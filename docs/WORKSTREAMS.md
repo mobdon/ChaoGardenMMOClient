@@ -24,6 +24,8 @@ Movement handoff: client commit `279a7b7` already publishes `src/chao-locomotion
 
 The current JumpUp132 / JumpDown135 / reverse137 proposal, real snapshot-field requirements and `createGarden` proof boundaries are recorded in [NATIVE-MOVEMENT-INTEGRATION.md](NATIVE-MOVEMENT-INTEGRATION.md). Use that handoff before changing the shared scene; the proposal remains unmerged.
 
+Integration's `codex/footwear-motion-fix` fixes the frozen visible shoes independently of that proposal: actual 006/013 sockets/overlay targets, skin-centered chest emerald and guarded heel jets. [FOOTWEAR-FIX.md](FOOTWEAR-FIX.md) records original-asset, real Rust round-trip and actual UI evidence. Preserve these attachment changes in a future movement merge. Read-only review of native movement commit86f41f9 confirmed invalid-height handling is fixed; duplicate-time history resets and the legacy water fallback mismatch remain for that stream's acceptance.
+
 ## Copy-and-paste chat briefs
 
 ### 1. Client — Tiny Garden app

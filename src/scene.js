@@ -8,6 +8,7 @@ import '@babylonjs/loaders/glTF/index.js';
 import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, stepInputPace } from './chao-locomotion.js';
+import { CHAO_GEAR_JOINTS, chestSurfacePoint, createShoeExhaust } from './chao-attachments.js';
 import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
@@ -528,9 +529,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     item.root.computeWorldMatrix(true);
     const toRoot = Matrix.Invert(item.root.getWorldMatrix());
     const result = { footwear: [], hands: [] };
-    for (const [side, armIndex, handIndex, footIndex, footMeshIndex] of [
-      ['right', '003', '004', '005', '006'], ['left', '010', '011', '012', '013'],
-    ]) {
+    for (const [side, armIndex, handIndex, footIndex, footMeshIndex] of CHAO_GEAR_JOINTS) {
       for (const [slot, socket, meshNode] of [
         ['footwear', find(footIndex), find(footMeshIndex)], ['hands', find(handIndex), find(armIndex)],
       ]) {
@@ -557,7 +556,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       const bodyMeshes = torso.getChildren().filter(node => /(?:^|-)attach_/.test(node.name))
         .flatMap(node => [node, ...node.getChildMeshes()]).filter(mesh => mesh.getTotalVertices?.());
       const bounds = boundsFor(geometryPoints(bodyMeshes, toRoot));
-      if (bounds) result.torso = { socket: torso, bounds, restToRoot: torso.getWorldMatrix().multiply(toRoot) };
+      if (bounds) result.torso = { socket: torso, bounds, surface: chestSurfacePoint(bodyMeshes, toRoot, bounds), restToRoot: torso.getWorldMatrix().multiply(toRoot) };
     }
     return result;
   }
@@ -627,6 +626,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (slot === 'footwear') {
       for (const { fit } of attachments) for (const mesh of fit.meshes) mesh.setEnabled(false);
       imported.footwearMeshes = attachments.flatMap(entry => entry.meshes);
+      if (itemId === 'shadow-air-shoes') void attachShoeExhaust(item, imported, attachments, version);
     }
     canvas.dataset.ownerGear = Object.entries(item.ownerGear).filter(([, entries]) => entries.length).map(([key]) => key).join(',');
   }
@@ -726,7 +726,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     vehicle.wasGrounded = !!state.grounded;
   }
 
-  async function attachNativeFlame(item) {
+  function nativeFlameMaterial() {
     if (!flameMaterialPromise) flameMaterialPromise = (async () => {
       try {
         const response = await fetch('/api/assets/chao-flame.png', { cache: 'no-store' });
@@ -758,8 +758,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         return mat;
       } catch { return null; }
     })();
-    const mat = await flameMaterialPromise;
-    if (!mat || disposed || item.root.isDisposed() || !item.imported) return;
+    return flameMaterialPromise;
+  }
+
+  async function attachNativeFlame(item) {
+    const imported = item.imported;
+    const mat = await nativeFlameMaterial();
+    if (!mat || disposed || item.root.isDisposed() || item.imported !== imported) return;
     const sprite = MeshBuilder.CreatePlane('original-dark-chaos-flame', { size: 0.18 }, scene);
     sprite.material = mat;
     sprite.parent = item.root;
@@ -768,6 +773,17 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     sprite.isPickable = false;
     glow.addExcludedMesh(sprite);
     item.nativeEmotion = sprite;
+  }
+
+  async function attachShoeExhaust(item, imported, attachments, version) {
+    const mat = await nativeFlameMaterial();
+    if (!mat || disposed || item.root.isDisposed() || item.imported !== imported || item.gearVersion !== version) return;
+    for (const entry of attachments) {
+      if (entry.root.isDisposed()) continue;
+      const jet = createShoeExhaust(scene, mat, entry);
+      for (const plane of jet.getChildMeshes()) glow.addExcludedMesh(plane);
+      entry.exhaust = jet;
+    }
   }
 
   async function attachNativeEmeralds(item) {
@@ -835,7 +851,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     const scale = 0.09 / source.size.y;
     visual.scaling.setAll(scale);
     visual.position.copyFrom(source.center.scale(-scale));
-    const position = new Vector3(fit.bounds.center.x, fit.bounds.min.y + fit.bounds.size.y * 0.62, fit.bounds.max.z + 0.018);
+    const position = fit.surface;
     const local = Matrix.Translation(position.x, position.y, position.z).multiply(Matrix.Invert(fit.restToRoot));
     chest.rotationQuaternion = Quaternion.Identity();
     local.decompose(chest.scaling, chest.rotationQuaternion, chest.position);
@@ -1485,6 +1501,11 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           mounted: !!item.vehicleKey,
           fresh,
         });
+        const skateBlend = item.imported.skate?.diagnostics.blend || 0;
+        for (const entry of item.ownerGear?.footwear || []) if (entry.exhaust) {
+          entry.exhaust.setEnabled(skateBlend > 0);
+          for (const mesh of entry.exhaust.getChildMeshes()) mesh.visibility = skateBlend;
+        }
         const speed = fresh && motion?.grounded && !item.vehicleKey ? motion.speed : 0;
         item.nativeGait = chooseNativeGait(speed, item.nativeGait);
         const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
@@ -1577,6 +1598,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     canvas.dataset.skateSpeed = (skate?.speed || 0).toFixed(3);
     canvas.dataset.skateRate = (skate?.rate || 0).toFixed(3);
     canvas.dataset.skateBlend = (skate?.blend || 0).toFixed(3);
+    canvas.dataset.footwearSockets = (self?.ownerGear?.footwear || []).map(entry => entry.fit.socket.name.match(/(\d{3})_object_/)?.[1] || '').join(',');
+    canvas.dataset.shoeExhaust = String((self?.ownerGear?.footwear || []).filter(entry => entry.exhaust?.isEnabled()).length);
     canvas.dataset.skateClip = skate?.clip || '';
     canvas.dataset.chaoMotion = skate?.active ? `ShadowSkate${skate.clip}` : self?.imported?.run && self.imported.current === self.imported.run ? 'NativeRun119' : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
     canvas.dataset.chaoMotionRate = (self?.imported?.current?.speedRatio || 1).toFixed(3);

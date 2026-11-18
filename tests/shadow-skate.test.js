@@ -48,7 +48,9 @@ test('model-space rotation retarget preserves every original transform position,
     const rightArm = make('003', body, [1, .5, 0], [0, .2, .1]);
     const leftArm = make('010', body, [-1, .5, 0], [0, -.2, -.1]);
     const nodes = [body, head, rightArm, make('004', rightArm, [.5, 0, 0], [.1, 0, .3]), leftArm,
-      make('011', leftArm, [-.5, 0, 0], [-.1, 0, -.3]), make('005', body, [.4, -1, 0], [.1, .2, 0]), make('012', body, [-.4, -1, 0], [-.1, -.2, 0])];
+      make('011', leftArm, [-.5, 0, 0], [-.1, 0, -.3]),
+      make('006', make('005', body, [.4, -1, 0], [.1, .2, 0]), [0, -.1, .1], [0, .1, 0]),
+      make('013', make('012', body, [-.4, -1, 0], [-.1, -.2, 0]), [0, -.1, .1], [0, -.1, 0])];
     const semantics = ['body', 'head', 'leftUpperArm', 'leftHand', 'rightUpperArm', 'rightHand', 'leftFoot', 'rightFoot'];
     const modelRotation = node => {
       node.computeWorldMatrix(true); armature.computeWorldMatrix(true);

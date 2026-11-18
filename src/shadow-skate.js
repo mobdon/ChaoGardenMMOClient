@@ -83,7 +83,7 @@ const TARGETS = [
   ['001', 'body'], ['014', 'head'],
   ['003', 'leftUpperArm'], ['004', 'leftHand'],
   ['010', 'rightUpperArm'], ['011', 'rightHand'],
-  ['005', 'leftFoot'], ['012', 'rightFoot'],
+  ['006', 'leftFoot'], ['013', 'rightFoot'],
 ];
 
 function relativeRotation(node, reference) {
