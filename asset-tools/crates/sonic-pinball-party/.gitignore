@@ -1,0 +1,11 @@
+/target/
+/.local/
+*.gba
+*.sav
+*.srm
+*.bin
+*.rgba
+*.pcm
+*.pam
+*.png
+*.wav
