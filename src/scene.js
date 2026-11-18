@@ -11,6 +11,7 @@ import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
 import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
 import { restoreNativeChaosSampling } from './chao-materials.js';
+import { createSteadyHead } from './chao-head.js';
 import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
@@ -197,6 +198,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     // leaves those alive; materials remain shared with the source container.
     const descendants = [root, ...root.getDescendants()];
     const entries = new Set(descendants.map(node => node.metadata?.importedEntries).filter(Boolean));
+    root.metadata?.steadyHead?.dispose();
     root.metadata?.shadowSkate?.dispose();
     for (const imported of entries) imported.dispose();
     for (const node of descendants) for (const mat of node.metadata?.ownedMaterials || []) mat.dispose(false, false);
@@ -421,6 +423,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     });
     item.imported.skate = createShadowSkate(item.imported);
     item.root.metadata.shadowSkate = item.imported.skate;
+    item.imported.steadyHead = createSteadyHead(item.imported);
+    item.root.metadata.steadyHead = item.imported.steadyHead;
     if (item.accessory) item.accessory.position.y = height * 0.78;
     canvas.dataset.localAssets = [...assetContainers.keys()].join(',');
     canvas.dataset.chaoAsset = 'loaded';
@@ -1436,11 +1440,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   buildWorld('hub');
   activeZone = 'hub';
   scene.onBeforeAnimationsObservable.add(() => {
+    for (const item of playerMeshes.values()) item.imported?.steadyHead?.restoreBase();
     for (const item of playerMeshes.values()) item.imported?.skate?.restoreBase();
   });
   scene.onAfterAnimationsObservable.add(() => {
     for (const item of playerMeshes.values()) item.imported?.skate?.apply();
     for (const item of playerMeshes.values()) groundImportedFeet(item);
+    for (const item of playerMeshes.values()) item.imported?.steadyHead?.apply();
     for (const item of animatedDecor) if (item.kind === 'npc') groundImportedFeet(item.chao);
   });
   scene.onBeforeRenderObservable.add(() => {
@@ -1504,7 +1510,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       const swimming = !terrain && activeZone !== 'mission' && activeZone !== 'race' && (item.root.position.x + 8) ** 2 + item.root.position.z ** 2 < 25;
       const phase = time * (item.moving ? 12 : 2.3);
       item.body.position.y = (0.8 + Math.sin(phase) * (item.moving ? 0.07 : 0.025)) * item.proxyScale;
-      item.head.position.y = (1.72 + Math.sin(phase) * 0.025) * item.proxyScale;
+      item.head.position.y = 1.72 * item.proxyScale;
       item.emotion.position.y = item.emotionBase + Math.sin(time * 2.8) * 0.02;
       if (item.imported) {
         const motion = item.motionSample;
@@ -1522,6 +1528,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         const speed = fresh && motion?.grounded && !item.vehicleKey ? motion.speed : 0;
         item.nativeVisualSpeed = fresh && motion?.grounded && !item.vehicleKey ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
         item.nativeGait = chooseNativeGait(speed, item.nativeGait);
+        item.imported.steadyHead?.update(dt, { mounted: !!item.vehicleKey });
         const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
         if (animation && item.imported.current !== animation) {
           item.imported.current?.stop();
@@ -1607,6 +1614,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     canvas.dataset.mechHeight = (self?.vehicle?.height || 0).toFixed(3);
     canvas.dataset.mechRadius = (self?.vehicle?.radius || 0).toFixed(3);
     const skate = self?.imported?.skate?.diagnostics;
+    const head = self?.imported?.steadyHead?.diagnostics;
+    canvas.dataset.headStabilized = String(head?.active || false);
+    canvas.dataset.headStabilityBlend = (head?.blend || 0).toFixed(3);
+    canvas.dataset.headActorPosition = head?.position?.map(value => value.toFixed(6)).join(',') || '';
     canvas.dataset.skateActive = String(skate?.active || false);
     canvas.dataset.skateState = skate?.state || 'unavailable';
     canvas.dataset.skateSpeed = (skate?.speed || 0).toFixed(3);

@@ -42,6 +42,7 @@ Test readiness checked November18: existing saved-Chao browser Tiny is `http://1
 
 | ID | Status | Work | Acceptance / evidence |
 | --- | --- | --- | --- |
+| VIS-14 | DONE | Stop head bob completely. | Native visible head016 stays fixed relative to the actor through idle, walk, run, skate and stops; mounted pilot pose retained. 26 tests/build and 11,880 actual-native frames pass across three forms; all 21 head/eye meshes steady, other local channels/scales/parents unchanged. docs/HEAD-STABILITY.md. |
 | VIS-01 | VERIFY | Close third person follow camera and correct controls in every area. | WASD/arrows follow camera basis; right-drag/wheel/R work; nonmodal panels retain movement; touch pad works. |
 | VIS-02 | VERIFY | Correct Chao/garden scale, grounding and collision. | Feet meet hub and all three native terrains at rest/motion; no cliff/void tunneling; path stones do not bury feet. |
 | VIS-03 | VERIFY | Opaque bodies and artifact-free Chao. | Inspect owner and all NPCs from multiple angles; only intended face cutouts/translucent effects use alpha. |

@@ -122,3 +122,5 @@ deliveries awaiting final combined browser acceptance. Earlier videos and
 baseline saved-Memory evidence remain historical checks of their recorded
 versions; no backend rollout, canonical-save migration or complete native-game
 port is implied by this ledger update.
+
+Head bob follow-up (November 18): user requested stopping it completely. The final visible head016 stays fixed relative to the moving actor through idle/walk/run/skate and stops. Only mounted pilot presentation bypasses the standing lock. See HEAD-STABILITY.md and VIS-14; 26 tests/build and 11,880 native frames pass.
