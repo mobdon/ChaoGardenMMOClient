@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-18",
+  "scope": "production Tiny account adapter against an isolated real Rust service; synthetic Chao only",
+  "runner": "scripts/verify-tiny-live.mjs",
+  "transport": "accounts-v2-tiny-adapter",
+  "serverSourceCommit": "56af22dece8551376f4c8b9a1882acecfff02bf1",
+  "serverSourceClean": true,
+  "serverExecutableSha256": "76df7aa256296b26468aa25a7bb5c2973d6b6a6fd9fea9413a78a34d89aca913",
+  "executedAdapterSha256": "5b1962a875bdcf713b5df29fa181eabd0ac7dd2f9783a5f515f7da38ed9f5eeb",
+  "gamesStartedAndStoppedWithoutCancellationReward": ["memory", "rock_paper_scissors", "bounce", "ball", "search"],
+  "memory": {"completed": true, "saved": true, "rings": 82, "receiptsAfterReconnectAndRestart": 1},
+  "canonicalIdentityPreserved": true,
+  "liveRuntimeOrUserSaveChanged": false,
+  "limits": ["synthetic service test, not the user's account", "not Android device execution", "not native ROM mechanics parity", "not four other complete reward rounds", "durable AFK and combined paired inventory care remain unavailable"]
+}

@@ -27,8 +27,11 @@ particular, the supplied source set still lacks the original SADX Search
 payload.
 
 No other workstream's source, index, live save or running service was changed.
-The widget-owned browser page is the immediate hybrid; full Tiny UI integration
-remains with its owning lane. Rust accounts draft server PR #15 at `56af22d`
+The widget-owned browser page remains the phone preview. The reviewed full Tiny
+UI delivery from client PR #5 (`f4f2f05`) is included as a source dependency;
+its five screens now open from this branch with the original English sidebar.
+That static layer does not implement native UI state machines or game rules.
+Rust accounts draft server PR #15 at `56af22d`
 supplies the agreed native pairing/account/lease/intent transport and canonical
 offline self; source review and isolated tests do not deploy it to the live
 legacy service.

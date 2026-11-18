@@ -2,10 +2,17 @@
 param(
     [Parameter(Mandatory = $true)][string]$A2neCrate,
     [Parameter(Mandatory = $true)][string]$Rom,
-    [string]$Output = (Join-Path $PSScriptRoot '../../.local/imports/tiny-garden-a2ne.png')
+    [ValidateSet('Garden', 'Sidebar0', 'Sidebar1')][string]$Kind = 'Garden',
+    [string]$Output
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+$exportKind = @{ Garden = 'garden'; Sidebar0 = 'sidebar-0'; Sidebar1 = 'sidebar-1' }[$Kind]
+if (-not $Output) {
+    $filename = @{ Garden = 'tiny-garden-a2ne.png'; Sidebar0 = 'tiny-garden-sidebar-0-a2ne.png'; Sidebar1 = 'tiny-garden-sidebar-1-a2ne.png' }[$Kind]
+    $Output = Join-Path $PSScriptRoot ('../../.local/imports/' + $filename)
+}
 
 $cratePath = (Resolve-Path -LiteralPath $A2neCrate).Path
 if (Test-Path -LiteralPath $cratePath -PathType Leaf) { $cratePath = Split-Path -Parent $cratePath }
@@ -46,11 +53,13 @@ png = "=0.17.16"
 [IO.File]::WriteAllText((Join-Path $harnessPath 'Cargo.toml'), $manifest, [Text.UTF8Encoding]::new($false))
 $manifestPath = Join-Path $harnessPath 'Cargo.toml'
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'tiny-garden-render.Cargo.lock') -Destination (Join-Path $harnessPath 'Cargo.lock')
+& cargo fmt --manifest-path $manifestPath --check
+if ($LASTEXITCODE -ne 0) { throw 'Rust renderer formatting failed.' }
 & cargo test --offline --locked --manifest-path $manifestPath
 if ($LASTEXITCODE -ne 0) { throw 'Rust renderer tests failed.' }
 & cargo clippy --offline --locked --manifest-path $manifestPath --all-targets -- -D warnings
 if ($LASTEXITCODE -ne 0) { throw 'Rust renderer lint failed.' }
-& cargo run --offline --locked --manifest-path $manifestPath -- $romPath $outputPath
+& cargo run --offline --locked --manifest-path $manifestPath -- $romPath $outputPath $exportKind
 if ($LASTEXITCODE -ne 0) { throw 'Native garden export failed.' }
 Write-Output "Export: $outputPath"
 Write-Output "Provenance: $outputPath.provenance.json"

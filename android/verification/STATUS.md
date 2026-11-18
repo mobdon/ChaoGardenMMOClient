@@ -29,7 +29,7 @@ Final local artifacts from the configured four-task verification:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `app/build/outputs/apk/debug/app-debug.apk` | `9c88270af59716d702b2b430952b66244971b777b5d379c4c1f53e32a1d21697` |
+| `app/build/outputs/apk/debug/app-debug.apk` | `15adadc4aba82d63e4d35a7a058d0ea904c1bd0568a35616f09291ace626a493` |
 | `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk` | `1faa1517d2d654efa33536000faba816940a6d84e72bb79d6425f106d6506f1d` |
 
 Google's `apksigner verify --verbose --print-certs` verifies the application APK
@@ -48,7 +48,14 @@ All eleven atlas/flame/transparent-gem APK entries also match their exact
 `ORIGINAL-ASSETS.json` hashes. The original opaque emerald environment textures
 are absent from the APK. The final application signature verifies using v2.
 The local final build log is
-`verification/local/build-chaos-native-sprite-size-2026-11-18.log`.
+`verification/local/build-tiny-native-form-priority-2026-11-18.log`.
+
+The final follow-up preserves the reviewed Tiny app's explicit form precedence:
+Hero/Dark/Neutral Chaos form names win over conflicting alignment; generic
+Chaos forms use the existing alignment thresholds. The expanded catalog
+regression, all four Gradle tasks, 44 regular JVM cases and lint passed again.
+The resulting application APK's v2 signature verified; the instrumentation APK
+is unchanged. This does not add Android device execution evidence.
 
 The new catalog tests distinguish art-only unpaired preview descriptors from
 canonical players, block preview whenever any credential/snapshot exists,

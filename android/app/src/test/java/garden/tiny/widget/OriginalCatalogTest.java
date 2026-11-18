@@ -31,7 +31,9 @@ public final class OriginalCatalogTest {
         variant("dark", player("chaos", -60));
         variant("hero", player("HERO-CHAOS", -100));
         variant("dark", player("dark-chaos", 0));
-        variant("hero", player("dark-chaos", 100));
+        variant("dark", player("dark-chaos", 100));
+        variant("neutral", player("neutral-chaos", 100));
+        variant("neutral", player("neutral-chaos", -100));
     }
     @Test public void onlyExplicitServerAdminFlagAddsTheWholeApprovedEmeraldIdentity() throws Exception {
         JSONObject owner = OriginalCatalog.forPlayer(player("chaos", -100).put("admin", true));

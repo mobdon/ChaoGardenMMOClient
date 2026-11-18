@@ -37,6 +37,12 @@ An unpaired widget without any saved snapshot can show **Dark Chaos · art previ
 
 The static portrait uses a uniform 0.20 scale: its complete frame occupies 32 original-garden pixels, with the body about 20 pixels high. This is a presentation adaptation of the original desktop Chaos art, not recovered normal/GBA sprite art. Its original front-idle feet stay on verified grass, and the flame/emerald frame stays within the scene. If any optional emerald is absent/corrupt, the actual body/flame stay visible while the entire chest/seven-gem group is hidden with an **ART LIMITED** label and accessibility explanation. Incomplete portraits are not cached, allowing recovery when correct assets are available.
 
+Explicit Hero/Dark/Neutral Chaos forms take priority over conflicting alignment
+in both Android and the reviewed full Tiny Garden app. Generic Chaos forms use
+the existing alignment thresholds. The full app now reuses its five existing
+screens with original garden/sidebar presentation; see
+[the presentation boundary](../docs/TINY-ORIGINAL-PRESENTATION.md).
+
 Stage the private originals before building:
 
 ```powershell

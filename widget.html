@@ -9,13 +9,15 @@
   </head>
   <body>
     <main class="widget-studio">
-      <header class="studio-header"><a class="garden-logo" href="/tiny.html"><span class="logo-gem">◈</span><span>TINY GARDEN<small>YOUR CHAO. YOUR WORLD.</small></span></a><span class="preview-tag">ANDROID WIDGET <b>WEB PREVIEW</b></span></header>
+      <header class="studio-header"><a class="garden-logo" href="/tiny.html"><span class="logo-gem">◈</span><span>TINY GARDEN<small>YOUR CHAO. YOUR WORLD.</small></span></a><div class="studio-header-actions"><span class="preview-tag">ANDROID WIDGET <b>WEB PREVIEW</b></span><a id="widget-focus-toggle" class="focus-view-toggle" href="?view=phone">Clearer phone view <span>↗</span></a></div></header>
       <div class="studio-layout">
         <section class="studio-controls" aria-labelledby="studio-title">
           <span class="section-kicker"><i></i> A LITTLE GARDEN. A BIG PRESENCE.</span>
           <h1 id="studio-title">Your Chao.<br />Always <em>in reach.</em></h1>
           <p class="studio-intro">The original little garden, with your Chao at its heart. Check in here. Open Tiny Garden for care, five minigames and training controls.</p>
-          <div class="configuration-card">
+          <details id="widget-configuration" class="configuration-card" open>
+            <summary class="configuration-summary"><span>Preview settings</span><span id="widget-configuration-state">Art preview</span></summary>
+            <div class="configuration-body">
             <div class="control-heading"><span>MAKE ROOM FOR YOUR CHAO</span><span>01 / 03</span></div>
             <fieldset class="size-selector"><legend>Choose a widget size</legend><div role="group" aria-label="Widget size"><button type="button" data-size="compact" aria-pressed="false"><span class="size-glyph compact-glyph"></span><b>Compact</b><small>2 × 2</small></button><button type="button" data-size="wide" aria-pressed="false"><span class="size-glyph wide-glyph"></span><b>Wide</b><small>4 × 2</small></button><button type="button" data-size="large" aria-pressed="true" class="selected"><span class="size-glyph large-glyph"></span><b>Large</b><small>4 × 4</small></button></div></fieldset>
             <div id="widget-art-selector" class="art-preview-control"><label class="save-label" for="widget-art-variant">Original Chaos artwork <span class="art-preview-tag">ART PREVIEW</span><select id="widget-art-variant"><option value="dark">Dark Chaos Chao</option><option value="neutral">Neutral Chaos Chao</option><option value="hero">Hero Chaos Chao</option></select></label><p>Artwork only. Your saved Chao takes over when connected.</p></div>
@@ -23,7 +25,8 @@
             <div id="studio-sync" class="studio-sync" data-state="offline" role="status"><i></i><span id="studio-sync-label">Looking for your saved Chao</span></div>
             <p id="widget-connection-note" class="connection-note">Use an existing garden save to see live stats here.</p>
             <div class="connection-actions"><button id="widget-retry" type="button" disabled>Retry connection</button><a href="/?tiny=1">Load existing save <span>↗</span></a></div>
-          </div>
+            </div>
+          </details>
           <p class="preview-explanation"><span>◈</span><span>Original Sonic Advance 2 garden data, decoded by the Rust port. Your Chao and stats come from the server. This browser preview opens Tiny Garden for care.</span></p>
           <a id="studio-open" class="studio-open" href="/tiny.html">OPEN TINY GARDEN <span>↗</span></a>
           <p class="studio-bottom-note">ONE CHAO. THE SAME SAVED PROGRESS.</p>

@@ -33,8 +33,8 @@ public final class OriginalCatalog {
         Object rawAlignment = canonicalPlayer.opt("alignment");
         double alignment = rawAlignment instanceof Number ? ((Number) rawAlignment).doubleValue() : 0;
         // Matches the Tiny Garden browser's chaosVariant precedence exactly.
-        int variant = form.contains("hero") || alignment >= 60 ? 1
-                : form.contains("dark") || alignment <= -60 ? 2 : 0;
+        int variant = form.contains("hero") ? 1 : form.contains("dark") ? 2
+                : form.contains("neutral") ? 0 : alignment >= 60 ? 1 : alignment <= -60 ? 2 : 0;
         return appearance(variant, Boolean.TRUE.equals(canonicalPlayer.opt("admin")));
     }
 

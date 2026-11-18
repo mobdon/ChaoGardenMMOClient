@@ -7,8 +7,8 @@ Use a worktree **outside `.local`**. Vite correctly blocks private files under
 that directory, including absolute module URLs generated from worktrees there.
 Keep the private boundary intact. This preview config extends the existing
 config and serves an exact whitelist of size-limited, hash-pinned PNGs: the
-A2NE garden, three Chaos phone atlases, the original Dark flame and seven
-transparent emerald geometry renders. It exposes no directory or arbitrary
+A2NE garden, its English native sidebar, three Chaos phone atlases, the
+original Dark flame and seven transparent emerald geometry renders. It exposes no directory or arbitrary
 native input. Existing atlas/flame asset paths can still use the Rust asset
 proxy when local originals are absent. Emerald renders use preview-only paths;
 they do not add a server contract.
@@ -26,7 +26,21 @@ $env:FRONTEND_PORT = '5177'
 $env:GAME_PORT = '3001'
 npx vite --config android/preview/vite.config.mjs
 # Open http://127.0.0.1:5177/widget.html
+# Focus the same phone mockup: http://127.0.0.1:5177/widget.html?view=phone
 ```
+
+The focused phone view retains the mockup, canonical/art-preview labels and
+all controls in a collapsible settings drawer. Its toggle preserves the current
+selection without reloading. The Chao keeps its small sprite footprint.
+
+Full-app entry now reuses client PR #5's actual Garden, Stats, Training, Games
+and Items controllers. `/tiny.html#garden` composes the original garden and
+English sidebar; `/tiny.html#stats`, `#training`, `#games` and `#items` select
+their existing panels without automatically starting activities. See
+[the presentation integration record](../../docs/TINY-ORIGINAL-PRESENTATION.md).
+All five minigames use the Rust service. Durable AFK and combined account-v2
+inventory care remain unavailable; original UI pixels do not implement those
+systems or the native menu state machines.
 
 For a local production bundle use
 `npx vite build --config android/preview/vite.config.mjs`. If configured, the
@@ -36,6 +50,8 @@ is labeled without changing the saved Chao's data. The Chaos/flame hashes are
 recorded in [ORIGINAL-ASSETS.json](../docs/ORIGINAL-ASSETS.json); the emerald
 geometry, rendering policy and deterministic hashes are recorded in
 [WIDGET-EMERALDS.json](../docs/WIDGET-EMERALDS.json).
+The native sidebar source/VRAM/map/palette and parity evidence are recorded in
+[TINY-MENU-ASSETS.json](../docs/TINY-MENU-ASSETS.json).
 
 Without a connected save, the preview shows clearly labeled Dark Chaos art,
 with Neutral/Hero choices. These descriptors contain only form/alignment;
