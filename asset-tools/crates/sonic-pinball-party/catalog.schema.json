@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed A3VE local asset metadata v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "source", "scanPolicy", "assets"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gameCode", "revision", "length", "sha1", "sha256"],
+      "properties": {
+        "gameCode": {"const": "A3VE"},
+        "revision": {"const": 0},
+        "length": {"const": 8388608},
+        "sha1": {"const": "92b5c19cb4dee8fdfc15a8abdc699822d5373042"},
+        "sha256": {"const": "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"}
+      }
+    },
+    "scanPolicy": {"type": "string", "minLength": 1},
+    "assets": {"type": "array", "maxItems": 16384, "items": {"$ref": "#/$defs/asset"}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "space", "offset", "offsetHex", "storedLength", "storedSha256", "encoding", "decodedLength", "decodedSha256", "pointerReferences", "status", "category", "evidence"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9-]+$"},
+        "space": {"enum": ["rom", "garden"]},
+        "offset": {"type": "integer", "minimum": 0, "maximum": 8388607},
+        "offsetHex": {"type": "string", "pattern": "^0x[0-9A-F]{6}$"},
+        "storedLength": {"type": "integer", "minimum": 1, "maximum": 8388608},
+        "storedSha256": {"$ref": "#/$defs/hash"},
+        "encoding": {"enum": ["raw", "gba-lz77-10", "gba-rle-30"]},
+        "decodedLength": {"type": "integer", "minimum": 1, "maximum": 8388608},
+        "decodedSha256": {"$ref": "#/$defs/hash"},
+        "pointerReferences": {"type": "array", "uniqueItems": true, "maxItems": 2097152, "items": {"type": "integer", "minimum": 0, "maximum": 8388604, "multipleOf": 4}},
+        "status": {"enum": ["structural-candidate", "mapped-span", "inferred-allocation", "verified-container", "verified-obj-tiles", "verified-bg-tiles", "verified-render"]},
+        "category": {"type": "string", "minLength": 1},
+        "evidence": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
