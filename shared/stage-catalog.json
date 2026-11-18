@@ -1,0 +1,3022 @@
+{
+  "version": 1,
+  "evidence": {
+    "mapping": "Official X-Hax SA Tools release786 PC_SA2/sa2lvl.ini",
+    "nativeIds": "https://github.com/X-Hax/sa2-mod-loader/blob/master/SA2ModLoader/include/SA2Enums.h",
+    "inventory": "Every listed resource path verified against the installed-file inventory; no original binaries are included.",
+    "status": "All native missions/arenas/courses are catalogued for future adaptation. The currently playable prototype routes are separate."
+  },
+  "stages": [
+    {
+      "id": 13,
+      "name": "City Escape",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/objtex_stg13.pak",
+        "resource/gd_PC/PRS/stg_title13.pak",
+        "resource/gd_PC/bgtex13.prs",
+        "resource/gd_PC/camset0013S.bin",
+        "resource/gd_PC/landtx13.prs",
+        "resource/gd_PC/objtex_stg13.prs",
+        "resource/gd_PC/set0013_2p_s.bin",
+        "resource/gd_PC/set0013_2p_u.bin",
+        "resource/gd_PC/set0013_hd_s.bin",
+        "resource/gd_PC/set0013_s.bin",
+        "resource/gd_PC/set0013_u.bin",
+        "resource/gd_PC/stg13D.rel",
+        "resource/gd_PC/stg13_light.bin",
+        "resource/gd_PC/stg13cam.prs",
+        "resource/gd_PC/stg_title13.prs"
+      ],
+      "available": false,
+      "nativeStageId": 13,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/City Escape]",
+        "Native mapping: stg13_cityescape/objLandTable0013.sa2blvl"
+      ]
+    },
+    {
+      "id": 16,
+      "name": "Wild Canyon",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title16.pak",
+        "resource/gd_PC/bgtex16.prs",
+        "resource/gd_PC/landtx16.prs",
+        "resource/gd_PC/objtex_stg16.prs",
+        "resource/gd_PC/set0016_hd_s.bin",
+        "resource/gd_PC/set0016_hd_u.bin",
+        "resource/gd_PC/set0016_s.bin",
+        "resource/gd_PC/set0016_u.bin",
+        "resource/gd_PC/stg16D.rel",
+        "resource/gd_PC/stg16_light.bin",
+        "resource/gd_PC/stg16_light_gc.bin",
+        "resource/gd_PC/stg16_wind.prs",
+        "resource/gd_PC/stg16cam.prs",
+        "resource/gd_PC/stg_title16.prs"
+      ],
+      "available": false,
+      "nativeStageId": 16,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Wild Canyon]",
+        "Native mapping: stg16_WildCanyon/objLandTable0016.sa2blvl"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "Prison Lane",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title09.pak",
+        "resource/gd_PC/landtx09.prs",
+        "resource/gd_PC/objtex_stg09.prs",
+        "resource/gd_PC/set0009_hd_s.bin",
+        "resource/gd_PC/set0009_s.bin",
+        "resource/gd_PC/set0009_u.bin",
+        "resource/gd_PC/stg09D.rel",
+        "resource/gd_PC/stg09_fog.bin",
+        "resource/gd_PC/stg09_light.bin",
+        "resource/gd_PC/stg09_light_gc.bin",
+        "resource/gd_PC/stg09cam.prs",
+        "resource/gd_PC/stg_title09.prs"
+      ],
+      "available": false,
+      "nativeStageId": 9,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Prison Lane]",
+        "Native mapping: stg09_tailsprison/objLandTable0009.sa2blvl"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "Metal Harbor",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title10.pak",
+        "resource/gd_PC/bgtex10.prs",
+        "resource/gd_PC/landtx10.prs",
+        "resource/gd_PC/objtex_stg10.prs",
+        "resource/gd_PC/set0010_2p_u.bin",
+        "resource/gd_PC/set0010_hd_s.bin",
+        "resource/gd_PC/set0010_hd_u.bin",
+        "resource/gd_PC/set0010_s.bin",
+        "resource/gd_PC/set0010_u.bin",
+        "resource/gd_PC/stg10D.rel",
+        "resource/gd_PC/stg10_fog.bin",
+        "resource/gd_PC/stg10_fogB.bin",
+        "resource/gd_PC/stg10_light.bin",
+        "resource/gd_PC/stg10_light_gc.bin",
+        "resource/gd_PC/stg10cam.prs",
+        "resource/gd_PC/stg_title10.prs"
+      ],
+      "available": false,
+      "nativeStageId": 10,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Metal Harbor]",
+        "Native mapping: stg10_metalharbor/objLandTable0010.sa2blvl"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Green Forest",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title03.pak",
+        "resource/gd_PC/bgtex03.prs",
+        "resource/gd_PC/landtx03.prs",
+        "resource/gd_PC/landtx03_suimen.prs",
+        "resource/gd_PC/objtex_stg03.prs",
+        "resource/gd_PC/set0003_2p_s.bin",
+        "resource/gd_PC/set0003_2p_u.bin",
+        "resource/gd_PC/set0003_hd_s.bin",
+        "resource/gd_PC/set0003_hd_u.bin",
+        "resource/gd_PC/set0003_s.bin",
+        "resource/gd_PC/set0003_u.bin",
+        "resource/gd_PC/stg03D.rel",
+        "resource/gd_PC/stg03_light.bin",
+        "resource/gd_PC/stg03cam.prs",
+        "resource/gd_PC/stg_title03.prs"
+      ],
+      "available": false,
+      "nativeStageId": 3,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Green Forest]",
+        "Native mapping: stg03_Jungle/objLandTable0003.sa2blvl"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Pumpkin Hill",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title05.pak",
+        "resource/gd_PC/bgtex05.prs",
+        "resource/gd_PC/landtx05.prs",
+        "resource/gd_PC/objtex_stg05.prs",
+        "resource/gd_PC/set0005_2P_s.bin",
+        "resource/gd_PC/set0005_2P_u.bin",
+        "resource/gd_PC/set0005_hd_s.bin",
+        "resource/gd_PC/set0005_s.bin",
+        "resource/gd_PC/set0005_u.bin",
+        "resource/gd_PC/stg05D.rel",
+        "resource/gd_PC/stg05_light.bin",
+        "resource/gd_PC/stg05_light_gc.bin",
+        "resource/gd_PC/stg05cam.prs",
+        "resource/gd_PC/stg_title05.prs"
+      ],
+      "available": false,
+      "nativeStageId": 5,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Pumpkin Hill]",
+        "Native mapping: stg05_pumpkin/objLandTable0005.sa2blvl"
+      ]
+    },
+    {
+      "id": 17,
+      "name": "Mission Street",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/landtx17.pak",
+        "resource/gd_PC/PRS/stg_title17.pak",
+        "resource/gd_PC/bgtex17.prs",
+        "resource/gd_PC/landtx17.prs",
+        "resource/gd_PC/objtex_stg17.prs",
+        "resource/gd_PC/set0017_hd_s.bin",
+        "resource/gd_PC/set0017_s.bin",
+        "resource/gd_PC/set0017_u.bin",
+        "resource/gd_PC/stg17D.rel",
+        "resource/gd_PC/stg17_light.bin",
+        "resource/gd_PC/stg17cam.prs",
+        "resource/gd_PC/stg_title17.prs"
+      ],
+      "available": false,
+      "nativeStageId": 17,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Mission Street]",
+        "Native mapping: stg17_Mission/objLandTable0017.sa2blvl"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Aquatic Mine",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title07.pak",
+        "resource/gd_PC/landtx07.prs",
+        "resource/gd_PC/objtex_stg07.prs",
+        "resource/gd_PC/set0007_hd_s.bin",
+        "resource/gd_PC/set0007_hd_u.bin",
+        "resource/gd_PC/set0007_s.bin",
+        "resource/gd_PC/set0007_u.bin",
+        "resource/gd_PC/stg07D.rel",
+        "resource/gd_PC/stg07_fog.bin",
+        "resource/gd_PC/stg07_fogB.bin",
+        "resource/gd_PC/stg07_light.bin",
+        "resource/gd_PC/stg07_suimenanim.prs",
+        "resource/gd_PC/stg07cam.prs",
+        "resource/gd_PC/stg_title07.prs"
+      ],
+      "available": false,
+      "nativeStageId": 7,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Aquatic Mine]",
+        "Native mapping: stg07_coalmine/objLandTable0007.sa2blvl"
+      ]
+    },
+    {
+      "id": 23,
+      "name": "Hidden Base",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title23.pak",
+        "resource/gd_PC/bgtex23.prs",
+        "resource/gd_PC/landtx23.prs",
+        "resource/gd_PC/objtex_stg23.prs",
+        "resource/gd_PC/set0023_hd_s.bin",
+        "resource/gd_PC/set0023_hd_u.bin",
+        "resource/gd_PC/set0023_s.bin",
+        "resource/gd_PC/set0023_u.bin",
+        "resource/gd_PC/stg23D.rel",
+        "resource/gd_PC/stg23_fog.bin",
+        "resource/gd_PC/stg23_light.bin",
+        "resource/gd_PC/stg23_ryuusa.prs",
+        "resource/gd_PC/stg23cam.prs",
+        "resource/gd_PC/stg_title23.prs"
+      ],
+      "available": false,
+      "nativeStageId": 23,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Hidden Base]",
+        "Native mapping: stg23_HiddenBase/objLandTable0023.sa2blvl"
+      ]
+    },
+    {
+      "id": 28,
+      "name": "Pyramid Cave",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title28.pak",
+        "resource/gd_PC/bgtex28.prs",
+        "resource/gd_PC/landtx28.prs",
+        "resource/gd_PC/objtex_stg28.prs",
+        "resource/gd_PC/set0028_hd_s.bin",
+        "resource/gd_PC/set0028_hd_u.bin",
+        "resource/gd_PC/set0028_s.bin",
+        "resource/gd_PC/set0028_u.bin",
+        "resource/gd_PC/stg28D.rel",
+        "resource/gd_PC/stg28_fire_red.prs",
+        "resource/gd_PC/stg28_fog.bin",
+        "resource/gd_PC/stg28_light.bin",
+        "resource/gd_PC/stg28cam.prs",
+        "resource/gd_PC/stg_title28.prs"
+      ],
+      "available": false,
+      "nativeStageId": 28,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Pyramid Cave]",
+        "Native mapping: stg28_PyramidCave/objLandTable0028.sa2blvl"
+      ]
+    },
+    {
+      "id": 25,
+      "name": "Death Chamber",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title25.pak",
+        "resource/gd_PC/bgtex25.prs",
+        "resource/gd_PC/landtx25.prs",
+        "resource/gd_PC/objtex_stg25.prs",
+        "resource/gd_PC/set0025_2p_s.bin",
+        "resource/gd_PC/set0025_2p_u.bin",
+        "resource/gd_PC/set0025_hd_s.bin",
+        "resource/gd_PC/set0025_s.bin",
+        "resource/gd_PC/set0025_u.bin",
+        "resource/gd_PC/stg25D.rel",
+        "resource/gd_PC/stg25_fire_blue.prs",
+        "resource/gd_PC/stg25_fire_green.prs",
+        "resource/gd_PC/stg25_fire_red.prs",
+        "resource/gd_PC/stg25_fog.bin",
+        "resource/gd_PC/stg25_fogB.bin",
+        "resource/gd_PC/stg25_light.bin",
+        "resource/gd_PC/stg25_map.prs",
+        "resource/gd_PC/stg25_water.prs",
+        "resource/gd_PC/stg25cam.prs",
+        "resource/gd_PC/stg_title25.prs"
+      ],
+      "available": false,
+      "nativeStageId": 25,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Death Chamber]",
+        "Native mapping: stg25_DeathChamber/objLandTable0025.sa2blvl"
+      ]
+    },
+    {
+      "id": 24,
+      "name": "Eternal Engine",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title24.pak",
+        "resource/gd_PC/SET0024_U.BIN",
+        "resource/gd_PC/bgtex24.prs",
+        "resource/gd_PC/landtx24.prs",
+        "resource/gd_PC/objtex_stg24.prs",
+        "resource/gd_PC/set0024_hd_s.bin",
+        "resource/gd_PC/set0024_s.bin",
+        "resource/gd_PC/stg24D.rel",
+        "resource/gd_PC/stg24_fogA.bin",
+        "resource/gd_PC/stg24_fogB.bin",
+        "resource/gd_PC/stg24_light.bin",
+        "resource/gd_PC/stg24cam.prs",
+        "resource/gd_PC/stg_title24.prs"
+      ],
+      "available": false,
+      "nativeStageId": 24,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Eternal Engine]",
+        "Native mapping: stg24_EternalEnginE/objLandTable0024.sa2blvl"
+      ]
+    },
+    {
+      "id": 32,
+      "name": "Meteor Herd",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title32.pak",
+        "resource/gd_PC/bgtex32.prs",
+        "resource/gd_PC/landtx32.prs",
+        "resource/gd_PC/landtx32_MA.prs",
+        "resource/gd_PC/landtx32_uv.prs",
+        "resource/gd_PC/objtex_stg32.prs",
+        "resource/gd_PC/set0032_2p_s.bin",
+        "resource/gd_PC/set0032_2p_u.bin",
+        "resource/gd_PC/set0032_hd_s.bin",
+        "resource/gd_PC/set0032_hd_u.bin",
+        "resource/gd_PC/set0032_s.bin",
+        "resource/gd_PC/set0032_u.bin",
+        "resource/gd_PC/stg32D.rel",
+        "resource/gd_PC/stg32_light.bin",
+        "resource/gd_PC/stg32cam.prs",
+        "resource/gd_PC/stg_title32.prs"
+      ],
+      "available": false,
+      "nativeStageId": 32,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Meteor Herd]",
+        "Native mapping: stg32_MeteorHerd/objLandTable0032.sa2blvl"
+      ]
+    },
+    {
+      "id": 22,
+      "name": "Crazy Gadget",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/bgtex22.pak",
+        "resource/gd_PC/PRS/stg_title22.pak",
+        "resource/gd_PC/bgtex22.prs",
+        "resource/gd_PC/landtx22.prs",
+        "resource/gd_PC/objtex_stg22.prs",
+        "resource/gd_PC/set0022_hd_s.bin",
+        "resource/gd_PC/set0022_s.bin",
+        "resource/gd_PC/set0022_u.bin",
+        "resource/gd_PC/stg22D.rel",
+        "resource/gd_PC/stg22_fog.bin",
+        "resource/gd_PC/stg22_light.bin",
+        "resource/gd_PC/stg22cam.prs",
+        "resource/gd_PC/stg_title22.prs"
+      ],
+      "available": false,
+      "nativeStageId": 22,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Crazy Gadget]",
+        "Native mapping: stg22_CrazyGadget/objLandTable0022.sa2blvl"
+      ]
+    },
+    {
+      "id": 30,
+      "name": "Final Rush",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title30.pak",
+        "resource/gd_PC/bgtex30.prs",
+        "resource/gd_PC/landtx30.prs",
+        "resource/gd_PC/landtx30_UV.prs",
+        "resource/gd_PC/objtex_stg30.prs",
+        "resource/gd_PC/set0030_2p_s.bin",
+        "resource/gd_PC/set0030_2p_u.bin",
+        "resource/gd_PC/set0030_hd_s.bin",
+        "resource/gd_PC/set0030_hd_u.bin",
+        "resource/gd_PC/set0030_s.bin",
+        "resource/gd_PC/set0030_u.bin",
+        "resource/gd_PC/stg30D.rel",
+        "resource/gd_PC/stg30_fogA.bin",
+        "resource/gd_PC/stg30_fogB.bin",
+        "resource/gd_PC/stg30_light.bin",
+        "resource/gd_PC/stg30_light_gc.bin",
+        "resource/gd_PC/stg30cam.prs",
+        "resource/gd_PC/stg_title30.prs"
+      ],
+      "available": false,
+      "nativeStageId": 30,
+      "group": "Hero Story",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Hero Story/Final Rush]",
+        "Native mapping: stg30_FinalRush/objLandTable0030.sa2blvl"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "Iron Gate",
+      "character": "Eggman",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title11.pak",
+        "resource/gd_PC/landtx11.prs",
+        "resource/gd_PC/objtex_stg11.prs",
+        "resource/gd_PC/set0011_2p_s.bin",
+        "resource/gd_PC/set0011_hd_s.bin",
+        "resource/gd_PC/set0011_hd_u.bin",
+        "resource/gd_PC/set0011_s.bin",
+        "resource/gd_PC/set0011_u.bin",
+        "resource/gd_PC/stg11D.rel",
+        "resource/gd_PC/stg11_fogB.bin",
+        "resource/gd_PC/stg11_light.bin",
+        "resource/gd_PC/stg11_light_gc.bin",
+        "resource/gd_PC/stg11cam.prs",
+        "resource/gd_PC/stg_title11.prs"
+      ],
+      "available": false,
+      "nativeStageId": 11,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "MechEggman",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Iron Gate]",
+        "Native mapping: stg11_prison/objLandTable0011.sa2blvl"
+      ]
+    },
+    {
+      "id": 18,
+      "name": "Dry Lagoon",
+      "character": "Rouge",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title18.pak",
+        "resource/gd_PC/bgtex18.prs",
+        "resource/gd_PC/landtx18.prs",
+        "resource/gd_PC/objtex_stg18.prs",
+        "resource/gd_PC/set0018_hd_s.bin",
+        "resource/gd_PC/set0018_hd_u.bin",
+        "resource/gd_PC/set0018_s.bin",
+        "resource/gd_PC/set0018_u.bin",
+        "resource/gd_PC/stg18D.rel",
+        "resource/gd_PC/stg18_fog.bin",
+        "resource/gd_PC/stg18_fogB.bin",
+        "resource/gd_PC/stg18_light.bin",
+        "resource/gd_PC/stg18_light_gc.bin",
+        "resource/gd_PC/stg18_suimenanim.prs",
+        "resource/gd_PC/stg18cam.prs",
+        "resource/gd_PC/stg_title18.prs"
+      ],
+      "available": false,
+      "nativeStageId": 18,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Rouge",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Dry Lagoon]",
+        "Native mapping: stg18_DryLagoon/objLandTable0018.sa2blvl"
+      ]
+    },
+    {
+      "id": 21,
+      "name": "Sand Ocean",
+      "character": "Eggman",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title21.pak",
+        "resource/gd_PC/bgtex21.prs",
+        "resource/gd_PC/landtx21.prs",
+        "resource/gd_PC/objtex_stg21.prs",
+        "resource/gd_PC/set0021_hd_s.bin",
+        "resource/gd_PC/set0021_hd_u.bin",
+        "resource/gd_PC/set0021_s.bin",
+        "resource/gd_PC/set0021_u.bin",
+        "resource/gd_PC/stg21D.rel",
+        "resource/gd_PC/stg21_fire.prs",
+        "resource/gd_PC/stg21_fog.bin",
+        "resource/gd_PC/stg21_light.bin",
+        "resource/gd_PC/stg21_ryuusa.prs",
+        "resource/gd_PC/stg21cam.prs",
+        "resource/gd_PC/stg_title21.prs"
+      ],
+      "available": false,
+      "nativeStageId": 21,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "MechEggman",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Sand Ocean]",
+        "Native mapping: stg21_SandOcean/objLandTable0021.sa2blvl"
+      ]
+    },
+    {
+      "id": 14,
+      "name": "Radical Highway",
+      "character": "Shadow",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/objtex_stg14.pak",
+        "resource/gd_PC/PRS/stg_title14.pak",
+        "resource/gd_PC/bgtex14.prs",
+        "resource/gd_PC/landtx14.prs",
+        "resource/gd_PC/objtex_stg14.prs",
+        "resource/gd_PC/set0014_2p_s.bin",
+        "resource/gd_PC/set0014_2p_u.bin",
+        "resource/gd_PC/set0014_hd_s.bin",
+        "resource/gd_PC/set0014_s.bin",
+        "resource/gd_PC/set0014_u.bin",
+        "resource/gd_PC/stg14D.rel",
+        "resource/gd_PC/stg14_light.bin",
+        "resource/gd_PC/stg14cam.prs",
+        "resource/gd_PC/stg_title14.prs"
+      ],
+      "available": false,
+      "nativeStageId": 14,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Shadow",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Radical Highway]",
+        "Native mapping: stg14_highway/objLandTable0014.sa2blvl"
+      ]
+    },
+    {
+      "id": 26,
+      "name": "Egg Quarters",
+      "character": "Rouge",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title26.pak",
+        "resource/gd_PC/bgtex26.prs",
+        "resource/gd_PC/landtx26.prs",
+        "resource/gd_PC/objtex_stg26.prs",
+        "resource/gd_PC/set0026_2p_s.bin",
+        "resource/gd_PC/set0026_2p_u.bin",
+        "resource/gd_PC/set0026_hd_s.bin",
+        "resource/gd_PC/set0026_s.bin",
+        "resource/gd_PC/set0026_u.bin",
+        "resource/gd_PC/stg26D.rel",
+        "resource/gd_PC/stg26_backfire.prs",
+        "resource/gd_PC/stg26_fire_blue.prs",
+        "resource/gd_PC/stg26_fire_green.prs",
+        "resource/gd_PC/stg26_fire_red.prs",
+        "resource/gd_PC/stg26_fog.bin",
+        "resource/gd_PC/stg26_fogB.bin",
+        "resource/gd_PC/stg26_fogC.bin",
+        "resource/gd_PC/stg26_light.bin",
+        "resource/gd_PC/stg26_light_gc.bin",
+        "resource/gd_PC/stg26_water.prs",
+        "resource/gd_PC/stg26cam.prs",
+        "resource/gd_PC/stg_title26.prs"
+      ],
+      "available": false,
+      "nativeStageId": 26,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Rouge",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Egg Quarters]",
+        "Native mapping: stg26_EggQuarter/objLandTable0026.sa2blvl"
+      ]
+    },
+    {
+      "id": 27,
+      "name": "Lost Colony",
+      "character": "Eggman",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title27.pak",
+        "resource/gd_PC/bgtex27.prs",
+        "resource/gd_PC/landtx27.prs",
+        "resource/gd_PC/objtex_stg27.prs",
+        "resource/gd_PC/set0027_hd_s.bin",
+        "resource/gd_PC/set0027_s.bin",
+        "resource/gd_PC/set0027_u.bin",
+        "resource/gd_PC/stg27D.rel",
+        "resource/gd_PC/stg27_fog.bin",
+        "resource/gd_PC/stg27_fogA.bin",
+        "resource/gd_PC/stg27_fogB.bin",
+        "resource/gd_PC/stg27_light.bin",
+        "resource/gd_PC/stg27_light_gc.bin",
+        "resource/gd_PC/stg27cam.prs",
+        "resource/gd_PC/stg_title27.prs"
+      ],
+      "available": false,
+      "nativeStageId": 27,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "MechEggman",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Lost Colony]",
+        "Native mapping: stg27_LostColony/objLandTable0027.sa2blvl"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "Weapons Bed",
+      "character": "Eggman",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title12.pak",
+        "resource/gd_PC/bgtex12.prs",
+        "resource/gd_PC/landtx12.prs",
+        "resource/gd_PC/objtex_stg12.prs",
+        "resource/gd_PC/set0012_hd_s.bin",
+        "resource/gd_PC/set0012_hd_u.bin",
+        "resource/gd_PC/set0012_s.bin",
+        "resource/gd_PC/set0012_u.bin",
+        "resource/gd_PC/stg12D.rel",
+        "resource/gd_PC/stg12_fog.bin",
+        "resource/gd_PC/stg12_light.bin",
+        "resource/gd_PC/stg12cam.prs",
+        "resource/gd_PC/stg_title12.prs"
+      ],
+      "available": false,
+      "nativeStageId": 12,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "MechEggman",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Weapons Bed]",
+        "Native mapping: stg12_weaponsbed/objLandTable0012.sa2blvl"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Security Hall",
+      "character": "Rouge",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title08.pak",
+        "resource/gd_PC/landtx08.prs",
+        "resource/gd_PC/objtex_stg08.prs",
+        "resource/gd_PC/set0008_2p_s.bin",
+        "resource/gd_PC/set0008_2p_u.bin",
+        "resource/gd_PC/set0008_hd_s.bin",
+        "resource/gd_PC/set0008_s.bin",
+        "resource/gd_PC/set0008_u.bin",
+        "resource/gd_PC/stg08D.rel",
+        "resource/gd_PC/stg08_fog.bin",
+        "resource/gd_PC/stg08_fogB.bin",
+        "resource/gd_PC/stg08_light.bin",
+        "resource/gd_PC/stg08_light_gc.bin",
+        "resource/gd_PC/stg08cam.prs",
+        "resource/gd_PC/stg_title08.prs"
+      ],
+      "available": false,
+      "nativeStageId": 8,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Rouge",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Security Hall]",
+        "Native mapping: stg08_securityhall/objLandTable0008.sa2blvl"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "White Jungle",
+      "character": "Shadow",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/BGTEX04.prs",
+        "resource/gd_PC/PRS/stg_title04.pak",
+        "resource/gd_PC/landtx04.prs",
+        "resource/gd_PC/objtex_stg04.prs",
+        "resource/gd_PC/set0004_2p_s.bin",
+        "resource/gd_PC/set0004_2p_u.bin",
+        "resource/gd_PC/set0004_hd_s.bin",
+        "resource/gd_PC/set0004_s.bin",
+        "resource/gd_PC/set0004_u.bin",
+        "resource/gd_PC/stg04D.rel",
+        "resource/gd_PC/stg04_fog.bin",
+        "resource/gd_PC/stg04_light.bin",
+        "resource/gd_PC/stg04cam.prs",
+        "resource/gd_PC/stg_title04.prs"
+      ],
+      "available": false,
+      "nativeStageId": 4,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Shadow",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/White Jungle]",
+        "Native mapping: stg04_FogJungle/objLandTable0004.sa2blvl"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Sky Rail",
+      "character": "Shadow",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title06.pak",
+        "resource/gd_PC/bgtex06.prs",
+        "resource/gd_PC/landtx06.prs",
+        "resource/gd_PC/objtex_stg06.prs",
+        "resource/gd_PC/set0006_2p_s.bin",
+        "resource/gd_PC/set0006_2p_u.bin",
+        "resource/gd_PC/set0006_hd_s.bin",
+        "resource/gd_PC/set0006_hd_u.bin",
+        "resource/gd_PC/set0006_s.bin",
+        "resource/gd_PC/set0006_u.bin",
+        "resource/gd_PC/stg06D.rel",
+        "resource/gd_PC/stg06_fog.bin",
+        "resource/gd_PC/stg06_light.bin",
+        "resource/gd_PC/stg06cam.prs",
+        "resource/gd_PC/stg_title06.prs"
+      ],
+      "available": false,
+      "nativeStageId": 6,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Shadow",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Sky Rail]",
+        "Native mapping: stg06_mountain/objLandTable0006.sa2blvl"
+      ]
+    },
+    {
+      "id": 44,
+      "name": "Mad Space",
+      "character": "Rouge",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title44.pak",
+        "resource/gd_PC/bgtex44.prs",
+        "resource/gd_PC/landtx44.prs",
+        "resource/gd_PC/landtx44_UV.prs",
+        "resource/gd_PC/objtex_stg44.prs",
+        "resource/gd_PC/set0044_2p_s.bin",
+        "resource/gd_PC/set0044_2p_u.bin",
+        "resource/gd_PC/set0044_hd_s.bin",
+        "resource/gd_PC/set0044_hd_u.bin",
+        "resource/gd_PC/set0044_s.bin",
+        "resource/gd_PC/set0044_u.bin",
+        "resource/gd_PC/stg44D.rel",
+        "resource/gd_PC/stg44_fogB.bin",
+        "resource/gd_PC/stg44_light.bin",
+        "resource/gd_PC/stg44cam.prs",
+        "resource/gd_PC/stg_title44.prs"
+      ],
+      "available": false,
+      "nativeStageId": 44,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Rouge",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Mad Space]",
+        "Native mapping: stg44_Madspace/objLandTable0044.sa2blvl"
+      ]
+    },
+    {
+      "id": 43,
+      "name": "Cosmic Wall",
+      "character": "Eggman",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title43.pak",
+        "resource/gd_PC/bgtex43.prs",
+        "resource/gd_PC/landtx43.prs",
+        "resource/gd_PC/landtx43_UV.prs",
+        "resource/gd_PC/objtex_stg43.prs",
+        "resource/gd_PC/set0043_hd_s.bin",
+        "resource/gd_PC/set0043_hd_u.bin",
+        "resource/gd_PC/set0043_s.bin",
+        "resource/gd_PC/set0043_u.bin",
+        "resource/gd_PC/stg43D.rel",
+        "resource/gd_PC/stg43_light.bin",
+        "resource/gd_PC/stg43cam.prs",
+        "resource/gd_PC/stg_title43.prs"
+      ],
+      "available": false,
+      "nativeStageId": 43,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "MechEggman",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Cosmic Wall]",
+        "Native mapping: stg43_CosmicWall/objLandTable0043.sa2blvl"
+      ]
+    },
+    {
+      "id": 40,
+      "name": "Final Chase",
+      "character": "Shadow",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title40.pak",
+        "resource/gd_PC/bgtex40.prs",
+        "resource/gd_PC/landtx40.prs",
+        "resource/gd_PC/landtx40_UV.prs",
+        "resource/gd_PC/objtex_stg40.prs",
+        "resource/gd_PC/set0040_2p_s.bin",
+        "resource/gd_PC/set0040_2p_u.bin",
+        "resource/gd_PC/set0040_hd_s.bin",
+        "resource/gd_PC/set0040_hd_u.bin",
+        "resource/gd_PC/set0040_s.bin",
+        "resource/gd_PC/set0040_u.bin",
+        "resource/gd_PC/stg40D.rel",
+        "resource/gd_PC/stg40_light.bin",
+        "resource/gd_PC/stg40cam.prs",
+        "resource/gd_PC/stg_title40.prs"
+      ],
+      "available": false,
+      "nativeStageId": 40,
+      "group": "Dark Story",
+      "sourceDefaultCharacter": "Shadow",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Dark Story/Final Chase]",
+        "Native mapping: stg40_FinalChase/objLandTable0040.sa2blvl"
+      ]
+    },
+    {
+      "id": 34,
+      "name": "Cannon's Core (Sonic)",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/bgtex34.prs",
+        "resource/gd_PC/landtx34.prs",
+        "resource/gd_PC/objtex_stg34.prs",
+        "resource/gd_PC/set0034_hd_s.bin",
+        "resource/gd_PC/set0034_s.bin",
+        "resource/gd_PC/set0034_u.bin",
+        "resource/gd_PC/stg34D.rel",
+        "resource/gd_PC/stg34_light.bin",
+        "resource/gd_PC/stg34_water.prs",
+        "resource/gd_PC/stg34_water2.prs",
+        "resource/gd_PC/stg34cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 34,
+      "group": "Last Story",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Last Story/Cannon's Core (Sonic)]",
+        "Native mapping: stg34_CannonsCoreSonic/objLandTable0034.sa2blvl"
+      ]
+    },
+    {
+      "id": 35,
+      "name": "Cannon's Core (Eggman)",
+      "character": "Eggman",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/bgtex35.prs",
+        "resource/gd_PC/landtx35.prs",
+        "resource/gd_PC/set0035_hd_s.bin",
+        "resource/gd_PC/set0035_s.bin",
+        "resource/gd_PC/set0035_u.bin",
+        "resource/gd_PC/stg35D.rel",
+        "resource/gd_PC/stg35_light.bin",
+        "resource/gd_PC/stg35_machine.prs",
+        "resource/gd_PC/stg35cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 35,
+      "group": "Last Story",
+      "sourceDefaultCharacter": "MechEggman",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Last Story/Cannon's Core (Eggman)]",
+        "Native mapping: stg35_CannonsCoreEggman/objLandTable0035.sa2blvl"
+      ]
+    },
+    {
+      "id": 36,
+      "name": "Cannon's Core (Tails)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title36.pak",
+        "resource/gd_PC/bgtex36.prs",
+        "resource/gd_PC/landtx36.prs",
+        "resource/gd_PC/set0036_hd_s.bin",
+        "resource/gd_PC/set0036_s.bin",
+        "resource/gd_PC/set0036_u.bin",
+        "resource/gd_PC/stg36D.rel",
+        "resource/gd_PC/stg36_light.bin",
+        "resource/gd_PC/stg36_texpattern.prs",
+        "resource/gd_PC/stg36_texpattern2.prs",
+        "resource/gd_PC/stg36cam.prs",
+        "resource/gd_PC/stg_title36.prs"
+      ],
+      "available": false,
+      "nativeStageId": 36,
+      "group": "Last Story",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Last Story/Cannon's Core (Tails)]",
+        "Native mapping: stg36_CannonsCoreTails/objLandTable0036.sa2blvl"
+      ]
+    },
+    {
+      "id": 37,
+      "name": "Cannon's Core (Rouge)",
+      "character": "Rouge",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/bgtex37.prs",
+        "resource/gd_PC/landtx37.prs",
+        "resource/gd_PC/set0037_hd_s.bin",
+        "resource/gd_PC/set0037_s.bin",
+        "resource/gd_PC/set0037_u.bin",
+        "resource/gd_PC/stg37D.rel",
+        "resource/gd_PC/stg37_light.bin",
+        "resource/gd_PC/stg37_suimenanim.prs",
+        "resource/gd_PC/stg37_suimenanim2.prs",
+        "resource/gd_PC/stg37cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 37,
+      "group": "Last Story",
+      "sourceDefaultCharacter": "Rouge",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Last Story/Cannon's Core (Rouge)]",
+        "Native mapping: stg37_CannonsCoreRouge/objLandTable0037.sa2blvl"
+      ]
+    },
+    {
+      "id": 38,
+      "name": "Cannon's Core (Knuckles)",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/bgtex38.prs",
+        "resource/gd_PC/landtx38.prs",
+        "resource/gd_PC/objtex_stg38.prs",
+        "resource/gd_PC/set0038_hd_s.bin",
+        "resource/gd_PC/set0038_s.bin",
+        "resource/gd_PC/set0038_u.bin",
+        "resource/gd_PC/stg38D.rel",
+        "resource/gd_PC/stg38_fog.bin",
+        "resource/gd_PC/stg38_fogB.bin",
+        "resource/gd_PC/stg38_light.bin",
+        "resource/gd_PC/stg38_water.prs",
+        "resource/gd_PC/stg38cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 38,
+      "group": "Last Story",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Last Story/Cannon's Core (Knuckles)]",
+        "Native mapping: stg38_CannonsCoreKnuckles/objLandTable0038.sa2blvl"
+      ]
+    },
+    {
+      "id": 31,
+      "name": "Green Hill",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title31.pak",
+        "resource/gd_PC/bgtex31.prs",
+        "resource/gd_PC/landtx31.prs",
+        "resource/gd_PC/landtx31_UV.prs",
+        "resource/gd_PC/objtex_stg31.prs",
+        "resource/gd_PC/set0031_s.bin",
+        "resource/gd_PC/set0031_u.bin",
+        "resource/gd_PC/stg31D.rel",
+        "resource/gd_PC/stg31_light.bin",
+        "resource/gd_PC/stg31_light_gc.bin",
+        "resource/gd_PC/stg31cam.prs",
+        "resource/gd_PC/stg_title31.prs"
+      ],
+      "available": false,
+      "nativeStageId": 31,
+      "group": "Extra Stages",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Extra Stages/Green Hill]",
+        "Native mapping: stg31_GreenHill/objLandTable0031.sa2blvl"
+      ]
+    },
+    {
+      "id": 0,
+      "name": "Test Stage",
+      "character": "Sonic",
+      "family": "other",
+      "resources": [
+        "resource/gd_PC/LANDTX00.prs",
+        "resource/gd_PC/SET0000_S.BIN",
+        "resource/gd_PC/SET0000_U.BIN",
+        "resource/gd_PC/stg00D.rel",
+        "resource/gd_PC/stg00_light.bin",
+        "resource/gd_PC/stg00cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 0,
+      "group": "Extra Stages",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Extra Stages/Test Stage]",
+        "Native mapping: stg00_basictest/objLandTable0000.sa2lvl"
+      ]
+    },
+    {
+      "id": 52,
+      "name": "Downtown Race (2P)",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/objtex_stg52.pak",
+        "resource/gd_PC/PRS/stg_title52.pak",
+        "resource/gd_PC/bgtex52.prs",
+        "resource/gd_PC/landtx52.prs",
+        "resource/gd_PC/objtex_stg52.prs",
+        "resource/gd_PC/set0052_s.bin",
+        "resource/gd_PC/set0052_u.bin",
+        "resource/gd_PC/stg52D.rel",
+        "resource/gd_PC/stg52cam.prs",
+        "resource/gd_PC/stg_title52.prs"
+      ],
+      "available": false,
+      "nativeStageId": 52,
+      "group": "2P Speed Stages",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Speed Stages/Downtown Race]",
+        "Native mapping: stg52_CityEscape2P/objLandTable0052.sa2blvl"
+      ]
+    },
+    {
+      "id": 54,
+      "name": "Grind Race (2P)",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title54.pak",
+        "resource/gd_PC/landtx54.prs",
+        "resource/gd_PC/objtex_stg54.prs",
+        "resource/gd_PC/set0054_s.bin",
+        "resource/gd_PC/set0054_u.bin",
+        "resource/gd_PC/stg54D.rel",
+        "resource/gd_PC/stg54_fire.prs",
+        "resource/gd_PC/stg54_light.bin",
+        "resource/gd_PC/stg54cam.prs",
+        "resource/gd_PC/stg_title54.prs"
+      ],
+      "available": false,
+      "nativeStageId": 54,
+      "group": "2P Speed Stages",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Speed Stages/Grind Race]",
+        "Native mapping: stg54_PyramidCave2P/objLandTable0054.sa2blvl"
+      ]
+    },
+    {
+      "id": 57,
+      "name": "Metal Harbor (2P)",
+      "character": "Sonic",
+      "family": "speed",
+      "resources": [
+        "resource/gd_PC/landtx57.prs",
+        "resource/gd_PC/set0057_2p_s.bin",
+        "resource/gd_PC/set0057_2p_u.bin",
+        "resource/gd_PC/stg57D.rel",
+        "resource/gd_PC/stg57cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 57,
+      "group": "2P Speed Stages",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [
+        "Chao running/jumping/flying adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Speed Stages/Metal Harbor]",
+        "Native mapping: stg57_metalharbor2p/objLandTable0057.sa2blvl"
+      ]
+    },
+    {
+      "id": 49,
+      "name": "Pool Quest (2P)",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title49.pak",
+        "resource/gd_PC/SET0049_2P_S.BIN",
+        "resource/gd_PC/SET0049_2P_U.BIN",
+        "resource/gd_PC/SET0049_S.BIN",
+        "resource/gd_PC/SET0049_U.BIN",
+        "resource/gd_PC/landtx49.prs",
+        "resource/gd_PC/objtex_stg49.prs",
+        "resource/gd_PC/stg49D.rel",
+        "resource/gd_PC/stg49_fog.bin",
+        "resource/gd_PC/stg49_light.bin",
+        "resource/gd_PC/stg49cam.prs",
+        "resource/gd_PC/stg_title49.prs"
+      ],
+      "available": false,
+      "nativeStageId": 49,
+      "group": "2P Treasure Hunting Stages",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Treasure Hunting Stages/Pool Quest]",
+        "Native mapping: stg49_AquaticMine2P/objLandTable0049.sa2blvl"
+      ]
+    },
+    {
+      "id": 50,
+      "name": "Planet Quest (2P)",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title50.pak",
+        "resource/gd_PC/SET0050_2P_S.BIN",
+        "resource/gd_PC/SET0050_2P_U.BIN",
+        "resource/gd_PC/SET0050_S.BIN",
+        "resource/gd_PC/SET0050_U.BIN",
+        "resource/gd_PC/landtx50.prs",
+        "resource/gd_PC/landtx50_uv.prs",
+        "resource/gd_PC/objtex_stg50.prs",
+        "resource/gd_PC/stg50D.rel",
+        "resource/gd_PC/stg50_light.bin",
+        "resource/gd_PC/stg50cam.prs",
+        "resource/gd_PC/stg_title50.prs"
+      ],
+      "available": false,
+      "nativeStageId": 50,
+      "group": "2P Treasure Hunting Stages",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Treasure Hunting Stages/Planet Quest]",
+        "Native mapping: stg50_MadSpace2P/objLandTable0050.sa2blvl"
+      ]
+    },
+    {
+      "id": 46,
+      "name": "Dry Lagoon (2P)",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/SET0046_2P_S.BIN",
+        "resource/gd_PC/SET0046_2P_U.BIN",
+        "resource/gd_PC/SET0046_S.BIN",
+        "resource/gd_PC/SET0046_U.BIN",
+        "resource/gd_PC/bgtex46.prs",
+        "resource/gd_PC/landtx46.prs",
+        "resource/gd_PC/objtex_stg46.prs",
+        "resource/gd_PC/stg46D.rel",
+        "resource/gd_PC/stg46_boko.prs",
+        "resource/gd_PC/stg46_hamon.prs",
+        "resource/gd_PC/stg46_light.bin",
+        "resource/gd_PC/stg46_light_gc.bin",
+        "resource/gd_PC/stg46_water.prs",
+        "resource/gd_PC/stg46cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 46,
+      "group": "2P Treasure Hunting Stages",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Treasure Hunting Stages/Dry Lagoon]",
+        "Native mapping: stg46_DryLagoon2P/objLandTable0046.sa2blvl"
+      ]
+    },
+    {
+      "id": 41,
+      "name": "Wild Canyon (2P)",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/SET0041_2P_S.BIN",
+        "resource/gd_PC/bgtex41.prs",
+        "resource/gd_PC/landtx41.prs",
+        "resource/gd_PC/set0041_2p_u.bin",
+        "resource/gd_PC/stg41D.rel",
+        "resource/gd_PC/stg41_fog.bin",
+        "resource/gd_PC/stg41_light.bin",
+        "resource/gd_PC/stg41cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 41,
+      "group": "2P Treasure Hunting Stages",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Treasure Hunting Stages/Wild Canyon]",
+        "Native mapping: stg41_WildCanyon2P/objLandTable0041.sa2blvl"
+      ]
+    },
+    {
+      "id": 59,
+      "name": "Death Chamber (2P)",
+      "character": "Knuckles",
+      "family": "hunt",
+      "resources": [
+        "resource/gd_PC/landtx59.prs",
+        "resource/gd_PC/set0059_s.bin",
+        "resource/gd_PC/set0059_u.bin",
+        "resource/gd_PC/stg59D.rel",
+        "resource/gd_PC/stg59_light.bin",
+        "resource/gd_PC/stg59cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 59,
+      "group": "2P Treasure Hunting Stages",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [
+        "Chao climbing/gliding/digging adaptation"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Treasure Hunting Stages/Death Chamber]",
+        "Native mapping: stg59_DeathChamber2P/objLandTable0059.sa2blvl"
+      ]
+    },
+    {
+      "id": 51,
+      "name": "Deck Race (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title51.pak",
+        "resource/gd_PC/SET0051_2P_S.BIN",
+        "resource/gd_PC/SET0051_2P_U.BIN",
+        "resource/gd_PC/SET0051_S.BIN",
+        "resource/gd_PC/SET0051_U.BIN",
+        "resource/gd_PC/landtx51.prs",
+        "resource/gd_PC/objtex_stg51.prs",
+        "resource/gd_PC/stg51D.rel",
+        "resource/gd_PC/stg51_light.bin",
+        "resource/gd_PC/stg51cam.prs",
+        "resource/gd_PC/stg_title51.prs"
+      ],
+      "available": false,
+      "nativeStageId": 51,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Deck Race]",
+        "Native mapping: stg51_DeckRace/objLandTable0051.sa2blvl"
+      ]
+    },
+    {
+      "id": 47,
+      "name": "Pyramid Race (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/PRS/stg_title47.pak",
+        "resource/gd_PC/SET0047_2P_S.BIN",
+        "resource/gd_PC/SET0047_2P_U.BIN",
+        "resource/gd_PC/SET0047_S.BIN",
+        "resource/gd_PC/SET0047_U.BIN",
+        "resource/gd_PC/bgtex47.prs",
+        "resource/gd_PC/landtx47.prs",
+        "resource/gd_PC/objtex_stg47.prs",
+        "resource/gd_PC/stg47D.rel",
+        "resource/gd_PC/stg47_light.bin",
+        "resource/gd_PC/stg47cam.prs",
+        "resource/gd_PC/stg_title47.prs"
+      ],
+      "available": false,
+      "nativeStageId": 47,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Pyramid Race]",
+        "Native mapping: stg47_PyramidRace/objLandTable0047.sa2blvl"
+      ]
+    },
+    {
+      "id": 15,
+      "name": "Weapons Bed (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/bgtex15.prs",
+        "resource/gd_PC/landtx15.prs",
+        "resource/gd_PC/objtex_stg15p.prs",
+        "resource/gd_PC/set0015_s.bin",
+        "resource/gd_PC/set0015_u.bin",
+        "resource/gd_PC/stg15D.rel",
+        "resource/gd_PC/stg15_fog.bin",
+        "resource/gd_PC/stg15_light.bin",
+        "resource/gd_PC/stg15cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 15,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Weapons Bed]",
+        "Native mapping: stg15_weaponsbed2p/objLandTable0015.sa2blvl"
+      ]
+    },
+    {
+      "id": 58,
+      "name": "Iron Gate (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/objtex_stg58.prs",
+        "resource/gd_PC/set0058_2p_s.bin",
+        "resource/gd_PC/set0058_2p_u.bin",
+        "resource/gd_PC/set0058_s.bin",
+        "resource/gd_PC/set0058_u.bin",
+        "resource/gd_PC/stg58D.rel",
+        "resource/gd_PC/stg58_light.bin",
+        "resource/gd_PC/stg58_light_gc.bin",
+        "resource/gd_PC/stg58cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 58,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Iron Gate]",
+        "Native mapping: stg58_irongate_2p/objLandTable0058.sa2blvl"
+      ]
+    },
+    {
+      "id": 48,
+      "name": "Hidden Base (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/SET0048_2P_S.BIN",
+        "resource/gd_PC/SET0048_2P_U.BIN",
+        "resource/gd_PC/SET0048_S.BIN",
+        "resource/gd_PC/SET0048_U.BIN",
+        "resource/gd_PC/bgtex48.prs",
+        "resource/gd_PC/landtx48.prs",
+        "resource/gd_PC/stg48D.rel",
+        "resource/gd_PC/stg48_light.bin",
+        "resource/gd_PC/stg48_light_gc.bin",
+        "resource/gd_PC/stg48cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 48,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Hidden Base]",
+        "Native mapping: stg48_HiddenBase2P/objLandTable0048.sa2blvl"
+      ]
+    },
+    {
+      "id": 39,
+      "name": "Mission Street (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/SET0039_U.BIN",
+        "resource/gd_PC/landtx39.prs",
+        "resource/gd_PC/objtex_stg39.prs",
+        "resource/gd_PC/set0039_s.bin",
+        "resource/gd_PC/stg39D.rel",
+        "resource/gd_PC/stg39_light.bin",
+        "resource/gd_PC/stg39cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 39,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Mission Street]",
+        "Native mapping: stg39_MissionStreet2P/objLandTable0039.sa2lvl"
+      ]
+    },
+    {
+      "id": 45,
+      "name": "Sand Ocean (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/landtx45.prs",
+        "resource/gd_PC/objtex_stg45.prs",
+        "resource/gd_PC/set0045_s.bin",
+        "resource/gd_PC/set0045_u.bin",
+        "resource/gd_PC/stg45D.rel",
+        "resource/gd_PC/stg45_light.bin",
+        "resource/gd_PC/stg45cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 45,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Sand Ocean]",
+        "Native mapping: stg45_SandOcean2P/objLandTable0045.sa2blvl"
+      ]
+    },
+    {
+      "id": 53,
+      "name": "Cosmic Wall (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/bgtex53.prs",
+        "resource/gd_PC/landtx53.prs",
+        "resource/gd_PC/objtex_stg53.prs",
+        "resource/gd_PC/set0053_s.bin",
+        "resource/gd_PC/set0053_u.bin",
+        "resource/gd_PC/stg53D.rel",
+        "resource/gd_PC/stg53cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 53,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Cosmic Wall]",
+        "Native mapping: stg53_CosmicWall2P/objLandTable0053.sa2blvl"
+      ]
+    },
+    {
+      "id": 56,
+      "name": "Eternal Engine (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/landtx29.prs",
+        "resource/gd_PC/set0056_s.bin",
+        "resource/gd_PC/set0056_u.bin",
+        "resource/gd_PC/stg56D.rel",
+        "resource/gd_PC/stg56cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 56,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Eternal Engine]",
+        "Native mapping: stg29_ewvstw2/objLandTable0029.sa2blvl"
+      ]
+    },
+    {
+      "id": 55,
+      "name": "Lost Colony (2P)",
+      "character": "Tails",
+      "family": "mech",
+      "resources": [
+        "resource/gd_PC/bgtex55.prs",
+        "resource/gd_PC/landtx55.prs",
+        "resource/gd_PC/objtex_stg55.prs",
+        "resource/gd_PC/set0055_s.bin",
+        "resource/gd_PC/set0055_u.bin",
+        "resource/gd_PC/stg55D.rel",
+        "resource/gd_PC/stg55_light_gc.bin",
+        "resource/gd_PC/stg55cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 55,
+      "group": "2P Mech Stages",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [
+        "Chao Walker",
+        "Dark Chao Walker"
+      ],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [2P Mech Stages/Lost Colony]",
+        "Native mapping: stg55_LostColony2P/objLandTable0055.sa2blvl"
+      ]
+    },
+    {
+      "id": 60,
+      "name": "Big Foot",
+      "character": "Sonic",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/BOSSTX_BIGFOOT.prs",
+        "resource/gd_PC/stg60_light_gc.bin"
+      ],
+      "available": false,
+      "nativeStageId": 60,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Big Foot]",
+        "Native mapping: BossGuardRobo/BigFoot/objLandTableBossBigFoot.sa2blvl"
+      ]
+    },
+    {
+      "id": 61,
+      "name": "Hot Shot",
+      "character": "Shadow",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/BOSSTX_GUARD0.prs",
+        "resource/gd_PC/stg61_light_gc.bin"
+      ],
+      "available": false,
+      "nativeStageId": 61,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Shadow",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Hot Shot]",
+        "Native mapping: BossGuardRobo/BossHotShot/objLandTableBossGuard0.sa2blvl"
+      ]
+    },
+    {
+      "id": 20,
+      "name": "Tails vs Eggman 1",
+      "character": "Tails / Eggman",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/SET0020_S.BIN",
+        "resource/gd_PC/SET0020_U.BIN",
+        "resource/gd_PC/landtx20.prs",
+        "resource/gd_PC/stg20D.rel",
+        "resource/gd_PC/stg20_light.bin",
+        "resource/gd_PC/stg20cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 20,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Tails vs Eggman 1]",
+        "Native mapping: stg20_ewvstw/objLandTable0020.sa2blvl"
+      ]
+    },
+    {
+      "id": 62,
+      "name": "Flying Dog",
+      "character": "Rouge",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/BOSSTX_FLYINGDOG.prs"
+      ],
+      "available": false,
+      "nativeStageId": 62,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Rouge",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Flying Dog]",
+        "Native mapping: BossGuardRobo/FlyingDog/objLandTableBossFlyingDog.sa2blvl"
+      ]
+    },
+    {
+      "id": 19,
+      "name": "Sonic vs Shadow 1",
+      "character": "Sonic / Shadow",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/SET0019_U.BIN",
+        "resource/gd_PC/landtx19.prs",
+        "resource/gd_PC/landtx19_suimen.prs",
+        "resource/gd_PC/objtex_stg19.prs",
+        "resource/gd_PC/set0019_s.bin",
+        "resource/gd_PC/stg19D.rel",
+        "resource/gd_PC/stg19cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 19,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Sonic vs Shadow 1]",
+        "Native mapping: stg19_sonicvsshadow/objLandTable0019.sa2blvl"
+      ]
+    },
+    {
+      "id": 63,
+      "name": "King Boom Boo",
+      "character": "Knuckles",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/bosstx_bigbogy.prs",
+        "resource/gd_PC/stg63cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 63,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/King Boom Boo]",
+        "Native mapping: BossBigBogy/objLandTableBossBigBogy.sa2blvl"
+      ]
+    },
+    {
+      "id": 64,
+      "name": "Egg Golem (Sonic)",
+      "character": "Sonic",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/bosstx_golem.prs",
+        "resource/gd_PC/stg64cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 64,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Egg Golem (Sonic)]",
+        "Native mapping: BossGolem/objLandTableBossGolem.sa2blvl"
+      ]
+    },
+    {
+      "id": 67,
+      "name": "Egg Golem (Eggman)",
+      "character": "Eggman",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/bosstx_golem_e.prs"
+      ],
+      "available": false,
+      "nativeStageId": 67,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "MechEggman",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Egg Golem (Eggman)]",
+        "Native mapping: BossGolemE/objLandTableBossGolemE.sa2blvl"
+      ]
+    },
+    {
+      "id": 33,
+      "name": "Knuckles vs Rouge",
+      "character": "Knuckles / Rouge",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/bgtex33.prs",
+        "resource/gd_PC/landtx33.prs",
+        "resource/gd_PC/landtx33_uv.prs",
+        "resource/gd_PC/set0033_s.bin",
+        "resource/gd_PC/set0033_u.bin",
+        "resource/gd_PC/stg33D.rel",
+        "resource/gd_PC/stg33_objtex.prs",
+        "resource/gd_PC/stg33cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 33,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Knuckles",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Knuckles vs Rouge]",
+        "Native mapping: stg33_knucklesvsrouge/objLandTable0033.sa2blvl"
+      ]
+    },
+    {
+      "id": 29,
+      "name": "Tails vs Eggman 2",
+      "character": "Tails / Eggman",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/bgtex29.prs",
+        "resource/gd_PC/landtx29.prs",
+        "resource/gd_PC/objtex_stg29.prs",
+        "resource/gd_PC/set0029_s.bin",
+        "resource/gd_PC/set0029_u.bin",
+        "resource/gd_PC/stg29D.rel",
+        "resource/gd_PC/stg29_light_gc.bin"
+      ],
+      "available": false,
+      "nativeStageId": 29,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "MechTails",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Tails vs Eggman 2]",
+        "Native mapping: stg29_ewvstw2/objLandTable0029.sa2blvl"
+      ]
+    },
+    {
+      "id": 42,
+      "name": "Sonic vs Shadow 2",
+      "character": "Sonic / Shadow",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/SET0042_S.BIN",
+        "resource/gd_PC/bgtex42.prs",
+        "resource/gd_PC/objtex_stg42.prs",
+        "resource/gd_PC/set0042_u.bin",
+        "resource/gd_PC/stg42D.rel",
+        "resource/gd_PC/stg42_light.bin"
+      ],
+      "available": false,
+      "nativeStageId": 42,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Sonic vs Shadow 2]",
+        "No editor landtable path provided; native runtime index only."
+      ]
+    },
+    {
+      "id": 65,
+      "name": "Biolizard",
+      "character": "Shadow",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/BOSSTX_LAST1.prs",
+        "resource/gd_PC/stg65cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 65,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Shadow",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Biolizard]",
+        "Native mapping: BossLast1/objLandTableBossLast1.sa2blvl"
+      ]
+    },
+    {
+      "id": 66,
+      "name": "Final Hazard",
+      "character": "Super Sonic / Super Shadow",
+      "family": "boss",
+      "resources": [
+        "resource/gd_PC/stg66_light.bin"
+      ],
+      "available": false,
+      "nativeStageId": 66,
+      "group": "Bosses",
+      "sourceDefaultCharacter": "Sonic",
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Bosses/Final Hazard]",
+        "No editor landtable path provided; native runtime index only."
+      ]
+    },
+    {
+      "id": "chao-chao-lobby",
+      "name": "Chao Lobby",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgLobby.prs",
+        "resource/gd_PC/ChaoStgLobby.rel",
+        "resource/gd_PC/ChaoStgLobby000.prs",
+        "resource/gd_PC/ChaoStgLobby00K.prs",
+        "resource/gd_PC/ChaoStgLobby0DK.prs",
+        "resource/gd_PC/ChaoStgLobbyH0K.prs",
+        "resource/gd_PC/ChaoStgLobbyHDK.prs",
+        "resource/gd_PC/al_stg_lobby_000_tex.prs",
+        "resource/gd_PC/al_stg_lobby_00k_tex.prs",
+        "resource/gd_PC/al_stg_lobby_0dk_tex.prs",
+        "resource/gd_PC/al_stg_lobby_h0k_tex.prs",
+        "resource/gd_PC/al_stg_lobby_hdk_tex.prs",
+        "resource/gd_PC/al_stg_lobby_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Lobby]",
+        "Native mapping: Chao/stg_lobby/objLandTableLobbyhdk.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-neutral-garden",
+      "name": "Neutral Garden",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgNeut.prs",
+        "resource/gd_PC/al_neut_obj_tex.prs",
+        "resource/gd_PC/al_stg_neut_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Neutral Garden]",
+        "Native mapping: Chao/stg_neut/objLandTableNeut.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-hero-garden",
+      "name": "Hero Garden",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgHero.prs",
+        "resource/gd_PC/PRS/al_stg_hero_tex.pak",
+        "resource/gd_PC/al_hero_obj_tex.prs",
+        "resource/gd_PC/al_stg_hero_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Hero Garden]",
+        "Native mapping: Chao/stg_hero/objLandTableHero.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-dark-garden",
+      "name": "Dark Garden",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgDark.prs",
+        "resource/gd_PC/al_dark_obj_tex.prs",
+        "resource/gd_PC/al_stg_dark_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Dark Garden]",
+        "Native mapping: Chao/stg_dark/objLandTableDark.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-race-entrance",
+      "name": "Chao Race Entrance",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_ENTRANCE_TEX.prs",
+        "resource/gd_PC/ChaoStgEntrance.prs",
+        "resource/gd_PC/PRS/al_ent_char_e_tex.pak",
+        "resource/gd_PC/PRS/al_ent_char_j_tex.pak",
+        "resource/gd_PC/al_ent_char_e_tex.prs",
+        "resource/gd_PC/al_ent_char_j_tex.prs",
+        "resource/gd_PC/al_ent_common_tex.prs",
+        "resource/gd_PC/al_ent_rival_tex.prs",
+        "resource/gd_PC/al_ent_title_e_tex.prs",
+        "resource/gd_PC/al_ent_title_j_tex.prs",
+        "resource/gd_PC/al_ent_vms_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Race Entrance]",
+        "Native mapping: Chao/stg_entrance/objLandTableEntrance.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-normal-chao-race",
+      "name": "Normal Chao Race",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgRace.prs",
+        "resource/gd_PC/PRS/al_stg_race_tex.pak",
+        "resource/gd_PC/al_race_obj_n_tex.prs",
+        "resource/gd_PC/al_race_water_tex.prs",
+        "resource/gd_PC/al_stg_race_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Normal Chao Race]",
+        "Native mapping: Chao/stg_race/Normal/objLandTableRace.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-hero-chao-race",
+      "name": "Hero Chao Race",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgRaceHero.prs",
+        "resource/gd_PC/PRS/al_stg_race_hero_tex.pak",
+        "resource/gd_PC/al_race_obj_h_tex.prs",
+        "resource/gd_PC/al_race_water_hero_tex.prs",
+        "resource/gd_PC/al_stg_race_hero_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Hero Chao Race]",
+        "Native mapping: Chao/stg_race/Hero/objLandTableRaceHero.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-dark-chao-race",
+      "name": "Dark Chao Race",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgRaceDark.prs",
+        "resource/gd_PC/PRS/al_stg_race_dark_tex.pak",
+        "resource/gd_PC/al_race_obj_d_tex.prs",
+        "resource/gd_PC/al_race_water_dark_tex.prs",
+        "resource/gd_PC/al_stg_race_dark_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Dark Chao Race]",
+        "Native mapping: Chao/stg_race/Dark/objLandTableRaceDark.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-stadium",
+      "name": "Chao Stadium",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgStadium.prs",
+        "resource/gd_PC/al_stg_stadium_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Stadium]",
+        "Native mapping: Chao/stg_stadium/objLandTableStadium.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-karate",
+      "name": "Chao Karate",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoStgKarate.prs",
+        "resource/gd_PC/PRS/al_stg_karate_adv_tex.pak",
+        "resource/gd_PC/al_karate_obj_tex.prs",
+        "resource/gd_PC/al_stg_karate_adv_tex.prs",
+        "resource/gd_PC/al_stg_karate_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Karate]",
+        "Native mapping: Chao/stg_karate/objLandTableChaoKarate.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-exterior",
+      "name": "Chao Kindergarten Exterior",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Exterior]",
+        "Native mapping: Chao/stg_kinder/Exterior/objLandTableKinderHo.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-commons",
+      "name": "Chao Kindergarten Commons",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Commons]",
+        "Native mapping: Chao/stg_kinder/Commons/objLandTableKinderCo.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-classroom",
+      "name": "Chao Kindergarten Classroom",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Classroom]",
+        "Native mapping: Chao/stg_kinder/Classroom/objLandTableKinderCl.sa2lvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-health-center",
+      "name": "Chao Kindergarten Health Center",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Health Center]",
+        "Native mapping: Chao/stg_kinder/Doctor's Office/objLandTableKinderHe.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-principal-s-room",
+      "name": "Chao Kindergarten Principal's Room",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Principal's Room]",
+        "Native mapping: Chao/stg_kinder/Principal's Office/objLandTableKinderPr.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-black-market",
+      "name": "Chao Kindergarten Black Market",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Black Market]",
+        "Native mapping: Chao/stg_kinder/Black Market/objLandTableKinderBl.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-fortuneteller-s-room",
+      "name": "Chao Kindergarten Fortuneteller's Room",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Fortuneteller's Room]",
+        "Native mapping: Chao/stg_kinder/Fortune Teller/objLandTableKinderFo.sa2blvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-library",
+      "name": "Chao Kindergarten Library",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Library]",
+        "Native mapping: Chao/stg_kinder/Library/objLandTableKinderLi.sa2lvl"
+      ]
+    },
+    {
+      "id": "chao-chao-kindergarten-playground",
+      "name": "Chao Kindergarten Playground",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/AL_STG_KINDER_TEX.prs",
+        "resource/gd_PC/ChaoStgKinder.prs",
+        "resource/gd_PC/PRS/al_stg_kinder_ad_tex.pak",
+        "resource/gd_PC/al_stg_kinder_ad_tex.prs",
+        "resource/gd_PC/al_stg_kinder_bl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_cl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_co_tex.prs",
+        "resource/gd_PC/al_stg_kinder_drug_tex.prs",
+        "resource/gd_PC/al_stg_kinder_fo_tex.prs",
+        "resource/gd_PC/al_stg_kinder_he_tex.prs",
+        "resource/gd_PC/al_stg_kinder_ho_tex.prs",
+        "resource/gd_PC/al_stg_kinder_li_tex.prs",
+        "resource/gd_PC/al_stg_kinder_obj_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pl_tex.prs",
+        "resource/gd_PC/al_stg_kinder_pr_tex.prs"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao World",
+      "sourceDefaultCharacter": null,
+      "adaptationCandidates": [],
+      "evidence": [
+        "X-Hax SA Tools786: PC_SA2/sa2lvl.ini [Chao World/Chao Kindergarten Playground]",
+        "Native mapping: Chao/stg_kinder/Playground/objLandTableKinderPl.sa2lvl"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "Knuckles Test (internal)",
+      "character": "Knuckles",
+      "family": "other",
+      "resources": [
+        "resource/gd_PC/set0001_s.bin",
+        "resource/gd_PC/set0001_u.bin",
+        "resource/gd_PC/stg01cam.prs"
+      ],
+      "available": false,
+      "nativeStageId": 1,
+      "group": "Internal tests",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: LevelIDs_KnucklesTest"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Sonic Test (internal)",
+      "character": "Sonic",
+      "family": "other",
+      "resources": [],
+      "available": false,
+      "nativeStageId": 2,
+      "group": "Internal tests",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: LevelIDs_SonicTest"
+      ]
+    },
+    {
+      "id": 70,
+      "name": "Route 101 / Route 280 (shared mode)",
+      "character": "Tails / Rouge",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 70,
+      "group": "Kart",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: LevelIDs_Route101280=70; LevelIDs_KartRace=71",
+        "X-Hax SA Tools786: PC_SA2/CART.ini and CART_DLL.ini"
+      ]
+    },
+    {
+      "id": 71,
+      "name": "Kart Race",
+      "character": "Kart roster",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 71,
+      "group": "Kart",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: LevelIDs_Route101280=70; LevelIDs_KartRace=71",
+        "X-Hax SA Tools786: PC_SA2/CART.ini and CART_DLL.ini"
+      ]
+    },
+    {
+      "id": "kart-course-0",
+      "name": "Route 101",
+      "character": "Tails",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 70,
+      "nativeCourseId": 0,
+      "group": "Kart courses",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: KartCourseIDs0–5; download slot presence does not verify an installed downloadable course."
+      ]
+    },
+    {
+      "id": "kart-course-1",
+      "name": "Route 280",
+      "character": "Rouge",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 70,
+      "nativeCourseId": 1,
+      "group": "Kart courses",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: KartCourseIDs0–5; download slot presence does not verify an installed downloadable course."
+      ]
+    },
+    {
+      "id": "kart-course-2",
+      "name": "Beginner",
+      "character": "Kart roster",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 71,
+      "nativeCourseId": 2,
+      "group": "Kart courses",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: KartCourseIDs0–5; download slot presence does not verify an installed downloadable course."
+      ]
+    },
+    {
+      "id": "kart-course-3",
+      "name": "Standard",
+      "character": "Kart roster",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 71,
+      "nativeCourseId": 3,
+      "group": "Kart courses",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: KartCourseIDs0–5; download slot presence does not verify an installed downloadable course."
+      ]
+    },
+    {
+      "id": "kart-course-4",
+      "name": "Expert",
+      "character": "Kart roster",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 71,
+      "nativeCourseId": 4,
+      "group": "Kart courses",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: KartCourseIDs0–5; download slot presence does not verify an installed downloadable course."
+      ]
+    },
+    {
+      "id": "kart-course-5",
+      "name": "Download Course (internal)",
+      "character": "Kart roster",
+      "family": "kart",
+      "resources": [
+        "resource/gd_PC/ADX/kart.adx",
+        "resource/gd_PC/CartD.rel",
+        "resource/gd_PC/PRS/course.pak",
+        "resource/gd_PC/PRS/kartRace.pak",
+        "resource/gd_PC/SOC/kart_02.pak",
+        "resource/gd_PC/SOC/kart_03.pak",
+        "resource/gd_PC/SOC/kart_04.pak",
+        "resource/gd_PC/SOC/kart_05.pak",
+        "resource/gd_PC/SOC/kartrace.pak",
+        "resource/gd_PC/bgCart.prs",
+        "resource/gd_PC/cartData.prs",
+        "resource/gd_PC/cartLim.prs",
+        "resource/gd_PC/cartObjModels.prs",
+        "resource/gd_PC/cart_fog.bin",
+        "resource/gd_PC/course.prs",
+        "resource/gd_PC/kartExModel.prs",
+        "resource/gd_PC/kartRace.prs",
+        "resource/gd_PC/kartRaceBg.prs",
+        "resource/gd_PC/resultCart.prs",
+        "resource/gd_PC/setCartBase.bin",
+        "resource/gd_PC/setCartMini1.bin",
+        "resource/gd_PC/setCartMini2.bin",
+        "resource/gd_PC/setCartMini3.bin",
+        "resource/gd_PC/setCartRouge.bin",
+        "resource/gd_PC/setCartRouge_hd.bin",
+        "resource/gd_PC/setCartTails.bin",
+        "resource/gd_PC/setCartTails_hd.bin"
+      ],
+      "available": false,
+      "nativeStageId": 71,
+      "nativeCourseId": 5,
+      "group": "Kart courses",
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h: KartCourseIDs0–5; download slot presence does not verify an installed downloadable course."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracebegfly",
+      "name": "ChaoSetRaceBegFly",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceBegFly.bin",
+        "resource/gd_PC/ChaoRaceCamBegFly.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracebegpow",
+      "name": "ChaoSetRaceBegPow",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceBegPow.bin",
+        "resource/gd_PC/ChaoRaceCamBegPow.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracebegrun",
+      "name": "ChaoSetRaceBegRun",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceBegRun.bin",
+        "resource/gd_PC/ChaoRaceCamBegRun.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracebegswm",
+      "name": "ChaoSetRaceBegSwm",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceBegSwm.bin",
+        "resource/gd_PC/ChaoRaceCamBegSwm.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracejwlfly",
+      "name": "ChaoSetRaceJwlFly",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceJwlFly.bin",
+        "resource/gd_PC/ChaoRaceCamJwlFly.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracejwlil",
+      "name": "ChaoSetRaceJwlIL",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceJwlIL.bin",
+        "resource/gd_PC/ChaoRaceCamJwlIL.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracejwlil-s",
+      "name": "ChaoSetRaceJwlIL_s",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceJwlIL_s.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracejwllng",
+      "name": "ChaoSetRaceJwlLng",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceJwlLng.bin",
+        "resource/gd_PC/ChaoRaceCamJwlLng.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracejwlpow",
+      "name": "ChaoSetRaceJwlPow",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceJwlPow.bin",
+        "resource/gd_PC/ChaoRaceCamJwlPow.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracejwlrun",
+      "name": "ChaoSetRaceJwlRun",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceJwlRun.bin",
+        "resource/gd_PC/ChaoRaceCamJwlRun.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    },
+    {
+      "id": "chao-course-chaosetracejwlswm",
+      "name": "ChaoSetRaceJwlSwm",
+      "character": "Chao",
+      "family": "chao",
+      "resources": [
+        "resource/gd_PC/ChaoSetRaceJwlSwm.bin",
+        "resource/gd_PC/ChaoRaceCamJwlSwm.bin"
+      ],
+      "available": false,
+      "nativeStageId": 90,
+      "group": "Chao race course sets",
+      "internalLabel": true,
+      "evidence": [
+        "Installed original race set/camera filenames. Retail course display-name mapping is not inferred from abbreviations."
+      ]
+    }
+  ]
+}

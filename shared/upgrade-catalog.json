@@ -1,0 +1,1149 @@
+{
+  "version": 1,
+  "status": "Native character collectibles indexed; visual import and MMO ability implementation are separate.",
+  "sourceReferences": {
+    "nativeFlags": "https://github.com/X-Hax/sa2-mod-loader/blob/master/SA2ModLoader/include/SA2Enums.h",
+    "modelStructures": "https://github.com/X-Hax/SA2BModdingGuide/wiki/Character-Model-Structures",
+    "retailDescriptions": "https://info.sonicretro.org/images/e/ee/SonicAdventure2_Prima_digital_guide.pdf",
+    "localMappings": "Official X-Hax SA Tools release786 GameConfig/PC_SA2"
+  },
+  "upgrades": [
+    {
+      "id": "sonic-light-shoes",
+      "character": "Sonic",
+      "name": "Light Shoes",
+      "nativeEffect": "Light Dash along ring trails.",
+      "upgradeBit": 0,
+      "upgradeMaskHex": "0x00000001",
+      "nativeEnum": "UpgradeBits_SonicLightShoes",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 13,
+            "name": "Light Shoes (Right)",
+            "archive": "resource/gd_PC/sonicmdl.prs",
+            "textureArchive": "resource/gd_PC/sonictex.prs",
+            "nativeName": "sonic_shoesR.sa2mdl",
+            "evidence": "PC_SA2/MDL/SONICMDL.ini"
+          },
+          {
+            "modelId": 14,
+            "name": "Light Shoes (Left)",
+            "archive": "resource/gd_PC/sonicmdl.prs",
+            "textureArchive": "resource/gd_PC/sonictex.prs",
+            "nativeName": "sonic_shoesL.sa2mdl",
+            "evidence": "PC_SA2/MDL/SONICMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x723EC4",
+          "pointerHex": "0x7353D0",
+          "modelPath": "OBJECT/LEVUPDAI/SONIC_SHOES.sa2mdl",
+          "texturePack": "SONICTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Light Shoes Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Ring-trail traversal challenge.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "sonic-ancient-light",
+      "character": "Sonic",
+      "name": "Ancient Light",
+      "nativeEffect": "Charged Light Attack chains through enemies.",
+      "upgradeBit": 1,
+      "upgradeMaskHex": "0x00000002",
+      "nativeEnum": "UpgradeBits_SonicAncientLight",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Validated enemy-chain targeting action.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "sonic-magic-gloves",
+      "character": "Sonic",
+      "name": "Magic Gloves",
+      "nativeEffect": "Turns an enemy into a throwable ball.",
+      "upgradeBit": 2,
+      "upgradeMaskHex": "0x00000004",
+      "nativeEnum": "UpgradeBits_SonicMagicGloves",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 27,
+            "name": "Magic Gloves",
+            "archive": "resource/gd_PC/sonicmdl.prs",
+            "textureArchive": "resource/gd_PC/sonictex.prs",
+            "nativeName": "sonic_magicwrist.sa2mdl",
+            "evidence": "PC_SA2/MDL/SONICMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x724B24",
+          "pointerHex": "0x735730",
+          "modelPath": "OBJECT/LEVUPDAI/SONIC_MAGICWRIST.sa2mdl",
+          "texturePack": "SONICTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Magic Gloves Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Capture-and-throw action with server-owned targets.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "sonic-flame-ring",
+      "character": "Sonic",
+      "name": "Flame Ring",
+      "nativeEffect": "Somersault breaks iron containers.",
+      "upgradeBit": 3,
+      "upgradeMaskHex": "0x00000008",
+      "nativeEnum": "UpgradeBits_SonicFlameRing",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 25,
+            "name": "Flame Ring",
+            "archive": "resource/gd_PC/sonicmdl.prs",
+            "textureArchive": "resource/gd_PC/sonictex.prs",
+            "nativeName": "sonic_flamering.sa2mdl",
+            "evidence": "PC_SA2/MDL/SONICMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x7243C4",
+          "pointerHex": "0x7353F4",
+          "modelPath": "OBJECT/LEVUPDAI/SONIC_FLAMERING.sa2mdl",
+          "texturePack": "SONICTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Sonic's Flame Ring Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Obstacle-specific fire roll.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "sonic-bounce-bracelet",
+      "character": "Sonic",
+      "name": "Bounce Bracelet",
+      "nativeEffect": "Enables repeated bounce jumps.",
+      "upgradeBit": 4,
+      "upgradeMaskHex": "0x00000010",
+      "nativeEnum": "UpgradeBits_SonicBounceBracelet",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 26,
+            "name": "Bounce Bracelet",
+            "archive": "resource/gd_PC/sonicmdl.prs",
+            "textureArchive": "resource/gd_PC/sonictex.prs",
+            "nativeName": "sonic_rubberunit.sa2mdl",
+            "evidence": "PC_SA2/MDL/SONICMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72190C",
+          "pointerHex": "0x7353AC",
+          "modelPath": "OBJECT/LEVUPDAI/SONIC_RUBBERUNIT.sa2mdl",
+          "texturePack": "SONICTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Bounce Bracelet Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Bounded bounce traversal.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "sonic-mystic-melody",
+      "character": "Sonic",
+      "name": "Mystic Melody",
+      "nativeEffect": "Activates shrine paths toward Lost Chao.",
+      "upgradeBit": 5,
+      "upgradeMaskHex": "0x00000020",
+      "nativeEnum": "UpgradeBits_SonicMysticMelody",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Shrine puzzle interaction.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "tails-booster",
+      "character": "Tails",
+      "name": "Booster",
+      "nativeEffect": "Lets the mech hover after jumping.",
+      "upgradeBit": 6,
+      "upgradeMaskHex": "0x00000040",
+      "nativeEnum": "UpgradeBits_TailsBooster",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 319,
+            "name": "Booster (Right)",
+            "archive": "resource/gd_PC/twalkmdl.prs",
+            "textureArchive": "resource/gd_PC/twalktex.prs",
+            "nativeName": "twalk_boosterR.sa2mdl",
+            "evidence": "PC_SA2/MDL/TWALKMDL.ini"
+          },
+          {
+            "modelId": 321,
+            "name": "Booster (Left)",
+            "archive": "resource/gd_PC/twalkmdl.prs",
+            "textureArchive": "resource/gd_PC/twalktex.prs",
+            "nativeName": "twalk_boosterL.sa2mdl",
+            "evidence": "PC_SA2/MDL/TWALKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x727F64",
+          "pointerHex": "0x735460",
+          "modelPath": "OBJECT/LEVUPDAI/TWALKER_BOOSTER.sa2mdl",
+          "texturePack": "TWALKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Booster Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Mech hover equipment.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "tails-bazooka",
+      "character": "Tails",
+      "name": "Bazooka",
+      "nativeEffect": "Shoots through iron containers.",
+      "upgradeBit": 7,
+      "upgradeMaskHex": "0x00000080",
+      "nativeEnum": "UpgradeBits_TailsBazooka",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 309,
+            "name": "Bazooka",
+            "archive": "resource/gd_PC/twalkmdl.prs",
+            "textureArchive": "resource/gd_PC/twalktex.prs",
+            "nativeName": "twalk_bazooka.sa2mdl",
+            "evidence": "PC_SA2/MDL/TWALKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x729104",
+          "pointerHex": "0x735484",
+          "modelPath": "OBJECT/LEVUPDAI/TWALKER_HYPERCANNON.sa2mdl",
+          "texturePack": "TWALKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Bazooka Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Reinforced-obstacle projectile.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "tails-laser-blaster",
+      "character": "Tails",
+      "name": "Laser Blaster",
+      "nativeEffect": "Upgrades lock-on weapon power.",
+      "upgradeBit": 8,
+      "upgradeMaskHex": "0x00000100",
+      "nativeEnum": "UpgradeBits_TailsLaserBlaster",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 306,
+            "name": "Laser Blaster",
+            "archive": "resource/gd_PC/twalkmdl.prs",
+            "textureArchive": "resource/gd_PC/twalktex.prs",
+            "nativeName": "twalk_laserblaster.sa2mdl",
+            "evidence": "PC_SA2/MDL/TWALKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72A42C",
+          "pointerHex": "0x7354A8",
+          "modelPath": "OBJECT/LEVUPDAI/TWALKER_LAZERBALSTER.sa2mdl",
+          "texturePack": "TWALKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Tails' Laser Blaster Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Mech weapon progression.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "tails-mystic-melody",
+      "character": "Tails",
+      "name": "Mystic Melody",
+      "nativeEffect": "Activates shrine paths toward Lost Chao.",
+      "upgradeBit": 9,
+      "upgradeMaskHex": "0x00000200",
+      "nativeEnum": "UpgradeBits_TailsMysticMelody",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Shrine puzzle interaction.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "knuckles-shovel-claw",
+      "character": "Knuckles",
+      "name": "Shovel Claw",
+      "nativeEffect": "Enables digging.",
+      "upgradeBit": 10,
+      "upgradeMaskHex": "0x00000400",
+      "nativeEnum": "UpgradeBits_KnucklesShovelClaw",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 162,
+            "name": "Shovel Claw (Right)",
+            "archive": "resource/gd_PC/knuckmdl.prs",
+            "textureArchive": "resource/gd_PC/knucktex.prs",
+            "nativeName": "knuck_clawsR.sa2mdl",
+            "evidence": "PC_SA2/MDL/KNUCKMDL.ini"
+          },
+          {
+            "modelId": 163,
+            "name": "Shovel Claw (Left)",
+            "archive": "resource/gd_PC/knuckmdl.prs",
+            "textureArchive": "resource/gd_PC/knucktex.prs",
+            "nativeName": "knuck_clawsL.sa2mdl",
+            "evidence": "PC_SA2/MDL/KNUCKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72FE1C",
+          "pointerHex": "0x73555C",
+          "modelPath": "OBJECT/LEVUPDAI/KNUCKLES_CLAWS.sa2mdl",
+          "texturePack": "KNUCKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Shovel Claw Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Diggable mission surfaces and buried rewards.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "knuckles-sunglasses",
+      "character": "Knuckles",
+      "name": "Sunglasses",
+      "nativeEffect": "Reveals otherwise hidden objects.",
+      "upgradeBit": 11,
+      "upgradeMaskHex": "0x00000800",
+      "nativeEnum": "UpgradeBits_KnucklesSunglasses",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 161,
+            "name": "Sunglasses",
+            "archive": "resource/gd_PC/knuckmdl.prs",
+            "textureArchive": "resource/gd_PC/knucktex.prs",
+            "nativeName": "knuck_sunglass.sa2mdl",
+            "evidence": "PC_SA2/MDL/KNUCKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x730744",
+          "pointerHex": "0x735754",
+          "modelPath": "OBJECT/LEVUPDAI/KNUCKLES_SUNGLASS.sa2mdl",
+          "texturePack": "KNUCKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Sunglasses Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Hidden-object perception challenge.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "knuckles-hammer-gloves",
+      "character": "Knuckles",
+      "name": "Hammer Gloves",
+      "nativeEffect": "Punches break iron containers.",
+      "upgradeBit": 12,
+      "upgradeMaskHex": "0x00001000",
+      "nativeEnum": "UpgradeBits_KnucklesHammerGloves",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 164,
+            "name": "Hammer Glove (Right)",
+            "archive": "resource/gd_PC/knuckmdl.prs",
+            "textureArchive": "resource/gd_PC/knucktex.prs",
+            "nativeName": "knuck_glovesR.sa2mdl",
+            "evidence": "PC_SA2/MDL/KNUCKMDL.ini"
+          },
+          {
+            "modelId": 165,
+            "name": "Hammer Glove (Left)",
+            "archive": "resource/gd_PC/knuckmdl.prs",
+            "textureArchive": "resource/gd_PC/knucktex.prs",
+            "nativeName": "knuck_glovesL.sa2mdl",
+            "evidence": "PC_SA2/MDL/KNUCKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72F644",
+          "pointerHex": "0x735580",
+          "modelPath": "OBJECT/LEVUPDAI/KNUCKLES_GROVES.sa2mdl",
+          "texturePack": "KNUCKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Hammer Gloves Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Obstacle-specific reinforced punch.",
+        "visualAssetStatus": "prepared-locally",
+        "ownerStarterSelection": true,
+        "slot": "hands",
+        "visualAssets": [
+          "knuckles-hammer-gloves-left.glb",
+          "knuckles-hammer-gloves-right.glb"
+        ]
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "knuckles-air-necklace",
+      "character": "Knuckles",
+      "name": "Air Necklace",
+      "nativeEffect": "Allows unlimited underwater breathing.",
+      "upgradeBit": 13,
+      "upgradeMaskHex": "0x00002000",
+      "nativeEnum": "UpgradeBits_KnucklesAirNecklace",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 168,
+            "name": "Air Necklace",
+            "archive": "resource/gd_PC/knuckmdl.prs",
+            "textureArchive": "resource/gd_PC/knucktex.prs",
+            "nativeName": "knuck_air.sa2mdl",
+            "evidence": "PC_SA2/MDL/KNUCKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x7301AC",
+          "pointerHex": "0x7355A4",
+          "modelPath": "OBJECT/LEVUPDAI/KNUCKLES_AIR.sa2mdl",
+          "texturePack": "KNUCKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Air Necklace Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Server-controlled underwater breathing equipment.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "knuckles-mystic-melody",
+      "character": "Knuckles",
+      "name": "Mystic Melody",
+      "nativeEffect": "Activates shrine paths toward Lost Chao.",
+      "upgradeBit": 14,
+      "upgradeMaskHex": "0x00004000",
+      "nativeEnum": "UpgradeBits_KnucklesMysticMelody",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Shrine puzzle interaction.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "shadow-air-shoes",
+      "character": "Shadow",
+      "name": "Air Shoes",
+      "nativeEffect": "Light Dash along ring trails.",
+      "upgradeBit": 16,
+      "upgradeMaskHex": "0x00010000",
+      "nativeEnum": "UpgradeBits_ShadowAirShoes",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 78,
+            "name": "Air Shoes (Right)",
+            "archive": "resource/gd_PC/teriosmdl.prs",
+            "textureArchive": "resource/gd_PC/teriostex.prs",
+            "nativeName": "terios_shoesR.sa2mdl",
+            "evidence": "PC_SA2/MDL/TERIOSMDL.ini"
+          },
+          {
+            "modelId": 79,
+            "name": "Air Shoes (Left)",
+            "archive": "resource/gd_PC/teriosmdl.prs",
+            "textureArchive": "resource/gd_PC/teriostex.prs",
+            "nativeName": "terios_shoesL.sa2mdl",
+            "evidence": "PC_SA2/MDL/TERIOSMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x726F4C",
+          "pointerHex": "0x735418",
+          "modelPath": "OBJECT/LEVUPDAI/SHADOW_SHOES.sa2mdl",
+          "texturePack": "TERIOSTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Air Shoes Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Ring-trail traversal challenge; owner shoe cosmetics first.",
+        "visualAssetStatus": "prepared-locally",
+        "ownerStarterSelection": true,
+        "slot": "footwear",
+        "visualAssets": [
+          "shadow-air-shoes-left.glb",
+          "shadow-air-shoes-right.glb"
+        ]
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "shadow-ancient-light",
+      "character": "Shadow",
+      "name": "Ancient Light",
+      "nativeEffect": "Charged Light Attack chains through enemies.",
+      "upgradeBit": 17,
+      "upgradeMaskHex": "0x00020000",
+      "nativeEnum": "UpgradeBits_ShadowAncientLight",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Validated enemy-chain targeting action.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "shadow-flame-ring",
+      "character": "Shadow",
+      "name": "Flame Ring",
+      "nativeEffect": "Somersault breaks iron containers.",
+      "upgradeBit": 18,
+      "upgradeMaskHex": "0x00040000",
+      "nativeEnum": "UpgradeBits_ShadowFlameRing",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 100,
+            "name": "Flame Ring",
+            "archive": "resource/gd_PC/teriosmdl.prs",
+            "textureArchive": "resource/gd_PC/teriostex.prs",
+            "nativeName": "terios_flamering.sa2mdl",
+            "evidence": "PC_SA2/MDL/TERIOSMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x725024",
+          "pointerHex": "0x73543C",
+          "modelPath": "OBJECT/LEVUPDAI/SHADOW_FLAMERING.sa2mdl",
+          "texturePack": "TERIOSTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Shadow's Flame Ring Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Obstacle-specific fire roll.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "shadow-mystic-melody",
+      "character": "Shadow",
+      "name": "Mystic Melody",
+      "nativeEffect": "Activates shrine paths toward Lost Chao.",
+      "upgradeBit": 19,
+      "upgradeMaskHex": "0x00080000",
+      "nativeEnum": "UpgradeBits_ShadowMysticMelody",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Shrine puzzle interaction.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "eggman-jet-engine",
+      "character": "Eggman",
+      "name": "Jet Engine",
+      "nativeEffect": "Lets the mech hover after jumping.",
+      "upgradeBit": 20,
+      "upgradeMaskHex": "0x00100000",
+      "nativeEnum": "UpgradeBits_EggmanJetEngine",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 274,
+            "name": "Jet Engine (Right)",
+            "archive": "resource/gd_PC/ewalkmdl.prs",
+            "textureArchive": "resource/gd_PC/ewalktex.prs",
+            "nativeName": "ewalk_jetengineR.sa2mdl",
+            "evidence": "PC_SA2/MDL/EWALKMDL.ini"
+          },
+          {
+            "modelId": 276,
+            "name": "Jet Engine (Left)",
+            "archive": "resource/gd_PC/ewalkmdl.prs",
+            "textureArchive": "resource/gd_PC/ewalktex.prs",
+            "nativeName": "ewalk_jetengineL.sa2mdl",
+            "evidence": "PC_SA2/MDL/EWALKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72B53C",
+          "pointerHex": "0x7354CC",
+          "modelPath": "OBJECT/LEVUPDAI/EWALKER_JETENGINE.sa2mdl",
+          "texturePack": "EWALKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Jet Engine Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Mech hover equipment.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "eggman-large-cannon",
+      "character": "Eggman",
+      "name": "Large Cannon",
+      "nativeEffect": "Shoots through iron containers.",
+      "upgradeBit": 21,
+      "upgradeMaskHex": "0x00200000",
+      "nativeEnum": "UpgradeBits_EggmanLargeCannon",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 263,
+            "name": "Large Cannon",
+            "archive": "resource/gd_PC/ewalkmdl.prs",
+            "textureArchive": "resource/gd_PC/ewalktex.prs",
+            "nativeName": "ewalk_bazooka.sa2mdl",
+            "evidence": "PC_SA2/MDL/EWALKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72CD8C",
+          "pointerHex": "0x735514",
+          "modelPath": "OBJECT/LEVUPDAI/EWALKER_BAZOOKA.sa2mdl",
+          "texturePack": "EWALKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Large Cannon Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Reinforced-obstacle projectile.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "eggman-laser-blaster",
+      "character": "Eggman",
+      "name": "Laser Blaster",
+      "nativeEffect": "Upgrades lock-on weapon power.",
+      "upgradeBit": 22,
+      "upgradeMaskHex": "0x00400000",
+      "nativeEnum": "UpgradeBits_EggmanLaserBlaster",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 260,
+            "name": "Laser Blaster",
+            "archive": "resource/gd_PC/ewalkmdl.prs",
+            "textureArchive": "resource/gd_PC/ewalktex.prs",
+            "nativeName": "ewalk_powergun.sa2mdl",
+            "evidence": "PC_SA2/MDL/EWALKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72E644",
+          "pointerHex": "0x735538",
+          "modelPath": "OBJECT/LEVUPDAI/EWALKER_POWERGUN.sa2mdl",
+          "texturePack": "EWALKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Eggman's Laser Blaster Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Mech weapon progression.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "eggman-protective-armor",
+      "character": "Eggman",
+      "name": "Protective Armor",
+      "nativeEffect": "Increases maximum mech health.",
+      "upgradeBit": 23,
+      "upgradeMaskHex": "0x00800000",
+      "nativeEnum": "UpgradeBits_EggmanProtectiveArmor",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 278,
+            "name": "Protection Armor",
+            "archive": "resource/gd_PC/ewalkmdl.prs",
+            "textureArchive": "resource/gd_PC/ewalktex.prs",
+            "nativeName": "ewalk_extrashield.sa2mdl",
+            "evidence": "PC_SA2/MDL/EWALKMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x72C0EC",
+          "pointerHex": "0x7354F0",
+          "modelPath": "OBJECT/LEVUPDAI/EWALKER_EXTRASHIELD.sa2mdl",
+          "texturePack": "EWALKTEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Protection Armor Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Bounded mech health upgrade.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "eggman-mystic-melody",
+      "character": "Eggman",
+      "name": "Mystic Melody",
+      "nativeEffect": "Activates shrine paths toward Lost Chao.",
+      "upgradeBit": 24,
+      "upgradeMaskHex": "0x01000000",
+      "nativeEnum": "UpgradeBits_EggmanMysticMelody",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Shrine puzzle interaction.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "rouge-pick-nails",
+      "character": "Rouge",
+      "name": "Pick Nails",
+      "nativeEffect": "Enables digging.",
+      "upgradeBit": 25,
+      "upgradeMaskHex": "0x02000000",
+      "nativeEnum": "UpgradeBits_RougePickNails",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 195,
+            "name": "Pick Nails (Right)",
+            "archive": "resource/gd_PC/rougemdl.prs",
+            "textureArchive": "resource/gd_PC/rougetex.prs",
+            "nativeName": "rouge_nailsR.sa2mdl",
+            "evidence": "PC_SA2/MDL/ROUGEMDL.ini"
+          },
+          {
+            "modelId": 199,
+            "name": "Pick Nails (Left)",
+            "archive": "resource/gd_PC/rougemdl.prs",
+            "textureArchive": "resource/gd_PC/rougetex.prs",
+            "nativeName": "rouge_nailsL.sa2mdl",
+            "evidence": "PC_SA2/MDL/ROUGEMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x732CB4",
+          "pointerHex": "0x7355EC",
+          "modelPath": "OBJECT/LEVUPDAI/ROUGE_NAILS.sa2mdl",
+          "texturePack": "ROUGETEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Pick Nails Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Diggable mission surfaces and buried rewards.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "rouge-treasure-scope",
+      "character": "Rouge",
+      "name": "Treasure Scope",
+      "nativeEffect": "Reveals otherwise hidden objects.",
+      "upgradeBit": 26,
+      "upgradeMaskHex": "0x04000000",
+      "nativeEnum": "UpgradeBits_RougeTreasureScope",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 205,
+            "name": "Treasure Scope",
+            "archive": "resource/gd_PC/rougemdl.prs",
+            "textureArchive": "resource/gd_PC/rougetex.prs",
+            "nativeName": "rouge_scope.sa2mdl",
+            "evidence": "PC_SA2/MDL/ROUGEMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x730C24",
+          "pointerHex": "0x7355C8",
+          "modelPath": "OBJECT/LEVUPDAI/ROUGE_SCOPE.sa2mdl",
+          "texturePack": "ROUGETEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Treasure Scope Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Hidden-object perception challenge.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "rouge-iron-boots",
+      "character": "Rouge",
+      "name": "Iron Boots",
+      "nativeEffect": "Kicks break iron containers.",
+      "upgradeBit": 27,
+      "upgradeMaskHex": "0x08000000",
+      "nativeEnum": "UpgradeBits_RougeIronBoots",
+      "nativeSources": {
+        "wearableModels": [
+          {
+            "modelId": 201,
+            "name": "Iron Boots (Right)",
+            "archive": "resource/gd_PC/rougemdl.prs",
+            "textureArchive": "resource/gd_PC/rougetex.prs",
+            "nativeName": "rouge_bootsR.sa2mdl",
+            "evidence": "PC_SA2/MDL/ROUGEMDL.ini"
+          },
+          {
+            "modelId": 203,
+            "name": "Iron Boots (Left)",
+            "archive": "resource/gd_PC/rougemdl.prs",
+            "textureArchive": "resource/gd_PC/rougetex.prs",
+            "nativeName": "rouge_bootsL.sa2mdl",
+            "evidence": "PC_SA2/MDL/ROUGEMDL.ini"
+          }
+        ],
+        "fieldPickup": {
+          "binary": "sonic2app.exe",
+          "addressHex": "0x7351EC",
+          "pointerHex": "0x735610",
+          "modelPath": "OBJECT/LEVUPDAI/ROUGE_BOOTS.sa2mdl",
+          "texturePack": "ROUGETEX",
+          "evidence": "PC_SA2/CommonObjects.ini [Iron Boots Field Upgrade]"
+        }
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Obstacle-specific reinforced kick.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    },
+    {
+      "id": "rouge-mystic-melody",
+      "character": "Rouge",
+      "name": "Mystic Melody",
+      "nativeEffect": "Activates shrine paths toward Lost Chao.",
+      "upgradeBit": 28,
+      "upgradeMaskHex": "0x10000000",
+      "nativeEnum": "UpgradeBits_RougeMysticMelody",
+      "nativeSources": {
+        "wearableModels": [],
+        "fieldPickup": null
+      },
+      "mmo": {
+        "nativeEffectImplemented": false,
+        "proposal": "Shrine puzzle interaction.",
+        "visualAssetStatus": "catalogued",
+        "ownerStarterSelection": false,
+        "slot": null,
+        "visualAssets": []
+      },
+      "evidence": [
+        "X-Hax sa2-mod-loader SA2Enums.h UpgradeBits/Upgrades",
+        "Licensed Prima Sonic Adventure2 guide: character upgrade descriptions; browser rules require separate implementation."
+      ]
+    }
+  ],
+  "specialStates": [
+    {
+      "id": "super-sonic-native-state",
+      "character": "Super Sonic",
+      "upgradeBit": 15,
+      "nativeEnum": "UpgradeBits_SuperSonic",
+      "upgradeMaskHex": "0x00008000",
+      "collectible": false,
+      "note": "Separate native super-state flag; not an ordinary field upgrade and not a Chaos Chao evolution."
+    }
+  ],
+  "alternateRoster": [
+    {
+      "character": "Amy",
+      "independentCollectibleUpgradeBits": [],
+      "note": "No separate collectible upgrade bit appears for this character in the mapped native UpgradeBits enum. Base/alternate abilities require their own catalog and behavior audit."
+    },
+    {
+      "character": "Metal Sonic",
+      "independentCollectibleUpgradeBits": [],
+      "note": "No separate collectible upgrade bit appears for this character in the mapped native UpgradeBits enum. Base/alternate abilities require their own catalog and behavior audit."
+    },
+    {
+      "character": "Tikal",
+      "independentCollectibleUpgradeBits": [],
+      "note": "No separate collectible upgrade bit appears for this character in the mapped native UpgradeBits enum. Base/alternate abilities require their own catalog and behavior audit."
+    },
+    {
+      "character": "Chaos0",
+      "independentCollectibleUpgradeBits": [],
+      "note": "No separate collectible upgrade bit appears for this character in the mapped native UpgradeBits enum. Base/alternate abilities require their own catalog and behavior audit."
+    },
+    {
+      "character": "Chao Walker",
+      "independentCollectibleUpgradeBits": [],
+      "note": "No separate collectible upgrade bit appears for this character in the mapped native UpgradeBits enum. Base/alternate abilities require their own catalog and behavior audit."
+    },
+    {
+      "character": "Dark Chao Walker",
+      "independentCollectibleUpgradeBits": [],
+      "note": "No separate collectible upgrade bit appears for this character in the mapped native UpgradeBits enum. Base/alternate abilities require their own catalog and behavior audit."
+    }
+  ],
+  "assetNotes": {
+    "shadow-air-shoes": "IDs78/79 are the native upgrade overlays; full exported jetboots also use original Shadow65 heel/toe mesh from native nodes13/14 and23/24. Each rigid assembled prop is recentered without stretching.",
+    "knuckles-hammer-gloves": "IDs164/165 are the native right/left wearable metal gloves. Fit as rigid hand props; the Chao body and native skeleton remain intact."
+  }
+}

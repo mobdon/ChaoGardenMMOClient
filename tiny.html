@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#0a1427" />
+    <meta name="description" content="Your saved Chao, seven live stats, and five little garden games." />
+    <title>Tiny Garden · Chao Garden</title>
+  </head>
+  <body>
+    <main class="tiny-app">
+      <header class="tiny-topbar">
+        <a class="tiny-wordmark" href="/tiny.html"><span class="tiny-brand-mark">◈</span><span>CHAO GARDEN<small>TINY GARDEN</small></span></a>
+        <span id="tiny-connection" class="connection-pill" data-status="offline"><i></i><span>Choose a save</span></span>
+      </header>
+
+      <div class="tiny-layout">
+        <aside class="tiny-profile-column">
+          <section class="tiny-hero">
+            <span class="tiny-eyebrow">A LITTLE TIME IN THE GARDEN</span>
+            <h1>Small games.<br /><em>Big Chao energy.</em></h1>
+            <p>Five little adventures. One saved Chao.</p>
+            <img src="/api/assets/login-chao.png" alt="Original Dark Chaos Chao with the seven Chaos Emeralds" class="tiny-hero-chao" />
+          </section>
+
+          <section class="profile-card" aria-label="Saved Chao">
+            <div class="profile-identity">
+              <canvas id="tiny-portrait" width="200" height="200" role="img" aria-label="Saved Chao preview"></canvas>
+              <div><small>YOUR SAVED CHAO</small><h2 id="tiny-name">Meet you in the garden</h2><span id="tiny-form">Load an existing save to begin.</span></div>
+              <div class="tiny-balance" aria-label="Saved ring balance"><span>◎</span><strong id="tiny-rings">—</strong><small>RINGS</small></div>
+            </div>
+            <label id="tiny-slot-label" class="slot-label" hidden>Saved Chao<select id="tiny-slot" aria-label="Choose a saved Chao"></select></label>
+            <div id="tiny-auth" class="tiny-auth"><p id="tiny-auth-message">Looking for this browser's saved Chao…</p><a href="/?tiny=1" class="text-link">Load a save at the garden title <span>↗</span></a></div>
+            <details id="tiny-stats-details" class="tiny-stats-details"><summary>Chao stats <span>ALL 7</span></summary><p id="tiny-stats-empty">Connect to see your Chao's live stats.</p><div id="tiny-stats"></div></details>
+          </section>
+          <p class="tiny-save-note" id="tiny-save-note">Stats and rewards stay with the same server save.</p>
+          <a class="text-link" href="/widget.html">Android widget preview <span>↗</span></a>
+          <section class="tiny-watch-card" aria-label="Check on your Chao">
+            <div class="tiny-watch-heading"><div><small>A MOMENT TOGETHER</small><h2>Check on your Chao</h2></div><span id="tiny-watch-status" class="phase-pill" role="status">Connect to visit</span></div>
+            <canvas id="tiny-watch-canvas" width="640" height="360" role="img" aria-label="Your Chao's garden routine"></canvas>
+            <p id="tiny-watch-copy">Let your Chao wander, pause, and rest while you keep them company.</p>
+            <div id="tiny-watch-needs" class="tiny-watch-needs"></div>
+            <button id="tiny-watch-toggle" class="tiny-primary" disabled>Connect a saved Chao</button>
+            <div id="tiny-watch-care" class="tiny-watch-care" hidden><button data-care="pet" class="small-button">Pet ♡</button><button data-care="rest" class="small-button">Rest</button><button data-care="wake" class="small-button">Wake up</button></div>
+            <p id="tiny-watch-note" class="tiny-watch-note">Leave your Chao in the shared garden while away. Take control before playing a minigame.</p>
+          </section>
+        </aside>
+
+        <section class="tiny-play-column" aria-label="Tiny Garden games">
+          <div class="game-section-label"><span class="tiny-eyebrow">PICK A LITTLE ADVENTURE</span><span>01—05</span></div>
+          <nav id="tiny-games" class="tiny-games" aria-label="Choose a minigame">
+            <button data-game="memory" class="selected" aria-pressed="true"><span>▦</span><strong>Memory</strong></button>
+            <button data-game="rock_paper_scissors" aria-pressed="false"><span>✌</span><strong>RPS</strong></button>
+            <button data-game="bounce" aria-pressed="false"><span>↟</span><strong>Bounce</strong></button>
+            <button data-game="ball" aria-pressed="false"><span>◉</span><strong>Ball</strong></button>
+            <button data-game="search" aria-pressed="false"><span>⌕</span><strong>Search</strong></button>
+          </nav>
+
+          <section class="tiny-game-card">
+            <header class="tiny-game-heading"><div><small id="tiny-game-number">GAME 01</small><h2 id="tiny-game-title">Chao Memory</h2></div><span id="tiny-phase" class="phase-pill">Ready when you are</span></header>
+            <p id="tiny-instructions" class="tiny-instructions">Remember the cards, watch the shuffle, and find all seven pairs.</p>
+            <div id="tiny-game-metrics" class="tiny-game-metrics" aria-live="off"><span>7 pairs</span><span>3 mistakes</span></div>
+
+            <div id="tiny-stage" class="tiny-stage">
+              <canvas id="tiny-canvas" width="600" height="600" tabindex="0" aria-label="Minigame arena. Use the touch controls below or arrow keys."></canvas>
+              <div id="tiny-memory-board" class="tiny-memory-board" aria-label="Memory cards" hidden></div>
+              <div id="tiny-stage-cover" class="tiny-stage-cover"><div class="cover-symbol">◈</div><h3 id="tiny-cover-title">A little challenge awaits.</h3><p id="tiny-cover-copy">Connect your saved Chao and start a round.</p></div>
+            </div>
+
+            <div id="tiny-result" class="tiny-result" role="status" hidden><div><small>RESULT SAVED</small><h3 id="tiny-result-title">Round complete</h3><p id="tiny-result-detail"></p></div><strong id="tiny-result-rings"></strong><button id="tiny-result-close" class="small-button">Back to games</button></div>
+            <p id="tiny-notice" class="tiny-notice" role="status" aria-live="polite"></p>
+            <div id="tiny-game-controls" class="tiny-game-controls" hidden>
+              <div id="tiny-move-controls" class="tiny-move-controls" aria-label="Movement controls"><button data-move="0,-1" class="move-up" aria-label="Move up">↑</button><button data-move="-1,0" class="move-left" aria-label="Move left">←</button><button data-move="0,1" class="move-down" aria-label="Move down">↓</button><button data-move="1,0" class="move-right" aria-label="Move right">→</button></div>
+              <div id="tiny-action-controls" class="tiny-action-controls"></div>
+            </div>
+            <div class="tiny-round-buttons"><button id="tiny-start" class="tiny-primary" disabled>Connect a saved Chao</button><button id="tiny-stop" class="tiny-stop" hidden>Stop round</button></div>
+            <p id="tiny-control-tip" class="tiny-control-tip">Touch to play. A keyboard works here too.</p>
+          </section>
+          <footer class="tiny-footer"><span>ORIGINAL CHAO ARTWORK · PROTOTYPE GAME VISUALS</span><span>GROW AT YOUR OWN PACE. <b>✦</b></span></footer>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/tiny.js"></script>
+  </body>
+</html>
