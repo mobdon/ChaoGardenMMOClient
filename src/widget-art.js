@@ -13,16 +13,18 @@ export function widgetArtSubject(profile, variant = 'dark') {
     : { subject: Object.hasOwn(previews, variant) ? previews[variant] : previews.dark, preview: true };
 }
 
-export function widgetCanvasPlacement(width, height, variant, widgetSize = 'large') {
+export function widgetCanvasPlacement(width, height, variant) {
   const mapScale = Math.min(width / 176, height / 160);
   const groundX = width / 2 + 176 * mapScale * 0.12;
   const groundY = (height - 160 * mapScale) / 2 + 160 * mapScale * 0.68;
   // Front Idle alpha ends at row84 in Dark/Hero and row83 in Neutral. The
   // shared renderer draws the whole96px cell into [34,50,326,342]. Pin the
-  // original feet to grass, preserving square pixels and the native rig.
+  // original feet to grass. Scale the complete portrait with the displayed
+  // garden, keeping the body, flame and full emerald orbit inside the scene.
   const footRatio = (50 + (variant === 'neutral' ? 83 : 84) / 96 * 292) / 360;
-  const limit = widgetSize === 'compact' ? 82 : widgetSize === 'wide' ? 96 : 130;
-  const size = Math.min(limit, groundY / footRatio);
+  // A 32px presentation footprint at the garden's native resolution keeps
+  // the visible body around 20px tall, comparable to a small handheld sprite.
+  const size = 32 * mapScale;
   return { left: groundX, top: Math.max(0, groundY - size * footRatio), size, groundX, groundY, footRatio };
 }
 

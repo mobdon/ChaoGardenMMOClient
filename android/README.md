@@ -35,7 +35,7 @@ The launcher shows a static snapshot. JobScheduler requests background reads eve
 
 An unpaired widget without any saved snapshot can show **Dark Chaos · art preview**. This contains no account or Chao ID, rings, needs, stats, activity, training state or enabled care. Its visible status and accessibility descriptions identify the artwork example. A paired normal/unsupported form never becomes that preview. Missing/changed required art gives an explicit marker; normal-Chao and gear-specific art remain open.
 
-The static portrait uses a uniform scale and places the original front-idle feet on verified grass in the original garden image. If any optional emerald is absent/corrupt, the actual body/flame stay visible while the entire chest/seven-gem group is hidden with an **ART LIMITED** label and accessibility explanation. Incomplete portraits are not cached, allowing recovery when correct assets are available.
+The static portrait uses a uniform 0.20 scale: its complete frame occupies 32 original-garden pixels, with the body about 20 pixels high. This is a presentation adaptation of the original desktop Chaos art, not recovered normal/GBA sprite art. Its original front-idle feet stay on verified grass, and the flame/emerald frame stays within the scene. If any optional emerald is absent/corrupt, the actual body/flame stay visible while the entire chest/seven-gem group is hidden with an **ART LIMITED** label and accessibility explanation. Incomplete portraits are not cached, allowing recovery when correct assets are available.
 
 Stage the private originals before building:
 

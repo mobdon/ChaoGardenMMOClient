@@ -25,7 +25,7 @@ const gardenWindow = $('.widget-garden-window');
 function positionAvatar() {
   const art = widgetArtSubject(profile, previewVariant);
   const placement = widgetCanvasPlacement(gardenWindow.clientWidth, gardenWindow.clientHeight,
-    chaosVariant(art.subject), $('#garden-widget').dataset.size);
+    chaosVariant(art.subject));
   for (const [key, value] of Object.entries({ left: placement.left, top: placement.top, width: placement.size, height: placement.size })) {
     const pixels = `${value}px`; if (canvas.style[key] !== pixels) canvas.style[key] = pixels;
   }
