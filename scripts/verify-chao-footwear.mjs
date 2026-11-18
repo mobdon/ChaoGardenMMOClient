@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LoadAssetContainerAsync, Matrix, NullEngine, Quaternion, Scene, TransformNode, Vector3 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
-import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, chestSurfacePoint, collectNativeShoeParts } from '../src/chao-attachments.js';
+import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation } from '../src/chao-attachments.js';
 import { attachNativeRun, captureChaoPose } from '../src/chao-locomotion.js';
 import { createShadowSkate } from '../src/shadow-skate.js';
 
@@ -15,15 +15,19 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) {
   const flag = process.argv[index], value = process.argv[index + 1];
-  assert.ok(['--asset-root', '--shoe-root', '--output'].includes(flag) && value && !value.startsWith('--'),
+  assert.ok(['--asset-root', '--shoe-root', '--source-root', '--output'].includes(flag) && value && !value.startsWith('--'),
     'Use --asset-root <asset directory>, --shoe-root <prepared shoes directory>, or --output <JSON file>.');
   options[flag.slice(2)] = value;
 }
 const assetRoot = resolve(options['asset-root'] || process.env.CHAO_FOOTWEAR_ASSET_ROOT || resolve(root, '.local/imports'));
 const shoeRoot = resolve(options['shoe-root'] || process.env.CHAO_FOOTWEAR_SHOE_ROOT || assetRoot);
+const nativeRoot = resolve(options['source-root'] || process.env.CHAO_BASIS_SOURCE_ROOT || resolve(root, '.local/extracted/shadow-skate/teriosmdl'));
 const output = resolve(options.output || resolve(root, '.local/reviews/chao-footwear-proof.json'));
 const engine = new NullEngine(), scene = new Scene(engine);
 const sourceHashes = {};
+for (const file of ['src/scene.js', 'src/chao-attachments.js', 'src/chao-locomotion.js', 'src/shadow-skate.js', 'scripts/verify-chao-footwear.mjs']) {
+  sourceHashes[file] = createHash('sha256').update(await readFile(resolve(root, file))).digest('hex');
+}
 async function load(name) {
   const bytes = await readFile(resolve(name.startsWith('shadow-air-shoes-') ? shoeRoot : assetRoot, `${name}.glb`));
   sourceHashes[name] = createHash('sha256').update(bytes).digest('hex');
@@ -31,33 +35,24 @@ async function load(name) {
     { pluginExtension: '.glb', pluginOptions: { gltf: { skipMaterials: true } } });
 }
 const find = (nodes, index) => nodes.find(node => new RegExp(`(?:^|-)${index}_object_`).test(node.name));
-function geometryBounds(meshes, toRoot = Matrix.Identity()) {
-  let min = new Vector3(Infinity, Infinity, Infinity), max = min.negate();
+function geometryVertices(meshes, toRoot = Matrix.Identity()) {
+  const points = [];
   for (const mesh of meshes) {
     mesh.computeWorldMatrix(true);
     const matrix = mesh.getWorldMatrix().multiply(toRoot), positions = mesh.getVerticesData('position');
     for (let i = 0; i < positions.length; i += 3) {
       const point = Vector3.TransformCoordinates(Vector3.FromArray(positions, i), matrix);
-      min = Vector3.Minimize(min, point); max = Vector3.Maximize(max, point);
+      points.push(point);
     }
   }
-  return { min, max, size: max.subtract(min), center: min.add(max).scale(.5) };
+  return points;
 }
-function shoeRotation(side) {
-  // Recorded native heel13/23 basis, also used by the presentation adapter.
-  const references = {
-    left: { up: [-.8377403, -.5430225, .0575994], forward: [.5453401747, -.8374025312, .0368930145] },
-    right: { up: [-.8025777, -.5964206, .0123086], forward: [.5965178011, -.8025729883, .0065659268] },
-  };
-  const up = Vector3.FromArray(references[side].up), forward = Vector3.FromArray(references[side].forward);
-  up.x *= -1; forward.x *= -1; up.normalize(); forward.normalize();
-  const basis = Matrix.Identity();
-  Matrix.FromXYZAxesToRef(Vector3.Cross(up, forward).normalize(), up, forward, basis);
-  const rotation = Quaternion.FromRotationMatrix(basis).conjugate().normalize();
-  const matrix = Matrix.FromQuaternionToRef(rotation, Matrix.Identity());
-  assert.ok(Vector3.Distance(Vector3.TransformNormal(up, matrix), Vector3.Up()) < 1e-5, 'native sole up');
-  assert.ok(Vector3.Distance(Vector3.TransformNormal(forward, matrix), Vector3.Forward()) < 1e-5, 'native toe forward');
-  return rotation;
+function geometryBounds(meshes, toRoot = Matrix.Identity()) {
+  let min = new Vector3(Infinity, Infinity, Infinity), max = min.negate();
+  for (const point of geometryVertices(meshes, toRoot)) {
+    min = Vector3.Minimize(min, point); max = Vector3.Maximize(max, point);
+  }
+  return { min, max, size: max.subtract(min), center: min.add(max).scale(.5) };
 }
 function inBody(point, parent, body) {
   parent.computeWorldMatrix(true); body.computeWorldMatrix(true);
@@ -78,8 +73,32 @@ function statistics(samples) {
 }
 const forms = [];
 try {
+  const canonicalBytes = await readFile(resolve(shoeRoot, `shadow-air-shoes-${CHAO_SHOE_REFERENCE_SIDE}.glb`));
+  const canonicalDocument = JSON.parse(canonicalBytes.subarray(20, 20 + canonicalBytes.readUInt32LE(12)));
+  const canonicalSource = canonicalDocument.asset.extras.sa2Source, mounting = canonicalSource.mountingReference;
+  assert.equal(canonicalSource.side, 'right'); assert.equal(canonicalSource.modelId, 78);
+  for (const [id, expected] of [[65, canonicalSource.baseBoot.nativeSha256], [78, canonicalSource.nativeSha256]]) {
+    const actual = createHash('sha256').update(await readFile(resolve(nativeRoot, `${id}.sa2mdl`))).digest('hex');
+    assert.equal(actual, expected); sourceHashes[`native-model-${id}`] = actual;
+  }
+  const rows = mounting.nativeHeelRestWorldBlenderMatrix;
+  const nativeRotation = Matrix.FromArray([
+    rows[0][0], rows[1][0], rows[2][0], 0, rows[0][1], rows[1][1], rows[2][1], 0,
+    rows[0][2], rows[1][2], rows[2][2], 0, 0, 0, 0, 1,
+  ]);
+  const localToe = Vector3.TransformNormal(Vector3.FromArray(mounting.nativeHeelToToeWorldBlender), Matrix.Invert(nativeRotation));
+  const nativeToe = new Vector3(-localToe.x, localToe.z, -localToe.y);
+  const nativeUp = Vector3.FromArray(mounting.exportedPropStandingUp); nativeUp.x *= -1;
+  const productionRotation = Matrix.FromQuaternionToRef(shadowShoeMountRotation(), Matrix.Identity());
+  const transformedUp = Vector3.TransformNormal(nativeUp, productionRotation).normalize();
+  const transformedToe = Vector3.TransformNormal(nativeToe, productionRotation).normalize();
+  const productionYawDegrees = Math.atan2(transformedToe.x, transformedToe.z) * 180 / Math.PI;
+  assert.ok(Vector3.Distance(transformedUp, Vector3.Up()) < 1e-5);
+  assert.ok(Math.abs(productionYawDegrees) < .0001);
+  const canonicalBasis = { sourceSide: 'right', nativeModel: 78, productionYawDegrees,
+    originalNativeUpPreserved: true, adaptation: 'Same original right boot mirrored rigidly for the left side; the original left mesh/model79 is not used.' };
   const locomotion = await load('chao-locomotion');
-  const props = Object.fromEntries(await Promise.all(['right', 'left'].map(async side => [side, await load(`shadow-air-shoes-${side}`)])));
+  const propSource = await load(`shadow-air-shoes-${CHAO_SHOE_REFERENCE_SIDE}`);
   const motionBytes = await readFile(resolve(assetRoot, 'shadow-skate-motion.json'));
   sourceHashes['shadow-skate-motion'] = createHash('sha256').update(motionBytes).digest('hex');
   const skateMotion = JSON.parse(motionBytes);
@@ -93,6 +112,7 @@ try {
     const nodes = visual.getDescendants(), body = find(nodes, '001');
     const fixed = nodes.map(node => ({ node, parent: node.parent, scale: node.scaling.asArray() }));
     const shoes = [];
+    let mirroredRest;
     actor.computeWorldMatrix(true);
     const toRoot = Matrix.Invert(actor.getWorldMatrix());
     const torsoMeshes = body.getChildren().filter(node => /(?:^|-)attach_/.test(node.name))
@@ -105,20 +125,17 @@ try {
       socket.computeWorldMatrix(true);
       const nativeMeshes = meshNode.getChildMeshes().filter(mesh => mesh.getTotalVertices());
       const fit = geometryBounds(nativeMeshes, toRoot), restToRoot = socket.getWorldMatrix().multiply(toRoot);
-      const prop = props[side].instantiateModelsToScene(value => `${name}-shoe-${side}-${value}`, false, { doNotInstantiate: true });
+      const prop = propSource.instantiateModelsToScene(value => `${name}-shoe-${side}-${value}`, false, { doNotInstantiate: true });
       const root = new TransformNode(`${name}-shoe-${side}`, scene);
       for (const node of prop.rootNodes) node.parent = root;
-      root.rotationQuaternion = shoeRotation(side);
-      const meshes = collectNativeShoeParts(root).meshes, source = geometryBounds(meshes);
+      root.rotationQuaternion = shadowShoeMountRotation();
+      const { meshes, effects } = collectNativeShoeParts(root), source = geometryBounds(meshes);
       root.computeWorldMatrix(true);
       const marker = Vector3.TransformCoordinates(source.center, Matrix.Invert(root.getWorldMatrix()));
-      const scale = fit.size.z * CHAO_SHOE_LENGTH_RATIO / source.size.z, position = fit.center.subtract(source.center.scale(scale));
-      position.y = fit.min.y - source.min.y * scale;
-      const local = Matrix.Compose(new Vector3(scale, scale, scale), root.rotationQuaternion, position).multiply(Matrix.Invert(restToRoot));
-      local.decompose(root.scaling, root.rotationQuaternion, root.position);
-      const uniform = (Math.abs(root.scaling.x) + Math.abs(root.scaling.y) + Math.abs(root.scaling.z)) / 3;
-      root.scaling.set(Math.sign(root.scaling.x) * uniform, Math.sign(root.scaling.y) * uniform, Math.sign(root.scaling.z) * uniform);
-      root.parent = socket; root.computeWorldMatrix(true);
+      if (side === CHAO_SHOE_REFERENCE_SIDE) mirroredRest = mirroredShadowShoeRest(source, fit);
+      assert.ok(mirroredRest, 'Reference shoe must be fitted before its mirror.');
+      attachRigidGearAtRest(root, { socket, restToRoot }, mirroredRest[side]);
+      root.computeWorldMatrix(true);
       const restCenter = Vector3.TransformCoordinates(marker, root.getWorldMatrix());
       // Track the footbed at the native foot's center as well as the shell's
       // geometry center. A tall boot center describes a different pitch arc;
@@ -128,9 +145,23 @@ try {
       const oldSocket = find(nodes, side === 'right' ? '005' : '012'); oldSocket.computeWorldMatrix(true);
       const oldMarker = Vector3.TransformCoordinates(footbedWorld, Matrix.Invert(oldSocket.getWorldMatrix()));
       assert.ok(restCenter.asArray().every(Number.isFinite));
-      shoes.push({ side, root, marker, footbed, oldSocket, oldMarker, nativeMeshes, prop });
+      shoes.push({ side, root, marker, footbed, oldSocket, oldMarker, nativeMeshes, prop, meshes, effects,
+        restMatrix: root.getWorldMatrix().multiply(toRoot).asArray() });
       for (const mesh of nativeMeshes) mesh.setEnabled(false);
     }
+    const mirrorErrors = {};
+    for (const part of ['boot', 'nativeJets']) {
+      const vertices = shoes.map(shoe => geometryVertices(part === 'boot' ? shoe.meshes : shoe.effects.map(effect => effect.mesh), toRoot));
+      assert.equal(vertices[0].length, vertices[1].length, 'Mirrored shoes retain matching native topology.');
+      const maximum = Math.max(0, ...vertices[0].map((point, index) => Vector3.Distance(new Vector3(-point.x, point.y, point.z), vertices[1][index])));
+      assert.ok(maximum < 2e-6, `${name}: every original ${part} vertex must be mirrored at rest (${maximum}).`);
+      mirrorErrors[part] = { vertices: vertices[0].length, maximumWorldError: maximum };
+    }
+    const restMirror = { sourceSide: CHAO_SHOE_REFERENCE_SIDE, sourceAsset: `shadow-air-shoes-${CHAO_SHOE_REFERENCE_SIDE}`,
+      lengthRatio: CHAO_SHOE_LENGTH_RATIO, scale: mirroredRest.scale, mirrorErrors,
+      mounts: shoes.map(shoe => ({ side: shoe.side, slot: 'footwear', asset: `shadow-air-shoes-${CHAO_SHOE_REFERENCE_SIDE}`,
+        matrix: shoe.restMatrix, mirrored: shoe.side !== CHAO_SHOE_REFERENCE_SIDE,
+        nativeEffectIds: shoe.effects.map(effect => effect.modelId) })) };
     const run = attachNativeRun(imported, locomotion, pose), walk = entries.animationGroups.find(group => /Walk$/.test(group.name));
     assert.ok(run && walk);
     const gaitResults = [];
@@ -186,10 +217,11 @@ try {
     forms.push({ name, originalNodes: nodes.length, originalParentsScalesPreserved: true, nativeScaleTolerance: 2e-6,
       gaitResults, skate: { samples: 165, ...skateResult, originalTranslationsPreserved: true },
       chest: { surface: skin.asArray(), aabbFront: torsoBounds.max.z } });
+    forms.at(-1).restMirror = restMirror;
     shoes.forEach(shoe => { shoe.prop.dispose(); shoe.root.dispose(); });
     entries.dispose(); visual.dispose(); actor.dispose(); asset.dispose();
   }
-  const report = { result: 'PASS', footwearSockets: CHAO_GEAR_JOINTS.map(([side, , , socket]) => ({ side, socket })), sourceHashes, forms,
+  const report = { result: 'PASS', canonicalBasis, footwearSockets: CHAO_GEAR_JOINTS.map(([side, , , socket]) => ({ side, socket })), sourceHashes, forms,
     limits: 'NullEngine asset/rig proof; actual renderer, trusted snapshot path, heel effects and visual grounding require separate live verification.' };
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`);

@@ -1,4 +1,5 @@
 import { Matrix, Quaternion, Vector3 } from '@babylonjs/core';
+import { smoothObservedSpeed } from './chao-locomotion.js';
 
 // Browser world units/second. Current Rust dry-ground speed is
 // 1.4 + runLevel * .006 (maximum1.994). These presentation thresholds never
@@ -6,14 +7,40 @@ import { Matrix, Quaternion, Vector3 } from '@babylonjs/core';
 export const SKATE_ENTER_SPEED = 1.55;
 export const SKATE_EXIT_SPEED = 1.30;
 export const SKATE_REFERENCE_SPEED = 1.8;
-export const SKATE_BLEND_SECONDS = 0.18;
+export const SKATE_BLEND_SECONDS = 0.42;
+export const SKATE_BLEND_OUT_SECONDS = 0.28;
+export const SKATE_SPEED_BLEND_SECONDS = 0.32;
+// Verified AnimationInfo states8/9/10, not direct resource-state172/173/174.
+// Mapping this MMO's observed speed bands onto these native rates is a
+// presentation adaptation; the retail movement-dependent timing is untraced.
+export const SKATE_SOURCE_RATES = Object.freeze({ 172: .12, 173: .15, 174: .20 });
+const frameDelta = dt => Math.max(0, Math.min(.1, Number.isFinite(dt) ? dt : 0));
+const smoothstep = value => value * value * (3 - 2 * value);
+
+function sourceBlend(speed) {
+  return speed < 1.8
+    ? { ids: [172, 173], mix: Math.max(0, Math.min(1, (speed - SKATE_ENTER_SPEED) / (1.8 - SKATE_ENTER_SPEED))) }
+    : { ids: [173, 174], mix: Math.max(0, Math.min(1, (speed - 1.8) / (1.994 - 1.8))) };
+}
+
+function nativeSourceRates(motion) {
+  return Object.fromEntries([172, 173, 174].map((id, index) => {
+    const speed = motion?.clips.find(clip => clip.nativeId === id)?.nativeStates
+      ?.find(state => state.index === 8 + index)?.animationSpeed;
+    return [id, Number.isFinite(speed) && speed > 0 && speed <= .5 ? speed : SKATE_SOURCE_RATES[id]];
+  }));
+}
 // Angular limits are a Chao retargeting adaptation. Source poses can rotate a
 // Shadow limb163° from bind pose; copying that range onto the much shorter
 // Chao limbs would fold the shoes/hands through the body.
 export const SKATE_ROTATION_LIMITS = {
-  body: 30, head: 35, leftUpperArm: 75, rightUpperArm: 75,
+  body: 24, head: 18, leftUpperArm: 75, rightUpperArm: 75,
   leftHand: 75, rightHand: 75, leftFoot: 50, rightFoot: 50,
 };
+// A Chao's large head exaggerates Shadow's native head sway. Retain35% of
+// that original rotation before the angular cap; keep native positions and
+// the full arm/foot strokes. This is anatomy adaptation, not a new motion.
+export const SKATE_ROTATION_WEIGHTS = Object.freeze({ head: .35 });
 
 let sharedMotion;
 async function loadMotion() {
@@ -54,20 +81,31 @@ export function observeSkateMotion(previous, player, serverTime, observedAt) {
 export class SkateCadence {
   constructor() {
     this.active = false; this.blend = 0; this.phase = 0;
-    this.speed = 0; this.rate = 0; this.state = 'idle';
+    this.speed = 0; this.visualSpeed = 0; this.rate = 0; this.state = 'idle';
+    this.blendProgress = 0;
   }
 
   update(dt, { speed = 0, grounded = false, footwear = false, mounted = false,
-    swimming = false, fresh = false, available = false } = {}) {
-    dt = Math.max(0, Math.min(0.1, Number.isFinite(dt) ? dt : 0));
-    this.speed = Number.isFinite(speed) ? Math.max(0, speed) : 0;
+    swimming = false, fresh = false, available = false, sourceRates = SKATE_SOURCE_RATES } = {}) {
+    dt = frameDelta(dt);
+    this.speed = Number.isFinite(speed) ? Math.max(0, Math.min(3, speed)) : 0;
     const blocked = !grounded || !footwear || mounted || swimming || !fresh || !available;
-    if (blocked) { this.active = false; this.blend = 0; }
+    if (blocked) {
+      this.active = false; this.blendProgress = 0;
+      this.visualSpeed = 0; this.phase = 0;
+    }
     else if (this.active) this.active = this.speed >= SKATE_EXIT_SPEED;
     else this.active = this.speed >= SKATE_ENTER_SPEED;
     const target = this.active ? 1 : 0;
-    this.blend += Math.sign(target - this.blend) * Math.min(Math.abs(target - this.blend), dt / SKATE_BLEND_SECONDS);
-    this.rate = this.speed > 0.05 ? Math.min(2, Math.max(0.35, this.speed / SKATE_REFERENCE_SPEED)) : 0;
+    const duration = this.active ? SKATE_BLEND_SECONDS : SKATE_BLEND_OUT_SECONDS;
+    this.blendProgress += Math.sign(target - this.blendProgress)
+      * Math.min(Math.abs(target - this.blendProgress), dt / duration);
+    this.blend = smoothstep(this.blendProgress);
+    if (this.blend) this.visualSpeed = smoothObservedSpeed(this.visualSpeed, this.speed, dt, SKATE_SPEED_BLEND_SECONDS);
+    else { this.visualSpeed = 0; this.phase = 0; }
+    const { ids, mix } = sourceBlend(this.visualSpeed);
+    const nativeRate = sourceRates[ids[0]] + (sourceRates[ids[1]] - sourceRates[ids[0]]) * mix;
+    this.rate = this.blend ? nativeRate * Math.min(1, this.visualSpeed / SKATE_ENTER_SPEED) : 0;
     this.state = mounted ? 'mounted' : !grounded ? 'airborne' : swimming ? 'swimming'
       : !fresh ? 'stale' : !footwear ? 'normal' : !available ? 'unavailable'
         : this.active ? this.blend < 1 ? 'blending-in' : 'skating'
@@ -135,8 +173,11 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
     return { node, semantic, restWorld: relativeRotation(node, root), base: null };
   }).filter(Boolean).sort((a, b) => nodeDepth(a.node) - nodeDepth(b.node)) : [];
   let data = supportedMotion(motion) ? motion : null;
+  let sourceRates = data ? nativeSourceRates(data) : SKATE_SOURCE_RATES;
   let disposed = false, clipName = '', deltaTime = 0;
-  if (!data && targets.length) void fetchMotion().then(value => { if (!disposed && supportedMotion(value)) data = value; });
+  if (!data && targets.length) void fetchMotion().then(value => {
+    if (!disposed && supportedMotion(value)) { data = value; sourceRates = nativeSourceRates(data); }
+  });
 
   function restoreBase() {
     for (const target of targets) if (target.base && !target.node.isDisposed()) {
@@ -146,18 +187,16 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
   }
 
   function update(dt, state) {
-    deltaTime = Math.max(0, Math.min(0.1, dt));
-    cadence.update(deltaTime, { ...state, available: !!data && targets.length === TARGETS.length });
+    deltaTime = frameDelta(dt);
+    cadence.update(deltaTime, { ...state, available: !!data && targets.length === TARGETS.length,
+      sourceRates });
     if (!cadence.blend) clipName = '';
   }
 
   function apply() {
     if (!data || !root || root.isDisposed() || !cadence.blend) return;
-    const ids = cadence.speed < 1.8 ? [172, 173] : [173, 174];
+    const { ids, mix } = sourceBlend(cadence.visualSpeed);
     const clips = ids.map(id => data.clips.find(clip => clip.nativeId === id));
-    const mix = Math.max(0, Math.min(1, cadence.speed < 1.8
-      ? (cadence.speed - SKATE_ENTER_SPEED) / (1.8 - SKATE_ENTER_SPEED)
-      : (cadence.speed - 1.8) / (1.994 - 1.8)));
     const duration = clips[0].durationSeconds + (clips[1].durationSeconds - clips[0].durationSeconds) * mix;
     cadence.phase = (cadence.phase + deltaTime * cadence.rate / duration) % 1;
     clipName = `${clips[mix < 0.5 ? 0 : 1].nativeId}`;
@@ -170,6 +209,8 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
       if (!a || !b) continue;
       const source = Quaternion.Slerp(a, b, mix).normalize();
       let delta = alignment.multiply(source).multiply(quaternion(sourceBone.restWorld).conjugate()).multiply(inverseAlignment).normalize();
+      const weight = SKATE_ROTATION_WEIGHTS[target.semantic] ?? 1;
+      if (weight < 1) delta = Quaternion.Slerp(Quaternion.Identity(), delta, weight).normalize();
       const angle = 2 * Math.acos(Math.min(1, Math.abs(delta.w)));
       const limit = (SKATE_ROTATION_LIMITS[target.semantic] || 50) * Math.PI / 180;
       if (angle > limit) delta = Quaternion.Slerp(Quaternion.Identity(), delta, limit / angle).normalize();
@@ -184,7 +225,8 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
 
   return { update, apply, restoreBase,
     get diagnostics() { return { active: cadence.blend > 0, state: cadence.state,
-      speed: cadence.speed, rate: cadence.rate, blend: cadence.blend, clip: clipName }; },
+      speed: cadence.speed, visualSpeed: cadence.visualSpeed, phase: cadence.phase,
+      rate: cadence.rate, blend: cadence.blend, clip: clipName }; },
     dispose() { disposed = true; restoreBase(); },
   };
 }

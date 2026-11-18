@@ -4,6 +4,86 @@ November 18, 2026. Client branch `codex/footwear-motion-fix`, based on
 `435f6a3689c2f25ebc1c6526d2075d59321c7b28`. This is a browser presentation
 change using the existing Rust authority and protocol.
 
+## Latest presentation follow-up
+
+Current branch `codex/music-controls`, base
+`a7a8d093838d66cc5fa190aaf71a60a5ad410de9`. Earlier sections below preserve
+historical checkpoints; the current mirrored fit supersedes the separate
+left/right shoe fitting.
+
+The user's newest corrections require exactly mirrored boots, the same fit in
+the title portrait, smooth whole-body skating with less head bob, and gloves
+that stay on the visible palms. These follow-ups are implemented in the current
+client source; the older clips below do not establish their browser acceptance.
+
+The runtime now reuses the original RIGHT Shadow shoe alias/model78 for both
+feet. One actor-local rest fit supplies the common0.90 length ratio and uniform
+scale magnitude; the left placement is the exact X reflection of the right.
+Each remains parented to its own native006/013 foot. Original right jet models
+96–99 reflect with that shell. This explicit mirroring adaptation preserves
+the original right-model geometry/materials and all native Chao joints; it is
+not a claim that the distinct native left model was loaded unchanged. See
+[MIRRORED-GEAR-FIT.md](MIRRORED-GEAR-FIT.md).
+
+The three-form `.local/reviews/mirrored-shoe-proof.json` checks207 boot and48
+jet vertices per side, native Walk/Run alternation and skating. Rest mirror
+error is0 for Neutral/Dark and3.73e-9 for Hero; verified source toe yaw is below
+8.06e-7°. Production helper mounts are recorded in
+`.local/reviews/mirrored-shoe-mounts.json`. The title-image source uses the same
+mirrored right shoe, with independently measured1.676e-8 vertex error; final
+title-image and in-game front silhouettes were subsequently checked in the
+actual browser. Both now show the same mirrored pair.
+
+Visible native arm/palm geometry belongs to003/010. Their meshless children
+004/011 are distal bind markers, and the skating overlay rotates them
+independently. Gloves now capture and mount on003/010, using004/011 only to
+find the original distal-palm direction. The original rigid glove fit and
+Chao rig remain intact. `scripts/verify-native-glove-contact.mjs` executes
+production socket/mount helpers with the actual original left/right glove
+props across all three forms and2,166 frames. Its ignored
+`.local/reviews/native-glove-contact-proof.json` records maximum contact drift
+3.43e-8 world units and relative-matrix error3.58e-7; the former leaf-socket
+baseline drifts up to0.04654 world units.
+
+The latest gear checkpoint passed21 client tests and the production build.
+The slower skate blend/cadence and18° head/24° torso limits are documented in
+[SHADOW-SKATE.md](SHADOW-SKATE.md). Actual browser/service validation of the
+combined latest gear, material, music and Watch controls has a bounded browser
+checkpoint below. Wider terrain, multi-client and transition acceptance stays
+open. No backend rollout or canonical-save migration is established by these
+source proofs.
+
+### Current browser/service checkpoint
+
+On November 18 the actual browser at isolated port 5176 used the frozen Rust
+service and a disposable admin Chao with 20 rings. Music played the existing
+native hub MP3 after a button click. Muting, changing volume while muted,
+independent NPC voice enablement, and reload persistence passed. Arrow keys
+adjusted the focused slider without moving the Chao; W on the slider left
+server position unchanged, then W on the canvas moved Z from 6.000 to 7.526.
+The revised controls use blue/gold menu styling and a custom ring-shaped
+slider thumb. The 1280×720 header had no page overflow.
+
+Watch start changed the server snapshot to the Neutral Garden with active
+Watch. Take control confirmed manual mode and focused the canvas. Gloves were
+equipped through the real service, both gear slots survived explicit Save and
+reload, and the browser rendered the mirrored front stance and original
+title portrait. Music stayed muted. The fixture later loaded copied native
+terrain files as well, avoiding a flat-server/native-renderer mismatch.
+
+The tip/hand material change restores native bilinear filtering and clamp
+addressing. It does not establish that those opaque body surfaces had an alpha
+leak: their original pixels were already fully opaque. The front silhouette
+shows the solid native body and intended flame/emerald translucency; additional
+view/terrain acceptance remains open.
+
+Fresh checks: 21 client tests/build; real disposable Rust proof 14 checks,
+60 samples/58 observer snapshots; actual three-form shoe proof; 2,166-frame
+native glove-contact proof; and 648-frame Shadow retarget proof all passed.
+Local screenshot: `.local/screenshots/mirrored-gear-and-sound.png`. Browser
+testing changed only disposable profiles; the canonical 139-ring Chao was
+observed through Tiny Garden without care, purchases or minigame mutations.
+
 ## Current follow-up integration
 
 The later `codex/native-presentation-fixes` branch replaces the historical

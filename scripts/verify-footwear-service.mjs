@@ -154,8 +154,11 @@ try {
   check('bounded walk input selects native Walk without skating', rows('walk').some(row => row.gait === 'Walk' && !row.skate));
   check('bounded run input selects native Run below skating', rows('run').some(row => row.gait === 'Run' && !row.skate));
   check('full bounded input reaches skating threshold', rows('skate').some(row => row.skate && row.speed > 1.55));
-  check('skate cadence follows observed authoritative speed', rows('skate').filter(row => row.skate)
-    .every(row => Math.abs(row.cadence - row.speed / 1.8) < 1e-9));
+  const skating = rows('skate').filter(row => row.skate);
+  check('skate cadence ramps inside native state8–10 timing bounds', skating.length > 2
+    && skating.every(row => row.cadence > 0 && row.cadence <= .20)
+    && skating.at(-1).cadence > skating[0].cadence
+    && skating.at(-1).cadence > .12);
   const airborne = samples.filter(row => !row.grounded && row.jumpOffset > .001);
   check('actual airborne snapshots immediately disable skating', airborne.length > 0 && airborne.every(row => !row.skate && row.blend === 0));
   const mounted = rows('mech-move');
