@@ -39,6 +39,13 @@ function render() {
   const routine = profile?.watch ? ({ wander: 'Exploring the garden', rest: 'Taking a little rest', idle: 'Enjoying the garden' })[profile.watch.activity] || 'In the shared garden'
     : profile ? 'Ready for a little adventure' : 'Connect your saved Chao';
   setText('#widget-routine', connectionState === 'offline' && profile ? 'Last known garden state' : routine);
+  // This legacy browser snapshot does not currently carry the durable AFK contract.
+  // Missing status must never be presented as an authoritative "no job".
+  const training = profile?.training;
+  const phase = training?.status;
+  setText('#widget-training-status', phase === 'none' ? 'No AFK job · open app to train'
+    : ['training', 'ready', 'settled', 'canceled'].includes(phase) ? `${training.skill || 'Training'} · ${phase}`
+      : 'AFK status unavailable');
   setText('#widget-sync-label', lastSyncedAt ? `${connectionState === 'live' ? 'SYNCED' : 'LAST SYNC'} ${new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(lastSyncedAt)}` : 'SAVE NOT CONNECTED');
   const label = profile ? `${profile.name || 'Chao'} · ${chaoFormLabel(profile)}` : 'Garden mascot preview; connect to show your saved Chao';
   canvas.setAttribute('aria-label', label);
