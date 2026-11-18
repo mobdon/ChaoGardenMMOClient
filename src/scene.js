@@ -7,6 +7,8 @@ import {
 import '@babylonjs/loaders/glTF/index.js';
 import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
+import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, stepInputPace } from './chao-locomotion.js';
+import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
   constructor(material) {
@@ -103,6 +105,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   let disposed = false;
   let time = 0;
   let inputTimer = 0;
+  let inputPace = 0;
+  const gaitControls = createGaitControls(canvas);
   let flameTexture = null;
   let flameMaterialPromise = null;
   let selfVehicleActive = false;
@@ -404,6 +408,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       current: null,
     };
     item.imported.gearSockets = captureGearSockets(item);
+    const locomotionPose = captureChaoPose(item.imported);
+    void loadLocalAsset('chao-locomotion').then(source => {
+      if (source && !disposed && !item.root.isDisposed()) {
+        attachNativeRun(item.imported, source, locomotionPose);
+        canvas.dataset.nativeRun = item.imported.run ? 'native119-loaded' : 'unavailable';
+      }
+    });
     item.imported.skate = createShadowSkate(item.imported);
     item.root.metadata.shadowSkate = item.imported.skate;
     if (item.accessory) item.accessory.position.y = height * 0.78;
@@ -1364,7 +1375,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   }
   function keyDown(event) {
     if (paused || textFocused()) return;
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'AltLeft', 'AltRight'].includes(event.code)) event.preventDefault();
     keys.add(event.code);
     if (!event.repeat && event.code === 'KeyF') onAction('attack');
     if (!event.repeat && event.code === 'KeyE') onAction('feed');
@@ -1374,7 +1385,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     }
   }
   function keyUp(event) { keys.delete(event.code); }
-  function blur() { keys.clear(); touch.dx = 0; touch.dz = 0; onInput({ dx: 0, dz: 0, jump: false, boost: false }); }
+  function blur() { keys.clear(); touch.dx = 0; touch.dz = 0; inputPace = 0; onInput({ dx: 0, dz: 0, jump: false, boost: false }); }
   function pointerDown(event) {
     if (paused || event.button !== 0) return;
     const pick = scene.pick(scene.pointerX, scene.pointerY);
@@ -1421,6 +1432,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (flameTexture) flameTexture.uOffset = (Math.floor(time * 18) % 16) / 16;
     inputTimer += dt;
     if (inputTimer >= 0.05) {
+      const inputDt = inputTimer;
       inputTimer = 0;
       const acceptsInput = !paused && !textFocused();
       let dx = acceptsInput ? (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0) + touch.dx : 0;
@@ -1436,6 +1448,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       let worldDx = right.x * dx - forward.x * dz;
       let worldDz = right.z * dx - forward.z * dz;
       const mounted = !!playerMeshes.get(snapshot?.selfId)?.vehicleKey;
+      const paceMode = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 'walk' : keys.has('AltLeft') || keys.has('AltRight') ? 'run' : gaitControls.mode;
+      inputPace = stepInputPace(inputPace, paceMode, length > 0, inputDt, mounted);
+      worldDx *= inputPace; worldDz *= inputPace;
+      canvas.dataset.gaitInputMode = paceMode; canvas.dataset.gaitInputScale = inputPace.toFixed(3);
       onInput({ dx: worldDx, dz: worldDz, jump: acceptsInput && keys.has('Space') && !mounted, boost: acceptsInput && keys.has('Space') && mounted });
     }
     const interpolation = Math.min(1, dt * 13);
@@ -1469,12 +1485,15 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           mounted: !!item.vehicleKey,
           fresh,
         });
-        const animation = item.moving && !item.vehicleKey && motion?.grounded ? item.imported.walk || item.imported.idle : item.imported.idle;
+        const speed = fresh && motion?.grounded && !item.vehicleKey ? motion.speed : 0;
+        item.nativeGait = chooseNativeGait(speed, item.nativeGait);
+        const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
         if (animation && item.imported.current !== animation) {
           item.imported.current?.stop();
           animation.start(true, 1);
           item.imported.current = animation;
         }
+        if (animation) animation.speedRatio = nativeGaitRate(animation === item.imported.run ? 'Run' : animation === item.imported.walk ? 'Walk' : 'Idle', speed);
       }
       if (item.vehicle) animateWalker(item, dt);
       for (const emerald of item.emeralds || []) {
@@ -1559,13 +1578,15 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     canvas.dataset.skateRate = (skate?.rate || 0).toFixed(3);
     canvas.dataset.skateBlend = (skate?.blend || 0).toFixed(3);
     canvas.dataset.skateClip = skate?.clip || '';
+    canvas.dataset.chaoMotion = skate?.active ? `ShadowSkate${skate.clip}` : self?.imported?.run && self.imported.current === self.imported.run ? 'NativeRun119' : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
+    canvas.dataset.chaoMotionRate = (self?.imported?.current?.speedRatio || 1).toFixed(3);
   });
   onReady();
 
   return {
     setSnapshot,
     handleEvent,
-    setPaused(value) { paused = !!value; if (paused) blur(); },
+    setPaused(value) { paused = !!value; gaitControls.setPaused(paused); if (paused) blur(); },
     setTouchInput(dx, dz) { touch.dx = Math.max(-1, Math.min(1, dx)); touch.dz = Math.max(-1, Math.min(1, dz)); },
     dispose() {
       disposed = true;
@@ -1576,6 +1597,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       canvas.removeEventListener('pointerdown', pointerDown);
       canvas.removeEventListener('contextmenu', suppressContextMenu);
       resizeObserver.disconnect();
+      gaitControls.dispose();
       scene.dispose();
       engine.dispose();
     },

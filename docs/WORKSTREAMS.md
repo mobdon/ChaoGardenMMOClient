@@ -4,6 +4,7 @@ Updated November 18, 2026. This is the handoff for user-created chats, not a cla
 
 ## Coordination rules
 
+- Use the server repository's `docs/coordination/BOARD.md`, `PROTOCOL.md` and `WORKSTREAMS.md` for Vibe Coder/repository coordination. This chat does not update the private Vibe website board. Claim a workstream and record its branch, dependencies, evidence and PR there; do not assume an unreported chat is running.
 - This original chat owns integration, release QA, the playable preview, TASKS.md and cross-repository contracts.
 - Use a separate branch/worktree for each implementation chat. Start from the verified published source; do not let multiple chats mutate the same checkout/index. Branches use codex/ prefix. Open reviewable PRs; the integration chat coordinates merges.
 - Client root is C:/Users/Admin/Documents/ChatGPT/mmo. Server root is C:/Users/Admin/Documents/ChatGPT/mmo/server. Do not combine the two Git histories.
@@ -29,7 +30,7 @@ Work in ChaoGardenMMOClient on Tiny Garden mobile UI/PWA only. Read docs/WORKSTR
 ### 2. Client — Android home-screen widget
 
 ```text
-Work in ChaoGardenMMOClient on the real Android Tiny Garden widget. Read docs/WORKSTREAMS.md and docs/TINY-GARDEN.md first. Android is the selected first platform. Own android/ and widget.html/src/widget.js/src/widget.css; web preview is not an installed widget. Build compact/wide/large layouts with native Chao art, chest/orbit emerald identity, live needs/stats, real training status and one-tap Tiny Garden entry. Use authenticated read-only snapshots and secure revocable device pairing; label cached/stale data. Keep Rust authority on the server; native Android glue may use Kotlin/RemoteViews or Glance. Respect OS background limits; no pretend continuously running widget game. Build/lint and test an actual APK/widget when toolchain/device access exists; report missing prerequisites honestly. Isolated codex/ branch, coordinate API requirements, PR plus proof.
+Work in ChaoGardenMMOClient on the real Android Tiny Garden widget. Read docs/WORKSTREAMS.md and docs/TINY-GARDEN.md first. Android is the selected first platform. Own android/ and widget.html/src/widget.js/src/widget.css; web preview is not an installed widget. Build compact/wide/large layouts with native Chao art, chest/orbit emerald identity, live needs/stats, real training status and one-tap Tiny Garden entry. The widget is specifically Tiny Garden: check on the same Chao and use quick pet/care actions; open the full Tiny Garden app for minigames and AFK training controls. Use authenticated snapshots, server-validated care/training intents and secure revocable device pairing; label cached/stale data. Keep Rust authority on the server; native Android glue may use Kotlin/RemoteViews or Glance. Respect OS background limits; no pretend continuously running widget game. Build/lint and test an actual APK/widget when toolchain/device access exists; report missing prerequisites honestly. Isolated codex/ branch, coordinate API requirements, PR plus proof.
 ```
 
 ### 3. Server — Durable AFK training
