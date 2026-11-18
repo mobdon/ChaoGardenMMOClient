@@ -58,15 +58,21 @@ test('ornaments require the complete seven original square cells and retain unif
   assert.equal(context.globalCompositeOperation, 'source-over');
 });
 
-test('native front Idle feet land at the garden grass point with square scaling', () => {
+test('native front Idle scales with each garden while feet stay on grass and the full portrait fits', () => {
   for (const variant of ['dark', 'hero', 'neutral']) {
-    for (const size of ['compact', 'wide', 'large']) {
-      const placement = widgetCanvasPlacement(176, 160, variant, size);
-      assert.ok(Math.abs(placement.left - 109.12) < 0.0001);
+    for (const [width, height] of [[138, 103], [138, 126], [320, 164], [176, 160], [100, 200]]) {
+      const placement = widgetCanvasPlacement(width, height, variant);
+      const mapScale = Math.min(width / 176, height / 160);
+      const mapWidth = 176 * mapScale, mapHeight = 160 * mapScale;
+      const mapLeft = (width - mapWidth) / 2, mapTop = (height - mapHeight) / 2;
+      assert.ok(Math.abs(placement.size / mapScale - 32) < 0.0001);
+      assert.ok(Math.abs(placement.left - (mapLeft + mapWidth * 0.62)) < 0.0001);
       const alphaBottom = variant === 'neutral' ? 83 / 96 : 84 / 96;
       const actualFeet = placement.top + placement.size * (50 + 292 * alphaBottom) / 360;
-      assert.ok(Math.abs(actualFeet - 108.8) < 0.0001);
-      assert.ok(placement.top >= 0 && placement.size > 0);
+      assert.ok(Math.abs(actualFeet - (mapTop + mapHeight * 0.68)) < 0.0001);
+      assert.ok(placement.left - placement.size / 2 >= mapLeft);
+      assert.ok(placement.left + placement.size / 2 <= mapLeft + mapWidth);
+      assert.ok(placement.top >= mapTop && placement.top + placement.size <= mapTop + mapHeight);
     }
   }
   const inset = widgetCanvasPlacement(320, 164, 'dark');

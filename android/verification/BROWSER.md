@@ -34,6 +34,15 @@ Executed checks:
   full large widget remains visible by scrolling without horizontal overflow
   (`clientWidth=scrollWidth=375`, accounting for browser scrollbar). Restored
   the default viewport after validation.
+- Follow-up scale adjustment: the complete square portrait now uses a 32px
+  footprint at the garden's native resolution (20% of its displayed height),
+  rather than separate fixed pixel limits. The visible body is about 20 native
+  pixels high, a presentation adaptation comparable to a small handheld sprite,
+  not a recovered GBA normal sprite metric. Native proportions and the grass
+  foot anchor remain unchanged;
+  the full frame, including flame/emerald margins, fits inside the garden.
+  Compact/wide/large and the 390px layout were visually rechecked; the existing
+  placement regression now checks scene-relative scale and all four bounds.
 - Opened the existing live widget at port 5173 and followed its Tiny Garden
   link. Both displayed the same saved Chao and canonical values from the actual
   legacy Rust service. This confirms that live handoff was working during

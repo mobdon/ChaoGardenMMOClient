@@ -29,7 +29,7 @@ Final local artifacts from the configured four-task verification:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `app/build/outputs/apk/debug/app-debug.apk` | `075a82d417702ab1dedc6f6570e7f033fb03843880852496f508ff31f5e82a8e` |
+| `app/build/outputs/apk/debug/app-debug.apk` | `9c88270af59716d702b2b430952b66244971b777b5d379c4c1f53e32a1d21697` |
 | `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk` | `1faa1517d2d654efa33536000faba816940a6d84e72bb79d6425f106d6506f1d` |
 
 Google's `apksigner verify --verbose --print-certs` verifies the application APK
@@ -48,7 +48,7 @@ All eleven atlas/flame/transparent-gem APK entries also match their exact
 `ORIGINAL-ASSETS.json` hashes. The original opaque emerald environment textures
 are absent from the APK. The final application signature verifies using v2.
 The local final build log is
-`verification/local/build-chaos-art-grounded-2026-11-18.log`.
+`verification/local/build-chaos-native-sprite-size-2026-11-18.log`.
 
 The new catalog tests distinguish art-only unpaired preview descriptors from
 canonical players, block preview whenever any credential/snapshot exists,
@@ -61,7 +61,9 @@ modified atlas was rejected before any staging; the prior staged atlas hash
 remained unchanged. Original bytes remain ignored. Native Canvas composition
 and visible/accessibility preview labels still require Android runtime QA.
 
-The two grounding regressions preserve uniform portrait scale and map all
+The two grounding regressions preserve uniform 0.20 portrait scale (32 original
+garden pixels for the complete frame, approximately 20 pixels for the body), retain the
+complete original portrait/flame/emerald frame within the scene and map all
 three original front-idle foot bounds to source garden grass point
 `(109.12,108.8)`, rather than the pond under the previous centered pose.
 Native optional-ornament loading preserves the actual base body/flame and

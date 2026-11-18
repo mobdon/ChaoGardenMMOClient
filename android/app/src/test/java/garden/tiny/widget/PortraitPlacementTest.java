@@ -10,10 +10,13 @@ public final class PortraitPlacementTest {
             float scaleX = (bounds[2] - bounds[0]) / 256f;
             float scaleY = (bounds[3] - bounds[1]) / 256f;
             assertEquals("Uniform native proportions", scaleX, scaleY, 0.00001f);
+            assertEquals("Portrait matches a 32px original-garden footprint", 0.20f, scaleX, 0.00001f);
             assertEquals("Grass x after original map center crop", 161.792f, bounds[0] + 128f * scaleX, 0.001f);
             assertEquals("Grass y, above the pond", 174.08f, bounds[1] + originalFoot * scaleY, 0.001f);
             assertTrue("Original flame remains in the scene", bounds[1] >= 0);
             assertTrue("Original front feet remain in the scene", bounds[1] + originalFoot * scaleY < 256);
+            assertTrue("Complete original portrait fits horizontally", bounds[0] >= 0 && bounds[2] <= 256);
+            assertTrue("Complete flame and ornaments fit vertically", bounds[3] <= 256);
         }
     }
     @Test public void invalidSourceGroundingIsRejected() {

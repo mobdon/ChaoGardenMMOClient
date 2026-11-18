@@ -90,7 +90,7 @@ h1, h2, p { margin: 0; }
 .widget-ring-balance small { grid-column: 2; font-size: 6px; color: #d1b87e; letter-spacing: 1px; }
 .widget-garden-window { position: relative; height: 164px; overflow: hidden; border: 1px solid #91ba8e66; border-radius: 10px; background: #325839; }
 .widget-garden-art { height: 100%; width: 100%; object-fit: contain; image-rendering: pixelated; display: block; }
-.widget-avatar { position: absolute; width: 130px; height: 130px; left: 50%; top: 0; transform: translateX(-50%); pointer-events: none; filter: drop-shadow(0 4px 3px #17312155); }
+.widget-avatar { position: absolute; width: 32px; height: 32px; left: 50%; top: 0; transform: translateX(-50%); pointer-events: none; filter: drop-shadow(0 1px 1px #17312155); }
 .widget-avatar-note, .widget-art-missing { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 7px 9px; border-radius: 5px; border: 1px solid #d8ebc746; background: #112c23de; font-size: 10px; text-align: center; color: #edf7df; width: max-content; max-width: 90%; }
 .widget-art-missing { top: 25%; font-size: 9px; }
 .widget-art-label { position: absolute; left: 6px; bottom: 6px; font-size: 5px; letter-spacing: .6px; background: #122b21bd; padding: 4px 5px; border-radius: 3px; color: #e5f4d7; }
@@ -138,7 +138,6 @@ h1, h2, p { margin: 0; }
 .garden-widget[data-size=compact] .widget-ring-balance { display: none; }
 .garden-widget[data-size=compact] .widget-owner { font-size: 5px; top: 30px; }
 .garden-widget[data-size=compact] .widget-garden-window { height: 103px; border-radius: 7px; }
-.garden-widget[data-size=compact] .widget-avatar { width: 82px; height: 82px; }
 .garden-widget[data-size=compact] .widget-avatar-note { font-size: 7px; padding: 6px; }
 .garden-widget[data-size=compact] .widget-art-missing { font-size: 6px; padding: 3px; }
 .garden-widget[data-size=compact] .widget-art-label { font-size: 4px; padding: 3px; left: 3px; bottom: 3px; letter-spacing: 0; }
@@ -151,7 +150,6 @@ h1, h2, p { margin: 0; }
 .garden-widget[data-size=wide] { grid-template-columns: 1fr 1.08fr; gap: 7px 10px; padding: 12px; border-radius: 17px; }
 .garden-widget[data-size=wide] .widget-topline { grid-column: 1 / -1; }
 .garden-widget[data-size=wide] .widget-garden-window { grid-column: 1; grid-row: 2 / 5; height: 126px; align-self: stretch; }
-.garden-widget[data-size=wide] .widget-avatar { height: 108px; width: 108px; }
 .garden-widget[data-size=wide] .widget-avatar-note { font-size: 8px; padding: 6px; }
 .garden-widget[data-size=wide] .widget-art-label { font-size: 4px; padding: 3px; left: 3px; bottom: 3px; letter-spacing: 0; }
 .garden-widget[data-size=wide] .widget-identity { grid-column: 2; grid-row: 2; align-self: start; }
