@@ -9,12 +9,13 @@ checkout are not writable test fixtures.
 
 `android/verify.ps1` successfully ran the real Gradle tasks `assembleDebug
 lintDebug testDebugUnitTest assembleDebugAndroidTest`, including the locally
-staged original A2NE garden background. Application and instrumentation APKs
+staged original A2NE garden background and all eleven original/adapted Chaos
+art assets. Application and instrumentation APKs
 were produced independently of the browser build. Debug signing, original
 pixels and generated APKs remain local/ignored.
 
-All 38 regular JVM tests passed: AccountAdapter 9, CarePolicy 11,
-OriginalCatalog 4, ServerOrigin 3, Snapshot 11. The default report contains 39
+All 44 regular JVM tests passed: AccountAdapter 9, CarePolicy 11,
+OriginalCatalog 8, PortraitPlacement 2, ServerOrigin 3, Snapshot 11. The default report contains 45
 tests, zero failures/errors and one deliberately skipped real-service test.
 The separately gated test passed in both phases of its dedicated runner below.
 
@@ -28,7 +29,7 @@ Final local artifacts from the configured four-task verification:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `app/build/outputs/apk/debug/app-debug.apk` | `368390bfc98464a6e7607f46bd114721572d28544c92fce8d577f9e00c6542f8` |
+| `app/build/outputs/apk/debug/app-debug.apk` | `075a82d417702ab1dedc6f6570e7f033fb03843880852496f508ff31f5e82a8e` |
 | `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk` | `1faa1517d2d654efa33536000faba816940a6d84e72bb79d6425f106d6506f1d` |
 
 Google's `apksigner verify --verbose --print-certs` verifies the application APK
@@ -43,7 +44,31 @@ inspection confirms disabled backup/cleartext, an unexported care receiver,
 the JobScheduler service's BIND_JOB_SERVICE permission and the extraction rules.
 The APK's 14,636-byte `assets/tiny-garden-a2ne.png` entry has the exact expected
 SHA-256 `75eb4d2839418fc730773377a1135776a0c361cbb1b6967af8134d8d4b5469ae`.
-The local final build log is `verification/local/build-final-2026-11-18.log`.
+All eleven atlas/flame/transparent-gem APK entries also match their exact
+`ORIGINAL-ASSETS.json` hashes. The original opaque emerald environment textures
+are absent from the APK. The final application signature verifies using v2.
+The local final build log is
+`verification/local/build-chaos-art-grounded-2026-11-18.log`.
+
+The new catalog tests distinguish art-only unpaired preview descriptors from
+canonical players, block preview whenever any credential/snapshot exists,
+reject filename/hash mismatches and forbid server routes on bundled-only gem
+renders. All seven canonical admin gems use the final deterministic hashes in
+`WIDGET-EMERALDS.json`; only Blender Date/RenderTime metadata was omitted, with
+independent repeated renders preserving exact PNG bytes and decoded RGBA.
+The staging script verified all eleven actual hashes/dimensions. A one-byte
+modified atlas was rejected before any staging; the prior staged atlas hash
+remained unchanged. Original bytes remain ignored. Native Canvas composition
+and visible/accessibility preview labels still require Android runtime QA.
+
+The two grounding regressions preserve uniform portrait scale and map all
+three original front-idle foot bounds to source garden grass point
+`(109.12,108.8)`, rather than the pond under the previous centered pose.
+Native optional-ornament loading preserves the actual base body/flame and
+suppresses the complete chest/seven-gem group if any member fails validation.
+It reports ART LIMITED/accessibility details and never caches an incomplete
+portrait, so corrected local assets can recover. These are source/JVM layout
+boundary checks; Android Canvas failure/recovery still needs device execution.
 
 ## Real Rust service round trip
 

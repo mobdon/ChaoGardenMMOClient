@@ -18,6 +18,7 @@
           <div class="configuration-card">
             <div class="control-heading"><span>MAKE ROOM FOR YOUR CHAO</span><span>01 / 03</span></div>
             <fieldset class="size-selector"><legend>Choose a widget size</legend><div role="group" aria-label="Widget size"><button type="button" data-size="compact" aria-pressed="false"><span class="size-glyph compact-glyph"></span><b>Compact</b><small>2 × 2</small></button><button type="button" data-size="wide" aria-pressed="false"><span class="size-glyph wide-glyph"></span><b>Wide</b><small>4 × 2</small></button><button type="button" data-size="large" aria-pressed="true" class="selected"><span class="size-glyph large-glyph"></span><b>Large</b><small>4 × 4</small></button></div></fieldset>
+            <div id="widget-art-selector" class="art-preview-control"><label class="save-label" for="widget-art-variant">Original Chaos artwork <span class="art-preview-tag">ART PREVIEW</span><select id="widget-art-variant"><option value="dark">Dark Chaos Chao</option><option value="neutral">Neutral Chaos Chao</option><option value="hero">Hero Chaos Chao</option></select></label><p>Artwork only. Your saved Chao takes over when connected.</p></div>
             <label class="save-label" for="widget-save">Your saved Chao<select id="widget-save" disabled><option>No saved Chao in this browser</option></select></label>
             <div id="studio-sync" class="studio-sync" data-state="offline" role="status"><i></i><span id="studio-sync-label">Looking for your saved Chao</span></div>
             <p id="widget-connection-note" class="connection-note">Use an existing garden save to see live stats here.</p>
@@ -37,12 +38,13 @@
               <div id="home-widget-position" class="home-widget-position" data-size="large">
                 <a id="garden-widget" class="garden-widget" data-size="large" data-admin="false" href="/tiny.html" aria-label="Open your Chao in Tiny Garden">
                   <div class="widget-topline"><span class="widget-brand"><b>◈</b> TINY GARDEN</span><span id="widget-live" class="widget-live" data-state="offline"><i></i><span>CONNECT</span></span></div>
-                  <div class="widget-identity"><div class="widget-name-block"><span id="widget-form" class="widget-form">THE SAME SAVED CHAO</span><h2 id="widget-name">Your Chao</h2><span id="widget-owner" class="widget-owner" hidden>OWNER</span></div><div class="widget-ring-balance"><span class="ring-symbol" aria-hidden="true"></span><strong id="widget-rings">—</strong><small>RINGS</small></div></div>
+                  <div class="widget-identity"><div class="widget-name-block"><span id="widget-form" class="widget-form">ART PREVIEW · ORIGINAL SA2</span><h2 id="widget-name">Dark Chaos</h2><span id="widget-owner" class="widget-owner" hidden>OWNER</span></div><div class="widget-ring-balance"><span class="ring-symbol" aria-hidden="true"></span><strong id="widget-rings">—</strong><small>RINGS</small></div></div>
                   <div class="widget-garden-window">
                     <img id="widget-garden-art" class="widget-garden-art" src="/__widget-art/tiny-garden-a2ne.png" alt="Original Sonic Advance 2 Tiny Chao Garden background" />
                     <span id="widget-art-missing" class="widget-art-missing" hidden>Original garden art is unavailable</span>
-                    <canvas id="widget-avatar" class="widget-avatar" width="360" height="360" role="img" aria-label="Connect to display your saved Chao" hidden></canvas>
-                    <span id="widget-avatar-note" class="widget-avatar-note">Connect to see your Chao</span>
+                    <canvas id="widget-avatar" class="widget-avatar" width="360" height="360" role="img" aria-label="Dark Chaos Chao artwork preview; not your saved Chao"></canvas>
+                    <span id="widget-subject-label" class="widget-subject-label">ART PREVIEW</span>
+                    <span id="widget-avatar-note" class="widget-avatar-note">Loading original Chaos artwork…</span>
                     <span class="widget-art-label">ORIGINAL A2NE GARDEN</span>
                   </div>
                   <span id="widget-routine" class="widget-routine">Connect to see your Chao</span>
@@ -58,10 +60,10 @@
               <div class="home-indicator" aria-hidden="true"></div>
             </div>
           </div>
-          <p class="device-footnote">Original garden pixels. Your canonical Chao.<br />Browser preview · Android packaging is separate.</p>
+          <p class="device-footnote">Original garden pixels. Native Chaos artwork.<br />Browser preview · Android packaging is separate.</p>
         </section>
       </div>
-      <footer class="studio-footer"><span>TINY GARDEN <b>✦</b> TAKE A LITTLE CHAOS WITH YOU.</span><span>CONNECTED TO THE SAME GARDEN SAVE</span></footer>
+      <footer class="studio-footer"><span>TINY GARDEN <b>✦</b> TAKE A LITTLE CHAOS WITH YOU.</span><span>CANONICAL DATA FROM THE RUST SERVER</span></footer>
     </main>
     <script type="module" src="/src/widget.js"></script>
   </body>

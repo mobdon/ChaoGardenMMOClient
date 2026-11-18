@@ -1,11 +1,18 @@
 import './widget.css';
 import { createSaveSlots } from './save-slots.js';
-import { chaoFormLabel, drawTinyAvatar, nativeDirection } from './tiny-avatar.js';
+import { chaoFormLabel, chaosVariant, drawTinyAvatar, nativeDirection } from './tiny-avatar.js';
 import { WIDGET_SKILLS, widgetSnapshotView } from './widget-state.js';
 import { acceptWidgetAccountSnapshot, acceptWidgetIdentity, authenticateWidgetSocket, readWidgetObservation, widgetSocketUrl } from './widget-observer.js';
+import { drawWidgetEmeraldLayer, WIDGET_EMERALD_COLORS, widgetArtSubject, widgetCanvasPlacement, widgetEmeraldImagesReady, widgetEmeraldLayout } from './widget-art.js';
 
 const $ = selector => document.querySelector(selector);
 const canvas = $('#widget-avatar'), context = canvas.getContext('2d');
+const bodyLayer = document.createElement('canvas'); bodyLayer.width = canvas.width; bodyLayer.height = canvas.height;
+const bodyContext = bodyLayer.getContext('2d');
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const emeraldImages = new Map(WIDGET_EMERALD_COLORS.map(color => {
+  const image = new Image(); image.src = `/__widget-art/widget-emerald-${color}.png`; return [color, image];
+}));
 let storage;
 try { storage = localStorage; } catch { storage = { getItem: () => null, setItem: () => {} }; }
 const saves = createSaveSlots(storage);
@@ -13,6 +20,17 @@ let slots = [], profile = null, token = null, socket = null, generation = 0, req
 let reconnectTimer, connectionTimer, connectionState = 'offline', lastSyncedAt = null, lastMotionAt = -Infinity;
 let previous = null, direction = 0, retryDelay = 2000;
 let knownV2 = false, accountIdentity = null;
+let previewVariant = 'dark';
+const gardenWindow = $('.widget-garden-window');
+function positionAvatar() {
+  const art = widgetArtSubject(profile, previewVariant);
+  const placement = widgetCanvasPlacement(gardenWindow.clientWidth, gardenWindow.clientHeight,
+    chaosVariant(art.subject), $('#garden-widget').dataset.size);
+  for (const [key, value] of Object.entries({ left: placement.left, top: placement.top, width: placement.size, height: placement.size })) {
+    const pixels = `${value}px`; if (canvas.style[key] !== pixels) canvas.style[key] = pixels;
+  }
+}
+const gardenResize = new ResizeObserver(positionAvatar); gardenResize.observe(gardenWindow);
 const statRows = WIDGET_SKILLS.map(([key, label]) => {
   const row = document.createElement('div');
   row.setAttribute('role', 'group');
@@ -26,7 +44,7 @@ function sync(state, label, note) {
   connectionState = state;
   $('#studio-sync').dataset.state = state; $('#widget-live').dataset.state = state;
   setText('#studio-sync-label', label);
-  setText('#widget-live>span', state === 'live' ? 'LIVE' : state === 'connecting' ? 'SYNCING' : profile ? 'LAST READ' : 'CONNECT');
+  setText('#widget-live>span', state === 'live' ? 'LIVE' : state === 'connecting' ? 'SYNCING' : profile ? 'LAST READ' : 'ART PREVIEW');
   $('#widget-retry').disabled = !slots.length || state === 'connecting';
   if (note) setText('#widget-connection-note', note);
   render();
@@ -37,8 +55,11 @@ function rememberSelection() {
 }
 function render() {
   const view = widgetSnapshotView(profile);
-  setText('#widget-name', profile?.name || 'Your Chao');
-  setText('#widget-form', profile ? chaoFormLabel(profile) : 'THE SAME SAVED CHAO');
+  const art = widgetArtSubject(profile, previewVariant);
+  setText('#widget-name', profile ? profile.name || 'Your Chao' : chaoFormLabel(art.subject).replace(/ Chao$/, ''));
+  setText('#widget-form', profile ? chaoFormLabel(profile) : 'ART PREVIEW · ORIGINAL SA2');
+  $('#widget-art-selector').hidden = !art.preview; $('#widget-art-variant').disabled = !art.preview;
+  $('#widget-subject-label').hidden = !art.preview;
   setText('#widget-rings', view.rings === null ? '—' : view.rings.toLocaleString());
   $('#garden-widget').dataset.admin = String(profile?.admin === true); $('#widget-owner').hidden = profile?.admin !== true;
   for (const key of ['energy', 'hunger', 'happiness']) {
@@ -53,14 +74,15 @@ function render() {
     const fullName = key[0].toUpperCase() + key.slice(1);
     row.title = row.ariaLabel = `${fullName}: level ${stat.level ?? 'not reported'}, points ${stat.points ?? 'not reported'}, grade ${stat.grade ?? 'not reported'}`;
   }
-  setText('#widget-routine', profile && connectionState !== 'live' ? `Last read · ${view.routine}` : view.routine);
+  setText('#widget-routine', !profile ? 'Connect your save for live data' : connectionState !== 'live' ? `Last read · ${view.routine}` : view.routine);
   setText('#widget-training-status', view.training);
   setText('#widget-sync-label', lastSyncedAt
     ? `${connectionState === 'live' ? 'READ' : 'LAST READ'} ${new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(lastSyncedAt)}` : 'NOT CONNECTED');
-  setText('#widget-avatar-note', !profile ? 'Connect to see your Chao' : '');
-  $('#widget-avatar-note').hidden = !!profile; canvas.hidden = !profile;
-  canvas.setAttribute('aria-label', profile ? `${profile.name || 'Chao'} · ${chaoFormLabel(profile)}` : 'Connect to display your saved Chao');
+  canvas.hidden = false;
+  canvas.setAttribute('aria-label', profile ? `${profile.name || 'Chao'} · ${chaoFormLabel(profile)}`
+    : `${chaoFormLabel(art.subject)} artwork preview; not your saved Chao`);
   $('#garden-widget').setAttribute('aria-label', profile ? `Open ${profile.name || 'your Chao'} in Tiny Garden` : 'Connect your saved Chao in Tiny Garden');
+  positionAvatar();
 }
 function consume(next) {
   if (!next || typeof next.id !== 'string' || next.id !== profile?.id) return;
@@ -142,6 +164,7 @@ for (const button of document.querySelectorAll('.size-selector button')) {
     }
     $('#garden-widget').dataset.size = size; $('#home-widget-position').dataset.size = size;
     setText('#widget-size-caption', `TINY GARDEN · ${size.toUpperCase()}`);
+    positionAvatar();
   });
 }
 $('#widget-save').addEventListener('change', event => {
@@ -149,6 +172,10 @@ $('#widget-save').addEventListener('change', event => {
 });
 $('#widget-retry').addEventListener('click', () => {
   const selected = slots[Number($('#widget-save').value)]; if (selected) void resume(selected.token);
+});
+$('#widget-art-variant').addEventListener('change', event => {
+  if (profile) return;
+  previewVariant = event.target.value; render();
 });
 for (const link of document.querySelectorAll('a[href="/tiny.html"]')) link.addEventListener('click', rememberSelection);
 const nativeArt = $('#widget-garden-art');
@@ -173,20 +200,29 @@ clock(); const clockTimer = setInterval(clock, 30000);
 function draw(time = 0) {
   if (!document.hidden) {
     context.clearRect(0, 0, canvas.width, canvas.height);
-    // No mascot is substituted. The canonical form selects the original phone
-    // atlas; unsupported art keeps the shared renderer's neutral marker.
-    if (profile) {
-      const drawn = drawTinyAvatar(context, profile, 180, 196, 292, { time: connectionState === 'live' ? time : 0, direction,
-        walking: connectionState === 'live' && profile.watch?.activity === 'wander' && time - lastMotionAt < 350 });
-      setText('#widget-avatar-note', drawn ? '' : 'Original art for this form is unavailable');
-      $('#widget-avatar-note').hidden = drawn;
-    }
+    const art = widgetArtSubject(profile, previewVariant);
+    const artTime = reducedMotion.matches ? 0 : (art.preview || connectionState === 'live' ? time : 0);
+    const owner = !art.preview && profile?.admin === true;
+    bodyContext.clearRect(0, 0, bodyLayer.width, bodyLayer.height);
+    // The owner portrait keeps its native front anchor so the fixed chest gem
+    // stays on the body. Preview selection never replaces canonical identity.
+    const drawn = drawTinyAvatar(bodyContext, art.subject, 180, 196, 292, { time: artTime,
+      direction: owner || art.preview ? 0 : direction,
+      walking: !art.preview && connectionState === 'live' && profile.watch?.activity === 'wander' && time - lastMotionAt < 350 });
+    const ornamentsReady = owner && widgetEmeraldImagesReady(emeraldImages);
+    const ornaments = drawn && ornamentsReady ? widgetEmeraldLayout(profile, { canonical: true, x: 180, y: 196, size: 292, time: artTime }) : [];
+    drawWidgetEmeraldLayer(context, emeraldImages, ornaments, 'far');
+    context.drawImage(bodyLayer, 0, 0);
+    drawWidgetEmeraldLayer(context, emeraldImages, ornaments, 'chest');
+    drawWidgetEmeraldLayer(context, emeraldImages, ornaments, 'near');
+    setText('#widget-avatar-note', !drawn ? 'Original art for this form is unavailable' : owner && !ornamentsReady ? 'Owner ornaments are unavailable' : '');
+    $('#widget-avatar-note').hidden = drawn && (!owner || ornamentsReady);
   }
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
 window.addEventListener('pagehide', () => {
-  generation++; clearTimeout(reconnectTimer); clearTimeout(connectionTimer); clearInterval(clockTimer); requestAbort?.abort(); socket?.close();
+  generation++; clearTimeout(reconnectTimer); clearTimeout(connectionTimer); clearInterval(clockTimer); requestAbort?.abort(); socket?.close(); gardenResize.disconnect();
 });
 // Back from the title/Tiny Garden can restore a page with old storage and a
 // closed socket. Reload the preview so it discovers the existing saved slot.

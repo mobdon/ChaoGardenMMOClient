@@ -2,7 +2,7 @@
 
 A native Android application and RemoteViews home-screen widget, separate from the browser preview at `widget.html`. Compact, wide and large layouts show the canonical Chao's needs, stats, activity and training availability. Android setup pairs an independent device credential; the widget opens the full Tiny Garden app for minigames and training controls.
 
-**Delivery status:** the actual debug APK and instrumentation APK build successfully; Android lint and all 38 regular JVM tests pass. The production Java adapter also passes a real isolated Rust pairing/care/restart round trip. The native package includes the verified local A2NE garden background when staged. Device execution remains unverified: no physical device was attached and the isolated software emulator attempts did not reach a usable Android guest. Production deployment and paired Android acceptance remain open. See [verification/STATUS.md](verification/STATUS.md) for exact evidence and limits.
+**Delivery status:** the actual debug APK and instrumentation APK build successfully; Android lint and all 44 regular JVM tests pass. The production Java adapter also passes a real isolated Rust pairing/care/restart round trip. The native package includes the verified local A2NE garden and original Neutral/Hero/Dark Chaos artwork when staged. Device execution remains unverified: no physical device was attached and the isolated software emulator attempts did not reach a usable Android guest. Production deployment and paired Android acceptance remain open. See [verification/STATUS.md](verification/STATUS.md) for exact evidence and limits.
 
 ## Build and test separately from the browser
 
@@ -31,7 +31,19 @@ The native adapter reads authenticated `GET /api/account`. It requires the exact
 
 The launcher shows a static snapshot. JobScheduler requests background reads every 30 minutes; Android may delay them under battery/network/quota limits. Manual refresh is available in the app and large widget. No foreground service, exact alarm, continuous simulation, local training settlement or offline reward queue exists. Delayed and redelivered care work is dropped; process changes invalidate freshness. A pending intent is encrypted before sending. Later authoritative revision/lease/sequence changes fence it before another care is allowed.
 
-[docs/ORIGINAL-ASSETS.json](docs/ORIGINAL-ASSETS.json) contains verified hashes and sanitized provenance for the existing local original assets, with no original bytes. Native atlases are a phone adaptation rendered from original desktop Chaos bodies/poses, not recovered GBA sprites. The paired server serves those exact PNGs; Android verifies hashes/dimensions and composes one static frame, original Dark flame and the owner's fixed cyan chest/all seven orbit gems. Canonical form/alignment selects the correct Chaos variant. Missing/changed art gives an explicit marker. Normal-Chao artwork and gear-specific sprite rendering remain presentation gaps; the app retains the canonical identity/data.
+[docs/ORIGINAL-ASSETS.json](docs/ORIGINAL-ASSETS.json) pins the eleven original/adapted Chaos PNGs. Native atlases preserve the original desktop bodies/poses; these are phone renderings, not recovered GBA sprites. Android composes a static front-idle frame directly from bundled, hash-checked art, including the original Dark flame. Canonical form/alignment selects the variant. Only literal server `admin=true` adds the cyan chest gem and all seven transparent sprites rendered from the unchanged original emerald geometry. Their source textures are opaque environment maps and are never used as square sprites. [WIDGET-EMERALDS.json](docs/WIDGET-EMERALDS.json) records mesh, material, texture and deterministic render provenance. Rendered gems are bundled-only and claim no Rust asset routes; atlases/flame retain the existing same-origin HTTPS fallback.
+
+An unpaired widget without any saved snapshot can show **Dark Chaos · art preview**. This contains no account or Chao ID, rings, needs, stats, activity, training state or enabled care. Its visible status and accessibility descriptions identify the artwork example. A paired normal/unsupported form never becomes that preview. Missing/changed required art gives an explicit marker; normal-Chao and gear-specific art remain open.
+
+The static portrait uses a uniform scale and places the original front-idle feet on verified grass in the original garden image. If any optional emerald is absent/corrupt, the actual body/flame stay visible while the entire chest/seven-gem group is hidden with an **ART LIMITED** label and accessibility explanation. Incomplete portraits are not cached, allowing recovery when correct assets are available.
+
+Stage the private originals before building:
+
+```powershell
+.\tools\stage-original-art.ps1 -SourceImports C:\path\to\private\.local\imports
+```
+
+The script validates every PNG hash and dimension before copying any of the eleven files to ignored `app/src/localArt/assets/`; the separately staged A2NE garden remains there. If needed, `tools/render-widget-emeralds.py` uses the established Blender presentation pipeline on the already converted original GLBs. Original bytes and rendered outputs stay outside Git.
 
 ## Integration gates
 
