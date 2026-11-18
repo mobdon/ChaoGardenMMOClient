@@ -22,6 +22,8 @@ Start Tiny Garden, Android widget, AFK training and device pairing together. The
 
 Movement handoff: client commit `279a7b7` already publishes `src/chao-locomotion.js`, its scene hooks, native Run119 build/verification tools and focused tests. The native movement stream should use that dependency rather than rebuild the helper; keep `src/scene.js` changes as a small reviewed patch. The exact `chao-locomotion.glb` server route works in the current local runtime but its source patch remains separately unpublished while Vibe's server build is blocked. Preserve opaque bodies, flame/gem alpha and depth-occluded bloom. The movement chat reports an isolated `codex/native-chao-movement` branch; it is not a merged delivery.
 
+The current JumpUp132 / JumpDown135 / reverse137 proposal, real snapshot-field requirements and `createGarden` proof boundaries are recorded in [NATIVE-MOVEMENT-INTEGRATION.md](NATIVE-MOVEMENT-INTEGRATION.md). Use that handoff before changing the shared scene; the proposal remains unmerged.
+
 ## Copy-and-paste chat briefs
 
 ### 1. Client — Tiny Garden app
