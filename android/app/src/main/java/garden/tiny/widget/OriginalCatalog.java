@@ -5,7 +5,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.Locale;
 
-/** Pinned, hash-checked local original-art routes. Contains metadata, never source art. */
+/** Pinned original-art descriptors for bundled PNGs and same-origin fallback. */
 public final class OriginalCatalog {
     private OriginalCatalog() { }
     private static final String[] VARIANTS = {"neutral", "hero", "dark"};
@@ -16,13 +16,13 @@ public final class OriginalCatalog {
     };
     private static final String[] GEM_COLORS = {"cyan", "blue", "yellow", "red", "green", "purple", "white"};
     private static final String[] GEM_HASHES = {
-            "a6f3fe23d1962e8871a513f34f10ab53e8f3556cf21e2ec0256a67f5537f1ca1",
-            "21d7b47a691819840d14c8d7e383583ec6e727037b347924339d84cc1344b833",
-            "ece5c5d96158eba56009c4dac3369c56de7bcd5f90a32813641d0b67b599e835",
-            "157bfdfff6064f142330bd0bfe9cadf8483851b691fc7e683861121092f0b5e1",
-            "ac27cedd76e1fca87a4bd9d6fba1c9aa6800a867a0a4e20b7c8b3f3795b1208d",
-            "a05bc333b6c0d4fa943f951d5af997fdcfae1c492c83e61dc57d02c4ca3812a8",
-            "fbe877077a5d24e0e49459b095d6a93831e130807ba643315b06c7421eb20440"
+            "414f1b7dd3396faac9661b4bcd6e7059fa18625eac50a586fce5e3c21141b497",
+            "1effc4358f9fc3b0bfc3a4dbaa459a7faf21f94a34fde37e873a165cfafa22fd",
+            "f275654fbbebb2d0f208dcfc9942769c87722e11e6a77679186c288184c4f721",
+            "e9bed916c89c4e4203723a2dc2cd4235fce3540b2c1d43cbf2ebe46f64cb4b6b",
+            "e0f28259c33db12c1d64d7dc4250ab19d9d07538ceeb89575ec7f513b1644b95",
+            "126d5cb23478156d899631fdb7dac1e831709b5f4bbf78f191a7b67e9fdacdfe",
+            "df7d3d8f0ceaf08d076baf5cf37eaf14c6d46f6700158bf55e75e59a55075e5a"
     };
 
     /** Canonical server player only; a normal or unknown form never becomes a mascot. */
@@ -35,17 +35,47 @@ public final class OriginalCatalog {
         // Matches the Tiny Garden browser's chaosVariant precedence exactly.
         int variant = form.contains("hero") || alignment >= 60 ? 1
                 : form.contains("dark") || alignment <= -60 ? 2 : 0;
+        return appearance(variant, Boolean.TRUE.equals(canonicalPlayer.opt("admin")));
+    }
+
+    /** An artwork example only: no player ID, account, stats, rings or granted actions. */
+    public static JSONObject artPreview() throws JSONException { return appearance(2, false); }
+
+    public static boolean canPreview(JSONObject state) {
+        return state != null && !state.has("token") && !state.has("snapshot");
+    }
+
+    /** Maps only this catalog's exact pinned assets to safe packaged basenames. */
+    public static String localFile(JSONObject descriptor) throws JSONException {
+        String hash = descriptor.getString("sha256");
+        if (descriptor.has("assetFile")) {
+            if (descriptor.has("path")) throw new IllegalArgumentException("Bundled art cannot invent a server route");
+            String filename = descriptor.getString("assetFile");
+            for (int i = 0; i < GEM_COLORS.length; i++)
+                if (filename.equals("widget-emerald-" + GEM_COLORS[i] + ".png") && hash.equals(GEM_HASHES[i])) return filename;
+            throw new IllegalArgumentException("Unrecognized bundled artwork descriptor");
+        }
+        String path = descriptor.getString("path");
+        for (int i = 0; i < VARIANTS.length; i++)
+            if (path.equals("/api/assets/tiny-" + VARIANTS[i] + "-chaos.png") && hash.equals(ATLAS_HASHES[i]))
+                return "tiny-" + VARIANTS[i] + "-chaos.png";
+        if (path.equals("/api/assets/chao-flame.png") && hash.equals("f90fba571d8bbd3c9e184961f75f75ba9c91b47eec46601e3515410752393952"))
+            return "chao-flame.png";
+        throw new IllegalArgumentException("Unrecognized original artwork descriptor");
+    }
+
+    private static JSONObject appearance(int variant, boolean admin) throws JSONException {
         JSONObject appearance = new JSONObject()
                 .put("atlasPath", "/api/assets/tiny-" + VARIANTS[variant] + "-chaos.png")
                 .put("atlasSha256", ATLAS_HASHES[variant])
                 .put("frameSize", 96).put("columns", 8).put("frameIndex", 0);
         if (variant == 2) appearance.put("flamePath", "/api/assets/chao-flame.png")
                 .put("flameSha256", "f90fba571d8bbd3c9e184961f75f75ba9c91b47eec46601e3515410752393952");
-        if (Boolean.TRUE.equals(canonicalPlayer.opt("admin"))) {
-            appearance.put("chestGemPath", "/api/assets/emerald-cyan.png").put("chestGemSha256", GEM_HASHES[0]);
+        if (admin) {
+            appearance.put("chestGemAsset", "widget-emerald-cyan.png").put("chestGemSha256", GEM_HASHES[0]);
             JSONArray orbit = new JSONArray();
             for (int i = 0; i < GEM_COLORS.length; i++) orbit.put(new JSONObject()
-                    .put("path", "/api/assets/emerald-" + GEM_COLORS[i] + ".png").put("sha256", GEM_HASHES[i]));
+                    .put("assetFile", "widget-emerald-" + GEM_COLORS[i] + ".png").put("sha256", GEM_HASHES[i]));
             appearance.put("orbit", orbit);
         }
         return appearance;

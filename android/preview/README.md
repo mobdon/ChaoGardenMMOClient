@@ -6,8 +6,14 @@ pairing and quick care are implemented separately under `android/app`.
 Use a worktree **outside `.local`**. Vite correctly blocks private files under
 that directory, including absolute module URLs generated from worktrees there.
 Keep the private boundary intact. This preview config extends the existing
-config and serves exactly one size-limited, hash-pinned PNG; it exposes no
-directory or arbitrary native input.
+config and serves an exact whitelist of size-limited, hash-pinned PNGs: the
+A2NE garden, three Chaos phone atlases, the original Dark flame and seven
+transparent emerald geometry renders. It exposes no directory or arbitrary
+native input. Existing atlas/flame asset paths can still use the Rust asset
+proxy when local originals are absent. Emerald renders use preview-only paths;
+they do not add a server contract.
+Restart this isolated preview after regenerating a provenance manifest; asset
+hashes are loaded when the Vite configuration starts.
 
 Generate the background using [the Rust exporter](../docs/TINY-GARDEN-ART.md),
 then run from the client worktree:
@@ -24,9 +30,19 @@ npx vite --config android/preview/vite.config.mjs
 
 For a local production bundle use
 `npx vite build --config android/preview/vite.config.mjs`. If configured, the
-verified image is emitted at `__widget-art/tiny-garden-a2ne.png`. Generated
-bundles containing native art remain local and ignored. Without the image the
-page labels the unavailable original art, preserving the saved Chao's data.
+verified originals are emitted at their whitelisted presentation paths.
+Generated bundles containing native art remain local and ignored. Missing art
+is labeled without changing the saved Chao's data. The Chaos/flame hashes are
+recorded in [ORIGINAL-ASSETS.json](../docs/ORIGINAL-ASSETS.json); the emerald
+geometry, rendering policy and deterministic hashes are recorded in
+[WIDGET-EMERALDS.json](../docs/WIDGET-EMERALDS.json).
+
+Without a connected save, the preview shows clearly labeled Dark Chaos art,
+with Neutral/Hero choices. These descriptors contain only form/alignment;
+identity, rings, needs and stats remain unknown. A canonical profile always
+takes precedence, including forms without available artwork. Only a literal
+canonical `admin: true` enables the fixed cyan chest gem and all seven orbit
+gems. Preview artwork never receives owner ornaments.
 
 Browser save credentials are origin-specific: a new port does not automatically
 inherit a saved session from another port or browser. The preview resumes only
@@ -60,5 +76,8 @@ its pinned build/source evidence separately.
 
 The original background is 176×160, exported through the A2NE Rust port with
 an exact ROM/payload fingerprint. The Chao overlay is the current canonical
-desktop-model-derived phone atlas. Native GBA Chao type-to-art rules and full
-minigame behavior are not established by this static art export.
+desktop-model-derived phone atlas, retaining the whole square atlas cell and
+native rig proportions. The transparent emerald sprites are new presentation
+renders of the unchanged original geometry/materials, not recovered GBA sprites.
+Native GBA Chao type-to-art rules and full minigame behavior are not established
+by these static art exports.

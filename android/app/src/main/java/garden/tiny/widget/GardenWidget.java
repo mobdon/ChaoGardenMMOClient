@@ -45,16 +45,22 @@ public final class GardenWidget extends AppWidgetProvider {
         RemoteViews view=new RemoteViews(context.getPackageName(),layout);
         Snapshot snapshot=null;
         try { if(state.has("snapshot")) snapshot=new Snapshot(state.getJSONObject("snapshot")); } catch(Exception ignored) { /* Fail closed. */ }
+        Bitmap art=snapshot==null?null:OriginalArtwork.forSnapshot(context,snapshot);
+        boolean artPreview=snapshot==null && OriginalCatalog.canPreview(state);
+        if(artPreview) { art=OriginalArtwork.artPreview(context); artPreview=art!=null; }
+        boolean limitedArtwork=snapshot!=null && OriginalArtwork.ornamentsUnavailable(snapshot);
         boolean fresh=snapshot!=null && state.has("token") && !state.has("error") && SecureStore.age(state)<=120000;
-        view.setTextViewText(R.id.widget_status,snapshot==null?"PAIR":fresh?"SNAPSHOT":"CACHED");
-        view.setContentDescription(R.id.widget_status,snapshot==null?"Pair device":fresh?"Server snapshot, refresh for latest data":"Cached stale snapshot, refresh before care");
-        view.setTextViewText(R.id.widget_name,snapshot==null?"Your Chao":snapshot.name);
-        view.setTextViewText(R.id.widget_form,snapshot==null?"Pair with your desktop garden":snapshot.form+" · "+snapshot.chao.optLong("rings")+" rings");
+        view.setTextViewText(R.id.widget_status,artPreview?"ART PREVIEW":snapshot==null?"PAIR":limitedArtwork?"ART LIMITED":fresh?"SNAPSHOT":"CACHED");
+        String statusDescription=artPreview?"Dark Chaos · art preview. Pair to watch your actual Chao.":snapshot==null?"Pair device":fresh?"Server snapshot, refresh for latest data":"Cached stale snapshot, refresh before care";
+        view.setContentDescription(R.id.widget_status,statusDescription+(limitedArtwork?". Emerald ornaments unavailable; the complete optional group is hidden.":""));
+        view.setTextViewText(R.id.widget_name,artPreview?"Dark Chaos":snapshot==null?"Your Chao":snapshot.name);
+        view.setContentDescription(R.id.widget_name,artPreview?"Dark Chaos · art preview, not a paired Chao":snapshot==null?"Your Chao, pairing required":snapshot.name);
+        view.setTextViewText(R.id.widget_form,artPreview?"Dark Chaos · art preview":snapshot==null?"Pair with your desktop garden":snapshot.form+" · "+snapshot.chao.optLong("rings")+" rings");
         boolean compact=layout==R.layout.widget_compact, large=layout==R.layout.widget_large;
         view.setTextViewText(R.id.widget_needs,snapshot==null?"Needs unavailable":!large?
                 "E"+Math.round(snapshot.needs.optDouble("energy"))+"% F"+Math.round(snapshot.needs.optDouble("fullness"))+"% H"+Math.round(snapshot.needs.optDouble("happiness"))+"%":snapshot.needsText());
         view.setContentDescription(R.id.widget_needs,snapshot==null?"Needs unavailable":snapshot.needsText());
-        String statText="Seven stats in app";
+        String statText="Seven stats unavailable";
         if(snapshot!=null) {
             if(compact) statText="Run "+snapshot.stats.optJSONObject("run").optInt("level")+" · +6 stats in app";
             else if(large) {
@@ -84,14 +90,13 @@ public final class GardenWidget extends AppWidgetProvider {
         view.setContentDescription(R.id.widget_training,snapshot==null?"AFK status unavailable":snapshot.trainingText());
         long readAt=state.optLong("receivedWall",-1);
         String synced=readAt<0?"unknown":new java.text.SimpleDateFormat("MMM d HH:mm",java.util.Locale.getDefault()).format(new java.util.Date(readAt));
-        view.setTextViewText(R.id.widget_sync,snapshot==null?"Open to pair":(fresh?"Read ":"Cached ")+synced);
-        view.setContentDescription(R.id.widget_sync,(state.has("error")?state.optString("error")+". ":"")+"Snapshot received on this device "+synced+". Server save time unavailable.");
-        Bitmap art=snapshot==null?null:OriginalArtwork.cached(context,snapshot);
+        view.setTextViewText(R.id.widget_sync,artPreview?"Art preview · open to pair":snapshot==null?"Open to pair":(fresh?"Read ":"Cached ")+synced);
+        view.setContentDescription(R.id.widget_sync,snapshot==null?"No paired snapshot, needs, stats, garden activity or training data available":(state.has("error")?state.optString("error")+". ":"")+"Snapshot received on this device "+synced+". Server save time unavailable.");
         Bitmap garden=GardenBackdrop.load(context);
         view.setViewVisibility(R.id.widget_garden,garden==null?android.view.View.GONE:android.view.View.VISIBLE);
         if(garden!=null) view.setImageViewBitmap(R.id.widget_garden,garden);
         if(art!=null) view.setImageViewBitmap(R.id.widget_avatar,art); else view.setImageViewResource(R.id.widget_avatar,R.drawable.ic_garden_gem);
-        view.setContentDescription(R.id.widget_avatar,art==null?"Original Chao artwork unavailable":snapshot.name+" · original source artwork");
+        view.setContentDescription(R.id.widget_avatar,art==null?"Original Chao artwork unavailable":artPreview?"Dark Chaos · art preview. Original model and flame. No account, stats or actions are represented.":snapshot.name+" · original source artwork for this canonical Chao"+(OriginalArtwork.ornamentsUnavailable(snapshot)?". Emerald ornaments unavailable; the entire optional chest and seven-gem group is hidden.":""));
         Intent open=new Intent(context,PairingActivity.class);
         if(state.has("token") && state.has("origin")) {
             try { open=new Intent(Intent.ACTION_VIEW,Uri.parse(new ServerOrigin(state.optString("origin")).garden())); }
@@ -107,7 +112,7 @@ public final class GardenWidget extends AppWidgetProvider {
             boolean enabled=fresh && !state.has("pendingV2") && watch!=null && state.optBoolean("httpCare",false);
             view.setBoolean(resource,"setEnabled",enabled);
             view.setTextViewText(resource,care.equals("pet")?"Pet":care.equals("wake")?"Wake":"Rest");
-            view.setContentDescription(resource,care.equals("pet")?"Ask the server to pet your Chao":care.equals("wake")?"Ask the server to wake your Chao":"Ask the server to let your Chao rest");
+            view.setContentDescription(resource,snapshot==null?"Care unavailable. Pair to watch your actual Chao.":care.equals("pet")?"Ask the server to pet your Chao":care.equals("wake")?"Ask the server to wake your Chao":"Ask the server to let your Chao rest");
             if(enabled) view.setOnClickPendingIntent(resource,action(context,"care",care,snapshot.id,snapshot.revision,state.optLong("receivedElapsed",-1)));
         }
         return view;
