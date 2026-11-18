@@ -77,8 +77,7 @@ public final class AccountAdapter {
             }
         }
         if (player == null) {
-            // The current service omits an offline nonresident player from its public list.
-            // Do not display another player or fabricate a substitute Chao in that case.
+            // Incomplete/older services must not substitute a different Chao.
             throw new JSONException("Canonical Chao missing from account snapshot");
         }
 

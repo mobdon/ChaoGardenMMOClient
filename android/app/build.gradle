@@ -12,6 +12,8 @@ android {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    // Generated from the owner's verified ROM; never committed or downloaded by Gradle.
+    sourceSets { main { assets.srcDir 'src/localArt/assets' } }
     buildTypes { release { minifyEnabled false } }
     lint { abortOnError true; checkReleaseBuilds true }
 }

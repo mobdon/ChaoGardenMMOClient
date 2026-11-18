@@ -14,15 +14,16 @@
         <section class="studio-controls" aria-labelledby="studio-title">
           <span class="section-kicker"><i></i> A LITTLE GARDEN. A BIG PRESENCE.</span>
           <h1 id="studio-title">Your Chao.<br />Always <em>in reach.</em></h1>
-          <p class="studio-intro">A little window into their world. Check their needs, then open Tiny Garden to pet, rest, or wake your Chao.</p>
+          <p class="studio-intro">The original little garden, with your Chao at its heart. Check in here. Open Tiny Garden for care, five minigames and training controls.</p>
           <div class="configuration-card">
             <div class="control-heading"><span>MAKE ROOM FOR YOUR CHAO</span><span>01 / 03</span></div>
             <fieldset class="size-selector"><legend>Choose a widget size</legend><div role="group" aria-label="Widget size"><button type="button" data-size="compact" aria-pressed="false"><span class="size-glyph compact-glyph"></span><b>Compact</b><small>2 × 2</small></button><button type="button" data-size="wide" aria-pressed="false"><span class="size-glyph wide-glyph"></span><b>Wide</b><small>4 × 2</small></button><button type="button" data-size="large" aria-pressed="true" class="selected"><span class="size-glyph large-glyph"></span><b>Large</b><small>4 × 4</small></button></div></fieldset>
             <label class="save-label" for="widget-save">Your saved Chao<select id="widget-save" disabled><option>No saved Chao in this browser</option></select></label>
             <div id="studio-sync" class="studio-sync" data-state="offline" role="status"><i></i><span id="studio-sync-label">Looking for your saved Chao</span></div>
             <p id="widget-connection-note" class="connection-note">Use an existing garden save to see live stats here.</p>
+            <div class="connection-actions"><button id="widget-retry" type="button" disabled>Retry connection</button><a href="/?tiny=1">Load existing save <span>↗</span></a></div>
           </div>
-          <p class="preview-explanation"><span>◈</span><span>Android first. The native widget is planned for quick care actions. This browser preview opens Tiny Garden for care; it does not install an OS widget.</span></p>
+          <p class="preview-explanation"><span>◈</span><span>Original Sonic Advance 2 garden data, decoded by the Rust port. Your Chao and stats come from the server. This browser preview opens Tiny Garden for care.</span></p>
           <a id="studio-open" class="studio-open" href="/tiny.html">OPEN TINY GARDEN <span>↗</span></a>
           <p class="studio-bottom-note">ONE CHAO. THE SAME SAVED PROGRESS.</p>
         </section>
@@ -35,16 +36,18 @@
               <div class="phone-clock"><time id="phone-date"></time><time id="phone-time"></time></div>
               <div id="home-widget-position" class="home-widget-position" data-size="large">
                 <a id="garden-widget" class="garden-widget" data-size="large" data-admin="false" href="/tiny.html" aria-label="Open your Chao in Tiny Garden">
-                  <div class="widget-grid" aria-hidden="true"></div>
-                  <img class="widget-emerald emerald-a" src="/api/assets/emerald-cyan.png" alt="" />
-                  <img class="widget-emerald emerald-b" src="/api/assets/emerald-blue.png" alt="" />
-                  <img class="widget-emerald emerald-c" src="/api/assets/emerald-yellow.png" alt="" />
                   <div class="widget-topline"><span class="widget-brand"><b>◈</b> TINY GARDEN</span><span id="widget-live" class="widget-live" data-state="offline"><i></i><span>CONNECT</span></span></div>
-                  <div class="widget-identity"><span id="widget-form" class="widget-form">A LITTLE WORLD OF YOUR OWN</span><h2 id="widget-name">Your Chao</h2><span id="widget-owner" class="widget-owner" hidden>OWNER</span></div>
-                  <div class="widget-ring-balance"><span class="ring-symbol" aria-hidden="true"></span><strong id="widget-rings">—</strong><small>RINGS</small></div>
-                  <canvas id="widget-avatar" class="widget-avatar" width="360" height="360" role="img" aria-label="Garden mascot preview; connect to show your saved Chao"></canvas>
-                  <span id="widget-routine" class="widget-routine">Connect your saved Chao</span>
+                  <div class="widget-identity"><div class="widget-name-block"><span id="widget-form" class="widget-form">THE SAME SAVED CHAO</span><h2 id="widget-name">Your Chao</h2><span id="widget-owner" class="widget-owner" hidden>OWNER</span></div><div class="widget-ring-balance"><span class="ring-symbol" aria-hidden="true"></span><strong id="widget-rings">—</strong><small>RINGS</small></div></div>
+                  <div class="widget-garden-window">
+                    <img id="widget-garden-art" class="widget-garden-art" src="/__widget-art/tiny-garden-a2ne.png" alt="Original Sonic Advance 2 Tiny Chao Garden background" />
+                    <span id="widget-art-missing" class="widget-art-missing" hidden>Original garden art is unavailable</span>
+                    <canvas id="widget-avatar" class="widget-avatar" width="360" height="360" role="img" aria-label="Connect to display your saved Chao" hidden></canvas>
+                    <span id="widget-avatar-note" class="widget-avatar-note">Connect to see your Chao</span>
+                    <span class="widget-art-label">ORIGINAL A2NE GARDEN</span>
+                  </div>
+                  <span id="widget-routine" class="widget-routine">Connect to see your Chao</span>
                   <div class="widget-needs" aria-label="Your Chao's needs"><div><span>ENERGY</span><meter id="widget-energy" min="0" max="100" value="0" aria-label="Energy" hidden></meter><b id="widget-energy-value">—</b></div><div><span>FULLNESS</span><meter id="widget-hunger" min="0" max="100" value="0" aria-label="Fullness" hidden></meter><b id="widget-hunger-value">—</b></div><div><span>HAPPINESS</span><meter id="widget-happiness" min="0" max="100" value="0" aria-label="Happiness" hidden></meter><b id="widget-happiness-value">—</b></div></div>
+                  <div class="widget-stats-wrap"><span class="widget-stats-label">SEVEN STATS <span>LEVELS</span></span><div id="widget-stats" class="widget-stats" aria-label="All seven Chao stat levels"></div></div>
                   <div class="widget-training"><span class="training-icon" aria-hidden="true">↗</span><span><small>AFK TRAINING</small><b id="widget-training-status">AFK status unavailable</b></span><span class="training-arrow" aria-hidden="true">→</span></div>
                   <div class="widget-bottomline"><span id="widget-sync-label">SAVE NOT CONNECTED</span><span>OPEN GARDEN <b>↗</b></span></div>
                 </a>
@@ -55,7 +58,7 @@
               <div class="home-indicator" aria-hidden="true"></div>
             </div>
           </div>
-          <p class="device-footnote">Live garden data. Original Chao artwork.<br />Browser preview · not an installed OS widget.</p>
+          <p class="device-footnote">Original garden pixels. Your canonical Chao.<br />Browser preview · Android packaging is separate.</p>
         </section>
       </div>
       <footer class="studio-footer"><span>TINY GARDEN <b>✦</b> TAKE A LITTLE CHAOS WITH YOU.</span><span>CONNECTED TO THE SAME GARDEN SAVE</span></footer>

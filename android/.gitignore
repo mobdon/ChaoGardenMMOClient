@@ -6,3 +6,4 @@ local.properties
 *.aab
 *.jks
 verification/local/
+app/src/localArt/

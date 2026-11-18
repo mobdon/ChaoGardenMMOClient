@@ -1,30 +1,145 @@
-# Verification — November 18, 2026
+# Android verification — November 18, 2026
 
-Source baseline: published client `af74a8df70b9781bb1dafe5ce148905ffa788716` (`origin/main`). Isolated branch: `codex/android-tiny-garden-widget`; worktree `.local/worktrees/android-widget`. The live checkout, preview processes, profile data and independent server history were not changed by this workstream.
+Follow-up branch `codex/tiny-widget-native-data`, based on published widget commit
+`550c9c5c229c86b8c74f389e300d335b521b905b`. Native checks use the isolated managed
+worktree. The live preview, canonical owner/profile and independent server
+checkout are not writable test fixtures.
 
-## Executed
+## Actual packaging
 
-- `npm run build`: passed; all three browser entries built. Existing native asset runtime references and large main bundle warnings remain. This is browser evidence only.
-- `node --check src/widget.js`: passed.
-- `node --test tests/*.test.js`: 7 passed, 1 failed. The standalone Vite boundary test receives 403 for `/src/main.js` because this worktree is inside `.local/`, which the existing Vite filesystem deny rule excludes. No Vite/test/shared boundary changes were made. The first sandbox attempt could not spawn child processes; the reported 7/8 run used the existing approved Node test escalation.
-- All 13 Android XML resources/manifest parsed successfully.
-- `git diff --check`: passed.
-- Protocol examples parsed by the contract subtask. Read-only source review checked the published Rust baseline and the accounts-v2 workstream's account/pairing/lease/intent implementation. The native adapter now uses that exact API; it is not yet deployed or tested on Android.
-- Verified all 11 original PNG hashes/dimensions and all three source GLB hashes against local provenance. Published sanitized metadata only; all original bytes remain ignored/local.
+`android/verify.ps1` successfully ran the real Gradle tasks `assembleDebug
+lintDebug testDebugUnitTest assembleDebugAndroidTest`, including the locally
+staged original A2NE garden background. Application and instrumentation APKs
+were produced independently of the browser build. Debug signing, original
+pixels and generated APKs remain local/ignored.
 
-## Native checks not yet executed
+All 38 regular JVM tests passed: AccountAdapter 9, CarePolicy 11,
+OriginalCatalog 4, ServerOrigin 3, Snapshot 11. The default report contains 39
+tests, zero failures/errors and one deliberately skipped real-service test.
+The separately gated test passed in both phases of its dedicated runner below.
 
-No JDK, Gradle, Android SDK, adb or emulator/device was present in targeted toolchain locations or PATH. An isolated JDK download failed in the network sandbox; both escalated official JDK download requests were canceled before download. The user accepted the Android SDK terms. Acceptance of SDK terms is not a successful download/build. No APK, Android lint report, executed JVM/JUnit result, native screenshot, installed-widget result or physical-device evidence exists at this checkpoint. No download or approval remains running.
+Initial lint reported zero errors and 27 warnings, including small widget text,
+setup string translation, baseline alignment and unused resources. The Android
+12 backup/transfer warning was addressed with explicit `dataExtractionRules`
+exclusions, in addition to disabled backup. The final verification passes with
+zero lint errors and 26 warnings. Warnings are not suppressed.
 
-`verify.ps1` provides the exact native build/lint/JUnit/instrumentation-APK commands once tools are available. Source includes Snapshot/Origin/AccountAdapter/CarePolicy/OriginalCatalog JVM regression tests and five Android instrumentation tests, including three real RemoteViews sizes at font scale 1.3 and package protections. Authored tests are **not** passing-test evidence.
+Final local artifacts from the configured four-task verification:
 
-## Cross-repository blockers
+| Artifact | SHA-256 |
+| --- | --- |
+| `app/build/outputs/apk/debug/app-debug.apk` | `368390bfc98464a6e7607f46bd114721572d28544c92fce8d577f9e00c6542f8` |
+| `app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk` | `1faa1517d2d654efa33536000faba816940a6d84e72bb79d6425f106d6506f1d` |
 
-- Identity v2 pairing claim/HTTP routes and secure reachable HTTPS deployment are not present on the published Rust baseline.
-- Integrate/deploy the Rust accounts-v2 PR and validate actual HTTPS Android HTTP pairing/account/lease/intent calls. Read-only account requests never acquire a lease; care uses Rust's watch ID/revision/sequence fencing and never retries an uncertain mutation automatically. Restricted widget scopes and token expiry remain future server policy.
-- The current server public-player filter omits an offline nonresident self. `integration/include-self.patch` passed `git apply --check` against the accounts worktree; it was not applied to the separately owned server. Missing canonical self is rejected rather than replaced.
-- Durable AFK service integration is separate; absent state shows unavailable. The widget never starts, cancels or settles training.
-- Original assets remain local/runtime-only. Verify actual paired Neutral/Hero/Dark forms, original flame/chest/seven emeralds and provenance on Android after deployment.
-- Full app entry opens the same origin's Tiny Garden browser route without a credential. The full app requires its own login to that canonical account; authenticated app handoff is not implemented here.
+Google's `apksigner verify --verbose --print-certs` verifies the application APK
+using APK Signature Scheme v2, one Android Debug signer. Its certificate SHA-256
+is `38c2fe3853558f8a1f525feee8ae8fdbfae82fa31c5002cda4c25aabc5155755`.
+This is local debug signing, not production distribution signing.
 
-Keep the PR a draft until native packaging and live canonical-Chao acceptance are completed. Do not label the browser build, XML parse or fixtures as an installed Android widget test.
+`aapt dump badging` confirms package `garden.tiny.widget`, minimum API 26,
+target/compile API 35, a launchable PairingActivity and app-widget component,
+with only INTERNET and ACCESS_NETWORK_STATE permissions. Compiled manifest
+inspection confirms disabled backup/cleartext, an unexported care receiver,
+the JobScheduler service's BIND_JOB_SERVICE permission and the extraction rules.
+The APK's 14,636-byte `assets/tiny-garden-a2ne.png` entry has the exact expected
+SHA-256 `75eb4d2839418fc730773377a1135776a0c361cbb1b6967af8134d8d4b5469ae`.
+The local final build log is `verification/local/build-final-2026-11-18.log`.
+
+## Real Rust service round trip
+
+`tools/verify-rust-roundtrip.ps1` passed the production Java Gateway and
+AccountAdapter against an actual newly built Rust accounts-v2 service, source
+commit `56af22dece8551376f4c8b9a1882acecfff02bf1`, binary SHA-256
+`76df7aa256296b26468aa25a7bb5c2973d6b6a6fd9fea9413a78a34d89aca913`.
+The isolated service uses loopback port 4317 and a fresh private test data
+directory. A test-only localhost HTTPS proxy forwards to that Rust service;
+default hostname verification stays enabled. Production Android trust settings
+are unchanged. This creates a test account rather than modifying the live owner.
+
+The exercise phase pairs a device, reads the same canonical Chao and seven
+stats/rings, starts a server watch session and commits Pet care. Pair replay,
+stale/duplicate intents and unauthorized access are rejected. After a clean
+Rust shutdown/restart, the same credential and committed care survive, the
+same canonical Chao/stats remain, sequence replay is rejected, and revocation
+removes access. The gated JUnit test executed once successfully in each phase.
+The sanitized source/binary receipt is recorded in
+`RUST-ROUNDTRIP-2026-11-18.json`; private test fixtures remain ignored.
+
+This proves the real service transport and canonical persistence boundary.
+It does not prove Android OS networking/Keystore, the user's existing account
+migration, public HTTPS deployment or a running Android launcher widget.
+
+## Toolchain
+
+Tools live under the original checkout's ignored `.local/tools/`. The user's
+existing SDK-license acceptance was used by Google's official installer. No
+global Java/Gradle installation or Windows hypervisor configuration was changed.
+
+| Tool | Version / package | Download SHA-256 |
+| --- | --- | --- |
+| Microsoft OpenJDK | 17.0.21.1+2, Windows x64 | `a07e270f86aec056d9c2acf981eb64a38e30814dacfadbc5f80f31c55d5a4427` |
+| Gradle | 8.11.1 binary | `f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6` |
+| Google Android command-line tools | 22.0, build 15859902 | `90ae805d20434428bffcb699c290860f19bb5f66a67e6b330067e3de801fb04a` |
+| Android SDK | platform 35, build-tools 35.0.0, platform-tools | Installed by Google's SDK manager |
+| Android Gradle Plugin | 8.9.2 | Declared official Gradle repositories |
+
+The three tool archives were checked against official publisher SHA-256 values
+before extraction. SDK packages use Google's installer. The older Android
+plugin prints an SDK XML v3/v4 warning with current command-line tools; the
+configured build tasks completed.
+
+## Device/emulator attempts
+
+No physical adb device is attached. The isolated AVD uses Google's API 35
+default x86_64 system image, revision 2. CPU hardware virtualization is enabled;
+`emulator -accel-check` reports `6` and `Android Emulator hypervisor driver is
+not installed on this machine`.
+
+Software-only attempts without driver installation or Windows changes:
+
+- Emulator 37.2.13: `-accel off -gpu swiftshader_indirect -no-window -no-audio
+  -no-boot-anim -no-snapshot -memory 2048 -cores 4 -port 5556`; observed about
+  96 seconds. Adb stayed offline; no usable guest appeared.
+- Same version: `-accel off -gpu off -feature -Vulkan -no-window -no-audio
+  -no-boot-anim -no-snapshot -memory 2048 -cores 1 -port 5556 -show-kernel`;
+  observed about 189 seconds. Adb stayed offline; no kernel output appeared.
+  Both incomplete attempts were stopped by their own process IDs.
+- Concrete fallback: official stable Emulator 35.4.9, archive build 13025442,
+  SHA-256 `8f0ead88560cb1841ddb38681669b33bbf71c39081b1cc0ada6c56d6aad2cb6f`.
+  Flags: `-accel off -gpu swiftshader_indirect -feature -Vulkan -no-window
+  -no-audio -no-boot-anim -no-snapshot -memory 2048 -cores 1 -port 5556
+  -show-kernel`. Startup exited unsuccessfully within seven seconds. A repeat
+  with `-verbose` captured native process exit `-1073741819` (`0xC0000005`,
+  access violation) before guest kernel output. The crash reporter printed
+  `NtQuerySystemInformation SystemExtendedHandleInformation ... (0xc0000004)`;
+  that is a crash-reporting error, not a proven emulator root cause. The full
+  verbose log remains local at `.local/tools/android-downloads/emulator35-startup.log`
+  in the original checkout.
+
+The missing hypervisor driver is an observed gap, not the proven cause of these
+software startup outcomes. No emulator remains running. Final `adb devices -l`
+returns an empty device list.
+
+The five Android instrumentation methods are packaged but unexecuted. They
+apply three actual RemoteViews sizes, check 48dp controls and increased font
+size, preserve seven accessible stats and inspect package protections. No
+passing AppWidgetHost binding, launcher placement, native screenshot, reboot or
+Doze result exists. Compilation is not installed-widget acceptance.
+
+## Remaining acceptance
+
+- Run `verify.ps1 -Connected` on an authorized usable Android device/emulator;
+  verify an actual AppWidgetHost binding, launcher placement, all three sizes,
+  accessibility, reboot and background behavior.
+- Exercise Android Keystore and real HTTPS pairing, canonical reads, revocation,
+  conflicting/stale care, unknown commit outcomes and restart. Separately
+  recorded JVM transport execution does not prove Android runtime behavior.
+- Verify canonical native forms, A2NE background, flame/chest/seven emerald
+  identity and full Tiny Garden entry on Android.
+- Durable AFK status remains unavailable until supplied by the real service.
+  The widget cannot start, cancel or settle training. Authenticated browser
+  handoff, normal/gear-specific art and production release signing remain open.
+
+Keep the PR a draft until missing runtime/paired-device acceptance is complete.
+Browser screenshots, actual APK packaging and JVM service calls prove their
+respective boundaries.
