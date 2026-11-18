@@ -4,6 +4,7 @@ Updated November 18, 2026. This is the handoff for user-created chats, not a cla
 
 ## Coordination rules
 
+- Read root AGENTS.md first. The user's Rust requirement applies to all game systems, shared mechanics and asset readers/converters; shared browser mechanics use the agreed Rust/WASM boundary. Existing browser/Android presentation must consume the actual Rust core/protocol. The generated Expo/Nest/TypeScript simulation batch is unaccepted; see the server coordination board and its dated Vibe review reports before further integration.
 - Use the server repository's `docs/coordination/BOARD.md`, `PROTOCOL.md` and `WORKSTREAMS.md` for Vibe Coder/repository coordination. This chat does not update the private Vibe website board. Claim a workstream and record its branch, dependencies, evidence and PR there; do not assume an unreported chat is running.
 - This original chat owns integration, release QA, the playable preview, TASKS.md and cross-repository contracts.
 - Use a separate branch/worktree for each implementation chat. Start from the verified published source; do not let multiple chats mutate the same checkout/index. Branches use codex/ prefix. Open reviewable PRs; the integration chat coordinates merges.
@@ -18,6 +19,8 @@ Updated November 18, 2026. This is the handoff for user-created chats, not a cla
 ## Start order
 
 Start Tiny Garden, Android widget, AFK training and device pairing together. The four game-specific Rust asset tracks can run independently after agreeing the common manifest format. Care, movement and competitions consume those outputs. Capacity/deployment measures the integrated service. This original chat integrates throughout.
+
+Movement handoff: client commit `279a7b7` already publishes `src/chao-locomotion.js`, its scene hooks, native Run119 build/verification tools and focused tests. The native movement stream should use that dependency rather than rebuild the helper; keep `src/scene.js` changes as a small reviewed patch. The exact `chao-locomotion.glb` server route works in the current local runtime but its source patch remains separately unpublished while Vibe's server build is blocked. Preserve opaque bodies, flame/gem alpha and depth-occluded bloom. The movement chat reports an isolated `codex/native-chao-movement` branch; it is not a merged delivery.
 
 ## Copy-and-paste chat briefs
 

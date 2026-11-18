@@ -8,6 +8,8 @@ Movement rule: original Chao action first; original stage-character movement ret
 
 ## Continue here
 
+The Vibe deliveries through server `282f6ab` are **UNACCEPTED**. Rust game/shared mechanics are mandatory. Server documentation commit `e09cd62` publishes the gate; dated review reports and repair tasks are in server `docs/coordination/`. The working runtime is unchanged. Root AGENTS.md applies the same requirement to client/platform work.
+
 1. Coordinate through the server repository's docs/coordination/BOARD.md and PROTOCOL.md. Accounts/pairing is active in an isolated worktree; agree the v2 contract and migrate all three clients before merging (NET-03, TCG-06).
 2. Connect durable AFK training and its Tiny Garden screen after ownership/lease agreement (TCG-08/16). The tested pure Rust job core is not a running training service.
 3. Turn the Android widget web preview into a native widget with authenticated observation, quick care and honest cached-state labels (ANDROID-01). Full minigames and AFK controls open Tiny Garden.
@@ -20,7 +22,7 @@ Movement rule: original Chao action first; original stage-character movement ret
 | --- | --- | --- | --- |
 | DOC-01 | DONE | Preserve recent feature requests, regular SA2 mechanics, movement list, mechs, Rust, source split and population target. | DESIGN.md and REQUESTS.md contain the scope; this queue records completion gates. |
 | DOC-02 | TODO | Keep the work record current at every session handoff. | Update task status/evidence and next steps; do not silently drop unfinished requests. |
-| WORK-01 | ACTIVE | Original chat owns integration/release across twelve scoped implementation chats. | Copy-ready briefs in docs/WORKSTREAMS.md; server docs/coordination holds the Vibe/repository board, mirrored contract and all briefs. Vibe release-doc push b525d8b synced. Only Accounts/pairing activity is confirmed; other chat activity stays unverified. Isolated branches/worktrees and coordinated shared runtime/protocol edits required. |
+| WORK-01 | ACTIVE | Original chat owns integration/release across twelve scoped implementation chats. | Copy-ready briefs in docs/WORKSTREAMS.md; server docs/coordination holds the Vibe/repository board, mirrored contract and all briefs. Accounts/pairing and native movement have reported isolated work; implementation remains subject to integration review. Client native Run helper is already published at279a7b7; avoid a duplicate implementation. Other chat activity stays unverified. |
 | OPS-01 | DONE | Separate frontend and backend processes and stop direct private-file serving. | Separate workers, proxy smoke and encoded/private path rejection checked; launcher cleanup checked on Windows. |
 | OPS-02 | DONE | Connect and populate the two user-created GitHub repos. | Published 91 client files (31646f2) and 60 server files (a8188a3); fetched Git trees and every blob match audited staged source. Independent prior histories preserved; native assets/ROMs/saves/tools excluded. Repos: mobdon/ChaoGardenMMOClient and mobdon/ChaoGardenMMOServer. |
 | OPS-03 | DONE | Isolated Rust/GNU toolchain and reproducible local setup. | Native hello-world cargo test/run passed; scripts/setup-rust.ps1, scripts/use-rust.ps1, docs/DEVELOPMENT.md. |
@@ -29,6 +31,7 @@ Movement rule: original Chao action first; original stage-character movement ret
 | NET-02 | DONE | Port implemented custom gameplay authority to Rust. | Rust service is the running preview backend. Release build, 70 host tests, strict fmt/Clippy, copied-native HTTP/WS smoke and durable Tiny reward/profile checks passed before switch. Native retail game code is not a completed Rust port. |
 | NET-03 | ACTIVE | Document/version client/server wire schema and shared constants. | Accounts/pairing isolated branch in progress. Integration constraints and proposed v2 envelope in docs/PROTOCOL-COORDINATION.md; client/AFK/widget agreement and migration tests required before merge. Both repos must detect incompatible protocol versions. |
 | NET-04 | TODO | Support reconnect recovery and duplicate-session behavior deliberately. | Test disconnect/rejoin during race, combat and purchase; no duplicate rewards or lost progression. |
+| REVIEW-01 | DONE | Review the received Vibe batches and record the user's Rust implementation requirement. | First four deliveries reviewed across97paths/25findings at5ec51f9; later59-path PR7 reviewed separately with17findings at282f6ab. Server docs-only commits e09cd62/325db09 publish Rust gates, findings and repair tasks. Feature acceptance remains blocked; no Vibe runtime rollout. Later source needs its own review. |
 
 ## Visuals, controls and native content
 
