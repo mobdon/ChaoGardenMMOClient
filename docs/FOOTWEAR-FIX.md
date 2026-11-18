@@ -28,6 +28,12 @@ skate blend and immediately disable for unavailable/stale authority, missing
 shoes, mounted, swimming or airborne state. Gear disposal removes the jets
 without disposing the shared atlas/material used by the head flame.
 
+The atlas-based shoe jets described above are historical. The source now uses
+the original Shadow models92–99 when locally prepared shoe aliases contain
+them; old aliases receive no fabricated fallback. See
+[NATIVE-SHOE-EFFECTS.md](NATIVE-SHOE-EFFECTS.md) for exact sources, reproducible
+Rust conversion, original material/alpha evidence and remaining visual gates.
+
 ## Verification
 
 - `npm test`: 14/14 client tests passed, including actual attachment motion,
