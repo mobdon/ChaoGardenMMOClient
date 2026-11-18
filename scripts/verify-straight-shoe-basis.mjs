@@ -12,7 +12,7 @@ import {
   LoadAssetContainerAsync, Matrix, NullEngine, Quaternion, Scene, TransformNode, Vector3,
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
-import { CHAO_GEAR_JOINTS, collectNativeShoeParts, nativeShoeEffect } from '../src/chao-attachments.js';
+import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, collectNativeShoeParts, nativeShoeEffect } from '../src/chao-attachments.js';
 import { attachNativeRun, captureChaoPose } from '../src/chao-locomotion.js';
 import { createShadowSkate } from '../src/shadow-skate.js';
 
@@ -162,7 +162,7 @@ try {
       const { meshes, effects } = collectNativeShoeParts(shoeRoot);
       assert.ok(meshes.every(mesh => !nativeShoeEffect(mesh)), 'Embedded native jets must not inflate boot fitting.');
       assert.ok(effects.every(effect => !effect.mesh.isEnabled()), 'Bundled jets start disabled during fitting.');
-      const sourceBounds = geometryBounds(meshes), scale = fit.size.z * 1.06 / sourceBounds.size.z;
+      const sourceBounds = geometryBounds(meshes), scale = fit.size.z * CHAO_SHOE_LENGTH_RATIO / sourceBounds.size.z;
       const position = fit.center.subtract(sourceBounds.center.scale(scale));
       position.y = fit.min.y - sourceBounds.min.y * scale;
       const local = Matrix.Compose(new Vector3(scale, scale, scale), shoeRoot.rotationQuaternion, position)

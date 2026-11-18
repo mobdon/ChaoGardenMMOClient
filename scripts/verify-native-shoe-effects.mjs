@@ -8,6 +8,7 @@ import '@babylonjs/loaders/glTF/index.js';
 import { collectNativeShoeParts, updateNativeShoeEffects } from '../src/chao-attachments.js';
 
 const sourceRoot = resolve(process.argv[2] || '.'), output = resolve(process.argv[3] || '.local/native-shoe-effects/v3');
+const originalDirectory = resolve(process.argv[4] || resolve(sourceRoot, '.local/imports'));
 const references = JSON.parse(await readFile(resolve(output, 'saio-reference.json'))).models;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 function glb(bytes) {
@@ -35,7 +36,7 @@ const triangleKey = values => [values.join(','), [values[1], values[2], values[0
 const engine = new NullEngine(), scene = new Scene(engine), records = [];
 try {
   for (const side of ['left', 'right']) {
-    const originalBytes = await readFile(resolve(sourceRoot, `.local/imports/shadow-air-shoes-${side}.glb`));
+    const originalBytes = await readFile(resolve(originalDirectory, `shadow-air-shoes-${side}.glb`));
     const bytes = await readFile(resolve(output, `shadow-air-shoes-${side}.glb`));
     const provenance = JSON.parse(await readFile(resolve(output, `shadow-air-shoes-${side}.glb.provenance.json`)));
     const original = glb(originalBytes), prepared = glb(bytes), doc = prepared.document;

@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LoadAssetContainerAsync, Matrix, NullEngine, Quaternion, Scene, TransformNode, Vector3 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
-import { CHAO_GEAR_JOINTS, chestSurfacePoint, collectNativeShoeParts } from '../src/chao-attachments.js';
+import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, chestSurfacePoint, collectNativeShoeParts } from '../src/chao-attachments.js';
 import { attachNativeRun, captureChaoPose } from '../src/chao-locomotion.js';
 import { createShadowSkate } from '../src/shadow-skate.js';
 
@@ -112,7 +112,7 @@ try {
       const meshes = collectNativeShoeParts(root).meshes, source = geometryBounds(meshes);
       root.computeWorldMatrix(true);
       const marker = Vector3.TransformCoordinates(source.center, Matrix.Invert(root.getWorldMatrix()));
-      const scale = fit.size.z * 1.06 / source.size.z, position = fit.center.subtract(source.center.scale(scale));
+      const scale = fit.size.z * CHAO_SHOE_LENGTH_RATIO / source.size.z, position = fit.center.subtract(source.center.scale(scale));
       position.y = fit.min.y - source.min.y * scale;
       const local = Matrix.Compose(new Vector3(scale, scale, scale), root.rotationQuaternion, position).multiply(Matrix.Invert(restToRoot));
       local.decompose(root.scaling, root.rotationQuaternion, root.position);

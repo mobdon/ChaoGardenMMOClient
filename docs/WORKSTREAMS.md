@@ -26,6 +26,8 @@ The current JumpUp132 / JumpDown135 / reverse137 proposal, real snapshot-field r
 
 Integration's `codex/footwear-motion-fix` fixes the frozen visible shoes independently of that proposal: actual 006/013 sockets/overlay targets, skin-centered chest emerald and guarded heel jets. [FOOTWEAR-FIX.md](FOOTWEAR-FIX.md) records original-asset, real Rust round-trip and actual UI evidence. Preserve these attachment changes in a future movement merge. Read-only review of native movement commit86f41f9 confirmed invalid-height handling is fixed; duplicate-time history resets and the legacy water fallback mismatch remain for that stream's acceptance.
 
+Follow-up integration on `codex/native-presentation-fixes` replaces adapted shoe sprites with original Shadow 92–99 geometry/materials, corrects inward toe basis, reduces uniform shoe fit to 0.90 and embeds the chest gem deeper. Keep these presentation changes when rebasing movement; native joints stay unchanged. Exact native emitter draw matrices/timing remain untraced. See [NATIVE-SHOE-EFFECTS.md](NATIVE-SHOE-EFFECTS.md). Always search and use native effects/assets first.
+
 ## Copy-and-paste chat briefs
 
 ### 1. Client — Tiny Garden app

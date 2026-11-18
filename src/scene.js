@@ -8,7 +8,7 @@ import '@babylonjs/loaders/glTF/index.js';
 import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, stepInputPace } from './chao-locomotion.js';
-import { CHAO_GEAR_JOINTS, chestSurfacePoint, collectNativeShoeParts, updateNativeShoeEffects } from './chao-attachments.js';
+import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, chestSurfacePoint, collectNativeShoeParts, updateNativeShoeEffects } from './chao-attachments.js';
 import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
@@ -603,7 +603,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       const { meshes, effects } = collectNativeShoeParts(root);
       const source = boundsFor(geometryPoints(meshes));
       if (!source) { destroyGroup(root); continue; }
-      const scale = slot === 'footwear' ? fit.bounds.size.z * 1.06 / source.size.z
+      const scale = slot === 'footwear' ? fit.bounds.size.z * CHAO_SHOE_LENGTH_RATIO / source.size.z
         : Math.max(fit.bounds.size.x, fit.bounds.size.y, fit.bounds.size.z) * 1.12 / Math.max(source.size.x, source.size.y, source.size.z);
       const position = fit.bounds.center.subtract(source.center.scale(scale));
       if (slot === 'footwear') position.y = fit.bounds.min.y - source.min.y * scale;
@@ -840,7 +840,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     const scale = 0.09 / source.size.y;
     visual.scaling.setAll(scale);
     visual.position.copyFrom(source.center.scale(-scale));
-    const position = fit.surface;
+    // The center was on the skin; tuck another quarter-depth inside so only
+    // a small facet cap projects from the chest instead of a pendant shape.
+    const position = fit.surface.subtract(new Vector3(0, 0, source.size.z * scale * .25));
     const local = Matrix.Translation(position.x, position.y, position.z).multiply(Matrix.Invert(fit.restToRoot));
     chest.rotationQuaternion = Quaternion.Identity();
     local.decompose(chest.scaling, chest.rotationQuaternion, chest.position);

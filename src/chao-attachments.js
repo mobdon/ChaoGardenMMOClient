@@ -7,6 +7,9 @@ export const CHAO_GEAR_JOINTS = [
   ['left', '010', '011', '013', '013'],
 ];
 
+// Compact rigid shells around the native feet; preserve uniform prop scale.
+export const CHAO_SHOE_LENGTH_RATIO = .90;
+
 // Capture the skin surface in the bind pose, before animation/async loading.
 // Centering the emerald here embeds half its depth instead of floating it
 // beyond the torso's maximum bounds (which include its wider lower belly).

@@ -4,6 +4,43 @@ November 18, 2026. Client branch `codex/footwear-motion-fix`, based on
 `435f6a3689c2f25ebc1c6526d2075d59321c7b28`. This is a browser presentation
 change using the existing Rust authority and protocol.
 
+## Current follow-up integration
+
+The later `codex/native-presentation-fixes` branch replaces the historical
+adapted shoe sprites with original Shadow jet meshes 92–99. See
+[NATIVE-SHOE-EFFECTS.md](NATIVE-SHOE-EFFECTS.md) for Rust preparation, exact
+source and unresolved retail emitter/timing parity. The approved head flame
+is unchanged.
+
+Each shoe now uses its actual native heel-to-toe direction, removing about
+11 degrees of inward yaw. Uniform length fitting is 0.90 instead of 1.06,
+making both boots 15.1% smaller on every axis. Native joints and sole curvature
+remain unchanged. The cyan chest gem center sits another quarter of its depth
+inside the measured skin, halving its nominal exposed depth.
+
+Final client tests pass 15/15 and production build passes. The smaller fit
+passes three-form motion/rig checks and 1,086 production-mount samples with
+toe yaw below 0.000001 degrees. The existing disposable real Rust protocol
+proof passed 14 checks with two clients; subsequent actual browser input
+verified the refined presentation at Walk 0.798, Run 1.236 and Skate 1.994
+units/s. Native jet IDs activate only during skating. Browser warning/error
+logs were empty.
+
+New ignored evidence: `.local/screenshots/native-footwear/evidence.json`
+contains final renderer hashes and 209 timestamped actual UI frames.
+`.local/screenshots/chao-refined-walk-run-skate.mp4` is the resulting
+9.708-second 1280×720 clip, resampled to 24 fps with gaps between takes trimmed.
+`front-refined.png` in the evidence folder shows the deeper gem/smaller shoes;
+`live-garden.png` shows the canonical Chao after integration.
+
+The two prepared shoe aliases were installed through the existing asset
+routes after backing up the originals in
+`.local/backups/native-shoe-originals-20261118/`. A fresh Rust/SAIO/PBR
+reproduction matches both installed hashes exactly. Existing backend/frontend
+processes stayed running. Chaos retains 139 rings, gear, Watch movement and
+muted audio; no backend rollout or profile migration occurred. Broad terrain
+contact and exact native emitter draw matrices/timing remain open.
+
 ## Result and original source
 
 The original Chao Walk and Run119 already alternate their feet. Shoes were
@@ -21,11 +58,11 @@ The cyan chest emerald is centered on a ray intersection with the captured
 bind-pose torso skin, embedding approximately half its depth. It retains the
 native torso 001 attachment, original model/texture and depth-occluded bloom.
 
-Heel jets reuse the original sixteen-frame Chao flame atlas as an explicitly
+The historical heel jets reused the original sixteen-frame Chao flame atlas as an explicitly
 adapted effect. These are not claimed to be extracted Shadow jet meshes.
 Crossed transparent planes follow each animated foot, fade with the existing
 skate blend and immediately disable for unavailable/stale authority, missing
-shoes, mounted, swimming or airborne state. Gear disposal removes the jets
+shoes, mounted, swimming or airborne state. Gear disposal removed those jets
 without disposing the shared atlas/material used by the head flame.
 
 The atlas-based shoe jets described above are historical. The source now uses

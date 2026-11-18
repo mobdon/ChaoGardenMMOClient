@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)][string]$SourceRoot,
     [Parameter(Mandatory = $true)][string]$InspectorExe,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
-    [string]$BlenderExe
+    [string]$BlenderExe,
+    [string]$OriginalShoeDirectory
 )
 
 # Owner-local preparation only. This never installs aliases or starts services.
@@ -24,6 +25,7 @@ $taskBlender = $null
 if ($BlenderExe) { $taskBlender = (Resolve-Path -LiteralPath $BlenderExe).Path }
 $taskModels = Join-Path $taskSource '.local/extracted/shadow-skate/teriosmdl'
 $taskImports = Join-Path $taskSource '.local/imports'
+if ($OriginalShoeDirectory) { $taskImports = (Resolve-Path -LiteralPath $OriginalShoeDirectory).Path }
 foreach ($taskId in 92..99) {
     if (-not (Test-Path -LiteralPath (Join-Path $taskModels "$taskId.sa2mdl"))) { throw "Missing native model $taskId." }
 }
@@ -54,7 +56,7 @@ try {
     if ($taskBlender) {
         & $taskBlender --background --factory-startup --python (Join-Path $PSScriptRoot 'inspect-native-shoe-effects.py') -- $taskSource (Join-Path $taskOutput 'saio-reference.json')
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $taskOutput 'saio-reference.json'))) { throw 'Independent SAIO inspection failed.' }
-        & node (Join-Path $PSScriptRoot 'verify-native-shoe-effects.mjs') $taskSource $taskOutput
+        & node (Join-Path $PSScriptRoot 'verify-native-shoe-effects.mjs') $taskSource $taskOutput $taskImports
         if ($LASTEXITCODE -ne 0) { throw 'Independent native material/geometry parity failed.' }
     }
     $taskEvidence = [ordered]@{

@@ -53,6 +53,7 @@ Activate the existing project Rust toolchain, then run from this checkout:
   -SourceRoot C:/Users/Admin/Documents/ChatGPT/mmo `
   -InspectorExe C:/Users/Admin/Documents/ChatGPT/mmo/.local/worktrees/sa2-assets/asset-tools/crates/sa2/target/debug/sa2-assets.exe `
   -OutputDirectory .local/native-shoe-effects/new-proof `
+  -OriginalShoeDirectory .local/backups/native-shoe-originals-20261118 `
   -BlenderExe C:/Users/Admin/Documents/ChatGPT/mmo/.local/tools/blender-5.1.2-windows-x64/blender.exe
 ```
 
@@ -60,6 +61,9 @@ Choose a new output directory on every run. The Blender argument enables an
 independent existing-SAIO import and geometry/material parity proof. Without
 it, only bounded Rust preparation runs. Inspect each output's provenance and
 `build-evidence.json`; no service, canonical profile or save is accessed.
+`OriginalShoeDirectory` selects the preserved unbundled boots and conversion
+report after installation. Omit it only when `.local/imports` still contains
+the originals; bundled aliases intentionally fail the original-hash check.
 
 ```powershell
 node scripts/verify-chao-footwear.mjs --asset-root C:/Users/Admin/Documents/ChatGPT/mmo/.local/imports --shoe-root .local/native-shoe-effects/new-proof --output .local/native-shoe-effects/new-proof/footwear-proof.json
@@ -93,8 +97,18 @@ effect selection, following, original alpha and disposal.
 Overwrite attempts, truncated GLBs, changed native fingerprints, extreme
 inspector offsets and invalid scene indices return errors without panics.
 
-These proofs do not establish an engine port, native effect timing, browser
-silhouette/terrain acceptance or a canonical Rust service round trip. Actual
-browser material/visual checks and service checks remain integration work.
-Prepared aliases have not been installed by this change. Runtime deployment,
-server migration and canonical-save changes are outside this preparation.
+Integration installed these exact aliases after backing up the originals.
+A fresh root-checkout Rust/SAIO/PBR reproduction in
+`.local/native-shoe-effects/repro-final/` matches both hashes. The final
+smaller 0.90 shoe fit passes the same 1,086 motion samples; actual browser UI
+captured Walk/Run/Skate with native IDs 92–99 selected only during skating.
+The disposable real Rust protocol proof passed 14 checks. Final screenshots,
+renderer hashes and clip are described in [FOOTWEAR-FIX.md](FOOTWEAR-FIX.md).
+
+These proofs do not establish a full engine port, broad terrain/contact
+acceptance or exact native emitter-frame/timing parity. Bounds/ray inspection
+shows sole-level downward heel thrust and toe plumes leaving the boot toward
+the ground; boot/terrain occlusion makes these subtle. Separate retail flame
+matrices are declared but not traced. No guessed visibility offset was added.
+Server executable, canonical save, credentials and resident opt-in remain
+unchanged; installation only updates local rendering assets.
