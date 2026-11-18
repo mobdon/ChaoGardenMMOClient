@@ -7,7 +7,7 @@ import {
 import '@babylonjs/loaders/glTF/index.js';
 import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
-import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, stepInputPace } from './chao-locomotion.js';
+import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, stepInputPace } from './chao-locomotion.js';
 import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
@@ -406,13 +406,15 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       idle: entries.animationGroups.find(group => /idle/i.test(group.name)),
       walk: entries.animationGroups.find(group => /walk/i.test(group.name)),
       current: null,
+      motionState: createNativeMotionState(),
     };
     item.imported.gearSockets = captureGearSockets(item);
     const locomotionPose = captureChaoPose(item.imported);
     void loadLocalAsset('chao-locomotion').then(source => {
       if (source && !disposed && !item.root.isDisposed()) {
-        attachNativeRun(item.imported, source, locomotionPose);
+        attachNativeLocomotion(item.imported, source, locomotionPose);
         canvas.dataset.nativeRun = item.imported.run ? 'native119-loaded' : 'unavailable';
+        canvas.dataset.nativeAir = item.imported.jumpUp && item.imported.jumpDown ? 'native132-137-loaded' : 'unavailable';
       }
     });
     item.imported.skate = createShadowSkate(item.imported);
@@ -1477,23 +1479,27 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       if (item.imported) {
         const motion = item.motionSample;
         const fresh = !!motion?.valid && performance.now() - motion.observedAt < 350;
-        item.imported.skate?.update(dt, {
+        // Restore last frame's overlay before manually sampling paused native
+        // air/recovery clips; otherwise the animation observer restores over it.
+        item.imported.skate?.restoreBase();
+        const native = updateNativeLocomotion(item.imported, item.imported.motionState, dt, {
           speed: fresh ? motion.speed : 0,
           grounded: motion?.grounded || false,
+          jumpOffset: motion?.jumpOffset,
+          verticalVelocity: motion?.verticalVelocity,
+          fresh,
+          mounted: !!item.vehicleKey,
+          swimming: motion?.swimming || false,
+        });
+        item.nativeMotion = native;
+        item.imported.skate?.update(dt, {
+          speed: fresh ? motion.speed : 0,
+          grounded: !!motion?.grounded && native.mode !== 'Land',
           swimming: motion?.swimming || false,
           footwear: item.gear?.footwear === 'shadow-air-shoes' && !!item.ownerGear?.footwear?.length,
           mounted: !!item.vehicleKey,
           fresh,
         });
-        const speed = fresh && motion?.grounded && !item.vehicleKey ? motion.speed : 0;
-        item.nativeGait = chooseNativeGait(speed, item.nativeGait);
-        const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
-        if (animation && item.imported.current !== animation) {
-          item.imported.current?.stop();
-          animation.start(true, 1);
-          item.imported.current = animation;
-        }
-        if (animation) animation.speedRatio = nativeGaitRate(animation === item.imported.run ? 'Run' : animation === item.imported.walk ? 'Walk' : 'Idle', speed);
       }
       if (item.vehicle) animateWalker(item, dt);
       for (const emerald of item.emeralds || []) {
@@ -1578,8 +1584,11 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     canvas.dataset.skateRate = (skate?.rate || 0).toFixed(3);
     canvas.dataset.skateBlend = (skate?.blend || 0).toFixed(3);
     canvas.dataset.skateClip = skate?.clip || '';
-    canvas.dataset.chaoMotion = skate?.active ? `ShadowSkate${skate.clip}` : self?.imported?.run && self.imported.current === self.imported.run ? 'NativeRun119' : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
-    canvas.dataset.chaoMotionRate = (self?.imported?.current?.speedRatio || 1).toFixed(3);
+    canvas.dataset.chaoMotion = skate?.active ? `ShadowSkate${skate.clip}` : self?.nativeMotion?.available && self.nativeMotion.nativeState ? `Native${self.nativeMotion.mode}${self.nativeMotion.nativeState}` : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
+    canvas.dataset.chaoMotionState = self?.nativeMotion?.mode || 'Idle';
+    canvas.dataset.chaoMotionAvailable = String(!!self?.nativeMotion?.available);
+    canvas.dataset.chaoMotionFrame = Number.isFinite(self?.nativeMotion?.frame) ? self.nativeMotion.frame.toFixed(3) : '';
+    canvas.dataset.chaoMotionRate = (self?.nativeMotion?.rate || 1).toFixed(3);
   });
   onReady();
 

@@ -69,7 +69,7 @@ Data verification checks all original hashes, native intermediate hashes, nine c
 
 Browser acceptance must still inspect threshold crossing and hysteresis, slow/fast cadence, starts/stops and turns, left/right boot contact, arm/hand props, eye/flame/emerald attachments, return to idle/air/mech actions, two-client ownership presentation and unchanged Chao proportions. The different anatomy means retarget amplitude limits and pose blending are adaptations requiring visual judgment. This source-data audit does not certify them by itself.
 
-## Integrated presentation and transform proof
+## Initial integrated presentation and transform proof
 
 Ordinary Chao running now has a separate genuine source asset for the requested Walk → Run → Skate sequence. `scripts/build-chao-locomotion.js` selects only `alm_run` from the verified activity library and compacts unused animation buffers into `.local/imports/chao-locomotion.glb` (67,812 bytes), served by the narrow `/api/assets/chao-locomotion.glb` route. Native state119 identifies `animation_002D8310`, `common/alm_run.saanim`, `LoopProperty=1`, `EndFrame=5` and `PlaySpeed=0.21`. It is not the distinct `alm_run_stopped` clip.
 
@@ -82,6 +82,18 @@ The separate `src/shadow-skate.js` helper now implements the adaptation. It ente
 To fit the different anatomy, the helper caps rotation deltas at 30° for the body, 35° for the head, 75° for upper arms/hands and 50° for feet. These are deliberate retarget limits rather than changes to original source clips, which can have much larger bind-relative rotations. Ordinary native Chao Idle/Walk remains underneath, with skating disabled for idle, airborne, mounted and invalid/stale movement states. Snapshots older than 350 ms and implausible teleport displacement cannot provide skating speed.
 
 `scripts/verify-shadow-skate-runtime.mjs` produces ignored `.local/imports/shadow-skate-runtime-proof.json`. The current CPU proof passes 648 sampled frames across Neutral/Hero/Dark Chaos; original local positions, scales and parent relationships remain unchanged for all 60/60/61 loaded rig nodes. It records 150 distinct foot-pose signatures per form and retains both original Idle/Walk clips. This verifies transforms and eligibility logic; live browser inspection remains the visual acceptance step.
+
+## Native jump and recovery follow-up
+
+The isolated movement PR extends the compact library with genuine `alm_jump_up`
+and `alm_jump_down`, retaining Run119. Native132–137 now present server-observed
+ascent, descent and landing recovery before skating resumes. The existing rig,
+prop sockets, body/effect alpha and terrain grounding remain intact. See
+[native movement validation](NATIVE-MOVEMENT-VALIDATION.md) for exact source
+hashes, the small scene integration boundary, 1,890 CPU frames, actual isolated
+Rust/two-client round-trip results, 30 browser phases and remaining limits.
+The library build now emits three clips; the earlier Run-only size/hash above
+records the initial integration proof rather than the new output.
 
 ## Live Walk → Run → Skate demonstration
 

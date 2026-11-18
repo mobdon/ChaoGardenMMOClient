@@ -15,6 +15,18 @@ export const SKATE_ROTATION_LIMITS = {
   leftHand: 75, rightHand: 75, leftFoot: 50, rightFoot: 50,
 };
 
+// Selected source world-space orientations are adapted to existing Chao
+// rotation channels. Shadow's limb count and proportions are never copied.
+// Source left/right map by the verified aligned model positions, not names.
+const TARGETS = [
+  ['001', 'body'], ['014', 'head'],
+  ['003', 'leftUpperArm'], ['004', 'leftHand'],
+  ['010', 'rightUpperArm'], ['011', 'rightHand'],
+  ['005', 'leftFoot'], ['012', 'rightFoot'],
+];
+
+const frameDelta = dt => Math.max(0, Math.min(0.1, Number.isFinite(dt) ? dt : 0));
+
 let sharedMotion;
 async function loadMotion() {
   sharedMotion ??= fetch('/api/assets/shadow-skate-motion.json', { cache: 'no-store' })
@@ -23,23 +35,35 @@ async function loadMotion() {
   return sharedMotion;
 }
 
-const finiteQuaternion = value => Array.isArray(value) && value.length === 4 && value.every(Number.isFinite) && Math.hypot(...value) > 0.5;
+const finiteQuaternion = value => Array.isArray(value) && value.length === 4 && value.every(Number.isFinite)
+  && Math.abs(Math.hypot(...value) - 1) < .01;
 const quaternion = value => Quaternion.FromArray(value).normalize();
 
 function supportedMotion(motion) {
   return motion?.version === 1 && motion.basis === 'right-handed glTF Y-up model space'
     && finiteQuaternion(motion.alignmentQuaternion)
     && Array.isArray(motion.bones) && Array.isArray(motion.clips)
+    && TARGETS.every(([, semantic]) => {
+      const bones = motion.bones.filter(bone => bone?.semantic === semantic);
+      return bones.length === 1 && finiteQuaternion(bones[0].restWorld);
+    })
     && [172, 173, 174].every(id => {
-      const clip = motion.clips.find(row => row.nativeId === id);
+      const clips = motion.clips.filter(row => row?.nativeId === id);
+      const clip = clips[0];
+      if (clips.length !== 1) return false;
       return clip && Number.isFinite(clip.durationSeconds) && clip.durationSeconds > 0
         && Array.isArray(clip.frames) && clip.frames.length > 1
-        && clip.frames.every(frame => Number.isFinite(frame.timeSeconds));
+        && clip.frames[0]?.timeSeconds === 0
+        && clip.frames.every((frame, index, frames) => Number.isFinite(frame?.timeSeconds)
+          && frame.timeSeconds >= 0 && frame.timeSeconds <= clip.durationSeconds
+          && (!index || frame.timeSeconds > frames[index - 1].timeSeconds)
+          && TARGETS.every(([, semantic]) => finiteQuaternion(frame.rotations?.[semantic])));
     });
 }
 
 export function observeSkateMotion(previous, player, serverTime, observedAt) {
   const x = player.x, z = player.z;
+  const jumpOffset = Number.isFinite(player.jumpOffset) && player.jumpOffset >= 0 ? player.jumpOffset : null;
   const elapsed = (serverTime - previous?.serverTime) / 1000;
   const distance = Math.hypot(x - previous?.x, z - previous?.z);
   const valid = Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(serverTime)
@@ -47,7 +71,10 @@ export function observeSkateMotion(previous, player, serverTime, observedAt) {
     && distance <= elapsed * 3 + 0.025;
   return { x, z, zone: player.zone, serverTime, observedAt,
     speed: valid ? distance / elapsed : 0, valid,
-    grounded: Number.isFinite(player.jumpOffset) && player.jumpOffset <= 0.001,
+    jumpOffset,
+    verticalVelocity: valid && jumpOffset !== null && Number.isFinite(previous?.jumpOffset)
+      ? (jumpOffset - previous.jumpOffset) / elapsed : 0,
+    grounded: jumpOffset !== null && jumpOffset <= 0.001,
     swimming: player.zone === 'garden' && (x + 8) ** 2 + z ** 2 < 25 };
 }
 
@@ -59,7 +86,7 @@ export class SkateCadence {
 
   update(dt, { speed = 0, grounded = false, footwear = false, mounted = false,
     swimming = false, fresh = false, available = false } = {}) {
-    dt = Math.max(0, Math.min(0.1, Number.isFinite(dt) ? dt : 0));
+    dt = frameDelta(dt);
     this.speed = Number.isFinite(speed) ? Math.max(0, speed) : 0;
     const blocked = !grounded || !footwear || mounted || swimming || !fresh || !available;
     if (blocked) { this.active = false; this.blend = 0; }
@@ -75,16 +102,6 @@ export class SkateCadence {
     return this;
   }
 }
-
-// Selected source world-space orientations are adapted to existing Chao
-// rotation channels. Shadow's limb count and proportions are never copied.
-// Source left/right map by the verified aligned model positions, not names.
-const TARGETS = [
-  ['001', 'body'], ['014', 'head'],
-  ['003', 'leftUpperArm'], ['004', 'leftHand'],
-  ['010', 'rightUpperArm'], ['011', 'rightHand'],
-  ['005', 'leftFoot'], ['012', 'rightFoot'],
-];
 
 function relativeRotation(node, reference) {
   node.computeWorldMatrix(true); reference.computeWorldMatrix(true);
@@ -146,7 +163,7 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
   }
 
   function update(dt, state) {
-    deltaTime = Math.max(0, Math.min(0.1, dt));
+    deltaTime = frameDelta(dt);
     cadence.update(deltaTime, { ...state, available: !!data && targets.length === TARGETS.length });
     if (!cadence.blend) clipName = '';
   }

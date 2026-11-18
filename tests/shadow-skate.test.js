@@ -5,6 +5,29 @@ import { createShadowSkate, observeSkateMotion, SkateCadence } from '../src/shad
 
 const ready = { grounded: true, footwear: true, mounted: false, swimming: false, fresh: true, available: true };
 
+function skateFixture() {
+  const engine = new NullEngine(), scene = new Scene(engine);
+  const visual = new TransformNode('visual', scene), armature = new TransformNode('armature', scene);
+  armature.parent = visual;
+  const nodes = [];
+  const make = (index, parent) => {
+    const node = new TransformNode(`${index}_object_test`, scene);
+    node.parent = parent; node.rotationQuaternion = Quaternion.Identity(); nodes.push(node); return node;
+  };
+  const root = make('000', armature), body = make('001', root);
+  make('014', body);
+  make('004', make('003', body)); make('011', make('010', body));
+  make('005', body); make('012', body);
+  const semantics = ['body', 'head', 'leftUpperArm', 'leftHand', 'rightUpperArm', 'rightHand', 'leftFoot', 'rightFoot'];
+  const rotations = Object.fromEntries(semantics.map(semantic => [semantic, [0, 0, 0, 1]]));
+  const motion = { version: 1, basis: 'right-handed glTF Y-up model space', alignmentQuaternion: [0, 0, 0, 1],
+    bones: semantics.map(semantic => ({ semantic, restWorld: [0, 0, 0, 1] })),
+    clips: [172, 173, 174].map(nativeId => ({ nativeId, durationSeconds: 1,
+      frames: [{ timeSeconds: 0, rotations: structuredClone(rotations) },
+        { timeSeconds: .75, rotations: structuredClone(rotations) }] })) };
+  return { engine, nodes, visual, body, motion };
+}
+
 test('skating has reachable speed hysteresis and exits for air, mechs, missing shoes and stale authority', () => {
   const cadence = new SkateCadence();
   cadence.update(.1, { ...ready, speed: 1.4 }); assert.equal(cadence.active, false);
@@ -27,10 +50,85 @@ test('cadence measures server displacement and ignores teleports and invalid clo
   const next = observeSkateMotion(first, { x: .1994, z: 6, zone: 'hub', jumpOffset: 0 }, 1100, 200);
   assert.equal(next.valid, true); assert.ok(Math.abs(next.speed - 1.994) < 1e-8); assert.equal(next.grounded, true);
   const jump = observeSkateMotion(next, { x: .3988, z: 6, zone: 'hub', jumpOffset: .1 }, 1200, 300);
-  assert.equal(jump.grounded, false);
-  assert.equal(observeSkateMotion(next, { x: 10, z: 6, zone: 'hub', jumpOffset: 0 }, 1200, 300).valid, false);
+  assert.equal(jump.grounded, false); assert.equal(jump.jumpOffset, .1); assert.equal(jump.verticalVelocity, 1);
+  const falling = observeSkateMotion(jump, { x: .5982, z: 6, zone: 'hub', jumpOffset: .05 }, 1300, 400);
+  assert.equal(falling.verticalVelocity, -.5); assert.equal(falling.grounded, false);
+  const landed = observeSkateMotion(falling, { x: .7976, z: 6, zone: 'hub', jumpOffset: 0 }, 1400, 500);
+  assert.equal(landed.grounded, true); assert.equal(landed.verticalVelocity, -.5);
+  const teleported = observeSkateMotion(jump, { x: 10, z: 6, zone: 'hub', jumpOffset: .3 }, 1300, 400);
+  assert.equal(teleported.valid, false); assert.equal(teleported.speed, 0); assert.equal(teleported.verticalVelocity, 0);
   assert.equal(observeSkateMotion(next, { x: .2, z: 6, zone: 'hub', jumpOffset: 0 }, 1100, 300).valid, false);
   assert.equal(observeSkateMotion(next, { x: .2, z: 6, zone: 'garden', jumpOffset: 0 }, 1200, 300).valid, false);
+  const stale = observeSkateMotion(jump, { x: .4, z: 6, zone: 'hub', jumpOffset: .2 }, 2300, 1400);
+  assert.equal(stale.valid, false); assert.equal(stale.verticalVelocity, 0);
+  const missingHeight = observeSkateMotion(jump, { x: .4, z: 6, zone: 'hub' }, 1300, 400);
+  assert.equal(missingHeight.jumpOffset, null); assert.equal(missingHeight.grounded, false); assert.equal(missingHeight.verticalVelocity, 0);
+  for (const jumpOffset of [-.1, NaN, Infinity]) {
+    const unknown = observeSkateMotion(jump, { x: .4, z: 6, zone: 'hub', jumpOffset }, 1300, 400);
+    assert.equal(unknown.jumpOffset, null); assert.equal(unknown.grounded, false); assert.equal(unknown.verticalVelocity, 0);
+  }
+});
+
+test('invalid render deltas cannot poison source sampling or the Chao rig', () => {
+  const fixture = skateFixture();
+  try {
+    for (const clip of fixture.motion.clips) clip.frames[1].rotations.body = Quaternion.RotationYawPitchRoll(.2, 0, 0).asArray();
+    const controller = createShadowSkate({ visual: fixture.visual }, { motion: fixture.motion });
+    for (const dt of [.1, .1, NaN, Infinity, undefined, -1, .1]) {
+      controller.restoreBase(); controller.update(dt, { ...ready, speed: 1.8 }); controller.apply();
+      assert.ok(fixture.nodes.every(node => node.rotationQuaternion.asArray().every(Number.isFinite)));
+      assert.ok(Number.isFinite(controller.diagnostics.blend));
+    }
+    assert.equal(controller.diagnostics.blend, 1);
+    assert.ok(Math.abs(fixture.body.rotationQuaternion.y) > .001, 'finite sampling must recover after an invalid delta');
+    controller.dispose();
+    assert.deepEqual(fixture.body.rotationQuaternion.asArray(), [0, 0, 0, 1]);
+  } finally { fixture.engine.dispose(); }
+});
+
+test('incomplete or unordered source data falls back without claiming genuine skating', () => {
+  const fixture = skateFixture();
+  try {
+    const mutations = [
+      motion => { delete motion.clips[0].frames[1].rotations.leftFoot; },
+      motion => { motion.clips[0].frames[1].timeSeconds = 0; },
+      motion => { motion.clips[0].frames[1].timeSeconds = 1.1; },
+      motion => { motion.clips[0].frames[0].timeSeconds = -.1; },
+      motion => { motion.clips[0].frames[1] = null; },
+      motion => { motion.clips.push(structuredClone(motion.clips[0])); },
+      motion => { motion.bones[0].restWorld = [0, 0, 0, NaN]; },
+      motion => { motion.bones.push(structuredClone(motion.bones[0])); },
+      motion => { motion.clips[0].frames[1].rotations.body = [1e308, 1e308, 1e308, 1e308]; },
+      motion => { motion.alignmentQuaternion = [0, 0, 0, 100]; },
+      motion => { motion.bones[0].restWorld = [0, 0, 0, 2]; },
+    ];
+    for (const mutate of mutations) {
+      const motion = structuredClone(fixture.motion); mutate(motion);
+      const controller = createShadowSkate({ visual: fixture.visual }, { motion, fetchMotion: async () => null });
+      controller.update(.1, { ...ready, speed: 1.994 }); controller.apply();
+      assert.equal(controller.diagnostics.active, false);
+      assert.equal(controller.diagnostics.state, 'unavailable');
+      assert.deepEqual(fixture.body.rotationQuaternion.asArray(), [0, 0, 0, 1]);
+      controller.dispose();
+    }
+  } finally { fixture.engine.dispose(); }
+});
+
+test('the genuine cycle interpolates from its last sample back to its first sample', () => {
+  const fixture = skateFixture();
+  try {
+    for (const clip of fixture.motion.clips) clip.frames[1].rotations.body = Quaternion.RotationYawPitchRoll(.2, 0, 0).asArray();
+    const controller = createShadowSkate({ visual: fixture.visual }, { motion: fixture.motion });
+    for (let frame = 0; frame < 9; frame++) {
+      controller.restoreBase(); controller.update(.1, { ...ready, speed: 1.8 }); controller.apply();
+    }
+    // At phase .9, the .75 sample is already 60% of the way back to bind.
+    const expected = Quaternion.RotationYawPitchRoll(.08, 0, 0);
+    assert.ok(Math.abs(Quaternion.Dot(fixture.body.rotationQuaternion, expected)) > 1 - 1e-8);
+    controller.restoreBase(); controller.update(.1, { ...ready, speed: 1.8 }); controller.apply();
+    assert.ok(Math.abs(Quaternion.Dot(fixture.body.rotationQuaternion, Quaternion.Identity())) > 1 - 1e-8);
+    controller.dispose();
+  } finally { fixture.engine.dispose(); }
 });
 
 test('model-space rotation retarget preserves every original transform position, scale and parent', () => {
