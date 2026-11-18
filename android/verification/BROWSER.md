@@ -6,20 +6,28 @@ their original ports. No private-source deny rule was weakened.
 
 Executed checks:
 
-- `npm test`: 28 passing client tests, including eighteen widget artwork,
+- Current combined source: 95 passing Node tests, including eighteen widget artwork,
   projection, bounded-request and protocol/auth/identity tests. Art tests cover
   preview descriptors without identity/progression, canonical precedence,
   literal owner-role gating, the complete seven-gem group and native foot
   placement with square scaling. The formerly failing private
   source boundary passes from this worktree location.
   A real cross-origin HTTP 307 test confirms that resume-token bodies are not
-  forwarded; all observer requests reject redirects.
+  forwarded; all observer requests reject redirects. Tiny account/status/resume/
+  pairing HTTP requests also reject redirects. A real HTTP 307 negative control
+  confirms the Tiny account adapter forwards no credential and enables no controls.
+  Entry-point reconnect tests also execute the production resume path and prove
+  that once v2 is observed, missing/unsupported capabilities cannot send a
+  credential to the legacy session or socket paths. Initial pairing discovery
+  uses the same sticky protocol guard; a later confirmed v2 reconnect works.
+  The two optional external-browser suites were excluded from this Node run;
+  actual UI inspection below used the in-app browser.
 - `node --test android/preview/preview-boundary.test.mjs`: passes. The explicit
-  local-art routes reject wrong garden and Chaos-atlas hashes without serving their contents, and
+  local-art routes reject wrong garden, Chaos-atlas and sidebar hashes without serving their contents, and
   encoded private paths stay blocked.
 - `vite build --config android/preview/vite.config.mjs`: passes with the local
-  art configured. All twelve emitted originals (garden, three Chaos atlases,
-  Dark flame, seven transparent geometry renders) match their pinned SHA-256.
+  art configured. All thirteen emitted originals (garden, English sidebar,
+  three Chaos atlases, Dark flame, seven transparent geometry renders) match their pinned SHA-256.
   The three local atlases and flame also returned their exact hashes while the
   Rust artwork proxy was unavailable. Existing main-bundle size/runtime-asset
   warnings remain.
@@ -54,6 +62,26 @@ Executed checks:
   an activity lease. Sanitized source/executable evidence is in
   `OBSERVER-ROUNDTRIP-2026-11-18.json`; the runnable test is documented in
   [the preview README](../preview/README.md).
+
+- The focused `widget.html?view=phone` keeps the phone mockup centered, hides
+  marketing text, increases widget text legibility and retains settings in one
+  native disclosure. Its toggle preserves the selected layout/profile. Desktop
+  and 390px UI checks passed; the drawer expands/collapses, Art preview stays
+  explicit, and `clientWidth=scrollWidth=375` at the narrow viewport.
+- The reviewed Tiny app delivery from PR #5 is included as a source dependency.
+  All five menu panels and hashes were checked in the actual browser. The Garden
+  uses the pixel-verified original English sidebar; a new origin has no Chao,
+  needs, levels or rings until authenticated. Training is disabled, Items asks
+  for a canonical snapshot and all five minigames remain visible. The 390px
+  native scene fits with no horizontal overflow. Temporary viewports were reset.
+  A control-handoff regression keeps fresh observed values LIVE and received
+  motion active while another device holds the lease, with care disabled. A
+  real disconnect returns the same scene to cached status.
+- The current production Tiny account adapter passed a fresh real Rust test:
+  all five games started/stopped without cancellation gains; Memory earned 82
+  durably saved rings and one receipt survived reconnect/restart with the same
+  synthetic Chao. Sanitized evidence is in `TINY-MENU-ROUNDTRIP-2026-11-18.json`.
+  This does not prove the four other complete reward rounds or native GBA rules.
 
 The isolated preview defaults to a labeled Dark Chaos art descriptor containing
 only form/alignment. Neutral/Hero selection is artwork only; canonical saved

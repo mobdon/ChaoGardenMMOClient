@@ -31,6 +31,23 @@ function positionAvatar() {
   }
 }
 const gardenResize = new ResizeObserver(positionAvatar); gardenResize.observe(gardenWindow);
+const focusToggle = $('#widget-focus-toggle');
+function applyPhoneView() {
+  const url = new URL(location.href);
+  const focused = url.searchParams.get('view') === 'phone';
+  document.body.dataset.widgetView = focused ? 'phone' : 'studio';
+  $('#widget-configuration').open = !focused;
+  if (focused) url.searchParams.delete('view'); else url.searchParams.set('view', 'phone');
+  focusToggle.href = `${url.pathname}${url.search}${url.hash}`;
+  focusToggle.replaceChildren(document.createTextNode(focused ? 'Back to studio' : 'Clearer phone view'));
+  focusToggle.setAttribute('aria-label', focused ? 'Back to the widget studio' : 'Show a clearer centered phone view');
+}
+focusToggle.addEventListener('click', event => {
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault(); history.pushState(null, '', focusToggle.href); applyPhoneView(); window.scrollTo(0, 0);
+});
+window.addEventListener('popstate', applyPhoneView);
+applyPhoneView();
 const statRows = WIDGET_SKILLS.map(([key, label]) => {
   const row = document.createElement('div');
   row.setAttribute('role', 'group');
@@ -44,6 +61,7 @@ function sync(state, label, note) {
   connectionState = state;
   $('#studio-sync').dataset.state = state; $('#widget-live').dataset.state = state;
   setText('#studio-sync-label', label);
+  setText('#widget-configuration-state', state === 'live' ? 'Live' : state === 'connecting' ? 'Connecting' : profile ? 'Last read' : 'Art preview');
   setText('#widget-live>span', state === 'live' ? 'LIVE' : state === 'connecting' ? 'SYNCING' : profile ? 'LAST READ' : 'ART PREVIEW');
   $('#widget-retry').disabled = !slots.length || state === 'connecting';
   if (note) setText('#widget-connection-note', note);

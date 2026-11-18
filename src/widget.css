@@ -9,11 +9,13 @@ a { color: inherit; text-decoration: none; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
-button:focus-visible, a:focus-visible, select:focus-visible { outline: 3px solid #a3caff; outline-offset: 4px; }
+button:focus-visible, a:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #a3caff; outline-offset: 4px; }
 [hidden] { display: none !important; }
 h1, h2, p { margin: 0; }
 .widget-studio { max-width: 1180px; margin: auto; padding: 0 54px; }
 .studio-header { height: 102px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #8aa4cd26; gap: 20px; }
+.studio-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 15px; flex-wrap: wrap; }
+.focus-view-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 8px 12px; border: 1px solid #8ba7d65e; border-radius: 7px; background: #172b465c; color: #dfcfaa; font-size: 10px; white-space: nowrap; }
 .garden-logo { display: flex; gap: 12px; align-items: center; font-size: 14px; letter-spacing: 2px; font-weight: 800; }
 .logo-gem { font-size: 37px; color: var(--gold); font-weight: 400; }
 .garden-logo small { display: block; font-size: 7px; letter-spacing: 2px; color: #b2c3df; margin-top: 6px; }
@@ -26,6 +28,7 @@ h1, h2, p { margin: 0; }
 .studio-controls h1 em { font-style: normal; color: var(--gold); }
 .studio-intro { max-width: 340px; color: var(--muted); font-size: 13px; line-height: 1.8; margin-top: 22px; }
 .configuration-card { margin-top: 26px; padding: 21px; border: 1px solid #8ca5cd35; border-radius: 14px; background: linear-gradient(145deg, #16243b8c, #0d182b88); max-width: 385px; }
+.configuration-summary { display: none; }
 .control-heading { display: flex; justify-content: space-between; gap: 10px; color: #a2b4cf; font-size: 7px; font-weight: 600; letter-spacing: 1px; }
 .control-heading span:last-child { color: #7b91b0; }
 .size-selector { border: 0; padding: 0; margin: 18px 0 20px; min-width: 0; }
@@ -182,6 +185,8 @@ h1, h2, p { margin: 0; }
   .garden-logo small { font-size: 5px; letter-spacing: 1.7px; }
   .preview-tag { font-size: 7px; letter-spacing: .4px; }
   .preview-tag b { display: none; }
+  .studio-header-actions .preview-tag { display: none; }
+  .focus-view-toggle { font-size: 9px; padding: 8px 10px; }
   .studio-layout { grid-template-columns: 1fr; gap: 36px; padding: 34px 0 28px; }
   .studio-controls { text-align: center; display: flex; flex-direction: column; align-items: center; }
   .section-kicker { font-size: 7px; letter-spacing: 1.2px; }
@@ -207,5 +212,50 @@ h1, h2, p { margin: 0; }
   .widget-brand { font-size: 7px; }
   .garden-widget[data-size=wide] { gap: 6px 8px; padding: 9px; }
   .garden-widget[data-size=wide] .widget-garden-window { height: 124px; }
+}
+/* Focus the existing phone without creating another app, canvas or profile.
+   The original garden dimensions and native32px Chao footprint stay intact. */
+body[data-widget-view=phone] .widget-studio { max-width: 620px; padding: 0 20px 20px; }
+body[data-widget-view=phone] .studio-header { min-height: 66px; height: auto; padding: 10px 0; max-width: 440px; margin: auto; gap: 12px; }
+body[data-widget-view=phone] .studio-header-actions .preview-tag { display: none; }
+body[data-widget-view=phone] .studio-layout { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 20px 0 0; }
+body[data-widget-view=phone] .phone-preview { order: 0; width: 100%; }
+body[data-widget-view=phone] .phone-preview::before { left: 0; right: 0; }
+body[data-widget-view=phone] .phone-shell { width: 430px; max-width: 100%; }
+body[data-widget-view=phone] .phone-screen { min-height: 760px; padding-left: 20px; padding-right: 20px; }
+body[data-widget-view=phone] .phone-clock { padding: 16px 0 20px; }
+body[data-widget-view=phone] #phone-time { font-size: 52px; }
+body[data-widget-view=phone] .device-caption,
+body[data-widget-view=phone] .section-kicker,
+body[data-widget-view=phone] #studio-title,
+body[data-widget-view=phone] .studio-intro,
+body[data-widget-view=phone] .preview-explanation,
+body[data-widget-view=phone] .studio-open,
+body[data-widget-view=phone] .studio-bottom-note,
+body[data-widget-view=phone] .studio-footer { display: none; }
+body[data-widget-view=phone] .studio-controls { order: 1; display: block; width: min(100%, 430px); text-align: left; }
+body[data-widget-view=phone] .configuration-card { width: 100%; max-width: none; padding: 0; margin: 0; border-radius: 10px; }
+body[data-widget-view=phone] .configuration-summary { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-height: 48px; padding: 12px 16px; cursor: pointer; list-style: none; color: #e5edf8; font-size: 12px; }
+body[data-widget-view=phone] .configuration-summary::-webkit-details-marker { display: none; }
+body[data-widget-view=phone] .configuration-summary::after { content: '+'; font-size: 18px; color: var(--gold); }
+body[data-widget-view=phone] .configuration-card[open] .configuration-summary::after { content: '−'; }
+body[data-widget-view=phone] .configuration-summary > span:first-child { flex: 1; }
+body[data-widget-view=phone] #widget-configuration-state { font-size: 10px; color: #b5c9dd; }
+body[data-widget-view=phone] .configuration-body { padding: 4px 16px 16px; }
+body[data-widget-view=phone] .device-footnote { margin-top: 12px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-brand { font-size: 9px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-form { font-size: 8px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-routine { font-size: 10px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-needs span { font-size: 7px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-needs b { font-size: 10px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-stats span { font-size: 8px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-stats b { font-size: 14px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-training b { font-size: 10px; }
+body[data-widget-view=phone] .garden-widget[data-size=large] .widget-bottomline { font-size: 7px; }
+@media (max-width: 450px) {
+  body[data-widget-view=phone] .widget-studio { padding: 0 12px 16px; }
+  body[data-widget-view=phone] .phone-screen { padding-left: 12px; padding-right: 12px; }
+  body[data-widget-view=phone] .garden-widget[data-size=large] .widget-needs { gap: 8px; }
+  body[data-widget-view=phone] .garden-widget[data-size=large] .widget-stats { gap: 3px; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }

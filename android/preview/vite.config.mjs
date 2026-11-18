@@ -14,10 +14,13 @@ export const CHAO_ASSETS = catalog.assets.filter(asset =>
   ['adapted-phone-atlas', 'original-dark-head-effect'].includes(asset.kind));
 const emeralds = JSON.parse(readFileSync(new URL('../docs/WIDGET-EMERALDS.json', import.meta.url), 'utf8'));
 export const EMERALD_ASSETS = emeralds.sprites;
+const menus = JSON.parse(readFileSync(new URL('../docs/TINY-MENU-ASSETS.json', import.meta.url), 'utf8'));
+export const MENU_ASSETS = menus.outputs.filter(asset => asset.previewRoute);
 const assets = new Map([
   [`/__widget-art/${GARDEN_FILE}`, { filename: GARDEN_FILE, sha256: GARDEN_SHA256, limit: 256 * 1024 }],
   ...CHAO_ASSETS.map(asset => [asset.path, { filename: asset.path.split('/').at(-1), sha256: asset.sha256, limit: 4 * 1024 * 1024 }]),
   ...EMERALD_ASSETS.map(asset => [`/__widget-art/${asset.filename}`, { filename: asset.filename, sha256: asset.sha256, limit: 256 * 1024 }]),
+  ...MENU_ASSETS.map(asset => [asset.previewRoute, { filename: asset.filename, sha256: asset.pngSha256, limit: 256 * 1024 }]),
 ]);
 
 async function originalAsset(descriptor) {

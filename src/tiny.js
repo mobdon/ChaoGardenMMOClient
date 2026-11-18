@@ -3,8 +3,14 @@ import { createSaveSlots } from './save-slots.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { chaosVariant, chaoFormLabel, drawTinyAvatar, nativeDirection } from './tiny-avatar.js';
 import { createTinyWatch } from './tiny-watch.js';
+import { createTinyTraining } from './tiny-training.js';
+import { createTinyItems } from './tiny-items.js';
+import { durableTinyResult, readTinyCache, writeTinyCache, observedTime } from './tiny-state.js';
+import { createTinyAccount, supportsTinyAccounts } from './tiny-account.js';
 
 const $ = selector => document.querySelector(selector);
+const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+const secureTransport = loopback || location.protocol === 'https:';
 const games = {
   memory: { number: '01', title: 'Chao Memory', intro: 'Remember the cards, watch the shuffle, and find all seven pairs.', tip: 'Tap two cards to find a pair. Trip the shuffle once for a quick peek.', metrics: ['7 pairs', '3 mistakes'] },
   rock_paper_scissors: { number: '02', title: 'Rock, Paper, Chao!', intro: 'Choose a hand and time your shot at the rotating targets. A winning hand earns a ring.', tip: 'Choose a card, then shoot. Keys 1–3 select a card; Space shoots.', metrics: ['Choose a hand', 'Time your shot'] },
@@ -20,6 +26,9 @@ const ctx = canvas.getContext('2d');
 const profileCanvas = $('#tiny-portrait');
 const profileContext = profileCanvas.getContext('2d');
 const faceArt = colors.map(color => { const image = new Image(); image.src = `/api/assets/emerald-${color}.png`; return image; });
+for (const [asset, className] of [['chao-stat-panel.png', 'native-stat-panel-ready'], ['chao-stat-font.png', 'native-stat-font-ready']]) {
+  const image = new Image(); image.onload = () => document.documentElement.classList.add(className); image.src = `/api/assets/${asset}`;
+}
 let storage;
 try { storage = window.localStorage; } catch { storage = { getItem: () => null, setItem: () => {} }; }
 const saves = createSaveSlots(storage);
@@ -39,6 +48,21 @@ let pendingStop = false;
 let controlsSession = '';
 let lastResultId = null;
 let lastSavedAt = null;
+let lastSyncedAt = null;
+let lastCachedAt = 0;
+let serverTime = null;
+let capabilities = {};
+let careState = null;
+let selectedScreen = 'garden';
+let pendingSave = false;
+let returnAfterSave = false;
+let saveTimer;
+let retryCount = 0;
+let resumeAbort;
+let accountV2 = false;
+let knownAccountV2 = false;
+let accountReady = false;
+let handshakeTimer;
 let lastRememberedAt = 0;
 let avatarMotion = { direction: 0, changedAt: 0 };
 let renderTime = 0;
@@ -50,6 +74,90 @@ const heldMoves = new Map();
 const heldKeys = new Set();
 const statRows = new Map();
 const gardenWatch = createTinyWatch({ send });
+const training = createTinyTraining({ root: $('#tiny-training-panel'), send });
+const items = createTinyItems({ root: $('#tiny-items-panel'), send });
+const account = createTinyAccount({
+  transmit: rawSend,
+  onState(state) { accountReady = state.ready; renderGame(); },
+  onError(text) { $('#tiny-session-notice').textContent = text; },
+  onSnapshot(snapshot) { if (connected && socket?.readyState === WebSocket.OPEN) consumeSnapshot(snapshot); },
+});
+
+// Menu links select presentation only. An activity still needs its explicit
+// control and the current server-owned account/lease checks.
+const roundShortcut = document.createElement('div');
+roundShortcut.id = 'tiny-active-round';
+roundShortcut.className = 'tiny-panel-copy';
+roundShortcut.hidden = true;
+roundShortcut.setAttribute('role', 'status');
+const roundShortcutCopy = document.createElement('p');
+const returnToRound = document.createElement('button');
+returnToRound.type = 'button'; returnToRound.className = 'small-button';
+returnToRound.textContent = 'Return to round';
+returnToRound.addEventListener('click', () => selectScreen('games', true));
+const stopFromMenu = document.createElement('button');
+stopFromMenu.type = 'button'; stopFromMenu.className = 'small-button';
+stopFromMenu.textContent = 'Stop round';
+stopFromMenu.addEventListener('click', () => $('#tiny-stop').click());
+roundShortcut.append(roundShortcutCopy, returnToRound, stopFromMenu);
+document.querySelector('.tiny-screen-nav').after(roundShortcut);
+
+function tinyScreenFromHash(hash) {
+  const screen = hash === '' ? 'garden' : typeof hash === 'string' && hash.startsWith('#') ? hash.slice(1) : null;
+  return ['garden', 'stats', 'training', 'games', 'items'].includes(screen) ? screen : null;
+}
+
+function selectScreen(screen, focus = false) {
+  if (!['garden', 'stats', 'training', 'games', 'items'].includes(screen)) return;
+  resetMovement(); selectedScreen = screen;
+  if (location.hash !== `#${screen}`) history.replaceState(null, '', `#${screen}`);
+  document.querySelectorAll('[data-panel]').forEach(panel => { panel.hidden = panel.dataset.panel !== screen; });
+  document.querySelectorAll('[data-screen]').forEach(button => {
+    if (button.dataset.screen === screen) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  renderGame();
+  if (focus) {
+    const panel = document.querySelector(`[data-panel="${screen}"]`);
+    panel.tabIndex = -1; panel.focus({ preventScroll: true });
+  }
+}
+
+function renderRoundShortcut() {
+  roundShortcut.hidden = !tinyGame || selectedScreen === 'games';
+  if (roundShortcut.hidden) return;
+  const saved = durableTinyResult(tinyGame.result, tinyGame) || lastResultId === tinyGame.id;
+  const waiting = !saved && ['saving', 'finished'].includes(tinyGame.phase);
+  roundShortcutCopy.textContent = saved ? 'Your saved round is waiting in Games.'
+    : waiting ? 'Your round is saving on the server.'
+      : `${games[tinyGame.gameId]?.title || 'Your round'} continues on the server. Return to play or stop the round.`;
+  stopFromMenu.hidden = saved || waiting;
+  stopFromMenu.disabled = $('#tiny-stop').disabled;
+}
+
+function renderConnection() {
+  $('#tiny-sync-note').textContent = lastSyncedAt
+    ? `${connected ? 'Live · Synced' : 'Last synced'} at ${observedTime(lastSyncedAt)} on this device${connected ? '.' : '. Reconnect before taking actions.'}`
+    : 'Waiting for a canonical server snapshot.';
+  $('#tiny-save-note').textContent = pendingSave ? 'Waiting for the server to save…'
+    : lastSavedAt ? `Save confirmed at ${observedTime(lastSavedAt)} on this device.` : 'No save acknowledgement received this visit.';
+  $('#tiny-save').disabled = !connected || pendingSave;
+  $('#tiny-reconnect').disabled = !token || connecting;
+  const foreignLease = accountV2 && account.identity?.lease && account.identity.lease.deviceId !== account.identity.deviceId;
+  $('#tiny-take-control').hidden = !foreignLease;
+  $('#tiny-take-control').disabled = !connected || !accountReady || account.pending;
+  if (foreignLease) $('#tiny-session-notice').textContent = 'Another device holds control. The server decides when it can hand over.';
+}
+
+function requestSave(returnToDesktop = false) {
+  if (!connected || pendingSave) return;
+  resetMovement(); pendingSave = true; returnAfterSave = returnToDesktop;
+  send({ type: 'action', action: 'save' }); renderConnection();
+  clearTimeout(saveTimer); saveTimer = setTimeout(() => {
+    pendingSave = false; returnAfterSave = false; renderConnection();
+    $('#tiny-save-note').textContent = 'Save not confirmed. Reconnect or try Save again.';
+  }, 10_000);
+}
 
 function notice(text = '', error = false) {
   $('#tiny-notice').textContent = text;
@@ -62,14 +170,26 @@ function connectionLabel(status, text) {
 }
 
 function publicState() { return tinyGame?.view?.state || null; }
-function playing() { return connected && tinyGame?.phase === 'playing' && !publicState()?.ended && !pendingStop; }
+function mayAct() { return connected && (!accountV2 || (accountReady && (!account.identity?.lease || account.identity.lease.deviceId === account.identity.deviceId))); }
+function playing() { return mayAct() && !document.hidden && selectedScreen === 'games' && tinyGame?.phase === 'playing' && !publicState()?.ended && !pendingStop; }
 function mode() { return tinyGame?.gameId || tinyGame?.view?.game || selectedGame; }
 function movementGame() { return ['bounce', 'ball', 'search'].includes(mode()); }
+function rawSend(message) {
+  if (socket?.readyState === WebSocket.OPEN && connected) { socket.send(JSON.stringify(message)); return true; }
+  return false;
+}
 function send(message) {
-  if (socket?.readyState === WebSocket.OPEN && connected) socket.send(JSON.stringify(message));
+  if (connected && message.type === 'action' && message.action === 'save') return accountV2 ? account.send(message) : rawSend(message);
+  if (!mayAct()) return false;
+  return accountV2 ? account.send(message) : rawSend(message);
 }
 function intent(input) {
   if (!playing()) return;
+  if (accountV2 && account.pending && input.kind !== 'move') {
+    const id = tinyGame.id;
+    void account.whenIdle().then(ready => { if (ready && playing() && tinyGame?.id === id) send({ type: 'tiny-input', sessionId: id, input }); });
+    return;
+  }
   send({ type: 'tiny-input', sessionId: tinyGame.id, input });
 }
 
@@ -97,11 +217,17 @@ function rememberPlayer(savedAt) {
 }
 
 function renderPlayer() {
-  if (!player) return;
+  if (!player) {
+    $('#tiny-name').textContent = 'Meet you in the garden'; $('#tiny-form').textContent = 'Connect your saved Chao.';
+    $('#tiny-rings').textContent = '—'; $('#tiny-stats-empty').hidden = false;
+    for (const row of statRows.values()) row.hidden = true;
+    renderConnection(); return;
+  }
   $('#tiny-name').textContent = player.name || 'Chao';
   $('#tiny-form').textContent = chaoFormLabel(player);
   $('#tiny-rings').textContent = displayNumber(player.rings);
   $('#tiny-auth').hidden = connected;
+  $('#tiny-pairing').hidden = connected || !accountV2;
   $('#tiny-stats-empty').hidden = !!player.stats;
   for (const name of statNames) {
     const stat = player.stats?.[name];
@@ -116,11 +242,12 @@ function renderPlayer() {
   }
   profileCanvas.setAttribute('aria-label', `${player.name || 'Chao'} · ${chaoFormLabel(player)}`);
   profileCanvas.dataset.variant = chaosVariant(player) || 'normal';
-  if (lastSavedAt) $('#tiny-save-note').textContent = 'Your last round was saved to this Chao. Desktop and Tiny Garden use the same profile.';
+  renderConnection();
 }
 
 function resetMovement(sendStop = true) {
-  if (sendStop && movementGame()) intent({ kind: 'move', x: 0, y: 0 });
+  const wasMoving = lastMove.x || lastMove.y || canvasMove.x || canvasMove.y || heldMoves.size || heldKeys.size;
+  if (sendStop && wasMoving && mayAct() && movementGame() && tinyGame?.phase === 'playing') send({ type: 'tiny-input', sessionId: tinyGame.id, input: { kind: 'move', x: 0, y: 0 } });
   heldMoves.clear(); heldKeys.clear();
   canvasMove = { x: 0, y: 0 }; lastMove = { x: 0, y: 0 }; pointer = null;
   document.querySelectorAll('[data-move]').forEach(button => button.classList.remove('active'));
@@ -207,8 +334,8 @@ function renderMemory(state) {
     const button = board.children[index];
     const revealed = Number.isInteger(card.face) && card.face >= 0 && card.face < colors.length;
     button.className = `memory-card${card.occupied ? '' : ' empty'}${card.matched ? ' matched' : ''}${revealed ? ' revealed' : ''}${state.moving_card?.includes(index) && state.phase === 'shuffle' ? ' moving' : ''}`;
-    button.disabled = !playing() || state.phase !== 'choose' || !card.occupied || card.matched || revealed;
-    button.setAttribute('aria-label', card.matched ? `Matched ${colors[card.face] || ''} card` : revealed ? `${colors[card.face]} emerald card` : `Hidden card, row ${Math.floor(index / state.columns) + 1}, column ${index % state.columns + 1}`);
+    button.disabled = !playing() || (accountV2 && account.pending) || state.phase !== 'choose' || !card.occupied || card.matched || revealed;
+    button.setAttribute('aria-label', card.matched ? `Matched ${colors[card.face] || ''} card` : revealed ? `${colors[card.face]} emerald card` : `Hidden card ${index + 1}`);
     // Replace the face entirely when the server hides it; no secret board or
     // previous reveal is retained in DOM attributes or client game state.
     button.replaceChildren();
@@ -223,41 +350,46 @@ function metricItems(values) {
 }
 
 function renderGame() {
-  gardenWatch.update(player, { connected, busy: !!tinyGame || pendingStart });
+  training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || !!player?.watch || (accountV2 && account.pending), capabilities, serverTime });
+  gardenWatch.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || training.blocksActivity || (accountV2 && account.pending) });
+  items.update(player, { connected: mayAct(), care: careState, accountsV2: accountV2, serverTime,
+    careMutations: !accountV2 && careState?.rulesVersion === 'adapted-care-v1' });
+  renderConnection();
   const active = mode(), definition = games[active] || games.memory, state = publicState();
   $('#tiny-game-number').textContent = `GAME ${definition.number}`;
   $('#tiny-game-title').textContent = definition.title;
   $('#tiny-instructions').textContent = definition.intro;
   $('#tiny-control-tip').textContent = definition.tip;
   $('#tiny-stage').dataset.game = active;
-  document.querySelectorAll('[data-game]').forEach(button => {
+  document.querySelectorAll('#tiny-games button[data-game]').forEach(button => {
     button.classList.toggle('selected', button.dataset.game === active);
     button.setAttribute('aria-pressed', String(button.dataset.game === active));
   });
   const hasGame = !!tinyGame;
-  const saved = !!tinyGame && (tinyGame.result?.saved === true || lastResultId === tinyGame.id);
+  const saved = !!tinyGame && (durableTinyResult(tinyGame.result, tinyGame) || lastResultId === tinyGame.id);
   const waiting = !saved && (tinyGame?.phase === 'saving' || tinyGame?.phase === 'finished');
   $('#tiny-stage-cover').hidden = connected && hasGame && !!state;
   $('#tiny-canvas').hidden = active === 'memory' && hasGame && !!state;
   $('#tiny-memory-board').hidden = active !== 'memory' || !hasGame || !state;
   $('#tiny-game-controls').hidden = !hasGame || !state;
   $('#tiny-stop').hidden = !hasGame;
-  $('#tiny-stop').disabled = !connected || pendingStop || waiting || saved;
-  $('#tiny-start').disabled = !connected || !player || hasGame || pendingStart || connecting || !!player?.watch;
+  $('#tiny-stop').disabled = !mayAct() || pendingStop || waiting || saved;
+  renderRoundShortcut();
+  $('#tiny-start').disabled = !mayAct() || !player || hasGame || pendingStart || connecting || !!player?.watch || training.blocksActivity;
   $('#tiny-start').textContent = pendingStart ? 'Starting your round…' : !connected ? 'Connect a saved Chao' : player?.watch ? 'Take control to play' : hasGame ? (saved ? 'Round complete' : waiting ? 'Saving result…' : 'Round in progress') : `Play ${definition.title}`;
   $('#tiny-phase').textContent = pendingStop ? 'Stopping round…' : saved ? 'Result saved' : waiting ? 'Saving result…' : !hasGame ? 'Ready when you are' : 'Playing';
   $('#tiny-cover-title').textContent = connected ? definition.title : 'A little challenge awaits.';
   $('#tiny-cover-copy').textContent = connected ? 'Tap Play to start a fresh round.' : 'Connect your saved Chao and start a round.';
   if (!state || !hasGame) { metricItems(definition.metrics); return; }
   makeControls();
-  $('#tiny-action-controls').querySelectorAll('button').forEach(button => { button.disabled = !playing(); });
+  $('#tiny-action-controls').querySelectorAll('button').forEach(button => { button.disabled = !playing() || (accountV2 && account.pending); });
   $('#tiny-move-controls').querySelectorAll('button').forEach(button => { button.disabled = !playing(); });
   if (active === 'memory') {
     const names = { peek: 'Remember these!', shuffle: 'Watch the shuffle', mismatch: 'Try another pair', choose: 'Find a pair', ended: 'Round complete' };
     $('#tiny-phase').textContent = saved ? 'Result saved' : waiting ? 'Saving result…' : names[state.phase] || 'Playing';
     metricItems([`${state.matches}/7 pairs`, `${state.mistakes}/3 mistakes`, `${displayNumber(state.rings)} run rings`]);
     renderMemory(state);
-    $('#tiny-trip').disabled = !playing() || !state.trip_available;
+    $('#tiny-trip').disabled = !playing() || (accountV2 && account.pending) || !state.trip_available;
   } else if (active === 'rock_paper_scissors') {
     metricItems([`${seconds(state.remaining_ms)} left`, `${state.targets?.length || 0} targets`, `${displayNumber(state.rings)} run rings`]);
     document.querySelectorAll('[data-rps-slot]').forEach(button => {
@@ -266,7 +398,7 @@ function renderGame() {
       button.querySelector('small').textContent = hand ? hand[0].toUpperCase() + hand.slice(1) : 'In flight';
       button.classList.toggle('selected', state.selected === index);
       button.setAttribute('aria-pressed', String(state.selected === index));
-      button.disabled = !playing() || !hand;
+      button.disabled = !playing() || (accountV2 && account.pending) || !hand;
     });
   } else if (active === 'bounce') {
     metricItems([`Level ${state.level}/4`, `${state.lives} lives`, `${displayNumber(state.earned_rings)} run rings`]);
@@ -279,9 +411,9 @@ function renderGame() {
   }
 }
 
-function showResult(result) {
-  if (!result?.saved || typeof result.id !== 'string' || result.id === lastResultId) return;
-  lastResultId = result.id; lastSavedAt = true;
+function showResult(result, fromSnapshot = false) {
+  if (!connected || (!fromSnapshot && !tinyGame) || !durableTinyResult(result, tinyGame) || result.id === lastResultId) return;
+  lastResultId = result.id; lastSavedAt = Date.now();
   $('#tiny-result').hidden = false;
   $('#tiny-result-title').textContent = result.completed ? 'A lovely little victory.' : 'Round complete.';
   const duration = Number.isFinite(result.elapsedMs) ? `${(result.elapsedMs / 1000).toFixed(1)}s` : '';
@@ -293,13 +425,21 @@ function showResult(result) {
 
 function consumeSnapshot(next) {
   const previousState = publicState();
-  const self = next.players?.find(row => row.id === next.selfId);
-  if (self) player = self;
+  const self = next.self || next.players?.find(row => row.id === next.selfId);
+  if (accountV2 && (!next.identity || next.identity.revision < account.identity?.revision)) return;
+  if (!self || (player?.id && self.id !== player.id)) return;
+  player = self; connected = true; connecting = false; retryCount = 0;
+  clearTimeout(handshakeTimer);
+  connectionLabel('live', 'Garden connected');
+  serverTime = Number.isFinite(next.serverTime) ? next.serverTime : null;
+  careState = next.care || null;
+  lastSyncedAt = Date.now();
+  if (lastSyncedAt - lastCachedAt >= 5_000) { writeTinyCache(storage, player, lastSyncedAt); lastCachedAt = lastSyncedAt; }
   const before = tinyGame?.id;
   tinyGame = next.tinyGame || null;
-  if (tinyGame) { selectedGame = tinyGame.gameId || tinyGame.view?.game || selectedGame; pendingStart = false; clearTimeout(pendingTimer); }
+  if (tinyGame) { selectedGame = tinyGame.gameId || tinyGame.view?.game || selectedGame; if (pendingStart) selectScreen('games'); pendingStart = false; clearTimeout(pendingTimer); }
   if (!tinyGame) pendingStop = false;
-  if (before !== tinyGame?.id) { resetMovement(false); controlsSession = ''; avatarMotion = { direction: 0, changedAt: 0 }; }
+  if (before !== tinyGame?.id) { pendingStop = false; resetMovement(false); controlsSession = ''; avatarMotion = { direction: 0, changedAt: 0 }; }
   else if (previousState && publicState()) {
     const state = publicState();
     const dx = mode() === 'bounce' ? state.chao_x - previousState.chao_x : state.player_x - previousState.player_x;
@@ -308,58 +448,138 @@ function consumeSnapshot(next) {
   }
   if (Date.now() - lastRememberedAt > 5_000) { rememberPlayer(); lastRememberedAt = Date.now(); }
   renderPlayer(); renderGame();
-  if (next.tinyResult) showResult(next.tinyResult);
+  if (next.tinyResult) showResult(next.tinyResult, true);
 }
 
 function openSocket(activeToken, generation) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const current = new WebSocket(`${protocol}//${location.host}/ws?token=${encodeURIComponent(activeToken)}`);
+  const current = new WebSocket(`${protocol}//${location.host}/ws${accountV2 ? '' : `?token=${encodeURIComponent(activeToken)}`}`);
   socket = current;
   current.onopen = () => {
     if (generation !== connectionGeneration) { current.close(); return; }
-    connected = true; connecting = false; connectionLabel('live', 'Garden connected');
+    connected = false; connectionLabel('connecting', 'Syncing your Chao…');
+    if (accountV2) current.send(JSON.stringify({ type: 'authenticate', token: activeToken }));
+    clearTimeout(handshakeTimer); handshakeTimer = setTimeout(() => { if (generation === connectionGeneration && !connected) current.close(); }, 10_000);
     notice(''); renderPlayer(); renderGame();
   };
   current.onmessage = event => {
     if (generation !== connectionGeneration) return;
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
+    if (accountV2) account.consume(message);
+    if (message.type === 'error') { resetMovement(false); pendingStart = false; pendingStop = false; clearTimeout(pendingTimer); renderGame(); }
     if (message.type === 'snapshot') consumeSnapshot(message);
-    if (message.type === 'notice') { gardenWatch.handleNotice?.(message); pendingStart = false; pendingStop = false; notice(message.text || 'The server could not complete that action.', message.kind === 'error'); renderGame(); }
+    if (message.type === 'notice') { gardenWatch.handleNotice?.(message); training.handleEvent(message); pendingStart = false; pendingStop = false; if (message.kind === 'error' && pendingSave) { clearTimeout(saveTimer); pendingSave = false; returnAfterSave = false; } notice(message.text || 'The server could not complete that action.', message.kind === 'error'); renderGame(); }
+    if (message.type === 'event') {
+      training.handleEvent(message);
+      if (items.handleEvent(message) && message.accepted === true) lastSavedAt = Date.now();
+      if (message.kind === 'watch-saved' && message.accepted === true) lastSavedAt = Date.now();
+      if (message.kind === 'saved' && message.playerId === player?.id && pendingSave && connected) {
+        clearTimeout(saveTimer); pendingSave = false; lastSavedAt = Date.now(); rememberPlayer(lastSavedAt);
+        if (returnAfterSave) { returnAfterSave = false; location.assign('/'); }
+      }
+      renderConnection();
+    }
     if (message.type === 'event' && message.kind === 'tiny-game-result') showResult(message);
   };
   current.onerror = () => connectionLabel('offline', 'Connection interrupted');
   current.onclose = event => {
     if (generation !== connectionGeneration) return;
     resetMovement(false); connected = false; connecting = false; tinyGame = null; controlsSession = ''; pendingStart = false; pendingStop = false;
+    clearTimeout(handshakeTimer); account.disconnect();
+    clearTimeout(saveTimer); pendingSave = false; returnAfterSave = false;
     connectionLabel('offline', 'Disconnected'); renderGame();
     notice('Connection lost. Controls stopped. An unfinished round may be canceled by the server.', true);
-    if (event.code !== 1008) reconnectTimer = setTimeout(() => resume(activeToken), 2_000);
+    if (event.code !== 1008) scheduleReconnect(activeToken);
     else { $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = 'Load this saved Chao again at the garden title.'; }
   };
+}
+
+function scheduleReconnect(activeToken) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => resume(activeToken), Math.min(15_000, 2_000 * 2 ** Math.min(retryCount++, 3)));
+}
+
+function selectAccountProtocol(status) {
+  const supported = supportsTinyAccounts(status);
+  if ((knownAccountV2 && !supported) || (status && Object.hasOwn(status, 'accounts') && !supported)) {
+    const error = new Error('This server uses an unsupported account protocol. Controls remain paused.');
+    error.retry = false; throw error;
+  }
+  knownAccountV2 ||= supported;
+  accountV2 = supported;
 }
 
 async function resume(activeToken) {
   const generation = ++connectionGeneration;
   clearTimeout(reconnectTimer);
+  resumeAbort?.abort(); resumeAbort = new AbortController();
+  const abort = resumeAbort;
+  const fetchTimeout = setTimeout(() => abort.abort(), 10_000);
   resetMovement();
+  account.disconnect();
+  clearTimeout(saveTimer); pendingSave = false; returnAfterSave = false;
   if (socket) { socket.onclose = null; socket.close(); socket = null; }
   connected = false; connecting = true; tinyGame = null; controlsSession = ''; pendingStart = false; pendingStop = false;
-  token = activeToken; connectionLabel('connecting', 'Connecting…'); renderGame();
+  if (token !== activeToken) { player = null; careState = null; lastSyncedAt = null; lastCachedAt = 0; lastSavedAt = null; lastResultId = null; $('#tiny-result').hidden = true; }
+  token = activeToken; renderPlayer();
+  const slot = savedSlots.find(row => row.token === activeToken);
+  const cached = readTinyCache(storage, slot?.id);
+  if (!player && cached) { player = cached.player; lastSyncedAt = cached.syncedAt; renderPlayer(); }
+  connectionLabel('connecting', 'Connecting…'); renderGame();
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: activeToken, resumeOnly: true }) });
-    const data = await response.json();
+    const statusResponse = await fetch('/api/status', { signal: abort.signal, cache: 'no-store', redirect: 'error' });
+    if (!statusResponse.ok) throw new Error('The server capabilities could not be confirmed. Reconnect before playing.');
+    const status = await statusResponse.json();
+    if (status?.ok !== true) throw new Error('The server capabilities could not be confirmed. Reconnect before playing.');
+    if (!secureTransport) { const error = new Error('This server needs HTTPS before this device can connect to its saved Chao.'); error.retry = false; throw error; }
     if (generation !== connectionGeneration) return;
-    if (!response.ok || !data.player || typeof data.token !== 'string') throw new Error(data.error || 'This saved Chao is not available on this server.');
-    player = data.player; token = data.token;
+    selectAccountProtocol(status);
+    capabilities = status?.tinyGarden || {};
+    $('#tiny-pairing').hidden = !accountV2;
+    if (accountV2) {
+      const result = await account.connect({ token: activeToken, status });
+      if (generation !== connectionGeneration || !result) return;
+      player = result.snapshot.self;
+    } else {
+      if (!loopback) { const error = new Error('This server needs secure device pairing before phone play is available.'); error.retry = false; throw error; }
+      const response = await fetch('/api/session', { method: 'POST', signal: abort.signal, redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: activeToken, resumeOnly: true }) });
+      const data = await response.json();
+      if (generation !== connectionGeneration) return;
+      if (!response.ok || !data.player || typeof data.token !== 'string') { const error = new Error(data.error || 'This saved Chao is not available on this server.'); error.retry = response.status >= 500; throw error; }
+      player = data.player; token = data.token;
+    }
     rememberPlayer(); renderSlots(); renderPlayer(); openSocket(token, generation);
   } catch (error) {
     if (generation !== connectionGeneration) return;
     connecting = false; connectionLabel('offline', 'Save unavailable');
     $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = error.message;
     notice(error.message, true); renderGame();
+    if (error.retry !== false) scheduleReconnect(activeToken);
+  } finally {
+    clearTimeout(fetchTimeout);
   }
 }
+
+document.querySelector('.tiny-screen-nav').addEventListener('click', event => {
+  const button = event.target.closest('[data-screen]');
+  if (button) {
+    if (location.hash !== `#${button.dataset.screen}`) location.hash = button.dataset.screen;
+    selectScreen(button.dataset.screen, true);
+  }
+});
+window.addEventListener('hashchange', () => {
+  const screen = tinyScreenFromHash(location.hash);
+  if (screen) selectScreen(screen, true);
+});
+$('#tiny-save').addEventListener('click', () => requestSave());
+$('#tiny-reconnect').addEventListener('click', () => { if (token) void resume(token); });
+$('#tiny-take-control').addEventListener('click', async () => {
+  if (!connected || !accountV2) return;
+  await account.takeControl(player?.watch ? 'watch' : tinyGame ? 'tiny' : 'direct'); renderGame();
+});
+$('.tiny-desktop-link').addEventListener('click', event => { event.preventDefault(); requestSave(true); });
+window.addEventListener('online', () => { if (token && !connected) void resume(token); });
 
 $('#tiny-slot').addEventListener('change', event => {
   const slot = savedSlots[Number(event.target.value)];
@@ -371,19 +591,23 @@ $('#tiny-games').addEventListener('click', event => {
   if (tinyGame) { notice('Finish or stop this round before choosing another game.'); return; }
   selectedGame = button.dataset.game; $('#tiny-result').hidden = true; notice(''); renderGame();
 });
-$('#tiny-start').addEventListener('click', () => {
-  if (!connected || !player || tinyGame || pendingStart) return;
+$('#tiny-start').addEventListener('click', async () => {
+  if (!mayAct() || !player || tinyGame || pendingStart || player.watch || training.blocksActivity) return;
   pendingStart = true; $('#tiny-result').hidden = true; notice('');
-  send({ type: 'action', action: 'tiny-start', gameId: selectedGame }); renderGame();
+  const sent = send({ type: 'action', action: 'tiny-start', gameId: selectedGame }); renderGame();
   clearTimeout(pendingTimer); pendingTimer = setTimeout(() => { if (pendingStart) { pendingStart = false; notice('The server has not started the round yet. Try again once connected.', true); renderGame(); } }, 8_000);
+  if (await sent === false) { pendingStart = false; clearTimeout(pendingTimer); notice('The start was not confirmed. Check the synced state before trying again.', true); renderGame(); }
 });
-$('#tiny-stop').addEventListener('click', () => {
+$('#tiny-stop').addEventListener('click', async () => {
   if (!tinyGame || !connected || pendingStop) return;
-  resetMovement(); send({ type: 'action', action: 'tiny-stop', sessionId: tinyGame.id }); pendingStop = true; renderGame();
+  resetMovement(false); const id = tinyGame.id; pendingStop = true; renderGame();
+  if (accountV2 && !(await account.whenIdle())) { pendingStop = false; renderGame(); return; }
+  if (!mayAct() || tinyGame?.id !== id) { pendingStop = false; renderGame(); return; }
+  if (await send({ type: 'action', action: 'tiny-stop', sessionId: id }) === false && tinyGame?.id === id) { pendingStop = false; notice('The stop was not confirmed. Check the synced state before trying again.', true); renderGame(); }
 });
-$('#tiny-result-close').addEventListener('click', () => {
+$('#tiny-result-close').addEventListener('click', async () => {
   $('#tiny-result').hidden = true;
-  if (tinyGame && connected) { send({ type: 'action', action: 'tiny-stop', sessionId: tinyGame.id }); pendingStop = true; }
+  if (tinyGame && connected) { const id = tinyGame.id; pendingStop = true; if (accountV2) await account.whenIdle(); if (tinyGame?.id === id && await send({ type: 'action', action: 'tiny-stop', sessionId: id }) === false) pendingStop = false; }
   notice(''); renderGame();
 });
 
@@ -418,7 +642,7 @@ canvas.addEventListener('pointermove', event => {
 function releaseCanvas(event, canceled = false) {
   if (!pointer || pointer.id !== event.pointerId) return;
   const tap = !pointer.moved && !canceled;
-  pointer = null; canvasMove = { x: 0, y: 0 }; flushMove(true);
+  pointer = null; canvasMove = { x: 0, y: 0 }; if (!tap) flushMove(true);
   if (!tap || !playing()) return;
   const point = canvasPoint(event);
   const hit = hitTargets.find(target => Math.hypot(point.x - target.x, point.y - target.y) <= target.radius);
@@ -447,9 +671,18 @@ window.addEventListener('keydown', event => {
 });
 window.addEventListener('keyup', event => { heldKeys.delete(event.code); flushMove(); });
 window.addEventListener('blur', () => resetMovement());
-document.addEventListener('visibilitychange', () => { if (document.hidden) resetMovement(); });
-window.addEventListener('pagehide', () => { resetMovement(); clearTimeout(reconnectTimer); socket?.close(); });
-setInterval(() => { if (playing() && movementGame() && !document.hidden) flushMove(true); }, 100);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) resetMovement();
+  else if (socket?.readyState === WebSocket.OPEN) { connected = false; connectionLabel('connecting', 'Syncing your Chao…'); renderGame(); }
+  else if (token) void resume(token);
+});
+window.addEventListener('pageshow', event => { if (event.persisted && token) void resume(token); });
+window.addEventListener('pagehide', () => { resetMovement(); if (connected) writeTinyCache(storage, player, lastSyncedAt); clearTimeout(reconnectTimer); socket?.close(); });
+setInterval(() => {
+  if (!playing() || !movementGame()) return;
+  const direction = moveDirection();
+  if (direction.x || direction.y || lastMove.x || lastMove.y) flushMove(true);
+}, 100);
 
 // Everything below presents the latest sanitized server view. There is no
 // local physics, hidden board, seed, collision, timer progression or reward.
@@ -548,12 +781,12 @@ function drawSearch(state) {
 }
 
 function draw(time = 0) {
-  gardenWatch.draw(time);
+  if (selectedScreen === 'garden') gardenWatch.draw(time);
   renderTime = time;
   profileContext.clearRect(0, 0, profileCanvas.width, profileCanvas.height);
-  drawTinyAvatar(profileContext, player, 100, 113, 158, { time });
+  drawTinyAvatar(profileContext, player, 100, 113, 158, { time: connected ? time : 0 });
   const state = publicState(); hitTargets = [];
-  if (state && tinyGame) {
+  if (selectedScreen === 'games' && state && tinyGame) {
     const active = mode();
     if (active === 'rock_paper_scissors') drawRps(state);
     else if (active === 'bounce') drawBounce(state);
@@ -564,8 +797,45 @@ function draw(time = 0) {
   requestAnimationFrame(draw);
 }
 
-renderGame();
+selectScreen(tinyScreenFromHash(location.hash) || 'garden');
 draw();
 const initialSlots = renderSlots();
 if (initialSlots.length) void resume(initialSlots[0].token);
-else { $('#tiny-auth-message').textContent = 'No saved Chao is connected in this browser. Load an existing save at the garden title first.'; connectionLabel('offline', 'No save connected'); }
+else {
+  $('#tiny-auth-message').textContent = 'No saved Chao is connected in this browser. Load an existing save or pair this phone.'; connectionLabel('offline', 'No save connected');
+  void fetch('/api/status', { cache: 'no-store', redirect: 'error' }).then(response => response.ok ? response.json() : null).then(status => {
+    selectAccountProtocol(status); capabilities = status?.tinyGarden || {}; $('#tiny-pairing').hidden = !accountV2 || !secureTransport; renderGame();
+  }).catch(() => {});
+}
+
+$('#tiny-pairing').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget, submit = form.querySelector('button');
+  const values = new FormData(form);
+  const payload = { pairingId: String(values.get('pairingId') || '').trim(), pairingSecret: String(values.get('pairingSecret') || '').trim() };
+  if (!accountV2 || !secureTransport || !payload.pairingId || !payload.pairingSecret || submit.disabled) return;
+  form.reset(); submit.disabled = true; $('#tiny-session-notice').textContent = 'Waiting for pairing confirmation…';
+  const pairingGeneration = connectionGeneration;
+  const abortPairing = new AbortController();
+  const pairingDeadline = setTimeout(() => abortPairing.abort(), 10_000);
+  try {
+    const response = await fetch('/api/pairing/claim', { method: 'POST', signal: abortPairing.signal, cache: 'no-store', credentials: 'omit', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const result = await response.json();
+    if (pairingGeneration !== connectionGeneration) return;
+    if (!response.ok || !/^[a-f0-9]{64}$/i.test(result.token || '') || typeof result.identity?.chaoId !== 'string') throw new Error('The invitation is invalid, expired or already used. Create a new desktop-approved invitation.');
+    // Preserve the new device credential even if the first synchronization fails.
+    // This placeholder contains no cached stats, inventory or progression.
+    try { saves.record(result.token, { id: result.identity.chaoId, name: 'Paired Chao' }); } catch { /* The credential remains available for this visit. */ }
+    $('#tiny-session-notice').textContent = 'Device paired. Syncing the same saved Chao…';
+    await resume(result.token);
+  } catch (error) { if (pairingGeneration === connectionGeneration) $('#tiny-session-notice').textContent = error.name === 'AbortError' ? 'Pairing was not confirmed. Check the desktop invitation before creating a new one.' : error.message || 'Pairing could not be confirmed.'; }
+  finally { clearTimeout(pairingDeadline); submit.disabled = false; }
+});
+
+let installPrompt;
+window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; $('#tiny-install').hidden = false; });
+$('#tiny-install').addEventListener('click', async () => { if (!installPrompt) return; await installPrompt.prompt(); installPrompt = null; $('#tiny-install').hidden = true; });
+window.addEventListener('appinstalled', () => { installPrompt = null; $('#tiny-install').hidden = true; });
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/tiny-sw.js', { scope: '/tiny.html' }).catch(() => { /* A failed shell cache does not affect authoritative play. */ }); });
+}

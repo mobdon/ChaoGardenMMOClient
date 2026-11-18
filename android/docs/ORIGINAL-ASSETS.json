@@ -6,7 +6,7 @@
   "deployment": "All eleven PNGs may be bundled from ignored local originals via tools/stage-original-art.ps1. Android validates filenames, SHA-256 and dimensions before composition. Atlases/flame alone retain existing same-origin HTTPS fallback. New transparent geometry-rendered gems are bundled-only; no server route is claimed. Missing required art produces an unavailable marker.",
   "identityRules": {
     "normal": "No Chaos mapping for normal, missing, or unknown non-Chaos forms.",
-    "chaos": "Matches src/tiny-avatar.js chaosVariant: form contains chaos; hero in form or alignment >= 60 wins; otherwise dark in form or alignment <= -60; otherwise neutral.",
+    "chaos": "Matches src/tiny-avatar.js chaosVariant: form contains chaos; explicit hero, dark or neutral form wins; otherwise generic Chaos uses alignment >= 60 for hero, <= -60 for dark, and neutral between.",
     "owner": "Only a literal canonical server admin=true adds one fixed cyan chest emerald and all seven native colored orbit sprites. This display flag grants no authority.",
     "preview": "Only a completely unpaired state without any stored snapshot may show Dark Chaos as an explicit art preview, with no player/account ID, rings, stats, garden activity or enabled care. Paired unsupported forms never become that preview."
   },
