@@ -1,18 +1,31 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { LoadAssetContainerAsync, Matrix, NullEngine, Quaternion, Scene, TransformNode, Vector3 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
-import { CHAO_GEAR_JOINTS, chestSurfacePoint } from '../src/chao-attachments.js';
+import { CHAO_GEAR_JOINTS, chestSurfacePoint, collectNativeShoeParts } from '../src/chao-attachments.js';
 import { attachNativeRun, captureChaoPose } from '../src/chao-locomotion.js';
 import { createShadowSkate } from '../src/shadow-skate.js';
 
 // Opt-in proof against ignored, locally converted retail assets. This probes
 // original rigs and rigid shoe trajectories; browser/effect QA is separate.
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const options = {};
+for (let index = 2; index < process.argv.length; index += 2) {
+  const flag = process.argv[index], value = process.argv[index + 1];
+  assert.ok(['--asset-root', '--shoe-root', '--output'].includes(flag) && value && !value.startsWith('--'),
+    'Use --asset-root <asset directory>, --shoe-root <prepared shoes directory>, or --output <JSON file>.');
+  options[flag.slice(2)] = value;
+}
+const assetRoot = resolve(options['asset-root'] || process.env.CHAO_FOOTWEAR_ASSET_ROOT || resolve(root, '.local/imports'));
+const shoeRoot = resolve(options['shoe-root'] || process.env.CHAO_FOOTWEAR_SHOE_ROOT || assetRoot);
+const output = resolve(options.output || resolve(root, '.local/reviews/chao-footwear-proof.json'));
 const engine = new NullEngine(), scene = new Scene(engine);
 const sourceHashes = {};
 async function load(name) {
-  const bytes = await readFile(`.local/imports/${name}.glb`);
+  const bytes = await readFile(resolve(name.startsWith('shadow-air-shoes-') ? shoeRoot : assetRoot, `${name}.glb`));
   sourceHashes[name] = createHash('sha256').update(bytes).digest('hex');
   return LoadAssetContainerAsync(new Uint8Array(bytes), scene,
     { pluginExtension: '.glb', pluginOptions: { gltf: { skipMaterials: true } } });
@@ -33,8 +46,8 @@ function geometryBounds(meshes, toRoot = Matrix.Identity()) {
 function shoeRotation(side) {
   // Recorded native heel13/23 basis, also used by the presentation adapter.
   const references = {
-    left: { up: [-.8377403, -.5430225, .0575994], forward: [.5294526, -.8335401, -.1577685] },
-    right: { up: [-.8025777, -.5964206, .0123086], forward: [.5854268, -.7834830, .2083981] },
+    left: { up: [-.8377403, -.5430225, .0575994], forward: [.5453401747, -.8374025312, .0368930145] },
+    right: { up: [-.8025777, -.5964206, .0123086], forward: [.5965178011, -.8025729883, .0065659268] },
   };
   const up = Vector3.FromArray(references[side].up), forward = Vector3.FromArray(references[side].forward);
   up.x *= -1; forward.x *= -1; up.normalize(); forward.normalize();
@@ -67,7 +80,7 @@ const forms = [];
 try {
   const locomotion = await load('chao-locomotion');
   const props = Object.fromEntries(await Promise.all(['right', 'left'].map(async side => [side, await load(`shadow-air-shoes-${side}`)])));
-  const motionBytes = await readFile('.local/imports/shadow-skate-motion.json');
+  const motionBytes = await readFile(resolve(assetRoot, 'shadow-skate-motion.json'));
   sourceHashes['shadow-skate-motion'] = createHash('sha256').update(motionBytes).digest('hex');
   const skateMotion = JSON.parse(motionBytes);
   for (const name of ['neutral-chaos', 'hero-chaos', 'dark-chaos']) {
@@ -96,7 +109,7 @@ try {
       const root = new TransformNode(`${name}-shoe-${side}`, scene);
       for (const node of prop.rootNodes) node.parent = root;
       root.rotationQuaternion = shoeRotation(side);
-      const meshes = root.getChildMeshes().filter(mesh => mesh.getTotalVertices()), source = geometryBounds(meshes);
+      const meshes = collectNativeShoeParts(root).meshes, source = geometryBounds(meshes);
       root.computeWorldMatrix(true);
       const marker = Vector3.TransformCoordinates(source.center, Matrix.Invert(root.getWorldMatrix()));
       const scale = fit.size.z * 1.06 / source.size.z, position = fit.center.subtract(source.center.scale(scale));
@@ -178,8 +191,8 @@ try {
   }
   const report = { result: 'PASS', footwearSockets: CHAO_GEAR_JOINTS.map(([side, , , socket]) => ({ side, socket })), sourceHashes, forms,
     limits: 'NullEngine asset/rig proof; actual renderer, trusted snapshot path, heel effects and visual grounding require separate live verification.' };
-  await mkdir('.local/reviews', { recursive: true });
-  await writeFile('.local/reviews/chao-footwear-proof.json', `${JSON.stringify(report, null, 2)}\n`);
+  await mkdir(dirname(output), { recursive: true });
+  await writeFile(output, `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify({ result: report.result, footwearSockets: report.footwearSockets,
     forms: forms.map(form => ({ name: form.name, originalNodes: form.originalNodes,
       gaitResults: form.gaitResults.map(gait => ({ clip: gait.clip, samples: gait.samples,
@@ -187,5 +200,5 @@ try {
         shoeForeAftRanges: gait.shoeShellCenters.z.ranges,
         oldSocketMaximumRange: Math.max(...Object.values(gait.oldStaticSockets).flatMap(axis => axis.ranges)) })),
       skateSamples: form.skate.samples, chest: form.chest })),
-    fullReport: '.local/reviews/chao-footwear-proof.json', limits: report.limits }, null, 2));
+    fullReport: output, limits: report.limits }, null, 2));
 } finally { engine.dispose(); }

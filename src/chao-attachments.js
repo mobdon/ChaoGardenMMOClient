@@ -1,4 +1,4 @@
-import { Matrix, MeshBuilder, Quaternion, Ray, TransformNode, Vector3 } from '@babylonjs/core';
+import { Engine, Ray, Vector3 } from '@babylonjs/core';
 
 // 005/012 are static leg pivots. Native Walk/Run articulate their children
 // 006/013; footwear must follow those actual animated feet.
@@ -30,26 +30,45 @@ export function chestSurfacePoint(meshes, toRoot, bounds, heightFraction = .62) 
   return point;
 }
 
-export function createShoeExhaust(scene, material, { root, fit }) {
-  const jet = new TransformNode(`${root.name}-heel-exhaust`, scene);
-  const length = fit.bounds.size.z * 1.15;
-  const direction = new Vector3(0, -.25, -1).normalize();
-  const heel = new Vector3(fit.bounds.center.x, fit.bounds.min.y + fit.bounds.size.y * .3, fit.bounds.min.z);
-  const rotation = Quaternion.RotationAxis(Vector3.Right(), -Math.PI / 2 - Math.atan(.25));
-  const desired = Matrix.Compose(Vector3.One(), rotation, heel.add(direction.scale(length / 2)));
-  jet.rotationQuaternion = Quaternion.Identity();
-  desired.multiply(Matrix.Invert(fit.restToRoot)).decompose(jet.scaling, jet.rotationQuaternion, jet.position);
-  jet.parent = fit.socket;
-  // Original Chao flame atlas adapted as a heel jet, not an extracted
-  // Shadow exhaust mesh. Crossed planes retain volume as the foot swings.
-  for (let i = 0; i < 2; i++) {
-    const plane = MeshBuilder.CreatePlane(`${jet.name}-${i}`, { width: fit.bounds.size.x * .6, height: length }, scene);
-    plane.parent = jet; plane.rotation.y = i * Math.PI / 2;
-    plane.material = material; plane.isPickable = false;
+export function nativeShoeEffect(mesh) {
+  const match = /native-shadow-jet-(9[2-9])-(left|right)-(toe|heel)-(narrow|wide)/.exec(mesh.name);
+  if (!match) return null;
+  const [, id, side, part, variant] = match;
+  return { mesh, modelId: Number(id), side, part, variant };
+}
+
+// The aliases bundle original effect geometry beside the original footwear.
+// Separate them before measuring the boot, so a flame cannot inflate fitting
+// or ground contact. Older aliases simply have no effect; never invent a sprite.
+export function collectNativeShoeParts(root) {
+  const meshes = [], effects = [];
+  for (const mesh of root.getChildMeshes().filter(mesh => mesh.getTotalVertices())) {
+    const effect = nativeShoeEffect(mesh);
+    if (!effect) { meshes.push(mesh); continue; }
+    mesh.useVertexColors = true;
+    mesh.hasVertexAlpha = true;
+    mesh.receiveShadows = false;
+    mesh.isPickable = false;
+    if (mesh.material) {
+      mesh.material.unlit = true;
+      mesh.material.alphaMode = Engine.ALPHA_COMBINE;
+      mesh.material.transparencyMode = 2;
+      mesh.material.backFaceCulling = false;
+      mesh.material.disableDepthWrite = true;
+    }
+    mesh.setEnabled(false);
+    effects.push(effect);
   }
-  jet.setEnabled(false);
-  // The socket owns animated placement; the gear owns its lifecycle. Shared
-  // material/atlas lifetime belongs to the scene, including the head flame.
-  root.onDisposeObservable.add(() => jet.dispose());
-  return jet;
+  return { meshes, effects };
+}
+
+export function updateNativeShoeEffects(effects, blend, speed) {
+  blend = Number.isFinite(blend) ? Math.max(0, Math.min(1, blend)) : 0;
+  // Original narrow/wide models are selected using this game's existing skate
+  // speed band. The retail effect timing/selection code has not been traced.
+  const variant = speed >= 1.8 ? 'wide' : 'narrow';
+  for (const effect of effects || []) {
+    effect.mesh.setEnabled(blend > 0 && effect.variant === variant);
+    effect.mesh.visibility = blend;
+  }
 }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Matrix, Mesh, MeshBuilder, NullEngine, Quaternion, RawTexture, Scene, StandardMaterial, TransformNode, Vector3, VertexData } from '@babylonjs/core';
-import { CHAO_GEAR_JOINTS, chestSurfacePoint, createShoeExhaust } from '../src/chao-attachments.js';
+import { Engine, Matrix, Mesh, MeshBuilder, NullEngine, Quaternion, Scene, StandardMaterial, TransformNode, Vector3, VertexData } from '@babylonjs/core';
+import { CHAO_GEAR_JOINTS, chestSurfacePoint, collectNativeShoeParts, updateNativeShoeEffects } from '../src/chao-attachments.js';
 
 test('footwear follows independently animated feet instead of their static parent pivots', () => {
   const engine = new NullEngine(), scene = new Scene(engine);
@@ -94,59 +94,57 @@ test('chest surface selects the front skin and has a finite bounds fallback', ()
   } finally { engine.dispose(); }
 });
 
-test('heel exhaust points behind the sole, follows animated feet and disposes without destroying the head flame atlas', () => {
+test('native shoe effects retain alpha and follow gear while staying outside boot fitting', () => {
   const engine = new NullEngine(), scene = new Scene(engine);
   try {
-    const actor = new TransformNode('actor', scene), visual = new TransformNode('native-visual', scene);
-    actor.position.set(4, 3, -2); actor.rotationQuaternion = Quaternion.RotationYawPitchRoll(.5, -.2, .1);
-    visual.parent = actor; visual.scaling.setAll(.1);
-    const material = new StandardMaterial('shared-native-flame', scene);
-    const atlas = RawTexture.CreateRGBATexture(new Uint8Array([255, 255, 255, 255]), 1, 1, scene, false, false);
-    material.diffuseTexture = atlas;
-    let materialDisposed = false, atlasDisposed = false;
-    material.onDisposeObservable.add(() => { materialDisposed = true; });
-    atlas.onDisposeObservable.add(() => { atlasDisposed = true; });
-    const headFlame = MeshBuilder.CreatePlane('head-flame', { size: .18 }, scene);
-    headFlame.material = material; headFlame.parent = actor;
-    for (const [side, , , socketIndex] of CHAO_GEAR_JOINTS) {
-      const pivot = new TransformNode(`${side}-static-pivot`, scene); pivot.parent = visual;
-      pivot.position.set(side === 'right' ? .5 : -.5, .3, 0);
-      const foot = new TransformNode(`${socketIndex}_object_foot`, scene); foot.parent = pivot;
-      foot.rotationQuaternion = Quaternion.RotationYawPitchRoll(.04, -.06, .02);
-      actor.computeWorldMatrix(true); foot.computeWorldMatrix(true);
-      const toRoot = Matrix.Invert(actor.getWorldMatrix());
-      const bounds = { min: new Vector3(-.06, 0, -.1), max: new Vector3(.06, .06, .1),
-        size: new Vector3(.12, .06, .2), center: new Vector3(0, .03, 0) };
-      const fit = { socket: foot, bounds, restToRoot: foot.getWorldMatrix().multiply(toRoot) };
-      const gear = new TransformNode(`${side}-air-shoe`, scene); gear.parent = foot;
-      const jet = createShoeExhaust(scene, material, { root: gear, fit }), planes = jet.getChildMeshes();
-      assert.equal(jet.parent, foot); assert.equal(jet.isEnabled(), false); assert.equal(planes.length, 2);
-      planes.forEach(plane => {
-        assert.equal(plane.material, material); assert.equal(plane.isPickable, false); assert.equal(plane.isEnabled(), false);
-      });
-      jet.computeWorldMatrix(true);
-      const rest = jet.getWorldMatrix().multiply(toRoot), length = bounds.size.z * 1.15;
-      const heel = new Vector3(0, bounds.min.y + bounds.size.y * .3, bounds.min.z);
-      const direction = new Vector3(0, -.25, -1).normalize();
-      assert.ok(Vector3.Distance(Vector3.TransformCoordinates(new Vector3(0, -length / 2, 0), rest), heel) < 1e-5);
-      assert.ok(Vector3.Distance(Vector3.TransformCoordinates(new Vector3(0, length / 2, 0), rest), heel.add(direction.scale(length))) < 1e-5);
-      const initialWorld = jet.getAbsolutePosition().clone();
-      const fixedLocal = Matrix.Compose(jet.scaling, jet.rotationQuaternion, jet.position);
-      const footScale = foot.scaling.asArray(), footParent = foot.parent;
-      jet.setEnabled(true);
-      foot.position.z = .35;
-      foot.rotationQuaternion = Quaternion.RotationYawPitchRoll(.4, -.5, .2);
-      foot.computeWorldMatrix(true); jet.computeWorldMatrix(true);
-      const expected = fixedLocal.multiply(foot.getWorldMatrix());
-      const expectedCenter = Vector3.TransformCoordinates(Vector3.Zero(), expected);
-      assert.ok(Vector3.Distance(jet.getAbsolutePosition(), expectedCenter) < 1e-5);
-      assert.ok(Vector3.Distance(jet.getAbsolutePosition(), initialWorld) > .02, 'exhaust must follow the foot swing');
-      assert.deepEqual(foot.scaling.asArray(), footScale); assert.equal(foot.parent, footParent);
-      gear.dispose();
-      assert.ok(jet.isDisposed()); planes.forEach(plane => assert.ok(plane.isDisposed()));
-      assert.equal(materialDisposed, false); assert.equal(atlasDisposed, false);
-      assert.equal(headFlame.material, material); assert.equal(headFlame.isDisposed(), false);
-      assert.ok(scene.materials.includes(material)); assert.ok(scene.textures.includes(atlas));
+    const foot = new TransformNode('006_object_foot', scene), gear = new TransformNode('shoe', scene);
+    gear.parent = foot; gear.scaling.setAll(.03);
+    const boot = MeshBuilder.CreateBox('native-boot', { size: 1 }, scene); boot.parent = gear;
+    const headMaterial = new StandardMaterial('head-flame', scene);
+    const head = MeshBuilder.CreatePlane('head-flame', { size: 1 }, scene); head.material = headMaterial;
+    const jets = [[92, 'toe', 'narrow'], [93, 'toe', 'wide'], [94, 'heel', 'wide'], [95, 'heel', 'narrow']].map(([id, part, variant]) => {
+      const mesh = MeshBuilder.CreateBox(`native-shadow-jet-${id}-left-${part}-${variant}`, { size: 8 }, scene);
+      mesh.parent = gear; mesh.position.z = -3;
+      mesh.material = new StandardMaterial(`original-${id}`, scene);
+      return mesh;
+    });
+    const fixed = jets.map(mesh => ({ mesh, parent: mesh.parent, position: mesh.position.asArray(), scale: mesh.scaling.asArray() }));
+    const parts = collectNativeShoeParts(gear);
+    assert.deepEqual(parts.meshes, [boot], 'native flame geometry must never enlarge the fitted boot or contact bounds');
+    assert.equal(parts.effects.length, 4);
+    for (const { mesh } of parts.effects) {
+      assert.equal(mesh.isEnabled(), false); assert.equal(mesh.hasVertexAlpha, true);
+      assert.equal(mesh.material.alphaMode, Engine.ALPHA_COMBINE);
+      assert.equal(mesh.material.disableDepthWrite, true); assert.equal(mesh.material.backFaceCulling, false);
+      assert.equal(mesh.material.unlit, true); assert.equal(mesh.material.diffuseTexture, null);
     }
+    updateNativeShoeEffects(parts.effects, .5, 1.6);
+    assert.deepEqual(parts.effects.filter(effect => effect.mesh.isEnabled()).map(effect => effect.modelId), [92, 95]);
+    assert.ok(parts.effects.every(effect => effect.mesh.visibility === .5));
+    updateNativeShoeEffects(parts.effects, 1, 1.994);
+    assert.deepEqual(parts.effects.filter(effect => effect.mesh.isEnabled()).map(effect => effect.modelId), [93, 94]);
+    foot.computeWorldMatrix(true); jets[0].computeWorldMatrix(true); const before = jets[0].getAbsolutePosition().clone();
+    foot.position.set(.4, .1, .3); foot.rotationQuaternion = Quaternion.RotationYawPitchRoll(.4, .3, -.2);
+    foot.computeWorldMatrix(true); jets[0].computeWorldMatrix(true);
+    assert.ok(Vector3.Distance(before, jets[0].getAbsolutePosition()) > .1);
+    fixed.forEach(({ mesh, parent, position, scale }) => {
+      assert.equal(mesh.parent, parent); assert.deepEqual(mesh.position.asArray(), position); assert.deepEqual(mesh.scaling.asArray(), scale);
+    });
+    updateNativeShoeEffects(parts.effects, 0, 1.994);
+    assert.ok(parts.effects.every(effect => !effect.mesh.isEnabled()));
+    updateNativeShoeEffects(parts.effects, NaN, 1.994);
+    assert.ok(parts.effects.every(effect => !effect.mesh.isEnabled()));
+    gear.dispose(); assert.ok(jets.every(mesh => mesh.isDisposed()));
+    assert.equal(head.isDisposed(), false); assert.ok(scene.materials.includes(headMaterial));
+  } finally { engine.dispose(); }
+});
+
+test('older shoe aliases never fabricate replacement exhaust geometry', () => {
+  const engine = new NullEngine(), scene = new Scene(engine);
+  try {
+    const root = new TransformNode('old-shoe', scene), mesh = MeshBuilder.CreateBox('native-shoe', { size: 1 }, scene);
+    mesh.parent = root; const before = scene.meshes.length;
+    const parts = collectNativeShoeParts(root); updateNativeShoeEffects(parts.effects, 1, 1.994);
+    assert.deepEqual(parts.meshes, [mesh]); assert.deepEqual(parts.effects, []); assert.equal(scene.meshes.length, before);
   } finally { engine.dispose(); }
 });
