@@ -1,0 +1,59 @@
+const labels = {
+  swim: [0, 78, 46, 16], fly: [49, 78, 29, 17], run: [81, 78, 36, 16],
+  power: [121, 78, 54, 16], stamina: [176, 78, 71, 16],
+};
+const grades = ['E', 'D', 'C', 'B', 'A', 'S'];
+const gradeCells = { S: [88, 44], A: [198, 22], B: [220, 22], C: [242, 22], D: [264, 22], E: [286, 22] };
+
+function nativeFrame() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 165 76');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('native-stat-frame');
+  const image = document.createElementNS(ns, 'image');
+  image.setAttribute('href', '/api/assets/chao-stat-panel.png');
+  image.setAttribute('width', '256'); image.setAttribute('height', '128');
+  svg.append(image);
+  return svg;
+}
+
+export function createStatRow(name) {
+  const row = document.createElement('div');
+  row.className = 'stat-row'; row.dataset.stat = name;
+  const label = document.createElement('span');
+  label.className = 'stat-name'; label.textContent = name;
+  if (labels[name]) {
+    const [x, y, width, height] = labels[name];
+    label.classList.add('native-stat-label');
+    label.style.setProperty('--sprite-x', `${-x}px`);
+    label.style.setProperty('--sprite-y', `${-y}px`);
+    label.style.setProperty('--sprite-width', `${width}px`);
+    label.style.setProperty('--sprite-height', `${height}px`);
+  }
+  const bar = document.createElement('div');
+  bar.className = 'stat-bar'; bar.append(document.createElement('span'));
+  const level = document.createElement('span'); level.className = 'stat-level';
+  const grade = document.createElement('span'); grade.className = 'stat-grade';
+  const points = document.createElement('span'); points.className = 'stat-points';
+  row.append(nativeFrame(), label, level, grade, bar, points);
+  return row;
+}
+
+export function updateStatRow(row, name, stat) {
+  const level = Math.max(0, Math.min(99, Number(stat.level) || 0));
+  const hidden = name === 'luck' || name === 'intelligence';
+  row.querySelector('.stat-bar>span').style.width = `${level / 99 * 100}%`;
+  row.querySelector('.stat-bar').setAttribute('aria-label', `${name} level ${level} of 99`);
+  row.querySelector('.stat-level').textContent = `Lv. ${String(level).padStart(2, '0')}`;
+  const grade = row.querySelector('.stat-grade');
+  grade.textContent = hidden ? (stat.grade === 255 ? 'MAX' : String(stat.grade)) : grades[stat.grade] || 'E';
+  grade.setAttribute('aria-label', hidden ? `${name} hidden grade ${stat.grade} of 255` : `${name} grade ${grade.textContent}`);
+  grade.classList.toggle('native-grade', !hidden);
+  if (!hidden) {
+    const [x, y] = gradeCells[grade.textContent];
+    grade.style.setProperty('--grade-x', `${-x}px`); grade.style.setProperty('--grade-y', `${-y}px`);
+  }
+  row.querySelector('.stat-points').textContent = `${String(Math.max(0, Number(stat.points) || 0)).padStart(4, '0')} pts`;
+}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#050a17" />
+    <meta name="description" content="A live browser preview of your Tiny Garden phone widget." />
+    <title>Tiny Garden · Android widget preview</title>
+  </head>
+  <body>
+    <main class="widget-studio">
+      <header class="studio-header"><a class="garden-logo" href="/tiny.html"><span class="logo-gem">◈</span><span>TINY GARDEN<small>YOUR CHAO. YOUR WORLD.</small></span></a><span class="preview-tag">ANDROID WIDGET <b>WEB PREVIEW</b></span></header>
+      <div class="studio-layout">
+        <section class="studio-controls" aria-labelledby="studio-title">
+          <span class="section-kicker"><i></i> A LITTLE GARDEN. A BIG PRESENCE.</span>
+          <h1 id="studio-title">Your Chao.<br />Always <em>in reach.</em></h1>
+          <p class="studio-intro">A little window into their world. Check in on your Chao, then jump straight into Tiny Garden.</p>
+          <div class="configuration-card">
+            <div class="control-heading"><span>MAKE ROOM FOR YOUR CHAO</span><span>01 / 03</span></div>
+            <fieldset class="size-selector"><legend>Choose a widget size</legend><div role="group" aria-label="Widget size"><button type="button" data-size="compact" aria-pressed="false"><span class="size-glyph compact-glyph"></span><b>Compact</b><small>2 × 2</small></button><button type="button" data-size="wide" aria-pressed="false"><span class="size-glyph wide-glyph"></span><b>Wide</b><small>4 × 2</small></button><button type="button" data-size="large" aria-pressed="true" class="selected"><span class="size-glyph large-glyph"></span><b>Large</b><small>4 × 4</small></button></div></fieldset>
+            <label class="save-label" for="widget-save">Your saved Chao<select id="widget-save" disabled><option>No saved Chao in this browser</option></select></label>
+            <div id="studio-sync" class="studio-sync" data-state="offline" role="status"><i></i><span id="studio-sync-label">Looking for your saved Chao</span></div>
+            <p id="widget-connection-note" class="connection-note">Use an existing garden save to see live stats here.</p>
+          </div>
+          <p class="preview-explanation"><span>◈</span><span>Android first. This is a working browser preview; installing a home screen widget requires the Android app.</span></p>
+          <a id="studio-open" class="studio-open" href="/tiny.html">OPEN TINY GARDEN <span>↗</span></a>
+          <p class="studio-bottom-note">ONE CHAO. THE SAME SAVED PROGRESS.</p>
+        </section>
+
+        <section class="phone-preview" aria-label="Android home screen widget preview">
+          <span class="device-caption">YOUR HOME SCREEN, WITH A LITTLE MORE CHAOS.</span>
+          <div class="phone-shell">
+            <div class="phone-screen">
+              <div class="device-top"><span>ANDROID PREVIEW</span><span class="camera-island" aria-hidden="true"></span><span class="device-spark" aria-hidden="true">✦</span></div>
+              <div class="phone-clock"><time id="phone-date"></time><time id="phone-time"></time></div>
+              <div id="home-widget-position" class="home-widget-position" data-size="large">
+                <a id="garden-widget" class="garden-widget" data-size="large" data-admin="false" href="/tiny.html" aria-label="Open your Chao in Tiny Garden">
+                  <div class="widget-grid" aria-hidden="true"></div>
+                  <img class="widget-emerald emerald-a" src="/api/assets/emerald-cyan.png" alt="" />
+                  <img class="widget-emerald emerald-b" src="/api/assets/emerald-blue.png" alt="" />
+                  <img class="widget-emerald emerald-c" src="/api/assets/emerald-yellow.png" alt="" />
+                  <div class="widget-topline"><span class="widget-brand"><b>◈</b> TINY GARDEN</span><span id="widget-live" class="widget-live" data-state="offline"><i></i><span>CONNECT</span></span></div>
+                  <div class="widget-identity"><span id="widget-form" class="widget-form">A LITTLE WORLD OF YOUR OWN</span><h2 id="widget-name">Your Chao</h2><span id="widget-owner" class="widget-owner" hidden>OWNER</span></div>
+                  <div class="widget-ring-balance"><span class="ring-symbol" aria-hidden="true"></span><strong id="widget-rings">—</strong><small>RINGS</small></div>
+                  <canvas id="widget-avatar" class="widget-avatar" width="360" height="360" role="img" aria-label="Garden mascot preview; connect to show your saved Chao"></canvas>
+                  <span id="widget-routine" class="widget-routine">Connect your saved Chao</span>
+                  <div class="widget-needs" aria-label="Your Chao's needs"><div><span>ENERGY</span><meter id="widget-energy" min="0" max="100" value="0" aria-label="Energy" hidden></meter><b id="widget-energy-value">—</b></div><div><span>FULLNESS</span><meter id="widget-hunger" min="0" max="100" value="0" aria-label="Fullness" hidden></meter><b id="widget-hunger-value">—</b></div><div><span>HAPPINESS</span><meter id="widget-happiness" min="0" max="100" value="0" aria-label="Happiness" hidden></meter><b id="widget-happiness-value">—</b></div></div>
+                  <div class="widget-training"><span class="training-icon" aria-hidden="true">↗</span><span><small>AFK TRAINING</small><b>No training job</b></span><span class="training-arrow" aria-hidden="true">→</span></div>
+                  <div class="widget-bottomline"><span id="widget-sync-label">SAVE NOT CONNECTED</span><span>OPEN GARDEN <b>↗</b></span></div>
+                </a>
+              </div>
+              <p class="widget-caption" id="widget-size-caption">TINY GARDEN · LARGE</p>
+              <div class="home-screen-spacer"></div>
+              <a class="phone-garden-shortcut" href="/tiny.html" aria-label="Open Tiny Garden"><img src="/api/assets/discord-icon.png" alt="" /><span>Tiny Garden</span></a>
+              <div class="home-indicator" aria-hidden="true"></div>
+            </div>
+          </div>
+          <p class="device-footnote">Live garden data. Original Chao artwork.<br />Browser preview · not an installed OS widget.</p>
+        </section>
+      </div>
+      <footer class="studio-footer"><span>TINY GARDEN <b>✦</b> TAKE A LITTLE CHAOS WITH YOU.</span><span>CONNECTED TO THE SAME GARDEN SAVE</span></footer>
+    </main>
+    <script type="module" src="/src/widget.js"></script>
+  </body>
+</html>

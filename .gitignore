@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.local/
+.codex-attachments/
+*.gba
+*.sav
+*.srm
+.serena/
+server/
+__pycache__/
+*.py[cod]
+target/
+*.log
+.env
+.env.*
+!.env.example

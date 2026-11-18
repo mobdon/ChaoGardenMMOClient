@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#173d38" />
+    <meta name="description" content="Live a Chao's life. Explore, grow, race, and find your place in the garden." />
+    <title>Chao Garden · A little world, a big adventure</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="garden" aria-label="Three dimensional Chao garden. Use WASD to move, Space to jump, F to attack, and E to eat fruit." tabindex="0"></canvas>
+      <div class="vignette"></div>
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="Chao Garden home"><span class="brand-symbol">◉</span><span>CHAO<span class="wordmark-light">GARDEN</span><small>ADVENTURE · RACE · BATTLE</small></span></a>
+        <nav class="top-links" aria-label="Game panels">
+          <button class="nav-button active" data-panel="world">The world</button>
+          <button class="nav-button" data-panel="character">My Chao <span class="key-hint">C</span></button>
+          <button class="nav-button" data-panel="journal">Journal <span class="key-hint">J</span></button>
+          <button class="nav-button" id="shop-open">Chao shop <span class="key-hint">B</span></button>
+          <button class="nav-button" id="stages-open">Stage select</button>
+          <button class="nav-button" id="tiny-open">Tiny Garden</button>
+          <button class="nav-button" id="save-title">Save &amp; title</button>
+          <button class="nav-button sound-button" id="audio-toggle" aria-pressed="false" aria-label="Enable music and NPC voices">♪ Sound off</button>
+        </nav>
+        <div class="top-status"><span id="connection-dot" class="status-dot"></span><span id="connection-text">Local garden</span><button id="setup-open" class="icon-button" aria-label="View installed game files">⌘</button></div>
+      </header>
+
+      <section class="world-title" aria-label="Current area">
+        <div class="eyebrow"><span class="tiny-star">✦</span> CHAO GARDEN ONLINE</div>
+        <h1 id="zone-title">A place to<br><em>grow.</em></h1>
+        <p id="zone-description">A little sunshine. A little mischief.<br>A whole world waiting for you.</p>
+        <div class="area-pill"><span class="sun-icon">☼</span><span id="zone-label">Neutral Garden</span><span class="pill-divider"></span><span id="online-count">0 Chao</span></div>
+      </section>
+
+      <aside id="quest-card" class="quest-card glass">
+        <div class="card-kicker"><span>YOUR NEXT ADVENTURE</span><span class="tiny-star">✧</span></div>
+        <h2 id="quest-title">Small feet, big plans</h2>
+        <p id="quest-text">Find your rhythm in the garden. Then take your first steps beyond it.</p>
+        <div id="quest-goals" class="quest-goals"></div>
+        <button class="text-button" data-action="mission">Visit the outpost <span>↗</span></button>
+      </aside>
+
+      <aside id="character-panel" class="detail-panel glass" hidden aria-label="Chao character stats">
+        <div class="panel-heading"><span class="eyebrow">CHAO DATA · MY CHAO</span><button class="close-button" data-close-panel aria-label="Close character panel">×</button></div>
+        <div class="profile-heading"><div class="profile-avatar">◕</div><div><h2 id="profile-name">Chao</h2><span id="profile-form">Neutral · Growing</span></div><span id="owner-badge" class="owner-badge" hidden>OWNER</span></div>
+        <div class="stat-heading"><span>ABILITY</span><span>LEVEL / POINTS</span><span>GRADE</span></div>
+        <div id="stats-list" class="stats-list"></div>
+        <details class="hidden-stats"><summary>Hidden potential <span>↗</span></summary><div id="hidden-stats-list"></div><p>Hidden grades use a 0–255 scale; 255 is maximum.</p></details>
+        <details class="owner-loadout"><summary>GEAR &amp; CHAOS FORM <span>↗</span></summary>
+          <button id="owner-dark-form" class="owner-form-button" hidden>ADMIN · Dark Chaos form <span>✦</span></button>
+          <button id="owner-walker" class="owner-form-button" hidden aria-pressed="false">Pilot Dark Chao Walker <span>↗</span></button>
+          <button id="owner-air-shoes" class="owner-form-button" hidden aria-pressed="false">Equip Shadow’s Air Shoes ↗</button>
+          <button id="owner-hammer-gloves" class="owner-form-button" hidden aria-pressed="false">Equip Knuckles’ Hammer Gloves ↗</button>
+        </details>
+        <div class="alignment-label"><span>Dark</span><strong id="alignment-value">Neutral · 0</strong><span>Hero</span></div>
+        <div class="alignment-track"><span id="alignment-marker"></span></div>
+        <p class="fine-print">Your alignment opens the Hero or Dark garden at ±60.</p>
+        <div class="button-row"><button class="soft-button" data-action="align-good">Lend a hand <span>+ Hero</span></button><button class="soft-button" data-action="align-dark">Cause mischief <span>+ Dark</span></button></div>
+        <button class="primary-button evolve-button" data-action="evolve">Become a Chaos Chao <span>✦</span></button>
+        <p id="evolution-requirements" class="fine-print">3 missions · 1 race · Run / Swim / Power Lv.10 · Happiness 80</p>
+      </aside>
+
+      <aside id="journal-panel" class="detail-panel glass" hidden aria-label="Adventure journal">
+        <div class="panel-heading"><span class="eyebrow">ONE STEP AT A TIME</span><button class="close-button" data-close-panel aria-label="Close journal">×</button></div>
+        <h2>The adventure journal</h2>
+        <p class="panel-intro">Explore. Bring something back. Grow a little.</p>
+        <div class="journal-entry"><span class="entry-number">01</span><div><h3>Beyond the garden</h3><p>Take on robots at the outpost. Fight together and earn rings when the arena is clear.</p><button class="text-button" data-action="mission">Enter the mission <span>↗</span></button></div></div>
+        <div class="journal-entry"><span class="entry-number">02</span><div><h3>A friendly rivalry</h3><p>Run through each checkpoint in order. Your Run level changes your speed.</p><button class="text-button" data-action="race">Start a garden race <span>↗</span></button></div></div>
+        <div class="journal-entry"><span class="entry-number">03</span><div><h3>Choose your nature</h3><p>Hero and Dark choices shape your alignment and open a new home.</p><div class="button-row"><button class="text-button" data-action="hero">Hero garden ↗</button><button class="text-button" data-action="dark">Dark garden ↗</button></div></div></div>
+        <div class="journal-note">Explore with locally imported SA2 Chao and garden assets. Original stage missions, expanded races, and karate are on the way.</div>
+      </aside>
+
+      <section id="activity-banner" class="activity-banner glass" hidden aria-live="polite"></section>
+      <section id="mech-hud" class="mech-hud glass" hidden aria-label="Dark Chao Walker status"><strong>DARK CHAO WALKER</strong><span id="boost-status">BOOST 100%</span><small>Hold SPACE · Jetpack &nbsp; F · Fire</small></section>
+      <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+      <footer class="bottom-hud">
+        <section class="chao-card glass" aria-label="Player status">
+          <div class="chao-avatar"><svg viewBox="0 0 64 64" aria-hidden="true"><ellipse cx="32" cy="45" rx="17" ry="14" fill="#72c9e0"/><path d="M14 27c0-12 8-16 18-21 1 8 18 8 18 21 0 12-8 18-18 18S14 39 14 27" fill="#8bdcf0"/><ellipse cx="25" cy="29" rx="3" ry="5" fill="#173f44"/><ellipse cx="39" cy="29" rx="3" ry="5" fill="#173f44"/><circle cx="32" cy="3" r="3" fill="#f9d674"/><ellipse cx="21" cy="58" rx="8" ry="5" fill="#ffe2a0"/><ellipse cx="43" cy="58" rx="8" ry="5" fill="#ffe2a0"/></svg></div>
+          <div class="chao-status"><div><strong id="hud-name">Your Chao</strong><span id="hud-form">NEUTRAL</span></div><div class="health-track"><span id="health-fill"></span></div><small id="hud-health">100 / 100 HP</small></div>
+          <div class="ring-count"><span class="ring-icon"></span><strong id="ring-count">20</strong><small>RINGS</small></div>
+        </section>
+        <section class="action-bar glass" aria-label="Activities">
+          <button data-action="hub" title="Return to the main hub"><span>⌂</span><small>Home</small></button>
+          <button data-action="feed" title="Eat fruit near the grove (E)"><span>♧</span><small>Eat</small></button>
+          <button data-action="train-run" title="Train your Run stat"><span>➟</span><small>Train</small></button>
+          <button data-action="attack" title="Attack a nearby robot (F)"><span>✹</span><small>Fight</small></button>
+          <button data-action="race" title="Start a race"><span>⚑</span><small>Race</small></button>
+          <button data-panel="character" title="Open your character (C)"><span>✦</span><small>Grow</small></button>
+        </section>
+        <div class="control-hints"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span><span id="context-controls"><kbd>SPACE</kbd> jump <kbd>F</kbd> attack</span><small>Right-drag to look · Scroll to zoom</small></div>
+      </footer>
+      <div class="build-label">LOCAL PROTOTYPE <span>•</span> LOADING LOCAL ASSETS</div>
+      <div class="touch-pad" aria-label="Touch movement"><button data-direction="up" aria-label="Move forward">↑</button><button data-direction="left" aria-label="Move left">←</button><button data-direction="down" aria-label="Move backward">↓</button><button data-direction="right" aria-label="Move right">→</button></div>
+
+      <dialog id="welcome-dialog" class="welcome-dialog title-screen" aria-labelledby="title-heading">
+        <div class="title-art" aria-hidden="true"><img src="/api/assets/login-chao.png" alt=""/><span class="title-orbit">RAISE CHAOS.</span><span class="title-art-caption">SMALL CHAO. / LIMITLESS POTENTIAL.</span></div>
+        <div class="title-content">
+          <div class="title-brand"><span>◉</span> CHAO GARDEN <b>ONLINE</b></div>
+          <div class="title-kicker">YOUR NEXT ADVENTURE STARTS HERE</div>
+          <h2 id="title-heading">A LITTLE<br>MORE <em>CHAOS.</em></h2>
+          <p class="title-intro">Your garden. Your rivals. Your legend.</p>
+          <section class="save-select" aria-labelledby="save-select-heading"><div class="title-section-label"><h3 id="save-select-heading">CONTINUE YOUR STORY</h3><span>LOCAL SLOTS</span></div><div id="save-slots"></div></section>
+          <details class="new-chao"><summary>＋ START WITH A NEW CHAO</summary><form id="join-form"><label for="chao-name">YOUR CHAO’S NAME</label><div><input id="chao-name" name="name" maxlength="20" autocomplete="nickname" value="Chao" required/><button id="join-button" class="primary-button" type="submit">Let’s go ↗</button></div><small>Your existing Chao stays in its save slot.</small></form></details>
+          <p id="join-error" role="alert"></p>
+          <div class="title-footer"><a class="title-tiny-link" href="/tiny.html">TAKE THE LITTLE ADVENTURE WITH YOU · TINY GARDEN ↗</a><div class="welcome-requirements"><span id="install-status-dot" class="status-dot"></span><span id="install-status">Checking local SA2 files…</span></div><small>Progress is saved by the game server. Slots remember this browser’s Chao.<br>Steam SA2 + BATTLE required for the intended game.</small></div>
+        </div>
+      </dialog>
+
+      <dialog id="setup-dialog" class="setup-dialog">
+        <div class="panel-heading"><span class="eyebrow">YOUR LOCAL GAME FILES</span><button class="close-button" id="setup-close" aria-label="Close file inventory">×</button></div>
+        <h2>The starting pieces.</h2>
+        <p>SA2 stays untouched. The local bridge reads the installation and maps content for the next conversion step.</p>
+        <div id="setup-content" class="setup-content">Checking the installation…</div>
+        <p class="fine-print">File discovery identifies content, and does not authenticate Steam ownership. BATTLE entitlement must be checked in Steam.</p>
+      </dialog>
+      <dialog id="shop-dialog" class="shop-dialog">
+        <div class="panel-heading"><span class="eyebrow">AMY CHAO’S BLACK MARKET</span><button class="close-button" id="shop-close" aria-label="Close Chao shop">×</button></div>
+        <div class="shop-heading"><div><small>WELCOME, LITTLE ADVENTURER</small><h2>CHAO SHOP<span>★</span></h2></div><div class="shop-wallet"><span class="ring-icon"></span><strong id="shop-balance">0</strong><span>RINGS</span></div></div>
+        <p>Bring your rings. Build your legend.</p>
+        <div id="shop-items" class="shop-items"></div>
+        <div class="shop-note">Earn rings in missions and races. Purchases and your equipped cap are saved with your Chao.</div>
+      </dialog>
+      <dialog id="stages-dialog" class="stages-dialog" aria-labelledby="stages-title">
+        <div class="panel-heading"><span class="eyebrow">CHOOSE YOUR ADVENTURE</span><button class="close-button" data-close-stages aria-label="Close stage select">×</button></div>
+        <h2 id="stages-title">STAGE SELECT <span>★</span></h2>
+        <p>Visit a garden or take on a challenge. More adventures will open as they’re ready.</p>
+        <div class="stage-playable" aria-label="Play now">
+          <button data-stage-action="hub">Main hub <small>PLAY NOW ↗</small></button>
+          <button data-stage-action="garden">Neutral Garden <small>PLAY NOW ↗</small></button>
+          <button data-stage-action="hero">Hero Garden <small>HERO ALIGNMENT ↗</small></button>
+          <button data-stage-action="dark">Dark Garden <small>DARK ALIGNMENT ↗</small></button>
+          <button data-stage-action="mission">Robot Outpost <small>MISSION ↗</small></button>
+          <button data-stage-action="race">Garden Circuit <small>RACE ↗</small></button>
+        </div>
+        <div class="stage-search-row"><label for="stage-search">ADVENTURE ARCHIVE</label><input id="stage-search" type="search" placeholder="Find a stage or character…" autocomplete="off"/><span class="stage-count"></span></div>
+        <div class="stage-filters" role="group" aria-label="Stage families"></div>
+        <div class="stage-grid"></div>
+      </dialog>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
