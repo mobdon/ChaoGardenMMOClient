@@ -42,7 +42,7 @@ This is a structural illustration, not a valid fixture: real nested identity mus
 
 The current server has no truthful last-saved UTC or durable training job. Internal `serverTimeMs` and `lastSavedAtMs` remain explicit null, and AFK status is unavailable. The Read timestamp is the Android receipt time and makes no durability claim. Even a future `durableTraining:true` does not imply a known job schema; add/validate that contract before presenting phases, costs or end times. Local clocks never advance a phase or grant points.
 
-The server public-player filter currently omits an offline nonresident self. `integration/include-self.patch` adds only the authenticated self to that filter. The patch was checked without changing the independent server checkout. Until integrated, such a response fails closed. Residents and connected canonical players remain usable.
+Server draft PR #15 at `56af22d` includes both private `snapshot.self` and exactly one matching canonical player even when offline without a resident. The obsolete include-self patch is removed. This adapter requires the canonical player and fails closed on older incomplete snapshots; it never selects a substitute.
 
 ## One-tap Watch care
 

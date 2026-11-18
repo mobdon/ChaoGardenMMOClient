@@ -6,7 +6,10 @@
 <TextView android:id="@+id/widget_status" style="@style/WidgetDetail" android:maxLines="1" android:text="@string/widget_pair_status" android:textColor="@color/garden_cyan" android:textSize="9sp" />
 
 </LinearLayout>
-<ImageView android:id="@+id/widget_avatar" android:layout_width="36dp" android:layout_height="36dp" android:layout_marginStart="4dp" android:contentDescription="@string/widget_avatar_description" android:scaleType="fitCenter" android:src="@drawable/ic_garden_gem" />
+<FrameLayout android:layout_width="36dp" android:layout_height="36dp" android:layout_marginStart="4dp">
+<ImageView android:id="@+id/widget_garden" android:layout_width="match_parent" android:layout_height="match_parent" android:contentDescription="@null" android:importantForAccessibility="no" android:scaleType="centerCrop" android:visibility="gone" />
+<ImageView android:id="@+id/widget_avatar" android:layout_width="36dp" android:layout_height="36dp" android:contentDescription="@string/widget_avatar_description" android:scaleType="fitCenter" android:src="@drawable/ic_garden_gem" />
+</FrameLayout>
 </LinearLayout>
 <TextView android:id="@+id/widget_activity" style="@style/WidgetDetail" android:maxLines="1" android:text="@string/widget_activity_unknown" android:textSize="11sp" />
 <TextView android:id="@+id/widget_needs" style="@style/WidgetText" android:maxLines="1" android:text="@string/widget_needs_unknown" android:textSize="11sp"  />

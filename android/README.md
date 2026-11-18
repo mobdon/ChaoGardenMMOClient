@@ -2,7 +2,7 @@
 
 A native Android application and RemoteViews home-screen widget, separate from the browser preview at `widget.html`. Compact, wide and large layouts show the canonical Chao's needs, stats, activity and training availability. Android setup pairs an independent device credential; the widget opens the full Tiny Garden app for minigames and training controls.
 
-**Delivery status:** source and tests are implemented. Native builds/device execution were blocked by missing tooling and canceled download approvals. The Rust accounts-v2 workstream provides the account, pairing and fenced-care contract; its integration/deployment remains a separate dependency. The published Rust baseline `a8188a3` is unsupported. No APK or installed-widget success is claimed. See [verification/STATUS.md](verification/STATUS.md).
+**Delivery status:** the actual debug APK and instrumentation APK build successfully; Android lint and all 38 regular JVM tests pass. The production Java adapter also passes a real isolated Rust pairing/care/restart round trip. The native package includes the verified local A2NE garden background when staged. Device execution remains unverified: no physical device was attached and the isolated software emulator attempts did not reach a usable Android guest. Production deployment and paired Android acceptance remain open. See [verification/STATUS.md](verification/STATUS.md) for exact evidence and limits.
 
 ## Build and test separately from the browser
 
@@ -35,6 +35,6 @@ The launcher shows a static snapshot. JobScheduler requests background reads eve
 
 ## Integration gates
 
-The exact Rust API and limitations are in [docs/PROTOCOL-v1.md](docs/PROTOCOL-v1.md). A small reviewed server patch in `integration/include-self.patch` includes authenticated offline nonresident self data; it was checked but not applied to the independently owned server.
+The exact Rust API and limitations are in [docs/PROTOCOL-v1.md](docs/PROTOCOL-v1.md). Server draft PR #15 (`56af22d`) includes the canonical offline self in authenticated account snapshots. The earlier include-self patch is obsolete and has been removed; this client does not apply changes to the independent server.
 
 Keep this PR a draft until Android build/lint/JVM/instrumentation execution and live pairing/care/resize/reboot/Doze acceptance pass against the integrated Rust service. Prove canonical identity across app entry, invitation expiry/replay, revocation, conflicting devices, stale input, failure after commit, save/restart, actual original art and all training phases once that service exists. Fixture/browser checks are not installed-widget evidence.

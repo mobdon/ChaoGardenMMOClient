@@ -87,6 +87,9 @@ public final class GardenWidget extends AppWidgetProvider {
         view.setTextViewText(R.id.widget_sync,snapshot==null?"Open to pair":(fresh?"Read ":"Cached ")+synced);
         view.setContentDescription(R.id.widget_sync,(state.has("error")?state.optString("error")+". ":"")+"Snapshot received on this device "+synced+". Server save time unavailable.");
         Bitmap art=snapshot==null?null:OriginalArtwork.cached(context,snapshot);
+        Bitmap garden=GardenBackdrop.load(context);
+        view.setViewVisibility(R.id.widget_garden,garden==null?android.view.View.GONE:android.view.View.VISIBLE);
+        if(garden!=null) view.setImageViewBitmap(R.id.widget_garden,garden);
         if(art!=null) view.setImageViewBitmap(R.id.widget_avatar,art); else view.setImageViewResource(R.id.widget_avatar,R.drawable.ic_garden_gem);
         view.setContentDescription(R.id.widget_avatar,art==null?"Original Chao artwork unavailable":snapshot.name+" · original source artwork");
         Intent open=new Intent(context,PairingActivity.class);
