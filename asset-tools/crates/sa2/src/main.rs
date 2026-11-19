@@ -1,9 +1,9 @@
 use sa2_asset_tools::{
-    archive, audio,
+    archive, audio, collision,
     manifest::{self, Asset, Dependency, Fidelity, Manifest, Output, Representation, Source, Span},
-    model, motion, pe, stage, texture, Error, Result,
+    model, motion, pe, pose, stage, texture, Error, Result,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -15,6 +15,9 @@ const MAX_INPUT: u64 = 512 * 1024 * 1024;
 const MAX_DECODED: usize = 128 * 1024 * 1024;
 
 fn read_source(path: &Path) -> Result<Vec<u8>> {
+    read_source_limited(path, MAX_INPUT)
+}
+fn read_source_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {
     if fs::symlink_metadata(path)?.file_type().is_symlink() {
         return Err(Error::invalid("source link refused"));
     }
@@ -22,12 +25,12 @@ fn read_source(path: &Path) -> Result<Vec<u8>> {
     if !file.metadata()?.is_file() {
         return Err(Error::invalid("expected regular input"));
     }
-    if file.metadata()?.len() > MAX_INPUT {
-        return Err(Error::invalid("input exceeds 512 MiB"));
+    if file.metadata()?.len() > limit {
+        return Err(Error::invalid("input exceeds its configured byte limit"));
     }
     let mut bytes = vec![];
-    (&mut file).take(MAX_INPUT + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_INPUT {
+    (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
         return Err(Error::invalid("input limit"));
     }
     Ok(bytes)
@@ -202,6 +205,93 @@ fn ensure_unchanged(input: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+struct RuntimeDependency<'a> {
+    path: &'a Path,
+    logical_path: String,
+    bytes: &'a [u8],
+    role: &'a str,
+}
+
+fn save_runtime_document(
+    input: &Path,
+    label: &str,
+    bytes: &[u8],
+    output: &Path,
+    value: &impl Serialize,
+    format: &str,
+    dependencies: &[RuntimeDependency<'_>],
+) -> Result<()> {
+    let data = serde_json::to_vec_pretty(value)?;
+    let source = Source::from_bytes(label, bytes)?;
+    let mut m = Manifest::new(vec![source]);
+    let source = &m.sources[0];
+    m.assets.push(asset(
+        source,
+        format!("native-evaluation.{format}"),
+        format,
+        whole_span(source),
+        Some(output_record(output, format, &data)?),
+        Representation::Decoded,
+        vec![
+            "Supported source-backed native data evaluation only. Collision response, full renderer/skinning and retail gameplay remain separate; see the output's policies/unknowns and full-game tracker.".into(),
+            "Generated-output identity requires the output SHA-256 as well as the source locator/hash: different frames, scales or queries may use the same source.".into(),
+        ],
+    ));
+    for dependency in dependencies {
+        ensure_unchanged(dependency.path, dependency.bytes)?;
+        let source = Source::from_bytes(&dependency.logical_path, dependency.bytes)?;
+        m.assets[0].dependencies.push(Dependency {
+            source_id: source.id.clone(),
+            role: dependency.role.into(),
+            offset: 0,
+            byte_length: source.byte_length,
+            sha256: source.sha256.clone(),
+            bank: None,
+            entry_count: None,
+        });
+        m.sources.push(source);
+    }
+    m.validate()?;
+    ensure_unchanged(input, bytes)?;
+    if sidecar(output).exists() {
+        return Err(Error::invalid("manifest output exists"));
+    }
+    write_new(output, &data)?;
+    write_json(&sidecar(output), &m)
+}
+
+fn finite_argument(value: &std::ffi::OsStr) -> Result<f64> {
+    value
+        .to_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| Error::invalid("expected a finite numeric argument"))
+}
+fn unit_scale() -> f64 {
+    1.0
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RayRequest {
+    origin: [f64; 3],
+    direction: [f64; 3],
+    max_distance: f64,
+    #[serde(default = "unit_scale")]
+    uniform_scale: f64,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PoseDocument {
+    schema_version: u32,
+    requested_frame: f64,
+    coordinate_space: &'static str,
+    reference_profile: &'static str,
+    frame_policy: &'static str,
+    unknowns: [&'static str; 2],
+    #[serde(flatten)]
+    evaluated: pose::Pose,
+}
+
 fn inspect(bytes: &[u8], name: &str) -> Result<Value> {
     let name = name.to_ascii_lowercase();
     if bytes.starts_with(b"SA2MDL") || bytes.starts_with(b"SA2BMDL") {
@@ -368,7 +458,7 @@ fn extract(input: &Path, label: &str, bytes: &[u8], directory: &Path) -> Result<
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK]\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.\nNo gameplay port or entitlement verification is implied.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.\nNo gameplay port or entitlement verification is implied.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -391,11 +481,27 @@ fn run() -> Result<()> {
         .ok_or_else(|| Error::invalid("command encoding"))?;
     if !matches!(
         command,
-        "catalog" | "inspect" | "prs" | "extract" | "texture" | "adx" | "transporter" | "validate"
+        "catalog"
+            | "inspect"
+            | "prs"
+            | "extract"
+            | "texture"
+            | "adx"
+            | "transporter"
+            | "validate"
+            | "pose"
+            | "collision"
+            | "raycast"
     ) {
         return Err(Error::invalid("unknown command (see --help)"));
     }
-    if args.len() != 3 && !(command == "texture" && args.len() == 5) {
+    let valid_arity = match command {
+        "texture" | "pose" => matches!(args.len(), 3 | 5),
+        "collision" => matches!(args.len(), 3 | 4),
+        "raycast" => args.len() == 4,
+        _ => args.len() == 3,
+    };
+    if !valid_arity {
         return Err(Error::invalid("unexpected arguments (see --help)"));
     }
     let input = Path::new(&args[1]);
@@ -412,6 +518,95 @@ fn run() -> Result<()> {
     let bytes = read_source(input)?;
     let label = source_label(input, source_root.as_deref())?;
     match command {
+        "pose" => {
+            let model = model::read_model(&bytes)?;
+            let motion_bytes = if args.len() == 5 {
+                Some(read_source(Path::new(&args[3]))?)
+            } else {
+                None
+            };
+            let motion = motion_bytes
+                .as_deref()
+                .map(motion::read_motion)
+                .transpose()?;
+            let frame = if args.len() == 5 {
+                finite_argument(&args[4])?
+            } else {
+                0.0
+            };
+            let evaluated=PoseDocument {
+                schema_version:1,
+                requested_frame:frame,
+                coordinate_space:"original native units; column-vector matrices",
+                reference_profile:"SAIO 2.2.2 / SA3D.Modeling 1.2.2+f23c73df68c0c69a96f28746c41b6fc32643340a",
+                frame_policy:"negative requests clamp to zero; supported channels clamp to their endpoint keys; no looping or inferred FPS",
+                unknowns:["Weighted-mesh skinning, morphs, blending and native action-state behavior are not implemented here","Parity is against the pinned reference library; compiled retail gameplay is not executed or validated"],
+                evaluated:pose::evaluate_model_pose(&model,motion.as_ref(),frame)?,
+            };
+            let dependencies = if let Some(ref data) = motion_bytes {
+                let path = Path::new(&args[3]);
+                vec![RuntimeDependency {
+                    path,
+                    logical_path: source_label(path, source_root.as_deref())?,
+                    bytes: data,
+                    role: "native-motion",
+                }]
+            } else {
+                vec![]
+            };
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &evaluated,
+                "native-pose-json",
+                &dependencies,
+            )?;
+        }
+        "collision" => {
+            let scale = if args.len() == 4 {
+                finite_argument(&args[3])?
+            } else {
+                1.0
+            };
+            let native = stage::read_stage(&bytes)?;
+            let world = collision::bake_stage(&native, scale)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &world,
+                "native-collision-json",
+                &[],
+            )?;
+        }
+        "raycast" => {
+            let request_path = Path::new(&args[3]);
+            let request_bytes = read_source_limited(request_path, 64 * 1024)?;
+            let request: RayRequest = serde_json::from_slice(&request_bytes)?;
+            let native = stage::read_stage(&bytes)?;
+            let world = collision::bake_stage(&native, request.uniform_scale)?;
+            let hit = world.raycast(request.origin, request.direction, request.max_distance)?;
+            let document = json!({"request":request,"hit":hit,"bounds":world.bounds,"unknowns":world.unknowns,
+                "queryPolicy":"Static two-sided geometric query, not native collision response, movement or gameplay"});
+            let dependencies = [RuntimeDependency {
+                path: request_path,
+                logical_path: format!("queries/{}", basename(request_path)?),
+                bytes: &request_bytes,
+                role: "ray-request",
+            }];
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &document,
+                "native-ray-query-json",
+                &dependencies,
+            )?;
+        }
         "inspect" => {
             let value = inspect(&bytes, &basename(input)?)?;
             let data = serde_json::to_vec_pretty(&value)?;

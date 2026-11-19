@@ -9,6 +9,11 @@ The CLI emits native structured JSON, raw archive entries, lossless RGBA PNGs an
 native-rate PCM WAVs. The existing SA Tools/Blender pipeline remains the verified
 model extraction/GLB export path. Do not replace its live outputs with these tools.
 
+The full SA2 + BATTLE Rust program is tracked in
+[GitHub issue 11](https://github.com/mobdon/ChaoGardenMMOClient/issues/11) and
+[FULL-GAME-PORT.md](docs/FULL-GAME-PORT.md). This crate is its resource/evaluation
+foundation; the full game is not yet ported.
+
 ```powershell
 # Use the original checkout's already prepared Rust session, or a normal Rust toolchain.
 . C:/path/to/original/client/scripts/use-rust.ps1
@@ -47,8 +52,9 @@ recorded. Supplying an unused palette is an error.
 Use `--source-root INSTALL` before a conversion command to retain the same
 installation-relative source identity as `catalog`. Without it, a single-file
 conversion uses its basename as its logical source identity. Consumers must key
-provenance by logical identity **and exact source SHA-256**, rather than trusting
-an ID or filename across installations. Native intermediate offsets belong to
+provenance by logical identity **and exact source SHA-256**, and include the
+output SHA-256 when identifying a generated result with a chosen frame, scale or
+query. Native intermediate offsets belong to
 that intermediate; a PRS-decoded offset is not a physical compressed-file offset.
 
 Each conversion gets a `.manifest.json` sidecar with full input hashes, bounded
@@ -63,6 +69,40 @@ audio PCM at 128 MiB. Native decoded geometry/key storage and total labels have
 separate aggregate limits. The installation catalog streams files in 64 KiB
 chunks. Reparse/link outputs are refused; these offline tools do not provide
 race-proof directory-handle isolation against another process replacing paths.
+
+Native evaluation/query commands now build on those readers:
+
+```powershell
+& $tool pose path/to/local/al_ncz.sa2mdl .local/sa2-rust/rest-pose.json
+& $tool pose path/to/local/al_ncz.sa2mdl .local/sa2-rust/walk-pose.json path/to/local/alm_aruki_ncz.saanim 3.5
+& $tool collision path/to/local/arena.sa2blvl .local/sa2-rust/collision.json 0.1
+& $tool raycast path/to/local/arena.sa2blvl .local/sa2-rust/hit.json .local/sa2-rust/ray-request.json
+```
+
+`pose` evaluates source-native units and hierarchy at an explicit native frame,
+without animation retargeting or implicit FPS/wrap assumptions. Unsupported
+interpolation/morph/quaternion variants fail explicitly. Its independent local
+oracle is pinned SA3D/SAIO, not a completed retail animation engine comparison.
+
+`collision` flattens supported original Basic collision polygons with their
+source flags and node transforms. Scale defaults to 1 (native units); the example's
+0.1 is an explicit world-coordinate adaptation, recorded in the output.
+`raycast` consumes a typed request such as
+`{"origin":[0,100,0],"direction":[0,-1,0],"maxDistance":250,"uniformScale":0.1}`.
+Directions are normalized; distance is in the selected world units. The default
+query is two-sided against solid, static source surfaces. This is geometric
+query support, not native collision response, navigation or a gameplay controller.
+Pose motion/query dependencies receive exact input hashes in the local sidecar.
+See [pose](docs/NATIVE-POSE.md), [collision](docs/NATIVE-COLLISION.md) and
+[independent parity](docs/NATIVE-RUNTIME-PARITY.md) for supported variants and
+precise reference limits.
+
+After generating the independent ignored pose oracle as described in the parity
+document, run the new checks with
+`./asset-tools/crates/sa2/verify-native-runtime.ps1 -ReferenceRoot path/to/original/client -PoseReference .local/native-pose-reference-v2.json`.
+The earlier `verify-local.ps1` retains the reader/conversion baseline checks;
+the native-runtime verifier adds pose/geometry/query evidence without claiming
+those checks execute the canonical gameplay service.
 
 Run all source-backed parity checks with prepared ignored references:
 
