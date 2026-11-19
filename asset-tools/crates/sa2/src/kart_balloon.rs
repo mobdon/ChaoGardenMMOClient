@@ -232,6 +232,7 @@ mod muteki_tests {
     #[test]
     fn wraps_then_alternates_attempts_and_only_draws_for_allocated_children() {
         let mut h = Host::default();
+
         let mut timer = u16::MAX;
         tick_muteki(&mut timer, 1, 1, &mut h);
         assert_eq!((timer, h.attempts, h.draws), (0, 1, 0));
@@ -256,11 +257,70 @@ mod muteki_tests {
 #[derive(Debug, Default)]
 pub struct Balloon {
     pub mode: i8,
+    pub selector: i32,
     pub phase: u8,
     pub timer: u16,
     pub scale: [f32; 3],
 }
 
+/// Vehicle task work fields accessed by CartD's matched-contact branch.
+#[derive(Debug, Default)]
+pub struct BalloonVehicle {
+    pub work_44: i32,
+    pub work_70: i32,
+    pub work_78: i32,
+    pub work_d8: i32,
+    pub work_108: i32,
+    pub work_288: i32,
+}
+pub trait RewardHost: InvincibilityHost {
+    fn engine_8002f8c4(&mut self, args: [i32; 4]);
+    fn engine_80063584(&mut self, driver: i32, value: i16);
+    fn engine_8006b710(&mut self, args: [i32; 4]);
+    fn random_sample(&mut self) -> u16;
+}
+
+impl BalloonVehicle {
+    fn collect(&mut self, kind: i32, clock: u32, host: &mut impl RewardHost) -> crate::Result<()> {
+        if self.work_70 < 0 {
+            return Ok(());
+        }
+        if self.work_44 != 0 {
+            host.engine_8002f8c4([self.work_78, 1, 0x30, 0]);
+            match award(
+                kind,
+                self.work_70,
+                self.work_44,
+                self.work_d8,
+                clock,
+                || host.random_sample(),
+            )
+            .map_err(crate::Error::invalid)?
+            {
+                Award::Charge {
+                    next,
+                    display,
+                    notify,
+                } => {
+                    host.engine_80063584(self.work_70, display);
+                    self.work_d8 = next;
+                    if let Some(n) = notify {
+                        host.engine_80063584(self.work_70, n as i16);
+                    }
+                }
+                Award::Invincibility => activate_invincibility(
+                    &mut self.work_108,
+                    &mut self.work_288,
+                    self.work_78,
+                    host,
+                ),
+                Award::None => (),
+            }
+        }
+        host.engine_8006b710([0x800d, 0, 0, 0]);
+        Ok(())
+    }
+}
 /// Host observations and callbacks not owned by the balloon task.
 /// Each contact entry is visited in original order. Rust resolves its task
 /// through CartD +0x1714 and passes the matched slot to the host for award and sound calls.
@@ -270,7 +330,8 @@ pub trait BalloonHost {
     fn contact_count(&self) -> i16;
     fn contact_task(&self, index: i16) -> u32;
     fn vehicle_tasks(&self) -> [u32; 6];
-    fn apply_contact(&mut self, index: i16, slot: usize);
+    type Rewards: RewardHost;
+    fn vehicle_and_rewards(&mut self, slot: usize) -> (&mut BalloonVehicle, &mut Self::Rewards);
     fn trig(&mut self, angle: i32) -> (f32, f32);
     fn register_collision(&mut self);
     fn cleanup(&mut self, has_entry: bool);
@@ -281,6 +342,7 @@ impl Balloon {
     pub fn tick(
         &mut self,
         range: crate::kart_object_range::ObjectRange,
+        clock: u32,
         has_entry: bool,
         host: &mut impl BalloonHost,
     ) -> crate::Result<()> {
@@ -313,7 +375,8 @@ impl Balloon {
                         {
                             self.mode = 4;
                             self.timer = 0;
-                            host.apply_contact(i, slot);
+                            let (vehicle, rewards) = host.vehicle_and_rewards(slot);
+                            vehicle.collect(self.selector, clock, rewards)?;
                         }
                         i += 1;
                     }
@@ -355,6 +418,32 @@ mod lifecycle_tests {
         installs: usize,
         registrations: usize,
         hits: usize,
+        vehicles: [BalloonVehicle; 6],
+        rewards: Calls,
+    }
+    #[derive(Default)]
+    struct Calls(Vec<Vec<i32>>);
+    impl InvincibilityHost for Calls {
+        fn request_audio(&mut self, _: &str) {
+            panic!()
+        }
+        fn create_task(&mut self, _: u32, _: u32, _: u32, _: &str) -> Option<(&mut u8, &mut u32)> {
+            panic!()
+        }
+    }
+    impl RewardHost for Calls {
+        fn engine_8002f8c4(&mut self, args: [i32; 4]) {
+            self.0.push(args.to_vec());
+        }
+        fn engine_80063584(&mut self, driver: i32, value: i16) {
+            self.0.push(vec![driver, value.into()]);
+        }
+        fn engine_8006b710(&mut self, args: [i32; 4]) {
+            self.0.push(args.to_vec());
+        }
+        fn random_sample(&mut self) -> u16 {
+            panic!()
+        }
     }
     impl BalloonHost for Host {
         fn install_collision(&mut self) {
@@ -372,10 +461,11 @@ mod lifecycle_tests {
         fn vehicle_tasks(&self) -> [u32; 6] {
             [0, 42, 0, 0, 0, 88]
         }
-        fn apply_contact(&mut self, i: i16, slot: usize) {
+        type Rewards = Calls;
+        fn vehicle_and_rewards(&mut self, slot: usize) -> (&mut BalloonVehicle, &mut Calls) {
             assert_eq!(slot, [5, 1][self.hits]);
-            assert_eq!(i as usize, self.hits * 2);
             self.hits += 1;
+            (&mut self.vehicles[slot], &mut self.rewards)
         }
         fn trig(&mut self, angle: i32) -> (f32, f32) {
             assert_eq!(angle, 0);
@@ -399,28 +489,45 @@ mod lifecycle_tests {
             first: 4_000_000.0,
             ..near
         };
-        let mut b = Balloon::default();
+        let mut b = Balloon {
+            selector: 3,
+            ..Default::default()
+        };
         let mut h = Host::default();
+        h.vehicles[5].work_44 = 1;
+        h.vehicles[5].work_78 = 4;
         for _ in 0..30 {
-            b.tick(near, true, &mut h).unwrap();
+            b.tick(near, 1, true, &mut h).unwrap();
         }
         assert_eq!(b.mode, 3);
-        b.tick(near, true, &mut h).unwrap();
+        b.tick(near, 1, true, &mut h).unwrap();
         assert_eq!(
             (b.mode, b.timer, b.scale, h.hits),
             (4, 0, [1.0, 1.0, 1.02], 2)
         );
+        assert_eq!(h.vehicles[5].work_d8, 20);
+        assert_eq!(h.vehicles[1].work_d8, 0);
+        assert_eq!(
+            h.rewards.0,
+            vec![
+                vec![4, 1, 48, 0],
+                vec![0, 10],
+                vec![0, 20],
+                vec![0x800d, 0, 0, 0],
+                vec![0x800d, 0, 0, 0]
+            ]
+        );
         for _ in 0..61 {
-            b.tick(far, true, &mut h).unwrap();
+            b.tick(far, 1, true, &mut h).unwrap();
         }
         assert_eq!((b.mode, b.timer), (5, 3600));
-        b.tick(far, true, &mut h).unwrap();
+        b.tick(far, 1, true, &mut h).unwrap();
         assert_eq!(b.timer, 3600);
         for _ in 0..3600 {
-            b.tick(near, true, &mut h).unwrap();
+            b.tick(near, 1, true, &mut h).unwrap();
         }
         assert_eq!((b.mode, b.timer, h.registrations), (1, 0, 31));
-        b.tick(near, true, &mut h).unwrap();
+        b.tick(near, 1, true, &mut h).unwrap();
         assert_eq!((b.mode, h.installs, h.registrations), (2, 1, 32));
     }
 }
