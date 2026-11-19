@@ -445,14 +445,14 @@ pub fn contacts(
             }
             calls.push(json!([0x20b38]));
             let slot = next()?;
-            if matches!(kind, 4..=6) {
+            if crate::emerald_path::checks_player_action(kind) {
                 let action = t
                     .player_actions
                     .get(usize::try_from(slot).unwrap_or(usize::MAX))
                     .ok_or_else(|| Error::invalid("invalid player lookup index"))?;
-                if action.is_some_and(|v| !matches!(v, 0x3e | 0x42)) {
+                if crate::emerald_path::needs_mode_query(*action) {
                     calls.push(json!([0x1fb28]));
-                    if !matches!(next()?, 8 | 16 | 18 | 41 | 46) {
+                    if !crate::emerald_path::mode_allows_pickup(next()?) {
                         break 'gate "continue";
                     }
                 }

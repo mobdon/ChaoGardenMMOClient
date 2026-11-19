@@ -10,6 +10,8 @@ struct Case {
     set: bool,
     kind: u32,
     flags: u16,
+    action: Option<i8>,
+    slot: i32,
     hits: i16,
     byte: i8,
     owner: u16,
@@ -55,9 +57,12 @@ impl MovingEmeraldServices for Case {
         assert!(matches!(site, 0x22550 | 0x225ac));
         self.call(site)
     }
-    fn eligible(&mut self, id: i32) -> bool {
-        assert_eq!(id, 7);
-        self.call(0x22594) != 0
+    fn player_action(&mut self, id: i32) -> Option<i8> {
+        assert_eq!(id, self.slot);
+        self.action
+    }
+    fn pickup_game_mode(&mut self) -> i32 {
+        self.call(0x1fb28)
     }
     fn pickup(&mut self, id: i32) {
         assert_eq!(id, 11);
@@ -81,7 +86,7 @@ impl MovingEmeraldServices for Case {
 fn installed_frames() {
     let bytes = std::fs::read(std::env::var_os("SA2_EMERALD_FRAMES").unwrap()).unwrap();
     let cases: Vec<Case> = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(cases.len(), 1416);
+    assert!(cases.len() >= 1416 + 48);
     for mut c in cases {
         let mut f = MovingEmeraldFrame {
             mode: c.mode,

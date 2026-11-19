@@ -176,6 +176,17 @@ impl PathTaskWork {
         *self = Self::default();
     }
 }
+/// Module 15, 1:0x1fac4: only these piece types inspect the player task.
+pub(crate) fn checks_player_action(kind: u64) -> bool {
+    matches!(kind, 4..=6)
+}
+pub(crate) fn needs_mode_query(action: Option<i8>) -> bool {
+    action.is_some_and(|v| !matches!(v, 0x3e | 0x42))
+}
+pub(crate) fn mode_allows_pickup(mode: i32) -> bool {
+    matches!(mode, 8 | 16 | 18 | 41 | 46)
+}
+
 /// Stage-owned decisions in module 15, 1:0x22300. Services operate on the same
 /// task and may update its cursor, transformed position, or engine collision data.
 pub trait MovingEmeraldServices {
@@ -188,7 +199,8 @@ pub trait MovingEmeraldServices {
     fn engine_byte(&mut self) -> i8;
     fn owner_id(&mut self) -> u16;
     fn collector(&mut self) -> i32;
-    fn eligible(&mut self, collector: i32) -> bool;
+    fn player_action(&mut self, collector: i32) -> Option<i8>;
+    fn pickup_game_mode(&mut self) -> i32;
     fn pickup(&mut self, collector: i32);
     fn remove(&mut self, has_set_entry: bool);
     fn refresh_shape(&mut self);
@@ -238,7 +250,10 @@ impl MovingEmeraldFrame {
             && services.owner_id() <= 1
         {
             let candidate = services.collector();
-            if services.eligible(candidate) {
+            if !checks_player_action(u64::from(self.type_word))
+                || !needs_mode_query(services.player_action(candidate))
+                || mode_allows_pickup(services.pickup_game_mode())
+            {
                 let collector = services.collector();
                 services.pickup(collector);
                 services.remove(self.has_set_entry);
