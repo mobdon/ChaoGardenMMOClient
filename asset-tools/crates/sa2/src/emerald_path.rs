@@ -153,6 +153,37 @@ pub struct PathTaskWork {
 }
 
 impl PathTaskWork {
+    /// Apply one step to a live unrotated placement. Keep the restored segment
+    /// byte until stepping, when the native routine reduces it by the path count.
+    pub fn step_placed(
+        &mut self,
+        points: &[[f32; 3]],
+        translation: [f32; 3],
+        distance: f32,
+        length: impl Fn(usize) -> f32,
+        angle: impl Fn(usize, f32, f32) -> f64,
+    ) -> Result<(PathStep, [f32; 3])> {
+        if self.allocation.is_none() || points.len() < 2 || self.segment > i32::MAX as u32 {
+            return Err(Error::invalid("invalid live emerald path work"));
+        }
+        let step = advance(
+            points,
+            self.segment as usize % points.len(),
+            self.fraction,
+            distance,
+            length,
+            |i| {
+                segment_heading(points[i], points[(i + 1) % points.len()], |x, z| {
+                    angle(i, x, z)
+                })
+            },
+        )?;
+        let world = translate_path_point(translation, step.position);
+        self.segment = step.segment as u32;
+        self.fraction = step.fraction;
+        Ok((step, world))
+    }
+
     /// 1:0x220c8..0x22114. On success the caller can begin the first path step.
     /// With no SET entry the native initializer preserves the segment already in work.
     pub fn begin(
