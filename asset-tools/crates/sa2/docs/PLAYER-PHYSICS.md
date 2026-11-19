@@ -15,3 +15,5 @@ cargo test --locked --test player_physics -- --include-ignored
 ```
 
 The independent checker resolves the section with .NET PEReader and decodes each record using the original SplitTools.dll PlayerParameter constructor. It cross-checks all 17 configured RVAs, reflects the decoder's field names, and hashes all 627 named values in slot and ordinal field-name order. The Rust test checks the source addresses and compares its typed public output to that digest. The reference SHA-256 is e233e63003d72275a6dfc5f0e615d4f8ae72b53e3242707f3fe272a3b0c119d3.
+
+Story, boss rush and demo mounts expose the dispatched character's static defaults, including the executable digest, row VA and digest of the 132 original bytes. A shared stage can therefore expose different defaults on each visit. Kart vehicle tuning remains on the kart route. Neither row establishes the active controller or reproduces a tick of movement.

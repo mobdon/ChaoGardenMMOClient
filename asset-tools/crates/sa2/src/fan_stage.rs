@@ -55,6 +55,7 @@ pub struct Campaign {
     tables: BTreeMap<String, ObjectList>,
     positions: Vec<stage_positions::PositionRow>,
     kart_routes: BTreeMap<i8, KartRoute>,
+    physics: Vec<crate::player_physics::PlayerPhysics>,
     ranks: Vec<crate::mission_ranks::RankRow>,
 }
 #[derive(Debug, Serialize)]
@@ -210,6 +211,8 @@ pub struct MountedStage<'a> {
     pub end_pose: Option<EntryPose>,
     pub mission2_end_pose: Option<EntryPose>,
     pub mission3_end_pose: Option<EntryPose>,
+    /// Static defaults for the dispatched character, including when riding a kart.
+    pub character_defaults: &'a crate::player_physics::PlayerPhysics,
     pub kart_route: Option<&'a KartRoute>,
     /// Authored rows only; absence does not imply an automatic grade.
     pub mission_ranks: Vec<&'a crate::mission_ranks::RankRow>,
@@ -384,6 +387,7 @@ impl Campaign {
             tables: object_table::mapped_tables(exe, object_config)?,
             positions: stage_positions::read_rows(exe)?,
             kart_routes: kart_routes(exe)?,
+            physics: crate::player_physics::read(exe)?,
             ranks: crate::mission_ranks::read(exe)?,
         })
     }
@@ -429,19 +433,13 @@ impl Campaign {
             .dispatch(sequence, action_index)
             .ok_or_else(|| Error::invalid("not an authored single-player campaign level action"))?
             .clone();
-        let ch = match dispatch.character {
-            0 => "Sonic",
-            1 => "Shadow",
-            2 => "Tails",
-            3 => "Eggman",
-            4 => "Knuckles",
-            5 => "Rouge",
-            6 => "MechTails",
-            7 => "MechEggman",
-            9 => "SuperSonic",
-            10 => "SuperShadow",
-            _ => return Err(Error::invalid("unknown story character")),
-        };
+        let character_defaults = usize::try_from(dispatch.character)
+            .ok()
+            .and_then(|slot| self.physics.get(slot))
+            .ok_or_else(|| Error::invalid("unknown story character slot"))?;
+        let ch = character_defaults
+            .character
+            .ok_or_else(|| Error::invalid("unnamed story character slot"))?;
         let lookup_pose = |kind, variant| -> Result<Option<EntryPose>> {
             let mut rows = self
                 .positions
@@ -571,6 +569,7 @@ impl Campaign {
         };
         let mission_ranks = self.rank_rows(&dispatch);
         Ok(MountedStage {
+            character_defaults,
             mission_ranks,
             checkpoint_items,
             dispatch,

@@ -90,6 +90,10 @@ fn mounted_campaign_routes() {
     for (name, ordinal, character, level) in demo_routes {
         let stage = campaign.mount(name, ordinal, installed).unwrap();
         assert_eq!(
+            stage.character_defaults.source_va,
+            0x017391e8 + character as u32 * 132
+        );
+        assert_eq!(
             (stage.dispatch.character, stage.dispatch.level),
             (character, level)
         );
@@ -130,6 +134,10 @@ fn mounted_campaign_routes() {
         for (ordinal, &(character, level)) in expected.iter().enumerate() {
             let stage = campaign.mount(name, ordinal, installed).unwrap();
             assert_eq!(
+                stage.character_defaults.source_va,
+                0x017391e8 + character as u32 * 132
+            );
+            assert_eq!(
                 (stage.dispatch.character, stage.dispatch.level),
                 (character, level)
             );
@@ -154,8 +162,12 @@ fn mounted_campaign_routes() {
             .map(|d| (d.action_index, d.character, d.level))
             .collect();
         assert_eq!(seen, expected);
-        for &(ordinal, _, level) in expected {
+        for &(ordinal, character, level) in expected {
             let stage = campaign.mount(sequence, ordinal, installed).unwrap();
+            assert_eq!(
+                stage.character_defaults.source_va,
+                0x017391e8 + character as u32 * 132
+            );
             assert_eq!(stage.dispatch.level, level);
             use sa2_asset_tools::mission_ranks::Observation;
             if level == 70 || level == 13 {
