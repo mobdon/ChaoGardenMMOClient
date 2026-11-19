@@ -218,6 +218,14 @@ fn mounted_campaign_routes() {
                         ("Sonic", 0x174a2e0, yaw, xyz)
                     );
                 }
+                let checkpoints: Vec<_> = stage
+                    .checkpoint_placements()
+                    .map(|(layer, p)| (layer.filename, p.placement_index, p.source_offset))
+                    .collect();
+                assert_eq!(
+                    checkpoints,
+                    [45, 218, 343].map(|n| ("set0013_s.bin", n, 32 + 32 * n))
+                );
                 let end = stage.end_pose.as_ref().unwrap();
                 assert_eq!(
                     (end.row_va, end.yaw, end.position),
