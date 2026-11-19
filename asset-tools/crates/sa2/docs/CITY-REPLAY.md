@@ -7,6 +7,7 @@ The stage host resolves a placement from one of the five installed City Escape S
 | 0 | `RING   ` | 0x6C0F80 | Ring | 104 |
 | 3 | `SPRA   ` | 0x6C4480 | ObjectSpring | 2 |
 | 4 | `SPRB   ` | 0x6C4E90 | ObjectSpringB | 27 |
+| 8 | `SAVEPOINT` | 0x6D99A0 | ObjectSavePoint | 11 |
 | 59 | `BOARDCOL` | 0x5EA210 | ObjectBoardCol | 13 |
 | 77 | `BOARD` | 0x5EBC50 | ObjectBoard | 4 |
 | 81 | `ADXCHG` | 0x5E2D70 | ObjectCeAdxChg | 2 |
@@ -50,3 +51,24 @@ The trace input is at most 1 MiB. Placement replays accept 1–2,048 frames. The
 ```
 
 For installed dispatch validation, set `SA2_SET_DIR` to `resource/gd_PC` and run `cargo test --locked --test city_replay -- --include-ignored`. The test verifies the executable hash, reads the native table and parses all five files, then uses synthetic observations for every supported placement. For board triggers the test supplies the opposite engine state from the source layer label and checks repeated contact on the third tick.
+
+
+**Checkpoint.** The normal Sonic layer has three checkpoint entries (indices
+45, 218, 343). The hard layer has three and the two-player Sonic layer has
+five. The following PowerShell example runs an offline two-tick comparison on
+entry 45. From the checkout containing this change, set SA2_GAME_PATH to the
+Steam installation and put sa2-assets on PATH (or invoke its built executable).
+
+```powershell
+$g = $env:SA2_GAME_PATH
+$d = New-Item -ItemType Directory -Path (Join-Path '.local' ('checkpoint-' + [guid]::NewGuid().ToString('N')))
+$p = @{position_bits=@(0,0,0); rotation=@(0,0,0)}
+$f = @{hit=@(1,0); players=@($p,$p); contact_speed=1.0}
+@{engine_result=0; stage_byte=1; frames=@($f,$f)} | ConvertTo-Json -Depth 8 | Set-Content "$d/request.json" -Encoding ascii
+sa2-assets city-replay "$g/resource/gd_PC/set0013_s.bin" "$d/result.json" "$g/sonic2app.exe" 45 "$d/request.json"
+```
+
+The first frame reports a handoff for slot 1 with checkpoint byte 3 and slot
+timers [0, 300]. On the second frame the timer is 299 and the handoff is null,
+even though the input repeats the hit. Hit, player pose and signed speed are
+supplied observations; this comparison does not demonstrate overlap or respawn.
