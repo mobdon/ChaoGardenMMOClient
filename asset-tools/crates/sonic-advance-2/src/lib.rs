@@ -1,13 +1,31 @@
-//! Source inspection only. Native data is never an authenticated MMO reward.
+//! A2NE asset readers and standalone cartridge Garden practice.
 #![forbid(unsafe_code)]
 
 pub mod catalog;
 #[path = "reused/gba.rs"]
 pub mod gba;
 pub mod graphics;
+pub mod native_garden_art;
+pub mod native_garden_background;
+pub mod native_garden_behavior;
+pub mod native_garden_home_art;
+pub mod native_garden_memory;
+pub mod native_garden_progress;
+pub mod native_garden_second;
+pub mod native_garden_session;
+#[path = "reused/native_growth.rs"]
+pub mod native_growth;
+#[path = "reused/native_hatching.rs"]
+pub mod native_hatching;
 #[path = "reused/native_save.rs"]
 pub mod native_save;
+#[path = "reused/native_shop_state.rs"]
+pub mod native_shop_state;
+#[path = "reused/native_weeds.rs"]
+pub mod native_weeds;
 pub mod save_layout;
+#[path = "reused/shop.rs"]
+pub mod shop;
 pub mod tables;
 pub mod transfer;
 

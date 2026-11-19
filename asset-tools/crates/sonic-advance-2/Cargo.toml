@@ -3,6 +3,7 @@ name = "sonic-advance-2-assets"
 version = "0.1.0"
 edition = "2024"
 publish = false
+default-run = "a2ne-assets"
 description = "Fingerprint-gated, local Sonic Advance 2 A2NE asset inspection"
 
 # Deliberately standalone until the four asset tracks agree a common workspace.

@@ -3,9 +3,9 @@ use sonic_advance_2_assets::{
 };
 use std::{
     error::Error,
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::{Read, Write},
-    path::{Component, Path},
+    path::Path,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -26,38 +26,8 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Asset writes require an explicit .local directory and reject symlink/junction
-/// ancestors. Generated source data cannot accidentally enter a normal source path.
-fn local_output(path: &Path) -> Result<()> {
-    if path.components().any(|p| matches!(p, Component::ParentDir))
-        || !path.components().any(|p| p.as_os_str() == ".local")
-    {
-        return Err("Extracted assets must use an explicit .local directory without '..'".into());
-    }
-    let mut ancestor = path.parent();
-    while let Some(parent) = ancestor {
-        if parent.as_os_str().is_empty() {
-            break;
-        }
-        if let Ok(metadata) = fs::symlink_metadata(parent) {
-            if metadata.file_type().is_symlink() {
-                return Err("Asset output has a symlink ancestor".into());
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-                if metadata.file_attributes() & 0x400 != 0 {
-                    return Err("Asset output has a reparse-point ancestor".into());
-                }
-            }
-        }
-        ancestor = parent.parent();
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    Ok(())
-}
+mod local_asset_output;
+use local_asset_output::local_output;
 
 fn json(value: &impl serde::Serialize) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec_pretty(value)?)
