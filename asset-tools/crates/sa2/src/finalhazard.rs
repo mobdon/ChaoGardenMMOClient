@@ -869,6 +869,13 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    /// Input to 0x71e0 from the body contact branch.
+    BodyImpulse {
+        player: i8,
+        player_y: f32,
+        contact_vector: Option<[f32; 3]>,
+    },
+
     /// Continuation at 0x7f0, using the signed collision-query returns.
     BodyContact {
         slot: Option<u8>,
@@ -1298,6 +1305,49 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             return Ok(
                 serde_json::json!({"slot":slot,"response_scalar":response,"timer":timer,
                 "wait_word":wait_word,"call_sites":sites}),
+            );
+        }
+        PlacementClock::BodyImpulse {
+            player,
+            player_y,
+            contact_vector,
+        } => {
+            let constant = |site| -> Result<f32> {
+                Ok(f32::from_be_bytes(
+                    phase_constant(&rel, site, 4)?.try_into().unwrap(),
+                ))
+            };
+            let (site, velocity) = if let Some(v) = contact_vector {
+                // The normalize helper sees all three axes. The caller then
+                // restores the incoming Y when it passes the vector onward.
+                let scale = constant(0x85a)?;
+                let len = (v[0] as f64).hypot(v[1] as f64).hypot(v[2] as f64);
+                let axis = |x: f32| {
+                    if len == 0.0 || scale == 0.0 {
+                        x
+                    } else {
+                        ((x as f64 / len) as f32) * scale
+                    }
+                };
+                (0x72c8, [axis(v[0]), v[1], axis(v[2])])
+            } else {
+                let z = constant(0x896)?;
+                let y = constant(if player_y > constant(0x723e)? {
+                    0x7252
+                } else {
+                    0x7262
+                })?;
+                (
+                    0x7278,
+                    [constant(0x726e)?, y, if player == 0 { z } else { -z }],
+                )
+            };
+            let target = rel
+                .reference(1, site)
+                .ok_or_else(|| Error::invalid("missing body impulse import"))?;
+            return Ok(
+                serde_json::json!({"player":player,"velocity_argument":velocity,"import":target.addend,
+                "scope":"Arguments to the player motion import; vector normalization uses Rust arithmetic, not emulated engine rounding."}),
             );
         }
         PlacementClock::InitialHealth => {
