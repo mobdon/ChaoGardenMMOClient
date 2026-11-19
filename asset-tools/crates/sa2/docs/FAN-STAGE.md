@@ -366,3 +366,16 @@ original state-2 callback for both five-tick directions and compares each
 state, heading, local velocity and position before later collision updates.
 The test uses modeled engine imports and supplied velocities, not a game
 trajectory or evidence of exact engine trigonometric rounding.
+
+`kart-drift-step CartD.rel OUTPUT.json INPUT.json` also handles state 3:
+add a `sustained` object with the current signed `stick_x`, profile
+`speed_threshold`, `work_fc`, and (when +0x74 is nonzero) the observed
+`angle_service_return`. Without this object it runs state 2. In state 3
+the new heading is compensated in +0x68 before applying the current stick.
+The shared drift velocity routine then updates local velocity and projected
+position. Local sideways speed below 1 increments the recovery counter;
+otherwise it resets. A counter reaching 20, zero velocity, or full 3D speed
+below the native fraction of the threshold selects normal state 0. Otherwise
+the next state is 3. These outputs precede separate vehicle collision tasks.
+The PPC comparison exercises 14 state-3 updates in addition to both windups,
+with engine math modeled and the angle service return supplied.

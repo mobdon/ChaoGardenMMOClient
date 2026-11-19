@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x30dc<=l<0x3188 or 0x399c<=l<0x3c74) or k not in (4,6):continue
+        if t!=1 or not (0x30dc<=l<0x3188 or 0x399c<=l<0x3ec4) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -48,33 +48,47 @@ def hook(m,addr,*args):
         p=m.reg_read(R.UC_PPC_REG_4);x,y,z=read(p)
         theta=math.radians(angle*360/65536);s,c=math.sin(theta),math.cos(theta)
         write(p,[c*x+s*z,y,-s*x+c*z])
-    elif pc==0x3a68:setfp(struct.unpack(">f",struct.pack(">f",math.hypot(*read(arg))))[0])
+    elif pc==0x3e1c:
+        assert arg==q['sustained']['work_fc'] and m.reg_read(R.UC_PPC_REG_5)==364
+        m.reg_write(R.UC_PPC_REG_3,q['sustained']['angle_service_return'])
+    elif pc in (0x3dd4,0x3a68):setfp(struct.unpack(">f",struct.pack(">f",math.hypot(*read(arg))))[0])
     elif pc==0x3aa8:
         v=read(arg);n=math.hypot(*v)
         if n:write(arg,[x/n for x in v])
     elif pc==0x3b08:write(arg,[a+b for a,b in zip(read(arg),read(m.reg_read(R.UC_PPC_REG_4)))])
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
-for pc in (0x3134,0x3a30,0x3af8,0x3a68,0x3aa8,0x3b08):
+for pc in (0x3134,0x3a30,0x3af8,0x3a68,0x3aa8,0x3b08,0x3dd4,0x3e1c):
     u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
     for side in (-1,1):
         q=dict(work_a4=0,heading=278,work_a8=side*35,work_68=0,position=[3,4,5],
                velocity=[0,0,0],accelerate=False,work_74=0,drift_handling=.75,weight=.5)
-        for n in range(5):
-            q.update(velocity=[[0,1,0],[0.25,2,-.25],[3,-1,4],[0,0,-4],[4,1,0]][n],
+        for n in range(12):
+            q.update(velocity=[[0,1,0],[0.25,2,-.25],[3,-1,4],[0,0,-4],[4,1,0]][n%5],
                      accelerate=n%2==0,work_74=n%2)
+            if n>=5:
+                if n==5:q["velocity"]=[4,0,0]
+                if n==6:q["velocity"]=[0,0,0]
+                if n==9:q.update(work_a4=19,heading=0,work_68=0,velocity=[0,0,-4])
+                ctx=dict(stick_x=(0 if n==9 else side*60),speed_threshold=(40 if n==8 else 1),
+                         work_fc=123,angle_service_return=33)
+                q["sustained"]=ctx
+                put(base[6]+0x224b8,"i",0);put(work+0x78,"i",0)
+                put(base[6]+0x224bc+28,"h",ctx["stick_x"]);put(work+0xfc,"i",ctx["work_fc"])
+                put(base[6]+0x2145c,"f",ctx["speed_threshold"])
             req=Path(td)/"q.json";out=Path(td)/f"{side}-{n}.json";req.write_text(json.dumps(q))
-            subprocess.run([cli,"kart-drift-windup",rel,out,req],check=True);doc=json.loads(out.read_text())
+            subprocess.run([cli,"kart-drift-step",rel,out,req],check=True);doc=json.loads(out.read_text())
             for off,key in [(0x68,"work_68"),(0xa4,"work_a4"),(0xa8,"work_a8"),(0x110,"accelerate"),(0x74,"work_74")]:
                 put(work+off,"i",q[key])
-            put(work+0x30,"i",2);put(tw+12,"i",q["heading"])
+            put(work+0x30,"i",2 if n<5 else 3);put(tw+12,"i",q["heading"])
             for addr,key in [(work+0x7c,"velocity"),(tw+0x14,"position")]:u.mem_write(addr,struct.pack(">3f",*q[key]))
             put(base[6]+0x21458,"f",.75);put(base[6]+0x21450,"f",.5)
             reg(3,task);u.reg_write(R.UC_PPC_REG_LR,base[1]+0x200)
-            run(0x3b30,0x200)
+            run(0x3b30 if n<5 else 0x3c74,0x200)
+            if n>=5:assert doc['work_fc']==get(work+0xfc,'i')
             for addr,key in [(work+0x30,"vehicle_state"),(work+0x68,"work_68"),(work+0xa4,"work_a4"),(tw+12,"heading")]:
                 assert get(addr,"i")==doc[key]
             for addr,key in [(work+0xac,"local_velocity"),(tw+0x14,"position")]:
                 assert bytes(u.mem_read(addr,12))==struct.pack(">3f",*doc[key]),(side,n,key)
             q.update({key:doc[key] for key in ("work_a4","work_68","position","heading")})
-print("Matched both five-update drift windups with modeled engine math.")
+print("Matched 10 windup and 14 sustained-drift updates with modeled engine math.")

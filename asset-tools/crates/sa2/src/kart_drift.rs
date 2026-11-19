@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
+    sustained: Option<Sustained>,
     heading: i32,
     work_68: i32,
-    work_a4: usize,
+    work_a4: i32,
     work_a8: i32,
     position: [f32; 3],
     velocity: [f32; 3],
@@ -16,11 +17,21 @@ pub struct Input {
     drift_handling: f32,
     weight: f32,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sustained {
+    stick_x: i16,
+    speed_threshold: f32,
+    work_fc: i32,
+    angle_service_return: Option<i32>,
+}
 #[derive(Serialize)]
 pub struct Update {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    work_fc: Option<i32>,
     heading: i32,
     work_68: i32,
-    work_a4: usize,
+    work_a4: i32,
     vehicle_state: i32,
     local_velocity: [f32; 3],
     position: [f32; 3],
@@ -36,7 +47,7 @@ fn rotate([x, y, z]: [f32; 3], angle: i32) -> [f32; 3] {
 }
 pub fn tick(bytes: &[u8], s: Input) -> Result<Update> {
     kart_progress::verify(bytes)?;
-    if s.work_a4 >= 5 {
+    if s.sustained.is_none() && !(0..5).contains(&s.work_a4) {
         return Err(Error::invalid("state 2 requires windup index 0 through 4"));
     }
     let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
@@ -50,12 +61,20 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Update> {
     } else {
         s.heading
     };
-    let at = 0x3be4 + s.work_a4 * 4;
-    let amount = i32::from_be_bytes(data[at..at + 4].try_into().unwrap());
-    let offset = if s.work_a8 < 0 {
-        s.work_68.wrapping_add(amount)
+    let offset = if let Some(ctx) = &s.sustained {
+        let turn = (f(0x218) * (f(0x260) * f32::from(ctx.stick_x))) as i32;
+        s.heading
+            .wrapping_add(s.work_68)
+            .wrapping_sub(heading)
+            .wrapping_sub(turn)
     } else {
-        s.work_68.wrapping_sub(amount)
+        let at = 0x3be4 + s.work_a4 as usize * 4;
+        let amount = i32::from_be_bytes(data[at..at + 4].try_into().unwrap());
+        if s.work_a8 < 0 {
+            s.work_68.wrapping_add(amount)
+        } else {
+            s.work_68.wrapping_sub(amount)
+        }
     };
     let angle = heading.wrapping_add(offset);
     let mut v = rotate([x, 0., z], angle.wrapping_neg());
@@ -79,12 +98,35 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Update> {
     if !position.iter().all(|x| x.is_finite()) {
         return Err(Error::invalid("nonfinite kart drift projection"));
     }
-    let done = s.work_a4 == 4;
+    let (vehicle_state, work_a4, work_fc) = if let Some(ctx) = s.sustained {
+        let counter = if v[0].abs() < f(0x22c) {
+            s.work_a4.wrapping_add(1)
+        } else {
+            0
+        };
+        let magnitude = (x as f64).hypot(y as f64).hypot(z as f64) as f32;
+        let factor = f64::from_be_bytes(constants[0x268..0x270].try_into().unwrap());
+        let exit = counter >= 20
+            || s.velocity == [0.; 3]
+            || f64::from(magnitude) < factor * f64::from(ctx.speed_threshold);
+        let fc = if s.work_74 != 0 {
+            ctx.angle_service_return
+                .ok_or_else(|| Error::invalid("missing drift angle service return"))?
+        } else {
+            ctx.work_fc.wrapping_add(91)
+        };
+        (if exit { 0 } else { 3 }, counter, Some(fc))
+    } else if s.work_a4 == 4 {
+        (3, 0, None)
+    } else {
+        (2, s.work_a4 + 1, None)
+    };
     Ok(Update {
         heading,
         work_68: offset,
-        work_a4: if done { 0 } else { s.work_a4 + 1 },
-        vehicle_state: if done { 3 } else { 2 },
+        work_a4,
+        vehicle_state,
+        work_fc,
         local_velocity: v,
         position,
         math_source: "mathematical_projection",
