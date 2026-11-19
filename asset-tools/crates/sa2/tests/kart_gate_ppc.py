@@ -554,4 +554,26 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-wrong-drift-routine.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"normal driving state" in rejected.stderr
+            for difference,held,state in [(546,4,1),(545,2,0)]:
+                recovery=dict(work_68=-1093,work_fc=13,work_28c=0,
+                    angle_radians=0,angle_difference=difference,magnitude_return=20,
+                    position_step=dict(work_74=0,transformed_vector=[2,0,-3]))
+                start=dict(frame,segment=5,position=[8,6,4],angles=[0,17,0],velocity=[0,0,0])
+                event=dict(boost_tick=dict(boost=dict(work_70=0,work_44=1,work_dc=0,slot_flag=0,
+                           piece_id=0,normalized_velocity=[1,0,0]),recovery_drive=recovery))
+                q.update(primary_charge=20,updates=[dict(vehicle_post_move=start),dict(continue_vehicle_update={}),
+                         dict(primary_stick_x=-25,buttons_held=held,buttons_pressed=0x200),event])
+                req.write_text(json.dumps(q));out=req.with_name(path.stem+f"-state-one-{difference}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                seq=json.loads(out.read_text());profile=seq["updates"][-1]["boostTick"];actual=profile["recovery_drive"]
+                assert profile["boost"]["velocity"]==[20,0,0] and actual["vehicle_state"]==seq["vehicleState"]==state
+                assert actual["work_68"]==(-546 if state else 0) and seq["updates"][-2]["steeringSum"]!=-25
+                native=dict(heading=17,work_68=-1093,work_fc=13,stick_x=-25,velocity_xz=[20,0],
+                    angle_radians=0,angle_difference=difference,magnitude_return=20,accelerate=held==4,brake=held==2,
+                    acceleration=profile["boost"]["acceleration"],speed_cap=profile["boost"]["speed_cap"],
+                    brake_power=profile["brake_power"],deceleration=profile["deceleration"],
+                    position_step=dict(recovery["position_step"],position=start["position"],velocity_y=0,weight=profile["weight"]))
+                req.write_text(json.dumps(native));out=req.with_name(path.stem+f"-standalone-one-{difference}.json")
+                subprocess.run([cli,"kart-recovery-drive",rel,out,req],check=True)
+                assert actual==json.loads(out.read_text())
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

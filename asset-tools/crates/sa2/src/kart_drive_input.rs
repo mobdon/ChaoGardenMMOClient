@@ -560,11 +560,81 @@ pub struct Recovery {
     local_displacement: [f32; 3],
     position_step: PositionStep,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryRecoveryDrive {
+    heading: Option<i32>,
+    work_68: i32,
+    work_fc: i32,
+    work_28c: i32,
+    position_step: StoryPosition,
+    angle_radians: Option<f64>,
+    angle_difference: Option<i32>,
+    magnitude_return: Option<f32>,
+    ground_angle_return: Option<i32>,
+}
+impl StoryRecoveryDrive {
+    pub(crate) fn bind_heading(&mut self, yaw: i32) -> Result<()> {
+        if self.heading.is_some_and(|v| v != yaw) {
+            return Err(Error::invalid(
+                "state 1 heading conflicts with preceding frame",
+            ));
+        }
+        self.heading = Some(yaw);
+        Ok(())
+    }
+    pub(crate) fn step(
+        self,
+        data: &[u8],
+        sample: (i16, u32),
+        position: [f32; 3],
+        velocity: [f32; 3],
+        [acceleration, brake_power, deceleration, speed_cap, weight]: [f32; 5],
+    ) -> Result<Recovery> {
+        let (stick_x, held) = sample;
+        recovery_with_constants(
+            data,
+            RecoveryInput {
+                heading: self
+                    .heading
+                    .ok_or_else(|| Error::invalid("missing state 1 heading"))?,
+                work_68: self.work_68,
+                work_fc: self.work_fc,
+                stick_x,
+                velocity_xz: [velocity[0], velocity[2]],
+                angle_radians: self.angle_radians,
+                angle_difference: self.angle_difference,
+                magnitude_return: self.magnitude_return,
+                ground_angle_return: self.ground_angle_return,
+                accelerate: held & 4 != 0,
+                brake: held & 0x402 != 0 && self.work_28c <= 10,
+                acceleration,
+                brake_power,
+                deceleration,
+                speed_cap,
+                position_step: PositionInput {
+                    position,
+                    velocity_y: velocity[1],
+                    weight,
+                    work_74: self.position_step.work_74,
+                    transformed_vector: Some(self.position_step.transformed_vector),
+                },
+            },
+        )
+    }
+}
+impl Recovery {
+    pub(crate) fn state(&self) -> i32 {
+        self.vehicle_state
+    }
+}
 /// CartD state 1, 0x36b4..0x3998. Horizontal motion controls the state exit.
 pub fn recovery(bytes: &[u8], s: RecoveryInput) -> Result<Recovery> {
     kart_progress::verify(bytes)?;
     let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
-    let data = rel.data(4)?;
+    recovery_with_constants(rel.data(4)?, s)
+}
+fn recovery_with_constants(data: &[u8], s: RecoveryInput) -> Result<Recovery> {
     let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
     let (mut heading, mut work_68, mut vehicle_state) = (s.heading, s.work_68, 1);
     let speed = if s.velocity_xz == [0., 0.] {

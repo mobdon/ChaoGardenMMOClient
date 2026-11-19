@@ -910,7 +910,8 @@ pub fn story_sequence(
                     }
                 }
                 recovered_pose = None;
-                if let Some((stick, sum, held, pressed)) = sample.take() {
+                let row = sample.take();
+                if let Some((stick, sum, held, pressed)) = row {
                     boost_tick.bind_pressed(pressed)?;
                     if let Some(d) = boost_tick.drive.as_mut() {
                         d.bind_sample((stick, sum), held)?;
@@ -933,7 +934,11 @@ pub fn story_sequence(
                     boost_timers,
                     scan_flag,
                     vehicle,
+                    row.and_then(|(stick, _, held, _)| held.map(|h| (stick, h))),
                 )?;
+                if let Some(r) = &result.recovery_drive {
+                    vehicle = Some(r.state());
+                }
                 if let Some(response) = result.drive.as_ref().and_then(|d| d.contact.as_ref()) {
                     spin_carry = response.spin_carry();
                 }

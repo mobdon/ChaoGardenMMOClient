@@ -70,6 +70,8 @@ struct Normalize {
 #[derive(Serialize)]
 pub struct Profile {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) recovery_drive: Option<crate::kart_drive_input::Recovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) drive: Option<crate::kart_drive_input::Motion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     boost: Option<Boost>,
@@ -93,6 +95,7 @@ pub struct Profile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryBoostInput {
+    recovery_drive: Option<crate::kart_drive_input::StoryRecoveryDrive>,
     pub(crate) drive: Option<crate::kart_drive_input::StoryDrive>,
     velocity: Option<[f32; 3]>,
     normalize: Option<Normalize>,
@@ -111,6 +114,9 @@ impl StoryBoostInput {
         yaw: i32,
     ) -> Result<()> {
         if let Some(drive) = &mut self.drive {
+            drive.bind_heading(yaw)?;
+        }
+        if let Some(drive) = &mut self.recovery_drive {
             drive.bind_heading(yaw)?;
         }
         for (word, value) in [
@@ -151,6 +157,7 @@ pub(crate) fn story_boost(
     timers: Option<(i32, i32)>,
     flag: Option<u32>,
     vehicle_state: Option<i32>,
+    sample: Option<(i16, u32)>,
 ) -> Result<(i32, (i32, i32), Profile)> {
     let task_position = input
         .boost
@@ -193,6 +200,29 @@ pub(crate) fn story_boost(
         .boost
         .as_ref()
         .ok_or_else(|| crate::Error::invalid("missing story boost output"))?;
+    if let Some(drive) = input.recovery_drive {
+        if vehicle_state != Some(1) || input.drive.is_some() {
+            return Err(crate::Error::invalid(
+                "recovery driving requires exclusive state 1 dispatch",
+            ));
+        }
+        let rel = CityRel::read_identified(bytes, 80)?;
+        output.recovery_drive = Some(drive.step(
+            rel.data(4)?,
+            sample.ok_or_else(|| {
+                crate::Error::invalid("state 1 requires sampled stick and held buttons")
+            })?,
+            task_position,
+            b.velocity,
+            [
+                b.acceleration,
+                output.brake_power,
+                output.deceleration,
+                b.speed_cap,
+                output.weight,
+            ],
+        )?);
+    }
     if let Some(drive) = input.drive {
         let rel = CityRel::read_identified(bytes, 80)?;
         output.drive = Some(drive.step(
@@ -270,6 +300,7 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
         .map(|b| boost_step(rel.data(4)?, b, event_pair, velocity, row[0], row[3]))
         .transpose()?;
     Ok(Profile {
+        recovery_drive: None,
         drive: None,
         boost,
         section5_offset: offset,
