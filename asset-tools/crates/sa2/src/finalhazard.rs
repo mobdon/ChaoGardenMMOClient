@@ -12,6 +12,8 @@ pub struct Joint {
     rotation: [i32; 3],
     scale: [f32; 3],
     attachment_rva: Option<u32>,
+    child_rva: Option<u32>,
+    sibling_rva: Option<u32>,
 }
 
 pub fn read(exe: &[u8]) -> Result<[Vec<Joint>; 2]> {
@@ -56,6 +58,8 @@ pub fn read(exe: &[u8]) -> Result<[Vec<Joint>; 2]> {
                 rotation: vector(20)?.map(|v| v as i32),
                 scale: vector(32)?.map(f32::from_bits),
                 attachment_rva: ptr(4)?,
+                child_rva: ptr(44)?,
+                sibling_rva: ptr(48)?,
             });
         }
         Ok(nodes)
@@ -159,4 +163,46 @@ pub fn motions(exe: &[u8]) -> Result<serde_json::Value> {
             "start":r.f32(at+16)?,"end":r.f32(at+20)?,"speed":r.f32(at+24)?,"motion":motion}));
     }
     Ok(serde_json::json!({"tableRva":0x4ac678,"entries":rows}))
+}
+
+/// Offline boss-local pose; no encounter state transitions or world placement.
+pub fn pose(exe: &[u8], clip: usize, frame: f64) -> Result<crate::pose::Pose> {
+    if clip >= 4 {
+        return Err(Error::invalid("Finalhazard clip index outside 0..4"));
+    }
+    let [boss, _] = read(exe)?;
+    let image = crate::pe::read_pe(exe)?;
+    let at = image.rva_to_offset(0x4ac678 + 28 * clip as u32, 28)?;
+    let va = Reader { data: exe }.u32(at)?;
+    image.va_to_offset(va, 12)?;
+    let motion = crate::board_motion::pc_transform_motion(exe, va - image.image_base, 46)?;
+    if !(0.0..f64::from(motion.frame_count)).contains(&frame) {
+        return Err(Error::invalid("frame outside Finalhazard clip"));
+    }
+    let nodes = boss
+        .iter()
+        .map(|j| crate::model::Node {
+            offset: j.rva,
+            parent_offset: j.parent.map(|p| boss[p].rva),
+            flags: j.flags,
+            attach_offset: j.attachment_rva.unwrap_or(0),
+            position: j.position,
+            rotation_bams: j.rotation,
+            scale: j.scale,
+            child_offset: j.child_rva.unwrap_or(0),
+            sibling_offset: j.sibling_rva.unwrap_or(0),
+            quaternion_scalar: None,
+        })
+        .collect();
+    let model = crate::model::Model {
+        format: "PC Chunk".into(),
+        version: 0,
+        root_offset: boss[0].rva,
+        metadata: vec![],
+        labels: Default::default(),
+        nodes,
+        attachments: vec![],
+        unknowns: vec![],
+    };
+    crate::pose::evaluate_model_pose(&model, Some(&motion), frame)
 }
