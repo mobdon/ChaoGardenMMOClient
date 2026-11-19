@@ -608,3 +608,41 @@ pub fn board_route(layout: &crate::city_stage::CityLayout, request: &[u8]) -> Re
         json!({"placements":slots,"frames":frames,"scope":"Independent board callbacks in SET order; player motion, range decisions and input consumption are external."}),
     )
 }
+
+/// Evaluate fresh board callbacks at the actual Sonic single-player stage start.
+pub fn board_start(layout: &crate::city_stage::CityLayout, exe: &[u8]) -> Result<Value> {
+    use crate::stage_positions::{self, PositionKind, Variant};
+    if layout.source_layer != "set0013_s.bin" {
+        return Err(Error::invalid("expected City Escape normal story SET"));
+    }
+    let start = stage_positions::for_stage(exe, 13)?
+        .into_iter()
+        .find(|r| r.character == "Sonic" && r.kind == PositionKind::Start)
+        .ok_or_else(|| Error::invalid("missing Sonic start row"))?;
+    let pose = start
+        .poses
+        .iter()
+        .find(|p| p.variant == Variant::Single)
+        .ok_or_else(|| Error::invalid("missing single-player start"))?;
+    // The mode field is only read by the two-player re-arm branch.
+    let players = [
+        Some(BoardPlayer {
+            position: pose.position,
+            mode: 0,
+        }),
+        None,
+    ];
+    let mut triggers = Vec::new();
+    for (slot, p) in layout.placements.iter().enumerate() {
+        if callback_name(p, layout.resolve(slot)?.1) != Some("ObjectBoardCol") {
+            continue;
+        }
+        let distance = crate::board::point_distance(p.position, pose.position);
+        let mut task = BoardTrigger::new(p.position, p.parameters[0], p.rotation[0]);
+        let calls: Vec<_> = (0..3).map(|_| task.tick(players, false, false)).collect();
+        triggers.push(json!({"placement":slot,"distance":distance,"triggerRadius":p.parameters[0]+10.0,"callsByTick":calls}));
+    }
+    Ok(
+        json!({"startRowVa":start.row_va,"startPose":pose,"triggers":triggers,"scope":"Three in-range ticks at the unchanged native start; calls are [player slot, SetInputP code]. No scheduler, gravity or input consumer is simulated."}),
+    )
+}
