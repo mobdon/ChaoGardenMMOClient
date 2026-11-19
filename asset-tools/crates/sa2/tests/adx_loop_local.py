@@ -25,20 +25,32 @@ def chunks(path):
 game = Path(os.environ["SA2_GAME_PATH"])
 local = Path.cwd() / ".local"
 local.mkdir(exist_ok=True)
-with tempfile.TemporaryDirectory(dir=local) as scratch:
-    for name in ("w_jungl", "w_canyon", "w_bed"):
-        source = game / "resource/gd_PC/ADX" / (name + ".adx")
+def loop_points(wave):
+    chunk = wave.get(b"smpl")
+    if chunk is None:
+        return None
+    assert struct.unpack_from("<I", chunk, 28)[0] == 1
+    return struct.unpack_from("<II", chunk, 44)
+
+sources = sorted((game / "resource/gd_PC/ADX").glob("*.adx"))
+assert sources, "installed ADX music directory is empty"
+looped = 0
+pcm_bytes = 0
+for source in sources:
+    with tempfile.TemporaryDirectory(dir=local) as scratch:
         original = hashlib.sha256(source.read_bytes()).digest()
-        actual = Path(scratch) / (name + "-rust.wav")
-        expected = Path(scratch) / (name + "-reference.wav")
-        subprocess.run([sys.argv[1], "adx", str(source), str(actual)], check=True)
+        actual = Path(scratch) / "rust.wav"
+        expected = Path(scratch) / "reference.wav"
+        subprocess.run([sys.argv[1], "adx", str(source), str(actual)],
+                       check=True, stdout=subprocess.DEVNULL)
         subprocess.run([sys.argv[2], "-L", "-o", str(expected), str(source)],
                        check=True, stdout=subprocess.DEVNULL)
         rust, reference = chunks(actual), chunks(expected)
-        assert rust[b"data"] == reference[b"data"], name
-        def loop(chunk):
-            assert struct.unpack_from("<I", chunk, 28)[0] == 1
-            return struct.unpack_from("<II", chunk, 44)
-        assert loop(rust[b"smpl"]) == loop(reference[b"smpl"]), (name,loop(rust[b"smpl"]),loop(reference[b"smpl"]))
+        assert rust[b"data"] == reference[b"data"], source.name
+        assert rust[b"fmt "][:16] == reference[b"fmt "][:16], source.name
+        points = loop_points(rust)
+        assert points == loop_points(reference), source.name
         assert hashlib.sha256(source.read_bytes()).digest() == original
-        print(name, loop(rust[b"smpl"]), len(rust[b"data"]), "PCM bytes matched")
+        looped += points is not None
+        pcm_bytes += len(rust[b"data"])
+print(f"{len(sources)} tracks matched, {looped} looped, {pcm_bytes} PCM bytes")
