@@ -175,20 +175,38 @@ pub fn motions(exe: &[u8]) -> Result<serde_json::Value> {
 
 /// Offline boss-local pose; no encounter state transitions or world placement.
 pub fn pose(exe: &[u8], clip: usize, frame: f64) -> Result<crate::pose::Pose> {
-    if clip >= 4 {
-        return Err(Error::invalid("Finalhazard clip index outside 0..4"));
+    BossClip::load(exe, clip)?.pose(frame)
+}
+
+/// Retains the decoded rig and keys; sampling no longer needs the game image.
+pub struct BossClip {
+    model: crate::model::Model,
+    motion: crate::motion::Motion,
+}
+impl BossClip {
+    pub fn load(exe: &[u8], clip: usize) -> Result<Self> {
+        if clip >= 4 {
+            return Err(Error::invalid("Finalhazard clip index outside 0..4"));
+        }
+        let [boss, _] = read(exe)?;
+        let image = crate::pe::read_pe(exe)?;
+        let at = image.rva_to_offset(0x4ac678 + 28 * clip as u32, 28)?;
+        let va = Reader { data: exe }.u32(at)?;
+        image.va_to_offset(va, 12)?;
+        Ok(Self {
+            model: rig_model(&boss),
+            motion: crate::board_motion::pc_transform_motion(exe, va - image.image_base, 46)?,
+        })
     }
-    let [boss, _] = read(exe)?;
-    let image = crate::pe::read_pe(exe)?;
-    let at = image.rva_to_offset(0x4ac678 + 28 * clip as u32, 28)?;
-    let va = Reader { data: exe }.u32(at)?;
-    image.va_to_offset(va, 12)?;
-    let motion = crate::board_motion::pc_transform_motion(exe, va - image.image_base, 46)?;
-    if !(0.0..f64::from(motion.frame_count)).contains(&frame) {
-        return Err(Error::invalid("frame outside Finalhazard clip"));
+    pub fn frame_count(&self) -> u32 {
+        self.motion.frame_count
     }
-    let model = rig_model(&boss);
-    crate::pose::evaluate_model_pose(&model, Some(&motion), frame)
+    pub fn pose(&self, frame: f64) -> Result<crate::pose::Pose> {
+        if !(0.0..f64::from(self.frame_count())).contains(&frame) {
+            return Err(Error::invalid("frame outside Finalhazard clip"));
+        }
+        crate::pose::evaluate_model_pose(&self.model, Some(&self.motion), frame)
+    }
 }
 fn rig_model(boss: &[Joint]) -> crate::model::Model {
     let nodes = boss
