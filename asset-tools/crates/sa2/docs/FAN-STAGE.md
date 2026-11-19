@@ -235,3 +235,17 @@ this command. In particular, identifying the delayed call does not establish
 a saved mission clear. Run `python tests/kart_pursuit_clock_ppc.py CLI CartD.rel
 PRIVATE_TMP_DIR` for the instruction comparison, including simultaneous flags,
 the two updates surrounding the delayed call, and integer wraparound.
+
+With an optional `race_results` context, `kart-pursuit-clock` also executes
+the race-finish branch through 0x85dc. The result lists proposed writes
+relative to the original in-memory record base; no save is opened or edited.
+At elapsed update 60 the first slot must exist, place first, and pass the
+single-player check. Mode 5 compares signed minute/second/centisecond bytes
+and replaces only a strictly slower stored time when the engine permits it.
+Other modes >=2 mark their indexed completion byte and submit the time.
+The service return supplied in `check_return` is needed only on a write path.
+An active result menu holds update 200 at 199. At update 300 the branch sets
+the result flag and requests engine action 8 unless engine byte +0x23 is 1.
+This is distinct from the pursuit catch path. Record persistence and subsequent
+engine transitions are unverified. Run `tests/kart_record_results_ppc.py CLI
+CartD.rel PRIVATE_TMP_DIR` to compare against instructions with scratch memory.

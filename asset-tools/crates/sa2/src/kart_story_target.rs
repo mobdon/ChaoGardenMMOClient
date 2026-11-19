@@ -104,6 +104,7 @@ pub fn step(bytes: &[u8], input: Input) -> Result<Output> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerInput {
+    race_results: Option<ResultContext>,
     remove_task: bool,
     pursuit_latch: i32,
     race_finish_latch: i32,
@@ -117,6 +118,8 @@ pub struct ControllerInput {
 
 #[derive(Serialize)]
 pub struct ControllerUpdate {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    race_results: Option<ResultActions>,
     elapsed: i32,
     remaining: i32,
     flag_3ce24: i32,
@@ -128,6 +131,7 @@ pub struct ControllerUpdate {
 pub fn controller(bytes: &[u8], s: ControllerInput) -> Result<ControllerUpdate> {
     kart_progress::verify(bytes)?;
     let mut r = ControllerUpdate {
+        race_results: None,
         elapsed: s.elapsed,
         remaining: s.remaining,
         flag_3ce24: s.flag_3ce24,
@@ -147,9 +151,86 @@ pub fn controller(bytes: &[u8], s: ControllerInput) -> Result<ControllerUpdate> 
         r.flag_3ce24 = 1;
         r.engine_byte_16 = 1;
     } else if s.race_finish_latch != 0 {
-        r.next = "race_results_83bc";
+        if let Some(ctx) = s.race_results {
+            r.race_results = Some(results(&mut r, ctx)?);
+        } else {
+            r.next = "race_results_83bc";
+        }
     } else if s.engine_byte_09 == 0 || s.engine_byte_42 != 0 {
         r.remaining = r.remaining.wrapping_sub(1);
     }
     Ok(r)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResultContext {
+    mode: i32,
+    first_slot_place: Option<i32>,
+    multiplayer_byte: i8,
+    engine_byte_23: i8,
+    menu_active: bool,
+    engine_word_b4: i32,
+    time: [i8; 3],
+    record: [i8; 3],
+    record_index: i32,
+    completion_index: i32,
+    check_return: Option<i32>,
+}
+#[derive(Serialize)]
+struct ResultActions {
+    /// Offsets relative to the original in-memory record base. No save I/O.
+    writes: Vec<(i32, Vec<i8>)>,
+    engine_byte_47_write: Option<i8>,
+    calls: Vec<(&'static str, Vec<i32>)>,
+}
+
+fn results(r: &mut ControllerUpdate, s: ResultContext) -> Result<ResultActions> {
+    r.calls.push(("engine_800629e4", None));
+    r.elapsed = r.elapsed.wrapping_add(1);
+    r.engine_byte_16 = 1;
+    let mut a = ResultActions {
+        writes: vec![],
+        engine_byte_47_write: None,
+        calls: vec![],
+    };
+    match r.elapsed {
+        300 => {
+            r.flag_3ce24 = 1;
+            if s.engine_byte_23 != 1 {
+                a.calls.push(("engine_8001ef18", vec![8]));
+            }
+        }
+        200 if s.menu_active => r.elapsed = 199,
+        60 if s.first_slot_place == Some(1) && s.multiplayer_byte == 0 && s.mode >= 2 => {
+            let time_value =
+                |[m, sec, cs]: [i8; 3]| i32::from(m) * 6000 + i32::from(sec) * 100 + i32::from(cs);
+            if s.mode == 5 {
+                if s.engine_word_b4 == 1 || time_value(s.time) >= time_value(s.record) {
+                    return Ok(a);
+                }
+                a.writes.push((
+                    s.record_index.wrapping_mul(3).wrapping_add(0x349a),
+                    s.time.to_vec(),
+                ));
+            } else {
+                a.writes.push((
+                    s.completion_index.wrapping_mul(13).wrapping_add(0x2fbc),
+                    vec![1],
+                ));
+                let [m, sec, cs] = s.time.map(i32::from);
+                a.calls.push(("engine_8005a8fc", vec![0, m, sec, cs]));
+            }
+            a.calls.push(("engine_8005aacc", vec![0]));
+            let byte = s.check_return.ok_or_else(|| {
+                crate::Error::invalid("missing observed return from engine_8005aacc")
+            })? as i8;
+            a.engine_byte_47_write = Some(byte);
+            if byte == 0 {
+                a.calls.push(("engine_8005ba74", vec![]));
+            }
+        }
+        _ => {}
+    }
+    Ok(a)
 }
