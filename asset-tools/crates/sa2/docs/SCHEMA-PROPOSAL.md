@@ -11,7 +11,7 @@ cross-game types; this standalone crate does not define an agreed shared API.
 | --- | --- |
 | `game`, `revision` | Game/platform scope; exact build is gated per source hash, never inferred from extension/header alone. |
 | `sources[]` | Logical relative path, stable `sa2.pc.source.*` ID, full byte count and lowercase SHA-256. No absolute private machine paths. |
-| `assets[].id` | Stable namespaced locator within the logical source context. Pair with exact source hash when loading/cache-keying. |
+| `assets[].id` | Stable namespaced locator within the logical source context. Pair with exact source hash for source identity; generated-output identity additionally requires `output.sha256`. |
 | `span` | Source ID, byte offset/length/hash, address space and optional parent ID. |
 | `addressSpace: file` | Span in the exact source file named by `sourceId`. |
 | `addressSpace: decoded-container` | Span in a decoded parent output. Parent is a decoded `prs-decoded` asset for this implementation. Its output length/hash identifies the containing bytes. |
@@ -26,6 +26,13 @@ The machine schema checks field shapes; the Rust validator additionally checks
 unique IDs, source references, range arithmetic, whole-source hash consistency,
 decoded-parent ownership/type and typed palette dependencies. Validation does not
 reopen local files and must never be reported as fresh content verification.
+
+Native evaluation locators include the output format, separating pose, collision
+and ray-query representations. Two poses at different frames, collision worlds
+at different scales or queries can still share a source locator/hash. Consumers
+must include `output.sha256` when loading or caching a generated result and
+retain every dependency hash. The generated documents carry their explicit
+frame, scale or request; no common schema shape or shared API is adopted here.
 
 Current conversions preserve source units, raw native BAMS angles, node scales,
 original alpha and unknown material/vertex words. Eyelid omission, body opacity,

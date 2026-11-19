@@ -1,5 +1,11 @@
 # SA2 Rust tooling delivery evidence
 
+This is the reader/conversion baseline at `c6cd348` (PR 7). The subsequent
+native hierarchy/motion evaluation and Basic collision world/query slice is
+documented separately in [NATIVE-RUNTIME-PARITY.md](NATIVE-RUNTIME-PARITY.md).
+The boundaries below describe that baseline; neither milestone completes the
+[full-game Rust tracker](https://github.com/mobdon/ChaoGardenMMOClient/issues/11).
+
 Recorded November 18, 2026 on the owner's Windows workstation. Native inputs,
 reference tools, decoded pixels/audio/geometry and detailed logs remain ignored
 under `.local`. Only Rust source, synthetic tests, schemas and documentation are
