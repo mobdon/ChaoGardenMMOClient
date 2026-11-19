@@ -413,6 +413,7 @@ pub fn replay_bgm(request: &[u8]) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckpointReplay {
+    initial_bonus_counters: Option<crate::checkpoint::BonusCounters>,
     engine_result: u32,
     stage_byte: i8,
     frames: Vec<CheckpointFrame>,
@@ -456,9 +457,15 @@ fn checkpoint_frames(
             counters: [0; 2],
         },
     };
+    let mut counters = req.initial_bonus_counters;
     let mut frames = Vec::new();
     for f in bounded(req.frames)? {
         let call = state.tick(f.hit, &f.players, byte, f.contact_speed)?;
+        if counters.is_some() && call.is_some() && f.bonus_inputs.is_none() {
+            return Err(Error::invalid(
+                "accepted contact requires bonus inputs when tracking counters",
+            ));
+        }
         let mut delivery = None;
         let selection = if let (Some(c), Some(inputs)) = (&call, &f.bonus_inputs) {
             let input = &inputs[c.slot];
@@ -475,6 +482,9 @@ fn checkpoint_frames(
                     );
                 }
             }
+            if let (Some(state), Some(bonus)) = (&mut counters, &selected) {
+                state.apply(bonus);
+            }
             Some(
                 json!({"slot":c.slot,"itemId":selected.as_ref().map(|b|b.item_id),
                 "counterIncrement":selected.map_or(0,|b|b.counter_increment)}),
@@ -483,7 +493,7 @@ fn checkpoint_frames(
             None
         };
         frames.push(
-            json!({"itemDelivery":delivery,"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
+            json!({"bonusCounters":counters,"itemDelivery":delivery,"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
             "angles":state.spin.angles,"steps":state.spin.steps,"bonusSelection":selection,"handoff":call}),
         );
     }

@@ -139,6 +139,25 @@ pub struct CheckpointBonus {
     pub counter_increment: i16,
 }
 
+/// Two halfwords written by the checkpoint caller *after* the item helper
+/// returns. Neither address is indexed by the contacting player.
+/// Values track only these caller writes, not mutations inside engine calls.
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BonusCounters {
+    /// Signed halfword at 0x801cbd88 + 0x6e.
+    pub direct: i16,
+    /// Signed halfword at (*0x803ad460) + 0x10.
+    pub indirect: i16,
+}
+
+impl BonusCounters {
+    pub fn apply(&mut self, bonus: &CheckpointBonus) {
+        self.direct = self.direct.wrapping_add(bonus.counter_increment);
+        self.indirect = self.indirect.wrapping_add(bonus.counter_increment);
+    }
+}
+
 /// The original helper's return is compared as a signed halfword. The two low
 /// equipment bits are consulted only for the highest tier.
 pub fn contact_bonus(value: i16, equipment: u16) -> Option<CheckpointBonus> {
