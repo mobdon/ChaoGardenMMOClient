@@ -824,6 +824,15 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    Defeat {
+        submode: i8,
+        flags: u16,
+        child14: bool,
+        child18: bool,
+        frame: f32,
+        global_counter: u32,
+        completion_poll: i32,
+    },
     DamageCheck {
         health: f32,
         mode: i8,
@@ -910,6 +919,68 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 }
             }
             (timer, Some(submode))
+        }
+        PlacementClock::Defeat {
+            mut submode,
+            mut flags,
+            mut child14,
+            mut child18,
+            frame,
+            global_counter,
+            completion_poll,
+        } => {
+            // Ordered call sites, including imports whose side effects belong to
+            // the engine. The caller supplies the animation frame and poll result.
+            let mut sites = Vec::new();
+            if submode == 0 {
+                if child14 {
+                    sites.push(0x18ac);
+                    child14 = false;
+                }
+                if child18 {
+                    sites.push(0x18c4);
+                    child18 = false;
+                }
+                sites.extend([0x18d8, 0x18f0, 0x18f8, 0x190c]);
+                flags &= !4;
+                submode = 1;
+            }
+            if submode == 1 {
+                let threshold = |site| -> Result<f32> {
+                    Ok(f32::from_be_bytes(
+                        phase_constant(&rel, site, 4)?.try_into().unwrap(),
+                    ))
+                };
+                if frame < threshold(0x1922)? && global_counter % 45 == 0 {
+                    sites.extend([0x197c, 0x198c]);
+                }
+                for (lo, hi, group) in [
+                    (0x1992, 0x19a6, &[0x19cc, 0x19dc][..]),
+                    (0x19e2, 0x19f6, &[0x1a20, 0x1a30, 0x1a40][..]),
+                    (0x1a46, 0x1a5a, &[0x1a80, 0x1a90][..]),
+                ] {
+                    if frame > threshold(lo)? && frame < threshold(hi)? {
+                        sites.extend_from_slice(group);
+                    }
+                }
+                if frame < threshold(0x1aca)? {
+                    if global_counter % 30 == 0 {
+                        sites.push(0x1ae0);
+                    }
+                    if global_counter % 10 == 0 {
+                        sites.extend([0x1b30, 0x1b34]);
+                    }
+                }
+                sites.push(0x1b3c);
+                if completion_poll != 0 {
+                    sites.extend([0x1b4c, 0x1b58, 0x1b70]);
+                    submode = 2;
+                }
+            }
+            return Ok(
+                serde_json::json!({"submode":submode,"flags":flags,"child14":child14,"child18":child18,
+                "call_sites":sites,"global_halfword_0a":0}),
+            );
         }
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
