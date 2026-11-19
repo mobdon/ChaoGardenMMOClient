@@ -3,7 +3,8 @@ name = "sonic-pinball-party"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Local, version-gated Sonic Pinball Party A3VE asset inspection"
+description = "Version-gated A3VE asset tools and Rust source-port work"
+default-run = "spp-assets"
 publish = false
 
 # Independently buildable until the asset workstreams agree a shared workspace.
@@ -18,3 +19,10 @@ sha2 = "0.10"
 [[bin]]
 name = "spp-assets"
 path = "src/main.rs"
+
+[[bin]]
+name = "spp-game"
+path = "src/game_main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
