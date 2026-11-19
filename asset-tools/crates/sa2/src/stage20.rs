@@ -5,12 +5,65 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    background: Option<Background>,
     startup: Option<Startup>,
     controller: Option<Controller>,
     tail: Option<Tail>,
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Background {
+    records: Vec<[u32; 6]>,
+    frames: u16,
+}
+fn background_updates(rel: &CityRel<'_>, b: Background) -> Result<Value> {
+    let invalid = || Error::invalid("invalid duel background table");
+    let reference = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend as usize)
+            .ok_or_else(invalid)
+    };
+    let float = |site, section| -> Result<f32> {
+        let p = reference(site, section)?;
+        Ok(f32::from_be_bytes(
+            rel.data(section)?
+                .get(p..p + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let capacity = reference(0x1e4a, 6)?
+        .checked_sub(reference(0x1e12, 6)?)
+        .ok_or_else(invalid)?
+        / 24;
+    if b.records.len() > capacity {
+        return Err(invalid());
+    }
+    let delta = float(0x1ca2, 4)?;
+    let threshold = (float(0x1e22, 4)? * float(0x1e2e, 5)?) as i32;
+    let mut rows = b.records;
+    let mut count = rows.len();
+    for _ in 0..b.frames {
+        let mut dst = 0;
+        for src in 0..count {
+            rows[dst] = rows[src];
+            let row = &mut rows[dst];
+            row[4] = row[4].wrapping_add(1);
+            if row[4].wrapping_sub(row[5]) as i32 <= threshold {
+                for word in &mut row[..2] {
+                    *word = (f32::from_bits(*word) + delta).to_bits();
+                }
+                dst += 1;
+            }
+        }
+        count = dst;
+    }
+    Ok(json!({"activeCount":count,"storage":rows}))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -256,6 +309,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        background,
         startup,
         controller,
         tail,
@@ -283,6 +337,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(bg) = background {
+        report["background"] = background_updates(&rel, bg)?;
+    }
     if let Some(s) = startup {
         report["startup"] = opponent_startup(&rel, s)?;
     }

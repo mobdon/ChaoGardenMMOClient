@@ -813,3 +813,31 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             assert sum(x is None for x in row)==(3 if not loaded and idx else 0)
     assert hits==18
 print(hits,"overrides and",len(sources)+len(standalone)-hits,"base fallbacks matched the stage 20 loader")
+
+# The native BgExec update compacts 24-byte records in BSS. Inspect inactive slots too.
+for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
+    while True:
+        n,k,s,v=struct.unpack_from(">HBBI",d,i);i+=8
+        if k==203:break
+        if k==202:t=s;off=0;continue
+        off+=n
+        if mod==19 and t==1 and s==6 and 0x1e08<=off<0x1efc and k in (4,6):
+            address=layout_bss+v
+            put(base[1]+off,"H",(address if k==4 else (address+32768)>>16)&65535)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for ages in [[],[454],[455],[454,455,453,456,0],[0x7fffffff,0xffffffff,454,455],[450]*5]:
+        rows=[[0x80000000,0x3fa00000,0xff123400+j,0x76543210+j,(age+j)&0xffffffff,j] for j,age in enumerate(ages)]
+        for frames in (0,1,2,6):
+            put(layout_bss+0x290,"I",len(rows))
+            for j,row in enumerate(rows):put(layout_bss+0x218+24*j,"6I",*row)
+            for _ in range(frames):
+                u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_LR,stop)
+                u.emu_start(base[1]+0x1c90,stop,count=400)
+                assert u.reg_read(R.UC_PPC_REG_PC)==stop
+            out=Path(tmp)/f"{idx}.json";idx+=1
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],background=dict(records=rows,frames=frames))))
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            assert json.loads(out.read_text())["background"]==dict(activeCount=get(layout_bss+0x290,"I")[0],
+                storage=[list(get(layout_bss+0x218+24*j,"6I")) for j in range(len(rows))])
+print(idx,"multi-frame background updates matched")
