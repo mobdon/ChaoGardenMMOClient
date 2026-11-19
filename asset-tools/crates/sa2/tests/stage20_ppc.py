@@ -777,3 +777,39 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         assert json.loads(out.read_text())["derivedWords"]==[list(get(dst+48*i,"9I")) for i in range(12)]
         assert all(bytes(u.mem_read(dst+48*i+36,12))==b"\xa5"*12 for i in range(12))
 print(len(sources),"installed light tables matched the stage 20 PPC loop")
+
+# Compare the destination after the first-row clear, derivation and optional GC copy.
+def light_io(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x7c08:
+        assert (reg(3),reg(4),reg(5))==(dst,0,48)
+        cpu.mem_write(dst,bytes(48))
+    elif site==0x7d70:cpu.reg_write(R.UC_PPC_REG_3,len(gc_data))
+    else:
+        assert (reg(3),reg(4),reg(5))==(dst,0x80fffe60,len(gc_data))
+        cpu.mem_write(dst,gc_data)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x7c08,0x7d70,0x7d8c):
+    u.hook_add(UC_HOOK_CODE,light_io,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    hits=0
+    overrides=list((game/"resource/gd_PC").glob("*_light_gc.bin"))
+    standalone=[g for g in overrides if not g.with_name(g.name.replace("_gc.bin",".bin")).exists()]
+    assert len(standalone)==4
+    for light in [*sources,*standalone]:
+        gc_file=light.with_name(light.stem+"_gc.bin")
+        if light in standalone:gc_file=light
+        gc_data=gc_file.read_bytes() if gc_file.exists() else b""
+        u.mem_write(src,bytes(384) if light in standalone else light.read_bytes());u.mem_write(dst,b"\xa5"*576)
+        u.reg_write(R.UC_PPC_REG_1,0x100e00)
+        u.emu_start(base[1]+0x7bf4,base[1]+0x7d9c,count=600)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x7d9c
+        loaded=bool(u.reg_read(R.UC_PPC_REG_3));hits+=loaded
+        out=Path(tmp)/(light.stem+".json")
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage-light-table",str(light),str(out)],check=True)
+        rep=json.loads(out.read_text());assert rep["overrideLoaded"]==loaded
+        for idx,row in enumerate(rep["activeWords"]):
+            assert len(row)==12 and [0xa5a5a5a5 if x is None else x for x in row]==list(get(dst+48*idx,"12I"))
+            assert sum(x is None for x in row)==(3 if not loaded and idx else 0)
+    assert hits==18
+print(hits,"overrides and",len(sources)+len(standalone)-hits,"base fallbacks matched the stage 20 loader")
