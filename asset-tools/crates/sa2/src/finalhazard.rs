@@ -96,3 +96,46 @@ pub fn geometry(
     }
     Ok(result)
 }
+
+/// Resolve the original model texlist by name; archive order is not a binding.
+pub fn textures(exe: &[u8], prs: &[u8]) -> Result<serde_json::Value> {
+    use crate::{archive, manifest::sha256, texture};
+    let image = object_table::verify_image(exe)?;
+    if sha256(prs) != "d4b805a4b0cd5de1ea696c9e031955d5e803e09f4252fa871563144b88bd0f48" {
+        return Err(Error::invalid(
+            "unrecognized Finalhazard model texture archive",
+        ));
+    }
+    let r = Reader { data: exe };
+    let list = image.rva_to_offset(0x13049d8, 8)?;
+    let count = r.u32(list + 4)? as usize;
+    let names = image.va_to_offset(r.u32(list)?, count * 12)?;
+    let raw = archive::decompress_prs(prs, 32 * 1024 * 1024)?;
+    let entries = archive::read_gvm(&raw)?;
+    let mut bindings = Vec::new();
+    for slot in 0..count {
+        let at = image.va_to_offset(r.u32(names + slot * 12)?, 32)?;
+        let name = r.string(at, at + 32)?;
+        let mut matches = entries
+            .iter()
+            .filter(|e| e.name.eq_ignore_ascii_case(&name));
+        let e = matches
+            .next()
+            .ok_or_else(|| Error::invalid(format!("missing Finalhazard texture {name}")))?;
+        if matches.next().is_some() {
+            return Err(Error::invalid("ambiguous Finalhazard texture"));
+        }
+        let tex = texture::decode_gvr(e.data, None)?;
+        let mut alpha = [0usize; 3];
+        for pixel in tex.rgba.chunks_exact(4) {
+            alpha[match pixel[3] {
+                0 => 0,
+                255 => 2,
+                _ => 1,
+            }] += 1;
+        }
+        bindings.push(serde_json::json!({"slot":slot,"name":name,"archiveIndex":e.index,"width":tex.width,"height":tex.height,
+            "sourceSha256":sha256(e.data),"rgbaSha256":sha256(&tex.rgba),"alphaPixels":{"transparent":alpha[0],"partial":alpha[1],"opaque":alpha[2]}}));
+    }
+    Ok(serde_json::json!({"texlistRva":0x13049d8,"bindings":bindings}))
+}
