@@ -25,6 +25,12 @@ pub struct Program {
     #[serde(skip)]
     child_idle_step: f32,
     #[serde(skip)]
+    child_actions: Vec<(u32, u32)>,
+    #[serde(skip)]
+    child_effect: [f32; 4],
+    #[serde(skip)]
+    child_helpers: [u32; 2],
+    #[serde(skip)]
     child_collision_descriptor: u32,
     pub child_entry: u32,
     pub child_parent_callback: u32,
@@ -264,6 +270,44 @@ impl Program {
             .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
             .ok_or_else(invalid)?;
         let child_idle_step = f32::from_bits(word(rel.data(4)?, idle_constant.addend as usize)?);
+        let local_ref = |off, section| {
+            rel.reference(1, two + off)
+                .filter(|r| r.kind == 4 && r.module == info.module && r.section == section)
+                .map(|r| r.addend)
+                .ok_or_else(invalid)
+        };
+        let table = local_ref(0xca, 5)?;
+        let mut child_actions = Vec::new();
+        for i in 0..11 {
+            let at = table + i * 8;
+            let (section, func) = rel.local_pointer(5, at + 4)?.ok_or_else(invalid)?;
+            if section != 1 {
+                return Err(invalid());
+            }
+            child_actions.push((word(rel.data(5)?, at as usize)?, func));
+        }
+        let scalar = |off| -> Result<f32> {
+            Ok(f32::from_bits(word(
+                rel.data(4)?,
+                local_ref(off, 4)? as usize,
+            )?))
+        };
+        let child_effect = [
+            scalar(0x12a)?,
+            scalar(0x13e)?,
+            scalar(0x14e)?,
+            scalar(0x16e)?,
+        ];
+        let branch = |off| -> Result<u32> {
+            let site: u32 = two + off;
+            let ins = word(instructions, site as usize)?;
+            if ins & 0xfc000003 != 0x48000001 {
+                return Err(invalid());
+            }
+            site.checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
+                .ok_or_else(invalid)
+        };
+        let child_helpers = [branch(0xd4)?, branch(0x174)?];
         let one = child_handlers[1];
         if manifest::sha256(
             instructions
@@ -422,6 +466,9 @@ impl Program {
             child_handlers,
             child_mode_one,
             child_idle_step,
+            child_actions,
+            child_effect,
+            child_helpers,
             child_collision_descriptor,
             child_entry,
             child_parent_callback,
@@ -743,6 +790,9 @@ impl Program {
             }
         }
         if slot < 0 {
+            if c.activation.is_some() {
+                return Err(bad());
+            }
             let idle = c.idle.ok_or_else(bad)?;
             calls.push(0x8000f4ec);
             let v = if idle.game_byte_55 == 0 {
@@ -754,6 +804,47 @@ impl Program {
         } else {
             if c.idle.is_some() {
                 return Err(bad());
+            }
+            if let Some(a) = c.activation {
+                let mut events = Vec::new();
+                if a.player_flags & 0x4000 == 0 {
+                    let [before, after] = a.indices.ok_or_else(bad)?;
+                    let &(code, _) = self.child_actions.get(before).ok_or_else(bad)?;
+                    let &(_, callback) = self.child_actions.get(after).ok_or_else(bad)?;
+                    events.push(json!(["local", self.child_helpers[0], slot, code]));
+                    events.push(json!(["local", callback, "task", slot]));
+                    events.push(json!(["engine", 0x800168c8u32, slot]));
+                } else if a.indices.is_some() {
+                    return Err(bad());
+                }
+                let [dy, xz, y, strength] = self.child_effect;
+                let [x, py, z] = a.position;
+                events.push(json!([
+                    "local",
+                    self.child_helpers[1],
+                    [x, py + dy, z],
+                    [xz, y, xz],
+                    strength
+                ]));
+                events.push(json!(["engine", 0x8006b710u32, 0x800d, 0, 0, 0]));
+                events.push(json!(["engine", 0x8002f8c4u32, slot, 1, 0x30, 0]));
+                if a.linked_task {
+                    events.push(json!(["engine", 0x8006521cu32, "task"]));
+                } else if a.parent_linked == Some(true) {
+                    events.push(json!(["engine", 0x8006521cu32, "parent"]));
+                }
+                if a.parent_linked.is_some() != (!a.linked_task && a.byte1 != 0) {
+                    return Err(bad());
+                }
+                events.push(json!(["engine", 0x8000f4ecu32, "task"]));
+                let v = if a.tail.game_byte_55 == 0 {
+                    a.tail.work36 + self.child_idle_step
+                } else {
+                    a.tail.work36
+                };
+                return Ok(
+                    json!({"calls":calls,"playerIndex":slot,"events":events,"mode":3,"work36Bits":v.to_bits()}),
+                );
             }
             Ok(json!({"calls":calls,"playerIndex":slot,"continueAt":self.child_handlers[2]+0x94}))
         }
@@ -821,7 +912,19 @@ struct ModeOneInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ChildActivation {
+    pub player_flags: u16,
+    pub indices: Option<[usize; 2]>,
+    pub position: [f32; 3],
+    pub linked_task: bool,
+    pub byte1: i8,
+    pub parent_linked: Option<bool>,
+    pub tail: ChildIdle,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChildContact {
+    pub activation: Option<ChildActivation>,
     pub flags: u16,
     pub cached: i8,
     pub primary: Option<bool>,

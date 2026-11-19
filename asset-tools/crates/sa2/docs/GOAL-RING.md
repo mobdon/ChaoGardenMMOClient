@@ -91,3 +91,14 @@ usable cached index resolves a player, supply `idle` with `work36` and
 `game_byte_55`. The report then follows registration and the gated work
 increment through the native return. A resolved player instead stops at
 the player lookup. Its index is not evidence of an award or mission clear.
+
+To follow a resolved player through the mode-2 return, supply
+`contact.activation`. It takes the observed player flags, position and two
+action indices (before and after the first local call). Bit 0x4000 skips
+both table lookups and requires absent indices. The report records calls to
+the selected module routines, effect parameters and subsequent engine calls.
+Supply `linked_task`, signed `byte1`, and `parent_linked` only for the parent
+lookup (no task link and byte1 nonzero). The `tail` observation supplies
+work36 and game byte 55 at final registration. On accepted contact the task
+switches to mode 3. Nested calls are observed at their boundaries; this
+does not establish their gameplay effects or a mission result.

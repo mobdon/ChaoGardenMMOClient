@@ -333,7 +333,7 @@ def contact_query(cpu,pc,*_):
             cpu.reg_write(R.UC_PPC_REG_3,TASK+0x400 if obs[key] else 0)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for off in (0x50,0x60,0x74,0x1e4):cpu.hook_add(UC_HOOK_CODE,contact_query,begin=BASE+off,end=BASE+off)
-cpu.hook_add(UC_HOOK_CODE,lambda cpu,*_:cpu.emu_stop(),begin=BASE+0x94,end=BASE+0x94)
+contact_stop=cpu.hook_add(UC_HOOK_CODE,lambda cpu,*_:cpu.emu_stop(),begin=BASE+0x94,end=BASE+0x94)
 cpu.mem_write(BASE,bytes(block));cpu.reg_write(R.UC_PPC_REG_MSR,8192)
 for flags,cached,(first,second),identified,gate in itertools.product((0,4),(-2,-1,0,1),((False,False),(False,True),(True,False)),(-1,1),(0,-1)):
     obs=dict(flags=flags,cached=cached);calls=[]
@@ -349,3 +349,66 @@ for flags,cached,(first,second),identified,gate in itertools.product((0,4),(-2,-
         obs['idle']=dict(work36=1.25,game_byte_55=gate)
         result.update(playerIndex=None,mode=cpu.mem_read(WORK,1)[0],work36Bits=struct.unpack('>I',cpu.mem_read(WORK+36,4))[0])
     print('P',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
+
+# Run past the player lookup, observing the engine and nested stage services.
+cpu.hook_del(contact_stop)
+players=0x801e7328;cpu.mem_map(players&~4095,4096)
+table_addr=DATA+0x2216e8;cpu.mem_map(table_addr&~4095,4096)
+cpu.mem_write(table_addr,d[ss[5][0]+0x2216e8:ss[5][0]+0x2216e8+88])
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if module==12 and section==5 and 0x2216e8<=off<0x2216e8+88 and kind==1:
+            assert s==1
+            cpu.mem_write(DATA+off,struct.pack('>I',BASE+val))
+        if section!=1 or not entry+0x94<=off<entry+0x1e0 or kind not in (4,6):continue
+        if module:
+            if s==4:cpu.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4])
+            val+=DATA
+        struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
+cpu.mem_write(BASE,bytes(block));cpu.ctl_remove_cache(BASE,BASE+len(block))
+def activated(cpu,pc,*_):
+    off=pc-BASE
+    reg=lambda i:cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i)))
+    if off in (0xd4,0x174):
+        ins=struct.unpack_from('>I',block,off)[0]
+        addr=entry+off+((ins&0x3fffffc)^0x2000000)-0x2000000
+        if off==0xd4:
+            events.append(['local',addr,reg(3),reg(4)])
+            cpu.mem_write(TASK+60,struct.pack('>I',after))
+        else:
+            vectors=[list(struct.unpack('>fff',cpu.mem_read(reg(i),12))) for i in (3,4)]
+            f=struct.unpack('>d',cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,'big'))[0]
+            events.append(['local',addr,*vectors,f])
+    elif off==0xf4:
+        assert reg(3)==TASK
+        events.append(['local',cpu.reg_read(R.UC_PPC_REG_LR)-BASE,'task',reg(4)])
+    else:
+        args={0xfc:[reg(3)],0x18c:[reg(i) for i in range(3,7)],0x1a0:[reg(i) for i in range(3,7)]}.get(off)
+        if args is None:
+            assert reg(3) in (TASK,TASK+0x600)
+            args=['task' if reg(3)==TASK else 'parent']
+        events.append(['engine',imports[pc],*args])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for off in (0xd4,0xf4,0xfc,0x174,0x18c,0x1a0,0x1b4,0x1dc):
+    cpu.hook_add(UC_HOOK_CODE,activated,begin=BASE+off,end=BASE+off)
+for before in range(11):
+    for flags,(linked,byte1,parent) in itertools.product((0,0x4000),((True,0,None),(False,0,None),(False,1,False),(False,-1,True))):
+        slot=before%2;gate=slot;after=10-before;events=[];calls=[];pos=[1.5,-7.25,30.]
+        cpu.mem_write(TASK+52,struct.pack('>III',WORK,TASK+0x200,before))
+        cpu.mem_write(TASK+8,struct.pack('>I',TASK+0x600));cpu.mem_write(TASK+48,struct.pack('>I',linked))
+        cpu.mem_write(TASK+0x630,struct.pack('>I',bool(parent)));cpu.mem_write(WORK,struct.pack('>Bb2xH',2,byte1,4))
+        cpu.mem_write(TASK+0x244,struct.pack('>b',slot));cpu.mem_write(players+slot*4,struct.pack('>I',TASK+0x500))
+        cpu.mem_write(TASK+0x510,struct.pack('>H',flags));cpu.mem_write(WORK+20,struct.pack('>fff',*pos))
+        cpu.mem_write(WORK+36,struct.pack('>f',1.25));cpu.mem_write(GLOBAL+55,struct.pack('>b',gate))
+        cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,TASK);cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x238)
+        cpu.emu_start(BASE,BASE+0x238,count=170)
+        assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x238 and calls==[REGISTER]
+        events.append(['engine',REGISTER,'task'])
+        obs=dict(flags=4,cached=slot,activation=dict(player_flags=flags,indices=None if flags else [before,after],position=pos,linked_task=linked,byte1=byte1,parent_linked=parent,tail=dict(work36=1.25,game_byte_55=gate)))
+        result=dict(calls=[],playerIndex=slot,events=events,mode=cpu.mem_read(WORK,1)[0],work36Bits=struct.unpack('>I',cpu.mem_read(WORK+36,4))[0])
+        print('Y',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
