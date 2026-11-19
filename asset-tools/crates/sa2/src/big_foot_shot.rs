@@ -18,6 +18,7 @@ pub(super) enum Tick {
         atan_results: [f64; 2],
         hit_player: bool,
         hit_other: bool,
+        effect_allocations: Option<Vec<bool>>,
     },
 }
 pub(super) fn run(replay: Replay, target: Vec3, angles: [i32; 3], offset: i32) -> Result<Value> {
@@ -92,6 +93,7 @@ impl State {
             atan_results,
             hit_player,
             hit_other,
+            effect_allocations,
         } = tick
         {
             let transforming = sub == 0 || (sub == 1 && timer == 0);
@@ -177,7 +179,26 @@ impl State {
             if hit_other {
                 events.push("other");
             }
-            impacts=events.iter().map(|_|json!({"position":p,"engineArgs":[0x4019,0,0,60],"effectKind":4,"freeChild":true})).collect();
+            if effect_allocations
+                .as_ref()
+                .is_some_and(|v| v.len() != events.len())
+            {
+                return Err(Error::invalid(
+                    "expected one effect allocation result per impact",
+                ));
+            }
+            for i in 0..events.len() {
+                let mut impact = json!({"position":p,"engineArgs":[0x4019,0,0,60],"effectKind":4,"freeChild":true});
+                if let Some(outcomes) = &effect_allocations {
+                    impact["effectTask"] = if outcomes[i] {
+                        json!({"kind":4,"position":p,"mainOffset":0x42458,"displayOffset":266696,
+                        "destructorOffset":271444,"work10":0.0,"work24":0.34_f32,"work38":1.0,"requestResources":true})
+                    } else {
+                        Value::Null
+                    };
+                }
+                impacts.push(impact);
+            }
             removed = !events.is_empty();
             events.push("register");
         }
