@@ -176,3 +176,18 @@ clear. This reader does not render the display callback or run the scheduler.
 `tests/kart_finish_menu_ppc.py CLI CartD.rel PRIVATE_TMP_DIR` executes the
 original callback, checking state, call order, and arguments on both timer
 boundaries, direction conflicts, confirmation, wraparound and inactive modes.
+
+`kart-finish-display CartD.rel OUTPUT.json resultCart.prs INPUT.json` follows
+the restricted result task's display callback (0xd734) through its sprite
+helper (0xd2dc). Supply signed `mode`, byte `selection`, the first two kart
+`places` and `viewport_flag`. The report lists draws in order with the
+initialized frame centers, original sizes, UV rectangles, screen positions,
+scale, priority and draw flags. Mode zero compares places (ties take the
+second branch); mode one draws a heading and two choice frames.
+
+The original archive loaded at 0xd49c contains one 256×256 GVR,
+`moji2p_big_kart`. The report hashes the decoded RGBA including original
+alpha. The offline oracle `tests/kart_finish_display_ppc.py CLI CartD.rel
+resultCart.prs PRIVATE_TMP_DIR` compares the native draw arguments and
+frame records for six cases. It stops at the engine sprite renderer; viewport
+internals, blending and final framebuffer pixels are not verified.
