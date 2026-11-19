@@ -140,6 +140,28 @@ fn mounted_campaign_routes() {
                                 &serde_json::to_vec(r).unwrap(),
                             )
                         };
+                        let mut exit = req.clone();
+                        exit["init_byte_23"] = serde_json::json!(3);
+                        exit["set_query_result"] = serde_json::json!(-1);
+                        let exited = run(&exit).unwrap();
+                        assert_eq!(exited["initExitCall"], 0x80065148u32);
+                        assert_eq!(exited["frames"], serde_json::json!([]));
+                        for value in [0, 1, -1] {
+                            let mut init = req.clone();
+                            init["set_query_result"] = serde_json::json!(value);
+                            let replay = run(&init).unwrap();
+                            let first = &replay["frames"][0];
+                            if value == 0 {
+                                assert_eq!(first, &seq["frames"][0]);
+                            } else {
+                                assert_eq!(first["mode"], 3);
+                                assert_eq!(first["angles"], serde_json::json!([0, -16384]));
+                                assert_eq!(first["slotTimers"], serde_json::json!([0, 0]));
+                                assert!(
+                                    first["handoff"].is_null() && first["itemDelivery"].is_null()
+                                );
+                            }
+                        }
                         let result = run(&gated).unwrap();
                         assert!(result["frames"][0]["itemDelivery"].is_null());
                         assert_eq!(
