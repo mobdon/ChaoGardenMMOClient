@@ -6,6 +6,11 @@ pub mod binary;
 pub mod catalog;
 pub mod garden;
 pub mod graphics;
+pub mod player;
+pub mod rings;
+pub mod runtime;
+pub mod sprite;
+pub mod stage;
 pub mod tables;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
