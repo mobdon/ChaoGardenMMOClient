@@ -841,3 +841,33 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             assert json.loads(out.read_text())["background"]==dict(activeCount=get(layout_bss+0x290,"I")[0],
                 storage=[list(get(layout_bss+0x218+24*j,"6I")) for j in range(len(rows))])
 print(idx,"multi-frame background updates matched")
+
+def draw_service(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x1d48:draw_calls.append(dict(local=site+(get(pc,"I")[0]&0x03fffffc),args=[]))
+    else:
+        if site in (0x1d24,0x1d44,0x1dcc):args=[reg(3),list(get(reg(4),"fff"))]
+        elif site in (0x1d30,0x1dd8,0x1de4):args=[reg(3)-base[5]]
+        elif site in (0x1d50,0x1dec):args=[reg(3)]
+        else:args=[]
+        draw_calls.append(dict(engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1d10,0x1d14,0x1d18,0x1d24,0x1d30,0x1d44,0x1d48,0x1d50,0x1d54,0x1d58,
+             0x1db8,0x1dbc,0x1dc0,0x1dcc,0x1dd8,0x1de4,0x1dec,0x1df0,0x1df4):
+    u.hook_add(UC_HOOK_CODE,draw_service,begin=base[1]+site,end=base[1]+site)
+u.mem_map(0x80174000,4096)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for field,entry_offset in [(20,0x1d6c),(32,0x1cc4)]:
+        for selected,pos in [(0,[1.,2.,3.]),(1,[-4.,-5.,-6.])]:
+            draw_calls=[];put(0x803ad6d0,"I",selected);put(0x80174f98,"II",pose0,pose1)
+            put((pose0,pose1)[selected],"fff",*pos)
+            u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_LR,stop)
+            u.emu_start(base[1]+entry_offset,stop,count=100)
+            assert u.reg_read(R.UC_PPC_REG_PC)==stop
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
+                background_draw=dict(callback_offset=field,selected_position=pos))))
+            out=Path(tmp)/f"{idx}.json";idx+=1
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            assert json.loads(out.read_text())["backgroundDraw"]==dict(entry=entry_offset,calls=draw_calls)
+print(idx,"background draw callback traces matched")

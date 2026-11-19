@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    background_draw: Option<BackgroundDraw>,
     background: Option<Background>,
     startup: Option<Startup>,
     controller: Option<Controller>,
@@ -12,6 +13,72 @@ struct Request {
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BackgroundDraw {
+    callback_offset: u8,
+    selected_position: [f32; 3],
+}
+fn background_draw_calls(rel: &CityRel<'_>, d: BackgroundDraw) -> Result<Value> {
+    let invalid = || Error::invalid("invalid duel background callback");
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let secondary = match d.callback_offset {
+        20 => false,
+        32 => true,
+        _ => return Err(invalid()),
+    };
+    let entry = ptr(if secondary { 0x18ee } else { 0x18e2 }, 1)?;
+    let base = if secondary { 0x1cc4 } else { 0x1d6c };
+    if entry != base {
+        return Err(invalid());
+    }
+    let data = rel.data(4)?;
+    let at = ptr(base + 0x3a, 4)? as usize;
+    let y = f32::from_be_bytes(
+        data.get(at..at + 4)
+            .ok_or_else(invalid)?
+            .try_into()
+            .unwrap(),
+    );
+    let [x, _, z] = d.selected_position;
+    let mut calls = Vec::new();
+    let engine = |site, args: Value| -> Result<Value> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(invalid)?;
+        Ok(json!({"engine":r.addend,"args":args}))
+    };
+    for site in [base + 0x4c, base + 0x50, base + 0x54] {
+        calls.push(engine(site, json!([]))?);
+    }
+    calls.push(engine(base + 0x60, json!([0, [x, y, z]]))?);
+    calls.push(engine(base + 0x6c, json!([ptr(base + 0x6a, 5)?]))?);
+    if secondary {
+        let at = ptr(0x1d3e, 5)? as usize + 8;
+        let data = rel.data(5)?;
+        let mut position = [0.; 3];
+        for (axis, value) in position.iter_mut().enumerate() {
+            let p = at + 4 * axis;
+            *value =
+                f32::from_be_bytes(data.get(p..p + 4).ok_or_else(invalid)?.try_into().unwrap());
+        }
+        calls.push(engine(0x1d44, json!([0, position]))?);
+        calls.push(json!({"local":0x1efc,"args":[]}));
+    } else {
+        calls.push(engine(0x1de4, json!([ptr(0x1de2, 5)?]))?);
+    }
+    let tail = if secondary { 0x1d50 } else { 0x1dec };
+    calls.push(engine(tail, json!([1]))?);
+    calls.push(engine(tail + 4, json!([]))?);
+    calls.push(engine(tail + 8, json!([]))?);
+    Ok(json!({"entry":entry,"calls":calls}))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -309,6 +376,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        background_draw,
         background,
         startup,
         controller,
@@ -337,6 +405,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(d) = background_draw {
+        report["backgroundDraw"] = background_draw_calls(&rel, d)?;
+    }
     if let Some(bg) = background {
         report["background"] = background_updates(&rel, bg)?;
     }
