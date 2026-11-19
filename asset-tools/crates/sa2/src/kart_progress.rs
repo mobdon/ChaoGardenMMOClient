@@ -149,3 +149,64 @@ pub fn segment_geometry(bytes: &[u8], s: SegmentInput) -> Result<SegmentGeometry
         triangle,
     })
 }
+
+/// Expand the source-local crossing quads in the order CartD's 0x7388 loop
+/// calls its transform helper. Array positions are native segment indices.
+pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value> {
+    verify(bytes)?;
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let invalid = || Error::invalid("invalid CartD crossing directory");
+    let hi = rel.reference(1, 0x715a).ok_or_else(invalid)?;
+    let lo = rel.reference(1, 0x715e).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind, lo.kind) != (80, 5, 6, 4)
+        || (hi.module, hi.section, hi.addend) != (lo.module, lo.section, lo.addend)
+    {
+        return Err(invalid());
+    }
+    let data = rel.data(5)?;
+    let mut pieces = Vec::new();
+    for id in 0..85 {
+        let row = hi.addend + id * 8;
+        let at = row as usize + 4;
+        let count = u32::from_be_bytes(
+            data.get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        );
+        let mut quads = Vec::new();
+        if count != 0 {
+            let (sec, start) = rel.local_pointer(5, row)?.ok_or_else(invalid)?;
+            let end = start
+                .checked_add(count.checked_mul(32).ok_or_else(invalid)?)
+                .ok_or_else(invalid)?;
+            for record in rel
+                .data(sec)?
+                .get(start as usize..end as usize)
+                .ok_or_else(invalid)?
+                .chunks_exact(32)
+            {
+                let mut quad = [[0f32; 2]; 4];
+                for (dest, src) in quad.iter_mut().flatten().zip(record.chunks_exact(4)) {
+                    *dest = f32::from_be_bytes(src.try_into().unwrap());
+                }
+                quads.push(quad);
+            }
+        }
+        pieces.push(quads);
+    }
+    let mut routes = Vec::new();
+    for course in crate::kart_course::courses(exe)? {
+        let mut segments = Vec::new();
+        for (occurrence, &id) in course.piece_ids.iter().enumerate() {
+            for local in 0..pieces.get(id as usize).ok_or_else(invalid)?.len() {
+                segments.push([occurrence, local]);
+            }
+        }
+        routes.push(
+            serde_json::json!({"course":course.name, "piece_ids":course.piece_ids,
+            "segment_count":segments.len(), "segment_occurrence_and_local_index":segments}),
+        );
+    }
+    Ok(serde_json::json!({"piece_local_xz_quads":pieces,"courses":routes}))
+}

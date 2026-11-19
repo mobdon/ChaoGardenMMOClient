@@ -96,3 +96,17 @@ The request supplies helper 0x9220's segment-test results in call order; missing
 `kart-segment-geometry CartD.rel OUTPUT.json OBSERVATIONS.json` reconstructs the first half of the native segment test (section 1 + 0x9220). The request contains task_position, nullable work_position and segment_xz (four native [X,Z] pairs from one 32-byte live record). A missing work pointer or no X/Z displacement returns a definite miss, even if Y changed. Otherwise the routine projects movement onto Y=0 and constructs a triangle: extend the first-to-fourth pair span by three spans at each end at Y=-20, and use the third pair at Y=100. The second pair is not used by this block. This is crossing-test geometry, distinct from road collision triangles.
 
 The moving case returns the inputs to the imported geometry routines. Their final hit result and the creation of the live segment table are not established by this replay. Run `python tests/kart_segment_ppc.py CLI CartD.rel PRIVATE_DIR` with Unicorn to compare early returns and the binary32 triangle, origin and direction against the installed instructions.
+
+`kart-crossing-directory CartD.rel OUTPUT.json EXE` reads the local X/Z quads and
+maps each runtime segment index to [piece occurrence, quad within piece]. In
+`kart-progress-tick`, the historical fields `course_length` and `piece` mean
+runtime **segment count** and **segment index**. Route 101 has 321 authored
+pieces and 482 segments; Route 280 has 369 and 537. Beginner, Standard, and
+Expert have 123, 160, and 190 segments respectively. The directory does not
+supply world coordinates or determine whether a moving kart crossed a segment.
+
+The local oracle `tests/kart_crossing_ppc.py CartD.rel OUTPUT.json Courses/`
+uses the independent SA Tools course splits and executes CartD 0x7388–0x7428.
+It compares the occurrence writes and every 32-byte source quad presented to
+the transform helper. It intercepts that helper; this does not verify its
+rotation, translation, intersection tests, or level completion.
