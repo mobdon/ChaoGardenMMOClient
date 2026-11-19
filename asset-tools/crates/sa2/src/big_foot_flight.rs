@@ -1,6 +1,8 @@
 //! Big Foot flight passes and turnarounds from the native takeoff up to entry into mode 5.
 #[path = "big_foot_aim.rs"]
 mod aim;
+#[path = "big_foot_landing.rs"]
+mod landing;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -11,6 +13,7 @@ pub(super) struct Flight {
     #[serde(default)]
     repeat_passes: Vec<Pass>,
     aim: Option<Vec<aim::Tick>>,
+    landing: Option<Vec<landing::Tick>>,
     center_approach: Option<Vec<CenterTick>>,
     extra_byte2: Option<u8>,
     steering: Option<Steering>,
@@ -31,6 +34,7 @@ pub(super) struct Trace {
     pub repeats: Vec<Value>,
     pub center: Option<Value>,
     pub aim: Option<Value>,
+    pub landing: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -48,6 +52,7 @@ pub(super) fn run(
         extra_byte2,
         repeat_passes,
         center_approach,
+        landing,
         aim,
         ticks,
         mut steering,
@@ -59,6 +64,7 @@ pub(super) fn run(
         pass_count,
     }: super::takeoff::Handoff,
     motion4_duration: u16,
+    spawn_order: &[u8; 16],
 ) -> Result<Trace> {
     if repeat_passes.len() > 2 {
         return Err(Error::invalid("at most two repeat passes follow takeoff"));
@@ -75,6 +81,7 @@ pub(super) fn run(
         repeats: Vec::new(),
         center: None,
         aim: None,
+        landing: None,
     };
     for (index, Pass { ticks, turnaround }) in std::iter::once(Pass { ticks, turnaround })
         .chain(repeat_passes)
@@ -238,6 +245,7 @@ pub(super) fn run(
                 .push(json!({"pass":frames,"turnaround":turn_output}));
         }
     }
+    let mut landing_entry = None;
     if let Some(ticks) = center_approach {
         if mode != 5 || sub != 0 || counter != 0 || ticks.len() > 2048 {
             return Err(Error::invalid(
@@ -251,10 +259,20 @@ pub(super) fn run(
         trace.center = Some(rows);
         if let Some(ticks) = aim {
             let entry = handoff.ok_or_else(|| Error::invalid("aim requires both center gates"))?;
-            trace.aim = Some(aim::run(entry, ticks, motion4_duration)?);
+            let (rows, next) = aim::run(entry, ticks, motion4_duration)?;
+            trace.aim = Some(rows);
+            landing_entry = next;
         }
     } else if aim.is_some() {
         return Err(Error::invalid("aim requires center approach"));
+    }
+    if let Some(ticks) = landing {
+        trace.landing = Some(landing::run(
+            landing_entry
+                .ok_or_else(|| Error::invalid("landing requires completed aim countdown"))?,
+            ticks,
+            spawn_order,
+        )?);
     }
     Ok(trace)
 }
@@ -437,6 +455,7 @@ fn center(
             aim = Some(target);
             handoff = Some(aim::Entry {
                 angles: state.angles,
+                rates: state.rates,
                 phase,
                 target,
                 flags,

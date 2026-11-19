@@ -200,12 +200,23 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
                 .try_into()
                 .unwrap(),
         );
+        let anchors = local(0x25d0, 5)? as usize;
+        let spawn_order = rel
+            .data(5)?
+            .get(anchors..anchors + 16)
+            .ok_or_else(invalid)?
+            .try_into()
+            .unwrap();
         let trace = flight::run(
             ticks,
             entry,
             u16::try_from(duration).map_err(|_| invalid())?,
+            spawn_order,
         )?;
         output["firstFlight"] = trace.first;
+        if let Some(landing) = trace.landing {
+            output["landing"] = landing;
+        }
         if let Some(aim) = trace.aim {
             output["aim"] = aim;
         }

@@ -20,7 +20,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0x1e50,0x2454),(0x2800,0x2820),(0x55948,0x55968),(0x55c10,0x55c5c),(0x55d20,0x55d78),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0x1e50,0x2820),(0x2800,0x2820),(0x55948,0x55968),(0x55c10,0x55c5c),(0x55d20,0x55d78),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
@@ -55,6 +55,7 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
 for dst,val in bind_relocs:put(dst,"I",val)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|8192)
 adjust_sites=(0x21c0,0x2200,0x22a0,0x22b4,0x22c8,0x239c,0x23b0,0x23c4,0x23d8,0x23ec,0x2400)
+landing_sites=(0x2478,0x248c,0x24a0,0x24d0,0x2520,0x2558,0x2564,0x2648,0x2684,0x26e4,0x273c,0x275c,0x276c,0x27b0,0x27c4,0x27dc)
 aim_sites=(0x21d0,0x2210,0x2224,0x2268,0x22f0,0x2428)
 def signed(v):return (v+2**31)%2**32-2**31
 def hook(uc,pc,size,_):
@@ -81,6 +82,34 @@ def hook(uc,pc,size,_):
     if off==0x19fc:
         assert reg(3)==binding
         u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x55d20);return
+    if off in (0x2478,0x248c,0x24a0):
+        land_calls.append(dict(angle=[signed(reg(k)) for k in (3,4,5)]))
+        setreg(3,land_angles[len(land_calls)-1]&0xffffffff)
+    if off in (0x24d0,0x26e4):
+        assert reg(3)==BOSS; land_calls.append(dict(helper6b8=list(get(reg(4),"fff"))))
+    if off==0x2520:
+        land_calls.append(dict(compareYaw=[signed(reg(3)),signed(reg(4))]));setreg(3,land_diff)
+    if off in (0x2558,0x275c):
+        kind=11 if off==0x2558 else 7
+        assert [reg(k) for k in (3,4,5,6,7)]==[kind,0,0,10 if kind==11 else 100,WORK+20]
+        land_calls.append(dict(engine2558=[reg(i) for i in (3,4,5,6)]))
+    if off==0x2564:
+        assert reg(3)==anim;land_calls.append(dict(motion=reg(4)))
+    if off==0x2648:
+        assert reg(3)==BOSS and reg(5)==WORK+8
+        f1=struct.unpack(">d",struct.pack(">Q",u.reg_read(R.UC_PPC_REG_FPR1)))[0]
+        land_calls.append(dict(helper57524=[reg(4)-(D+6*0x400000),f1]));setreg(3,0x1234)
+    if off==0x2684:
+        assert reg(3)==BOSS;land_calls.append(dict(disableCollision=reg(4)))
+    if off==0x273c:
+        assert reg(3)==WORK+20 and reg(4)==0;land_calls.append("helper55148")
+    if off==0x276c:
+        assert [reg(i) for i in (3,4,5)]==[7,0,0];land_calls.append("engine276c")
+    if off==0x27b0:
+        assert reg(3)==WORK+20 and bytes(u.mem_read(reg(4),24))==d[sec(4)+844:sec(4)+868];land_calls.append(dict(effectDescriptor=844))
+    if off==0x27c4:land_calls.append(dict(engine27c4=[reg(i) for i in (3,4,5,6)]))
+    if off==0x27dc:
+        assert reg(3)==anim;land_calls.append("motionReady");setreg(3,int(land_ready))
     if off in adjust_sites:
         old,target,step=(signed(reg(i)) for i in (3,4,5))
         angle_calls.append([old,target,step])
@@ -165,7 +194,7 @@ def hook(uc,pc,size,_):
         assert get(reg(3),"fff")==tuple(position)
         put(reg(3),"fff",*vector);calls.append(off)
     u.reg_write(R.UC_PPC_REG_PC,pc+4)
-for off in (*adjust_sites,*aim_sites,0x1e60,0x2810,0x1ed8,0x1efc,0x1fc8,0x1fec,0x1f70,0x207c,0x20cc,0x2804,0x16f8,0x1728,0x1734,0x1890,0x1948,0x18c8,0x1980,0x19cc,0x19fc,0x1a04,0x1a28,0x1e20,0x1e2c,0x1d8c,0x1db0,0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
+for off in (*landing_sites,*adjust_sites,*aim_sites,0x1e60,0x2810,0x1ed8,0x1efc,0x1fc8,0x1fec,0x1f70,0x207c,0x20cc,0x2804,0x16f8,0x1728,0x1734,0x1890,0x1948,0x18c8,0x1980,0x19cc,0x19fc,0x1a04,0x1a28,0x1e20,0x1e2c,0x1d8c,0x1db0,0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
     u.hook_add(UC_HOOK_CODE,hook,begin=B+off,end=B+off)
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
@@ -374,9 +403,38 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         assert expected_aim[-1]["submode"]==6
         assert sum(row["motion"]==4 for row in expected_aim)==1
         request["first_flight"]["aim"]=aim
+        landing=[];expected_landing=[]
+        assert get(EXTRA+0x28,"f")== (4.,)
+        u.mem_write(D+4*0x400000+844,d[sec(4)+844:sec(4)+868])
+        for j in range(60):
+            sub=get(WORK+1,"B")[0];land_calls=[];vertical=None;height=None
+            if sub==6:
+                vy=(-0.101,-0.1,0.,0.,0.)[min(j,4)];ay=j/16
+                land_angles=[1 if j==2 else 0,1 if j==3 else 0,heading];land_diff=int(j==1)
+                obs=dict(align=dict(velocity_y=vy,acceleration_y=ay,adjusted_angles=land_angles,
+                    heading_difference=land_diff if j>0 else None))
+                put(motion+4,"f",vy);put(motion+16,"f",ay)
+            elif sub==7:
+                y=3. if j<22 else (0. if case==1 else -0.125)
+                obs=dict(descend=dict(height=y));put(WORK+24,"f",y)
+            else:
+                land_ready=j>24;obs=dict(recover=dict(motion_ready=land_ready))
+            invoke(0x1e50,BOSS)
+            if sub==6:vertical=[get(motion+k,"f")[0] for k in (4,16)]
+            if sub==7:height=get(WORK+24,"f")[0]
+            landing.append(obs);expected_landing.append(dict(mode=get(WORK,"B")[0],submode=get(WORK+1,"B")[0],
+                flags=get(WORK+4,"H")[0],angles=list(get(WORK+8,"iii")),rates=list(get(motion+0x6c,"fff")),
+                intensity=get(motion+0xb8,"f")[0],vertical=vertical,height=height,calls=land_calls))
+            if expected_landing[-1]["mode"]==8:
+                assert get(WORK+3,"B")== (0,) and get(WORK+6,"H")== (0,)
+                break
+        assert expected_landing[-1]["mode"]==8
+        request["first_flight"]["landing"]=landing
         req.write_text(json.dumps(request));out=tmp/f"flight{case}.json"
         subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
         replay=json.loads(out.read_text())["replay"]
+        for a,e in zip(replay["landing"],expected_landing,strict=True):assert a==e,(case,a,e)
+        print("landing through mode 8:",len(landing))
         for a,e in zip(replay["aim"],expected_aim,strict=True):assert a==e,(case,a,e)
         print("aim and motion-4 updates matched:",len(aim))
         for a,e in zip(replay["centerApproach"],expected_center,strict=True):assert a==e,(case,a,e)

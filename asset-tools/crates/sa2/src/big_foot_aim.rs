@@ -8,6 +8,7 @@ pub(super) struct Entry {
     pub phase: [i32; 3],
     pub target: [i32; 2],
     pub flags: u16,
+    pub rates: [f32; 3],
 }
 
 #[derive(Deserialize)]
@@ -19,7 +20,7 @@ pub(super) struct Tick {
     difference: Option<i32>,
 }
 
-pub(super) fn run(mut s: Entry, ticks: Vec<Tick>, duration: u16) -> Result<Value> {
+pub(super) fn run(mut s: Entry, ticks: Vec<Tick>, duration: u16) -> Result<(Value, Option<Entry>)> {
     if ticks.len() > 2048 {
         return Err(Error::invalid("too many aim updates"));
     }
@@ -102,5 +103,5 @@ pub(super) fn run(mut s: Entry, ticks: Vec<Tick>, duration: u16) -> Result<Value
         rows.push(json!({"submode":sub,"flags":s.flags,"timer":timer,"angles":s.angles,"phase":s.phase,"target":s.target,
             "velocityXZ":velocity,"accelerationY":ay,"angleCalls":calls,"differenceArgs":diff_args,"motion":motion}));
     }
-    Ok(json!(rows))
+    Ok((json!(rows), (sub == 6).then_some(s)))
 }
