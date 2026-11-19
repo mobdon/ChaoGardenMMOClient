@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sonic Advance · local native stage</title>
+    <link rel="stylesheet" href="/runtime.css">
+    <script type="module" src="/runtime.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#stage">Skip to stage</a>
+    <main>
+      <header>
+        <p class="eyebrow">ASOE · USA revision 0 · Rust / WebAssembly</p>
+        <h1>Sonic Advance</h1>
+        <p class="subtitle">Play the native title sequence and practice either Neo Green Hill act locally.</p>
+      </header>
+
+      <section class="player" aria-labelledby="stage-heading">
+        <div class="player-heading">
+          <h2 id="stage-heading">Neo Green Hill · Act 1</h2>
+          <span id="run-state" class="run-state">No ROM loaded</span>
+        </div>
+        <div class="screen">
+          <canvas id="stage" width="240" height="160" tabindex="0" aria-label="Native Sonic Advance stage. Left and right arrows move; Z or Space jumps; hold Down, tap jump, then release Down to spindash. Enter presses Start on the title screen."></canvas>
+          <p id="empty-state">Choose your local Sonic Advance ASOE ROM to begin.</p>
+        </div>
+        <div class="controls">
+          <label class="file-button" for="rom-file">Choose local ROM</label>
+          <input id="rom-file" type="file" accept=".gba,application/octet-stream" disabled>
+          <label for="practice-act">Screen</label>
+          <select id="practice-act" disabled><option value="title">Title screen</option><option value="0">Neo Green Hill 1</option><option value="1">Neo Green Hill 2</option></select>
+          <button id="pause" type="button" disabled>Resume</button>
+          <button id="reset" type="button" disabled>Reset stage</button>
+        </div>
+        <p id="status" class="status" role="status" aria-live="polite">Loading the local Rust runtime…</p>
+        <p class="keyboard"><kbd>Enter</kbd> Start <span>·</span> <kbd>←</kbd> <kbd>→</kbd> move <span>·</span> <kbd>Z</kbd> / <kbd>Space</kbd> jump <span>&middot;</span> Hold <kbd>&darr;</kbd>, tap jump, then release <kbd>&darr;</kbd> to spindash.</p>
+      </section>
+
+      <section class="details" aria-label="Rust runtime state">
+        <dl>
+          <div><dt>Frame</dt><dd id="frame-value">—</dd></div>
+          <div><dt>Position</dt><dd id="position-value">—</dd></div>
+          <div><dt>Rings</dt><dd id="rings-value">—</dd></div>
+          <div><dt>Action</dt><dd id="action-value">&mdash;</dd></div>
+          <div><dt>Source</dt><dd id="source-value">Awaiting verification</dd></div>
+        </dl>
+      </section>
+
+      <aside class="notes" aria-label="Scope and local privacy">
+        <p><strong>Original data, local only.</strong> Select the exact 8 MiB USA ASOE revision-0 file. Rust verifies its fingerprint. The ROM is read into browser memory; it is never uploaded, cached or written by this page.</p>
+        <p>This solo practice slice uses native stage, collision and sprite resources. Desktop and browser use the same Rust movement. Enemies, bosses, in-game audio and complete act progression remain unfinished.</p>
+        <p>It is separate from the MMO Chao, inventory, rewards and saves. Changing tabs or leaving the window pauses play; return and choose Resume.</p>
+      </aside>
+    </main>
+  </body>
+</html>

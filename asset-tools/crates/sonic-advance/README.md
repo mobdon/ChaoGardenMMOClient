@@ -1,6 +1,6 @@
 # Sonic Advance ASOE asset tools
 
-The native Rust port continuation now includes a runnable first-stage testbed:
+The native Rust port continuation now includes a shared desktop and browser stage runtime:
 [port status and local play commands](docs/PORT-STATUS.md). Full-game parity
 remains unfinished; the existing catalog/decoder evidence below is unchanged.
 

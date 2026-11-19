@@ -4,14 +4,25 @@
 pub mod animation;
 pub mod binary;
 pub mod catalog;
+pub mod entities;
+pub mod flash;
 pub mod garden;
 pub mod graphics;
+pub mod hud;
+pub mod items;
+pub mod music;
 pub mod player;
+pub mod posts;
 pub mod rings;
 pub mod runtime;
+pub mod springs;
 pub mod sprite;
 pub mod stage;
 pub mod tables;
+pub mod tiny_game;
+pub mod tiny_rps;
+pub mod title;
+pub mod transfer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
