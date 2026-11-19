@@ -493,6 +493,16 @@ impl Campaign {
             .chain(&self.demos)
             .find(|d| d.sequence == sequence && d.action_index == ordinal)
     }
+    /// Inspect entry data without loading stage geometry or substituting another character's start.
+    pub fn story_starts(&self) -> Result<Vec<serde_json::Value>> {
+        self.levels.iter().map(|d|{
+            let player=self.physics.get(d.character as usize).ok_or_else(||Error::invalid("unknown story player"))?;
+            let ch=player.character.ok_or_else(||Error::invalid("unnamed story player"))?;
+            let pose=select_pose(&self.positions,d.level,ch,PositionKind::Start,Variant::Single)?;
+            let kart=if d.level==70 {self.kart_routes.get(&d.character)} else {None};
+            Ok(serde_json::json!({"dispatch":d,"characterName":ch,"physicsRowVa":player.source_va,"entryPose":pose,"kartRoute":kart.map(|k|serde_json::json!({"name":k.name,"descriptorRva":k.descriptor_rva}))}))
+        }).collect()
+    }
     pub fn levels(&self) -> &[LevelDispatch] {
         &self.levels
     }
