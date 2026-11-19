@@ -30,16 +30,17 @@ pub struct Update {
     #[serde(skip_serializing_if = "Option::is_none")]
     work_fc: Option<i32>,
     heading: i32,
-    work_68: i32,
+    pub(crate) work_68: i32,
     work_a4: i32,
     vehicle_state: i32,
     local_velocity: [f32; 3],
-    position: [f32; 3],
+    pub(crate) position: [f32; 3],
     math_source: &'static str,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryTick {
+    pub(crate) contact: Option<DriftContact>,
     heading: i32,
     position: [f32; 3],
     velocity: [f32; 3],
@@ -47,6 +48,18 @@ pub(crate) struct StoryTick {
     buttons_held: Option<u32>,
     work_fc: Option<i32>,
     angle_service_return: Option<i32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DriftContact {
+    pub(crate) query: crate::kart_contact::StoryContact,
+    pub(crate) work_28c: i32,
+    pub(crate) work_44: i32,
+}
+impl StoryTick {
+    pub(crate) fn world_velocity(&self) -> [f32; 3] {
+        self.velocity
+    }
 }
 pub(crate) struct DriftCarry {
     work_fc: Option<i32>,

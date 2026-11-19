@@ -742,7 +742,18 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
-            SequenceEvent::DriftTick { drift_tick } => {
+            SequenceEvent::DriftTick { mut drift_tick } => {
+                recovered_pose = None;
+                let mut context = drift_tick.contact.take();
+                if let Some(ctx) = &mut context {
+                    if scan_flag.is_some_and(|flag| flag != ctx.work_44 as u32) {
+                        return Err(Error::invalid("drift contact conflicts with vehicle flag"));
+                    }
+                    if let Some(r) = &mut ctx.query.recovery {
+                        r.bind_progress(route, count)?;
+                    }
+                }
+                let velocity = drift_tick.world_velocity();
                 let state = vehicle
                     .filter(|s| matches!(s, 2 | 3))
                     .ok_or_else(|| Error::invalid("drift tick requires state 2 or 3"))?;
@@ -758,10 +769,34 @@ pub fn story_sequence(
                         state,
                     )?;
                 vehicle = Some(next.state());
-                if vehicle == Some(0) {
+                let mut event = json!({"driftTick":next});
+                if let Some(ctx) = context {
+                    let response = ctx.query.apply(
+                        constants,
+                        bytes,
+                        exe,
+                        next.work_68,
+                        vehicle,
+                        next.position,
+                        velocity,
+                        ctx.work_28c,
+                        ctx.work_44,
+                        mode,
+                    )?;
+                    if let Some(recovered) = response.recovered_progress() {
+                        vehicle = Some(recovered.state);
+                        route = Some(recovered.route);
+                        progressed_route = route;
+                        count = recovered.counter;
+                        crossing_positions = Some(recovered.positions);
+                        recovered_pose = Some(recovered);
+                    }
+                    event["driftContact"] = json!(response);
+                }
+                if !matches!(vehicle, Some(2 | 3)) {
                     windup = None;
                 }
-                updates.push(json!({"driftTick":next}));
+                updates.push(event);
                 continue;
             }
             SequenceEvent::ControllerSample {

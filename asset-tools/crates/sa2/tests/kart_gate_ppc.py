@@ -434,6 +434,17 @@ if len(sys.argv)>4:
             doc=json.loads(out.read_text());active,exit_tick=[doc["updates"][i]["driftTick"] for i in (-3,-1)]
             assert (active["vehicle_state"],active["work_fc"])==(3,96)
             assert (exit_tick["vehicle_state"],exit_tick["work_fc"],doc["vehicleState"])==(0,187,0)
+            # Run contact on a sustained tick, before the separate exit tick.
+            # The native request ends at the drift task position; effects use
+            # world velocity, distinct from the rotated local drift vector.
+            moving["contact"]=dict(work_28c=31,work_44=1,query=dict(previous_position=[9,4,3],
+                result=dict(return_word=1,resolved_position=[8,5,7])))
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-drift-contact.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            event=json.loads(out.read_text())["updates"][-3];collision=event["driftContact"]
+            assert collision["request"]["to"]==event["driftTick"]["position"] and collision["request"]["from"]==[9,4,3]
+            assert collision["response"]["velocity"]==[-1,1,4]
+            assert collision["response"]["calls"][0]["Effect10860"]["velocity"]==[0,0,20]
             q["updates"]=q["updates"][:2]
             q["vehicle_state"]=1
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-wrong-drift-routine.json")
