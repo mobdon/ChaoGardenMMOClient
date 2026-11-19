@@ -280,4 +280,14 @@ if len(sys.argv)>4:
             frames=[v["vehiclePostMove"]["frame"] for v in json.loads(out.read_text())["updates"]]
             assert [[f[k] for k in ("cooldown","work_288","work_108")] for f in frames]==[
                 [2,1,17],[1,0,0],[0,2,9],[0,1,9]]
+            indices=[i for i,r in enumerate(rows) if r[0]&4095==9]
+            pickups=[dict(balloon_reward=dict(placement=i,contact_task=primary,driver=0,work_44=1,clock=1)) for i in indices]
+            q.update(primary_charge=4,updates=pickups)
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-balloon-charge.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());charge=4
+            for i,event in zip(indices,doc["updates"],strict=True):
+                amount=[5,10,20][rows[i][1]-1];charge+=amount
+                assert event["balloonReward"]==dict(placement=i,charge=charge,display=[10,amount])
+            assert doc["primaryCharge"]==charge==(54 if "Rouge" in path.name else 94)
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

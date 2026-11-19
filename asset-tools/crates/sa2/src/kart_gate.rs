@@ -588,6 +588,7 @@ pub struct GateSequence {
     controller_state: ControllerState,
     lap_clock: Option<crate::kart_lap_clock::Clock>,
     vehicle_state: Option<i32>,
+    primary_charge: Option<i32>,
     updates: Vec<SequenceEvent>,
 }
 #[derive(Deserialize)]
@@ -609,6 +610,9 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    BalloonReward {
+        balloon_reward: BalloonReward,
+    },
     SlotProgress {
         slot_progress: SlotTests,
     },
@@ -631,6 +635,15 @@ enum SequenceEvent {
         controller: crate::kart_story_target::ControllerSignals,
         timing: Option<crate::kart_lap_clock::TimingSignals>,
     },
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BalloonReward {
+    placement: usize,
+    contact_task: u32,
+    driver: i32,
+    work_44: Option<u32>,
+    clock: u32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -697,6 +710,7 @@ pub fn story_sequence(
     let mut target_handle = None;
     let mut finish = None;
     let mut timer_words = None;
+    let mut charge = s.primary_charge;
     let mut parent = None;
     let mut crossing_positions = None;
     let mut route = None;
@@ -708,6 +722,54 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::BalloonReward { balloon_reward: v } => {
+                let placement = objects
+                    .placements
+                    .get(v.placement)
+                    .filter(|p| p.object_id == 9)
+                    .ok_or_else(|| Error::invalid("reward placement is not a story balloon"))?;
+                let kind = i32::from(placement.rotation[0] as i16);
+                if !(1..=3).contains(&kind)
+                    || crate::kart_registry::slot(&s.registered_tasks, v.contact_task) != Some(0)
+                {
+                    return Err(Error::invalid(
+                        "expected fixed story balloon and primary kart contact",
+                    ));
+                }
+                if scan_flag.zip(v.work_44).is_some_and(|(a, b)| a != b) {
+                    return Err(Error::invalid(
+                        "balloon vehicle flag conflicts with dispatch",
+                    ));
+                }
+                let flag = scan_flag
+                    .or(v.work_44)
+                    .ok_or_else(|| Error::invalid("missing balloon vehicle flag"))?;
+                let prior =
+                    charge.ok_or_else(|| Error::invalid("missing initial primary charge"))?;
+                let award = crate::kart_balloon::award(
+                    kind,
+                    v.driver,
+                    flag as i32,
+                    prior,
+                    v.clock,
+                    || unreachable!(),
+                )
+                .map_err(Error::invalid)?;
+                let display = match award {
+                    crate::kart_balloon::Award::None => None,
+                    crate::kart_balloon::Award::Charge {
+                        next,
+                        display,
+                        notify,
+                    } => {
+                        charge = Some(next);
+                        Some((display, notify))
+                    }
+                    _ => return Err(Error::invalid("unexpected non-charge story reward")),
+                };
+                updates.push(json!({"balloonReward":{"placement":v.placement,"charge":charge,"display":display}}));
+                continue;
+            }
             SequenceEvent::SlotProgress { slot_progress: v } => {
                 let (piece, course_length) = route
                     .ok_or_else(|| Error::invalid("slot progress requires vehicle route state"))?;
@@ -950,6 +1012,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "primaryRoute":route,"highestCheckpoint":highest,"lapClock":lap,"finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "primaryCharge":charge,"primaryRoute":route,"highestCheckpoint":highest,"lapClock":lap,"finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }
