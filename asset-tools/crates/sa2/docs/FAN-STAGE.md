@@ -379,3 +379,20 @@ below the native fraction of the threshold selects normal state 0. Otherwise
 the next state is 3. These outputs precede separate vehicle collision tasks.
 The PPC comparison exercises 14 state-3 updates in addition to both windups,
 with engine math modeled and the angle service return supplied.
+
+`kart-contact-step CartD.rel OUTPUT.json INPUT.json` builds the movement
+query issued at 0x2d0c after normal or drift motion. It takes the previous
+work position and proposed task position, current velocity, work words
++0x28c and +0x44, and player slot. Without a supplied `result`, it returns
+the query only. With the engine's signed `return_word` and
+`resolved_position`, the next callback copies that position even for a
+zero return, and recomputes velocity from resolved minus previous position.
+The full return word becomes +0x74. Nonzero contact resets +0x28c; a miss
+increments it. First contact after more than 30 missed updates requests the
+original effect and, when +0x44 is nonzero, cue and controller services.
+
+The imported resolver 0x800c1488, later wall response and effect playback
+are not implemented by this command. Static course raycasts do not substitute
+for a movement query. `tests/kart_contact_ppc.py CLI CartD.rel PRIVATE_DIR`
+compares the request bytes, branch choice, outgoing effect arguments and
+state writes against the original callbacks with supplied resolver results.
