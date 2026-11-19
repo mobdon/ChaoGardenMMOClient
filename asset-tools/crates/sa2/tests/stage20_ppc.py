@@ -1218,3 +1218,32 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["splashDisplay"]==dict(calls=draw_calls,materialOffset=0x34b8e,materialWord=get(base[5]+0x34b8e,"H")[0])
 print(idx+1,"splash display call streams and shared material writes matched")
+
+# After the radial loop, the native hook slot gates three more submissions.
+def secondary_rng(cpu,pc,*_):
+    cpu.reg_write(R.UC_PPC_REG_3,next(samples)&0xffffffff)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+def secondary_submit(cpu,pc,*_):
+    pos=cpu.reg_read(R.UC_PPC_REG_3);vec=cpu.reg_read(R.UC_PPC_REG_4)
+    strength=struct.unpack(">d",cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,"big"))[0]
+    submissions.append(dict(local=pc-base[1],position=list(get(pos,"fff")),vectorBits=list(get(vec,"III")),
+                            strengthBits=struct.unpack(">I",struct.pack(">f",strength))[0]))
+    cpu.reg_write(R.UC_PPC_REG_PC,cpu.reg_read(R.UC_PPC_REG_LR))
+for site in (0xce68,0xcefc,0xcf68):
+    u.hook_add(UC_HOOK_CODE,secondary_rng,begin=base[1]+site,end=base[1]+site)
+u.hook_add(UC_HOOK_CODE,secondary_submit,begin=base[1]+0x164bc,end=base[1]+0x164bc)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,(slot,first,second,random) in enumerate([(0,1.,1.,None),(1,2.5,.75,[0,32767,16384]),
+            (0x12345678,-1.25,3.5,[1234,15555,30001]),(1,0.,1.,[-2147483648,2147483647,-32768])]):
+        pos=[-4.5,3.,10.];samples=iter(random or []);submissions=[]
+        put(hook_table+28,"I",slot);put(pose0,"fff",*pos)
+        u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_31,pose0)
+        for reg,val in [(R.UC_PPC_REG_FPR30,first),(R.UC_PPC_REG_FPR31,second)]:
+            u.reg_write(reg,int.from_bytes(struct.pack(">d",val),"big"))
+        u.emu_start(base[1]+0xce44,base[1]+0xcfd8,count=160)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xcfd8 and next(samples,None) is None
+        req=Path(tmp)/"request.json";out=Path(tmp)/f"{idx}.json"
+        req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_secondary=dict(position=pos,first=first,second=second,hook_slot=slot,random=random))))
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())["splashSecondary"]==submissions
+print(idx+1,"secondary splash submission paths matched")

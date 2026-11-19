@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    splash_secondary: Option<SplashSecondary>,
     splash_display: Option<SplashDisplay>,
     splash_update: Option<SplashUpdate>,
     splash_spawn: Option<SplashSpawn>,
@@ -73,6 +74,58 @@ fn splash_spawn(rel: &CityRel<'_>, s: SplashSpawn) -> Result<Value> {
     Ok(
         json!({"create":create,"writes":writes,"continueAt":if s.second>scalar(0xcbe6,4)?{0xcbf4}else{0xcfd8}}),
     )
+}
+/// Tail reached after the radial loop. RNG results are supplied in call order.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashSecondary {
+    position: [f32; 3],
+    first: f32,
+    second: f32,
+    hook_slot: u32,
+    random: Option<[i32; 3]>,
+}
+fn splash_secondary(rel: &CityRel<'_>, s: SplashSecondary) -> Result<Value> {
+    let mut calls = Vec::new();
+    if s.hook_slot != 0 {
+        let random = s
+            .random
+            .ok_or_else(|| Error::invalid("missing splash RNG observations"))?;
+        let scalar = |site| -> Result<f32> {
+            let missing = || Error::invalid("missing secondary splash constant");
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 19 && r.kind == 4 && r.section == 4)
+                .ok_or_else(missing)?;
+            let at = r.addend as usize;
+            Ok(f32::from_be_bytes(
+                rel.data(4)?
+                    .get(at..at + 4)
+                    .ok_or_else(missing)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        let scale = scalar(0xce96)?;
+        let bias = scalar(0xce5e)?;
+        let spread = scalar(0xcea6)?;
+        let r = random.map(|v| v as f32 * scale);
+        let x = [
+            (bias + bias * s.second) + spread * r[0],
+            bias + (scalar(0xcf36)? * s.second + bias * r[1]),
+            bias + (scalar(0xcfa2)? * s.second + spread * r[2]),
+        ];
+        let y = scalar(0xcec6)?;
+        let z = scalar(0xced6)?;
+        for (x, k) in x.into_iter().zip([0xceee, 0xcf5a, 0xcfca]) {
+            calls.push(json!({"local":0x164bc,"position":s.position,"vectorBits":[x.to_bits(),y.to_bits(),z.to_bits()],"strengthBits":(scalar(k)?*s.first).to_bits()}));
+        }
+    } else if s.random.is_some() {
+        return Err(Error::invalid(
+            "inactive splash hook consumes no RNG observations",
+        ));
+    }
+    Ok(json!(calls))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -841,6 +894,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        splash_secondary: secondary,
         splash_display: display,
         splash_update: update,
         splash_spawn: spawn,
@@ -876,6 +930,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(s) = secondary {
+        report["splashSecondary"] = splash_secondary(&rel, s)?;
+    }
     if let Some(s) = display {
         report["splashDisplay"] = splash_display(&rel, s)?;
     }

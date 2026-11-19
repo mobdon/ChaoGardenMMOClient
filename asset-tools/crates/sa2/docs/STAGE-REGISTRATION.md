@@ -95,3 +95,11 @@ of the shared material word with the task counter shifted right by two.
 Supply the current material word when replaying another task sharing that
 material. The registered cleanup callback (0xd2f8) returns immediately.
 The display report describes renderer inputs; pixel output has not been verified.
+
+The optional `splash_secondary` observation begins at 0xce44, after the
+radial emission loop. A zero value in slot 0x1c of the engine hook table
+skips all three submissions. Otherwise, supply three observed signed RNG
+returns in order. The report records each call to the stage task factory
+(0x164bc), with the supplied world position and exact binary32 vector and
+strength arguments. It does not predict the engine RNG, run the preceding
+radial loop, or simulate allocation and subsequent particle updates.
