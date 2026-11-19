@@ -138,3 +138,50 @@ pub fn ring_groups(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<serde_
         "parentRelease":0x80065148u32,"ringCount":total,"groups":groups}),
     )
 }
+
+/// Bind BALOON placement angles to the selector read at task-work +8.
+pub fn balloon_layout(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    crate::kart_progress::verify(module)?;
+    let rel = crate::city_rel::CityRel::read_identified(module, 80)?;
+    let objects = read(exe, set_bytes)?;
+    let invalid = || Error::invalid("mismatched kart balloon registration");
+    let pc = objects.definitions.get(9).ok_or_else(invalid)?;
+    let Some((5, off)) = rel.local_pointer(5, 0x1674)? else {
+        return Err(invalid());
+    };
+    let label = rel
+        .data(5)?
+        .get(off as usize..)
+        .and_then(|s| std::ffi::CStr::from_bytes_until_nul(s).ok());
+    if pc.name != "BALOON"
+        || label.map(|s| s.to_bytes()) != Some(b"BALOON")
+        || rel.local_pointer(5, 0x1670)? != Some((1, 0xa138))
+    {
+        return Err(invalid());
+    }
+    let mut rows = Vec::new();
+    for (i, p) in objects
+        .placements
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.object_id == 9)
+    {
+        let kind = i32::from(p.rotation[0] as i16);
+        // All pinned story placements have fixed awards; do not draw hypothetical RNG.
+        let charge = match kind {
+            1..=3 => match crate::kart_balloon::award(kind, 0, 1, 0, 0, || unreachable!())
+                .map_err(Error::invalid)?
+            {
+                crate::kart_balloon::Award::Charge { next, .. } => Some(next),
+                _ => return Err(invalid()),
+            },
+            _ => None,
+        };
+        rows.push(json!({"placement":i,"setOffset":32+i*32,"source":p,"selector":kind,"fixedCharge":charge}));
+    }
+    Ok(
+        json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set_bytes),
+        "pcCallbackVa":pc.function_va,"relCallback":0xa138,"balloons":rows}),
+    )
+}
