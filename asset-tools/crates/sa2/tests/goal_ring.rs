@@ -48,7 +48,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 11];
+    let mut counts = [0; 12];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     let variants = [13, 16, 18]
@@ -75,6 +75,15 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "Z" {
+            assert_eq!(
+                program
+                    .child_start(n(1) as i8, serde_json::from_str(v[2]).unwrap())
+                    .unwrap(),
+                serde_json::from_str::<serde_json::Value>(v[3]).unwrap(),
+                "{line}"
+            );
+            counts[11] += 1;
         } else if v[0] == "P" || v[0] == "Y" {
             let obs = serde_json::from_str(v[1]).unwrap();
             assert_eq!(
@@ -281,7 +290,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176]);
+    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176, 1280]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]
@@ -347,8 +356,10 @@ fn mounted_goal_cli() {
     assert_eq!(v["frames"][2]["calls"], serde_json::json!(["Register"]));
     assert_eq!(run("349").unwrap()["replay"]["init"], "ChildTask");
     assert!(run("7").is_none());
-    fs::write(&request,r#"{"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"}],"child":{"existing":false,"allocation":true,"linked_after":true},"child_dispatch":{"mode":0,"byte1":1}}"#).unwrap();
+    fs::write(&request,r#"{"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"}],"child":{"existing":false,"allocation":true,"linked_after":true},"child_dispatch":{"mode":0,"byte1":1,"start":{"work32":2.0,"task_link":false,"parent_link":false,"query_returns":[]}}}"#).unwrap();
     let child = run("349").unwrap();
+    assert_eq!(child["replay"]["childDispatch"]["start"]["mode"], 1);
+    assert_eq!(child["replay"]["childDispatch"]["start"]["task60"], 2);
     assert_eq!(child["replay"]["childDispatch"]["rangeChecked"], false);
     assert!(child["replay"]["childDispatch"]["taskCall"]["local"].is_u64());
     let mut inputs = vec![serde_json::json!({"kind":"none"}); 64];

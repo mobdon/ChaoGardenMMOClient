@@ -690,3 +690,58 @@ for before,slot in itertools.product(range(11),(0,1)):
         if after==2 and flags==0:
             obs["activation"]["action_links"]=dict(byte1=byte1,parent_link=parent if byte1 else None,task_link=None if byte1 and parent else linked)
         print('Y',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
+
+# Mode zero: relocate the installed callback and observe its calls and task writes.
+entry=0x2fbe8
+block=bytearray(d[ss[1][0]+entry:ss[1][0]+entry+0x200])
+cpu=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+cpu.mem_map(BASE,0x1000);cpu.mem_map(TASK,0x2000)
+bases={1:BASE,4:DATA,5:DATA+0x100000}
+imports={}
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not entry<=off<entry+len(block):continue
+        if module==0:
+            assert kind==10
+            imports[BASE+off-entry]=val
+        else:
+            assert module==12 and kind in (4,6)
+            val+=bases[s]
+            struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
+for s,off,size in [(4,0xcf0,4),(5,0x2216e8,88)]:
+    addr=bases[s]+off
+    cpu.mem_map(addr&~4095,4096)
+    cpu.mem_write(addr,d[ss[s][0]+off:ss[s][0]+off+size])
+cpu.mem_write(BASE,bytes(block));cpu.reg_write(R.UC_PPC_REG_MSR,8192)
+def start_service(cpu,pc,*_):
+    addr=imports[pc]
+    args=[cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i))) for i in range(3,7)]
+    target={TASK:'task',TASK+0x600:'parent'}[args[0]]
+    event=[addr,target]
+    if addr in (0x800651e4,0x8006519c):
+        answer=(mask>>len(answers))&1
+        answers.append(answer);cpu.reg_write(R.UC_PPC_REG_3,answer)
+    elif addr==0x8000f7d8:event.extend([args[1]-bases[5],*args[2:]])
+    else:assert addr==0x80018d28
+    calls.append(event);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in imports:cpu.hook_add(UC_HOOK_CODE,start_service,begin=pc,end=pc)
+for selector,(byte1,linked,parent),mask in itertools.product(
+        [-3.5,2.,4.75,10.,16.],[(0,0,0),(1,1,0),(-1,0,1),(1,1,1)],range(64)):
+    cpu.mem_write(TASK,bytes(0x800))
+    for off,val in [(52,WORK),(8,TASK+0x600),(48,linked),(0x630,parent)]:
+        cpu.mem_write(TASK+off,struct.pack('>I',val))
+    cpu.mem_write(WORK+1,struct.pack('>b',byte1));cpu.mem_write(WORK+32,struct.pack('>f',selector))
+    calls=[];answers=[]
+    cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,TASK);cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x300)
+    cpu.emu_start(BASE,BASE+0x300,count=400)
+    assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x300
+    word_at=lambda ptr:struct.unpack('>I',cpu.mem_read(ptr,4))[0]
+    result=dict(mode=cpu.mem_read(WORK,1)[0],task60=word_at(TASK+60),work36Bits=word_at(WORK+36),
+                work40Bits=word_at(WORK+40),calls=calls,callbacks20_24_32=[word_at(TASK+i)-BASE for i in (20,24,32)])
+    obs=dict(work32=selector,task_link=bool(linked),parent_link=bool(parent),query_returns=answers)
+    print('Z',byte1,json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))

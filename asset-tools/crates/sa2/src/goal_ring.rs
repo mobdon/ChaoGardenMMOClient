@@ -23,6 +23,8 @@ pub struct Program {
     #[serde(skip)]
     child_mode_one: [f32; 4],
     #[serde(skip)]
+    child_start_data: [u32; 3],
+    #[serde(skip)]
     child_idle_step: f32,
     #[serde(skip)]
     child_actions: Vec<(u32, u32)>,
@@ -793,6 +795,51 @@ impl Program {
                 .ok_or_else(invalid)
         };
         let child_helpers = [branch(0xd4)?, branch(0x174)?];
+        let zero = child_handlers[0];
+        if manifest::sha256(
+            instructions
+                .get(zero as usize..zero as usize + 0x200)
+                .ok_or_else(invalid)?,
+        ) != "7a15b3e684e484e0e8b943be392e32f4ff438f4b1669966f0fb7e43cc004c930"
+        {
+            return Err(invalid());
+        }
+        let reference = |off, section| {
+            rel.reference(1, zero + off)
+                .filter(|r| r.module == info.module && r.section == section && r.kind == 4)
+                .map(|r| r.addend)
+                .ok_or_else(invalid)
+        };
+        if reference(0xee, 5)? != table
+            || reference(0x1ca, 1)? != child_handlers[4]
+            || reference(0x1d6, 1)? != child_callbacks[0]
+            || reference(0x1e2, 1)? != child_callbacks[1]
+        {
+            return Err(invalid());
+        }
+        let child_start_data = [
+            word(rel.data(4)?, reference(0x2a, 4)? as usize)?,
+            reference(0x18a, 5)?,
+            reference(0x1ae, 5)?,
+        ];
+        for (off, addr) in [
+            (0x88, 0x800651e4),
+            (0x98, 0x8006519c),
+            (0xc4, 0x800651e4),
+            (0xd4, 0x8006519c),
+            (0x148, 0x800651e4),
+            (0x174, 0x800651e4),
+            (0x194, 0x8000f7d8),
+            (0x1b8, 0x8000f7d8),
+            (0x1c0, 0x80018d28),
+        ] {
+            if !rel
+                .reference(1, zero + off)
+                .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == addr)
+            {
+                return Err(invalid());
+            }
+        }
         let one = child_handlers[1];
         if manifest::sha256(
             instructions
@@ -950,6 +997,7 @@ impl Program {
             child_callbacks,
             child_handlers,
             child_mode_one,
+            child_start_data,
             child_idle_step,
             child_actions,
             action_services,
@@ -1384,6 +1432,50 @@ impl Program {
             Ok(json!({"calls":calls,"playerIndex":slot,"continueAt":self.child_handlers[2]+0x94}))
         }
     }
+    pub fn child_start(&self, byte1: i8, input: ChildStart) -> Result<Value> {
+        if byte1 == 0 && input.parent_link {
+            return Err(Error::invalid(
+                "parent link unavailable for standalone child",
+            ));
+        }
+        let mut answers = input.query_returns.into_iter();
+        let mut calls = Vec::new();
+        let mut query = |addr: u32, target: &str| -> Result<bool> {
+            let answer = answers
+                .next()
+                .ok_or_else(|| Error::invalid("missing child initialization query return"))?;
+            calls.push(json!([addr, target]));
+            Ok(answer != 0)
+        };
+        let mut index = (input.work32 as i32).clamp(0, 10) as usize;
+        let parent = byte1 != 0 && input.parent_link;
+        let special =
+            (input.task_link && !query(0x800651e4, "task")? && query(0x8006519c, "task")?)
+                || (parent && !query(0x800651e4, "parent")? && query(0x8006519c, "parent")?);
+        if special && self.child_actions[index].0 == 10 {
+            if let Some(i) = self.child_actions.iter().position(|a| a.0 == 7) {
+                index = i;
+            }
+        }
+        let alt = (input.task_link && query(0x800651e4, "task")?)
+            || (parent && query(0x800651e4, "parent")?);
+        if answers.next().is_some() {
+            return Err(Error::invalid("unused child initialization query returns"));
+        }
+        let [initial, alternate, regular] = self.child_start_data;
+        calls.push(json!([
+            0x8000f7d8u32,
+            "task",
+            if alt { alternate } else { regular },
+            2,
+            if alt { 4 } else { 2 }
+        ]));
+        calls.push(json!([0x80018d28u32, "task"]));
+        Ok(
+            json!({"mode":if alt{4}else{1},"task60":index,"work36Bits":initial,"work40Bits":initial,"calls":calls,
+            "callbacks20_24_32":[self.child_callbacks[0],self.child_handlers[4],self.child_callbacks[1]]}),
+        )
+    }
     pub fn child_dispatch(&self, mode: i8, byte1: i8, range_out: Option<bool>) -> Result<Value> {
         if (byte1 == 0) != range_out.is_some() {
             return Err(Error::invalid(
@@ -1484,7 +1576,16 @@ pub struct ChildIdle {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ChildStart {
+    pub work32: f32,
+    pub task_link: bool,
+    pub parent_link: bool,
+    pub query_returns: Vec<i32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ChildDispatch {
+    start: Option<ChildStart>,
     contact: Option<ChildContact>,
     mode_one: Option<ModeOneInput>,
     mode: i8,
@@ -1560,6 +1661,12 @@ pub fn replay(
                     return Err(Error::invalid("contact requires an active mode-2 handler"));
                 }
                 report["contact"] = p.child_contact(c)?;
+            }
+            if let Some(input) = d.start {
+                if d.mode != 0 || d.range_out == Some(true) {
+                    return Err(Error::invalid("initialization requires active mode 0"));
+                }
+                report["start"] = p.child_start(d.byte1, input)?;
             }
             if let Some(input) = d.mode_one {
                 if d.mode != 1 || d.range_out == Some(true) {

@@ -185,3 +185,5 @@ SHA-256 of the prepared stream without exporting its contents. City Escape's
 32 vertices yield 524 bytes. The comparator executes the installed preparation
 routine, checks its return and the guard words around its output, and compares
 the full stream digest. Color computation, renderer and pixels remain unverified.
+
+Child mode zero reads its selector from work offset 32. The installed City Escape callback is executed in the local PPC comparison: Rust must match the selected index, initial mode, two scalar writes, three installed callbacks, and ordered service calls including collision descriptor and arguments. Task and parent queries are independent observations; a later call may return a different value. Engine service implementations and subsequent mode-four behavior are outside this comparison. Green Forest placement 349 also exercises the regular initialization path through the mounted CLI.
