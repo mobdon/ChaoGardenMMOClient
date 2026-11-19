@@ -24,7 +24,7 @@ word = lambda i: struct.unpack_from(">I", data, i)[0]
 section = lambda n: (word(word(16) + 8 * n) & ~1, word(word(16) + 8 * n + 4))
 code, code_size = section(1)
 
-relocs = {}
+relocs, data_relocs = {}, {}
 imp_off, imp_size = struct.unpack_from(">II", data, 0x28)
 for i in range(imp_off, imp_off + imp_size, 8):
     mod, off = struct.unpack_from(">II", data, i)
@@ -39,12 +39,14 @@ for i in range(imp_off, imp_off + imp_size, 8):
             sec, pos = s, 0
         elif t != 201 and sec == 1:
             relocs[pos] = (t, mod, s, add)
+        elif t != 201:
+            data_relocs[(sec, pos)] = (t, mod, s, add)
 
 CODE, RETURN, STACK = 0x100000, 0x0FFFF0, 0x0F0000
 cpu = Uc(UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN)
 cpu.mem_map(0, 0x200000)
 cpu.reg_write(R.UC_PPC_REG_MSR, cpu.reg_read(R.UC_PPC_REG_MSR) | 0x2000)
-RANGES = [(0x40CC, 0x4158), (0xEB38, 0xEC04), (0xEE8C, 0xF070)]
+RANGES = [(0x40CC, 0x4158), (0xEB38, 0xEC04), (0xEE8C, 0xF3F8)]
 windows, imports = {}, {}
 for a, b in RANGES:
     cpu.mem_write(CODE + a, data[code + a:code + b])
@@ -65,10 +67,19 @@ for at, (t, mod, s, add) in sorted(relocs.items()):
     half = ((dest + 0x8000) >> 16) if t == 6 else dest & 0xFFFF
     cpu.mem_write(CODE + at, struct.pack(">H", half & 0xFFFF))
 
+# The timed-voice jump table (section 5 + 0x40008) holds relocated code
+# addresses; point them at the emulated copy of section 1.
+JUMPS = windows[(88, 5, 0x40008)]
+for pos in range(0x40008, 0x40030, 4):
+    t, mod, s, add = data_relocs[(5, pos)]
+    assert (t, mod, s) == (1, 88, 1), (hex(pos), t, mod, s)
+    cpu.mem_write(JUMPS + pos - 0x40008, struct.pack(">I", CODE + add))
 VOICE = windows[(0, 9, 0x803AD3D0)]
+GLOBAL = windows[(0, 6, 0x801CBD88)]
+VECTOR = windows[(88, 4, 0x560)]
 WORKPTR = windows[(88, 6, 0x4A8)]
 PRESENT, PLAYER1 = windows[(0, 7, 0x801E7388)], windows[(0, 7, 0x801E7368)]
-CHANNELS, WORK, P1 = 0x80000, 0x81000, 0x82000
+CHANNELS, WORK, P1, TASK = 0x80000, 0x81000, 0x82000, 0x83000
 cpu.mem_write(WORKPTR, struct.pack(">I", WORK))
 for s in range(2):
     cpu.mem_write(PLAYER1 + 4 * s, struct.pack(">I", P1 + 0x100 * s))
@@ -81,11 +92,20 @@ def hook(u, pc, size, _):
     if pc == RETURN:
         u.emu_stop()
         return
+    if off == 0xF3DC:  # local voice-task helper 0x18ed0
+        assert u.reg_read(R.UC_PPC_REG_8) == TASK
+        events.append(dict(site=off, local=0x18ED0,
+                           args=[u.reg_read(getattr(R, f"UC_PPC_REG_{n}")) for n in (4, 5, 6, 7)],
+                           vector=list(struct.unpack(">3f", u.mem_read(u.reg_read(R.UC_PPC_REG_3), 12)))))
+        u.reg_write(R.UC_PPC_REG_PC, pc + 4)
+        return
     if off not in imports:
         return
     target = imports[off]
-    if target in (0x8010AC70, 0x8010ACBC):  # save/restore FPR helpers
+    if target in (0x8010AC70, 0x8010ACBC, 0x8010AC80, 0x8010ACCC):  # register save/restore
         pass
+    elif target == 0x80071878:  # release the task's held object
+        events.append(dict(site=off, call=target, args=[u.reg_read(R.UC_PPC_REG_3)]))
     elif target == 0x8011B314:  # distance(a, b)
         vec = lambda p: list(struct.unpack(">3f", u.mem_read(p, 12)))
         events.append(dict(site=off, call=target, vectors=[vec(u.reg_read(R.UC_PPC_REG_3)),
@@ -106,7 +126,9 @@ def hook(u, pc, size, _):
 cpu.hook_add(UC_HOOK_CODE, hook)
 
 
-def call(entry):
+def call(entry, r3=0, r4=0):
+    cpu.reg_write(R.UC_PPC_REG_3, r3)
+    cpu.reg_write(R.UC_PPC_REG_4, r4)
     cpu.reg_write(R.UC_PPC_REG_1, STACK)
     cpu.reg_write(R.UC_PPC_REG_LR, RETURN)
     cpu.emu_start(CODE + entry, RETURN + 4, count=5000)
@@ -177,6 +199,46 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
         assert rev == events, (n, got, events)
         clamps += sum(e.get("radial_clamp", False) for e in got["events"])
         arena_cases += 1
-assert clamps > 50, clamps
-print(f"{gate_cases} voice gate and {arena_cases} arena clamp PPC comparisons passed "
-      f"({clamps} radial clamps)")
+    # Timed voice lines: every line index, frames around each threshold.
+    voice_cases, spoken, deferred = 0, 0, 0
+    thresholds = (1800, 3600, 5400, 7200, 9000, 10800, 12600, 14400, 16200, 17400)
+    for n in range(3000):
+        line = rng.choice(list(range(-1, 11)) + [5, 6, 7])
+        t = thresholds[line] if 0 <= line <= 9 else 1800
+        frame = rng.choice((t - 4, t - 1, t, t + 1, t + 4, t + 8, 0, 20000, -4))
+        player = rng.choice((0, 1, 1, -1))
+        countdown = rng.choice((0, 0, 0, 1, -3))
+        g42, g43 = rng.choice(((0, 0), (0, 0), (0, 0), (1, 0), (0, 1), (2, 2)))
+        task_0c = rng.choice((0, 0, 0, 0x9100))
+        busy = rng.random() < 0.3
+        if rng.random() < 0.2:
+            channels = None
+            cpu.mem_write(VOICE, struct.pack(">I", 0))
+        else:
+            channels = [dict(state=rng.choice((1, 6) if busy else (0, 5, -1)),
+                             category=rng.choice((3, 2))) for _ in range(2)]
+            cpu.mem_write(VOICE, struct.pack(">I", CHANNELS))
+            for i, ch in enumerate(channels):
+                cpu.mem_write(CHANNELS + 0x1C * i + 0x30, struct.pack(">i", ch["state"]))
+                cpu.mem_write(CHANNELS + 0x1C * i + 0x25, struct.pack(">b", ch["category"]))
+        cpu.mem_write(WORK, struct.pack(">b", player))
+        cpu.mem_write(WORK + 6, struct.pack(">b", line))
+        cpu.mem_write(WORK + 0xE, struct.pack(">h", countdown))
+        cpu.mem_write(GLOBAL + 0x7C, struct.pack(">i", frame))
+        cpu.mem_write(GLOBAL + 0x42, bytes([g42, g43]))
+        cpu.mem_write(TASK + 0xC, struct.pack(">I", task_0c))
+        events = []
+        call(0xF070, TASK, WORK)
+        native_line = struct.unpack(">b", cpu.mem_read(WORK + 6, 1))[0]
+        got = rust(p, 5000 + n, dict(path="timed_voice", player=player, countdown=countdown,
+                                     line=line, global_7c=frame, global_42=g42, global_43=g43,
+                                     task_0c=task_0c, channels=channels))
+        assert got["line"] == native_line, (n, got, native_line)
+        assert got["events"] == events, (n, got, events)
+        spoken += got["spoke"]
+        deferred += got["voice"] is not None and not got["spoke"]
+        voice_cases += 1
+assert clamps > 50 and spoken > 50 and deferred > 50, (clamps, spoken, deferred)
+print(f"{gate_cases} voice gate, {arena_cases} arena clamp and {voice_cases} timed voice "
+      f"PPC comparisons passed ({clamps} radial clamps, {spoken} lines spoken, "
+      f"{deferred} deferred)")

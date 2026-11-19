@@ -893,6 +893,21 @@ pub enum PlacementClock {
     VoiceGate {
         channels: Option<[VoiceChannel; 2]>,
     },
+    /// Section 1 + 0xf070: the timed boss voice lines, called every frame
+    /// from the shared tail with the stage task and its work block.
+    TimedVoice {
+        /// Work byte 0 (active player), short 0xe (countdown), byte 6 (next line).
+        player: i8,
+        countdown: i16,
+        line: i8,
+        /// Engine global 0x801cbd88: word 0x7c (frame count), bytes 0x42/0x43.
+        global_7c: i32,
+        global_42: i8,
+        global_43: i8,
+        /// Word 0xc of the stage task.
+        task_0c: u32,
+        channels: Option<[VoiceChannel; 2]>,
+    },
     /// Section 1 + 0xee8c: per-frame arena bounds for both players.
     ArenaClamp {
         switch_state: i8,
@@ -2054,6 +2069,68 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 serde_json::json!({"frames":out,"player":player,"switch_state":switch_state,
                 "timer":timer,"countdown":countdown,"returned_to_normal_dispatch":switch_state==0,
                 "scope":"Handoff frames 0xf458..0xff34 with engine and local calls observed; their effects are external."}),
+            );
+        }
+        PlacementClock::TimedVoice {
+            player,
+            countdown,
+            mut line,
+            global_7c,
+            global_42,
+            global_43,
+            task_0c,
+            channels,
+        } => {
+            let mut events = Vec::new();
+            let release = |events: &mut Vec<serde_json::Value>, site: u32| -> Result<bool> {
+                if task_0c != 0 {
+                    events.push(serde_json::json!({"site":site,"call":engine_import(&rel, site)?,"args":[task_0c]}));
+                }
+                Ok(task_0c != 0)
+            };
+            let mut voice = None;
+            if global_42 == 1 || global_43 == 1 {
+                release(&mut events, 0xf0e8)?;
+            } else if countdown <= 0 && global_7c & 3 == 0 && (0..=9).contains(&line) {
+                // Jump table (section 5 + 0x40008) of ten threshold cases:
+                // cmpwi frame,T at +0, li r31,a at +0x18, li r31,b at +0x20.
+                let at = 0x40008 + 4 * line as u32;
+                let case = rel
+                    .reference(5, at)
+                    .filter(|r| r.module == 88 && r.section == 1 && r.kind == 1)
+                    .ok_or_else(|| Error::invalid("missing voice line jump target"))?
+                    .addend as usize;
+                if global_7c >= word(case) as i16 as i32 {
+                    voice = Some(word(case + if player == 0 { 0x18 } else { 0x20 }) as i16);
+                    line += 1;
+                }
+            }
+            let mut spoke = false;
+            if let Some(v) = voice {
+                // Inline channel scan: busy category-3 voices are stopped and
+                // defer the line; other busy channels are ignored.
+                let mut clear = true;
+                for (i, ch) in channels.iter().flatten().enumerate() {
+                    if !matches!(ch.state, 5 | 0 | -1) && ch.category == 3 {
+                        events.push(serde_json::json!({"site":0xf380,"call":engine_import(&rel, 0xf380)?,"args":[i]}));
+                        clear = false;
+                    }
+                }
+                if release(&mut events, 0xf3a4)? {
+                    clear = false;
+                }
+                if clear {
+                    events.push(serde_json::json!({"site":0xf3dc,"local":0x18ed0,
+                        "args":[0,0,v,1],"vector":[stage_f32(&rel, 0xf08e, 4, 0)?,
+                        stage_f32(&rel, 0xf08e, 4, 4)?, stage_f32(&rel, 0xf08e, 4, 8)?]}));
+                    spoke = true;
+                } else {
+                    line = line.wrapping_sub(1);
+                }
+            }
+            return Ok(
+                serde_json::json!({"line":line,"voice":voice,"spoke":spoke,"events":events,
+                "scope":"Line selection and gating; the 0x18ed0 voice task is created by engine code."}),
             );
         }
         PlacementClock::VoiceGate { channels } => {
