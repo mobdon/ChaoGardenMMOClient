@@ -210,11 +210,28 @@ struct Controller {
 #[serde(deny_unknown_fields)]
 struct StateTwo {
     decision: SteeringDecision,
+    after_steering: Option<AfterSteering>,
     slot0: [f32; 3],
     slot1: [f32; 3],
     angle_return: f64,
     slot_byte: i8,
     turn: Option<TurnObservation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AfterSteering {
+    pose_word: u16,
+    scalar: f32,
+    counter: i16,
+    limit: i16,
+    range: Option<RangeObservation>,
+    draw: Option<i32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RangeObservation {
+    slot0_byte: i8,
+    distance_return: f64,
 }
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -412,6 +429,51 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
             "turnArgs":turn_args,"yaw":yaw,"scalar":number(4,field(scalar_site,4)?)?});
         if let Some(trace) = decision_trace {
             report["decision"] = trace;
+        }
+        if let Some(a) = v.after_steering {
+            let f = |site| number(4, field(site, 4)?);
+            let mut counter = a.counter;
+            let mut pulse = false;
+            let mut next = 0x1424;
+            let mut draw_used = false;
+            if v.slot_byte == 6 && a.pose_word != 0 && a.scalar < f(0xbf6)? {
+                if a.range.is_some() {
+                    return Err(invalid());
+                }
+                mode = 8;
+                counter = 0;
+            } else {
+                let r = a.range.ok_or_else(invalid)?;
+                if (r.slot0_byte == 7 && r.distance_return < f64::from(f(0x2ba)?))
+                    || r.distance_return <= f64::from(f(0x2d6)?)
+                {
+                    next = 0x640;
+                } else {
+                    let sites = match v.slot_byte {
+                        6 if counter & 31 == 0 => Some((0xc8e, 0xc9e)),
+                        7 if counter & 63 == 0 => Some((0xcfa, 0xd0a)),
+                        _ => None,
+                    };
+                    if let Some((scale, threshold)) = sites {
+                        draw_used = true;
+                        pulse = (a.draw.ok_or_else(invalid)? as f32) * f(scale)? < f(threshold)?;
+                    }
+                    if !pulse && counter > a.limit {
+                        next = 0xd48;
+                    }
+                }
+            }
+            if !draw_used && a.draw.is_some() {
+                return Err(invalid());
+            }
+            report["continueAt"] = json!(next);
+            report["mode"] = json!(mode);
+            report["counter"] = json!(counter);
+            report["byteWrites"] = json!(if pulse {
+                vec![0x803ad485u32, 0x803ad495]
+            } else {
+                vec![]
+            });
         }
     }
     if let Some(v) = c.state_eight {

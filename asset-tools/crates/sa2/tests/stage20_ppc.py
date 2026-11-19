@@ -414,3 +414,47 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=0xbd0,mode=2,
                     angleArgs=args,turnArgs=turn_args or None,yaw=yaw,scalar=scalar,decision=trace)
 print(idx,"integrated walker steering decisions matched")
+
+# Run the steering block together with its following range, timer and pulse branches.
+run_native_decision=False
+def range_service(cpu,pc,*_):
+    site=pc-base[1]
+    if site==0x294:
+        assert [cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i))) for i in (3,4)]==[pose0+20,pose1+20]
+        observed["distance"]=True
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",dist),"big"))
+    else:
+        observed["draw"]=True
+        cpu.reg_write(R.UC_PPC_REG_3,draw&0xffffffff)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x294,0xc60,0xccc):
+    u.hook_add(UC_HOOK_CODE,range_service,begin=base[1]+site,end=base[1]+site)
+def stop_at_branch(cpu,pc,*_):cpu.emu_stop()
+for site in (0x640,0xd48):u.hook_add(UC_HOOK_CODE,stop_at_branch,begin=base[1]+site,end=base[1]+site)
+cases=[(6,6,1,4.99,200,1,0,0)]
+cases += [(6,slot0,1,5.,dist,1,0,0) for slot0 in (6,7) for dist in (69.9,70.,70.1,99.9,100.)]
+cases += [(slot,6,0,0.,120.,ctr,limit,draw) for slot,ctr in ((6,-32),(7,64),(7,32),(-1,0))
+          for limit in (ctr-1,ctr) for draw in (0,16384,26214,26215)]
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,(slot,slot0,pose,scalar,dist,ctr,limit,draw) in enumerate(cases):
+        mode=(2,10)[idx%2];decision=1;angle=-0.25;args=[];turn_args=[];observed={}
+        put(work,"bbhh",mode,0,ctr,limit);put(player0+1,"b",slot0);put(player1+1,"b",slot)
+        put(pose1+6,"H",pose);put(player1+72,"f",scalar)
+        for addr in pulse_bytes:put(addr,"B",0)
+        for r,vv in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work)]:
+            u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),vv)
+        u.emu_start(base[1]+0xad4,base[1]+0x1424,count=250)
+        dest=u.reg_read(R.UC_PPC_REG_PC)-base[1];assert dest in (0x640,0xd48,0x1424)
+        a=dict(pose_word=pose,scalar=scalar,counter=ctr,limit=limit)
+        if "distance" in observed:a["range"]=dict(slot0_byte=slot0,distance_return=dist)
+        if "draw" in observed:a["draw"]=draw
+        v=dict(decision=1,slot0=p0,slot1=p1,angle_return=angle,slot_byte=slot,after_steering=a)
+        c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        yaw,scalar_out=get(0x801e5000,"if")
+        assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=dest,mode=get(work,"b")[0],
+            angleArgs=args,turnArgs=None,yaw=yaw,scalar=scalar_out,counter=get(work+2,"h")[0],
+            byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
+print(len(cases),"post-steering range and timer paths matched")
