@@ -53,9 +53,18 @@ enum AudioDispatch {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryTick {
+    pub(crate) after_movement: Option<AfterMovement>,
     position: Option<[f32; 3]>,
     angles: Option<[i32; 3]>,
     globals: Option<[i32; 2]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AfterMovement {
+    pub(crate) velocity: [f32; 3],
+    pub(crate) audio: Option<crate::kart_drive_input::StoryVehicleAudio>,
+    pub(crate) magnitude_return: Option<f32>,
+    pub(crate) contact: Option<crate::kart_drift::DriveContact>,
 }
 impl StoryTick {
     pub(crate) fn advance(
@@ -106,6 +115,9 @@ impl StoryTick {
     }
 }
 impl Update {
+    pub(crate) fn position(&self) -> [f32; 3] {
+        self.state.position
+    }
     pub(crate) fn state(&self) -> i32 {
         self.state.vehicle_state
     }

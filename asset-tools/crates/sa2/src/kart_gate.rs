@@ -796,10 +796,11 @@ pub fn story_sequence(
                     .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
                 continue;
             }
-            SequenceEvent::ScriptedTick { scripted_tick } => {
+            SequenceEvent::ScriptedTick { mut scripted_tick } => {
                 let state = vehicle
                     .ok_or_else(|| Error::invalid("missing vehicle state for scripted update"))?;
-                snapshot = None;
+                let start = snapshot.take();
+                let tail = scripted_tick.after_movement.take();
                 let pose = inherited_pose.take().map(|(p, _, a)| (p, a));
                 let r = scripted_tick.advance(&rel, state, pose, scripted_globals)?;
                 scripted_globals = Some(r.globals());
@@ -811,7 +812,57 @@ pub fn story_sequence(
                 completed_pose = None;
                 recovered_pose = None;
                 sample = None;
-                updates.push(json!({"scriptedTick":r}));
+                let mut event = json!({"scriptedTick":r});
+                if let Some(tail) = tail {
+                    if let Some(a) = tail.audio {
+                        if scan_flag.is_some_and(|v| v != a.work_44 as u32)
+                            || tail
+                                .contact
+                                .as_ref()
+                                .is_some_and(|c| c.work_44 != a.work_44)
+                        {
+                            return Err(Error::invalid(
+                                "scripted audio conflicts with vehicle flag",
+                            ));
+                        }
+                        event["scriptedAudio"] = json!(a.run(
+                            &rel,
+                            mode,
+                            r.state(),
+                            r.position(),
+                            tail.velocity,
+                            tail.magnitude_return
+                        )?);
+                    }
+                    if let Some(mut c) = tail.contact {
+                        if c.query.recovery.is_some() {
+                            return Err(Error::invalid("scripted dispatch skips fall recovery"));
+                        }
+                        if scan_flag.is_some_and(|v| v != c.work_44 as u32) {
+                            return Err(Error::invalid(
+                                "scripted contact conflicts with vehicle flag",
+                            ));
+                        }
+                        c.query
+                            .bind_origin(start.and_then(|v| v.primary_update_position))?;
+                        let response = c.query.apply(
+                            constants,
+                            bytes,
+                            exe,
+                            0,
+                            vehicle,
+                            r.position(),
+                            tail.velocity,
+                            c.work_28c,
+                            c.work_44,
+                            mode,
+                            crate::kart_fall_recovery::ImpactCheck::Skip,
+                        )?;
+                        vehicle = response.wall_state().or(vehicle);
+                        event["scriptedContact"] = json!(response);
+                    }
+                }
+                updates.push(event);
                 continue;
             }
             SequenceEvent::SpinTick { mut spin_tick } => {
@@ -841,7 +892,8 @@ pub fn story_sequence(
                     {
                         return Err(Error::invalid("spin audio conflicts with vehicle flag"));
                     }
-                    event["spinAudio"] = json!(a.run(&rel, mode, &r, velocity, magnitude)?);
+                    event["spinAudio"] =
+                        json!(a.run(&rel, mode, r.state(), r.position(), velocity, magnitude)?);
                 }
                 if let Some(mut ctx) = context {
                     if scan_flag.is_some_and(|flag| flag != ctx.work_44 as u32) {

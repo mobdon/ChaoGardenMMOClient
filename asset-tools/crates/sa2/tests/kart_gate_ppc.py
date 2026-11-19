@@ -185,6 +185,31 @@ if len(sys.argv)>4:
             assert (last["vehicle_state"],last["global_21760"],last["global_22494"])==(0,122,0)
             assert last["position"]==[9,8,-3] and last["angles"]==[4,5,6] and seq["vehicleState"]==0
             assert [seq["updates"][i]["boostTick"]["boost"]["work_dc"] for i in (0,-1)]==[2,0]
+            # Both scripted arms call sound before contact. State 9's exit
+            # still takes this same contact path but plays state 0 driving cues.
+            for i in (1,2):
+                sc=nine["updates"][i]["scripted_tick"]
+                sc["after_movement"]=dict(velocity=[3,0,4],magnitude_return=5,
+                    audio=dict(work_44=1,work_284=0,work_110=1,work_114=0,piece_id=0),
+                    contact=dict(work_44=1,work_28c=31,query=dict(previous_position=[6,7,8],
+                        result=dict(return_word=1,resolved_position=[1,2,3]))))
+            req.write_text(json.dumps(nine));out=req.with_name(path.stem+"-scripted-tail.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            seq=json.loads(out.read_text());script,normal=seq["updates"][1:3]
+            assert script["scriptedAudio"]["calls"][0]["scripted"]["position"]==first["position"]
+            assert normal["scriptedAudio"]["calls"][1]["play"]["position"]==last["position"]
+            assert normal["scriptedAudio"]["calls"][-1]["pitch"]["value"]==1280
+            for row in (script,normal):
+                response=row["scriptedContact"]
+                assert response["request"]["to"]==row["scriptedTick"]["position"]
+                assert response["response"]["calls"][0]["Effect10860"]["velocity"]==[3,0,4]
+                assert "impact" not in response and "recovery" not in response
+            ctx8=dict(work_44=0,work_28c=0,query=dict(result=dict(return_word=0,resolved_position=[1,2,3])))
+            caught_q["updates"][-1]["scripted_tick"]["after_movement"]=dict(velocity=[3,4,12],contact=ctx8)
+            req.write_text(json.dumps(caught_q));out=req.with_name(path.stem+"-caught-contact.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            row=json.loads(out.read_text())["updates"][-1]
+            assert row["scriptedContact"]["request"]["from"]==pos and row["scriptedContact"]["request"]["to"]==move["position"]
             # Vehicle writes the finish flag at the native engine threshold;
             # the controller must see that write without a second observation.
             ctx=dict(mode=int("Rouge" in path.name),first_slot_place=1,multiplayer_byte=0,engine_byte_23=0,

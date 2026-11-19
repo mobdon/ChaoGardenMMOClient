@@ -755,7 +755,7 @@ pub struct SpinInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StorySpin {
-    pub(crate) audio: Option<SpinAudio>,
+    pub(crate) audio: Option<StoryVehicleAudio>,
     pub(crate) contact: Option<crate::kart_drift::DriveContact>,
     heading: i32,
     velocity_xz: [f32; 2],
@@ -765,19 +765,20 @@ pub(crate) struct StorySpin {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SpinAudio {
+pub(crate) struct StoryVehicleAudio {
     pub(crate) work_44: i32,
     work_284: i32,
     work_110: i32,
     work_114: i32,
     piece_id: Option<u8>,
 }
-impl SpinAudio {
+impl StoryVehicleAudio {
     pub(crate) fn run(
         self,
         rel: &crate::city_rel::CityRel,
         mode: i32,
-        motion: &Spin,
+        vehicle_state: i32,
+        position: [f32; 3],
         velocity: [f32; 3],
         magnitude_return: Option<f32>,
     ) -> Result<crate::kart_driving_audio::Output> {
@@ -785,8 +786,8 @@ impl SpinAudio {
             rel,
             crate::kart_driving_audio::Input {
                 work_44: self.work_44,
-                vehicle_state: motion.vehicle_state,
-                position: motion.position(),
+                vehicle_state,
+                position,
                 velocity_xz: [velocity[0], velocity[2]],
                 controls: crate::kart_driving_audio::Controls {
                     profile: mode as usize,

@@ -113,6 +113,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             if combined>=2:
                 hit["resolved_position"][2]=34
                 w["mode"]=[0,1,2,1,0,3][j]
+            if not combined:w["vehicle_state"]=(8,9,0)[j%3]
             if combined==3:w["vehicle_state"]=2+j%2
             q["wall"]=w;hit["returned_from"]=[1,2,3]
             for off,fmt,v in [(0x70,"i",w["work_70"]),(0x290,"i",w["cooldown"]),(0x30,"i",w["vehicle_state"])]:put(work+off,fmt,v)
@@ -196,12 +197,18 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             assert signals==([] if signal is None else [signal])
             continue
         reg(3,task);u.reg_write(R.UC_PPC_REG_LR,base[1]+0x200);calls=[]
-        u.emu_start(base[1]+0x2ca4,base[1]+0x200,count=300)
-        if hit is None:
-            assert doc["response"] is None and u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x2d0c
-            continue
-        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x200
-        reg(3,task);run(0x2da8,0x200 if i>=7 else (0x2e00 if word else 0x2f5c))
+        if i>=7:
+            # Call query, response and the final stub from the scripted arms.
+            # The arm entered as 9 can already have written state 0.
+            reg(29,task);reg(30,work)
+            run(0x25dc if w["vehicle_state"]==8 else 0x2608,0x2648)
+        else:
+            u.emu_start(base[1]+0x2ca4,base[1]+0x200,count=300)
+            if hit is None:
+                assert doc["response"] is None and u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x2d0c
+                continue
+            assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x200
+            reg(3,task);run(0x2da8,0x2e00 if word else 0x2f5c)
         expected=dict(work_74=get(work+0x74,"i"),work_28c=get(work+0x28c,"i"),
                       velocity=vec(work+0x7c),position=vec(tw+20),calls=calls,
                       next="contact_2e00" if word else "no_contact_2f5c")
@@ -220,5 +227,5 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             assert struct.pack(">3f",*wall["impulse"])==struct.pack(">3f",*got["impulse"])
             wall["impulse"]=got["impulse"];expected["wall"]=wall
         assert expected==doc["response"]
-print("Matched thirteen movement contact and wall-response cases with supplied engine results.")
+print("Matched thirteen contact cases with supplied engine results, including six scripted dispatch tails.")
 if exe:print("Six shortened updates, six normal and six drift contact-to-recovery suffixes matched through the final branch.")
