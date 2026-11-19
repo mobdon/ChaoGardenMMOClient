@@ -1,0 +1,1218 @@
+{
+  "sourceSha256": "afc29e3325baf68a1822e88b25fcb59c8bdc29b8cdc48fa21c56defbd60ca020",
+  "policy": "Tile-major 4bpp indices; BGR555 bit replication, opaque palette entries. Bounded candidate spans do not establish original array lengths.",
+  "outputs": [
+    {
+      "id": "sonic-advance.asoe.r0.maps.73.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "1232f9afcb0b900326e586edaf9519c69d1261aa4598195ed95659f8387d24d9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.74.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "1232f9afcb0b900326e586edaf9519c69d1261aa4598195ed95659f8387d24d9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.75.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "1232f9afcb0b900326e586edaf9519c69d1261aa4598195ed95659f8387d24d9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.76.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "98a4e2f7bf309801164bde87ff34b61daf6b51904eeab4a7513b7b825a4263dd"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.77.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "0a7dc74402344f4a21614639f108fccbd75ae8d6b68eb53bdb8835f0d67bec64"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.78.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "cb386fcd5099bcf78bc2db868afd11f859be83bd1d484d6d96789110d68337aa"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.79.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "cb386fcd5099bcf78bc2db868afd11f859be83bd1d484d6d96789110d68337aa"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.80.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "ba1603c9d1f0cf7f98629973ea7968ce7377682ff1acf56e83ee3b35908240b6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.81.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "fbd274822d46c75f720d702277a3b3b0db22190f04e96bfbb44d44043f3c3387"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.82.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "fbd274822d46c75f720d702277a3b3b0db22190f04e96bfbb44d44043f3c3387"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.85.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "ac0bf8a0e012fcf0de29cfcdfdee885c53448d0e8f9dd6d1e7af25ce525117e8"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.84.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "0a7dc74402344f4a21614639f108fccbd75ae8d6b68eb53bdb8835f0d67bec64"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.83.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "016aa0b2deb18f2eb073833ae857672fc1ac6764694152946aa8ff55b0de838c"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.86.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "6af3e634706b139f453af397bbc79441359a347911a934ffad80b5e9d3e1b3ec"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.87.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "9489a898de13db4ff4cc5d8bbcd823b2fc51f09694d392a1bd30ea760375b0dc"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.sprites.palette-bank-span",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 29696,
+      "sha256": "0ccc771cc6243ed983a8f090987627a80106f1800907136d09e12a6b8d522d66"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.54.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "3a8e09c5ae5642d4d3ff3266d86093adab764f6f189ef4983895bd5e3c407012"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.55.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.56.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.57.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.58.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.59.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.60.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.61.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.62.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.63.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.64.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.65.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.66.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.67.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.68.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.69.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.70.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 128,
+      "sha256": "45eb4f03ae302826937bfcc08a9ab41a7237913085cc71e01f7e2f4275cc5cc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.88.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "304cff6ddc0ee00af728b6b7d5a93af038012a531f5cf134a842dcc2cda474ba"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.00.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "4d3e25ef3e9f8206d4a0eefa6904ef42ed6939fb1368c0db61a71026882baced"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.01.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "4d3e25ef3e9f8206d4a0eefa6904ef42ed6939fb1368c0db61a71026882baced"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.03.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "3088a677c3a39882f37cbf6ce0d907c905ea82a44b1a57ed667f3262a084414d"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.04.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "3088a677c3a39882f37cbf6ce0d907c905ea82a44b1a57ed667f3262a084414d"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.06.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "d002154f9a5d3132ea63a48eb47545731004154dc82337c1c356e71850d9e102"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.07.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "d002154f9a5d3132ea63a48eb47545731004154dc82337c1c356e71850d9e102"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.09.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "d002154f9a5d3132ea63a48eb47545731004154dc82337c1c356e71850d9e102"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.10.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "d002154f9a5d3132ea63a48eb47545731004154dc82337c1c356e71850d9e102"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.12.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "be791083119162669d32ded4fa3d14c470cbea2d5c290898a0e41483389a93db"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.13.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "be791083119162669d32ded4fa3d14c470cbea2d5c290898a0e41483389a93db"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.15.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "be791083119162669d32ded4fa3d14c470cbea2d5c290898a0e41483389a93db"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.16.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "be791083119162669d32ded4fa3d14c470cbea2d5c290898a0e41483389a93db"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.18.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "f090eaa0b199139f412b4f46ab10fc682b6b6092626705def69460dca135c030"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.19.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "f090eaa0b199139f412b4f46ab10fc682b6b6092626705def69460dca135c030"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.21.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "f090eaa0b199139f412b4f46ab10fc682b6b6092626705def69460dca135c030"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.22.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "f090eaa0b199139f412b4f46ab10fc682b6b6092626705def69460dca135c030"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.24.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "8cb9fad2b15365e45f59af7f0ed1c3a629c98c75f249342ab5f080a5c470bfe6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.25.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "8cb9fad2b15365e45f59af7f0ed1c3a629c98c75f249342ab5f080a5c470bfe6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.27.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "8cb9fad2b15365e45f59af7f0ed1c3a629c98c75f249342ab5f080a5c470bfe6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.28.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "8cb9fad2b15365e45f59af7f0ed1c3a629c98c75f249342ab5f080a5c470bfe6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.30.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "1f37c041a3acf9dd531324c17f5fcd413d1543640f5549e95d000dd180afbb89"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.31.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "1f37c041a3acf9dd531324c17f5fcd413d1543640f5549e95d000dd180afbb89"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.33.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "057c709ed69f2e68a8a6aaaed174ae84f1443e07f042b9bfee497fc54d3f737a"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.34.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "057c709ed69f2e68a8a6aaaed174ae84f1443e07f042b9bfee497fc54d3f737a"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.36.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "b65b778a7b57c1edac109cfadecefdc39a321abb94210a1459e6a69dce54d8f7"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.37.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "b65b778a7b57c1edac109cfadecefdc39a321abb94210a1459e6a69dce54d8f7"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.39.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "c709b7025238edef3249f186de87fb8686369656808030e2577a625026af6601"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.40.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "c709b7025238edef3249f186de87fb8686369656808030e2577a625026af6601"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.42.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "a32818cc16cbc17a79f6cb39347b9eb1c8158dd57e862cb6e1f2b4c0be852379"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.43.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "a32818cc16cbc17a79f6cb39347b9eb1c8158dd57e862cb6e1f2b4c0be852379"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.45.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "d002154f9a5d3132ea63a48eb47545731004154dc82337c1c356e71850d9e102"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.46.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "d002154f9a5d3132ea63a48eb47545731004154dc82337c1c356e71850d9e102"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.48.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "be791083119162669d32ded4fa3d14c470cbea2d5c290898a0e41483389a93db"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.49.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "be791083119162669d32ded4fa3d14c470cbea2d5c290898a0e41483389a93db"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.51.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "057c709ed69f2e68a8a6aaaed174ae84f1443e07f042b9bfee497fc54d3f737a"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.52.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "057c709ed69f2e68a8a6aaaed174ae84f1443e07f042b9bfee497fc54d3f737a"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.71.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "f164d86ffea61e86a2d0739d08bf8c05baa8bebd1fe1d1fe08bd7b3d44255dbf"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.maps.72.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 1024,
+      "sha256": "4413a64df6dc5cfe27c7941435861e9797be57ba336a06b2a841f8edc743823c"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsasciichars.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 16384,
+      "sha256": "0314f973dbb2f34ee6f7045180ca07b7b31c5f849ee1d4cbcd654e8aaf75bc47"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsasciichars.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upiconsonic.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 256,
+      "sha256": "a952327c186b8f4c4d2ea72dde107bb8e511d75d6516fe5fb4e95663af620e44"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upiconsonic.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "ab1e6e73f5fd022d1d421a1d10afb847fb09a22c5fe73beac4ea5891e772a2be"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upicontails.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 256,
+      "sha256": "aeb63f2257db7ab2f161c97214e689b10b680643a5a6bf74f8b8a5fc370345d2"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upicontails.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "47edc94af57a0c14a4e94c578d2870d32dacb7133251fd6d28116d76c52ac691"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upiconknuckles.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 256,
+      "sha256": "2294c882db40089a3176b5d119e6ca978d0d39b65bb349692c7aeae5347fa16d"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upiconknuckles.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "6fb7468be1dddb9a9b893be1f87e8884ac05b2df19cb7d1075f293784a251a72"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upiconamy.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 256,
+      "sha256": "1e1e02046062e0214bdb2ba8746a9efdc917af98e590e54b3eeb5b6a6130a212"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphics1upiconamy.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "c2855a0b3fee887d4a43d5f0522f85a7ed7fffcda72088678333f6263552cd2b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicshudring.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 1024,
+      "sha256": "4dbfbaeddb5ca1f2c70ba6a4b80af66cdbb369e17712e891a86b7d5868fa368b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicshudring.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintrosonic.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2048,
+      "sha256": "b5265d970b5d350469d307192f9e3432bedc071f9066adbf02cf45fe45f69fc1"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintrosonic.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "e01ad93139af8a0b7737279757e0c7193d62c581db0e5203e823627cc40abba3"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintrotails.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2048,
+      "sha256": "514e330cb35b2411500a5e9ee3b99c91cbbde0dbc3357fbb62834d9051edf482"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintrotails.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "e01ad93139af8a0b7737279757e0c7193d62c581db0e5203e823627cc40abba3"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintroknuckles.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2048,
+      "sha256": "0c019fa27f732aec18d6af1854af0eb232bd1d72c88024559fa0ff50ee38d999"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintroknuckles.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "e01ad93139af8a0b7737279757e0c7193d62c581db0e5203e823627cc40abba3"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintroamy.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2048,
+      "sha256": "8713f556d5f3dfbb329bc3585e7d75d9e79359639f636b729d3b592043266c82"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintroamy.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "e01ad93139af8a0b7737279757e0c7193d62c581db0e5203e823627cc40abba3"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintrochar_names.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 16384,
+      "sha256": "0ec6cfa000fc0e7f391bef6b261a666c75c01ab8e474697a6697acd3711a2631"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageintrochar_names.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "e01ad93139af8a0b7737279757e0c7193d62c581db0e5203e823627cc40abba3"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultsonic.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3072,
+      "sha256": "9b93b2449a476c1781013c6340f3c6e19d07cf885e6599a64ba92271c7e66bdb"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultsonic.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "b70b908aabf63bcd63028acffec843c581386a192d320186910152f81954b7a9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresulttails.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3072,
+      "sha256": "cfe0a7bbb630da1d5e91f7f6c60b2416d37680f77c9130f7184facbc8e6bce8b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresulttails.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "7b9e5042f27969586a5cd198d0ea9f3d09931e51a522d83b94f85cab6133ee80"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultknuckles.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3072,
+      "sha256": "7fc51b0b12c0d4f694b85b1b7e3b2a777c57407c7d2755924a44e2f1ccbdccec"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultknuckles.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "f277960a8c3d44dfdaf8db662f4fd82c47959c3e18f00775bac4d6eb8ec46800"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultamy.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3072,
+      "sha256": "1e224fbccfda95f020342d190bcd75a3207fc62bb7ad98a383fb2b69776fef72"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultamy.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "2f89a6eacad0357e4192df35b9e96e03eb0b0bc27b434fa187e65afeaf62e653"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultact12.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 1024,
+      "sha256": "1ea3b4419b80b587b3110e78fe99f4e3cb6d8623bc90d8d301214c7a7095169a"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultact12.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "681009652cf1607d0c59f37c2e406384b70465c9bbd8812c1c797a6fc38c1c20"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultheadlineback.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 1024,
+      "sha256": "4c733a569b584842f40690363ef3b595c230037117fd76808a5edc7993235bed"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstageresultheadlineback.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamesjapanese0.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 5376,
+      "sha256": "548f50a51d41a009dc3206da7b8b7266c358432dc7bff72ed69944472779dc24"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamesjapanese0.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "681009652cf1607d0c59f37c2e406384b70465c9bbd8812c1c797a6fc38c1c20"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamesjapanese1.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 4096,
+      "sha256": "1b316e3aec7a6c83594ab0453a3f6ab5500e70d90e5d7bc440df24735a15888e"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamesjapanese1.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameneogreenhillzone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "2723c4a9454d99be448a57371e678777dae0e239ee8d24b2bd321db1042ce11b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameneogreenhillzone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamesecretbasezone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "943baf26798c8ac42acc47dceff69ca17f82f9e5962ae4f55460d9dad18218c5"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamesecretbasezone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamecasinoparadisezone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "9bef2d4bdbcb9df7dadf07503babd4c49300c9efbb9b93fba65871eb9ee43f50"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamecasinoparadisezone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameicemountainzone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "bd57c9ca255927f1553fb54ddeb89654dcf6177aa3f714b644b1bf296b250bc3"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameicemountainzone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameangelislandzone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "094418d5bd2f38326f298a052921fa0a82a189683b9b3f7088fc62081b95f88b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameangelislandzone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameeggrocketzone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "96101480b8ba80aee810e12d8125966143f319d5a7c97413d4c7a0fd8fecf9cb"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameeggrocketzone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamecosmicangelzone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "7cac966444439a3727eea64096d315a36b69511e03cee51724c67b7acdb8b353"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamecosmicangelzone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamexzone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "a7c8a7dbd66f2b84a34118e69ffb6de988d5d323a753e7b301fef0335d0062a6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamexzone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamethemoonzone.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "5ac08cde0ec6737a69f48bdfacc62c87a258b5ebbbcf19722687e8caa4368d80"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamethemoonzone.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameforestchaogarden.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "7ab1493de58f00ca55cce8dd61ed7829fb4980c32a2d658a1ed4a612556792b4"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenameforestchaogarden.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamefactorychaogarden.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "6987d3fcfe5676159e9dff8a5d364ab9ca2bad4dd5dd0b6176c0b0ac26c0a082"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamefactorychaogarden.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamepinballchaogarden.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "d9a473416a3bdc48bd75a8e70808fb05f461be4850696bf7b5db55be3666ba20"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamepinballchaogarden.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamespacechaogarden.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3584,
+      "sha256": "20e7ecf19dc7f8ed5eee402c70800f171ae3873e1b6fab62e95db1a673c9ef99"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsstagenamespacechaogarden.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "dcf08f255a465549363edbfe965d2f610254d3db2a7d7f6aa7805c4a69e050b9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstimerdigits.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2816,
+      "sha256": "da76193f010be68cf1c3b3fcb5fa73927638dbe3a8f3354dc1cb459df4654009"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstimerdigits.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "d736f6b2fc92fbf92694bf435d3b51b509d5620a8bfdcbd4719ca817a778c5e2"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsok.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 1024,
+      "sha256": "c2086d60e025aee2cb04e9ee8fc3f3b21fffae89a55665d6b31d7e3d770fa7b0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsok.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsgotthroughtexts.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 20480,
+      "sha256": "123b54d8cd554762c683b4bb082be7b5ead8ed1a4c665cc2fbd99fd4a1cde67d"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsgotthroughtexts.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "9bacd89e489fbf6236bb8e814ed23885934e9fa987c588cb7dd677739fd7a9d9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlayentername.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 40960,
+      "sha256": "99faf7061136468219295ac24f7f901ae56c1301ab4b6a0bf28f9677097cca90"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlayentername.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "15fdc340e0f3da42ee0aa81d1f21e78d16f5e7bbb46d894c2e017f939d2c8332"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlaycharacters.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 20480,
+      "sha256": "5b16e7a5f73b852110e70cb85650c148ace5fa88b8935bd94a81ab7cfb988d13"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlaycharacters.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "44336c1fb286633c13f2a9db4761fb4c3cc76ba6483b12e0c9966b4b6726efa6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlayredcorner.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "59aa67df12aff9773db47e497a4614dbb9610fcda96aa329b88428be29611ab7"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlayredcorner.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "ab3400b03ab9d05456b2cb354972bc29a117af4a1b0640ecb3dd888ceb8b5a0d"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlaycursors.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 512,
+      "sha256": "995a40bd1d9546579ff8108b519e1317453a121fb1302ad117d6f6d732ab7fc0"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsoverlaycursors.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "ca72b980ca1327d2b52792a742cb4344ee1c9354a6b87ab3531e905b1eb73db7"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectzigzag.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2048,
+      "sha256": "e95f774e8c808a3c92a4a914ca33223b9f5a0d7e273c9a3c001333a109b9a173"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectzigzag.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "29e61b9327835962e225555732084bdab2d00d48989efa587677ca6b31206709"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectarrow.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2048,
+      "sha256": "7cdf260972cb8d8e5585294fe76dab172f3d9f96988fdeddce2bad49d1f19b0f"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectarrow.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "f1f604fa400ffece511c9068d34704efdaeb1a04f8f3644183904876e13938ce"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectnames.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 24576,
+      "sha256": "7abeea417e100d18689d777e0f9c8b7f34b02d324183d8b5a1e82bf956738eda"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectnames.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "f1f604fa400ffece511c9068d34704efdaeb1a04f8f3644183904876e13938ce"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectselectacharacter.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 4096,
+      "sha256": "3cf08c3b3cd0b1c79a2377078e1ca7af179bdc45c7ec0bd1120d7db51062d7ce"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectselectacharacter.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a04c4575963d0f18f0a28d0949d0695ce6c2c111c5055698ae1a6061116fa6c6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectblackbox.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 512,
+      "sha256": "941657fde04ff270f8ae019ede5287c71d887758641536ab0eb87a0d434526bd"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectblackbox.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "f1f604fa400ffece511c9068d34704efdaeb1a04f8f3644183904876e13938ce"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectok.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 1024,
+      "sha256": "4b7779fcf43786e0a201c6637c78e721c94ef71c3c2739890cde24f6c4e50239"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectok.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "f1f604fa400ffece511c9068d34704efdaeb1a04f8f3644183904876e13938ce"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectblackbox2.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 1024,
+      "sha256": "aca97a86f4dc7c202406fe867d87b2ab9e5b0f5102493f2086750e118e8fa97e"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicscharselectblackbox2.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "d736f6b2fc92fbf92694bf435d3b51b509d5620a8bfdcbd4719ca817a778c5e2"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstage46.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 2048,
+      "sha256": "4becc977c71f22129f79ef1950d1bec0bec7da4bc09a2d4cd2e01e627f8b2c66"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstage46.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "eec513cffa62b4a99bf544069a1112b0f10af8b0a6a8c86657c92dc3eb5ed59b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotrings0.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 7168,
+      "sha256": "94730890d3d387e404d1c16ca40e2df36c7378d965a0fe993bf4d6d1d8a71db6"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotrings0.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotrings1.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 7168,
+      "sha256": "8c63af43971daf4711cb969caff3c513ffa9dabb4ab35ac3e3e30c8683d6145a"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotrings1.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotrings2.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 7168,
+      "sha256": "03852dabdc376faa89693a8eb6d366856543b00ab5d696898290fdb8fe9517a4"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotrings2.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextstart.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 5120,
+      "sha256": "0394db963e9db3dfc165bfabf44df32c0fa965860657fda6b28a1b50c9fd9f9b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextstart.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a5d907c5dcaf96c6852c244bdf31e22d3bde3fbe9446374f33cc689b12c2c337"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotachaosemerald.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 7168,
+      "sha256": "913ae18862f4e2424ce035e4573e8454e94b187d1be317f1887c8577b9682ecd"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextgotachaosemerald.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "243a18c2943c4cea95e599d7aa0d4d53fee8d37839be548a4bcd6fd718786720"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextspecialstage.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 9216,
+      "sha256": "81b6b7b15de9f30cabdfa2802f9b19750f72107dbb2d29f2b754628781257670"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagetextspecialstage.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "789f4035b9d27c940fc33a22d94541d63b76c28e0a89b119ccf8471140c8ff6b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstage53.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 10240,
+      "sha256": "83230cde7bc2a1f1c50f3440a4a80b0cbcc40a5df1fed57fa54b7713a63e172d"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstage53.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "243a18c2943c4cea95e599d7aa0d4d53fee8d37839be548a4bcd6fd718786720"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagechaosemerald.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 3072,
+      "sha256": "7d3d29dc3f7091c6390694297187c87d5c5262ccb62d9a769de23237ac105aab"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicsspecialstagechaosemerald.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "2d7cfbb95ba36a0bd835ec13d3c7666e068387706c892f6528390a65a379c2a9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent0.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent0.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "2d7cfbb95ba36a0bd835ec13d3c7666e068387706c892f6528390a65a379c2a9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent1.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent1.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "c5b7632a1cdc1f0bd80b3a08641c9330a4469a9e7f4d5b6e835833b85e9d6886"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent2.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent2.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "a4112655d1d6007ea190289abb1e015b5efb8c056b3b0e7d8470e946fe9b6878"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent3.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent3.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "844fb39f32d6b723138593b614e8fe11beedbef65a766cc1c3e6f364acce9726"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent4.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent4.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "8d95e78baed7ccdff040aa80b784f050b5c9e5c25dfbd06678c5e4ed1127a302"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent5.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 256,
+      "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicstransparent5.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "72df693a2aa3ae2266f45261976afa09aaf6209ea6a7d4b424592178e251fa89"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbackground.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 4096,
+      "sha256": "59c05b80a07bfe4fee52ebb20828e1d89ee49f4fb2dc2bd30be3f8ef7b8d13d9"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbackground.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "8db6e82013e335b7db861385fdfcda538e429dd1a8fe06f086088bbdd5623023"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbox2.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbox2.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "3349c3c427e5ede31fa744216290cc3eb4c0f46a25da5a62ef938193c4993119"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbox3.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "6cfeeb3aa25d3f411dae5eec17d7369ca7153e72dcf54bcf4c3daec0f5b21fc7"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbox3.palette",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "352b10379a7a84aefa65408ff9e0e1db9aa61d3b6f348acc0041b42854c33e2e"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbox4.tiles",
+      "codec": "4bpp-indices",
+      "bytes": 64,
+      "sha256": "6cfeeb3aa25d3f411dae5eec17d7369ca7153e72dcf54bcf4c3daec0f5b21fc7"
+    },
+    {
+      "id": "sonic-advance.asoe.r0.ui.guigraphicssoundtestbox4.palette-candidate",
+      "codec": "bgr555-rgba-opaque",
+      "bytes": 64,
+      "sha256": "5aabf43fcb2a24a03973bd989e7417bb693c2581d926bcb1ff6cad641f26f221"
+    }
+  ]
+}

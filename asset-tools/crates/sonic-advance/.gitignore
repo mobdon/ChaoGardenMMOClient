@@ -1,0 +1,10 @@
+/target/
+/.local/
+*.gba
+*.sav
+*.srm
+*.chao
+*.bin
+*.rgba
+*.png
+*.wav
