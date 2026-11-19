@@ -139,6 +139,25 @@ pub struct CheckpointBonus {
     pub counter_increment: i16,
 }
 
+/// Two halfwords written by the checkpoint caller *after* the item helper
+/// returns. Neither address is indexed by the contacting player.
+/// Values track only these caller writes, not mutations inside engine calls.
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BonusCounters {
+    /// Signed halfword at 0x801cbd88 + 0x6e.
+    pub direct: i16,
+    /// Signed halfword at (*0x803ad460) + 0x10.
+    pub indirect: i16,
+}
+
+impl BonusCounters {
+    pub fn apply(&mut self, bonus: &CheckpointBonus) {
+        self.direct = self.direct.wrapping_add(bonus.counter_increment);
+        self.indirect = self.indirect.wrapping_add(bonus.counter_increment);
+    }
+}
+
 /// The original helper's return is compared as a signed halfword. The two low
 /// equipment bits are consulted only for the highest tier.
 pub fn contact_bonus(value: i16, equipment: u16) -> Option<CheckpointBonus> {
@@ -569,5 +588,252 @@ mod approach_tests {
                 .unwrap();
             assert_eq!(state.spin.steps[1], step);
         }
+    }
+}
+
+/// Stage-local item delivery table (11 pairs in REL section 5).
+/// Offsets refer to section 1 of the identified REL, not PC executable addresses.
+#[derive(Debug)]
+pub struct StageItemTable {
+    dispatcher: u32,
+    entries: [(i32, u32); 11],
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ItemDispatch {
+    /// Arguments for the first direct call at text +0x30724.
+    pub notify_args: [i32; 2],
+    pub handler_offset: u32,
+    /// Arguments for the subsequent indirect item call.
+    pub handler_args: [i32; 2],
+}
+
+pub type CityItemTable = StageItemTable;
+
+impl StageItemTable {
+    pub fn read(module: &[u8]) -> Result<Self> {
+        Self::read_stage(13, module)
+    }
+
+    pub fn read_stage(level: u16, module: &[u8]) -> Result<Self> {
+        let layouts: &[(u16, usize, u32)] = include!("checkpoint_item_layouts.rs");
+        let &(_, table, dispatcher) = layouts
+            .iter()
+            .find(|r| r.0 == level)
+            .ok_or_else(|| Error::invalid("unsupported checkpoint stage"))?;
+        let filename = format!("stg{level:02}D.rel");
+        let info = crate::stage_land::catalog()
+            .iter()
+            .find(|r| r.filename == filename)
+            .ok_or_else(|| Error::invalid("missing stage identity"))?;
+        if info.size != module.len() || info.sha256 != crate::manifest::sha256(module) {
+            return Err(Error::invalid("unsupported checkpoint REL revision"));
+        }
+        let rel = crate::city_rel::CityRel::read_identified(module, info.module)?;
+        let data = rel.data(5)?;
+        let code = rel.data(1)?;
+        let mut entries = [(0, 0); 11];
+        for (i, row) in entries.iter_mut().enumerate() {
+            let at = table + i * 8;
+            let id = i32::from_be_bytes(
+                data.get(at..at + 4)
+                    .ok_or_else(|| Error::invalid("truncated item ID"))?
+                    .try_into()
+                    .unwrap(),
+            );
+            let link = rel
+                .reference(5, (at + 4) as u32)
+                .ok_or_else(|| Error::invalid("missing item handler relocation"))?;
+            if (link.module, link.section, link.kind) != (info.module, 1, 1)
+                || link.addend % 4 != 0
+                || code.get(link.addend as usize..).is_none_or(|s| s.len() < 4)
+            {
+                return Err(Error::invalid("invalid item handler target"));
+            }
+            *row = (id, link.addend);
+        }
+        Ok(Self {
+            entries,
+            dispatcher,
+        })
+    }
+
+    /// Mirrors the item helper's early exits and first matching ID. Returns
+    /// the two calls in order; does not apply the handler's gameplay effects.
+    pub fn dispatch(&self, slot: usize, equipment: u16, item: i32) -> Result<Option<ItemDispatch>> {
+        if slot >= 2 {
+            return Err(Error::invalid("invalid item player slot"));
+        }
+        if equipment & 0x4000 != 0 || item == 7 {
+            return Ok(None);
+        }
+        Ok(self
+            .entries
+            .iter()
+            .find(|(id, _)| *id == item)
+            .map(|&(id, handler_offset)| ItemDispatch {
+                notify_args: [slot as i32, id],
+                handler_offset,
+                handler_args: [0, slot as i32],
+            }))
+    }
+}
+
+#[cfg(test)]
+mod item_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires installed stage modules"]
+    fn installed_stage_item_tables() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap())
+            .join("resource/gd_PC");
+        let layouts: &[(u16, usize, u32)] = include!("checkpoint_item_layouts.rs");
+        for &(level, _, _) in layouts {
+            let bytes = std::fs::read(root.join(format!("stg{level:02}D.rel"))).unwrap();
+            let table = StageItemTable::read_stage(level, &bytes)
+                .unwrap_or_else(|e| panic!("stage {level}: {e}"));
+            for item in [0, 1, 2, 3, 6, 8] {
+                assert!(table.visit_checkpoint_item(0, 0, item, |_| {}).unwrap());
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires installed City Escape module"]
+    fn installed_item_dispatch_targets() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let t =
+            CityItemTable::read(&std::fs::read(root.join("resource/gd_PC/stg13D.rel")).unwrap())
+                .unwrap();
+        for (id, offset) in [
+            (0, 0x303c0),
+            (1, 0x30520),
+            (2, 0x30498),
+            (3, 0x30570),
+            (4, 0x305a8),
+            (5, 0x305e4),
+            (6, 0x30628),
+            (8, 0x304e8),
+            (9, 0x30664),
+            (10, 0x30410),
+        ] {
+            assert_eq!(
+                t.dispatch(1, 0, id).unwrap(),
+                Some(ItemDispatch {
+                    notify_args: [1, id],
+                    handler_offset: offset,
+                    handler_args: [0, 1]
+                })
+            );
+            assert_eq!(t.dispatch(1, 0x4000, id).unwrap(), None);
+        }
+        for (id, points, amount, scalar, last) in [
+            (0, 100, Some(10), Some(0.5f32), 0x80035a88),
+            (1, 200, Some(20), Some(1.0), 0x80035a88),
+            (2, 50, Some(5), Some(0.25), 0x80035a88),
+            (3, 200, None, None, 0x80037278),
+            (6, 200, None, None, 0x80037394),
+            (8, 200, None, None, 0x800374b0),
+        ] {
+            let mut calls = Vec::new();
+            assert!(t
+                .visit_checkpoint_item(1, 0, id, |c| calls.push(c))
+                .unwrap());
+            assert_eq!(
+                calls[0],
+                ItemEngineCall {
+                    target: 0x80063524,
+                    r3: points,
+                    r4: None,
+                    f1_bits: None
+                }
+            );
+            assert_eq!(calls.len(), if amount.is_some() { 3 } else { 2 });
+            if amount.is_some() {
+                assert_eq!(
+                    calls[1],
+                    ItemEngineCall {
+                        target: 0x80063584,
+                        r3: 1,
+                        r4: amount,
+                        f1_bits: None
+                    }
+                );
+            }
+            assert_eq!(
+                calls.last(),
+                Some(&ItemEngineCall {
+                    target: last,
+                    r3: 1,
+                    r4: None,
+                    f1_bits: scalar.map(f32::to_bits)
+                })
+            );
+            assert!(!t
+                .visit_checkpoint_item(1, 0x4000, id, |_| panic!())
+                .unwrap());
+        }
+        for id in [-1, 7, 11] {
+            assert_eq!(t.dispatch(0, 0, id).unwrap(), None);
+        }
+        assert!(t.dispatch(2, 0, 1).is_err());
+    }
+}
+
+/// Arguments explicitly set by a stage item handler before it calls the
+/// external engine. Float arguments retain their original binary32 bits.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ItemEngineCall {
+    pub target: u32,
+    pub r3: i32,
+    pub r4: Option<i32>,
+    pub f1_bits: Option<u32>,
+}
+
+impl StageItemTable {
+    /// Execute the stage-local part of the six handlers reachable from
+    /// checkpoint bonus selection. A host supplies the external engine calls.
+    pub fn visit_checkpoint_item(
+        &self,
+        slot: usize,
+        equipment: u16,
+        item: i32,
+        mut visit: impl FnMut(ItemEngineCall),
+    ) -> Result<bool> {
+        let Some(dispatch) = self.dispatch(slot, equipment, item)? else {
+            return Ok(false);
+        };
+        let player = dispatch.handler_args[1];
+        // Verified distance back from the dispatcher to each handler entry.
+        let (points, amount, scalar, target) =
+            match self.dispatcher.checked_sub(dispatch.handler_offset) {
+                Some(0x2dc) => (100, Some(10), Some(0x3f000000), 0x80035a88),
+                Some(0x17c) => (200, Some(20), Some(0x3f800000), 0x80035a88),
+                Some(0x204) => (50, Some(5), Some(0x3e800000), 0x80035a88),
+                Some(0x12c) => (200, None, None, 0x80037278),
+                Some(0x74) => (200, None, None, 0x80037394),
+                Some(0x1b4) => (200, None, None, 0x800374b0),
+                _ => return Err(Error::invalid("unsupported checkpoint item handler")),
+            };
+        visit(ItemEngineCall {
+            target: 0x80063524,
+            r3: points,
+            r4: None,
+            f1_bits: None,
+        });
+        if let Some(n) = amount {
+            visit(ItemEngineCall {
+                target: 0x80063584,
+                r3: player,
+                r4: Some(n),
+                f1_bits: None,
+            });
+        }
+        visit(ItemEngineCall {
+            target,
+            r3: player,
+            r4: None,
+            f1_bits: scalar,
+        });
+        Ok(true)
     }
 }

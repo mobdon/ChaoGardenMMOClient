@@ -274,12 +274,16 @@ pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Opti
     }
 }
 pub(crate) fn mounted_replay(
+    items: Option<&crate::checkpoint::StageItemTable>,
     level: u16,
     p: &Placement,
     d: &ObjectDefinition,
     request: &[u8],
 ) -> Result<Value> {
     let name = mounted_callback(level, p, d);
+    if name == Some("ObjectSavePoint") {
+        return checkpoint_frames(p, decode(request)?, items);
+    }
     if name == Some("CheckpointContact") {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -297,7 +301,7 @@ pub(crate) fn mounted_replay(
         }
         let r = match decode::<ReplayRequest>(request)? {
             ReplayRequest::Single(r) => r,
-            ReplayRequest::Frames(r) => return checkpoint_frames(p, r),
+            ReplayRequest::Frames(r) => return checkpoint_frames(p, r, items),
         };
         let mut state = crate::checkpoint::ContactState {
             mode: 1,
@@ -409,6 +413,7 @@ pub fn replay_bgm(request: &[u8]) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckpointReplay {
+    initial_bonus_counters: Option<crate::checkpoint::BonusCounters>,
     engine_result: u32,
     stage_byte: i8,
     frames: Vec<CheckpointFrame>,
@@ -429,9 +434,13 @@ struct CheckpointBonusInput {
 }
 
 fn checkpoint(p: &Placement, request: &[u8]) -> Result<Value> {
-    checkpoint_frames(p, decode(request)?)
+    checkpoint_frames(p, decode(request)?, None)
 }
-fn checkpoint_frames(p: &Placement, req: CheckpointReplay) -> Result<Value> {
+fn checkpoint_frames(
+    p: &Placement,
+    req: CheckpointReplay,
+    items: Option<&crate::checkpoint::StageItemTable>,
+) -> Result<Value> {
     use crate::checkpoint::{CheckpointPlacement, CheckpointSpin, CheckpointTicks, ContactState};
     let placement = CheckpointPlacement {
         rotation: p.rotation.map(i32::from),
@@ -448,19 +457,43 @@ fn checkpoint_frames(p: &Placement, req: CheckpointReplay) -> Result<Value> {
             counters: [0; 2],
         },
     };
+    let mut counters = req.initial_bonus_counters;
     let mut frames = Vec::new();
     for f in bounded(req.frames)? {
         let call = state.tick(f.hit, &f.players, byte, f.contact_speed)?;
-        let selection = call.as_ref().and_then(|c| {
-            let input = &f.bonus_inputs.as_ref()?[c.slot];
+        if counters.is_some() && call.is_some() && f.bonus_inputs.is_none() {
+            return Err(Error::invalid(
+                "accepted contact requires bonus inputs when tracking counters",
+            ));
+        }
+        let mut delivery = None;
+        let selection = if let (Some(c), Some(inputs)) = (&call, &f.bonus_inputs) {
+            let input = &inputs[c.slot];
             let selected = crate::checkpoint::contact_bonus(input.value, input.equipment);
+            if let (Some(table), Some(bonus)) = (items, &selected) {
+                let id = i32::from(bonus.item_id);
+                if let Some(dispatch) = table.dispatch(c.slot, input.equipment, id)? {
+                    let mut calls = Vec::new();
+                    table.visit_checkpoint_item(c.slot, input.equipment, id, |event| {
+                        calls.push(event)
+                    })?;
+                    delivery = Some(
+                        json!({"notifyArgs":dispatch.notify_args,"handlerOffset":dispatch.handler_offset,"engineCalls":calls}),
+                    );
+                }
+            }
+            if let (Some(state), Some(bonus)) = (&mut counters, &selected) {
+                state.apply(bonus);
+            }
             Some(
                 json!({"slot":c.slot,"itemId":selected.as_ref().map(|b|b.item_id),
                 "counterIncrement":selected.map_or(0,|b|b.counter_increment)}),
             )
-        });
+        } else {
+            None
+        };
         frames.push(
-            json!({"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
+            json!({"bonusCounters":counters,"itemDelivery":delivery,"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
             "angles":state.spin.angles,"steps":state.spin.steps,"bonusSelection":selection,"handoff":call}),
         );
     }
