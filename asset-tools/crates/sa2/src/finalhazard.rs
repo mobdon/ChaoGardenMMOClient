@@ -823,6 +823,14 @@ pub enum PlacementClock {
     Periodic {
         timer: u16,
     },
+    /// Arguments and task state at the paired selector/transition calls.
+    NextPhase {
+        work28: f32,
+        cursor: i8,
+        mode: i8,
+        submode: i8,
+        gate_task: Option<PhaseGateTask>,
+    },
     /// Mode 11 submode 2; null means the child slot is empty.
     AttackChild {
         child_mode: Option<i8>,
@@ -839,6 +847,12 @@ pub enum PlacementClock {
         task_timer: u16,
         placement_timer: u16,
     },
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseGateTask {
+    pub mode: i8,
+    pub flags: u16,
 }
 pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json::Value> {
     if crate::manifest::sha256(bytes)
@@ -867,6 +881,48 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 }
             }
             (timer, Some(submode))
+        }
+        PlacementClock::NextPhase {
+            work28,
+            cursor,
+            mode,
+            submode,
+            gate_task,
+        } => {
+            let row = work28.trunc();
+            if !(1.0..=6.0).contains(&row) {
+                return Err(Error::invalid("phase selector outside the six source rows"));
+            }
+            let ptr = rel
+                .reference(1, 0xd76)
+                .ok_or_else(|| Error::invalid("missing phase table relocation"))?;
+            let lo = crate::city_rel::Reference { kind: 4, ..ptr };
+            if (ptr.module, ptr.section, ptr.kind) != (88, 5, 6)
+                || rel.reference(1, 0xd7a) != Some(lo)
+                || rel.reference(1, 0xda6) != Some(ptr)
+                || rel.reference(1, 0xdaa) != Some(lo)
+            {
+                return Err(Error::invalid("phase table relocation mismatch"));
+            }
+            let start = ptr.addend as usize + (row as usize - 1) * 4;
+            let table = &rel.data(5)?[start..start + 4];
+            let next = cursor.wrapping_add(1);
+            if !(0..4).contains(&next) {
+                return Err(Error::invalid("phase cursor outside source row"));
+            }
+            let next = if (table[next as usize] as i8) < 0 {
+                0
+            } else {
+                next
+            };
+            let selected = table[next as usize] as i8;
+            // 0xdc4 requires a zero gate result. Its nonzero path tests
+            // whether the same value equals both 3 and 13, so cannot write.
+            let apply = gate_task.is_some_and(|task| task.mode != 13 && task.flags & 4 == 0);
+            return Ok(
+                serde_json::json!({"cursor":next,"selected":selected,"applied":apply,
+                "mode":if apply {selected} else {mode},"submode":if apply {0} else {submode}}),
+            );
         }
         PlacementClock::AttackChild { child_mode } => {
             let ready = matches!(child_mode, None | Some(4));
