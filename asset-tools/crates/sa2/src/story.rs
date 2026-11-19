@@ -157,9 +157,12 @@ pub fn saved_sections(exe: &[u8], snapshot: &[u8]) -> Result<serde_json::Value> 
         1 => ("Hero", 0x133a148, 46),
         2 => ("Dark", 0x133a370, 44),
         3 => ("Last", 0x133a580, 8),
+        12 => ("Hero Boss Rush", 0x133a628, 9),
+        13 => ("Dark Boss Rush", 0x133a698, 9),
+        14 => ("All Boss Rush", 0x133a708, 19),
         _ => {
             return Err(Error::invalid(
-                "saved sequence number is not Hero, Dark or Last",
+                "saved sequence number is not a supported story or boss rush",
             ))
         }
     };

@@ -23,9 +23,9 @@ sections = actions = 0
 with tempfile.TemporaryDirectory(dir=tmp_root) as tmp:
     root=Path(tmp)
     image=bytearray(0x349a)
-    for seq,(name,rva) in enumerate([("Hero",0x133a148),("Dark",0x133a370),("Last",0x133a580)],1):
+    for seq,(name,rva) in [(1,("Hero",0x133a148)),(2,("Dark",0x133a370)),(3,("Last",0x133a580)),(12,("Hero Boss Rush",0x133a628)),(13,("Dark Boss Rush",0x133a698)),(14,("All Boss Rush",0x133a708))]:
         ini=configparser.ConfigParser(interpolation=None)
-        with (Path(splits)/(name+" Story.ini")).open(encoding="utf-8-sig") as f: ini.read_file(f)
+        with (Path(splits)/(name+(".ini" if seq>=12 else " Story.ini"))).open(encoding="utf-8-sig") as f: ini.read_file(f)
         expected=[]
         ordinal=0
         for idx in range(len(ini.sections())):
@@ -49,4 +49,4 @@ with tempfile.TemporaryDirectory(dir=tmp_root) as tmp:
             got=json.loads(out.read_text())
             assert got["sequence"]==name and got["current"]==expected[idx]
             assert got["nextInSameTable"]==(expected[nxt] if nxt!=255 else dict(index=255,status="outsideTable"))
-    print(f"Matched {sections} story sections, {actions} actions and all three terminators.")
+    print(f"Matched {sections} story sections, {actions} actions and all six terminators.")

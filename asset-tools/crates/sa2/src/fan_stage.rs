@@ -26,6 +26,11 @@ pub struct LevelDispatch {
     pub character: i8,
     pub level: u16,
 }
+const BOSS_RUSHES: [&str; 3] = [
+    "Hero Boss Rush Story Sequence",
+    "Dark Boss Rush Story Sequence",
+    "All Boss Rush Story Sequence",
+];
 struct LevelConfig {
     section: String,
     set_prefix: String,
@@ -35,6 +40,7 @@ struct LevelConfig {
 /// Immutable index of normal story routes; resource bytes are requested lazily by mount.
 pub struct Campaign {
     levels: Vec<LevelDispatch>,
+    boss_rushes: Vec<LevelDispatch>,
     configs: BTreeMap<u16, LevelConfig>,
     tables: BTreeMap<String, ObjectList>,
     positions: Vec<stage_positions::PositionRow>,
@@ -285,28 +291,33 @@ impl Campaign {
             }
         }
         let sequences = story::read(exe, story_config)?;
-        let mut levels = Vec::new();
-        for sequence in STORIES {
-            let mut cursor = story::Cursor::new(
-                sequences
-                    .get(sequence)
-                    .ok_or_else(|| Error::invalid("missing campaign sequence"))?,
-            );
-            let mut action_index = 0;
-            while let Some(d) = cursor.dispatch() {
-                if let story::Action::Level { character, level } = d.action {
-                    levels.push(LevelDispatch {
-                        sequence,
-                        action_index,
-                        source_rva: d.source_rva,
-                        character,
-                        level: level as u16,
-                    });
+        let collect_levels = |names: &[&'static str]| -> Result<Vec<LevelDispatch>> {
+            let mut rows = Vec::new();
+            for &sequence in names {
+                let mut cursor = story::Cursor::new(
+                    sequences
+                        .get(sequence)
+                        .ok_or_else(|| Error::invalid("missing campaign sequence"))?,
+                );
+                let mut action_index = 0;
+                while let Some(d) = cursor.dispatch() {
+                    if let story::Action::Level { character, level } = d.action {
+                        rows.push(LevelDispatch {
+                            sequence,
+                            action_index,
+                            source_rva: d.source_rva,
+                            character,
+                            level: level as u16,
+                        });
+                    }
+                    cursor.acknowledge(&d.token)?;
+                    action_index += 1;
                 }
-                cursor.acknowledge(&d.token)?;
-                action_index += 1;
             }
-        }
+            Ok(rows)
+        };
+        let levels = collect_levels(&STORIES)?;
+        let boss_rushes = collect_levels(&BOSS_RUSHES)?;
         let mut names = BTreeMap::new();
         for (section, fields) in sections(object_config, &["filename", "type"])? {
             if fields.get("type").is_some_and(|v| v == "objlist") {
@@ -328,7 +339,7 @@ impl Campaign {
             let Some(id) = fields.get("levelid").and_then(|s| s.parse::<u16>().ok()) else {
                 continue;
             };
-            if !levels.iter().any(|l| l.level == id) {
+            if !levels.iter().chain(&boss_rushes).any(|l| l.level == id) {
                 continue;
             }
             let object_section = fields
@@ -351,6 +362,7 @@ impl Campaign {
         }
         Ok(Self {
             levels,
+            boss_rushes,
             configs,
             tables: object_table::mapped_tables(exe, object_config)?,
             positions: stage_positions::read_rows(exe)?,
@@ -372,6 +384,15 @@ impl Campaign {
             .filter(|r| r.level == dispatch.level && r.course == course)
             .collect()
     }
+    pub fn boss_rushes(&self) -> &[LevelDispatch] {
+        &self.boss_rushes
+    }
+    pub fn dispatch(&self, sequence: &str, ordinal: usize) -> Option<&LevelDispatch> {
+        self.levels
+            .iter()
+            .chain(&self.boss_rushes)
+            .find(|d| d.sequence == sequence && d.action_index == ordinal)
+    }
     pub fn levels(&self) -> &[LevelDispatch] {
         &self.levels
     }
@@ -384,9 +405,7 @@ impl Campaign {
         mut load: impl FnMut(&str) -> Result<Option<Vec<u8>>>,
     ) -> Result<MountedStage<'_>> {
         let dispatch = self
-            .levels
-            .iter()
-            .find(|d| d.sequence == sequence && d.action_index == action_index)
+            .dispatch(sequence, action_index)
             .ok_or_else(|| Error::invalid("not an authored single-player campaign level action"))?
             .clone();
         let ch = match dispatch.character {

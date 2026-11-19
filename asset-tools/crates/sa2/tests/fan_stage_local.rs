@@ -77,6 +77,47 @@ fn mounted_campaign_routes() {
             Ok(None)
         }
     };
+    let hero_bosses = [
+        (0, 60),
+        (6, 20),
+        (0, 19),
+        (4, 63),
+        (0, 64),
+        (4, 33),
+        (6, 29),
+        (0, 42),
+    ];
+    let dark_bosses = [
+        (1, 61),
+        (7, 20),
+        (5, 62),
+        (1, 19),
+        (7, 67),
+        (5, 33),
+        (7, 29),
+        (1, 42),
+    ];
+    let all_bosses = [
+        hero_bosses.as_slice(),
+        dark_bosses.as_slice(),
+        &[(1, 65), (0, 66)],
+    ]
+    .concat();
+    assert_eq!(campaign.boss_rushes().len(), 34);
+    for (name, expected) in [
+        ("Hero Boss Rush Story Sequence", hero_bosses.as_slice()),
+        ("Dark Boss Rush Story Sequence", dark_bosses.as_slice()),
+        ("All Boss Rush Story Sequence", all_bosses.as_slice()),
+    ] {
+        for (ordinal, &(character, level)) in expected.iter().enumerate() {
+            let stage = campaign.mount(name, ordinal, installed).unwrap();
+            assert_eq!(
+                (stage.dispatch.character, stage.dispatch.level),
+                (character, level)
+            );
+        }
+        assert!(campaign.dispatch(name, expected.len()).is_none());
+    }
     let mut unique = BTreeSet::new();
     let (mut mounts, mut placements, mut unresolved, mut starts, mut grounds) = (0, 0, 0, 0, 0);
     let mut terrain_ids = BTreeSet::new();
