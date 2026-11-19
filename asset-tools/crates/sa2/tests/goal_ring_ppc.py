@@ -556,7 +556,7 @@ def model_service(cpu,pc,*_):
     if pc==BASE+mh+0xc4:
         display[-1][1]["field20Restored"]=read32(model_mem+20);return
     if pc==BASE+mh+0x98:
-        assert reg(3)==model_mem and reg(4)==0x12345678
+        assert reg(3)==model_mem and reg(4)==draw_colors[-1]
         ins=read32(pc);target=pc-BASE+((ins&0x03fffffc)^0x02000000)-0x02000000
         display[-1][1]["calls"].append(["local",target,model,"previousReturn"])
         return  # let the native branch enter the submission wrapper
@@ -567,7 +567,7 @@ def model_service(cpu,pc,*_):
             args=[reg(3)-DATA]
         elif dst==0x80114e30:args=[reg(3),bits(1),bits(2),bits(3)]
         elif dst==0x80033248:
-            args=[reg(3),reg(4),bits(1)];cpu.reg_write(R.UC_PPC_REG_3,0x12345678)
+            args=[reg(3),reg(4),bits(1)];color=(0x12345678 ^ bits(1))&0xffffffff;draw_colors.append(color);cpu.reg_write(R.UC_PPC_REG_3,color)
         call=["engine",dst,*args]
     display[-1][1]["calls"].append(call)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
@@ -589,14 +589,32 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if section==1 and off==sub+0x48 and kind==10:
             assert module==0
             submit_engine=val
+# The scratch buffer straddles the comparator's synthetic BASE. Use a separate
+# PPC address space for this leaf, retaining its real source and destination.
+leaf=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+prep=0x16870;scratch=0x80fffe60;stream=read32(model_mem)-DATA
+for page in (BASE,BASE-4096,(BASE+prep)&~4095,(DATA+stream)&~4095):leaf.mem_map(page,4096)
+leaf.mem_write(BASE+prep,d[ss[1][0]+prep:ss[1][0]+prep+0x1bc])
+vertex_count=w(ss[5][0]+stream+4)>>16
+src_size=12+vertex_count*24
+leaf.mem_write(DATA+stream,d[ss[5][0]+stream:ss[5][0]+stream+src_size])
+out_size=12+vertex_count*16
 def submit_service(cpu,pc,*_):
     record=display[-1][1]
     reg=lambda n:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(n)))
     if pc==BASE+sub+0x68:
         record["modelPointerRestored"]=read32(model_mem)-DATA;return
     if pc==BASE+sub+0x3c:
-        assert reg(5)==0x12345678 and reg(4)==read32(model_mem)
+        assert reg(5)==draw_colors[-1] and reg(4)==read32(model_mem)
         ins=read32(pc);target=pc-BASE+((ins&0x03fffffc)^0x02000000)-0x02000000
+        assert target==prep and reg(3)==scratch
+        leaf.mem_write(scratch-4,b"\xcd"*(out_size+8))
+        for i in range(3,7):leaf.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),reg(i))
+        leaf.reg_write(R.UC_PPC_REG_LR,BASE+prep+0x1bc)
+        leaf.emu_start(BASE+prep,BASE+prep+0x1bc,count=2000)
+        assert leaf.reg_read(R.UC_PPC_REG_PC)==BASE+prep+0x1bc and leaf.reg_read(R.UC_PPC_REG_3)==0
+        assert leaf.mem_read(scratch-4,4)==leaf.mem_read(scratch+out_size,4)==b"\xcd"*4
+        record["preparedStream"]=dict(packedColor=reg(5),vertexCount=vertex_count,bytes=out_size,sha256=hashlib.sha256(leaf.mem_read(scratch,out_size)).hexdigest())
         call=["local",target,reg(3),reg(4)-DATA,"previousReturn",reg(6)]
     else:
         assert reg(3)==model_mem
@@ -643,7 +661,7 @@ for before,slot in itertools.product(range(11),(0,1)):
         result=dict(calls=[],playerIndex=slot,events=events,mode=cpu.mem_read(WORK,1)[0],work36Bits=struct.unpack('>I',cpu.mem_read(WORK+36,4))[0])
         if list_input and (prev or created):
             updates=53 if slot else 1
-            frames=[]
+            frames=[];draw_colors=[]
             query=[pos[0]+(10 if slot else 12),pos[1],pos[2]]
             cpu.mem_write(TASK+0xc00,struct.pack(">fff",*query))
             display_word=0xfffffffb if slot else 17
@@ -665,7 +683,7 @@ for before,slot in itertools.product(range(11),(0,1)):
             write32(global_hook,BASE+0x30bc8 if owns[1] else 0x5678)
             released=[];manager_run(0x30b34)
             assert read32(manager+60)==0 and read32(manager_slot)==(0 if owns[0] else 0x1234) and read32(global_hook)==(0 if owns[1] else 0x5678)
-            list_input['schedule']=dict(previous=previous,updates=updates,cleanup=owns,query=query,display_word=display_word)
+            list_input['schedule']=dict(previous=previous,updates=updates,cleanup=owns,query=query,display_word=display_word,display_colors=draw_colors)
             record=next(ev[1] for ev in events if ev[0]=="positionList")
             record["schedule"]=dict(frames=frames,cleanup=dict(released=[item[0] for item in released],clearManager=owns[0],clearHook=owns[1]))
         if list_input:obs['activation']['position_list']=list_input

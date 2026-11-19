@@ -75,6 +75,8 @@ struct PositionRoutine {
 }
 #[derive(Debug)]
 struct PositionModel {
+    vertex_header: u32,
+    positions: Vec<[u8; 12]>,
     model: u32,
     texture: u32,
     base: f32,
@@ -85,14 +87,28 @@ struct PositionModel {
     prepare: u32,
 }
 impl PositionModel {
-    fn trace(&self, radius: f32, ratio: f32) -> Value {
+    fn trace(&self, radius: f32, ratio: f32, color: Option<u32>) -> Value {
         let scale = (radius / self.base).to_bits();
-        json!({"model":self.model,"field20During":(self.bias+radius).to_bits(),"calls":[
+        let mut result = json!({"model":self.model,"field20During":(self.bias+radius).to_bits(),"calls":[
         ["engine",0x80116ad0u32,self.texture],["engine",0x80115d50u32],["engine",0x80114e30u32,0,scale,scale,scale],
         ["engine",0x80033248u32,self.colors[0],self.colors[1],ratio.to_bits()],
         ["local",self.submit,self.model,"previousReturn"],
         ["local",self.prepare,0x80fffe60u32,self.source,"previousReturn",65535],
-        ["engine",0x8011de10u32,self.model,{"modelPointerDuring":0x80fffe60u32}],["engine",0x80115d9cu32]],"modelPointerRestored":self.source,"field20Restored":self.base.to_bits()})
+        ["engine",0x8011de10u32,self.model,{"modelPointerDuring":0x80fffe60u32}],["engine",0x80115d9cu32]],"modelPointerRestored":self.source,"field20Restored":self.base.to_bits()});
+        if let Some(color) = color {
+            let count = self.positions.len();
+            let header = (((4 * (count as u32) + 1) << 16) | 0x23).to_be_bytes();
+            let mut bytes = Vec::with_capacity(12 + count * 16);
+            bytes.extend(header);
+            bytes.extend(self.vertex_header.to_be_bytes());
+            for xyz in &self.positions {
+                bytes.extend(xyz);
+                bytes.extend(color.to_be_bytes());
+            }
+            bytes.extend(255u32.to_be_bytes());
+            result["preparedStream"] = json!({"packedColor":color,"vertexCount":count,"bytes":bytes.len(),"sha256":manifest::sha256(&bytes)});
+        }
+        result
     }
 }
 #[derive(Deserialize)]
@@ -117,6 +133,7 @@ pub struct PositionNode {
 #[serde(deny_unknown_fields)]
 pub struct ManagerSchedule {
     pub display_word: Option<u32>,
+    pub display_colors: Option<Vec<u32>>,
     pub query: Option<[f32; 3]>,
     pub previous: Vec<PositionNode>,
     pub updates: u8,
@@ -177,6 +194,10 @@ impl PositionRoutine {
                 list.push((n.address, n.value, n.limit, n.position));
             }
             let mut frames = Vec::new();
+            if schedule.display_colors.is_some() && schedule.display_word.is_none() {
+                return Err(bad());
+            }
+            let mut colors = schedule.display_colors.as_ref().map(|c| c.iter());
             let mut display_records = 0;
             for _ in 0..schedule.updates {
                 let mut freed = Vec::new();
@@ -233,7 +254,14 @@ impl PositionRoutine {
                         ]));
                         display.push(json!([
                             "modelDraw",
-                            self.model_draw.trace(radius, radius / limit)
+                            self.model_draw.trace(
+                                radius,
+                                radius / limit,
+                                colors
+                                    .as_mut()
+                                    .map(|it| it.next().copied().ok_or_else(bad))
+                                    .transpose()?
+                            )
                         ]));
                         display.push(json!(["engine", 0x80115d9cu32]));
                     }
@@ -242,6 +270,9 @@ impl PositionRoutine {
                 if list.is_empty() {
                     break;
                 }
+            }
+            if colors.is_some_and(|mut c| c.next().is_some()) {
+                return Err(bad());
             }
             let cleanup=schedule.cleanup.map(|[owns_manager,owns_hook]|json!({"released":list.iter().map(|n|n.0).collect::<Vec<_>>(),"clearManager":owns_manager,"clearHook":owns_hook}));
             result["schedule"] = json!({"frames":frames,"cleanup":cleanup});
@@ -654,7 +685,31 @@ impl Program {
                         let (5, source) = rel.local_pointer(5, model)?.ok_or_else(invalid)? else {
                             return Err(invalid());
                         };
+                        if manifest::sha256(
+                            instructions
+                                .get(prepare as usize..prepare as usize + 0x1bc)
+                                .ok_or_else(invalid)?,
+                        ) != "d3b6c552a802b74e949aefe4904a4b06d6ad653e535ffb52064730c0b405b766"
+                        {
+                            return Err(invalid());
+                        }
+                        let vertices = rel.data(5)?;
+                        let start = source as usize;
+                        let vertex_header = word(vertices, start + 4)?;
+                        let count = (vertex_header >> 16) as usize;
+                        let end = start + 8 + count * 24;
+                        if word(vertices, end)? != 255 {
+                            return Err(invalid());
+                        }
+                        let positions = vertices[start + 8..end]
+                            .as_chunks::<24>()
+                            .0
+                            .iter()
+                            .map(|chunk| chunk[..12].try_into().unwrap())
+                            .collect();
                         let model_draw = PositionModel {
+                            positions,
+                            vertex_header,
                             model,
                             texture: field(0x52, 5)?,
                             base: f32::from_bits(word(rel.data(5)?, model as usize + 20)?),

@@ -176,5 +176,12 @@ scratch address, the color service return and 65535 to its preparation
 routine. It temporarily replaces the model's first pointer with the scratch
 address for the engine draw call, then restores the original pointer.
 The City Escape comparator runs these writes and observes the pointer at the
-draw call and after return. The scratch contents, renderer and pixels
-remain unverified.
+draw call and after return. To replay buffer preparation, supply `schedule.display_colors`: one observed
+packed color-service return per surviving node per displayed update, in
+submission order. Rust reads the module's original XYZ words without float
+conversion and writes its packed color word unchanged after each vertex.
+The replay checks the source terminator and reports the byte length and
+SHA-256 of the prepared stream without exporting its contents. City Escape's
+32 vertices yield 524 bytes. The comparator executes the installed preparation
+routine, checks its return and the guard words around its output, and compares
+the full stream digest. Color computation, renderer and pixels remain unverified.
