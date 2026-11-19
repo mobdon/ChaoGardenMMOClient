@@ -439,6 +439,46 @@ pub fn weakpoint_placements(bytes: &[u8]) -> Result<serde_json::Value> {
     };
     let base = pair(0x844e, 5)?;
     let matrices = pair(0x847e, 6)?;
+    let lookup = pair(0x41a2, 5)?;
+    if pair(0x41be, 6)? != matrices {
+        return Err(Error::invalid("different weakpoint matrix buffer"));
+    }
+    let mut pending = vec![0x18614u32];
+    let mut hierarchy = Vec::new();
+    while let Some(n) = pending.pop() {
+        if hierarchy.contains(&n) || hierarchy.len() >= 46 {
+            return Err(Error::invalid("unexpected boss hierarchy"));
+        }
+        hierarchy.push(n);
+        for field in [48, 44] {
+            if let Some((section, next)) = rel.local_pointer(5, n + field)? {
+                if section != 5 {
+                    return Err(Error::invalid("foreign boss joint"));
+                }
+                pending.push(next);
+            }
+        }
+    }
+    let mut captures = Vec::new();
+    for (slot, call) in [0x4278, 0x4290, 0x42a8, 0x42bc, 0x42d0]
+        .into_iter()
+        .enumerate()
+    {
+        let callee = rel
+            .reference(1, call)
+            .ok_or_else(|| Error::invalid("missing matrix capture"))?;
+        if (callee.module, callee.kind, callee.addend) != (0, 10, 0x80114c24) {
+            return Err(Error::invalid("unexpected matrix capture"));
+        }
+        let target = rel
+            .local_pointer(5, lookup + 16 + 20 * slot as u32)?
+            .ok_or_else(|| Error::invalid("null capture joint"))?;
+        let joint = hierarchy
+            .iter()
+            .position(|&n| target == (5, n))
+            .ok_or_else(|| Error::invalid("unmapped capture joint"))?;
+        captures.push(serde_json::json!({"slot":slot,"bossJointIndex":joint,"jointSection5":target.1,"captureCallSection1":call}));
+    }
     let model = pair(0x84c2, 5)?;
     let data = rel.data(5)?;
     let table = data
@@ -457,6 +497,6 @@ pub fn weakpoint_placements(bytes: &[u8]) -> Result<serde_json::Value> {
     }
     Ok(
         serde_json::json!({"modelSection5":model,"tableSection5":base,"matrixArraySection6":matrices,
-        "matrixStride":48,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
+        "matrixStride":48,"matrixCaptures":captures,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
     )
 }
