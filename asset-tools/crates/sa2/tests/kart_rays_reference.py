@@ -38,8 +38,14 @@ def interior(piece):
 
 with tempfile.TemporaryDirectory(dir=private) as temp:
     req=Path(temp)/"ray.json"
-    for route in [101,280]:
-        ids=list(map(int,(courses/f"Route {route}.txt").read_text(encoding="utf-8-sig").split()))
+    catalog=Path(temp)/"courses.json"
+    subprocess.run([cli,"kart-courses",game/"sonic2app.exe",catalog],check=True)
+    rows={r["name"]:r for r in json.loads(catalog.read_text())}
+    assert len(rows)==5
+    for route in ["101","280","beginner","standard","expert"]:
+        filename=f"Route {route}" if route.isdecimal() else route.title()
+        ids=list(map(int,(courses/f"{filename}.txt").read_text(encoding="utf-8-sig").split()))
+        assert rows[route]["piece_ids"]==ids
         pos=(0.,0.,0.); heading=0
         for i,piece in enumerate(ids):
             if i in (0,len(ids)//2,len(ids)-1):
@@ -48,10 +54,12 @@ with tempfile.TemporaryDirectory(dir=private) as temp:
                 point=transform(pos,heading,local)
                 req.write_text(json.dumps(dict(origin=[point[0],point[1]+1,point[2]],direction=[0,-2,0],maxDistance=2)))
                 subprocess.run([cli,"kart-raycast",game/"sonic2app.exe",out,game/"resource/gd_PC/DLL/Win32/Data_DLL.dll",str(route),req],check=True)
-                hit=json.loads(out.read_text())["hit"]
+                report=json.loads(out.read_text())
+                assert report["occurrencesWithoutCollision"]==[[j,n] for j,n in enumerate(ids) if not (models/f"{n:03}.sa1mdl").exists()]
+                hit=report["hit"]
                 assert (hit["occurrence"],hit["piece_id"],hit["strip"],hit["triangle"])==(i,piece,strip,t),(route,i,hit)
                 assert abs(hit["distance"]-1)<0.005,(route,i,hit)
             row=config[str(piece)]
             pos=transform(pos,heading,list(map(float,row["EndPoint"].split(","))))
             heading=(heading+int(row.get("YRotation","0"),16))&65535
-print("Matched starting, middle and final piece hits for both story routes.")
+print("Matched starting, middle and final piece hits for all five courses.")

@@ -96,7 +96,7 @@ pub struct KartRankRow {
     pub a: [u8; 2],
 }
 /// The two kart stage dispatches use separate course descriptors rather than a static landtable.
-pub(crate) fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
+fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
     let pe = crate::pe::read_pe(exe)?;
     let r = crate::model::Reader { data: exe };
     let mut routes = BTreeMap::new();
@@ -120,12 +120,7 @@ pub(crate) fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
             0x133b3a5,
         ),
     ] {
-        let at = pe.rva_to_offset(descriptor_rva, 8)?;
-        let count = r.u32(at + 4)? as usize;
-        if count != expected {
-            return Err(Error::invalid("unknown kart course row"));
-        }
-        let ptr = pe.va_to_offset(r.u32(at)?, count)?;
+        let ids = crate::kart_course::read_piece_ids(&r, &pe, descriptor_rva, expected)?;
         let pa = pe.rva_to_offset(physics_rva, 40)?;
         let f = |i: usize| r.f32(pa + 4 * i);
         let physics = KartPhysics {
@@ -166,7 +161,7 @@ pub(crate) fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
                 rank_times_rva,
                 rank_times_sha256: crate::manifest::sha256(ranks),
                 rank_times,
-                course_parts: r.span(ptr, count)?.to_vec(),
+                course_parts: ids.to_vec(),
                 set_filename,
             },
         );

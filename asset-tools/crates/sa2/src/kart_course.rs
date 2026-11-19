@@ -429,6 +429,55 @@ pub struct KartHit {
     pub barycentric: [f64; 3],
     pub front_face: bool,
 }
+#[derive(Debug, serde::Serialize)]
+pub struct Course<'a> {
+    pub name: &'static str,
+    pub descriptor_rva: u32,
+    pub piece_ids: &'a [u8],
+    pub piece_ids_sha256: String,
+}
+
+pub fn courses(exe: &[u8]) -> Result<Vec<Course<'_>>> {
+    let pe = crate::object_table::verify_image(exe)?;
+    let r = crate::model::Reader { data: exe };
+    [
+        ("101", 0xaf82bc, 321),
+        ("280", 0xaf82c4, 369),
+        ("beginner", 0xaf82cc, 88),
+        ("standard", 0xaf82d4, 112),
+        ("expert", 0xaf82dc, 123),
+    ]
+    .into_iter()
+    .map(|(name, descriptor_rva, n)| {
+        let piece_ids = read_piece_ids(&r, &pe, descriptor_rva, n)?;
+        Ok(Course {
+            name,
+            descriptor_rva,
+            piece_ids,
+            piece_ids_sha256: sha256(piece_ids),
+        })
+    })
+    .collect()
+}
+
+pub(crate) fn read_piece_ids<'a>(
+    r: &crate::model::Reader<'a>,
+    pe: &crate::pe::PeImage,
+    rva: u32,
+    n: usize,
+) -> Result<&'a [u8]> {
+    let at = pe.rva_to_offset(rva, 8)?;
+    if r.u32(at + 4)? as usize != n {
+        return Err(Error::invalid("unknown kart course length"));
+    }
+    let ptr = pe.va_to_offset(r.u32(at)?, n)?;
+    let ids = r.span(ptr, n)?;
+    if ids.iter().any(|&v| v >= 85) {
+        return Err(Error::invalid("course piece outside native table"));
+    }
+    Ok(ids)
+}
+
 pub fn story_raycast(
     exe: &[u8],
     dll: &[u8],
@@ -437,27 +486,50 @@ pub fn story_raycast(
     direction: [f64; 3],
     limit: f64,
 ) -> Result<Option<KartHit>> {
-    let character = match route {
-        101 => 6,
-        280 => 5,
+    let name = match route {
+        101 => "101",
+        280 => "280",
         _ => return Err(Error::invalid("unknown story kart route")),
     };
+    Ok(course_raycast(exe, dll, name, origin, direction, limit)?.hit)
+}
+
+pub struct CourseQuery {
+    pub hit: Option<KartHit>,
+    pub without_collision: Vec<(usize, u8)>,
+}
+
+pub fn course_raycast(
+    exe: &[u8],
+    dll: &[u8],
+    name: &str,
+    origin: [f64; 3],
+    direction: [f64; 3],
+    limit: f64,
+) -> Result<CourseQuery> {
     if !origin.iter().all(|v| v.is_finite()) || !limit.is_finite() || limit <= 0. {
         return Err(Error::invalid("invalid kart ray origin or distance"));
     }
     let direction = crate::collision::unit_direction(direction)?;
-    crate::object_table::verify_image(exe)?;
+    let course = courses(exe)?
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| Error::invalid("unknown kart course"))?;
     if sha256(dll) != crate::board_motion::PC_DLL_SHA256 {
         return Err(Error::invalid("unsupported kart DLL revision"));
     }
-    let routes = crate::fan_stage::kart_routes(exe)?;
-    let ids = &routes[&character].course_parts;
+    let ids = course.piece_ids;
     let pe = read_pe(dll)?;
     let table = read_course_table(dll)?;
     let poses = course_layout(&table, ids, CoursePose::default())?;
+    let mut without_collision = Vec::new();
     let mut nearest = None;
     let mut closest = limit;
     for (occurrence, (&piece_id, pose)) in ids.iter().zip(poses).enumerate() {
+        if table.pieces[usize::from(piece_id)].collision.is_none() {
+            without_collision.push((occurrence, piece_id));
+            continue;
+        }
         let mut result = Ok(());
         visit_piece_triangles(dll, &pe, &table.pieces[usize::from(piece_id)], pose, |t| {
             if result.is_err() {
@@ -487,5 +559,8 @@ pub fn story_raycast(
         })?;
         result?;
     }
-    Ok(nearest)
+    Ok(CourseQuery {
+        hit: nearest,
+        without_collision,
+    })
 }
