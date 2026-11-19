@@ -1,0 +1,912 @@
+{
+  "schemaVersion": 1,
+  "romSha256": "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b",
+  "wholeGamePorted": false,
+  "scope": "Source evidence spans only; includes partial ports, boundaries and resources. See docs/PORT-STATUS.md for behavior coverage.",
+  "spans": [
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.initialize",
+      "name": "routines.initialize",
+      "offset": 23452,
+      "length": 52,
+      "sha256": "5988f38989338d8ea5ff4a37be5f8886b1b2da0e1a0c970405738e5a512f5ed3"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.dispatch",
+      "name": "routines.dispatch",
+      "offset": 23504,
+      "length": 36,
+      "sha256": "f3c90aff6cbcdc190a9385528eb45887fdfaf69750bc44285d1f4b897b16ad14"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.end",
+      "name": "routines.end",
+      "offset": 23540,
+      "length": 12,
+      "sha256": "64e808d4e1ad597e30b06aed9137486b372f74efde0661bfed5bcdf2708c7efd"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.frame",
+      "name": "routines.frame",
+      "offset": 23552,
+      "length": 48,
+      "sha256": "a92d7e9564c5a3f01d4c0ec0b85a2f2c7d8a05abd036614c112437b81c147f8b"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.blank",
+      "name": "routines.blank",
+      "offset": 23600,
+      "length": 48,
+      "sha256": "54d7171b8caa1866d7ec758dbb356ae88beaac99f390a391c7ddd012963cefb2"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.immediate",
+      "name": "routines.immediate",
+      "offset": 23648,
+      "length": 20,
+      "sha256": "216ed6ee73b7184db7416724fdc68e29c1919ed605a81f19fe12fc1ef2e702d5"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.wait",
+      "name": "routines.wait",
+      "offset": 23668,
+      "length": 40,
+      "sha256": "53612199cd670f04f2b10245274e06f0e09ca9a3cd92ae7509c0e5e1818038ae"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.loopBegin",
+      "name": "routines.loopBegin",
+      "offset": 23708,
+      "length": 44,
+      "sha256": "1ca00811094d4bb6286e0e829ff03d443804e6634c948c89c1d46265e332fd7a"
+    },
+    {
+      "fixture": "tests/animation-vectors.json",
+      "key": "routines.loopEnd",
+      "name": "routines.loopEnd",
+      "offset": 23752,
+      "length": 64,
+      "sha256": "e2ae0bf40bf47f64994c60c7abde0dc9aefe78dcfa47e16e0ba71ac8bb4af8c9"
+    },
+    {
+      "fixture": "tests/ball-vectors.json",
+      "key": "routines[0]",
+      "name": "routines[0]",
+      "offset": 170560,
+      "length": 360,
+      "sha256": "209276c2813b578ac79743dbb4ce212b769b846c532d9ddf9349c8cc20099ef6"
+    },
+    {
+      "fixture": "tests/ball-vectors.json",
+      "key": "routines[1]",
+      "name": "routines[1]",
+      "offset": 172108,
+      "length": 312,
+      "sha256": "fcbf0d803980db7bdde77b122d12d0b321095e17b05addf69e68233d8ffda34e"
+    },
+    {
+      "fixture": "tests/ball-vectors.json",
+      "key": "routines[2]",
+      "name": "routines[2]",
+      "offset": 173264,
+      "length": 140,
+      "sha256": "d6b43ba7a8e7790794aaf23b2c8baa3dd11b5fd95b0a266f9d3ab0bbffbd3542"
+    },
+    {
+      "fixture": "tests/ball-vectors.json",
+      "key": "routines[3]",
+      "name": "routines[3]",
+      "offset": 186008,
+      "length": 116,
+      "sha256": "fada3d2e88e4369914d4ef42710822543d80cd1bda6f5ba2be9273dff77af366"
+    },
+    {
+      "fixture": "tests/ball-vectors.json",
+      "key": "routines[4]",
+      "name": "routines[4]",
+      "offset": 171152,
+      "length": 248,
+      "sha256": "254e95a868038aef1f099e44de329cc7c34fd2ead9cc04497d7b6aafbd8abd39"
+    },
+    {
+      "fixture": "tests/ball-vectors.json",
+      "key": "routines[5]",
+      "name": "routines[5]",
+      "offset": 171448,
+      "length": 18,
+      "sha256": "1773241ff7cd0d45863ee5a306c62e3327347be8b988d133ed467f74996d4316"
+    },
+    {
+      "fixture": "tests/ball-vectors.json",
+      "key": "resources[0]",
+      "name": "resources[0]",
+      "offset": 716834,
+      "length": 2050,
+      "sha256": "9c9e60ec4bd598b1551293dc50521c9b4d011cb3822e53865d16647cb01ac008"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[0]",
+      "name": "collision_dispatch",
+      "offset": 178712,
+      "length": 1468,
+      "sha256": "bd024e76961c7224ea5cbca61fc2adf2576de574dab027797eff19673771f5d4"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[1]",
+      "name": "probe",
+      "offset": 180180,
+      "length": 364,
+      "sha256": "ae11247b0bcb1465c5b83929fb8ff4e4ba24868571c014d64b830ab87decaca4"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[2]",
+      "name": "sweep",
+      "offset": 180544,
+      "length": 248,
+      "sha256": "67859b8b2469ac9b55eece1d926531a06393a81745145b0c3e6cfe6dd0952f1f"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[3]",
+      "name": "classify_tiles",
+      "offset": 180792,
+      "length": 372,
+      "sha256": "9ce6f8f7fd8b3e638e7a6b9a9c61b5bc0683526c5f0ac31fe7245b04196ba982"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[4]",
+      "name": "classify_flippers",
+      "offset": 181164,
+      "length": 448,
+      "sha256": "a0cfb2cfc8b64161fef83ecc9bbfaf616af67b3f2bfecde5faacdc35cd3ea066"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[5]",
+      "name": "sample_flipper",
+      "offset": 181612,
+      "length": 1352,
+      "sha256": "cf09e2e4b618fd19fd7e20072cd4d0b6fab711ad513f5fb39220077ade6b6f9d"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[6]",
+      "name": "contact_adjust",
+      "offset": 182964,
+      "length": 288,
+      "sha256": "1d69443ab2484de9d009e192b9c27a5524d750606e32a6d955a5e7de55de94b7"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[7]",
+      "name": "reflect",
+      "offset": 183252,
+      "length": 332,
+      "sha256": "c25baf1b7f99661800988721016d23fc589f72a41392657af0fce6e621561ea8"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[8]",
+      "name": "material_response",
+      "offset": 183584,
+      "length": 604,
+      "sha256": "31413a541704ec69c59888ed694bf02b9f55e02bc9796e6391e78234ee7a14da"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[9]",
+      "name": "select_map",
+      "offset": 186124,
+      "length": 2176,
+      "sha256": "8a83d1ca44e9fb886168fe9a90e07ddef5a2aeabc5ac3a1bb240628d8819b862"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[10]",
+      "name": "extra_flipper_kick",
+      "offset": 184188,
+      "length": 1140,
+      "sha256": "ca1349f69996994db9e8c058ebdc6de9056719791aaa28ffac77ff950f0be301"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "routines[11]",
+      "name": "main_flipper_kick",
+      "offset": 185328,
+      "length": 680,
+      "sha256": "8a8f19fb71245e2e72ad98170e02bd6ec9295e5726ef4dd718ceee91c547ee9e"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[0]",
+      "name": "flipper_frame_selectors",
+      "offset": 719124,
+      "length": 210,
+      "sha256": "f33bdab9149a0839aba98237336d7f76aac823815e4d2ff079bc868efe7c432b"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[1]",
+      "name": "flipper_neighbours",
+      "offset": 7246752,
+      "length": 8,
+      "sha256": "fe08e865247a9214a9a484688c5ea265458f3a77961b66ee554958eabcfd0faa"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[2]",
+      "name": "collision_regions",
+      "offset": 715696,
+      "length": 110,
+      "sha256": "b647ff027d2064ddfde7751140cc46473684137b781370ccd9ccd44af48d86fb"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[3]",
+      "name": "base_tile_pointers",
+      "offset": 7246656,
+      "length": 24,
+      "sha256": "53a059d279cb64a222a03860b323910edd835d6391be31d54109d027fa18dda3"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[4]",
+      "name": "base_angle_pointers",
+      "offset": 7246688,
+      "length": 24,
+      "sha256": "13e3186bdda2af975327ccc32c4410af022ec9de3137121287f010a3fbc7cea5"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[5]",
+      "name": "base_material_pointers",
+      "offset": 7246720,
+      "length": 24,
+      "sha256": "263333ffa15d70b074b788945f75bd0607222470aa263ddc166e6ea0dc1edfdc"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[6]",
+      "name": "flipper_separations",
+      "offset": 718916,
+      "length": 16,
+      "sha256": "5c391d253dff90a36019b35d2000646fad87292a33f813c91ec18680135ff9a2"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[7]",
+      "name": "kick_lookup_window",
+      "offset": 718916,
+      "length": 208,
+      "sha256": "2f458707ffdb10efdcf09c3a7cc68aa35059b0754263f0cf054a5749dc05525c"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[8]",
+      "name": "flipper_mask_planes",
+      "offset": 6725816,
+      "length": 387072,
+      "sha256": "8ddbc973f61722dd910e60b79a662affd48b96c3cf652ac6a424526203a6357d"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[9]",
+      "name": "wall_separations",
+      "offset": 718884,
+      "length": 32,
+      "sha256": "db5c94993a111688765e99785f927b84743a81f3aacfeaf8a31ba2e227be76a7"
+    },
+    {
+      "fixture": "tests/collision-vectors.json",
+      "key": "resources[10]",
+      "name": "material_impulses",
+      "offset": 719404,
+      "length": 18,
+      "sha256": "4707f125024a7f46b640a2c13dbcb5feed9ec9c287b1c43ac7bc8fdf8b8b4592"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[0]",
+      "name": "initialize",
+      "offset": 11364,
+      "length": 56,
+      "sha256": "92b344af3781e44e80cfeded94e94a37a17f102eb8501cc0a568ad5eb9f5a461"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[1]",
+      "name": "poll",
+      "offset": 11420,
+      "length": 36,
+      "sha256": "c6cbf1a06cfc6e9021388f869b2c03f6afe7324548debff9185ed79aebd4c131"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[2]",
+      "name": "group",
+      "offset": 11456,
+      "length": 268,
+      "sha256": "2b46d43f8572eee81a2b694c89e853c7055f456aa30f785a9356144eb383f96d"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[3]",
+      "name": "per-key",
+      "offset": 11724,
+      "length": 244,
+      "sha256": "7e36f64b728fd945f4ffcf69df281575b6702a652b3cd7c520b1c0d2571e8000"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[4]",
+      "name": "clear",
+      "offset": 11968,
+      "length": 12,
+      "sha256": "57649b85d7e283c6e56a5679368cc3ffe0766b751a307539a26d1b2808bcb629"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[5]",
+      "name": "push",
+      "offset": 11980,
+      "length": 52,
+      "sha256": "df1dda24ef5862594f320167b05af9c8dbedac7affa3a588c418392f7e9c30e2"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[6]",
+      "name": "pop",
+      "offset": 12032,
+      "length": 20,
+      "sha256": "81a5f74bcc9daef21e2b8dd3261e080f102824430309c134bb5a73f248340692"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[7]",
+      "name": "replace",
+      "offset": 12052,
+      "length": 32,
+      "sha256": "f55c28d012006fdf174ef6515978ef8c17ec6f38d3125a3d0081835df9dc1296"
+    },
+    {
+      "fixture": "tests/control-vectors.json",
+      "key": "routines[8]",
+      "name": "per-key-mask-table-including-terminator",
+      "offset": 420924,
+      "length": 22,
+      "sha256": "f210fb1b1738bb97e66b1089c33bcef855f05636c2747a4358b2e8ec3ee86aa7"
+    },
+    {
+      "fixture": "tests/flipper-native-vectors.json",
+      "key": "routines[0]",
+      "name": "routines[0]",
+      "offset": 173944,
+      "length": 540,
+      "sha256": "8f4b03a036c173bd866cb6b42db80931e08f38500352761ecbee0b4556bc693a"
+    },
+    {
+      "fixture": "tests/flipper-native-vectors.json",
+      "key": "routines[1]",
+      "name": "routines[1]",
+      "offset": 175128,
+      "length": 600,
+      "sha256": "b87031892b924596255532029cea638f6edb72671aca3647cf216af2da83c576"
+    },
+    {
+      "fixture": "tests/flipper-native-vectors.json",
+      "key": "routines[2]",
+      "name": "routines[2]",
+      "offset": 175728,
+      "length": 784,
+      "sha256": "dd0a4cfde79c661192950741317d2c7e934fbb6d255770bc411faff9986353a9"
+    },
+    {
+      "fixture": "tests/flipper-native-vectors.json",
+      "key": "resources[0]",
+      "name": "resources[0]",
+      "offset": 7246272,
+      "length": 360,
+      "sha256": "5da92d0db33d0213ce881598ca9127a70c25fd16eac938c588de21068793038e"
+    },
+    {
+      "fixture": "tests/flipper-vectors.json",
+      "key": "routines[0]",
+      "name": "routines[0]",
+      "offset": 173944,
+      "length": 540,
+      "sha256": "8f4b03a036c173bd866cb6b42db80931e08f38500352761ecbee0b4556bc693a"
+    },
+    {
+      "fixture": "tests/flipper-vectors.json",
+      "key": "routines[1]",
+      "name": "routines[1]",
+      "offset": 175128,
+      "length": 600,
+      "sha256": "b87031892b924596255532029cea638f6edb72671aca3647cf216af2da83c576"
+    },
+    {
+      "fixture": "tests/flipper-vectors.json",
+      "key": "routines[2]",
+      "name": "routines[2]",
+      "offset": 175728,
+      "length": 784,
+      "sha256": "dd0a4cfde79c661192950741317d2c7e934fbb6d255770bc411faff9986353a9"
+    },
+    {
+      "fixture": "tests/frame-native-leaf-vectors.json",
+      "key": "routines[0]",
+      "name": "routines[0]",
+      "offset": 42040,
+      "length": 560,
+      "sha256": "22e671310c7d77a36a67a0ad3190e54db07edbc61037b428062adddde38b3ce1"
+    },
+    {
+      "fixture": "tests/frame-native-leaf-vectors.json",
+      "key": "routines[1]",
+      "name": "routines[1]",
+      "offset": 175128,
+      "length": 600,
+      "sha256": "b87031892b924596255532029cea638f6edb72671aca3647cf216af2da83c576"
+    },
+    {
+      "fixture": "tests/frame-native-leaf-vectors.json",
+      "key": "routines[2]",
+      "name": "routines[2]",
+      "offset": 175728,
+      "length": 784,
+      "sha256": "dd0a4cfde79c661192950741317d2c7e934fbb6d255770bc411faff9986353a9"
+    },
+    {
+      "fixture": "tests/frame-native-leaf-vectors.json",
+      "key": "routines[3]",
+      "name": "routines[3]",
+      "offset": 172108,
+      "length": 312,
+      "sha256": "fcbf0d803980db7bdde77b122d12d0b321095e17b05addf69e68233d8ffda34e"
+    },
+    {
+      "fixture": "tests/frame-native-leaf-vectors.json",
+      "key": "resources[0]",
+      "name": "resources[0]",
+      "offset": 7246272,
+      "length": 360,
+      "sha256": "5da92d0db33d0213ce881598ca9127a70c25fd16eac938c588de21068793038e"
+    },
+    {
+      "fixture": "tests/frame-vectors.json",
+      "key": "routines[0]",
+      "name": "routines[0]",
+      "offset": 42040,
+      "length": 560,
+      "sha256": "22e671310c7d77a36a67a0ad3190e54db07edbc61037b428062adddde38b3ce1"
+    },
+    {
+      "fixture": "tests/game-graphics-vectors.json",
+      "key": "resources[0]",
+      "name": "ballTiles",
+      "offset": 4561324,
+      "length": 512,
+      "sha256": "2a0b79175c78349bedc717a18f7c876d12b79f6bc85fbe34c067fed766f270ad"
+    },
+    {
+      "fixture": "tests/game-graphics-vectors.json",
+      "key": "resources[1]",
+      "name": "ballPalette",
+      "offset": 4562348,
+      "length": 22,
+      "sha256": "93cfb2110473dc10a293d4e352d77191a846d9f78b06ae332d849223e37f43b6"
+    },
+    {
+      "fixture": "tests/game-graphics-vectors.json",
+      "key": "resources[2]",
+      "name": "ballOam",
+      "offset": 7199856,
+      "length": 8,
+      "sha256": "d40e9ce59f3b4f3a78c04c8e42cca0e774a9f84298d394ce0404edc4f077b472"
+    },
+    {
+      "fixture": "tests/graphics_frame-vectors.json",
+      "key": "routines.begin",
+      "name": "routines.begin",
+      "offset": 7620,
+      "length": 24,
+      "sha256": "6f7eb745ddf7dfa196744d77bf896c418d311ae132fd6decf3f857f46594da60"
+    },
+    {
+      "fixture": "tests/graphics_frame-vectors.json",
+      "key": "routines.hide",
+      "name": "routines.hide",
+      "offset": 7644,
+      "length": 76,
+      "sha256": "a4ceb8ebd69ba6c1b1734aec6f5a9601cf46a0771c40bf02e96ab859cae04fa0"
+    },
+    {
+      "fixture": "tests/graphics_frame-vectors.json",
+      "key": "routines.affine",
+      "name": "routines.affine",
+      "offset": 7720,
+      "length": 60,
+      "sha256": "8478f528c51a39dbc1ceaa2be2ec634a44dff8836dcc6079bca44683b617c965"
+    },
+    {
+      "fixture": "tests/graphics_frame-vectors.json",
+      "key": "routines.dma",
+      "name": "routines.dma",
+      "offset": 9568,
+      "length": 32,
+      "sha256": "9c140a3c0589297e7c879bfc93d1de6871eea7f2301baa6e4afd0d32f4a548f5"
+    },
+    {
+      "fixture": "tests/graphics_frame-vectors.json",
+      "key": "routines.queue",
+      "name": "routines.queue",
+      "offset": 9600,
+      "length": 12,
+      "sha256": "44ff7825697236b23fd7bca272f60cdc4ff61309773d5e33fd69997115687179"
+    },
+    {
+      "fixture": "tests/graphics_frame-vectors.json",
+      "key": "routines.tree",
+      "name": "routines.tree",
+      "offset": 10476,
+      "length": 24,
+      "sha256": "1eb2c0655d62462cb604e3c7aadccc57d29b566f74f9c62fdb77cf9b0335840c"
+    },
+    {
+      "fixture": "tests/interpolation-vectors.json",
+      "key": "routines.constructor",
+      "name": "routines.constructor",
+      "offset": 25924,
+      "length": 248,
+      "sha256": "20f0aee31ce1d955ce0f937d5a505594576d7c2a7f77817f0a97241f70566033"
+    },
+    {
+      "fixture": "tests/interpolation-vectors.json",
+      "key": "routines.update",
+      "name": "routines.update",
+      "offset": 26172,
+      "length": 188,
+      "sha256": "5e70c01cb0cf642b1af8f9d88fa2c1d5d5f3c955f9c9dbdc9aea223cae6e7069"
+    },
+    {
+      "fixture": "tests/interpolation-vectors.json",
+      "key": "routines.submission",
+      "name": "routines.submission",
+      "offset": 9748,
+      "length": 124,
+      "sha256": "2da13e38a8d7500ff026faa9057c867cfb52da8bf9969f48cfb67f216261fbbc"
+    },
+    {
+      "fixture": "tests/lifecycle-vectors.json",
+      "key": "routines[0]",
+      "name": "lifecycle_dispatch",
+      "offset": 188832,
+      "length": 64,
+      "sha256": "1a833b7cefd7bc208483c3d452551a7c445ca71cb1c88153a79131228e61ba50"
+    },
+    {
+      "fixture": "tests/lifecycle-vectors.json",
+      "key": "routines[1]",
+      "name": "lifecycle_table01",
+      "offset": 188896,
+      "length": 828,
+      "sha256": "a7e5e790e11cd6e8500e91e6f4b6c2784d97957b63221d432c6742eacce7e70e"
+    },
+    {
+      "fixture": "tests/lifecycle-vectors.json",
+      "key": "routines[2]",
+      "name": "lifecycle_clear_pair",
+      "offset": 285152,
+      "length": 16,
+      "sha256": "d48f60e237abf87bec967ec773641be74472ed191a54f52779fea9cfa29dc2fa"
+    },
+    {
+      "fixture": "tests/lifecycle_tables-vectors.json",
+      "key": "routines[0]",
+      "name": "lifecycle_table2",
+      "offset": 189724,
+      "length": 1256,
+      "sha256": "2dbcbdc2d5f29e1246b9847696a962c1c44bfe7c1cc78f368dbe7a02b9573a0a"
+    },
+    {
+      "fixture": "tests/lifecycle_tables-vectors.json",
+      "key": "routines[1]",
+      "name": "lifecycle_table3",
+      "offset": 378180,
+      "length": 284,
+      "sha256": "3b97d2def623f8420649ddfc60ff5d59c3fd4046525c722d5f85464c8b65a472"
+    },
+    {
+      "fixture": "tests/lifecycle_tables-vectors.json",
+      "key": "routines[2]",
+      "name": "lifecycle_bank_base",
+      "offset": 13864,
+      "length": 24,
+      "sha256": "8e9f8c0373bc769ca4474b8f147ea9b4ba73b315d931ff495e4160fdc54be019"
+    },
+    {
+      "fixture": "tests/math-vectors.json",
+      "key": "routines[0]",
+      "name": "divide",
+      "offset": 395468,
+      "length": 152,
+      "sha256": "d978c39db53692496794787309f5d518a1428e0900c730a2171602ce38299b07"
+    },
+    {
+      "fixture": "tests/math-vectors.json",
+      "key": "routines[1]",
+      "name": "sine",
+      "offset": 188304,
+      "length": 80,
+      "sha256": "fb053c0f9dfcb582f366fb73f535607319402485c66834a3db3cf6fca0bcfffe"
+    },
+    {
+      "fixture": "tests/math-vectors.json",
+      "key": "routines[2]",
+      "name": "cosine",
+      "offset": 188384,
+      "length": 24,
+      "sha256": "e97c565a2c47002b3a463bbbd4dced02cf51169f0fd63a1b9cd0a0cedcf0499f"
+    },
+    {
+      "fixture": "tests/math-vectors.json",
+      "key": "routines[3]",
+      "name": "bios-atan2-wrapper-only",
+      "offset": 392876,
+      "length": 4,
+      "sha256": "d0c2ec82c5f5d65a013e773fd2f3eb012f5930f37efbf594d8e08b2afd3c3154"
+    },
+    {
+      "fixture": "tests/math-vectors.json",
+      "key": "routines[4]",
+      "name": "bios-sqrt-wrapper-only",
+      "offset": 392948,
+      "length": 4,
+      "sha256": "de4a71d0d630472b454682d19fb9bad740be092c8543ac383d1aab54f492cff4"
+    },
+    {
+      "fixture": "tests/math-vectors.json",
+      "key": "routines[5]",
+      "name": "local-quarter-wave-resource",
+      "offset": 716834,
+      "length": 2050,
+      "sha256": "9c9e60ec4bd598b1551293dc50521c9b4d011cb3822e53865d16647cb01ac008"
+    },
+    {
+      "fixture": "tests/mplay-vectors.json",
+      "key": "routines[0]",
+      "name": "open",
+      "offset": 389368,
+      "length": 120,
+      "sha256": "008059813c597439c76f7811e6a152552d162db64c062dfe300d62be5a389910"
+    },
+    {
+      "fixture": "tests/mplay-vectors.json",
+      "key": "routines[1]",
+      "name": "clear64",
+      "offset": 385328,
+      "length": 24,
+      "sha256": "5419bd3c98ab164d43e875108e63059c0cbf03bd8f21994049aecff5588fd52b"
+    },
+    {
+      "fixture": "tests/mplay-vectors.json",
+      "key": "routines[2]",
+      "name": "clear64Wrapper",
+      "offset": 388516,
+      "length": 20,
+      "sha256": "2ec7f4dc59c0d4c21ef29c33abef5e63ee97da49d6983a3fe6e6c100948d4ffe"
+    },
+    {
+      "fixture": "tests/mplay-vectors.json",
+      "key": "routines[3]",
+      "name": "start",
+      "offset": 389488,
+      "length": 228,
+      "sha256": "52f0b5b1ba337a053c8dde6375741ce06e164f80a4ba2ee07175d1e4808da85c"
+    },
+    {
+      "fixture": "tests/mplay-vectors.json",
+      "key": "routines[4]",
+      "name": "stop",
+      "offset": 389716,
+      "length": 64,
+      "sha256": "da665554358bb49b9ff641ed8b50e8b2d731ef811d35b6210c11c4097869e783"
+    },
+    {
+      "fixture": "tests/mplay-vectors.json",
+      "key": "routines[5]",
+      "name": "trackStop",
+      "offset": 386576,
+      "length": 68,
+      "sha256": "42f0896ed58bb911bad7a16413ced7798e23955b043d5f728b5e3385d3ee37e0"
+    },
+    {
+      "fixture": "tests/mplay-vectors.json",
+      "key": "routines[6]",
+      "name": "soundMode",
+      "offset": 388948,
+      "length": 152,
+      "sha256": "5bc6c1b30b9ef6694b19f65e9cb4717464094575425fe9bb2696f51abb1615fa"
+    },
+    {
+      "fixture": "tests/nudge-native-vectors.json",
+      "key": "routines[0]",
+      "name": "routines[0]",
+      "offset": 237284,
+      "length": 436,
+      "sha256": "c0ec8ad410575cd2bf3034a983dee8e237bf4e63a047ab7b47c5722d639667ed"
+    },
+    {
+      "fixture": "tests/nudge-native-vectors.json",
+      "key": "resources[0]",
+      "name": "resources[0]",
+      "offset": 7249614,
+      "length": 20,
+      "sha256": "1c92b60ec86694dfdcaf503b699753480e1aedfde4dedd375e07bbb39832286a"
+    },
+    {
+      "fixture": "tests/nudge-vectors.json",
+      "key": "routines[0]",
+      "name": "routines[0]",
+      "offset": 237284,
+      "length": 436,
+      "sha256": "c0ec8ad410575cd2bf3034a983dee8e237bf4e63a047ab7b47c5722d639667ed"
+    },
+    {
+      "fixture": "tests/oam-vectors.json",
+      "key": "routine",
+      "name": "routine",
+      "offset": 9748,
+      "length": 124,
+      "sha256": "2da13e38a8d7500ff026faa9057c867cfb52da8bf9969f48cfb67f216261fbbc"
+    },
+    {
+      "fixture": "tests/oam_render-vectors.json",
+      "key": "routine",
+      "name": "routine",
+      "offset": 9984,
+      "length": 492,
+      "sha256": "7e5c1f49a3aec57c60cbedbb7dc51effb0bc99accd8c4202848a49518704b7e0"
+    },
+    {
+      "fixture": "tests/oam_render-vectors.json",
+      "key": "masks",
+      "name": "masks",
+      "offset": 420904,
+      "length": 20,
+      "sha256": "3077a920b59da1a92cd4bd3d00b57ce6a3dd22e0a3dbde98cc4ef4bdfd946059"
+    },
+    {
+      "fixture": "tests/oam_tree-vectors.json",
+      "key": "routine",
+      "name": "routine",
+      "offset": 10868,
+      "length": 260,
+      "sha256": "0d8d621c178d94551ead556cee5ee010eee8da35dfe2f2f29c4a079e59ffaa7b"
+    },
+    {
+      "fixture": "tests/oam_tree-vectors.json",
+      "key": "masks",
+      "name": "masks",
+      "offset": 420904,
+      "length": 20,
+      "sha256": "3077a920b59da1a92cd4bd3d00b57ce6a3dd22e0a3dbde98cc4ef4bdfd946059"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[0]",
+      "name": "blend",
+      "offset": 6608,
+      "length": 216,
+      "sha256": "6a1a9c688b00cc706bc18c16f0dac34b09e8036a5cc6067c1ce0533ab5dbc062"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[1]",
+      "name": "initialize",
+      "offset": 22040,
+      "length": 80,
+      "sha256": "f955cc1567c2cf7345c3abde08a1bc4a23a4cd77b51086f7e42bd70880c1113b"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[2]",
+      "name": "process",
+      "offset": 22120,
+      "length": 156,
+      "sha256": "acc2b05c317cc2153f9fbf3816595391f1dd90d173621607db89abb4986f4e53"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[3]",
+      "name": "configure",
+      "offset": 22292,
+      "length": 16,
+      "sha256": "f38907721a180db3e722ae172a67a5a632d233b1641cf1c1e8eae7a9604c210c"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[4]",
+      "name": "copySource",
+      "offset": 22308,
+      "length": 96,
+      "sha256": "560836c8d36cec61c46ed24bbaa696201ac01adc2a55b7700787eb2756fe0bb2"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[5]",
+      "name": "setEffects",
+      "offset": 22404,
+      "length": 60,
+      "sha256": "9789e08b7d0f1ed9c72f430b288916b202f832913e105c3a8e0f222ff3dbef8a"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[6]",
+      "name": "markDirty",
+      "offset": 22464,
+      "length": 60,
+      "sha256": "4a9d2b149dc29be35ba8d4bc124b2f5475ba37dac3b581d55f1a30df43c3afe9"
+    },
+    {
+      "fixture": "tests/palette-vectors.json",
+      "key": "sourceSpans[7]",
+      "name": "cpuSetWrapper",
+      "offset": 392884,
+      "length": 4,
+      "sha256": "07967ebdc3979cd4fd4de37fd22b3e6de8965b00dae4ac5585577c9709839652"
+    },
+    {
+      "fixture": "tests/sound-vectors.json",
+      "key": "routines[0]",
+      "name": "request",
+      "offset": 14292,
+      "length": 120,
+      "sha256": "79f90794952407e38c5933ea4b839767a1f91ee014d4b1c1fb232e246b515423"
+    },
+    {
+      "fixture": "tests/sound-vectors.json",
+      "key": "routines[1]",
+      "name": "force",
+      "offset": 14412,
+      "length": 80,
+      "sha256": "ced8f01793bee8e880b6a732e48a66ec5bb58f9265fc7cd4638e7ee4a7779396"
+    },
+    {
+      "fixture": "tests/sound-vectors.json",
+      "key": "routines[2]",
+      "name": "status",
+      "offset": 14588,
+      "length": 36,
+      "sha256": "3d6ec7b5f0c104607dd3cf9e720e8ab24862ef9782d3bda5c10c257f0c56c757"
+    },
+    {
+      "fixture": "tests/sound-vectors.json",
+      "key": "routines[3]",
+      "name": "force-channel2",
+      "offset": 14548,
+      "length": 20,
+      "sha256": "d4dee33ab91b83a4bee563dae4bf4909ef32fad2de21bebf09032506b759b973"
+    },
+    {
+      "fixture": "tests/startup-vectors.json",
+      "key": "wrapper",
+      "name": "wrapper",
+      "offset": 33256,
+      "length": 120,
+      "sha256": "634a6001b14c77aaa88ff8cc8e1bca4874d14b4ad53b07c673f156541caf6b54"
+    }
+  ]
+}
