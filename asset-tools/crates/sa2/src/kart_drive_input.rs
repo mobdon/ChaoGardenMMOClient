@@ -98,7 +98,7 @@ struct Drive {
     speed_cap: f32,
 }
 #[derive(Serialize)]
-struct Motion {
+pub(crate) struct Motion {
     #[serde(skip_serializing_if = "Option::is_none")]
     drift: Option<DriftUpdate>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -108,6 +108,56 @@ struct Motion {
     work_a4: i32,
     work_68: i32,
     local_displacement: [f32; 3],
+}
+/// Observations at entry to the normal, single-player driving branch.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryDrive {
+    heading: i32,
+    work_a4: i32,
+    buttons: u32,
+    work_28c: i32,
+    stick_x: i16,
+    steering_sum: i32,
+    magnitude_return: Option<f32>,
+}
+impl StoryDrive {
+    pub(crate) fn step(
+        self,
+        velocity: [f32; 3],
+        tuning: [f32; 4],
+        constants: &[u8],
+    ) -> Result<Motion> {
+        let velocity_xz = [velocity[0], velocity[2]];
+        if velocity_xz != [0.; 2] && self.magnitude_return.is_none() {
+            return Err(Error::invalid(
+                "moving story drive requires native magnitude result",
+            ));
+        }
+        let [acceleration, brake_power, deceleration, speed_cap] = tuning;
+        let scale = f32::from_be_bytes(constants[0x200..0x204].try_into().unwrap());
+        drive_step(
+            Drive {
+                heading: self.heading,
+                work_a4: self.work_a4,
+                place: 1,
+                multiplayer: false,
+                velocity_xz,
+                magnitude_return: self.magnitude_return,
+                acceleration,
+                brake_power,
+                deceleration,
+                speed_cap,
+                drift: None,
+                position_step: None,
+            },
+            scale * self.steering_sum as f32,
+            self.stick_x,
+            self.buttons & 4 != 0,
+            self.buttons & 0x402 != 0 && self.work_28c <= 10,
+            constants,
+        )
+    }
 }
 /// 0x31b4..0x33a4: heading and local displacement before engine matrix calls.
 fn drive_step(

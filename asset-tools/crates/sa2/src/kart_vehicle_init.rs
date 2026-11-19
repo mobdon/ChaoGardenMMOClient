@@ -70,6 +70,8 @@ struct Normalize {
 #[derive(Serialize)]
 pub struct Profile {
     #[serde(skip_serializing_if = "Option::is_none")]
+    drive: Option<crate::kart_drive_input::Motion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     boost: Option<Boost>,
     section5_offset: usize,
     cue_words: [i32; 6],
@@ -91,6 +93,7 @@ pub struct Profile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryBoostInput {
+    drive: Option<crate::kart_drive_input::StoryDrive>,
     velocity: [f32; 3],
     normalize: Option<Normalize>,
     boost: BoostInput,
@@ -121,7 +124,7 @@ pub(crate) fn story_boost(
     bind(&mut b.work_dc, timers.map(|t| t.0))?;
     bind(&mut b.slot_flag, timers.map(|t| t.1))?;
     bind(&mut b.work_44, flag.map(|v| v as i32))?;
-    let output = profile(
+    let mut output = profile(
         bytes,
         ProfileInput {
             profile: story_profile,
@@ -137,6 +140,19 @@ pub(crate) fn story_boost(
         .boost
         .as_ref()
         .ok_or_else(|| crate::Error::invalid("missing story boost output"))?;
+    if let Some(drive) = input.drive {
+        let rel = CityRel::read_identified(bytes, 80)?;
+        output.drive = Some(drive.step(
+            b.velocity,
+            [
+                b.acceleration,
+                output.brake_power,
+                output.deceleration,
+                b.speed_cap,
+            ],
+            rel.data(4)?,
+        )?);
+    }
     Ok((b.work_d8, (b.work_dc, b.slot_flag), output))
 }
 /// Resolve the physics row copied by 0x2284 and bound the incoming 3D velocity.
@@ -192,6 +208,7 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
         .map(|b| boost_step(rel.data(4)?, b, event_pair, velocity, row[0], row[3]))
         .transpose()?;
     Ok(Profile {
+        drive: None,
         boost,
         section5_offset: offset,
         cue_words,
