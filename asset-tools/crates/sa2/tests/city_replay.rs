@@ -97,7 +97,7 @@ fn music_binding_requires_observed_stage_and_correct_lifecycle() {
 
 #[test]
 #[ignore = "requires SA2_SET_DIR pointing at the installed resource/gd_PC directory"]
-fn installed_city_layouts_dispatch_to_all_six_callbacks() {
+fn installed_city_layouts_dispatch_to_all_seven_callbacks() {
     let dir = std::path::PathBuf::from(std::env::var_os("SA2_SET_DIR").unwrap());
     let exe = std::fs::read(dir.join("../../sonic2app.exe")).unwrap();
     let image = object_table::verify_image(&exe).unwrap();
@@ -148,6 +148,11 @@ fn installed_city_layouts_dispatch_to_all_six_callbacks() {
                     .is_err());
                     json!({"two_player":two_player,"frames":frames})
                 }
+                "ObjectSavePoint" => {
+                    let player = json!({"position_bits":[1,2,3],"rotation":[4,5,6]});
+                    let frame = json!({"hit":[1,0],"players":[player,player],"contact_speed":1.0});
+                    json!({"engine_result":0,"stage_byte":1,"frames":[frame,frame]})
+                }
                 "ObjectCeAdxChg" => {
                     json!({"frames":[{"op":"bind","range_out":false,"short_city_2p":false}]})
                 }
@@ -165,10 +170,19 @@ fn installed_city_layouts_dispatch_to_all_six_callbacks() {
                 let last = result["frames"][2]["calls"].as_array().unwrap();
                 assert_eq!(last.len(), usize::from(!file.contains("_2p_")), "{file}");
             }
+            if name == "ObjectSavePoint" {
+                assert_eq!(
+                    result["frames"][0]["handoff"]["checkpoint_byte"],
+                    p.rotation[1] & 255
+                );
+                assert_eq!(result["frames"][0]["handoff"]["slot"], 1);
+                assert_eq!(result["frames"][1]["slotTimers"], json!([0, 299]));
+                assert!(result["frames"][1]["handoff"].is_null());
+            }
             seen.insert(name);
         }
     }
-    assert_eq!(seen.len(), 6);
+    assert_eq!(seen.len(), 7);
     assert_eq!(
         board_indices,
         [

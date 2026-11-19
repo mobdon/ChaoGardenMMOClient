@@ -247,6 +247,7 @@ pub fn callback_name(p: &Placement, d: &ObjectDefinition) -> Option<&'static str
         (0, "RING   ", 0x6c0f80) => Some("Ring"),
         (3, "SPRA   ", 0x6c4480) => Some("ObjectSpring"),
         (4, "SPRB   ", 0x6c4e90) => Some("ObjectSpringB"),
+        (8, "SAVEPOINT", 0x6d99a0) => Some("ObjectSavePoint"),
         (59, "BOARDCOL", 0x5ea210) => Some("ObjectBoardCol"),
         (77, "BOARD", 0x5ebc50) => Some("ObjectBoard"),
         (81, "ADXCHG", 0x5e2d70) => Some("ObjectCeAdxChg"),
@@ -261,6 +262,13 @@ pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Opti
         (0x6c4e90, "SPRB   ") => Some("ObjectSpringB"),
         (0x6d95e0, "CHAOPIPE" | "chaopipe") => Some("ObjectChaoPipe"),
         (0x6de3b0, "CONTCHAO" | "contchao") => Some("ContainerChao"),
+        // Installed modules with verified checkpoint gate and handoff spans.
+        (0x6d99a0, "SAVEPOINT")
+            if level != 13
+                && matches!(level,0|3..=18|21..=28|30..=32|34..=38|40..=41|43..=44|46..=55|57..=59) =>
+        {
+            Some("CheckpointContact")
+        }
         _ if level == 13 => callback_name(p, d),
         _ => None,
     }
@@ -272,6 +280,38 @@ pub(crate) fn mounted_replay(
     request: &[u8],
 ) -> Result<Value> {
     let name = mounted_callback(level, p, d);
+    if name == Some("CheckpointContact") {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ContactRequest {
+            engine_result: u32,
+            stage_byte: i8,
+            hit: Option<(i32, u32)>,
+            players: [crate::checkpoint::ContactPlayer; 2],
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ReplayRequest {
+            Frames(CheckpointReplay),
+            Single(ContactRequest),
+        }
+        let r = match decode::<ReplayRequest>(request)? {
+            ReplayRequest::Single(r) => r,
+            ReplayRequest::Frames(r) => return checkpoint_frames(p, r),
+        };
+        let mut state = crate::checkpoint::ContactState {
+            mode: 1,
+            slot_timers: [0; 2],
+        };
+        let byte = crate::checkpoint::CheckpointPlacement {
+            rotation: p.rotation.map(i32::from),
+        }
+        .work_byte(r.engine_result, r.stage_byte);
+        let handoff = state.accept(r.hit, &r.players, byte)?;
+        return Ok(
+            json!({"callback":"CheckpointContact","mode":state.mode,"slotTimers":state.slot_timers,"handoff":handoff,"scope":"One idle contact check; placement supplies checkpoint byte; gate inputs and hit are observed."}),
+        );
+    }
     if name == Some("ContainerChao") {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -326,6 +366,7 @@ fn replay_named(name: Option<&str>, placement: &Placement, request: &[u8]) -> Re
             placement,
             bounded(decode::<Frames<crate::board_replay::Step>>(request)?.frames)?,
         ),
+        Some("ObjectSavePoint") => checkpoint(placement, request),
         Some("ObjectBoardCol") => board(placement, request),
         Some("ObjectCeAdxChg") => adx(request),
         _ => Err(Error::invalid(
@@ -363,4 +404,67 @@ pub fn replay_bgm(request: &[u8]) -> Result<Value> {
         frames.push(json!({"counter":bgm.counter,"calls":calls}));
     }
     Ok(json!({"callback":"CityEscapeProlog/BgmStart","prolog":prolog,"frames":frames}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointReplay {
+    engine_result: u32,
+    stage_byte: i8,
+    frames: Vec<CheckpointFrame>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointFrame {
+    hit: Option<(i32, u32)>,
+    players: [crate::checkpoint::ContactPlayer; 2],
+    contact_speed: f32,
+    bonus_inputs: Option<[CheckpointBonusInput; 2]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointBonusInput {
+    value: i16,
+    equipment: u16,
+}
+
+fn checkpoint(p: &Placement, request: &[u8]) -> Result<Value> {
+    checkpoint_frames(p, decode(request)?)
+}
+fn checkpoint_frames(p: &Placement, req: CheckpointReplay) -> Result<Value> {
+    use crate::checkpoint::{CheckpointPlacement, CheckpointSpin, CheckpointTicks, ContactState};
+    let placement = CheckpointPlacement {
+        rotation: p.rotation.map(i32::from),
+    };
+    let byte = placement.work_byte(req.engine_result, req.stage_byte);
+    let mut state = CheckpointTicks {
+        contact: ContactState {
+            mode: 1,
+            slot_timers: [0; 2],
+        },
+        spin: CheckpointSpin {
+            angles: [0x4000, -0x4000],
+            steps: [0; 2],
+            counters: [0; 2],
+        },
+    };
+    let mut frames = Vec::new();
+    for f in bounded(req.frames)? {
+        let call = state.tick(f.hit, &f.players, byte, f.contact_speed)?;
+        let selection = call.as_ref().and_then(|c| {
+            let input = &f.bonus_inputs.as_ref()?[c.slot];
+            let selected = crate::checkpoint::contact_bonus(input.value, input.equipment);
+            Some(
+                json!({"slot":c.slot,"itemId":selected.as_ref().map(|b|b.item_id),
+                "counterIncrement":selected.map_or(0,|b|b.counter_increment)}),
+            )
+        });
+        frames.push(
+            json!({"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
+            "angles":state.spin.angles,"steps":state.spin.steps,"bonusSelection":selection,"handoff":call}),
+        );
+    }
+    Ok(
+        json!({"callback":"ObjectSavePoint","scope":"Initialized idle checkpoint; hit and signed speed are observations. Handoff is reported, not applied.","frames":frames}),
+    )
 }

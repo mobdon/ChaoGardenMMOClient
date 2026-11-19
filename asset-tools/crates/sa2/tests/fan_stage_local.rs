@@ -81,6 +81,8 @@ fn mounted_campaign_routes() {
     let (mut mounts, mut placements, mut unresolved, mut starts, mut grounds) = (0, 0, 0, 0, 0);
     let mut terrain_ids = BTreeSet::new();
     let mut gaps = vec![];
+    let mut checkpoint_levels = std::collections::BTreeSet::new();
+    let mut checkpoint_count = 0;
     for (sequence, expected) in [
         ("Hero Story Sequence", HERO),
         ("Dark Story Sequence", DARK),
@@ -96,6 +98,53 @@ fn mounted_campaign_routes() {
         for &(ordinal, _, level) in expected {
             let stage = campaign.mount(sequence, ordinal, installed).unwrap();
             assert_eq!(stage.dispatch.level, level);
+            for (layer_idx, layer) in stage.layers.iter().enumerate() {
+                for place in &layer.placements {
+                    if level == 13
+                        || !stage
+                            .object_table
+                            .and_then(|t| t.entries.get(place.definition_index?))
+                            .is_some_and(|d| d.function_va == 0x6d99a0 && d.name == "SAVEPOINT")
+                    {
+                        continue;
+                    }
+                    let request=br#"{"engine_result":1,"stage_byte":1,"hit":[1,0],"players":[{"rotation":[0,0,0],"position_bits":[0,0,0]},{"rotation":[1,2,3],"position_bits":[4,5,6]}]}"#;
+                    let out = stage
+                        .replay_object(layer_idx, place.placement_index, request)
+                        .unwrap();
+                    assert_eq!(
+                        out["handoff"]["checkpoint_byte"],
+                        place.placement.rotation[1] & 255
+                    );
+                    assert_eq!(out["handoff"]["rotation"], serde_json::json!([1, 2, 3]));
+                    assert_eq!(out["slotTimers"], serde_json::json!([0, 300]));
+                    let mut frame: serde_json::Value = serde_json::from_slice(request).unwrap();
+                    let obj = frame.as_object_mut().unwrap();
+                    obj.remove("engine_result");
+                    obj.remove("stage_byte");
+                    obj.insert("contact_speed".into(), serde_json::json!(1.0));
+                    frame["bonus_inputs"] =
+                        serde_json::json!([{"value":19,"equipment":0},{"value":60,"equipment":0}]);
+                    let req = serde_json::json!({"engine_result":1,"stage_byte":1,"frames":[frame,frame]});
+                    let seq = stage
+                        .replay_object(
+                            layer_idx,
+                            place.placement_index,
+                            &serde_json::to_vec(&req).unwrap(),
+                        )
+                        .unwrap();
+                    assert_eq!(seq["frames"][0]["handoff"], out["handoff"]);
+                    assert_eq!(
+                        seq["frames"][0]["bonusSelection"],
+                        serde_json::json!({"slot":1,"itemId":1,"counterIncrement":20})
+                    );
+                    assert!(seq["frames"][1]["bonusSelection"].is_null());
+                    assert_eq!(seq["frames"][1]["slotTimers"], serde_json::json!([0, 299]));
+                    assert_eq!(seq["frames"][1]["steps"], serde_json::json!([-44, 1810]));
+                    checkpoint_levels.insert(level);
+                    checkpoint_count += 1;
+                }
+            }
             if stage.entry_pose.is_some() {
                 starts += 1;
             }
@@ -218,6 +267,33 @@ fn mounted_campaign_routes() {
                         ("Sonic", 0x174a2e0, yaw, xyz)
                     );
                 }
+                let checkpoints: Vec<_> = stage
+                    .checkpoint_placements()
+                    .map(|(layer, p)| (layer.filename, p.placement_index, p.source_offset))
+                    .collect();
+                assert_eq!(
+                    checkpoints,
+                    [45, 218, 343].map(|n| ("set0013_s.bin", n, 32 + 32 * n))
+                );
+                let angles: Vec<_> = stage
+                    .checkpoint_placements()
+                    .map(|(_, p)| {
+                        let cp = sa2_asset_tools::checkpoint::CheckpointPlacement {
+                            rotation: p.placement.rotation.map(i32::from),
+                        };
+                        assert_eq!(cp.work_byte(2, 1), 0);
+                        assert_eq!(cp.work_byte(0, 0), 0);
+                        (cp.work_byte(1, -1), cp.child_angles([0x4000, -0x4000, 0]))
+                    })
+                    .collect();
+                assert_eq!(
+                    angles,
+                    [
+                        (3, [[16384, 49152, 0], [16384, 16384, 0]]),
+                        (2, [[16384, 32768, 0], [16384, 0, 0]]),
+                        (1, [[16384, 16896, 0], [16384, -15872, 0]])
+                    ]
+                );
                 let end = stage.end_pose.as_ref().unwrap();
                 assert_eq!(
                     (end.row_va, end.yaw, end.position),
@@ -233,6 +309,8 @@ fn mounted_campaign_routes() {
             }
         }
     }
+    assert_eq!(checkpoint_count, 76);
+    assert_eq!(checkpoint_levels.len(), 18);
     assert_eq!(campaign.levels().len(), 49);
     assert_eq!(unique.len(), 84);
     assert_eq!(mounts, 94);

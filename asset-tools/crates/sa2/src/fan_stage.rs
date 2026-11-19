@@ -202,6 +202,19 @@ pub struct MountedStage<'a> {
     pub unavailable_systems: &'static [&'static str],
 }
 impl MountedStage<'_> {
+    /// Authored SET records bound to the Steam Checkpoint_Main callback.
+    /// The layer and SET index identify the placement, not its runtime respawn ID.
+    pub fn checkpoint_placements(&self) -> impl Iterator<Item = (&Layer, &BoundPlacement)> {
+        let objects = self.object_table;
+        self.layers.iter().flat_map(move |layer| {
+            layer.placements.iter().filter_map(move |placement| {
+                let def = objects?.entries.get(placement.definition_index?)?;
+                (def.function_va == 0x6d99a0 && def.name == "SAVEPOINT")
+                    .then_some((layer, placement))
+            })
+        })
+    }
+
     /// Raw object function addresses are identities, not callable host pointers.
     pub fn resolve(
         &self,

@@ -2,15 +2,15 @@ use crate::{Error, Result};
 /// A big-endian CCL_INFO as supplied by the stage to CCL_Init. Do not
 /// interpret the attribute bits or overwrite the stage's source record.
 #[derive(Debug, serde::Serialize)]
-pub(crate) struct CollisionRecord {
-    kind: i8,
-    form: u8,
-    push: i8,
-    damage: i8,
-    attr: u32,
-    center: [f32; 3],
-    parameters: [f32; 4],
-    angles: [i32; 3],
+pub struct CollisionRecord {
+    pub kind: i8,
+    pub form: u8,
+    pub push: i8,
+    pub damage: i8,
+    pub attr: u32,
+    pub center: [f32; 3],
+    pub parameters: [f32; 4],
+    pub angles: [i32; 3],
 }
 pub(crate) fn collision_record(data: &[u8], offset: u32) -> Result<CollisionRecord> {
     let raw = data
