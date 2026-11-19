@@ -1184,3 +1184,37 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         actual=json.loads(out.read_text())["splashUpdate"]
         assert actual==expected,(idx,next(((a,b) for a,b in zip(actual,expected) if a!=b),None))
 print(idx+1,"splash update sequences matched through removal")
+
+# Capture the actual renderer boundary and shared material write for both draws.
+def capture_splash_draw(cpu, pc, *_):
+    site=pc-base[1]
+    g=lambda n:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(n)))
+    f=lambda n:struct.unpack(">d",cpu.reg_read(getattr(R,"UC_PPC_REG_FPR"+str(n))).to_bytes(8,"big"))[0]
+    if site==0xd170:args=[g(3)-base[5]]
+    elif site in (0xd1b4,0xd1e4,0xd2d0):args=[f(i) for i in range(1,5)]
+    elif site==0xd1f0:args=list(get(g(3),"fff"))
+    elif site in (0xd1fc,0xd208,0xd214):args=[g(3),g(4)]
+    elif site in (0xd228,0xd29c):args=[g(3),f(1),f(2),f(3)]
+    elif site in (0xd278,0xd2b0):
+        args=[g(i)-base[5] for i in range(3,6)]+[f(1)]
+        assert get(base[5]+0x34b8e,"H")[0]==(material&0xc000)|(counter>>2)
+    else:args=[]
+    draw_calls.append([site,engines[site],args])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in engines:
+    if 0xd140<=site<0xd2f8:
+        u.hook_add(UC_HOOK_CODE,capture_splash_draw,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,(counter,material) in enumerate([(0,0xffff),(3,0x4055),(4,0x8055),(7,0xffff),(65535,0x1234)]):
+        pos=[-1.25,2.5,10.];rot=[0xffff0001,0x2456,0x8000];draw_calls=[]
+        put(msg+52,"I",mwork);put(msg+76,"f",.625);put(mwork+6,"H",counter)
+        put(mwork+8,"III",*rot);put(mwork+20,"fff",*pos);put(mwork+32,"fff",2.5,.375,4.125)
+        put(base[5]+0x34b8e,"H",material)
+        for entry in (0xd140,0xd2f8):
+            u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_3,msg);u.reg_write(R.UC_PPC_REG_LR,stop)
+            u.emu_start(base[1]+entry,stop,count=160);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+        req=Path(tmp)/"request.json";out=Path(tmp)/f"{idx}.json"
+        req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_display=dict(position=pos,rotation=rot,work32=2.5,task76=.625,work36=.375,phase=4.125,counter=counter,material_word=material))))
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())["splashDisplay"]==dict(calls=draw_calls,materialOffset=0x34b8e,materialWord=get(base[5]+0x34b8e,"H")[0])
+print(idx+1,"splash display call streams and shared material writes matched")

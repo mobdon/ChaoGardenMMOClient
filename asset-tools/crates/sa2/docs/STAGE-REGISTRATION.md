@@ -84,3 +84,14 @@ stage references an 11-entry list here. The report retains the exact float
 bits at work offsets 36 and 40 and the halfword at offset 6. It stops at the
 first removal request and identifies its call site. Display, scheduler removal
 and cleanup run outside this callback; this observation does not render a frame.
+
+The optional `splash_display` observation replays the first splash display
+callback (0xd140). Each call records its section-1 site, engine address and
+arguments. Section-5 pointers are offsets; the position pointer is reported
+as its three float values. The callback applies rotations in Z, X, Y order
+and submits the same model/motion resources twice, with an intervening scale
+change. Immediately before the first submission it replaces the low 14 bits
+of the shared material word with the task counter shifted right by two.
+Supply the current material word when replaying another task sharing that
+material. The registered cleanup callback (0xd2f8) returns immediately.
+The display report describes renderer inputs; pixel output has not been verified.

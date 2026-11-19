@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    splash_display: Option<SplashDisplay>,
     splash_update: Option<SplashUpdate>,
     splash_spawn: Option<SplashSpawn>,
     exit: Option<StageExit>,
@@ -131,6 +132,75 @@ fn splash_update(rel: &CityRel<'_>, mut s: SplashUpdate) -> Result<Value> {
         }
     }
     Ok(json!(frames))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashDisplay {
+    position: [f32; 3],
+    rotation: [u32; 3],
+    work32: f32,
+    work36: f32,
+    task76: f32,
+    phase: f32,
+    counter: u16,
+    material_word: u16,
+}
+
+fn splash_display(rel: &CityRel<'_>, s: SplashDisplay) -> Result<Value> {
+    let missing = || Error::invalid("missing splash display reference");
+    let data = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.kind == 4)
+            .ok_or_else(missing)
+    };
+    let ptr = |site| data(site).map(|r| r.addend);
+    let scalar = |site| -> Result<f32> {
+        let r = data(site)?;
+        let at = r.addend as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(r.section)?
+                .get(at..at + 4)
+                .ok_or_else(missing)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut calls = Vec::new();
+    let mut call = |site, args: Value| -> Result<()> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(missing)?;
+        calls.push(json!([site, r.addend, args]));
+        Ok(())
+    };
+    call(0xd170, json!([ptr(0xd16e)?]))?;
+    let group = s.counter >> 2;
+    let (site, first, other) = if group == 0 {
+        (0xd1b4, scalar(0xd18a)? - scalar(0xd196)?, scalar(0xd1a6)?)
+    } else {
+        (0xd1e4, s.work36 - scalar(0xd1c6)?, scalar(0xd1d6)?)
+    };
+    call(site, json!([first, other, other, other]))?;
+    call(0xd1e8, json!([]))?;
+    call(0xd1f0, json!(s.position))?;
+    for (site, angle) in [
+        (0xd1fc, s.rotation[2]),
+        (0xd208, s.rotation[0]),
+        (0xd214, s.rotation[1]),
+    ] {
+        call(site, json!([0, angle]))?;
+    }
+    call(0xd228, json!([0, s.work32, s.task76, s.work32]))?;
+    let material_word = (s.material_word & 0xc000) | group;
+    let draw = json!([ptr(0xd256)?, ptr(0xd262)?, ptr(0xd26e)?, s.phase]);
+    call(0xd278, draw.clone())?;
+    let xz = scalar(0xd286)?;
+    call(0xd29c, json!([0, xz, scalar(0xd292)?, xz]))?;
+    call(0xd2b0, draw)?;
+    call(0xd2b4, json!([]))?;
+    call(0xd2d0, json!([scalar(0xd2be)?; 4].as_slice()))?;
+    Ok(json!({"calls":calls,"materialOffset":ptr(0xd232)?+14,"materialWord":material_word}))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -771,6 +841,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        splash_display: display,
         splash_update: update,
         splash_spawn: spawn,
         exit,
@@ -805,6 +876,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(s) = display {
+        report["splashDisplay"] = splash_display(&rel, s)?;
+    }
     if let Some(s) = update {
         report["splashUpdate"] = splash_update(&rel, s)?;
     }
