@@ -48,7 +48,9 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0, 0];
+    let mut counts = [0, 0, 0];
+    let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
+    let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     for line in stdout.lines() {
         let v: Vec<_> = line.split_whitespace().collect();
         let n = |i: usize| v[i].parse::<i32>().unwrap();
@@ -71,6 +73,21 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "M" {
+            let mut m = sa2_asset_tools::goal_ring::RegularMotion {
+                yaw: 2147483640,
+                y: -11.625,
+                timer: n(3) as u16,
+            };
+            m.tick(n(1) != 0, n(2) as i8, program.spin, program.rise);
+            assert_eq!(u32::from(m.timer), n(5) as u32);
+            assert_eq!(m.yaw, n(6));
+            assert_eq!(m.y.to_bits(), v[7].parse::<u32>().unwrap());
+            assert_eq!(
+                m.cleanup_call(n(1) != 0, n(4) != 0).unwrap_or_default(),
+                v[8].parse::<u32>().unwrap()
+            );
+            counts[2] += 1;
         } else {
             let mut s = Contact { latched: n(3) != 0 };
             let hit = match n(4) {
@@ -127,7 +144,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280]);
+    assert_eq!(counts, [720, 280, 40]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]
@@ -183,6 +200,24 @@ fn mounted_goal_cli() {
     assert_eq!(v["frames"][2]["calls"], serde_json::json!(["Register"]));
     assert_eq!(run("349").unwrap()["replay"]["init"], "ChildTask");
     assert!(run("7").is_none());
+    let mut inputs = vec![serde_json::json!({"kind":"none"}); 64];
+    inputs[0] = serde_json::json!({"kind":"player","slot":0});
+    fs::write(
+        &request,
+        serde_json::to_vec(&serde_json::json!({
+            "game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":inputs,
+            "lifecycle":{"initial_timer":0,"game_byte_37":0,"task_field_30_present":false}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let doc = run("198").unwrap();
+    let frames = doc["replay"]["frames"].as_array().unwrap();
+    assert_eq!(frames.len(), 61);
+    assert_eq!(frames[0]["regularMotion"]["timer"], 0);
+    assert_eq!(frames[59]["regularMotion"]["timer"], 59);
+    assert!(frames[59]["cleanupCall"].is_null());
+    assert_eq!(frames[60]["cleanupCall"], 0x80071878u32);
     fs::remove_file(request).unwrap();
     fs::remove_dir(dir).unwrap();
 }

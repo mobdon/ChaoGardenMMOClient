@@ -12,6 +12,8 @@ pub struct Program {
     pub contact_offset: u32,
     pub local_effect: u32,
     pub radii: [f32; 2],
+    pub spin: [i32; 2],
+    pub rise: f32,
 }
 fn invalid() -> Error {
     Error::invalid("unverified goal ring module or callback")
@@ -99,6 +101,46 @@ impl Program {
                 return Err(invalid());
             }
         }
+        let instructions = rel.data(1)?;
+        for (offset, length, hash) in [
+            (
+                0x5f8,
+                0x68,
+                "96efb20d8a54e6dbe19cb4d2020ca30e248e21466929d49fba85e4bd0dc11650",
+            ),
+            (
+                0xacc,
+                0x3c,
+                "1db9e90fdb5660cfc98be6ff0bb8616f263ae76343219f3c6438841b6bf4d1fd",
+            ),
+        ] {
+            let at = init as usize + offset;
+            if manifest::sha256(instructions.get(at..at + length).ok_or_else(invalid)?) != hash {
+                return Err(invalid());
+            }
+        }
+        let constant = |hi, lo| -> Result<u32> {
+            let a = rel.reference(1, init + hi).ok_or_else(invalid)?;
+            let b = rel.reference(1, init + lo).ok_or_else(invalid)?;
+            if (
+                a.module, a.section, a.kind, b.module, b.section, b.kind, b.addend,
+            ) != (info.module, 5, 6, info.module, 5, 4, a.addend)
+            {
+                return Err(invalid());
+            }
+            word(rel.data(5)?, a.addend as usize)
+        };
+        let spin = [
+            constant(0x64e, 0x652)? as i32,
+            constant(0x60e, 0x612)? as i32,
+        ];
+        let rise = f32::from_bits(constant(0x632, 0x636)?);
+        for (offset, addr) in [(0xaf8, 0x80065148), (0xb04, 0x80071878)] {
+            let r = rel.reference(1, init + offset).ok_or_else(invalid)?;
+            if (r.module, r.kind, r.addend) != (0, 10, addr) {
+                return Err(invalid());
+            }
+        }
         Ok(Self {
             level,
             module: info.module,
@@ -106,6 +148,8 @@ impl Program {
             contact_offset: start,
             local_effect: target,
             radii,
+            spin,
+            rise,
         })
     }
 }
@@ -235,6 +279,38 @@ pub fn initialize(
         InitRoute::NoWork
     }
 }
+/// Regular (angle X divisible by three) task fields updated before contact detection.
+#[derive(Clone, Copy, Serialize)]
+pub struct RegularMotion {
+    pub yaw: i32,
+    pub y: f32,
+    pub timer: u16,
+}
+impl RegularMotion {
+    pub fn tick(&mut self, latched: bool, game_byte_37: i8, spin: [i32; 2], rise: f32) {
+        if game_byte_37 == 0 {
+            self.yaw = self.yaw.wrapping_add(spin[usize::from(latched)]);
+            if latched {
+                self.timer = self.timer.wrapping_add(1);
+                self.y += rise;
+            }
+        }
+    }
+    pub fn cleanup_call(self, latched: bool, task_field_30_present: bool) -> Option<u32> {
+        (latched && self.timer >= 60).then_some(if task_field_30_present {
+            0x80065148
+        } else {
+            0x80071878
+        })
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LifecycleInput {
+    game_byte_37: i8,
+    task_field_30_present: bool,
+    initial_timer: u16,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -243,6 +319,7 @@ struct Request {
     allocation_ok: bool,
     game_byte_23: i8,
     frames: Vec<Hit>,
+    lifecycle: Option<LifecycleInput>,
     probe: Option<Probe>,
 }
 #[derive(Deserialize)]
@@ -302,11 +379,34 @@ pub fn replay(
         None
     };
     let mut state = Contact::default();
+    if r.lifecycle.is_some() && angle_x % 3 != 0 {
+        return Err(Error::invalid("lifecycle requires a regular goal ring"));
+    }
+    let mut motion = RegularMotion {
+        yaw: i32::from(row.placement.rotation[1] as i16),
+        y: center[1],
+        timer: r.lifecycle.as_ref().map_or(0, |v| v.initial_timer),
+    };
     let mut frames = vec![];
     for hit in r.frames {
         let was_latched = state.latched;
+        if let Some(input) = &r.lifecycle {
+            motion.tick(was_latched, input.game_byte_37, p.spin, p.rise);
+        }
         let calls = state.step(angle_x, r.game_byte_23, hit, p.local_effect)?;
-        frames.push(json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched}));
+        let mut frame = json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched});
+        let cleanup = r
+            .lifecycle
+            .as_ref()
+            .and_then(|v| motion.cleanup_call(state.latched, v.task_field_30_present));
+        if r.lifecycle.is_some() {
+            frame["regularMotion"] = json!(motion);
+            frame["cleanupCall"] = json!(cleanup);
+        }
+        frames.push(frame);
+        if cleanup.is_some() {
+            break;
+        }
     }
     Ok(
         json!({"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),

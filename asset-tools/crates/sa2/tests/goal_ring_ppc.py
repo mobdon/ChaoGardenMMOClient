@@ -12,7 +12,7 @@ d=(Path(os.environ['SA2_SET_DIR'])/'stg13D.rel').read_bytes()
 assert hashlib.sha256(d).hexdigest()=='bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b'
 def w(i):return struct.unpack_from('>I',d,i)[0]
 ss=[(w(w(16)+i*8)&~1,w(w(16)+i*8+4)) for i in range(w(12))]
-code=bytearray(d[ss[1][0]+FIRST:ss[1][0]+END])
+code=bytearray(d[ss[1][0]+FIRST:ss[1][0]+0x2dd10])
 for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
     section=off=0
     while True:
@@ -20,7 +20,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind==203:break
         if kind==202:section=s;off=0;continue
         off+=delta
-        if section!=1 or not FIRST<=off<END:continue
+        if section!=1 or not FIRST<=off<0x2dd10:continue
         if module==12:val+=(BASE if s==1 else DATA+s*0x100000)
         else:assert module==0
         loc=off-FIRST
@@ -73,3 +73,27 @@ for x,byte,latched,hit in itertools.product((-3,-2,-1,0,1,2,3),(-1,0,1,2,3),(0,1
     u.emu_start(BASE+0x2da4c,BASE+END,count=100)
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+END
     print('C',x,byte,latched,hit,get(WORK+1,'B'),get(WORK+0x24,'f'),','.join(observed))
+
+# Run the native regular motion block, then the end-of-frame cleanup dispatch.
+cleanup_targets=(0x80065148,0x80071878)
+for pc in cleanup_targets:
+    if pc & ~0xfff != RANGE & ~0xfff:map_page(pc)
+    def cleanup_hook(uc,pc,size,_):
+        assert reg(3)==TASK
+        observed.append(pc)
+        uc.emu_stop()
+    u.hook_add(UC_HOOK_CODE,cleanup_hook,begin=pc,end=pc)
+const_base=DATA+5*0x100000
+map_page(const_base+2219464)
+u.mem_write(const_base+2219464,d[ss[5][0]+2219464:ss[5][0]+2219496])
+for pc in (BASE+0x2d868,BASE+0x2da4c,BASE+0x2dd10):
+    u.hook_add(UC_HOOK_CODE,lambda uc,pc,size,data:uc.emu_stop(),begin=pc,end=pc)
+for active,gate,timer,ptr in itertools.product((0,1),(0,1),(0,58,59,60,65535),(0,1)):
+    observed=[];setreg(26,TASK);setreg(27,WORK);setreg(28,GLOBAL+0x37)
+    put(GLOBAL+0x37,'b',gate);put(WORK+1,'B',active);put(WORK+8,'i',0)
+    put(WORK+6,'H',timer);put(WORK+12,'i',2147483640);put(WORK+24,'f',-11.625)
+    put(TASK+0x30,'I',ptr)
+    u.emu_start(BASE+0x2d674,BASE+(0x2da4c if gate else 0x2d868),count=64)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+(0x2da4c if gate else 0x2d868),(active,gate,timer,hex(u.reg_read(R.UC_PPC_REG_PC)))
+    u.emu_start(BASE+0x2dcd4,BASE+0x2dd10,count=32)
+    print('M',active,gate,timer,ptr,get(WORK+6,'H'),get(WORK+12,'i'),get(WORK+24,'I'),next(iter(observed),0))
