@@ -351,3 +351,58 @@ fn range_return_skips_ring_initialization_pickup_and_retirement() {
     )
     .is_err());
 }
+
+#[test]
+fn board_route_needs_independent_rider_evidence() {
+    use sa2_asset_tools::{city_replay::board_route, city_stage::CityLayout};
+    let (mut trigger, mut td) = ring_fixture();
+    trigger.object_id = 59;
+    trigger.rotation[0] = 1;
+    td.name = "BOARDCOL".into();
+    td.function_va = 0x5ea210;
+    let (mut board, mut bd) = ring_fixture();
+    board.object_id = 77;
+    bd.name = "BOARD".into();
+    bd.function_va = 0x5ebc50;
+    let mut table: Vec<_> = (0..78).map(|_| ring_fixture().1).collect();
+    table[59] = td;
+    table[77] = bd;
+    let layout = CityLayout {
+        source_layer: "fixture",
+        source_sha256: "",
+        executable_sha256: "",
+        object_list_rva: 0,
+        two_player_layer: false,
+        object_table: table,
+        placements: vec![trigger, board],
+        callback_counts: Default::default(),
+        unsupported_placements: 0,
+    };
+    let frame = json!({"players":[{"position":[0,0,0],"mode":0},null],"range_out_slots":[],
+        "rider_motion":[{"angles":[0,0,0],"speed":[0,0,0],"action":0,"motion_mode":3,"frame":0},null]});
+    let mut req = json!({"physical_board":{"placement":1,"allocation_ok":true},
+        "two_player":false,"frames":[frame,frame]});
+    let run = |r: &serde_json::Value| board_route(&layout, &serde_json::to_vec(r).unwrap());
+    let trace = run(&req).unwrap();
+    assert_eq!(
+        trace["frames"][1]["calls"][0]["call"],
+        json!(["SetInputP", 0, 34, 0])
+    );
+    assert_eq!(
+        trace["physicalBoard"]["trace"]["frames"][2]["state"]["mode"],
+        0
+    );
+    req["frames"][1]["rider_motion"] = json!([null, null]);
+    assert!(run(&req)
+        .unwrap_err()
+        .to_string()
+        .contains("match observed player slots"));
+    req["frames"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("rider_motion");
+    assert!(run(&req)
+        .unwrap_err()
+        .to_string()
+        .contains("requires rider observations"));
+}
