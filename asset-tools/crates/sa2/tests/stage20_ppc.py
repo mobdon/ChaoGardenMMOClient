@@ -536,3 +536,50 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                     timerWrite=timer if m!=5 else None,steering=dict(angleArgs=observed["angle"],yaw=yaw,scalar=scalar) if word else None,
                     byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
 print(idx,"state-five updates matched")
+
+# The two axis calls independently sample the same engine word.
+phase_addr=0x801cbd88+0x7c
+reg_float=lambda cpu,r:struct.unpack(">d",cpu.reg_read(r).to_bytes(8,"big"))[0]
+def four_service(cpu,pc,*_):
+    site=pc-base[1]
+    if site in (0xf34,0xf58):
+        idx_axis=int(site==0xf58)
+        axis_args.append(cpu.reg_read(R.UC_PPC_REG_3))
+        value=axis_returns[idx_axis]
+        put(phase_addr,"I",phase_words[1])
+    else:
+        angle_args.extend(reg_float(cpu,r) for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2))
+        put(player1+1,"b",final_slot)
+        value=angle
+    cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",value),"big"))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0xf34,0xf58,0xf7c):
+    u.hook_add(UC_HOOK_CODE,four_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for slot in (6,7,-1):
+        for dist,scalar,ctr,limit in [(70.,0.,10,0),(100.,0.,10,0),(101.,20.,65,64),(101.,20.,64,64),(101.,20.,-1,0)]:
+            for final_slot in (6,7):
+                calls=[];observed={};axis_args=[];angle_args=[];draw=19531;angle=-1.34
+                phase_words=[0xfabc0123,0x80000000];axis_returns=[-0.3125,0.8125]
+                put(phase_addr,"I",phase_words[0]);put(work,"bbhhh",4,0,ctr,limit,5)
+                put(player0+1,"b",7);put(player1+1,"b",slot);put(player1+72,"f",scalar)
+                put(0x801e5000,"if",-777,-777.)
+                for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
+                    u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+                u.emu_start(base[1]+0xe9c,base[1]+0x1424,count=300)
+                assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+                m,_,counter,timer,cool=get(work,"bbhhh");yaw,out_scalar=get(0x801e5000,"if")
+                v=dict(range=dict(slot0_byte=7,distance_return=dist),slot_byte=slot,scalar=scalar,counter=ctr,limit=limit)
+                if m==5:v["close_range"]=dict(cooldown=5)
+                if m==2:v["draw"]=draw
+                if axis_args:v["steering"]=dict(slot0=p0,slot1=p1,phase_words=phase_words,axis_returns=axis_returns,angle_return=angle,final_slot_byte=final_slot)
+                else:assert (yaw,out_scalar)==(-777,-777.)
+                c=dict(mode=4,engine_bytes=[0,0,0],player_flags=[0,0],state_four=v)
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                assert json.loads(out.read_text())["controller"]==dict(dispatch=0xe9c,continueAt=0x1424,mode=m,counter=counter,
+                    timerWrite=timer if m==2 else None,closeRange=dict(cooldown=cool,calls=calls) if m==5 else None,
+                    steering=dict(axisArgs=axis_args,angleArgs=angle_args,yaw=yaw,scalar=out_scalar) if axis_args else None)
+print(idx,"state-four updates matched")

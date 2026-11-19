@@ -199,6 +199,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
 struct Controller {
     state_two: Option<StateTwo>,
     state_five: Option<StateFive>,
+    state_four: Option<StateFour>,
     state_seven: Option<StateSeven>,
     state_eight: Option<StateEight>,
     state_one: Option<StateOne>,
@@ -206,6 +207,28 @@ struct Controller {
     engine_bytes: [i8; 3],
     player_flags: [u16; 2],
     opening: Option<Opening>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateFour {
+    range: RangeObservation,
+    close_range: Option<CloseRange>,
+    slot_byte: i8,
+    scalar: f32,
+    counter: i16,
+    limit: i16,
+    draw: Option<i32>,
+    steering: Option<FourSteering>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FourSteering {
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    phase_words: [u32; 2],
+    axis_returns: [f32; 2],
+    angle_return: f64,
+    final_slot_byte: i8,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -423,6 +446,84 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         }
         Ok(0x4000i32.wrapping_sub(units as i32))
     };
+    let close_entry = |close: CloseRange| -> Result<Value> {
+        let mut calls = Vec::new();
+        let mut call = |site, args: Vec<i32>| -> Result<()> {
+            let service = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            calls.push(json!({"engine":service.addend,"args":args}));
+            Ok(())
+        };
+        let cooldown = match (close.cooldown > 0, close.services) {
+            (true, None) => close.cooldown,
+            (false, Some(s)) => {
+                for (slot, result) in s.queries.into_iter().enumerate() {
+                    call(0x694, vec![3, slot as i32])?;
+                    if result == 1 {
+                        call(0x6a4, vec![slot as i32])?;
+                    }
+                }
+                let request = match (s.slot_byte, s.variant) {
+                    (7, 61) => Some((0x6ec, 0x816)),
+                    (7, _) => Some((0x6fc, 0x817)),
+                    (6, 62) => Some((0x71c, 0x8d6)),
+                    (6, _) => Some((0x72c, 0x8d7)),
+                    _ => None,
+                };
+                if let Some((site, id)) = request {
+                    call(site, vec![id, 3])?;
+                }
+                480
+            }
+            _ => return Err(invalid()),
+        };
+        Ok(json!({"cooldown":cooldown,"calls":calls}))
+    };
+    if let Some(v) = c.state_four {
+        if target != 0xe9c {
+            return Err(invalid());
+        }
+        let f = |site| number(4, field(site, 4)?);
+        let near = (v.range.slot0_byte == 7 && v.range.distance_return < f64::from(f(0x2ba)?))
+            || v.range.distance_return <= f64::from(f(0x2d6)?);
+        let mut steering = None;
+        let mut close = None;
+        mode = if near {
+            5
+        } else if v.slot_byte == 6 && v.scalar < f(0xede)? {
+            8
+        } else if v.counter > v.limit {
+            2
+        } else {
+            4
+        };
+        match (mode, v.close_range, v.draw, v.steering) {
+            (5, Some(c), None, None) => close = Some(close_entry(c)?),
+            (8, None, None, None) => {}
+            (2, None, Some(d), None) => {
+                let (scale, range, base) = if v.slot_byte == 7 {
+                    (0x586, 0x596, 0x5a6)
+                } else {
+                    (0x5f2, 0x602, 0x612)
+                };
+                timer = Some((f(base)? + f(range)? * (f(scale)? * d as f32)) as i32 as i16 as i32);
+            }
+            (4, None, None, Some(h)) => {
+                let radius = f(0xf3e)?;
+                let x = (h.slot0[0] + radius * h.axis_returns[0]) - h.slot1[0];
+                let z = (h.slot0[2] + radius * h.axis_returns[1]) - h.slot1[2];
+                steering = Some(
+                    json!({"axisArgs":h.phase_words.map(|w|w<<8),"angleArgs":[x,z],
+                    "yaw":heading(0xf86,h.angle_return)?,"scalar":f(if h.final_slot_byte==6 {0xfc2}else{0xfd6})?}),
+                );
+            }
+            _ => return Err(invalid()),
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"counter":if mode==4 {v.counter}else{0},
+            "steering":steering,"timerWrite":timer,"closeRange":close});
+    }
     if let Some(v) = c.state_five {
         if target != 0xfe4 {
             return Err(invalid());
@@ -549,42 +650,10 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
                 if next != 0x640 {
                     return Err(invalid());
                 }
-                let mut calls = Vec::new();
-                let mut call = |site, args: Vec<i32>| -> Result<()> {
-                    let service = rel
-                        .reference(1, site)
-                        .filter(|r| r.module == 0 && r.kind == 10)
-                        .ok_or_else(invalid)?;
-                    calls.push(json!({"engine":service.addend,"args":args}));
-                    Ok(())
-                };
-                let cooldown = match (close.cooldown > 0, close.services) {
-                    (true, None) => close.cooldown,
-                    (false, Some(s)) => {
-                        for (slot, result) in s.queries.into_iter().enumerate() {
-                            call(0x694, vec![3, slot as i32])?;
-                            if result == 1 {
-                                call(0x6a4, vec![slot as i32])?;
-                            }
-                        }
-                        let request = match (s.slot_byte, s.variant) {
-                            (7, 61) => Some((0x6ec, 0x816)),
-                            (7, _) => Some((0x6fc, 0x817)),
-                            (6, 62) => Some((0x71c, 0x8d6)),
-                            (6, _) => Some((0x72c, 0x8d7)),
-                            _ => None,
-                        };
-                        if let Some((site, id)) = request {
-                            call(site, vec![id, 3])?;
-                        }
-                        480
-                    }
-                    _ => return Err(invalid()),
-                };
                 counter = 0;
                 mode = 5;
                 next = 0x1424;
-                report["closeRange"] = json!({"cooldown":cooldown,"calls":calls});
+                report["closeRange"] = close_entry(close)?;
             }
             if !draw_used && a.draw.is_some() {
                 return Err(invalid());
