@@ -555,7 +555,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, transporter, validate\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, transporter, validate\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -591,6 +591,7 @@ fn run() -> Result<()> {
             | "texture"
             | "movie-video"
             | "movie-audio"
+            | "event-music"
             | "event-voices"
             | "event-cues"
             | "ahx"
@@ -619,7 +620,7 @@ fn run() -> Result<()> {
         "collision" | "city-collision" => matches!(args.len(), 3 | 4),
         "city-board-model" | "city-raycast" | "raycast" | "glb" | "object-tables"
         | "city-layout" => args.len() == 4,
-        "event-voices" => args.len() == 4,
+        "event-voices" | "event-music" => args.len() == 4,
         "movie-video" => args.len() == 4,
         "movie-audio" => args.len() == 5,
         "city-replay" => args.len() == 6,
@@ -1065,6 +1066,68 @@ fn run() -> Result<()> {
                 ],
                 )?;
             }
+        }
+        "event-music" => {
+            let mut report =
+                audio::read_event_cues(&archive::decompress_prs(&bytes, MAX_DECODED)?)?;
+            let mut paths = std::collections::BTreeMap::new();
+            for entry in fs::read_dir(Path::new(&args[3]))? {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if name.ends_with(".adx")
+                    && entry.file_type()?.is_file()
+                    && paths.insert(name, entry.path()).is_some()
+                {
+                    return Err(Error::invalid("ambiguous case-insensitive ADX track name"));
+                }
+            }
+            let mut tracks = std::collections::BTreeMap::new();
+            let mut remaining = MAX_INPUT;
+            for cue in report["audio"]
+                .as_array_mut()
+                .ok_or_else(|| Error::invalid("missing cue array"))?
+            {
+                let name = cue["musicName"].as_str().unwrap_or("").to_ascii_lowercase();
+                if name.is_empty() {
+                    continue;
+                }
+                let Some(path) = paths.get(&name) else {
+                    cue["musicResolution"] = json!(if name.ends_with(".adx") {
+                        "missing-track"
+                    } else {
+                        "uninterpreted-token"
+                    });
+                    continue;
+                };
+                if !tracks.contains_key(&name) {
+                    let data = read_source_limited(path, remaining)?;
+                    remaining -= data.len() as u64;
+                    let header = audio::read_adx_header(&data)?;
+                    let logical = source_label(path, source_root.as_deref())?;
+                    let source = Source::from_bytes(&logical, &data)?;
+                    tracks.insert(name.clone(),(path,logical,data,json!({"sourceId":source.id,"sha256":source.sha256,"sampleCount":header.sample_count,"sampleRate":header.sample_rate})));
+                }
+                cue["musicResolution"] = json!("matched-track");
+                cue["musicTrack"] = tracks[&name].3.clone();
+            }
+            let deps = tracks
+                .values()
+                .map(|(path, logical, data, _)| RuntimeDependency {
+                    path,
+                    logical_path: logical.clone(),
+                    bytes: data,
+                    role: "event-music-track",
+                })
+                .collect::<Vec<_>>();
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "event-music-json",
+                &deps,
+            )?;
         }
         "event-voices" => {
             let exe_path = Path::new(&args[3]);
