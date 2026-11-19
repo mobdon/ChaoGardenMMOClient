@@ -137,22 +137,18 @@ impl MountedStage<'_> {
             .map(|t| collision::bake_stage(&t.stage, 1.))
             .transpose()
     }
-    /// Only City Escape's specifically matched partial callback implementations.
+    /// Replay a verified shared callback or a stage-specific City Escape callback.
     pub fn replay_object(
         &self,
         layer: usize,
         index: usize,
         request: &[u8],
     ) -> Result<serde_json::Value> {
-        if self.dispatch.level != 13 {
-            return Err(Error::invalid(
-                "no mounted object callback adapter for this stage",
-            ));
-        }
         let (placement, definition) = self
             .resolve(layer, index)
             .ok_or_else(|| Error::invalid("placement outside mounted layer"))?;
-        city_replay::replay(
+        city_replay::mounted_replay(
+            self.dispatch.level,
             &placement.placement,
             definition.ok_or_else(|| Error::invalid("unresolved native object ID"))?,
             request,
@@ -441,10 +437,8 @@ fn mount_layer(
         if def.is_none() {
             *unresolved_ids.entry(placement.object_id).or_default() += 1;
         }
-        if level == 13 {
-            if let Some(name) = def.and_then(|d| city_replay::callback_name(&placement, d)) {
-                *partial_callback_counts.entry(name).or_default() += 1;
-            }
+        if let Some(name) = def.and_then(|d| city_replay::mounted_callback(level, &placement, d)) {
+            *partial_callback_counts.entry(name).or_default() += 1;
         }
         placements.push(BoundPlacement {
             placement_index,

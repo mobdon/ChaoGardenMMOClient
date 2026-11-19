@@ -70,7 +70,7 @@ pub fn read(
                 task.levels.insert(d.level);
                 if fresh {
                     task.distinct_placements += 1;
-                    if d.level == 13 && city_replay::callback_name(&p.placement, def).is_some() {
+                    if city_replay::mounted_callback(d.level, &p.placement, def).is_some() {
                         task.with_partial_adapter += 1;
                     }
                 }

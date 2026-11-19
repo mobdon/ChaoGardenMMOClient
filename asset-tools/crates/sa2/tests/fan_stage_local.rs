@@ -255,3 +255,50 @@ fn task_coverage_partitions_the_verified_campaign_sets() {
     assert_eq!(absent.missing_files.len(), 84);
     assert!(absent.by_function_va.is_empty());
 }
+#[test]
+#[ignore = "requires installed Green Forest stage and PC mappings"]
+fn green_forest_shared_tasks() {
+    use serde_json::json;
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let cfg = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap());
+    let read = |f: &str| fs::read_to_string(cfg.join(f)).unwrap();
+    let campaign = Campaign::new(
+        &fs::read(game.join("sonic2app.exe")).unwrap(),
+        &read("ADVERTISE.ini"),
+        &read("sa2lvl.ini"),
+        &read("ObjectLists.ini"),
+    )
+    .unwrap();
+    let stage = campaign
+        .mount("Hero Story Sequence", 13, |f| {
+            Ok(Some(fs::read(game.join("resource/gd_PC").join(f))?))
+        })
+        .unwrap();
+    let spring = stage
+        .replay_object(0, 1, br#"{"out_point":[0,7,0],"frames":[{},{}]}"#)
+        .unwrap();
+    assert_eq!(spring["callback"], "ObjectSpringB");
+    let pos = stage.layers[0].placements[7].placement.position;
+    let player = json!({"position":pos,"collision_center":pos,"speed":[0,0,0]});
+    let initial = json!({"range_out":false,"spin_enabled":true,"player_items":[2,null]});
+    let advance = json!({"range_out":false,"spin_enabled":true,"player_items":[2,null],"magnet_players":[player,null],"advance_result":pos});
+    let pickup =
+        json!({"range_out":false,"spin_enabled":true,"player_items":[0,null],"ccl_hit_slot":0});
+    let input = serde_json::to_vec(&json!({"frames":[initial,advance,pickup,initial]})).unwrap();
+    let ring = stage.replay_object(0, 7, &input).unwrap();
+    assert_eq!(ring["frames"][1]["calls"][0][0], "CalcAdvanceAsPossible");
+    assert_eq!(ring["frames"][1]["calls"][1][0], "CCL_Entry");
+    assert_eq!(ring["frames"][1]["magneticTimer"], 1);
+    assert_eq!(ring["frames"][1]["yaw"], ring["frames"][0]["yaw"]);
+    assert_eq!(ring["frames"][2]["calls"][0], json!(["AddScore", 10]));
+    assert_eq!(ring["frames"][3]["calls"], json!([["DeadOut"]]));
+    let mut missing = advance;
+    missing.as_object_mut().unwrap().remove("advance_result");
+    assert!(stage
+        .replay_object(
+            0,
+            7,
+            &serde_json::to_vec(&json!({"frames":[initial,missing]})).unwrap()
+        )
+        .is_err());
+}

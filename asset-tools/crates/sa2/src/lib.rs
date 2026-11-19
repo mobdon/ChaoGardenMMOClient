@@ -27,6 +27,7 @@ pub mod pe;
 pub mod physical_board;
 pub mod player_physics;
 pub mod pose;
+pub mod ring_magnet;
 pub mod set;
 pub mod spring;
 pub mod stage;
