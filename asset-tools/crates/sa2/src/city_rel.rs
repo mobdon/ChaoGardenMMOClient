@@ -338,3 +338,37 @@ pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
     }
     Ok(registration)
 }
+
+/// Run Hot Shot's slot-zero stage constraint (section 1:7050 -> 6fcc).
+pub fn hot_shot_arena(bytes: &[u8], mut position: [f32; 3]) -> Result<[f32; 3]> {
+    if bytes.len() != 1_180_821
+        || manifest::sha256(bytes)
+            != "9e0caebeefbdeb2e2829f17510b44d9238956342b3eed10a2ae7e1ff56358960"
+    {
+        return Err(invalid());
+    }
+    if !position.iter().all(|v| v.is_finite()) {
+        return Err(Error::invalid("expected finite player coordinates"));
+    }
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let bound = |offset| -> Result<f32> {
+        let hi = rel.reference(1, offset).ok_or_else(invalid)?;
+        if (hi.module, hi.section, hi.kind) != (82, 4, 6)
+            || rel.reference(1, offset + 4) != Some(Reference { kind: 4, ..hi })
+        {
+            return Err(invalid());
+        }
+        let start = hi.addend as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(4)?
+                .get(start..start + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    for (axis, lo, hi) in [(0, 0x6ffe, 0x6fe2), (2, 0x7036, 0x701a)] {
+        position[axis] = position[axis].clamp(bound(lo)?, bound(hi)?);
+    }
+    Ok(position)
+}
