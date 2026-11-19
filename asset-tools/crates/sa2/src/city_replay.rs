@@ -259,6 +259,7 @@ pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Opti
         (0x6c0f80, "RING" | "RING   ") => (p.parameters[0] != -1.).then_some("Ring"),
         (0x6c4480, "SPRA   ") => Some("ObjectSpring"),
         (0x6c4e90, "SPRB   ") => Some("ObjectSpringB"),
+        (0x6d95e0, "CHAOPIPE" | "chaopipe") => Some("ObjectChaoPipe"),
         _ if level == 13 => callback_name(p, d),
         _ => None,
     }
@@ -269,7 +270,18 @@ pub(crate) fn mounted_replay(
     d: &ObjectDefinition,
     request: &[u8],
 ) -> Result<Value> {
-    replay_named(mounted_callback(level, p, d), p, request)
+    let name = mounted_callback(level, p, d);
+    if name == Some("ObjectChaoPipe") {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PipeRequest {
+            slot_zero_character: i8,
+            frames: Vec<crate::stage_pipe::Frame>,
+        }
+        let req = decode::<PipeRequest>(request)?;
+        return crate::stage_pipe::replay(p, req.slot_zero_character, bounded(req.frames)?);
+    }
+    replay_named(name, p, request)
 }
 /// The caller verifies the executable and resolves the entry in the stage 13 list.
 /// Names include native padding. Only explicitly mapped callbacks are supported.

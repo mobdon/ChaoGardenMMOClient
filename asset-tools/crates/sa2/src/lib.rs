@@ -36,6 +36,7 @@ pub mod stage;
 pub mod stage_catalog;
 pub mod stage_gameplay;
 pub mod stage_paths;
+mod stage_pipe;
 pub mod stage_positions;
 pub mod stage_spring_host;
 pub mod story;
