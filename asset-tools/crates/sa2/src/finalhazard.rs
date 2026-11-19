@@ -230,6 +230,16 @@ pub fn weakpoint_glb(exe: &[u8], prs: &[u8]) -> Result<Vec<u8>> {
         }
     }
     let scene = crate::visual::evaluate_static_model(&model)?;
+    textured_glb(exe, prs, &scene)
+}
+pub fn boss_glb(exe: &[u8], prs: &[u8], clip: usize, frame: f64) -> Result<Vec<u8>> {
+    textured_glb(
+        exe,
+        prs,
+        &crate::finalhazard_visual::sample(exe, clip, frame)?,
+    )
+}
+fn textured_glb(exe: &[u8], prs: &[u8], scene: &crate::visual::StaticVisual) -> Result<Vec<u8>> {
     let mut pngs = std::collections::BTreeMap::new();
     texture_rows(exe, prs, |id, image| {
         if scene
