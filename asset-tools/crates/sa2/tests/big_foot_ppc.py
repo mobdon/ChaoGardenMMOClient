@@ -20,12 +20,13 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
 page(T);page(T+0x2000);page(ret)
 player_ptr=0
+defeat_targets={}
 bind_relocs=[]
 for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
     off=0
@@ -39,6 +40,9 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
             if off%20==528%20: # copy each binding's trailing XYZ floats
                 u.mem_write(dst+8,d[sec(5)+off+8:sec(5)+off+20])
         if target!=1 or not any(lo<=off<hi for lo,hi in ranges):continue
+        if target==1 and off in (0x3ed0,0x3ed8,0x45d0,0x45d8):
+            assert module==0 and k==10
+            defeat_targets[off]=a
         if k==10:continue # observed at the external call site
         val=(B+a if s==1 else D+s*0x400000+a) if module else a;page(val)
         if module and s in (4,5):u.mem_write(val,d[sec(s)+a:sec(s)+a+16])
@@ -114,6 +118,31 @@ for off in (0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
     u.emu_start(B+pc,ret,count=1200);assert u.reg_read(R.UC_PPC_REG_PC)==ret
+def defeat_clock(low):
+    # Execute the original timer blocks; omit motion/effect code between them.
+    end=0x402c if low else 0x4650
+    calls=[];rows=[]
+    def trace(uc,pc,size,_):
+        off=pc-B
+        if off in defeat_targets:
+            calls.append(dict(address=f"{defeat_targets[off]:08x}",argument=reg(3)))
+            uc.reg_write(R.UC_PPC_REG_PC,pc+4)
+        elif off in jumps:
+            uc.reg_write(R.UC_PPC_REG_PC,B+jumps[off])
+    jumps={0x3074:0x30b8,0x30c4:0x36ac,0x36c0:0x36e8,0x42ac:0x45b8}
+    handles=[u.hook_add(UC_HOOK_CODE,trace,begin=B+a,end=B+a) for a in [*jumps,*defeat_targets]]
+    page(B+end);setreg(28 if low else 29,WORK)
+    try:
+        for _ in range(400):
+            sm=get(WORK+1,"B")[0]
+            pc=([0x306c,0x36ac,0x3eb8] if low else [0x4298,0x45b8])[sm]
+            u.emu_start(B+pc,B+end,count=75)
+            assert u.reg_read(R.UC_PPC_REG_PC)==B+end
+            rows.append(dict(submode=get(WORK+1,"B")[0],timer=get(WORK+6,"H")[0]))
+            if calls:return dict(frames=rows,handoffUpdate=len(rows),callsOnHandoff=calls)
+        raise AssertionError("no defeat handoff")
+    finally:
+        for handle in handles:u.hook_del(handle)
 rng=random.Random(60)
 positions=[[0,7,0],[120,50,0],[72,-70,96],[120.00001,1,0],[119.99999,1,0]]
 positions.extend([[rng.uniform(-180,180),rng.uniform(-30,30),rng.uniform(-180,180)] for _ in range(96)])
@@ -259,7 +288,9 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         assert expected[-1]["health"]==0 and expected[-1]["mode"]==(10 if path==0 else 13)
         req.write_text(json.dumps({"work_allocation_ok":True,"frames":[],"damage":observations}));out=tmp/f"damage{path}.json"
         subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
-        actual=json.loads(out.read_text())["replay"]["damage"]["frames"]
+        damage=json.loads(out.read_text())["replay"]["damage"]
+        assert damage["defeatClock"]==defeat_clock(path==0)
+        actual=damage["frames"]
         for i,(a,e) in enumerate(zip(actual,expected,strict=True)):assert a==e,(path,i,a,e)
     print(3*len(expected),"post-AI damage callbacks matched, including both lethal routes")
 print("1,353 mode-one callbacks matched the native player placement, state, timer and helper calls")

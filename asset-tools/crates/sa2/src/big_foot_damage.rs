@@ -41,6 +41,7 @@ pub(super) fn run(start: f32, frames: Vec<Frame>) -> Result<Value> {
     }
     let mut health = start;
     let mut rows = Vec::new();
+    let mut defeat = None;
     for f in frames {
         if !f.height.is_finite() || health <= 0. {
             return Err(Error::invalid("invalid or post-lethal damage update"));
@@ -85,6 +86,9 @@ pub(super) fn run(start: f32, frames: Vec<Frame>) -> Result<Value> {
                         13
                     }
                 };
+                if health <= 0. {
+                    defeat = Some(defeat_clock(mode == 10));
+                }
                 sm = 0;
                 b3 = 0;
                 timer = 0;
@@ -102,5 +106,29 @@ pub(super) fn run(start: f32, frames: Vec<Frame>) -> Result<Value> {
         }
         rows.push(json!({"mode":mode,"submode":sm,"byte3":b3,"timer":timer,"flags":flags,"health":health,"impulse":impulse,"damageWork":work}));
     }
-    Ok(json!({"initialHealth":start,"frames":rows}))
+    Ok(json!({"initialHealth":start,"frames":rows,"defeatClock":defeat}))
+}
+
+/// Project only the boss-owned timer, starting on the first update after the lethal hit.
+/// Both callbacks initialize and decrement on entry, and branch on the pre-decrement value.
+fn defeat_clock(low: bool) -> Value {
+    let mut frames = Vec::new();
+    let mut submode = 1;
+    let mut timer: u16 = if low { 90 } else { 240 };
+    loop {
+        let expired = timer == 0;
+        timer = timer.wrapping_sub(1);
+        if expired {
+            submode += 1;
+            if low && submode == 2 {
+                timer = 240;
+            }
+        }
+        frames.push(json!({"submode":submode,"timer":timer}));
+        if expired && submode == if low { 3 } else { 2 } {
+            break;
+        }
+    }
+    json!({"handoffUpdate":frames.len(),"frames":frames,"callsOnHandoff":[
+        {"address":"8001c78c","argument":0},{"address":"80022bdc","argument":0}]})
 }
