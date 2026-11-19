@@ -1,0 +1,12 @@
+{
+  "id": "/tiny.html",
+  "name": "Tiny Garden",
+  "short_name": "Tiny Garden",
+  "description": "Care, seven stats, training and five games for your saved Chao.",
+  "start_url": "/tiny.html",
+  "scope": "/tiny.html",
+  "display": "standalone",
+  "background_color": "#091323",
+  "theme_color": "#0a1427",
+  "icons": [{ "src": "/api/assets/discord-icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }]
+}
