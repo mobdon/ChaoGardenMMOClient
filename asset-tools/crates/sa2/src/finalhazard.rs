@@ -824,6 +824,13 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    /// Imported return values at section 1 + 0x1b3c and 0x1b4c.
+    DefeatHandoff {
+        completion_poll: i32,
+        player_byte: u8,
+        lookup_result: u32,
+    },
+
     Defeat {
         submode: i8,
         flags: u16,
@@ -980,6 +987,31 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             return Ok(
                 serde_json::json!({"submode":submode,"flags":flags,"child14":child14,"child18":child18,
                 "call_sites":sites,"global_halfword_0a":0}),
+            );
+        }
+        PlacementClock::DefeatHandoff {
+            completion_poll,
+            player_byte,
+            lookup_result,
+        } => {
+            let mut imports = Vec::new();
+            if completion_poll != 0 {
+                for (site, args) in [
+                    (0x1b4c, vec![0]),
+                    (0x1b58, vec![0, lookup_result]),
+                    (0x1b70, vec![player_byte as i8 as i32 as u32]),
+                ] {
+                    let target = rel
+                        .reference(1, site)
+                        .ok_or_else(|| Error::invalid("missing defeat handoff target"))?;
+                    if target.module != 0 || target.kind != 10 {
+                        return Err(Error::invalid("unexpected defeat handoff relocation"));
+                    }
+                    imports.push(serde_json::json!({"address":target.addend,"arguments":args}));
+                }
+            }
+            return Ok(
+                serde_json::json!({"imports":imports,"submode":if completion_poll==0 {1} else {2},"global_halfword_0a":0}),
             );
         }
         PlacementClock::InitialHealth => {
