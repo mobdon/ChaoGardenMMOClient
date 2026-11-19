@@ -101,3 +101,18 @@ fn retail_launch_image_matches_native_stores() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires local SONIC_ADVANCE_ASOE_ROM"]
+fn garden_background_matches_retail_vram_and_palette() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    let program = catalog::garden(&rom).unwrap();
+    let evidence = garden::GardenEvidence::parse(&program.bytes).unwrap();
+    let colors = sonic_advance_assets::garden_screen::background(&evidence).unwrap();
+    let bytes: Vec<_> = colors.into_iter().flat_map(u16::to_le_bytes).collect();
+    assert_eq!(
+        binary::sha256(&bytes),
+        "1a964b65aab3269fb68bb12c528d0858e25bc95bc26d5739641350391e012ebc"
+    );
+}

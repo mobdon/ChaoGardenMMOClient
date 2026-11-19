@@ -1,6 +1,6 @@
 """Sample the original title or a Sonic spindash from a cold boot. No save files or frame dumps.
 
-Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--garden-input|--title|--menu|--menu-tiny|--character-input|--character-video|--confirm-sonic|--confirm-tails|--confirm-knuckles|--confirm-amy|--act-intro|--act-intro-skip]
+Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--garden-background|--garden-input|--title|--menu|--menu-tiny|--character-input|--character-video|--confirm-sonic|--confirm-tails|--confirm-knuckles|--confirm-amy|--act-intro|--act-intro-skip]
 The DLL and ROM are identified before any external code runs. Outputs only
 selected numbers and pixel hashes. No graphical or memory buffers are written.
 """
@@ -60,6 +60,8 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
         title = True
         title_origin = 1250
         title_ticks = (0, 1, 2, 3, 4, 9, 10, 11, 19, 20, 21, 39, 40, 41, 48, 49, 50, 57, 58, 59, 69, 70, 71, 75, 95, 117, 118, 119)
+    if menu == 'garden-background':
+        title_ticks = (450,)
     if menu == 'garden-input':
         title_ticks = (450, 451, 452, 466, 470, 471, 472)
     frame = -1
@@ -77,6 +79,11 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
         if cmd == 36:
             regions = ct.cast(pointer, ct.POINTER(MemoryMap)).contents
             for region in regions.entries[:regions.count]:
+                if menu == "garden-background" and region.ptr:
+                    if region.start == 0x06000000 and region.length >= 0x10000:
+                        mem["bg"] = region.ptr + region.offset
+                    if region.start == 0x05000000 and region.length >= 512:
+                        mem["palette"] = region.ptr + region.offset
                 if region.start == 0x03000000 and region.ptr and region.length >= 0x5a20 + 72:
                     mem["iwram"] = region.ptr + region.offset
         return cmd in (10, 36)
@@ -148,6 +155,18 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
                 if 1701 <= frame < 1721: buttons.add(7)
                 if frame == 1721: buttons.add(8)
             core.retro_run()
+            if menu == "garden-background" and frame == 1700:
+                vram = ct.string_at(mem["bg"], 65536)
+                palette = ct.string_at(mem["palette"], 512)
+                plane = bytearray()
+                for y in range(160):
+                    for x in range(176):
+                        entry, = struct.unpack_from("<H", vram, 0xf800 + 2 * ((y//8)*32 + x//8))
+                        tx = x%8 ^ (7 if entry & 1024 else 0)
+                        ty = y%8 ^ (7 if entry & 2048 else 0)
+                        color = vram[(entry & 1023)*64 + 8*ty + tx] * 2
+                        plane.extend(palette[color:color+2])
+                return {"frame": frame, "bg3Sha256": hashlib.sha256(plane).hexdigest()}
             if menu == 'garden-input' and frame - title_origin in title_ticks:
                 state = ct.string_at(mem['iwram'] + 0x3830, 11)
                 rows.append([frame, *struct.unpack('<4H3B', state), video_frames[frame-title_origin]])
@@ -192,10 +211,10 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
 if __name__ == "__main__":
     mode = sys.argv[3] if len(sys.argv) == 4 else None
     confirm_modes = ("--confirm-sonic", "--confirm-tails", "--confirm-knuckles", "--confirm-amy")
-    if len(sys.argv) not in (3, 4) or mode not in ("--act-intro","--act-intro-skip") + confirm_modes + (None, "--garden-input", "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
+    if len(sys.argv) not in (3, 4) or mode not in ("--act-intro","--act-intro-skip") + confirm_modes + (None, "--garden-background", "--garden-input", "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
         sys.exit(__doc__)
     print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]),
-                            mode == "--title", {"--garden-input":"garden-input", "--menu":"regular", "--menu-tiny":"tiny"}.get(mode),
+                            mode == "--title", {"--garden-background":"garden-background", "--garden-input":"garden-input", "--menu":"regular", "--menu-tiny":"tiny"}.get(mode),
                             mode in ("--character-input","--character-video"), mode == "--character-video", confirm_modes.index(mode) if mode in confirm_modes else (0 if mode in ("--act-intro","--act-intro-skip") else None),
                             mode in ("--act-intro","--act-intro-skip"), mode=="--act-intro-skip"),
                      indent=None if mode == "--character-input" else 2))
