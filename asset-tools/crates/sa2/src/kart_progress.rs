@@ -246,3 +246,68 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
     }
     Ok(serde_json::json!({"piece_local_xz_quads":pieces,"courses":routes}))
 }
+
+/// Inputs immediately before the two imported vector-length results are combined.
+/// Slots are the contiguous occupied prefix (CartD stops at the first null).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StandingSlot {
+    segment: i32,
+    counter: i32,
+    segment_length: f32,
+    distance_to_next: f32,
+}
+
+#[derive(Serialize)]
+pub struct Standings {
+    /// Raw single-precision values also preserve unordered scores (zero / zero).
+    score_bits: Vec<u32>,
+    places_by_slot: Vec<usize>,
+}
+
+pub fn standings(bytes: &[u8], slots: &[StandingSlot]) -> Result<Standings> {
+    verify(bytes)?;
+    if slots.len() > 6 {
+        return Err(Error::invalid(
+            "kart standings have at most six occupied slots",
+        ));
+    }
+    let mut scores = Vec::new();
+    for slot in slots {
+        if [slot.segment_length, slot.distance_to_next]
+            .iter()
+            .any(|&x| !x.is_finite() || x < 0.)
+        {
+            return Err(Error::invalid("expected finite nonnegative kart distances"));
+        }
+        let fraction = 100. - 100. * slot.distance_to_next / slot.segment_length;
+        let base = slot
+            .counter
+            .wrapping_add(10)
+            .wrapping_mul(1_000_000)
+            .wrapping_add(slot.segment.wrapping_mul(1000));
+        scores.push(base as f32 + if fraction < 0. { 0. } else { fraction });
+    }
+    // 0x94f4 uses a halving-gap sort. A stable library sort gives different
+    // places for some tied slots; unordered comparisons also never swap.
+    let mut order: Vec<_> = (0..slots.len()).collect();
+    let mut gap = order.len() / 2;
+    while gap > 0 {
+        for i in gap..order.len() {
+            let mut j = i;
+            while j >= gap && scores[order[j - gap]] > scores[order[j]] {
+                order.swap(j - gap, j);
+                j -= gap;
+            }
+        }
+        gap /= 2;
+    }
+    let mut places_by_slot = vec![0; slots.len()];
+    for (i, slot) in order.into_iter().enumerate() {
+        places_by_slot[slot] = slots.len() - i;
+    }
+    Ok(Standings {
+        score_bits: scores.into_iter().map(f32::to_bits).collect(),
+        places_by_slot,
+    })
+}

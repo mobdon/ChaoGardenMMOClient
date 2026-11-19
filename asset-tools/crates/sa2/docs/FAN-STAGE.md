@@ -126,3 +126,21 @@ pefile installed for a second layout calculation using the PC export and
 double precision. Across the five installed courses the largest observed
 distance between the two projections was 0.01834 game units (Route 280).
 This comparison does not establish a tolerance for real gameplay contacts.
+
+`kart-standings CartD.rel OUTPUT.json OCCUPIED_SLOTS.json` computes the active
+race ordering after the progress update. Supply an array in native slot order,
+ending before the first empty slot (maximum six). Each row contains `segment`,
+`counter`, `segment_length` and `distance_to_next`. The last two fields are
+results of the imported vector-length calls at 0x8e90 and 0x8e9c: the first
+uses the current and next quads' **second** X/Z pairs; the other uses the
+kart position and the next quad's second pair. The next index wraps to zero.
+This command does not derive distances from the mathematical course projection.
+
+The result contains one single-precision score bit pattern and one place per
+occupied slot. Place 1 leads. The native halving-gap sort can reorder equal
+scores; zero-length segments can also produce unordered scores. The local
+comparison `tests/kart_standings_ppc.py CLI CartD.rel PRIVATE_TMP_DIR`
+executes the original scoring, sorting, and place-write instructions for
+empty, solo, tied, over-distance, degenerate and signed wraparound inputs.
+It checks NaN classification rather than payload. This covers rank assignment,
+not the subsequent leader-change effects or race finish.
