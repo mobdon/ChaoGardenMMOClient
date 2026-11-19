@@ -136,6 +136,39 @@ fn signed_profiles_flags_flip_angles_and_bounded_floor_probes() {
 }
 
 #[test]
+fn tile_upload_cycles_the_prefix_and_preserves_unrelated_character_data() {
+    let mut bytes = fixture();
+    put16(&mut bytes, 0x24, 64);
+    bytes[0x26] = 2;
+    bytes[0x27] = 3;
+    bytes[0x180..0x1a0].fill(0x22); // second tile in the uploaded prefix
+    pointer(&mut bytes, 0x44 + 8, 0x800); // distinct backing for the second layer
+    bytes[0x840..0x860].fill(0x11);
+    let stage = parse(&bytes).unwrap();
+    for (tick, expected) in [
+        (0, 0xff0000),
+        (2, 0xff0000),
+        (3, 0x00ff00),
+        (5, 0x00ff00),
+        (6, 0xff0000),
+    ] {
+        let mut pixels = [0; 24];
+        stage.render_view(0, 0, 24, 1, tick, &mut pixels).unwrap();
+        assert_eq!(
+            (pixels[0], pixels[8], pixels[16]),
+            (expected, 0x00ff00, 0xff0000)
+        );
+    }
+    for size in [0, 31, 128] {
+        put16(&mut bytes, 0x24, size);
+        assert!(parse(&bytes).is_err());
+    }
+    put16(&mut bytes, 0x24, 64);
+    bytes[0x26] = 255; // advertised frames run past end of source
+    assert!(parse(&bytes).is_err());
+}
+
+#[test]
 fn malformed_graphs_and_output_budgets_fail_before_rendering() {
     let bytes = fixture();
     for length in [0, 31, 127, 0x600, 0x735] {
@@ -271,4 +304,47 @@ fn all_eighteen_actual_stage_graphs_and_native_viewport_hashes_match() {
         }
     }
     assert!(Stage::load(&rom, stage::STAGE_COUNT).is_err());
+}
+
+#[test]
+#[ignore = "requires local ASOE ROM"]
+fn act_two_animation_matches_native_upload_and_scroll_reference() {
+    let rom = std::fs::read(std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap()).unwrap();
+    let stage = Stage::load(&rom, 1).unwrap();
+    let mut pixels = vec![0; 240 * 160];
+    for (tick, expected) in [
+        (
+            0,
+            "8f289485adc86858e987178c45c2b68eeab4464ba51cf8e53240d58abe09f439",
+        ),
+        (
+            9,
+            "8f289485adc86858e987178c45c2b68eeab4464ba51cf8e53240d58abe09f439",
+        ),
+        (
+            10,
+            "7b07ba73bf4fdfb7a6a18443c03633952974f749904ce149b5888a8fb763521a",
+        ),
+        (
+            20,
+            "e9b1a2fa31f3443c18c27790a335f383a90295e4c481695de33d8ea00df54c36",
+        ),
+        (
+            30,
+            "96c5e534c753a3423fc6f1d30b564878973354166efeef9000adb07f017191fd",
+        ),
+        (
+            40,
+            "363336bce4f1299f179a81d37bd5317dadbdadf488eb37625825429f1a738bdc",
+        ),
+    ] {
+        stage
+            .render_view(4200, 96, 240, 160, tick, &mut pixels)
+            .unwrap();
+        let rgba: Vec<_> = pixels
+            .iter()
+            .flat_map(|p| [(*p >> 16) as u8, (*p >> 8) as u8, *p as u8, 255])
+            .collect();
+        assert_eq!(binary::sha256(&rgba), expected, "tick {tick}");
+    }
 }

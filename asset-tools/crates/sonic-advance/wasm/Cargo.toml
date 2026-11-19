@@ -1,0 +1,20 @@
+[package]
+name = "asoe-runtime-wasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+sonic-advance-assets = { path = ".." }
+serde_json = "1"
+
+[profile.release]
+lto = true
+opt-level = 3
+panic = "abort"

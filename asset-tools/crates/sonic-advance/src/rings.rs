@@ -147,6 +147,17 @@ impl LocalCollection {
         player_y: i32,
         half_height: i32,
     ) -> Result<usize> {
+        self.collect_with(layout, player_x, player_y, half_height, |_| {})
+    }
+
+    pub(crate) fn collect_with(
+        &mut self,
+        layout: &RingLayout,
+        player_x: i32,
+        player_y: i32,
+        half_height: i32,
+        mut picked: impl FnMut(&Ring),
+    ) -> Result<usize> {
         if !matches!(half_height, 9 | 14) {
             return Err(Error("unsupported Sonic ring contact half height".into()));
         }
@@ -176,6 +187,7 @@ impl LocalCollection {
                 && self.collected.insert(ring.record_offset)
             {
                 added += 1;
+                picked(ring);
             }
         }
         Ok(added)
