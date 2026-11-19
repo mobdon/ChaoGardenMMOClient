@@ -274,7 +274,7 @@ pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Opti
     }
 }
 pub(crate) fn mounted_replay(
-    items: Option<&crate::checkpoint::CityItemTable>,
+    items: Option<&crate::checkpoint::StageItemTable>,
     level: u16,
     p: &Placement,
     d: &ObjectDefinition,
@@ -301,7 +301,7 @@ pub(crate) fn mounted_replay(
         }
         let r = match decode::<ReplayRequest>(request)? {
             ReplayRequest::Single(r) => r,
-            ReplayRequest::Frames(r) => return checkpoint_frames(p, r, None),
+            ReplayRequest::Frames(r) => return checkpoint_frames(p, r, items),
         };
         let mut state = crate::checkpoint::ContactState {
             mode: 1,
@@ -438,7 +438,7 @@ fn checkpoint(p: &Placement, request: &[u8]) -> Result<Value> {
 fn checkpoint_frames(
     p: &Placement,
     req: CheckpointReplay,
-    items: Option<&crate::checkpoint::CityItemTable>,
+    items: Option<&crate::checkpoint::StageItemTable>,
 ) -> Result<Value> {
     use crate::checkpoint::{CheckpointPlacement, CheckpointSpin, CheckpointTicks, ContactState};
     let placement = CheckpointPlacement {

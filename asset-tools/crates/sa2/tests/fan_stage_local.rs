@@ -159,6 +159,8 @@ fn mounted_campaign_routes() {
                         seq["frames"][0]["bonusSelection"],
                         serde_json::json!({"slot":1,"itemId":1,"counterIncrement":20})
                     );
+                    assert_eq!(seq["frames"][0]["itemDelivery"]["engineCalls"][1]["r4"], 20);
+                    assert!(seq["frames"][1]["itemDelivery"].is_null());
                     assert!(seq["frames"][1]["bonusSelection"].is_null());
                     assert_eq!(seq["frames"][1]["slotTimers"], serde_json::json!([0, 299]));
                     assert_eq!(seq["frames"][1]["steps"], serde_json::json!([-44, 1810]));

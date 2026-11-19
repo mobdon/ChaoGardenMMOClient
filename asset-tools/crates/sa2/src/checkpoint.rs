@@ -572,10 +572,11 @@ mod approach_tests {
     }
 }
 
-/// City Escape's stage-local item delivery table (11 pairs in REL section 5).
+/// Stage-local item delivery table (11 pairs in REL section 5).
 /// Offsets refer to section 1 of the identified REL, not PC executable addresses.
 #[derive(Debug)]
-pub struct CityItemTable {
+pub struct StageItemTable {
+    dispatcher: u32,
     entries: [(i32, u32); 11],
 }
 
@@ -588,14 +589,33 @@ pub struct ItemDispatch {
     pub handler_args: [i32; 2],
 }
 
-impl CityItemTable {
+pub type CityItemTable = StageItemTable;
+
+impl StageItemTable {
     pub fn read(module: &[u8]) -> Result<Self> {
-        let rel = crate::city_rel::CityRel::read(module)?;
+        Self::read_stage(13, module)
+    }
+
+    pub fn read_stage(level: u16, module: &[u8]) -> Result<Self> {
+        let layouts: &[(u16, usize, u32)] = include!("checkpoint_item_layouts.rs");
+        let &(_, table, dispatcher) = layouts
+            .iter()
+            .find(|r| r.0 == level)
+            .ok_or_else(|| Error::invalid("unsupported checkpoint stage"))?;
+        let filename = format!("stg{level:02}D.rel");
+        let info = crate::stage_land::catalog()
+            .iter()
+            .find(|r| r.filename == filename)
+            .ok_or_else(|| Error::invalid("missing stage identity"))?;
+        if info.size != module.len() || info.sha256 != crate::manifest::sha256(module) {
+            return Err(Error::invalid("unsupported checkpoint REL revision"));
+        }
+        let rel = crate::city_rel::CityRel::read_identified(module, info.module)?;
         let data = rel.data(5)?;
         let code = rel.data(1)?;
         let mut entries = [(0, 0); 11];
         for (i, row) in entries.iter_mut().enumerate() {
-            let at = 0x2216e8 + i * 8;
+            let at = table + i * 8;
             let id = i32::from_be_bytes(
                 data.get(at..at + 4)
                     .ok_or_else(|| Error::invalid("truncated item ID"))?
@@ -605,7 +625,7 @@ impl CityItemTable {
             let link = rel
                 .reference(5, (at + 4) as u32)
                 .ok_or_else(|| Error::invalid("missing item handler relocation"))?;
-            if (link.module, link.section, link.kind) != (12, 1, 1)
+            if (link.module, link.section, link.kind) != (info.module, 1, 1)
                 || link.addend % 4 != 0
                 || code.get(link.addend as usize..).is_none_or(|s| s.len() < 4)
             {
@@ -613,7 +633,10 @@ impl CityItemTable {
             }
             *row = (id, link.addend);
         }
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            dispatcher,
+        })
     }
 
     /// Mirrors the item helper's early exits and first matching ID. Returns
@@ -640,6 +663,21 @@ impl CityItemTable {
 #[cfg(test)]
 mod item_tests {
     use super::*;
+    #[test]
+    #[ignore = "requires installed stage modules"]
+    fn installed_stage_item_tables() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap())
+            .join("resource/gd_PC");
+        let layouts: &[(u16, usize, u32)] = include!("checkpoint_item_layouts.rs");
+        for &(level, _, _) in layouts {
+            let bytes = std::fs::read(root.join(format!("stg{level:02}D.rel"))).unwrap();
+            let table = StageItemTable::read_stage(level, &bytes)
+                .unwrap_or_else(|e| panic!("stage {level}: {e}"));
+            for item in [0, 1, 2, 3, 6, 8] {
+                assert!(table.visit_checkpoint_item(0, 0, item, |_| {}).unwrap());
+            }
+        }
+    }
     #[test]
     #[ignore = "requires installed City Escape module"]
     fn installed_item_dispatch_targets() {
@@ -732,7 +770,7 @@ pub struct ItemEngineCall {
     pub f1_bits: Option<u32>,
 }
 
-impl CityItemTable {
+impl StageItemTable {
     /// Execute the stage-local part of the six handlers reachable from
     /// checkpoint bonus selection. A host supplies the external engine calls.
     pub fn visit_checkpoint_item(
@@ -746,15 +784,17 @@ impl CityItemTable {
             return Ok(false);
         };
         let player = dispatch.handler_args[1];
-        let (points, amount, scalar, target) = match dispatch.handler_offset {
-            0x303c0 => (100, Some(10), Some(0x3f000000), 0x80035a88),
-            0x30520 => (200, Some(20), Some(0x3f800000), 0x80035a88),
-            0x30498 => (50, Some(5), Some(0x3e800000), 0x80035a88),
-            0x30570 => (200, None, None, 0x80037278),
-            0x30628 => (200, None, None, 0x80037394),
-            0x304e8 => (200, None, None, 0x800374b0),
-            _ => return Err(Error::invalid("unsupported checkpoint item handler")),
-        };
+        // Verified distance back from the dispatcher to each handler entry.
+        let (points, amount, scalar, target) =
+            match self.dispatcher.checked_sub(dispatch.handler_offset) {
+                Some(0x2dc) => (100, Some(10), Some(0x3f000000), 0x80035a88),
+                Some(0x17c) => (200, Some(20), Some(0x3f800000), 0x80035a88),
+                Some(0x204) => (50, Some(5), Some(0x3e800000), 0x80035a88),
+                Some(0x12c) => (200, None, None, 0x80037278),
+                Some(0x74) => (200, None, None, 0x80037394),
+                Some(0x1b4) => (200, None, None, 0x800374b0),
+                _ => return Err(Error::invalid("unsupported checkpoint item handler")),
+            };
         visit(ItemEngineCall {
             target: 0x80063524,
             r3: points,

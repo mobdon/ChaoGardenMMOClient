@@ -196,7 +196,7 @@ pub struct MountedStage<'a> {
     pub kart_route: Option<&'a KartRoute>,
     pub object_table: Option<&'a ObjectList>,
     #[serde(skip)]
-    city_items: Option<crate::checkpoint::CityItemTable>,
+    checkpoint_items: Option<crate::checkpoint::StageItemTable>,
     pub layers: Vec<Layer>,
     pub terrain: Option<Terrain>,
     /// Resource/entry-specific gaps. These are separate from missing gameplay systems.
@@ -247,7 +247,7 @@ impl MountedStage<'_> {
             .resolve(layer, index)
             .ok_or_else(|| Error::invalid("placement outside mounted layer"))?;
         city_replay::mounted_replay(
-            self.city_items.as_ref(),
+            self.checkpoint_items.as_ref(),
             self.dispatch.level,
             &placement.placement,
             definition.ok_or_else(|| Error::invalid("unresolved native object ID"))?,
@@ -495,20 +495,24 @@ impl Campaign {
                 dispatch.level
             ));
         }
-        let city_items = if dispatch.level == 13 {
-            let table = load("stg13D.rel")?
+        let checkpoint_items = if layers.iter().flat_map(|layer| &layer.placements).any(|p| {
+            p.definition_index
+                .and_then(|i| object_table?.entries.get(i))
+                .is_some_and(|d| d.function_va == 0x6d99a0 && d.name == "SAVEPOINT")
+        }) {
+            let table = load(&format!("stg{:02}D.rel", dispatch.level))?
                 .as_deref()
-                .map(crate::checkpoint::CityItemTable::read)
+                .map(|bytes| crate::checkpoint::StageItemTable::read_stage(dispatch.level, bytes))
                 .transpose()?;
             if table.is_none() {
-                gaps.push("Missing City Escape REL; checkpoint item dispatch unavailable.".into());
+                gaps.push("Missing stage REL; checkpoint item dispatch unavailable.".into());
             }
             table
         } else {
             None
         };
         Ok(MountedStage {
-            city_items,
+            checkpoint_items,
             dispatch,
             level_section: config.map(|c| c.section.as_str()),
             entry_pose,
