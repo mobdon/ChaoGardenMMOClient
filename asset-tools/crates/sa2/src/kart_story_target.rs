@@ -104,6 +104,7 @@ pub fn step(bytes: &[u8], input: Input) -> Result<Output> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerInput {
+    lap_clock: Option<crate::kart_lap_clock::ClockInput>,
     race_results: Option<ResultContext>,
     remove_task: bool,
     pursuit_latch: i32,
@@ -119,6 +120,8 @@ pub struct ControllerInput {
 #[derive(Serialize)]
 pub struct ControllerUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
+    lap_clock: Option<crate::kart_lap_clock::Clock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     race_results: Option<ResultActions>,
     elapsed: i32,
     remaining: i32,
@@ -131,6 +134,7 @@ pub struct ControllerUpdate {
 pub fn controller(bytes: &[u8], s: ControllerInput) -> Result<ControllerUpdate> {
     kart_progress::verify(bytes)?;
     let mut r = ControllerUpdate {
+        lap_clock: None,
         race_results: None,
         elapsed: s.elapsed,
         remaining: s.remaining,
@@ -158,6 +162,15 @@ pub fn controller(bytes: &[u8], s: ControllerInput) -> Result<ControllerUpdate> 
         }
     } else if s.engine_byte_09 == 0 || s.engine_byte_42 != 0 {
         r.remaining = r.remaining.wrapping_sub(1);
+    }
+    if r.next == "shared_timing_861c" {
+        if let Some(clock) = s.lap_clock {
+            r.lap_clock = Some(crate::kart_lap_clock::advance(
+                clock,
+                s.race_finish_latch != 0,
+            )?);
+            r.next = "slot_progress_8824";
+        }
     }
     Ok(r)
 }

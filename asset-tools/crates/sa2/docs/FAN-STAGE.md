@@ -249,3 +249,21 @@ the result flag and requests engine action 8 unless engine byte +0x23 is 1.
 This is distinct from the pursuit catch path. Record persistence and subsequent
 engine transitions are unverified. Run `tests/kart_record_results_ppc.py CLI
 CartD.rel PRIVATE_TMP_DIR` to compare against instructions with scratch memory.
+
+When `kart-pursuit-clock` reaches shared timing it accepts an optional
+`lap_clock`: its `clock` contains a tick word, the current three signed
+display bytes and the two three-entry lap arrays (`first`, `second`).
+Supply `inhibit`, `cumulative`, `first_counter`, `first_highest` and optional
+`second_highest`. A finish latch or inhibit word freezes the clock. Otherwise
+it advances one tick and truncates to centiseconds at 60 ticks per second.
+The first kart can record cumulative time or individual splits; the second
+records cumulative times only on the split path. The returned display bytes
+are suitable as time inputs on a later record update. The native split helper
+round-trips the first subtraction through three signed bytes on lap three.
+Negative indices into the lap arrays are unsupported.
+
+The countdown at state +0x0c is separate from the elapsed ticks at +8.
+Consumers test the countdown at 0x2704 (vehicle state), 0x98d4 (timeout
+branch) and 0xdaac (pursuit target). This pass does not perform those tasks.
+Run `tests/kart_lap_clock_ppc.py CLI CartD.rel PRIVATE_TMP_DIR` for the
+installed instruction comparison.
