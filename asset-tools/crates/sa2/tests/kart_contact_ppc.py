@@ -21,7 +21,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0 or 0x4b50<=l<0x4eb4 or 0x30dc<=l<0x3188) or k not in (4,6):continue
+        if t!=1 or not (0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0 or 0xc74<=l<0xd00 or 0x4a58<=l<0x4eb4 or 0x30dc<=l<0x3188) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -42,6 +42,9 @@ def vec(a):return list(struct.unpack(">3f",u.mem_read(a,12)))
 def hook(m,addr,*_):
     pc=addr-base[1];args=[m.reg_read(getattr(R,f"UC_PPC_REG_{i}")) for i in range(3,7)]
     a,b,c,d=args
+    if pc==0x4b50:
+        if combined==2:assert get(work+0x30,"i")==result["impact"]["state"]
+        return
     if pc==0x2d0c:
         assert a==work+0x118
         req=dict(from_=vec(a),to=vec(a+12),word_18=get(a+24,"I"),float_1c=get(a+28,"f"))
@@ -50,6 +53,7 @@ def hook(m,addr,*_):
         u.mem_write(a+32,struct.pack(">3f",*hit["resolved_position"]))
         if "returned_from" in hit:u.mem_write(a,struct.pack(">3f",*hit["returned_from"]))
         reg(3,hit["return_word"] & 0xffffffff)
+    elif pc in (0x4afc,0x4b28,0x4b34):impact_calls.append(args if pc==0x4afc else a)
     elif pc in (0x4bf8,0x4c04):
         signals.append(a)
     elif pc==0x3134:
@@ -80,7 +84,7 @@ def hook(m,addr,*_):
         assert c==work+0x7c
         u.mem_write(c,struct.pack(">3f",*(x-y for x,y in zip(vec(a),vec(b)))))
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
-for pc in (0x4bf8,0x4c04,0x3134,0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0,0x2e90,0x2ea4,0x2ee8,0x2ef4,0x2f18,0x2f30,0x2f40,0x2f54,0x2f74,0x2fac,0x2fcc):
+for pc in (0x4b50,0x4afc,0x4b28,0x4b34,0x4bf8,0x4c04,0x3134,0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0,0x2e90,0x2ea4,0x2ee8,0x2ef4,0x2f18,0x2f30,0x2f40,0x2f54,0x2f74,0x2fac,0x2fcc):
     u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
     if exe:
@@ -90,6 +94,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
     cases=[(None,0,0),(0,4,1),(0,2147483647,0),(1,30,1),(1,31,0),(-1,31,1),(3,-1,1)]+[(1,0,1)]*5+[(0,0,0)]
     runs=[(False,i) for i in range(len(cases))]
     if exe:runs.extend((True,i) for i in range(7,len(cases)))
+    if exe:runs.extend((2,i) for i in range(7,len(cases)))
     for combined,i in runs:
         word,count,enabled=cases[i]
         hit=None if word is None else dict(return_word=word,resolved_position=[11,-3.125,19])
@@ -99,6 +104,9 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             j=i-7
             w=dict(normal=[1,[0,.125,0,.25,0,0][j],-1],impulse=[1,2,3],work_70=-1 if j==4 else j%2,
                    cooldown=5 if j==2 else 0,mode=j%2,vehicle_state=2,engine_byte_23=3)
+            if combined==2:
+                hit["resolved_position"][2]=34
+                w["mode"]=[0,1,2,1,0,3][j]
             q["wall"]=w;hit["returned_from"]=[1,2,3]
             for off,fmt,v in [(0x70,"i",w["work_70"]),(0x290,"i",w["cooldown"]),(0x30,"i",2)]:put(work+off,fmt,v)
             put(engine+0x23,"b",3);put(base[6]+0x1a0,"i",w["mode"])
@@ -135,6 +143,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             height=min([100000]+[p["translation"][1] for p in route["projected_occurrence_poses"][1:]])
             if j:
                 hit["returned_from"][1]=height-8;hit["resolved_position"][1]=height-10
+            if combined==2:saved["work_68"]=[0,1,-1,3,0,-3][j]
             fields=dict(task_mode=(tw,"B"),saved_angles=(work+8,"3i"),grounded_position=(work+0x268,"3f"),
                 work_68=(work+0x68,"i"),work_fc_104=(work+0xfc,"3i"),segment=(work+0xbc,"i"),lap=(work+0xc4,"i"),
                 work_cc=(work+0xcc,"i"),work_254=(work+0x254,"i"),work_25c=(work+0x25c,"i"),timer=(work+0x294,"i"))
@@ -144,10 +153,22 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             put(base[6]+0x24d68,"f",height);put(base[6]+0x24d80,"i",route["segment_count"])
             for k,quad in enumerate(route["projected_segment_xz"]):
                 u.mem_write(base[6]+0x26d84+k*32,struct.pack(">8f",*(x for v in quad for x in v)))
-            req.write_text(json.dumps(dict(contact=q,**saved)));out=Path(td)/f"combined-{i}.json"
-            subprocess.run([cli,"kart-contact-recovery",rel,out,exe,route["course"],req],check=True)
+            request=dict(contact=q,**saved)
+            if combined==2:
+                before=[7.5,7.500001,10,5,15,0][j]
+                put(base[6]+0x21468+0x7c,"f",before);put(base[6]+0x21468+0x84,"f",0)
+                put(work+0xb8,"i",77)
+                request=dict(update=request,previous_velocity_xz=[before,0],work_b8=77)
+            req.write_text(json.dumps(request));out=Path(td)/f"combined-{combined}-{i}.json"
+            subprocess.run([cli,"kart-normal-contact" if combined==2 else "kart-contact-recovery",rel,out,exe,route["course"],req],check=True)
             result=json.loads(out.read_text());doc=result["contact"];signals=[];calls=[]
-            reg(29,task);run(0x2258,0x287c)
+            impact_calls=[];reg(29,task)
+            if combined==2:
+                reg(30,work);run(0x23f8 if j%2==0 else 0x244c,0x2648)
+                impact=result["impact"]
+                assert get(work+0xb8,"i")==impact["work_b8"]
+                assert impact_calls==[val for val in (impact["engine_8006b710"],impact["engine_80011714"]) if val is not None]
+            else:run(0x2258,0x287c)
             assert struct.pack(">3f",*doc["response"]["tail"]["projected_local_velocity"])==bytes(u.mem_read(work+0x88,12))
             assert calls==doc["response"]["calls"]
             fields.update(position=(tw+20,"3f"),saved_position=(work+20,"3f"),velocity=(work+0x7c,"3f"),
@@ -184,4 +205,4 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             wall["impulse"]=got["impulse"];expected["wall"]=wall
         assert expected==doc["response"]
 print("Matched thirteen movement contact and wall-response cases with supplied engine results.")
-if exe:print("Six complete shortened update bodies matched through the final branch.")
+if exe:print("Six shortened updates and six normal contact-to-recovery suffixes matched through the final branch.")

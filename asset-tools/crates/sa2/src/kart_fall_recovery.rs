@@ -209,6 +209,8 @@ pub struct ContactRecovery {
 pub struct ShortUpdate {
     contact: crate::kart_contact::Update,
     recovery: Output,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    impact: Option<Impact>,
 }
 /// Shortened update body, 0x2258..0x2280. Last two callbacks immediately return.
 pub fn contact_course_tick(
@@ -217,12 +219,86 @@ pub fn contact_course_tick(
     name: &str,
     s: ContactRecovery,
 ) -> Result<ShortUpdate> {
+    contact_sequence(bytes, exe, name, s, None)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NormalContact {
+    update: ContactRecovery,
+    previous_velocity_xz: [f32; 2],
+    work_b8: i32,
+}
+
+#[derive(Serialize)]
+struct Impact {
+    state: i32,
+    work_b8: i32,
+    engine_8006b710: Option<[i32; 4]>,
+    engine_80011714: Option<i32>,
+}
+
+/// The common contact-to-recovery suffix of state 0 and 1 (0x23f8/0x244c).
+pub fn normal_contact_tick(
+    bytes: &[u8],
+    exe: &[u8],
+    name: &str,
+    s: NormalContact,
+) -> Result<ShortUpdate> {
+    contact_sequence(
+        bytes,
+        exe,
+        name,
+        s.update,
+        Some((s.previous_velocity_xz, s.work_b8)),
+    )
+}
+fn contact_sequence(
+    bytes: &[u8],
+    exe: &[u8],
+    name: &str,
+    s: ContactRecovery,
+    previous: Option<([f32; 2], i32)>,
+) -> Result<ShortUpdate> {
     let (contact, c) = crate::kart_contact::step_for_fall(bytes, s.contact)?;
+    let impact = previous
+        .map(|(before, work_b8)| -> Result<Impact> {
+            let rel = CityRel::read_identified(bytes, 80)?;
+            let tolerance = f32::from_be_bytes(rel.data(4)?[0x240..0x244].try_into().unwrap());
+            let speed = |[x, z]: [f32; 2]| (x * x + z * z).sqrt();
+            let now = speed([c.velocity[0], c.velocity[2]]);
+            let old = speed(before);
+            if !old.is_finite() || !now.is_finite() {
+                return Err(Error::invalid("unsupported horizontal speed"));
+            }
+            let spin = now < old - tolerance;
+            Ok(Impact {
+                state: if spin { 4 } else { c.state },
+                work_b8: if !spin {
+                    work_b8
+                } else if s.work_68 > 0 {
+                    0x71c
+                } else {
+                    -0x71c
+                },
+                engine_8006b710: spin.then_some([15, 0, 0, 0]),
+                engine_80011714: if spin {
+                    match c.mode {
+                        0 => Some(0x69d),
+                        1 => Some(0x529),
+                        _ => None,
+                    }
+                } else {
+                    None
+                },
+            })
+        })
+        .transpose()?;
     let vehicle = Vehicle {
         position: c.position,
         velocity: c.velocity,
         angles: c.angles,
-        state: c.state,
+        state: impact.as_ref().map_or(c.state, |i| i.state),
         saved_position: c.saved_position,
         task_mode: s.task_mode,
         saved_angles: s.saved_angles,
@@ -253,5 +329,9 @@ pub fn contact_course_tick(
             vertex: None,
         },
     )?;
-    Ok(ShortUpdate { contact, recovery })
+    Ok(ShortUpdate {
+        contact,
+        recovery,
+        impact,
+    })
 }
