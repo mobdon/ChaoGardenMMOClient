@@ -26,6 +26,8 @@ pub struct State {
 struct AudioInput {
     work_44: i32,
     profile: u32,
+    #[serde(default)]
+    alternate: bool,
 }
 #[derive(Serialize)]
 pub struct Update {
@@ -81,12 +83,11 @@ pub fn step(bytes: &[u8], input: Input) -> Result<Update> {
             if s.vehicle_state == 0 {
                 return Ok(AudioDispatch::NormalState5820);
             }
-            if a.profile >= 16 {
-                return Err(Error::invalid("kart cue profile outside supported table"));
-            }
-            let data = rel.data(5)?;
-            let at = 0x3924 + a.profile as usize * 24;
-            let cue = u32::from_be_bytes(data[at..at + 4].try_into().unwrap());
+            let cue = crate::kart_vehicle_init::cue_row(
+                rel.data(5)?,
+                a.profile as usize,
+                a.alternate,
+            )?[0] as u32;
             Ok(AudioDispatch::Engine8006b188 {
                 cue,
                 task_relative_handle: cue,

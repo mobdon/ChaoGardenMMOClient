@@ -57,6 +57,7 @@ pub struct ProfileInput {
     alternate: bool,
     velocity: [f32; 3],
     normalize: Option<Normalize>,
+    event: Option<EventInput>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -67,6 +68,9 @@ struct Normalize {
 #[derive(Serialize)]
 pub struct Profile {
     section5_offset: usize,
+    cue_words: [i32; 6],
+    event_pair: Option<[i32; 2]>,
+    event: Option<Event>,
     acceleration: f32,
     brake_power: f32,
     deceleration: f32,
@@ -98,6 +102,37 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
     let row: [f32; 10] = std::array::from_fn(|j| {
         f32::from_be_bytes(data[offset + 4 * j..offset + 4 * j + 4].try_into().unwrap())
     });
+    let cue_words = cue_row(data, s.profile, s.alternate)?;
+    let event_pair = (s.profile < 8).then(|| {
+        let at = if s.alternate {
+            0x3b14 + (s.profile - 2) * 8
+        } else {
+            0x3ad4 + s.profile * 8
+        };
+        std::array::from_fn(|j| {
+            i32::from_be_bytes(data[at + 4 * j..at + 4 * j + 4].try_into().unwrap())
+        })
+    });
+    let event = s
+        .event
+        .map(|e| -> Result<_> {
+            let eligible = e.work_44 != 0 && event_pair.is_some();
+            let id = if eligible {
+                *event_pair
+                    .as_ref()
+                    .unwrap()
+                    .get(e.selector)
+                    .ok_or_else(|| crate::Error::invalid("kart event selector must be 0 or 1"))?
+            } else {
+                -1
+            };
+            Ok(Event {
+                return_word: i32::from(eligible),
+                call_cart_979c: id >= 0,
+                engine_args: (id >= 0).then_some([id, 0, 0, 0]),
+            })
+        })
+        .transpose()?;
     let mut velocity = s.velocity;
     let mut shared_velocity_write = None;
     if velocity != [0.; 3] {
@@ -111,6 +146,9 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
     }
     Ok(Profile {
         section5_offset: offset,
+        cue_words,
+        event_pair,
+        event,
         acceleration: row[0],
         brake_power: row[1],
         deceleration: row[2],
@@ -124,4 +162,31 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
         velocity,
         shared_velocity_write,
     })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EventInput {
+    work_44: i32,
+    selector: usize,
+}
+#[derive(Serialize)]
+struct Event {
+    return_word: i32,
+    call_cart_979c: bool,
+    engine_args: Option<[i32; 4]>,
+}
+
+pub(crate) fn cue_row(data: &[u8], profile: usize, alternate: bool) -> Result<[i32; 6]> {
+    if profile >= 16 || (alternate && !(2..=7).contains(&profile)) {
+        return Err(crate::Error::invalid("unsupported kart cue profile"));
+    }
+    let at = if alternate {
+        0x39fc + (profile - 2) * 24
+    } else {
+        0x3924 + profile * 24
+    };
+    Ok(std::array::from_fn(|j| {
+        i32::from_be_bytes(data[at + 4 * j..at + 4 * j + 4].try_into().unwrap())
+    }))
 }

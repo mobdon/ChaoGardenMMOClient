@@ -568,3 +568,11 @@ requires the observed normalization return and normalized vector; only a
 magnitude strictly above the limit changes vehicle velocity and writes the
 shared copy. The source-row offset identifies which profile was used. This
 does not populate the separate spawn resource table or select unlocks.
+
+The alternate replacement copies three rows: physics, six cue words and a
+pair of signed event IDs. Active-profile reports retain all three. Optional
+`event: {work_44, selector}` follows 0x5b90 for selector 0 or 1. A negative
+ID suppresses calls but still returns 1 for an eligible controlled kart;
+profile 8 and disabled control return 0. The CartD helper and engine request
+are reported, not executed. Scripted movement's audio input also accepts
+`alternate: true` for replaced slots 2–7.
