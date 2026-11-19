@@ -240,3 +240,100 @@ pub fn root_collision_strips(
     }
     Ok(Some(strips))
 }
+
+/// Course-relative pose. The caller supplies any stage/world origin.
+/// Heading uses one unsigned 16-bit revolution, as in the native piece data.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CoursePose {
+    pub position: [f64; 3],
+    pub heading: u16,
+}
+
+impl CoursePose {
+    pub fn transform(self, local: [f32; 3]) -> [f64; 3] {
+        let theta = f64::from(self.heading) * (std::f64::consts::TAU / 65536.0);
+        let (s, c) = theta.sin_cos();
+        let [x, y, z] = local.map(f64::from);
+        [
+            self.position[0] + c * x + s * z,
+            self.position[1] + y,
+            self.position[2] - s * x + c * z,
+        ]
+    }
+}
+
+/// One origin per ordered piece, followed by the terminal endpoint. Uses
+/// mathematical sine/cosine; original engine rounding is not established.
+pub fn course_layout(
+    table: &CourseTable,
+    ids: &[u8],
+    start: CoursePose,
+) -> Result<Vec<CoursePose>> {
+    let mut poses = vec![start];
+    let mut pose = start;
+    for &id in ids {
+        let piece = table
+            .pieces
+            .get(usize::from(id))
+            .ok_or_else(|| Error::invalid("unknown kart piece ID"))?;
+        if !piece.move_offset.iter().all(|v| v.is_finite()) {
+            return Err(Error::invalid("nonfinite kart piece displacement"));
+        }
+        pose = CoursePose {
+            position: pose.transform(piece.move_offset),
+            heading: pose.heading.wrapping_add(piece.move_angle as u16),
+        };
+        poses.push(pose);
+    }
+    Ok(poses)
+}
+
+#[cfg(test)]
+mod layout_reference {
+    use super::*;
+    #[test]
+    #[ignore = "requires Steam game and independently split course lists"]
+    fn matches_story_set_neighborhoods() {
+        let game = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap())
+            .join("resource/gd_PC");
+        let courses =
+            std::path::PathBuf::from(std::env::var_os("SA2_KART_COURSE_REFERENCE").unwrap());
+        let table = read_course_table(&std::fs::read(game.join("DLL/Win32/Data_DLL.dll")).unwrap())
+            .unwrap();
+        for (name, ch, count, lo, hi) in [
+            ("101", "Tails", 321, 105., 111.),
+            ("280", "Rouge", 369, 169., 175.),
+        ] {
+            let text = std::fs::read_to_string(courses.join(format!("Route {name}.txt"))).unwrap();
+            let ids: Vec<u8> = text
+                .trim_start_matches('\u{feff}')
+                .split_whitespace()
+                .map(|v| v.parse().unwrap())
+                .collect();
+            let poses = course_layout(&table, &ids, CoursePose::default()).unwrap();
+            assert_eq!(poses.len(), count + 1);
+            let placements = crate::set::parse_set(
+                &std::fs::read(game.join(format!("setCart{ch}.bin"))).unwrap(),
+            )
+            .unwrap();
+            let mut nearest: Vec<f64> = placements
+                .iter()
+                .map(|p| {
+                    poses
+                        .iter()
+                        .map(|q| {
+                            (0..3)
+                                .map(|k| (q.position[k] - f64::from(p.position[k])).powi(2))
+                                .sum::<f64>()
+                                .sqrt()
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .collect();
+            nearest.sort_by(f64::total_cmp);
+            let n = nearest.len();
+            let median = (nearest[(n - 1) / 2] + nearest[n / 2]) * 0.5;
+            assert!((lo..hi).contains(&median), "route {name}: {median}");
+        }
+    }
+}
