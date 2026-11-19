@@ -152,17 +152,26 @@ pub fn read(exe: &[u8], config: &str) -> Result<BTreeMap<String, Sequence>> {
 pub fn saved_sections(exe: &[u8], snapshot: &[u8]) -> Result<serde_json::Value> {
     use serde_json::json;
     let (number, current, next) = crate::stage_result::story_progress(snapshot)?.section_numbers();
-    // SAMT seqctrl.h: SEQ_NO_STORY_* and seqSectionStory* arrays (incl. end).
+    // SAMT seqctrl.h: ucCurSequence values and physical SEQ_SECTION arrays, including their end row.
     let (name, rva, rows) = match number {
         1 => ("Hero", 0x133a148, 46),
         2 => ("Dark", 0x133a370, 44),
         3 => ("Last", 0x133a580, 8),
+        4 => ("Intro", 0x133a5e0, 2),
+        5 => ("Sonic Trial Demo", 0x1330074, 3),
+        6 => ("Sonic Demo", 0x133089c, 3),
+        7 => ("Tails Demo", 0x133a5f8, 2),
+        8 => ("Knuckles Demo", 0x1330ac4, 3),
+        9 => ("Shadow Demo", 0x13312ec, 3),
+        10 => ("Eggman Demo", 0x133a610, 2),
+        11 => ("Rouge Demo", 0x13318cc, 3),
+        15 => ("Dreamcast Intro", 0x133a7ec, 2),
         12 => ("Hero Boss Rush", 0x133a628, 9),
         13 => ("Dark Boss Rush", 0x133a698, 9),
         14 => ("All Boss Rush", 0x133a708, 19),
         _ => {
             return Err(Error::invalid(
-                "saved sequence number is not a supported story or boss rush",
+                "saved sequence number has no verified native table",
             ))
         }
     };

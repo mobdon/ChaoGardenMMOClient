@@ -77,6 +77,24 @@ fn mounted_campaign_routes() {
             Ok(None)
         }
     };
+    let demo_routes = [
+        ("Sonic SA2 The Trial Demo Sequence", 1, 0, 13),
+        ("Sonic Demo Sequence", 0, 0, 13),
+        ("Mech Tails Demo Sequence", 0, 6, 9),
+        ("Knuckles Demo Sequence", 1, 4, 16),
+        ("Shadow Demo Sequence", 0, 1, 14),
+        ("Mech Eggman Demo Sequence", 0, 7, 21),
+        ("Rouge Demo Sequence", 1, 5, 18),
+    ];
+    assert_eq!(campaign.demos().len(), demo_routes.len());
+    for (name, ordinal, character, level) in demo_routes {
+        let stage = campaign.mount(name, ordinal, installed).unwrap();
+        assert_eq!(
+            (stage.dispatch.character, stage.dispatch.level),
+            (character, level)
+        );
+        assert!(stage.layers.iter().any(|l| !l.placements.is_empty()));
+    }
     let hero_bosses = [
         (0, 60),
         (6, 20),

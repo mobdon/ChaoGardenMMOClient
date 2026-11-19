@@ -23,9 +23,27 @@ sections = actions = 0
 with tempfile.TemporaryDirectory(dir=tmp_root) as tmp:
     root=Path(tmp)
     image=bytearray(0x349a)
-    for seq,(name,rva) in [(1,("Hero",0x133a148)),(2,("Dark",0x133a370)),(3,("Last",0x133a580)),(12,("Hero Boss Rush",0x133a628)),(13,("Dark Boss Rush",0x133a698)),(14,("All Boss Rush",0x133a708))]:
+    tables = [
+        (1, "Hero", 0x133a148),
+        (2, "Dark", 0x133a370),
+        (3, "Last", 0x133a580),
+        (4, "Intro", 0x133a5e0),
+        (5, "Sonic Trial Demo", 0x1330074),
+        (6, "Sonic Demo", 0x133089c),
+        (7, "Tails Demo", 0x133a5f8),
+        (8, "Knuckles Demo", 0x1330ac4),
+        (9, "Shadow Demo", 0x13312ec),
+        (10, "Eggman Demo", 0x133a610),
+        (11, "Rouge Demo", 0x13318cc),
+        (12, "Hero Boss Rush", 0x133a628),
+        (13, "Dark Boss Rush", 0x133a698),
+        (14, "All Boss Rush", 0x133a708),
+        (15, "Dreamcast Intro", 0x133a7ec),
+    ]
+    for seq,name,rva in tables:
         ini=configparser.ConfigParser(interpolation=None)
-        with (Path(splits)/(name+(".ini" if seq>=12 else " Story.ini"))).open(encoding="utf-8-sig") as f: ini.read_file(f)
+        directory = Path(splits).parent/"Demos" if 5<=seq<=11 else Path(splits)
+        with (directory/(name+(" Story.ini" if seq<=3 else ".ini"))).open(encoding="utf-8-sig") as f: ini.read_file(f)
         expected=[]
         ordinal=0
         for idx in range(len(ini.sections())):
@@ -49,4 +67,4 @@ with tempfile.TemporaryDirectory(dir=tmp_root) as tmp:
             got=json.loads(out.read_text())
             assert got["sequence"]==name and got["current"]==expected[idx]
             assert got["nextInSameTable"]==(expected[nxt] if nxt!=255 else dict(index=255,status="outsideTable"))
-    print(f"Matched {sections} story sections, {actions} actions and all six terminators.")
+    print(f"Matched {sections} story sections, {actions} actions and all 15 terminators.")

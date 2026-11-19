@@ -32,3 +32,9 @@ Do not pass the entire buffer to the raw reader or trim it at the final nonzero
 byte: its size leaves a 16-byte remainder after complete 44-byte records, and
 its last byte is nonzero. The recording supplies no identified per-frame
 position, velocity or contact reference for the board descent.
+
+## Mounting the demo stages offline
+
+Run `fan-demos EXE OUTPUT.json PC_SA2_CONFIG_DIR` to list the seven authored level dispatches with their character, level ID, action index and source RVA. Pass the reported sequence name and action index to `fan-stage`. For example, the Sonic Trial sequence opens with an event and mounts City Escape at index 1; the Sonic preview mounts City Escape at index 0 and follows it with event 532. In this context, an action index selects a story-table action, not a frame in a controller recording.
+
+The two intros contain event sections only. The `story-sections` snapshot command can resolve those sections as well as the demo sections, including each native terminator. These lookups do not select an input file or establish a playable interval in a PRS recording.

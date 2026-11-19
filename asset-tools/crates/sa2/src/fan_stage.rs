@@ -26,6 +26,15 @@ pub struct LevelDispatch {
     pub character: i8,
     pub level: u16,
 }
+const DEMOS: [&str; 7] = [
+    "Sonic SA2 The Trial Demo Sequence",
+    "Sonic Demo Sequence",
+    "Mech Tails Demo Sequence",
+    "Knuckles Demo Sequence",
+    "Shadow Demo Sequence",
+    "Mech Eggman Demo Sequence",
+    "Rouge Demo Sequence",
+];
 const BOSS_RUSHES: [&str; 3] = [
     "Hero Boss Rush Story Sequence",
     "Dark Boss Rush Story Sequence",
@@ -41,6 +50,7 @@ struct LevelConfig {
 pub struct Campaign {
     levels: Vec<LevelDispatch>,
     boss_rushes: Vec<LevelDispatch>,
+    demos: Vec<LevelDispatch>,
     configs: BTreeMap<u16, LevelConfig>,
     tables: BTreeMap<String, ObjectList>,
     positions: Vec<stage_positions::PositionRow>,
@@ -318,6 +328,7 @@ impl Campaign {
         };
         let levels = collect_levels(&STORIES)?;
         let boss_rushes = collect_levels(&BOSS_RUSHES)?;
+        let demos = collect_levels(&DEMOS)?;
         let mut names = BTreeMap::new();
         for (section, fields) in sections(object_config, &["filename", "type"])? {
             if fields.get("type").is_some_and(|v| v == "objlist") {
@@ -339,7 +350,12 @@ impl Campaign {
             let Some(id) = fields.get("levelid").and_then(|s| s.parse::<u16>().ok()) else {
                 continue;
             };
-            if !levels.iter().chain(&boss_rushes).any(|l| l.level == id) {
+            if !levels
+                .iter()
+                .chain(&boss_rushes)
+                .chain(&demos)
+                .any(|l| l.level == id)
+            {
                 continue;
             }
             let object_section = fields
@@ -363,6 +379,7 @@ impl Campaign {
         Ok(Self {
             levels,
             boss_rushes,
+            demos,
             configs,
             tables: object_table::mapped_tables(exe, object_config)?,
             positions: stage_positions::read_rows(exe)?,
@@ -384,6 +401,9 @@ impl Campaign {
             .filter(|r| r.level == dispatch.level && r.course == course)
             .collect()
     }
+    pub fn demos(&self) -> &[LevelDispatch] {
+        &self.demos
+    }
     pub fn boss_rushes(&self) -> &[LevelDispatch] {
         &self.boss_rushes
     }
@@ -391,6 +411,7 @@ impl Campaign {
         self.levels
             .iter()
             .chain(&self.boss_rushes)
+            .chain(&self.demos)
             .find(|d| d.sequence == sequence && d.action_index == ordinal)
     }
     pub fn levels(&self) -> &[LevelDispatch] {
