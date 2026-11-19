@@ -390,3 +390,71 @@ pub fn recovery(bytes: &[u8], s: RecoveryInput) -> Result<Recovery> {
         position_step: position(s.position_step, heading, z, f(0x234))?,
     })
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpinInput {
+    heading: i32,
+    work_68: i32,
+    work_b8: i32,
+    velocity_xz: [f32; 2],
+    angle_radians: Option<f64>,
+    magnitude_return: Option<f32>,
+    position_step: PositionInput,
+}
+#[derive(Serialize)]
+pub struct Spin {
+    heading: i32,
+    work_68: i32,
+    work_b8: i32,
+    vehicle_state: i32,
+    local_displacement: [f32; 3],
+    position_step: PositionStep,
+}
+/// State 4 decays the signed angular step and calls 0x30dc on crossing zero.
+pub fn spin(bytes: &[u8], s: SpinInput) -> Result<Spin> {
+    kart_progress::verify(bytes)?;
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let data = rel.data(4)?;
+    let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
+    let mut work_68 = s.work_68.wrapping_add(s.work_b8);
+    let work_b8 = if s.work_b8 > 0 {
+        s.work_b8 - 18
+    } else {
+        s.work_b8 + 18
+    };
+    let exit = if s.work_b8 > 0 {
+        work_b8 < 0
+    } else {
+        work_b8 > 0
+    };
+    let mut heading = s.heading;
+    if exit {
+        work_68 = 0;
+        if s.velocity_xz.iter().any(|v| v.abs() >= f(0x21c)) {
+            let radians = s
+                .angle_radians
+                .ok_or_else(|| Error::invalid("missing exit heading angle"))?;
+            let units = radians * f64::from_be_bytes(data[0x208..0x210].try_into().unwrap());
+            if !(-2147483648.0..2147483648.0).contains(&units) {
+                return Err(Error::invalid("unsupported exit angle"));
+            }
+            heading = (units as i32).wrapping_add(0x4000).wrapping_neg() & 0xffff;
+        }
+    }
+    let speed = if s.velocity_xz == [0.; 2] {
+        0.
+    } else {
+        s.magnitude_return
+            .ok_or_else(|| Error::invalid("missing horizontal magnitude"))?
+    };
+    let z = f(0x270) * -speed;
+    Ok(Spin {
+        heading,
+        work_b8,
+        work_68,
+        vehicle_state: if exit { 0 } else { 4 },
+        local_displacement: [0., 0., z],
+        position_step: position(s.position_step, heading, z, f(0x234))?,
+    })
+}

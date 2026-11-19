@@ -541,3 +541,12 @@ zero. A stationary kart skips that state test. Both paths still apply the
 current raw stick, pedal flags, profile displacement and gravity that tick.
 Observed angle/magnitude/ground service results are explicit inputs. The
 position step accepts an observed transformed vector or labels its projection.
+
+`kart-spin-drive CartD.rel OUTPUT.json INPUT.json` advances state 4 through
+the end of its movement callback. The angular step moves toward zero by 18;
+landing exactly on zero keeps state 4 for that tick, while starting at zero
+takes the exit. On exit the heading helper uses the horizontal velocity if
+either component has magnitude at least 0.5, wrapping heading to 16 bits.
+The transition tick still applies local displacement and vertical motion.
+Magnitude and angle imports use observed results; the position step labels
+its transformed vector as observed or mathematically projected.
