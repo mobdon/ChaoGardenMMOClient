@@ -335,6 +335,9 @@ pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
             "constructorSection1Offset":0, "position":[x,yz,yz], "yaw":-16384,
             "nextTaskSection1Offset":pair(0x6fae, 1)?
         });
+        // Intro routine 1:c80, submode zero: three scalar stores to slot zero.
+        let v = scalar(0xd42)?;
+        registration["introPlayerWrite"] = serde_json::json!({"slot":0,"position":[v,v,v]});
     }
     Ok(registration)
 }

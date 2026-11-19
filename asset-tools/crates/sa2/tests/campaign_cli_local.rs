@@ -560,3 +560,33 @@ fn big_foot_preview_distinguishes_boss_spawn_and_intro_player_write() {
         .unwrap();
     assert_eq!(call, &serde_json::json!({"slot":0,"position":[-90.,0.,0.]}));
 }
+
+#[test]
+#[ignore = "requires installed Hot Shot REL, executable and PC mapping"]
+fn hot_shot_preview_distinguishes_boss_spawn_and_intro_player_write() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
+    let exe = game.join("sonic2app.exe");
+    let module = game.join("resource/gd_PC/boss_hotshotD.rel");
+    let case = local_case(game);
+    let r = case.good(
+        "campaign-frame",
+        &exe,
+        "hot-shot-opening",
+        &[ini.to_str().unwrap(), "Dark Story Sequence", "3", "0"],
+        &[
+            ("native-table-mapping", &ini),
+            ("boss-stage-program", &module),
+        ],
+    );
+    assert!(r["content"]["entryPose"].is_null());
+    let intro = &r["content"]["bossIntroPreview"];
+    assert_eq!(
+        intro["stageSetup"]["position"],
+        serde_json::json!([170., 0., 0.])
+    );
+    assert_eq!(
+        intro["introPlayerWrite"],
+        serde_json::json!({"slot":0,"position":[0.,0.,0.]})
+    );
+}

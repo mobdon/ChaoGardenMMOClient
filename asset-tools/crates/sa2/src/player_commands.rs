@@ -271,6 +271,15 @@ fn campaign(
                 let trace=sa2_asset_tools::big_foot::replay(&extras[i].bytes, br#"{"work_allocation_ok":true,"frames":[],"intro":{"updates":1,"helper_task_created":false}}"#)?;
                 payload["bossIntroPreview"] = json!({"requiresBossWorkAllocation":true,"stageSetup":trace["boss"],"firstCallback":trace["intro"]["frames"][0],"scope":"First scheduled boss intro update after successful setup; the earlier player spawn and yaw are unknown."});
             }
+            if level == 61 && character == 1 {
+                let i = load(
+                    extras,
+                    "resource/gd_PC/boss_hotshotD.rel".into(),
+                    "boss-stage-program",
+                )?;
+                let reg = sa2_asset_tools::city_rel::stage_registration(&extras[i].bytes)?;
+                payload["bossIntroPreview"] = json!({"stageSetup":reg["bossTaskSetup"],"introPlayerWrite":reg["introPlayerWrite"],"scope":"Slot-zero position written in intro submode zero. Earlier player spawn, yaw and encounter progression are unknown."});
+            }
             payload
         }
         story::Action::Credits => {
