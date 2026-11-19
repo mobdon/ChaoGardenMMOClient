@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Animation, AnimationGroup, NullEngine, Quaternion, Scene, TransformNode, Vector3 } from '@babylonjs/core';
-import { attachNativeRun, captureChaoPose, chooseNativeGait, nativeGaitRate, stepInputPace } from '../src/chao-locomotion.js';
+import { attachNativeRun, captureChaoPose, chooseNativeGait, nativeGaitRate, smoothObservedSpeed, stepInputPace } from '../src/chao-locomotion.js';
 
 test('pace controls stay within ordinary analog input and reach walk, native run, then skate bands', () => {
   for (const [mode, expected] of [['walk', .4], ['run', .62], ['auto', 1]]) {
@@ -20,6 +20,34 @@ test('pace controls stay within ordinary analog input and reach walk, native run
   assert.equal(chooseNativeGait(.94, 'Run'), 'Walk');
   assert.equal(nativeGaitRate('Run', 1.2), .21, 'native119 PlaySpeed is applied to60Hz reference frames');
   assert.equal(nativeGaitRate('Walk', .8), 1);
+});
+
+test('observed speed eases animation cadence continuously without changing gait thresholds', () => {
+  let speed = 0;
+  const rates = [];
+  for (let frame = 0; frame < 120; frame++) {
+    const next = smoothObservedSpeed(speed, 1.994, 1 / 60);
+    assert.ok(next > speed && next <= 1.994);
+    speed = next;
+    rates.push(nativeGaitRate('Run', speed));
+  }
+  assert.ok(speed > 1.99);
+  assert.ok(rates.at(-1) > rates[0]);
+  const slower = smoothObservedSpeed(speed, .8, 1 / 60);
+  assert.ok(slower < speed && slower > .8, 'a snapshot speed change cannot snap animation speed');
+  assert.equal(chooseNativeGait(.8, 'Run'), 'Walk', 'raw observed speed still selects the native gait');
+  const together = smoothObservedSpeed(0, 1.8, .1);
+  const partitioned = smoothObservedSpeed(smoothObservedSpeed(0, 1.8, .05), 1.8, .05);
+  assert.ok(Math.abs(together - partitioned) < 1e-12, 'equivalent render time partitions agree');
+  assert.equal(smoothObservedSpeed(1, 2, 0), 1);
+  assert.equal(smoothObservedSpeed(1, 2, -.1), 1);
+  assert.equal(smoothObservedSpeed(1, 2, NaN), 1);
+  assert.equal(smoothObservedSpeed(0, 2, Infinity), 0);
+  assert.equal(smoothObservedSpeed(0, 2, 5), smoothObservedSpeed(0, 2, .1), 'long frames are bounded');
+  for (const previous of [NaN, Infinity, -1, 9]) for (const target of [NaN, Infinity, -1, 9]) {
+    const value = smoothObservedSpeed(previous, target, .1);
+    assert.ok(Number.isFinite(value) && value >= 0 && value <= 3);
+  }
 });
 
 test('native Run cloning retains target bind offsets, original parents and scale without mutating source motion', () => {
