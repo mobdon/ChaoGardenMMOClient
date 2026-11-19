@@ -49,3 +49,79 @@ pub fn init(bytes: &[u8], s: Input) -> Result<Init> {
         guidance,
     })
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileInput {
+    profile: usize,
+    alternate: bool,
+    velocity: [f32; 3],
+    normalize: Option<Normalize>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Normalize {
+    magnitude: f32,
+    vector: [f32; 3],
+}
+#[derive(Serialize)]
+pub struct Profile {
+    section5_offset: usize,
+    acceleration: f32,
+    brake_power: f32,
+    deceleration: f32,
+    speed_cap: f32,
+    weight: f32,
+    field_14: f32,
+    drift_handling: f32,
+    speed_threshold: f32,
+    field_20: f32,
+    velocity_limit: f32,
+    velocity: [f32; 3],
+    shared_velocity_write: Option<[f32; 3]>,
+}
+/// Resolve the physics row copied by 0x2284 and bound the incoming 3D velocity.
+pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
+    kart_progress::verify(bytes)?;
+    if s.profile > 8 || (s.alternate && !(2..=7).contains(&s.profile)) {
+        return Err(crate::Error::invalid(
+            "unsupported base/alternate kart profile",
+        ));
+    }
+    let rel = CityRel::read_identified(bytes, 80)?;
+    let data = rel.data(5)?;
+    let offset = if s.alternate {
+        0x3834 + (s.profile - 2) * 40
+    } else {
+        0x36cc + s.profile * 40
+    };
+    let row: [f32; 10] = std::array::from_fn(|j| {
+        f32::from_be_bytes(data[offset + 4 * j..offset + 4 * j + 4].try_into().unwrap())
+    });
+    let mut velocity = s.velocity;
+    let mut shared_velocity_write = None;
+    if velocity != [0.; 3] {
+        let n = s.normalize.ok_or_else(|| {
+            crate::Error::invalid("moving kart requires observed normalization result")
+        })?;
+        if n.magnitude > row[9] {
+            velocity = n.vector.map(|v| v * row[9]);
+            shared_velocity_write = Some(velocity);
+        }
+    }
+    Ok(Profile {
+        section5_offset: offset,
+        acceleration: row[0],
+        brake_power: row[1],
+        deceleration: row[2],
+        speed_cap: row[3],
+        weight: row[4],
+        field_14: row[5],
+        drift_handling: row[6],
+        speed_threshold: row[7],
+        field_20: row[8],
+        velocity_limit: row[9],
+        velocity,
+        shared_velocity_write,
+    })
+}

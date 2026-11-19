@@ -559,3 +559,12 @@ in state 7 with history disabled and guidance usable by kart-guided-drive.
 The first target is slot plus one (without a course-length wrap here).
 Only the listed writes are initialized: this callback does not clear the
 whole work area or populate the live profile table.
+
+`kart-active-profile CartD.rel OUTPUT.json INPUT.json` reads the 40-byte
+physics row loaded at 0x2284. Supply profile 0–8, alternate true only for
+2–7 after the native replacement, and incoming velocity. The driving speed
+cap and the full-vector velocity limit are distinct fields. Nonzero velocity
+requires the observed normalization return and normalized vector; only a
+magnitude strictly above the limit changes vehicle velocity and writes the
+shared copy. The source-row offset identifies which profile was used. This
+does not populate the separate spawn resource table or select unlocks.
