@@ -168,8 +168,29 @@ pub fn enter(
                         .map(|&v| crate::emerald_path::translate_path_point(t, v))
                         .collect::<Vec<_>>()
                 });
+                let initial_distance = parameter(0x22120)? + p.parameters[2];
+                let fresh = if let Some(t) = translation {
+                    let (segment, fraction, local, wrapped) =
+                        crate::emerald_path::advance_position(
+                            vertices,
+                            0,
+                            0.,
+                            initial_distance,
+                            |j| {
+                                crate::board::point_distance(
+                                    vertices[j],
+                                    vertices[(j + 1) % vertices.len()],
+                                )
+                            },
+                        )?;
+                    Some(
+                        json!({"segment":segment,"fraction":fraction,"local":local,"world":crate::emerald_path::translate_path_point(t,local),"wrapped":wrapped}),
+                    )
+                } else {
+                    None
+                };
                 Some(json!({
-                    "allocation":[1,24], "initialDistance": parameter(0x22120)? + p.parameters[2],
+                    "allocation":[1,24], "initialDistance":initial_distance,"freshCursorPosition":fresh,
                     "translate":p.position, "rotationWords":[p.rotation[1],p.rotation[2]],
                     "translateAfterRotation":center.map(|v| -v),"derivedWorldVertices":world_vertices,
                     "typeWord":u32::from_be_bytes(data[row as usize..row as usize+4].try_into().unwrap()),

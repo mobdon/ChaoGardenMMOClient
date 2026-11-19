@@ -194,6 +194,15 @@ def alternate_setup(data, at, path):
         for i,v in enumerate(vector):t[i][3]=v
         m=[[f32(sum(row[k]*t[k][j] for k in range(4))) for j in range(4)] for row in m]
     setup["derivedWorldVertices"]=[[f32(sum(a*b for a,b in zip(row,[*v,1.]))) for row in m[:3]] for v in path["points"]]
+    # Independently evaluate the first interior point for these installed placements.
+    import math
+    a,b=path["points"][:2];sq=[f32(f32(x-y)**2) for x,y in zip(a,b)]
+    length=f32(math.sqrt(f32(f32(sq[0]+sq[1])+sq[2])))
+    d=setup["initialDistance"];assert 0<d<length
+    left=f32(f32(length-d)/length);right=f32(1-left)
+    local=[f32(f32(x*left)+f32(y*right)) for x,y in zip(a,b)]
+    world=[f32(sum(v*k for v,k in zip(row,[*local,1.]))) for row in m[:3]]
+    setup["freshCursorPosition"]=dict(segment=0,fraction=right,local=local,world=world,wrapped=False)
     return setup
 def emerald_tasks():
     paths=emerald_paths()

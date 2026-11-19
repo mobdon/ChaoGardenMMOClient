@@ -35,12 +35,34 @@ pub struct PathStep {
 /// services explicit avoids silently substituting host trig or distance approximations.
 pub fn advance(
     points: &[[f32; 3]],
+    segment: usize,
+    fraction: f32,
+    distance: f32,
+    length: impl Fn(usize) -> f32,
+    heading: impl Fn(usize) -> i16,
+) -> Result<PathStep> {
+    let (segment, b, position, wrapped) =
+        advance_position(points, segment, fraction, distance, length)?;
+    let start = heading(segment);
+    let delta = heading((segment + 1) % points.len()).wrapping_sub(start);
+    Ok(PathStep {
+        segment,
+        fraction: b,
+        position,
+        heading: i32::from(start) + i32::from((f32::from(delta) * b) as i32 as i16),
+        wrapped,
+    })
+}
+
+/// Position interpolation runs before the native helper calculates its heading.
+/// The initializer consumes only the position and cursor.
+pub(crate) fn advance_position(
+    points: &[[f32; 3]],
     mut segment: usize,
     mut fraction: f32,
     mut distance: f32,
     length: impl Fn(usize) -> f32,
-    heading: impl Fn(usize) -> i16,
-) -> Result<PathStep> {
+) -> Result<(usize, f32, [f32; 3], bool)> {
     if points.len() < 2
         || segment >= points.len()
         || !(0.0..=1.0).contains(&fraction)
@@ -99,15 +121,12 @@ pub fn advance(
                 (1.0 - b, b)
             }
         };
-        let start = heading(segment);
-        let delta = heading(next).wrapping_sub(start);
-        return Ok(PathStep {
+        return Ok((
             segment,
-            fraction: b,
-            position: std::array::from_fn(|i| points[segment][i] * a + points[next][i] * b),
-            heading: i32::from(start) + i32::from((f32::from(delta) * b) as i32 as i16),
+            b,
+            std::array::from_fn(|i| points[segment][i] * a + points[next][i] * b),
             wrapped,
-        });
+        ));
     }
     Err(Error::invalid(
         "emerald path observation exceeded segment budget",
