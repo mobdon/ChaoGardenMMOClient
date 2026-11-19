@@ -300,3 +300,52 @@ for level,entry in ((13,0x2fde8),(16,0x25c74),(18,0x2aacc)):
             frames.append(dict(mode=mode,work36Bits=a,work40Bits=b))
             if mode==2:break
         print('A',level,initial36,initial40,json.dumps(gates,separators=(',',':')),json.dumps(frames,separators=(',',':')))
+
+# Execute mode 2 to either the first player lookup or the native idle return.
+cpu=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+for addr in (BASE,DATA,TASK,GLOBAL&~4095):cpu.mem_map(addr,4096)
+entry=0x2fe80;block=bytearray(d[ss[1][0]+entry:ss[1][0]+entry+0x238])
+imports={}
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not entry<=off<entry+len(block):continue
+        if kind==10 and module==0:imports[BASE+off-entry]=val
+        if kind in (4,6) and off-entry>=0x1e0:
+            if module:
+                cpu.mem_write(DATA+val,d[ss[s][0]+val:ss[s][0]+val+4]);val+=DATA
+            struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
+def contact_query(cpu,pc,*_):
+    target=imports[pc];calls.append(target)
+    arg=cpu.reg_read(R.UC_PPC_REG_3)
+    if target==0x80037c74:
+        assert arg==TASK+0x400
+        obs['identified']=identified;cpu.reg_write(R.UC_PPC_REG_3,identified&0xffffffff)
+    else:
+        assert arg==TASK
+        if target!=REGISTER:
+            key='primary' if target==CHECK else 'secondary'
+            obs[key]=(first if key=='primary' else second)
+            cpu.reg_write(R.UC_PPC_REG_3,TASK+0x400 if obs[key] else 0)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for off in (0x50,0x60,0x74,0x1e4):cpu.hook_add(UC_HOOK_CODE,contact_query,begin=BASE+off,end=BASE+off)
+cpu.hook_add(UC_HOOK_CODE,lambda cpu,*_:cpu.emu_stop(),begin=BASE+0x94,end=BASE+0x94)
+cpu.mem_write(BASE,bytes(block));cpu.reg_write(R.UC_PPC_REG_MSR,8192)
+for flags,cached,(first,second),identified,gate in itertools.product((0,4),(-2,-1,0,1),((False,False),(False,True),(True,False)),(-1,1),(0,-1)):
+    obs=dict(flags=flags,cached=cached);calls=[]
+    cpu.mem_write(TASK+52,struct.pack('>II',WORK,TASK+0x200));cpu.mem_write(WORK,b'\x02')
+    cpu.mem_write(WORK+4,struct.pack('>H',flags));cpu.mem_write(TASK+0x244,struct.pack('>b',cached))
+    cpu.mem_write(WORK+36,struct.pack('>f',1.25));cpu.mem_write(GLOBAL+55,struct.pack('>b',gate))
+    cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,TASK);cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x238)
+    cpu.emu_start(BASE,BASE+0x238,count=110);pc=cpu.reg_read(R.UC_PPC_REG_PC)
+    result=dict(calls=calls)
+    if pc==BASE+0x94:result.update(playerIndex=cpu.reg_read(R.UC_PPC_REG_30),continueAt=entry+0x94)
+    else:
+        assert pc==BASE+0x238
+        obs['idle']=dict(work36=1.25,game_byte_55=gate)
+        result.update(playerIndex=None,mode=cpu.mem_read(WORK,1)[0],work36Bits=struct.unpack('>I',cpu.mem_read(WORK+36,4))[0])
+    print('P',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))

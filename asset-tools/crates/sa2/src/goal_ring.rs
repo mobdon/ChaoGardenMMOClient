@@ -23,6 +23,8 @@ pub struct Program {
     #[serde(skip)]
     child_mode_one: [f32; 4],
     #[serde(skip)]
+    child_idle_step: f32,
+    #[serde(skip)]
     child_collision_descriptor: u32,
     pub child_entry: u32,
     pub child_parent_callback: u32,
@@ -235,6 +237,33 @@ impl Program {
             handler(0x100)?,
             handler(0x118)?,
         ];
+        let two = child_handlers[2];
+        if manifest::sha256(
+            instructions
+                .get(two as usize..two as usize + 0x94)
+                .ok_or_else(invalid)?,
+        ) != "81673aa59887f6d1db6fee246b846cf74a9e41e69fbad2259265725bcff910ac"
+        {
+            return Err(invalid());
+        }
+        for (offset, addr) in [
+            (0x50, 0x800066f4),
+            (0x60, 0x80006574),
+            (0x74, 0x80037c74),
+            (0x1e4, 0x8000f4ec),
+        ] {
+            if !rel
+                .reference(1, two + offset)
+                .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == addr)
+            {
+                return Err(invalid());
+            }
+        }
+        let idle_constant = rel
+            .reference(1, two + 0x20a)
+            .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
+            .ok_or_else(invalid)?;
+        let child_idle_step = f32::from_bits(word(rel.data(4)?, idle_constant.addend as usize)?);
         let one = child_handlers[1];
         if manifest::sha256(
             instructions
@@ -392,6 +421,7 @@ impl Program {
             child_callbacks,
             child_handlers,
             child_mode_one,
+            child_idle_step,
             child_collision_descriptor,
             child_entry,
             child_parent_callback,
@@ -678,6 +708,56 @@ impl Program {
         }
         Ok(json!(frames))
     }
+    pub fn child_contact(&self, c: ChildContact) -> Result<Value> {
+        let bad = || Error::invalid("inconsistent child mode-2 contact observations");
+        let mut calls = Vec::new();
+        let cached = i32::from(c.cached);
+        let direct = c.flags & 4 != 0 && cached != -1;
+        let mut slot = cached;
+        if direct {
+            if c.primary.is_some() || c.secondary.is_some() || c.identified.is_some() {
+                return Err(bad());
+            }
+        } else {
+            calls.push(0x800066f4u32);
+            let hit = if c.primary.ok_or_else(bad)? {
+                if c.secondary.is_some() {
+                    return Err(bad());
+                }
+                true
+            } else {
+                calls.push(0x80006574);
+                c.secondary.ok_or_else(bad)?
+            };
+            if hit {
+                calls.push(0x80037c74);
+                let id = c.identified.ok_or_else(bad)?;
+                if id >= 0 {
+                    slot = id;
+                }
+            } else {
+                if c.identified.is_some() {
+                    return Err(bad());
+                }
+                slot = -1;
+            }
+        }
+        if slot < 0 {
+            let idle = c.idle.ok_or_else(bad)?;
+            calls.push(0x8000f4ec);
+            let v = if idle.game_byte_55 == 0 {
+                idle.work36 + self.child_idle_step
+            } else {
+                idle.work36
+            };
+            Ok(json!({"calls":calls,"playerIndex":null,"mode":2,"work36Bits":v.to_bits()}))
+        } else {
+            if c.idle.is_some() {
+                return Err(bad());
+            }
+            Ok(json!({"calls":calls,"playerIndex":slot,"continueAt":self.child_handlers[2]+0x94}))
+        }
+    }
     pub fn child_dispatch(&self, mode: i8, byte1: i8, range_out: Option<bool>) -> Result<Value> {
         if (byte1 == 0) != range_out.is_some() {
             return Err(Error::invalid(
@@ -741,7 +821,24 @@ struct ModeOneInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ChildContact {
+    pub flags: u16,
+    pub cached: i8,
+    pub primary: Option<bool>,
+    pub secondary: Option<bool>,
+    pub identified: Option<i32>,
+    pub idle: Option<ChildIdle>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChildIdle {
+    pub game_byte_55: i8,
+    pub work36: f32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ChildDispatch {
+    contact: Option<ChildContact>,
     mode_one: Option<ModeOneInput>,
     mode: i8,
     byte1: i8,
@@ -811,6 +908,12 @@ pub fn replay(
                 return Err(Error::invalid("cannot dispatch an absent linked child"));
             }
             let mut report = p.child_dispatch(d.mode, d.byte1, d.range_out)?;
+            if let Some(c) = d.contact {
+                if d.mode != 2 || d.range_out == Some(true) {
+                    return Err(Error::invalid("contact requires an active mode-2 handler"));
+                }
+                report["contact"] = p.child_contact(c)?;
+            }
             if let Some(input) = d.mode_one {
                 if d.mode != 1 || d.range_out == Some(true) {
                     return Err(Error::invalid(

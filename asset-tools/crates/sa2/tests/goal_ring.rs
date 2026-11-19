@@ -48,7 +48,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 9];
+    let mut counts = [0; 10];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     let variants = [13, 16, 18]
@@ -75,6 +75,14 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "P" {
+            let obs = serde_json::from_str(v[1]).unwrap();
+            assert_eq!(
+                program.child_contact(obs).unwrap(),
+                serde_json::from_str::<serde_json::Value>(v[2]).unwrap(),
+                "{line}"
+            );
+            counts[9] += 1;
         } else if v[0] == "A" {
             let p = variants
                 .iter()
@@ -273,7 +281,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6, 18]);
+    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6, 18, 96]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]

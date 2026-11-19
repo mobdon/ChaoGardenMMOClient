@@ -81,3 +81,13 @@ A nonzero byte forces the transition and leaves work36 untouched. The
 report retains both binary32 bit patterns per invocation and stops at mode
 2, without executing that next handler. Eighteen sequences compare the
 installed instructions for stages 13, 16 and 18.
+
+For an active mode-2 child, `child_dispatch.contact` takes `flags` (work
+halfword at +4) and `cached` (signed byte at secondary work +0x44). Supply
+`primary` and `secondary` hit booleans only for queries that execute;
+`identified` is the signed engine result when a hit is identified. A miss
+on both queries does not reuse a cached player. When neither a hit nor a
+usable cached index resolves a player, supply `idle` with `work36` and
+`game_byte_55`. The report then follows registration and the gated work
+increment through the native return. A resolved player instead stops at
+the player lookup. Its index is not evidence of an award or mission clear.
