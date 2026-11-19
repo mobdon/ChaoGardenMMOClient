@@ -28,6 +28,7 @@ page(T);page(T+0x2000);page(ret)
 player_ptr=0
 defeat_targets={}
 bind_relocs=[]
+shot_registrations=[]
 for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
     off=0
     while True:
@@ -49,6 +50,7 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==10:continue # observed at the external call site
         val=(B+a if s==1 else D+s*0x400000+a) if module else a;page(val)
         if module and s in (4,5):u.mem_write(val,d[sec(s)+a:sec(s)+a+16])
+        if off==0x5760e:u.mem_write(val,d[sec(s)+a:sec(s)+a+48])
         if off==0x673a:player_ptr=val
         assert k in (4,6)
         put(B+off,"H",(val if k==4 else (val+0x8000)>>16)&65535)
@@ -132,6 +134,11 @@ def hook(uc,pc,size,_):
     if off==0x57598:setreg(3,children[-1][0]+0x100)
     if off==0x57618:
         h=children[-1][0];assert reg(3)==h and reg(5)==1 and reg(6)==3;put(h+0xac,"I",h+0x200)
+        seed=(0xffff if len(children)%2 else 0xa501);put(h+0x204,"H",seed)
+        ptr=reg(4);v=get(ptr,"4BI7f3i")
+        shot_registrations.append((dict(descriptor=dict(descriptorOffset=ptr-D-5*0x400000,
+            headerBytes=list(v[:4]),attributes=v[4],originalCenter=list(v[5:8]),
+            parameters=list(v[8:12]),angles=list(v[12:])),count=reg(5),collisionId=reg(6)),h,seed))
     if off in (0x577bc,0x578e8):rotation_angle[:]=[signed(reg(4))]
     if off in (0x577cc,0x578f8):
         vec=get(reg(4),"fff");rotations.append([rotation_angle[0],list(vec)])
@@ -502,6 +509,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         request["first_flight"]["landing"]=landing
         shots=[];expected_volley=[]
         assert len(children)==8
+        for _,h,seed in shot_registrations[-8:]:assert get(h+0x204,"H")[0]==seed&~0x40
         schedule=[];live=set();retired=set();ages=[0]*8;overlap=0
         def child_phase(indices):
             obs=[];rows=[]
@@ -648,6 +656,9 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
     out=tmp/"collision.json"
     subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
     c=json.loads(out.read_text())["replay"]["collision"]
+    registration=c["shotRegistration"].copy()
+    assert registration.pop("clearWorkFlags")==0x40 and shot_registrations
+    assert all(original==registration for original,_,_ in shot_registrations)
     assert c["frames"]==expected
     for i,row in enumerate(c["descriptors"]):
         raw=sec(5)+i*48

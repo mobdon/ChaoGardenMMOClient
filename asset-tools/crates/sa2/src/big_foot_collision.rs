@@ -30,6 +30,41 @@ fn vec3(data: &[u8], at: usize) -> Result<[f32; 3]> {
         f32::from_bits(word(data, at + 8)?),
     ])
 }
+fn descriptor(data: &[u8], offset: u32) -> Result<Value> {
+    let row = data
+        .get(offset as usize..)
+        .and_then(|tail| tail.get(..48))
+        .ok_or_else(|| Error::invalid("truncated Big Foot collision descriptor"))?;
+    let parameters = (0..4)
+        .map(|j| word(row, 20 + j * 4).map(f32::from_bits))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(
+        json!({"descriptorOffset":offset,"headerBytes":row[..4],"attributes":word(row,4)?,
+        "originalCenter":vec3(row,8)?,"parameters":parameters,
+        "angles":[word(row,36)? as i32,word(row,40)? as i32,word(row,44)? as i32]}),
+    )
+}
+fn shot_registration(rel: &CityRel<'_>, data: &[u8]) -> Result<Value> {
+    let hi = rel.reference(1, 0x5760a);
+    let lo = rel.reference(1, 0x5760e);
+    let offset = match (hi, lo) {
+        (Some(h), Some(l))
+            if (h.module, h.section, h.kind) == (81, 5, 6)
+                && (l.module, l.section, l.kind) == (81, 5, 4)
+                && h.addend == l.addend =>
+        {
+            h.addend
+        }
+        _ => {
+            return Err(Error::invalid(
+                "invalid Big Foot projectile collision binding",
+            ))
+        }
+    };
+    Ok(
+        json!({"descriptor":descriptor(data,offset)?,"count":1,"collisionId":3,"clearWorkFlags":0x40}),
+    )
+}
 pub(super) fn run(rel: &CityRel<'_>, ticks: Vec<Tick>) -> Result<Value> {
     if ticks.len() > 2048 {
         return Err(Error::invalid("too many boss collision updates"));
@@ -53,11 +88,10 @@ pub(super) fn run(rel: &CityRel<'_>, ticks: Vec<Tick>) -> Result<Value> {
             204 => 2,
             _ => return Err(Error::invalid("unknown Big Foot collision anchor")),
         };
-        let off = shape as usize;
-        let parameters = (0..4)
-            .map(|j| word(data, off + 20 + j * 4).map(f32::from_bits))
-            .collect::<Result<Vec<_>>>()?;
-        shapes.push(json!({"index":index,"descriptorOffset":shape,"headerBytes":data[off..off+4],"attributes":word(data,off+4)?,"originalCenter":vec3(data,off+8)?,"parameters":parameters,"angles":[word(data,off+36)? as i32,word(data,off+40)? as i32,word(data,off+44)? as i32],"anchorOffset":anchor}));
+        let mut row = descriptor(data, shape)?;
+        row["index"] = json!(index);
+        row["anchorOffset"] = json!(anchor);
+        shapes.push(row);
         bindings.push((slot, vec3(data, at as usize + 8)?));
     }
     let number = |at| word(constants, at).map(f32::from_bits);
@@ -101,5 +135,7 @@ pub(super) fn run(rel: &CityRel<'_>, ticks: Vec<Tick>) -> Result<Value> {
         }
         frames.push(json!({"centers":centers,"registration":{"position":pos,"angles":ang},"afterRegistration":{"position":t.position,"angles":t.angles}}));
     }
-    Ok(json!({"descriptors":shapes,"frames":frames}))
+    Ok(
+        json!({"descriptors":shapes,"frames":frames,"shotRegistration":shot_registration(rel,data)?}),
+    )
 }
