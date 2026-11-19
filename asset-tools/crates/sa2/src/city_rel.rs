@@ -438,3 +438,48 @@ pub fn hot_shot_intro_clock(bytes: &[u8], updates: u16) -> Result<serde_json::Va
         "entersNextMode":exited
     }))
 }
+
+/// Replay the submode-specific opening of mode two, stopping before the shared tail.
+pub fn hot_shot_mode_two_opening(
+    bytes: &[u8],
+    polls: u16,
+    ready_on_last: bool,
+) -> Result<serde_json::Value> {
+    identify_hot_shot(bytes)?;
+    if ready_on_last && polls == 0 {
+        return Err(Error::invalid(
+            "readiness requires at least one submode-one poll",
+        ));
+    }
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let data = rel.data(4)?;
+    let scalar = |at| -> Result<f32> {
+        let hi = rel.reference(1, at).ok_or_else(invalid)?;
+        if (hi.module, hi.section, hi.kind) != (82, 4, 6)
+            || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
+        {
+            return Err(invalid());
+        }
+        let offset = hi.addend as usize;
+        Ok(f32::from_be_bytes(
+            data.get(offset..offset + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut amount = scalar(0x1142)?;
+    let step = scalar(0x11b2)?;
+    let cap = scalar(0x11ca)?;
+    for _ in 0..polls {
+        amount = (amount + step).min(cap);
+    }
+    Ok(serde_json::json!({
+        "mode":2,"submode":if ready_on_last {2} else {1},
+        "timer":0u16.wrapping_sub(polls), "workB8":amount,
+        "entryWork58":scalar(0x1132)?, "entryRequest":8,
+        "lastLocal790Vector":(polls != 0).then_some([amount;3]),
+        "readyBranchWork10Write":if ready_on_last {Some(scalar(0x120e)?)} else {None},
+        "scope":"Submode-specific writes before the common tail; engine readiness is supplied and helper effects are not simulated."
+    }))
+}
