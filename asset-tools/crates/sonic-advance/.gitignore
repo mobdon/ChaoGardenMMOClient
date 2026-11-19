@@ -1,0 +1,13 @@
+/target/
+/.local/
+*.gba
+*.sav
+*.srm
+*.chao
+*.bin
+*.rgba
+*.png
+*.wav
+*.ppm
+*.trace.json
+*.receipt.json

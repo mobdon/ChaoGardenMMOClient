@@ -589,6 +589,510 @@
       "sha256": "d40e9ce59f3b4f3a78c04c8e42cca0e774a9f84298d394ce0404edc4f077b472"
     },
     {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.initializer",
+      "name": "sources.initializer",
+      "offset": 67048,
+      "length": 120,
+      "sha256": "d30e3b7303bcedf45aad2972b163beb6f491ee3d33c24a065c62b4bbdf51b8e1",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.soundInit",
+      "name": "sources.soundInit",
+      "offset": 68072,
+      "length": 248,
+      "sha256": "6b629928e77314da2bb5cbb619a50e8c322b2dcd5b7e1aea3f480ac6ea9cb73e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.psgInit",
+      "name": "sources.psgInit",
+      "offset": 67748,
+      "length": 280,
+      "sha256": "369ff9972b6ef9cc8b4737d28de2101c4b9bf36291666a3a6e4a371ec2a211c8",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.soundMode",
+      "name": "sources.soundMode",
+      "offset": 68484,
+      "length": 152,
+      "sha256": "5bc6c1b30b9ef6694b19f65e9cb4717464094575425fe9bb2696f51abb1615fa",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.disable",
+      "name": "sources.disable",
+      "offset": 68720,
+      "length": 124,
+      "sha256": "9e91c5c69c8184e9b0a24bd50d0604cdb5397abcf81a309562ba4deabde5aff1",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.enable",
+      "name": "sources.enable",
+      "offset": 68844,
+      "length": 60,
+      "sha256": "c244c321133c00d7b2e322a7ac6429d6ed9b795048de82983e79a915c1d6a404",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.callbackInit",
+      "name": "sources.callbackInit",
+      "offset": 64968,
+      "length": 48,
+      "sha256": "428173d6b20ebe479759bafa5e9d250b3e67520df334de5fb22f1acd8cf02d30",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.callbackTable",
+      "name": "sources.callbackTable",
+      "offset": 102852,
+      "length": 144,
+      "sha256": "8707f15f8eed490f3fbbbdbf84045b34e41fd84f62e5e3b67e7dba7de38f5448",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.copiedCode",
+      "name": "sources.copiedCode",
+      "offset": 63932,
+      "length": 1024,
+      "sha256": "7b4fef2cb8e0e87ce8e8aaf244970f121851095a6d6260a423eda20791d5b238",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.playerOpen",
+      "name": "sources.playerOpen",
+      "offset": 68904,
+      "length": 120,
+      "sha256": "129aa1d995fad7f427c0db75ac0b85dadde2b25e79bf557d4a5e87e2325ba696",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.clearPlayer",
+      "name": "sources.clearPlayer",
+      "offset": 64864,
+      "length": 24,
+      "sha256": "5419bd3c98ab164d43e875108e63059c0cbf03bd8f21994049aecff5588fd52b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.clearCallback",
+      "name": "sources.clearCallback",
+      "offset": 68052,
+      "length": 20,
+      "sha256": "6e6144e099b4e07dc523679e161507335397d31717daa110537f905492c5e9dc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.biosCpuSet",
+      "name": "sources.biosCpuSet",
+      "offset": 72420,
+      "length": 4,
+      "sha256": "07967ebdc3979cd4fd4de37fd22b3e6de8965b00dae4ac5585577c9709839652",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.frequencyBoundary",
+      "name": "sources.frequencyBoundary",
+      "offset": 68320,
+      "length": 164,
+      "sha256": "a8c20dd1b28100c9ff050d53d80341fcee7194c2fce54adc7f8ceb31aa9c1c0f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.mixerWrapper",
+      "name": "sources.mixerWrapper",
+      "offset": 67168,
+      "length": 12,
+      "sha256": "be97755229b87ccfc5d520e15242c95995c59ad569dce54f4e9eb0fbc9c3bb5d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-init-vectors.json",
+      "key": "sources.mixerBoundary",
+      "name": "sources.mixerBoundary",
+      "offset": 63800,
+      "length": 132,
+      "sha256": "9a1f8aee3c9e63c33d4b56efafc79f6d910fc46dfa16b644abd019435f586c12",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.routing",
+      "name": "sources.routing",
+      "offset": 67180,
+      "length": 496,
+      "sha256": "017c23f7afdea41fb0d7048e9e172ac8c1584c7f91d2b1a66b7e462a1f6e5b20",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.resumeAndFade",
+      "name": "sources.resumeAndFade",
+      "offset": 66988,
+      "length": 60,
+      "sha256": "7dda487dc04d1cc4c85c039fb3836fd8b53c001d847e78b87651ee984031956d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.open",
+      "name": "sources.open",
+      "offset": 68904,
+      "length": 120,
+      "sha256": "129aa1d995fad7f427c0db75ac0b85dadde2b25e79bf557d4a5e87e2325ba696",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.start",
+      "name": "sources.start",
+      "offset": 69024,
+      "length": 228,
+      "sha256": "52f0b5b1ba337a053c8dde6375741ce06e164f80a4ba2ee07175d1e4808da85c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.stop",
+      "name": "sources.stop",
+      "offset": 69252,
+      "length": 64,
+      "sha256": "da665554358bb49b9ff641ed8b50e8b2d731ef811d35b6210c11c4097869e783",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.trackStop",
+      "name": "sources.trackStop",
+      "offset": 66112,
+      "length": 68,
+      "sha256": "42f0896ed58bb911bad7a16413ced7798e23955b043d5f728b5e3385d3ee37e0",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.clearCallback",
+      "name": "sources.clearCallback",
+      "offset": 68052,
+      "length": 20,
+      "sha256": "6e6144e099b4e07dc523679e161507335397d31717daa110537f905492c5e9dc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.clear64",
+      "name": "sources.clear64",
+      "offset": 64864,
+      "length": 24,
+      "sha256": "5419bd3c98ab164d43e875108e63059c0cbf03bd8f21994049aecff5588fd52b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.callbackTableInit",
+      "name": "sources.callbackTableInit",
+      "offset": 64968,
+      "length": 48,
+      "sha256": "428173d6b20ebe479759bafa5e9d250b3e67520df334de5fb22f1acd8cf02d30",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.callbackTable",
+      "name": "sources.callbackTable",
+      "offset": 102852,
+      "length": 144,
+      "sha256": "8707f15f8eed490f3fbbbdbf84045b34e41fd84f62e5e3b67e7dba7de38f5448",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.players",
+      "name": "sources.players",
+      "offset": 105440,
+      "length": 48,
+      "sha256": "376f11609385beff83adf58f0e4c8908ae4f3f11b201ee46ec828d02adba8d7a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.songs",
+      "name": "sources.songs",
+      "offset": 105488,
+      "length": 296,
+      "sha256": "4daf243e3b087f32dd522837437f589adec8cb507706ab61b3a0342d6f0df812",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-audio-vectors.json",
+      "key": "sources.highestSongIdCaller",
+      "name": "sources.highestSongIdCaller",
+      "offset": 19398,
+      "length": 64,
+      "sha256": "1079294c88651825c0001840c6e128f2959580ae41e1322f3c0f618163d1fe47",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.frameTimersAndSwitch",
+      "name": "sources.frameTimersAndSwitch",
+      "offset": 17432,
+      "length": 444,
+      "sha256": "de9639e70952a740090966a436496798efd86c0ef2ec2863cbb48cbb751db2b6",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.stateTargets",
+      "name": "sources.stateTargets",
+      "offset": 17876,
+      "length": 256,
+      "sha256": "bc28317d2050abd69dd85beed9824cc92bedd072c1eddb4e10a2040d9472bd6e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.firstActions",
+      "name": "sources.firstActions",
+      "offset": 18132,
+      "length": 616,
+      "sha256": "b840d4163baaa9d404600f9d27f2df1a99fed7cdf7e381b70fe73d5b0ce9b6ae",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.timerAction",
+      "name": "sources.timerAction",
+      "offset": 19100,
+      "length": 36,
+      "sha256": "cd8f84602ab4e6ca176166371eb10ca4097eed68fbfc23860c90d1669238d7cd",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.repeatedAction",
+      "name": "sources.repeatedAction",
+      "offset": 19268,
+      "length": 76,
+      "sha256": "324608f6e92ff851cd903971cc4d597bdbb6c95c3bff5f9a51010a9c32e6757a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.walkAction",
+      "name": "sources.walkAction",
+      "offset": 19604,
+      "length": 256,
+      "sha256": "3161888d02a2103216953c07817b9a54e7a167f3f3125526d854ff0daa93a77f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.timedActions",
+      "name": "sources.timedActions",
+      "offset": 20032,
+      "length": 164,
+      "sha256": "6512708d935b18dbb2400f30daa5523a2d3cfa05d2204cee8963c95c5151043f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.directionalTimers",
+      "name": "sources.directionalTimers",
+      "offset": 22134,
+      "length": 202,
+      "sha256": "9a458c305ce29ad9cc96bda1b40e0be4c25a8e95d52ac176a464e139bbdd918c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.heightAndMapActions",
+      "name": "sources.heightAndMapActions",
+      "offset": 22624,
+      "length": 168,
+      "sha256": "c66e3c6074f49e6f935fde844d00a5fd94fa985bc4be0c9ac64fb1d65e088a0f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.resetAndSelect",
+      "name": "sources.resetAndSelect",
+      "offset": 23304,
+      "length": 54,
+      "sha256": "871ac4dc4c6d6f0f30954755fc5b1128a9733b4c798bfeaa2d93443a01f5d8f4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.frameWriteback",
+      "name": "sources.frameWriteback",
+      "offset": 24080,
+      "length": 72,
+      "sha256": "ec0593ecc322b0ba2beceb3a63c0c329156b6a68ae369516dda4ff7e420bf1be",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.movement",
+      "name": "sources.movement",
+      "offset": 24152,
+      "length": 164,
+      "sha256": "d6c301969987ea3835d362dfe5f3684fd0865bd3f2f22b9b5bd0cd051862989a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.selection",
+      "name": "sources.selection",
+      "offset": 24316,
+      "length": 1624,
+      "sha256": "fb02ce2a6dd4050accf8e03166240196e5954c9e2085f5990b68c398e5ef4977",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.directionChoice",
+      "name": "sources.directionChoice",
+      "offset": 25940,
+      "length": 152,
+      "sha256": "2b5eeb467748391d274f6a73dc9f4f5d86c2090940c6efda621755733f5c4528",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.rng",
+      "name": "sources.rng",
+      "offset": 5428,
+      "length": 84,
+      "sha256": "e0ca48c7f6302da4911a1b12eff7d44a992705544bead9f1ee01a6d0826db5b2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.trig",
+      "name": "sources.trig",
+      "offset": 6188,
+      "length": 48,
+      "sha256": "df1b00da1ee21562872ffbc6c2700712c73af2b32a85ce6a0b487c9518a09217",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.trigTable",
+      "name": "sources.trigTable",
+      "offset": 127712,
+      "length": 512,
+      "sha256": "b41552b15b70b61ebfaf7d857b9f99849fd89889f4d273733d1e069def5ac745",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.directionAngles",
+      "name": "sources.directionAngles",
+      "offset": 132722,
+      "length": 12,
+      "sha256": "650fa55c501a27ebc1dd545fbc1bc679362ff0537b4c8e537999eda3e2ed2666",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.foodEffects",
+      "name": "sources.foodEffects",
+      "offset": 75420,
+      "length": 49,
+      "sha256": "b33ae558a366ac031e7326d7ade4d3a38f3818f21c6139f6a97a8ceeaa3c49bd",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.applyFood",
+      "name": "sources.applyFood",
+      "offset": 18748,
+      "length": 352,
+      "sha256": "fb99a189d340d161f5b69be73c270ee85d4f803dbec9b0ef8a19173917574530",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.careCooldown",
+      "name": "sources.careCooldown",
+      "offset": 19136,
+      "length": 132,
+      "sha256": "f235be0e73d71fc3e8d6d51f4c4c822aeb02638250fdc50a31b6038386779a16",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.approachContact",
+      "name": "sources.approachContact",
+      "offset": 21328,
+      "length": 496,
+      "sha256": "90103a709ec15cb7e2a19bc03526d012b50c76380456ecbfa9930b0e1282b27b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.allocateTask",
+      "name": "sources.allocateTask",
+      "offset": 3332,
+      "length": 172,
+      "sha256": "168464f8e6d170a06a4fea0aef4cb34ceadbe6a119cb48d82fb5956f1b9cad98",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.allActions",
+      "name": "sources.allActions",
+      "offset": 18132,
+      "length": 5948,
+      "sha256": "766780f7d55db5f14f5d8d6f12520a812d71d67040c5d03f5a18b9f73f9f4bea",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.dialogBuilder",
+      "name": "sources.dialogBuilder",
+      "offset": 9996,
+      "length": 544,
+      "sha256": "0378a7be9e022bc65be55b59f5b819a9ab867a8d43b114080bf5eb5d431ddb21",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.initializeChao",
+      "name": "sources.initializeChao",
+      "offset": 16864,
+      "length": 568,
+      "sha256": "91217ee971fc7ce7287a3a6fabeef7b3e0533b104c004cb1efe9aa37369bc738",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-care-vectors.json",
+      "key": "sources.immediateCallback",
+      "name": "sources.immediateCallback",
+      "offset": 74908,
+      "length": 2,
+      "sha256": "bac8ca6ee9f77b46c7ab5824c7c59d99fd0ca53ae998ea2872b78bb6a5189cc5",
+      "space": "garden"
+    },
+    {
       "fixture": "tests/garden-frame-vectors.json",
       "key": "routines[0]",
       "name": "main",
@@ -739,6 +1243,312 @@
       "offset": 90444,
       "length": 3878,
       "sha256": "c187d348641b37fdf9afcbf067d32c1330cd8efcbe47749d781fec7bab4798d0",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.6a54",
+      "name": "sources.6a54",
+      "offset": 27220,
+      "length": 2028,
+      "sha256": "5d61c9a658b3a43d4cb41175c9e3bfef5cab70658ee050e934ef7dd4573b42aa",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.7240",
+      "name": "sources.7240",
+      "offset": 29248,
+      "length": 360,
+      "sha256": "6ff9190887f1adc8e0f7cfd22d955b807a0678d3b8653bc55d719d195f39ddb6",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.73a8",
+      "name": "sources.73a8",
+      "offset": 29608,
+      "length": 280,
+      "sha256": "1994c3cd205b04aaa6d1516458bc88233dc9a22f82d6eb0ceb89e3798667df75",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.8a74",
+      "name": "sources.8a74",
+      "offset": 35444,
+      "length": 68,
+      "sha256": "2c73aee6ac87d26afb27a596997aa7ad89f717f199fcfbf1a1e172027348ff05",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.8ab8",
+      "name": "sources.8ab8",
+      "offset": 35512,
+      "length": 100,
+      "sha256": "e7d8b1c08f892c5f4e8aa3ddec597ffdafd6de4445ca6c62cf74d37050bbd5ea",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.3424",
+      "name": "sources.3424",
+      "offset": 13348,
+      "length": 272,
+      "sha256": "85a58d91e775536e1780c2e3d27a6ba6ec2f85ebfe2d659807d2a42a17b859d9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.35cc",
+      "name": "sources.35cc",
+      "offset": 13772,
+      "length": 72,
+      "sha256": "63856ab2a68b8fe882fcb50116a61534cc55b8264f5ceb1c220fe078fa0df51c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.74c0",
+      "name": "sources.74c0",
+      "offset": 29888,
+      "length": 68,
+      "sha256": "94f1e45662aee0cb93252a0797af16f2d87aa84520a9293bd28ffc5ccfb5294c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.89b0",
+      "name": "sources.89b0",
+      "offset": 35248,
+      "length": 36,
+      "sha256": "62833c0b8bc769bdf248b79227e02fd883b5566512d7bffed439b2e498a94588",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.8a04",
+      "name": "sources.8a04",
+      "offset": 35332,
+      "length": 40,
+      "sha256": "503ece0b471f87b78eacdd060009fecc9d7b97df4a09f4c616a87b70e485894c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.89d4",
+      "name": "sources.89d4",
+      "offset": 35284,
+      "length": 48,
+      "sha256": "2747d8dc3a1726dfa56832ec2ab009bd484003d568a3cee03a68cd0ee48be25f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.218c",
+      "name": "sources.218c",
+      "offset": 8588,
+      "length": 104,
+      "sha256": "1914a4e642e03124fbae24010694904c02bcf96ef79230f04cde13b8f14ee6f1",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.88b0",
+      "name": "sources.88b0",
+      "offset": 34992,
+      "length": 72,
+      "sha256": "f2bb312e49839428c2edafe1fdbce6c8360bf2c605c3ec9d6266e23cda340ece",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.83e4",
+      "name": "sources.83e4",
+      "offset": 33764,
+      "length": 264,
+      "sha256": "00689cf464b3f3ee8d8906bd3e2238e66097d2ebbd681a191b7cb590f9ed1cb2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.84ec",
+      "name": "sources.84ec",
+      "offset": 34028,
+      "length": 244,
+      "sha256": "21724f44b8896a5cb221e17cdb90dc89262afb6554e8750e85f4a18d604eaa60",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.3e04",
+      "name": "sources.3e04",
+      "offset": 15876,
+      "length": 176,
+      "sha256": "7322b218f25a43d9c764587dbdf6e71c3bab57070863dfa24bbe04e2ad6ad08a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.3eb4",
+      "name": "sources.3eb4",
+      "offset": 16052,
+      "length": 180,
+      "sha256": "eb8029470621145c999cbde582172594aa644d8e1818ea5b0752d00c5bd7ab68",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.8b1c",
+      "name": "sources.8b1c",
+      "offset": 35612,
+      "length": 32,
+      "sha256": "7a65a4eb28cc53c4dbbfe8b67ad8e6e55783082060f4d2895cc4bd8b02a322fa",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.292c",
+      "name": "sources.292c",
+      "offset": 10540,
+      "length": 1420,
+      "sha256": "161bbe44e9e2a14f2449388e90be8660b4e9eb04f1afc32e02cf4e13266ff57f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.3748",
+      "name": "sources.3748",
+      "offset": 14152,
+      "length": 1244,
+      "sha256": "23585d1d7c0349948b4d7b254d9d3eb258eefebd4c6288a0d522e7004ae8a0da",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.3614",
+      "name": "sources.3614",
+      "offset": 13844,
+      "length": 216,
+      "sha256": "010b0bd16bf80575202547bd8102d5725e90c6d7783bc876ac822bd3de1e4a51",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.36ec",
+      "name": "sources.36ec",
+      "offset": 14060,
+      "length": 92,
+      "sha256": "825f6d4b06d87c2ea3404abade293cdc8b5e8477d152fb996ee375ee6f3d7741",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.3c24",
+      "name": "sources.3c24",
+      "offset": 15396,
+      "length": 308,
+      "sha256": "0fdcf6c281dc312fa1e13ecee443a472133e2614f5b8f282a1cae29fc58afd58",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.3d58",
+      "name": "sources.3d58",
+      "offset": 15704,
+      "length": 172,
+      "sha256": "eb4dd587044541c9c5216dad434ff9986249b3a704c5bbebfd886d50dd43d0a0",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.85e0",
+      "name": "sources.85e0",
+      "offset": 34272,
+      "length": 104,
+      "sha256": "5f0bfafc9b9b7159b919fd3939cc3c88767cfaab2dd2f3c3228a9b744a6b1dfc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.8648",
+      "name": "sources.8648",
+      "offset": 34376,
+      "length": 108,
+      "sha256": "72bd18d270b307f35e7888e81e76385a9a8ae1b0f802652e8f043ece1c8500ce",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-tasks-vectors.json",
+      "key": "sources.8d90",
+      "name": "sources.8d90",
+      "offset": 36240,
+      "length": 92,
+      "sha256": "98aec18d8f8967f7e281b3038553cbabdeb69822574e95e45cedc37ae9968b37",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-vectors.json",
+      "key": "routines[0]",
+      "name": "boot",
+      "offset": 196,
+      "length": 164,
+      "sha256": "7b506458757d373a076b78a18dcfecb522eb8b2fdc980fb89345efa4c13f4a84",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-vectors.json",
+      "key": "routines[1]",
+      "name": "interruptInstall",
+      "offset": 412,
+      "length": 172,
+      "sha256": "e03b11745ce44cfa77248fc97cef200d0ea7b7b93d5ec67df31fc92766677323",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-vectors.json",
+      "key": "routines[2]",
+      "name": "audioHooks",
+      "offset": 6304,
+      "length": 40,
+      "sha256": "685d9577502735731657ba90b973e5cf0a43572cceb2e196ef5f75e0dd7f0d49",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-vectors.json",
+      "key": "routines[3]",
+      "name": "home",
+      "offset": 6344,
+      "length": 656,
+      "sha256": "b9457f72a85b2f7bf4b3ee73dc00ae4cd94820ccf23e07176f4de3d43b6e25fc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-vectors.json",
+      "key": "routines[4]",
+      "name": "graphics",
+      "offset": 7264,
+      "length": 264,
+      "sha256": "37dfa53fc38f5ccf96e15354c915c13863c396aa99fbb9d1760711fd1fe1bc39",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-vectors.json",
+      "key": "routines[5]",
+      "name": "otherModeReset",
+      "offset": 48676,
+      "length": 24,
+      "sha256": "f61b0234633d04f2850d957f4d9fdc9e638441881434d0976574b01732ba381d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-home-vectors.json",
+      "key": "routines[6]",
+      "name": "boardReset",
+      "offset": 53884,
+      "length": 24,
+      "sha256": "a5f2de8a2dd1706d0dcfaef8460a4252cdba09ed3c5132ecea1d16856b531c55",
       "space": "garden"
     },
     {
@@ -901,6 +1711,834 @@
       "offset": 59996,
       "length": 172,
       "sha256": "e211821847303d72a77c111bf51fdd065a0fb0eeda038206a6ac7ac7eb3814d4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[0]",
+      "name": "sources[0]",
+      "offset": 55460,
+      "length": 260,
+      "sha256": "05b2b1741b1931f58893a23b7d8239602057545c37f11157c6f60fa7bf6d355f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[1]",
+      "name": "sources[1]",
+      "offset": 55720,
+      "length": 92,
+      "sha256": "db7cb7f623643e414818febb4cf92568f217b6d8dc2e9bf9be370fe73ac15b5c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[2]",
+      "name": "sources[2]",
+      "offset": 55812,
+      "length": 84,
+      "sha256": "0bbe63f4e04bb4e5c1f309c9a4f688c97b13103509777da5e35d423e1402337e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[3]",
+      "name": "sources[3]",
+      "offset": 55896,
+      "length": 104,
+      "sha256": "f51ac622df9604d3c8b8f806dfd4cc898e985276e13c292f6d75ab4f9f8e79f9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[4]",
+      "name": "sources[4]",
+      "offset": 56000,
+      "length": 104,
+      "sha256": "410c312a0910fc94ec1d3ff22b77d2345d85b3a3372e7882c669e75a15da7ab7",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[5]",
+      "name": "sources[5]",
+      "offset": 56104,
+      "length": 128,
+      "sha256": "8a5db96a0e9fb541bb162608a0b75f2d607d21f6778cc29bbdc8a4fd6f1f6bfd",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[6]",
+      "name": "sources[6]",
+      "offset": 56232,
+      "length": 636,
+      "sha256": "4b0a50c509e4a3cc418dd156d3fafd9cc00ca035ad0d27f7f4c7139d1c916dd7",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[7]",
+      "name": "sources[7]",
+      "offset": 56868,
+      "length": 408,
+      "sha256": "7c4b4b33f2a286159883ef28e5144e6da286606faab089ba7b1136f12fba8b2e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[8]",
+      "name": "sources[8]",
+      "offset": 57276,
+      "length": 112,
+      "sha256": "22829a9fe33d5df7b0d5d9e59505ef93a44416581caf80cb82893a08e512b386",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[9]",
+      "name": "sources[9]",
+      "offset": 57840,
+      "length": 452,
+      "sha256": "cc9c703b4b73596b14f88c3721b9f43adf504c52cf49cb99b0619c82f4759898",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[10]",
+      "name": "sources[10]",
+      "offset": 58292,
+      "length": 124,
+      "sha256": "095d78225e3f1ff26dfd4bdb98b2edd4656419e8285f85ff0388345535bca045",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[11]",
+      "name": "sources[11]",
+      "offset": 59096,
+      "length": 432,
+      "sha256": "8740ba17a38755bc7b258cb2ada0fd9650a29b4b3e8a567c800bde229533ef57",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[12]",
+      "name": "sources[12]",
+      "offset": 59528,
+      "length": 236,
+      "sha256": "59aed15e7eca7509a7fbaf11118b3468c52fad5d8718a5da09d13b63a8c1ffd6",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[13]",
+      "name": "sources[13]",
+      "offset": 62172,
+      "length": 296,
+      "sha256": "7cef2a5714674acce96a6f5248682456fabfce2f4fbc6eb937e8032bfdc0ec7e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[14]",
+      "name": "sources[14]",
+      "offset": 63112,
+      "length": 52,
+      "sha256": "b92a20943b4bd636db8b3a2a92094946f46d7dd8b36aa8642b7c70deee1e19d2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[15]",
+      "name": "sources[15]",
+      "offset": 63164,
+      "length": 112,
+      "sha256": "e8463300e0202dffeee0b92604f6352d0bda693655aa0e1a84e3ccd616a9da95",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[16]",
+      "name": "sources[16]",
+      "offset": 63452,
+      "length": 56,
+      "sha256": "6889cc3b6ce9508fc5b0ee9113446dff0f686700d5588899028bf72fc03e5a7b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[17]",
+      "name": "sources[17]",
+      "offset": 63580,
+      "length": 44,
+      "sha256": "5a80dcab9b37062a05126e2d4233b0a13690d7fa2dc7f4d9bad7780c6d61576f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[18]",
+      "name": "sources[18]",
+      "offset": 63624,
+      "length": 72,
+      "sha256": "09d7fb4a5bbad3256ab49c8d31ce15cd90bcaa50511203e6fa2dbe9a48ac7777",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[19]",
+      "name": "sources[19]",
+      "offset": 188695,
+      "length": 4,
+      "sha256": "f16f6b7f1cd082e72284f88f0b05969cfa0431be25a05508e66cf60b3ea2cf63",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[20]",
+      "name": "sources[20]",
+      "offset": 188608,
+      "length": 72,
+      "sha256": "bbbcd67bb09d440590f34bb68bdd03e8e10198db8d973730983101021e69b614",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[21]",
+      "name": "sources[21]",
+      "offset": 57388,
+      "length": 96,
+      "sha256": "8b1b8402fba5213b21683c26f8878016786419b9e965cc1b5f8a895eaa78b8f9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[22]",
+      "name": "sources[22]",
+      "offset": 57484,
+      "length": 168,
+      "sha256": "542ea478b5746be4589edaf24aaf0d3d61c65299f5684cb11683bc2c41cedce8",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[23]",
+      "name": "sources[23]",
+      "offset": 57652,
+      "length": 188,
+      "sha256": "f96f5b874ff63205921d8bcf4e229489c96095735c685001a2ff08c14c33d269",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[24]",
+      "name": "sources[24]",
+      "offset": 58416,
+      "length": 680,
+      "sha256": "d71f923eda49610ebddaefdd8ca9479c048a0dd375cd2b0fac488ab8438c980e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[25]",
+      "name": "sources[25]",
+      "offset": 61844,
+      "length": 132,
+      "sha256": "2fb5fe70a10a2ab01da743e5bb7e3fa0e35b4c078b0a802a139818c71238b28b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[26]",
+      "name": "sources[26]",
+      "offset": 61976,
+      "length": 196,
+      "sha256": "6d63c51207df5564e5797e887abb60c01cca75566b218d210eba933b77912bf2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[27]",
+      "name": "sources[27]",
+      "offset": 62468,
+      "length": 276,
+      "sha256": "c9f4d3249ecad56298689ae7eea9acbecf18d8fef5a41075f460dfb5de732fbc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[28]",
+      "name": "sources[28]",
+      "offset": 62744,
+      "length": 268,
+      "sha256": "29bff6498ee5ac4c2064f4e2264270e150f0beff1bf966363c2145cc75a2271f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[29]",
+      "name": "sources[29]",
+      "offset": 63012,
+      "length": 100,
+      "sha256": "d3d9a1cb89532c16c7c9577bbddc279406c1b3c1ca5cee1b8a84f5580eeba21d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[30]",
+      "name": "sources[30]",
+      "offset": 63276,
+      "length": 76,
+      "sha256": "c6e9393d5b3a90033d72015eb30e2f49d67ff6ed615af33afc3908e1d3dd06af",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[31]",
+      "name": "sources[31]",
+      "offset": 63352,
+      "length": 100,
+      "sha256": "3a2795d03f59411f12134ded305a3150e48f71d2137ebeb70121c5902f4d485b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[32]",
+      "name": "sources[32]",
+      "offset": 63508,
+      "length": 72,
+      "sha256": "76b8f4f68423a932cfc58de1d09e64a82f6d95746860a9dc4b37265051c08fed",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[33]",
+      "name": "sources[33]",
+      "offset": 63696,
+      "length": 40,
+      "sha256": "3c8b6d701f5310e3782c79c30234486c5e0c77e247f21c3f167ef1f3cb0b51b2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[34]",
+      "name": "sources[34]",
+      "offset": 63736,
+      "length": 48,
+      "sha256": "5aacc91374911562e6713dbed9c123e8d5adec3912bf03ece3bdcff73a8c4ddf",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[35]",
+      "name": "sources[35]",
+      "offset": 60168,
+      "length": 148,
+      "sha256": "4f9ef56d2050d46f5c1c45a64154a81cfb4fd9a04c624d00fce1498c96aa17d4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[36]",
+      "name": "sources[36]",
+      "offset": 60316,
+      "length": 300,
+      "sha256": "78a2a0b7c9b84021c6ef46a95c74769f76140b673f2dee04b15411b722ff6cce",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[37]",
+      "name": "sources[37]",
+      "offset": 60616,
+      "length": 200,
+      "sha256": "cca7278e0a0597d598f860773e40bd91e51f8b4e498100f176d95683e2285c4c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[38]",
+      "name": "sources[38]",
+      "offset": 60816,
+      "length": 360,
+      "sha256": "84e7d25e14c7b8c60c52c11995491c13f752716522db60052d14053a90108904",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[39]",
+      "name": "sources[39]",
+      "offset": 61176,
+      "length": 88,
+      "sha256": "fc18ec83df9f92cba7f4e01f99ca085285a6d84f4f084bbcadced7461d5f4601",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[40]",
+      "name": "sources[40]",
+      "offset": 61264,
+      "length": 192,
+      "sha256": "1cf5cc5291a18e4853822645aeae4ac430df8b2490c7ac53c6533c46b4a806b3",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[41]",
+      "name": "sources[41]",
+      "offset": 61456,
+      "length": 224,
+      "sha256": "b1dd0ae1b12d050218b450c2f0311e4776f8af3af518e2d8b641fcc43dc2cef9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[42]",
+      "name": "sources[42]",
+      "offset": 61680,
+      "length": 164,
+      "sha256": "60a6015bc54b6ec2bc4f2c7e299315131ef485614ded9b9e09f0abc509171d2e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-puzzle-objects-vectors.json",
+      "key": "sources[43]",
+      "name": "sources[43]",
+      "offset": 94612,
+      "length": 64,
+      "sha256": "30ad00cad7b5b9094fd8b025122bf847a8650d379f66362a4a92fd7e5d197da2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-runtime-vectors.json",
+      "key": "routines[0]",
+      "name": "joinedBoardFrame",
+      "offset": 55244,
+      "length": 216,
+      "sha256": "c85b555e957585c2587d9f28efb835b494ebe5441e4c14c05360653b50f64ff8",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-runtime-vectors.json",
+      "key": "routines[1]",
+      "name": "joinedHomeFrame",
+      "offset": 7528,
+      "length": 152,
+      "sha256": "925d4befceac5d71ab610b5eeb3e71ae6792fc3d532c0b205ca70af91d1ce467",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.loader",
+      "name": "sources.loader",
+      "offset": 584,
+      "length": 356,
+      "sha256": "25cdd363c8dfbc6b6605bc11614c6f378c039cc52788cc4360a5bdd6941a2e92",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.writer",
+      "name": "sources.writer",
+      "offset": 940,
+      "length": 144,
+      "sha256": "febb036c5b5a31d039e3047f150466b7367ff6122d1820e8c2f0a1e18067e512",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.initializer",
+      "name": "sources.initializer",
+      "offset": 1084,
+      "length": 68,
+      "sha256": "eed92d3d6deeac9554f08812f57b3897db3db5ccaea36b7a93606f6ef03fd027",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.rngGetSet",
+      "name": "sources.rngGetSet",
+      "offset": 5404,
+      "length": 24,
+      "sha256": "35ddfecb3256b23096bb110a8617ea1add410fb575b15c6a785b3913c8a77238",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.rng",
+      "name": "sources.rng",
+      "offset": 5428,
+      "length": 32,
+      "sha256": "1bda6b24868e07d883082aa5ba2ca44ee58445c29a45f22f9efb58dd09692aed",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.boundedRandom",
+      "name": "sources.boundedRandom",
+      "offset": 5460,
+      "length": 52,
+      "sha256": "4eaa1115da813e03903ee46e6a14555e964bc0f9cc633fb9c855f029eaed6480",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.crc",
+      "name": "sources.crc",
+      "offset": 6236,
+      "length": 68,
+      "sha256": "5cb88259a275680748c7d8b60a5fa7b2248a7c577016a52adb6af2e073021476",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.initialDelay",
+      "name": "sources.initialDelay",
+      "offset": 34832,
+      "length": 28,
+      "sha256": "6b8eeff2b85a821dc6c5281e6ce42ee53d489203cb346daf78d3ffb30713a03d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.biosDivRemainder",
+      "name": "sources.biosDivRemainder",
+      "offset": 72428,
+      "length": 8,
+      "sha256": "42e9b07c34a46a83d308209e1d8e109bfe4831ebd72f6a345b4733bd131b1804",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-save-vectors.json",
+      "key": "sources.crcTable",
+      "name": "sources.crcTable",
+      "offset": 128224,
+      "length": 512,
+      "sha256": "638dbc5f735cced09b3d0d767a72a8800baeb1b3bb399a514af61b3ea7be8a01",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[0]",
+      "name": "backgrounds",
+      "offset": 5152,
+      "length": 252,
+      "sha256": "a01b5cb53ae43c71940df3480c029d29c69d5d18ab14543b1a7b376271d29a3d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[1]",
+      "name": "tasks",
+      "offset": 3756,
+      "length": 40,
+      "sha256": "9f2bc32c517324764cc4b4daaed554baca0b38c64317fb0225f55864713d2272",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[2]",
+      "name": "unlink",
+      "offset": 3796,
+      "length": 96,
+      "sha256": "eebb4fb5f5402382aeddcf40f6d9113618d9b0a333595aad8414efbef4396f60",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[3]",
+      "name": "compose",
+      "offset": 4232,
+      "length": 244,
+      "sha256": "15820948718dfac281dfda0dc9f9dd7848e59ac9a9561e1bb5a6c086d415694d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[4]",
+      "name": "sort",
+      "offset": 4476,
+      "length": 276,
+      "sha256": "4adbb6ea88ec66be26f39c71f8b13e6d07f375d9954ce3aa072d57275f5bcd28",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[5]",
+      "name": "draw",
+      "offset": 4980,
+      "length": 172,
+      "sha256": "8d0a1a2a9f4f7c73de1f038a23887efe170891f253f1aae6ada1a41209453db0",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[6]",
+      "name": "rng",
+      "offset": 5404,
+      "length": 56,
+      "sha256": "e701cc9143965f561771bf99f7c98afa15f034919a0453e28da137da7ca31897",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[7]",
+      "name": "queue",
+      "offset": 6052,
+      "length": 140,
+      "sha256": "cd7232f8eebe985873fafdec1771e357da83b61164260d1f7a4e7f43b7e069db",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[8]",
+      "name": "snapshot",
+      "offset": 3504,
+      "length": 252,
+      "sha256": "53fbc250613161d6a818812be83e5dc4d9a6d36fb4ce5ef05047c8db2ea83299",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-services-vectors.json",
+      "key": "routines[9]",
+      "name": "affineSnapshot",
+      "offset": 3892,
+      "length": 340,
+      "sha256": "da43cc6d2e1a8962a7f2d8fe7849218a7068957bb1f130d4fa27dc47db2f6e60",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.decimalDigits",
+      "name": "sources.decimalDigits",
+      "offset": 5580,
+      "length": 112,
+      "sha256": "c41e9b2f0e44b8bbf07ff95a026c056455b85bf4460e61cf8bcdfe46998902be",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.priceRows",
+      "name": "sources.priceRows",
+      "offset": 29952,
+      "length": 392,
+      "sha256": "77ade55b6cf80de42372f58b0b346820231b8d2258be784ce83b40f5dd5a3f2a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.panel",
+      "name": "sources.panel",
+      "offset": 30344,
+      "length": 752,
+      "sha256": "ed2f913ffbd94f64d8cfffac1f332234c6c7cc28c0a04d26ca90e34ecec2ddea",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.firstPurchase",
+      "name": "sources.firstPurchase",
+      "offset": 31096,
+      "length": 392,
+      "sha256": "274fbb2bb3ccf9210f5c331ddae6140e9c03e1dc644bfed072b54bd25cc93e3d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.secondPurchase",
+      "name": "sources.secondPurchase",
+      "offset": 31488,
+      "length": 332,
+      "sha256": "cdbb7a30955be24878485c2f4c5a51ce481625d402b0ad4c63a27041dfd7ee01",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.thirdPurchase",
+      "name": "sources.thirdPurchase",
+      "offset": 31820,
+      "length": 340,
+      "sha256": "320037ec695af04add11623d4ed5dcb7e9a06c8f8729617827bc6a7ac9abd05e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.carryFood",
+      "name": "sources.carryFood",
+      "offset": 32160,
+      "length": 624,
+      "sha256": "9036e33af06d0a561fbf30083b2174732d771b7abd10e1cdaa6fc066ac8a95c6",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.carrySecond",
+      "name": "sources.carrySecond",
+      "offset": 32784,
+      "length": 208,
+      "sha256": "5e81ba5fad1f41ae80bba930c4dc3f2b0a6f9a1d5d9b3c8c46133282d26d14a7",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.carryThird",
+      "name": "sources.carryThird",
+      "offset": 32992,
+      "length": 580,
+      "sha256": "74b021fa8b1b16432abe62a9bba4c9e051cd4afdbb1dc97f2252c6c9c1f1f474",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.restoreFood",
+      "name": "sources.restoreFood",
+      "offset": 33572,
+      "length": 192,
+      "sha256": "0098d3a90f509ed9b57e997384b8d2d4b37ac358868727d97c220f7eb0efd53c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.firstRow",
+      "name": "sources.firstRow",
+      "offset": 35644,
+      "length": 64,
+      "sha256": "68cc8a0f8b5f6c9761652ca053c6b0323660e9e5e7b555f0f4da56de03e59446",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.secondRow",
+      "name": "sources.secondRow",
+      "offset": 35708,
+      "length": 72,
+      "sha256": "aa176b772410a6b3ad07be5dd23ac475e68f0a5c2432faec9710f45ef9dd24cc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.thirdRow",
+      "name": "sources.thirdRow",
+      "offset": 35780,
+      "length": 72,
+      "sha256": "2f90c25c1d63eb95e9ad7c9167d818251e0812e4d837ba549e22999343a939ac",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.labelSetup",
+      "name": "sources.labelSetup",
+      "offset": 35852,
+      "length": 68,
+      "sha256": "3c3990415b666cae15127830408705724b3acebc11e01ab49ac827d7f3b25e20",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.labelFrame",
+      "name": "sources.labelFrame",
+      "offset": 35920,
+      "length": 76,
+      "sha256": "20ec70f1cba2c90df75fc8969d223b7bba6df1ce0174dc1e0d31654f2ff028b4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.firstTransition",
+      "name": "sources.firstTransition",
+      "offset": 35996,
+      "length": 56,
+      "sha256": "70118e92b7bf07bdc4ea2c45878c8632d297692e42d72e939e2c93c88dc89e10",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.secondTransition",
+      "name": "sources.secondTransition",
+      "offset": 36052,
+      "length": 48,
+      "sha256": "e65c79c624a98ed526241115fe7b7d42d93ae872d9383a50a0320742cbd1cbe4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.thirdTransition",
+      "name": "sources.thirdTransition",
+      "offset": 36100,
+      "length": 56,
+      "sha256": "0afcf706ef0c7fc98590d06b57b855133d1c5b6e5ca7414e5e41a5cdc59104b4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.foodFrame",
+      "name": "sources.foodFrame",
+      "offset": 36156,
+      "length": 84,
+      "sha256": "805fc6c83580a44def23e9701af622992e6cb3c99e476457ecbd6f9a2ad9cc10",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.effectRows",
+      "name": "sources.effectRows",
+      "offset": 75420,
+      "length": 49,
+      "sha256": "b33ae558a366ac031e7326d7ade4d3a38f3818f21c6139f6a97a8ceeaa3c49bd",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.rowOrder",
+      "name": "sources.rowOrder",
+      "offset": 75469,
+      "length": 7,
+      "sha256": "57355ac3303c148f11aef7cb179456b9232cde33a818dfda2c2fcb9325749a6b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.prices",
+      "name": "sources.prices",
+      "offset": 75476,
+      "length": 88,
+      "sha256": "08fc9c7086aa10c27c3838440b941b519d00b98d84a20d1fe5bcd1abba30d517",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.glyphTemplate",
+      "name": "sources.glyphTemplate",
+      "offset": 130568,
+      "length": 40,
+      "sha256": "62cafac6e656065f8d9192d3e5167da55b74d3b9652e82bcc32fa29c4749dd78",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.firstBanks",
+      "name": "sources.firstBanks",
+      "offset": 132712,
+      "length": 7,
+      "sha256": "85fe2cefac60ab44ce07a1e0d5986c9bbce5a660748587d8f4e950bbbe55e76d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.thirdBanks",
+      "name": "sources.thirdBanks",
+      "offset": 132719,
+      "length": 3,
+      "sha256": "6688e761164ac22e8e63f75ac1b33389ba28b253302c4f8acb3ce4274327d5c2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-shop-vectors.json",
+      "key": "sources.dropMap",
+      "name": "sources.dropMap",
+      "offset": 136864,
+      "length": 440,
+      "sha256": "89df8284214fac1aafded9fb635442cffe79261c2b3cc3610ca2d70ad515adc0",
       "space": "garden"
     },
     {
@@ -1431,6 +3069,141 @@
       "offset": 90220,
       "length": 224,
       "sha256": "15927abd5d354edf7c87c1282f4b55c124430d985bf935c5945453181a7331d9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[0]",
+      "name": "sources[0]",
+      "offset": 1152,
+      "length": 272,
+      "sha256": "95209ade487569aaaa849dffd660451f6de87f94e21b059c311466c8e70e803b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[1]",
+      "name": "sources[1]",
+      "offset": 1424,
+      "length": 296,
+      "sha256": "87850bc1fd58007f7dde078a99194dafaf4a69b36276271d34e4b826ed9eb82f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[2]",
+      "name": "sources[2]",
+      "offset": 1720,
+      "length": 720,
+      "sha256": "6d58ec6867bb689b553d98e0bd0c4eb2392225a7900a1fa24d1e67354d96bf91",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[3]",
+      "name": "sources[3]",
+      "offset": 2440,
+      "length": 184,
+      "sha256": "b3d8dd1914936870c8044a7ce866eccadd7f88afcdec81ee93881e33ba04d5b6",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[4]",
+      "name": "sources[4]",
+      "offset": 2624,
+      "length": 176,
+      "sha256": "ee9021c1de33fc9626b3850bc4a44cd8ff2ceede908eabb4da5c106ca10fd7d4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[5]",
+      "name": "sources[5]",
+      "offset": 2800,
+      "length": 28,
+      "sha256": "675d4bcb107d8b48923148ef01f1a3bd210c021270b46e486c8157412d34077f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[6]",
+      "name": "sources[6]",
+      "offset": 2828,
+      "length": 88,
+      "sha256": "f49d7961b43262ad637bbb1f9dd04811d6a6277a102950efe5db4ed6b4c6e827",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[7]",
+      "name": "sources[7]",
+      "offset": 2916,
+      "length": 76,
+      "sha256": "ea3327815372119d74fe966430b92e53ec658ea43a03eed9483883371349fe8a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[8]",
+      "name": "sources[8]",
+      "offset": 2992,
+      "length": 32,
+      "sha256": "4197aaeb58bb3bb3892cef49d97362e9912ce825f8d23721d36b748246807f7b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[9]",
+      "name": "sources[9]",
+      "offset": 9060,
+      "length": 428,
+      "sha256": "271e596099cf2a4069b992d4df6e0ea49ef581e9afe1cc58c44724d672895ac8",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[10]",
+      "name": "sources[10]",
+      "offset": 9488,
+      "length": 508,
+      "sha256": "70553213ce4439f0780bce18f0b72e9f652f54fcad5f1de1528b945bd496d705",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[11]",
+      "name": "sources[11]",
+      "offset": 11960,
+      "length": 1236,
+      "sha256": "06944830e2ab23ad5f39d17c784c00a1abbb6aaec61960eec3a763ab6b847395",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[12]",
+      "name": "sources[12]",
+      "offset": 13196,
+      "length": 152,
+      "sha256": "c86a2e5c86fff8ec4a60864eac4849cdc2edb783901591f074281a75c87b4f8b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[13]",
+      "name": "sources[13]",
+      "offset": 6188,
+      "length": 44,
+      "sha256": "125a2a93ab5f3e1d12f3b39f3219e639a036ad3d76ecf24bd9a432480d6246f2",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-transfer-vectors.json",
+      "key": "sources[14]",
+      "name": "sources[14]",
+      "offset": 940,
+      "length": 144,
+      "sha256": "febb036c5b5a31d039e3047f150466b7367ff6122d1820e8c2f0a1e18067e512",
       "space": "garden"
     },
     {

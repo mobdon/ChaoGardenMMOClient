@@ -10,6 +10,13 @@ pub const PAYLOAD_BASE: u32 = 0x0200_0000;
 pub const PAYLOAD_LENGTH: usize = 0x2e12c;
 pub const PAYLOAD_SHA256: &str = "33dcbab013c9007ad838d8cbff693eef140768ca4110c9617c4055aa75659efb";
 pub const MAX_RESOURCE_BYTES: usize = 0x40000;
+pub(crate) fn diagnostic_address(offset: u32) -> u32 {
+    if (offset as usize) < PAYLOAD_LENGTH {
+        PAYLOAD_BASE + offset
+    } else {
+        offset
+    }
+}
 pub const SOURCE_SPANS: [(&str, usize, usize, &str); 3] = [
     (
         "registerScript",
@@ -138,6 +145,18 @@ impl std::error::Error for Error {}
 impl From<FrameError> for Error {
     fn from(value: FrameError) -> Self {
         Self::Memory(value)
+    }
+}
+pub(crate) fn frame_error(offset: u32, error: Error) -> FrameError {
+    match error {
+        Error::Memory(error) => error,
+        error => FrameError::Dependency {
+            call: NativeCall {
+                entry_offset: PAYLOAD_BASE + offset,
+                argument0: None,
+            },
+            reason: error.to_string(),
+        },
     }
 }
 impl From<crate::binary::Error> for Error {
@@ -401,6 +420,31 @@ pub fn initialize(
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+    #[test]
+    fn nested_failures_keep_original_dependency_and_memory_addresses() {
+        for original in [
+            FrameError::Dependency {
+                call: NativeCall {
+                    entry_offset: 0x02010698,
+                    argument0: Some(4),
+                },
+                reason: "test strict song boundary".into(),
+            },
+            FrameError::MissingRead {
+                address: 0x0203ffff,
+                width: 4,
+            },
+            FrameError::MissingWrite {
+                address: 0x06018000,
+                width: 2,
+            },
+        ] {
+            assert_eq!(
+                frame_error(0xd294, Error::Memory(original.clone())),
+                original
+            );
+        }
+    }
 
     #[derive(Clone)]
     struct Region {

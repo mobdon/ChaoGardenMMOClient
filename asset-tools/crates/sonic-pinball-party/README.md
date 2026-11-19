@@ -6,7 +6,7 @@ The whole 8,388,608-byte source must match SHA-256 `5690eb0a58ac24616fd6747a8aed
 
 Asset tools implement bounded BIOS LZ77/RLE, BGR555 palettes, 4bpp/8bpp tiles, text background rendering, OAM fields, 23 visual descriptors with variant indirection, a 200-entry audio-header catalog, the distinct embedded Tiny Garden payload, and opaque Garden save/flash inspection. The separate Rust game modules translate input, ball/flipper helpers, collision paths, frame control, OAM composition, palette processing and audio routing/player lifecycle. Their verified scopes are narrower than a complete game. Chao Ball resources have a traced loader and candidate semantic identification; runtime confirmation remains pending.
 
-Tiny Garden is the current priority. Its Rust board setup now runs for all four native rounds and enters the first frame, which stops at unported `0x02001420`. Care, shop, audio, saves/transfers and complete minigame sessions still prevent an end-to-end Garden pass. See [GARDEN-SYSTEMS.md](docs/GARDEN-SYSTEMS.md) for exact original subsystem roots.
+Tiny Garden is the current priority. Joined Rust execution matches 600 native home callbacks across five languages and Chao present/absent states, and 2,160 Chao Ball frames across all four rounds and three input profiles. All 64 care action states, shop purchases, native save control, song routing and the local transfer endpoint have separate native tests. Full boot, the other minigame branch, audio output, physical transfer and complete sessions still prevent an end-to-end Garden pass. See [GARDEN-SYSTEMS.md](docs/GARDEN-SYSTEMS.md) for original subsystem roots and [GARDEN-VALIDATION.md](docs/GARDEN-VALIDATION.md) for the exact acceptance boundary.
 
 See [CATALOG.md](docs/CATALOG.md) for coverage/unknowns, [GARDEN.md](docs/GARDEN.md) for save/transfer/minigame evidence, [PINBALL-MECHANICS.md](docs/PINBALL-MECHANICS.md) for the separate mechanics backlog, and [MANIFEST.md](docs/MANIFEST.md) for the proposed interchange contract.
 
@@ -55,11 +55,12 @@ The original asset CLI remains the default binary. Source-port diagnostics are e
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- status $env:SPP_ROM
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- verify $env:SPP_ROM
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- run $env:SPP_ROM
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- garden-audit $env:SPP_ROM
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- garden-board $env:SPP_ROM 0 1
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- board $env:SPP_ROM 3 --headless
 ```
 
-`garden-board` takes a native round index 0..3 and a u32 PRNG seed. It runs complete puzzle setup on explicitly synthetic RAM, attempts the first frame, prints its exact missing dependency and returns failure while that dependency is unported. It does not run home Garden, render a full screen or read a native save.
+`garden-board` takes a native round index 0..3 and a u32 PRNG seed. It runs complete puzzle setup and one joined task/frame callback on explicitly synthetic RAM with the authenticated local payload. It does not render a full screen or read a native save. `garden-audit` attempts eight system paths on separate explicit snapshots. It reports each completed call count and the exact first missing address, then returns failure because full Garden acceptance remains incomplete. Successful callback probes do not mean power-on, trusted rewards, audio playback or real-device acceptance.
 
 `run` executes the Rust startup wrapper and stops at its first unported dependency, currently ROM `0x6EF4`. `board` renders original background pixels; on Windows, omit `--headless` for the finite diagnostic window and manual Up/Down viewport control. These commands do not run an emulator, alter a native save, or contact the MMO service.
 

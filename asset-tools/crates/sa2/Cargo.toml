@@ -1,0 +1,20 @@
+[package]
+name = "sa2-asset-tools"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "Bounded local Sonic Adventure 2 + BATTLE asset readers and conversion audit tools"
+
+# Shared workspace/core ownership awaits integration review.
+[workspace]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.10.9"
+png = "0.17.16"
+
+[[bin]]
+name = "sa2-assets"
+path = "src/main.rs"

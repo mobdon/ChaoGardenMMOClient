@@ -23,7 +23,7 @@ fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let command = args.first().and_then(|s| s.to_str()).unwrap_or("help");
     if matches!(command, "help" | "--help") {
-        println!("A3VE Rust source port — incomplete\nspp-game status ROM\nspp-game verify ROM\nspp-game run ROM\nspp-game garden-board ROM ROUND SEED\nspp-game board ROM FRAMES [--headless]\ngarden-board runs native puzzle setup on explicit synthetic RAM, then fails at the first unported frame dependency. board is a native-background diagnostic with manual Up/Down scrolling. run stops at the first unported dependency. No MMO state or native saves are changed.");
+        println!("A3VE Rust source port — incomplete\nspp-game status ROM\nspp-game verify ROM\nspp-game run ROM\nspp-game garden-audit ROM\nspp-game garden-board ROM ROUND SEED\nspp-game board ROM FRAMES [--headless]\ngarden-audit attempts all system entry paths and returns failure while full acceptance is incomplete. garden-board runs native puzzle setup and one frame on explicit synthetic RAM. board is a native-background diagnostic with manual Up/Down scrolling. run stops at the first unported dependency. No MMO state or native saves are changed.");
         return Ok(());
     }
     if args.len() < 2 {
@@ -31,6 +31,13 @@ fn run() -> Result<()> {
     }
     let rom = read_rom(Path::new(&args[1]))?;
     match command {
+        "garden-audit" if args.len() == 2 => {
+            let report = game::garden_audit::run(&rom)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !report.garden_end_to_end_validated {
+                return Err("Tiny Garden end-to-end acceptance remains incomplete; see strict system boundaries above".into());
+            }
+        }
         "status" if args.len() == 2 => println!(
             "{}",
             serde_json::json!({
@@ -42,7 +49,10 @@ fn run() -> Result<()> {
                 "startupDependenciesPorted":false,
                 "gardenBoardSetupPorted":true,
                 "wholeGardenPorted":false,
-                "gardenFrameFirstMissingAddress":"0x02001420",
+                "gardenBootFirstMissingAddress":"0x02012028",
+                "gardenJoinedHomeFramesVerified":600,
+                "gardenJoinedBoardFramesVerified":2160,
+                "gardenAcceptanceAudit":"spp-game garden-audit ROM",
                 "nativeBoardRasterSha256":game::board::BOARD_RGBA_SHA256,
                 "missing":["complete boot/screen wiring","complete table rules and progression","complete camera/layer/sprite presentation","complete sequencer/mixer/audio playback","main saves/transfer","complete Tiny Garden gameplay"]
             })
@@ -75,10 +85,16 @@ fn run() -> Result<()> {
                 garden_runtime::{RejectBackend, Runtime},
                 memory::{MemoryImage, Region},
             };
-            let mut memory = MemoryImage::new(
-                &rom,
+            let mut ewram = vec![0; 0x40000];
+            ewram[..payload.len()].copy_from_slice(&payload);
+            let mut regions = vec![Region {
+                base: 0x02000000,
+                bytes: ewram,
+                writable: true,
+            }];
+            regions.extend(
                 [
-                    (0x03000000, 0x7000),
+                    (0x03000000, 0x8000),
                     (0x04000000, 0x400),
                     (0x05000000, 0x400),
                     (0x06000000, 0x18000),
@@ -89,9 +105,9 @@ fn run() -> Result<()> {
                     base,
                     bytes: vec![0; length],
                     writable: true,
-                })
-                .collect(),
-            )?;
+                }),
+            );
+            let mut memory = MemoryImage::new(&rom, regions)?;
             memory.write_u8(0x03001ad1, round)?;
             memory.write_bytes(0x030013a8, &seed.to_le_bytes())?;
             let mut runtime = Runtime::new(&payload, RejectBackend)?;

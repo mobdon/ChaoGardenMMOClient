@@ -1,7 +1,7 @@
 # A3VE Tiny Garden systems map
 
-The native route is mapped below; **a complete Tiny Garden end-to-end run has
-not been executed or passed**. Traced source, a Rust port, native instruction
+The native route is mapped below; **the all-system end-to-end requirement has
+not passed**. The strict audit attempts each original entry path. Traced source, a Rust port, native instruction
 parity, and service integration are different evidence levels. No asset or native
 save bytes are included here.
 
@@ -17,19 +17,38 @@ See [GARDEN.md](GARDEN.md) for ROM, palettes and opaque flash-record provenance.
 ## Implemented boundary
 
 `garden_frame` ports input initialization `0xC6C`, input polling `0xBD0`, main
-entry scheduling `0x168` and one main-loop iteration. Boot `0xC4`, VBlank, audio
-and unresolved callbacks remain strict dependencies. `garden_palette` ports the
-whole source-order callback `0x1D68`, including its dependency calls; its name
-does not mean that task, transfer and rendering dependencies are complete.
+entry scheduling `0x168` and one main-loop iteration. `garden_home` now ports
+boot `0xC4`, IRQ installation transactions, home task installation `0x18C8`
+and authentic graphics loader `0x1C60`. Boot stops at actual flash identification
+`0x12028`; VBlank, mixer and unresolved callbacks remain strict dependencies.
+`garden_palette` ports the whole source-order callback `0x1D68`.
 
 `garden_graphics` ports `0xD294` static graphics and native register/map helpers.
 `garden_payload` ports the full `0xD504` board initializer and the next callback
 `0xD7CC` up to its strict dependencies, plus the bounded board helpers.
-The corpus has 63 native cases, including four-round complete initialization
-without internal function stubs; the subsequent callback still stops at unimplemented `0x1420`.
-`garden_runtime` joins completed routines on one bounded memory image and rejects
-unimplemented calls. These component checks do not establish a complete Garden,
-Chao Ball session, working save/transfer route, or canonical service round trip.
+`garden_services` closes the native background/task/draw/OAM services, snapshots,
+queues and PRNG. `garden_care` implements every action target in the 64-state
+switch, Chao initialization and movement; `garden_home_tasks` adds native part
+poses, cursor/petting, HUD and object callbacks. `garden_shop` covers all three
+purchase categories and inventory contact/consumption setup.
+
+`garden_puzzle_objects` closes the ball puzzle task/rule chains, including shot
+resolution, groups, collapse, result banners, ring cap and return transitions.
+Joined execution has no inner function stubs: 600 home callbacks across five
+languages and present/absent Chao, and 2,160 board callbacks across four rounds
+and three input profiles match original instructions and all workspace hashes.
+Audio is not initialized in these explicit snapshots; native song routing runs
+with that same inactive state. This is callback composition, not full boot or
+audible gameplay.
+
+`garden_save` executes the original loader, initializer and rotating/retrying
+writer. `garden_transfer` executes the bounded local JoyBus endpoint and UI
+transaction, including receive-to-save order. `garden_audio` independently
+authenticates this payload's four players and 37 songs, then ports routing and
+player lifecycle. Device inputs/calls are explicit seams in their component
+fixtures. `garden_runtime` joins these on one bounded memory image, rejects
+unknown calls, and never invokes native instructions. The all-system strict
+audit and remaining gates are recorded in [GARDEN-VALIDATION.md](GARDEN-VALIDATION.md).
 
 ## Entry, input and frame
 
@@ -83,14 +102,14 @@ status and cannot be assigned MMO meanings by analogy.
 | System | Source route | Unimplemented acceptance gate |
 | --- | --- | --- |
 | Chao presentation | `0x41E0` checks save `+0x58` against the absent sentinel, creates components and selects display data using save `+0x72`; it installs `0x4418`. | Audit type-to-display mapping, component descriptors, native motions and Neutral/Hero/Dark Chaos forms. |
-| AI and care | `0x4418` updates native timers/needs and dispatches task `+0x17` through 64 pointers at `0x45D4`. Actions occupy `0x46D4..0x5E58`; `0x5EFC` selects states and `0x5E58` integrates and reflects movement. | Port actual states, signed/clamped care effects and transitions; native multi-frame parity and exact stat names remain open. |
+| AI and care | `0x4418` updates native timers/needs and dispatches task `+0x17` through 64 pointers at `0x45D4`. All state targets, signed food effects, localized dialogs, numerical movement and `0x41E0` component initialization have native multi-frame parity. | Complete interactive sessions and authoritative MMO field/intent mapping. Exact semantic names are not inferred from Advance. |
 | Food/items | `0x7DA0..0x800C` checks selection/contact state, reads seven-byte rows at `0x1269C`, starts a Chao action and removes an inventory entry. `0x8324` restores item positions/callbacks. | Audit each effect row and all consumption/cancel paths before assigning canonical skills or needs. |
-| Shop | `0x7500` initializes; `0x7688` controls the panel. Purchases `0x7978`, `0x7B00`, `0x7C4C` compare/subtract working rings using three price categories of 7/12/3 words. Category 0 finds one of eight `0xFF` slots at save `+0x5A`; later categories mutate save `+0x59` and persistent positions. | Full stock, eligibility, labels, purchase/cancel/failure, re-entry and save parity. Food/egg/toy labels beyond observed behavior need native UI confirmation. |
+| Shop | `0x7500` initializes; `0x7688` controls the panel. Purchases `0x7978`, `0x7B00`, `0x7C4C` compare/subtract working rings using three price categories of 7/12/3 words. Category 0 finds one of eight `0xFF` slots at save `+0x5A`; later categories mutate save `+0x59` and persistent positions. Stock/eligibility/labels, success/failure/cancel and item handoff have native parity. | Complete interactive home-to-shop-to-save session and canonical inventory integration. |
 | Rings/stats | `0x89B0 -> 0x292C` animates toward working rings at `0x03006194`, mirrors them byte-swapped at save `+0x64`, and displays seven saved stat values. | Audit display order/scales and every mutation site. HUD output is not a completed economy. |
 | Menus | `0x218C` reacts to Start and installs `0x21F4`; its save branch installs `0x8940`, which calls `0x3AC` before the fade route `0x882C`. | Native menu, cancellation, save failure and return sequences. |
 | Minigames | `0x3A90` compares object class 4 and selects `0xA8A4` or `0xD294` using task `+0x1A`. `0xD294` loads graphics and invokes `0xD504`. | Full round controls, score/reward, return and save behavior. These are two traced A3VE branches; the five MMO games are a separate cross-source scope. |
-| Saves | `0x248` loads; `0x3AC` writes; `0x43C` initializes; `0x185C` computes CRC. Writer stores working rings at save `+0xC` and PRNG state at `+0x18`, then calls flash writer `0x11FE0`, rotating sectors and retrying failures. | Actual flash/power-loss behavior, native save-fixture roundtrip, and preservation of unknown fields. |
-| Transfer | `0x480` initializes; `0x590` maintains; IRQ `0x6B8` dispatches 16 states via `0x6E0`. `0xB0C` receives into `0x03004270`; `0xB64` sends from save `+0x58`; `0x89D4 -> 0x2EB8` handles communication UI. | Packet schema, bounded sizes, handshake, retry/failure rollback and a real peer exchange. Native JoyBus is not MMO networking. |
+| Saves | `0x248` loads all six sectors and rereads the selected record; `0x3AC` writes; `0x43C` initializes; `0x185C` computes CRC. Actual loader/writer/init, interrupted reads, retry rotation, fresh-RAM recovery and opaque-tail preservation match native instructions against synthetic flash. | Actual flash/power-loss behavior, a supplied real native save, full boot and canonical persistence. |
+| Transfer | `0x480` initializes; `0x590` maintains; IRQ `0x6B8` has ten first-level states via `0x6E0`. `0xB0C` receives into `0x03004270`; `0xB64` sends from save `+0x58`; `0x89D4 -> 0x2EB8` handles communication UI. All are ported with bounded buffers; a complete synthetic 2,048-byte receive/save transaction matches native register order and record hash. | Physical peer exchange, interrupt timing, on-device persistence and trusted canonical import. Native JoyBus is not MMO networking. |
 | Audio | `0x105E8` initializes four players from `0x19BE0`; `0x10660` invokes `0xF938`. `0x1066C/0x10698` index payload song records at `0x19C10`. | This payload's own header/track/voice/sample closure and actual audio parity; cartridge-engine offsets cannot substitute for these sources. |
 
 Transfer success/save ordering has concrete evidence: `0x30BE..0x30CA` copies

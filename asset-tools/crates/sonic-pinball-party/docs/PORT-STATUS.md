@@ -31,8 +31,8 @@ the complete cartridge identity. Garden spans are checked against the separately
 | Sound | Separate main-game 135-entry map, routing and MPlay lifecycle; 16 native command leaves, full sequencer tick, instrument/note allocation, PCM/PSG pitch, four-channel PSG register updates, unlink/finish graphs and DMA gate transactions | PCM mixer/output, DMA timing and audible playback; command-byte MMIO capture is not device execution |
 | Math | Original software division and native quarter-wave sine/cosine | Authentic BIOS is not supplied. Strict backend errors; opt-in integer numerical reference is separately labeled and tested |
 | Table rules | Source region/layer event routers, native action/message queues, phase/multiball setup and six map pointer bindings; native u64 score awards and five contact-handler groups; camera/visibility object placement; numeric IDs retained | Sonic, NiGHTS, Samba and all special modes: complete scoring, missions, bosses, progression, unlocks and multiplayer rules |
-| Saves/transfer | Original asset work's bounded opaque Garden record/flash inspection | Main save layout/writes, complete transfer protocol, atomic progression and native save round trips |
-| Tiny Garden/Chao Ball | Separate payload catalog and source systems map; native Garden input/frame wrapper, palette update, static puzzle scene, complete four-round board setup, seven-direction ball-flip rule and native task/register/OAM services | Home boot/care/AI/items/shop, remaining puzzle objects and full rounds, other minigame branch, audio, save/transfer runtime and complete garden playthroughs |
+| Saves/transfer | Bounded opaque Garden record/flash reader; actual native six-sector loader, initializer, rotating/retrying writer; bounded JoyBus endpoint/IRQ/controller, full synthetic receive-to-save transaction and once-only write parity | Main-game save layout, real native save fixtures, physical transfer, device persistence and canonical progression integration |
+| Tiny Garden/Chao Ball | Independent payload/layout; all 64 care states and Chao initializer, 27 home/part/cursor/HUD callbacks, shop/inventory, puzzle tasks/rules/results/rewards, queues/snapshots/OAM, Garden-specific audio routing; joined 600 home and 2,160 board frames match native instructions | Full boot and native devices, hatching/effect/pause/item continuations, other minigame, mixer/output, complete interactive sessions and canonical service round trip |
 
 Numeric source table IDs are retained without assuming they map directly to
 menu names or to another routine's IDs. In particular, a selector's no-rebind
@@ -81,9 +81,26 @@ inputs. Unknown fields are preserved.
 
 ## Reproduction
 
-This checkpoint passed 196 Rust tests with local ROM checks enabled, 44 Python unit tests, regeneration of 53 registered engine-oracle fixtures plus one metadata-only Garden systems map, all 396 source-span hashes, formatting and strict Clippy. The systems map explicitly has no instruction-parity or end-to-end acceptance claim. The explicit oracle driver controls registry membership; unregistered scratch fixtures cannot change publication metadata. These counts are scoped evidence, never a completion percentage.
+The explicit oracle driver controls registry membership; unregistered scratch
+fixtures cannot change publication metadata. The systems map explicitly has no
+instruction-parity or end-to-end acceptance claim. Counts are scoped evidence,
+never a completion percentage. See [GARDEN-VALIDATION.md](GARDEN-VALIDATION.md)
+for the joined frame traces, component scopes, device seams and reproduction.
+The current checkpoint passed 222 Rust tests, 44 Python unit tests (one optional
+test skipped), formatting and strict Clippy; the oracle driver verifies 64
+instruction/reference fixtures, one metadata-only systems map and 593 source
+spans.
 
-Tiny Garden has a real strict stopping point: the complete Rust `0xD504` setup allocates four native puzzle objects and installs callback `0x0200D7CD`. Its next frame flushes queued display registers and uploads the OAM shadow, then stops at unported queued-background handler **`0x02001420`**. No inner function is skipped in the four-round setup-to-frame oracle; BIOS Div/CpuSet/CpuFastSet are independently represented numerical/copy primitives, not authentic BIOS execution. The CLI probe supplies explicitly synthetic RAM, a round and a seed; it is not a power-on/reset, native save or completed playable session. `docs/GARDEN-SYSTEMS.md` maps the remaining original subsystems independently.
+The previous `0x02001420` frame barrier is now ported. Native home and board
+callbacks compose through their task, care, shop, graphics and song-routing
+paths on one shared bounded memory image. The real boot path still stops at
+**`0x02012028`**, flash identification. `garden-audit` attempts eight system
+entry paths and returns failure while full acceptance is incomplete. BIOS
+numerical/copy primitives and synthetic MMIO latches do not establish authentic
+BIOS, hardware timing or visible/audible output. Direct callback traces hold
+the supplied native frame counter fixed; the complete main loop and trusted
+time are separate gates. The other minigame, interactive continuations, mixer,
+devices and service integration remain unfinished.
 
 From this crate, activate the local Rust toolchain if needed, set `SPP_ROM` and
 `A3VE_ROM` to the same exact local cartridge, then run:
@@ -94,6 +111,7 @@ cargo fmt -- --check
 cargo clippy --locked --all-targets -- -D warnings
 python tests/engine_sources.py --rom $env:SPP_ROM
 python tests/check_source_port.py --rom $env:SPP_ROM
+cargo run --offline --bin spp-game -- garden-audit $env:SPP_ROM
 python tests/game_graphics_reference.py --rom $env:SPP_ROM
 python tests/mplay_reference.py --rom $env:SPP_ROM
 python tests/sound_reference.py --rom $env:SPP_ROM
