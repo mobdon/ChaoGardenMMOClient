@@ -246,3 +246,66 @@ pub struct BoardResources {
     pub other_object: u32,
     pub textures: Vec<String>,
 }
+/// Recover the descriptor passed by the standard stage registration prolog.
+/// Offsets refer to REL sections, never process addresses in the Rust host.
+pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
+    let digest = manifest::sha256(bytes);
+    // Stage 42 has a registration descriptor but no mapped terrain in the land catalog.
+    let module = if bytes.len() == 345422
+        && digest == "51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+    {
+        41
+    } else {
+        crate::stage_land::catalog()
+            .iter()
+            .find(|s| s.filename.ends_with(".rel") && s.size == bytes.len() && s.sha256 == digest)
+            .ok_or_else(invalid)?
+            .module
+    };
+    let rel = CityRel::read_identified(bytes, module)?;
+    let entry = u32::from_be_bytes(bytes[52..56].try_into().unwrap());
+    if bytes[48] != 1 {
+        return Err(invalid());
+    }
+    let code = rel.data(1)?;
+    let body = code
+        .get(entry as usize..)
+        .and_then(|b| b.get(..40))
+        .ok_or_else(invalid)?;
+    for (word, expected) in body.as_chunks::<4>().0.iter().zip([
+        0x7c0802a6, 0x90010004, 0x9421fff8, 0x3c600000, 0x38630000, 0x48000001, 0x8001000c,
+        0x38210008, 0x7c0803a6, 0x4e800020,
+    ]) {
+        if u32::from_be_bytes(*word) != expected {
+            return Err(invalid());
+        }
+    }
+    let hi = rel.reference(1, entry + 14).ok_or_else(invalid)?;
+    let lo = rel.reference(1, entry + 18).ok_or_else(invalid)?;
+    let call = rel.reference(1, entry + 20).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind) != (module, 5, 6)
+        || lo != (Reference { kind: 4, ..hi })
+        || (call.module, call.kind, call.addend) != (0, 10, 0x8001a01c)
+    {
+        return Err(invalid());
+    }
+    let descriptor = hi.addend;
+    let data = rel.data(5)?;
+    let label = data
+        .get(descriptor as usize..)
+        .and_then(|b| b.get(..12))
+        .ok_or_else(invalid)?;
+    let end = label.iter().position(|b| *b == 0).ok_or_else(invalid)?;
+    let name = std::str::from_utf8(&label[..end]).map_err(|_| invalid())?;
+    let callback = |delta| -> Result<Option<u32>> {
+        match rel.local_pointer(5, descriptor + delta)? {
+            Some((1, off)) if off % 4 == 0 && (off as usize) < code.len() => Ok(Some(off)),
+            None => Ok(None),
+            _ => Err(invalid()),
+        }
+    };
+    Ok(
+        serde_json::json!({"module":module,"prolog":entry,"descriptor":descriptor,"name":name,
+        "registerTarget":call.addend,"startup":callback(12)?,"teardown":callback(16)?,"entry":callback(20)?}),
+    )
+}
