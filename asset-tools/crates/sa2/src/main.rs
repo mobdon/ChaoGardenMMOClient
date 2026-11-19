@@ -971,7 +971,12 @@ fn run() -> Result<()> {
             let source = Source::from_bytes(&label, &bytes)?;
             let mut m = Manifest::new(vec![source]);
             let source = &m.sources[0];
-            m.assets.push(asset(source,"rgba".into(),"texture",whole_span(source),Some(output_record(output,"png-rgba8",&png)?),Representation::Decoded,vec![format!("Mip level {level}; pixels are unscaled straight RGBA. External palette bank: {}. No material opacity or eye adaptation.",if palette.is_some(){bank.to_string()}else{"none".into()})]));
+            let image_id = if level == 0 {
+                "rgba".to_owned()
+            } else {
+                format!("rgba.mip.{level}")
+            };
+            m.assets.push(asset(source,image_id,"texture",whole_span(source),Some(output_record(output,"png-rgba8",&png)?),Representation::Decoded,vec![format!("Mip level {level}; pixels are unscaled straight RGBA. External palette bank: {}. No material opacity or eye adaptation.",if palette.is_some(){bank.to_string()}else{"none".into()})]));
             if let Some(p) = palette_bytes {
                 let palette_path = Path::new(&args[3]);
                 ensure_unchanged(palette_path, &p)?;

@@ -373,3 +373,68 @@ fn manifest_validation_rejects_contradictory_hashes_and_opaque_parents() {
         assert!(!output.exists(), "{name}");
     }
 }
+
+#[test]
+fn dds_mip_outputs_have_distinct_ids_and_reject_missing_blocks() {
+    let case = Case::new();
+    let mut dds = vec![0; 128];
+    dds[..4].copy_from_slice(b"DDS ");
+    for (offset, value) in [
+        (4, 124u32),
+        (8, 0x21007),
+        (12, 4),
+        (16, 4),
+        (28, 2),
+        (76, 32),
+        (80, 4),
+    ] {
+        dds[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    dds[84..88].copy_from_slice(b"DXT1");
+    // Both levels occupy a full block, even though the second is only 2x2.
+    dds.extend([0x00, 0xf8, 0, 0, 0, 0, 0, 0]);
+    dds.extend([0xe0, 0x07, 0, 0, 0, 0, 0, 0]);
+    let input = case.file("sample.dds", &dds);
+    for (level, size, color, suffix) in [
+        ("0", 4, [255, 0, 0, 255], ".rgba"),
+        ("1", 2, [0, 255, 0, 255], ".rgba.mip.1"),
+    ] {
+        let output = case.path.join(format!("level-{level}.png"));
+        succeeded(
+            case.command()
+                .arg("texture")
+                .arg(&input)
+                .arg(&output)
+                .args(["--mip", level])
+                .output()
+                .unwrap(),
+        );
+        let manifest = json_file(sidecar(&output));
+        assert!(manifest["assets"][0]["id"]
+            .as_str()
+            .unwrap()
+            .ends_with(suffix));
+        assert_eq!(manifest["sources"][0]["sha256"], manifest::sha256(&dds));
+        let mut reader = png::Decoder::new(Cursor::new(fs::read(output).unwrap()))
+            .read_info()
+            .unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut pixels).unwrap();
+        assert_eq!((info.width, info.height), (size, size));
+        assert!(pixels.chunks_exact(4).all(|pixel| pixel == color));
+    }
+    let truncated = case.file("short.dds", &dds[..dds.len() - 1]);
+    for (source, level) in [(&input, "2"), (&truncated, "1")] {
+        let output = case.path.join("rejected.png");
+        let result = case
+            .command()
+            .arg("texture")
+            .arg(source)
+            .arg(&output)
+            .args(["--mip", level])
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(!output.exists() && !sidecar(&output).exists());
+    }
+}
