@@ -277,6 +277,31 @@ fn decode(
     Ok(result)
 }
 
+/// Rebase a single unlinked Win32 Basic object using the same pointer and
+/// polygon layouts as installed land. The private offsets are file offsets + 16.
+pub(crate) fn win32_basic_object(
+    bytes: &[u8],
+    image: &crate::pe::PeImage,
+    rva: u32,
+) -> Result<crate::duel_platform::Platform> {
+    let root = image.rva_to_offset(rva, 52)?;
+    let mut v = View {
+        source: Source::Win32(image),
+        src: bytes,
+        out: vec![0; bytes.len() + BASE],
+    };
+    v.word(root)?;
+    let base = v
+        .ptr(root + 4)?
+        .ok_or_else(|| Error::invalid("missing Basic model"))?;
+    v.words(root + 8, 9)?;
+    if v.ptr(root + 44)?.is_some() || v.ptr(root + 48)?.is_some() {
+        return Err(Error::invalid("expected a single Basic platform object"));
+    }
+    v.attach(base)?;
+    crate::duel_platform::decode(&v.out, (root + BASE) as u32)
+}
+
 /// One placed kart course piece: native object file offsets in the Win32 DLL
 /// and the course-relative pose that places that occurrence.
 pub(crate) struct KartOccurrence {
@@ -414,29 +439,4 @@ pub(crate) fn win32_kart_course(
         "GC display attachments remain opaque; textures, draw order, scenery objects and the race scene are separate".into(),
     ];
     Ok(result)
-}
-
-/// Rebase a single unlinked Win32 Basic object using the same pointer and
-/// polygon layouts as installed land. The private offsets are file offsets + 16.
-pub(crate) fn win32_basic_object(
-    bytes: &[u8],
-    image: &crate::pe::PeImage,
-    rva: u32,
-) -> Result<crate::duel_platform::Platform> {
-    let root = image.rva_to_offset(rva, 52)?;
-    let mut v = View {
-        source: Source::Win32(image),
-        src: bytes,
-        out: vec![0; bytes.len() + BASE],
-    };
-    v.word(root)?;
-    let base = v
-        .ptr(root + 4)?
-        .ok_or_else(|| Error::invalid("missing Basic model"))?;
-    v.words(root + 8, 9)?;
-    if v.ptr(root + 44)?.is_some() || v.ptr(root + 48)?.is_some() {
-        return Err(Error::invalid("expected a single Basic platform object"));
-    }
-    v.attach(base)?;
-    crate::duel_platform::decode(&v.out, (root + BASE) as u32)
 }
