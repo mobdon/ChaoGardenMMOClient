@@ -219,3 +219,19 @@ supplies successful allocation and intercepts the cue service. The installed
 event_adx archives did not provide a named directory establishing a mapping
 from kart cue IDs to localized clips; matching numeric indices alone is
 insufficient to establish playback.
+
+`kart-pursuit-clock CartD.rel OUTPUT.json INPUT.json` handles the controller
+prelude at 0x832c after a target update. Pass the target state's `latch` as
+`pursuit_latch`; this takes priority over `race_finish_latch`. Each caught
+update calls 0x800629e4, increments the signed elapsed word and sets the
+controller flags. Only an increment to exactly 300 adds the call to
+0x8005eb24(0). Without either finish latch, the remaining countdown is
+decremented unless engine byte +9 is nonzero and byte +0x42 is zero.
+A task removal request precedes all these branches. The separate race-results
+block is reported as a continuation; its writes are not included here.
+
+The native helpers' effects and the shared timing block at 0x861c are outside
+this command. In particular, identifying the delayed call does not establish
+a saved mission clear. Run `python tests/kart_pursuit_clock_ppc.py CLI CartD.rel
+PRIVATE_TMP_DIR` for the instruction comparison, including simultaneous flags,
+the two updates surrounding the delayed call, and integer wraparound.

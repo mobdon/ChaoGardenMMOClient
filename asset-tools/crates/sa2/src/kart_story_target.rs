@@ -99,3 +99,57 @@ pub fn step(bytes: &[u8], input: Input) -> Result<Output> {
         installs_callbacks,
     })
 }
+
+/// Controller prelude after the target task, before the shared timing code at 0x861c.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControllerInput {
+    remove_task: bool,
+    pursuit_latch: i32,
+    race_finish_latch: i32,
+    elapsed: i32,
+    remaining: i32,
+    engine_byte_09: i8,
+    engine_byte_42: i8,
+    flag_3ce24: i32,
+    engine_byte_16: i8,
+}
+
+#[derive(Serialize)]
+pub struct ControllerUpdate {
+    elapsed: i32,
+    remaining: i32,
+    flag_3ce24: i32,
+    engine_byte_16: i8,
+    calls: Vec<(&'static str, Option<i32>)>,
+    next: &'static str,
+}
+
+pub fn controller(bytes: &[u8], s: ControllerInput) -> Result<ControllerUpdate> {
+    kart_progress::verify(bytes)?;
+    let mut r = ControllerUpdate {
+        elapsed: s.elapsed,
+        remaining: s.remaining,
+        flag_3ce24: s.flag_3ce24,
+        engine_byte_16: s.engine_byte_16,
+        calls: vec![],
+        next: "shared_timing_861c",
+    };
+    if s.remove_task {
+        r.calls.push(("engine_80071888_task", None));
+        r.next = "return";
+    } else if s.pursuit_latch != 0 {
+        r.calls.push(("engine_800629e4", None));
+        r.elapsed = r.elapsed.wrapping_add(1);
+        if r.elapsed == 300 {
+            r.calls.push(("engine_8005eb24", Some(0)));
+        }
+        r.flag_3ce24 = 1;
+        r.engine_byte_16 = 1;
+    } else if s.race_finish_latch != 0 {
+        r.next = "race_results_83bc";
+    } else if s.engine_byte_09 == 0 || s.engine_byte_42 != 0 {
+        r.remaining = r.remaining.wrapping_sub(1);
+    }
+    Ok(r)
+}
