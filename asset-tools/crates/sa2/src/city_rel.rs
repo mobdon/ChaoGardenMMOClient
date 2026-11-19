@@ -186,6 +186,23 @@ impl<'a> CityRel<'a> {
             _ => Err(invalid()),
         }
     }
+    /// ObjectCesobjExec, after range acceptance and optional executor/CCL dispatch.
+    /// The coordinate is player zero after the engine's object-local transform.
+    pub fn scenery_proximity(&self, player_local: Option<[f32; 3]>) -> Result<serde_json::Value> {
+        let offset = self.resource(0xc1c6)? as usize;
+        let data = self.data(5)?.get(offset..offset + 12).ok_or_else(invalid)?;
+        let limits: [f32; 3] =
+            std::array::from_fn(|i| f32::from_be_bytes(data[i * 4..i * 4 + 4].try_into().unwrap()));
+        if player_local.is_some_and(|p| p.iter().any(|v| !v.is_finite())) {
+            return Err(Error::invalid("nonfinite local player position"));
+        }
+        let inside =
+            player_local.is_some_and(|p| [0, 2, 1].iter().all(|&i| p[i].abs() < limits[i]));
+        Ok(
+            serde_json::json!({"playerLocal":player_local,"halfExtents":limits,"mode":if inside {0}else{1},"dataSectionOffset":offset,
+        "scope":"After range acceptance. No player gives mode one. No collision hit or range result inferred."}),
+        )
+    }
     fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
         let data = self.data(5)?;
         let local = |o| {
