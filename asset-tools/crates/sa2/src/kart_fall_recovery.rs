@@ -203,7 +203,7 @@ pub struct ContactRecovery {
 #[serde(deny_unknown_fields)]
 struct RecoveryFields {
     task_mode: u8,
-    saved_angles: [i32; 3],
+    saved_angles: Option<[i32; 3]>,
     grounded_position: [f32; 3],
     work_68: i32,
     work_fc_104: [i32; 3],
@@ -262,7 +262,11 @@ pub(crate) struct StoryRecovery {
     fields: RecoveryFields,
 }
 impl StoryRecovery {
-    pub(crate) fn bind_snapshot(&mut self, velocity: [f32; 3]) -> Result<()> {
+    pub(crate) fn bind_snapshot(
+        &mut self,
+        velocity: [f32; 3],
+        angles: Option<[i32; 3]>,
+    ) -> Result<()> {
         let before = [velocity[0], velocity[2]];
         if self
             .previous_velocity_xz
@@ -272,6 +276,17 @@ impl StoryRecovery {
                 "impact speed conflicts with vehicle update snapshot",
             ));
         }
+        if self
+            .fields
+            .saved_angles
+            .zip(angles)
+            .is_some_and(|(a, b)| a != b)
+        {
+            return Err(Error::invalid(
+                "recovery angles conflict with update-start rotation",
+            ));
+        }
+        self.fields.saved_angles = angles.or(self.fields.saved_angles);
         self.previous_velocity_xz = Some(before);
         Ok(())
     }
@@ -416,7 +431,9 @@ fn contact_sequence(
         state: impact.as_ref().map_or(c.state, |i| i.state),
         saved_position: c.saved_position,
         task_mode: s.task_mode,
-        saved_angles: s.saved_angles,
+        saved_angles: s
+            .saved_angles
+            .ok_or_else(|| Error::invalid("missing saved rotation for recovery"))?,
         grounded_position: s.grounded_position,
         work_68: s.work_68,
         work_fc_104: s.work_fc_104,

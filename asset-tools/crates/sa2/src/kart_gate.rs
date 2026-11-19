@@ -607,14 +607,18 @@ struct ControllerState {
     flag_3ce24: i32,
     engine_byte_16: i8,
 }
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrimaryUpdate {
+    primary_update_velocity: [f32; 3],
+    primary_update_position: Option<[f32; 3]>,
+    primary_update_angles: Option<[i32; 3]>,
+}
 #[derive(Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
-    UpdateStart {
-        primary_update_velocity: [f32; 3],
-        primary_update_position: Option<[f32; 3]>,
-    },
+    UpdateStart(PrimaryUpdate),
     DriftTick {
         drift_tick: crate::kart_drift::StoryTick,
     },
@@ -747,17 +751,12 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
-            SequenceEvent::UpdateStart {
-                primary_update_velocity,
-                primary_update_position,
-            } => {
-                if snapshot
-                    .replace((primary_update_velocity, primary_update_position))
-                    .is_some()
-                {
+            SequenceEvent::UpdateStart(start) => {
+                if snapshot.replace(start).is_some() {
                     return Err(Error::invalid("overlapping primary update snapshots"));
                 }
-                updates.push(json!({"previousVelocity":primary_update_velocity,"work_10c":0}));
+                updates
+                    .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
                 continue;
             }
             SequenceEvent::DriftTick { mut drift_tick } => {
@@ -768,11 +767,12 @@ pub fn story_sequence(
                     if scan_flag.is_some_and(|flag| flag != ctx.work_44 as u32) {
                         return Err(Error::invalid("drift contact conflicts with vehicle flag"));
                     }
-                    ctx.query.bind_origin(start.and_then(|(_, p)| p))?;
+                    ctx.query
+                        .bind_origin(start.and_then(|v| v.primary_update_position))?;
                     if let Some(r) = &mut ctx.query.recovery {
                         r.bind_progress(route, count)?;
-                        if let Some((v, _)) = start {
-                            r.bind_snapshot(v)?;
+                        if let Some(v) = start {
+                            r.bind_snapshot(v.primary_update_velocity, v.primary_update_angles)?;
                         }
                     }
                 }
@@ -840,13 +840,13 @@ pub fn story_sequence(
             }
             SequenceEvent::BoostTick { mut boost_tick } => {
                 let start = snapshot.take();
-                if let (Some((v, p)), Some(d)) = (start, boost_tick.drive.as_mut()) {
+                if let (Some(v), Some(d)) = (start, boost_tick.drive.as_mut()) {
                     if let Some(c) = d.contact.as_mut() {
-                        c.bind_origin(p)?;
+                        c.bind_origin(v.primary_update_position)?;
                     }
                     d.begin_update()?;
                     if let Some(r) = d.contact.as_mut().and_then(|c| c.recovery.as_mut()) {
-                        r.bind_snapshot(v)?;
+                        r.bind_snapshot(v.primary_update_velocity, v.primary_update_angles)?;
                     }
                 }
                 recovered_pose = None;

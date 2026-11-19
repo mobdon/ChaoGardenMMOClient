@@ -360,6 +360,18 @@ if len(sys.argv)>4:
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"contact origin conflicts" in rejected.stderr
             last["contact"]["previous_position"]=origin
+            fields=last["contact"]["recovery"]
+            initial_angles=fields.pop("saved_angles")
+            q["updates"][-2]["primary_update_angles"]=[-12345,65537,23456]
+            fields.update(timer=2,engine_halfword_64=2)
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-restore-snapshot.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            recovered=json.loads(out.read_text())["updates"][-1]["boostTick"]["drive"]["contact"]["recovery"]["vehicle"]
+            assert recovered["position"]==origin and recovered["angles"]==[-12345,65537,23456]
+            fields["saved_angles"]=initial_angles
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-saved-angles.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"recovery angles conflict" in rejected.stderr
             q["updates"].pop(-2)
             last["contact"]["recovery"]["previous_velocity_xz"]=observed
             # A later recovery tick rewinds the course. Its two saved poses

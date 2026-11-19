@@ -95,7 +95,10 @@ reg(30,work);put(work+0x10c,"I",0x80000001)
 u.mem_write(work+0x7c,struct.pack(">3f",-20,7,0.125))
 reg(29,task);pose=struct.pack(">3f",-0.0,11.25,-39.5)
 u.mem_write(tw+0x14,pose);u.mem_write(work+0x14,bytes(12))
+angles=struct.pack(">3i",-12345,65537,23456)
+u.mem_write(tw+8,angles);u.mem_write(work+8,bytes(12))
 run(0x2170,0x2214)
+assert bytes(u.mem_read(work+8,12))==angles and bytes(u.mem_read(base[6]+0x21468+8,12))==angles
 assert bytes(u.mem_read(work+0x14,12))==pose
 assert bytes(u.mem_read(base[6]+0x21468+0x14,12))==pose
 assert bytes(u.mem_read(base[6]+0x21468+0x7c,12))==struct.pack(">3f",-20,7,0.125)
