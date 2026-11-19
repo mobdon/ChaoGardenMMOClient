@@ -98,6 +98,30 @@ fn mounted_campaign_routes() {
         for &(ordinal, _, level) in expected {
             let stage = campaign.mount(sequence, ordinal, installed).unwrap();
             assert_eq!(stage.dispatch.level, level);
+            use sa2_asset_tools::mission_ranks::Observation;
+            if level == 70 || level == 13 {
+                assert_eq!(stage.mission_ranks.len(), 5);
+                let row = stage.mission_ranks.iter().find(|r| r.mission == 1).unwrap();
+                if level == 70 {
+                    let expected = if stage.dispatch.character == 6 {
+                        [210, 195, 170, 165]
+                    } else {
+                        [230, 220, 210, 200]
+                    };
+                    assert_eq!(
+                        row.differences(Observation::Seconds(200)).unwrap(),
+                        expected.map(|cut| 200 - cut)
+                    );
+                    assert!(row.differences(Observation::StoredScore(200)).is_err());
+                } else {
+                    assert_eq!(
+                        row.differences(Observation::StoredScore(140)).unwrap(),
+                        [50, 30, 0, -40]
+                    );
+                }
+            } else if level == 60 {
+                assert!(stage.mission_ranks.is_empty());
+            }
             for (layer_idx, layer) in stage.layers.iter().enumerate() {
                 for place in &layer.placements {
                     if !stage

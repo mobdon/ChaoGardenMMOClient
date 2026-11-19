@@ -39,6 +39,7 @@ pub struct Campaign {
     tables: BTreeMap<String, ObjectList>,
     positions: Vec<stage_positions::PositionRow>,
     kart_routes: BTreeMap<i8, KartRoute>,
+    ranks: Vec<crate::mission_ranks::RankRow>,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -194,6 +195,8 @@ pub struct MountedStage<'a> {
     pub mission2_end_pose: Option<EntryPose>,
     pub mission3_end_pose: Option<EntryPose>,
     pub kart_route: Option<&'a KartRoute>,
+    /// Authored rows only; absence does not imply an automatic grade.
+    pub mission_ranks: Vec<&'a crate::mission_ranks::RankRow>,
     pub object_table: Option<&'a ObjectList>,
     #[serde(skip)]
     checkpoint_items: Option<crate::checkpoint::StageItemTable>,
@@ -352,7 +355,22 @@ impl Campaign {
             tables: object_table::mapped_tables(exe, object_config)?,
             positions: stage_positions::read_rows(exe)?,
             kart_routes: kart_routes(exe)?,
+            ranks: crate::mission_ranks::read(exe)?,
         })
+    }
+    pub fn rank_rows(&self, dispatch: &LevelDispatch) -> Vec<&crate::mission_ranks::RankRow> {
+        let course = if dispatch.level == 70 {
+            let Some(route) = self.kart_routes.get(&dispatch.character) else {
+                return vec![];
+            };
+            Some(route.name)
+        } else {
+            None
+        };
+        self.ranks
+            .iter()
+            .filter(|r| r.level == dispatch.level && r.course == course)
+            .collect()
     }
     pub fn levels(&self) -> &[LevelDispatch] {
         &self.levels
@@ -511,7 +529,9 @@ impl Campaign {
         } else {
             None
         };
+        let mission_ranks = self.rank_rows(&dispatch);
         Ok(MountedStage {
+            mission_ranks,
             checkpoint_items,
             dispatch,
             level_section: config.map(|c| c.section.as_str()),
