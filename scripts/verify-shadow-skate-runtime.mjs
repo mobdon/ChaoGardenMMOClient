@@ -3,9 +3,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { NullEngine, Scene, LoadAssetContainerAsync, TransformNode } from '@babylonjs/core';
+import { Matrix, NullEngine, Scene, LoadAssetContainerAsync, Quaternion, TransformNode, Vector3 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
-import { createShadowSkate } from '../src/shadow-skate.js';
+import { createShadowSkate, SKATE_ROTATION_LIMITS } from '../src/shadow-skate.js';
 
 const motionBytes = await readFile('.local/imports/shadow-skate-motion.json');
 const motion = JSON.parse(motionBytes);
@@ -19,6 +19,17 @@ try {
     for (const node of entries.rootNodes) node.parent = visual;
     for (const group of entries.animationGroups) group.stop();
     const nodes = visual.getDescendants(), parents = nodes.map(node => node.parent);
+    const modelRoot = nodes.find(node => /(?:^|-)000_object_/.test(node.name)).parent;
+    const modelRotation = node => {
+      node.computeWorldMatrix(true); modelRoot.computeWorldMatrix(true);
+      const rotation = Quaternion.Identity();
+      node.getWorldMatrix().multiply(Matrix.Invert(modelRoot.getWorldMatrix())).decompose(new Vector3(), rotation, new Vector3());
+      return rotation.normalize();
+    };
+    const upperBody = [['body', '001'], ['head', '014']].map(([semantic, index]) => {
+      const node = nodes.find(node => new RegExp(`(?:^|-)${index}_object_`).test(node.name));
+      return { semantic, node, rest: modelRotation(node), peak: 0 };
+    });
     const controller = createShadowSkate({ visual }, { motion });
     let sampled = 0, skatingFrames = 0;
     const poseSignatures = new Set();
@@ -28,7 +39,7 @@ try {
       for (let frame = 0; frame < 36; frame++) {
         controller.restoreBase();
         group?.goToFrame(group.from + (frame / 36) * (group.to - group.from));
-        const transforms = nodes.map(node => ({ p: node.position?.asArray(), s: node.scaling?.asArray() }));
+        const transforms = nodes.map(node => ({ p: node.position?.asArray(), s: node.scaling?.asArray(), q: node.rotationQuaternion?.clone() }));
         controller.update(1 / 60, { speed, grounded: true, footwear: true, mounted: false, swimming: false, fresh: true });
         controller.apply();
         nodes.forEach((node, index) => {
@@ -41,8 +52,17 @@ try {
         });
         if (controller.diagnostics.active) {
           skatingFrames++;
-          poseSignatures.add(nodes.filter(node => /(?:^|-)005_object_|(?:^|-)012_object_/.test(node.name))
-            .map(node => node.rotationQuaternion.asArray().map(value => value.toFixed(4)).join(',')).join(';'));
+          // Measure the overlay itself on the actual animated feet006/013;
+          // pivots005/012 are static, and underlying Walk cannot prove skating.
+          poseSignatures.add(nodes.flatMap((node, index) => /(?:^|-)006_object_|(?:^|-)013_object_/.test(node.name)
+            ? [transforms[index].q.conjugate().multiply(node.rotationQuaternion).normalize().asArray().map(value => value.toFixed(4)).join(',')]
+            : []).join(';'));
+          if (controller.diagnostics.blend === 1) for (const target of upperBody) {
+            const delta = modelRotation(target.node).multiply(target.rest.conjugate()).normalize();
+            const degrees = 2 * Math.acos(Math.min(1, Math.abs(delta.w))) * 180 / Math.PI;
+            target.peak = Math.max(target.peak, degrees);
+            assert.ok(degrees <= SKATE_ROTATION_LIMITS[target.semantic] + .001, `${target.semantic} exceeds anatomy adaptation limit`);
+          }
         }
         sampled++;
       }
@@ -60,6 +80,7 @@ try {
     controller.dispose();
     forms.push({ name, sourceSha256: createHash('sha256').update(source).digest('hex'),
       originalRigNodes: nodes.length, sampledFrames: sampled, skatingFrames, distinctFootPoseSignatures: poseSignatures.size,
+      maximumFullSkateRotationDegrees: Object.fromEntries(upperBody.map(target => [target.semantic, target.peak])),
       originalClips: entries.animationGroups.map(group => group.name), positionsScalesAndHierarchyPreserved: true });
     entries.dispose(); visual.dispose(); asset.dispose();
   }
