@@ -726,3 +726,37 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         assert result["continueAt"]==0x1800 and result["layoutSetup"]==dict(operations=layout_calls,
             storedHandle=dict(section=6,offset=0,value=get(layout_bss,"I")[0]))
 print("3 startup layout traces matched")
+
+def capture_scene(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    name=lambda ptr:bytes(cpu.mem_read(ptr,32)).split(b"\0")[0].decode()
+    if site==0x18b4:
+        dest=site+(get(pc,"I")[0]&0x03fffffc)
+        scene_calls.append(dict(site=site,local=dest,args=[name(reg(3))]))
+    else:
+        if site in (0x1800,0x1804):args=[]
+        elif site in (0x1824,0x1838,0x1848):args=[reg_float(cpu,getattr(R,"UC_PPC_REG_FPR"+str(i))) for i in range(1,3 if site==0x1838 else 4)]
+        elif site in (0x185c,0x1868,0x1874,0x1880):args=[reg(3),reg(4)-base[5]]
+        elif site in (0x188c,0x1898):args=[reg(3),reg(4)]
+        elif site in (0x18a0,0x18a8):args=[reg(3)]
+        else:
+            args=[reg(3),reg(4),reg(5)-base[1],name(reg(6))]
+            cpu.reg_write(R.UC_PPC_REG_3,msg if allocated else 0)
+        scene_calls.append(dict(site=site,engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1800,0x1804,0x1824,0x1838,0x1848,0x185c,0x1868,0x1874,0x1880,0x188c,0x1898,0x18a0,0x18a8,0x18b4,0x18d0):
+    u.hook_add(UC_HOOK_CODE,capture_scene,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,allocated in enumerate((False,True)):
+        scene_calls=[];layout_calls=[];handle=123
+        for off in (20,32,24):put(msg+off,"I",0)
+        u.emu_start(base[1]+0x176c,base[1]+0x1900,count=160)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1900
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
+            startup=dict(character_queries=[7],slot_one_present=False,layout_handle=handle,background_allocated=allocated))))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        result=json.loads(out.read_text())["startup"]
+        callbacks=[[off,get(msg+off,"I")[0]-base[1]] for off in (20,32,24) if get(msg+off,"I")[0]]
+        assert result["continueAt"]==0x1900 and result["sceneSetup"]==dict(operations=scene_calls,callbacks=callbacks)
+print("2 startup lighting and background task paths matched")

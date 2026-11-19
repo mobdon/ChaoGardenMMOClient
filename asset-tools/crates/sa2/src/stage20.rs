@@ -16,6 +16,7 @@ struct Request {
 #[serde(deny_unknown_fields)]
 struct Startup {
     layout_handle: Option<u32>,
+    background_allocated: Option<bool>,
     character_queries: Vec<i32>,
     slot_one_present: bool,
     walker: Option<Walker>,
@@ -123,6 +124,9 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
         }
     }
     let mut report = json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls});
+    if s.background_allocated.is_some() && s.layout_handle.is_none() {
+        return Err(Error::invalid("background setup requires layout setup"));
+    }
     if let Some(handle) = s.layout_handle {
         let invalid = || Error::invalid("invalid duel layout setup relocation");
         let pointer = |site, section| {
@@ -159,6 +163,65 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
         record(0x17fc, json!([pointer(0x17f6, 5)?, handle]))?;
         report["layoutSetup"] = json!({"operations":operations,"storedHandle":{"section":6,"offset":pointer(0x17ea,6)?,"value":handle}});
         report["continueAt"] = json!(0x1800);
+        if let Some(allocated) = s.background_allocated {
+            let mut ops = Vec::new();
+            let service = |site, args: Value| -> Result<Value> {
+                let r = rel
+                    .reference(1, site)
+                    .filter(|r| r.module == 0 && r.kind == 10)
+                    .ok_or_else(invalid)?;
+                Ok(json!({"site":site,"engine":r.addend,"args":args}))
+            };
+            let constant = |site| -> Result<f32> {
+                let at = pointer(site, 4)? as usize;
+                Ok(f32::from_be_bytes(
+                    rel.data(4)?
+                        .get(at..at + 4)
+                        .ok_or_else(invalid)?
+                        .try_into()
+                        .unwrap(),
+                ))
+            };
+            let x = constant(0x180e)?;
+            let y = constant(0x181a)?;
+            for (site, args) in [
+                (0x1800, json!([])),
+                (0x1804, json!([])),
+                (0x1824, json!([x, y, x])),
+                (0x1838, json!([y, constant(0x1832)?])),
+                (0x1848, json!([y, y, y])),
+            ] {
+                ops.push(service(site, args)?);
+            }
+            let table = pointer(0x1856, 5)?;
+            for (slot, site) in [0x185c, 0x1868, 0x1874, 0x1880].into_iter().enumerate() {
+                ops.push(service(
+                    site,
+                    json!([slot, table + if slot == 1 { 32 } else { 0 }]),
+                )?);
+            }
+            for (site, args) in [
+                (0x188c, json!([0, 0])),
+                (0x1898, json!([0, 1])),
+                (0x18a0, json!([0])),
+                (0x18a8, json!([2])),
+            ] {
+                ops.push(service(site, args)?);
+            }
+            ops.push(json!({"site":0x18b4,"local":0x7b54,"args":[name(0x18b2)?]}));
+            ops.push(service(
+                0x18d0,
+                json!([2, 1, pointer(0x18c6, 1)?, name(0x18ce)?]),
+            )?);
+            let mut callbacks = Vec::new();
+            if allocated {
+                for (offset, site) in [(20, 0x18e2), (32, 0x18ee), (24, 0x18fa)] {
+                    callbacks.push(json!([offset, pointer(site, 1)?]));
+                }
+            }
+            report["sceneSetup"] = json!({"operations":ops,"callbacks":callbacks});
+            report["continueAt"] = json!(0x1900);
+        }
     }
     if let Some(w) = s.walker {
         if !s.slot_one_present {
