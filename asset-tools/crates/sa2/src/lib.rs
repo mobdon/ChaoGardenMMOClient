@@ -83,5 +83,6 @@ pub mod emerald_path;
 pub mod fan_stage;
 pub mod goal_ring;
 pub mod mission_ranks;
+pub mod stage20;
 pub mod stage_land;
 pub mod task_coverage;
