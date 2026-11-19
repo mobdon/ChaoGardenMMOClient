@@ -386,31 +386,9 @@ pub fn light_tables(source: &[u8], gc: &[u8]) -> Result<Value> {
             "expected complete Wild Canyon lighting files",
         ));
     }
-    let words = |row: &[u8]| {
-        row.as_chunks::<4>()
-            .0
-            .iter()
-            .map(|v| u32::from_be_bytes(*v))
-            .collect::<Vec<_>>()
-    };
-    let mut derived = Vec::new();
-    for row in source.as_chunks::<32>().0 {
-        let w = words(row);
-        let scaled = |i: usize| (f32::from_bits(w[3]) * f32::from_bits(w[i])).to_bits();
-        derived.push([
-            w[0],
-            w[1],
-            w[2],
-            scaled(5),
-            scaled(6),
-            scaled(7),
-            w[4],
-            w[4],
-            w[4],
-        ]);
-    }
+    let derived = crate::stage_lighting::derive(source)?;
     Ok(
-        json!({"derivedWords":derived,"activeWords":gc.as_chunks::<48>().0.iter().map(|row|words(row)).collect::<Vec<_>>() }),
+        json!({"derivedWords":derived,"activeWords":gc.as_chunks::<48>().0.iter().map(crate::stage_lighting::words).collect::<Vec<_>>() }),
     )
 }
 

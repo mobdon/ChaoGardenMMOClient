@@ -760,3 +760,20 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         callbacks=[[off,get(msg+off,"I")[0]-base[1]] for off in (20,32,24) if get(msg+off,"I")[0]]
         assert result["continueAt"]==0x1900 and result["sceneSetup"]==dict(operations=scene_calls,callbacks=callbacks)
 print("2 startup lighting and background task paths matched")
+
+# Run the duel loader's derivation loop against each installed base table.
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    sources=sorted((game/"resource/gd_PC").glob("*_light.bin"))
+    assert len(sources)==52
+    for light in sources:
+        raw=light.read_bytes();assert len(raw)==384
+        src,dst=0x801e5470,0x801e5230
+        u.mem_write(src,raw);u.mem_write(dst,b"\xa5"*576)
+        u.reg_write(R.UC_PPC_REG_3,src);u.reg_write(R.UC_PPC_REG_30,dst)
+        u.emu_start(base[1]+0x7c18,base[1]+0x7d64,count=500)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x7d64
+        out=Path(tmp)/(light.stem+".json")
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage-light-base",str(light),str(out)],check=True)
+        assert json.loads(out.read_text())["derivedWords"]==[list(get(dst+48*i,"9I")) for i in range(12)]
+        assert all(bytes(u.mem_read(dst+48*i+36,12))==b"\xa5"*12 for i in range(12))
+print(len(sources),"installed light tables matched the stage 20 PPC loop")
