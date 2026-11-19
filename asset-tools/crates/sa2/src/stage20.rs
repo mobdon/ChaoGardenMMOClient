@@ -534,11 +534,7 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
                     if i == 3 {
                         let mut splash = json!({"local":0xca28,"args":[]});
                         if let Some(q) = s.splash_query {
-                            let (site, file, list) = match q {
-                                34 | 37 | 38 | 65 => (0xca80, 0xca76, 0xca7e),
-                                18 => (0xca98, 0xca8e, 0xca96),
-                                _ => (0xcab0, 0xcaa6, 0xcaae),
-                            };
+                            let (site, file, list) = splash_sites(q);
                             splash["calls"] = json!([
                                 service(0xca34, json!([]))?,
                                 service(site, json!([name(file)?, pointer(list, 5)?]))?
@@ -583,7 +579,15 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
     }
     Ok(report)
 }
-pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
+fn splash_sites(q: i32) -> (u32, u32, u32) {
+    match q {
+        34 | 37 | 38 | 65 => (0xca80, 0xca76, 0xca7e),
+        18 => (0xca98, 0xca8e, 0xca96),
+        _ => (0xcab0, 0xcaa6, 0xcaae),
+    }
+}
+
+fn identified_module(module: &[u8]) -> Result<CityRel<'_>> {
     let invalid = || Error::invalid("unexpected stage 20 entry module");
     let source = stage_land::catalog()
         .iter()
@@ -592,7 +596,51 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     if module.len() != source.size || manifest::sha256(module) != source.sha256 {
         return Err(invalid());
     }
-    let rel = CityRel::read_identified(module, source.module)?;
+    CityRel::read_identified(module, source.module)
+}
+pub fn splash_resource(module: &[u8], q: i32) -> Result<(String, usize)> {
+    let rel = identified_module(module)?;
+    let (_, name, list) = splash_sites(q);
+    let at = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+            .map(|r| r.addend as usize)
+            .ok_or_else(|| Error::invalid("missing splash list reference"))
+    };
+    let data = rel.data(5)?;
+    let raw = &data[at(name)?..];
+    let text = std::str::from_utf8(
+        &raw[..raw
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::invalid("missing archive name"))?],
+    )
+    .map_err(|_| Error::invalid("invalid archive name"))?;
+    let p = at(list)? + 4;
+    Ok((
+        format!("{}.prs", text.to_ascii_lowercase()),
+        u32::from_be_bytes(data[p..p + 4].try_into().unwrap()) as usize,
+    ))
+}
+pub fn splash_textures(prs: &[u8], count: usize) -> Result<Value> {
+    let data = crate::archive::decompress_prs(prs, 16 * 1024 * 1024)?;
+    let entries = crate::archive::read_gvm(&data)?;
+    if entries.len() != count {
+        return Err(Error::invalid(
+            "splash GVM count disagrees with stage texture list",
+        ));
+    }
+    let mut rows = Vec::new();
+    for e in entries {
+        let image = crate::texture::decode_gvr(e.data, None)?;
+        rows.push(json!({"index":e.index,"name":e.name,"globalIndex":e.global_index,"width":image.width,"height":image.height,
+            "rgbaSha256":manifest::sha256(&image.rgba),"nonopaquePixels":image.rgba.as_chunks::<4>().0.iter().filter(|p|p[3]!=255).count()}));
+    }
+    Ok(json!({"textures":rows,"archiveSha256":manifest::sha256(prs)}))
+}
+pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
+    let invalid = || Error::invalid("unexpected stage 20 entry module");
+    let rel = identified_module(module)?;
     let constant = |pc| -> Result<f32> {
         let r = rel.reference(1, pc).ok_or_else(invalid)?;
         if (r.module, r.section, r.kind) != (19, 4, 4) {
