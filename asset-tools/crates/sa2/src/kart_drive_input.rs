@@ -113,6 +113,7 @@ pub(crate) struct Motion {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryDrive {
+    position_step: Option<StoryPosition>,
     heading: i32,
     work_a4: i32,
     buttons: u32,
@@ -121,11 +122,19 @@ pub(crate) struct StoryDrive {
     steering_sum: i32,
     magnitude_return: Option<f32>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoryPosition {
+    work_74: i32,
+    transformed_vector: [f32; 3],
+}
 impl StoryDrive {
     pub(crate) fn step(
         self,
         velocity: [f32; 3],
         tuning: [f32; 4],
+        task_position: [f32; 3],
+        weight: f32,
         constants: &[u8],
     ) -> Result<Motion> {
         let velocity_xz = [velocity[0], velocity[2]];
@@ -149,7 +158,13 @@ impl StoryDrive {
                 deceleration,
                 speed_cap,
                 drift: None,
-                position_step: None,
+                position_step: self.position_step.map(|p| PositionInput {
+                    position: task_position,
+                    velocity_y: velocity[1],
+                    weight,
+                    work_74: p.work_74,
+                    transformed_vector: Some(p.transformed_vector),
+                }),
             },
             scale * self.steering_sum as f32,
             self.stick_x,

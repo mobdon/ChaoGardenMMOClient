@@ -297,11 +297,12 @@ if len(sys.argv)>4:
                 return dict(boost_tick=dict(velocity=[0,0,0],
                             boost=dict(boost_inputs,**changes)))
             q.update(primary_charge=0,updates=[pickups[0],boost(work_dc=0,slot_flag=0,buttons_pressed=0),
-                boost(buttons_pressed=0x200,normalized_velocity=[1,0,0]),boost()])
+                boost(buttons_pressed=0x200,normalized_velocity=[0.6,0.8,0]),boost()])
             driving=dict(buttons=4,work_28c=0,heading=17,work_a4=2,stick_x=0,steering_sum=0)
+            driving["position_step"]=dict(work_74=0,transformed_vector=[-1.25,0.75,2])
             for event in q["updates"][1:]:
                 event["boost_tick"]["drive"]=dict(driving)
-            q["updates"][2]["boost_tick"]["drive"]["magnitude_return"]=20.0
+            q["updates"][2]["boost_tick"]["drive"]["magnitude_return"]=12.0
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-earned-boost.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             doc=json.loads(out.read_text())
@@ -316,4 +317,9 @@ if len(sys.argv)>4:
             assert activated["magnitude_source"]=="observed"
             assert powered["heading"]==17 and powered["work_a4"]==1
             assert abs(powered["local_displacement"][2])>abs(normal["local_displacement"][2])
+            for event,vy in zip(doc["updates"][1:],(0,16,0),strict=True):
+                profile=event["boostTick"];pos=profile["drive"]["position_step"]
+                assert pos["transform_source"]=="observed" and pos["world_displacement"]==[-1.25,0.75,2]
+                assert pos["position"][::2]==[-0.25,5]
+                assert abs(pos["position"][1]-(2.75+vy-profile["weight"]))<0.000002
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

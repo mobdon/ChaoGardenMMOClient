@@ -107,6 +107,7 @@ pub(crate) fn story_boost(
     timers: Option<(i32, i32)>,
     flag: Option<u32>,
 ) -> Result<(i32, (i32, i32), Profile)> {
+    let task_position = input.boost.position;
     let b = &mut input.boost;
     if b.work_70 != 0 {
         return Err(crate::Error::invalid("expected primary controller slot"));
@@ -150,6 +151,8 @@ pub(crate) fn story_boost(
                 output.deceleration,
                 b.speed_cap,
             ],
+            task_position,
+            output.weight,
             rel.data(4)?,
         )?);
     }
