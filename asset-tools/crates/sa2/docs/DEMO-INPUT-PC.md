@@ -29,6 +29,6 @@ encoding. This supports the same record alignment for the input-bearing part
 of the single-player buffer. It does not establish its playback interval.
 
 Do not pass the entire buffer to the raw reader or trim it at the final nonzero
-byte: its size leaves a 32-byte remainder after complete 44-byte records, and
+byte: its size leaves a 16-byte remainder after complete 44-byte records, and
 its last byte is nonzero. The recording supplies no identified per-frame
 position, velocity or contact reference for the board descent.
