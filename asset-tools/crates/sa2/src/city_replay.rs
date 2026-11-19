@@ -218,6 +218,7 @@ pub fn callback_name(p: &Placement, d: &ObjectDefinition) -> Option<&'static str
         (3, "SPRA   ", 0x6c4480) => Some("ObjectSpring"),
         (4, "SPRB   ", 0x6c4e90) => Some("ObjectSpringB"),
         (59, "BOARDCOL", 0x5ea210) => Some("ObjectBoardCol"),
+        (77, "BOARD", 0x5ebc50) => Some("ObjectBoard"),
         (81, "ADXCHG", 0x5e2d70) => Some("ObjectCeAdxChg"),
         _ => None,
     }
@@ -246,6 +247,10 @@ pub fn replay(placement: &Placement, def: &ObjectDefinition, request: &[u8]) -> 
             value["callback"] = json!(name);
             Ok(value)
         }
+        Some("ObjectBoard") => crate::board_replay::replay(
+            placement,
+            bounded(decode::<Frames<crate::board_replay::Step>>(request)?.frames)?,
+        ),
         Some("ObjectBoardCol") => board(placement, request),
         Some("ObjectCeAdxChg") => adx(request),
         _ => Err(Error::invalid(

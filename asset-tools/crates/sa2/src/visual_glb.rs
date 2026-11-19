@@ -205,7 +205,9 @@ pub fn export(visual: &StaticVisual, pngs: &BTreeMap<u16, Vec<u8>>) -> Result<Ve
     let mut samplers = Vec::new();
     for surface in &visual.surfaces {
         let mat = &surface.material;
-        if !matches!(surface.strip_flags, 0x02 | 0x1a | 0x58) || mat.blend_flags != Some(0x25) {
+        if !matches!(surface.strip_flags, 0x02 | 0x0a | 0x1a | 0x58)
+            || mat.blend_flags != Some(0x25)
+        {
             return Err(Error::invalid("unsupported GLB material/strip profile"));
         }
         let [h, data] = mat

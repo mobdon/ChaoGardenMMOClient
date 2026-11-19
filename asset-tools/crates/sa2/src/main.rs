@@ -15,6 +15,30 @@ use std::{
 
 const MAX_INPUT: u64 = 512 * 1024 * 1024;
 mod player_commands;
+fn city_collision(bytes: &[u8]) -> Result<stage::Stage> {
+    if bytes.starts_with(b"MZ") {
+        sa2_asset_tools::city_land::read_win32_collision_stage(bytes)
+    } else {
+        sa2_asset_tools::city_land::read_collision_stage(bytes)
+    }
+}
+
+fn board_variant(value: &std::ffi::OsStr) -> Result<sa2_asset_tools::board_model::BoardModel> {
+    use sa2_asset_tools::board_model::BoardModel::*;
+    match value.to_str() {
+        Some("street") => Ok(Streetboard),
+        Some("shadow") => Ok(ShadowBoard),
+        Some("amy") => Ok(AmyBoard),
+        Some("metal") => Ok(MetalBoard),
+        Some("sonic") => Ok(SonicBoard),
+        Some("cast-shadow") => Ok(CastShadow),
+        Some("modifier") => Ok(Modifier),
+        _ => Err(Error::invalid(
+            "expected board variant street, shadow, amy, metal, sonic, cast-shadow or modifier",
+        )),
+    }
+}
+
 const MAX_DECODED: usize = 128 * 1024 * 1024;
 
 fn read_source(path: &Path) -> Result<Vec<u8>> {
@@ -537,14 +561,20 @@ fn run() -> Result<()> {
             | "glb"
             | "object-tables"
             | "city-layout"
+            | "city-board-glb"
+            | "city-board-model"
+            | "city-collision"
+            | "city-raycast"
             | "city-replay"
     ) {
         return Err(Error::invalid("unknown command (see --help)"));
     }
     let valid_arity = match command {
         "texture" | "pose" => matches!(args.len(), 3 | 5),
-        "collision" => matches!(args.len(), 3 | 4),
-        "raycast" | "glb" | "object-tables" | "city-layout" => args.len() == 4,
+        "city-board-glb" => args.len() == 5,
+        "collision" | "city-collision" => matches!(args.len(), 3 | 4),
+        "city-board-model" | "city-raycast" | "raycast" | "glb" | "object-tables"
+        | "city-layout" => args.len() == 4,
         "city-replay" => args.len() == 6,
         _ => args.len() == 3,
     };
@@ -738,13 +768,52 @@ fn run() -> Result<()> {
                 &dependencies,
             )?;
         }
-        "collision" => {
+        "city-board-glb" => {
+            let archive = Path::new(&args[4]);
+            let textures = read_source_limited(archive, 1024 * 1024)?;
+            let glb = sa2_asset_tools::board_model::board_glb(
+                &bytes,
+                &textures,
+                board_variant(&args[3])?,
+            )?;
+            save_runtime_bytes(
+                input,
+                &label,
+                &bytes,
+                output,
+                &glb,
+                "native-board-glb",
+                &[RuntimeDependency {
+                    path: archive,
+                    logical_path: source_label(archive, source_root.as_deref())?,
+                    bytes: &textures,
+                    role: "board-textures",
+                }],
+            )?;
+        }
+        "city-board-model" => {
+            let board = sa2_asset_tools::board_model::extract(&bytes, board_variant(&args[3])?)?;
+            save_runtime_bytes(
+                input,
+                &label,
+                &bytes,
+                output,
+                &board.sa2mdl,
+                "native-board-sa2mdl",
+                &[],
+            )?;
+        }
+        "collision" | "city-collision" => {
             let scale = if args.len() == 4 {
                 finite_argument(&args[3])?
             } else {
                 1.0
             };
-            let native = stage::read_stage(&bytes)?;
+            let native = if command.starts_with("city-") {
+                city_collision(&bytes)?
+            } else {
+                stage::read_stage(&bytes)?
+            };
             let world = collision::bake_stage(&native, scale)?;
             save_runtime_document(
                 input,
@@ -756,11 +825,15 @@ fn run() -> Result<()> {
                 &[],
             )?;
         }
-        "raycast" => {
+        "raycast" | "city-raycast" => {
             let request_path = Path::new(&args[3]);
             let request_bytes = read_source_limited(request_path, 64 * 1024)?;
             let request: RayRequest = serde_json::from_slice(&request_bytes)?;
-            let native = stage::read_stage(&bytes)?;
+            let native = if command.starts_with("city-") {
+                city_collision(&bytes)?
+            } else {
+                stage::read_stage(&bytes)?
+            };
             let world = collision::bake_stage(&native, request.uniform_scale)?;
             let hit = world.raycast(request.origin, request.direction, request.max_distance)?;
             let document = json!({"request":request,"hit":hit,"bounds":world.bounds,"unknowns":world.unknowns,
