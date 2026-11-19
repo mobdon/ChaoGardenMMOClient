@@ -208,6 +208,11 @@ fn mounted_campaign_routes() {
                     [516, 898]
                 );
                 assert!(stage.entry_pose.as_ref().unwrap().character == "Sonic");
+                let end = stage.end_pose.as_ref().unwrap();
+                assert_eq!(
+                    (end.row_va, end.yaw, end.position),
+                    (0x1748538, 0x4000, [3955., -22175., 16130.])
+                );
                 if let Some(world) = stage.collision_world().unwrap() {
                     let hit = world
                         .raycast([0., 1000., 0.], [0., -1., 0.], 2000.)

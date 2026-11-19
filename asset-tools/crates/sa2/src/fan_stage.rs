@@ -189,6 +189,8 @@ pub struct MountedStage<'a> {
     pub dispatch: LevelDispatch,
     pub level_section: Option<&'a str>,
     pub entry_pose: Option<EntryPose>,
+    /// Authored single-player end pose; does not trigger completion or respawn.
+    pub end_pose: Option<EntryPose>,
     pub kart_route: Option<&'a KartRoute>,
     pub object_table: Option<&'a ObjectList>,
     pub layers: Vec<Layer>,
@@ -364,23 +366,29 @@ impl Campaign {
             10 => "SuperShadow",
             _ => return Err(Error::invalid("unknown story character")),
         };
-        let mut rows = self.positions.iter().filter(|r| {
-            r.stage == dispatch.level && r.kind == PositionKind::Start && r.character == ch
-        });
-        let entry_pose = rows.next().and_then(|r| {
-            r.poses
+        let single_pose = |kind| -> Result<Option<EntryPose>> {
+            let mut rows = self
+                .positions
                 .iter()
-                .find(|p| p.variant == Variant::Single)
-                .map(|p| EntryPose {
-                    character: r.character,
-                    row_va: r.row_va,
-                    position: p.position,
-                    yaw: p.yaw,
-                })
-        });
-        if rows.next().is_some() {
-            return Err(Error::invalid("ambiguous campaign start row"));
-        }
+                .filter(|r| r.stage == dispatch.level && r.kind == kind && r.character == ch);
+            let pose = rows.next().and_then(|r| {
+                r.poses
+                    .iter()
+                    .find(|p| p.variant == Variant::Single)
+                    .map(|p| EntryPose {
+                        character: r.character,
+                        row_va: r.row_va,
+                        position: p.position,
+                        yaw: p.yaw,
+                    })
+            });
+            if rows.next().is_some() {
+                return Err(Error::invalid("ambiguous campaign position row"));
+            }
+            Ok(pose)
+        };
+        let entry_pose = single_pose(PositionKind::Start)?;
+        let end_pose = single_pose(PositionKind::End)?;
         let mut gaps = vec![];
         if entry_pose.is_none() {
             gaps.push(format!(
@@ -471,6 +479,7 @@ impl Campaign {
             dispatch,
             level_section: config.map(|c| c.section.as_str()),
             entry_pose,
+            end_pose,
             kart_route,
             unavailable_systems: &[
                 "retail task scheduling and dynamic contacts",
