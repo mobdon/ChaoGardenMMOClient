@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "sourceGitBlobs": {
+    "src_game_shared_stage_player.c": "0e99fe239ec75a8d188769913aafd9485dc76908",
+    "src_game_shared_stage_terrain_collision.c": "a62362ae875a5f54eb6a1c08343967e93071a210",
+    "libagbsyscall_libagbsyscall.c": "42d8742465d68a00333967ae1842b34b755eff25"
+  },
+  "seed": 2730496285,
+  "cases": 32768,
+  "fullQuadrants": true,
+  "rowWords": 18,
+  "unsupportedCases": 0,
+  "outputBytes": 2359296,
+  "outputSha256": "e7ed7423c959eb1d4983bc6d18e5558ed06a98fc83a204f993db68b27412face",
+  "playerFunctions": [
+    "Player_HandleSpriteYOffsetChange",
+    "sub_802195C",
+    "sub_8021A34",
+    "sub_8021B08",
+    "sub_8029BB8",
+    "sub_8029AC0",
+    "sub_8029B0C",
+    "sub_8021BE0",
+    "sub_8021C4C",
+    "sub_8021DB8",
+    "sub_8021EE4",
+    "sub_802203C",
+    "sub_8022190",
+    "sub_80228C0",
+    "sub_80229EC",
+    "sub_8022B18",
+    "sub_8022C44",
+    "sub_8022D6C",
+    "sub_8022F58",
+    "sub_802302C",
+    "sub_8023128"
+  ],
+  "scope": "Exact original C normal-gravity player/terrain functions across all rotation quadrants and pinned portable integer angle reference; water/object/special states remain separate"
+}

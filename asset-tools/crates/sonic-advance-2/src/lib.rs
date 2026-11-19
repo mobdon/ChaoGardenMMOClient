@@ -1,12 +1,36 @@
-//! Source inspection only. Native data is never an authenticated MMO reward.
+//! Verified local asset inspection and an incomplete native Rust execution port.
+//! Native data is never an authenticated MMO reward.
 #![forbid(unsafe_code)]
 
 pub mod catalog;
 #[path = "reused/gba.rs"]
 pub mod gba;
 pub mod graphics;
+pub mod native_animation;
+pub mod native_audio;
+pub mod native_camera;
+pub mod native_campaign_save;
+pub mod native_checkpoints;
+pub mod native_collision;
+pub mod native_combat;
+pub mod native_enemies;
+pub mod native_entities;
+pub mod native_game;
+pub mod native_goal;
+mod native_hud;
+pub mod native_lifecycle;
+mod native_placements;
+pub mod native_player;
+pub mod native_results_ui;
+pub mod native_rings;
+pub mod native_runtime;
 #[path = "reused/native_save.rs"]
 pub mod native_save;
+pub mod native_scatter;
+pub mod native_sonic;
+pub mod native_special_rings;
+pub mod native_springs;
+pub mod native_stage;
 pub mod save_layout;
 pub mod tables;
 pub mod transfer;

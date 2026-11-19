@@ -1,7 +1,10 @@
 # A3VE embedded Tiny Garden evidence
 
-This is a version-specific asset and opaque-save catalog. It does not run Tiny
-Garden, implement Chao Ball, or establish parity for native game mechanics.
+This is a version-specific asset and opaque-save catalog. The separate Rust
+mechanics slice now includes input/frame control, palette updates, puzzle scene
+setup, four-round board initialization and a ball-flip rule. It does not run a
+complete Tiny Garden or Chao Ball session; see [GARDEN-SYSTEMS.md](GARDEN-SYSTEMS.md)
+for the source map and remaining end-to-end gates.
 ROMs, decoded payloads, images and native saves remain local. Pinball mechanics
 are a separate workstream.
 
@@ -159,3 +162,35 @@ Native JoyBus code is not the MMO transport protocol. Animation descriptors,
 sprite assembly, text/UI naming, audio dependency graphs and the Chao type to
 display lookup require further independent tracing before they can be labeled
 complete or reused as game mechanics.
+
+## Rust Garden mechanics and actual stopping point
+
+`game::garden_runtime` joins the completed Garden routines on one memory image,
+using payload offsets in a call domain separate from the main cartridge engine.
+It authenticates the distinct Garden payload before reading source tables.
+`garden_frame` translates input initialization/polling and the main-loop iteration;
+boot, VBlank, current scene and audio remain strict dependencies. `garden_palette`
+retains the complete `0x1D68` call order and both dirty-bank branches, including
+the first selector's RAM fallback and the second selector's full byte index.
+Neither selector is labeled a Chao type.
+
+`garden_graphics` translates `0xD294` and the `0x163C`/`0x1718` helpers. It preserves
+source tilemaps, palette-bank deltas, resource destinations and the native display
+register script. The script writes DISPCNT zero; static scene transactions alone
+do not enable or prove a displayed screen. The real tail calls remain explicit.
+
+Astra's `garden_payload` translates complete `0xD504` setup for all four rounds,
+including alternating color runs, source special-cell tables, native PRNG,
+four task allocations and queued display state. `0xEA5C`/`0xE974` reproduce the
+seven-direction bracketed-ball flip and changed-cell marks. The `0x1698(0x12,0)`
+effect queues **BG0 vertical scroll**, not sound. Native register/task/OAM services
+execute before the first frame stops at **`0x02001420`**, the unported queued
+background-transfer routine. Other puzzle object callbacks, scoring, success,
+failure, rewards and return-to-Garden remain incomplete.
+
+`game::garden_runtime` and the `garden-board` CLI probe use real Rust ports and
+stop on missing calls. The CLI declares its synthetic initial RAM and cannot
+report whole-Garden completion. Native source spans are verified in the Garden
+address space by both Rust and Python. These tests are component and bounded
+composition evidence, not an all-systems end-to-end pass. Care, shop, audio,
+save/transfer and complete minigame paths must execute before that claim is valid.
