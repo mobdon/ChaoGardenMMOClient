@@ -711,3 +711,48 @@ pub fn event_subtitles(
     }
     Ok(json!({"encoding":encoding.name(),"events":events}))
 }
+
+/// Battle event effects layout: SA3D.SA2Event.Effects.EventEffects,
+/// ScreenEffect and ObjectLighting. Preserve original floats without color conversion.
+pub fn event_lighting(data: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    if data.len() != 239616 {
+        return Err(Error::invalid("unexpected Battle effects size"));
+    }
+    let mut screens = Vec::new();
+    let mut lights = Vec::new();
+    let scalar = |row: &[u8], p| -> Result<f32> {
+        let n = f32::from_bits(be32(row, p)?);
+        if n.is_finite() {
+            Ok(n)
+        } else {
+            Err(Error::invalid("non-finite event lighting value"))
+        }
+    };
+    let vector = |row: &[u8], p| -> Result<[f32; 3]> {
+        Ok([scalar(row, p)?, scalar(row, p + 4)?, scalar(row, p + 8)?])
+    };
+    let screen_start = 38912;
+    for (slot, row) in range(data, screen_start, 64 * 64)?
+        .chunks_exact(64)
+        .enumerate()
+    {
+        if row.iter().all(|b| *b == 0) {
+            continue;
+        }
+        screens.push(json!({"slot":slot,"byteOffset":screen_start+slot*64,"frame":be32(row,0)?,"type":row[4],"argb":be32(row,8)?,"fadeOutRaw":row[12],"textureId":be16(row,14)?,"frameTime":be32(row,16)?,"position":[be16(row,20)? as i16,be16(row,22)? as i16],"size":[scalar(row,24)?,scalar(row,28)?]}));
+    }
+    let start = screen_start + 64 * 64 + 2048 * 56;
+    for (i, row) in range(data, start, 4 * 256 * 68)?
+        .chunks_exact(68)
+        .enumerate()
+    {
+        if row.iter().all(|b| *b == 0) {
+            continue;
+        }
+        lights.push(json!({"channel":i/256,"slot":i%256,"byteOffset":start+i*68,"frame":be32(row,0)?,"fadeMode":be32(row,4)?,"direction":vector(row,8)?,"diffuse":vector(row,20)?,"intensity":scalar(row,32)?,"ambient":vector(row,36)?}));
+    }
+    Ok(
+        json!({"screenEffects":screens,"objectLights":lights,"offsetBasis":"decompressed file","selection":"nonzero records, not verified runtime activation"}),
+    )
+}
