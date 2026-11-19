@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "sourceGitBlobs": {
+    "src/game/sa2/save.c": "7bdb3cc5afb1fef5fc4e555c8ea2f5911bc6db82",
+    "include/game/sa2/save.h": "72ae6b741aa9cf50a01b8ce7cc30ffb78517fa6c",
+    "include/game/sa2/stage/player_controls.h": "09375b3f7d2b25c2adf7f96d58b5372ba6946d46",
+    "include/game/globals.h": "dff72b844fae51ba1af3fa7f8040e17ec88f8833",
+    "include/game/math.h": "574b4e7d050e6c98eb9b38fbb7e79aa3cd586e92",
+    "include/constants/zones.h": "8743af77f3cf53d8c30127dbbdb540f596b61902",
+    "include/constants/sa2/characters.h": "31139cd7efc1a05f9bbde67bf104e14524b66fbf",
+    "include/constants/sa2/text.h": "8572d8108d32df8e948c80d510e4f3b4759a01df"
+  },
+  "profileSeed": 2731171329,
+  "headerSeed": 2731171330,
+  "profileBytes": 884,
+  "payloadBytes": 888,
+  "checksumOffset": 884,
+  "timeRecords": 315,
+  "nameWords": 6,
+  "campaignSectors": 10,
+  "sectorBytes": 4096,
+  "sessionScenarios": 8,
+  "sessionSteps": 8,
+  "sessionHeaderWords": 10,
+  "functions": [
+    "GenerateNewSaveGame",
+    "InitSaveGameSectorData",
+    "PackSaveSectorData",
+    "UnpackSaveSectorData",
+    "FindNewestSaveGameSector",
+    "FindOldestSaveGameSector",
+    "StringEquals",
+    "InsertMultiplayerProfile",
+    "RecordOwnMultiplayerResult",
+    "RecordMultiplayerResult",
+    "GenerateCompletedSaveGame",
+    "HasChangesToSave",
+    "ReadSaveSectorAndVerifyChecksum",
+    "TryWriteSaveGame",
+    "TryLoadLatestSaveGame",
+    "CreateAndTryWriteNewSaveGame",
+    "SaveGameExists",
+    "WriteSaveGame"
+  ],
+  "outputs": {
+    "profiles": {
+      "cases": 256,
+      "bytes": 682732,
+      "sha256": "e23ef5439459386c67615991a7c361b89b1fef8fb20b63cdfeb16be1d46c19ae"
+    },
+    "headers": {
+      "cases": 1024,
+      "bytes": 12288,
+      "sha256": "8f840df42591c30e174481f2299b1422a2327c249ce4c9c4bbb4084969a78941"
+    },
+    "sessions": {
+      "cases": 64,
+      "bytes": 4366848,
+      "sha256": "4a03642f2a190b5b0d06b836070aaea1f13e51f5598ca6f19c913066e888464f"
+    }
+  },
+  "boundary": "Exact original C; bool8=u8 and native 32-bit checksum words; Random/flash are deterministic in-memory stubs, no hardware or real campaign-save fixture"
+}
