@@ -335,9 +335,9 @@ call boundary; these positions precede the remaining vehicle and collision
 updates and are not a verified trajectory.
 
 Optional `drive.drift` follows the normal driving routine through its drift
-entry decision. Supply the 30 position-history samples (newest first),
+entry decision. Supply the 30 motion-history samples (newest first),
 the active profile's drift speed threshold, vehicle state, +0x10c flags and
-+0xa8. Rust computes the offset of the newest position from the 30-sample
++0xa8. Rust computes the offset of the newest sample from the 30-sample
 mean. When the rotated `local_offset` is observed it also reports the native
 +0xf0 and +0xf8 writes; absent that observation those fields remain null.
 The vector-add/subtract engine imports are represented arithmetically.
@@ -396,3 +396,19 @@ are not implemented by this command. Static course raycasts do not substitute
 for a movement query. `tests/kart_contact_ppc.py CLI CartD.rel PRIVATE_DIR`
 compares the request bytes, branch choice, outgoing effect arguments and
 state writes against the original callbacks with supplied resolver results.
+
+Optional `wall` observations extend the movement response through 0x2fa0:
+supply contact normal, existing impulse, +0x70, cooldown (+0x290), mode,
+vehicle state and engine byte +0x23. For nonnegative +0x70, a nonzero
+contact with absolute normal Y below 0.2 restores the query's start position
+(optional `result.returned_from` if the engine changed it), zeroes vertical
+velocity and replaces horizontal impulse. The callback then adds all three
+impulse components and damps only X/Z. Wall feedback, gated route cue,
+timeout dispatch and the 180-update cooldown write are reported in order.
+`align_to_normal` indicates the engine angle-service path; its rotation
+outputs are not calculated. Terrain resolution remains external.
+
+The subsequent history writer at 0x2fc4 passes work velocity (+0x7c), not
+world position, to 0x5220. For driving history use `motion_history` in
+newest-first order; `positions` is accepted for compatibility. Feeding
+world-space positions to that calculation would misrepresent this caller.

@@ -226,8 +226,9 @@ fn position(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DriftInput {
-    /// The 30 position-history reads returned by 0x52b0, newest first.
-    positions: [[f32; 3]; 30],
+    /// The 30 motion-history reads returned by 0x52b0, newest first.
+    #[serde(alias = "positions")]
+    motion_history: [[f32; 3]; 30],
     /// Return of the rotation helper 0x5498, if observed.
     local_offset: Option<[f32; 3]>,
     speed_threshold: f32,
@@ -255,12 +256,12 @@ fn drift_update(
 ) -> DriftUpdate {
     let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
     let mut sum = [0f32; 3];
-    for pos in s.positions {
+    for pos in s.motion_history {
         for (acc, x) in sum.iter_mut().zip(pos) {
             *acc += x;
         }
     }
-    let history_offset = std::array::from_fn(|i| s.positions[0][i] - sum[i] * f(0x238));
+    let history_offset = std::array::from_fn(|i| s.motion_history[0][i] - sum[i] * f(0x238));
     let work_f0 = s.local_offset.map(|[x, _, z]| {
         if x < f(0x23c) {
             640

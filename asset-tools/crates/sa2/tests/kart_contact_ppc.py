@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x2ca4<=l<0x2da8) or k not in (4,6):continue
+        if t!=1 or not (0x2ca4<=l<0x2fa0) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -45,24 +45,42 @@ def hook(m,addr,*_):
         req["from"]=req.pop("from_");assert req==doc["request"]
         if hit is None:m.emu_stop();return
         u.mem_write(a+32,struct.pack(">3f",*hit["resolved_position"]))
+        if "returned_from" in hit:u.mem_write(a,struct.pack(">3f",*hit["returned_from"]))
         reg(3,hit["return_word"] & 0xffffffff)
     elif pc==0x2d50:
         scale=struct.unpack(">d",struct.pack(">Q",m.reg_read(R.UC_PPC_REG_FPR1)))[0]
         calls.append(dict(Effect10860=dict(position=vec(a),velocity=vec(b),scale=scale)))
-    elif pc==0x2d70:calls.append(dict(Engine8006b710=args))
-    elif pc==0x2d84:calls.append(dict(Engine8002f8c4=args))
+    elif pc==0x2f18:calls.append("Cart9884")
+    elif pc in (0x2ee8,0x2ef4):calls.append(dict(Engine80011714=a))
+    elif pc==0x2f30:
+        assert vec(a)==w["normal"]
+        put(b,"i",0);put(c,"i",0)
+    elif pc in (0x2f40,0x2f54):
+        assert c==182
+        reg(3,0)
+    elif pc==0x2f74:u.mem_write(c,struct.pack(">3f",*(x+y for x,y in zip(vec(a),vec(b)))))
+    elif pc in (0x2d70,0x2e90):calls.append(dict(Engine8006b710=args))
+    elif pc in (0x2d84,0x2ea4):calls.append(dict(Engine8002f8c4=args))
     else:
         assert c==work+0x7c
         u.mem_write(c,struct.pack(">3f",*(x-y for x,y in zip(vec(a),vec(b)))))
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
-for pc in (0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0):
+for pc in (0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0,0x2e90,0x2ea4,0x2ee8,0x2ef4,0x2f18,0x2f30,0x2f40,0x2f54,0x2f74):
     u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
     for i,(word,count,enabled) in enumerate([(None,0,0),(0,4,1),(0,2147483647,0),
-                                            (1,30,1),(1,31,0),(-1,31,1),(3,-1,1)]):
+                                            (1,30,1),(1,31,0),(-1,31,1),(3,-1,1)]+[(1,0,1)]*5+[(0,0,0)]):
         hit=None if word is None else dict(return_word=word,resolved_position=[11,-3.125,19])
         q=dict(previous_position=[8,-2,30],proposed_position=[10,-4,20],velocity=[2,-2,-10],
                player_slot=1,work_28c=count,work_44=enabled,result=hit)
+        if i>=7:
+            j=i-7
+            w=dict(normal=[1,[0,.125,0,.25,0,0][j],-1],impulse=[1,2,3],work_70=-1 if j==4 else 0,
+                   cooldown=5 if j==2 else 0,mode=j%2,vehicle_state=2,engine_byte_23=3)
+            q["wall"]=w;hit["returned_from"]=[1,2,3]
+            for off,fmt,v in [(0x70,"i",w["work_70"]),(0x290,"i",w["cooldown"]),(0x30,"i",2)]:put(work+off,fmt,v)
+            put(engine+0x23,"b",3);put(base[6]+0x1a0,"i",w["mode"])
+            for off,key in [(0x190,"normal"),(0x98,"impulse")]:u.mem_write(work+off,struct.pack(">3f",*w[key]))
         req=Path(td)/"q.json";out=Path(td)/f"{i}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-contact-step",rel,out,req],check=True);doc=json.loads(out.read_text())
         for addr,key in [(work+20,"previous_position"),(tw+20,"proposed_position"),(work+0x7c,"velocity")]:
@@ -74,9 +92,16 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             assert doc["response"] is None and u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x2d0c
             continue
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x200
-        reg(3,task);run(0x2da8,0x2e00 if word else 0x2f5c)
+        reg(3,task);run(0x2da8,0x2fa0 if i>=7 else (0x2e00 if word else 0x2f5c))
         expected=dict(work_74=get(work+0x74,"i"),work_28c=get(work+0x28c,"i"),
                       velocity=vec(work+0x7c),position=vec(tw+20),calls=calls,
                       next="contact_2e00" if word else "no_contact_2f5c")
+        if i>=7:
+            expected["next"]="velocity_transform_2fa0"
+            got=doc["response"]["wall"]
+            wall=dict(wall_hit=any(isinstance(c,dict) and c.get("Engine8006b710")==[18,0,0,0] for c in calls),
+                      impulse=vec(work+0x98),cooldown=get(work+0x290,"i"),vehicle_state=get(work+0x30,"i"),align_to_normal=bool(word))
+            assert struct.pack(">3f",*wall["impulse"])==struct.pack(">3f",*got["impulse"])
+            wall["impulse"]=got["impulse"];expected["wall"]=wall
         assert expected==doc["response"]
-print("Matched seven contact request and response cases with supplied engine results.")
+print("Matched thirteen movement contact and wall-response cases with supplied engine results.")
