@@ -203,6 +203,54 @@ impl<'a> CityRel<'a> {
         "scope":"After range acceptance. No player gives mode one. No collision hit or range result inferred."}),
         )
     }
+    /// Installed object-list wrappers referencing the shared ObjectCesobj initializer.
+    pub fn scenery_descriptors(&self) -> Result<serde_json::Value> {
+        let data = self.data(5)?;
+        let word = |p: u32| -> Result<u32> {
+            Ok(u32::from_be_bytes(
+                data.get(p as usize..p as usize + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        let mut rows = Vec::new();
+        for (entry, wrapper, load, delta) in
+            [(0x1ffcfc, 0xbe9c, 0xbec2, 0), (0x1ffd0c, 0xbee8, 0xbf0e, 8)]
+        {
+            if self.local_pointer(5, entry)? != Some((1, wrapper)) {
+                return Err(invalid());
+            }
+            let (section, name_at) = self.local_pointer(5, entry + 4)?.ok_or_else(invalid)?;
+            let name = self
+                .data(section)?
+                .get(name_at as usize..)
+                .ok_or_else(invalid)?
+                .split(|b| *b == 0)
+                .next()
+                .ok_or_else(invalid)?;
+            let name = std::str::from_utf8(name).map_err(|_| invalid())?;
+            let header = self.resource(load)? + delta;
+            let (5, start) = self.local_pointer(5, header)?.ok_or_else(invalid)? else {
+                return Err(invalid());
+            };
+            let count = word(header + 4)?;
+            if !(1..=256).contains(&count) {
+                return Err(invalid());
+            }
+            let mut variants = Vec::new();
+            for i in 0..count {
+                let d = start + 40 * i;
+                variants.push(serde_json::json!({"variant":i,"flags":word(d)?,"collision":self.local_pointer(5,d+12)?,"collisionCount":word(d+16)?,"displayCallback":self.local_pointer(5,d+20)?,"updateCallback":self.local_pointer(5,d+24)?}));
+            }
+            rows.push(
+                serde_json::json!({"objectName":name,"wrapperOffset":wrapper,"variants":variants}),
+            );
+        }
+        Ok(
+            serde_json::json!({"objects":rows,"pointerBasis":"REL section and offset","selection":"low 8 bits of SET rotation X, capped at last variant"}),
+        )
+    }
     fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
         let data = self.data(5)?;
         let local = |o| {
