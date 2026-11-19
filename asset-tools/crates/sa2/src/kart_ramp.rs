@@ -115,7 +115,11 @@ pub struct Contact {
     /// Observed after the opaque kart response call.
     pub post_response_work_44: u32,
     pub post_response_work_70: u32,
-    pub helper_5b90_result: Option<i32>,
+    pub post_response_work_48: Option<i32>,
+    /// Byte resolved from the live course directory by helper 0x979c.
+    pub course_byte: Option<u8>,
+    /// Optional changed slot on return from the first external call.
+    pub work_48_after_call: Option<i32>,
 }
 #[derive(Serialize)]
 pub struct Dispatch {
@@ -125,6 +129,8 @@ pub struct Dispatch {
     pub yaw: i32,
     pub call_8002f8c4: Option<[u32; 4]>,
     pub called_5b90: bool,
+    pub call_8006c97c: Option<i32>,
+    pub call_8006b710: Option<[i32; 4]>,
 }
 #[derive(Serialize)]
 pub struct TickResult {
@@ -142,6 +148,25 @@ pub fn tick(bytes: &[u8], input: RampTick) -> Result<TickResult> {
     {
         return Err(Error::invalid("invalid ramp tick observations"));
     }
+    let rel = CityRel::read_identified(bytes, 80)?;
+    let hi = rel
+        .reference(1, 0x5bca)
+        .ok_or_else(|| Error::invalid("missing kart table relocation"))?;
+    let lo = rel
+        .reference(1, 0x5bce)
+        .ok_or_else(|| Error::invalid("missing kart table relocation"))?;
+    if hi.module != 80
+        || hi.section != 5
+        || hi.kind != 6
+        || lo.module != 80
+        || lo.section != 5
+        || lo.kind != 4
+        || hi.addend != lo.addend
+    {
+        return Err(Error::invalid("unexpected kart table relocation"));
+    }
+    let data = rel.data(5)?;
+    let table_offset = hi.addend as usize;
     let mut cooldown = (input.cooldown - 1.).max(0.);
     let mut dispatches = Vec::new();
     if input.collision_flags & 1 != 0 {
@@ -150,12 +175,33 @@ pub fn tick(bytes: &[u8], input: RampTick) -> Result<TickResult> {
                 continue;
             }
             let called_5b90 = cooldown == 0.;
-            if called_5b90
-                && c.helper_5b90_result
-                    .ok_or_else(|| Error::invalid("missing invoked ramp helper result"))?
-                    != 0
-            {
-                cooldown = 30.;
+            let mut first = None;
+            let mut second = None;
+            if called_5b90 && c.post_response_work_44 != 0 {
+                let slot = c
+                    .post_response_work_48
+                    .ok_or_else(|| Error::invalid("missing kart work+0x48"))?;
+                if slot < 0 {
+                    return Err(Error::invalid("kart slot precedes mapped table"));
+                }
+                if slot < 8 {
+                    let entry = |slot: i32| -> Result<i32> {
+                        if !(0..8).contains(&slot) {
+                            return Err(Error::invalid("kart slot outside secondary call table"));
+                        }
+                        let at = table_offset + slot as usize * 8;
+                        Ok(i32::from_be_bytes(data[at..at + 4].try_into().unwrap()))
+                    };
+                    if entry(slot)? >= 0 {
+                        let byte = c
+                            .course_byte
+                            .ok_or_else(|| Error::invalid("missing indexed course byte"))?
+                            as i8;
+                        first = Some(if (50..=71).contains(&byte) { 0 } else { -127 });
+                        second = Some([entry(c.work_48_after_call.unwrap_or(slot))?, 0, 0, 0]);
+                    }
+                    cooldown = 30.;
+                }
             }
             dispatches.push(Dispatch {
                 contact_index,
@@ -169,6 +215,8 @@ pub fn tick(bytes: &[u8], input: RampTick) -> Result<TickResult> {
                     0,
                 ]),
                 called_5b90,
+                call_8006c97c: first,
+                call_8006b710: second,
             });
         }
     }

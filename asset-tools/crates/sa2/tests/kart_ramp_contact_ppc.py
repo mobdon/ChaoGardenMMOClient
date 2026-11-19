@@ -20,9 +20,11 @@ for mod,at in struct.iter_unpack(">II",d[word(40):word(40)+word(44)]):
         if k==203:break
         if k==202:target=s;loc=0;continue
         loc+=delta
-        if target==1 and mod==80 and (0xbdf4<=loc<0xbf30 or 0x1714<=loc<0x17e8) and k in (4,6):
+        if target==1 and mod==80 and (0xbdf4<=loc<0xbf30 or 0x1714<=loc<0x17e8 or 0x5b90<=loc<0x5c30 or 0x979c<=loc<0x9810) and k in (4,6):
             ptr=base[s]+a
             if loc==0x1716:registry=ptr
+            if loc==0x97aa:course=ptr
+            if loc==0x97c2:indices=ptr
             u.mem_write(base[1]+loc,struct.pack(">H",(ptr if k==4 else (ptr+32768)>>16)&65535))
 ram=0x85000000;u.mem_map(ram,0x10000);work=ram;coll=ram+256
 get=lambda n:u.reg_read(getattr(R,f"UC_PPC_REG_{n}"))
@@ -33,22 +35,28 @@ u.reg_write(R.UC_PPC_REG_MSR,8192)
 kart=ram+0x2000;kart2=ram+0x2200
 def hook(u,addr,size,_):
     off=addr-base[1]
-    if off not in (0xbe90,0xbe98,0xbea4,0xbeb4,0xbeb8,0xbec4,0xbee8,0xbf04):return
+    if off not in (0xbe90,0xbe98,0xbea4,0xbeb4,0xbeb8,0xbec4,0xbee8,0xbf04,0x97ec,0x97fc,0x5c0c):return
     i=get(26)
-    if off==0xbea4:trace.append(dict(contact_index=i,task=get(25),yaw=struct.unpack(">i",struct.pack(">I",get(4)))[0],call_8002f8c4=None,called_5b90=False))
+    if off==0xbea4:trace.append(dict(contact_index=i,task=get(25),yaw=struct.unpack(">i",struct.pack(">I",get(4)))[0],call_8002f8c4=None,called_5b90=False,call_8006c97c=None,call_8006b710=None))
     if off==0xbeb4:trace[-1]["matrix_input"]=list(read(get(4),"3f"))
     if off==0xbec4:
         assert get(3)==trace[-1]["task"]
     if off==0xbee8:trace[-1]["call_8002f8c4"]=[get(n) for n in (3,4,5,6)]
     if off==0xbf04:
         assert get(3)==get(25) and get(4)==0
-        trace[-1]["called_5b90"]=True;reg(3,obs[i]["helper_5b90_result"]&0xffffffff)
+        trace[-1]["called_5b90"]=True
+        return # execute both native helpers
+    if off in (0x97ec,0x97fc):
+        trace[-1]["call_8006c97c"]=struct.unpack(">i",struct.pack(">I",get(3)))[0]
+        changed=obs[i]["work_48_after_call"]
+        if changed is not None:put(get(25)+128+72,"i",changed)
+    if off==0x5c0c:trace[-1]["call_8006b710"]=[get(n) for n in (3,4,5,6)]
     u.reg_write(R.UC_PPC_REG_PC,addr+4)
 u.hook_add(UC_HOOK_CODE,hook)
 with tempfile.TemporaryDirectory(dir=private) as tmp:
     for case,(flags,timer,ids,results) in enumerate([
         (0,1,[kart],[1]),(1,0,[],[]),(1,0,[0,ram+0x2600],[0,0]),
-        (1,0.25,[kart,kart2,kart2],[0,-1,0]),(3,3.5,[kart2],[1]),(1,1,[kart],[1])]):
+        (1,0.25,[kart,kart2,kart2],[0,-1,0]),(3,3.5,[kart2],[1]),(1,1,[kart],[1])]+[(1,0,[kart2],[slot]) for slot in range(9)]):
         trace=[];obs=[]
         put(registry,"6I",kart,0,0,0,0,kart2);reg(31,work);reg(1,ram+0x8000)
         put(work+12,"i",-1234);put(work+32,"3f",11.5,-2.25,timer);put(work+44,"I",coll)
@@ -57,11 +65,17 @@ with tempfile.TemporaryDirectory(dir=private) as tmp:
             put(coll+20+i*8,"I",task)
             enabled=int(task==kart2)
             if task:put(task+56,"I",task+128);put(task+128+68,"I",enabled);put(task+128+112,"I",37)
-            obs.append(dict(task=task,post_response_work_44=enabled,post_response_work_70=37,helper_5b90_result=results[i]))
+            slot=results[i] if case>=6 else 2
+            byte=[49,50,71,72,255][case%5]
+            changed=7 if case==6 else None
+            if task:
+                put(task+128+72,"i",slot);put(task+128+188,"I",1)
+            put(course+8,"I",ram+0x9100);put(indices+4,"I",3);put(ram+0x9103,"B",byte)
+            obs.append(dict(task=task,post_response_work_44=enabled,post_response_work_70=37,post_response_work_48=slot,course_byte=byte,work_48_after_call=changed))
         u.emu_start(base[1]+0xbdf4,base[1]+0xbf30,count=3000)
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xbf30
         req=Path(tmp)/"request.json";out=Path(tmp)/f"{case}.json"
         req.write_text(json.dumps(dict(cooldown=timer,collision_flags=flags,registered_tasks=[kart,0,0,0,0,kart2],yaw=-1234,work_20=11.5,work_24=-2.25,contacts=obs)))
         subprocess.run([cli,"kart-ramp-tick",rel,out,req],check=True)
         assert json.loads(out.read_text())==dict(cooldown=read(work+40,"f")[0],dispatches=trace)
-print("Matched six native contact loops, registry filtering, ordered calls and timer writes.")
+print("Matched 15 native contact loops including secondary helpers, table reload and timer writes.")
