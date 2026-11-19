@@ -31,6 +31,34 @@ pub struct CityRel<'a> {
 }
 
 impl<'a> CityRel<'a> {
+    /// Stage-local player motion registrations; preserve source order and REL addresses.
+    pub fn player_motion_bindings(&self) -> Result<serde_json::Value> {
+        let data = self.data(5)?;
+        let mut rows = Vec::new();
+        let start = 0x1fd2b0usize;
+        for (n, row) in data
+            .get(start..)
+            .ok_or_else(invalid)?
+            .chunks_exact(8)
+            .enumerate()
+        {
+            let index = i16::from_be_bytes([row[0], row[1]]);
+            if index == -1 {
+                return Ok(serde_json::json!({"section":5,"tableOffset":start,"bindings":rows}));
+            }
+            if !(0..300).contains(&index) {
+                return Err(invalid());
+            }
+            let (section, offset) = self
+                .local_pointer(5, (start + n * 8 + 4) as u32)?
+                .ok_or_else(invalid)?;
+            if offset as usize >= self.data(section)?.len() {
+                return Err(invalid());
+            }
+            rows.push(serde_json::json!({"index":index,"tag":i16::from_be_bytes([row[2],row[3]]),"section":section,"offset":offset}));
+        }
+        Err(invalid())
+    }
     /// Distinct from the GSNE8P decompilation's expected disc build.
     pub fn read(bytes: &'a [u8]) -> Result<Self> {
         if bytes.len() != 3_304_912 || manifest::sha256(bytes) != SHA256 {
