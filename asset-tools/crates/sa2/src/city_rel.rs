@@ -52,10 +52,23 @@ impl<'a> CityRel<'a> {
             let (section, offset) = self
                 .local_pointer(5, (start + n * 8 + 4) as u32)?
                 .ok_or_else(invalid)?;
-            if offset as usize >= self.data(section)?.len() {
+            let header = self
+                .data(section)?
+                .get(offset as usize..)
+                .and_then(|tail| tail.get(..12))
+                .ok_or_else(invalid)?;
+            let (tracks_section, tracks_offset) =
+                self.local_pointer(section, offset)?.ok_or_else(invalid)?;
+            if tracks_offset as usize >= self.data(tracks_section)?.len() {
                 return Err(invalid());
             }
-            rows.push(serde_json::json!({"index":index,"tag":i16::from_be_bytes([row[2],row[3]]),"section":section,"offset":offset}));
+            rows.push(serde_json::json!({
+                "index":index,"tag":i16::from_be_bytes([row[2],row[3]]),"section":section,"offset":offset,
+                "frameCount":u32::from_be_bytes(header[4..8].try_into().unwrap()),
+                "motionType":u16::from_be_bytes([header[8],header[9]]),
+                "interpolationAndFactors":u16::from_be_bytes([header[10],header[11]]),
+                "motionData":{"section":tracks_section,"offset":tracks_offset}
+            }));
         }
         Err(invalid())
     }
