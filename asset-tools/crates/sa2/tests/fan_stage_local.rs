@@ -226,6 +226,25 @@ fn mounted_campaign_routes() {
                     checkpoints,
                     [45, 218, 343].map(|n| ("set0013_s.bin", n, 32 + 32 * n))
                 );
+                let angles: Vec<_> = stage
+                    .checkpoint_placements()
+                    .map(|(_, p)| {
+                        let cp = sa2_asset_tools::checkpoint::CheckpointPlacement {
+                            rotation: p.placement.rotation.map(i32::from),
+                        };
+                        assert_eq!(cp.work_byte(2, 1), 0);
+                        assert_eq!(cp.work_byte(0, 0), 0);
+                        (cp.work_byte(1, -1), cp.child_angles([0x4000, -0x4000, 0]))
+                    })
+                    .collect();
+                assert_eq!(
+                    angles,
+                    [
+                        (3, [[16384, 49152, 0], [16384, 16384, 0]]),
+                        (2, [[16384, 32768, 0], [16384, 0, 0]]),
+                        (1, [[16384, 16896, 0], [16384, -15872, 0]])
+                    ]
+                );
                 let end = stage.end_pose.as_ref().unwrap();
                 assert_eq!(
                     (end.row_va, end.yaw, end.position),

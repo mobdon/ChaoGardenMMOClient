@@ -345,3 +345,35 @@ mod geometry_tests {
         assert_eq!(offsets, &exe[0x71adb8..0x71add0]);
     }
 }
+
+/// City Escape checkpoint placement angles. SET yaw packs a work byte in
+/// its low eight bits; those bits never rotate either child.
+#[derive(Debug, Clone, Copy)]
+pub struct CheckpointPlacement {
+    pub rotation: [i32; 3],
+}
+
+impl CheckpointPlacement {
+    /// In the initialization branch at text +0x43d88, arguments are the
+    /// observed engine return and stage byte, whose meanings are unresolved.
+    pub fn work_byte(self, engine_result: u32, stage_byte: i8) -> u8 {
+        if engine_result <= 1 && stage_byte != 0 {
+            self.rotation[1] as u8
+        } else {
+            0
+        }
+    }
+
+    /// The two child task angle writes at text +0x44628..0x446d4.
+    /// Input is the checkpoint work's three signed 32-bit angle words.
+    pub fn child_angles(self, work: [i32; 3]) -> [[i32; 3]; 2] {
+        let [x, y, z] = self.rotation;
+        let x = work[0].wrapping_add(x);
+        let z = work[2].wrapping_add(z);
+        let y = y & 0xff00;
+        [
+            [x, y.wrapping_sub(work[1]), z],
+            [x, y.wrapping_add(work[1]), z],
+        ]
+    }
+}
