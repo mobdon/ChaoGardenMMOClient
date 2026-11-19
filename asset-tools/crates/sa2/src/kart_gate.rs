@@ -94,6 +94,9 @@ fn verified_module(bytes: &[u8]) -> Result<CityRel<'_>> {
 }
 pub fn tick(bytes: &[u8], s: GateTick) -> Result<GateResult> {
     let rel = verified_module(bytes)?;
+    tick_registered(&rel, s)
+}
+fn tick_registered(rel: &CityRel<'_>, s: GateTick) -> Result<GateResult> {
     if rel.local_pointer(5, 0x1620)? != Some((1, 0xb5cc)) {
         return Err(Error::invalid("unknown GATE2 callback"));
     }
@@ -123,7 +126,7 @@ pub fn tick(bytes: &[u8], s: GateTick) -> Result<GateResult> {
                 .wrapping_add((ticks as i32 as u32).wrapping_mul(60));
             r.primary_kart_counter = r.primary_kart_counter.wrapping_add(1);
             r.calls.extend(["cart:1:c820", "cart:1:b940"]);
-            r.story_cues = s.story_cues.map(|ctx| story_cues(&rel, ctx)).transpose()?;
+            r.story_cues = s.story_cues.map(|ctx| story_cues(rel, ctx)).transpose()?;
         }
         r.calls.push("main:8000f4ec(gate_task)");
     }
@@ -572,4 +575,83 @@ pub fn bind_draw_textures(bytes: &[u8], pak: &[u8], report: &mut serde_json::Val
     }
     draw["textures"] = serde_json::to_value(textures)?;
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateSequence {
+    timer_word: u32,
+    primary_kart_counter: u32,
+    sequence: u32,
+    registered_tasks: [u32; 6],
+    updates: Vec<GateObservation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GateObservation {
+    placement: usize,
+    collision_flags: u16,
+    first_contact: u32,
+    final_flags: u32,
+}
+/// Replay admitted active callbacks only. External countdown or traffic changes
+/// between callbacks are not implied by the order of supplied contacts.
+pub fn story_sequence(
+    bytes: &[u8],
+    exe: &[u8],
+    set: &[u8],
+    s: GateSequence,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let rel = verified_module(bytes)?;
+    let objects = crate::kart_objects::read(exe, set)?;
+    let mode = match objects.set_file {
+        "setCartTails.bin" | "setCartTails_hd.bin" => 0,
+        "setCartRouge.bin" | "setCartRouge_hd.bin" => 1,
+        _ => return Err(Error::invalid("expected a story kart layout")),
+    };
+    if s.updates.len() > 4096 {
+        return Err(Error::invalid("too many gate callbacks"));
+    }
+    let mut latches = std::collections::BTreeMap::new();
+    for (i, p) in objects.placements.iter().enumerate() {
+        if p.object_id == 4 {
+            latches.insert(i, 0u16);
+        }
+    }
+    let (mut timer, mut count, mut seq) = (s.timer_word, s.primary_kart_counter, s.sequence);
+    let mut updates = Vec::new();
+    for event in s.updates {
+        let latch = latches
+            .get_mut(&event.placement)
+            .ok_or_else(|| Error::invalid("placement is not a story time gate"))?;
+        let result = tick_registered(
+            &rel,
+            GateTick {
+                latch: *latch,
+                collision_flags: event.collision_flags,
+                first_contact: event.first_contact,
+                registered_tasks: s.registered_tasks,
+                work_24: objects.placements[event.placement].parameters[1],
+                timer_word: timer,
+                primary_kart_counter: count,
+                final_flags: event.final_flags,
+                story_cues: Some(StoryCueContext {
+                    mode,
+                    sequence: seq,
+                }),
+            },
+        )?;
+        *latch = result.latch;
+        timer = result.timer_word;
+        count = result.primary_kart_counter;
+        if let Some(cue) = &result.story_cues {
+            seq = cue.next_sequence;
+        }
+        updates.push(json!({"placement":event.placement,"result":result}));
+    }
+    Ok(
+        json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
+        "timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+    )
 }

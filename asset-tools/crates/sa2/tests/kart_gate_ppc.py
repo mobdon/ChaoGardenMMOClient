@@ -3,7 +3,7 @@ import hashlib,json,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-cli,rel,private=map(Path,sys.argv[1:])
+cli,rel,private=map(Path,sys.argv[1:4])
 d=rel.read_bytes()
 assert hashlib.sha256(d).hexdigest()=="71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c"
 w=lambda i:struct.unpack_from(">I",d,i)[0]
@@ -61,3 +61,32 @@ with tempfile.TemporaryDirectory(dir=private) as tmp:
         subprocess.run([cli,"kart-gate-tick",rel,out,req],check=True)
         assert json.loads(out.read_text())==dict(latch=get(work+6,"H"),timer_word=get(variables[0xb79e]+12,"I"),primary_kart_counter=get(kw+0xc4,"I"),work_byte_3=get(work+3,"B"),calls=calls)
 print("Matched seven GATE2 traces including one-shot credit, first-contact filtering and timer wrap.")
+
+# Optional installed executable enables coupled traces across both authored gates.
+if len(sys.argv)>4:
+    exe=Path(sys.argv[4])
+    with tempfile.TemporaryDirectory(dir=private) as td:
+        for path in sorted([*rel.parent.glob("setCartTails*.bin"),*rel.parent.glob("setCartRouge*.bin")]):
+            rows=list(struct.iter_unpack(">4H6f",path.read_bytes()[32:]))
+            a,b=[i for i,r in enumerate(rows) if r[0]&4095==4]
+            registry=[primary,0,0,0,0,other]
+            put(variables[0x1716],"6I",*registry);put(variables[0xb7c6],"I",primary);put(primary+56,"I",kw)
+            put(variables[0xb79e]+12,"I",0xfffffff0);put(kw+0xc4,"I",4)
+            slots={a:work,b:work+128}
+            for p in slots.values():put(p+6,"H",0);put(p+0x2c,"I",coll)
+            events=[];expected=[]
+            for index,flags,first in [(b,1,0),(b,1,other),(a,0,primary),(b,1,primary),(a,1,primary),(a,1,other)]:
+                p=slots[index];put(p+0x24,"f",rows[index][8]);put(coll+4,"H",flags);put(coll+20,"I",first)
+                put(variables[0xb7f2]+0x7c,"I",4)
+                u.reg_write(R.UC_PPC_REG_1,ram+0xf000);u.reg_write(R.UC_PPC_REG_31,p);u.reg_write(R.UC_PPC_REG_30,task)
+                calls=[];u.emu_start(base[1]+0xb74c,base[1]+0xb81c,count=300)
+                assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xb81c
+                expected.append((get(p+6,"H"),get(variables[0xb79e]+12,"I"),get(kw+0xc4,"I"),calls))
+                events.append(dict(placement=index,collision_flags=flags,first_contact=first,final_flags=4))
+            req=Path(td)/"contacts.json";out=req.with_name(path.stem+".json")
+            req.write_text(json.dumps(dict(timer_word=0xfffffff0,primary_kart_counter=4,sequence=0,registered_tasks=registry,updates=events)))
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());assert doc["sequence"]==2
+            for event,ref in zip(doc["updates"],expected,strict=True):
+                r=event["result"];assert (r["latch"],r["timer_word"],r["primary_kart_counter"],r["calls"])==ref
+    print("Matched 24 ordered gate updates across four installed story layouts.")
