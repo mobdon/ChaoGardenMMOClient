@@ -225,7 +225,21 @@ struct AfterSteering {
     counter: i16,
     limit: i16,
     range: Option<RangeObservation>,
+    close_range: Option<CloseRange>,
     draw: Option<i32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseRange {
+    cooldown: i16,
+    services: Option<CloseServices>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseServices {
+    queries: [i32; 2],
+    slot_byte: i8,
+    variant: i8,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -462,6 +476,47 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
                         next = 0xd48;
                     }
                 }
+            }
+            if let Some(close) = a.close_range {
+                if next != 0x640 {
+                    return Err(invalid());
+                }
+                let mut calls = Vec::new();
+                let mut call = |site, args: Vec<i32>| -> Result<()> {
+                    let service = rel
+                        .reference(1, site)
+                        .filter(|r| r.module == 0 && r.kind == 10)
+                        .ok_or_else(invalid)?;
+                    calls.push(json!({"engine":service.addend,"args":args}));
+                    Ok(())
+                };
+                let cooldown = match (close.cooldown > 0, close.services) {
+                    (true, None) => close.cooldown,
+                    (false, Some(s)) => {
+                        for (slot, result) in s.queries.into_iter().enumerate() {
+                            call(0x694, vec![3, slot as i32])?;
+                            if result == 1 {
+                                call(0x6a4, vec![slot as i32])?;
+                            }
+                        }
+                        let request = match (s.slot_byte, s.variant) {
+                            (7, 61) => Some((0x6ec, 0x816)),
+                            (7, _) => Some((0x6fc, 0x817)),
+                            (6, 62) => Some((0x71c, 0x8d6)),
+                            (6, _) => Some((0x72c, 0x8d7)),
+                            _ => None,
+                        };
+                        if let Some((site, id)) = request {
+                            call(site, vec![id, 3])?;
+                        }
+                        480
+                    }
+                    _ => return Err(invalid()),
+                };
+                counter = 0;
+                mode = 5;
+                next = 0x1424;
+                report["closeRange"] = json!({"cooldown":cooldown,"calls":calls});
             }
             if !draw_used && a.draw.is_some() {
                 return Err(invalid());

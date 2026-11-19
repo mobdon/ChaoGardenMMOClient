@@ -429,7 +429,9 @@ def range_service(cpu,pc,*_):
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for site in (0x294,0xc60,0xccc):
     u.hook_add(UC_HOOK_CODE,range_service,begin=base[1]+site,end=base[1]+site)
-def stop_at_branch(cpu,pc,*_):cpu.emu_stop()
+expand_close=False
+def stop_at_branch(cpu,pc,*_):
+    if pc!=base[1]+0x640 or not expand_close:cpu.emu_stop()
 for site in (0x640,0xd48):u.hook_add(UC_HOOK_CODE,stop_at_branch,begin=base[1]+site,end=base[1]+site)
 cases=[(6,6,1,4.99,200,1,0,0)]
 cases += [(6,slot0,1,5.,dist,1,0,0) for slot0 in (6,7) for dist in (69.9,70.,70.1,99.9,100.)]
@@ -458,3 +460,35 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             angleArgs=args,turnArgs=None,yaw=yaw,scalar=scalar_out,counter=get(work+2,"h")[0],
             byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
 print(len(cases),"post-steering range and timer paths matched")
+
+expand_close=True
+def close_service(cpu,pc,*_):
+    site=pc-base[1];r3=cpu.reg_read(R.UC_PPC_REG_3);r4=cpu.reg_read(R.UC_PPC_REG_4)
+    calls.append(dict(engine=engines[site],args=[r3] if site==0x6a4 else [r3,r4]))
+    if site==0x694:cpu.reg_write(R.UC_PPC_REG_3,queries[r4]&0xffffffff)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x694,0x6a4,0x6ec,0x6fc,0x71c,0x72c):
+    u.hook_add(UC_HOOK_CODE,close_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for slot,variant in [(6,62),(6,61),(7,61),(7,-1),(-1,62)]:
+        for cool,queries in [(1,None),(0,[1,0]),(-1,[2,1]),(0,[1,1])]:
+            mode=(2,10)[idx%2];calls=[];observed={};args=[];decision=1;angle=0.5;dist=60.
+            put(work,"bbhhh",mode,0,55,22,cool);put(player0+1,"b",6);put(player1+1,"b",slot)
+            put(player1+4,"b",variant);put(pose1+6,"H",0)
+            for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work)]:
+                u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+            u.emu_start(base[1]+0xad4,base[1]+0x1424,count=300)
+            assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+            close=dict(cooldown=cool)
+            if queries is not None:close["services"]=dict(queries=queries,slot_byte=slot,variant=variant)
+            a=dict(pose_word=0,scalar=0.,counter=55,limit=22,range=dict(slot0_byte=6,distance_return=dist),close_range=close)
+            v=dict(decision=1,slot0=p0,slot1=p1,angle_return=angle,slot_byte=slot,after_steering=a)
+            c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+            out=Path(tmp)/f"{idx}.json";idx+=1
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            report=json.loads(out.read_text())["controller"]
+            assert (report["mode"],report["counter"],report["continueAt"])==(get(work,"b")[0],get(work+2,"h")[0],0x1424)
+            assert report["closeRange"]==dict(cooldown=get(work+6,"h")[0],calls=calls)
+print(idx,"close-range state-five entries matched")
