@@ -107,7 +107,7 @@ fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[
     Ok(n.map(|x| x / length))
 }
 
-fn read_strips(chunk: &PolygonChunk, indices: &BTreeMap<u16, usize>) -> Result<Vec<Strip>> {
+pub(crate) fn read_strips(chunk: &PolygonChunk, indices: &BTreeMap<u16, usize>) -> Result<Vec<Strip>> {
     let words = &chunk.raw_words;
     let header = *words
         .get(2)

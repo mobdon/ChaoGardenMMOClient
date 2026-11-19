@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
         out=Path(td)/f"{mode}.json"
         subprocess.run([cli,"--source-root",game,"kart-target-model",gd/"CartD.rel",out,str(mode)],check=True)
         report=json.loads(out.read_text());rows=report["nodes"]
-        stack=[(export(name),None)];seen=set();vertices=0
+        stack=[(export(name),None)];seen=set();vertices=triangles=corners=0
         for row in rows:
             va,parent=stack.pop();assert va not in seen;seen.add(va)
             at=offset(va-base)
@@ -57,10 +57,36 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
                         vertices+=count;v+=4+size*4
                     assert read("B",v)==(255,)
                 else:assert not g["chunks"]
+                poly=offset(read("I",a+4)[0]-base)
+                for batch in g["polygons"]:
+                    c=batch["chunk"];kind=c["kind"];words=c["rawWords"]
+                    assert struct.pack("<"+"H"*len(words),*words)==dll[poly:poly+2*len(words)],(name,len(seen),kind)
+                    if kind in (64,65):
+                        cursor=poly+6
+                        for strip in batch["strips"]:
+                            n,=read("h",cursor);cursor+=2
+                            assert (n<0,abs(n))==(strip["reversed"],len(strip["corners"]))
+                            ids=[]
+                            for corner in strip["corners"]:
+                                vertex,=read("H",cursor);cursor+=2
+                                assert vertex==corner["vertex"];ids.append(vertex)
+                                if kind==65:
+                                    uv=read("hh",cursor);cursor+=4
+                                    assert list(uv)==corner["uvRaw"] and [x/256 for x in uv]==corner["uv"]
+                                else:assert corner["uvRaw"] is None
+                            expected=[]
+                            for k in range(len(ids)-2):
+                                face=[k,k+1,k+2]
+                                if (k%2==1)!=(n<0):face[0],face[1]=face[1],face[0]
+                                if len({ids[j] for j in face})==3:expected.append(face)
+                            assert expected==strip["triangles"]
+                            triangles+=len(expected);corners+=len(ids)
+                    poly+=2*len(words)
+                assert read("B",poly)==(255,)
             if sibling:stack.append((sibling,parent))
             if child:stack.append((child,len(seen)-1))
         assert not stack
-        print(f"{name}: {len(rows)} matching nodes, {vertices} matching vertices")
+        print(f"{name}: {len(rows)} matching nodes, {vertices} matching vertices, {corners} corners, {triangles} triangles")
         if mode==0:
             assert report["motion"] is None and all("motion" not in row for row in rows)
             continue

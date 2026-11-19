@@ -497,3 +497,11 @@ and normals. No coordinate or unit conversion is applied. The independent PC
 export comparison matched every position and normal word: 1,458 vertices on
 the limousine and 1,183 on the Tornado. These are vertex streams; polygon
 connectivity, material selection and UVs are not implied by this comparison.
+
+Pursuit geometry also reports the ordered polygon commands, including native
+material and texture words, diffuse RGBA when specified, and strip flags.
+Each strip records its original winding, per-corner vertex index, signed UV
+words and triangle indices into that strip. The independent PC export comparison
+matches all polygon command words, 6,351 corners and 4,383 nondegenerate
+triangles across both models. Caller-side rendering and material state across
+draws are still outside this report.

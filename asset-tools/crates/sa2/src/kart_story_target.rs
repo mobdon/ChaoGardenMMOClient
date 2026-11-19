@@ -491,6 +491,7 @@ fn vertices(rel: &crate::city_rel::CityRel<'_>, attach: u32) -> Result<serde_jso
         Ok([word(at)?, word(at + 4)?, word(at + 8)?].map(f32::from_bits))
     };
     let mut chunks = Vec::new();
+    let mut indices = std::collections::BTreeMap::new();
     if let Some((section, start)) = rel.local_pointer(5, attach)? {
         if section != 5 {
             return Err(invalid());
@@ -504,21 +505,84 @@ fn vertices(rel: &crate::city_rel::CityRel<'_>, attach: u32) -> Result<serde_jso
             if header as u8 != 41 {
                 return Err(invalid());
             }
-            let indices = word(cursor + 4)?;
-            let count = (indices >> 16) as usize;
+            let index_word = word(cursor + 4)?;
+            let count = (index_word >> 16) as usize;
             if header >> 16 != (1 + count * 6) as u32 {
                 return Err(invalid());
             }
             let mut entries = Vec::with_capacity(count);
             for i in 0..count {
+                let index = (index_word as u16)
+                    .checked_add(i as u16)
+                    .ok_or_else(invalid)?;
+                indices.insert(index, usize::from(index));
                 let at = cursor + 8 + i * 24;
                 entries.push(serde_json::json!({"position":xyz(at)?,"normal":xyz(at+12)?}));
             }
-            chunks.push(serde_json::json!({"flags":(header>>8) as u8,"index_offset":indices as u16,"vertices":entries}));
+            chunks.push(serde_json::json!({"flags":(header>>8) as u8,"index_offset":index_word as u16,"vertices":entries}));
             cursor += 8 + count * 24;
         }
     }
     Ok(
-        serde_json::json!({"center":xyz(attach as usize+8)?,"radius":f32::from_bits(word(attach as usize+20)?),"chunks":chunks}),
+        serde_json::json!({"center":xyz(attach as usize+8)?,"radius":f32::from_bits(word(attach as usize+20)?),"chunks":chunks,"polygons":polygons(rel,attach,&indices)?}),
     )
+}
+
+fn polygons(
+    rel: &crate::city_rel::CityRel<'_>,
+    attach: u32,
+    indices: &std::collections::BTreeMap<u16, usize>,
+) -> Result<Vec<serde_json::Value>> {
+    let invalid = || crate::Error::invalid("unexpected pursuit polygon stream");
+    let mut result = Vec::new();
+    let Some((5, start)) = rel.local_pointer(5, attach + 4)? else {
+        return Err(invalid());
+    };
+    let data = rel.data(5)?;
+    let word = |at: usize| -> Result<u16> {
+        Ok(u16::from_be_bytes(
+            data.get(at..at + 2)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut at = start as usize;
+    loop {
+        let header = word(at)?;
+        let kind = header as u8;
+        let words = match kind {
+            255 => break,
+            8 => 2,
+            18..=21 | 23 | 64 | 65 => 2 + usize::from(word(at + 2)?),
+            _ => return Err(invalid()),
+        };
+        let raw = (0..words)
+            .map(|i| word(at + 2 * i))
+            .collect::<Result<Vec<_>>>()?;
+        let diffuse_rgba = if (16..32).contains(&kind) && kind & 1 != 0 {
+            let [b, g] = raw[2].to_le_bytes();
+            let [r, a] = raw[3].to_le_bytes();
+            Some([r, g, b, a])
+        } else {
+            None
+        };
+        let chunk = crate::model::PolygonChunk {
+            offset: at as u32,
+            kind,
+            flags: (header >> 8) as u8,
+            length: words * 2,
+            texture_id: (kind == 8).then(|| raw[1] & 0x1fff),
+            diffuse_rgba,
+            raw_words: raw,
+        };
+        let strips = if kind >= 64 {
+            Some(crate::visual::read_strips(&chunk, indices)?)
+        } else {
+            None
+        };
+        result.push(serde_json::json!({"chunk":chunk,"strips":strips}));
+        at += words * 2;
+    }
+    Ok(result)
 }
