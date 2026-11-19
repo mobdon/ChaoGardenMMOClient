@@ -164,4 +164,11 @@ the current radius and radius divided by limit. The trace preserves float
 argument bits and the order of the transform calls, including the final
 pop. Empty lists emit no calls. Previous nodes need their XYZ positions.
 The trace is limited to 8192 displayed records across the supplied updates.
-These are submissions; neither the nested draw helper nor pixels are verified here.
+The trace also expands the stage draw helper using the model and texture
+list from that module. It records the temporary model field at offset 20,
+the scale derived from its original value, both original packed color
+arguments, and the ratio passed to the engine. The selected color is
+forwarded to the model submission routine as `previousReturn`; the engine
+color computation is not replayed. The helper then pops its transform and
+restores the model field. The comparison uses the module's initial model
+state. Final model submission and rendered pixels remain unverified.

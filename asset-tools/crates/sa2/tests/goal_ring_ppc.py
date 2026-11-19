@@ -530,12 +530,51 @@ def manager_draw(cpu,pc,*_):
     ins=read32(pc)
     target=pc-BASE+((ins&0x03fffffc)^0x02000000)-0x02000000
     display.append(["local",target,bits(R.UC_PPC_REG_FPR1),bits(R.UC_PPC_REG_FPR2)])
-    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+    # Allow the actual branch instruction to enter the original nested helper.
 cpu.hook_add(UC_HOOK_CODE,manager_draw,begin=BASE+0x30b04,end=BASE+0x30b04)
+mh=0x18ca8;model=0x20e30c;model_mem=DATA+model
+cpu.mem_map((BASE+mh)&~4095,4096);cpu.mem_map(model_mem&~4095,4096)
+mc=bytearray(d[ss[1][0]+mh:ss[1][0]+mh+0xc8]);model_imports={}
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not mh<=off<mh+len(mc):continue
+        if kind==10 and module==0:model_imports[BASE+off]=val
+        elif kind in (4,6):
+            assert module==12
+            if s==4 or (s==5 and val in (0x20e324,0x20e328)):
+                cpu.mem_write(DATA+val,d[ss[s][0]+val:ss[s][0]+val+4])
+            val+=DATA;struct.pack_into('>H',mc,off-mh,(val if kind==4 else (val+0x8000)>>16)&65535)
+cpu.mem_write(BASE+mh,bytes(mc));cpu.mem_write(model_mem+20,d[ss[5][0]+model+20:ss[5][0]+model+24])
+def model_service(cpu,pc,*_):
+    reg=lambda i:cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i)))
+    bits=lambda i:struct.unpack(">I",struct.pack(">f",struct.unpack(">d",cpu.reg_read(getattr(R,"UC_PPC_REG_FPR"+str(i))).to_bytes(8,"big"))[0]))[0]
+    if pc==BASE+mh+0xc4:
+        display[-1][1]["field20Restored"]=read32(model_mem+20);return
+    if pc==BASE+mh+0x98:
+        assert reg(3)==model_mem and reg(4)==0x12345678
+        ins=read32(pc);target=pc-BASE+((ins&0x03fffffc)^0x02000000)-0x02000000
+        call=["local",target,model,"previousReturn"]
+    else:
+        dst=model_imports[pc];args=[]
+        if dst==0x80116ad0:
+            display.append(["modelDraw",dict(model=model,field20During=read32(model_mem+20),calls=[])])
+            args=[reg(3)-DATA]
+        elif dst==0x80114e30:args=[reg(3),bits(1),bits(2),bits(3)]
+        elif dst==0x80033248:
+            args=[reg(3),reg(4),bits(1)];cpu.reg_write(R.UC_PPC_REG_3,0x12345678)
+        call=["engine",dst,*args]
+    display[-1][1]["calls"].append(call)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in [*model_imports,BASE+mh+0x98,BASE+mh+0xc4]:cpu.hook_add(UC_HOOK_CODE,model_service,begin=pc,end=pc)
 def manager_run(entry,arg=manager):
     cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,arg)
     cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x238)
-    cpu.emu_start(BASE+entry,BASE+0x238,count=400)
+    cpu.emu_start(BASE+entry,BASE+0x238,count=1000)
     assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x238
 for before,slot in itertools.product(range(11),(0,1)):
     for flags,(linked,byte1,parent) in itertools.product((0,0x4000),((True,0,None),(False,0,None),(False,1,False),(False,-1,True))):

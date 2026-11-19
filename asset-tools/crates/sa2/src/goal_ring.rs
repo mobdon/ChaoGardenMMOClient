@@ -71,6 +71,25 @@ struct PositionRoutine {
     initial: [u32; 2],
     step: f32,
     display_helper: u32,
+    model_draw: PositionModel,
+}
+#[derive(Debug)]
+struct PositionModel {
+    model: u32,
+    texture: u32,
+    base: f32,
+    bias: f32,
+    colors: [u32; 2],
+    submit: u32,
+}
+impl PositionModel {
+    fn trace(&self, radius: f32, ratio: f32) -> Value {
+        let scale = (radius / self.base).to_bits();
+        json!({"model":self.model,"field20During":(self.bias+radius).to_bits(),"calls":[
+        ["engine",0x80116ad0u32,self.texture],["engine",0x80115d50u32],["engine",0x80114e30u32,0,scale,scale,scale],
+        ["engine",0x80033248u32,self.colors[0],self.colors[1],ratio.to_bits()],
+        ["local",self.submit,self.model,"previousReturn"],["engine",0x80115d9cu32]],"field20Restored":self.base.to_bits()})
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -207,6 +226,10 @@ impl PositionRoutine {
                             self.display_helper,
                             radius.to_bits(),
                             (radius / limit).to_bits()
+                        ]));
+                        display.push(json!([
+                            "modelDraw",
+                            self.model_draw.trace(radius, radius / limit)
                         ]));
                         display.push(json!(["engine", 0x80115d9cu32]));
                     }
@@ -572,6 +595,48 @@ impl Program {
                         let display_helper = site
                             .checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
                             .ok_or_else(invalid)?;
+                        let h = display_helper;
+                        let field = |off, section| {
+                            rel.reference(1, h + off)
+                                .filter(|r| {
+                                    r.module == info.module && r.section == section && r.kind == 4
+                                })
+                                .map(|r| r.addend)
+                                .ok_or_else(invalid)
+                        };
+                        for (off, dest) in [
+                            (0x54, 0x80116ad0),
+                            (0x58, 0x80115d50),
+                            (0x6c, 0x80114e30),
+                            (0x8c, 0x80033248),
+                            (0x9c, 0x80115d9c),
+                        ] {
+                            if !rel
+                                .reference(1, h + off)
+                                .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == dest)
+                            {
+                                return Err(invalid());
+                            }
+                        }
+                        let model = field(0x2a, 5)?;
+                        let site = h + 0x98;
+                        let ins = word(instructions, site as usize)?;
+                        if ins & 0xfc000003 != 0x48000001 {
+                            return Err(invalid());
+                        }
+                        let model_draw = PositionModel {
+                            model,
+                            texture: field(0x52, 5)?,
+                            base: f32::from_bits(word(rel.data(5)?, model as usize + 20)?),
+                            bias: f32::from_bits(word(rel.data(4)?, field(0x3a, 4)? as usize)?),
+                            colors: [
+                                word(rel.data(5)?, field(0x76, 5)? as usize)?,
+                                word(rel.data(5)?, field(0x82, 5)? as usize)?,
+                            ],
+                            submit: site
+                                .checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
+                                .ok_or_else(invalid)?,
+                        };
                         let tick = data(0x42, 1)?;
                         let hook = data(0xc2, 1)?;
                         if manifest::sha256(
@@ -606,6 +671,7 @@ impl Program {
                             entry,
                             task_entry: tick,
                             display_helper,
+                            model_draw,
                             step,
                             label: data(0x4a, 5)?,
                             callbacks: [data(0x66, 1)?, data(0x72, 1)?],
