@@ -80,9 +80,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod city_land;
 
+pub mod checkpoint;
 pub mod emerald_path;
 pub mod fan_stage;
 pub mod goal_ring;
+pub mod kart_course;
 pub mod message_bank;
 pub mod mission_ranks;
 pub mod stage20;
@@ -90,5 +92,3 @@ pub mod stage_fog;
 pub mod stage_land;
 pub mod stage_lighting;
 pub mod task_coverage;
-pub mod kart_course;
-pub mod checkpoint;

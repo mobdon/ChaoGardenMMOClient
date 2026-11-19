@@ -1,0 +1,225 @@
+[
+  {
+    "source": "data/sa2/maps/zone_1/act_1/entities/enemies.csv",
+    "level_ids": [
+      0
+    ],
+    "count": 15,
+    "source_git_blob": "0fdc06be400582c558c5f109e0de75779a05af76",
+    "positions_sha256": "8e4cab398831a7a880ea69230609b2229b0eb8e983691c8a12bd8a41aef99d1e"
+  },
+  {
+    "source": "data/sa2/maps/zone_1/act_2/entities/enemies.csv",
+    "level_ids": [
+      1,
+      3
+    ],
+    "count": 14,
+    "source_git_blob": "97d16306ec19b0610dc96bd9c50f1973a085adee",
+    "positions_sha256": "5c44a53f315b44ee92ac7b28ea5423c19dbcc074640ffce56b49f6dd5df9544f"
+  },
+  {
+    "source": "data/sa2/maps/zone_1/act_boss/entities/enemies.csv",
+    "level_ids": [
+      2
+    ],
+    "count": 0,
+    "source_git_blob": "014e80c418579f353135879a25d462e98ee73408",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_2/act_1/entities/enemies.csv",
+    "level_ids": [
+      4
+    ],
+    "count": 31,
+    "source_git_blob": "09dde6173e393e463ef24e281447880d46579c84",
+    "positions_sha256": "0d6612475565a34264705be41c629f4abcd0156c7db6135a8625a4470ae9b937"
+  },
+  {
+    "source": "data/sa2/maps/zone_2/act_2/entities/enemies.csv",
+    "level_ids": [
+      5,
+      7
+    ],
+    "count": 37,
+    "source_git_blob": "b85539ba8ae273e2ad41938fb9be2f5a5b131ae2",
+    "positions_sha256": "5094ba9af00fddb32111a0fe7f557116bdbaf349afe34870f45a84a28e34f361"
+  },
+  {
+    "source": "data/sa2/maps/zone_2/act_boss/entities/enemies.csv",
+    "level_ids": [
+      6
+    ],
+    "count": 0,
+    "source_git_blob": "874f2ec135d9b73e123a57cbebc9ac78651e6a9d",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_3/act_1/entities/enemies.csv",
+    "level_ids": [
+      8
+    ],
+    "count": 26,
+    "source_git_blob": "e39c6adb11e2cd39b6e907eddfec9555b5ef37d4",
+    "positions_sha256": "119e80046ced9c902c4619aa52b6168503c087f3a65a14b1c299c34c92b3d4bb"
+  },
+  {
+    "source": "data/sa2/maps/zone_3/act_2/entities/enemies.csv",
+    "level_ids": [
+      9,
+      11
+    ],
+    "count": 20,
+    "source_git_blob": "46e561830f83300a16d108045f015761783ed94c",
+    "positions_sha256": "7d4708cfd18f8aa37a6471e603b65a3eb15738df89d485f7450443bcc5ddda8a"
+  },
+  {
+    "source": "data/sa2/maps/zone_3/act_boss/entities/enemies.csv",
+    "level_ids": [
+      10
+    ],
+    "count": 0,
+    "source_git_blob": "b160b79000dcecdd550638e08efe695bbba8729c",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_4/act_1/entities/enemies.csv",
+    "level_ids": [
+      12
+    ],
+    "count": 28,
+    "source_git_blob": "f563d52ccf7f924d607b7e6c0c60bd81cc38dcee",
+    "positions_sha256": "44d9127f93bd4e92dd30b6fcb618dff9ae62ee013c919cca39a11389ed8209b0"
+  },
+  {
+    "source": "data/sa2/maps/zone_4/act_2/entities/enemies.csv",
+    "level_ids": [
+      13,
+      15
+    ],
+    "count": 26,
+    "source_git_blob": "055f26541966be909076c6211b7536015e18ee0f",
+    "positions_sha256": "75605bc835eb8f3d8337d345eb7d1114707127a7bd87a2096c05a4fa370810a9"
+  },
+  {
+    "source": "data/sa2/maps/zone_4/act_boss/entities/enemies.csv",
+    "level_ids": [
+      14
+    ],
+    "count": 0,
+    "source_git_blob": "522b1e8ab87de75f2892f1d2fec356a9f70751a0",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_5/act_1/entities/enemies.csv",
+    "level_ids": [
+      16
+    ],
+    "count": 17,
+    "source_git_blob": "1429f313818fbcb682ed51227c084d68f00f68f6",
+    "positions_sha256": "5f199e91b56b6f908d34e28dfb71c7c626c2e6c655bf120230e9eaffb23022f3"
+  },
+  {
+    "source": "data/sa2/maps/zone_5/act_2/entities/enemies.csv",
+    "level_ids": [
+      17,
+      19
+    ],
+    "count": 18,
+    "source_git_blob": "94dd7874633fc5afa1b6710718cc0859078f5a87",
+    "positions_sha256": "08425dec33cf0056e8da20e931f0a9c30a5a0f2772589019bde16e4d69ceaa4c"
+  },
+  {
+    "source": "data/sa2/maps/zone_5/act_boss/entities/enemies.csv",
+    "level_ids": [
+      18
+    ],
+    "count": 0,
+    "source_git_blob": "014e80c418579f353135879a25d462e98ee73408",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_6/act_1/entities/enemies.csv",
+    "level_ids": [
+      20
+    ],
+    "count": 26,
+    "source_git_blob": "d371f49027e8d20f7e8f6108a709d89267813bcc",
+    "positions_sha256": "724c19b335bba7e2131f3b531c92a61ad09ec07fcee9ccc499eae24ec7825b3b"
+  },
+  {
+    "source": "data/sa2/maps/zone_6/act_2/entities/enemies.csv",
+    "level_ids": [
+      21,
+      23
+    ],
+    "count": 24,
+    "source_git_blob": "40786ef567c11617f5ff3b69259990a3fb8987e6",
+    "positions_sha256": "3d6ba59aaa3fa763453fc8825323ca2ebc644e38ab91f6e4cb14e01d97d51ea4"
+  },
+  {
+    "source": "data/sa2/maps/zone_6/act_boss/entities/enemies.csv",
+    "level_ids": [
+      22
+    ],
+    "count": 0,
+    "source_git_blob": "dd16a29753694b503611e4a919204d50caedf9e7",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_7/act_1/entities/enemies.csv",
+    "level_ids": [
+      24
+    ],
+    "count": 59,
+    "source_git_blob": "5d3e4770dae9b2383d422fd0819ba24daaf5b548",
+    "positions_sha256": "50e965baaa204b275a68d9eb60fc50aba4759993b46e98d0615a33526a82b543"
+  },
+  {
+    "source": "data/sa2/maps/zone_7/act_2/entities/enemies.csv",
+    "level_ids": [
+      25,
+      27
+    ],
+    "count": 51,
+    "source_git_blob": "90e8e3dd906c9e5452f58bfabf37a1d548125788",
+    "positions_sha256": "3dfab981dbd8a4b97015b06f7b0ea84a563808dd9e9468cf3c9e737b75d04e1d"
+  },
+  {
+    "source": "data/sa2/maps/zone_7/act_boss/entities/enemies.csv",
+    "level_ids": [
+      26
+    ],
+    "count": 0,
+    "source_git_blob": "522b1e8ab87de75f2892f1d2fec356a9f70751a0",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_final/act_xx/entities/enemies.csv",
+    "level_ids": [
+      28
+    ],
+    "count": 0,
+    "source_git_blob": "3da06818a9a6e1467b6e3d73324a408024b60121",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_final/act_ta53/entities/enemies.csv",
+    "level_ids": [
+      29
+    ],
+    "count": 0,
+    "source_git_blob": "dd16a29753694b503611e4a919204d50caedf9e7",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "data/sa2/maps/zone_final/act_unused/entities/enemies.csv",
+    "level_ids": [
+      30
+    ],
+    "count": 0,
+    "source_git_blob": "459e57585d9855f0b05f2645b8960cf6daaefd2d",
+    "positions_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]
