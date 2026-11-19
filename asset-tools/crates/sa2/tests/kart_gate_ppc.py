@@ -561,9 +561,20 @@ if len(sys.argv)>4:
             # world velocity, distinct from the rotated local drift vector.
             moving["contact"]=dict(work_28c=31,work_44=1,query=dict(previous_position=[9,4,3],
                 result=dict(return_word=1,resolved_position=[8,5,7])))
+            moving["audio"]=dict(work_44=1,work_28c=31,work_284=0,piece_id=0,magnitude_return=20)
+            winding["drift_tick"]["audio"]=dict(work_44=1,work_28c=0,work_284=0,piece_id=0)
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-drift-contact.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
-            event=json.loads(out.read_text())["updates"][-3];collision=event["driftContact"]
+            timeline=json.loads(out.read_text())["updates"]
+            event=timeline[-3];collision=event["driftContact"]
+            sounds=[u for u in timeline if "driftAudio" in u]
+            assert [u["driftTick"]["vehicle_state"] for u in sounds]==[2,2,2,2,3,3,0]
+            for u in sounds[:-1]:
+                assert u["driftAudio"]["calls"][-1]["play"]["cue"]==16
+                assert u["driftAudio"]["calls"][-1]["play"]["position"]==u["driftTick"]["position"]
+            assert event["driftAudio"]["calls"][-2]["pitch"]["value"]==5120
+            assert sounds[-1]["driftAudio"]["calls"][-1]["pitch"]["value"]==0
+            del moving["audio"], winding["drift_tick"]["audio"]
             assert collision["request"]["to"]==event["driftTick"]["position"] and collision["request"]["from"]==[9,4,3]
             assert collision["response"]["velocity"]==[-1,1,4]
             assert collision["response"]["calls"][0]["Effect10860"]["velocity"]==[0,0,20]

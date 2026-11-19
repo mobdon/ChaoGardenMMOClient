@@ -878,6 +878,7 @@ pub fn story_sequence(
                 }
                 recovered_pose = None;
                 let start = snapshot.take();
+                let audio = drift_tick.audio.take();
                 let mut context = drift_tick.contact.take();
                 if let Some(ctx) = &mut context {
                     if scan_flag.is_some_and(|flag| flag != ctx.work_44 as u32) {
@@ -897,18 +898,29 @@ pub fn story_sequence(
                     .filter(|s| matches!(s, 2 | 3))
                     .ok_or_else(|| Error::invalid("drift tick requires state 2 or 3"))?;
                 let row = sample.take();
+                let held = drift_tick.held(row.and_then(|(_, _, held, _)| held))?;
                 let next = windup
                     .as_mut()
                     .ok_or_else(|| Error::invalid("missing normal-drive drift entry"))?
                     .advance(
                         bytes,
                         drift_tick,
-                        row.and_then(|(_, _, held, _)| held),
+                        held,
                         row.map(|(stick, _, _, _)| stick),
                         state,
                     )?;
                 vehicle = Some(next.state());
                 let mut event = json!({"driftTick":next});
+                if let Some(a) = audio {
+                    if scan_flag.is_some_and(|v| v != a.work_44 as u32)
+                        || context
+                            .as_ref()
+                            .is_some_and(|c| c.work_44 != a.work_44 || c.work_28c != a.work_28c)
+                    {
+                        return Err(Error::invalid("drift audio conflicts with vehicle work"));
+                    }
+                    event["driftAudio"] = json!(a.run(&rel, mode, &next, velocity, held)?);
+                }
                 if let Some(ctx) = context {
                     let response = ctx.query.apply(
                         constants,

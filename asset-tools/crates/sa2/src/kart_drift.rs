@@ -41,6 +41,7 @@ pub struct Update {
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryTick {
     pub(crate) contact: Option<DriveContact>,
+    pub(crate) audio: Option<DriftAudio>,
     heading: Option<i32>,
     position: Option<[f32; 3]>,
     velocity: [f32; 3],
@@ -56,7 +57,53 @@ pub(crate) struct DriveContact {
     pub(crate) work_28c: i32,
     pub(crate) work_44: i32,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DriftAudio {
+    pub(crate) work_44: i32,
+    work_284: i32,
+    pub(crate) work_28c: i32,
+    piece_id: Option<u8>,
+    magnitude_return: Option<f32>,
+}
+impl DriftAudio {
+    pub(crate) fn run(
+        self,
+        rel: &crate::city_rel::CityRel,
+        mode: i32,
+        motion: &Update,
+        velocity: [f32; 3],
+        held: u32,
+    ) -> Result<crate::kart_driving_audio::Output> {
+        crate::kart_driving_audio::tick_verified(
+            rel,
+            crate::kart_driving_audio::Input {
+                work_44: self.work_44,
+                vehicle_state: motion.vehicle_state,
+                position: motion.position,
+                velocity_xz: [velocity[0], velocity[2]],
+                controls: crate::kart_driving_audio::Controls {
+                    profile: mode as usize,
+                    alternate: false,
+                    work_284: self.work_284,
+                    work_110: i32::from(held & 4 != 0),
+                    work_114: i32::from(held & 0x402 != 0 && self.work_28c <= 10),
+                    piece_id: self.piece_id,
+                    magnitude_return: self.magnitude_return,
+                },
+            },
+        )
+    }
+}
 impl StoryTick {
+    pub(crate) fn held(&self, sampled: Option<u32>) -> Result<u32> {
+        if sampled.zip(self.buttons_held).is_some_and(|(a, b)| a != b) {
+            return Err(Error::invalid("drift buttons conflict with controller"));
+        }
+        sampled
+            .or(self.buttons_held)
+            .ok_or_else(|| Error::invalid("missing held buttons for drift windup"))
+    }
     pub(crate) fn bind_task_pose(&mut self, position: [f32; 3], yaw: i32) -> Result<()> {
         if self.heading.is_some_and(|v| v != yaw)
             || self
@@ -99,16 +146,10 @@ impl DriftCarry {
         &mut self,
         bytes: &[u8],
         s: StoryTick,
-        held: Option<u32>,
+        held: u32,
         stick: Option<i16>,
         state: i32,
     ) -> Result<Update> {
-        if held.zip(s.buttons_held).is_some_and(|(a, b)| a != b) {
-            return Err(Error::invalid("drift buttons conflict with controller"));
-        }
-        let held = held
-            .or(s.buttons_held)
-            .ok_or_else(|| Error::invalid("missing held buttons for drift windup"))?;
         let sustained = if state == 3 {
             if s.work_fc.zip(self.work_fc).is_some_and(|(a, b)| a != b) {
                 return Err(Error::invalid("conflicting sustained drift rotation"));

@@ -70,4 +70,12 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         u.emu_start(base[1]+0x5774,base[1]+0x200,count=400)
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x200
         assert got==dict(work_284=get(wk+0x284,"i")[0],calls=calls),(i,got,calls)
-print("40 vehicle sound dispatches matched through return.")
+        # Execute the original caller through the return to contact. State 3
+        # can follow windup movement; state 0 can follow sustained drift.
+        for start in ([0x2498] if state==2 else [0x2498,0x24f8] if state==3 else [0x24f8] if state==0 else []):
+            put(wk+0x284,"i",flag);calls=[]
+            u.reg_write(R.UC_PPC_REG_29,parent);u.reg_write(R.UC_PPC_REG_3,0)
+            u.emu_start(base[1]+start,base[1]+start+8,count=400)
+            assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+start+8
+            assert got==dict(work_284=get(wk+0x284,"i")[0],calls=calls),(start,i)
+print("40 vehicle sound dispatches and 32 drift caller sound traces matched through return.")
