@@ -138,6 +138,9 @@ pub struct TickResult {
     pub dispatches: Vec<Dispatch>,
 }
 pub fn tick(bytes: &[u8], input: RampTick) -> Result<TickResult> {
+    panel_contacts(bytes, input, false)
+}
+fn panel_contacts(bytes: &[u8], input: RampTick, dash: bool) -> Result<TickResult> {
     if manifest::sha256(bytes) != HASH {
         return Err(Error::invalid("unsupported CartD.rel revision"));
     }
@@ -206,7 +209,11 @@ pub fn tick(bytes: &[u8], input: RampTick) -> Result<TickResult> {
             dispatches.push(Dispatch {
                 contact_index,
                 task: c.task,
-                matrix_input: [0., input.work_24, input.work_20],
+                matrix_input: if dash {
+                    [0., 0., -input.work_20]
+                } else {
+                    [0., input.work_24, input.work_20]
+                },
                 yaw: input.yaw,
                 call_8002f8c4: (c.post_response_work_44 != 0).then_some([
                     c.post_response_work_70,
@@ -302,5 +309,120 @@ pub fn response(bytes: &[u8], input: ResponseInput) -> Result<ResponseWrites> {
             );
         }
     }
+    Ok(out)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DashInput {
+    culled: bool,
+    mode: i8,
+    phase: u16,
+    cooldown: f32,
+    yaw: i32,
+    strength: f32,
+    collision_flags: u16,
+    registered_tasks: [u32; 6],
+    contacts: Vec<Contact>,
+    /// Matrix and engine math returns for each dispatched kart, in order.
+    responses: Option<Vec<DashMath>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashMath {
+    transformed_vector: [f32; 3],
+    work_274: i32,
+    magnitude_return: Option<f32>,
+    angle_return: Option<f64>,
+    turn_return: Option<i32>,
+}
+#[derive(Serialize)]
+pub struct DashUpdate {
+    mode: i8,
+    phase: u16,
+    cooldown: f32,
+    install_callbacks: Option<[u32; 2]>,
+    collision_init: Option<[u32; 3]>,
+    register_collision: bool,
+    uv_call: Option<[i32; 3]>,
+    dispatches: Vec<Dispatch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vehicle_writes: Option<Vec<ResponseWrites>>,
+}
+/// Native DASH PANEL callback 0xac40. Keep rotation input separate from the imported matrix result.
+pub fn dash(bytes: &[u8], s: DashInput) -> Result<DashUpdate> {
+    crate::kart_progress::verify(bytes)?;
+    let rel = CityRel::read_identified(bytes, 80)?;
+    if rel.local_pointer(5, 0x1600)? != Some((1, 0xac40)) {
+        return Err(Error::invalid("unexpected dash panel callback"));
+    }
+    let mut out = DashUpdate {
+        mode: s.mode,
+        phase: s.phase,
+        cooldown: s.cooldown,
+        install_callbacks: None,
+        collision_init: None,
+        register_collision: false,
+        uv_call: None,
+        dispatches: vec![],
+        vehicle_writes: None,
+    };
+    let mut math = s.responses.map(Vec::into_iter);
+    if s.culled {
+        if math.as_ref().is_some_and(|m| m.len() != 0) {
+            return Err(Error::invalid("unused dash panel response"));
+        }
+        return Ok(out);
+    }
+    if s.mode == 0 {
+        out.mode = 1;
+        out.install_callbacks = Some([0xae40, 0xaed4]);
+        out.collision_init = Some([0x2ed428, 1, 4]);
+        out.cooldown = f32::from_be_bytes(rel.data(4)?[0x3d8..0x3dc].try_into().unwrap());
+    } else {
+        let controls: Vec<_> = s.contacts.iter().map(|c| c.post_response_work_44).collect();
+        let r = panel_contacts(
+            bytes,
+            RampTick {
+                cooldown: s.cooldown,
+                collision_flags: s.collision_flags,
+                registered_tasks: s.registered_tasks,
+                yaw: s.yaw,
+                work_20: s.strength,
+                work_24: 0.,
+                contacts: s.contacts,
+            },
+            true,
+        )?;
+        out.cooldown = r.cooldown;
+        if let Some(m) = math.as_mut() {
+            let mut writes = Vec::new();
+            for hit in &r.dispatches {
+                let obs = m
+                    .next()
+                    .ok_or_else(|| Error::invalid("missing dash panel response"))?;
+                writes.push(response(
+                    bytes,
+                    ResponseInput {
+                        vector: obs.transformed_vector,
+                        work_44: controls[hit.contact_index],
+                        work_274: obs.work_274,
+                        magnitude_return: obs.magnitude_return,
+                        angle_return: obs.angle_return,
+                        turn_return: obs.turn_return,
+                    },
+                )?);
+            }
+            out.vehicle_writes = Some(writes);
+        }
+        out.dispatches = r.dispatches;
+    }
+    if math.as_ref().is_some_and(|m| m.len() != 0) {
+        return Err(Error::invalid("unused dash panel response"));
+    }
+    out.register_collision = true;
+    let phase = s.phase & 0x3fff;
+    out.uv_call = Some([0x42, 0, i32::from(phase)]);
+    out.phase = phase + 60;
     Ok(out)
 }

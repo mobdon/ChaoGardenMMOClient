@@ -4,7 +4,8 @@ from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
 
-cli,rel,private=map(Path,sys.argv[1:])
+cli,rel,private=map(Path,sys.argv[1:4])
+dash=sys.argv[4:]==["dash"]
 d=rel.read_bytes()
 assert hashlib.sha256(d).hexdigest()=="71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c"
 word=lambda i:struct.unpack_from(">I",d,i)[0]
@@ -20,7 +21,7 @@ for mod,at in struct.iter_unpack(">II",d[word(40):word(40)+word(44)]):
         if k==203:break
         if k==202:target=s;loc=0;continue
         loc+=delta
-        if target==1 and mod==80 and (0xbdf4<=loc<0xbf30 or 0x1714<=loc<0x17e8 or 0x5b90<=loc<0x5c30 or 0x979c<=loc<0x9810) and k in (4,6):
+        if target==1 and mod==80 and (0xbdf4<=loc<0xbf30 or 0xac40<=loc<0xaf34 or 0x1714<=loc<0x17e8 or 0x5b90<=loc<0x5c30 or 0x979c<=loc<0x9810) and k in (4,6):
             ptr=base[s]+a
             if loc==0x1716:registry=ptr
             if loc==0x97aa:course=ptr
@@ -35,6 +36,22 @@ u.reg_write(R.UC_PPC_REG_MSR,8192)
 kart=ram+0x2000;kart2=ram+0x2200
 def hook(u,addr,size,_):
     off=addr-base[1]
+    if dash:
+        if off==0xac60:
+            reg(3,int(culled))
+        elif off==0xacb0:
+            assert get(3)==panel
+            installs.extend([v-base[1] for v in read(panel+20,"2I")]);init.extend([get(4)-base[5],get(5),get(6)])
+        elif off==0xae0c:registered.append(get(3))
+        elif off==0xaf20:uv.extend([get(5),*read(get(6),"2h")])
+        else:
+            off={0xad68:0xbe90,0xad70:0xbe98,0xad7c:0xbea4,0xad8c:0xbeb4,0xad90:0xbeb8,
+                 0xad9c:0xbec4,0xadc0:0xbee8,0xaddc:0xbf04}.get(off,off)
+            return handle_contact(u,addr,off)
+        u.reg_write(R.UC_PPC_REG_PC,addr+4)
+        return
+    handle_contact(u,addr,off)
+def handle_contact(u,addr,off):
     if off not in (0xbe90,0xbe98,0xbea4,0xbeb4,0xbeb8,0xbec4,0xbee8,0xbf04,0x97ec,0x97fc,0x5c0c):return
     i=get(26)
     if off==0xbea4:trace.append(dict(contact_index=i,task=get(25),yaw=struct.unpack(">i",struct.pack(">I",get(4)))[0],call_8002f8c4=None,called_5b90=False,call_8006c97c=None,call_8006b710=None))
@@ -72,10 +89,33 @@ with tempfile.TemporaryDirectory(dir=private) as tmp:
                 put(task+128+72,"i",slot);put(task+128+188,"I",1)
             put(course+8,"I",ram+0x9100);put(indices+4,"I",3);put(ram+0x9103,"B",byte)
             obs.append(dict(task=task,post_response_work_44=enabled,post_response_work_70=37,post_response_work_48=slot,course_byte=byte,work_48_after_call=changed))
-        u.emu_start(base[1]+0xbdf4,base[1]+0xbf30,count=3000)
-        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xbf30
+        if dash:
+            phase=[0,16383,65535,16384][case%4];mode=0 if case==0 else 1;culled=case==1
+            panel=ram+0x700;put(panel+0x34,"I",work);put(work,"B",mode);put(work+6,"H",phase)
+            installs=[];init=[];registered=[];uv=[];reg(3,panel)
+            u.emu_start(base[1]+0xac54,base[1]+0xae28,count=3000)
+            assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xae28
+        else:
+            u.emu_start(base[1]+0xbdf4,base[1]+0xbf30,count=3000)
+            assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xbf30
         req=Path(tmp)/"request.json";out=Path(tmp)/f"{case}.json"
-        req.write_text(json.dumps(dict(cooldown=timer,collision_flags=flags,registered_tasks=[kart,0,0,0,0,kart2],yaw=-1234,work_20=11.5,work_24=-2.25,contacts=obs)))
-        subprocess.run([cli,"kart-ramp-tick",rel,out,req],check=True)
-        assert json.loads(out.read_text())==dict(cooldown=read(work+40,"f")[0],dispatches=trace)
-print("Matched 15 native contact loops including secondary helpers, table reload and timer writes.")
+        q=dict(cooldown=timer,collision_flags=flags,registered_tasks=[kart,0,0,0,0,kart2],yaw=-1234,work_20=11.5,work_24=-2.25,contacts=obs)
+        expected=dict(cooldown=read(work+40,"f")[0],dispatches=trace)
+        if dash:
+            del q["work_24"];q.update(strength=q.pop("work_20"),culled=culled,mode=mode,phase=phase)
+            expected.update(mode=read(work,"b")[0],phase=read(work+6,"H")[0],install_callbacks=installs or None,
+                            collision_init=init or None,register_collision=registered==[panel],uv_call=uv or None)
+        if dash and trace:
+            q["responses"]=[];expected["vehicle_writes"]=[]
+            for hit in trace:
+                # Matrix return is injected at the same boundary as the dedicated response oracle.
+                response=dict(transformed_vector=[3,0,-4],work_274=-12,angle_return=-.625,magnitude_return=5,turn_return=-192)
+                q["responses"].append(response);ref=dict(response)
+                ref["vector"]=ref.pop("transformed_vector");ref["work_44"]=obs[hit["contact_index"]]["post_response_work_44"]
+                req.write_text(json.dumps(ref));dest=Path(tmp)/f"response-{case}-{hit['contact_index']}.json"
+                subprocess.run([cli,"kart-ramp-response",rel,dest,req],check=True)
+                expected["vehicle_writes"].append(json.loads(dest.read_text()))
+        req.write_text(json.dumps(q))
+        subprocess.run([cli,"kart-dash-panel" if dash else "kart-ramp-tick",rel,out,req],check=True)
+        assert json.loads(out.read_text())==expected,(case,expected)
+print("Matched 15 native", "dash panel updates" if dash else "jump panel contact loops")
