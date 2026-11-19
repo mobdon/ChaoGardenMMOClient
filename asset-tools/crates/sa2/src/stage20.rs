@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    fog_header: Option<[u32; 4]>,
     background_draw: Option<BackgroundDraw>,
     background: Option<Background>,
     startup: Option<Startup>,
@@ -473,6 +474,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        fog_header,
         background_draw,
         background,
         startup,
@@ -502,6 +504,62 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some([flags, argb, max, min]) = fog_header {
+        let mut calls = Vec::new();
+        let mut emit = |site, args: Value| -> Result<()> {
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            calls.push(json!({"engine":r.addend,"args":args}));
+            Ok(())
+        };
+        let far = f32::from_bits(max) >= constant(0x116fa)?;
+        let (sites, kind, near) = if far {
+            (
+                vec![0x11710, 0x11724, 0x11738, 0x1173c],
+                0,
+                constant(0x1171a)?.to_bits(),
+            )
+        } else if flags & 2 != 0 {
+            let index = ((flags >> 16) & 15) as usize;
+            if index >= 6 {
+                return Err(Error::invalid("unmapped stage 20 fog mode"));
+            }
+            let table = rel
+                .reference(1, 0x11762)
+                .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+                .ok_or_else(invalid)?
+                .addend as usize;
+            let at = table + 4 * index;
+            let kind = u32::from_be_bytes(
+                rel.data(5)?
+                    .get(at..at + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            );
+            (vec![0x1176c, 0x11778, 0x1178c, 0x11790, 0x11794], kind, min)
+        } else {
+            (
+                vec![0x117a0, 0x117b4, 0x117c8, 0x117cc, 0x117d0],
+                5,
+                constant(0x117aa)?.to_bits(),
+            )
+        };
+        for (i, site) in sites.into_iter().enumerate() {
+            emit(
+                site,
+                match i {
+                    0 => json!([kind]),
+                    1 => json!([near, max]),
+                    2 => json!([argb.rotate_left(8)]),
+                    _ => json!([]),
+                },
+            )?;
+        }
+        report["fogApply"] = json!(calls);
+    }
     if let Some(d) = background_draw {
         report["backgroundDraw"] = background_draw_calls(&rel, d)?;
     }

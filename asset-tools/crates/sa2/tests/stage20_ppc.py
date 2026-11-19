@@ -963,3 +963,28 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["startup"]["fogLoad"]==fog_report
 print(len(cases),"fog manager and file-service paths matched")
+
+# Native single-buffer fog application; service float arguments are reported as IEEE words.
+def fog_apply_call(cpu,pc,*_):
+    site=pc-base[1]
+    if site in (0x11724,0x11778,0x117b4):
+        args=[int.from_bytes(struct.pack(">f",reg_float(cpu,r)),"big") for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2)]
+    elif site in (0x11710,0x11738,0x1176c,0x1178c,0x117a0,0x117c8):args=[cpu.reg_read(R.UC_PPC_REG_3)]
+    else:args=[]
+    calls.append(dict(engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x11710,0x11724,0x11738,0x1173c,0x1176c,0x11778,0x1178c,0x11790,0x11794,0x117a0,0x117b4,0x117c8,0x117cc,0x117d0):
+    u.hook_add(UC_HOOK_CODE,fog_apply_call,begin=base[1]+site,end=base[1]+site)
+headers=[f.read_bytes()[:16] for f in (game/"resource/gd_PC").glob("*fog*.bin")]
+assert len(headers)==38
+headers.extend(struct.pack(">IIff",mode<<16|2,0x12345678,distance,-16.) for mode in range(6) for distance in (99999.,100000.,100001.))
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,h in enumerate(headers):
+        calls=[];u.mem_write(fog_dst,h)
+        u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_3,fog_dst);u.reg_write(R.UC_PPC_REG_LR,stop)
+        u.emu_start(base[1]+0x116dc,stop,count=100);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],fog_header=struct.unpack(">4I",h))))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())["fogApply"]==calls
+print(len(headers),"single-buffer fog submissions matched")
