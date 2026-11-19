@@ -191,3 +191,12 @@ alpha. The offline oracle `tests/kart_finish_display_ppc.py CLI CartD.rel
 resultCart.prs PRIVATE_TMP_DIR` compares the native draw arguments and
 frame records for six cases. It stops at the engine sprite renderer; viewport
 internals, blending and final framebuffer pixels are not verified.
+
+When a field slot supplies its native kart index (`work_48`), the same field
+update resolves each call to CartD 0x5c38 into a `cue_requests` entry.
+Finish, first-place and sixth-place calls use columns +8, +12 and +16 of the
+24-byte row in section 5 at 0x3924. Negative IDs produce no engine request.
+An omitted index stays unresolved, including for a slot with a known place.
+The local field oracle runs the original selector for all 16 rows and three
+selectors, intercepting the engine at the cue submission. IDs represent
+requests, not a verified mapping into a localized audio bank or playback.

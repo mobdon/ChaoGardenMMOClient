@@ -332,6 +332,9 @@ pub struct RaceField {
 pub struct RaceSlot {
     #[serde(skip_serializing)]
     standing: StandingSlot,
+    /// Original kart work +0x48; an absent observation must not imply slot zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    work_48: Option<u8>,
     work_44: u32,
     place: i32,
     first_ticks: i32,
@@ -344,7 +347,61 @@ pub struct RaceFieldUpdate {
     finish_latched: bool,
     post_finish_ticks: i32,
     slots: Vec<RaceSlot>,
+    cue_requests: Vec<CueRequest>,
     calls: Vec<(usize, &'static str, Option<u8>)>,
+}
+
+#[derive(Serialize)]
+struct CueRequest {
+    slot: usize,
+    kind: u8,
+    work_48: Option<u8>,
+    resolution: CueResolution,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+enum CueResolution {
+    NeedsKartIndex,
+    Silent,
+    EngineRequest { id: i32 },
+}
+
+fn resolve_cues(
+    bytes: &[u8],
+    slots: &[RaceSlot],
+    calls: &[(usize, &str, Option<u8>)],
+) -> Result<Vec<CueRequest>> {
+    let module = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let data = module.data(5)?;
+    let mut requests = Vec::new();
+    for &(slot, name, kind) in calls {
+        if name != "cart_5c38" {
+            continue;
+        }
+        let kind = kind.ok_or_else(|| Error::invalid("missing kart cue selector"))?;
+        let work_48 = slots[slot].work_48;
+        let resolution = match work_48 {
+            None => CueResolution::NeedsKartIndex,
+            Some(index @ 0..=15) => {
+                // Section 1 +0x5c72, 0x5c8e and 0x5caa all relocate to this table.
+                let at = 0x3924 + usize::from(index) * 24 + 8 + usize::from(kind) * 4;
+                let id = i32::from_be_bytes(data[at..at + 4].try_into().unwrap());
+                if id < 0 {
+                    CueResolution::Silent
+                } else {
+                    CueResolution::EngineRequest { id }
+                }
+            }
+            _ => return Err(Error::invalid("unknown kart cue table index")),
+        };
+        requests.push(CueRequest {
+            slot,
+            kind,
+            work_48,
+            resolution,
+        });
+    }
+    Ok(requests)
 }
 
 /// CartD 0x8d70–0x913c, after the occupied slots' progress counters are updated.
@@ -395,7 +452,9 @@ pub fn field_update(bytes: &[u8], mut field: RaceField) -> Result<RaceFieldUpdat
             }
         }
     }
+    let cue_requests = resolve_cues(bytes, &field.slots, &calls)?;
     Ok(RaceFieldUpdate {
+        cue_requests,
         finish_latched: field.finish_latched,
         post_finish_ticks: field.post_finish_ticks,
         slots: field.slots,
