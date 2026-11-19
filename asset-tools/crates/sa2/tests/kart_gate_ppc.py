@@ -567,6 +567,30 @@ if len(sys.argv)>4:
             assert collision["request"]["to"]==event["driftTick"]["position"] and collision["request"]["from"]==[9,4,3]
             assert collision["response"]["velocity"]==[-1,1,4]
             assert collision["response"]["calls"][0]["Effect10860"]["velocity"]==[0,0,20]
+            # The windup and sustained arms both call impact and THEN fall recovery.
+            # Only a final state 4 may consume the signed impulse on the next tick.
+            for windup in (True,False):
+                steps=q["updates"][:4] if windup else q["updates"][:-2]
+                sample_q=dict(q,updates=json.loads(json.dumps(steps)))
+                drift=sample_q["updates"][-1]["drift_tick"]
+                offset=(wind[0] if windup else active)["work_68"]
+                ctx=json.loads(json.dumps(spin_q["updates"][-103]["boost_tick"]["drive"]["contact"]))
+                ctx["wall"]["vehicle_state"]=2 if windup else 3
+                ctx["recovery"]["work_68"]=offset
+                drift["contact"]=dict(work_44=1,work_28c=0,query=ctx)
+                sample_q["updates"].append(dict(spin_tick=spin_input))
+                req.write_text(json.dumps(sample_q));out=req.with_name(path.stem+f"-drift-impact-{windup}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                seq=json.loads(out.read_text());hit=seq["updates"][-2]["driftContact"]
+                impulse=1820 if offset>0 else -1820
+                assert hit["impact"]["work_b8"]==impulse and hit["recovery"]["vehicle"]["state"]==4
+                assert seq["updates"][-1]["spinTick"]["work_68"]==offset+impulse
+                ctx["previous_position"]=ctx["result"]["resolved_position"]=[7,-100000,5]
+                sample_q["updates"].pop()
+                req.write_text(json.dumps(sample_q));out=req.with_name(path.stem+f"-drift-impact-fall-{windup}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                seq=json.loads(out.read_text());hit=seq["updates"][-1]["driftContact"]
+                assert hit["impact"]["state"]==4 and hit["recovery"]["vehicle"]["state"]==seq["vehicleState"]==10
             # Full vehicle updates clear the flag word before sampling. The
             # dispatch selected on entry sets bit 2 even when this tick exits.
             del entry["boost_tick"]["drive"]["drift"]["work_10c"]

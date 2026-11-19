@@ -931,6 +931,10 @@ pub fn story_sequence(
                         crossing_positions = Some(recovered.positions);
                         recovered_pose = Some(recovered);
                     }
+                    spin_carry = response.spin_carry();
+                    if recovered_pose.is_none() {
+                        vehicle = response.wall_state().or(vehicle);
+                    }
                     event["driftContact"] = json!(response);
                 }
                 if !matches!(vehicle, Some(2 | 3)) {
