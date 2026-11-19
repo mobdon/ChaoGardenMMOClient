@@ -281,7 +281,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 88]);
+    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]

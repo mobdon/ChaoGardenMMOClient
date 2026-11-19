@@ -27,6 +27,8 @@ pub struct Program {
     #[serde(skip)]
     child_actions: Vec<(u32, u32)>,
     #[serde(skip)]
+    action_services: Vec<Option<ActionServices>>,
+    #[serde(skip)]
     child_effect: [f32; 4],
     #[serde(skip)]
     child_helpers: [u32; 2],
@@ -50,6 +52,12 @@ fn word(bytes: &[u8], off: usize) -> Result<u32> {
             .try_into()
             .unwrap(),
     ))
+}
+#[derive(Debug)]
+struct ActionServices {
+    first: u16,
+    second: Option<u16>,
+    scalar: u32,
 }
 impl Program {
     pub fn read(level: u16, bytes: &[u8]) -> Result<Self> {
@@ -278,12 +286,54 @@ impl Program {
         };
         let table = local_ref(0xca, 5)?;
         let mut child_actions = Vec::new();
+        let mut action_services = Vec::new();
         for i in 0..11 {
             let at = table + i * 8;
             let (section, func) = rel.local_pointer(5, at + 4)?.ok_or_else(invalid)?;
             if section != 1 {
                 return Err(invalid());
             }
+            let service = if matches!(i, 1 | 3 | 4 | 7) {
+                let imm = |off| -> Result<u16> {
+                    let ins = word(instructions, (func + off) as usize)?;
+                    let expected = if off == 0x14 { 0x3860 } else { 0x3880 };
+                    if ins >> 16 != expected {
+                        return Err(invalid());
+                    }
+                    Ok(ins as u16)
+                };
+                let short = i == 7;
+                for (off, address) in [
+                    (0x18, 0x80063524),
+                    (if short { 0x2c } else { 0x38 }, 0x80035a88),
+                ] {
+                    if !rel
+                        .reference(1, func + off)
+                        .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == address)
+                    {
+                        return Err(invalid());
+                    }
+                }
+                if !short
+                    && !rel
+                        .reference(1, func + 0x24)
+                        .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x80063584)
+                {
+                    return Err(invalid());
+                }
+                let r = rel
+                    .reference(1, func + if short { 0x26 } else { 0x32 })
+                    .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
+                    .ok_or_else(invalid)?;
+                Some(ActionServices {
+                    first: imm(0x14)?,
+                    second: if short { None } else { Some(imm(0x20)?) },
+                    scalar: word(rel.data(4)?, r.addend as usize)?,
+                })
+            } else {
+                None
+            };
+            action_services.push(service);
             child_actions.push((word(rel.data(5)?, at as usize)?, func));
         }
         let scalar = |off| -> Result<f32> {
@@ -467,6 +517,7 @@ impl Program {
             child_mode_one,
             child_idle_step,
             child_actions,
+            action_services,
             child_effect,
             child_helpers,
             child_collision_descriptor,
@@ -755,6 +806,15 @@ impl Program {
         }
         Ok(json!(frames))
     }
+    fn action_calls(&self, index: usize, slot: i32) -> Option<Vec<Value>> {
+        let s = self.action_services.get(index)?.as_ref()?;
+        let mut calls = vec![json!(["engine", 0x80063524u32, s.first])];
+        if let Some(v) = s.second {
+            calls.push(json!(["engine", 0x80063584u32, slot, v]));
+        }
+        calls.push(json!(["engine",0x80035a88u32,slot,{"f1Bits":s.scalar}]));
+        Some(calls)
+    }
     pub fn child_contact(&self, c: ChildContact) -> Result<Value> {
         let bad = || Error::invalid("inconsistent child mode-2 contact observations");
         let mut calls = Vec::new();
@@ -813,6 +873,9 @@ impl Program {
                     let &(_, callback) = self.child_actions.get(after).ok_or_else(bad)?;
                     events.push(json!(["local", self.child_helpers[0], slot, code]));
                     events.push(json!(["local", callback, "task", slot]));
+                    if let Some(nested) = self.action_calls(after, slot) {
+                        events.extend(nested);
+                    }
                     events.push(json!(["engine", 0x800168c8u32, slot]));
                 } else if a.indices.is_some() {
                     return Err(bad());

@@ -386,7 +386,12 @@ def activated(cpu,pc,*_):
             events.append(['local',addr,*vectors,f])
     elif off==0xf4:
         assert reg(3)==TASK
-        events.append(['local',cpu.reg_read(R.UC_PPC_REG_LR)-BASE,'task',reg(4)])
+        callback=cpu.reg_read(R.UC_PPC_REG_LR)
+        events.append(['local',callback-BASE,'task',reg(4)])
+        if callback in action_entries:
+            cpu.reg_write(R.UC_PPC_REG_LR,pc+4)
+            cpu.reg_write(R.UC_PPC_REG_PC,callback)
+            return
     else:
         args={0xfc:[reg(3)],0x18c:[reg(i) for i in range(3,7)],0x1a0:[reg(i) for i in range(3,7)]}.get(off)
         if args is None:
@@ -396,9 +401,39 @@ def activated(cpu,pc,*_):
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for off in (0xd4,0xf4,0xfc,0x174,0x18c,0x1a0,0x1b4,0x1dc):
     cpu.hook_add(UC_HOOK_CODE,activated,begin=BASE+off,end=BASE+off)
-for before in range(11):
+# Enter four native action routines; leave only their imported services stubbed.
+action_entries=set();action_imports={}
+cpu.mem_map((BASE+197784)&~4095,4096)
+for index,length in ((1,0x50),(3,0x50),(4,0x50),(7,0x44)):
+    dest=struct.unpack('>I',cpu.mem_read(table_addr+8*index+4,4))[0]
+    start=dest-BASE;code=bytearray(d[ss[1][0]+start:ss[1][0]+start+length])
+    for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+        section=off=0
+        while True:
+            delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+            if kind==203:break
+            if kind==202:section=s;off=0;continue
+            off+=delta
+            if section!=1 or not start<=off<start+length:continue
+            if module==0 and kind==10:action_imports[BASE+off]=val
+            elif kind in (4,6):
+                assert module==12 and s==4
+                cpu.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4]);val+=DATA
+                struct.pack_into('>H',code,off-start,(val if kind==4 else (val+0x8000)>>16)&65535)
+    cpu.mem_write(dest,bytes(code));action_entries.add(dest)
+def action_engine(cpu,pc,*_):
+    dst=action_imports[pc];args=[cpu.reg_read(R.UC_PPC_REG_3)]
+    if dst==0x80063584:args.append(cpu.reg_read(R.UC_PPC_REG_4))
+    elif dst==0x80035a88:
+        f=struct.unpack('>d',cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,'big'))[0]
+        args.append(dict(f1Bits=struct.unpack('>I',struct.pack('>f',f))[0]))
+    else:assert dst==0x80063524
+    events.append(['engine',dst,*args])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in action_imports:cpu.hook_add(UC_HOOK_CODE,action_engine,begin=pc,end=pc)
+for before,slot in itertools.product(range(11),(0,1)):
     for flags,(linked,byte1,parent) in itertools.product((0,0x4000),((True,0,None),(False,0,None),(False,1,False),(False,-1,True))):
-        slot=before%2;gate=slot;after=10-before;events=[];calls=[];pos=[1.5,-7.25,30.]
+        gate=slot;after=10-before;events=[];calls=[];pos=[1.5,-7.25,30.]
         cpu.mem_write(TASK+52,struct.pack('>III',WORK,TASK+0x200,before))
         cpu.mem_write(TASK+8,struct.pack('>I',TASK+0x600));cpu.mem_write(TASK+48,struct.pack('>I',linked))
         cpu.mem_write(TASK+0x630,struct.pack('>I',bool(parent)));cpu.mem_write(WORK,struct.pack('>Bb2xH',2,byte1,4))

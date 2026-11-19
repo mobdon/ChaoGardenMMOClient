@@ -102,3 +102,10 @@ lookup (no task link and byte1 nonzero). The `tail` observation supplies
 work36 and game byte 55 at final registration. On accepted contact the task
 switches to mode 3. Nested calls are observed at their boundaries; this
 does not establish their gameplay effects or a mission result.
+
+For action indices 1, 3, 4 and 7 the trace also expands the selected
+callback's nested engine calls in order. The stage supplies their integer
+arguments and the exact single-precision float passed in register f1
+(`f1Bits`). No resulting change to player stats, score or inventory is
+inferred from these requests. The comparison follows the original callback
+inside the contact handler for both player slots.
