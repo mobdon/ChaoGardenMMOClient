@@ -25,6 +25,10 @@ pub struct Program {
     #[serde(skip)]
     spawn_constants: [f32; 6],
     spawn_helper: u32,
+    #[serde(skip)]
+    record_constants: [f32; 5],
+    #[serde(skip)]
+    record_pool: u32,
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     #[serde(skip)]
@@ -558,6 +562,52 @@ impl Program {
                 return Err(invalid());
             }
         }
+        if manifest::sha256(
+            instructions
+                .get(spawn_helper as usize..spawn_helper as usize + 0x174)
+                .ok_or_else(invalid)?,
+        ) != "9f13765c1a6f6c64789609fd9b17df55278cace3ec6be04dc82fdea64deafc25"
+        {
+            return Err(invalid());
+        }
+        let record_ref = |off, section| -> Result<u32> {
+            let h = rel.reference(1, spawn_helper + off).ok_or_else(invalid)?;
+            let l = rel
+                .reference(1, spawn_helper + off + 4)
+                .ok_or_else(invalid)?;
+            if (h.module, h.kind, h.section) != (info.module, 6, section)
+                || (l.module, l.kind, l.section, l.addend) != (info.module, 4, section, h.addend)
+            {
+                return Err(invalid());
+            }
+            Ok(h.addend)
+        };
+        for (off, addr) in [(0x34, 0x80032910), (0x78, 0x8010d940), (0xf0, 0x8010d940)] {
+            let r = rel.reference(1, spawn_helper + off).ok_or_else(invalid)?;
+            if (r.module, r.kind, r.addend) != (0, 10, addr) {
+                return Err(invalid());
+            }
+        }
+        let record_pool = record_ref(0x2e, 5)?;
+        for off in [0x7e, 0xf6] {
+            let at = record_ref(off, 4)? as usize;
+            if word(rel.data(4)?, at)? != 0x43300000 || word(rel.data(4)?, at + 4)? != 0x80000000 {
+                return Err(invalid());
+            }
+        }
+        let scalar = |off| -> Result<f32> {
+            Ok(f32::from_bits(word(
+                rel.data(4)?,
+                record_ref(off, 4)? as usize,
+            )?))
+        };
+        let record_constants = [
+            scalar(0xa2)?,
+            scalar(0xb2)?,
+            scalar(0xc2)?,
+            scalar(0xd2)?,
+            scalar(0x11e)?,
+        ];
         let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
         for i in 0..93 {
@@ -1331,6 +1381,8 @@ impl Program {
             gate_constants,
             spawn_constants,
             spawn_helper,
+            record_constants,
+            record_pool,
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
@@ -1507,10 +1559,33 @@ impl Program {
             let [g, b, a] = values.map(|r| if norm(r) > mid { 255u8 } else { 224 });
             u32::from_be_bytes([255, g, b, a])
         });
-        Ok(
-            json!({"local":self.spawn_helper,"positionBits":pos.map(f32::to_bits),"velocityBits":velocity.map(f32::to_bits),
-            "scaleBits":(gain+gain*e).to_bits(),"colorWrite20":color}),
-        )
+        let scale = gain + gain * e;
+        let mut out = json!({"local":self.spawn_helper,"positionBits":pos.map(f32::to_bits),"velocityBits":velocity.map(f32::to_bits),
+            "scaleBits":scale.to_bits(),"colorWrite20":color});
+        if let Some(r) = s.record {
+            if (r.address != 0) != s.created || s.created != r.random.is_some() {
+                return Err(Error::invalid("inconsistent effect record observations"));
+            }
+            let [unit, span, center, angle, half] = self.record_constants;
+            let fields = if let Some([a, b]) = r.random {
+                let one = angle * ((a as f32 * unit) * span - center);
+                let two = angle * (b as f32 * unit - half);
+                if ![one, two]
+                    .into_iter()
+                    .all(|v| (-2147483648.0..2147483648.0).contains(&v))
+                {
+                    return Err(Error::invalid("effect angle outside verified range"));
+                }
+                Some(
+                    json!({"word0":one as i32,"scale4":scale.to_bits(),"position8":pos.map(f32::to_bits),
+                    "velocity32":velocity.map(f32::to_bits),"word44":two as i32,"word56":0}),
+                )
+            } else {
+                None
+            };
+            out["record"] = json!({"request":[0x80032910u32,self.record_pool],"returned":r.address,"writes":fields});
+        }
+        Ok(out)
     }
     pub fn consumer_gate(&self, byte1: u8, g: ConsumerGate) -> Result<Value> {
         if byte1 & 2 != 0 {
@@ -1719,7 +1794,14 @@ pub struct ConsumerGate {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RecordInput {
+    address: u32,
+    random: Option<[i32; 2]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConsumerSpawn {
+    record: Option<RecordInput>,
     position: [f32; 3],
     motion: [f32; 3],
     random: [i32; 5],

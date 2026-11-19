@@ -1050,17 +1050,47 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
 sc.mem_write(BASE,bytes(block));sc.mem_write(DATA+0xf34,d[ss[4][0]+0xf34:ss[4][0]+0xf38])
 def spawn_draw(cpu,pc,*_):
     cpu.reg_write(R.UC_PPC_REG_3,next(draws)&0xffffffff);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+helper=0x1c678
+hblock=bytearray(d[ss[1][0]+helper:ss[1][0]+helper+0x174])
+hbase=BASE+0x1000
+sc.mem_map(hbase,4096)
+def allocate_record(cpu,pc,*_):
+    record["request"]=[0x80032910,cpu.reg_read(R.UC_PPC_REG_3)-DATA]
+    cpu.reg_write(R.UC_PPC_REG_3,address);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not helper<=off<helper+len(hblock):continue
+        if kind==10:
+            assert module==0 and val in (0x80032910,0x8010d940)
+            pc=hbase+off-helper
+            sc.hook_add(UC_HOOK_CODE,allocate_record if val==0x80032910 else spawn_draw,begin=pc,end=pc)
+        else:
+            assert module==12 and s in (4,5) and kind in (4,6)
+            if s==4:sc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8])
+            val+=DATA
+            struct.pack_into('>H',hblock,off-helper,(val if kind==4 else (val+0x8000)>>16)&65535)
+sc.mem_write(hbase,bytes(hblock))
+sc.hook_add(UC_HOOK_CODE,lambda cpu,*_: record.update(returned=cpu.reg_read(R.UC_PPC_REG_3)),begin=hbase+0x170,end=hbase+0x170)
 def spawn_call(cpu,pc,*_):
     disp=struct.unpack_from('>I',block,pc-BASE)[0]&0x3fffffc
     dest=entry+pc-BASE+(disp if disp<1<<25 else disp-(1<<26))
     read_vec=lambda reg:struct.unpack('>III',cpu.mem_read(cpu.reg_read(reg),12))
     f=struct.unpack('>d',cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,'big'))[0]
     observed.update(local=dest,positionBits=read_vec(R.UC_PPC_REG_3),velocityBits=read_vec(R.UC_PPC_REG_4),scaleBits=struct.unpack('>I',struct.pack('>f',f))[0])
-    cpu.reg_write(R.UC_PPC_REG_3,TASK+0x600 if created else 0);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+    assert dest==helper
+    cpu.reg_write(R.UC_PPC_REG_LR,pc+4);cpu.reg_write(R.UC_PPC_REG_PC,hbase)
 for pc in draw_sites:sc.hook_add(UC_HOOK_CODE,spawn_draw,begin=pc,end=pc)
 sc.hook_add(UC_HOOK_CODE,spawn_call,begin=BASE+0x1c8,end=BASE+0x1c8)
 for first,color in itertools.product([[0,1,16384,32767,12345],[307,21003,5189,20001,3]], [None,[16384,16385,0],[32767,0,32767]]):
-    created=color is not None;draws=iter(first+(color or []));observed={}
+    created=color is not None;address=TASK+0x600 if created else 0
+    extra=first[:2] if created else None
+    draws=iter(first+(extra or [])+(color or []));observed={};record={}
+    sc.mem_write(TASK+0x600,b'\x12'*60)
     pos=[12.25,-6.75,8.5];motion=[-.03125,1.75,-2.125]
     sc.mem_write(WORK+20,struct.pack('>fff',*pos));sc.mem_write(WORK+0x100,struct.pack('>fff',*motion))
     sc.mem_write(TASK+0x614,b'\x12'*4)
@@ -1070,5 +1100,14 @@ for first,color in itertools.product([[0,1,16384,32767,12345],[307,21003,5189,20
     word=struct.unpack('>I',sc.mem_read(TASK+0x614,4))[0]
     assert created or word==0x12121212
     observed['colorWrite20']=word if created else None
-    obs=dict(position=pos,motion=motion,random=first,created=created,color_random=color)
+    assert record["returned"]==address
+    raw=sc.mem_read(TASK+0x600,60)
+    fields=None
+    if created:
+        fields=dict(word0=struct.unpack_from('>i',raw)[0],scale4=struct.unpack_from('>I',raw,4)[0],
+                    position8=struct.unpack_from('>III',raw,8),velocity32=struct.unpack_from('>III',raw,32),
+                    word44=struct.unpack_from('>i',raw,44)[0],word56=struct.unpack_from('>I',raw,56)[0])
+    else:assert raw==b'\x12'*60
+    record.update(returned=address,writes=fields);observed['record']=record
+    obs=dict(position=pos,motion=motion,random=first,created=created,color_random=color,record=dict(address=address,random=extra))
     print('SPAWN',json.dumps(obs,separators=(',',':')),json.dumps(observed,separators=(',',':')))
