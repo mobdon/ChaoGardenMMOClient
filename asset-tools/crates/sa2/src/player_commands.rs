@@ -253,16 +253,15 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 serde_json::to_value(catalog.levels())?
             } else {
                 let stage = catalog.mount(text_arg(&args[4])?, number(&args[5])?, |name| {
+                    let logical = format!("resource/gd_PC/{name}");
+                    if let Some(source) = extras.iter().find(|source| source.logical == logical) {
+                        return Ok(Some(source.bytes.clone()));
+                    }
                     let path = gd.join(name);
                     if !path.try_exists()? {
                         return Ok(None);
                     }
-                    let src = Extra::read(
-                        &path,
-                        format!("resource/gd_PC/{name}"),
-                        64 * 1024 * 1024,
-                        "mounted-resource",
-                    )?;
+                    let src = Extra::read(&path, logical, 64 * 1024 * 1024, "mounted-resource")?;
                     let data = src.bytes.clone();
                     extras.push(src);
                     Ok(Some(data))

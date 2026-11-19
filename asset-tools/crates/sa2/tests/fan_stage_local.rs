@@ -508,3 +508,79 @@ fn green_forest_shared_tasks() {
         )
         .is_err());
 }
+#[test]
+#[ignore = "requires installed game and SA Tools PC_SA2 maps"]
+fn mounted_story_goal_samples_live_game_bytes() {
+    let root = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let cfg = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap());
+    let gd = root.join("resource/gd_PC");
+    let exe = fs::read(root.join("sonic2app.exe")).unwrap();
+    let effects = fs::read(gd.join("efftex_common.prs")).unwrap();
+    let ini = |f: &str| fs::read_to_string(cfg.join(f)).unwrap();
+    let campaign = Campaign::new(
+        &exe,
+        &ini("ADVERTISE.ini"),
+        &ini("sa2lvl.ini"),
+        &ini("ObjectLists.ini"),
+    )
+    .unwrap();
+    let mut covered = BTreeSet::new();
+    for dispatch in campaign.levels() {
+        if covered.contains(&dispatch.level) || matches!(dispatch.character, 4 | 5) {
+            continue;
+        }
+        let stage = campaign
+            .mount(dispatch.sequence, dispatch.action_index, |name| {
+                let p = gd.join(name);
+                Ok(if p.is_file() {
+                    Some(fs::read(p)?)
+                } else {
+                    None
+                })
+            })
+            .unwrap();
+        let Some((layer, row)) = stage.layers.iter().enumerate().find_map(|(layer, l)| {
+            l.placements
+                .iter()
+                .find(|p| {
+                    p.definition_index
+                        .and_then(|i| stage.object_table?.entries.get(i))
+                        .is_some_and(|d| d.function_va == 0x6c63c0 && d.name == "GOALRING")
+                        && (p.placement.rotation[0] as i16) % 3 == 0
+                })
+                .map(|p| (layer, p.placement_index))
+        }) else {
+            continue;
+        };
+        let module = fs::read(gd.join(format!("stg{:02}D.rel", dispatch.level))).unwrap();
+        let request = serde_json::json!({"game_byte_23":0,"range_out":false,"allocation_ok":true,
+            "initial_slot_words":[77,88],"lifecycle":{"initial_timer":58,"game_byte_37":0,"task_field_30_present":true},
+            "frames":[{"kind":"none"},{"hit":{"kind":"player","slot":1},"game_byte_23":1,"game_byte_37":1},
+            {"hit":{"kind":"none"},"game_byte_23":0,"game_byte_37":1},{"kind":"none"},{"kind":"none"},{"kind":"none"}]});
+        let replay = sa2_asset_tools::goal_ring::replay(
+            &stage,
+            layer,
+            row,
+            &module,
+            &exe,
+            &effects,
+            &serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        let frames = replay["frames"].as_array().unwrap();
+        assert_eq!(frames.len(), 5);
+        assert!(frames[1]["calls"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({"Main":{"address":0x8001baa4u32,"slot":1}})));
+        assert_eq!(frames[1]["moduleSlotWords"], serde_json::json!([77, 88]));
+        assert_eq!(frames[0]["regularMotion"], frames[2]["regularMotion"]);
+        assert_eq!(frames[3]["regularMotion"]["timer"], 59);
+        assert_eq!(frames[4]["cleanupCall"], 0x80065148u32);
+        covered.insert(dispatch.level);
+    }
+    assert_eq!(
+        covered,
+        BTreeSet::from([3, 4, 6, 9, 10, 11, 12, 13, 14, 17, 21, 22, 23, 24, 27, 28, 30, 40, 43])
+    );
+}
