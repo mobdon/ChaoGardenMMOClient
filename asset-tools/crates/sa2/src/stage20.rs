@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 #[serde(deny_unknown_fields)]
 struct Request {
     startup: Option<Startup>,
+    controller: Option<Controller>,
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
@@ -154,6 +155,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     };
     let Request {
         startup,
+        controller,
         mut mode,
         mut position,
         targets,
@@ -181,5 +183,98 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     if let Some(s) = startup {
         report["startup"] = opponent_startup(&rel, s)?;
     }
+    if let Some(c) = controller {
+        report["controller"] = dispatch_controller(&rel, c)?;
+    }
     Ok(report)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Controller {
+    mode: i8,
+    engine_bytes: [i8; 3],
+    player_flags: [u16; 2],
+    opening: Option<Opening>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Opening {
+    query: i32,
+    character: i8,
+    yaw: u32,
+    position: [f32; 3],
+}
+fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
+    let invalid = || Error::invalid("unexpected walker controller observation");
+    let field = |pc, sect| {
+        rel.reference(1, pc)
+            .filter(|r| r.module == 19 && r.section == sect && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let number = |section: u8, at: u32| -> Result<f32> {
+        let p = at as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(section)?
+                .get(p..p + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let [a, b, d] = c.engine_bytes;
+    let gated = a == 1 || b & 2 != 0 || d == 1;
+    let mut mode = c.mode;
+    if !gated && c.player_flags.iter().any(|f| f & 0x4000 != 0) {
+        mode = 9;
+    }
+    let target = if gated {
+        0x1518
+    } else if !(0..=10).contains(&mode) {
+        0x1424
+    } else {
+        rel.local_pointer(5, field(0x816, 5)? + 4 * mode as u32)?
+            .filter(|(s, _)| *s == 1)
+            .ok_or_else(invalid)?
+            .1
+    };
+    let mut ops = Vec::new();
+    let mut timer = None;
+    let mut next = target;
+    if target == 0x828 {
+        let o = c.opening.ok_or_else(invalid)?;
+        ops.push(json!([0x828]));
+        if o.query == 16 {
+            ops.extend([json!([0x838, 3]), json!([0x83c])]);
+            mode = 1;
+            timer = Some(360);
+            if matches!(o.character, 6 | 7) {
+                ops.push(json!([
+                    if o.character == 6 { 0x86c } else { 0x888 },
+                    0,
+                    field(if o.character == 6 { 0x86a } else { 0x886 }, 5)?
+                ]));
+            }
+            let pos = [
+                o.position[0],
+                number(4, field(0x8ca, 4)?)? + number(5, field(0x8d6, 5)? + 4)?,
+                o.position[2],
+            ];
+            ops.push(json!([
+                0x91c,
+                0,
+                number(4, field(0x892, 4)?)?,
+                o.yaw.wrapping_sub(0xf000),
+                pos,
+                number(4, field(0x8f2, 4)?)?,
+                number(4, field(0x902, 4)?)?,
+                0x6000
+            ]));
+        }
+        next = 0x1424;
+    } else if c.opening.is_some() {
+        return Err(invalid());
+    }
+    Ok(json!({"dispatch":target,"continueAt":next,"mode":mode,"timerWrite":timer,"operations":ops}))
 }

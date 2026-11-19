@@ -115,3 +115,47 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["startup"]["walker"]==ops
 print("5 walker controller initialization paths matched")
+
+# Run the controller through dispatch and, for state zero, through its opening block.
+u.mem_map(0x801cb000,8192)
+player0,player1,pose0,pose1=(0x100500,0x100600,0x100700,0x100800)
+put(0x801e7328,"II",player0,player1);put(0x801e7368,"II",pose0,pose1)
+branches={get(base[5]+0x298+i*4,"I")[0]-base[1] for i in range(11)}
+def opening_call(cpu,pc,*_):
+    global dispatched
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site in branches|{0x1424,0x1518}:
+        if dispatched is None:dispatched=site
+        if site!=0x828:cpu.emu_stop();return
+    if site==0x768:pass
+    elif site==0x828:ops.append([site]);cpu.reg_write(R.UC_PPC_REG_3,query)
+    elif site==0x838:ops.append([site,reg(3)])
+    elif site==0x83c:ops.append([site])
+    elif site in (0x86c,0x888):ops.append([site,reg(3),reg(4)-base[5]])
+    elif site==0x91c:
+        angle,yaw,ptr,x,y,last=get(reg(4),"fIIffI")
+        assert ptr==work+12
+        ops.append([site,reg(3),angle,yaw,list(get(ptr,"fff")),x,y,last])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in branches|{0x768,0x828,0x838,0x83c,0x86c,0x888,0x91c,0x1424,0x1518}:
+    u.hook_add(UC_HOOK_CODE,opening_call,begin=base[1]+site,end=base[1]+site)
+cases=[(m,[0,0,0],[0,0],16,6) for m in range(-1,12)]
+cases+=[(0,b,f,q,ch) for b,f,q,ch in (([1,0,0],[0,0],16,7),([0,-2,0],[0,0],16,7),([0,0,1],[0,0],16,7),
+          ([0,0,0],[0x4000,0],16,7),([0,0,0],[0,0x4000],16,7),([0,0,0],[1,0],15,7),([0,0,0],[0,0],16,7),([0,0,0],[0,0],16,-1))]
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,(mode,b,f,query,ch) in enumerate(cases):
+        ops=[];dispatched=None;yaw=4;pos=[5.,91.,-3.]
+        for off,v in zip((0x39,0x37,0x42),b):put(0x801cbd88+off,"b",v)
+        put(player0+16,"H",f[0]);put(player1+16,"H",f[1]);put(player1+3,"b",ch)
+        put(pose1+12,"I",yaw);put(pose1+20,"fff",*pos)
+        put(task+64,"I",work);put(work,"b",mode);put(work+4,"h",-12)
+        u.reg_write(R.UC_PPC_REG_1,0x100f00);u.reg_write(R.UC_PPC_REG_3,task)
+        u.emu_start(base[1]+0x754,stop,count=300);end=u.reg_read(R.UC_PPC_REG_PC)-base[1]
+        c=dict(mode=mode,engine_bytes=b,player_flags=f)
+        if dispatched==0x828:c["opening"]=dict(query=query,character=ch,yaw=yaw,position=pos)
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        timer=get(work+4,"h")[0]
+        assert json.loads(out.read_text())["controller"]==dict(dispatch=dispatched,continueAt=end,mode=get(work,"b")[0],timerWrite=None if timer==-12 else timer,operations=ops)
+print(len(cases),"walker dispatch and opening observations matched")
