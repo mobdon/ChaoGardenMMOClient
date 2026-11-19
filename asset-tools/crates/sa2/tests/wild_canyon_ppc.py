@@ -141,7 +141,52 @@ def emerald_paths():
     finally:
         for h in hooks:u.hook_del(h)
     return paths
+def alternate_setup(data, at, center):
+    rx,ry,rz=struct.unpack_from(">3H",data,at+2)
+    xyz=struct.unpack_from(">6f",data,at+8)
+    extra=stage+1200; shape=stage+1400; ccl=stage+1500
+    local=(11.,-17.,23.); world=(101.,-103.,107.)
+    steps=[]; setup={}
+    def floats(cpu, n):
+        return [struct.unpack(">d",cpu.reg_read(getattr(R,"UC_PPC_REG_FPR"+str(i))).to_bytes(8,"big"))[0] for i in range(1,n+1)]
+    def observe(cpu,pc,size,_):
+        site=pc-base[1];steps.append(site)
+        if site==0x220e4:
+            setup["allocation"]=[reg(3),reg(4)];cpu.reg_write(R.UC_PPC_REG_3,extra)
+        elif site==0x22108:cpu.reg_write(R.UC_PPC_REG_3,0x1234)
+        elif site==0x2213c:
+            assert get(reg(4),"I")== (0x34,) and reg(3)==work
+            setup["initialDistance"]=floats(cpu,1)[0];put(reg(6),"fff",*local)
+        elif site==0x2214c:put(reg(4),"fff",*center)
+        elif site==0x22160:setup["translate"]=list(get(reg(3),"fff"))
+        elif site in (0x2216c,0x22178):setup.setdefault("rotationWords",[]).append(reg(4))
+        elif site==0x2219c:setup["translateAfterRotation"]=floats(cpu,3)
+        elif site==0x221ac:
+            assert get(reg(4),"fff")==local and reg(5)==extra
+            put(extra,"fff",*world)
+        elif site==0x221f8:
+            setup.update(typeWord=reg(3),lowByte=reg(4));assert get(reg(5),"fff")==world
+        elif site==0x22210:cpu.reg_write(R.UC_PPC_REG_3,0)
+        elif site==0x22230:
+            setup.update(shapeOffset=reg(4)-base[5],count=reg(5),id=reg(6))
+            put(work+0x2c,"I",ccl);put(ccl+12,"I",shape)
+        elif site==0x2227c:
+            assert reg(3)==ccl and get(shape+8,"fff")==world
+            setup["shapeParameter"]=get(shape+20,"f")[0]
+        cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+    sites=(0x220e4,0x22108,0x2213c,0x2214c,0x22150,0x22158,0x22160,0x2216c,0x22178,
+           0x2219c,0x221ac,0x221b0,0x221f8,0x22210,0x22230,0x2227c)
+    hooks=[u.hook_add(UC_HOOK_CODE,observe,begin=base[1]+s,end=base[1]+s) for s in sites]
+    try:
+        put(child+0x30,"II",1,work);put(work,"B",0);put(work+8,"III",rx,ry,rz);put(work+20,"6f",*xyz)
+        u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child);u.reg_write(R.UC_PPC_REG_LR,stop)
+        u.emu_start(base[1]+0x220ac,stop,count=300)
+        assert u.reg_read(R.UC_PPC_REG_PC)==stop and steps==list(sites),steps
+    finally:
+        for hook in hooks:u.hook_del(hook)
+    return setup
 def emerald_tasks():
+    paths=emerald_paths()
     expected=[]
     def intercept(cpu,pc,size,_):
         if pc==base[1]+0x1fd20:
@@ -197,6 +242,7 @@ def emerald_tasks():
                             if row["commonSetup"] is None:row["commonSetup"]=setup
                             else:assert row["commonSetup"]==setup
                 row["pathIndex"]=(int(struct.unpack_from(">f",data,32+32*index+20)[0])%12 if row["initialize"]==0x220ac else None)
+                row["alternateSetup"]=None if row["pathIndex"] is None else alternate_setup(data,32+32*index,paths[row["pathIndex"]]["center"])
                 expected.append(row)
     finally:
         for h in hooks:u.hook_del(h)

@@ -70,6 +70,7 @@ pub fn enter(
         return Err(invalid());
     }
     let mut paths = Vec::new();
+    let mut centers = Vec::new();
     for index in 0..count {
         let header = section_ptr(path_table + 4 * index)?;
         let at = header as usize;
@@ -96,6 +97,7 @@ pub fn enter(
             vertices.push(xyz);
         }
         let center: [f32; 3] = std::array::from_fn(|j| (hi[j] + lo[j]) * half);
+        centers.push(center);
         paths.push(
             json!({"headerOffset":header,"pointsOffset":points,"points":vertices,"center":center}),
         );
@@ -151,9 +153,24 @@ pub fn enter(
             } else {
                 None
             };
+            let alternate_setup = if let Some(i) = path_index {
+                let parameter = |pc| f32_at(rel.data(4)?, pair(pc, 4)? as usize);
+                let p = &bound.placement;
+                let center = centers[i as usize];
+                Some(json!({
+                    "allocation":[1,24], "initialDistance": parameter(0x22120)? + p.parameters[2],
+                    "translate":p.position, "rotationWords":[p.rotation[1],p.rotation[2]],
+                    "translateAfterRotation":center.map(|v| -v),
+                    "typeWord":u32::from_be_bytes(data[row as usize..row as usize+4].try_into().unwrap()),
+                    "lowByte":p.rotation[0]&255, "shapeOffset":pair(0x22220,5)?,
+                    "count":1,"id":6,"shapeParameter":parameter(0x22234)? + p.parameters[1]
+                }))
+            } else {
+                None
+            };
             emeralds.push(json!({"layer":layer.filename,"index":bound.placement_index,"object":def.name,"variant":variant,
                 "main":code(row+20)?,"destroy":code(row+28)?,"display":display,"defaultDisplaySlot":32,
-                "nonzeroQueryDisplaySlot":conditional.then_some(20),"initialize":init,"commonSetup":setup,"pathIndex":path_index}));
+                "nonzeroQueryDisplaySlot":conditional.then_some(20),"initialize":init,"commonSetup":setup,"pathIndex":path_index,"alternateSetup":alternate_setup}));
         }
     }
     let ptr = |at| -> Result<Option<u32>> {
