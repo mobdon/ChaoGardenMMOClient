@@ -576,3 +576,10 @@ ID suppresses calls but still returns 1 for an eligible controlled kart;
 profile 8 and disabled control return 0. The CartD helper and engine request
 are reported, not executed. Scripted movement's audio input also accepts
 `alternate: true` for replaced slots 2–7.
+
+The crossing directory reports segment_event_modes in native segment order.
+For an active-profile event, pass its current piece_id to include the result
+of CartD 0x979c before event dispatch. The helper maps signed piece values
+50 through 71 inclusive to engine 0x8006c97c argument 0 and returns 1;
+all other values submit -127 and return 0. The outer event return is
+independent. The engine's downstream audio effect is not inferred.

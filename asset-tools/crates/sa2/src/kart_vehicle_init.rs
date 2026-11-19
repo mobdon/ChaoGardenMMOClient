@@ -129,6 +129,7 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
             Ok(Event {
                 return_word: i32::from(eligible),
                 call_cart_979c: id >= 0,
+                course_mode: e.piece_id.filter(|_| id >= 0).map(course_mode),
                 engine_args: (id >= 0).then_some([id, 0, 0, 0]),
             })
         })
@@ -169,11 +170,14 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
 struct EventInput {
     work_44: i32,
     selector: usize,
+    piece_id: Option<u8>,
 }
 #[derive(Serialize)]
 struct Event {
     return_word: i32,
     call_cart_979c: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    course_mode: Option<CourseMode>,
     engine_args: Option<[i32; 4]>,
 }
 
@@ -189,4 +193,20 @@ pub(crate) fn cue_row(data: &[u8], profile: usize, alternate: bool) -> Result<[i
     Ok(std::array::from_fn(|j| {
         i32::from_be_bytes(data[at + 4 * j..at + 4 * j + 4].try_into().unwrap())
     }))
+}
+
+/// 0x979c uses the signed course-piece byte for the current segment.
+#[derive(Serialize)]
+pub(crate) struct CourseMode {
+    piece_id: u8,
+    engine_8006c97c_arg: i32,
+    return_word: i32,
+}
+pub(crate) fn course_mode(piece_id: u8) -> CourseMode {
+    let inside = (0x32..=0x47).contains(&(piece_id as i8));
+    CourseMode {
+        piece_id,
+        engine_8006c97c_arg: if inside { 0 } else { -127 },
+        return_word: i32::from(inside),
+    }
 }

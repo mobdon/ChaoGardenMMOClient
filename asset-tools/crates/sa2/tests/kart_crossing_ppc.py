@@ -59,8 +59,11 @@ for course in doc["courses"]:
     rows = course["segment_occurrence_and_local_index"]
     assert count == course["segment_count"] == len(rows) == len(calls)
     owners = struct.unpack(f">{count}I", u.mem_read(ram+0x2000, 4*count))
-    for (occ, local), owner, raw in zip(rows, owners, calls):
+    assert len(course["segment_event_modes"])==count
+    for idx,((occ, local), owner, raw) in enumerate(zip(rows, owners, calls)):
         assert occ == owner
+        pid=ids[owner]; inside=50<=pid<=71
+        assert course["segment_event_modes"][idx]==dict(piece_id=pid,engine_8006c97c_arg=0 if inside else -127,return_word=int(inside))
         quad = doc["piece_local_xz_quads"][ids[occ]][local]
         assert struct.pack(">8f", *(v for pair in quad for v in pair)) == raw
     print(name, len(ids), count)

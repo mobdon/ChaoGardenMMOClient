@@ -203,6 +203,7 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
     let mut routes = Vec::new();
     for course in crate::kart_course::courses(exe)? {
         let mut segments = Vec::new();
+        let mut segment_event_modes = Vec::new();
         let mut translation = [0f32; 3];
         let mut yaw = 0i32;
         let mut poses = Vec::new();
@@ -228,6 +229,7 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
                 .enumerate()
             {
                 segments.push([occurrence, local]);
+                segment_event_modes.push(crate::kart_vehicle_init::course_mode(id));
                 projected.push(quad.map(|[x, z]| {
                     let [rx, rz] = rotate(x, z);
                     [translation[0] + rx, translation[2] + rz]
@@ -241,7 +243,7 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
         }
         routes.push(
             serde_json::json!({"course":course.name, "piece_ids":course.piece_ids,
-            "projected_occurrence_poses":poses,"projected_segment_xz":projected,"segment_count":segments.len(), "segment_occurrence_and_local_index":segments}),
+            "projected_occurrence_poses":poses,"projected_segment_xz":projected,"segment_event_modes":segment_event_modes,"segment_count":segments.len(), "segment_occurrence_and_local_index":segments}),
         );
     }
     Ok(serde_json::json!({"piece_local_xz_quads":pieces,"courses":routes}))
