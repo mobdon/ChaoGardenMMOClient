@@ -119,4 +119,16 @@ can submit a parent or task request. For row 2, supply `action_links` on
 `activation`: `byte1`, `parent_link` only if that byte is nonzero, and
 `task_link` only if no parent link was selected. These are observations
 inside the action; the later activation link check is independent. This
-replay does not execute the shared engine services or row 6's nested helper.
+replay does not execute the shared engine services.
+
+For row 6, optional `activation.position_list` supplies the raw manager
+pointer, the observed task allocation return (`created`) if the manager
+was absent, and the node allocation return (`node`) if a manager exists.
+Zero means allocation failed. Only a successful node allocation reads
+`hook` and `old_head`. The helper initializes a newly created manager's
+two callbacks, requests 24 bytes, conditionally installs the global hook,
+and prepends a record containing the three original position words, two
+stage constants and the previous head pointer. Code and label pointers in
+the report are module section offsets. The comparison runs the original
+helper inside action 6 with both player slots. Later list processing and
+engine task scheduling are outside the replay.

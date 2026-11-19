@@ -58,8 +58,54 @@ enum ActionRoutine {
     Scaled(ActionServices),
     Player(u32),
     Linked,
-    Position(u32),
+    Position(PositionRoutine),
     Empty,
+}
+#[derive(Debug)]
+struct PositionRoutine {
+    entry: u32,
+    task_entry: u32,
+    label: u32,
+    callbacks: [u32; 2],
+    hook: u32,
+    initial: [u32; 2],
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PositionInput {
+    pub manager: u32,
+    pub created: Option<u32>,
+    pub node: Option<u32>,
+    pub hook: Option<u32>,
+    pub old_head: Option<u32>,
+}
+impl PositionRoutine {
+    fn run(&self, p: &PositionInput, pos: [f32; 3]) -> Result<Value> {
+        let bad = || Error::invalid("inconsistent position-list allocation observations");
+        if p.created.is_some() != (p.manager == 0) {
+            return Err(bad());
+        }
+        let manager = p.created.unwrap_or(p.manager);
+        if p.node.is_some() != (manager != 0) {
+            return Err(bad());
+        }
+        let node = p.node.unwrap_or(0);
+        if p.hook.is_some() != (node != 0) || p.old_head.is_some() != (node != 0) {
+            return Err(bad());
+        }
+        let mut calls = Vec::new();
+        if p.manager == 0 {
+            calls.push(json!([0x80071ba4u32, 2, 3, self.task_entry, self.label]));
+        }
+        if manager != 0 {
+            calls.push(json!([0x801194b4u32, 1, 24]));
+        }
+        Ok(
+            json!({"calls":calls,"manager":manager,"callbackWrites":p.created.filter(|v|*v!=0).map(|_|self.callbacks),
+            "hookWrite":p.hook.filter(|v|*v==0).map(|_|self.hook),"node":node,
+            "insert":p.old_head.map(|old|json!({"positionBits":pos.map(f32::to_bits),"work12Bits":self.initial[0],"work16Bits":self.initial[1],"next":old,"newHead":node}))}),
+        )
+    }
 }
 #[derive(Debug)]
 struct ActionServices {
@@ -371,10 +417,33 @@ impl Program {
                         if ins & 0xfc000003 != 0x48000001 {
                             return Err(invalid());
                         }
-                        ActionRoutine::Position(
-                            site.checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
-                                .ok_or_else(invalid)?,
-                        )
+                        let entry = site
+                            .checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
+                            .ok_or_else(invalid)?;
+                        let data = |off, section| {
+                            rel.reference(1, entry + off)
+                                .filter(|r| {
+                                    r.module == info.module && r.kind == 4 && r.section == section
+                                })
+                                .map(|r| r.addend)
+                                .ok_or_else(invalid)
+                        };
+                        for (offset, target) in [(0x4c, 0x80071ba4), (0x98, 0x801194b4)] {
+                            if !rel.reference(1, entry + offset).is_some_and(|r| {
+                                r.module == 0 && r.kind == 10 && r.addend == target
+                            }) {
+                                return Err(invalid());
+                            }
+                        }
+                        let constant = |off| word(rel.data(4)?, data(off, 4)? as usize);
+                        ActionRoutine::Position(PositionRoutine {
+                            entry,
+                            task_entry: data(0x42, 1)?,
+                            label: data(0x4a, 5)?,
+                            callbacks: [data(0x66, 1)?, data(0x72, 1)?],
+                            hook: data(0xc2, 1)?,
+                            initial: [constant(0xf2)?, constant(0x10a)?],
+                        })
                     }
                     9 if word(instructions, func as usize)? == 0x4e800020 => ActionRoutine::Empty,
                     _ => return Err(invalid()),
@@ -855,6 +924,9 @@ impl Program {
     }
     fn action_calls(&self, index: usize, slot: i32, a: &ChildActivation) -> Result<Vec<Value>> {
         let routine = self.action_services.get(index).ok_or_else(invalid)?;
+        if a.position_list.is_some() && !matches!(routine, ActionRoutine::Position(_)) {
+            return Err(invalid());
+        }
         if a.action_links.is_some() && !matches!(routine, ActionRoutine::Linked) {
             return Err(invalid());
         }
@@ -869,7 +941,12 @@ impl Program {
             }
             ActionRoutine::Empty => calls.clear(),
             ActionRoutine::Player(addr) => calls.push(json!(["engine", addr, slot])),
-            ActionRoutine::Position(addr) => calls.push(json!(["local", addr, "work+20"])),
+            ActionRoutine::Position(r) => {
+                calls.push(json!(["local", r.entry, "work+20"]));
+                if let Some(p) = &a.position_list {
+                    calls.push(json!(["positionList", r.run(p, a.position)?]));
+                }
+            }
             ActionRoutine::Linked => {
                 calls.push(json!(["engine", 0x80063f50u32, slot, 1]));
                 let l = a
@@ -950,7 +1027,10 @@ impl Program {
                     events.push(json!(["local", callback, "task", slot]));
                     events.extend(self.action_calls(after, slot, &a)?);
                     events.push(json!(["engine", 0x800168c8u32, slot]));
-                } else if a.indices.is_some() || a.action_links.is_some() {
+                } else if a.indices.is_some()
+                    || a.action_links.is_some()
+                    || a.position_list.is_some()
+                {
                     return Err(bad());
                 }
                 let [dy, xz, y, strength] = self.child_effect;
@@ -1056,6 +1136,7 @@ pub struct ActionLinks {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChildActivation {
+    pub position_list: Option<PositionInput>,
     pub action_links: Option<ActionLinks>,
     pub player_flags: u16,
     pub indices: Option<[usize; 2]>,

@@ -435,14 +435,64 @@ def action_engine(cpu,pc,*_):
     events.append(['engine',dst,*args])
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in action_imports:cpu.hook_add(UC_HOOK_CODE,action_engine,begin=pc,end=pc)
+# Replay the nested position-list routine with the engine allocator observed.
+helper=0x30764;manager_slot=DATA+0x400000+0xd98;global_hook=0x803ad3e8
+for addr in (manager_slot,global_hook):cpu.mem_map(addr&~4095,4096)
+code=bytearray(d[ss[1][0]+helper:ss[1][0]+helper+0x138])
+alloc_sites={}
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not helper<=off<helper+len(code):continue
+        if module==0 and kind==10:alloc_sites[BASE+off]=val
+        elif kind in (4,6):
+            if module:
+                if s==4:cpu.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4])
+                val+=BASE if s==1 else DATA+(0x400000 if s==6 else 0)
+            struct.pack_into('>H',code,off-helper,(val if kind==4 else (val+0x8000)>>16)&65535)
+cpu.mem_write(BASE+helper,bytes(code))
+read32=lambda addr:struct.unpack('>I',cpu.mem_read(addr,4))[0]
+write32=lambda addr,val:cpu.mem_write(addr,struct.pack('>I',val))
+manager,nodeaddr=TASK+0x800,TASK+0x900
 def position_helper(cpu,pc,*_):
     assert cpu.reg_read(R.UC_PPC_REG_3)==WORK+20
     events.append(["local",pc-BASE,"work+20"])
-    cpu.reg_write(R.UC_PPC_REG_PC,cpu.reg_read(R.UC_PPC_REG_LR))
-cpu.hook_add(UC_HOOK_CODE,position_helper,begin=BASE+0x30764,end=BASE+0x30764)
+def position_alloc(cpu,pc,*_):
+    reg=lambda i:cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i)))
+    addr=alloc_sites[pc]
+    if addr==0x80071ba4:args=[reg(3),reg(4),reg(5)-BASE,reg(6)-DATA];ret=list_input['created']
+    else:args=[reg(3),reg(4)];ret=list_input['node']
+    allocations.append([addr,*args])
+    cpu.reg_write(R.UC_PPC_REG_3,ret);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+def position_return(cpu,pc,*_):
+    mgr=read32(manager_slot);node=cpu.reg_read(R.UC_PPC_REG_3)
+    callbacks=[read32(manager+v)-BASE for v in (20,24)] if list_input['created'] else None
+    hook=read32(global_hook)-BASE if node and list_input['hook']==0 else None
+    ins=None
+    if node:
+        x,y,z,a,b,nxt=struct.unpack('>6I',cpu.mem_read(node,24))
+        ins=dict(positionBits=[x,y,z],work12Bits=a,work16Bits=b,next=nxt,newHead=read32(mgr+60))
+    events.append(["positionList",dict(calls=allocations,manager=mgr,node=node,callbackWrites=callbacks,hookWrite=hook,insert=ins)])
+cpu.hook_add(UC_HOOK_CODE,position_helper,begin=BASE+helper,end=BASE+helper)
+for pc in alloc_sites:cpu.hook_add(UC_HOOK_CODE,position_alloc,begin=pc,end=pc)
+cpu.hook_add(UC_HOOK_CODE,position_return,begin=BASE+helper+0x134,end=BASE+helper+0x134)
 for before,slot in itertools.product(range(11),(0,1)):
     for flags,(linked,byte1,parent) in itertools.product((0,0x4000),((True,0,None),(False,0,None),(False,1,False),(False,-1,True))):
         gate=slot;after=10-before;events=[];calls=[];pos=[1.5,-7.25,30.]
+        list_input=None;allocations=[]
+        if after==6 and flags==0:
+            prev=manager if byte1 else 0
+            created=(manager if slot or linked else 0) if not prev else None
+            node=(nodeaddr if slot or byte1 else 0) if prev or created else None
+            old=(0x1314 if slot else 0) if node else None
+            hook=(0x3456 if parent else 0) if node else None
+            list_input=dict(manager=prev,created=created,node=node,old_head=old,hook=hook)
+            write32(manager_slot,prev);write32(global_hook,hook or 0);write32(manager+60,old or 0)
+            cpu.mem_write(nodeaddr,bytes([0xdd])*24)
         cpu.mem_write(TASK+52,struct.pack('>III',WORK,TASK+0x200,before))
         cpu.mem_write(TASK+8,struct.pack('>I',TASK+0x600));cpu.mem_write(TASK+48,struct.pack('>I',linked))
         cpu.mem_write(TASK+0x630,struct.pack('>I',bool(parent)));cpu.mem_write(WORK,struct.pack('>Bb2xH',2,byte1,4))
@@ -450,11 +500,12 @@ for before,slot in itertools.product(range(11),(0,1)):
         cpu.mem_write(TASK+0x510,struct.pack('>H',flags));cpu.mem_write(WORK+20,struct.pack('>fff',*pos))
         cpu.mem_write(WORK+36,struct.pack('>f',1.25));cpu.mem_write(GLOBAL+55,struct.pack('>b',gate))
         cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,TASK);cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x238)
-        cpu.emu_start(BASE,BASE+0x238,count=170)
+        cpu.emu_start(BASE,BASE+0x238,count=300)
         assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x238 and calls==[REGISTER]
         events.append(['engine',REGISTER,'task'])
         obs=dict(flags=4,cached=slot,activation=dict(player_flags=flags,indices=None if flags else [before,after],position=pos,linked_task=linked,byte1=byte1,parent_linked=parent,tail=dict(work36=1.25,game_byte_55=gate)))
         result=dict(calls=[],playerIndex=slot,events=events,mode=cpu.mem_read(WORK,1)[0],work36Bits=struct.unpack('>I',cpu.mem_read(WORK+36,4))[0])
+        if list_input:obs['activation']['position_list']=list_input
         if after==2 and flags==0:
             obs["activation"]["action_links"]=dict(byte1=byte1,parent_link=parent if byte1 else None,task_link=None if byte1 and parent else linked)
         print('Y',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
