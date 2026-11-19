@@ -1,7 +1,7 @@
 """Compare active jump-panel task branches with the installed PPC instructions."""
 import hashlib,json,struct,subprocess,sys,tempfile
 from pathlib import Path
-from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
+from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE,UC_HOOK_MEM_WRITE
 from unicorn import ppc_const as R
 
 cli,rel,private=map(Path,sys.argv[1:4])
@@ -21,6 +21,8 @@ for mod,at in struct.iter_unpack(">II",d[word(40):word(40)+word(44)]):
         if k==203:break
         if k==202:target=s;loc=0;continue
         loc+=delta
+        if dash and target==5 and mod==80 and k==1 and s in base:
+            u.mem_write(base[5]+loc,struct.pack(">I",base[s]+a))
         if target==1 and mod==80 and (0xbdf4<=loc<0xbf30 or 0xac40<=loc<0xaf34 or 0x1714<=loc<0x17e8 or 0x5b90<=loc<0x5c30 or 0x979c<=loc<0x9810) and k in (4,6):
             ptr=base[s]+a
             if loc==0x1716:registry=ptr
@@ -43,7 +45,9 @@ def hook(u,addr,size,_):
             assert get(3)==panel
             installs.extend([v-base[1] for v in read(panel+20,"2I")]);init.extend([get(4)-base[5],get(5),get(6)])
         elif off==0xae0c:registered.append(get(3))
-        elif off==0xaf20:uv.extend([get(5),*read(get(6),"2h")])
+        elif off==0xaf20:
+            uv.extend([get(5),*read(get(6),"2h")])
+            return # Run the native material directory loop, including halfword writes.
         else:
             off={0xad68:0xbe90,0xad70:0xbe98,0xad7c:0xbea4,0xad8c:0xbeb4,0xad90:0xbeb8,
                  0xad9c:0xbec4,0xadc0:0xbee8,0xaddc:0xbf04}.get(off,off)
@@ -70,6 +74,16 @@ def handle_contact(u,addr,off):
     if off==0x5c0c:trace[-1]["call_8006b710"]=[get(n) for n in (3,4,5,6)]
     u.reg_write(R.UC_PPC_REG_PC,addr+4)
 u.hook_add(UC_HOOK_CODE,hook)
+def uv_write(m,access,address,size,value,_):
+    pc=m.reg_read(R.UC_PPC_REG_PC)-base[1]
+    if pc in (0xdf9c,0xdfb0):
+        assert size==2
+        value=struct.unpack(">h",struct.pack(">H",value&65535))[0]
+        if pc==0xdf9c:writes.append(dict(section5_offset=address-base[5],uv=[value]))
+        else:
+            assert address==base[5]+writes[-1]["section5_offset"]+2
+            writes[-1]["uv"].append(value)
+if dash:u.hook_add(UC_HOOK_MEM_WRITE,uv_write,begin=base[5],end=base[5]+0x2fffff)
 with tempfile.TemporaryDirectory(dir=private) as tmp:
     for case,(flags,timer,ids,results) in enumerate([
         (0,1,[kart],[1]),(1,0,[],[]),(1,0,[0,ram+0x2600],[0,0]),
@@ -92,7 +106,7 @@ with tempfile.TemporaryDirectory(dir=private) as tmp:
         if dash:
             phase=[0,16383,65535,16384][case%4];mode=0 if case==0 else 1;culled=case==1
             panel=ram+0x700;put(panel+0x34,"I",work);put(work,"B",mode);put(work+6,"H",phase)
-            installs=[];init=[];registered=[];uv=[];reg(3,panel)
+            installs=[];init=[];registered=[];uv=[];writes=[];reg(3,panel)
             u.emu_start(base[1]+0xac54,base[1]+0xae28,count=3000)
             assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xae28
         else:
@@ -104,7 +118,8 @@ with tempfile.TemporaryDirectory(dir=private) as tmp:
         if dash:
             del q["work_24"];q.update(strength=q.pop("work_20"),culled=culled,mode=mode,phase=phase)
             expected.update(mode=read(work,"b")[0],phase=read(work+6,"H")[0],install_callbacks=installs or None,
-                            collision_init=init or None,register_collision=registered==[panel],uv_call=uv or None)
+                            collision_init=init or None,register_collision=registered==[panel],uv_call=uv or None,uv_writes=writes)
+            assert len(writes)==(0 if culled else 32)
         if dash and trace:
             q["responses"]=[];expected["vehicle_writes"]=[]
             for hit in trace:

@@ -345,6 +345,7 @@ pub struct DashUpdate {
     collision_init: Option<[u32; 3]>,
     register_collision: bool,
     uv_call: Option<[i32; 3]>,
+    uv_writes: Vec<UvWrite>,
     dispatches: Vec<Dispatch>,
     #[serde(skip_serializing_if = "Option::is_none")]
     vehicle_writes: Option<Vec<ResponseWrites>>,
@@ -364,6 +365,7 @@ pub fn dash(bytes: &[u8], s: DashInput) -> Result<DashUpdate> {
         collision_init: None,
         register_collision: false,
         uv_call: None,
+        uv_writes: vec![],
         dispatches: vec![],
         vehicle_writes: None,
     };
@@ -423,6 +425,69 @@ pub fn dash(bytes: &[u8], s: DashInput) -> Result<DashUpdate> {
     out.register_collision = true;
     let phase = s.phase & 0x3fff;
     out.uv_call = Some([0x42, 0, i32::from(phase)]);
+    out.uv_writes = panel_uv(&rel, phase)?;
     out.phase = phase + 60;
     Ok(out)
+}
+
+#[derive(Serialize)]
+struct UvWrite {
+    section5_offset: u32,
+    uv: [i16; 2],
+}
+
+/// CartD 0xdf38 traverses the model/material directory and resets every matching
+/// pair from its saved baseline (not from the result of the preceding update).
+fn panel_uv(rel: &CityRel<'_>, phase: u16) -> Result<Vec<UvWrite>> {
+    let invalid = || Error::invalid("invalid kart UV directory");
+    let d = rel.data(5)?;
+    let target = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 80 && r.kind == 4 && r.section == 5)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let ptr = |field| -> Result<Option<u32>> {
+        rel.local_pointer(5, field)?
+            .map(|(s, p)| if s == 5 { Ok(p) } else { Err(invalid()) })
+            .transpose()
+    };
+    let field = |at: u32| -> Result<[u8; 4]> {
+        d.get(at as usize..)
+            .and_then(|p| p.get(..4))
+            .ok_or_else(invalid)?
+            .try_into()
+            .map_err(|_| invalid())
+    };
+    let count = |at| -> Result<i32> { Ok(i32::from_be_bytes(field(at)?)) };
+    let mut row = target(0xaf0e)?;
+    let model = target(0xaf16)?;
+    let mut writes = Vec::new();
+    while let Some(key) = ptr(row)? {
+        if key == model {
+            let list = ptr(row + 8)?.ok_or_else(invalid)?;
+            for i in 0..count(row + 4)? {
+                let group = ptr(list + 4 * i as u32)?.ok_or_else(invalid)?;
+                if count(group)? != 0x42 {
+                    continue;
+                }
+                let entries = ptr(group + 12)?.ok_or_else(invalid)?;
+                for j in 0..count(group + 8)? {
+                    let at = entries + 8 * j as u32;
+                    let dst = ptr(at)?.ok_or_else(invalid)?;
+                    field(dst)?;
+                    let [a, b, c, e] = field(at + 4)?;
+                    writes.push(UvWrite {
+                        section5_offset: dst,
+                        uv: [
+                            i16::from_be_bytes([a, b]),
+                            i16::from_be_bytes([c, e]).wrapping_add(phase as i16),
+                        ],
+                    });
+                }
+            }
+        }
+        row += 12;
+    }
+    Ok(writes)
 }
