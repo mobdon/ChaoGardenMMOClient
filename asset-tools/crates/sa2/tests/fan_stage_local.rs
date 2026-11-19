@@ -594,6 +594,44 @@ fn mounted_story_goal_samples_live_game_bytes() {
                 replay["frames"][0]["alternateMotion"]["soundBeforeContact"]["code"],
                 0x1012
             );
+            let sample = |hit, timer, gate| serde_json::json!({"hit":hit,"game_byte_23":1,"game_byte_37":gate,"alternate_timer":timer});
+            let none = serde_json::json!({"kind":"none"});
+            let player = serde_json::json!({"kind":"player","slot":0});
+            for field_present in [true, false] {
+                request["alternate_lifecycle"] = serde_json::json!({"task_field_30_present":field_present,"release":{"work56":4096,"nested":8192}});
+                request["frames"] = serde_json::json!([
+                    sample(&none, 65535, 0),
+                    sample(&player, 59, 0),
+                    sample(&none, 60, 1),
+                    sample(&none, 61, 0)
+                ]);
+                let life = sa2_asset_tools::goal_ring::replay(
+                    &stage,
+                    layer,
+                    row,
+                    &module,
+                    &exe,
+                    &effects,
+                    &serde_json::to_vec(&request).unwrap(),
+                )
+                .unwrap();
+                let frames = life["frames"].as_array().unwrap();
+                assert_eq!(frames.len(), 3);
+                assert!(frames[0]["cleanupCall"].is_null() && frames[1]["cleanupCall"].is_null());
+                assert_eq!(
+                    frames[2]["cleanupCall"],
+                    if field_present {
+                        0x80065148u32
+                    } else {
+                        0x80071878u32
+                    }
+                );
+                assert!(frames[2]["alternateMotion"]["soundBeforeContact"].is_null());
+                assert_eq!(
+                    life["observedRelease"]["events"][0],
+                    serde_json::json!(["free", 0x801194e0u32, 8192])
+                );
+            }
             hunters.insert(dispatch.character);
             continue;
         }
