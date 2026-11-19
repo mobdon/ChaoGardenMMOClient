@@ -6,6 +6,7 @@ timer store (0xff34). Engine imports and local calls are observed and given
 controlled results; every non-stack store is recorded with its instruction.
 """
 import json
+import math
 from pathlib import Path
 import random
 import struct
@@ -24,7 +25,7 @@ section = lambda n: (word(word(16) + 8 * n) & ~1, word(word(16) + 8 * n + 4))
 code = section(1)[0]
 FIRST, STOP = 0xf458, 0xff38
 
-relocs = {}
+relocs, data_relocs = {}, {}
 imp_off, imp_size = struct.unpack_from(">II", data, 0x28)
 for i in range(imp_off, imp_off + imp_size, 8):
     mod, off = struct.unpack_from(">II", data, i)
@@ -39,17 +40,24 @@ for i in range(imp_off, imp_off + imp_size, 8):
             sec, pos = s, 0
         elif t != 201 and sec == 1:
             relocs[pos] = (t, mod, s, add)
+        elif t != 201:
+            data_relocs[(sec, pos)] = (t, mod, s, add)
 
 cpu = Uc(UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN)
 cpu.mem_map(0, 0x100000)
 cpu.reg_write(R.UC_PPC_REG_MSR, cpu.reg_read(R.UC_PPC_REG_MSR) | 0x2000)
-cpu.mem_write(0x10000 + FIRST, data[code + FIRST:code + STOP])
 CODE = 0x10000  # section 1 offset X lives at CODE + X
+# The handoff frame plus the stage-local calls it can run natively: square
+# root, voice gate, arena bounds and timed voice lines.
+LOCALS = [(0x40CC, 0x4158), (0xEB38, 0xEC04), (0xEE8C, 0xF3F8)]
+RANGES = [(FIRST, STOP)] + LOCALS
+for a, b in RANGES:
+    cpu.mem_write(CODE + a, data[code + a:code + b])
 
-# Every data reference in the range gets its own 0x1000 window.
+# Every data reference in the ranges gets its own 0x1000 window.
 windows, imports = {}, {}
 for at, (t, mod, s, add) in sorted(relocs.items()):
-    if not FIRST <= at < STOP:
+    if not any(a <= at < b for a, b in RANGES):
         continue
     if t == 10:
         imports[at] = add
@@ -67,6 +75,15 @@ for at, (t, mod, s, add) in sorted(relocs.items()):
     half = ((dest + 0x8000) >> 16) if t == 6 else dest & 0xFFFF
     cpu.mem_write(CODE + at, struct.pack(">H", half & 0xFFFF))
 
+assert 0x40000 + 0x1000 * len(windows) <= 0x80000, len(windows)
+JUMPS = windows[(88, 5, 0x40008)]
+for pos in range(0x40008, 0x40030, 4):
+    t, mod, s, add = data_relocs[(5, pos)]
+    assert (t, mod, s) == (1, 88, 1), (hex(pos), t, mod, s)
+    cpu.mem_write(JUMPS + pos - 0x40008, struct.pack(">I", CODE + add))
+VOICE = windows[(0, 9, 0x803AD3D0)]
+PRESENT = windows[(0, 7, 0x801E7388)]
+CHANNELS = 0x8A000
 GLOBAL = windows[(0, 6, 0x801CBD88)]
 TABLE1, TABLE2, TABLE3 = (windows[(0, 7, a)] for a in (0x801E7368, 0x801E7328, 0x801E7348))
 RESOURCES = windows[(0, 7, 0x801E5928)]
@@ -99,6 +116,14 @@ def region(addr):
     raise AssertionError(f"unexpected store at {addr:#x}")
 
 
+
+
+SAVE = {0x8010AC70, 0x8010AC80}  # register-save helpers in the local prologues
+RESTORE = {0x8010ACBC, 0x8010ACCC}
+saved = []
+in_local = lambda off: any(a <= off < b for a, b in LOCALS)
+
+
 def code_hook(u, pc, size, _):
     off = pc - CODE
     if off == STOP:
@@ -107,97 +132,188 @@ def code_hook(u, pc, size, _):
     ins = struct.unpack(">I", u.mem_read(pc, 4))[0]
     if ins >> 26 != 18 or not ins & 1:
         return
-    r3, r4, r5, r6 = (u.reg_read(getattr(R, f"UC_PPC_REG_{n}")) for n in (3, 4, 5, 6))
+    regs = lambda *ns: [u.reg_read(getattr(R, f"UC_PPC_REG_{n}")) for n in ns]
+    r3, r4, r5, r6 = regs(3, 4, 5, 6)
+    stage = frame.get("stage")
     if off in imports:
-        ev = dict(site=off, call=imports[off], args=[r3, r4, r5, r6])
-        if off in SUBMIT:
-            ev["packet"] = list(struct.unpack(">6I", u.mem_read(r4, 24)))
-        events.append(ev)
+        target = imports[off]
         ret = 0
-        if off in POLL:
-            ret = frame["poll"]
-        elif off in MODE:
-            ret = frame["camera_mode"] if off in (0xF680, 0xF7D4) else frame["second_lookup"]
-        u.reg_write(R.UC_PPC_REG_3, ret & 0xFFFFFFFF)
-    else:
-        li = ins & 0x3FFFFFC
-        if li & 0x2000000:
-            li -= 0x4000000
-        target = off + li
-        events.append(dict(site=off, local=target))
-        u.reg_write(R.UC_PPC_REG_3, frame["cue_result"] & 0xFFFFFFFF if target == 0xEB38 else 0)
+        if target in SAVE:
+            saved.append(regs(*range(14, 32)))
+        elif target in RESTORE:
+            for n, v in zip(range(14, 32), saved.pop()):
+                u.reg_write(getattr(R, f"UC_PPC_REG_{n}"), v)
+        elif target == 0x8011B314:  # engine distance(a, b)
+            vec = lambda p: list(struct.unpack(">3f", u.mem_read(p, 12)))
+            events.append(dict(site=off, call=target, vectors=[vec(r3), vec(r4)]))
+            slot = u.reg_read(R.UC_PPC_REG_28)
+            bits = struct.unpack(">Q", struct.pack(">d", stage["distances"][slot]))[0]
+            u.reg_write(R.UC_PPC_REG_FPR1, bits)
+        elif target == 0x80039754:  # engine set position(slot, x, y, z)
+            fpr = lambda n: struct.unpack(">d", struct.pack(
+                ">Q", u.reg_read(getattr(R, f"UC_PPC_REG_FPR{n}"))))[0]
+            events.append(dict(site=off, call=target, args=[r3], floats=[fpr(n) for n in (1, 2, 3)]))
+        else:
+            ev = dict(site=off, call=target, args=[r3, r4, r5, r6])
+            if off in SUBMIT:
+                ev["packet"] = list(struct.unpack(">6I", u.mem_read(r4, 24)))
+            events.append(ev)
+            if off in POLL:
+                ret = frame["poll"]
+            elif off in MODE:
+                ret = frame["camera_mode"] if off in (0xF680, 0xF7D4) else frame["second_lookup"]
+        if target not in SAVE | RESTORE and target not in (0x8011B314,):
+            u.reg_write(R.UC_PPC_REG_3, ret & 0xFFFFFFFF)
+        u.reg_write(R.UC_PPC_REG_PC, pc + 4)
+        return
+    li = ins & 0x3FFFFFC
+    if li & 0x2000000:
+        li -= 0x4000000
+    target = off + li
+    if target == 0x40CC:  # stage square root: always run natively
+        return
+    if off == 0xF3DC:  # voice-task helper 0x18ed0 stays external
+        events.append(dict(site=off, local=target, args=regs(4, 5, 6, 7),
+                           vector=list(struct.unpack(">3f", u.mem_read(r3, 12)))))
+        u.reg_write(R.UC_PPC_REG_PC, pc + 4)
+        return
+    events.append(dict(site=off, local=target))
+    if stage is not None and target in (0xEB38, 0xEE8C, 0xF070):
+        return  # run the stage-local call natively
+    u.reg_write(R.UC_PPC_REG_3, frame["cue_result"] & 0xFFFFFFFF if target == 0xEB38 else 0)
     u.reg_write(R.UC_PPC_REG_PC, pc + 4)
 
 
 def write_hook(u, access, addr, size, value, _):
-    if STACK - 0x1000 <= addr < STACK + 0x1000:
+    if STACK - 0x2000 <= addr < STACK + 0x1000:
         return
+    site = u.reg_read(R.UC_PPC_REG_PC) - CODE
+    if in_local(site):
+        return  # local-call stores are checked through the final work state
     name, slot, offset = region(addr)
-    events.append(dict(site=u.reg_read(R.UC_PPC_REG_PC) - CODE, store=name, slot=slot,
+    events.append(dict(site=site, store=name, slot=slot,
                        offset=offset, size=size, value=value & ((1 << (8 * size)) - 1)))
 
 
 cpu.hook_add(UC_HOOK_CODE, code_hook)
 cpu.hook_add(UC_HOOK_MEM_WRITE, write_hook)
+cpu.mem_write(windows[(88, 6, 0x4A8)], struct.pack(">I", WORK))
 
 
 def run(start):
-    """Emulate one replay and return the request plus native per-frame events."""
-    player, state, timer, countdown, visits, frames_in = start
+    """Emulate one replay and return the native per-frame events and state."""
+    player, state, timer, countdown, visits, line, frames_in = start
     cpu.mem_write(WORK, bytes(0x100))
     cpu.mem_write(WORK, struct.pack(">bbbb", player, state, *visits))
+    cpu.mem_write(WORK + 6, struct.pack(">b", line))
     cpu.mem_write(WORK + 8, struct.pack(">h", timer))
     cpu.mem_write(WORK + 0xE, struct.pack(">h", countdown))
     native = []
     global frame, events
     for frame in frames_in:
         events = []
-        cpu.mem_write(GLOBAL + 0x7C, struct.pack(">I", frame["global_7c"]))
+        cpu.mem_write(GLOBAL + 0x7C, struct.pack(">I", frame["global_7c"] & 0xFFFFFFFF))
         for s in range(2):
             cpu.mem_write(player1[s] + 0xC, struct.pack(">i", frame["yaws"][s]))
             cpu.mem_write(player2[s] + 1, struct.pack(">b", frame["characters"][s]))
+        stage = frame.get("stage")
+        if stage is not None:
+            cpu.mem_write(GLOBAL + 0x42, struct.pack(">bb", stage["global_42"], stage["global_43"]))
+            cpu.mem_write(TASK + 0xC, struct.pack(">I", stage["task_0c"]))
+            if stage["channels"] is None:
+                cpu.mem_write(VOICE, struct.pack(">I", 0))
+            else:
+                cpu.mem_write(VOICE, struct.pack(">I", CHANNELS))
+                for i, ch in enumerate(stage["channels"]):
+                    cpu.mem_write(CHANNELS + 0x1C * i + 0x30, struct.pack(">i", ch["state"]))
+                    cpu.mem_write(CHANNELS + 0x1C * i + 0x25, struct.pack(">b", ch["category"]))
+            for s in range(2):
+                cpu.mem_write(PRESENT + 4 * s, struct.pack(">I", 0x9000 if stage["present"][s] else 0))
+                cpu.mem_write(player1[s] + 0x14, struct.pack(">3f", *stage["positions"][s]))
         cpu.reg_write(R.UC_PPC_REG_1, STACK)
         cpu.reg_write(R.UC_PPC_REG_29, TASK)
         cpu.reg_write(R.UC_PPC_REG_30, WORK)
-        cpu.emu_start(CODE + FIRST, CODE + STOP + 4, count=1000)
+        cpu.emu_start(CODE + FIRST, CODE + STOP + 4, count=20000)
+        assert not saved, saved
         p, st = struct.unpack(">bb", cpu.mem_read(WORK, 2))
         t, = struct.unpack(">h", cpu.mem_read(WORK + 8, 2))
         c, = struct.unpack(">h", cpu.mem_read(WORK + 0xE, 2))
-        native.append((events, dict(player=p, switch_state=st, timer=t, countdown=c)))
+        ln, = struct.unpack(">b", cpu.mem_read(WORK + 6, 1))
+        after = dict(player=p, switch_state=st, timer=t, countdown=c)
+        if stage is not None:
+            after["line"] = ln
+        native.append((events, after))
         if st == 0:
             break
     return native
 
 
+RUST_ONLY = {"resource_table_offset", "radial_clamp", "result", "voice", "spoke"}
+
+
+def flatten(rust_events):
+    """Rust nests a local call's own events; the emulator sees them inline."""
+    for r in rust_events:
+        inner = r.get("events", [])
+        yield {k: v for k, v in r.items() if k not in RUST_ONLY and k != "events"}
+        yield from flatten(inner)
+
+
+f32 = lambda v: struct.unpack(">f", struct.pack(">f", v))[0]
+
+
+def stage_frame(rng):
+    positions = [[f32(rng.choice((0.0, 240.0, 260.0, 1499.0, -1600.0)) + rng.uniform(-2, 2)),
+                  f32(rng.choice((0.0, 301.0, -501.0))),
+                  f32(rng.choice((0.0, 1400.0, 1600.0, -2000.0)) + rng.uniform(-2, 2))]
+                 for _ in range(2)]
+    busy = rng.random() < 0.3
+    return dict(
+        channels=None if rng.random() < 0.15 else [
+            dict(state=rng.choice((1, 6) if busy else (0, 5, -1)), category=rng.choice((3, 2)))
+            for _ in range(2)],
+        present=[rng.random() < 0.85 for _ in range(2)],
+        positions=positions,
+        distances=[f32(rng.choice((math.hypot(p[0], p[2]), 1500.0, 0.0))) for p in positions],
+        global_42=rng.choice((0, 0, 0, 0, 1)), global_43=rng.choice((0, 0, 0, 0, 1)),
+        task_0c=rng.choice((0, 0, 0, 0x9100)))
+
+
 rng = random.Random(421)
 Path(".local").mkdir(exist_ok=True)
-replays = frames_total = 0
+replays = frames_total = staged = spoken = 0
 seen = set()
 with tempfile.TemporaryDirectory(dir=".local") as directory:
     p = Path(directory)
-    for case in range(160):
+    for case in range(240):
         player = case & 1
         state = (1, 2, 3)[case // 2 % 3]
         timer = rng.choice((0, 100, 119, 120, 121, 179, 180, 181, -3, 32767))
         countdown = rng.choice((0, 1, 5, -2))
         visits = [rng.choice((-1, 0, 1, 2, 3)) for _ in range(2)]
+        line = rng.choice((0, 0, 3, 9, 10, -1))
+        with_stage = case >= 160
         poll_rate = rng.choice((0.0, 0.1, 0.5, 1.0))
+        clock = rng.choice((0, 1796, 9000, 17396))
         frames_in = []
-        for _ in range(rng.choice((1, 3, 40, 400))):
+        for k in range(rng.choice((1, 3, 40, 400))):
             mode = rng.choice((-1, 13, 14, 20))
-            frames_in.append(dict(
+            fr = dict(
                 poll=rng.choice((1, -1, 7)) if rng.random() < poll_rate else 0,
                 characters=[rng.choice((9, 10, 0, -1)) for _ in range(2)],
                 yaws=[rng.choice((0, 0x4000, 0x8000, 0x9000, -1, 0x7FFFFFFF, -0x80000000))
                       for _ in range(2)],
                 camera_mode=mode, second_lookup=0x2A + mode,
                 cue_result=rng.choice((-1, 0, 5)),
-                global_7c=rng.choice((0, 14399, 14400, 14400, 14401))))
-        native = run((player, state, timer, countdown, visits, frames_in))
+                global_7c=(clock + k) if with_stage else rng.choice((0, 14399, 14400, 14401)))
+            if with_stage:
+                fr["stage"] = stage_frame(rng)
+            frames_in.append(fr)
+        native = run((player, state, timer, countdown, visits, line, frames_in))
         frames_in = frames_in[:len(native)]
         inp = dict(path="switch_replay", player=player, switch_state=state, timer=timer,
                    countdown=countdown, visits=visits, player1=player1, player2=player2,
-                   player_tasks=player_tasks, table_words=table, frames=frames_in)
+                   player_tasks=player_tasks, table_words=table, line=line, frames=frames_in)
         q = p / "request.json"
         out = p / f"{case}.json"
         q.write_text(json.dumps(inp))
@@ -207,20 +323,23 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
         assert len(got["frames"]) == len(native), (case, len(got["frames"]), len(native))
         for n, (rust, (events, after)) in enumerate(zip(got["frames"], native)):
             assert {k: rust[k] for k in after} == after, (case, n, rust, after)
-            rev = rust["events"]
+            rev = list(flatten(rust["events"]))
             assert len(rev) == len(events), (case, n, rev, events)
             for r, e in zip(rev, events):
-                if "call" in r:
+                if "args" in r and "call" in r:
                     e = dict(e, args=e["args"][:len(r["args"])])
-                    r = {k: v for k, v in r.items() if k != "resource_table_offset"}
                 assert r == e, (case, n, r, e)
+            spoken += sum(1 for e in events if e.get("local") == 0x18ED0)
         assert got["returned_to_normal_dispatch"] == (native[-1][1]["switch_state"] == 0)
         replays += 1
+        staged += with_stage
         frames_total += len(native)
         seen.update(e["site"] for events, _ in native for e in events)
-# Every handoff branch must have been exercised at least once.
+# Every handoff branch and every stage-local call site must have been exercised.
 required = {0xF47C, 0xF498, 0xF4C4, 0xF4D8, 0xF52C, 0xF55C, 0xF564, 0xF5C8, 0xF690, 0xF69C,
             0xF6A8, 0xF6C0, 0xF718, 0xF7E4, 0xF7F0, 0xF7FC, 0xF800, 0xF838, 0xF848, 0xF86C,
-            0xF87C, 0xF884, 0xF8BC, 0xF8C4, 0xFF34}
+            0xF87C, 0xF884, 0xF8BC, 0xF8C4, 0xFF34, 0xEBC0, 0xEF74, 0xF038, 0xF0E8, 0xF380,
+            0xF3A4, 0xF3DC}
 assert required <= seen, sorted(hex(s) for s in required - seen)
-print(f"{replays} installed PPC handoff replays ({frames_total} frames) matched")
+print(f"{replays} installed PPC handoff replays ({frames_total} frames, {staged} with stage "
+      f"calls run natively, {spoken} voice lines) matched")

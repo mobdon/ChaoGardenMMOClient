@@ -941,6 +941,9 @@ pub enum PlacementClock {
         player2: [u32; 2],
         player_tasks: [u32; 2],
         table_words: [u32; 4],
+        /// Work byte 6, the next timed voice line (used by frames with `stage`).
+        #[serde(default)]
+        line: i8,
         frames: Vec<HandoffFrame>,
     },
     SwitchTick {
@@ -1160,10 +1163,183 @@ fn stage_f32(
         .ok_or_else(|| Error::invalid("truncated arena constant"))?;
     Ok(f32::from_be_bytes(bytes.try_into().unwrap()))
 }
+/// Section 1 + 0xeb38. Returns -1 when a channel holds a voice that is not
+/// category 3; busy category-3 channels are stopped through the engine.
+fn voice_gate(
+    rel: &crate::city_rel::CityRel<'_>,
+    channels: Option<&[VoiceChannel; 2]>,
+) -> Result<(i32, Vec<serde_json::Value>)> {
+    let mut events = Vec::new();
+    for (i, ch) in channels.into_iter().flatten().enumerate() {
+        // States 5, 0 and -1 are idle; anything else holds a voice.
+        if matches!(ch.state, 5 | 0 | -1) {
+            continue;
+        }
+        if ch.category != 3 {
+            return Ok((-1, events));
+        }
+        events
+            .push(serde_json::json!({"site":0xebc0,"call":engine_import(rel, 0xebc0)?,"args":[i]}));
+    }
+    Ok((0, events))
+}
+/// Section 1 + 0xee8c: arena bounds for both players unless switch state 4.
+fn arena_clamp(
+    rel: &crate::city_rel::CityRel<'_>,
+    switch_state: i8,
+    present: [bool; 2],
+    positions: [[f32; 3]; 2],
+    distances: [f32; 2],
+) -> Result<Vec<serde_json::Value>> {
+    let mut events = Vec::new();
+    if switch_state == 4 {
+        return Ok(events);
+    }
+    let center = [
+        stage_f32(rel, 0xeede, 5, 0)?,
+        stage_f32(rel, 0xeede, 5, 4)?,
+        stage_f32(rel, 0xeede, 5, 8)?,
+    ];
+    let plane_y = stage_f32(rel, 0xeee6, 4, 0)?;
+    let radius = stage_f32(rel, 0xeeee, 5, 0)?;
+    let one = stage_f32(rel, 0xeef6, 4, 0)?;
+    let x_max = stage_f32(rel, 0xeefe, 5, 0)?;
+    let y_max = stage_f32(rel, 0xef06, 5, 0)?;
+    let y_min = stage_f32(rel, 0xef0e, 5, 0)?;
+    for slot in 0..2 {
+        if !present[slot] {
+            continue;
+        }
+        let [px, py, pz] = positions[slot];
+        events.push(
+            serde_json::json!({"site":0xef74,"call":engine_import(rel, 0xef74)?,
+            "vectors":[[px, plane_y, pz], [center[0], plane_y, center[2]]]}),
+        );
+        let (mut x, mut z) = (px, pz);
+        let clamped = distances[slot] > radius;
+        if clamped {
+            let dx = px - center[0];
+            let dz = pz - center[2];
+            let scale = one / stage_sqrt(dx * dx + dz * dz);
+            let reach = (radius - one) * scale;
+            x = center[0] + dx * reach;
+            z = center[2] + dz * reach;
+        }
+        if x > x_max {
+            x = x_max;
+        }
+        let mut y = py;
+        if y > y_max {
+            y = y_max;
+        }
+        if y < y_min {
+            y = y_min;
+        }
+        events.push(
+            serde_json::json!({"site":0xf038,"call":engine_import(rel, 0xf038)?,
+            "args":[slot],"floats":[x, y, z],"radial_clamp":clamped}),
+        );
+    }
+    Ok(events)
+}
+struct TimedVoiceResult {
+    line: i8,
+    voice: Option<i16>,
+    spoke: bool,
+    events: Vec<serde_json::Value>,
+}
+/// Section 1 + 0xf070: the timed boss voice lines.
+#[allow(clippy::too_many_arguments)]
+fn timed_voice(
+    rel: &crate::city_rel::CityRel<'_>,
+    code: &[u8],
+    player: i8,
+    countdown: i16,
+    mut line: i8,
+    global_7c: i32,
+    global_42_43: [i8; 2],
+    task_0c: u32,
+    channels: Option<&[VoiceChannel; 2]>,
+) -> Result<TimedVoiceResult> {
+    let word = |offset: usize| u32::from_be_bytes(code[offset..offset + 4].try_into().unwrap());
+    let mut events = Vec::new();
+    let release = |events: &mut Vec<serde_json::Value>, site: u32| -> Result<bool> {
+        if task_0c != 0 {
+            events.push(
+                serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":[task_0c]}),
+            );
+        }
+        Ok(task_0c != 0)
+    };
+    let mut voice = None;
+    if global_42_43.contains(&1) {
+        release(&mut events, 0xf0e8)?;
+    } else if countdown <= 0 && global_7c & 3 == 0 && (0..=9).contains(&line) {
+        // Jump table (section 5 + 0x40008) of ten threshold cases:
+        // cmpwi frame,T at +0, li r31,a at +0x18, li r31,b at +0x20.
+        let case = rel
+            .reference(5, 0x40008 + 4 * line as u32)
+            .filter(|r| r.module == 88 && r.section == 1 && r.kind == 1)
+            .ok_or_else(|| Error::invalid("missing voice line jump target"))?
+            .addend as usize;
+        if global_7c >= word(case) as i16 as i32 {
+            voice = Some(word(case + if player == 0 { 0x18 } else { 0x20 }) as i16);
+            line += 1;
+        }
+    }
+    let mut spoke = false;
+    if let Some(v) = voice {
+        // Inline channel scan: busy category-3 voices are stopped and defer
+        // the line; other busy channels are ignored.
+        let mut clear = true;
+        for (i, ch) in channels.into_iter().flatten().enumerate() {
+            if !matches!(ch.state, 5 | 0 | -1) && ch.category == 3 {
+                events.push(serde_json::json!({"site":0xf380,"call":engine_import(rel, 0xf380)?,"args":[i]}));
+                clear = false;
+            }
+        }
+        if release(&mut events, 0xf3a4)? {
+            clear = false;
+        }
+        if clear {
+            events.push(serde_json::json!({"site":0xf3dc,"local":0x18ed0,
+                "args":[0,0,v,1],"vector":[stage_f32(rel, 0xf08e, 4, 0)?,
+                stage_f32(rel, 0xf08e, 4, 4)?, stage_f32(rel, 0xf08e, 4, 8)?]}));
+            spoke = true;
+        } else {
+            line = line.wrapping_sub(1);
+        }
+    }
+    Ok(TimedVoiceResult {
+        line,
+        voice,
+        spoke,
+        events,
+    })
+}
+/// Stage state the three local calls of a handoff frame read. When a frame
+/// carries it, the replay runs 0xeb38, 0xee8c and 0xf070 instead of only
+/// reporting their call sites.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageFrame {
+    pub channels: Option<[VoiceChannel; 2]>,
+    pub present: [bool; 2],
+    pub positions: [[f32; 3]; 2],
+    pub distances: [f32; 2],
+    #[serde(default)]
+    pub global_42: i8,
+    #[serde(default)]
+    pub global_43: i8,
+    #[serde(default)]
+    pub task_0c: u32,
+}
 /// Engine results one handoff frame observes.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandoffFrame {
+    #[serde(default)]
+    pub stage: Option<StageFrame>,
     pub poll: i32,
     /// Byte 1 of each 0x801e7328 entry and word 0xc of each 0x801e7368 entry.
     pub characters: [i8; 2],
@@ -1918,6 +2094,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             player2,
             player_tasks,
             table_words,
+            mut line,
             frames,
         } => {
             if player > 1 || !(1..=3).contains(&switch_state) {
@@ -2026,8 +2203,19 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                                 call(0xf720, &[0])?,
                             ]);
                             camera(&mut ev, 3, player)?;
-                            ev.push(local(0xf800, 0xeb38));
-                            if f.cue_result != -1 {
+                            let cue_result = match &f.stage {
+                                Some(s) => {
+                                    let (result, inner) = voice_gate(&rel, s.channels.as_ref())?;
+                                    ev.push(serde_json::json!({"site":0xf800,"local":0xeb38,
+                                        "result":result,"events":inner}));
+                                    result
+                                }
+                                None => {
+                                    ev.push(local(0xf800, 0xeb38));
+                                    f.cue_result
+                                }
+                            };
+                            if cue_result != -1 {
                                 let v = visits[r31 as usize];
                                 let (site, cue) = match (player, v) {
                                     (0, v) if v > 1 => (0xf848, 0x872),
@@ -2056,14 +2244,37 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                     _ => {}
                 }
                 // Shared tail: two local updates, then the handoff timer.
+                match &f.stage {
+                    Some(s) => {
+                        let inner = arena_clamp(
+                            &rel,
+                            switch_state as i8,
+                            s.present,
+                            s.positions,
+                            s.distances,
+                        )?;
+                        ev.push(serde_json::json!({"site":0xff1c,"local":0xee8c,"events":inner}));
+                        let v = timed_voice(
+                            &rel,
+                            code,
+                            player as i8,
+                            countdown,
+                            line,
+                            f.global_7c as i32,
+                            [s.global_42, s.global_43],
+                            s.task_0c,
+                            s.channels.as_ref(),
+                        )?;
+                        line = v.line;
+                        ev.push(serde_json::json!({"site":0xff28,"local":0xf070,
+                            "voice":v.voice,"spoke":v.spoke,"events":v.events}));
+                    }
+                    None => ev.extend([local(0xff1c, 0xee8c), local(0xff28, 0xf070)]),
+                }
                 timer = timer.wrapping_add(1);
-                ev.extend([
-                    local(0xff1c, 0xee8c),
-                    local(0xff28, 0xf070),
-                    store(0xff34, "task", None, 8, 2, timer.into()),
-                ]);
+                ev.push(store(0xff34, "task", None, 8, 2, timer.into()));
                 out.push(serde_json::json!({"frame":n,"events":ev,"player":player,
-                    "switch_state":switch_state,"timer":timer,"countdown":countdown}));
+                    "switch_state":switch_state,"timer":timer,"countdown":countdown,"line":line}));
             }
             return Ok(
                 serde_json::json!({"frames":out,"player":player,"switch_state":switch_state,
@@ -2074,80 +2285,32 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::TimedVoice {
             player,
             countdown,
-            mut line,
+            line,
             global_7c,
             global_42,
             global_43,
             task_0c,
             channels,
         } => {
-            let mut events = Vec::new();
-            let release = |events: &mut Vec<serde_json::Value>, site: u32| -> Result<bool> {
-                if task_0c != 0 {
-                    events.push(serde_json::json!({"site":site,"call":engine_import(&rel, site)?,"args":[task_0c]}));
-                }
-                Ok(task_0c != 0)
-            };
-            let mut voice = None;
-            if global_42 == 1 || global_43 == 1 {
-                release(&mut events, 0xf0e8)?;
-            } else if countdown <= 0 && global_7c & 3 == 0 && (0..=9).contains(&line) {
-                // Jump table (section 5 + 0x40008) of ten threshold cases:
-                // cmpwi frame,T at +0, li r31,a at +0x18, li r31,b at +0x20.
-                let at = 0x40008 + 4 * line as u32;
-                let case = rel
-                    .reference(5, at)
-                    .filter(|r| r.module == 88 && r.section == 1 && r.kind == 1)
-                    .ok_or_else(|| Error::invalid("missing voice line jump target"))?
-                    .addend as usize;
-                if global_7c >= word(case) as i16 as i32 {
-                    voice = Some(word(case + if player == 0 { 0x18 } else { 0x20 }) as i16);
-                    line += 1;
-                }
-            }
-            let mut spoke = false;
-            if let Some(v) = voice {
-                // Inline channel scan: busy category-3 voices are stopped and
-                // defer the line; other busy channels are ignored.
-                let mut clear = true;
-                for (i, ch) in channels.iter().flatten().enumerate() {
-                    if !matches!(ch.state, 5 | 0 | -1) && ch.category == 3 {
-                        events.push(serde_json::json!({"site":0xf380,"call":engine_import(&rel, 0xf380)?,"args":[i]}));
-                        clear = false;
-                    }
-                }
-                if release(&mut events, 0xf3a4)? {
-                    clear = false;
-                }
-                if clear {
-                    events.push(serde_json::json!({"site":0xf3dc,"local":0x18ed0,
-                        "args":[0,0,v,1],"vector":[stage_f32(&rel, 0xf08e, 4, 0)?,
-                        stage_f32(&rel, 0xf08e, 4, 4)?, stage_f32(&rel, 0xf08e, 4, 8)?]}));
-                    spoke = true;
-                } else {
-                    line = line.wrapping_sub(1);
-                }
-            }
+            let v = timed_voice(
+                &rel,
+                code,
+                player,
+                countdown,
+                line,
+                global_7c,
+                [global_42, global_43],
+                task_0c,
+                channels.as_ref(),
+            )?;
             return Ok(
-                serde_json::json!({"line":line,"voice":voice,"spoke":spoke,"events":events,
+                serde_json::json!({"line":v.line,"voice":v.voice,"spoke":v.spoke,"events":v.events,
                 "scope":"Line selection and gating; the 0x18ed0 voice task is created by engine code."}),
             );
         }
         PlacementClock::VoiceGate { channels } => {
-            let mut stops = Vec::new();
-            let mut result = 0;
-            for (i, ch) in channels.iter().flatten().enumerate() {
-                // States 5, 0 and -1 are idle; anything else holds a voice.
-                if matches!(ch.state, 5 | 0 | -1) {
-                    continue;
-                }
-                if ch.category != 3 {
-                    result = -1;
-                    break;
-                }
-                stops.push(serde_json::json!({"site":0xebc0,"call":engine_import(&rel, 0xebc0)?,"args":[i]}));
-            }
-            return Ok(serde_json::json!({"result":result,"events":stops}));
+            let (result, events) = voice_gate(&rel, channels.as_ref())?;
+            return Ok(serde_json::json!({"result":result,"events":events}));
         }
         PlacementClock::ArenaClamp {
             switch_state,
@@ -2155,54 +2318,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             positions,
             distances,
         } => {
-            let mut events = Vec::new();
-            if switch_state != 4 {
-                let center = [
-                    stage_f32(&rel, 0xeede, 5, 0)?,
-                    stage_f32(&rel, 0xeede, 5, 4)?,
-                    stage_f32(&rel, 0xeede, 5, 8)?,
-                ];
-                let plane_y = stage_f32(&rel, 0xeee6, 4, 0)?;
-                let radius = stage_f32(&rel, 0xeeee, 5, 0)?;
-                let one = stage_f32(&rel, 0xeef6, 4, 0)?;
-                let x_max = stage_f32(&rel, 0xeefe, 5, 0)?;
-                let y_max = stage_f32(&rel, 0xef06, 5, 0)?;
-                let y_min = stage_f32(&rel, 0xef0e, 5, 0)?;
-                for slot in 0..2 {
-                    if !present[slot] {
-                        continue;
-                    }
-                    let [px, py, pz] = positions[slot];
-                    events.push(
-                        serde_json::json!({"site":0xef74,"call":engine_import(&rel, 0xef74)?,
-                        "vectors":[[px, plane_y, pz], [center[0], plane_y, center[2]]]}),
-                    );
-                    let (mut x, mut z) = (px, pz);
-                    let clamped = distances[slot] > radius;
-                    if clamped {
-                        let dx = px - center[0];
-                        let dz = pz - center[2];
-                        let scale = one / stage_sqrt(dx * dx + dz * dz);
-                        let reach = (radius - one) * scale;
-                        x = center[0] + dx * reach;
-                        z = center[2] + dz * reach;
-                    }
-                    if x > x_max {
-                        x = x_max;
-                    }
-                    let mut y = py;
-                    if y > y_max {
-                        y = y_max;
-                    }
-                    if y < y_min {
-                        y = y_min;
-                    }
-                    events.push(
-                        serde_json::json!({"site":0xf038,"call":engine_import(&rel, 0xf038)?,
-                        "args":[slot],"floats":[x, y, z],"radial_clamp":clamped}),
-                    );
-                }
-            }
+            let events = arena_clamp(&rel, switch_state, present, positions, distances)?;
             return Ok(
                 serde_json::json!({"skipped":switch_state == 4,"events":events,
                 "scope":"Stage-side bounds only; the distance and position-set calls are engine code."}),
