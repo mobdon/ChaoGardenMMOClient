@@ -405,6 +405,16 @@ fn story_run_stops_before_gameplay() {
                 sa2_asset_tools::manifest::sha256(&reference_bytes),
                 "955fb973f28976ee043d8aa825c21d057fb37c099ef4f6feb7899b85cef9a0e8"
             );
+            let mut order = Vec::new();
+            for picture in v["stop"]["movie"]["presentationOrder"].as_array().unwrap() {
+                order.extend(picture["pts"].as_u64().unwrap().to_be_bytes());
+                order.extend(picture["packetOffset"].as_u64().unwrap().to_be_bytes());
+                order.extend(picture["coding"].as_str().unwrap().bytes());
+            }
+            assert_eq!(
+                sa2_asset_tools::manifest::sha256(&order),
+                "45ada4b137cc428f6f3c5930cd4297c2d36d12678c99fd335561ba94520abe55"
+            );
             let video = &v["stop"]["movie"]["videoStream"];
             assert_eq!(
                 video["sha256"],

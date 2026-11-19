@@ -124,7 +124,46 @@ pub fn inspect_602(b: &[u8]) -> Result<Value> {
         .ok_or_else(|| Error::invalid("expected MPEG sequence header"))?;
     let width = (u16::from(h[4]) << 4) | u16::from(h[5] >> 4);
     let height = (u16::from(h[5] & 15) << 8) | u16::from(h[6]);
-    let pictures = video.windows(4).filter(|v| *v == [0, 0, 1, 0]).count();
+    // A timed video PES anchors the next picture header. The final PES with
+    // a repeated PTS carries no new picture and must not extend the schedule.
+    let anchors: Vec<_> = report["timedPackets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["stream"] == 0xe0)
+        .map(|p| {
+            (
+                p["streamOffset"].as_u64().unwrap() as usize,
+                p["pts"].as_u64().unwrap(),
+                p["packetOffset"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let mut schedule = Vec::new();
+    for (offset, h) in video
+        .windows(6)
+        .enumerate()
+        .filter(|(_, v)| v[..4] == [0, 0, 1, 0])
+    {
+        let index = anchors
+            .partition_point(|a| a.0 <= offset)
+            .checked_sub(1)
+            .ok_or_else(|| Error::invalid("unanchored movie picture"))?;
+        let (_, pts, packet) = anchors[index];
+        let kind = match (h[5] >> 3) & 7 {
+            1 => "I",
+            2 => "P",
+            3 => "B",
+            _ => return Err(Error::invalid("unsupported movie picture coding")),
+        };
+        schedule.push((pts,json!({"pts":pts,"packetOffset":packet,"streamOffset":offset,"codedIndex":schedule.len(),"coding":kind})));
+    }
+    schedule.sort_by_key(|a| a.0);
+    if schedule.windows(2).any(|w| w[0].0 == w[1].0) {
+        return Err(Error::invalid("ambiguous movie picture presentation time"));
+    }
+    let pictures = schedule.len();
+    report["presentationOrder"] = Value::Array(schedule.into_iter().map(|(_, p)| p).collect());
     report["videoStream"] = json!({"bytes":video.len(),"sha256":manifest::sha256(&video),"width":width,"height":height,"pictures":pictures,"sequenceRateCode":h[7]&15});
     for (key, data) in ["c0", "c1"].into_iter().zip(tracks) {
         let pcm = crate::audio::decode_adx(&data, 3_000_000)?;
