@@ -44,11 +44,29 @@ struct TailInput {
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Ring {
+pub(crate) struct Ring {
     slot: i32,
     cursor: usize,
     velocities: Vec<[f32; 3]>,
     rotations: Vec<[i32; 3]>,
+}
+impl Ring {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if !(0..=1).contains(&self.slot)
+            || self.cursor >= 60
+            || self.velocities.len() != 60
+            || self.rotations.len() != 60
+        {
+            return Err(crate::Error::invalid("invalid kart velocity/rotation ring"));
+        }
+        Ok(())
+    }
+    pub(crate) fn motion_history(&self) -> Result<[[f32; 3]; 30]> {
+        self.validate()?;
+        Ok(std::array::from_fn(|i| {
+            self.velocities[(self.cursor + 59 - i) % 60]
+        }))
+    }
 }
 #[derive(Serialize)]
 struct TailUpdate {
@@ -68,18 +86,12 @@ impl TailInput {
         let mut ring = self.ring;
         let motion_history = match (&mut ring, slot) {
             (None, i) if i < 0 => None,
-            (Some(r), 0..=1)
-                if r.slot == slot
-                    && r.cursor < 60
-                    && r.velocities.len() == 60
-                    && r.rotations.len() == 60 =>
-            {
+            (Some(r), 0..=1) if r.slot == slot => {
+                r.validate()?;
                 r.velocities[r.cursor] = raw;
                 r.rotations[r.cursor] = self.post_alignment_angles;
                 r.cursor = (r.cursor + 1) % 60;
-                Some(std::array::from_fn(|i| {
-                    r.velocities[(r.cursor + 59 - i) % 60]
-                }))
+                Some(r.motion_history()?)
             }
             _ => return Err(crate::Error::invalid(
                 "expected matching 60-entry history for slot 0/1, or no history for negative slot",

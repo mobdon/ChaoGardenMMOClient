@@ -545,7 +545,7 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
             extras.push(Extra::read(
                 path,
                 format!("requests/{}", basename(path)?),
-                4096,
+                64 * 1024,
                 "kart-movement-contact",
             )?);
             serde_json::to_value(sa2_asset_tools::kart_contact::step(

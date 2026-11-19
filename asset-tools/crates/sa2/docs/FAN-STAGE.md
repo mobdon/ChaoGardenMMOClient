@@ -429,3 +429,9 @@ handle and updated position to engine 0x8006b188. An enabled kart leaving
 state 9 for 0 instead reaches the normal sound path at 0x5820, reported as
 unresolved. This describes engine requests, not playback. The horizontal
 speed computed on entry does not affect these scripted cue arguments.
+
+After a contact with history enabled, pass the same returned
+`response.tail.ring` to the next contact as `tail.ring` and to the next
+normal drive step as `drift.ring`. The drive read uses the newest 30 raw
+velocities without advancing the cursor. For standalone captures, supply
+`drift.motion_history` instead. Each ring belongs to one kart history slot.

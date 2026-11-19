@@ -155,7 +155,8 @@ fn drive_step(
         .transpose()?;
     let drift = d
         .drift
-        .map(|i| drift_update(i, speed, work_a4, accelerate, stick_x, constants));
+        .map(|i| drift_update(i, speed, work_a4, accelerate, stick_x, constants))
+        .transpose()?;
     Ok(Motion {
         drift,
         position_step,
@@ -228,7 +229,8 @@ fn position(
 struct DriftInput {
     /// The 30 motion-history reads returned by 0x52b0, newest first.
     #[serde(alias = "positions")]
-    motion_history: [[f32; 3]; 30],
+    motion_history: Option<[[f32; 3]; 30]>,
+    ring: Option<crate::kart_contact::Ring>,
     /// Return of the rotation helper 0x5498, if observed.
     local_offset: Option<[f32; 3]>,
     speed_threshold: f32,
@@ -253,15 +255,24 @@ fn drift_update(
     accelerate: bool,
     stick: i16,
     constants: &[u8],
-) -> DriftUpdate {
+) -> Result<DriftUpdate> {
+    let history = match (s.motion_history, s.ring) {
+        (Some(h), None) => h,
+        (None, Some(r)) => r.motion_history()?,
+        _ => {
+            return Err(Error::invalid(
+                "supply exactly one kart motion_history or ring",
+            ))
+        }
+    };
     let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
     let mut sum = [0f32; 3];
-    for pos in s.motion_history {
+    for pos in history {
         for (acc, x) in sum.iter_mut().zip(pos) {
             *acc += x;
         }
     }
-    let history_offset = std::array::from_fn(|i| s.motion_history[0][i] - sum[i] * f(0x238));
+    let history_offset = std::array::from_fn(|i| history[0][i] - sum[i] * f(0x238));
     let work_f0 = s.local_offset.map(|[x, _, z]| {
         if x < f(0x23c) {
             640
@@ -281,7 +292,7 @@ fn drift_update(
             a4 = 0;
         }
     }
-    DriftUpdate {
+    Ok(DriftUpdate {
         history_offset,
         work_f0,
         work_f8,
@@ -289,5 +300,5 @@ fn drift_update(
         work_10c,
         work_a8,
         work_a4: a4,
-    }
+    })
 }
