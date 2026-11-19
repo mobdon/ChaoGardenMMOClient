@@ -91,3 +91,5 @@ Across the normal story SETs, 24,162 placement visits reduce to 24,003 distinct 
 For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-space platform collision model. Its motion, placement and live contact handler remain open.
 
 [Shared stage callbacks](SHARED-STAGE-TASKS.md) documents mounted replay and magnetic shield selection.
+
+[Damage and dropped ring behavior](DAMAGE-RINGS.md) covers ring loss, scatter, flight, static contact response and expiry.
