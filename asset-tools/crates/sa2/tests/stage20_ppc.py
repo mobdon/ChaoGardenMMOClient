@@ -430,8 +430,9 @@ def range_service(cpu,pc,*_):
 for site in (0x294,0xc60,0xccc):
     u.hook_add(UC_HOOK_CODE,range_service,begin=base[1]+site,end=base[1]+site)
 expand_close=False
+expand_expiry=False
 def stop_at_branch(cpu,pc,*_):
-    if pc!=base[1]+0x640 or not expand_close:cpu.emu_stop()
+    if not (expand_close if pc==base[1]+0x640 else expand_expiry):cpu.emu_stop()
 for site in (0x640,0xd48):u.hook_add(UC_HOOK_CODE,stop_at_branch,begin=base[1]+site,end=base[1]+site)
 cases=[(6,6,1,4.99,200,1,0,0)]
 cases += [(6,slot0,1,5.,dist,1,0,0) for slot0 in (6,7) for dist in (69.9,70.,70.1,99.9,100.)]
@@ -634,3 +635,40 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0x11a8,continueAt=0x1424,mode=m,counter=counter,
                     timerWrite=timer if m==2 else None,steering=seen if m==6 else None)
 print(idx,"state-six updates matched")
+
+expand_expiry=True
+def expiry_draw(cpu,pc,*_):
+    site=pc-base[1];value={0xd70:first,0xddc:second,0xe2c:third}[site]
+    draws.append(value)
+    if site==0xddc:put(player1+1,"b",second_byte)
+    cpu.reg_write(R.UC_PPC_REG_3,value&0xffffffff);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0xd70,0xddc,0xe2c):u.hook_add(UC_HOOK_CODE,expiry_draw,begin=base[1]+site,end=base[1]+site)
+def record_expiry_byte(cpu,pc,*_):bytes_read.append(get(player1+1,"b")[0])
+for site in (0xdcc,0xe1c,0x328,0x438):
+    u.hook_add(UC_HOOK_CODE,record_expiry_byte,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for slot,second_byte in ((6,6),(6,7),(7,7),(-1,-1)):
+        for flag,first,second,third in [(1,0,0,0),(0,6553,0,0),(0,6554,29491,16383),(0,6554,29492,16384),(0,32767,0,16384)]:
+            mode=(2,10)[idx%2];decision=1;dist=150.;angle=0.3;draw=18921
+            calls=[];ops=[];observed={};args=[];draws=[];bytes_read=[]
+            put(work,"bbhhh",mode,0,5,4,13);put(player0+1,"b",6);put(player1+1,"b",slot)
+            put(pose1+6,"H",0);put(0x801e738c,"I",task);put(task+64,"I",0);put(0x803ad494,"b",flag)
+            for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
+                u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+            u.emu_start(base[1]+0xad4,base[1]+0x1424,count=480)
+            assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+            m,_,counter,timer,cool=get(work,"bbhhh")
+            if m in (4,6):draws.append(draw)
+            exp=dict(decision=dict(work_word=None,engine_byte=flag),draws=draws,slot_bytes=bytes_read)
+            a=dict(counter=5,limit=4,scalar=20.,pose_word=0,range=dict(slot0_byte=6,distance_return=dist),expiry=exp)
+            if m==5:a["close_range"]=dict(cooldown=13)
+            v=dict(slot0=p0,slot1=p1,slot_byte=slot,angle_return=angle,decision=1,after_steering=a)
+            c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+            out=Path(tmp)/f"{idx}.json";idx+=1
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            rep=json.loads(out.read_text())["controller"]
+            assert (rep["mode"],rep["counter"],rep["timerWrite"],rep["continueAt"])==(m,counter,timer if m in (4,6) else None,0x1424)
+            if m==5:assert rep["closeRange"]==dict(cooldown=cool,calls=calls)
+print(idx,"integrated expiry transitions matched")

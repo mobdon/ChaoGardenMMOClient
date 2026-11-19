@@ -292,6 +292,7 @@ struct StateTwo {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AfterSteering {
+    expiry: Option<WalkerExpiry>,
     pose_word: u16,
     scalar: f32,
     counter: i16,
@@ -299,6 +300,13 @@ struct AfterSteering {
     range: Option<RangeObservation>,
     close_range: Option<CloseRange>,
     draw: Option<i32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WalkerExpiry {
+    decision: WalkerDecision,
+    draws: Vec<i32>,
+    slot_bytes: Vec<i8>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -732,6 +740,45 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
                         next = 0xd48;
                     }
                 }
+            }
+            if let Some(e) = a.expiry {
+                if next != 0xd48 {
+                    return Err(invalid());
+                }
+                let mut draws = e.draws.into_iter();
+                let mut bytes = e.slot_bytes.into_iter();
+                let mut draw = || draws.next().map(|n| n as f32).ok_or_else(invalid);
+                let mut byte = || bytes.next().ok_or_else(invalid);
+                mode = if e.decision.active() {
+                    6
+                } else if draw()? * f(0xd9e)? < f(0xdae)? {
+                    4
+                } else {
+                    let six = byte()? == 6 && draw()? * f(0xd9e)? > f(0xe0e)?;
+                    if six || (byte()? == 7 && draw()? * f(0xe5a)? < f(0xe6a)?) {
+                        7
+                    } else {
+                        5
+                    }
+                };
+                if mode == 4 || mode == 6 {
+                    let (s, r, b) = match (mode, byte()?) {
+                        (6, 7) => (0x366, 0x376, 0x376),
+                        (6, _) => (0x3c6, 0x3d6, 0x3e6),
+                        (4, 7) => (0x476, 0x486, 0x486),
+                        _ => (0x4d6, 0x4e6, 0x4f6),
+                    };
+                    timer = Some((f(b)? + f(r)? * (f(s)? * draw()?)) as i32 as i16 as i32);
+                }
+                if draws.next().is_some() || bytes.next().is_some() {
+                    return Err(invalid());
+                }
+                if mode == 5 && a.close_range.is_none() {
+                    return Err(invalid());
+                }
+                next = if mode == 5 { 0x640 } else { 0x1424 };
+                counter = 0;
+                report["timerWrite"] = json!(timer);
             }
             if let Some(close) = a.close_range {
                 if next != 0x640 {
