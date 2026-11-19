@@ -97,4 +97,23 @@ if len(sys.argv)>4:
             for event,ref in zip(doc["updates"],expected,strict=True):
                 if isinstance(ref,int):assert event["controller"]["remaining"]==ref;continue
                 r=event["result"];assert (r["latch"],r["timer_word"],r["primary_kart_counter"],r["calls"])==ref
+            # Identical one-tick clock, different order of admitted callbacks.
+            check=dict(vehicle_countdown={})
+            advance=dict(controller=dict(remove_task=False,pursuit_latch=0,race_finish_latch=0,engine_byte_09=0,engine_byte_42=0))
+            credit=dict(placement=a,collision_flags=1,first_contact=primary,final_flags=0)
+            for early in (True,False):
+                timeline=[advance,credit,check] if early else [advance,check,check,credit,check]+[dict(timeout_tick=dict(engine_halfword_64=0))]*181
+                q=dict(timer_word=1,primary_kart_counter=0,sequence=0,registered_tasks=registry,vehicle_state=0,updates=timeline)
+                req.write_text(json.dumps(q));out=req.with_name(f"{path.stem}-{early}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                result=json.loads(out.read_text())
+                assert result["timerWord"]==int(rows[a][8])*60
+                assert result["vehicleState"]==(0 if early else 10)
+                assert result["timeoutTimer"]==(None if early else 181)
+                if not early:
+                    results=result["updates"]
+                    assert results[1]["vehicleCountdown"]["cue_id"]==(0x706 if "Tails" in path.name else 0x70d)
+                    assert results[2]["vehicleCountdown"]["timer"] is None
+                    assert results[4]["vehicleCountdown"]["next"]=="vehicle_272c"
+                    assert results[-2]["timeoutTick"]["action"] is None and results[-1]["timeoutTick"]["action"]==8
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

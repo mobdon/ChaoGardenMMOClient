@@ -586,6 +586,7 @@ pub struct GateSequence {
     registered_tasks: [u32; 6],
     #[serde(default)]
     controller_state: ControllerState,
+    vehicle_state: Option<i32>,
     updates: Vec<SequenceEvent>,
 }
 #[derive(Deserialize)]
@@ -607,9 +608,23 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    Vehicle {
+        vehicle_countdown: VehicleCountdown,
+    },
+    Timeout {
+        timeout_tick: TimeoutTick,
+    },
     Controller {
         controller: crate::kart_story_target::ControllerSignals,
     },
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VehicleCountdown {}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TimeoutTick {
+    engine_halfword_64: i16,
 }
 /// Replay admitted active callbacks only. External countdown or traffic changes
 /// between callbacks are not implied by the order of supplied contacts.
@@ -639,9 +654,45 @@ pub fn story_sequence(
     let (mut timer, mut count, mut seq) = (s.timer_word, s.primary_kart_counter, s.sequence);
     let mut updates = Vec::new();
     let mut clock = s.controller_state;
+    let mut vehicle = s.vehicle_state;
+    let mut timeout = None;
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::Vehicle {
+                vehicle_countdown: VehicleCountdown {},
+            } => {
+                let state = vehicle.ok_or_else(|| {
+                    Error::invalid("vehicle_countdown requires initial vehicle_state")
+                })?;
+                let result = crate::kart_timeout::step_verified(
+                    bytes,
+                    crate::kart_timeout::Input::VehicleCountdown {
+                        remaining: timer as i32,
+                        vehicle_state: state,
+                        mode,
+                    },
+                )?;
+                vehicle = result.vehicle_state;
+                if let Some(start) = result.timer {
+                    timeout = Some(start);
+                }
+                updates.push(json!({"vehicleCountdown":result}));
+                continue;
+            }
+            SequenceEvent::Timeout { timeout_tick } => {
+                let t = timeout.ok_or_else(|| Error::invalid("timeout task has not spawned"))?;
+                let result = crate::kart_timeout::step_verified(
+                    bytes,
+                    crate::kart_timeout::Input::Tick {
+                        timer: t,
+                        engine_halfword_64: timeout_tick.engine_halfword_64,
+                    },
+                )?;
+                timeout = result.timer;
+                updates.push(json!({"timeoutTick":result}));
+                continue;
+            }
             SequenceEvent::Controller { controller } => {
                 let r = crate::kart_story_target::controller_verified(controller.input(
                     timer as i32,
@@ -689,6 +740,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }

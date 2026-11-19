@@ -106,8 +106,8 @@ pub struct Update {
     limousine: Option<Limousine>,
     #[serde(skip_serializing_if = "Option::is_none")]
     frame: Option<Frame>,
-    vehicle_state: Option<i32>,
-    timer: Option<u16>,
+    pub(crate) vehicle_state: Option<i32>,
+    pub(crate) timer: Option<u16>,
     cue_id: Option<i32>,
     action: Option<i32>,
     next: &'static str,
@@ -124,6 +124,9 @@ fn spawn(r: &mut Update, remaining: i32, mode: i32) {
 }
 pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
     kart_progress::verify(bytes)?;
+    step_verified(bytes, s)
+}
+pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
     let mut r = Update {
         limousine: None,
         frame: None,
