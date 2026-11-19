@@ -1024,10 +1024,12 @@ print(idx,"two-buffer fog submissions matched")
 
 # Execute the registered exit with matching / replaced callbacks and both layout states.
 put(base[1]+0x1b5a,"H",(layout_bss+32768)>>16);put(base[1]+0x1b5e,"H",layout_bss&65535)
+expand_release=False
 def exit_service(cpu,pc,*_):
     site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
     if site in (0x1aac,0x1ad0,0x1af8,0x1b20):ops.append(dict(clear=reg(5)));return
     if site==0x1b74:ops.append(dict(clearBss=reg(31)-layout_bss));return
+    if expand_release and site in (0x1a78,0x1a7c):return
     if site in (0x1a78,0x1a7c,0x1b24):
         ops.append(dict(local=site+(get(pc,"I")[0]&0x03fffffc)))
     else:
@@ -1053,3 +1055,41 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             assert json.loads(out.read_text())["exit"]==dict(slots=[get(hook_table+o,"I")[0] for o in offsets],
                 layoutHandle=get(layout_bss,"I")[0],operations=ops)
 print(idx,"registered stage exit paths matched")
+
+expand_release=True
+for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
+    while True:
+        n,k,s,v=struct.unpack_from(">HBBI",d,i);i+=8
+        if k==203:break
+        if k==202:t=s;off=0;continue
+        off+=n
+        if mod==19 and t==1 and s==6 and (0x21bcc<=off<0x21c50 or 0x11bf0<=off<0x11c78) and k in (4,6):
+            addr=layout_bss+v;put(base[1]+off,"H",(addr if k==4 else (addr+32768)>>16)&65535)
+def release_call(cpu,pc,*_):
+    site=pc-base[1]
+    if site==0x11c4c:
+        args=[int.from_bytes(struct.pack(">f",reg_float(cpu,r)),"big") for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2)]
+    elif site in (0x11c58,0x11c5c,0x11c60):args=[]
+    else:args=[cpu.reg_read(R.UC_PPC_REG_3)]
+    (release_msg if site>=0x21bcc else release_fog).append(dict(engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x21bf0,0x21c20,0x11c14,0x11c30,0x11c4c,0x11c54,0x11c58,0x11c5c,0x11c60):
+    u.hook_add(UC_HOOK_CODE,release_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for mask in range(8):
+        release_msg=[];release_fog=[];ops=[]
+        handles=[0x1020 if mask&1 else 0,0x88880000 if mask&2 else 0];manager=msg if mask&4 else 0
+        put(layout_bss+0xd80,"II",*handles);put(base[5]+0x4749c,"ii",6,123)
+        put(layout_bss+0x6d4,"I",manager);put(0x803ad7c8,"I",0xdeadcafe)
+        for off in (0,8,36,40):put(hook_table+off,"I",0)
+        put(layout_bss,"I",0);u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_LR,stop)
+        u.emu_start(get(base[5]+88932+16,"I")[0],stop,count=300);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+        obs=dict(code_base=base[1],slots=[0]*4,layout_handle=0,resources=dict(message_handles=handles,
+            message_counts=[6,123],fog_manager=manager,fog_link=0xdeadcafe))
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],exit=obs)))
+        out=Path(tmp)/f"{mask}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        operations=json.loads(out.read_text())["exit"]["operations"]
+        assert operations[0]["cleanup"]==dict(calls=release_msg,handles=list(get(layout_bss+0xd80,"II")),counts=list(get(base[5]+0x4749c,"ii")))
+        assert operations[1]["cleanup"]==dict(calls=release_fog,manager=get(layout_bss+0x6d4,"I")[0],link=get(0x803ad7c8,"I")[0])
+print("8 integrated message and fog cleanup paths matched")

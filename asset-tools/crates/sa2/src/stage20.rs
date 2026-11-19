@@ -20,9 +20,18 @@ struct Request {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StageExit {
+    resources: Option<ExitResources>,
     code_base: u32,
     slots: [u32; 4],
     layout_handle: u32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExitResources {
+    message_handles: [u32; 2],
+    message_counts: [i32; 2],
+    fog_manager: u32,
+    fog_link: u32,
 }
 fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
     let invalid = || Error::invalid("missing stage 20 exit relocation");
@@ -45,6 +54,44 @@ fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
         engine(0x1a80, json!([]))?,
         engine(0x1a84, json!([]))?,
     ];
+    if let Some(r) = e.resources {
+        let mut counts = r.message_counts;
+        let mut releases = Vec::new();
+        for (i, site) in [0x21bf0, 0x21c20].into_iter().enumerate() {
+            if r.message_handles[i] != 0 {
+                releases.push(engine(site, json!([r.message_handles[i]]))?);
+                counts[i] = -1;
+            }
+        }
+        ops[0]["cleanup"] = json!({"calls":releases,"handles":[0,0],"counts":counts});
+        let mut calls = Vec::new();
+        let mut link = r.fog_link;
+        if r.fog_manager != 0 {
+            calls.push(engine(0x11c14, json!([r.fog_manager]))?);
+            link = 0;
+        }
+        let bits = |site| -> Result<u32> {
+            let p = field(site, 19, 4)? as usize;
+            Ok(u32::from_be_bytes(
+                rel.data(4)?
+                    .get(p..p + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        for (site, args) in [
+            (0x11c30, json!([0])),
+            (0x11c4c, json!([bits(0x11c3a)?, bits(0x11c46)?])),
+            (0x11c54, json!([u32::MAX])),
+            (0x11c58, json!([])),
+            (0x11c5c, json!([])),
+            (0x11c60, json!([])),
+        ] {
+            calls.push(engine(site, args)?);
+        }
+        ops[1]["cleanup"] = json!({"calls":calls,"manager":0,"link":link});
+    }
     let mut slots = e.slots;
     for (idx, base, offset, reference) in [
         (3, 0x1a8e, 40, 0x1a9e),
