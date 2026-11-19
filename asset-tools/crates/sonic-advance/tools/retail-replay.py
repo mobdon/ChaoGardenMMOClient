@@ -1,6 +1,6 @@
 """Sample the original title or a Sonic spindash from a cold boot. No save files or frame dumps.
 
-Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input|--character-video]
+Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input|--character-video|--confirm-sonic|--confirm-tails|--confirm-knuckles|--confirm-amy]
 The DLL and ROM are identified before any external code runs. Outputs only
 selected numbers and pixel hashes. No graphical or memory buffers are written.
 """
@@ -44,7 +44,7 @@ def verified(path, limit, digest):
     return data
 
 
-def replay(rom, dll, title=False, menu=None, character=False, character_video=False):
+def replay(rom, dll, title=False, menu=None, character=False, character_video=False, confirm=None):
     data = verified(rom, 8388608, ROM_HASH)
     verified(dll, 32 * 1024 * 1024, CORE_HASH)
     core = ct.CDLL(str(dll.resolve()))
@@ -82,6 +82,7 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
     def video(pointer, width, height, pitch):
         tick = frame - title_origin
         sample_character = character_video and 1401 <= frame <= 1600
+        sample_character |= confirm is not None and 1601 <= frame <= 1657
         if not pointer or not (sample_character or (title and tick in title_ticks)):
             return
         if pixel_format != 2 or (width, height) != (240, 160) or not 480 <= pitch <= 2048:
@@ -135,7 +136,14 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
                 # Every pulse has a released frame before it (no key repeat).
                 # Libretro keys: right, left, up, down, L, R, A.
                 buttons.update(CHARACTER_PULSES.get(frame, ()))
+            if confirm is not None and frame >= 1353:
+                buttons.clear()
+                if frame in (1480,1520,1560)[:confirm]: buttons.add(7)
+                if frame == 1600: buttons.add(8)
             core.retro_run()
+            if confirm is not None and frame == 1657:
+                if len(video_frames) != 57: raise ValueError("incomplete confirmation video")
+                return video_frames
             if character and 1415 <= frame <= 1600:
                 # Fixed task allocation on this cold-boot route only.
                 raw_state = ct.string_at(mem["iwram"] + 0x26f4 + 0x24, 0x16)
@@ -167,9 +175,10 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
 
 if __name__ == "__main__":
     mode = sys.argv[3] if len(sys.argv) == 4 else None
-    if len(sys.argv) not in (3, 4) or mode not in (None, "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
+    confirm_modes = ("--confirm-sonic", "--confirm-tails", "--confirm-knuckles", "--confirm-amy")
+    if len(sys.argv) not in (3, 4) or mode not in confirm_modes + (None, "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
         sys.exit(__doc__)
     print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]),
                             mode == "--title", {"--menu":"regular", "--menu-tiny":"tiny"}.get(mode),
-                            mode in ("--character-input","--character-video"), mode == "--character-video"),
+                            mode in ("--character-input","--character-video"), mode == "--character-video", confirm_modes.index(mode) if mode in confirm_modes else None),
                      indent=None if mode == "--character-input" else 2))

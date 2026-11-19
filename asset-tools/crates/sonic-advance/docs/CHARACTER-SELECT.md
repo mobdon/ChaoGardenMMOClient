@@ -34,8 +34,12 @@ Single Player now opens the native carousel in the browser. The Rust screen draw
 the opening fade, BG1 tile strips, original character portraits, window brightness,
 arrows, scrolling header and character nameplate. Left/Right select, Z/Space
 confirm, and X returns to the menu. A/S supply the GBA L/R shoulder buttons.
-Confirmation currently stops at the selected character. The native confirmation
-animation, subsequent level-selection/start flow, return fade, and audio are pending.
+Confirmation plays the original animation and fade for all four characters.
+In a fresh browser session solo Sonic then starts the existing Act 1 runtime.
+The runtime starts at its playable spawn: the native act introduction is pending.
+Other characters and CPU Tails stop after the confirmation fade; they never load
+Sonic in place of the requested character. Course select for an existing save,
+the return fade and audio remain pending.
 
 Run the same replay tool with --character-video to regenerate only hashes:
 200 consecutive complete displayed frames (1401–1600 inclusive), including
@@ -67,3 +71,19 @@ elements share the arrow palette except for the four character-specific band pal
 | Character names | 0x6713B8 | 12288 | f5738ba611faf5513b120f9f8f637671766ce61a0fbc589bed827d76b2e75302 |
 | Header letters | 0x6743D8 | 2048 | 159edfc0258ddf0e71e9ae9caf5bafc8b027e4f3fbbfce512f990b70c9266640 |
 | Header backing | 0x674BF8 | 256 | 3d6876a0146de8576eb2395a858de1213d1b92c65b779df3a331cfd5a4584546 |
+
+Confirmation evidence: tools/retail-replay.py accepts --confirm-sonic,
+--confirm-tails, --confirm-knuckles and --confirm-amy. Each local cold boot uses
+the first 0–3 Right pulses at frames 1480, 1520 and 1560, followed by A at 1600.
+The Rust test compares every full BGR555 video frame from 1601 through 1657:
+57 per character, 228 total. It covers the odd-numbered animation 722 variants,
+outward motion of the side portraits, disappearance of the arrows, slowing header,
+and final fade. The confirmation header tiles occupy ASOE file span
+0x674D18..0x674F18 (exclusive end), SHA-256 e726d23c277c23447ab4da7f4b007294dec43e035d50b88bdb519a8a07f7fb7e.
+
+The retail Single Player task starts level 0 when the selected character has
+zero unlocked levels; otherwise it calls course select. See Task_805AAF8 in the
+pinned reference above. The browser currently has no loaded flash save and only
+the solo Sonic player is supported. Chromium exercises fresh Sonic from title to
+Act 1, then crouches, charges and releases a spindash without using the practice
+selector to enter the act. This check does not certify the missing stage intro.

@@ -3,7 +3,7 @@
 #![deny(unsafe_code)]
 use sonic_advance_assets::{
     binary,
-    character_select::{screen::Screen, Selection},
+    character_select::{screen::Screen, Character, Selection},
     player::Input,
     runtime::NativeRun,
     title::{
@@ -22,7 +22,7 @@ struct Host {
     rgb: Vec<u32>,
     title: Option<Title>,
     menu: Option<MainMenu>,
-    characters: Option<Screen>,
+    characters: Option<Screen<'static>>,
     title_pixels: Vec<u8>,
     snapshot: Vec<u8>,
     error: Vec<u8>,
@@ -36,6 +36,17 @@ fn source() -> Result<&'static [u8]> {
     ROM.get()
         .map(Vec::as_slice)
         .ok_or_else(|| Error("no game loaded".into()))
+}
+fn step_stage(game: &mut NativeRun<'_>, mask: u32) -> Result<()> {
+    game.step_controls(
+        Input {
+            left: mask & 32 != 0,
+            right: mask & 16 != 0,
+            jump: mask & 1 != 0,
+        },
+        mask & 128 != 0,
+    )
+    .map(|_| ())
 }
 fn redraw(host: &mut Host) -> Result<()> {
     let game = host
@@ -138,9 +149,28 @@ pub extern "C" fn asoe_step(mask: u32, frames: u32) -> i32 {
             if bits & !0x03ff != 0 || !(1..=4).contains(&frames) {
                 return Err(Error("invalid title/menu input or frame count".into()));
             }
-            for _ in 0..frames {
+            for tick in 0..frames {
                 if let Some(screen) = &mut host.characters {
                     screen.step(bits)?;
+                    if screen.confirmation_finished()
+                        && screen.selection()
+                            == Some(Selection::Confirm {
+                                character: Character::Sonic,
+                                cpu_tails_sequence: false,
+                            })
+                    {
+                        // This adapter starts a fresh local session with no loaded save.
+                        let mut game = NativeRun::load_stage(source()?, 0)?;
+                        for _ in tick + 1..frames {
+                            step_stage(&mut game, mask)?;
+                        }
+                        host.runtime = Some(game);
+                        host.characters = None;
+                        host.menu = None;
+                        host.title = None;
+                        host.title_pixels.clear();
+                        return redraw(host);
+                    }
                     if screen.selection() == Some(Selection::Back) {
                         host.characters = None;
                         host.menu = Some(MainMenu::from_title(source()?, title, bits)?);
@@ -170,14 +200,7 @@ pub extern "C" fn asoe_step(mask: u32, frames: u32) -> i32 {
             .as_mut()
             .ok_or_else(|| Error("no game loaded".into()))?;
         for _ in 0..frames {
-            game.step_controls(
-                Input {
-                    left: mask & 32 != 0,
-                    right: mask & 16 != 0,
-                    jump: mask & 1 != 0,
-                },
-                mask & 128 != 0,
-            )?;
+            step_stage(game, mask)?;
         }
         redraw(host)
     })
@@ -265,7 +288,7 @@ pub extern "C" fn asoe_snapshot_ptr() -> u32 {
     let status = run(|host| {
         host.snapshot.clear();
         if let Some(screen) = &host.characters {
-            host.snapshot=serde_json::to_vec(&serde_json::json!({"scene":"characters","frame":screen.frame(),"character":format!("{:?}",screen.character()),"confirmed":matches!(screen.selection(),Some(Selection::Confirm{..}))})).map_err(|e|Error(e.to_string()))?;
+            host.snapshot=serde_json::to_vec(&serde_json::json!({"scene":"characters","frame":screen.frame(),"character":format!("{:?}",screen.character()),"confirmed":screen.confirmation_finished()})).map_err(|e|Error(e.to_string()))?;
             return Ok(());
         }
         if let Some(menu) = &host.menu {

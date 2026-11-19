@@ -1,6 +1,6 @@
 # Sonic Advance ASOE: shared Rust port
 
-Desktop and browser now step the same `NativeRun`. The browser loads a private ASOE ROM into memory, renders the English title in Rust and can enter Neo Green Hill Acts 1 and 2 from the practice selector. The title's Start event is verified; the original main menu does not yet follow it. Desktop can load the first twelve ordinary act slots. Loading a slot does not prove its completion.
+Desktop and browser now step the same `NativeRun`. The browser loads a private ASOE ROM into memory, renders the English title in Rust and can enter Neo Green Hill Acts 1 and 2 from the practice selector. Start opens the English main menu. Single Player enters the native character carousel and a fresh solo Sonic confirmation reaches the playable Act 1 spawn. The stage introduction is still missing. Desktop can load the first twelve ordinary act slots. Loading a slot does not prove its completion.
 
 This continuation is stacked on desktop PR #13, which is based on catalog PR #4. It incorporates the verified title and browser presentation from PR #14 at `54e04a0d6505296400d9aa8e34bad1d34115350e`. Its flat/upright player and second gameplay loop were not imported. Both of that branch's reported terrain regressions now have tests against the original game. The same native dust clips (746/747) are driven by the shared sprite VM.
 

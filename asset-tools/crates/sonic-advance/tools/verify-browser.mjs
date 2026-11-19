@@ -49,6 +49,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#stage-heading').textContent === 'Main menu');
   await page.keyboard.up('Enter');
   const enterCharacters = async () => {
+    await page.waitForFunction(() => Number(document.querySelector("#frame-value").textContent) >= 4);
     await page.keyboard.down('KeyZ');
     await page.waitForFunction(() => document.querySelector('#stage-heading').textContent === 'Character select');
     await page.keyboard.up('KeyZ');
@@ -78,8 +79,17 @@ try {
   await page.keyboard.down('KeyZ');
   await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Tiny Chao Garden selected.'));
   await page.keyboard.up('KeyZ');
-  await page.locator('#practice-act').selectOption('0');
+  await page.locator('#reset').click();
   await button.click();
+  await page.waitForFunction(() => document.querySelector('#action-value').textContent === 'Press Start');
+  await page.locator('#stage').focus();
+  await page.keyboard.down('Enter');
+  await page.waitForFunction(() => document.querySelector('#stage-heading').textContent === 'Main menu');
+  await page.keyboard.up('Enter');
+  await enterCharacters();
+  await page.keyboard.down('KeyZ');
+  await page.waitForFunction(() => document.querySelector('#stage-heading').textContent === 'Neo Green Hill · Act 1');
+  await page.keyboard.up('KeyZ');
   await page.waitForFunction(() => Number(document.querySelector('#frame-value').textContent) >= 16);
   await page.locator('#stage').focus();
   await page.keyboard.down('ArrowDown');

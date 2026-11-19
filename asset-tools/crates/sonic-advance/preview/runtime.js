@@ -81,6 +81,7 @@ function showSnapshot() {
   const length = api.asoe_snapshot_len();
   if (length > 8192) throw new Error('The Rust snapshot exceeds the adapter limit.');
   const snapshot = JSON.parse(decoder.decode(new Uint8Array(api.memory.buffer, pointer, length)));
+  const wasFrontEnd = atTitle;
   atTitle = snapshot.scene === 'title' || snapshot.scene === 'mainMenu' || snapshot.scene === 'characters';
   if (snapshot.scene === 'characters') {
     document.querySelector('#stage-heading').textContent = 'Character select';
@@ -131,6 +132,7 @@ function showSnapshot() {
     }
     return;
   }
+  if (wasFrontEnd) message('Neo Green Hill · Act 1. Use Left and Right to move; Z or Space jumps.');
   actSelect.value = String(snapshot.stageIndex);
   document.querySelector('#stage-heading').textContent = 'Neo Green Hill · Act ' + (snapshot.stageIndex + 1);
   document.querySelector('#frame-value').textContent = String(snapshot.frame);
@@ -275,7 +277,7 @@ function animate(now) {
       try {
         check(api.asoe_step(mask, frames));
         draw();
-        if (now - lastSnapshotAt >= 250) { showSnapshot(); lastSnapshotAt = now; }
+        if (atTitle || now - lastSnapshotAt >= 250) { showSnapshot(); lastSnapshotAt = now; }
       } catch (error) { fail(error); }
     }
   } else {

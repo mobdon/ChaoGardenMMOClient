@@ -8,7 +8,11 @@ use crate::{
 };
 const W: usize = 240;
 const H: usize = 160;
-pub struct Screen {
+pub struct Screen<'a> {
+    bank: SpriteBank<'a>,
+    confirmed_player: Option<SpritePlayer>,
+    confirmed_image: Option<RenderedSprite>,
+    confirm_age: u8,
     pub(crate) carousel: Carousel,
     backgrounds: Vec<Vec<u8>>,
     portraits: Vec<RenderedSprite>,
@@ -21,8 +25,8 @@ pub struct Screen {
     frame: u32,
     opening: u8,
 }
-impl Screen {
-    pub fn load(rom: &[u8], held: u16) -> Result<Self> {
+impl<'a> Screen<'a> {
+    pub fn load(rom: &'a [u8], held: u16) -> Result<Self> {
         if held & !1023 != 0 {
             return Err(Error("invalid initial buttons".into()));
         }
@@ -65,6 +69,10 @@ impl Screen {
         }
         Ok(Self {
             carousel: Carousel::new(Character::Sonic),
+            bank,
+            confirmed_player: None,
+            confirmed_image: None,
+            confirm_age: 0,
             backgrounds,
             portraits,
             overlay: super::overlay::Overlay::load(rom)?,
@@ -83,12 +91,37 @@ impl Screen {
     pub fn selection(&self) -> Option<Selection> {
         self.carousel.selection()
     }
+    pub fn confirmation_finished(&self) -> bool {
+        self.confirm_age >= 57
+    }
+    fn confirm_tick(&mut self) -> Result<()> {
+        if self.confirmation_finished() {
+            return Ok(());
+        }
+        self.frame = self.frame.saturating_add(1);
+        self.confirm_age += 1;
+        let character = self.character() as u8;
+        let p = self
+            .confirmed_player
+            .get_or_insert_with(|| SpritePlayer::new(722, 2 * character + 1));
+        p.tick(&self.bank)?;
+        self.confirmed_image = self.bank.render(p)?;
+        if self.confirm_age <= 5 {
+            self.xs[0] -= 20;
+            self.xs[2] += 20;
+        }
+        self.overlay.confirm_tick(self.confirm_age);
+        Ok(())
+    }
     pub fn frame(&self) -> u32 {
         self.frame
     }
     pub fn step(&mut self, held: u16) -> Result<()> {
         if held & !1023 != 0 {
             return Err(Error("invalid carousel input".into()));
+        }
+        if matches!(self.selection(), Some(Selection::Confirm { .. })) {
+            return self.confirm_tick();
         }
         if self.selection().is_some() {
             return Ok(());
@@ -111,8 +144,11 @@ impl Screen {
             self.opening -= 1;
             return Ok(());
         }
-        self.frame = self.frame.saturating_add(1);
         self.carousel.step(pressed, repeated)?;
+        if matches!(self.selection(), Some(Selection::Confirm { .. })) {
+            return self.confirm_tick();
+        }
+        self.frame = self.frame.saturating_add(1);
         self.overlay.tick(self.frame, self.carousel.angle_q8());
         self.bg = usize::from((self.carousel.angle_q8() & 255) >> 6);
 
@@ -166,8 +202,12 @@ impl Screen {
             }
             return Ok(());
         }
-        for (&x, &id) in self.xs.iter().zip(&self.ids).rev() {
-            let s = &self.portraits[id];
+        for (i, (&x, &id)) in self.xs.iter().zip(&self.ids).enumerate().rev() {
+            let s = if i == 1 {
+                self.confirmed_image.as_ref().unwrap_or(&self.portraits[id])
+            } else {
+                &self.portraits[id]
+            };
             let w = s.image.width as usize;
             for (n, p) in s.image.pixels.iter().enumerate() {
                 let px = x - i32::from(s.anchor_x) + (n % w) as i32;
@@ -181,7 +221,7 @@ impl Screen {
                         21..=27 => 240 - (self.frame as i32 - 21) * 5,
                         _ => 200,
                     };
-                    if !(40..right).contains(&px) {
+                    if self.confirm_age == 0 && !(40..right).contains(&px) {
                         for c in &mut out[at..at + 3] {
                             let v = *c >> 3;
                             let v = v + (31 - v) / 2;
@@ -191,7 +231,26 @@ impl Screen {
                 }
             }
         }
-        self.overlay.draw(out, self.frame, self.carousel.angle_q8());
+        self.overlay.draw(
+            out,
+            self.frame,
+            self.carousel.angle_q8(),
+            self.confirm_age > 0,
+        );
+        let k = u16::from(self.confirm_age.saturating_sub(39).min(16));
+        if k > 0 {
+            for pixel in out.chunks_exact_mut(4) {
+                for (i, c) in pixel[..3].iter_mut().enumerate() {
+                    let v = u16::from(*c >> 3);
+                    let v = if i == 2 {
+                        v - v * k / 16
+                    } else {
+                        v * (16 - k) / 16
+                    };
+                    *c = ((v << 3) | (v >> 2)) as u8;
+                }
+            }
+        }
         Ok(())
     }
 }

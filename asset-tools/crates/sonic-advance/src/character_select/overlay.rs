@@ -24,6 +24,7 @@ impl Overlay {
             (0x6713b8, 0x3000),
             (0x6743d8, 0x800),
             (0x674bf8, 0x100),
+            (0x674d18, 0x200),
         ] {
             tiles.push(decode_tile_indices(
                 binary::range(rom, a, n)?,
@@ -68,6 +69,13 @@ impl Overlay {
             self.previous_gap = (frac - 127).abs() / 2;
         }
     }
+    pub(super) fn confirm_tick(&mut self, age: u8) {
+        self.scroll -= 180 - 3 * i32::from(age - 1);
+        if self.scroll < -1984 {
+            self.scroll += 2048;
+            self.base = (self.base + 1) % 8;
+        }
+    }
     fn obj(
         &self,
         out: &mut [u8],
@@ -98,7 +106,7 @@ impl Overlay {
             }
         }
     }
-    pub(super) fn draw(&self, out: &mut [u8], frame: u32, angle: u16) {
+    pub(super) fn draw(&self, out: &mut [u8], frame: u32, angle: u16, confirmed: bool) {
         let t = frame.saturating_add(1);
         let sin = |index: i32| i32::from(self.sine[index as usize]) >> 8;
         let banner_y = match frame {
@@ -137,8 +145,8 @@ impl Overlay {
         for i in 0..count {
             self.obj(
                 out,
-                3,
-                ((self.base + i) % 8) * 8,
+                if confirmed { 5 } else { 3 },
+                ((self.base + i) % if confirmed { 2 } else { 8 }) * 8,
                 32,
                 16,
                 (self.scroll >> 6) + 32 * i as i32,
@@ -188,6 +196,9 @@ impl Overlay {
                 if t < 34 { 84 + dy } else { 132 },
                 &self.common,
             );
+        }
+        if confirmed {
+            return;
         }
         let frame = t;
         if frame <= 30 {
