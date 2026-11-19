@@ -16,6 +16,7 @@ pub mod city_rider;
 pub mod city_stage;
 pub mod collision;
 mod collision_record;
+pub use collision_record::chao_collision;
 pub mod damage_ring;
 pub mod damage_ring_stage;
 pub mod death_zones;
