@@ -249,10 +249,27 @@ pub fn weakpoint_glb(exe: &[u8], prs: &[u8]) -> Result<Vec<u8>> {
 /// Replay Ninja weight start/middle/end records in native node traversal order.
 /// Preserve individual bone-local inputs; rigid vertices use a separate path.
 pub fn weights(exe: &[u8]) -> Result<serde_json::Value> {
+    weight_report(exe, None)
+}
+
+/// Sample weighted positions in boss-local coordinates (no encounter placement).
+pub fn weighted_pose(exe: &[u8], clip: usize, frame: f64) -> Result<serde_json::Value> {
+    let pose = pose(exe, clip, frame)?;
+    let mut report = weight_report(exe, Some(&pose))?;
+    report["clip"] = serde_json::json!(clip);
+    report["frame"] = serde_json::json!(frame);
+    Ok(report)
+}
+fn weight_report(exe: &[u8], pose: Option<&crate::pose::Pose>) -> Result<serde_json::Value> {
     use std::collections::BTreeMap;
+    let matrices: BTreeMap<_, _> = pose
+        .into_iter()
+        .flat_map(|p| &p.nodes)
+        .map(|n| (n.offset, &n.world_matrix))
+        .collect();
     let [boss, _] = read(exe)?;
     let attachments = geometry(exe)?;
-    let mut pending = BTreeMap::<u32, Vec<serde_json::Value>>::new();
+    let mut pending = BTreeMap::<u32, (Vec<serde_json::Value>, [f64; 3])>::new();
     let mut finished = Vec::new();
     for joint in boss {
         let Some(a) = joint.attachment_rva else {
@@ -269,7 +286,7 @@ pub fn weights(exe: &[u8]) -> Result<serde_json::Value> {
                     .get(6)
                     .ok_or_else(|| Error::invalid("missing vertex weight"))?;
                 let index = u32::from(chunk.index_offset) + (word & 0xffff);
-                if phase == 0 && pending.insert(index, Vec::new()).is_some() {
+                if phase == 0 && pending.insert(index, (Vec::new(), [0.; 3])).is_some() {
                     return Err(Error::invalid("unfinished weight at start"));
                 }
                 if phase > 2 {
@@ -278,12 +295,26 @@ pub fn weights(exe: &[u8]) -> Result<serde_json::Value> {
                 let chain = pending
                     .get_mut(&index)
                     .ok_or_else(|| Error::invalid("weight without start"))?;
-                chain.push(serde_json::json!({"jointRva":joint.rva,"weightByte":(word>>16)&255,"rawFlags":word,
+                if pose.is_some() {
+                    let matrix = matrices
+                        .get(&joint.rva)
+                        .ok_or_else(|| Error::invalid("missing posed joint"))?;
+                    let point = crate::pose::transform_point(matrix, v.position.map(f64::from));
+                    // SA3D ChunkVertex.Weight: the high halfword divided by 255.
+                    let weight = f64::from(word >> 16) / 255.;
+                    for (sum, x) in chain.1.iter_mut().zip(point) {
+                        *sum += x * weight;
+                    }
+                }
+                chain.0.push(serde_json::json!({"jointRva":joint.rva,"weightByte":(word>>16)&255,"rawFlags":word,
                     "position":v.position,"normal":v.normal}));
                 if phase == 2 {
-                    finished.push(
-                        serde_json::json!({"index":index,"influences":pending.remove(&index)}),
-                    );
+                    let (influences, position) = pending.remove(&index).unwrap();
+                    let mut vertex = serde_json::json!({"index":index,"influences":influences});
+                    if pose.is_some() {
+                        vertex["bossLocalPosition"] = serde_json::json!(position);
+                    }
+                    finished.push(vertex);
                 }
             }
         }
