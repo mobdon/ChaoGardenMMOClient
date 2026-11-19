@@ -194,6 +194,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         })?;
         let trace = flight::run(ticks, entry)?;
         output["firstFlight"] = trace.first;
+        if let Some(center) = trace.center {
+            output["centerApproach"] = center;
+        }
         if !trace.repeats.is_empty() {
             output["repeatPasses"] = json!(trace.repeats);
         }

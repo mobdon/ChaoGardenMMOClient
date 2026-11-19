@@ -1,6 +1,6 @@
 //! Big Foot flight passes and turnarounds from the native takeoff up to entry into mode 5.
 use crate::{Error, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[derive(Deserialize)]
@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 pub(super) struct Flight {
     #[serde(default)]
     repeat_passes: Vec<Pass>,
+    center_approach: Option<Vec<CenterTick>>,
     extra_byte2: Option<u8>,
     steering: Option<Steering>,
     ticks: Vec<Tick>,
@@ -25,6 +26,7 @@ pub(super) struct Trace {
     pub first: Value,
     pub turnaround: Option<Value>,
     pub repeats: Vec<Value>,
+    pub center: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -41,6 +43,7 @@ pub(super) fn run(
     Flight {
         extra_byte2,
         repeat_passes,
+        center_approach,
         ticks,
         mut steering,
         turnaround,
@@ -64,6 +67,7 @@ pub(super) fn run(
         first: Value::Null,
         turnaround: None,
         repeats: Vec::new(),
+        center: None,
     };
     for (index, Pass { ticks, turnaround }) in std::iter::once(Pass { ticks, turnaround })
         .chain(repeat_passes)
@@ -145,7 +149,7 @@ pub(super) fn run(
             }
             match (&mut steering, t.motion) {
                 (Some(state), Some(m)) => {
-                    row["steering"] = state.step(
+                    row["steering"] = json!(state.step(
                         &mut phase,
                         t.velocity_x,
                         m,
@@ -154,7 +158,7 @@ pub(super) fn run(
                         } else {
                             FlightLaw::First
                         },
-                    )?
+                    )?)
                 }
                 (None, None) => (),
                 _ => return Err(Error::invalid("supply motion on every steering update")),
@@ -209,7 +213,7 @@ pub(super) fn run(
                 match (&mut steering, t.motion) {
                     (Some(state), Some(m)) => {
                         row["steering"] =
-                            state.step(&mut phase, t.velocity_x, m, FlightLaw::Turnaround)?
+                            json!(state.step(&mut phase, t.velocity_x, m, FlightLaw::Turnaround)?)
                     }
                     (None, None) => (),
                     _ => return Err(Error::invalid("supply motion on every steering update")),
@@ -226,6 +230,17 @@ pub(super) fn run(
                 .repeats
                 .push(json!({"pass":frames,"turnaround":turn_output}));
         }
+    }
+    if let Some(ticks) = center_approach {
+        if mode != 5 || sub != 0 || counter != 0 || ticks.len() > 2048 {
+            return Err(Error::invalid(
+                "center approach requires the third turnaround",
+            ));
+        }
+        let state = steering
+            .as_mut()
+            .ok_or_else(|| Error::invalid("center approach requires continuous steering"))?;
+        trace.center = Some(center(ticks, state, phase, flags)?);
     }
     Ok(trace)
 }
@@ -252,11 +267,33 @@ enum FlightLaw {
     First,
     Repeat,
     Turnaround,
+    CenterOuter,
+    CenterInner,
+}
+
+#[derive(Serialize)]
+struct FlightMotion {
+    #[serde(rename = "velocityXZ")]
+    velocity: [f32; 2],
+    acceleration: [f32; 3],
+    angles: [i32; 3],
+    rates: [f32; 3],
+    #[serde(rename = "speedSquared")]
+    speed_squared: f32,
+    phase: [i32; 3],
 }
 
 impl Steering {
-    fn step(&mut self, phase: &mut [i32; 3], vx: f32, m: Motion, law: FlightLaw) -> Result<Value> {
+    fn step(
+        &mut self,
+        phase: &mut [i32; 3],
+        vx: f32,
+        m: Motion,
+        law: FlightLaw,
+    ) -> Result<FlightMotion> {
         let (thrust, damping, turn_gain) = match law {
+            FlightLaw::CenterOuter => (0.1, 0.93, 0.07),
+            FlightLaw::CenterInner => (0.07, 0.96, 0.07),
             FlightLaw::First => (0.1, 0.96, 0.081),
             FlightLaw::Repeat => (0.1, 0.94, 0.07),
             FlightLaw::Turnaround => (0.09, 0.92, 0.081),
@@ -308,9 +345,14 @@ impl Steering {
             }
             *angle = angle.wrapping_add(step as i32);
         }
-        Ok(
-            json!({"velocityXZ":velocity,"acceleration":acc,"angles":self.angles,"rates":self.rates,"speedSquared":speed,"phase":phase}),
-        )
+        Ok(FlightMotion {
+            velocity,
+            acceleration: acc,
+            angles: self.angles,
+            rates: self.rates,
+            speed_squared: speed,
+            phase: *phase,
+        })
     }
 }
 
@@ -321,4 +363,69 @@ struct TurnTick {
     velocity_x: f32,
     player_xz: Option<[f32; 2]>,
     motion: Option<Motion>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CenterTick {
+    boss_xz: [f32; 2],
+    velocity_x: f32,
+    motion: Motion,
+    slot_zero_heading: Option<i32>,
+}
+
+fn center(
+    ticks: Vec<CenterTick>,
+    state: &mut Steering,
+    mut phase: [i32; 3],
+    mut flags: u16,
+) -> Result<Value> {
+    let mut sub = 0;
+    let mut rows = Vec::new();
+    for t in ticks {
+        let [x, z] = t.boss_xz;
+        let squared = x * x + z * z;
+        if sub == 3 || !squared.is_finite() || !t.velocity_x.is_finite() {
+            return Err(Error::invalid("invalid center approach update"));
+        }
+        if sub == 0 {
+            flags &= !0x400;
+            sub = 1;
+        }
+        let inner = sub == 2;
+        if inner {
+            // This submode advances all three phases before calling the common steering helper.
+            for (p, delta) in phase.iter_mut().zip([0x210, 0x250, 0x300]) {
+                *p = p.wrapping_add(delta);
+            }
+        }
+        let mut movement = state.step(
+            &mut phase,
+            t.velocity_x,
+            t.motion,
+            if inner {
+                FlightLaw::CenterInner
+            } else {
+                FlightLaw::CenterOuter
+            },
+        )?;
+        let inside = squared.sqrt() < if inner { 90. } else { 170. };
+        let clear_shape = !inner && inside;
+        let mut aim = None;
+        if inner && inside {
+            let heading = t.slot_zero_heading.ok_or_else(|| {
+                Error::invalid("center approach needs the native slot-zero heading")
+            })?;
+            movement.acceleration[0] = 0.;
+            movement.acceleration[2] = 0.;
+            aim = Some([state.angles[0].wrapping_sub(0x400), heading]);
+        } else if t.slot_zero_heading.is_some() {
+            return Err(Error::invalid("unexpected slot-zero heading"));
+        }
+        if inside {
+            sub += 1;
+        }
+        rows.push(json!({"submode":sub,"flags":flags,"targetXZ":[0.,0.],"clearShape7Attribute16":clear_shape,"aimPitchYaw":aim,"steering":movement}));
+    }
+    Ok(json!(rows))
 }
