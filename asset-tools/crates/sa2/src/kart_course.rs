@@ -127,6 +127,7 @@ mod collision_reference {
         let table = read_course_table(&dll).unwrap();
         let mut compared = 0;
         let mut normalized_zeros = 0;
+        let mut strip_count = 0;
         for (i, piece) in table.pieces.iter().enumerate() {
             let path = models.join(format!("{i:03}.sa1mdl"));
             let Some(bank) = root_collision_positions(&dll, &pe, piece).unwrap() else {
@@ -155,9 +156,87 @@ mod collision_reference {
                     normalized_zeros += 1;
                 }
             }
+            let mesh = r.u32(attach + 12).unwrap() as usize;
+            let mut cursor = r.u32(mesh + 4).unwrap() as usize;
+            let strips = root_collision_strips(&dll, &pe, piece).unwrap().unwrap();
+            assert_eq!(strips.len(), usize::from(r.u16(mesh + 2).unwrap()));
+            strip_count += strips.len();
+            for strip in strips {
+                let header = r.u16(cursor).unwrap();
+                assert_eq!(strip.reversed, header & 0x8000 != 0);
+                assert_eq!(strip.indices.len(), usize::from(header & 0x7fff));
+                cursor += 2;
+                for index in strip.indices {
+                    assert_eq!(index, r.u16(cursor).unwrap());
+                    cursor += 2;
+                }
+            }
             compared += 1;
         }
         assert_eq!(compared, 81);
         assert_eq!(normalized_zeros, 191);
+        assert_eq!(strip_count, 428);
     }
+}
+/// Source triangle strips for a Steam kart root collision attachment. Each
+/// header retains its winding bit; indices address root_collision_positions.
+pub struct CollisionStrip {
+    pub reversed: bool,
+    pub indices: Vec<u16>,
+}
+
+pub fn root_collision_strips(
+    dll: &[u8],
+    pe: &crate::pe::PeImage,
+    piece: &CoursePiece,
+) -> Result<Option<Vec<CollisionStrip>>> {
+    let Some(vertices) = root_collision_positions(dll, pe, piece)? else {
+        return Ok(None);
+    };
+    let r = crate::model::Reader { data: dll };
+    let at = pe.va_to_offset(
+        r.u32(
+            piece
+                .collision
+                .ok_or_else(|| Error::invalid("missing kart root"))?
+                + 4,
+        )?,
+        40,
+    )?;
+    if r.u16(at + 20)? != 1 {
+        return Err(Error::invalid("unexpected kart meshset count"));
+    }
+    let mesh = pe.va_to_offset(r.u32(at + 12)?, 24)?;
+    if r.u16(mesh)? >> 14 != 3 {
+        return Err(Error::invalid("expected kart collision triangle strips"));
+    }
+    let mut cursor = r.u32(mesh + 4)?;
+    let mut strips = Vec::new();
+    let mut total = 0usize;
+    for _ in 0..r.u16(mesh + 2)? {
+        let header = r.u16(pe.va_to_offset(cursor, 2)?)?;
+        let count = usize::from(header & 0x7fff);
+        total += count;
+        if count < 3 || total > 2_000_000 {
+            return Err(Error::invalid("invalid kart strip size"));
+        }
+        let bytes = 2 + 2 * count;
+        let offset = pe.va_to_offset(cursor, bytes)?;
+        let mut indices = Vec::with_capacity(count);
+        for j in 0..count {
+            let index = r.u16(offset + 2 + j * 2)?;
+            if usize::from(index) >= vertices.len() {
+                return Err(Error::invalid("kart collision vertex index out of bounds"));
+            }
+            indices.push(index);
+        }
+        strips.push(CollisionStrip {
+            reversed: header & 0x8000 != 0,
+            indices,
+        });
+        cursor = cursor
+            .checked_add(bytes as u32)
+            .ok_or_else(|| Error::invalid("kart strip address overflow"))?;
+    }
+    Ok(Some(strips))
 }
