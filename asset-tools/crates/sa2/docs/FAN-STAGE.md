@@ -435,3 +435,14 @@ After a contact with history enabled, pass the same returned
 normal drive step as `drift.ring`. The drive read uses the newest 30 raw
 velocities without advancing the cursor. For standalone captures, supply
 `drift.motion_history` instead. Each ring belongs to one kart history slot.
+
+`kart-timeout` operation `vehicle_post_move` covers the shared update at
+0x2648 through entry to 0x2814. Supply the wall response cooldown, remaining
+clock, vehicle state, mode and frame (see the local PPC comparison for its
+field layout). A contact that writes 180 carries 179 past this update. Only
+modes <=1 enter the countdown and route boundary checks. With time remaining
+the boundary is strictly past segment_count minus 20: engine byte +0x23 equal
+to 1 resets the kart pose and segment; otherwise the kart shifts X and goes
+back to segment_count minus 25. The former requires the observed magnitude
+return and the latter requires the 0xd968 task return if no handle exists.
+Neither path proves a completed stage or runs the following vehicle routines.
