@@ -278,9 +278,10 @@ pub(crate) fn mounted_replay(
         struct ContainerRequest {
             stage_flags: u32,
             frames: Vec<crate::stage_container::Frame>,
+            key: Option<crate::stage_key::Request>,
         }
         let req = decode::<ContainerRequest>(request)?;
-        return crate::stage_container::replay(p, req.stage_flags, bounded(req.frames)?);
+        return crate::stage_container::replay(p, req.stage_flags, bounded(req.frames)?, req.key);
     }
     if name == Some("ObjectChaoPipe") {
         #[derive(Deserialize)]

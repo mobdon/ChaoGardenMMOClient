@@ -32,10 +32,16 @@ struct Release {
 }
 
 const NO_FLOOR: f32 = -1000000.;
-pub(crate) fn replay(p: &Placement, mut flags: u32, frames: Vec<Frame>) -> Result<Value> {
+pub(crate) fn replay(
+    p: &Placement,
+    mut flags: u32,
+    frames: Vec<Frame>,
+    mut key: Option<crate::stage_key::Request>,
+) -> Result<Value> {
     let [x, y, z] = p.position;
     let (mut bound, mut mode, mut timer, mut floor) = (false, 0u8, 0u16, NO_FLOOR);
     let mut trace = Vec::new();
+    let mut key_replay = None;
     for f in frames {
         let mut calls = Vec::new();
         let mut collision_attr_bit = None;
@@ -122,6 +128,14 @@ pub(crate) fn replay(p: &Placement, mut flags: u32, frames: Vec<Frame>) -> Resul
                     }
                     if r.has_condition && !r.flag_20 && !r.broken {
                         if !r.has_key {
+                            if let Some(req) = key.take() {
+                                key_replay = Some(crate::stage_key::replay(
+                                    p.position,
+                                    if floor == NO_FLOOR { y } else { floor },
+                                    req,
+                                )?);
+                            }
+
                             calls.push(json!({"spawnKey":{"position":p.position,"floor":if floor==NO_FLOOR {y}else{floor},"speed":2.5}}));
                         } else if flags & 0x100 == 0 {
                             flags |= 0x100;
@@ -157,5 +171,12 @@ pub(crate) fn replay(p: &Placement, mut flags: u32, frames: Vec<Frame>) -> Resul
             break;
         }
     }
-    Ok(json!({"callback":"ContainerChao","frames":trace}))
+    if key.is_some() {
+        return Err(Error::invalid("no key spawned by the container trace"));
+    }
+    let mut output = json!({"callback":"ContainerChao","frames":trace});
+    if let Some(replay) = key_replay {
+        output["key"] = replay;
+    }
+    Ok(output)
 }

@@ -36,6 +36,7 @@ pub mod stage;
 pub mod stage_catalog;
 mod stage_container;
 pub mod stage_gameplay;
+mod stage_key;
 pub mod stage_paths;
 mod stage_pipe;
 pub mod stage_positions;
