@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x30dc<=l<0x3188 or 0x399c<=l<0x3ec4) or k not in (4,6):continue
+        if t!=1 or not (0x21d8<=l<0x2214 or 0x30dc<=l<0x3188 or 0x399c<=l<0x3ec4) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -91,4 +91,13 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             for addr,key in [(work+0xac,"local_velocity"),(tw+0x14,"position")]:
                 assert bytes(u.mem_read(addr,12))==struct.pack(">3f",*doc[key]),(side,n,key)
             q.update({key:doc[key] for key in ("work_a4","work_68","position","heading")})
+reg(30,work);put(work+0x10c,"I",0x80000001)
+u.mem_write(work+0x7c,struct.pack(">3f",-20,7,0.125))
+run(0x21d8,0x2214)
+assert bytes(u.mem_read(base[6]+0x21468+0x7c,12))==struct.pack(">3f",-20,7,0.125)
+assert get(base[6]+0x21468+0x10c,"I")==0x80000001 and get(work+0x10c,"I")==0
+for at in [0x24c0,0x2520]:
+    for word in [0,0x80000001]:
+        put(work+0x10c,"I",word);run(at,at+12)
+        assert get(work+0x10c,"I")==word|4
 print("Matched 10 windup and 14 sustained-drift updates with modeled engine math.")

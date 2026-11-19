@@ -256,12 +256,25 @@ pub(crate) struct Impact {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryRecovery {
-    previous_velocity_xz: [f32; 2],
+    previous_velocity_xz: Option<[f32; 2]>,
     work_b8: i32,
     #[serde(flatten)]
     fields: RecoveryFields,
 }
 impl StoryRecovery {
+    pub(crate) fn bind_snapshot(&mut self, velocity: [f32; 3]) -> Result<()> {
+        let before = [velocity[0], velocity[2]];
+        if self
+            .previous_velocity_xz
+            .is_some_and(|a| a.map(f32::to_bits) != before.map(f32::to_bits))
+        {
+            return Err(Error::invalid(
+                "impact speed conflicts with vehicle update snapshot",
+            ));
+        }
+        self.previous_velocity_xz = Some(before);
+        Ok(())
+    }
     pub(crate) fn bind_progress(&mut self, route: Option<(i32, i32)>, counter: u32) -> Result<()> {
         if self.fields.lap.is_some_and(|n| n as u32 != counter)
             || self
@@ -299,7 +312,11 @@ impl StoryRecovery {
                 contact,
                 fields: self.fields,
             },
-            Some((self.previous_velocity_xz, self.work_b8)),
+            Some((
+                self.previous_velocity_xz
+                    .ok_or_else(|| Error::invalid("missing previous velocity for impact"))?,
+                self.work_b8,
+            )),
         )
     }
 }

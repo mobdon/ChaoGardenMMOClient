@@ -347,6 +347,14 @@ if len(sys.argv)>4:
             doc=json.loads(out.read_text());suffix=doc["updates"][-1]["boostTick"]["drive"]["contact"]
             assert suffix["impact"]["state"]==4 and suffix["recovery"]["engine_call_8001ef18"]==8
             assert suffix["recovery"]["vehicle"]["state"]==doc["vehicleState"]==10
+            observed=last["contact"]["recovery"].pop("previous_velocity_xz")
+            q["updates"].insert(-1,dict(primary_update_velocity=[0,0,0]))
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-saved-speed.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            saved=json.loads(out.read_text())["updates"][-1]["boostTick"]["drive"]["contact"]
+            assert saved["impact"]["state"]==0 and saved["recovery"]["vehicle"]["state"]==10
+            q["updates"].pop(-2)
+            last["contact"]["recovery"]["previous_velocity_xz"]=observed
             # A later recovery tick rewinds the course. Its two saved poses
             # differ only vertically, so the next scan needs no injected hits.
             recovery=last["contact"]["recovery"]
@@ -445,6 +453,18 @@ if len(sys.argv)>4:
             assert collision["request"]["to"]==event["driftTick"]["position"] and collision["request"]["from"]==[9,4,3]
             assert collision["response"]["velocity"]==[-1,1,4]
             assert collision["response"]["calls"][0]["Effect10860"]["velocity"]==[0,0,20]
+            # Full vehicle updates clear the flag word before sampling. The
+            # dispatch selected on entry sets bit 2 even when this tick exits.
+            del entry["boost_tick"]["drive"]["drift"]["work_10c"]
+            q["updates"].insert(0,dict(primary_update_velocity=[0,0,0]))
+            q["updates"].insert(-1,dict(primary_update_velocity=[0,0,0]))
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-frame-flags.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            seq=json.loads(out.read_text())["updates"]
+            assert seq[0]["work_10c"]==0 and seq[2]["boostTick"]["drive"]["drift"]["work_10c"]==1
+            assert seq[-1]["work_10c"]==4 and seq[-1]["driftTick"]["vehicle_state"]==0
+            q["updates"].pop(0)
+            entry["boost_tick"]["drive"]["drift"]["work_10c"]=4
             q["updates"]=q["updates"][:2]
             q["vehicle_state"]=1
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-wrong-drift-routine.json")

@@ -136,7 +136,7 @@ struct StoryPosition {
 struct StoryDrift {
     motion_history: [[f32; 3]; 30],
     local_offset: [f32; 3],
-    work_10c: u32,
+    work_10c: Option<u32>,
     work_a8: i32,
 }
 impl Motion {
@@ -149,6 +149,17 @@ impl Motion {
     }
 }
 impl StoryDrive {
+    pub(crate) fn begin_update(&mut self) -> Result<()> {
+        if let Some(d) = &mut self.drift {
+            if d.work_10c.is_some_and(|v| v != 0) {
+                return Err(Error::invalid(
+                    "drift flags conflict with vehicle update reset",
+                ));
+            }
+            d.work_10c = Some(0);
+        }
+        Ok(())
+    }
     pub(crate) fn bind_sample(
         &mut self,
         (stick, sum): (i16, i32),
@@ -221,7 +232,9 @@ impl StoryDrive {
                             pitch_roll: None,
                             speed_threshold,
                             vehicle_state: state,
-                            work_10c: d.work_10c,
+                            work_10c: d
+                                .work_10c
+                                .ok_or_else(|| Error::invalid("missing initial drift flags"))?,
                             work_a8: d.work_a8,
                         })
                     })

@@ -611,6 +611,9 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    UpdateStart {
+        primary_update_velocity: [f32; 3],
+    },
     DriftTick {
         drift_tick: crate::kart_drift::StoryTick,
     },
@@ -724,6 +727,7 @@ pub fn story_sequence(
     let mut timer_words = None;
     let mut charge = s.primary_charge;
     let mut boost_timers = None;
+    let mut snapshot = None;
     let mut windup: Option<crate::kart_drift::DriftCarry> = None;
     let mut history = s.controller_history;
     if let Some(h) = &history {
@@ -742,8 +746,18 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::UpdateStart {
+                primary_update_velocity,
+            } => {
+                if snapshot.replace(primary_update_velocity).is_some() {
+                    return Err(Error::invalid("overlapping primary update snapshots"));
+                }
+                updates.push(json!({"previousVelocity":primary_update_velocity,"work_10c":0}));
+                continue;
+            }
             SequenceEvent::DriftTick { mut drift_tick } => {
                 recovered_pose = None;
+                let start = snapshot.take();
                 let mut context = drift_tick.contact.take();
                 if let Some(ctx) = &mut context {
                     if scan_flag.is_some_and(|flag| flag != ctx.work_44 as u32) {
@@ -751,6 +765,9 @@ pub fn story_sequence(
                     }
                     if let Some(r) = &mut ctx.query.recovery {
                         r.bind_progress(route, count)?;
+                        if let Some(v) = start {
+                            r.bind_snapshot(v)?;
+                        }
                     }
                 }
                 let velocity = drift_tick.world_velocity();
@@ -796,6 +813,9 @@ pub fn story_sequence(
                 if !matches!(vehicle, Some(2 | 3)) {
                     windup = None;
                 }
+                if start.is_some() {
+                    event["work_10c"] = json!(4);
+                }
                 updates.push(event);
                 continue;
             }
@@ -813,6 +833,13 @@ pub fn story_sequence(
                 continue;
             }
             SequenceEvent::BoostTick { mut boost_tick } => {
+                let start = snapshot.take();
+                if let (Some(v), Some(d)) = (start, boost_tick.drive.as_mut()) {
+                    d.begin_update()?;
+                    if let Some(r) = d.contact.as_mut().and_then(|c| c.recovery.as_mut()) {
+                        r.bind_snapshot(v)?;
+                    }
+                }
                 recovered_pose = None;
                 if let Some((stick, sum, held, pressed)) = sample.take() {
                     boost_tick.bind_pressed(pressed)?;
