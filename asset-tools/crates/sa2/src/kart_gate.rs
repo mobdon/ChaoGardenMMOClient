@@ -401,3 +401,97 @@ pub fn time_extension(bytes: &[u8], pak: &[u8]) -> Result<serde_json::Value> {
     }
     Err(Error::invalid("time extension task did not release"))
 }
+
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Presentation {
+    Display {
+        current_view_metric: f32,
+        byte_3: u8,
+        position: [f32; 3],
+        angles: [i32; 3],
+        /// Live shared polygon word from the previous draw, if any.
+        material_word: Option<u16>,
+    },
+    Cleanup {
+        task: u32,
+        work_38: u32,
+    },
+}
+
+/// Native gate render/cleanup callbacks +0xb834/+0xb914.
+pub fn presentation(bytes: &[u8], request: Presentation) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let rel = verified_module(bytes)?;
+    let invalid = || Error::invalid("unresolved story gate display reference");
+    let target = |site| {
+        rel.reference(1, site)
+            .filter(|r| (r.module, r.section, r.kind) == (80, 5, 4))
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let data = rel.data(5)?;
+    let ptr = |at| {
+        rel.local_pointer(5, at)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v)
+            .ok_or_else(invalid)
+    };
+    match request {
+        Presentation::Cleanup { task, work_38 } => {
+            let call = rel
+                .reference(1, 0xb92c)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            Ok(
+                json!({"call":(work_38!=0).then(||json!({"address":call.addend,"args":[task,work_38]}))}),
+            )
+        }
+        Presentation::Display {
+            current_view_metric,
+            byte_3,
+            position,
+            angles,
+            material_word,
+        } => {
+            let limit = f32::from_be_bytes(rel.data(4)?[0x1c0..0x1c4].try_into().unwrap());
+            if current_view_metric >= limit {
+                return Ok(json!({"draw":null,"writes":[]}));
+            }
+            let model = target(0xb8f6)?;
+            let mut table = target(0xb87a)?;
+            let mut writes = Vec::new();
+            if byte_3 <= 1 {
+                while let Some((_, object)) = rel.local_pointer(5, table)? {
+                    if object == model {
+                        let count = i32::from_be_bytes(
+                            data[table as usize + 4..table as usize + 8]
+                                .try_into()
+                                .unwrap(),
+                        );
+                        let entries = ptr(table + 8)?;
+                        for i in 0..count {
+                            let entry = ptr(entries + 4 * i as u32)? as usize;
+                            if data[entry..entry + 4] != 73u32.to_be_bytes() {
+                                continue;
+                            }
+                            let at = ptr(entry as u32 + 4)?;
+                            let before = material_word.unwrap_or_else(|| {
+                                u16::from_be_bytes(
+                                    data[at as usize..at as usize + 2].try_into().unwrap(),
+                                )
+                            });
+                            let after = (before & 0xc000) + if byte_3 == 0 { 69 } else { 73 };
+                            writes.push(json!({"offset":at,"before":before,"after":after}));
+                        }
+                    }
+                    table += 12;
+                }
+            }
+            Ok(
+                json!({"draw":{"model":model,"textureList":target(0xb8ea)?,"position":position,
+                "rotations":[["z",angles[2]],["x",angles[0]],["y",angles[1]]]},"writes":writes}),
+            )
+        }
+    }
+}
