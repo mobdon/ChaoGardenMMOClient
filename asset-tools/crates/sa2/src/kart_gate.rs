@@ -753,6 +753,20 @@ pub fn story_sequence(
     let mut spin_carry = None;
     let mut guided_work = None;
     let mut guided_quads = None;
+    let load_story_quads = |cache: &mut Option<Vec<[[f32; 2]; 4]>>| -> Result<()> {
+        if cache.is_none() {
+            let name = if mode == 0 { "101" } else { "280" };
+            *cache = Some(
+                crate::kart_progress::read_crossings(bytes, exe)?
+                    .courses
+                    .into_iter()
+                    .find(|r| r.course == name)
+                    .ok_or_else(|| Error::invalid("missing story guidance course"))?
+                    .projected_segment_xz,
+            );
+        }
+        Ok(())
+    };
     let mut scripted_globals = None;
     let mut scripted_boost_reset = false;
     let mut windup: Option<crate::kart_drift::DriftCarry> = None;
@@ -806,17 +820,7 @@ pub fn story_sequence(
                     return Err(Error::invalid("guided drive requires vehicle state 7"));
                 }
                 let work = guided_work.ok_or_else(|| Error::invalid("missing finish guidance"))?;
-                if guided_quads.is_none() {
-                    let name = if mode == 0 { "101" } else { "280" };
-                    guided_quads = Some(
-                        crate::kart_progress::read_crossings(bytes, exe)?
-                            .courses
-                            .into_iter()
-                            .find(|r| r.course == name)
-                            .ok_or_else(|| Error::invalid("missing story guidance course"))?
-                            .projected_segment_xz,
-                    );
-                }
+                load_story_quads(&mut guided_quads)?;
                 let next = guided_drive.run(
                     &rel,
                     work,
@@ -1267,7 +1271,13 @@ pub fn story_sequence(
                 let state = vehicle.ok_or_else(|| {
                     Error::invalid("vehicle_post_move requires initial vehicle_state")
                 })?;
-                let r = crate::kart_timeout::step_verified(
+                let course = if frame.needs_course_quads() {
+                    load_story_quads(&mut guided_quads)?;
+                    guided_quads.as_deref()
+                } else {
+                    None
+                };
+                let r = crate::kart_timeout::step_with_course(
                     bytes,
                     crate::kart_timeout::Input::VehiclePostMove {
                         frame: *frame,
@@ -1275,6 +1285,7 @@ pub fn story_sequence(
                         vehicle_state: state,
                         mode,
                     },
+                    course,
                 )?;
                 vehicle = r.vehicle_state;
                 if let Some(g) = r.frame.as_ref().and_then(|f| f.finish_guidance()) {

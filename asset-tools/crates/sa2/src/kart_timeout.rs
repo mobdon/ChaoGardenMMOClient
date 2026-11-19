@@ -51,6 +51,16 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn needs_course_quads(&self) -> bool {
+        self.dispatch
+            .as_ref()
+            .and_then(|d| d.target.as_ref())
+            .is_some_and(|t| t.quad.is_none())
+            || self
+                .limousine_allocation
+                .as_ref()
+                .is_some_and(|a| a.segment_xz.is_none())
+    }
     pub(crate) fn finish_guidance(&self) -> Option<crate::kart_guided_drive::Guidance> {
         Some(self.dispatch.as_ref()?.guidance.as_ref()?.work)
     }
@@ -170,8 +180,8 @@ struct Dispatch {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Target {
-    segment: i32,
-    quad: [[f32; 2]; 4],
+    segment: Option<i32>,
+    quad: Option<[[f32; 2]; 4]>,
     magnitude_return: Option<f32>,
     angle_return: f64,
 }
@@ -186,8 +196,8 @@ struct Guidance {
 #[serde(deny_unknown_fields)]
 struct Allocation {
     task_handle: u32,
-    segment: i32,
-    segment_xz: [[f32; 2]; 4],
+    segment: Option<i32>,
+    segment_xz: Option<[[f32; 2]; 4]>,
     latch: i32,
 }
 #[derive(Serialize)]
@@ -232,6 +242,27 @@ pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
     step_verified(bytes, s)
 }
 pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
+    step_with_course(bytes, s, None)
+}
+pub(crate) fn step_with_course(
+    bytes: &[u8],
+    s: Input,
+    course: Option<&[[[f32; 2]; 4]]>,
+) -> Result<Update> {
+    let quad_at = |segment: i32,
+                   supplied_segment: Option<i32>,
+                   observed: Option<[[f32; 2]; 4]>|
+     -> Result<[[f32; 2]; 4]> {
+        if segment < 0
+            || supplied_segment.is_some_and(|v| v != segment)
+            || (observed.is_some() && supplied_segment.is_none())
+        {
+            return Err(crate::Error::invalid("wrong vehicle waypoint segment"));
+        }
+        observed
+            .or_else(|| course.and_then(|c| c.get(segment as usize).copied()))
+            .ok_or_else(|| crate::Error::invalid("missing vehicle waypoint quad"))
+    };
     let mut r = Update {
         limousine: None,
         frame: None,
@@ -256,6 +287,15 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             let mut previous_position = frame.previous_position.ok_or_else(missing)?;
             let mut velocity = frame.velocity.ok_or_else(missing)?;
             let mut angles = frame.angles.ok_or_else(missing)?;
+            if let Some(c) = course {
+                let count = c.len() as i32;
+                if frame.segment_count.is_some_and(|n| n != count) {
+                    return Err(crate::Error::invalid(
+                        "vehicle waypoint count conflicts with installed course",
+                    ));
+                }
+                frame.segment_count = Some(count);
+            }
             let (mut segment, segment_count) = frame
                 .route()
                 .ok_or_else(|| crate::Error::invalid("missing vehicle route"))?;
@@ -308,9 +348,9 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                         position[0] -= f(0x1fc);
                         if frame.work_ec == 0 {
                             match (frame.limousine_allocation.take(), frame.d968_return) {
-                                (Some(a), None) if a.task_handle != 0 && a.segment == segment && a.segment >= 0 => {
+                                (Some(a), None) if a.task_handle != 0 && segment >= 0 => {
                                     let target = crate::kart_story_target::step_constants(constants, crate::kart_story_target::Input::Spawn {
-                                        segment_xz: a.segment_xz, parent_task_y: position[1], mode, latch: a.latch,
+                                        segment_xz: quad_at(segment,a.segment,a.segment_xz)?, parent_task_y: position[1], mode, latch: a.latch,
                                     })?;
                                     r.limousine = Some(Limousine {
                                         task_handle: a.task_handle, exec_offset: 0xda80,
@@ -348,7 +388,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                         }
                         let ahead = segment.wrapping_add(2) % segment_count;
                         let near = segment.wrapping_add(1) % segment_count;
-                        if t.segment != ahead || ahead < 0 || near < 0 {
+                        if ahead < 0 || near < 0 {
                             return Err(crate::Error::invalid("wrong state 7 target quad"));
                         }
                         let speed = if velocity == [0.; 3] {
@@ -375,7 +415,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                                 work_264: speed,
                                 work_274: angle as i32,
                             },
-                            target_xz: t.quad[1],
+                            target_xz: quad_at(ahead, t.segment, t.quad)?[1],
                             from_xz: [position[0], position[2]],
                         });
                     }

@@ -320,8 +320,8 @@ if len(sys.argv)>4:
             # updated target segment/corner on a separately observed moving frame.
             mode=int("Rouge" in path.name);course=courses["280" if mode else "101"]
             quads=course["projected_segment_xz"]
-            real=json.loads(json.dumps(guided));real["segment_count"]=len(quads)
-            real["dispatch"]["target"]["quad"]=quads[7]
+            real=json.loads(json.dumps(guided));del real["segment_count"]
+            real["dispatch"]["target"]=dict(angle_return=0.0)
             go=dict(work_74=1,place=1,previous_ground_position=[1,2,3],engine=dict(angle_radians=0,
                     angle_difference=0,stepped_angle=100,direction_xz=[1,0],distance_return=0,random_return=0))
             turn=dict(go,work_74=0,position=[11,12,13],velocity_y=3,engine=dict(go["engine"],
@@ -331,6 +331,7 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(guide_q));out=req.with_name(path.stem+"-finish-guidance.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             seq=json.loads(out.read_text())["updates"];init=seq[0]["vehiclePostMove"]["frame"]["dispatch"]["guidance"]
+            assert init["target_xz"]==quads[7][1]
             guided_first,guided_turn=[v["guidedDrive"] for v in seq[-2:]]
             assert guided_first["advanced"] and not guided_turn["advanced"]
             assert guided_first["guidance"]["work_254"]==8 and guided_first["guidance"]["work_258"]==2
@@ -346,6 +347,25 @@ if len(sys.argv)>4:
                 req.write_text(json.dumps(reference));out=req.with_name(path.stem+f"-guided-reference-{prior['work_254']}.json")
                 subprocess.run([cli,"kart-guided-drive",rel,out,req],check=True)
                 assert actual==json.loads(out.read_text())
+            # Both waypoint users read the segment AFTER the end-of-course
+            # rewrite. Check the installed projection against an explicit replay.
+            for reset in (0,1):
+                near=dict(real,segment=len(quads)-1,engine_byte_23=reset,magnitude_return=0)
+                if not reset:near["limousine_allocation"]=dict(task_handle=0x1234,latch=0)
+                final_seg=0 if reset else len(quads)-25
+                installed=dict(q,updates=[dict(vehicle_post_move=near)])
+                req.write_text(json.dumps(installed));out=req.with_name(path.stem+f"-waypoint-installed-{reset}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                result=json.loads(out.read_text())
+                selected=result["updates"][0]["vehiclePostMove"]["frame"]
+                assert selected["segment"]==final_seg and selected["dispatch"]["guidance"]["target_xz"]==quads[final_seg+2][1]
+                explicit=json.loads(json.dumps(installed));obs=explicit["updates"][0]["vehicle_post_move"]
+                obs["segment_count"]=len(quads)
+                obs["dispatch"]["target"].update(segment=final_seg+2,quad=quads[final_seg+2])
+                if not reset:obs["limousine_allocation"].update(segment=final_seg,segment_xz=quads[final_seg])
+                req.write_text(json.dumps(explicit));out=req.with_name(path.stem+f"-waypoint-observed-{reset}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                assert json.loads(out.read_text())==result
             scan["work_44"]=1
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-scan.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
