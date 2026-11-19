@@ -587,6 +587,15 @@ pub fn display(bytes: &[u8], pak: &[u8], s: DisplayInput) -> crate::Result<serde
     let image = crate::texture::decode_dds(entry.data)?;
     let geometry =
         crate::kart_story_target::vertices(&rel, attach, &mut crate::visual::Material::default())?;
+    let word = |at: u32| u32::from_be_bytes(data[at as usize..at as usize + 4].try_into().unwrap());
+    // The native draw traverses a Ninja object. This pinned object has one node.
+    if rel.local_pointer(5, object + 44)?.is_some() || rel.local_pointer(5, object + 48)?.is_some()
+    {
+        return Err(invalid());
+    }
+    let vec3 = |at| [word(at), word(at + 4), word(at + 8)];
+    let node = json!({"flags":word(object),"position":(vec3(object+8).map(f32::from_bits)),
+        "angles":(vec3(object+20).map(|v|v as i32)),"scale":(vec3(object+32).map(f32::from_bits))});
     let popping = s.mode == 4;
     let alpha = if popping {
         (60 - i32::from(s.timer)) as f32 / f(0x3a8)
@@ -597,7 +606,7 @@ pub fn display(bytes: &[u8], pak: &[u8], s: DisplayInput) -> crate::Result<serde
         json!({"draw":{"object":object,"attach":attach,"textureList":list,"geometry":geometry,
         "position":s.position,"yaw":s.yaw,"scale":s.scale,"materialMultiplier":[alpha,1.0,1.0,1.0],
         "controlMasks":if popping {[255,2048]} else {[-2049,0]},
-        "texture":{"entry":entry.name,"width":image.width,"height":image.height,
+        "node":node,"texture":{"offset":entry.offset,"length":entry.length,"entry":entry.name,"width":image.width,"height":image.height,
         "ddsSha256":crate::manifest::sha256(entry.data),"rgbaSha256":crate::manifest::sha256(&image.rgba)}}}),
     )
 }
