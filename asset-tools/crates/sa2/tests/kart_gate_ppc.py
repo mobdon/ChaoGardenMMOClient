@@ -569,9 +569,9 @@ if len(sys.argv)>4:
             event=timeline[-3];collision=event["driftContact"]
             sounds=[u for u in timeline if "driftAudio" in u]
             assert [u["driftTick"]["vehicle_state"] for u in sounds]==[2,2,2,2,3,3,0]
-            for u in sounds[:-1]:
-                assert u["driftAudio"]["calls"][-1]["play"]["cue"]==16
-                assert u["driftAudio"]["calls"][-1]["play"]["position"]==u["driftTick"]["position"]
+            for sound in sounds[:-1]:
+                assert sound["driftAudio"]["calls"][-1]["play"]["cue"]==16
+                assert sound["driftAudio"]["calls"][-1]["play"]["position"]==sound["driftTick"]["position"]
             assert event["driftAudio"]["calls"][-2]["pitch"]["value"]==5120
             assert sounds[-1]["driftAudio"]["calls"][-1]["pitch"]["value"]==0
             del moving["audio"], winding["drift_tick"]["audio"]
