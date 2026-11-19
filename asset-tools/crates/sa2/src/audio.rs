@@ -649,3 +649,65 @@ pub fn read_event_cues(data: &[u8]) -> Result<serde_json::Value> {
     }
     Ok(json!({"audio":audio,"subtitles":subtitles,"trailingBytes":data.len()-prefix.len()}))
 }
+
+// Battle event subtitle pointers refer to this image base (SA3D.SA2Event EventType).
+pub fn event_subtitles(
+    data: &[u8],
+    encoding: &'static encoding_rs::Encoding,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let offset = |p: u32| {
+        p.checked_sub(0x817afe60)
+            .map(|v| v as usize)
+            .ok_or_else(|| Error::invalid("invalid subtitle pointer"))
+    };
+    let mut events = std::collections::BTreeMap::new();
+    let mut cursor = 0;
+    let mut budget = 0usize;
+    loop {
+        let id = be32(data, cursor)?;
+        if id == u32::MAX {
+            break;
+        }
+        let ptr = offset(be32(data, cursor + 4)?)?;
+        let n = be32(data, cursor + 8)? as usize;
+        if n > 256 || events.len() >= 4096 {
+            return Err(Error::invalid("subtitle table limit"));
+        }
+        let rows = range(data, ptr, n * 8)?;
+        let mut slots = Vec::with_capacity(n);
+        for row in rows.chunks_exact(8) {
+            let character = be32(row, 0)? as i32;
+            let pointer = be32(row, 4)?;
+            let raw = if pointer == 0 {
+                None
+            } else {
+                let start = offset(pointer)?;
+                let tail = data
+                    .get(start..)
+                    .ok_or_else(|| Error::invalid("subtitle offset exceeds bank"))?;
+                let len = tail
+                    .iter()
+                    .take(65536)
+                    .position(|&c| c == 0)
+                    .ok_or_else(|| Error::invalid("unterminated subtitle"))?;
+                Some((start, &tail[..len]))
+            };
+            budget += raw.map_or(0, |(_, s)| s.len()) + 64;
+            if budget > 16 * 1024 * 1024 {
+                return Err(Error::invalid("subtitle output limit"));
+            }
+            let (start, s) = raw.map_or((None, &[][..]), |(o, s)| (Some(o), s));
+            let centered = s.first() == Some(&7);
+            let text = encoding
+                .decode_without_bom_handling_and_without_replacement(&s[usize::from(centered)..])
+                .ok_or_else(|| Error::invalid("invalid subtitle encoding"))?;
+            slots.push(json!({"slot":slots.len(),"character":character,"textOffset":start,"byteLength":s.len(),"centered":centered,"text":text}));
+        }
+        if events.insert(id, slots).is_some() {
+            return Err(Error::invalid("duplicate subtitle event"));
+        }
+        cursor += 12;
+    }
+    Ok(json!({"encoding":encoding.name(),"events":events}))
+}
