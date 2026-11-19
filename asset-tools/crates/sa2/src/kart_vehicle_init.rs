@@ -117,6 +117,15 @@ impl Profile {
     }
 }
 impl StoryBoostInput {
+    pub(crate) fn bind_scripted_reset(&mut self) -> Result<()> {
+        if self.boost.work_dc.is_some_and(|v| v != 0) {
+            return Err(crate::Error::invalid(
+                "boost duration conflicts with scripted reset",
+            ));
+        }
+        self.boost.work_dc = Some(0);
+        Ok(())
+    }
     pub(crate) fn contact_mut(&mut self) -> Option<&mut crate::kart_contact::StoryContact> {
         self.drive
             .as_mut()

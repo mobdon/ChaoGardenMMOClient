@@ -50,10 +50,76 @@ enum AudioDispatch {
     },
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryTick {
+    position: Option<[f32; 3]>,
+    angles: Option<[i32; 3]>,
+    globals: Option<[i32; 2]>,
+}
+impl StoryTick {
+    pub(crate) fn advance(
+        self,
+        rel: &CityRel,
+        state: i32,
+        pose: Option<([f32; 3], [i32; 3])>,
+        globals: Option<[i32; 2]>,
+    ) -> Result<Update> {
+        let mut position = self.position;
+        let mut angles = self.angles;
+        if let Some((p, a)) = pose {
+            if position.is_some_and(|x| x.map(f32::to_bits) != p.map(f32::to_bits))
+                || angles.is_some_and(|x| x != a)
+            {
+                return Err(Error::invalid(
+                    "scripted pose conflicts with preceding frame",
+                ));
+            }
+            position = Some(p);
+            angles = Some(a);
+        }
+        if self.globals.zip(globals).is_some_and(|(a, b)| a != b) {
+            return Err(Error::invalid(
+                "scripted globals conflict with preceding update",
+            ));
+        }
+        let [global_21760, global_22494] = globals
+            .or(self.globals)
+            .ok_or_else(|| Error::invalid("missing initial scripted globals"))?;
+        // Both movement callbacks unconditionally overwrite +0x68 and +0xdc.
+        step_verified(
+            rel,
+            Input {
+                audio: None,
+                state: State {
+                    position: position
+                        .ok_or_else(|| Error::invalid("missing scripted position"))?,
+                    angles: angles.ok_or_else(|| Error::invalid("missing scripted angles"))?,
+                    vehicle_state: if global_22494 != 0 { 9 } else { state },
+                    work_68: 0,
+                    work_dc: 0,
+                    global_21760,
+                    global_22494,
+                },
+            },
+        )
+    }
+}
+impl Update {
+    pub(crate) fn state(&self) -> i32 {
+        self.state.vehicle_state
+    }
+    pub(crate) fn globals(&self) -> [i32; 2] {
+        [self.state.global_21760, self.state.global_22494]
+    }
+}
 pub fn step(bytes: &[u8], input: Input) -> Result<Update> {
-    let mut s = input.state;
     kart_progress::verify(bytes)?;
     let rel = CityRel::read_identified(bytes, 80)?;
+    step_verified(&rel, input)
+}
+fn step_verified(rel: &CityRel, input: Input) -> Result<Update> {
+    let mut s = input.state;
     let constants = rel.data(4)?;
     let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
     match s.vehicle_state {

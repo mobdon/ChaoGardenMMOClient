@@ -625,6 +625,9 @@ enum SequenceEvent {
     ContinueVehicle {
         continue_vehicle_update: EmptyUpdate,
     },
+    ScriptedTick {
+        scripted_tick: crate::kart_scripted_motion::StoryTick,
+    },
     SpinTick {
         spin_tick: crate::kart_drive_input::StorySpin,
     },
@@ -745,6 +748,8 @@ pub fn story_sequence(
     let mut completed_pose = None;
     let mut inherited_pose = None;
     let mut spin_carry = None;
+    let mut scripted_globals = None;
+    let mut scripted_boost_reset = false;
     let mut windup: Option<crate::kart_drift::DriftCarry> = None;
     let mut history = s.controller_history;
     if let Some(h) = &history {
@@ -777,7 +782,7 @@ pub fn story_sequence(
                     primary_update_position: Some(position),
                     primary_update_angles: Some(angles),
                 });
-                inherited_pose = Some((position, velocity, angles[1]));
+                inherited_pose = Some((position, velocity, angles));
                 updates.push(json!({"previousVelocity":velocity,"savedPosition":position,"savedAngles":angles,"work_10c":0}));
                 continue;
             }
@@ -789,6 +794,24 @@ pub fn story_sequence(
                 }
                 updates
                     .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
+                continue;
+            }
+            SequenceEvent::ScriptedTick { scripted_tick } => {
+                let state = vehicle
+                    .ok_or_else(|| Error::invalid("missing vehicle state for scripted update"))?;
+                snapshot = None;
+                let pose = inherited_pose.take().map(|(p, _, a)| (p, a));
+                let r = scripted_tick.advance(&rel, state, pose, scripted_globals)?;
+                scripted_globals = Some(r.globals());
+                vehicle = Some(r.state());
+                scripted_boost_reset = true;
+                if let Some((_, flag)) = boost_timers {
+                    boost_timers = Some((0, flag));
+                }
+                completed_pose = None;
+                recovered_pose = None;
+                sample = None;
+                updates.push(json!({"scriptedTick":r}));
                 continue;
             }
             SequenceEvent::SpinTick { mut spin_tick } => {
@@ -873,8 +896,8 @@ pub fn story_sequence(
             }
             SequenceEvent::DriftTick { mut drift_tick } => {
                 completed_pose = None;
-                if let Some((position, _, yaw)) = inherited_pose.take() {
-                    drift_tick.bind_task_pose(position, yaw)?;
+                if let Some((position, _, angles)) = inherited_pose.take() {
+                    drift_tick.bind_task_pose(position, angles[1])?;
                 }
                 recovered_pose = None;
                 let start = snapshot.take();
@@ -973,8 +996,8 @@ pub fn story_sequence(
             }
             SequenceEvent::BoostTick { mut boost_tick } => {
                 completed_pose = None;
-                if let Some((p, v, yaw)) = inherited_pose.take() {
-                    boost_tick.bind_previous_frame(p, v, yaw)?;
+                if let Some((p, v, angles)) = inherited_pose.take() {
+                    boost_tick.bind_previous_frame(p, v, angles[1])?;
                 }
                 let start = snapshot.take();
                 if let Some(v) = start {
@@ -998,6 +1021,10 @@ pub fn story_sequence(
                 }
                 if let Some(r) = boost_tick.contact_mut().and_then(|c| c.recovery.as_mut()) {
                     r.bind_progress(route, count)?;
+                }
+                if scripted_boost_reset {
+                    boost_tick.bind_scripted_reset()?;
+                    scripted_boost_reset = false;
                 }
                 let (next, timers, result) = crate::kart_vehicle_init::story_boost(
                     bytes,

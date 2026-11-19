@@ -49,7 +49,7 @@ MountedStage::resolve(layer, index) returns the original placement and optional 
 
 Run cargo test --locked --test fan_stage_local -- --ignored from this crate with SA2_GAME_PATH and SA2_PC_CONFIG pointing to the installation and SA Tools PC_SA2 config directory. The installed test checks all authored level dispatches, distinct SETs and resolution counts, exact kart course bytes, start and terrain coverage, all 40 collision-world builds, a City Escape ray, unavailable resources, a wrong SET, and rejection of an event ordinal. Only code, source identities, and observed counts are stored here.
 
-Big Foot�s boss task later places player slot zero at (-90, 0, 0) during its [intro callback](BIG-FOOT.md). The general start-row count above is unchanged.
+Big Footï¿½s boss task later places player slot zero at (-90, 0, 0) during its [intro callback](BIG-FOOT.md). The general start-row count above is unchanged.
 
 Both kart mounts also load their character-specific 40-byte story vehicle profile and five nine-byte rank-time rows from the Steam executable. Each row retains the level byte and the four D/C/B/A minute-second pairs; the two unidentified physics floats remain unknown1 and unknown2. Route 101 uses the Tornado car profile (speed cap 10), while Route 280 uses the Bat car profile (speed cap 12). Both have a separate top-speed field of 15. The mounted campaign test compares all named fields, thresholds and raw table hashes against independent SA Tools 786 split.exe binary exports of the two story physics and two rank-time sections in CART.ini. These are tuning and ranking inputs; steering, engine placement rounding, finish detection and rank assignment still require runtime verification.
 
@@ -67,7 +67,7 @@ To reproduce: split all kartphysics sections of PC_SA2/CART.ini with SA Tools 78
 
 The same report includes the two standalone Basic collision meshes mapped by PC_SA2/CART.ini: JUMPDAI (6 vertices) and CHECKGATE (48 vertices). These are in model-local coordinates. GATE and GATE2 have distinct callback addresses; the names do not establish which callback uses CHECKGATE, how it transforms the mesh, or when a checkpoint counts. Ramp launch behavior is likewise unverified. To repeat the comparison, split the two basicmodel sections with SA Tools 786, set SA2_GAME_PATH and SA2_KART_OBJECT_SPLITS (the directory containing both sa1mdl files), then run `cargo test --locked --test kart_objects_local -- --include-ignored`.
 
-`kart-ramp-init CartD.rel OUTPUT.json TASK_POSE.json` reproduces the post-allocation block of the installed BATTLE JUMP PANEL callback. Input supplies the current task position and full signed yaw, for example {"position":[100,0,-400],"yaw":16384}. Module 80's slot 1 name and executable relocations identify section 1 + 0xBC98. After the work allocation succeeds, instructions at 0xBD04–0xBDEC copy a 56-byte node, clear its two low flags, set translation and yaw, zero pitch and roll, issue two external calls and initialize task-work +0x28. The result represents the attachment pointer as a section and offset; it does not expose an emulator address.
+`kart-ramp-init CartD.rel OUTPUT.json TASK_POSE.json` reproduces the post-allocation block of the installed BATTLE JUMP PANEL callback. Input supplies the current task position and full signed yaw, for example {"position":[100,0,-400],"yaw":16384}. Module 80's slot 1 name and executable relocations identify section 1 + 0xBC98. After the work allocation succeeds, instructions at 0xBD04â€“0xBDEC copy a 56-byte node, clear its two low flags, set translation and yaw, zero pitch and roll, issue two external calls and initialize task-work +0x28. The result represents the attachment pointer as a section and offset; it does not expose an emulator address.
 
 Run `python tests/kart_ramp_ppc.py CLI CartD.rel PRIVATE_DIR` with Unicorn installed. The test executes the original instructions for three poses and compares every initialized node word, both call argument lists and the final work field. The calls themselves are not executed. This establishes ramp setup given the task pose, not SET-to-task conversion, engine collision registration, a kart launch, or checkpoint credit.
 
@@ -75,21 +75,21 @@ Run `python tests/kart_ramp_ppc.py CLI CartD.rel PRIVATE_DIR` with Unicorn insta
 
 The report records transform inputs and subsequent conditional calls, not final kart velocity. Contact generation, the matrix result, the internals of the kart response at 0x5524 and external call effects are outside this replay. The request supplies post-response kart fields and the indexed course byte when required. See `tests/kart_ramp_contact_ppc.py` for 15 runnable inputs and the comparison with the actual contact loop, registry and secondary helper instructions; run with CLI, installed CartD.rel and an ignored temporary directory.
 
-The secondary helper at 0x5B90 returns zero for a cleared work+0x44 field or a signed work+0x48 slot of 8 or above. For mapped slots 0�7 and a nonzero work+0x44 it returns one, resetting the panel timer. Negative slots precede the verified table and are rejected. Helper 0x979C reads a signed course byte: 50�71 inclusive passes 0 to the imported routine at 0x8006C97C; other bytes pass -127. The subsequent call to 0x8006B710 selects its first argument from the native two-column table (ramp column 0), re-reading the slot after the first call. The replay accepts an optional changed slot for this reload, otherwise retaining the observed one. Call effects and the source of the live course index remain external.
+The secondary helper at 0x5B90 returns zero for a cleared work+0x44 field or a signed work+0x48 slot of 8 or above. For mapped slots 0ï¿½7 and a nonzero work+0x44 it returns one, resetting the panel timer. Negative slots precede the verified table and are rejected. Helper 0x979C reads a signed course byte: 50ï¿½71 inclusive passes 0 to the imported routine at 0x8006C97C; other bytes pass -127. The subsequent call to 0x8006B710 selects its first argument from the native two-column table (ramp column 0), re-reading the slot after the first call. The replay accepts an optional changed slot for this reload, otherwise retaining the observed one. Call effects and the source of the live course index remain external.
 
 `kart-ramp-response CartD.rel OUTPUT.json RESPONSE_INPUT.json` replays helper 0x5524 given the transformed vector received from the panel. When kart work+0x44 is nonzero it clears work+0x30 and +0x68 and copies the three vector words to +0x7C. Its nested yaw update (0x30DC) leaves task yaw untouched when both horizontal components have absolute value below 0.5; otherwise it scales the external angle result by the module's binary64 conversion constant, truncates and wraps the adjusted yaw to 16 bits. With work+0x44 zero, the helper writes a scalar at +0x264 and calls a turn helper using +0x274 and a 0x4000 limit. Null output fields mean no write or call.
 
 The transformed vector and imported magnitude, angle and turn results are explicit observations. This does not integrate subsequent vehicle position. Run `python tests/kart_ramp_response_ppc.py CLI CartD.rel PRIVATE_DIR` with Unicorn to compare both branches and untouched fields against native instructions with those imports supplied.
 
-`kart-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json` replays the active story GATE2 block (section 1 + 0xB74C–0xB81C) after the entry cull. While the latch is clear, only the first reported contact is tested against the six registered kart tasks. A match sets the latch, adds 60 times the truncated task parameter at +0x24 to the timer word, and increments the primary kart's +0xC4 counter even when a different registered kart made contact. Both words use 32-bit wrapping arithmetic. Further ticks with the latch set skip those writes. The final global flag controls the task byte at +3. The trace records four call sites in order without executing their effects. This does not establish when the engine generates a contact or finishes a race.
+`kart-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json` replays the active story GATE2 block (section 1 + 0xB74Câ€“0xB81C) after the entry cull. While the latch is clear, only the first reported contact is tested against the six registered kart tasks. A match sets the latch, adds 60 times the truncated task parameter at +0x24 to the timer word, and increments the primary kart's +0xC4 counter even when a different registered kart made contact. Both words use 32-bit wrapping arithmetic. Further ticks with the latch set skip those writes. The final global flag controls the task byte at +3. The trace records four call sites in order without executing their effects. This does not establish when the engine generates a contact or finishes a race.
 
 Run `python tests/kart_gate_ppc.py CLI CartD.rel PRIVATE_DIR` with Unicorn to compare seven traces against the installed instructions, including repeated contact, a registered kart other than the primary, ignored contacts, fractional parameters and counter overflow.
 
-`kart-race-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json` replays the active racing-menu GATE update (slot 3, section 1 + 0xB0E4–0xB234). Unlike GATE2, this block does not test a contact. Its helper at 0x9164 reads six signed kart counters at work+0xC4, taking their maximum with an initial value of -1. In the ordinary timed branch a changed maximum restarts the gate timer at 600 and selects state byte 5, even on the tick that the timer expires. The other branches handle the observed phase and override globals. Field and state-byte names remain descriptive; the actual rendered gate, race finish logic and upstream counter changes are separate.
+`kart-race-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json` replays the active racing-menu GATE update (slot 3, section 1 + 0xB0E4â€“0xB234). Unlike GATE2, this block does not test a contact. Its helper at 0x9164 reads six signed kart counters at work+0xC4, taking their maximum with an initial value of -1. In the ordinary timed branch a changed maximum restarts the gate timer at 600 and selects state byte 5, even on the tick that the timer expires. The other branches handle the observed phase and override globals. Field and state-byte names remain descriptive; the actual rendered gate, race finish logic and upstream counter changes are separate.
 
 `tests/kart_race_gate_ppc.py CLI CartD.rel PRIVATE_DIR` compares ten active updates, including the original six-kart helper, against Rust. Cases cover phase-change call arguments, signed-byte comparison, override precedence, timer zero versus expiry, and 16-bit counter wrap. The external call is observed only.
 
-`kart-progress-tick CartD.rel OUTPUT.json OBSERVATIONS.json` reproduces one occupied kart's section 1 + 0x885C–0x8D60 update. The native loop tests candidate segments in order. A nonzero work+0x44 permits nine forward candidates and then two reverse candidates; otherwise it tries three forward candidates. The query index uses signed remainder. The stored piece index behaves differently: a one-piece forward crossing resets it to zero, whereas a multi-piece crossing increments the counter and retains the advanced index in this block. For reverse crossings the mode controls whether to clamp to the start or decrement the counter. Work+0xC8 retains the signed maximum of its old value and the resulting +0xC4 counter.
+`kart-progress-tick CartD.rel OUTPUT.json OBSERVATIONS.json` reproduces one occupied kart's section 1 + 0x885Câ€“0x8D60 update. The native loop tests candidate segments in order. A nonzero work+0x44 permits nine forward candidates and then two reverse candidates; otherwise it tries three forward candidates. The query index uses signed remainder. The stored piece index behaves differently: a one-piece forward crossing resets it to zero, whereas a multi-piece crossing increments the counter and retains the advanced index in this block. For reverse crossings the mode controls whether to clamp to the start or decrement the counter. Work+0xC8 retains the signed maximum of its old value and the resulting +0xC4 counter.
 
 The request supplies helper 0x9220's segment-test results in call order; missing or unused results are rejected. Geometry determining those results, debug draw effects, subsequent ranking and race completion are outside this command. Run `tests/kart_progress_ppc.py CLI CartD.rel PRIVATE_DIR` with Python and Unicorn to compare 24 updates against native instructions, including forward and reverse crossings, missed probes and counter wrap.
 
@@ -106,13 +106,13 @@ Expert have 123, 160, and 190 segments respectively. The source-local directory 
 supply world coordinates or determine whether a moving kart crossed a segment.
 
 The local oracle `tests/kart_crossing_ppc.py CartD.rel OUTPUT.json Courses/`
-uses the independent SA Tools course splits and executes CartD 0x7388–0x7428.
+uses the independent SA Tools course splits and executes CartD 0x7388â€“0x7428.
 It compares the occurrence writes and every 32-byte source quad presented to
 the transform helper. It intercepts that helper; this does not verify its
 rotation, translation, intersection tests, or level completion.
 
 The same report includes `projected_segment_xz` in segment order and
-`projected_occurrence_poses` in piece order. CartD 0x72a4–0x7368 takes the
+`projected_occurrence_poses` in piece order. CartD 0x72a4â€“0x7368 takes the
 previous piece displacement and turn from its 108-byte model row to place
 the next occurrence. Rust retains the full accumulated signed yaw, projects
 with mathematical sine/cosine, and rounds transformed vectors and accumulated
@@ -185,7 +185,7 @@ initialized frame centers, original sizes, UV rectangles, screen positions,
 scale, priority and draw flags. Mode zero compares places (ties take the
 second branch); mode one draws a heading and two choice frames.
 
-The original archive loaded at 0xd49c contains one 256×256 GVR,
+The original archive loaded at 0xd49c contains one 256Ã—256 GVR,
 `moji2p_big_kart`. The report hashes the decoded RGBA including original
 alpha. The offline oracle `tests/kart_finish_display_ppc.py CLI CartD.rel
 resultCart.prs PRIVATE_TMP_DIR` compares the native draw arguments and
@@ -561,8 +561,8 @@ Only the listed writes are initialized: this callback does not clear the
 whole work area or populate the live profile table.
 
 `kart-active-profile CartD.rel OUTPUT.json INPUT.json` reads the 40-byte
-physics row loaded at 0x2284. Supply profile 0–8, alternate true only for
-2–7 after the native replacement, and incoming velocity. The driving speed
+physics row loaded at 0x2284. Supply profile 0â€“8, alternate true only for
+2â€“7 after the native replacement, and incoming velocity. The driving speed
 cap and the full-vector velocity limit are distinct fields. Nonzero velocity
 requires the observed normalization return and normalized vector; only a
 magnitude strictly above the limit changes vehicle velocity and writes the
@@ -575,7 +575,7 @@ pair of signed event IDs. Active-profile reports retain all three. Optional
 ID suppresses calls but still returns 1 for an eligible controlled kart;
 profile 8 and disabled control return 0. The CartD helper and engine request
 are reported, not executed. Scripted movement's audio input also accepts
-`alternate: true` for replaced slots 2–7.
+`alternate: true` for replaced slots 2â€“7.
 
 The crossing directory reports segment_event_modes in native segment order.
 For an active-profile event, pass its current piece_id to include the result
@@ -593,7 +593,7 @@ the alternate row for profile 4 silences all three of those requests.
 
 `kart-race-tuning CartD.rel OUTPUT.json INPUT.json` applies the shared setup
 writes at 0x5ce8. Pass the mode and, on repeated setups, previous_tuning.
-Modes 2–4 change only selected coefficients. Mode 5 requires the live record
+Modes 2â€“4 change only selected coefficients. Mode 5 requires the live record
 selected by 0x12c: it copies ten words into profile 8 and selects one of two
 tuning triples using engine word +0xb4. Pass the resulting tuning to
 kart-guided-drive and profile8_write to kart-active-profile. Setup does not
@@ -631,7 +631,7 @@ The dash-panel update now resolves the material directory used by +0xdf38. Its m
 
 `kart-dash-display CartD.rel OUTPUT.json INPUT.json` resolves both native dash-panel objects in draw order. It uses the current view range result, translates by task position, then applies Z/X/Y rotations. Supply `last_uv_phase` from the last update of the shared model, not the panel timer after increment. UV writes are applied to a local copy before polygon and strip decoding. Both models retain local transforms and native vertex colors. Texture slots 61, 65 and 66 resolve by the REL list to installed course.pak DDS members. Five PPC draw comparisons checked both models against memory after the native UV callback, and Pillow independently matched the RGBA hashes for all three textures. The output is draw data; no renderer was launched.
 
-`kart-balloon-layout CartD.rel OUTPUT.json EXE SET` binds slot 9 (BALOON) in the pinned PC and REL tables and reads the signed X rotation as the reward selector. In SET order, Tails has five fixed-charge balloons (20, 20, 20, 10, 20); Rouge has three (20, 20, 10). Their respective hd layouts have the same reward sequences. Base and Mini1–3 contain none. These are authored opportunities, not guarantees that a kart collects a reward. Each layout is separate. No installed placement requires random selection or invincibility.
+`kart-balloon-layout CartD.rel OUTPUT.json EXE SET` binds slot 9 (BALOON) in the pinned PC and REL tables and reads the signed X rotation as the reward selector. In SET order, Tails has five fixed-charge balloons (20, 20, 20, 10, 20); Rouge has three (20, 20, 10). Their respective hd layouts have the same reward sequences. Base and Mini1â€“3 contain none. These are authored opportunities, not guarantees that a kart collects a reward. Each layout is separate. No installed placement requires random selection or invincibility.
 
 The balloon layout also reports the collision descriptor referenced by CartD mode 0, its install function and its count/list arguments. Section 5 offset 0x2ed390 matches all 48 bytes of the PC record at file offset 0xaf3458 after word endian conversion: local center (0, -4.13, 0), first shape parameter 38, one entry on list 5. Another PC record shares those dimensions but has different header/attributes. This establishes descriptor parity, not PC code binding or an engine overlap result.
 
@@ -736,3 +736,5 @@ For drift windup and sustained drift, the state 2/3 dispatch calls the speed-los
 Both drift arms call driving audio between movement and contact (CartD +0x249c/+0x24fc). Optional drift_tick.audio uses the selected story profile, held pedal buttons and work_28c brake gate, post-movement state and task position, and horizontal world velocity before contact. The horizontal magnitude service result for moving audio remains an observation. The auxiliary cue 16 follows drift movement into state 3 but stops being appended on the tick that exits to state 0. The harness executes the installed caller instructions up to the following contact call; actual sound playback is external.
 
 The full driving dispatch reads work +0x30 at +0x23b4. The section 5 +0x3b94 jump table sends state 0 to normal movement and states 5 and 10 directly to +0x2648. The story sequence now retains the wall callback state even if the supplied trace stops before impact/fall recovery; later recovery still takes precedence. An explicit normal drive requires state 0. A wall hit with engine byte +0x23 equal to 3 can therefore prevent the next normal drive, while a nonzero cooldown suppresses this transition.
+
+A story scripted_tick now consumes the retained vehicle state (8/9), including the state 8 selected by pursuit. After continue_vehicle_update it inherits the preceding live task position and full angles. An independent tick supplies both fields. Supply globals [section 6 +0x21760, +0x22494] at the first tick; subsequent ticks retain these primary-replay values. On an admitted full update the gate at +0x2214..+0x2284 forces state 9 when +0x22494 is nonzero. Both callbacks clear the boost duration; state 9 tests the pre-increment shared counter before returning to normal. Calls assume no intervening unmodeled task writes to those globals. Contact, playback and scheduling remain external.

@@ -162,6 +162,29 @@ if len(sys.argv)>4:
             doc=json.loads(out.read_text());caught,finished=[v["vehiclePostMove"] for v in doc["updates"][-2:]]
             assert caught["vehicle_state"]==8 and caught["frame"]["dispatch"]["work_c4"]==5
             assert finished["frame"]["dispatch"]["work_c8"]==doc["primaryKartCounter"]==3
+            # Pursuit selects state 8. Its next movement uses the live task pose.
+            caught_q=dict(q,updates=q["updates"][:-1]+[dict(continue_vehicle_update={}),dict(scripted_tick=dict(globals=[7,0]))])
+            req.write_text(json.dumps(caught_q));out=req.with_name(path.stem+"-caught-motion.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            seq=json.loads(out.read_text());move=seq["updates"][-1]["scriptedTick"]
+            pos=caught["frame"]["position"]
+            assert move["position"]==[pos[0]+7,pos[1],pos[2]] and move["angles"]==[0,-16384,0]
+            assert move["vehicle_state"]==seq["vehicleState"]==8 and [move["global_21760"],move["global_22494"]]==[7,0]
+            # State 9 tests the old signed counter. Supply an independent live
+            # pose each tick because track contact between movements is external.
+            base_pose=dict(position=[11,12,13],angles=[4,5,6])
+            tuning=dict(work_70=0,work_44=1,position=[1,2,3],slot_flag=0)
+            first_boost=dict(boost_tick=dict(velocity=[0,0,0],boost=dict(tuning,work_dc=3)))
+            last_boost=dict(boost_tick=dict(velocity=[0,0,0],boost=tuning))
+            nine=dict(q,vehicle_state=0,primary_charge=0,updates=[first_boost,
+                dict(scripted_tick=dict(base_pose,globals=[120,1])),dict(scripted_tick=dict(base_pose,position=[9,8,7])),last_boost])
+            req.write_text(json.dumps(nine));out=req.with_name(path.stem+"-scripted-return.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            seq=json.loads(out.read_text());first,last=[x["scriptedTick"] for x in seq["updates"][1:3]]
+            assert (first["vehicle_state"],first["global_21760"],first["position"])==(9,121,[11,12,3])
+            assert (last["vehicle_state"],last["global_21760"],last["global_22494"])==(0,122,0)
+            assert last["position"]==[9,8,-3] and last["angles"]==[4,5,6] and seq["vehicleState"]==0
+            assert [seq["updates"][i]["boostTick"]["boost"]["work_dc"] for i in (0,-1)]==[2,0]
             # Vehicle writes the finish flag at the native engine threshold;
             # the controller must see that write without a second observation.
             ctx=dict(mode=int("Rouge" in path.name),first_slot_place=1,multiplayer_byte=0,engine_byte_23=0,
