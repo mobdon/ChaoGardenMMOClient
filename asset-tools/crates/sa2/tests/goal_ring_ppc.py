@@ -71,6 +71,16 @@ for x,ch,byte,timer,out,alloc in itertools.product((-1,0,1,2,4),(0,4,5,6),(0,1,2
     u.emu_start(BASE+0x2d24c,BASE+END,count=110)
     assert len(observed)==1
     print('I',x,ch,byte,timer,out,alloc,observed[0],get(WORK+8,'i'))
+# Preserve the same task work across calls. A different game byte on the
+# second invocation must see the angle written before the first timer gate.
+for ch in (4,5):
+    put(WORK,'BB',0,0);put(WORK+8,'i',1)
+    for byte,timer,alloc,expected in [(1,119,1,'return'),(0,120,1,'return'),(1,120,0,'return'),(1,120,1,'contact')]:
+        out=1;observed=[]
+        put(GLOBAL+0x23,'b',byte);put(0x801e7368,'I',TASK+768);put(TASK+774,'H',timer)
+        setreg(3,ch);setreg(30,TASK);setreg(31,WORK)
+        u.emu_start(BASE+0x2d24c,BASE+END,count=110)
+        assert (observed,get(WORK,'B'),get(WORK+8,'i'))==([expected],1,2)
 mode='contact'
 for x,byte,latched,hit in itertools.product((-3,-2,-1,0,1,2,3),(-1,0,1,2,3),(0,1),(-2,-1,0,1)):
     put(slot_base,'II',12345,54321)

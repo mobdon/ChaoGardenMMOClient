@@ -1833,29 +1833,48 @@ pub fn initialize(
     range_out: bool,
     allocated: bool,
 ) -> InitRoute {
-    let mut x = angle_x;
-    let mut bypass_range = false;
-    if matches!(character, 4 | 5) {
-        if game_byte == 1 {
-            x = 2;
-            if !slot_zero_timer.is_some_and(|t| t >= 120) {
+    let mut work = GoalInitWork { angle_x, mode: 0 };
+    work.attempt(character, game_byte, slot_zero_timer, range_out, allocated)
+}
+
+#[derive(Serialize)]
+struct GoalInitWork {
+    angle_x: i32,
+    mode: u8,
+}
+
+impl GoalInitWork {
+    fn attempt(
+        &mut self,
+        character: i8,
+        game_byte: i8,
+        slot_zero_timer: Option<u16>,
+        range_out: bool,
+        allocated: bool,
+    ) -> InitRoute {
+        if matches!(character, 4 | 5) {
+            if game_byte == 1 {
+                self.angle_x = 2;
+                self.mode = 1;
+                if !slot_zero_timer.is_some_and(|t| t >= 120) {
+                    return InitRoute::Deferred;
+                }
+            } else if self.angle_x % 3 != 1 {
                 return InitRoute::Deferred;
             }
-            bypass_range = true;
-        } else if x % 3 != 1 {
-            return InitRoute::Deferred;
         }
-    }
-    if game_byte != 2 && x % 3 == 1 {
-        return InitRoute::ChildTask;
-    }
-    if !bypass_range && range_out {
-        return InitRoute::OutOfRange;
-    }
-    if allocated {
-        InitRoute::Contact { angle_x: x }
-    } else {
-        InitRoute::NoWork
+        let x = self.angle_x;
+        if game_byte != 2 && x % 3 == 1 {
+            return InitRoute::ChildTask;
+        }
+        if self.mode == 0 && range_out {
+            return InitRoute::OutOfRange;
+        }
+        if allocated {
+            InitRoute::Contact { angle_x: x }
+        } else {
+            InitRoute::NoWork
+        }
     }
 }
 /// Regular (angle X divisible by three) task fields updated before contact detection.
@@ -2470,7 +2489,17 @@ struct GoalSample {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct InitAttempt {
+    game_byte_23: i8,
+    slot_zero_timer: Option<u16>,
+    range_out: bool,
+    allocation_ok: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Request {
+    #[serde(default)]
+    init_retries: Vec<InitAttempt>,
     texture_setup: Option<TextureSetup>,
     bind_query_returns: Option<Vec<i32>>,
     child_dispatch: Option<ChildDispatch>,
@@ -2510,14 +2539,38 @@ pub fn replay(
     if !(1..=2048).contains(&r.frames.len()) {
         return Err(Error::invalid("expected 1..2048 goal frames"));
     }
-    let init = initialize(
-        i32::from(row.placement.rotation[0] as i16),
+    if r.init_retries.len() > 2047 {
+        return Err(Error::invalid("too many goal initialization attempts"));
+    }
+    let mut work = GoalInitWork {
+        angle_x: i32::from(row.placement.rotation[0] as i16),
+        mode: 0,
+    };
+    let mut game_byte = r.game_byte_23;
+    let mut init = work.attempt(
         stage.dispatch.character,
-        r.game_byte_23,
+        game_byte,
         r.slot_zero_timer,
         r.range_out,
         r.allocation_ok,
     );
+    let mut attempts = vec![json!({"route":init,"work":work})];
+    for retry in r.init_retries {
+        if !matches!(init, InitRoute::Deferred | InitRoute::NoWork) {
+            return Err(Error::invalid(
+                "retry requires deferred initialization or failed allocation",
+            ));
+        }
+        game_byte = retry.game_byte_23;
+        init = work.attempt(
+            stage.dispatch.character,
+            game_byte,
+            retry.slot_zero_timer,
+            retry.range_out,
+            retry.allocation_ok,
+        );
+        attempts.push(json!({"route":init,"work":work}));
+    }
     let texture_setup = match (&init, &r.texture_setup) {
         (InitRoute::Contact { .. }, Some(t)) => {
             let reference_size = crate::texture::gx_buffer_size(64, 64, 2, false, 0)?;
@@ -2612,12 +2665,12 @@ pub fn replay(
             None
         };
         return Ok(
-            json!({"pcCollisionTemplates":p.pc_shape_templates(exe)?,"program":p,"init":init,"child":writes,"childDispatch":dispatch,"dispatchedFrames":0,"scope":"Child placement and optional dispatch including mode 3 and 6 handler writes; engine calls are observations."}),
+            json!({"pcCollisionTemplates":p.pc_shape_templates(exe)?,"program":p,"init":init,"initAttempts":attempts,"child":writes,"childDispatch":dispatch,"dispatchedFrames":0,"scope":"Child placement and optional dispatch including mode 3 and 6 handler writes; engine calls are observations."}),
         );
     }
     let InitRoute::Contact { angle_x } = init else {
         return Ok(
-            json!({"program":p,"init":init,"dispatchedFrames":0,"scope":"Fresh native goal task did not enter the contact executor."}),
+            json!({"program":p,"init":init,"initAttempts":attempts,"dispatchedFrames":0,"scope":"Fresh native goal task did not enter the contact executor."}),
         );
     };
     let radius = p.radii[usize::from(angle_x % 3 == 1)];
@@ -2653,7 +2706,7 @@ pub fn replay(
     let mut frames = vec![];
     for observation in r.frames {
         let (hit, game_byte, motion_gate) = match observation {
-            GoalFrame::Hit(hit) => (hit, r.game_byte_23, None),
+            GoalFrame::Hit(hit) => (hit, game_byte, None),
             GoalFrame::Sample(s) => (s.hit, s.game_byte_23, s.game_byte_37),
         };
         if motion_gate.is_some() && r.lifecycle.is_none() {
@@ -2741,6 +2794,6 @@ pub fn replay(
         None
     };
     Ok(
-        json!({"effectTextures":p.effect_texture_receipt(effect_archive)?,"textureSetup":texture_setup,"observedRelease":released,"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
+        json!({"initAttempts":attempts,"effectTextures":p.effect_texture_receipt(effect_archive)?,"textureSetup":texture_setup,"observedRelease":released,"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
     )
 }

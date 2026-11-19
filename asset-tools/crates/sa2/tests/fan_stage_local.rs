@@ -524,9 +524,10 @@ fn mounted_story_goal_samples_live_game_bytes() {
         &ini("ObjectLists.ini"),
     )
     .unwrap();
+    let mut hunters = BTreeSet::new();
     let mut covered = BTreeSet::new();
     for dispatch in campaign.levels() {
-        if covered.contains(&dispatch.level) || matches!(dispatch.character, 4 | 5) {
+        if covered.contains(&dispatch.level) || hunters.contains(&dispatch.character) {
             continue;
         }
         let stage = campaign
@@ -539,6 +540,55 @@ fn mounted_story_goal_samples_live_game_bytes() {
                 })
             })
             .unwrap();
+        if matches!(dispatch.character, 4 | 5) {
+            let Some((layer, row)) = stage.layers.iter().enumerate().find_map(|(layer, l)| {
+                l.placements
+                    .iter()
+                    .find(|p| {
+                        p.definition_index
+                            .and_then(|i| stage.object_table?.entries.get(i))
+                            .is_some_and(|d| d.function_va == 0x6c63c0 && d.name == "GOALRING")
+                    })
+                    .map(|p| (layer, p.placement_index))
+            }) else {
+                continue;
+            };
+            let module = fs::read(gd.join(format!("stg{:02}D.rel", dispatch.level))).unwrap();
+            let attempt = |byte, timer, alloc| serde_json::json!({"game_byte_23":byte,"slot_zero_timer":timer,"range_out":true,"allocation_ok":alloc});
+            let mut request = attempt(1, 119, true);
+            request["init_retries"] = serde_json::json!([
+                attempt(0, 120, true),
+                attempt(1, 120, false),
+                attempt(1, 120, true)
+            ]);
+            request["frames"] = serde_json::json!([{"kind":"player","slot":0}]);
+            let replay = sa2_asset_tools::goal_ring::replay(
+                &stage,
+                layer,
+                row,
+                &module,
+                &exe,
+                &effects,
+                &serde_json::to_vec(&request).unwrap(),
+            )
+            .unwrap();
+            let attempts = replay["initAttempts"].as_array().unwrap();
+            assert_eq!(
+                attempts.iter().map(|v| &v["route"]).collect::<Vec<_>>(),
+                vec![
+                    &serde_json::json!("Deferred"),
+                    &serde_json::json!("Deferred"),
+                    &serde_json::json!("NoWork"),
+                    &serde_json::json!({"Contact":{"angle_x":2}})
+                ]
+            );
+            assert!(attempts
+                .iter()
+                .all(|v| v["work"] == serde_json::json!({"mode":1,"angle_x":2})));
+            assert_eq!(replay["frames"][0]["latched"], true);
+            hunters.insert(dispatch.character);
+            continue;
+        }
         let Some((layer, row)) = stage.layers.iter().enumerate().find_map(|(layer, l)| {
             l.placements
                 .iter()
@@ -579,6 +629,7 @@ fn mounted_story_goal_samples_live_game_bytes() {
         assert_eq!(frames[4]["cleanupCall"], 0x80065148u32);
         covered.insert(dispatch.level);
     }
+    assert_eq!(hunters, BTreeSet::from([4, 5]));
     assert_eq!(
         covered,
         BTreeSet::from([3, 4, 6, 9, 10, 11, 12, 13, 14, 17, 21, 22, 23, 24, 27, 28, 30, 40, 43])
