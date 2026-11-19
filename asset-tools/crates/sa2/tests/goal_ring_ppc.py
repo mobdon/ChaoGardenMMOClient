@@ -980,3 +980,48 @@ for slot,(first,second,fallback) in itertools.product([0,1],[
     result=dict(player=slot,queries=calls,positionBits=struct.unpack('>III',cpu.mem_read(TASK+0x400,12)),
                 deltaBits=struct.unpack('>III',cpu.mem_read(TASK+0x410,12)))
     print('VEC',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
+
+entry=0x3a0e0
+block=bytearray(d[ss[1][0]+entry:ss[1][0]+entry+0xa0])
+gc=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+for page,size in [(BASE,4096),(DATA,0x10000),(TASK,4096)]:gc.mem_map(page,size)
+gc.reg_write(R.UC_PPC_REG_MSR,8192)
+services={}
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not entry<=off<entry+len(block):continue
+        if kind==10:
+            assert module==0
+            services[BASE+off-entry]=val
+            continue
+        assert module==12 and s==4 and kind in (4,6)
+        gc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8]);val+=DATA
+        struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
+gc.mem_write(BASE,bytes(block))
+def gate_service(cpu,pc,*_):
+    addr=services[pc];calls.append(addr)
+    if addr==0x8010d940:cpu.reg_write(R.UC_PPC_REG_3,rnd&0xffffffff)
+    else:
+        assert addr==0x80114eac and cpu.reg_read(R.UC_PPC_REG_3)==WORK+0x400
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack('>d',vector),'big'))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in services:gc.hook_add(UC_HOOK_CODE,gate_service,begin=pc,end=pc)
+for off in [0xa0,0x390]:gc.hook_add(UC_HOOK_CODE,lambda cpu,*_:cpu.emu_stop(),begin=BASE+off,end=BASE+off)
+from unicorn import UC_HOOK_MEM_READ
+gc.hook_add(UC_HOOK_MEM_READ,lambda *args: reads.append(True),begin=WORK+36,end=WORK+39)
+for rnd,vector,x in itertools.product([0,9830,9831,32767],[0.,struct.unpack('>f',bytes.fromhex('3ecccccd'))[0],1.],[0.5,1.,2.]):
+    calls=[];reads=[];byte=0xfc;flags=0x8055aa11
+    gc.mem_write(TASK+60,struct.pack('>I',WORK+0x200));gc.mem_write(WORK+0x260,struct.pack('>I',flags))
+    gc.mem_write(WORK+1,bytes([byte]));gc.mem_write(WORK+36,struct.pack('>f',x))
+    for i,v in [(1,TASK+0xf00),(28,TASK),(30,WORK),(31,WORK+0x400)]:gc.reg_write(getattr(R,'UC_PPC_REG_'+str(i)),v)
+    gc.emu_start(BASE,BASE+0x400,count=64)
+    end=gc.reg_read(R.UC_PPC_REG_PC)-BASE
+    assert end in (0xa0,0x390)
+    obs=dict(flags96=flags,random_return=rnd,vector_return=vector if len(calls)==2 else None,work36=x if reads else None)
+    result=dict(flags96=struct.unpack('>I',gc.mem_read(WORK+0x260,4))[0],byte1=gc.mem_read(WORK+1,1)[0],calls=calls,continueEffect=end==0xa0)
+    print('GATE',byte,json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))

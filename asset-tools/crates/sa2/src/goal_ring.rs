@@ -20,6 +20,8 @@ pub struct Program {
     consumer_blend: [f32; 2],
     #[serde(skip)]
     vector_constants: [f32; 5],
+    #[serde(skip)]
+    gate_constants: [f32; 4],
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     #[serde(skip)]
@@ -480,6 +482,41 @@ impl Program {
             constant(0x146)?,
             constant(0x20a)?,
             constant(0x24a)?,
+        ];
+        let gateway = local_target(common + 0xa0)? + 0x48;
+        let branch = word(instructions, gateway as usize)?;
+        if branch & 0xffff0003 != 0x41820000 {
+            return Err(invalid());
+        }
+        let gate = gateway
+            .checked_add_signed((branch as u16 as i16) as i32)
+            .ok_or_else(invalid)?;
+        if manifest::sha256(
+            instructions
+                .get(gate as usize..gate as usize + 0xa0)
+                .ok_or_else(invalid)?,
+        ) != "7e4c6b45c1436bf3590e47f72b50af3a0073119136b6e179ce97a874d2d56bb1"
+        {
+            return Err(invalid());
+        }
+        for (off, addr) in [(0x1c, 0x8010d940), (0x6c, 0x80114eac)] {
+            let r = rel.reference(1, gate + off).ok_or_else(invalid)?;
+            if (r.module, r.kind, r.addend) != (0, 10, addr) {
+                return Err(invalid());
+            }
+        }
+        let g = gate.checked_sub(helper).ok_or_else(invalid)?;
+        let bias = rel.reference(1, gate + 0x26).ok_or_else(invalid)?.addend;
+        if constant(g + 0x22)?.to_bits() != 0x43300000
+            || word(rel.data(4)?, bias as usize + 4)? != 0x80000000
+        {
+            return Err(invalid());
+        }
+        let gate_constants = [
+            constant(g + 0x46)?,
+            constant(g + 0x56)?,
+            constant(g + 0x72)?,
+            constant(g + 0x8a)?,
         ];
         let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
@@ -1251,6 +1288,7 @@ impl Program {
             consumer_scale,
             consumer_blend,
             vector_constants,
+            gate_constants,
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
@@ -1404,6 +1442,29 @@ impl Program {
         };
         Ok(
             json!({"player":v.player,"queries":queries,"positionBits":position.map(f32::to_bits),"deltaBits":delta.map(f32::to_bits)}),
+        )
+    }
+    pub fn consumer_gate(&self, byte1: u8, g: ConsumerGate) -> Result<Value> {
+        if byte1 & 2 != 0 {
+            return Err(Error::invalid("expected cleared countdown bit"));
+        }
+        let [scale, r_limit, v_limit, w_limit] = self.gate_constants;
+        let first = (g.random_return as f32) * scale < r_limit;
+        if first != g.vector_return.is_some() {
+            return Err(Error::invalid(
+                "vector return required only after random gate",
+            ));
+        }
+        let second = g.vector_return.is_some_and(|v| v > v_limit);
+        if second != g.work36.is_some() {
+            return Err(Error::invalid("work36 required only after vector gate"));
+        }
+        let mut calls = vec![0x8010d940u32];
+        if first {
+            calls.push(0x80114eac);
+        }
+        Ok(
+            json!({"flags96":g.flags96 & !0x8000,"byte1":byte1 & !1,"calls":calls,"continueEffect":g.work36.is_some_and(|v|v<w_limit)}),
         )
     }
     pub fn consumer_countdown(&self, timer: i32, c: ConsumerCountdown) -> Value {
@@ -1582,7 +1643,16 @@ pub struct ConsumerVectors {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ConsumerGate {
+    flags96: u32,
+    random_return: i32,
+    vector_return: Option<f32>,
+    work36: Option<f32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConsumerUpdate {
+    gate: Option<ConsumerGate>,
     vectors: Option<ConsumerVectors>,
     countdown: Option<ConsumerCountdown>,
     frame: i32,
@@ -2269,6 +2339,9 @@ pub fn replay(
             json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0});
         if let Some(u) = c.update {
             out["update"] = p.consumer_update(u.frame, u.service_return, u.counter)?;
+            if u.gate.is_some() && u.vectors.is_none() {
+                return Err(Error::invalid("post-vector gate requires vector helper"));
+            }
             if let Some(v) = u.vectors {
                 if u.countdown.is_none() {
                     return Err(Error::invalid(
@@ -2278,6 +2351,9 @@ pub fn replay(
                 out["update"]["vectors"] = p.consumer_vectors(v)?;
             }
             if let Some(fields) = u.countdown {
+                if let Some(g) = u.gate {
+                    out["update"]["gate"] = p.consumer_gate(fields.byte1 & !3, g)?;
+                }
                 out["update"]["countdown"] = p.consumer_countdown(120, fields);
             }
         }
