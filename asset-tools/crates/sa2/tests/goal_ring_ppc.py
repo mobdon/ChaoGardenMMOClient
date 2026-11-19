@@ -103,3 +103,37 @@ for active,gate,timer,ptr in itertools.product((0,1),(0,1),(0,58,59,60,65535),(0
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+(0x2da4c if gate else 0x2d868),(active,gate,timer,hex(u.reg_read(R.UC_PPC_REG_PC)))
     u.emu_start(BASE+0x2dcd4,BASE+0x2dd10,count=32)
     print('M',active,gate,timer,ptr,get(WORK+6,'H'),get(WORK+12,'i'),get(WORK+24,'I'),next(iter(observed),0))
+
+# Execute the separate task only when observed at the word-2 dispatch.
+begin,end=0x3ba44,0x3bd8c
+map_page(BASE+begin)
+u.mem_write(BASE+begin,d[ss[1][0]+begin:ss[1][0]+end])
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if module!=12:continue
+        address=(BASE if s==1 else DATA+s*0x100000)+val
+        if section==5 and 0x2403b4<=off<0x2403b4+93*4:
+            assert kind==1 and s==1
+            put(const_base+off,'I',address)
+        elif section==1 and begin<=off<end and kind in (4,6):
+            put(BASE+off,'H',(address if kind==4 else (address+0x8000)>>16)&65535)
+def query_hook(cpu,pc,*_):
+    setreg(3,query);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+def local_hook(cpu,pc,*_):
+    assert reg(4)==WORK+0x3c
+    codes.append(reg(3));cpu.reg_write(R.UC_PPC_REG_PC,cpu.reg_read(R.UC_PPC_REG_LR))
+u.hook_add(UC_HOOK_CODE,query_hook,begin=BASE+0x3baa0,end=BASE+0x3baa0)
+u.hook_add(UC_HOOK_CODE,local_hook,begin=BASE+0x39244,end=BASE+0x39244)
+for slot,query in itertools.product((0,1),[-2147483648,*range(2,97),2147483647]):
+    codes=[];setreg(5,WORK);setreg(27,TASK);setreg(28,TASK+0x80)
+    put(TASK+0x40,'I',WORK);put(WORK+0x54,'I',slot);put(slot_base,'II',41,42);put(slot_base+slot*4,'I',2)
+    put(TASK+0x80,'B',77);put(WORK+0x34,'I',77)
+    u.emu_start(BASE+begin,BASE+end,count=90)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+end and len(codes)<=1
+    assert get(TASK+0x80,'B')==0 and get(WORK+0x34,'I')==120
+    print('D',slot,query,next(iter(codes),-1),get(slot_base,'I'),get(slot_base+4,'I'))

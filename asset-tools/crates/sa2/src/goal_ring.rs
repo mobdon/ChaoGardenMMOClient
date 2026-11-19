@@ -12,6 +12,8 @@ pub struct Program {
     pub contact_offset: u32,
     pub local_effect: u32,
     pub slot_words_offset: u32,
+    #[serde(skip)]
+    dispatch_codes: Vec<Option<u16>>,
     pub initial_slot_words: [u32; 2],
     pub radii: [f32; 2],
     pub spin: [i32; 2],
@@ -88,6 +90,44 @@ impl Program {
         let data = rel.data(5)?;
         let at = slot_words_offset as usize;
         let initial_slot_words = [word(data, at)?, word(data, at + 4)?];
+        // Locate the switch by its engine query and the preceding read of our slot array.
+        let instructions = rel.data(1)?;
+        let switch = (0..instructions.len() as u32)
+            .step_by(4)
+            .find(|&off| {
+                off >= 0x50
+                    && rel
+                        .reference(1, off)
+                        .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x8001dcf4)
+                    && rel.reference(1, off - 0x4e).is_some_and(|r| {
+                        r.module == info.module
+                            && r.section == 5
+                            && r.kind == 4
+                            && r.addend == slot_words_offset
+                    })
+            })
+            .ok_or_else(invalid)?;
+        let table = rel
+            .reference(1, switch + 0x16)
+            .filter(|r| r.module == info.module && r.kind == 4 && r.section == 5)
+            .ok_or_else(invalid)?;
+        let mut dispatch_codes = Vec::with_capacity(93);
+        for i in 0..93 {
+            let (section, branch) = rel
+                .local_pointer(5, table.addend + i * 4)?
+                .ok_or_else(invalid)?;
+            if section != 1 {
+                return Err(invalid());
+            }
+            let ins = word(instructions, branch as usize)?;
+            dispatch_codes.push(if branch == switch + 0x2b8 {
+                None
+            } else if ins >> 16 == 0x3860 {
+                Some(ins as u16)
+            } else {
+                return Err(invalid());
+            });
+        }
         // Verify the actual callees even though the code hashes cover unrelocated branches.
         for (off, addr) in [
             (0x14, 0x800066f4),
@@ -170,6 +210,7 @@ impl Program {
             object_init: init,
             contact_offset: start,
             local_effect: target,
+            dispatch_codes,
             slot_words_offset,
             initial_slot_words,
             radii,
@@ -277,6 +318,24 @@ pub fn apply_slot_writes(words: &mut [u32; 2], calls: &[Call], helper: u32) {
         }
     }
 }
+impl Program {
+    /// Only the observed word-2 branch of the stage task; other modes have separate paths.
+    pub fn consume_goal_word(
+        &self,
+        words: &mut [u32; 2],
+        slot: u8,
+        query: i32,
+    ) -> Result<Option<u16>> {
+        let w = words
+            .get_mut(usize::from(slot))
+            .filter(|v| **v == 2)
+            .ok_or_else(|| Error::invalid("expected a pending goal word in the selected slot"))?;
+        let index = query.wrapping_sub(3) as u32;
+        let code = self.dispatch_codes.get(index as usize).copied().flatten();
+        *w = 0;
+        Ok(code)
+    }
+}
 /// First invocation on a fresh SET task. A child route has its own executor.
 #[derive(Debug, PartialEq, Serialize)]
 pub enum InitRoute {
@@ -353,7 +412,14 @@ struct LifecycleInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ConsumerInput {
+    slot: u8,
+    query: i32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Request {
+    post_contact_consumer: Option<ConsumerInput>,
     slot_zero_timer: Option<u16>,
     range_out: bool,
     allocation_ok: bool,
@@ -452,7 +518,13 @@ pub fn replay(
             break;
         }
     }
+    let consumer = if let Some(c) = r.post_contact_consumer {
+        let code = p.consume_goal_word(&mut slot_words, c.slot, c.query)?;
+        Some(json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0}))
+    } else {
+        None
+    };
     Ok(
-        json!({"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
+        json!({"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
     )
 }

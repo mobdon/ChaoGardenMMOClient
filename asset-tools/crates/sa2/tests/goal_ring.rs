@@ -48,7 +48,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0, 0, 0];
+    let mut counts = [0, 0, 0, 0];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     for line in stdout.lines() {
@@ -73,6 +73,14 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "D" {
+            let slot = n(1) as u8;
+            let mut words = [41, 42];
+            words[usize::from(slot)] = 2;
+            let code = program.consume_goal_word(&mut words, slot, n(2)).unwrap();
+            assert_eq!(code.map(i32::from).unwrap_or(-1), n(3));
+            assert_eq!(words, [n(4) as u32, n(5) as u32]);
+            counts[3] += 1;
         } else if v[0] == "M" {
             let mut m = sa2_asset_tools::goal_ring::RegularMotion {
                 yaw: 2147483640,
@@ -147,7 +155,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40]);
+    assert_eq!(counts, [720, 280, 40, 194]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]
@@ -163,7 +171,7 @@ fn mounted_goal_cli() {
     let game = PathBuf::from(env::var_os("SA2_GAME_PATH").unwrap());
     let config = PathBuf::from(env::var_os("SA2_PC_CONFIG").unwrap());
     let request = dir.join("request.json");
-    fs::write(&request,r#"{"initial_slot_words":[91,72],"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"},{"kind":"player","slot":1},{"kind":"player","slot":1}]}"#).unwrap();
+    fs::write(&request,r#"{"post_contact_consumer":{"slot":1,"query":13},"initial_slot_words":[91,72],"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"},{"kind":"player","slot":1},{"kind":"player","slot":1}]}"#).unwrap();
     let run = |row: &str| {
         let out = dir.join(format!("{row}.json"));
         let result = Command::new(env!("CARGO_BIN_EXE_sa2-assets"))
@@ -198,6 +206,10 @@ fn mounted_goal_cli() {
     };
     let doc = run("198").unwrap();
     let v = &doc["replay"];
+    assert_eq!(
+        v["postContactConsumer"]["moduleSlotWords"],
+        serde_json::json!([91, 0])
+    );
     assert_eq!(v["radius"], 25.);
     for (i, expected) in [[91, 72], [91, 2], [91, 2]].iter().enumerate() {
         assert_eq!(

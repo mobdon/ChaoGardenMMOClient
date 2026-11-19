@@ -26,3 +26,14 @@ module. Each frame reports `moduleSlotWords`; a fresh replay starts from
 the two original section-5 words, or from `initial_slot_words` supplied by
 a caller replaying an already active stage. This state belongs to the
 stage module. Its write alone does not establish a mission result.
+
+To replay the separate stage task once it reaches the word-2 branch, add
+`"post_contact_consumer":{"slot":1,"query":13}`. The query is the observed
+return from engine routine 0x8001dcf4. Rust reads the installed module's
+93-entry jump table. Depending on its entry, the task can pass a code and
+its work pointer + 0x3c to a local helper. It then clears the selected slot,
+writes 120 to work offset 0x34 and resets the mode byte. Out-of-range query
+values skip the helper but still perform these writes. This replay ends at
+that reset. Scheduling the task, executing its nested helper and deciding
+the mission result remain open. Neither the goal write nor this read is
+evidence that the mission controller advanced.
