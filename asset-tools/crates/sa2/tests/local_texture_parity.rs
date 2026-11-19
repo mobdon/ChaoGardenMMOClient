@@ -190,7 +190,7 @@ fn pak_payload_parity_and_dds_decode() {
     let original_hash = Sha256::digest(&bytes);
     let entries = archive::read_pak(&bytes).unwrap();
     let mut checked = 0;
-    let mut decoded = 0;
+    let mut pixel_records = Vec::new();
     let mut digest = Sha256::new();
     for entry in entries {
         let relative = entry.name.replace('\\', "/");
@@ -208,12 +208,24 @@ fn pak_payload_parity_and_dds_decode() {
                 actual.rgba.len(),
                 actual.width as usize * actual.height as usize * 4
             );
-            decoded += 1;
+            let mut record = Sha256::digest(entry.data).to_vec();
+            record.extend(actual.width.to_le_bytes());
+            record.extend(actual.height.to_le_bytes());
+            record.extend(Sha256::digest(&actual.rgba));
+            pixel_records.push(record);
         }
     }
     assert_eq!(Sha256::digest(fs::read(source).unwrap()), original_hash);
     assert_eq!(checked, 118);
+    let decoded = pixel_records.len();
     assert_eq!(decoded, 117);
+    pixel_records.sort_unstable();
+    let pixels = Sha256::digest(pixel_records.concat());
+    // Pillow 13.0.0 RGBA output from the independently supplied loose DDS files.
+    assert_eq!(
+        format!("{pixels:x}"),
+        "89c0c5fe7ecf0215d05bf31b74bf910c6d370a91fee399f7411d47974b957a49"
+    );
     println!("PAK {checked} payloads byte-identical to independently supplied loose files; {decoded} DDS base images decode; source {original_hash:x}; payload aggregate {:x}",digest.finalize());
 }
 
