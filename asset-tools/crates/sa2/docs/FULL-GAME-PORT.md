@@ -66,3 +66,18 @@ Client/server histories and other workstream ownership remain separate. Source
 publication does not authorize live preview restart, runtime rollout or save
 migration. The full-game tracker stays open until the complete acceptance gates
 are met; no percentage or finished-game claim is inferred from asset counts.
+
+## Story, terrain and mission tables
+
+[Story run](STORY-RUN.md) reports where the three installed story openings stop. [Campaign mounts](FAN-STAGE.md) covers 49 authored level dispatches, and [static terrain](STAGE-LANDS.md) covers primary and alternate tables across 79 installed modules. The mount reports unsupported systems per level. Chao rig adaptation for story play comes after native gameplay; no Chao stats are awarded here.
+
+From the checkout, use the PC_SA2 directory from the supported SA Tools mappings and fresh output paths under .local:
+
+    sa2-assets fan-levels GAME/sonic2app.exe .local/levels.json PC_SA2
+    sa2-assets fan-stage GAME/sonic2app.exe .local/green-forest.json PC_SA2 "Hero Story Sequence" 13
+    sa2-assets stage-raycast GD_PC/stg03D.rel .local/probe.json objLandTable0003 REQUEST.json
+    sa2-assets mission-ranks GAME/sonic2app.exe .local/ranks.json
+
+A ray request contains origin, direction and maxDistance; a null hit is a valid result. The verified Green Forest mount has 517 entries and 144 Basic attachments; a downward 5,000-unit ray from the original Sonic start returned no static hit. That is not evidence the in-game player falls.
+
+The Steam EXE provides 164 ordered rank rows: 30 each for missions 1, 3, 4 and 5; 34 for mission 2; five per kart route. Rust exposes native score units or time in seconds and retains the source address. The independent SA Tools 786 split of the five Mission rank sections from PC_SA2/Characters.ini and the two Route rank sections from CART.ini matched all level/mission associations and 656 D/C/B/A values. Reproduce with tests/mission_rank_reference.py OUTPUT_JSON SPLIT/figure/Ranks SA2Enums.h using the SA2 Mod Loader level enum. The reader does not calculate the final mission score, decide ties or modify the player's rank or save.

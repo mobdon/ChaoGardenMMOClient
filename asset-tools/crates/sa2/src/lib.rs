@@ -69,4 +69,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod city_land;
 
+pub mod fan_stage;
+pub mod mission_ranks;
 pub mod stage_land;

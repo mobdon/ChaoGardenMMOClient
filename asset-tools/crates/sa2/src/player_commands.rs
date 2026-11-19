@@ -6,16 +6,16 @@ use sa2_asset_tools::{
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="story-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
+pub(super) const USAGE:&str="mission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
-        "player-physics" | "city-board-resources" => Some(3),
+        "mission-ranks" | "player-physics" | "city-board-resources" => Some(3),
         "campaign-camera" => Some(8),
-        "event-camera" => Some(6),
+        "event-camera" | "fan-stage" => Some(6),
         "city-rider-pose" | "city-board-pose" | "stage-bind" | "campaign-frame" => Some(7),
-        "story-run" | "city-spawn-ground" => Some(5),
+        "stage-raycast" | "story-run" | "city-spawn-ground" => Some(5),
         "stage-positions" | "death-zones" | "stage-paths" | "story" | "event-frame"
-        | "demo-frame" => Some(4),
+        | "demo-frame" | "fan-levels" => Some(4),
         _ => None,
     }
 }
@@ -172,6 +172,63 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
     let label = source_label(input, root)?;
     let mut extras = Vec::new();
     let doc = match command {
+        "mission-ranks" => serde_json::to_value(sa2_asset_tools::mission_ranks::read(&bytes)?)?,
+        "fan-stage" | "fan-levels" => {
+            let cfg = Path::new(&args[3]);
+            for (name, role) in [
+                ("ADVERTISE.ini", "story-mapping"),
+                ("sa2lvl.ini", "level-mapping"),
+                ("ObjectLists.ini", "object-list-mapping"),
+            ] {
+                extras.push(Extra::mapping(cfg.join(name).as_os_str(), role)?);
+            }
+            let catalog = sa2_asset_tools::fan_stage::Campaign::new(
+                &bytes,
+                extras[0].text()?,
+                extras[1].text()?,
+                extras[2].text()?,
+            )?;
+            if command == "fan-levels" {
+                serde_json::to_value(catalog.levels())?
+            } else {
+                let gd = input
+                    .parent()
+                    .ok_or_else(|| Error::invalid("missing installation root"))?
+                    .join("resource/gd_PC");
+                let stage = catalog.mount(text_arg(&args[4])?, number(&args[5])?, |name| {
+                    let path = gd.join(name);
+                    if !path.try_exists()? {
+                        return Ok(None);
+                    }
+                    let src = Extra::read(
+                        &path,
+                        format!("resource/gd_PC/{name}"),
+                        64 * 1024 * 1024,
+                        "mounted-resource",
+                    )?;
+                    let data = src.bytes.clone();
+                    extras.push(src);
+                    Ok(Some(data))
+                })?;
+                serde_json::to_value(stage)?
+            }
+        }
+        "stage-raycast" => {
+            let p = Path::new(&args[4]);
+            let src = Extra::read(
+                p,
+                format!("requests/{}", basename(p)?),
+                64 * 1024,
+                "ray-request",
+            )?;
+            let req: RayRequest = serde_json::from_slice(&src.bytes)?;
+            let symbol = text_arg(&args[3])?;
+            let stage = sa2_asset_tools::stage_land::read_named(&bytes, symbol)?;
+            let world = collision::bake_stage(&stage, req.uniform_scale)?;
+            let hit = world.raycast(req.origin, req.direction, req.max_distance)?;
+            extras.push(src);
+            json!({"symbol":symbol,"request":req,"hit":hit,"bounds":world.bounds,"scope":"static geometric query"})
+        }
         "story-run" => {
             extras.push(Extra::mapping(&args[3], "native-table-mapping")?);
             story_run::run(

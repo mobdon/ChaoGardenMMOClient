@@ -1,11 +1,11 @@
-//! File-backed sections and relocation references of the City Escape module shipped with Steam.
+//! File-backed sections and relocation references of the pinned Steam stage modules.
 use crate::{manifest, Error, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
 pub const SHA256: &str = "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b";
 fn invalid() -> Error {
-    Error::invalid("invalid or unsupported City Escape REL reference")
+    Error::invalid("invalid or unsupported installed REL reference")
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -25,6 +25,7 @@ pub struct Reference {
 
 pub struct CityRel<'a> {
     bytes: &'a [u8],
+    module: u32,
     sections: Vec<Section>,
     refs: BTreeMap<(u8, u32), Reference>,
 }
@@ -35,6 +36,10 @@ impl<'a> CityRel<'a> {
         if bytes.len() != 3_304_912 || manifest::sha256(bytes) != SHA256 {
             return Err(Error::invalid("unsupported City Escape REL revision"));
         }
+        Self::read_identified(bytes, 12)
+    }
+    /// Caller must first identify the released module by pinned digest.
+    pub(crate) fn read_identified(bytes: &'a [u8], module: u32) -> Result<Self> {
         let word = |at: usize| -> Result<u32> {
             Ok(u32::from_be_bytes(
                 bytes
@@ -44,7 +49,7 @@ impl<'a> CityRel<'a> {
                     .unwrap(),
             ))
         };
-        if word(0)? != 12 || word(28)? != 2 {
+        if word(0)? != module || word(28)? != 2 {
             return Err(invalid());
         }
         let dir = word(16)? as usize;
@@ -66,7 +71,7 @@ impl<'a> CityRel<'a> {
         let mut refs = BTreeMap::new();
         let imports = word(40)? as usize;
         for off in (imports..imports + word(44)? as usize).step_by(8) {
-            let module = word(off)?;
+            let imported_module = word(off)?;
             let mut stream = word(off + 4)? as usize;
             let mut src = None;
             let mut loc = 0u32;
@@ -101,7 +106,7 @@ impl<'a> CityRel<'a> {
                     return Err(invalid());
                 }
                 let addend = u32::from_be_bytes(r[4..].try_into().unwrap());
-                if module == 12
+                if imported_module == module
                     && addend >= sections.get(section as usize).ok_or_else(invalid)?.size
                 {
                     return Err(invalid());
@@ -110,7 +115,7 @@ impl<'a> CityRel<'a> {
                     .insert(
                         (src, loc),
                         Reference {
-                            module,
+                            module: imported_module,
                             kind,
                             section,
                             addend,
@@ -124,6 +129,7 @@ impl<'a> CityRel<'a> {
         }
         Ok(Self {
             bytes,
+            module,
             sections,
             refs,
         })
@@ -151,11 +157,11 @@ impl<'a> CityRel<'a> {
             .ok_or_else(invalid)?;
         match self.reference(section, offset) {
             Some(Reference {
-                module: 12,
+                module,
                 kind: 1,
                 section,
                 addend,
-            }) => Ok(Some((section, addend))),
+            }) if module == self.module => Ok(Some((section, addend))),
             None if word == [0; 4] => Ok(None),
             _ => Err(invalid()),
         }
