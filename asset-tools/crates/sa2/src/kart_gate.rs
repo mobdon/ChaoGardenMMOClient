@@ -320,7 +320,7 @@ impl TimeExtension {
         false
     }
 }
-pub fn time_extension(bytes: &[u8]) -> Result<serde_json::Value> {
+pub fn time_extension(bytes: &[u8], pak: &[u8]) -> Result<serde_json::Value> {
     let rel = verified_module(bytes)?;
     for (site, target) in [(0xc83a, 0xc858), (0xc9ce, 0xca10)] {
         if !rel
@@ -330,13 +330,73 @@ pub fn time_extension(bytes: &[u8]) -> Result<serde_json::Value> {
             return Err(Error::invalid("unexpected time extension callback"));
         }
     }
+    let data = rel.data(5)?;
+    let invalid = || Error::invalid("unexpected checkpoint HUD resource");
+    let target = |at| {
+        rel.reference(1, at)
+            .filter(|r| (r.module, r.section, r.kind) == (80, 5, 4))
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let ptr = |at| {
+        rel.local_pointer(5, at)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v)
+            .ok_or_else(invalid)
+    };
+    let list = target(0xc3aa)?;
+    let anim = target(0xc3b6)?;
+    let mut sprites = Vec::new();
+    for index in [6u32, 5] {
+        let at = (anim + 20 * index) as usize;
+        let row = data.get(at..at + 20).ok_or_else(invalid)?;
+        let h = |i: usize| u16::from_be_bytes([row[2 * i], row[2 * i + 1]]);
+        sprites.push(
+            serde_json::json!({"index":index,"size":[h(0),h(1)],"pivot":[h(2) as i16,h(3) as i16],
+            "uv":[h(4),h(5),h(6),h(7)],"textureId":h(8),"attributes":h(9)}),
+        );
+    }
+    let slot = sprites[0]["textureId"].as_u64().ok_or_else(invalid)? as u32;
+    if sprites[0]["textureId"] != sprites[1]["textureId"]
+        || slot
+            >= u32::from_be_bytes(
+                data[list as usize + 4..list as usize + 8]
+                    .try_into()
+                    .unwrap(),
+            )
+    {
+        return Err(invalid());
+    }
+    let at = ptr(ptr(list)? + 12 * slot)? as usize;
+    let name = std::ffi::CStr::from_bytes_until_nul(&data[at..])
+        .map_err(|_| invalid())?
+        .to_str()
+        .map_err(|_| invalid())?
+        .trim_end();
+    let member = format!("course\\{name}.dds");
+    let bank = crate::archive::read_pak(pak)?;
+    let entry = bank
+        .iter()
+        .find(|e| e.name.eq_ignore_ascii_case(&member))
+        .ok_or_else(invalid)?;
+    let image = crate::texture::decode_dds(entry.data)?;
+    let texture = serde_json::json!({"name":entry.name,"offset":entry.offset,"length":entry.length,"width":image.width,"height":image.height,
+        "ddsSha256":crate::manifest::sha256(entry.data),"rgbaSha256":crate::manifest::sha256(&image.rgba)});
+    let mut draws = Vec::new();
     let mut state = TimeExtension::default();
     let mut frames = Vec::new();
     for _ in 0..256 {
         let delete = state.tick();
+        let [x, y] = state.position;
+        draws.push([
+            [(1.0 + (400.0 - x)) as i32, (1.0 + y) as i32, -1],
+            [x as i32, y as i32, 0],
+        ]);
         frames.push(serde_json::json!({"state":state,"delete":delete}));
         if delete {
-            return Ok(serde_json::json!({"frames":frames}));
+            return Ok(
+                serde_json::json!({"frames":frames,"displayAtState":draws,"drawFlags":32,"sprites":sprites,"texture":texture}),
+            );
         }
     }
     Err(Error::invalid("time extension task did not release"))

@@ -979,7 +979,16 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 serde_json::from_slice(&extras[0].bytes)?,
             )?)?
         }
-        "kart-time-extension" => sa2_asset_tools::kart_gate::time_extension(&bytes)?,
+        "kart-time-extension" => {
+            let path = input.with_file_name("PRS").join("course.pak");
+            extras.push(Extra::read(
+                &path,
+                source_label(&path, root)?,
+                16 * 1024 * 1024,
+                "kart-course-texture-bank",
+            )?);
+            sa2_asset_tools::kart_gate::time_extension(&bytes, &extras[0].bytes)?
+        }
         "kart-gate-tick" | "kart-race-gate-tick" => {
             let path = Path::new(&args[3]);
             extras.push(Extra::read(
