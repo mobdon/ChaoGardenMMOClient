@@ -225,3 +225,82 @@ pub fn tick(bytes: &[u8], input: RampTick) -> Result<TickResult> {
         dispatches,
     })
 }
+/// Inputs at CartD section 1 + 0x5524. External math results are observations.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResponseInput {
+    pub vector: [f32; 3],
+    pub work_44: u32,
+    pub work_274: i32,
+    pub magnitude_return: Option<f32>,
+    pub angle_return: Option<f64>,
+    pub turn_return: Option<i32>,
+}
+#[derive(Serialize)]
+pub struct ResponseWrites {
+    pub work_30: Option<u32>,
+    pub work_68: Option<u32>,
+    pub work_7c: Option<[f32; 3]>,
+    pub work_264: Option<f32>,
+    pub work_274: Option<i32>,
+    pub task_yaw: Option<u16>,
+    pub angle_args: Option<[f32; 2]>,
+    pub turn_args: Option<[i32; 3]>,
+}
+pub fn response(bytes: &[u8], input: ResponseInput) -> Result<ResponseWrites> {
+    if manifest::sha256(bytes) != HASH {
+        return Err(Error::invalid("unsupported CartD.rel revision"));
+    }
+    let rel = CityRel::read_identified(bytes, 80)?;
+    let constants = rel.data(4)?;
+    let threshold = f32::from_be_bytes(constants[0x21c..0x220].try_into().unwrap());
+    let factor = f64::from_be_bytes(constants[0x208..0x210].try_into().unwrap());
+    let [x, y, z] = input.vector;
+    if ![x, y, z].into_iter().all(f32::is_finite) {
+        return Err(Error::invalid("nonfinite ramp response vector"));
+    }
+    let direct = input.work_44 != 0;
+    let mut out = ResponseWrites {
+        work_30: direct.then_some(0),
+        work_68: direct.then_some(0),
+        work_7c: direct.then_some(input.vector),
+        work_264: None,
+        work_274: None,
+        task_yaw: None,
+        angle_args: None,
+        turn_args: None,
+    };
+    if !direct {
+        out.work_264 = Some(if x == 0. && y == 0. && z == 0. {
+            0.
+        } else {
+            input
+                .magnitude_return
+                .filter(|v| v.is_finite())
+                .ok_or_else(|| Error::invalid("missing finite magnitude return"))?
+        });
+    }
+    if !direct || z.abs() >= threshold || x.abs() >= threshold {
+        out.angle_args = Some([z, x]);
+        let scaled = input
+            .angle_return
+            .ok_or_else(|| Error::invalid("missing angle return"))?
+            * factor;
+        let trunc = scaled.trunc();
+        if !trunc.is_finite() || trunc < f64::from(i32::MIN) || trunc > f64::from(i32::MAX) {
+            return Err(Error::invalid("angle outside verified conversion range"));
+        }
+        let angle = trunc as i32;
+        if direct {
+            out.task_yaw = Some(angle.wrapping_add(0x4000).wrapping_neg() as u16);
+        } else {
+            out.turn_args = Some([input.work_274, angle, 0x4000]);
+            out.work_274 = Some(
+                input
+                    .turn_return
+                    .ok_or_else(|| Error::invalid("missing bounded turn return"))?,
+            );
+        }
+    }
+    Ok(out)
+}
