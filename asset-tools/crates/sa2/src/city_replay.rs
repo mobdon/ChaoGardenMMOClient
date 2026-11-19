@@ -106,6 +106,12 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
                 json!(["SE_CallRing", slot]),
             ]);
         }
+        let pickup_particles = events.particles.then(|| {
+            crate::stage_gameplay::pickup_particles(ring.position, |angle| {
+                let (s, c) = (f64::from(angle) * std::f64::consts::TAU / 65536.0).sin_cos();
+                (s as f32, c as f32)
+            })
+        });
         if events.particles {
             calls.push(json!(["o_ring_0"]));
         }
@@ -128,7 +134,12 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
         if events.dead_out {
             calls.push(json!(["DeadOut"]));
         }
-        frames.push(json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"position":ring.position,"magneticSlot":magnetic.map(|m|m.slot),"magneticTimer":magnet_timer,"magneticAngle":magnet_angle,"calls":calls}));
+        let mut tick = json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"position":ring.position,"magneticSlot":magnetic.map(|m|m.slot),"magneticTimer":magnet_timer,"magneticAngle":magnet_angle,"calls":calls});
+        if let Some(particles) = pickup_particles {
+            tick["pickupParticles"] = json!(particles);
+            tick["particleTrig"] = json!("host f64 sin/cos rounded to f32");
+        }
+        frames.push(tick);
     }
     Ok(json!({"callback":"Ring","frames":frames}))
 }

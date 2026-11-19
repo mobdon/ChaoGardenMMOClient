@@ -592,6 +592,13 @@ fn green_forest_shared_tasks() {
     assert_eq!(ring["frames"][1]["magneticTimer"], 1);
     assert_eq!(ring["frames"][1]["yaw"], ring["frames"][0]["yaw"]);
     assert_eq!(ring["frames"][2]["calls"][0], json!(["AddScore", 10]));
+    let particles = ring["frames"][2]["pickupParticles"].as_array().unwrap();
+    assert_eq!(particles.len(), 4);
+    assert_eq!(
+        particles[0]["position"],
+        json!([pos[0], (pos[1] + 7.2) - 1.5, pos[2] + 4.0])
+    );
+    assert!(ring["frames"][1].get("pickupParticles").is_none());
     assert_eq!(ring["frames"][3]["calls"], json!([["DeadOut"]]));
     let mut missing = advance;
     missing.as_object_mut().unwrap().remove("advance_result");

@@ -25,3 +25,5 @@ cargo test --test stage_gameplay_trace -- --include-ignored
 ```
 
 For GCC or Clang point CC at the compiler and leave SA2B_ZIG_CC unset. No extracted native files are required or produced.
+
+On pickup, shared Ring replays also report the four ordered MakeParticle requests from o_ring_0 at the ring position before any magnetic advance that tick. Each carries the native position, velocity and scale argument. The core accepts a native angle lookup; the replay labels its host sin/cos approximation. The installed Green Forest test checks the pickup at layer 0, placement 7. These requests do not implement the particle renderer.
