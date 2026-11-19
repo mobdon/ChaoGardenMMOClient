@@ -719,3 +719,58 @@ pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Va
         "scope":"Mode-nine timing and selected writes. Target tracking, helper lifetimes and attack effects are not simulated."}),
     )
 }
+
+/// Tracking helper at 1:4cef4, called on the enabled, unlocked target update path.
+pub fn hot_shot_target_follow(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        position: [f32; 3],
+        saved_position: [f32; 3],
+        player_position: [f32; 3],
+        engine_length: f32,
+        normalized: Option<[f32; 3]>,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let speed = hot_shot_scalar(&rel, 0x4b86)?;
+    let limited = s.engine_length > speed;
+    if !s.engine_length.is_finite()
+        || s.engine_length < 0.
+        || limited != s.normalized.is_some()
+        || !s
+            .position
+            .iter()
+            .chain(&s.saved_position)
+            .chain(&s.player_position)
+            .chain(s.normalized.iter().flatten())
+            .all(|v| v.is_finite())
+    {
+        return Err(Error::invalid(
+            "expected finite tracking state and a normalization result only on the limited branch",
+        ));
+    }
+    let mut delta: [f32; 3] = std::array::from_fn(|i| s.saved_position[i] - s.position[i]);
+    if let Some(direction) = s.normalized {
+        let [x, y, z] = delta;
+        let squared = z * z + (x * x + y * y);
+        if !squared.is_finite() {
+            return Err(Error::invalid("target distance overflow"));
+        }
+        let step = if squared.sqrt() > hot_shot_scalar(&rel, 0x4cf7e)? {
+            speed * hot_shot_scalar(&rel, 0x4cf92)?
+        } else {
+            speed
+        };
+        delta = direction.map(|v| v * step);
+    }
+    let position: [f32; 3] = std::array::from_fn(|i| s.position[i] + delta[i]);
+    if !position.iter().all(|v| v.is_finite()) {
+        return Err(Error::invalid("target position overflow"));
+    }
+    Ok(
+        serde_json::json!({"position":position,"savedPosition":s.player_position,
+        "limited":limited,"scope":"Unlocked target movement; imported length and normalization results are supplied."}),
+    )
+}
