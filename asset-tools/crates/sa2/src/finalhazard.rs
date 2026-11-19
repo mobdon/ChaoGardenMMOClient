@@ -888,6 +888,19 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    SwitchStart {
+        player: u8,
+        visits: [i8; 2],
+        reason: i8,
+        switch_count: i8,
+        target_count: i16,
+        player_counts: [i32; 2],
+        character: i8,
+        cue_gate: i32,
+        global42: i8,
+        global43: i8,
+    },
+
     HitReaction {
         submode: i8,
         flags: u16,
@@ -1577,6 +1590,56 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 serde_json::json!({"mode":mode,"submode":submode,"flags":flags,"cursor":cursor,
                 "child14":child14,"child18":child18,"start_player_switch":start_switch,
                 "call_sites":sites,"global_halfword_0a":0}),
+            );
+        }
+        PlacementClock::SwitchStart {
+            player,
+            mut visits,
+            reason,
+            mut switch_count,
+            mut target_count,
+            player_counts,
+            character,
+            cue_gate,
+            global42,
+            global43,
+        } => {
+            if player > 1 {
+                return Err(Error::invalid("invalid switch player slot"));
+            }
+            let from = player as usize;
+            let to = 1 - from;
+            let cue_site = match (visits[from] == 0, reason == 1, player) {
+                (true, _, 0) => 0xec78,
+                (true, _, _) => 0xec80,
+                (false, true, 0) => 0xeca0,
+                (false, true, _) => 0xeca8,
+                (false, false, 0) => 0xecb8,
+                _ => 0xecc0,
+            };
+            let cue = word(cue_site) as u16;
+            let mut adjustments = Vec::new();
+            let mut motion = None;
+            if reason == 1 {
+                switch_count = switch_count.wrapping_add(1);
+                target_count = word(if (0..4).contains(&switch_count) {
+                    0xed64
+                } else {
+                    0xed7c
+                }) as i16;
+                adjustments.push((to, i32::from(target_count).wrapping_sub(player_counts[to])));
+                adjustments.push((from, player_counts[from].wrapping_neg()));
+                motion = match character {
+                    9 => Some(word(0xee20) as u16),
+                    10 => Some(word(0xee2c) as u16),
+                    _ => None,
+                };
+            }
+            visits[from] = visits[from].saturating_add(1);
+            return Ok(
+                serde_json::json!({"active_player":player,"switch_state":1,"timer":0,"reason":0,"global3a":0,
+                "visits":visits,"switch_count":switch_count,"target_count":target_count,"count_adjustments":adjustments,
+                "outgoing_motion_write":motion,"selected_cue":cue,"play_cue":cue_gate==0 && global42!=1 && global43!=1}),
             );
         }
         PlacementClock::InitialHealth => {
