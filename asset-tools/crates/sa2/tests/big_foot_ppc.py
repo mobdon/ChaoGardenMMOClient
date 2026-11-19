@@ -20,7 +20,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0x42540,0x42590),(0x42648,0x426bc),(0x57524,0x57d10),(0x57dcc,0x57e5c),(0x2ae4,0x2d8c),(0x2820,0x2ae4),(0x57d10,0x57da0),(0x1e50,0x2820),(0x2800,0x2820),(0x55948,0x55968),(0x55c10,0x55c5c),(0x55d20,0x55d78),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0x2ff0,0x3020),(0x4204,0x4230),(0x3eec,0x402c),(0x45ec,0x4650),(0x574b4,0x57524),(0x42540,0x42590),(0x42648,0x426bc),(0x57524,0x57d10),(0x57dcc,0x57e5c),(0x2ae4,0x2d8c),(0x2820,0x2ae4),(0x57d10,0x57da0),(0x1e50,0x2820),(0x2800,0x2820),(0x55948,0x55968),(0x55c10,0x55c5c),(0x55d20,0x55d78),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
@@ -50,6 +50,7 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==10:continue # observed at the external call site
         val=(B+a if s==1 else D+s*0x400000+a) if module else a;page(val)
         if module and s in (4,5):u.mem_write(val,d[sec(s)+a:sec(s)+a+16])
+        if off==0x3f6e:u.mem_write(val,d[sec(s)+a:sec(s)+a+60])
         if off==0x5760e:u.mem_write(val,d[sec(s)+a:sec(s)+a+48])
         if off==0x673a:player_ptr=val
         assert k in (4,6)
@@ -302,6 +303,37 @@ def defeat_clock(low):
         raise AssertionError("no defeat handoff")
     finally:
         for handle in handles:u.hook_del(handle)
+def after_defeat(low):
+    position=[7.25,-2.5,13.0];angles=[-125,77,91]
+    put(WORK+20,"fff",*position);put(WORK+8,"iii",*angles)
+    end=0x402c if low else 0x4650;entry=0x2ff0 if low else 0x4204
+    setreg(24 if low else 26,BOSS);setreg(28 if low else 29,WORK)
+    ticks=[];rows=[]
+    def trace(uc,pc,size,_):
+        off=pc-B
+        if off==0x574fc:
+            assert reg(3)==BOSS and reg(4)==0
+            row["headingQuery"]=True;setreg(3,3)
+        elif off==0x4648:
+            row["approach"]=[signed(reg(i)) for i in (3,4,5)]
+            assert row["approach"][1:]==[-4096,256]
+            result=991-len(rows)*57;tick["approach_result"]=result;setreg(3,result&0xffffffff)
+        else:
+            packet=reg(3);pars=reg(4)
+            assert bytes(u.mem_read(pars,60))==d[sec(4)+1020:sec(4)+1080]
+            row["effect"]=dict(kind=get(packet,"B")[0],angles=list(get(packet+4,"iii")),position=list(get(packet+16,"fff")),parameterOffset=1020)
+        uc.reg_write(R.UC_PPC_REG_PC,pc+4)
+    handles=[u.hook_add(UC_HOOK_CODE,trace,begin=B+i,end=B+i) for i in (0x574fc,0x4648,0x4028)]
+    try:
+        for flag in (0,-1,1,0,0,1,2,1,0,1,1,0):
+            put(2149367176+0x43,"b",flag);setreg(1,T+0x2d00)
+            tick=dict(engine_byte_43=flag);row=dict(headingQuery=False,approach=None,effect=None)
+            u.emu_start(B+entry,B+end,count=180);assert u.reg_read(R.UC_PPC_REG_PC)==B+end
+            row.update(timer=get(WORK+6,"H")[0],position=list(get(WORK+20,"fff")),angles=list(get(WORK+8,"iii")))
+            rows.append(row);ticks.append(tick)
+    finally:
+        for handle in handles:u.hook_del(handle)
+    return dict(position=position,angles=angles,ticks=ticks),rows
 def step_shot(h,j,k):
     global rotation_angle,hit_player,hit_other,rotations,transformed,events,removals,impacts,atan_args,atan_results
     rotation_angle=[]
@@ -715,10 +747,11 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
                 flags=get(WORK+4,"H")[0],health=hp,impulse=impulses[0] if impulses else None,damageWork=changes))
             observations.append(reqframe)
         assert expected[-1]["health"]==0 and expected[-1]["mode"]==(10 if path==0 else 13)
-        req.write_text(json.dumps({"work_allocation_ok":True,"frames":[],"damage":observations}));out=tmp/f"damage{path}.json"
+        clock=defeat_clock(path==0);post,after=after_defeat(path==0)
+        req.write_text(json.dumps({"work_allocation_ok":True,"frames":[],"damage":observations,"post_defeat":post}));out=tmp/f"damage{path}.json"
         subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
         damage=json.loads(out.read_text())["replay"]["damage"]
-        assert damage["defeatClock"]==defeat_clock(path==0)
+        assert damage["defeatClock"]==clock and damage["postDefeat"]==after
         actual=damage["frames"]
         for i,(a,e) in enumerate(zip(actual,expected,strict=True)):assert a==e,(path,i,a,e)
     print(3*len(expected),"post-AI damage callbacks matched, including both lethal routes")

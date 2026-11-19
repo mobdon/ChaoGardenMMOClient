@@ -35,13 +35,65 @@ struct DamageWork {
 fn push(yaw: i32, velocity: [f32; 3]) -> Value {
     json!({"slot":0,"velocity":velocity,"angles":[0,yaw.wrapping_add(0x8000),0],"duration":60})
 }
-pub(super) fn run(start: f32, frames: Vec<Frame>) -> Result<Value> {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct After {
+    position: [f32; 3],
+    angles: [i32; 3],
+    ticks: Vec<AfterTick>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AfterTick {
+    engine_byte_43: i8,
+    approach_result: Option<i32>,
+}
+fn after(low: bool, input: After, target: [f32; 2]) -> Result<Value> {
+    let mut position = input.position;
+    let mut angles = input.angles;
+    if !position.iter().all(|v| v.is_finite()) || input.ticks.len() > 2048 {
+        return Err(Error::invalid("invalid post-defeat replay"));
+    }
+    let mut timer = u16::MAX;
+    let mut rows = Vec::new();
+    for tick in input.ticks {
+        timer = timer.wrapping_add(1);
+        if tick.engine_byte_43 == 1 {
+            position = [target[0], position[1], target[1]];
+            angles[1] = 0x4000; // Overrides the helper's heading result.
+        }
+        let mut approach = None;
+        match (low, tick.approach_result) {
+            (false, Some(result)) => {
+                approach = Some([angles[0], -0x1000, 0x100]);
+                angles[0] = result;
+            }
+            (true, None) => (),
+            _ => {
+                return Err(Error::invalid(
+                    "post-defeat angle observation does not match route",
+                ))
+            }
+        }
+        let effect = (low && timer.is_multiple_of(5))
+            .then(|| json!({"kind":5,"position":position,"angles":angles,"parameterOffset":1020}));
+        rows.push(json!({"timer":timer,"position":position,"angles":angles,"headingQuery":tick.engine_byte_43==1,"approach":approach,"effect":effect}));
+    }
+    Ok(json!(rows))
+}
+pub(super) fn run(
+    start: f32,
+    frames: Vec<Frame>,
+    post: Option<After>,
+    target: impl Fn(bool) -> Result<[f32; 2]>,
+) -> Result<Value> {
     if frames.len() > 2048 {
         return Err(Error::invalid("too many boss damage updates"));
     }
     let mut health = start;
     let mut rows = Vec::new();
     let mut defeat = None;
+    let mut route = None;
     for f in frames {
         if !f.height.is_finite() || health <= 0. {
             return Err(Error::invalid("invalid or post-lethal damage update"));
@@ -87,6 +139,7 @@ pub(super) fn run(start: f32, frames: Vec<Frame>) -> Result<Value> {
                     }
                 };
                 if health <= 0. {
+                    route = Some(mode == 10);
                     defeat = Some(defeat_clock(mode == 10));
                 }
                 sm = 0;
@@ -106,7 +159,12 @@ pub(super) fn run(start: f32, frames: Vec<Frame>) -> Result<Value> {
         }
         rows.push(json!({"mode":mode,"submode":sm,"byte3":b3,"timer":timer,"flags":flags,"health":health,"impulse":impulse,"damageWork":work}));
     }
-    Ok(json!({"initialHealth":start,"frames":rows,"defeatClock":defeat}))
+    let mut result = json!({"initialHealth":start,"frames":rows,"defeatClock":defeat});
+    if let Some(input) = post {
+        let low = route.ok_or_else(|| Error::invalid("post_defeat requires lethal damage"))?;
+        result["postDefeat"] = after(low, input, target(low)?)?;
+    }
+    Ok(result)
 }
 
 /// Project only the boss-owned timer, starting on the first update after the lethal hit.

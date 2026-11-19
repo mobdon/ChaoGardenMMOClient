@@ -19,6 +19,7 @@ struct Request {
     intro: Option<Intro>,
     collision: Option<Vec<collision::Tick>>,
     damage: Option<Vec<damage::Frame>>,
+    post_defeat: Option<damage::After>,
     takeoff: Option<Vec<takeoff::Tick>>,
     first_flight: Option<flight::Flight>,
 }
@@ -247,11 +248,18 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         }
         output["collision"] = collision::run(&rel, ticks)?;
     }
+    if req.post_defeat.is_some() && req.damage.is_none() {
+        return Err(Error::invalid("post_defeat requires lethal damage"));
+    }
     if let Some(frames) = req.damage {
         if !req.work_allocation_ok {
             return Err(Error::invalid("damage requires an allocated boss"));
         }
-        output["damage"] = damage::run(scalar(0x294)?, frames)?;
+        output["damage"] = damage::run(scalar(0x294)?, frames, req.post_defeat, |low| {
+            let at = local(if low { 0x3ef8 } else { 0x45ec }, 4)? as usize;
+            let bytes = rel.data(4)?.get(at..at + 12).ok_or_else(invalid)?;
+            Ok([0, 8].map(|i| f32::from_be_bytes(bytes[i..i + 4].try_into().unwrap())))
+        })?;
     }
     Ok(output)
 }
