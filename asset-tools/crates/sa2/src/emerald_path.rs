@@ -184,6 +184,24 @@ impl PathTaskWork {
         Ok((step, world))
     }
 
+    /// Step using the same host njDistanceP2P evaluation as City Escape's board
+    /// trigger. Angle calculation remains an explicit engine service.
+    pub fn step_placed_geometry(
+        &mut self,
+        points: &[[f32; 3]],
+        translation: [f32; 3],
+        distance: f32,
+        angle: impl Fn(usize, f32, f32) -> f64,
+    ) -> Result<(PathStep, [f32; 3])> {
+        self.step_placed(
+            points,
+            translation,
+            distance,
+            |i| crate::board::point_distance(points[i], points[(i + 1) % points.len()]),
+            angle,
+        )
+    }
+
     /// 1:0x220c8..0x22114. On success the caller can begin the first path step.
     /// With no SET entry the native initializer preserves the segment already in work.
     pub fn begin(

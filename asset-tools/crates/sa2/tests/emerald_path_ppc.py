@@ -1,9 +1,23 @@
 """Run original path stepper with explicit distance and heading service observations."""
-import json, os, struct, subprocess, tempfile
+import math, json, os, struct, subprocess, tempfile
 from pathlib import Path
 import wild_canyon_ppc as native
 
 u, R, base = native.u, native.R, native.base
+# Matching City Escape source names both player-slot calls njDistanceP2P.
+# Resolve both installed modules' import tables rather than assuming DOL addresses.
+city=(native.game/"resource/gd_PC/stg13D.rel").read_bytes()
+w=lambda i:struct.unpack_from(">I",city,i)[0]
+board_imports={}
+for module,at in struct.iter_unpack(">II",city[w(40):w(40)+w(44)]):
+    offset=0
+    while True:
+        inc,kind,section,target=struct.unpack_from(">HBBI",city,at);at+=8
+        if kind==203:break
+        if kind==202:destination=section;offset=0;continue
+        offset+=inc
+        if module==0 and destination==1 and kind==10:board_imports[offset]=target
+assert board_imports[0x9ac]==board_imports[0xa40]==native.engines[0x21914]==native.engines[0x21b08]==0x8011b314
 paths = native.emerald_paths()
 scratch = native.stage + 1200
 def fp(x):
@@ -58,7 +72,11 @@ for name in ("set0016_s.bin","set0016_u.bin"):
         if native.get(table+36*((rx>>8)%11)+8,"I")[0]!=base[1]+0x220ac:continue
         assert (ry,rz)==(0,0)
         path_index=int(values[3])%len(paths);path=paths[path_index];points=path["points"]
-        start=base[5]+path["pointsOffset"];lengths=[8.+(i%5) for i in range(len(points))]
+        start=base[5]+path["pointsOffset"]
+        lengths=[]
+        for j,p in enumerate(points):
+            sq=[f32(f32(a-b)**2) for a,b in zip(p,points[(j+1)%len(points)])]
+            lengths.append(f32(math.sqrt(f32(f32(sq[0]+sq[1])+sq[2]))))
         angles=[(3.141,-3.141,-0.1234)[i%3] for i in range(len(points))]
         native.put(scratch,"If",255,0.0);native.put(native.work+32,"f",float(path_index))
         runs=[]
@@ -74,7 +92,7 @@ for name in ("set0016_s.bin","set0016_u.bin"):
             seg,f,x,y,z,h=native.get(scratch,"Iffffi")
             world=[f32(v+f32(origin-center)) for v,origin,center in zip((x,y,z),values,path["center"])]
             runs.append([seg,f,[x,y,z],h,bool(native.reg(3)),world])
-        series.append([points,lengths,angles,values[:3],path["center"],dist,runs])
+        series.append([points,angles,values[:3],path["center"],dist,runs])
 assert len(series)==8
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     file=Path(tmp)/"oracle.json";file.write_text(json.dumps(cases))
