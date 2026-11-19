@@ -278,3 +278,70 @@ mod contact_tests {
         assert_eq!(state.accept(Some((0, 0)), &players, 89).unwrap(), None);
     }
 }
+
+pub use crate::collision_record::CollisionRecord;
+/// Stage-authored parent collision template and the two child task offsets.
+/// Offsets are model-local; the native initialization transforms them before use.
+pub struct CheckpointGeometry {
+    pub parent: CollisionRecord,
+    pub child_offsets: [[f32; 3]; 2],
+    pub parent_sha256: String,
+    pub offsets_sha256: String,
+}
+
+pub fn city_geometry(module: &[u8]) -> Result<CheckpointGeometry> {
+    let rel = crate::city_rel::CityRel::read(module)?;
+    let data = rel.data(5)?;
+    let shape = data
+        .get(0x24d1d4..0x24d204)
+        .ok_or_else(|| Error::invalid("missing checkpoint collision"))?;
+    let offsets = data
+        .get(0x24d244..0x24d25c)
+        .ok_or_else(|| Error::invalid("missing checkpoint child offsets"))?;
+    Ok(CheckpointGeometry {
+        parent: crate::collision_record::collision_record(shape, 0)?,
+        child_offsets: std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                let at = 12 * i + 4 * j;
+                f32::from_be_bytes(offsets[at..at + 4].try_into().unwrap())
+            })
+        }),
+        parent_sha256: crate::manifest::sha256(shape),
+        offsets_sha256: crate::manifest::sha256(offsets),
+    })
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires installed Steam stage and executable"]
+    fn compares_to_pc_checkpoint_geometry() {
+        let g = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let exe = std::fs::read(g.join("sonic2app.exe")).unwrap();
+        crate::object_table::verify_image(&exe).unwrap();
+        let s =
+            city_geometry(&std::fs::read(g.join("resource/gd_PC/stg13D.rel")).unwrap()).unwrap();
+        let mut bytes = vec![
+            s.parent.kind as u8,
+            s.parent.form,
+            s.parent.push as u8,
+            s.parent.damage as u8,
+        ];
+        bytes.extend(s.parent.attr.to_le_bytes());
+        for f in s.parent.center.into_iter().chain(s.parent.parameters) {
+            bytes.extend(f.to_le_bytes())
+        }
+        for a in s.parent.angles {
+            bytes.extend(a.to_le_bytes())
+        }
+        assert_eq!(bytes, &exe[0x71ad80..0x71adb0]);
+        let offsets: Vec<_> = s
+            .child_offsets
+            .into_iter()
+            .flatten()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        assert_eq!(offsets, &exe[0x71adb8..0x71add0]);
+    }
+}
