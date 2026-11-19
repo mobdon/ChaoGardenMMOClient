@@ -1072,7 +1072,7 @@ fn run() -> Result<()> {
                 output,
                 &wav,
                 "wav-float32",
-                vec!["Fixed mono AHX; trimmed to declared sample count. Layer II synthesis clamps peaks to [-1, 1].".into()],
+                vec!["Fixed mono AHX; trimmed to declared sample count. Float output preserves peaks outside [-1, 1].".into()],
             )?;
         }
         "adx" => {

@@ -136,9 +136,9 @@ Use `sa2-assets ahx INPUT.ahx .local/voice.wav` for extracted, unencrypted mono 
 
 A local comparison decoded every installed event-bank entry separately with the Rust release binary and vgmstream-cli (`-W 4`). Every sample count matched the AHX header and the reference WAV. Waveform comparison used corresponding samples without alignment shifts or normalization.
 
-| Bank | Clips | Mono samples | Clips with reference peaks outside ±1 | Samples outside ±1 | Largest absolute error after limiting reference to ±1 |
+| Bank | Clips | Mono samples | Clips with reference peaks outside ±1 | Samples outside ±1 | Largest absolute error against original float reference |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | event_adx.afs | 2,727 | 208,701,648 | 1,629 | 87,762 | 0.000001565 |
 | event_adx_e.afs | 2,727 | 198,635,282 | 1,184 | 47,736 | 0.000001193 |
 
-The decoder clips peaks outside ±1. Against the original float reference, the maximum absolute sample differences were 0.619 and 0.443 respectively. The conversion does not preserve this headroom. This comparison covers offline voice conversion only; playback, cue selection and mixing require separate verification.
+Float output preserves peaks outside the unit range. This comparison covers offline voice conversion only; playback, cue selection and mixing require separate verification.
