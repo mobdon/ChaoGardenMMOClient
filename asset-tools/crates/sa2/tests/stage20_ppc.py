@@ -10,6 +10,7 @@ for s,b in base.items():
     row=w(16)+8*s;at=w(row)&~1;size=w(row+4);u.mem_map(b,(size+4095)&~4095);u.mem_write(b,d[at:at+size])
 def put(addr,fmt,*vals):u.mem_write(addr,struct.pack(">"+fmt,*vals))
 def get(addr,fmt):return struct.unpack(">"+fmt,u.mem_read(addr,struct.calcsize(">"+fmt)))
+engines={}
 for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
     off=0
     while True:
@@ -20,6 +21,7 @@ for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if t not in base:continue
         if mod==19 and s in base:v+=base[s]
         elif mod!=0:continue
+        if mod==0 and t==1 and k==10:engines[off]=v
         if k==1:put(base[t]+off,"I",v)
         if k in (4,6):put(base[t]+off,"H",(v if k==4 else (v+32768)>>16)&65535)
         if t==1 and off==0x1c2c and k==10:service=v
@@ -50,3 +52,31 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())==dict(module=19,entry=entry-base[1],frames=frames)
 print("24 consecutive stage 20 task frame observations matched")
+
+startup=get(base[5]+88932+12,"I")[0]
+def startup_call(cpu,pc,*_):
+    site=pc-base[1];r3=cpu.reg_read(R.UC_PPC_REG_3);r4=cpu.reg_read(R.UC_PPC_REG_4)
+    if site==0x1744:
+        assert r3==target;ops.append(dict(site=site,slot=1,workByte=2,value=cpu.reg_read(R.UC_PPC_REG_0)))
+        return
+    if site in (0x1750,0x175c,0x1768):
+        displacement=get(pc,"I")[0]&0x03fffffc
+        if displacement&0x02000000:displacement-=0x04000000
+        ops.append(dict(site=site,local=site+displacement,args=[] if site==0x1750 else [r3,r4]))
+    else:
+        ops.append(dict(site=site,engine=engines[site],args=[r3]))
+        if site in (0x16e8,0x1704):cpu.reg_write(R.UC_PPC_REG_3,next(answers)&0xffffffff)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x16e8,0x16f8,0x1704,0x1714,0x1730,0x1744,0x174c,0x1750,0x175c,0x1768):
+    u.hook_add(UC_HOOK_CODE,startup_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,queries in enumerate(([7],[6,6],[6,7],[0,6],[0,0],[-1,-1])):
+        for present in (False,True):
+            ops=[];answers=iter(queries);put(0x801e738c,"I",task if present else 0);put(0x801e736c,"I",target);put(target+2,"B",0xdd)
+            u.reg_write(R.UC_PPC_REG_1,0x100f00);u.emu_start(startup,base[1]+0x176c,count=100)
+            assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x176c and get(target+2,"B")[0]==(3 if present else 0xdd)
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],startup=dict(character_queries=queries,slot_one_present=present))))
+            out=Path(tmp)/f"{idx}-{present}.json"
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            assert json.loads(out.read_text())["startup"]==dict(entry=startup-base[1],continueAt=0x176c,operations=ops)
+print("12 stage 20 opponent startup paths matched")

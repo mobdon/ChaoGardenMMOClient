@@ -5,9 +5,59 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    startup: Option<Startup>,
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Startup {
+    character_queries: Vec<i32>,
+    slot_one_present: bool,
+}
+/// Registered startup up to the first unconditional resource call (1:0x176c).
+fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
+    let mut queries = s.character_queries.into_iter();
+    let mut calls = Vec::new();
+    let mut engine = |site: u32, args: &[i32]| -> Result<()> {
+        let target = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(|| Error::invalid("missing duel startup call"))?;
+        calls.push(json!({"site":site,"engine":target.addend,"args":args}));
+        Ok(())
+    };
+    let mut query = || {
+        queries
+            .next()
+            .ok_or_else(|| Error::invalid("missing slot-zero character observation"))
+    };
+    engine(0x16e8, &[0])?;
+    if query()? == 7 {
+        engine(0x16f8, &[1])?;
+    } else {
+        engine(0x1704, &[0])?;
+        if query()? == 6 {
+            engine(0x1714, &[1])?;
+        }
+    }
+    if queries.next().is_some() {
+        return Err(Error::invalid("unused slot-zero character observation"));
+    }
+    if s.slot_one_present {
+        engine(0x1730, &[1])?;
+        calls.push(json!({"site":0x1744,"slot":1,"workByte":2,"value":3}));
+        let r = rel
+            .reference(1, 0x174c)
+            .ok_or_else(|| Error::invalid("missing duel startup call"))?;
+        calls.push(json!({"site":0x174c,"engine":r.addend,"args":[1]}));
+        calls.push(json!({"site":0x1750,"local":0x1584,"args":[]}));
+        for (site, slot) in [(0x175c, 0), (0x1768, 1)] {
+            calls.push(json!({"site":site,"local":0x139e4,"args":[slot,0]}));
+        }
+    }
+    Ok(json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls}))
 }
 pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let invalid = || Error::invalid("unexpected stage 20 entry module");
@@ -34,6 +84,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        startup,
         mut mode,
         mut position,
         targets,
@@ -57,5 +108,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         }
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
-    Ok(json!({"module":19,"entry":0x1b90,"frames":frames}))
+    let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(s) = startup {
+        report["startup"] = opponent_startup(&rel, s)?;
+    }
+    Ok(report)
 }
