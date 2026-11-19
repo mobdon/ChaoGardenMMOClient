@@ -260,3 +260,51 @@ pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
         .transpose()?;
     Ok(Update { request, response })
 }
+
+/// State carried across the return from 0x2da8 into 0x4b50.
+pub(crate) struct FallCarry {
+    pub position: [f32; 3],
+    pub velocity: [f32; 3],
+    pub angles: [i32; 3],
+    pub state: i32,
+    pub work_74: i32,
+    pub work_44: i32,
+    pub mode: i32,
+    pub saved_position: [f32; 3],
+}
+
+pub(crate) fn step_for_fall(bytes: &[u8], s: Input) -> Result<(Update, FallCarry)> {
+    let wall = s
+        .wall
+        .as_ref()
+        .ok_or_else(|| crate::Error::invalid("missing wall context"))?;
+    let mode = wall.mode;
+    let angles = s
+        .tail
+        .as_ref()
+        .ok_or_else(|| crate::Error::invalid("missing alignment and contact tail"))?
+        .post_alignment_angles;
+    let work_44 = s.work_44;
+    let saved_position = s.previous_position;
+    let update = step(bytes, s)?;
+    let r = update
+        .response
+        .as_ref()
+        .ok_or_else(|| crate::Error::invalid("missing engine contact result"))?;
+    let state = r
+        .wall
+        .as_ref()
+        .ok_or_else(|| crate::Error::invalid("missing wall response"))?
+        .vehicle_state;
+    let carry = FallCarry {
+        position: r.position,
+        velocity: r.velocity,
+        angles,
+        state,
+        mode,
+        work_74: r.work_74,
+        work_44,
+        saved_position,
+    };
+    Ok((update, carry))
+}

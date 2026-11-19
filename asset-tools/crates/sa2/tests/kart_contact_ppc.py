@@ -4,7 +4,8 @@ from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
 
-cli,rel,tmp=map(Path,sys.argv[1:])
+cli,rel,tmp=map(Path,sys.argv[1:4])
+exe=Path(sys.argv[4]) if len(sys.argv)>4 else None
 d=rel.read_bytes();u=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
 base={1:0x81000000,5:0x86000000,4:0x82000000,6:0x83000000};engine=0x84000000
 for s,p in base.items():
@@ -20,7 +21,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0) or k not in (4,6):continue
+        if t!=1 or not (0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0 or 0x4b50<=l<0x4eb4 or 0x30dc<=l<0x3188) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -47,6 +48,10 @@ def hook(m,addr,*_):
         u.mem_write(a+32,struct.pack(">3f",*hit["resolved_position"]))
         if "returned_from" in hit:u.mem_write(a,struct.pack(">3f",*hit["returned_from"]))
         reg(3,hit["return_word"] & 0xffffffff)
+    elif pc in (0x4bf8,0x4c04):
+        signals.append(a)
+    elif pc==0x3134:
+        m.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",.25))[0])
     elif pc==0x2d50:
         scale=struct.unpack(">d",struct.pack(">Q",m.reg_read(R.UC_PPC_REG_FPR1)))[0]
         calls.append(dict(Effect10860=dict(position=vec(a),velocity=vec(b),scale=scale)))
@@ -72,11 +77,18 @@ def hook(m,addr,*_):
         assert c==work+0x7c
         u.mem_write(c,struct.pack(">3f",*(x-y for x,y in zip(vec(a),vec(b)))))
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
-for pc in (0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0,0x2e90,0x2ea4,0x2ee8,0x2ef4,0x2f18,0x2f30,0x2f40,0x2f54,0x2f74,0x2fac,0x2fcc):
+for pc in (0x4bf8,0x4c04,0x3134,0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0,0x2e90,0x2ea4,0x2ee8,0x2ef4,0x2f18,0x2f30,0x2f40,0x2f54,0x2f74,0x2fac,0x2fcc):
     u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
-    for i,(word,count,enabled) in enumerate([(None,0,0),(0,4,1),(0,2147483647,0),
-                                            (1,30,1),(1,31,0),(-1,31,1),(3,-1,1)]+[(1,0,1)]*5+[(0,0,0)]):
+    if exe:
+        directory=Path(td)/"directory.json"
+        subprocess.run([cli,"kart-crossing-directory",rel,directory,exe],check=True)
+        route=json.loads(directory.read_text())["courses"][0]
+    cases=[(None,0,0),(0,4,1),(0,2147483647,0),(1,30,1),(1,31,0),(-1,31,1),(3,-1,1)]+[(1,0,1)]*5+[(0,0,0)]
+    runs=[(False,i) for i in range(len(cases))]
+    if exe:runs.extend((True,i) for i in range(7,len(cases)))
+    for combined,i in runs:
+        word,count,enabled=cases[i]
         hit=None if word is None else dict(return_word=word,resolved_position=[11,-3.125,19])
         q=dict(previous_position=[8,-2,30],proposed_position=[10,-4,20],velocity=[2,-2,-10],
                player_slot=1,work_28c=count,work_44=enabled,result=hit)
@@ -104,11 +116,43 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
                     u.mem_write(rp+k*12,struct.pack(">3i",*ring["rotations"][k]))
             tail=dict(observed_local_velocity=[-4,3,2],observed_raw_magnitude=11.5,post_alignment_angles=angles,work_d4=2147483645,ring=ring)
             q["tail"]=tail;put(work+0xd4,"i",tail["work_d4"])
-        req=Path(td)/"q.json";out=Path(td)/f"{i}.json";req.write_text(json.dumps(q))
+        req=Path(td)/"q.json";out=Path(td)/f"{combined}-{i}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-contact-step",rel,out,req],check=True);doc=json.loads(out.read_text())
         for addr,key in [(work+20,"previous_position"),(tw+20,"proposed_position"),(work+0x7c,"velocity")]:
             u.mem_write(addr,struct.pack(">3f",*q[key]))
         put(work+0x28c,"i",count);put(work+0x44,"i",enabled);put(work+0x78,"i",1)
+        if combined:
+            # Same task and work addresses from first contact query to the final branch.
+            saved=dict(task_mode=7,saved_angles=[12,13,14],grounded_position=[-6,7,8],
+                       work_68=11,work_fc_104=[12,13,14],segment=3,lap=2,work_cc=1,
+                       work_254=6,work_25c=8,timer=[1,180,181,182,181,5][j],work_260=2,
+                       engine_halfword_64=(0 if j==3 else 2),angle_radians=.25)
+            # Put the query's supplied contact below the course minimum in selected cases.
+            height=min([100000]+[p["translation"][1] for p in route["projected_occurrence_poses"][1:]])
+            if j:
+                hit["returned_from"][1]=height-8;hit["resolved_position"][1]=height-10
+            fields=dict(task_mode=(tw,"B"),saved_angles=(work+8,"3i"),grounded_position=(work+0x268,"3f"),
+                work_68=(work+0x68,"i"),work_fc_104=(work+0xfc,"3i"),segment=(work+0xbc,"i"),lap=(work+0xc4,"i"),
+                work_cc=(work+0xcc,"i"),work_254=(work+0x254,"i"),work_25c=(work+0x25c,"i"),timer=(work+0x294,"i"))
+            for k,(addr,fmt) in fields.items():
+                v=saved[k];u.mem_write(addr,struct.pack(">"+fmt,*(v if isinstance(v,list) else [v])))
+            put(work+0x260,"i",2);put(engine+0x64,"h",saved["engine_halfword_64"])
+            put(base[6]+0x24d68,"f",height);put(base[6]+0x24d80,"i",route["segment_count"])
+            for k,quad in enumerate(route["projected_segment_xz"]):
+                u.mem_write(base[6]+0x26d84+k*32,struct.pack(">8f",*(x for v in quad for x in v)))
+            req.write_text(json.dumps(dict(contact=q,**saved)));out=Path(td)/f"combined-{i}.json"
+            subprocess.run([cli,"kart-contact-recovery",rel,out,exe,route["course"],req],check=True)
+            result=json.loads(out.read_text());doc=result["contact"];signals=[];calls=[]
+            reg(29,task);run(0x2258,0x287c)
+            assert calls==doc["response"]["calls"]
+            fields.update(position=(tw+20,"3f"),saved_position=(work+20,"3f"),velocity=(work+0x7c,"3f"),
+                          angles=(tw+8,"3i"),state=(work+0x30,"i"))
+            for k,(addr,fmt) in fields.items():
+                val=result["recovery"]["vehicle"][k]
+                assert bytes(u.mem_read(addr,struct.calcsize(">"+fmt)))==struct.pack(">"+fmt,*(val if isinstance(val,list) else [val])),(i,k,val)
+            signal=result["recovery"]["engine_call_8001ef18"]
+            assert signals==([] if signal is None else [signal])
+            continue
         reg(3,task);u.reg_write(R.UC_PPC_REG_LR,base[1]+0x200);calls=[]
         u.emu_start(base[1]+0x2ca4,base[1]+0x200,count=300)
         if hit is None:
@@ -135,3 +179,4 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             wall["impulse"]=got["impulse"];expected["wall"]=wall
         assert expected==doc["response"]
 print("Matched thirteen movement contact and wall-response cases with supplied engine results.")
+if exe:print("Six complete shortened update bodies matched through the final branch.")

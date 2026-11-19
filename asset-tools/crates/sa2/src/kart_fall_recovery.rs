@@ -184,3 +184,74 @@ fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output
         engine_call_8001ef18: call,
     })
 }
+
+/// Fields untouched by the two preceding contact callbacks.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContactRecovery {
+    contact: crate::kart_contact::Input,
+    task_mode: u8,
+    saved_angles: [i32; 3],
+    grounded_position: [f32; 3],
+    work_68: i32,
+    work_fc_104: [i32; 3],
+    segment: i32,
+    lap: i32,
+    work_cc: i32,
+    work_254: i32,
+    work_25c: i32,
+    timer: i32,
+    work_260: i32,
+    engine_halfword_64: Option<i16>,
+    angle_radians: Option<f64>,
+}
+#[derive(Serialize)]
+pub struct ShortUpdate {
+    contact: crate::kart_contact::Update,
+    recovery: Output,
+}
+/// Shortened update body, 0x2258..0x2280. Last two callbacks immediately return.
+pub fn contact_course_tick(
+    bytes: &[u8],
+    exe: &[u8],
+    name: &str,
+    s: ContactRecovery,
+) -> Result<ShortUpdate> {
+    let (contact, c) = crate::kart_contact::step_for_fall(bytes, s.contact)?;
+    let vehicle = Vehicle {
+        position: c.position,
+        velocity: c.velocity,
+        angles: c.angles,
+        state: c.state,
+        saved_position: c.saved_position,
+        task_mode: s.task_mode,
+        saved_angles: s.saved_angles,
+        grounded_position: s.grounded_position,
+        work_68: s.work_68,
+        work_fc_104: s.work_fc_104,
+        segment: s.segment,
+        lap: s.lap,
+        work_cc: s.work_cc,
+        work_254: s.work_254,
+        work_25c: s.work_25c,
+        timer: s.timer,
+    };
+    let recovery = course_tick(
+        bytes,
+        exe,
+        name,
+        Input {
+            vehicle,
+            work_74: c.work_74,
+            work_44: c.work_44,
+            work_260: s.work_260,
+            mode: c.mode,
+            engine_halfword_64: s.engine_halfword_64,
+            angle_radians: s.angle_radians,
+            fall_height: None,
+            segment_count: None,
+            vertex: None,
+        },
+    )?;
+    Ok(ShortUpdate { contact, recovery })
+}
