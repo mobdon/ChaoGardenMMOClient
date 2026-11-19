@@ -94,4 +94,5 @@ pub mod stage_land;
 pub mod stage_lighting;
 pub mod task_coverage;
 pub mod kart_course;
+pub mod kart_objects;
 pub mod checkpoint;
