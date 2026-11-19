@@ -35,6 +35,9 @@ pub fn update(bytes: &[u8], s: Input) -> Result<Update> {
     update_verified(s)
 }
 pub(crate) fn update_verified(s: Input) -> Result<Update> {
+    update_motion(s, false)
+}
+pub(crate) fn update_motion(s: Input, stationary: bool) -> Result<Update> {
     if s.course_length <= 0 || s.segment_tests.len() > 11 {
         return Err(Error::invalid(
             "invalid course length or segment observation count",
@@ -50,6 +53,12 @@ pub(crate) fn update_verified(s: Input) -> Result<Update> {
     let mut observations = s.segment_tests.into_iter();
     let mut test = |idx| {
         r.tested_indices.push(idx);
+        if stationary {
+            if observations.next() == Some(true) {
+                return Err(Error::invalid("stationary kart cannot cross a segment"));
+            }
+            return Ok(false);
+        }
         observations
             .next()
             .ok_or_else(|| Error::invalid("missing segment test result"))
@@ -114,6 +123,16 @@ pub enum SegmentGeometry {
         triangle: [[f32; 3]; 3],
     },
 }
+pub(crate) fn planar_direction(task: [f32; 3], work: [f32; 3]) -> Result<[f32; 3]> {
+    let d = [work[0] - task[0], 0., work[2] - task[2]];
+    if ![task[0], task[2], d[0], d[2]]
+        .into_iter()
+        .all(f32::is_finite)
+    {
+        return Err(Error::invalid("invalid kart segment movement"));
+    }
+    Ok(d)
+}
 /// Reconstruct the operands at the first imported geometry call of 0x9220.
 /// No work pointer or zero planar displacement returns zero before that call.
 pub fn segment_geometry(bytes: &[u8], s: SegmentInput) -> Result<SegmentGeometry> {
@@ -122,13 +141,7 @@ pub fn segment_geometry(bytes: &[u8], s: SegmentInput) -> Result<SegmentGeometry
         return Ok(SegmentGeometry::Miss);
     };
     let [x, _, z] = s.task_position;
-    let direction = [work[0] - x, 0., work[2] - z];
-    if ![x, z, direction[0], direction[2]]
-        .into_iter()
-        .all(f32::is_finite)
-    {
-        return Err(Error::invalid("invalid kart segment movement"));
-    }
+    let direction = planar_direction(s.task_position, work)?;
     if direction[0] == 0. && direction[2] == 0. {
         return Ok(SegmentGeometry::Miss);
     }

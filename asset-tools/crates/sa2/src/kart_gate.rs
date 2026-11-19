@@ -637,6 +637,7 @@ enum SequenceEvent {
 struct SlotTests {
     work_44: u32,
     debug_enabled: bool,
+    #[serde(default)]
     segment_tests: Vec<bool>,
     highest: Option<i32>,
 }
@@ -696,6 +697,7 @@ pub fn story_sequence(
     let mut target_handle = None;
     let mut finish = None;
     let mut parent = None;
+    let mut crossing_positions = None;
     let mut route = None;
     let mut highest = None;
     let mut target: Option<crate::kart_story_target::State> = None;
@@ -709,18 +711,24 @@ pub fn story_sequence(
                 if highest.zip(v.highest).is_some_and(|(a, b)| a != b) {
                     return Err(Error::invalid("conflicting highest checkpoint"));
                 }
-                let r = crate::kart_progress::update_verified(crate::kart_progress::Input {
-                    piece,
-                    course_length,
-                    counter: count as i32,
-                    highest: highest
-                        .or(v.highest)
-                        .ok_or_else(|| Error::invalid("missing initial highest checkpoint"))?,
-                    work_44: v.work_44,
-                    debug_enabled: v.debug_enabled,
-                    mode,
-                    segment_tests: v.segment_tests,
-                })?;
+                let (task, work) = crossing_positions
+                    .ok_or_else(|| Error::invalid("missing kart pose for course update"))?;
+                let stationary = crate::kart_progress::planar_direction(task, work)? == [0.; 3];
+                let r = crate::kart_progress::update_motion(
+                    crate::kart_progress::Input {
+                        piece,
+                        course_length,
+                        counter: count as i32,
+                        highest: highest
+                            .or(v.highest)
+                            .ok_or_else(|| Error::invalid("missing initial highest checkpoint"))?,
+                        work_44: v.work_44,
+                        debug_enabled: v.debug_enabled,
+                        mode,
+                        segment_tests: v.segment_tests,
+                    },
+                    stationary,
+                )?;
                 route = Some((r.piece, course_length));
                 highest = Some(r.highest);
                 count = r.counter as u32;
@@ -760,6 +768,7 @@ pub fn story_sequence(
                 }
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
                 parent = r.frame.as_ref().map(|f| f.pursuit_parent());
+                crossing_positions = r.frame.as_ref().map(|f| f.crossing_positions());
                 route = r.frame.as_ref().map(|f| f.route());
                 if let Some(h) = r.frame.as_ref().and_then(|f| f.highest()) {
                     highest = Some(h);

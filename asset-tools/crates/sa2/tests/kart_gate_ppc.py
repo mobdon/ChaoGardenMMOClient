@@ -210,4 +210,18 @@ if len(sys.argv)>4:
             assert doc["primaryRoute"]==[8,100] and doc["highestCheckpoint"]==doc["primaryKartCounter"]==1
             assert doc["updates"][2]["slotProgress"]["tested_indices"]==[6,7]
             assert doc["lapClock"]["first"]==[[0,0,0],[0,1,0],[0,0,0]]
+            stationary=dict(vehicle_post_move=dict(frame,segment=5,position=[6,999,4],previous_position=[6,5,4]))
+            probe=dict(work_44=1,debug_enabled=True,highest=0)
+            q.update(updates=[stationary,dict(slot_progress=probe)])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stationary.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());step=doc["updates"][1]["slotProgress"]
+            assert step["tested_indices"]==[6,7,8,9,10,11,12,13,14,4,3]
+            assert step["debug_indices"]==[6,7,5,4,3] and step["piece"]==5
+            assert doc["primaryKartCounter"]==0
+            for label,move,extra in [("false-hit",stationary,dict(segment_tests=[True])),("missing-hit",first,{})]:
+                q.update(updates=[move,dict(slot_progress=dict(probe,**extra))])
+                req.write_text(json.dumps(q));out=req.with_name(path.stem+"-"+label+".json")
+                rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+                assert rejected.returncode!=0 and not out.exists()
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

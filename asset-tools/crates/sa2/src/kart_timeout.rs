@@ -51,6 +51,9 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn crossing_positions(&self) -> ([f32; 3], [f32; 3]) {
+        (self.position, self.previous_position)
+    }
     pub(crate) fn route(&self) -> (i32, i32) {
         (self.segment, self.segment_count)
     }
