@@ -389,6 +389,22 @@ fn story_run_stops_before_gameplay() {
             assert_eq!(v["stop"]["movie"]["packCount"], 14099);
             assert_eq!(v["stop"]["movie"]["videoPackets"], 12632);
             assert_eq!(v["stop"]["movie"]["audioPackets"]["c1"], 732);
+            let tracks = &v["stop"]["movie"]["audioTracks"];
+            for (key, adx, pcm) in [
+                (
+                    "c0",
+                    "cb102a3396f2e3eba63146e93f3373d5ca082f38cba8f9c8240e0ad5d8c9cbae",
+                    "c52ab2a4f956d2b77428c8b95d2b0ddb306e807c99a10ca471f0e46faccccd07",
+                ),
+                (
+                    "c1",
+                    "66cdcb63ed7463912e5e646804444c030916054ce30ed556343af7966e2b31b2",
+                    "cbb1cc93c3778b215b92d05fd499cf9ba7ed78c339e1d42b08d9bb03dcc59f87",
+                ),
+            ] {
+                assert_eq!(tracks[key]["adxSha256"], adx);
+                assert_eq!(tracks[key]["pcmS16leSha256"], pcm);
+            }
             ("awaitingMoviePlayback", "event")
         } else {
             ("awaitingLevelRuntime", "level")
