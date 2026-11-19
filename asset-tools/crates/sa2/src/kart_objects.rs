@@ -85,3 +85,56 @@ pub fn read(exe: &[u8], set_bytes: &[u8]) -> Result<KartObjects> {
         collision_models,
     })
 }
+
+/// Installed G RING SET tasks enter 0xbab0 in mode zero. Each creates individual
+/// CART RING tasks via 0xa7b8 and then releases its SET entry.
+pub fn ring_groups(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    crate::kart_progress::verify(module)?;
+    let rel = crate::city_rel::CityRel::read_identified(module, 80)?;
+    let objects = read(exe, set_bytes)?;
+    let invalid = || Error::invalid("mismatched Kart ring task registration");
+    let d = rel.data(5)?;
+    for (id, row, text, name) in [
+        (8, 0x1660, 0xa824, "CART RING"),
+        (12, 0x16a0, 0xbab0, "G RING"),
+    ] {
+        if rel.local_pointer(5, row)? != Some((1, text)) {
+            return Err(invalid());
+        }
+        let Some((5, offset)) = rel.local_pointer(5, row + 4)? else {
+            return Err(invalid());
+        };
+        let label =
+            std::ffi::CStr::from_bytes_until_nul(&d[offset as usize..]).map_err(|_| invalid())?;
+        if label.to_bytes() != name.as_bytes()
+            || objects.definitions.get(id).map(|e| e.name.as_str()) != Some(name)
+        {
+            return Err(invalid());
+        }
+    }
+    let mut groups = Vec::new();
+    let mut total = 0usize;
+    for (index, p) in objects.placements.iter().enumerate() {
+        if p.object_id != 12 {
+            continue;
+        }
+        let mut position = p.position;
+        let count = i32::from(p.rotation[0] as i16);
+        let mut children = Vec::new();
+        for _ in 0..count {
+            children.push(position);
+            for (coord, delta) in position.iter_mut().zip(p.parameters) {
+                *coord += delta;
+            }
+        }
+        total += children.len();
+        groups.push(json!({"placement":index,"setOffset":32+32*index,"origin":p.position,"step":p.parameters,
+            "count":count,"positions":children}));
+    }
+    Ok(
+        json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set_bytes),
+        "groupCallback":0xbab0,"child":{"callback":0xa824,"mode":0,"loadArgs":[2,2],"nameOffset":0x2ed418},
+        "parentRelease":0x80065148u32,"ringCount":total,"groups":groups}),
+    )
+}
