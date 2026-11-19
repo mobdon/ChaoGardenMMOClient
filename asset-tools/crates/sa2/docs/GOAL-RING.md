@@ -221,3 +221,14 @@ To follow the creation helper itself, supply spawn.record with the observed pool
 For a created effect, record.update accepts the observed starting frame at offset 24 and one return from 0x80112050 per scheduled callback. The pool descriptor supplies the callback, frame limit, growth, drag, gravity and frame increment. Rust carries the initialized record and caller color through successive ticks, including angle and phase updates, frame clamp and halving only the high color byte. A zero callback return ends the trace. The installed City Escape comparator follows creation through that return for four successful records with two starting frames. The caller does not supply updated positions, colors or the retirement tick. The pool scheduler, physical removal and renderer remain external.
 
 The contact-route receipt resolves effectTextures from the pool descriptor's relocated texture list. All 28 supported modules name kiran01 through kiran04 in that order; the mounted efftex_common.prs contains the matching GVR entries. Each receipt identifies the PRS, decompressed GVM, GVR range and source hash, dimensions and decoded RGBA/alpha hashes. For the independent check, run SA Tools 786 ArchiveTool.exe -png on an ignored local copy of efftex_common.prs. Set SA2_EFFECT_REFERENCE to the resulting PNG directory and SA2_SET_DIR to the installed module folder; run cargo test --test goal_effect_textures -- --ignored. The check compares decoded texels, not final blend or screen output.
+
+### City Escape: which goal placement receives contact?
+
+For Hero action 1, layer 0, the installed SET contains two GOALRING placements. The following results come from four headless fan-goal runs with Sonic, a fresh in-range task, successful allocation, and one no-contact frame. The global byte is an explicit replay input.
+
+| SET index | Height above static terrain at placement | Global byte 0 | Global byte 2 |
+| --- | ---: | --- | --- |
+| 21 | 36 | Parent contact, radius 25 | Parent contact, radius 25 |
+| 457 | 0 | Child task | Parent contact, radius 8 |
+
+A child task is a different executor; its parent does not expose a contact sphere on this route. The two placements cannot be substituted based on which is closest to the floor. The matrix tests initialization, not which global value a running story supplies, whether a player touches the sphere, or whether the mission controller accepts a clear.
