@@ -101,4 +101,5 @@ pub mod kart_objects;
 pub mod kart_progress;
 pub mod kart_ramp;
 pub mod kart_story_target;
+pub mod kart_timeout;
 pub mod checkpoint;

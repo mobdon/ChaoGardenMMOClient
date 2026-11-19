@@ -267,3 +267,21 @@ Consumers test the countdown at 0x2704 (vehicle state), 0x98d4 (timeout
 branch) and 0xdaac (pursuit target). This pass does not perform those tasks.
 Run `tests/kart_lap_clock_ppc.py CLI CartD.rel PRIVATE_TMP_DIR` for the
 installed instruction comparison.
+
+`kart-timeout CartD.rel OUTPUT.json INPUT.json` follows the controller's
+remaining countdown into the vehicle at 0x26fc. Operation `vehicle_countdown`
+uses `remaining`, `vehicle_state` and `mode`. When remaining is nonpositive
+and the vehicle is not already in state 10, it enters 10 and creates the
+time-over task. State 10 suppresses a duplicate spawn on this path.
+Operation `spawn` also supports the constructor's other caller: positive
+remaining starts the timer at 120 without the expiry cue. With zero or
+negative remaining, it starts at zero and requests cue 0x706 or 0x70d in
+modes 0 or 1. Operation `tick` takes `timer` and `engine_halfword_64`.
+After increment, values strictly above 180 request engine action 8 when
+that signed halfword is below one, otherwise action 4. The task itself
+does not consume the request or prevent it from recurring next update.
+
+The comparison `tests/kart_timeout_ppc.py CLI CartD.rel PRIVATE_TMP_DIR`
+runs the vehicle branch, constructor and task updates against the installed
+PowerPC code with a successful allocation. It checks cue and action IDs;
+the action service's effects and the scheduler are not verified.
