@@ -5,7 +5,8 @@
   "frames": 227,
   "final_q_world_x": 105155,
   "final_q_world_y": 173105,
-  "rgba_sha256": "23b86a1f728015a073015e52e03e1aa21743d06248116c93cb97a70150cba4de",
+  "rings": 3,
+  "rgba_sha256": "b6e99245af53ea770a91e8725ad3cc1347226842128b225688fa384f4ba33753",
   "transitions": [
     [
       0,

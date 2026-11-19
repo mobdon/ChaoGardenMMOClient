@@ -2,7 +2,7 @@
 
 Original source/executable/state vectors remain in the explicit ignored output
 directory. Public output is source hashes, counts and an output fingerprint.
-This validates selected normal-gravity routines, not all player callbacks.
+This validates all normal-gravity attachment quadrants, not all player callbacks.
 """
 
 import argparse
@@ -64,6 +64,12 @@ typedef int32_t s32; typedef uint32_t u32; typedef volatile u8 vu8;
 #define MOVESTATE_20 32
 #define MOVESTATE_200 512
 #define MOVESTATE_800000 0x800000
+#define MOVESTATE_STOOD_ON_OBJ 8
+#define MOVESTATE_20000 0x20000
+#define ABS(x) ((x)<0?-(x):(x))
+#define TRUE 1
+#define IS_SINGLE_PLAYER 1
+#define SE_281 281
 #define PLAYERFN_SET(callback_) p->callback=(callback_)
 #define PLAYERFN_SET_SHIFT_OFFSETS(p,x,y) do{(p)->spriteOffsetX=(x);(p)->spriteOffsetY=(y);}while(0)
 typedef struct Player Player;
@@ -72,6 +78,11 @@ struct Player { s32 qWorldX,qWorldY; s16 qSpeedAirX,qSpeedAirY,qSpeedGround;
  s8 unk62,unk63,defeatScoreIndex; void (*callback)(Player*); };
 void Player_TouchGround(Player*p){(void)p;}
 void Player_Jumping(Player*p){(void)p;}
+int gCurrentLevel=0;
+struct {int isActive,currentWaterLevel;} gWater={0};
+void CreateRunOnWaterEffect(void){}
+void m4aSongNumStartOrContinue(int id){(void)id;}
+void m4aSongNumStop(int id){(void)id;}
 typedef struct {const s8*height_map;const u8*tile_rotation;const u16*metatiles;
  const u16*map[2];const u16*flags;u16 levelX,levelY;u32 pxWidth,pxHeight;} Collision;
 const Collision *gRefCollision;
@@ -82,27 +93,26 @@ s32 sub_801EF94(s32,s32,s32);
 
 DRIVER = r'''
 static u32 next(u32 x){x^=x<<13;x^=x>>17;return x^(x<<5);}
-static int floor_quad(u8 rotation){s32 r=(s8)rotation;u8 q=r+((r<=0&&r+32>0)?32:31);return(q>>6)==0;}
 int main(int argc,char**argv){
  if(argc!=3)return 2;FILE*file=fopen(argv[1],"rb");if(!file)return 3;
  u8*rom=malloc(0x1000000);if(!rom)return 4;if(fread(rom,1,0x1000000,file)!=0x1000000)return 5;fclose(file);
  Collision col={(s8*)(rom+0x6f12a8),rom+0x6f2f50,(u16*)(rom+0x6f33d0),
  {(u16*)(rom+0x70de30),(u16*)(rom+0x7111b0)},(u16*)(rom+0x6f32e8),206,32,19776,3072};gRefCollision=&col;
  FILE*out=fopen(argv[2],"wb");if(!out)return 6;u32 seed=0xa2c0111d;
- for(int i=0;i<8192;i++){
+ for(int i=0;i<32768;i++){
   Player p={0};int op=i%4;
   seed=next(seed);p.qWorldX=((s32)(seed%19840)-32)*256+(seed>>24);
   seed=next(seed);p.qWorldY=((s32)(seed%3136)-32)*256+(seed>>24);
   seed=next(seed);p.qSpeedAirX=(s32)(seed%12289)-6144;
   seed=next(seed);p.qSpeedAirY=(s32)(seed%12289)-6144;
   seed=next(seed);p.qSpeedGround=(s32)(seed%8193)-4096;
-  seed=next(seed);p.rotation=(u8)((s32)(seed%49)-24);p.layer=seed&1;
+  seed=next(seed);p.rotation=seed&255;p.layer=seed&1;
   p.spriteOffsetX=6;p.spriteOffsetY=(seed&2)?9:14;p.unk28=0x40;p.unk29=0xc0;p.unk62=3;p.unk63=-4;p.defeatScoreIndex=7;
   p.callback=Player_TouchGround;
   if(op==3){p.rotation=0;p.moveState=0x116;p.callback=Player_Jumping;}
   s32 angle=ArcTan2(p.qSpeedAirX,p.qSpeedAirY),result=0;
-  switch(op){case 0:result=sub_8022F58(p.rotation+128,&p);break;case 1:sub_8023128(&p);break;case 2:sub_80228C0(&p);break;case 3:sub_8022190(&p);break;}
-  int unsupported=(op==2&&!floor_quad(p.rotation))||(op==3&&p.callback==Player_TouchGround&&!floor_quad(p.rotation));
+  switch(op){case 0:result=sub_8022F58(p.rotation+128,&p);break;case 1:sub_8023128(&p);break;case 2:sub_8022D6C(&p);break;case 3:sub_8022190(&p);break;}
+  int unsupported=0;
   s32 row[18]={unsupported,result,angle,p.qWorldX,p.qWorldY,p.qSpeedAirX,p.qSpeedAirY,p.qSpeedGround,(s32)p.moveState,p.rotation,
    p.spriteOffsetX,p.spriteOffsetY,p.unk28,p.unk29,p.unk62,p.unk63,p.defeatScoreIndex,p.callback==Player_TouchGround};
   if(fwrite(row,4,18,out)!=18)return 7;
@@ -141,6 +151,7 @@ def main():
     player_names = ["Player_HandleSpriteYOffsetChange", "sub_802195C", "sub_8021A34", "sub_8021B08",
                     "sub_8029BB8", "sub_8029AC0", "sub_8029B0C", "sub_8021BE0", "sub_8021C4C",
                     "sub_8021DB8", "sub_8021EE4", "sub_802203C", "sub_8022190", "sub_80228C0",
+                    "sub_80229EC", "sub_8022B18", "sub_8022C44", "sub_8022D6C",
                     "sub_8022F58", "sub_802302C", "sub_8023128"]
     player_functions = [function(source["src_game_shared_stage_player.c"], name) for name in player_names]
     prototypes = "\n".join(text[:text.index("{")].strip()+";" for text in player_functions)
@@ -154,12 +165,12 @@ def main():
     subprocess.run([str(args.zig), "cc", "-std=gnu11", "-O1", "-fwrapv", "-fno-strict-aliasing", str(c_path), "-o", str(executable)], check=True)
     subprocess.run([str(executable), str(args.rom), str(results)], check=True)
     data = results.read_bytes()
-    assert len(data) == 8192*18*4
+    assert len(data) == 32768*18*4
     unsupported = sum(int.from_bytes(data[i:i+4], "little", signed=True) for i in range(0,len(data),72))
     report = {"schemaVersion":1,"referenceCommit":PIN,"sourceGitBlobs":SOURCES,"seed":0xa2c0111d,
-              "cases":8192,"rowWords":18,"unsupportedCases":unsupported,"outputBytes":len(data),
+              "cases":32768,"fullQuadrants":True,"rowWords":18,"unsupportedCases":unsupported,"outputBytes":len(data),
               "outputSha256":hashlib.sha256(data).hexdigest(),"playerFunctions":player_names,
-              "scope":"Exact original C normal-gravity player/terrain functions and pinned portable integer angle reference; unsupported attachment cases are rejected by Rust, not claimed as implemented"}
+              "scope":"Exact original C normal-gravity player/terrain functions across all rotation quadrants and pinned portable integer angle reference; water/object/special states remain separate"}
     args.summary.parent.mkdir(parents=True, exist_ok=True)
     args.summary.write_text(json.dumps(report,indent=2)+"\n")
     print(json.dumps(report))

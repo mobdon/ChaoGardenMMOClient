@@ -1,7 +1,7 @@
-# Sonic Advance 2 native Rust port: first executable slice
+# Sonic Advance 2 native Rust port
 
 The Rust native port has started with executable engine, player, sprite and
-Leaf Forest terrain subsystems. The existing asset catalog remains a separate
+course terrain subsystems. The existing asset catalog remains a separate
 foundation. This is not a completed retail game, a ROM emulator or an MMO
 adaptation. No production server, canonical Chao, credentials, live save,
 browser authority or device protocol is changed by these modules.
@@ -137,8 +137,8 @@ position corrections rather than approximating terrain with drawn rectangles.
 | --- | --- | --- |
 | `jump_clearance` | Two-sensor clearance at `rotation + 128`, including the native sensor-angle fields | `sub_8022F58`; the caller compares its distance with four pixels |
 | `ground_wall` | Ground-speed-dependent wall probe, speed cancellation and correction before position advancement | `sub_802302C` / `sub_8023128` |
-| `ground_follow` | Foot selection, retained rotation fields, penetration cutoff and speed-dependent follow limit after movement | Floor branch of `sub_80228C0` |
-| `air_collision` | Integer angle direction dispatch, both side sensors, ceiling/floor correction and supported landing decisions | `sub_8022190` and its four branches |
+| `ground_follow` | All four attachment quadrants, native sensor order, retained rotation fields, penetration cutoff and speed-dependent follow limit after movement | `sub_8022D6C` dispatch and `sub_80228C0` / `sub_80229EC` / `sub_8022B18` / `sub_8022C44` |
+| `air_collision` | Integer angle direction dispatch, both side sensors, ceiling/floor correction and native surface attachment/speed conversion | `sub_8022190` and its four branches |
 | `native_arctan2` | Signed integer polynomial angle service | Pinned portable `libagbsyscall` reference; actual retail BIOS hardware parity is not claimed |
 
 Landing clears the native in-air/spin/direction-flip flags, restores the native
@@ -149,11 +149,20 @@ collision API does not itself execute the complete next-frame callback graph.
 landing and leaving-ground events for the host.
 
 The supported context is normal gravity without water, object attachment or the
-special native 0x200/0x800000 collision states. Ground traversal and landing into
-wall/ceiling attachment quadrants return errors. Callers must supply the normal
-gravity context; this API has no inverted-gravity parameter. Errors leave player
-state unchanged. These explicit host rejection paths replace no claimed native
-behavior and must not be treated as completed wall-running or water physics.
+special native 0x200/0x800000 collision states. Floor, both walls and ceiling
+attachment now use the original routines, including the signed rounding at
+rotation-quadrant boundaries and the original upward steep-surface landing.
+Callers must supply the normal-gravity context; this API has no inverted-gravity
+parameter. Errors leave player state unchanged. Water-running and object-bound
+motion remain separate unimplemented services.
+
+After ground following, the caller must execute the native
+`PLAYERFN_UPDATE_UNK2A` step: decrement a nonzero control-lock timer, or detach
+from nonfloor rotations below absolute ground speed 480, set speed to zero and
+lock controls for thirty frames. If in-air is then set, schedule `Player_Jumping`.
+This callback ordering is distinct from terrain correction and is already
+represented by the local runner. Full character movement/callback parity still
+requires its own integration evidence.
 
 The source oracle compiles the exact pinned player and terrain functions from
 local references and probes the verified cartridge's actual Leaf Forest Act 1
@@ -176,27 +185,30 @@ cargo test --locked --manifest-path "$crateRoot/Cargo.toml" --lib native_collisi
 cargo test --locked --manifest-path "$crateRoot/Cargo.toml" --test source_native_collision -- --ignored
 ```
 
-All 8,192 seeded source cases match: 2,048 each for jump clearance, ground wall,
-ground following and airborne collision. The Rust test verifies the local
-589,824-byte oracle's committed SHA256, then compares eighteen words per case,
-including the independent integer angle result and native state fields. This
-seed enters zero unsupported attachment cases; three focused Rust tests also
-cover threshold behavior, shape restoration and explicit transactional mode
-rejection. That evidence establishes the listed routines, not a complete level
-playthrough or every collision state.
+All 32,768 seeded source cases match: 8,192 each for jump clearance, ground wall,
+ground following and airborne collision. Ground inputs span all 256 rotation
+values rather than a floor-only angle range. The Rust test verifies the local
+2,359,296-byte oracle's committed SHA256
+`e7ed7423c959eb1d4983bc6d18e5558ed06a98fc83a204f993db68b27412face`, then compares
+eighteen words per case, including the independent integer angle result and
+native state fields. Five focused Rust tests cover threshold behavior, shape
+restoration, all four correction axes, exact quadrant boundaries, upward steep
+attachment and transactional sensor/mode failures. That evidence establishes
+the listed normal-gravity routines, not a complete level playthrough or every
+collision state.
 
 ## Full native-game coverage boundary
 
 | Subsystem | Current first-slice implementation | Work still required for a full game |
 | --- | --- | --- |
 | Main loop/input/tasks/RNG/math | Executable Rust input, logical task dispatch, both RNGs and selected Q24.8 helpers with C parity | Boot, interrupt/frame ordering, recorder lifecycle, complete math library, native allocator and global-state integration |
-| Player | Selected native input/ground/air/gravity/jump/slope/rotation/state arithmetic | Complete callback graph, all characters/abilities, object interactions, damage/death, collision/camera orchestration and complete route parity |
-| Terrain/stages | ROM-backed Leaf Forest Act 1 metatiles, terrain sampling/probes, normal-gravity player sensors/corrections and bounded viewport rendering | All stages, wall/ceiling traversal, inverted gravity/water, moving terrain, complete object/entity placement, stage transitions and end-to-end level behavior |
-| Sprite animation/presentation | Executable bounded animation commands and non-affine OBJ composition from verified original resources | Complete renderer integration, affine/mosaic/window behavior, hardware-equivalent ordering, effects and broad gameplay-state selection |
-| Camera/presentation loop | Local host harness integration is an explicit binding | Complete native camera modes, parallax, transitions, menus, UI flow and interactive acceptance |
-| Enemies/objects/bosses | Existing resource catalog supplies original-data provenance | Native object spawning, task callbacks, enemy/boss AI, item/ring rules and stage-specific interactions |
+| Player | Sonic movement, jump, skid, four-direction terrain attachment, no-target Insta Shield/Forward Thrust and ordinary spring responses | Other playable characters, combat, full action graph and route parity |
+| Terrain/stages | 31 terrain slots with animated foregrounds; 14 normal course acts boot from ROM spawn positions | Boss, special, final and multiplayer stage execution, stage-specific events, water and inverted-gravity orchestration |
+| Sprite animation/presentation | Executable bounded animation commands, ordinary OBJ composition and native affine matrices/anchors/OBJ sampling from verified original resources; see `NATIVE-AFFINE.md` | Complete renderer integration, shared/global matrix services, mosaic/blend/window behavior, hardware-equivalent ordering, effects and broad gameplay-state selection |
+| Camera/presentation loop | Normal camera, Leaf Forest BG0/BG3 parallax, priority-aware foregrounds, native HUD and affine walking | Other zone backgrounds and camera modes, native countdown, menus, hardware-wide OAM/DMA timing |
+| Enemies/objects/bosses | Ordinary rings, layer switches, springs and visible/silent checkpoints use actual placements. Life loss, timeout and stage retry run in memory. | Remaining interactables, enemies, bosses, goal/results and full campaign playthrough |
 | Audio | Song/voicegroup/track-start catalog inspection; animation sound commands can be events | Sequence interpreter, instruments/samples, mixing, sound-task timing and audible parity |
-| Saves/transfer | Existing bounded local garden save and transfer inspection | Main-game save semantics, native write ordering/failure paths and complete hardware/local compatibility paths |
+| Saves/transfer | Bounded garden save/transfer inspection plus campaign profile/sector codec, ten-sector selection/recovery and in-memory native write/reset lifecycle with exact C parity; see `NATIVE-CAMPAIGN-SAVE.md` | Real campaign-save fixture compatibility, flash hardware/error/timing parity, durable storage integration and complete transfer lifecycle |
 | Tiny Garden/minigames | Embedded payload identified; selected assets/tables/save structures inspected | Complete original care/behavior/physics/scoring/reward execution and native transfer lifecycle; MMO adaptations remain separate |
 | Multiplayer/link | No completed native link runtime | Native link/session synchronization, remote player behavior and deterministic multiplayer execution |
 | Frontend/platform | Rust modules can execute locally without a GBA CPU emulator | Reviewed Rust/WASM/platform adapter, actual input/render/audio presentation and full user playthroughs |

@@ -13,6 +13,7 @@ struct Oracle {
     cases: usize,
     row_words: usize,
     unsupported_cases: usize,
+    full_quadrants: bool,
     output_bytes: usize,
     output_sha256: String,
 }
@@ -44,6 +45,8 @@ fn native_collision_matches_original_c() {
     );
     let mut seed = expected.seed;
     let mut unsupported = 0;
+    let mut rotations: [std::collections::BTreeSet<u8>; 3] =
+        std::array::from_fn(|_| Default::default());
     for (row, raw) in oracle.chunks_exact(expected.row_words * 4).enumerate() {
         let words: Vec<_> = raw
             .as_chunks::<4>()
@@ -63,7 +66,11 @@ fn native_collision_matches_original_c() {
         p.q_speed_air_x = air_x;
         p.q_speed_air_y = air_y;
         p.q_speed_ground = ground;
-        p.rotation = ((flags % 49) as i32 - 24) as u8;
+        p.rotation = if expected.full_quadrants {
+            flags as u8
+        } else {
+            ((flags % 49) as i32 - 24) as u8
+        };
         p.layer = (flags & 1) as u8;
         p.sprite_offset_x = 6;
         p.sprite_offset_y = if flags & 2 != 0 { 9 } else { 14 };
@@ -78,6 +85,8 @@ fn native_collision_matches_original_c() {
             p.rotation = 0;
             p.move_state = 0x116;
             p.callback = Callback::Airborne;
+        } else {
+            rotations[row % 4].insert(p.rotation);
         }
         assert_eq!(
             i32::from(native_arctan2(air_x, air_y)),
@@ -127,4 +136,9 @@ fn native_collision_matches_original_c() {
         );
     }
     assert_eq!(unsupported, expected.unsupported_cases);
+    if expected.full_quadrants {
+        for rotations in rotations {
+            assert_eq!(rotations.len(), 256);
+        }
+    }
 }

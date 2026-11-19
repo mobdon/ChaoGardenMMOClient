@@ -120,6 +120,7 @@ fn native_player_primitives_match_original_c() {
             Callback::Airborne => 2,
             Callback::Rolling => 3,
             Callback::Skidding => 4,
+            Callback::Uncurl => 5,
         };
         let words = [
             p.q_world_x,

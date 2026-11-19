@@ -1,4 +1,4 @@
-//! Executable A2NE sprite command VM and non-affine OBJ composition.
+//! Executable A2NE sprite command VM and bounded OBJ composition.
 //!
 //! Format/behavior reference: SAT-R/sa2 2dd3f17d, include/core.h,
 //! include/constants/anim_commands.h and src/sprite.c:138-212,289-380,
@@ -269,6 +269,98 @@ pub struct SpriteFrame {
     pub rgba: Vec<u8>,
 }
 
+/// Native SpriteTransform rotation (1024 units per turn) and signed Q8 scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AffineTransform {
+    pub rotation: u16,
+    pub q_scale_x: i16,
+    pub q_scale_y: i16,
+}
+
+/// TransformSprite's inverse sampling matrix and adjusted Sprite position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AffinePlacement {
+    pub pa: i16,
+    pub pb: i16,
+    pub pc: i16,
+    pub pd: i16,
+    pub sprite_x: i16,
+    pub sprite_y: i16,
+}
+
+/// Independent native TransformSprite arithmetic, using the verified ROM's
+/// original sine table. Zero scale is an explicit host error.
+pub fn native_transform(
+    rom: &VerifiedRom<'_>,
+    dimensions: FrameDimensions,
+    transform: AffineTransform,
+    x: i16,
+    y: i16,
+) -> Result<AffinePlacement, Error> {
+    transform_from_bytes(rom.rom_bytes(), dimensions, transform, x, y)
+}
+
+fn transform_from_bytes(
+    rom: &[u8],
+    dimensions: FrameDimensions,
+    transform: AffineTransform,
+    x: i16,
+    y: i16,
+) -> Result<AffinePlacement, Error> {
+    if transform.q_scale_x == 0 || transform.q_scale_y == 0 {
+        return Err(err("Native affine scale is zero"));
+    }
+    let sine = bounded_range(rom, 0x97aa4, 0xa00)?;
+    let read_sine =
+        |index: usize| i32::from(i16::from_le_bytes([sine[index * 2], sine[index * 2 + 1]])) >> 6;
+    let angle = usize::from(transform.rotation & 1023);
+    let cos = read_sine(angle + 256);
+    let sin = read_sine(angle);
+    // Native Div results and forward coefficients are narrowed to s16 before
+    // subsequent products; retaining a wider quotient changes tiny scales.
+    let inverse_x = i32::from((65_536 / i32::from(transform.q_scale_x)) as i16);
+    let inverse_y = i32::from((65_536 / i32::from(transform.q_scale_y)) as i16);
+    let scale_x = i32::from(transform.q_scale_x.wrapping_abs());
+    let scale_y = i32::from(transform.q_scale_y.wrapping_abs());
+    let forward = [
+        ((cos * scale_x) >> 8) as i16,
+        ((-sin * scale_x) >> 8) as i16,
+        ((sin * scale_y) >> 8) as i16,
+        ((cos * scale_y) >> 8) as i16,
+    ];
+    let width = i32::from(dimensions.width);
+    let height = i32::from(dimensions.height);
+    let anchor_x = if transform.q_scale_x > 0 {
+        dimensions.origin_x
+    } else {
+        dimensions.width.wrapping_sub(dimensions.origin_x as u16) as i16
+    };
+    let anchor_y = if transform.q_scale_y > 0 {
+        dimensions.origin_y
+    } else {
+        dimensions.height.wrapping_sub(dimensions.origin_y as u16) as i16
+    };
+    let dx = i32::from(anchor_x) - width / 2;
+    let dy = i32::from(anchor_y) - height / 2;
+    let adjustment = |a: i16, b: i16, half: i32| {
+        (i32::from(a)
+            .wrapping_mul(dx)
+            .wrapping_add(i32::from(b).wrapping_mul(dy))
+            .wrapping_add(half << 8))
+            >> 8
+    };
+    Ok(AffinePlacement {
+        pa: ((cos * inverse_x) >> 8) as i16,
+        pb: ((sin * inverse_x) >> 8) as i16,
+        pc: ((-sin * inverse_y) >> 8) as i16,
+        pd: ((cos * inverse_y) >> 8) as i16,
+        sprite_x: i32::from(x).wrapping_sub(adjustment(forward[0], forward[1], width / 2)) as i16,
+        sprite_y: i32::from(y).wrapping_sub(adjustment(forward[2], forward[3], height / 2)) as i16,
+    })
+}
+
 #[derive(Clone, Copy)]
 struct Tables<'a> {
     rom: &'a [u8],
@@ -381,6 +473,14 @@ impl<'a> AnimationPlayer<'a> {
         Ok(())
     }
 
+    /// Player sprite selection invalidates prevVariant and both body hitboxes
+    /// when the native force-restart latch is set, even for the same script.
+    pub(crate) fn restart_body_script(&mut self) {
+        self.previous = None;
+        self.hitboxes[0].index = -1;
+        self.hitboxes[1].index = -1;
+    }
+
     /// Native speed units: 0x10 is one source frame per 60 Hz update.
     pub fn set_speed(&mut self, speed: u8) {
         self.speed = speed;
@@ -396,6 +496,17 @@ impl<'a> AnimationPlayer<'a> {
     }
     pub fn palette_words(&self) -> &[u16; 256] {
         &self.palette
+    }
+
+    /// Mirror one native global OBJ palette-bank write into this private host
+    /// image. Call after the frame's animation palette commands have executed.
+    pub fn set_palette_bank(&mut self, bank: u8, words: &[u16; 16]) -> Result<(), Error> {
+        if bank >= 16 {
+            return Err(err("OBJ palette bank exceeds native 16-bank capacity"));
+        }
+        let start = usize::from(bank) * 16;
+        self.palette[start..start + 16].copy_from_slice(words);
+        Ok(())
     }
     pub fn oam_order(&self) -> u8 {
         self.order
@@ -602,6 +713,162 @@ impl<'a> AnimationPlayer<'a> {
         self.dimensions
     }
 
+    /// Native TransformSprite plus affine DisplaySprite/OAM sampling. Each OBJ
+    /// rotates about its own center and keeps its native fixed clipping box.
+    /// The returned anchor is relative to transform position (0,0); the caller
+    /// supplies world/camera position and the player's negative-scale X offset.
+    /// Ordinary flip flags and frame flip metadata are ignored in affine mode,
+    /// as in DisplaySprite. Global transforms and shared matrix slots remain
+    /// separate services. Native translation commands are overwritten by the
+    /// subsequent TransformSprite position, so returned translations are zero.
+    pub fn render_affine(
+        &self,
+        transform: AffineTransform,
+        double_size: bool,
+    ) -> Result<SpriteFrame, Error> {
+        let Some(dimensions) = self.dimensions else {
+            let mut frame = self.render()?;
+            frame.translation_x = 0;
+            frame.translation_y = 0;
+            return Ok(frame);
+        };
+        let placement = transform_from_bytes(self.tables.rom, dimensions, transform, 0, 0)?;
+        let base_x = i32::from(placement.sprite_x)
+            - if double_size {
+                i32::from(dimensions.width / 2)
+            } else {
+                0
+            };
+        let base_y = i32::from(placement.sprite_y)
+            - if double_size {
+                i32::from(dimensions.height / 2)
+            } else {
+                0
+            };
+        let oam_base = self.tables.table_entry(self.tables.oam, self.animation)?;
+        let mut parts = Vec::with_capacity(usize::from(dimensions.subframes));
+        let (mut left, mut top, mut right, mut bottom) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for part in 0..usize::from(dimensions.subframes) {
+            let offset = indexed(oam_base, usize::from(dimensions.oam_index) + part, 6)?;
+            let raw = bounded_range(self.tables.rom, offset, 6)?;
+            let a0 = u16::from_le_bytes([raw[0], raw[1]]);
+            let a1 = u16::from_le_bytes([raw[2], raw[3]]);
+            let a2 = u16::from_le_bytes([raw[4], raw[5]]);
+            if a0 & 0x1c00 != 0 {
+                return Err(err("Affine mosaic/blended/window OAM mode is unported"));
+            }
+            if a1 & 0x3e00 != 0 {
+                return Err(err("Affine template requires an external matrix slot"));
+            }
+            let (width, height) = object_size((a0 >> 14) as u8, (a1 >> 14) as u8)?;
+            let double = double_size || a0 & 0x200 != 0;
+            let box_width = width * if double { 2 } else { 1 };
+            let box_height = height * if double { 2 } else { 1 };
+            let mut x = i32::from(a1 & 0x1ff);
+            let mut y = i32::from(a0 & 0xff);
+            if x >= 256 {
+                x -= 512;
+            }
+            if y >= 128 {
+                y -= 256;
+            }
+            x += base_x;
+            y += base_y;
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x + box_width as i32);
+            bottom = bottom.max(y + box_height as i32);
+            parts.push((x, y, width, height, box_width, box_height, a0, a2));
+        }
+        if parts.is_empty() {
+            return Ok(SpriteFrame {
+                width: 0,
+                height: 0,
+                origin_x: 0,
+                origin_y: 0,
+                translation_x: 0,
+                translation_y: 0,
+                frame_index: self.frame_index,
+                subframes: 0,
+                rgba: Vec::new(),
+            });
+        }
+        let width = usize::try_from(right - left).map_err(|_| err("Affine width overflow"))?;
+        let height = usize::try_from(bottom - top).map_err(|_| err("Affine height overflow"))?;
+        let pixels = width
+            .checked_mul(height)
+            .filter(|n| *n <= MAX_PIXELS)
+            .ok_or_else(|| err("Affine OBJ output exceeds pixel capacity"))?;
+        let origin_x = i16::try_from(-left).map_err(|_| err("Affine anchor X overflow"))?;
+        let origin_y = i16::try_from(-top).map_err(|_| err("Affine anchor Y overflow"))?;
+        let mut rgba = vec![0; pixels * 4];
+        let mut winning = vec![(u8::MAX, usize::MAX); pixels];
+        for (part, &(x, y, source_width, source_height, box_width, box_height, a0, a2)) in
+            parts.iter().enumerate()
+        {
+            let eight_bpp = a0 & 0x2000 != 0;
+            let stride = if eight_bpp { 64 } else { 32 };
+            let tile_base = usize::from(a2 & 0x3ff);
+            let palette_bank = usize::from(a2 >> 12);
+            let rank = (((a2 >> 10) as u8 & 3) | self.priority, part);
+            for local_y in 0..box_height {
+                for local_x in 0..box_width {
+                    let dx = local_x as i32 - box_width as i32 / 2;
+                    let dy = local_y as i32 - box_height as i32 / 2;
+                    let sx = ((i32::from(placement.pa) * dx + i32::from(placement.pb) * dy) >> 8)
+                        + source_width as i32 / 2;
+                    let sy = ((i32::from(placement.pc) * dx + i32::from(placement.pd) * dy) >> 8)
+                        + source_height as i32 / 2;
+                    if sx < 0 || sy < 0 || sx >= source_width as i32 || sy >= source_height as i32 {
+                        continue;
+                    }
+                    let sx = sx as usize;
+                    let sy = sy as usize;
+                    let tile = tile_base + (sy / 8) * (source_width / 8) + sx / 8;
+                    let within = (sy % 8) * 8 + sx % 8;
+                    let packed = tile
+                        .checked_mul(stride)
+                        .and_then(|n| n.checked_add(if eight_bpp { within } else { within / 2 }))
+                        .ok_or_else(|| err("Affine OBJ tile address overflow"))?;
+                    let byte = *self
+                        .tiles
+                        .get(packed)
+                        .ok_or_else(|| err("Affine OBJ tile index exceeds VRAM"))?;
+                    let index = if eight_bpp {
+                        byte
+                    } else {
+                        (byte >> ((within % 2) * 4)) & 15
+                    };
+                    if index == 0 {
+                        continue;
+                    }
+                    let destination = (y - top + local_y as i32) as usize * width
+                        + (x - left + local_x as i32) as usize;
+                    if rank >= winning[destination] {
+                        continue;
+                    }
+                    winning[destination] = rank;
+                    let color_index =
+                        usize::from(index) + if eight_bpp { 0 } else { palette_bank * 16 };
+                    let color = PaletteColor::from_word(self.palette[color_index]).rgb8();
+                    rgba[destination * 4..destination * 4 + 3].copy_from_slice(&color);
+                    rgba[destination * 4 + 3] = 255;
+                }
+            }
+        }
+        Ok(SpriteFrame {
+            width,
+            height,
+            origin_x,
+            origin_y,
+            translation_x: 0,
+            translation_y: 0,
+            frame_index: self.frame_index,
+            subframes: usize::from(dimensions.subframes),
+            rgba,
+        })
+    }
+
     /// Produces the native frame rectangle with its native anchor. OBJ index
     /// zero is transparent. The caller applies world position and camera.
     /// Affine, mosaic, semi-transparent and object-window modes are explicit
@@ -785,6 +1052,85 @@ mod tests {
             tiles4: offsets[4],
             tiles8: offsets[5],
         }
+    }
+
+    #[test]
+    fn affine_identity_mirror_clipping_and_double_size_preserve_native_sampling() {
+        let (mut rom, offsets) = setup(&[-1, 0, 1, -2, 0, 16, 8, 0, -3, 2]);
+        rom.resize(0x984a4, 0);
+        for (index, value) in [(0, 0i16), (256, 16384), (512, 0), (768, -16384)] {
+            rom[0x97aa4 + index * 2..0x97aa4 + index * 2 + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        let mut player = AnimationPlayer::from_tables(tables(&rom, offsets), 0, 0).unwrap();
+        player.advance().unwrap();
+        let transform = AffineTransform {
+            rotation: 0,
+            q_scale_x: 256,
+            q_scale_y: 256,
+        };
+        let normal = player.render().unwrap();
+        let identity = player.render_affine(transform, false).unwrap();
+        assert_eq!(identity.rgba, normal.rgba);
+        assert_eq!((identity.origin_x, identity.origin_y), (4, 7));
+        player.set_flip(true, true);
+        assert_eq!(
+            player.render_affine(transform, false).unwrap().rgba,
+            identity.rgba,
+            "ordinary flip flags are ignored in native affine mode"
+        );
+        let mirrored = player
+            .render_affine(
+                AffineTransform {
+                    q_scale_x: -256,
+                    ..transform
+                },
+                false,
+            )
+            .unwrap();
+        for y in 0..8 {
+            assert_eq!(
+                mirrored.rgba[(y * 8) * 4 + 3],
+                0,
+                "native fixed OBJ clipping box"
+            );
+            assert_eq!(mirrored.rgba[(y * 8 + 1) * 4 + 3], 255);
+        }
+        let double = player.render_affine(transform, true).unwrap();
+        assert_eq!(
+            (
+                double.width,
+                double.height,
+                double.origin_x,
+                double.origin_y
+            ),
+            (16, 16, 8, 11)
+        );
+        assert_eq!(
+            double
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|pixel| pixel[3] == 255)
+                .count(),
+            64
+        );
+        assert!(
+            player
+                .render_affine(
+                    AffineTransform {
+                        q_scale_x: 0,
+                        ..transform
+                    },
+                    false
+                )
+                .is_err()
+        );
+        let before = *player.palette_words();
+        assert!(player.set_palette_bank(16, &[0x7fff; 16]).is_err());
+        assert_eq!(player.palette_words(), &before);
+        player.set_palette_bank(15, &[0x1234; 16]).unwrap();
+        assert_eq!(&player.palette_words()[240..], &[0x1234; 16]);
     }
 
     #[test]

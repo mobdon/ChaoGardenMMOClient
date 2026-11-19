@@ -2,8 +2,9 @@
 //!
 //! Evidence: pinned SAT-R/sa2 player.c sub_802302C/sub_8023128,
 //! sub_80228C0/sub_8022D6C, sub_8022F58, sub_8022190 and its four air
-//! collision branches. Host errors explicitly reject unported object/water,
-//! wall-running and inverted-gravity state; corrections are transactional.
+//! collision branches and four ground attachment quadrants. Host errors reject
+//! unported object/water/special states; normal gravity is the caller context.
+//! Corrections are transactional.
 
 use crate::{
     Error,
@@ -50,11 +51,13 @@ pub struct CollisionReport {
     pub q_correction_y: i32,
 }
 
-fn validate(player: &PlayerState) -> Result<(), Error> {
+fn validate(player: &PlayerState, allow_object: bool) -> Result<(), Error> {
     if player.layer > 1 {
         return Err(Error("Native player collision layer must be 0 or 1".into()));
     }
-    if player.move_state & (IN_WATER | STOOD_ON_OBJECT | 0x200 | 0x800000) != 0 {
+    if player.move_state & (IN_WATER | 0x200 | 0x800000) != 0
+        || (!allow_object && player.move_state & STOOD_ON_OBJECT != 0)
+    {
         return Err(Error(
             "Object/water/special native collision state is not ported".into(),
         ));
@@ -62,30 +65,23 @@ fn validate(player: &PlayerState) -> Result<(), Error> {
     Ok(())
 }
 
-fn floor_quadrant(rotation: u8) -> bool {
+fn ground_direction(rotation: u8) -> u8 {
     let signed = i32::from(rotation as i8);
     let rounded = signed
-        + if signed <= 0 && signed + 32 > 0 {
+        + if (signed + 32 > 0) == (signed <= 0) {
             32
         } else {
             31
         };
-    (rounded as u8) >> 6 == 0
-}
-
-fn require_floor(player: &PlayerState) -> Result<(), Error> {
-    validate(player)?;
-    if !floor_quadrant(player.rotation) {
-        return Err(Error("Native wall/ceiling running is not ported".into()));
-    }
-    Ok(())
+    (rounded as u8) >> 6
 }
 
 fn transactional(
     player: &mut PlayerState,
+    allow_object: bool,
     operation: impl FnOnce(&mut PlayerState, &mut CollisionReport) -> Result<(), Error>,
 ) -> Result<CollisionReport, Error> {
-    validate(player)?;
+    validate(player, allow_object)?;
     let mut next = *player;
     let mut report = CollisionReport::default();
     operation(&mut next, &mut report)?;
@@ -162,7 +158,7 @@ pub fn jump_clearance(
     terrain: &impl TerrainProbes,
     player: &mut PlayerState,
 ) -> Result<i32, Error> {
-    require_floor(player)?;
+    validate(player, false)?;
     let angle = player.rotation.wrapping_add(128);
     let result = sensor_pair(terrain, player, angle.wrapping_add(32) >> 6)?.distance;
     player.unk28 = angle;
@@ -182,8 +178,8 @@ pub fn ground_wall(
     terrain: &impl TerrainProbes,
     player: &mut PlayerState,
 ) -> Result<CollisionReport, Error> {
-    require_floor(player)?;
-    transactional(player, |p, report| {
+    validate(player, false)?;
+    transactional(player, false, |p, report| {
         if p.q_speed_ground == 0 {
             return Ok(());
         }
@@ -237,18 +233,36 @@ pub fn ground_wall(
     })
 }
 
-/// Native floor branch sub_80228C0. Called after position advancement.
+/// Native sub_8022D6C dispatch and all four attachment branches, called after
+/// position advancement. Water-running and object attachment remain separate.
 pub fn ground_follow(
     terrain: &impl TerrainProbes,
     player: &mut PlayerState,
 ) -> Result<CollisionReport, Error> {
-    require_floor(player)?;
-    transactional(player, |p, _| {
+    transactional(player, false, |p, _| {
         let x = p.q_world_x >> 8;
-        let y = (p.q_world_y >> 8) + i32::from(p.sprite_offset_y);
+        let y = p.q_world_y >> 8;
         let reach = 2 + i32::from(p.sprite_offset_x);
-        let a = terrain.terrain_probe(x - reach, y, p.layer, 8, true)?;
-        let b = terrain.terrain_probe(x + reach, y, p.layer, 8, true)?;
+        let offset = i32::from(p.sprite_offset_y);
+        let direction = ground_direction(p.rotation);
+        let (a, b) = match direction {
+            0 => (
+                terrain.terrain_probe(x - reach, y + offset, p.layer, 8, true)?,
+                terrain.terrain_probe(x + reach, y + offset, p.layer, 8, true)?,
+            ),
+            1 => (
+                terrain.terrain_probe(x - offset, y - reach, p.layer, -8, false)?,
+                terrain.terrain_probe(x - offset, y + reach, p.layer, -8, false)?,
+            ),
+            2 => (
+                terrain.terrain_probe(x + reach, y - offset, p.layer, -8, true)?,
+                terrain.terrain_probe(x - reach, y - offset, p.layer, -8, true)?,
+            ),
+            _ => (
+                terrain.terrain_probe(x + offset, y + reach, p.layer, 8, false)?,
+                terrain.terrain_probe(x + offset, y - reach, p.layer, 8, false)?,
+            ),
+        };
         if let Some(rotation) = a.rotation {
             p.unk28 = rotation;
         }
@@ -264,20 +278,26 @@ pub fn ground_follow(
             return Ok(());
         }
         if distance > 0 {
-            let following_limit = ((i32::from(p.q_speed_air_x).abs() >> 8) + 3).min(11);
+            let along_speed = if direction & 1 == 0 {
+                p.q_speed_air_x
+            } else {
+                p.q_speed_air_y
+            };
+            let following_limit = ((i32::from(along_speed).abs() >> 8) + 3).min(11);
             if distance > following_limit {
                 p.move_state |= IN_AIR;
                 p.move_state &= !0x20;
                 return Ok(());
             }
         }
-        p.q_world_y = p.q_world_y.wrapping_add(distance.wrapping_mul(256));
+        let delta = distance.wrapping_mul(256);
+        match direction {
+            0 => p.q_world_y = p.q_world_y.wrapping_add(delta),
+            1 => p.q_world_x = p.q_world_x.wrapping_sub(delta),
+            2 => p.q_world_y = p.q_world_y.wrapping_sub(delta),
+            _ => p.q_world_x = p.q_world_x.wrapping_add(delta),
+        }
         if rotation & 1 == 0 {
-            if !floor_quadrant(rotation) {
-                return Err(Error(
-                    "Native floor continuation entered unported wall-running quadrant".into(),
-                ));
-            }
             p.rotation = rotation;
         }
         Ok(())
@@ -285,11 +305,6 @@ pub fn ground_follow(
 }
 
 fn land(p: &mut PlayerState, rotation: u8, report: &mut CollisionReport) -> Result<(), Error> {
-    if !floor_quadrant(rotation) {
-        return Err(Error(
-            "Native landing would attach to unported wall/ceiling".into(),
-        ));
-    }
     p.rotation = rotation;
     p.callback = Callback::Ground;
     p.move_state &= !(FLIP_WITH_MOVE_DIR | IN_AIR);
@@ -381,9 +396,9 @@ fn ascending(
         if (u16::from(ceiling.rotation) + 32) & 0x40 != 0
             && i32::from(ceiling.rotation as i8) - 64 > 0
         {
-            return Err(Error(
-                "Native ceiling contact would attach to unported wall-running state".into(),
-            ));
+            land(p, ceiling.rotation, report)?;
+            p.q_speed_ground = i32::from(p.q_speed_air_y).abs() as i16;
+            return Ok(());
         }
         p.q_speed_air_y = 0;
     }
@@ -463,7 +478,7 @@ pub fn air_collision(
     terrain: &impl TerrainProbes,
     player: &mut PlayerState,
 ) -> Result<CollisionReport, Error> {
-    transactional(player, |p, report| {
+    transactional(player, true, |p, report| {
         let angle = (native_arctan2(p.q_speed_air_x, p.q_speed_air_y) >> 8) as u8;
         match angle.wrapping_sub(32) >> 6 {
             0 => descending(terrain, p, report),
@@ -526,8 +541,8 @@ mod tests {
         let report = ground_follow(&replies(&[(4, 0), (5, 0)]), &mut p).unwrap();
         assert!(report.left_ground);
         let before = p;
-        assert!(ground_follow(&replies(&[(0, 64), (0, 64)]), &mut p).is_err());
-        assert_eq!(p, before, "unsupported mode cannot partly mutate state");
+        assert!(ground_follow(&replies(&[(0, 64)]), &mut p).is_err());
+        assert_eq!(p, before, "sensor failure cannot partly mutate state");
     }
 
     #[test]
@@ -564,6 +579,50 @@ mod tests {
         assert!(jump_clearance(&replies(&[]), &mut p).is_err());
         p.move_state = 0;
         p.rotation = 64;
-        assert!(ground_wall(&replies(&[]), &mut p).is_err());
+        p.q_speed_ground = 256;
+        assert!(ground_wall(&replies(&[(1, 0)]), &mut p).is_ok());
+    }
+
+    #[test]
+    fn all_ground_quadrants_follow_the_native_correction_axis() {
+        for (rotation, dx, dy) in [(0, 0, -2), (64, 2, 0), (128, 0, 2), (192, -2, 0)] {
+            let mut p = player();
+            p.rotation = rotation;
+            ground_follow(&replies(&[(-2, rotation), (-1, rotation)]), &mut p).unwrap();
+            assert_eq!(
+                (p.q_world_x, p.q_world_y),
+                ((100 + dx) * 256, (100 + dy) * 256)
+            );
+            assert_eq!(p.rotation, rotation);
+        }
+        for (rotation, direction) in [
+            (32, 0),
+            (33, 1),
+            (96, 1),
+            (97, 2),
+            (160, 2),
+            (161, 3),
+            (224, 3),
+            (225, 0),
+        ] {
+            assert_eq!(ground_direction(rotation), direction);
+        }
+    }
+
+    #[test]
+    fn upward_steep_contact_can_attach_with_original_vertical_speed() {
+        let mut p = player();
+        p.move_state = IN_AIR;
+        p.q_speed_air_y = -1024;
+        p.q_speed_air_x = 0;
+        let report =
+            air_collision(&replies(&[(5, 0), (5, 0), (-2, 80), (-1, 80)]), &mut p).unwrap();
+        assert!(report.hit_ceiling && report.landed);
+        assert_eq!(
+            (p.rotation, p.q_speed_ground, p.q_speed_air_y),
+            (80, 1024, -1024)
+        );
+        assert_eq!(p.move_state & IN_AIR, 0);
+        assert_eq!(p.callback, Callback::Ground);
     }
 }

@@ -53,6 +53,7 @@ fn fresh_loopback_session_advances_and_resets_to_exact_initial_pixels() {
             .arg("serve")
             .arg(std::env::var_os("A2NE_ROM").unwrap())
             .arg("0")
+            .arg("9")
             .stdout(Stdio::piped())
             .spawn()
             .unwrap(),
@@ -72,6 +73,7 @@ fn fresh_loopback_session_advances_and_resets_to_exact_initial_pixels() {
     assert!(addr.ip().is_loopback());
     let (initial, initial_pixels) = frame(addr, "GET", "/frame", "");
     assert_eq!(initial["frame"], 0);
+    assert_eq!(initial["level_id"], 9);
     assert_eq!(exchange(addr, "GET", "/cartridge.gba", "").0, 404);
     assert_eq!(exchange(addr, "POST", "/tick", "2").0, 400);
     assert_eq!(frame(addr, "GET", "/frame", "").0, initial);

@@ -24,6 +24,7 @@ fn leaf_forest_replay_integrates_original_movement_sensors_and_animation() {
     let mut previous = (game.snapshot().callback, 0, 0);
     let mut airborne = false;
     let mut landed = false;
+    let mut pickup_pans = Vec::new();
     for segment in replay["segments"].as_array().unwrap() {
         let keys = segment["keys"].as_u64().unwrap() as u16;
         for _ in 0..segment["frames"].as_u64().unwrap() {
@@ -35,6 +36,7 @@ fn leaf_forest_replay_integrates_original_movement_sensors_and_animation() {
                 landed = true;
                 assert_eq!(state.player.sprite_offset_y, 14);
             }
+            pickup_pans.extend_from_slice(&state.ring_sound_pans);
             let next = (state.callback, state.player.char_state, state.variant);
             if next != previous {
                 transitions.push(serde_json::json!([
@@ -49,6 +51,11 @@ fn leaf_forest_replay_integrates_original_movement_sensors_and_animation() {
     }
     let final_state = game.snapshot();
     assert!(airborne && landed);
+    assert_eq!(
+        u64::from(final_state.rings),
+        expected["rings"].as_u64().unwrap()
+    );
+    assert_eq!(pickup_pans, [-64, 64, -64]);
     assert_eq!(final_state.frame, expected["frames"].as_u64().unwrap());
     assert_eq!(
         i64::from(final_state.player.q_world_x),
@@ -68,4 +75,66 @@ fn leaf_forest_replay_integrates_original_movement_sensors_and_animation() {
         gba::sha256(&game.render().unwrap()),
         expected["rgba_sha256"]
     );
+}
+
+#[test]
+#[ignore = "requires local verified A2NE_ROM"]
+fn fourteen_course_runs_exercise_springs_layer_switches_death_and_checkpoint_retries() {
+    use sonic_advance_2_assets::{native_game::HarnessCallback, native_lifecycle::Phase};
+    let bytes = std::fs::read(std::env::var_os("A2NE_ROM").unwrap()).unwrap();
+    let rom = VerifiedRom::parse(&bytes).unwrap();
+    let (mut springs, mut lower, mut retry, mut dying) = (false, false, false, false);
+    for level in (0..28).filter(|n| n % 4 < 2) {
+        let mut game = NativeHarness::for_level(&rom, level).unwrap();
+        let mut prev = game.snapshot();
+        for _ in 0..1800 {
+            let next = game.tick(16).unwrap();
+            assert!(
+                next.halted.is_none(),
+                "level {level} frame {}: {:?}",
+                next.frame,
+                next.halted
+            );
+            springs |= next.callback == HarnessCallback::Spring
+                && (next.animation_sound_ids.contains(&153) || (8..=9).contains(&level));
+            lower |= prev.player.layer != next.player.layer;
+            dying |= next.lifecycle.phase == Phase::Dying;
+            if prev.lifecycle.phase == (Phase::Waiting { frames: 0 })
+                && next.lifecycle.phase == Phase::Alive
+            {
+                assert_eq!(next.lives, prev.lives - 1);
+                assert_eq!(next.rings, 0);
+                assert_eq!(
+                    next.player.q_world_x,
+                    i32::from(prev.lifecycle.checkpoint.x) * 256
+                );
+                assert_eq!(
+                    next.player.q_world_y,
+                    i32::from(prev.lifecycle.checkpoint.y) * 256
+                );
+                retry = true;
+            }
+            prev = next;
+        }
+        assert_eq!(prev.frame, 1800, "level {level}");
+    }
+    assert!(
+        springs && lower && retry && dying,
+        "spring={springs}, layer={lower}, retry={retry}, death={dying}"
+    );
+}
+
+#[test]
+#[ignore = "requires local verified A2NE_ROM"]
+fn second_jump_edge_emits_native_insta_shield_in_the_player_loop() {
+    let bytes = std::fs::read(std::env::var_os("A2NE_ROM").unwrap()).unwrap();
+    let rom = VerifiedRom::parse(&bytes).unwrap();
+    let mut game = NativeHarness::new(&rom).unwrap();
+    for input in [0, 1, 1, 0] {
+        assert!(game.tick(input).unwrap().halted.is_none());
+    }
+    let action = game.tick(1).unwrap();
+    assert!(action.halted.is_none());
+    assert_eq!((action.player.char_state, action.animation), (18, 17));
+    assert!(action.animation_sound_ids.contains(&113));
 }

@@ -2,7 +2,7 @@
 
 Read-only Rust catalog and converters for **one verified USA revision 0 cartridge** and its embedded Tiny Chao Garden. All code, tests, metadata and documentation stay inside this workstream's crate. The crate has its own workspace/lockfile so it does not change the shared asset workspace before the other tracks agree a contract.
 
-The asset tools now also provide an initial executable Rust engine slice: native input/tasks/RNG, player movement primitives, Leaf Forest terrain collision and sprite animation. A separate local runner connects movement, jumping, landing, braking and turning. **The whole game is not ported.** Native camera/render ordering, entities, audio synthesis, most callbacks and the other subsystems in the [coverage matrix](docs/NATIVE-PORT.md) remain unfinished. The [local runner guide](docs/NATIVE-HARNESS.md) distinguishes executed native routines from host adaptations.
+The crate includes a [local Rust course runner](docs/NATIVE-HARNESS.md) for Sonic in the fourteen normal acts. It reads actual course maps, collisions, placements, sprite scripts and palettes. The native camera, rings, layer switches, ordinary springs, checkpoints, death/retry and HUD run locally. **The full retail game is not ported.** See the [coverage matrix](docs/NATIVE-PORT.md#full-native-game-coverage-boundary) for remaining gameplay, presentation, audio and campaign work.
 
 ## Exact source gate
 
@@ -30,6 +30,7 @@ cargo test --locked --manifest-path $crate --test source_parity --test source_ma
 cargo run --locked --manifest-path $crate -- catalog $env:A2NE_ROM
 cargo run --locked --manifest-path $crate -- extract $env:A2NE_ROM rom.tiny-garden.lz77 .local/a2ne-extracted
 cargo run --locked --manifest-path $crate -- save .local/native-flash.sav
+cargo run --locked --manifest-path $crate -- campaign-save .local/native-flash.sav
 cargo run --locked --manifest-path $crate -- transfer 00040022 .local/native-transfer.bin
 cargo run --locked --manifest-path $crate -- render-map $env:A2NE_ROM rom.bg.title.map rom.bg.title.tiles rom.bg.title.palette 32 64 .local/title.pam
 ```
@@ -38,7 +39,7 @@ On this workstation, dot-source the **original checkout's** `scripts/use-rust.ps
 
 `catalog ROM [REPORT.json]` emits only metadata, offsets and hashes. `extract` writes the exact source range plus an optional deterministic decoded stream; it requires a `.local` output path, rejects parent traversal/symlink ancestors and refuses to overwrite files. ROM filenames and archive paths never determine output names. `render-map ROM MAP_ID TILES_ID PALETTE_ID WIDTH_TILES HEIGHT_TILES .local/OUTPUT.pam` composes a caller-selected **row-major 4bpp text map** to RGBA PAM with transparent index zero. It does not infer tile bases, native VRAM assembly, OAM, affine layout or screen-block ordering. Those choices need the specific source evidence.
 
-`save` reads six garden sectors in the first 64 KiB bank, reports other trailing bytes, and never repairs/writes a save. `transfer` inspects an explicitly supplied opaque payload and its native length command, not a live hardware transcript or networking session. See [save and transfer evidence](docs/SAVE-TRANSFER.md).
+`save` reads six garden sectors in the first 64 KiB bank, reports other trailing bytes, and never repairs/writes a save. `campaign-save` separately inspects the main game’s ten flash sectors and reports recovery from an in-memory copy. See [campaign save layout and validation](docs/NATIVE-CAMPAIGN-SAVE.md). `transfer` inspects an explicitly supplied opaque payload and its native length command, not a live hardware transcript or networking session. See [save and transfer evidence](docs/SAVE-TRANSFER.md).
 
 ## Coverage and provenance
 

@@ -7,11 +7,12 @@
     "libagbsyscall_libagbsyscall.c": "42d8742465d68a00333967ae1842b34b755eff25"
   },
   "seed": 2730496285,
-  "cases": 8192,
+  "cases": 32768,
+  "fullQuadrants": true,
   "rowWords": 18,
   "unsupportedCases": 0,
-  "outputBytes": 589824,
-  "outputSha256": "2c60576dff6259d99c719df0027d0107902bf82abf42c2716ad42cf97946d720",
+  "outputBytes": 2359296,
+  "outputSha256": "e7ed7423c959eb1d4983bc6d18e5558ed06a98fc83a204f993db68b27412face",
   "playerFunctions": [
     "Player_HandleSpriteYOffsetChange",
     "sub_802195C",
@@ -27,9 +28,13 @@
     "sub_802203C",
     "sub_8022190",
     "sub_80228C0",
+    "sub_80229EC",
+    "sub_8022B18",
+    "sub_8022C44",
+    "sub_8022D6C",
     "sub_8022F58",
     "sub_802302C",
     "sub_8023128"
   ],
-  "scope": "Exact original C normal-gravity player/terrain functions and pinned portable integer angle reference; unsupported attachment cases are rejected by Rust, not claimed as implemented"
+  "scope": "Exact original C normal-gravity player/terrain functions across all rotation quadrants and pinned portable integer angle reference; water/object/special states remain separate"
 }

@@ -1,5 +1,5 @@
 use sonic_advance_2_assets::{
-    VerifiedRom, catalog, gba, graphics, native_save, save_layout, transfer,
+    VerifiedRom, catalog, gba, graphics, native_campaign_save, native_save, save_layout, transfer,
 };
 use std::{
     error::Error,
@@ -119,6 +119,16 @@ fn run(args: &[String]) -> Result<()> {
             write_new(Path::new(&args[7]), &pam)?;
             println!("Rendered {}x{} RGBA map locally", output.width, output.height);
         }
+        Some("campaign-save") if args.len() == 2 => {
+            let bytes = read_limited(Path::new(&args[1]), 16 * native_campaign_save::SECTOR_BYTES)?;
+            let inspection = native_campaign_save::inspect_flash(&bytes)?;
+            let mut session = native_campaign_save::CampaignSaveSession::new(&bytes, true)?;
+            let recovery = session.load_latest(&native_campaign_save::MemoryFlashFaults::default());
+            let profile = recovery.success.then_some(&session.loaded);
+            println!("{}", String::from_utf8(json(&serde_json::json!({
+                "inspection": inspection, "inMemoryRecovery": recovery, "profile": profile
+            }))?)?);
+        }
         Some("save") if args.len() == 2 => {
             let bytes = read_limited(Path::new(&args[1]), 128 * 1024)?;
             let inspection = native_save::inspect_flash(&bytes)?;
@@ -136,7 +146,7 @@ fn run(args: &[String]) -> Result<()> {
             let report = transfer::TransferPayload::parse(command, &bytes)?.report();
             println!("{}", String::from_utf8(json(&report)?)?);
         }
-        _ => return Err("Usage: a2ne-assets catalog ROM [METADATA.json] | extract ROM ID .local/OUTPUT_DIR | render-map ROM MAP_ID TILES_ID PALETTE_ID WIDTH_TILES HEIGHT_TILES .local/OUTPUT.pam | save FLASH.sav | transfer HEX_COMMAND PAYLOAD_FILE".into()),
+        _ => return Err("Usage: a2ne-assets catalog ROM [METADATA.json] | extract ROM ID .local/OUTPUT_DIR | render-map ROM MAP_ID TILES_ID PALETTE_ID WIDTH_TILES HEIGHT_TILES .local/OUTPUT.pam | save FLASH.sav | campaign-save FLASH.sav | transfer HEX_COMMAND PAYLOAD_FILE".into()),
     }
     Ok(())
 }

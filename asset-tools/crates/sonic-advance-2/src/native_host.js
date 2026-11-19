@@ -24,8 +24,8 @@ function draw(buffer) {
   if (frame.width !== 240 || frame.height !== 160 || bytes.length !== 8 + length + 240 * 160 * 4) throw new Error('Invalid native viewport');
   context.putImageData(new ImageData(new Uint8ClampedArray(buffer, 8 + length), 240, 160), 0, 0);
   const state = frame.state;
-  halted = Boolean(state.halted);
-  status.textContent = state.halted || `Frame ${state.frame} · (${(state.player.q_world_x / 256).toFixed(2)}, ${(state.player.q_world_y / 256).toFixed(2)}) · ${state.callback}`;
+  halted = Boolean(state.halted || state.game_over);
+  status.textContent = state.halted || (state.game_over ? `Game over: ${state.game_over}` : null) || `Zone ${1 + (state.level_id >> 2)} Act ${1 + (state.level_id % 4)} · Rings ${state.rings} · Frame ${state.frame} · (${(state.player.q_world_x / 256).toFixed(2)}, ${(state.player.q_world_y / 256).toFixed(2)}) · ${state.callback}`;
   detail.textContent = JSON.stringify(state, null, 2);
   if (halted) setRunning(false);
 }

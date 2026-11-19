@@ -50,10 +50,11 @@ def main():
     args = parser.parse_args()
     if ".local" not in args.local.resolve().parts:
         raise ValueError("Generated reference C/executable must remain under .local")
-    source = (args.references / "src_game_shared_stage_player.c").read_text()
-    move = (args.references / "include_constants_sa2_move_states.h").read_text()
-    states = (args.references / "include_constants_sa2_char_states.h").read_text()
-    params = (args.references / "include_game_shared_parameters_characters.h").read_text()
+    # Git object identities describe exact bytes, including terminal newlines.
+    source = (args.references / "src_game_shared_stage_player.c").read_bytes().decode("utf-8")
+    move = (args.references / "include_constants_sa2_move_states.h").read_bytes().decode("utf-8")
+    states = (args.references / "include_constants_sa2_char_states.h").read_bytes().decode("utf-8")
+    params = (args.references / "include_game_shared_parameters_characters.h").read_bytes().decode("utf-8")
     identities = [
         (source, "0e99fe239ec75a8d188769913aafd9485dc76908"),
         (move, "d6a8a15088d0ace855a532dba713873c04ea608a"),

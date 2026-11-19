@@ -45,6 +45,7 @@ pub enum Callback {
     Airborne,
     Rolling,
     Skidding,
+    Uncurl,
 }
 
 /// Movement fields used by this native slice. This is not a native save layout.
@@ -81,6 +82,11 @@ pub struct PlayerState {
     pub unk61: i8,
     pub unk62: i8,
     pub unk63: i8,
+    #[serde(default)]
+    pub unk6c: bool,
+    pub unk6e: u8,
+    #[serde(default)]
+    pub disable_trick_timer: u8,
     pub unk70: bool,
     pub unk71: u8,
 }
@@ -121,6 +127,9 @@ impl PlayerState {
             unk61: 0,
             unk62: 0,
             unk63: 0,
+            unk6c: false,
+            unk6e: 0,
+            disable_trick_timer: 0,
             unk70: false,
             unk71: 0,
         }
@@ -405,9 +414,7 @@ impl PlayerState {
     }
 
     /// Player_InitJump through the boundary immediately before Player_Jumping.
-    /// sin/cos use `(rotation - 64) * 4` in the native sine table. Boss camera
-    /// correction is supplied only by a host executing an actual boss context.
-    pub fn initialize_jump(&mut self, sin_q8: i32, cos_q8: i32, boss_camera_dx: Option<i16>) {
+    pub(crate) fn cancel_flying_and_boost(&mut self) {
         let cancel = 0x20000000
             | 0x10000000
             | 0x1000000
@@ -431,6 +438,12 @@ impl PlayerState {
         if self.character == Character::Sonic {
             self.move_state &= !0x2000000;
         }
+    }
+
+    /// sin/cos use `(rotation - 64) * 4` in the native sine table. Boss camera
+    /// correction is supplied only by a host executing an actual boss context.
+    pub fn initialize_jump(&mut self, sin_q8: i32, cos_q8: i32, boss_camera_dx: Option<i16>) {
+        self.cancel_flying_and_boost();
         self.move_state |= JUMP_HELD_STATE | IN_AIR;
         self.move_state &= !(0x1000000 | 0x20);
         if self.move_state & SPIN_ATTACK != 0 {

@@ -3,6 +3,7 @@ use serde::Deserialize;
 use sonic_advance_2_assets::{
     ROM_LEN, VerifiedRom, gba,
     native_game::{MAX_REPLAY_FRAMES, NativeHarness, SUPPORTED_INPUT, VIEW_HEIGHT, VIEW_WIDTH},
+    native_stage::{NativeStage, TERRAIN_LEVELS, is_course_act},
 };
 use std::{
     error::Error,
@@ -59,9 +60,9 @@ fn replay_frames(bytes: &[u8]) -> Result<Vec<u16>> {
     Ok(frames)
 }
 
-fn run_replay(rom: &VerifiedRom<'_>, bytes: &[u8]) -> Result<()> {
+fn run_replay(rom: &VerifiedRom<'_>, bytes: &[u8], level: u8) -> Result<()> {
     let frames = replay_frames(bytes)?;
-    let mut game = NativeHarness::new(rom)?;
+    let mut game = NativeHarness::for_level(rom, level)?;
     let mut transitions = vec![game.snapshot()];
     let mut previous = (
         game.snapshot().callback,
@@ -71,11 +72,11 @@ fn run_replay(rom: &VerifiedRom<'_>, bytes: &[u8]) -> Result<()> {
     for keys in &frames {
         let state = game.tick(*keys)?;
         let next = (state.callback, state.player.char_state, state.variant);
-        if next != previous || state.halted.is_some() {
+        if next != previous || state.halted.is_some() || state.game_over.is_some() {
             transitions.push(state.clone());
         }
         previous = next;
-        if state.halted.is_some() {
+        if state.halted.is_some() || state.game_over.is_some() {
             break;
         }
     }
@@ -224,10 +225,10 @@ fn packet(game: &NativeHarness<'_>) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn serve(rom: &VerifiedRom<'_>, port: u16) -> Result<()> {
+fn serve(rom: &VerifiedRom<'_>, port: u16, level: u8) -> Result<()> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))?;
     let host = listener.local_addr()?.to_string();
-    let mut game = NativeHarness::new(rom)?;
+    let mut game = NativeHarness::for_level(rom, level)?;
     println!("A2NE native Rust execution slice: http://{host}/");
     println!("One local session. Left/right and A (Z/space). Ctrl+C stops the lab.");
     for stream in listener.incoming() {
@@ -270,7 +271,7 @@ fn serve(rom: &VerifiedRom<'_>, port: u16) -> Result<()> {
                     )
                 }
                 ("POST", "/reset") if request.body.is_empty() => {
-                    game = NativeHarness::new(rom)?;
+                    game = NativeHarness::for_level(rom, level)?;
                     response(
                         &mut stream,
                         "200 OK",
@@ -300,19 +301,29 @@ fn serve(rom: &VerifiedRom<'_>, port: u16) -> Result<()> {
 
 fn run(args: &[String]) -> Result<()> {
     if args.len() < 2 {
-        return Err("Usage: a2ne-native serve ROM [PORT] | replay ROM INPUTS.json".into());
+        return Err("Usage: a2ne-native stages ROM | serve ROM [PORT [LEVEL_ID]] | replay ROM INPUTS.json [LEVEL_ID]".into());
     }
     let bytes = read_limited(Path::new(&args[1]), ROM_LEN)?;
     let rom = VerifiedRom::parse(&bytes)?;
     match args[0].as_str() {
-        "serve" if (2..=3).contains(&args.len()) => serve(
+        "stages" if args.len() == 2 => {
+            for id in 0..TERRAIN_LEVELS {
+                let stage = NativeStage::for_level(&rom, id)?;
+                let (width, height) = stage.dimensions();
+                let mode = if is_course_act(id) { "course movement" } else { "terrain only" };
+                println!("level {id:2}   {width} x {height}   spawn {:?}   {mode}", stage.spawn);
+            }
+            Ok(())
+        }
+        "serve" if (2..=4).contains(&args.len()) => serve(
             &rom,
             args.get(2).map(|s| s.parse()).transpose()?.unwrap_or(42872),
+            args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(0),
         ),
-        "replay" if args.len() == 3 => {
-            run_replay(&rom, &read_limited(Path::new(&args[2]), 256 * 1024)?)
+        "replay" if (3..=4).contains(&args.len()) => {
+            run_replay(&rom, &read_limited(Path::new(&args[2]), 256 * 1024)?, args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(0))
         }
-        _ => Err("Usage: a2ne-native serve ROM [PORT] | replay ROM INPUTS.json".into()),
+        _ => Err("Usage: a2ne-native stages ROM | serve ROM [PORT [LEVEL_ID]] | replay ROM INPUTS.json [LEVEL_ID]".into()),
     }
 }
 
