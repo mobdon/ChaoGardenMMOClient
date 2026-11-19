@@ -699,6 +699,7 @@ pub fn story_sequence(
     let mut parent = None;
     let mut crossing_positions = None;
     let mut route = None;
+    let mut progressed_route = None;
     let mut highest = None;
     let mut target: Option<crate::kart_story_target::State> = None;
     let constants = rel.data(4)?;
@@ -730,6 +731,7 @@ pub fn story_sequence(
                     stationary,
                 )?;
                 route = Some((r.piece, course_length));
+                progressed_route = route;
                 highest = Some(r.highest);
                 count = r.counter as u32;
                 updates.push(json!({"slotProgress":r}));
@@ -738,6 +740,9 @@ pub fn story_sequence(
             SequenceEvent::PostMove {
                 vehicle_post_move: mut frame,
             } => {
+                if let Some(selected) = progressed_route.take() {
+                    frame.bind_route(selected)?;
+                }
                 frame.bind_story_dispatch(target.map(|t| t.latch), count)?;
                 if target_handle.is_some_and(|handle| handle != frame.work_ec) {
                     return Err(Error::invalid(
@@ -769,7 +774,7 @@ pub fn story_sequence(
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
                 parent = r.frame.as_ref().map(|f| f.pursuit_parent());
                 crossing_positions = r.frame.as_ref().map(|f| f.crossing_positions());
-                route = r.frame.as_ref().map(|f| f.route());
+                route = r.frame.as_ref().and_then(|f| f.route());
                 if let Some(h) = r.frame.as_ref().and_then(|f| f.highest()) {
                     highest = Some(h);
                 }

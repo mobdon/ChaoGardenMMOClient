@@ -34,8 +34,8 @@ pub struct Frame {
     engine_byte_23: i8,
     engine_halfword_68: i16,
     pub(crate) global_24d60: i32,
-    segment: i32,
-    segment_count: i32,
+    segment: Option<i32>,
+    segment_count: Option<i32>,
     position: [f32; 3],
     previous_position: [f32; 3],
     velocity: [f32; 3],
@@ -54,8 +54,20 @@ impl Frame {
     pub(crate) fn crossing_positions(&self) -> ([f32; 3], [f32; 3]) {
         (self.position, self.previous_position)
     }
-    pub(crate) fn route(&self) -> (i32, i32) {
-        (self.segment, self.segment_count)
+    pub(crate) fn route(&self) -> Option<(i32, i32)> {
+        self.segment.zip(self.segment_count)
+    }
+    pub(crate) fn bind_route(&mut self, retained: (i32, i32)) -> Result<()> {
+        if self.segment.is_some_and(|v| v != retained.0)
+            || self.segment_count.is_some_and(|v| v != retained.1)
+        {
+            return Err(crate::Error::invalid(
+                "vehicle route conflicts with slot progress",
+            ));
+        }
+        self.segment = Some(retained.0);
+        self.segment_count = Some(retained.1);
+        Ok(())
     }
     pub(crate) fn highest(&self) -> Option<i32> {
         self.dispatch.as_ref().map(|v| v.work_c8)
@@ -182,6 +194,9 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
             let constants = rel.data(4)?;
             let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
+            let (mut segment, segment_count) = frame
+                .route()
+                .ok_or_else(|| crate::Error::invalid("missing vehicle route"))?;
             frame.cooldown = frame.cooldown.wrapping_sub(1).max(0);
             if frame.work_288 != 0 {
                 frame.work_288 = frame.work_288.wrapping_sub(1);
@@ -203,7 +218,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                         vehicle_state = 10;
                         spawn(&mut r, remaining, mode);
                     }
-                } else if frame.segment > frame.segment_count.wrapping_sub(20) {
+                } else if segment > segment_count.wrapping_sub(20) {
                     if frame.engine_byte_23 == 1 {
                         frame.position = [f(0x1e4), f(0x1f4), f(0x1f8)];
                         frame.previous_position = frame.position;
@@ -217,13 +232,13 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                             })?,
                         ];
                         frame.angles = [0; 3];
-                        frame.segment = 0;
+                        segment = 0;
                     } else {
-                        frame.segment = frame.segment_count.wrapping_sub(25);
+                        segment = segment_count.wrapping_sub(25);
                         frame.position[0] -= f(0x1fc);
                         if frame.work_ec == 0 {
                             match (frame.limousine_allocation.take(), frame.d968_return) {
-                                (Some(a), None) if a.task_handle != 0 && a.segment == frame.segment && a.segment >= 0 => {
+                                (Some(a), None) if a.task_handle != 0 && a.segment == segment && a.segment >= 0 => {
                                     let target = crate::kart_story_target::step_constants(constants, crate::kart_story_target::Input::Spawn {
                                         segment_xz: a.segment_xz, parent_task_y: frame.position[1], mode, latch: a.latch,
                                     })?;
@@ -258,13 +273,11 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                                 "state 7 requires its target segment and observed angle",
                             )
                         })?;
-                        if frame.segment_count <= 0
-                            || !(0..frame.segment_count).contains(&frame.segment)
-                        {
+                        if segment_count <= 0 || !(0..segment_count).contains(&segment) {
                             return Err(crate::Error::invalid("invalid state 7 course segment"));
                         }
-                        let ahead = frame.segment.wrapping_add(2) % frame.segment_count;
-                        let near = frame.segment.wrapping_add(1) % frame.segment_count;
+                        let ahead = segment.wrapping_add(2) % segment_count;
+                        let near = segment.wrapping_add(1) % segment_count;
                         if t.segment != ahead || ahead < 0 || near < 0 {
                             return Err(crate::Error::invalid("wrong state 7 target quad"));
                         }
@@ -306,6 +319,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                 r.next = "engine_8000f4ec";
             }
             r.vehicle_state = Some(vehicle_state);
+            frame.segment = Some(segment);
             r.frame = Some(frame);
         }
         Input::VehicleCountdown {
