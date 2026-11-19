@@ -14,6 +14,7 @@ pub struct Program {
     pub slot_words_offset: u32,
     #[serde(skip)]
     dispatch_codes: Vec<Option<u16>>,
+    pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     pub radii: [f32; 2],
     pub spin: [i32; 2],
@@ -111,6 +112,7 @@ impl Program {
             .reference(1, switch + 0x16)
             .filter(|r| r.module == info.module && r.kind == 4 && r.section == 5)
             .ok_or_else(invalid)?;
+        let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
         for i in 0..93 {
             let (section, branch) = rel
@@ -123,11 +125,44 @@ impl Program {
             dispatch_codes.push(if branch == switch + 0x2b8 {
                 None
             } else if ins >> 16 == 0x3860 {
+                let site = branch + 12;
+                let call = word(instructions, site as usize)?;
+                if call & 0xfc00_0003 != 0x4800_0001 {
+                    return Err(invalid());
+                }
+                let dest = site
+                    .checked_add_signed(((call & 0x03ff_fffc) << 6) as i32 >> 6)
+                    .ok_or_else(invalid)?;
+                if message_helper.replace(dest).is_some_and(|v| v != dest) {
+                    return Err(invalid());
+                }
                 Some(ins as u16)
             } else {
                 return Err(invalid());
             });
         }
+        let h = message_helper.ok_or_else(invalid)?;
+        if manifest::sha256(
+            instructions
+                .get(h as usize..h as usize + 0x98)
+                .ok_or_else(invalid)?,
+        ) != "d311986b7441f00116f026399a3a013990f84219e0fb1faf056b139591e6a06c"
+        {
+            return Err(invalid());
+        }
+        for (off, engine) in [(0x60, 0x800dfe0c), (0x84, 0x800dfe3c)] {
+            if !rel
+                .reference(1, h + off)
+                .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == engine)
+            {
+                return Err(invalid());
+            }
+        }
+        let fallback_message_offset = rel
+            .reference(1, h + 0x7a)
+            .filter(|r| r.module == info.module && r.kind == 4 && r.section == 5)
+            .ok_or_else(invalid)?
+            .addend;
         // Verify the actual callees even though the code hashes cover unrelocated branches.
         for (off, addr) in [
             (0x14, 0x800066f4),
@@ -211,6 +246,7 @@ impl Program {
             contact_offset: start,
             local_effect: target,
             dispatch_codes,
+            fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
             radii,
@@ -412,7 +448,45 @@ struct LifecycleInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MessageContext {
+    pub count: i32,
+    pub handle: u32,
+    pub work_address: u32,
+    pub section5_address: u32,
+    pub indexed: Option<IndexedMessage>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IndexedMessage {
+    pub pointer: u32,
+    pub game_byte_17: i8,
+}
+impl Program {
+    pub fn message_call(&self, code: u16, m: MessageContext) -> Result<Value> {
+        let work = m.work_address.wrapping_add(0x3c);
+        if i32::from(code) < m.count {
+            let entry = m
+                .indexed
+                .ok_or_else(|| Error::invalid("missing indexed goal message"))?;
+            Ok(
+                json!({"engine":0x800dfe0cu32,"args":[m.handle,entry.pointer,120,entry.game_byte_17,work,0]}),
+            )
+        } else {
+            if m.indexed.is_some() {
+                return Err(Error::invalid(
+                    "fallback does not read indexed goal message",
+                ));
+            }
+            Ok(
+                json!({"engine":0x800dfe3cu32,"args":[m.handle,m.section5_address.wrapping_add(self.fallback_message_offset),120,0,work]}),
+            )
+        }
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConsumerInput {
+    message: Option<MessageContext>,
     slot: u8,
     query: i32,
 }
@@ -520,7 +594,15 @@ pub fn replay(
     }
     let consumer = if let Some(c) = r.post_contact_consumer {
         let code = p.consume_goal_word(&mut slot_words, c.slot, c.query)?;
-        Some(json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0}))
+        let mut out =
+            json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0});
+        if let Some(m) = c.message {
+            out["messageCall"] = p.message_call(
+                code.ok_or_else(|| Error::invalid("no message selected"))?,
+                m,
+            )?;
+        }
+        Some(out)
     } else {
         None
     };

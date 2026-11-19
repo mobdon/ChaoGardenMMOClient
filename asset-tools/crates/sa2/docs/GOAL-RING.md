@@ -37,3 +37,14 @@ values skip the helper but still perform these writes. This replay ends at
 that reset. Scheduling the task, executing its nested helper and deciding
 the mission result remain open. Neither the goal write nor this read is
 evidence that the mission controller advanced.
+
+The optional `post_contact_consumer.message` expands that nested call when
+the switch selects a code. The installed helper compares the code to the
+signed message count. An in-range code selects an indexed pointer; otherwise
+the stage passes its section-5 fallback message. Supply the observed
+`count`, selected `handle`, `work_address` and `section5_address`.
+Only the indexed route takes `indexed: {"pointer": ..., "game_byte_17": ...}`.
+The report records the engine address and register arguments. In City Escape
+the fallback string identifies an out-of-range message setting. No message
+text is exported. Message presentation, the separate main-engine call on
+goal contact, and mission completion remain outside this replay.

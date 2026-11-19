@@ -128,7 +128,7 @@ def local_hook(cpu,pc,*_):
     assert reg(4)==WORK+0x3c
     codes.append(reg(3));cpu.reg_write(R.UC_PPC_REG_PC,cpu.reg_read(R.UC_PPC_REG_LR))
 u.hook_add(UC_HOOK_CODE,query_hook,begin=BASE+0x3baa0,end=BASE+0x3baa0)
-u.hook_add(UC_HOOK_CODE,local_hook,begin=BASE+0x39244,end=BASE+0x39244)
+local_stub=u.hook_add(UC_HOOK_CODE,local_hook,begin=BASE+0x39244,end=BASE+0x39244)
 for slot,query in itertools.product((0,1),[-2147483648,*range(2,97),2147483647]):
     codes=[];setreg(5,WORK);setreg(27,TASK);setreg(28,TASK+0x80)
     put(TASK+0x40,'I',WORK);put(WORK+0x54,'I',slot);put(slot_base,'II',41,42);put(slot_base+slot*4,'I',2)
@@ -137,3 +137,36 @@ for slot,query in itertools.product((0,1),[-2147483648,*range(2,97),2147483647])
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+end and len(codes)<=1
     assert get(TASK+0x80,'B')==0 and get(WORK+0x34,'I')==120
     print('D',slot,query,next(iter(codes),-1),get(slot_base,'I'),get(slot_base+4,'I'))
+
+# Execute the nested message selector and capture only its engine boundary.
+u.hook_del(local_stub)
+h=0x39244;bss=DATA+6*0x100000
+map_page(bss+0xdb4)
+u.mem_write(BASE+h,d[ss[1][0]+h:ss[1][0]+h+0x98])
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not h<=off<h+0x98 or kind not in (4,6):continue
+        addr=val+(DATA+s*0x100000 if module==12 else 0)
+        put(BASE+off,'H',(addr if kind==4 else (addr+0x8000)>>16)&65535)
+def message_service(cpu,pc,*_):
+    normal=pc==BASE+0x392a4
+    args=[reg(i) for i in range(3,9 if normal else 8)]
+    if normal:args[3]=struct.unpack('>i',struct.pack('>I',args[3]))[0]
+    observed.append([0x800dfe0c if normal else 0x800dfe3c,*args])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for off in (0x392a4,0x392c8):
+    u.hook_add(UC_HOOK_CODE,message_service,begin=BASE+off,end=BASE+off)
+for code,count,gamebyte in itertools.product((5,90,109),(-1,5,90,109,110),(-128,0,127)):
+    observed=[]
+    put(const_base+0x240200,'i',count);put(const_base+0x240214,'II',35,67)
+    put(bss+0xdb4,'I',TASK+0x400);put(TASK+0x400+code*4,'I',0x12340000+code)
+    put(GLOBAL+17,'b',gamebyte);setreg(1,TASK+0xf00);setreg(3,code);setreg(4,WORK+0x3c)
+    u.reg_write(R.UC_PPC_REG_LR,BASE+h+0x98)
+    u.emu_start(BASE+h,BASE+h+0x98,count=60)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+h+0x98 and len(observed)==1
+    print('T',code,count,gamebyte,*observed[0])

@@ -48,7 +48,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0, 0, 0, 0];
+    let mut counts = [0; 5];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     for line in stdout.lines() {
@@ -73,6 +73,31 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "T" {
+            use sa2_asset_tools::goal_ring::{IndexedMessage, MessageContext};
+            let code = n(1) as u16;
+            let count = n(2);
+            let normal = i32::from(code) < count;
+            let m = MessageContext {
+                count,
+                handle: if normal { 67 } else { 35 },
+                work_address: 0x100100,
+                section5_address: 0x82500000,
+                indexed: normal.then_some(IndexedMessage {
+                    pointer: 0x12340000 + u32::from(code),
+                    game_byte_17: n(3) as i8,
+                }),
+            };
+            let call = program.message_call(code, m).unwrap();
+            assert_eq!(call["engine"], v[4].parse::<u32>().unwrap());
+            assert_eq!(
+                call["args"],
+                serde_json::json!(v[5..]
+                    .iter()
+                    .map(|x| x.parse::<i64>().unwrap())
+                    .collect::<Vec<_>>())
+            );
+            counts[4] += 1;
         } else if v[0] == "D" {
             let slot = n(1) as u8;
             let mut words = [41, 42];
@@ -155,7 +180,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194]);
+    assert_eq!(counts, [720, 280, 40, 194, 45]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]
