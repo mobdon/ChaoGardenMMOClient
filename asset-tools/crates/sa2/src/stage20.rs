@@ -209,12 +209,32 @@ struct Controller {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StateTwo {
-    decision: i32,
+    decision: SteeringDecision,
     slot0: [f32; 3],
     slot1: [f32; 3],
     angle_return: f64,
     slot_byte: i8,
     turn: Option<TurnObservation>,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SteeringDecision {
+    Observed(i32),
+    Inputs(SteeringInputs),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SteeringInputs {
+    slot0_byte: i8,
+    distance_return: f64,
+    facing: Option<FacingObservation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FacingObservation {
+    angle_return: f64,
+    previous_yaw: i32,
+    difference_return: i32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -361,7 +381,26 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         if target != 0xad4 {
             return Err(invalid());
         }
-        let direct = v.decision != 0;
+        let mut decision_trace = None;
+        let direct = match v.decision {
+            SteeringDecision::Observed(value) => value != 0,
+            SteeringDecision::Inputs(inputs) => {
+                let near = inputs.slot0_byte == 7
+                    && inputs.distance_return < f64::from(number(4, field(0x1fa, 4)?)?);
+                let (direct, difference) = match (near, inputs.facing) {
+                    (true, None) => (true, None),
+                    (false, Some(f)) => (
+                        f.difference_return < 0x3000,
+                        Some([heading(0x232, f.angle_return)?, f.previous_yaw]),
+                    ),
+                    _ => return Err(invalid()),
+                };
+                decision_trace = Some(json!({"direct":direct,"distanceArgs":[v.slot0,v.slot1],
+                    "angleArgs":if near {None} else {Some([v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]])},
+                    "differenceArgs":difference}));
+                direct
+            }
+        };
         let desired = heading(if direct { 0xb0e } else { 0xb8e }, v.angle_return)?;
         let (yaw, turn_args, scalar_site) = match (direct, v.turn) {
             (true, None) => (desired, None, if v.slot_byte == 6 { 0xb4a } else { 0xb5e }),
@@ -371,6 +410,9 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         report = json!({"dispatch":target,"continueAt":0xbd0,"mode":mode,
             "angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],
             "turnArgs":turn_args,"yaw":yaw,"scalar":number(4,field(scalar_site,4)?)?});
+        if let Some(trace) = decision_trace {
+            report["decision"] = trace;
+        }
     }
     if let Some(v) = c.state_eight {
         if target != 0x137c {

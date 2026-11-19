@@ -332,10 +332,12 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 assert json.loads(out.read_text())["controller"]["messenger"]==messenger
 print(idx,"opening messenger creations matched")
 
+run_native_decision=False
 def steering_call(cpu,pc,*_):
     site=pc-base[1]
     if site==0xae0:
         assert [cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i))) for i in (3,4,5)]==[work,pose0,pose1]
+        if run_native_decision:return
         cpu.reg_write(R.UC_PPC_REG_3,decision&0xffffffff)
     elif site==0xbb0:
         turn_args.extend(struct.unpack(">i",cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i))).to_bytes(4,"big"))[0] for i in (3,4,5))
@@ -368,3 +370,47 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=0xbd0,mode=mode,
                     angleArgs=args,turnArgs=turn_args or None,yaw=yaw,scalar=scalar)
 print(idx,"state 2/10 steering paths matched")
+
+run_native_decision=True
+def decision_call(cpu,pc,*_):
+    site=pc-base[1]
+    reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x1d4:
+        trace["distanceArgs"]=[list(get(reg(i),"fff")) for i in (3,4)]
+        value=distance
+    elif site==0x228:
+        trace["angleArgs"]=[struct.unpack(">d",reg("FPR"+str(i)).to_bytes(8,"big"))[0] for i in (1,2)]
+        value=helper_angle
+    elif site==0x250:
+        trace["differenceArgs"]=[struct.unpack(">i",reg(i).to_bytes(4,"big"))[0] for i in (3,4)]
+        cpu.reg_write(R.UC_PPC_REG_3,diff&0xffffffff)
+    else:
+        trace["direct"]=bool(reg(3))
+        return
+    if site!=0x250:cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",value),"big"))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1d4,0x228,0x250,0xae4):
+    u.hook_add(UC_HOOK_CODE,decision_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for byte in (6,7):
+        for distance in (99.5,100.,101.):
+            for diff in (-1,0x2fff,0x3000,0x3001):
+                args=[];turn_args=[];trace=dict(angleArgs=None,differenceArgs=None);helper_angle=-0.75;angle=1.3
+                put(player0+1,"b",byte);put(player1+1,"b",6);put(pose1+12,"i",-123)
+                for r,vv in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work)]:
+                    u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),vv)
+                u.emu_start(base[1]+0xad4,base[1]+0xbd0,count=160)
+                assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xbd0
+                dec=dict(slot0_byte=byte,distance_return=distance)
+                if trace["differenceArgs"] is not None:dec["facing"]=dict(angle_return=helper_angle,previous_yaw=-123,difference_return=diff)
+                v=dict(decision=dec,slot0=p0,slot1=p1,angle_return=angle,slot_byte=6)
+                if turn_args:v["turn"]=dict(previous_yaw=-123,result=2468)
+                c=dict(mode=2,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                yaw,scalar=get(0x801e5000,"if")
+                assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=0xbd0,mode=2,
+                    angleArgs=args,turnArgs=turn_args or None,yaw=yaw,scalar=scalar,decision=trace)
+print(idx,"integrated walker steering decisions matched")
