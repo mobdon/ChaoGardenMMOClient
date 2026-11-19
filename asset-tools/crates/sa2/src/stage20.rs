@@ -137,6 +137,7 @@ fn background_updates(rel: &CityRel<'_>, b: Background) -> Result<Value> {
 struct Startup {
     layout_handle: Option<u32>,
     background_allocated: Option<bool>,
+    callback_slots_occupied: Option<[bool; 4]>,
     character_queries: Vec<i32>,
     slot_one_present: bool,
     walker: Option<Walker>,
@@ -244,6 +245,9 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
         }
     }
     let mut report = json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls});
+    if s.callback_slots_occupied.is_some() && s.background_allocated.is_none() {
+        return Err(Error::invalid("final startup requires scene setup"));
+    }
     if s.background_allocated.is_some() && s.layout_handle.is_none() {
         return Err(Error::invalid("background setup requires layout setup"));
     }
@@ -341,6 +345,50 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
             }
             report["sceneSetup"] = json!({"operations":ops,"callbacks":callbacks});
             report["continueAt"] = json!(0x1900);
+            if let Some(occupied) = s.callback_slots_occupied {
+                let absolute = |site| {
+                    rel.reference(1, site)
+                        .filter(|r| r.module == 0 && r.kind == 4)
+                        .map(|r| r.addend)
+                        .ok_or_else(invalid)
+                };
+                let mut final_ops = vec![service(0x1908, json!([pointer(0x1906, 5)?]))?];
+                for (i, (table, offset, target)) in [
+                    (0x1912, 0, 0x1926),
+                    (0x1932, 8, 0x194a),
+                    (0x1956, 36, 0x196e),
+                    (0x197e, 40, 0x1996),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if i == 3 {
+                        final_ops.push(json!({"local":0xca28,"args":[]}));
+                    }
+                    if !occupied[i] {
+                        final_ops.push(json!({"address":absolute(table)?+offset,"localCallback":pointer(target,1)?}));
+                    }
+                }
+                final_ops.push(json!({"local":0x11c78,"args":[name(0x19a2)?,pointer(0x19aa,6)?]}));
+                for site in [0x19b0, 0x19b4] {
+                    final_ops.push(service(site, json!([]))?);
+                }
+                final_ops.push(json!({"local":0x21c50,"args":[name(0x19be)?]}));
+                let mut slots = vec![json!({"engine":absolute(0x19ca)?})];
+                for site in [0x19de, 0x19ea, 0x19f6] {
+                    slots.push(json!({"local":pointer(site,1)?}));
+                }
+                slots.resize(14, Value::Null);
+                final_ops.push(json!({"address":absolute(0x19d2)?,"slots":slots}));
+                final_ops.push(service(0x1a2c, json!([0]))?);
+                final_ops.push(service(0x1a38, json!([name(0x1a36)?]))?);
+                final_ops.push(service(
+                    0x1a4c,
+                    json!([name(0x1a42)?, pointer(0x1a4a, 4)?]),
+                )?);
+                report["finalSetup"] = json!(final_ops);
+                report["continueAt"] = Value::Null;
+            }
         }
     }
     if let Some(w) = s.walker {

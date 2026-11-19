@@ -871,3 +871,46 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
             assert json.loads(out.read_text())["backgroundDraw"]==dict(entry=entry_offset,calls=draw_calls)
 print(idx,"background draw callback traces matched")
+
+# Run the final startup block to its actual return with engine calls captured.
+hook_table=0x801a2638;dispatch_table=0x801e73d8
+u.mem_map(hook_table&~4095,4096)
+put(base[1]+0x19a6,"H",(layout_bss+4+32768)>>16);put(base[1]+0x19aa,"H",(layout_bss+4)&65535)
+def final_service(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    name=lambda addr:bytes(cpu.mem_read(addr,32)).split(b"\0")[0].decode()
+    if site in (0x1928,0x194c,0x1970,0x1998):
+        final_ops.append(dict(address=reg(4),localCallback=reg(0)-base[1]));return
+    if site in (0x1974,0x19ac,0x19c0):
+        target=site+(get(pc,"I")[0]&0x03fffffc)
+        args=[] if site==0x1974 else [name(reg(3))]
+        if site==0x19ac:args.append(reg(4)-layout_bss)
+        final_ops.append(dict(local=target,args=args))
+    else:
+        if site==0x1a2c:
+            slots=[dict(engine=v) if j==0 else dict(local=v-base[1]) if v else None for j,v in enumerate(get(dispatch_table,"14I"))]
+            final_ops.append(dict(address=dispatch_table,slots=slots));args=[reg(3)]
+        elif site==0x1908:args=[reg(3)-base[5]]
+        elif site==0x1a38:args=[name(reg(3))]
+        elif site==0x1a4c:args=[name(reg(3)),reg(4)-base[4]]
+        else:args=[]
+        final_ops.append(dict(site=site,engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1908,0x1928,0x194c,0x1970,0x1974,0x1998,0x19ac,0x19b0,0x19b4,0x19c0,0x1a2c,0x1a38,0x1a4c):
+    u.hook_add(UC_HOOK_CODE,final_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for mask in range(16):
+        final_ops=[];occupied=[bool(mask&(1<<i)) for i in range(4)]
+        for off,used in zip((0,8,36,40),occupied):put(hook_table+off,"I",0x1234 if used else 0)
+        u.mem_write(dispatch_table,b"\xab"*56);put(0x100e14,"I",stop)
+        u.reg_write(R.UC_PPC_REG_1,0x100e00);u.emu_start(base[1]+0x1900,stop,count=150)
+        assert u.reg_read(R.UC_PPC_REG_PC)==stop
+        for off,used in zip((0,8,36,40),occupied):
+            if used:assert get(hook_table+off,"I")[0]==0x1234
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],startup=dict(
+            character_queries=[7],slot_one_present=False,layout_handle=0,background_allocated=False,callback_slots_occupied=occupied))))
+        out=Path(tmp)/f"{mask}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        report=json.loads(out.read_text())["startup"]
+        assert report["continueAt"] is None and report["finalSetup"]==final_ops
+print("16 startup finalization paths matched")
