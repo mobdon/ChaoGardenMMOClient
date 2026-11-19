@@ -129,3 +129,16 @@ verify entitlement. Models/textures decoded successfully do not establish native
 gameplay parity.
 
 For `kart-contact-step`, optional `tail` (requires `result` and `wall`) continues CartD through return at 0x3020. Supply `post_alignment_angles`, `observed_local_velocity` from 0x5498, `observed_raw_magnitude` from the engine, and signed `work_d4`. For work_70 slots 0 and 1, supply `ring` with the matching slot, cursor (0–59), and 60 triples each of velocities and rotations; omit it for negative slots. Reuse the returned ring on the next tick. Copy response.tail.motion_history into drift.motion_history for kart-drive-input: these are the newest 30 raw velocity samples, after the write, not transformed velocities. The engine query, alignment and matrix math are not implemented by this callback comparison.
+
+### AHX voice conversion
+
+Use `sa2-assets ahx INPUT.ahx .local/voice.wav` for extracted, unencrypted mono voices. The converter reconstructs Layer II frames, keeps decoder state across frames and trims the float WAV to the source sample count. The conversion manifest records the source hash.
+
+A local comparison decoded every installed event-bank entry separately with the Rust release binary and vgmstream-cli (`-W 4`). Every sample count matched the AHX header and the reference WAV. Waveform comparison used corresponding samples without alignment shifts or normalization.
+
+| Bank | Clips | Mono samples | Clips with reference peaks outside ±1 | Samples outside ±1 | Largest absolute error after limiting reference to ±1 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| event_adx.afs | 2,727 | 208,701,648 | 1,629 | 87,762 | 0.000001565 |
+| event_adx_e.afs | 2,727 | 198,635,282 | 1,184 | 47,736 | 0.000001193 |
+
+The decoder clips peaks outside ±1. Against the original float reference, the maximum absolute sample differences were 0.619 and 0.443 respectively. The conversion does not preserve this headroom. This comparison covers offline voice conversion only; playback, cue selection and mixing require separate verification.
