@@ -11,7 +11,7 @@ pub(super) struct Replay {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-enum Tick {
+pub(super) enum Tick {
     Paused,
     Active {
         rotated_vector: Option<Vec3>,
@@ -20,22 +20,66 @@ enum Tick {
         hit_other: bool,
     },
 }
-pub(super) fn run(
-    replay: Replay,
-    target: Vec3,
-    mut angles: [i32; 3],
-    offset: i32,
-) -> Result<Value> {
-    let mut p = replay.anchor_position;
-    if replay.ticks.len() > 2048 || !p.iter().all(|v| v.is_finite()) {
-        return Err(Error::invalid("invalid shot replay"));
+pub(super) fn run(replay: Replay, target: Vec3, angles: [i32; 3], offset: i32) -> Result<Value> {
+    if replay.ticks.len() > 2048 {
+        return Err(Error::invalid("too many projectile updates"));
     }
-    let (mut sub, mut timer, mut t, mut step) = (0, 0u16, 0f32, 0f32);
-    let mut v = [0.; 3];
-    let mut cp = [[0.; 3]; 4];
-    let mut rows = Vec::new();
-    let mut removed = false;
-    for tick in replay.ticks {
+    let mut state = State::launch(replay.anchor_position, target, angles, offset)?;
+    let rows = replay
+        .ticks
+        .into_iter()
+        .map(|tick| state.update(tick))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(json!(rows))
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct State {
+    p: Vec3,
+    target: Vec3,
+    angles: [i32; 3],
+    offset: i32,
+    sub: u8,
+    timer: u16,
+    t: f32,
+    step: f32,
+    v: Vec3,
+    cp: [Vec3; 4],
+    removed: bool,
+}
+impl State {
+    pub(super) fn launch(p: Vec3, target: Vec3, angles: [i32; 3], offset: i32) -> Result<Self> {
+        if !p.iter().chain(&target).all(|n| n.is_finite()) {
+            return Err(Error::invalid("invalid projectile position"));
+        }
+        Ok(Self {
+            p,
+            target,
+            angles,
+            offset,
+            sub: 0,
+            timer: 0,
+            t: 0.,
+            step: 0.,
+            v: [0.; 3],
+            cp: [[0.; 3]; 4],
+            removed: false,
+        })
+    }
+    pub(super) fn update(&mut self, tick: Tick) -> Result<Value> {
+        let Self {
+            mut p,
+            target,
+            mut angles,
+            offset,
+            mut sub,
+            mut timer,
+            mut t,
+            mut step,
+            mut v,
+            mut cp,
+            mut removed,
+        } = *self;
         if removed {
             return Err(Error::invalid("shot update after removal request"));
         }
@@ -137,7 +181,21 @@ pub(super) fn run(
             removed = !events.is_empty();
             events.push("register");
         }
-        rows.push(json!({"position":p,"velocity":v,"timer":timer,"submode":sub,"curveTime":t,"curveStep":step,"rotation":rotation,"events":events,"angles":angles,"atanArgs":atan_args,"impacts":impacts}));
+        *self = Self {
+            p,
+            target,
+            angles,
+            offset,
+            sub,
+            timer,
+            t,
+            step,
+            v,
+            cp,
+            removed,
+        };
+        Ok(
+            json!({"position":p,"velocity":v,"timer":timer,"submode":sub,"curveTime":t,"curveStep":step,"rotation":rotation,"events":events,"angles":angles,"atanArgs":atan_args,"impacts":impacts}),
+        )
     }
-    Ok(json!(rows))
 }

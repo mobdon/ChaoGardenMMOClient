@@ -20,6 +20,7 @@ pub(super) struct Flight {
     landing: Option<Vec<landing::Tick>>,
     recovery: Option<Vec<recovery::Tick>>,
     next_takeoff: Option<super::takeoff::Restart>,
+    volley_frames: Option<Vec<volley::Frame>>,
     ground_volley: Option<[volley::Launch; 8]>,
     center_approach: Option<Vec<CenterTick>>,
     extra_byte2: Option<u8>,
@@ -64,6 +65,7 @@ pub(super) fn run(
         center_approach,
         landing,
         ground_volley,
+        volley_frames,
         recovery,
         next_takeoff,
         aim,
@@ -283,6 +285,9 @@ pub(super) fn run(
         return Err(Error::invalid("aim requires center approach"));
     }
     let mut recovery_flags = None;
+    if volley_frames.is_some() && ground_volley.is_none() {
+        return Err(Error::invalid("volley frames require ground volley"));
+    }
     if let Some(ticks) = landing {
         let (rows, next) = landing::run(
             landing_entry
@@ -297,6 +302,7 @@ pub(super) fn run(
                     Error::invalid("ground volley requires finished landing animation")
                 })?,
                 observations,
+                volley_frames,
             )?;
             trace.volley = Some(rows);
             recovery_flags = Some(flags);

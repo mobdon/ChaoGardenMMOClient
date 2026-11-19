@@ -280,6 +280,20 @@ def defeat_clock(low):
         raise AssertionError("no defeat handoff")
     finally:
         for handle in handles:u.hook_del(handle)
+def step_shot(h,j,k):
+    global rotation_angle,hit_player,hit_other,rotations,transformed,events,removals,impacts,atan_args,atan_results
+    rotation_angle=[]
+    paused=k==1
+    put(2149367176+0x37,"B",int(paused));hit_player=j==2 and k==4;hit_other=j in (2,3) and k==4
+    rotations=[];transformed=[];events=[];removals=[];impacts=[];atan_args=[];atan_results=[]
+    invoke(0x57dcc,h)
+    assert len(removals)==sum(e!="register" for e in events)
+    observation=("paused" if paused else dict(active=dict(atan_results=atan_results,rotated_vector=transformed or None,hit_player=hit_player,hit_other=hit_other)))
+    row=(dict(position=list(get(h+0x94,"fff")),velocity=list(get(h+0x100,"fff")),timer=get(h+0x86,"H")[0],
+        submode=get(h+0x81,"B")[0],curveTime=get(h+0x140,"f")[0],curveStep=get(h+0x144,"f")[0],
+        rotation=rotations[0] if rotations else None,events=events,impacts=impacts,atanArgs=atan_args or None,angles=list(get(h+0x88,"iii"))))
+    put(2149367176+0x37,"B",0)
+    return observation,row,bool(removals)
 rng=random.Random(60)
 positions=[[0,7,0],[120,50,0],[72,-70,96],[120.00001,1,0],[119.99999,1,0]]
 positions.extend([[rng.uniform(-180,180),rng.uniform(-30,30),rng.uniform(-180,180)] for _ in range(96)])
@@ -488,14 +502,34 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         request["first_flight"]["landing"]=landing
         shots=[];expected_volley=[]
         assert len(children)==8
+        schedule=[];live=set();retired=set();ages=[0]*8;overlap=0
+        def child_phase(indices):
+            obs=[];rows=[]
+            for idx in indices:
+                if idx in retired:continue
+                h,anchor=children[idx]
+                if idx in live:
+                    inp,out,dead=step_shot(h,7-idx,ages[idx]);ages[idx]+=1
+                    obs.append(dict(slot=idx,update=dict(flight=inp)));rows.append(dict(slot=idx,flight=out))
+                    if dead:retired.add(idx);live.remove(idx)
+                else:
+                    loc=[float(5+idx+frame/16),18.,idx-5.]
+                    put(D+6*0x400000+anchor,"fff",*loc);invoke(0x57dcc,h)
+                    obs.append(dict(slot=idx,update=dict(attached=loc)));rows.append(dict(slot=idx,anchorOffset=anchor,
+                        position=list(get(h+0x94,"fff")),angles=list(get(h+0x88,"iii"))))
+            return obs,rows
         for frame in range(300):
             j=len(shots)%8;rv=[0,1,8,12345,16384,24576,32766,32767][j]
             hd=-777+j;dv=2147483600 if j==0 else -319+j
             position=[float(frame),j*0.25,-j*1.5];put(PLAYER+20,"fff",*position)
-            for idx,(h,anchor) in enumerate(children[:get(EXTRA+1,"B")[0]]):
-                loc=(180 if idx==7 and case==2 else 10+anchor/4+frame/16,12+case,idx-5)
-                put(D+6*0x400000+anchor,"fff",*loc);invoke(0x57dcc,h)
-                assert get(h+0x94,"fff")==loc
+            if case==1:
+                before_ids=[i for i in range(8) if (i+frame)%2==0]
+                before,before_rows=child_phase(before_ids)
+            else:
+                for idx,(h,anchor) in enumerate(children[:get(EXTRA+1,"B")[0]]):
+                    loc=(180 if idx==7 and case==2 else 10+anchor/4+frame/16,12+case,idx-5)
+                    put(D+6*0x400000+anchor,"fff",*loc);invoke(0x57dcc,h)
+                    assert get(h+0x94,"fff")==loc
             released=[];dv_args=[];volley_motion=[]
             invoke(0x2820,BOSS)
             shot=None;remaining=get(EXTRA+1,"B")[0]
@@ -505,26 +539,30 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
                 shot=dict(slot=remaining,anchorOffset=anchor,angles=list(get(h+0x88,"iii")),target=list(get(h+0x148,"fff")),
                     differenceArgs=dv_args[0],headingOffset=get(h+0x130,"i")[0],speed=get(h+0x13c,"f")[0],
                     mode=get(h+0x80,"B")[0],submode=get(h+0x81,"B")[0])
-                shot_ticks=[];shot_rows=[];rotation_angle=[];anchor_position=list(get(h+0x94,"fff"))
-                for k in range(300):
-                    paused=k==1
-                    put(2149367176+0x37,"B",int(paused));hit_player=j==2 and k==4;hit_other=j in (2,3) and k==4
-                    rotations=[];transformed=[];events=[];removals=[];impacts=[];atan_args=[];atan_results=[]
-                    invoke(0x57dcc,h)
-                    assert len(removals)==sum(e!="register" for e in events)
-                    shot_ticks.append("paused" if paused else dict(active=dict(atan_results=atan_results,rotated_vector=transformed or None,hit_player=hit_player,hit_other=hit_other)))
-                    shot_rows.append(dict(position=list(get(h+0x94,"fff")),velocity=list(get(h+0x100,"fff")),timer=get(h+0x86,"H")[0],
-                        submode=get(h+0x81,"B")[0],curveTime=get(h+0x140,"f")[0],curveStep=get(h+0x144,"f")[0],
-                        rotation=rotations[0] if rotations else None,events=events,impacts=impacts,atanArgs=atan_args or None,angles=list(get(h+0x88,"iii"))))
-                    if removals:break
-                assert removals
-                shots[-1]["flight"]=dict(anchor_position=anchor_position,ticks=shot_ticks);shot["flight"]=shot_rows
+                if case==1:live.add(remaining)
+                else:
+                    shot_ticks=[];shot_rows=[];rotation_angle=[];anchor_position=list(get(h+0x94,"fff"))
+                    for k in range(300):
+                        observation,row,dead=step_shot(h,j,k)
+                        shot_ticks.append(observation);shot_rows.append(row)
+                        if removals:break
+                    assert removals
+                    shots[-1]["flight"]=dict(anchor_position=anchor_position,ticks=shot_ticks);shot["flight"]=shot_rows
             expected_volley.append(dict(mode=get(WORK,"B")[0],submode=get(WORK+1,"B")[0],timer=get(WORK+6,"H")[0],
                 flags=get(WORK+4,"H")[0],remaining=remaining,burst=get(motion+0xbc,"f")[0],launch=shot,
                 motion=volley_motion[0] if volley_motion else None))
+            if case==1:
+                overlap=max(overlap,len(live))
+                after,after_rows=child_phase(i for i in reversed(range(8)) if i not in before_ids)
+                schedule.append(dict(before=before,after=after))
+                expected_volley[-1].update(beforeBoss=before_rows,afterBoss=after_rows)
             if expected_volley[-1]["mode"]==6:break
         assert len(shots)==8 and expected_volley[-1]["mode"]==6
         request["first_flight"]["ground_volley"]=shots
+        if case==1:
+            assert overlap>=2 and len(retired)==8
+            request["first_flight"]["volley_frames"]=schedule
+            print("shared frames:",len(schedule),"peak live shots:",overlap,"flight updates:",sum(ages))
         recovery=[];expected_recovery=[]
         headings=iter([-16384,-16640,-16128,-16641 if case==1 else -16127])
         waiting=0
@@ -559,11 +597,23 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         req.write_text(json.dumps(request));out=tmp/f"flight{case}.json"
         subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
         replay=json.loads(out.read_text())["replay"]
+        if case==1:
+            import copy
+            for reason in ("duplicate","late attachment"):
+                bad=copy.deepcopy(request)
+                frames=bad["first_flight"]["volley_frames"]
+                if reason=="duplicate":frames[0]["after"].append(frames[0]["before"][0])
+                else:
+                    first_active=next(c for f in frames for c in f["before"]+f["after"] if "flight" in c["update"])
+                    first_active["update"]={"attached":[0,0,0]}
+                req.write_text(json.dumps(bad))
+                rejected=subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(tmp/("bad-"+reason+".json")),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],capture_output=True,text=True)
+                assert rejected.returncode!=0 and ("duplicate child callback" if reason=="duplicate" else "disagrees with launch state") in rejected.stderr
         for k,expected in [("groundRecovery",expected_recovery),("nextTakeoff",expected_restart)]:
             for a,e in zip(replay[k],expected,strict=True):assert a==e,(k,case,a,e)
         print("recovery and second takeoff matched:",len(recovery),len(expected_restart))
         for a,e in zip(replay["groundVolley"],expected_volley,strict=True):assert a==e,(case,a,e)
-        print("child flight updates:",sum(len(o["flight"]["ticks"]) for o in shots))
+        print("child flight updates:",sum(len(o["flight"]["ticks"]) for o in shots if "flight" in o))
         print("volley to mode 6:",len(expected_volley),"updates;",len(shots),"launches")
         for a,e in zip(replay["landing"],expected_landing,strict=True):assert a==e,(case,a,e)
         print("landing through mode 8:",len(landing))
