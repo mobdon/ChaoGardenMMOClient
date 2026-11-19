@@ -558,7 +558,8 @@ def model_service(cpu,pc,*_):
     if pc==BASE+mh+0x98:
         assert reg(3)==model_mem and reg(4)==0x12345678
         ins=read32(pc);target=pc-BASE+((ins&0x03fffffc)^0x02000000)-0x02000000
-        call=["local",target,model,"previousReturn"]
+        display[-1][1]["calls"].append(["local",target,model,"previousReturn"])
+        return  # let the native branch enter the submission wrapper
     else:
         dst=model_imports[pc];args=[]
         if dst==0x80116ad0:
@@ -571,6 +572,38 @@ def model_service(cpu,pc,*_):
     display[-1][1]["calls"].append(call)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in [*model_imports,BASE+mh+0x98,BASE+mh+0xc4]:cpu.hook_add(UC_HOOK_CODE,model_service,begin=pc,end=pc)
+# Load the original model pointer and execute the wrapper through its real return.
+sub=0x17090
+cpu.mem_map((BASE+sub)&~4095,4096)
+cpu.mem_write(BASE+sub,d[ss[1][0]+sub:ss[1][0]+sub+0x6c])
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section==5 and off==model and kind==1:
+            assert module==12 and s==5
+            write32(model_mem,DATA+val)
+        if section==1 and off==sub+0x48 and kind==10:
+            assert module==0
+            submit_engine=val
+def submit_service(cpu,pc,*_):
+    record=display[-1][1]
+    reg=lambda n:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(n)))
+    if pc==BASE+sub+0x68:
+        record["modelPointerRestored"]=read32(model_mem)-DATA;return
+    if pc==BASE+sub+0x3c:
+        assert reg(5)==0x12345678 and reg(4)==read32(model_mem)
+        ins=read32(pc);target=pc-BASE+((ins&0x03fffffc)^0x02000000)-0x02000000
+        call=["local",target,reg(3),reg(4)-DATA,"previousReturn",reg(6)]
+    else:
+        assert reg(3)==model_mem
+        call=["engine",submit_engine,reg(3)-DATA,{"modelPointerDuring":read32(reg(3))}]
+    record["calls"].append(call)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for off in (0x3c,0x48,0x68):cpu.hook_add(UC_HOOK_CODE,submit_service,begin=BASE+sub+off,end=BASE+sub+off)
 def manager_run(entry,arg=manager):
     cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,arg)
     cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x238)

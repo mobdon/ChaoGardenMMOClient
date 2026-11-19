@@ -171,4 +171,10 @@ arguments, and the ratio passed to the engine. The selected color is
 forwarded to the model submission routine as `previousReturn`; the engine
 color computation is not replayed. The helper then pops its transform and
 restores the model field. The comparison uses the module's initial model
-state. Final model submission and rendered pixels remain unverified.
+state. The submission wrapper passes the original section-5 source pointer, a
+scratch address, the color service return and 65535 to its preparation
+routine. It temporarily replaces the model's first pointer with the scratch
+address for the engine draw call, then restores the original pointer.
+The City Escape comparator runs these writes and observes the pointer at the
+draw call and after return. The scratch contents, renderer and pixels
+remain unverified.

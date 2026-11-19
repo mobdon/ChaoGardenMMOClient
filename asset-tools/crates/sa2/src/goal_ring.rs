@@ -81,6 +81,8 @@ struct PositionModel {
     bias: f32,
     colors: [u32; 2],
     submit: u32,
+    source: u32,
+    prepare: u32,
 }
 impl PositionModel {
     fn trace(&self, radius: f32, ratio: f32) -> Value {
@@ -88,7 +90,9 @@ impl PositionModel {
         json!({"model":self.model,"field20During":(self.bias+radius).to_bits(),"calls":[
         ["engine",0x80116ad0u32,self.texture],["engine",0x80115d50u32],["engine",0x80114e30u32,0,scale,scale,scale],
         ["engine",0x80033248u32,self.colors[0],self.colors[1],ratio.to_bits()],
-        ["local",self.submit,self.model,"previousReturn"],["engine",0x80115d9cu32]],"field20Restored":self.base.to_bits()})
+        ["local",self.submit,self.model,"previousReturn"],
+        ["local",self.prepare,0x80fffe60u32,self.source,"previousReturn",65535],
+        ["engine",0x8011de10u32,self.model,{"modelPointerDuring":0x80fffe60u32}],["engine",0x80115d9cu32]],"modelPointerRestored":self.source,"field20Restored":self.base.to_bits()})
     }
 }
 #[derive(Deserialize)]
@@ -624,6 +628,32 @@ impl Program {
                         if ins & 0xfc000003 != 0x48000001 {
                             return Err(invalid());
                         }
+                        let submit = site
+                            .checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
+                            .ok_or_else(invalid)?;
+                        let sub = instructions
+                            .get(submit as usize..submit as usize + 0x6c)
+                            .ok_or_else(invalid)?;
+                        let mut signature = sub.to_vec();
+                        let branch = word(sub, 0x3c)?;
+                        if branch & 0xfc000003 != 0x48000001 {
+                            return Err(invalid());
+                        }
+                        signature[0x3c..0x40].copy_from_slice(&0x48000001u32.to_be_bytes());
+                        if manifest::sha256(&signature)
+                            != "5efdaa2e2578ff6ed7a5847f8147275ae761b99f85a685fa708d51f19f3ce012"
+                            || !rel.reference(1, submit + 0x48).is_some_and(|r| {
+                                r.module == 0 && r.kind == 10 && r.addend == 0x8011de10
+                            })
+                        {
+                            return Err(invalid());
+                        }
+                        let prepare = (submit + 0x3c)
+                            .checked_add_signed(((branch & 0x03fffffc) << 6) as i32 >> 6)
+                            .ok_or_else(invalid)?;
+                        let (5, source) = rel.local_pointer(5, model)?.ok_or_else(invalid)? else {
+                            return Err(invalid());
+                        };
                         let model_draw = PositionModel {
                             model,
                             texture: field(0x52, 5)?,
@@ -633,9 +663,9 @@ impl Program {
                                 word(rel.data(5)?, field(0x76, 5)? as usize)?,
                                 word(rel.data(5)?, field(0x82, 5)? as usize)?,
                             ],
-                            submit: site
-                                .checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
-                                .ok_or_else(invalid)?,
+                            submit,
+                            prepare,
+                            source,
                         };
                         let tick = data(0x42, 1)?;
                         let hook = data(0xc2, 1)?;
