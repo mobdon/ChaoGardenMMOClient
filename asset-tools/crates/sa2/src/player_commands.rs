@@ -4,12 +4,14 @@ use sa2_asset_tools::{
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="stage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
+pub(super) const USAGE:&str="city-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
+        "player-physics" | "city-board-resources" => Some(3),
         "campaign-camera" => Some(8),
         "event-camera" => Some(6),
-        "stage-bind" | "campaign-frame" => Some(7),
+        "city-board-pose" | "stage-bind" | "campaign-frame" => Some(7),
+        "city-spawn-ground" => Some(5),
         "stage-positions" | "death-zones" | "stage-paths" | "story" | "event-frame"
         | "demo-frame" => Some(4),
         _ => None,
@@ -168,6 +170,59 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
     let label = source_label(input, root)?;
     let mut extras = Vec::new();
     let doc = match command {
+        "city-board-pose" | "city-spawn-ground" => {
+            let exe = Path::new(&args[3]);
+            extras.push(Extra::read(
+                exe,
+                source_label(exe, root)?,
+                128 * 1024 * 1024,
+                "pc-executable",
+            )?);
+            let exe = &extras[0].bytes;
+            if command == "city-board-pose" {
+                let variant = board_variant(&args[4])?;
+                let action: i16 = number(&args[5])?;
+                let frame = finite_argument(&args[6])?;
+                let (bank, address_space) = if bytes.starts_with(b"MZ") {
+                    (sa2_asset_tools::board_motion::read_pc(&bytes)?, "pe_rva")
+                } else {
+                    let rel = sa2_asset_tools::city_rel::CityRel::read(&bytes)?;
+                    (sa2_asset_tools::board_motion::read(&rel)?, "rel_section_5")
+                };
+                let motion = bank
+                    .for_action(action)
+                    .ok_or_else(|| Error::invalid("no stage board default for action"))?;
+                if frame < 0. || frame >= f64::from(motion.frame_count) {
+                    return Err(Error::invalid("board frame outside motion duration"));
+                }
+                let native = sa2_asset_tools::board_model::extract(exe, variant)?;
+                let source_model = model::read_model(&native.sa2mdl)?;
+                let sample = pose::evaluate_model_pose(&source_model, Some(motion), frame)?;
+                json!({"variant":variant,"riderAction":action,"defaultMotionSlot":action+24,"motionAddressSpace":address_space,"motionOffset":motion.offset,
+                    "textureNames":native.texture_names,"pose":sample,"scope":"Board-local pose from the original stage default motion; live replacement slots and rider/world transform are external."})
+            } else {
+                let distance = finite_argument(&args[4])?;
+                let row = stage_positions::for_stage(exe, 13)?
+                    .into_iter()
+                    .find(|r| {
+                        r.character == "Sonic" && r.kind == stage_positions::PositionKind::Start
+                    })
+                    .ok_or_else(|| Error::invalid("missing Sonic City Escape start row"))?;
+                let world = collision::bake_stage(&city_collision(&bytes)?, 1.)?;
+                let mut probes = Vec::new();
+                for p in &row.poses {
+                    let hit = world.raycast(p.position.map(f64::from), [0., -1., 0.], distance)?;
+                    probes.push(json!({"pose":p,"hit":hit}));
+                }
+                json!({"stage":13,"character":row.character,"startRowVa":row.row_va,"maxDistance":distance,"probes":probes,
+                    "scope":"Downward rays from the three authored PC start variants against the supplied module's static collision; these are not observed player contacts."})
+            }
+        }
+        "city-board-resources" => {
+            let rel = sa2_asset_tools::city_rel::CityRel::read(&bytes)?;
+            json!({"dataSection":5,"resources":rel.board_resources()?})
+        }
+        "player-physics" => serde_json::to_value(sa2_asset_tools::player_physics::read(&bytes)?)?,
         "stage-bind" => {
             let exe = Path::new(&args[3]);
             extras.push(Extra::read(

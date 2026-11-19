@@ -32,7 +32,7 @@ reviewed follow-ups, tracked through the server coordination board.
 The `codex/sa2-stage-gameplay` milestone follows the original campaign tables
 through the first Hero, Dark and Last event cameras and can mount both normal
 City Escape layers. [Run it locally and see exactly what was compared](CAMPAIGN-ENTRY.md).
-Passing these checks does not satisfy the main-game or integration gates below.
+The next [City Escape board milestone](CITY-BOARD.md) resolves original board models and stage motions, executes the attached-board update, and queries the native stage collision below Sonic’s spawn. It still requires externally observed rider state. Passing these checks does not satisfy the main-game or integration gates below.
 
 ## Full-game acceptance gates
 
