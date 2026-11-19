@@ -197,6 +197,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Controller {
+    state_two: Option<StateTwo>,
     state_seven: Option<StateSeven>,
     state_eight: Option<StateEight>,
     state_one: Option<StateOne>,
@@ -204,6 +205,22 @@ struct Controller {
     engine_bytes: [i8; 3],
     player_flags: [u16; 2],
     opening: Option<Opening>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateTwo {
+    decision: i32,
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    angle_return: f64,
+    slot_byte: i8,
+    turn: Option<TurnObservation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TurnObservation {
+    previous_yaw: i32,
+    result: i32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -331,19 +348,37 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         }
         report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"timerWrite":timer,"counter":counter,"operations":ops});
     }
+    let heading = |site, angle: f64| -> Result<i32> {
+        let at = field(site, 4)? as usize;
+        let bytes = rel.data(4)?.get(at..at + 8).ok_or_else(invalid)?;
+        let units = (angle * f64::from_be_bytes(bytes.try_into().unwrap())).trunc();
+        if !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&units) {
+            return Err(invalid());
+        }
+        Ok(0x4000i32.wrapping_sub(units as i32))
+    };
+    if let Some(v) = c.state_two {
+        if target != 0xad4 {
+            return Err(invalid());
+        }
+        let direct = v.decision != 0;
+        let desired = heading(if direct { 0xb0e } else { 0xb8e }, v.angle_return)?;
+        let (yaw, turn_args, scalar_site) = match (direct, v.turn) {
+            (true, None) => (desired, None, if v.slot_byte == 6 { 0xb4a } else { 0xb5e }),
+            (false, Some(t)) => (t.result, Some([t.previous_yaw, desired, 0x180]), 0xbc6),
+            _ => return Err(invalid()),
+        };
+        report = json!({"dispatch":target,"continueAt":0xbd0,"mode":mode,
+            "angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],
+            "turnArgs":turn_args,"yaw":yaw,"scalar":number(4,field(scalar_site,4)?)?});
+    }
     if let Some(v) = c.state_eight {
         if target != 0x137c {
             return Err(invalid());
         }
         let mut counter = v.counter;
         let mut ops = vec![0x1394];
-        let factor_at = field(0x139e, 4)? as usize;
-        let factor = f64::from_be_bytes(rel.data(4)?[factor_at..factor_at + 8].try_into().unwrap());
-        let units = (v.angle_return * factor).trunc();
-        if !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&units) {
-            return Err(invalid());
-        }
-        let yaw = 0x4000i32.wrapping_sub(units as i32);
+        let yaw = heading(0x139e, v.angle_return)?;
         let pulse = v.pose_word != 0 && counter & 7 == 0;
         if v.pose_word == 0 {
             let draw = v.draw.ok_or_else(invalid)? as f32;

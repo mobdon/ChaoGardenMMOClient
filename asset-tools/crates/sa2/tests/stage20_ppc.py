@@ -331,3 +331,40 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["controller"]["messenger"]==messenger
 print(idx,"opening messenger creations matched")
+
+def steering_call(cpu,pc,*_):
+    site=pc-base[1]
+    if site==0xae0:
+        assert [cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i))) for i in (3,4,5)]==[work,pose0,pose1]
+        cpu.reg_write(R.UC_PPC_REG_3,decision&0xffffffff)
+    elif site==0xbb0:
+        turn_args.extend(struct.unpack(">i",cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i))).to_bytes(4,"big"))[0] for i in (3,4,5))
+        cpu.reg_write(R.UC_PPC_REG_3,2468)
+    else:
+        args.extend(struct.unpack(">d",cpu.reg_read(r).to_bytes(8,"big"))[0] for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2))
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",angle),"big"))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0xae0,0xb04,0xb84,0xbb0):
+    u.hook_add(UC_HOOK_CODE,steering_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for mode in (2,10):
+        for decision in (-1,0,1):
+            for slot,angle in [(6,-2.7),(7,1.3)]:
+                args=[];turn_args=[]
+                put(pose0+20,"fff",*p0);put(pose1+20,"fff",*p1)
+                put(pose1+12,"i",-123);put(player1+1,"b",slot)
+                for r,v in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work)]:
+                    u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
+                u.emu_start(base[1]+0xad4,base[1]+0xbd0,count=100)
+                assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xbd0
+                v=dict(decision=decision,slot0=p0,slot1=p1,angle_return=angle,slot_byte=slot)
+                if not decision:v["turn"]=dict(previous_yaw=-123,result=2468)
+                c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                yaw,scalar=get(0x801e5000,"if")
+                assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=0xbd0,mode=mode,
+                    angleArgs=args,turnArgs=turn_args or None,yaw=yaw,scalar=scalar)
+print(idx,"state 2/10 steering paths matched")
