@@ -85,6 +85,7 @@ pub mod goal_ring;
 pub mod message_bank;
 pub mod mission_ranks;
 pub mod stage20;
+pub mod stage_fog;
 pub mod stage_land;
 pub mod stage_lighting;
 pub mod task_coverage;
