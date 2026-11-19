@@ -259,8 +259,18 @@ fn campaign(
             }
             let rows = stage_positions::for_stage(exe, level as u16)?;
             let (pose, defaults) = story_run::level_player(exe, character, level, &rows)?;
-            json!({"entryPose":pose,"playerDefaults":defaults,"entryPoses":rows,"normalCityLayers":layers,
-                "scope":"Authored character poses and available layer bindings. No character dynamics, mission execution or stage-clear transition."})
+            let mut payload = json!({"entryPose":pose,"playerDefaults":defaults,"entryPoses":rows,"normalCityLayers":layers,
+                "scope":"Authored character poses and available layer bindings. No character dynamics, mission execution or stage-clear transition."});
+            if level == 60 && character == 0 {
+                let i = load(
+                    extras,
+                    "resource/gd_PC/boss_bigfootD.rel".into(),
+                    "boss-stage-program",
+                )?;
+                let trace=sa2_asset_tools::big_foot::replay(&extras[i].bytes, br#"{"work_allocation_ok":true,"frames":[],"intro":{"updates":1,"helper_task_created":false}}"#)?;
+                payload["bossIntroPreview"] = json!({"requiresBossWorkAllocation":true,"stageSetup":trace["boss"],"firstCallback":trace["intro"]["frames"][0],"scope":"First scheduled boss intro update after successful setup; the earlier player spawn and yaw are unknown."});
+            }
+            payload
         }
         story::Action::Credits => {
             if args.len() == 8 {
