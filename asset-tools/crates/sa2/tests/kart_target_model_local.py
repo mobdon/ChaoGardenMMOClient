@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
     for mode,name in enumerate(("object_chara_limoall_limoall","object_tornado_3rd_tornado_3rd")):
         out=Path(td)/f"{mode}.json"
         subprocess.run([cli,"--source-root",game,"kart-target-model",gd/"CartD.rel",out,str(mode)],check=True)
-        rows=json.loads(out.read_text())["nodes"]
+        report=json.loads(out.read_text());rows=report["nodes"]
         stack=[(export(name),None)];seen=set()
         for row in rows:
             va,parent=stack.pop();assert va not in seen;seen.add(va)
@@ -45,3 +45,21 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
             if child:stack.append((child,len(seen)-1))
         assert not stack
         print(f"{name}: {len(rows)} matching nodes")
+        if mode==0:
+            assert report["motion"] is None and all("motion" not in row for row in rows)
+            continue
+        m=offset(export("motion_tornado_3rd")-base)
+        tracks,frames,flags,interp=read("IIHH",m)
+        assert (frames,flags,interp)==tuple(report["motion"][k] for k in ("frames","type","interpolation_word"))
+        keys=0
+        for i,row in enumerate(rows):
+            channel_row=offset(tracks-base)+i*24
+            for j,(name,fmt) in enumerate((("position","3f"),("angles","3i"),("scale","3f"))):
+                ptr,=read("I",channel_row+j*4);n,=read("I",channel_row+12+j*4)
+                channel=row["motion"][name]
+                assert len(channel)==n,(i,name)
+                for k,entry in enumerate(channel):
+                    key=offset(ptr-base)+16*k
+                    assert struct.pack("<I"+fmt,entry["frame"],*entry["value"])==dll[key:key+16],(i,name,k)
+                    keys+=1
+        print(f"{len(rows)*3} channels, {keys} matching position/angle/scale keys")

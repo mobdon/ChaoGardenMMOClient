@@ -412,5 +412,63 @@ pub fn model(bytes: &[u8], mode: i32) -> Result<serde_json::Value> {
             pending.push((child, Some(index)));
         }
     }
-    Ok(serde_json::json!({"root":root,"section":5,"nodes":nodes}))
+    let motion = if mode == 0 {
+        None
+    } else {
+        Some(bind_motion(&rel, &mut nodes)?)
+    };
+    Ok(serde_json::json!({"root":root,"section":5,"nodes":nodes,"motion":motion}))
+}
+
+fn bind_motion(
+    rel: &crate::city_rel::CityRel<'_>,
+    nodes: &mut [serde_json::Value],
+) -> Result<serde_json::Value> {
+    let invalid = || crate::Error::invalid("unexpected pursuit motion layout");
+    let data = rel.data(5)?;
+    let word = |at: usize| -> Result<u32> {
+        Ok(u32::from_be_bytes(
+            data.get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let ptr = |at: usize| -> Result<usize> {
+        rel.local_pointer(5, at as u32)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, o)| o as usize)
+            .ok_or_else(invalid)
+    };
+    let offset = rel
+        .reference(1, 0xdc6e)
+        .filter(|r| r.module == 80 && r.kind == 4 && r.section == 5)
+        .ok_or_else(invalid)?
+        .addend as usize;
+    let table = ptr(offset)?;
+    let frames = word(offset + 4)?;
+    if word(offset + 8)? != 0x00070003 || table + nodes.len() * 24 != offset {
+        return Err(invalid());
+    }
+    for (i, node) in nodes.iter_mut().enumerate() {
+        let row = table + i * 24;
+        for (j, name) in ["position", "angles", "scale"].iter().enumerate() {
+            let start = ptr(row + 4 * j)?;
+            let count = word(row + 12 + 4 * j)? as usize;
+            let mut keys = Vec::new();
+            for k in 0..count {
+                let key = start + k * 16;
+                let frame = word(key)?;
+                let xyz = [word(key + 4)?, word(key + 8)?, word(key + 12)?];
+                let value = if j == 1 {
+                    serde_json::json!(xyz.map(|v| v as i32))
+                } else {
+                    serde_json::json!(xyz.map(f32::from_bits))
+                };
+                keys.push(serde_json::json!({"frame":frame,"value":value}));
+            }
+            node["motion"][*name] = keys.into();
+        }
+    }
+    Ok(serde_json::json!({"offset":offset,"frames":frames,"type":7,"interpolation_word":3}))
 }

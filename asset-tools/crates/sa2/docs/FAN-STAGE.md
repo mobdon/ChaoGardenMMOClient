@@ -482,3 +482,11 @@ references. Mode 0 selects the president's limousine (11 nodes); nonzero
 mode selects the Tornado (53 nodes). All 64 nodes match their corresponding
 PC Data_DLL exports for parentage, transform bits, flags and attachment
 presence. This comparison does not establish mesh or skinning parity.
+
+The animated pursuit report also follows the motion pointer passed to the draw
+call. Each Tornado node carries its original position, angle and scale keys
+with frame indices. The 10-frame motion has 159 channels and 326 keys; every
+key word matches the corresponding PC motion export, including signed game
+angles and signed zero in float values. The limousine has no submitted motion.
+These are authored keys; fractional-frame interpolation and skinned draw output
+are not verified by the key comparison.
