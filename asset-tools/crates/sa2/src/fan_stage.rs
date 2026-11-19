@@ -95,19 +95,86 @@ pub struct KartRankRow {
     pub b: [u8; 2],
     pub a: [u8; 2],
 }
+#[derive(Debug, Serialize)]
+pub struct KartProfile {
+    pub slot: usize,
+    pub name: &'static str,
+    pub source_rva: u32,
+    pub sha256: String,
+    pub physics: KartPhysics,
+}
+
+// Names correspond to the split filenames in SA Tools PC_SA2/CART.ini.
+const KART_PROFILES: [&str; 15] = [
+    "TailsStory",
+    "RougeStory",
+    "SonicKart",
+    "KnucklesKart",
+    "TailsKart",
+    "EggmanKart",
+    "ShadowKart",
+    "RougeKart",
+    "Placeholder",
+    "SonicAltKart",
+    "KnucklesAltKart",
+    "ChaoKart",
+    "EggmanAltKart",
+    "ShadowAltKart",
+    "EggroboKart",
+];
+fn read_kart_profile(
+    r: &crate::model::Reader<'_>,
+    pe: &crate::pe::PeImage,
+    slot: usize,
+) -> Result<KartProfile> {
+    let name = *KART_PROFILES
+        .get(slot)
+        .ok_or_else(|| Error::invalid("unknown kart profile slot"))?;
+    let physics_rva = 0xbf9ef0 + 40 * slot as u32;
+    let pa = pe.rva_to_offset(physics_rva, 40)?;
+    let f = |i: usize| r.f32(pa + 4 * i);
+    let physics = KartPhysics {
+        acceleration: f(0)?,
+        brake_power: f(1)?,
+        deceleration: f(2)?,
+        speed_cap: f(3)?,
+        weight: f(4)?,
+        unknown1: f(5)?,
+        drift_handling: f(6)?,
+        drift_speed_threshold: f(7)?,
+        unknown2: f(8)?,
+        top_speed: f(9)?,
+    };
+    let physics_sha256 = crate::manifest::sha256(r.span(pa, 40)?);
+    Ok(KartProfile {
+        slot,
+        name,
+        source_rva: physics_rva,
+        sha256: physics_sha256,
+        physics,
+    })
+}
+pub fn kart_profiles(exe: &[u8]) -> Result<Vec<KartProfile>> {
+    let pe = crate::object_table::verify_image(exe)?;
+    let r = crate::model::Reader { data: exe };
+    (0..KART_PROFILES.len())
+        .map(|slot| read_kart_profile(&r, &pe, slot))
+        .collect()
+}
+
 /// The two kart stage dispatches use separate course descriptors rather than a static landtable.
 fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
     let pe = crate::pe::read_pe(exe)?;
     let r = crate::model::Reader { data: exe };
     let mut routes = BTreeMap::new();
-    for (ch, name, descriptor_rva, expected, set_filename, physics_rva, rank_times_rva) in [
+    for (ch, name, descriptor_rva, expected, set_filename, profile_slot, rank_times_rva) in [
         (
             6,
             "Route 101",
             0xaf82bc,
             321,
             "setCartTails.bin",
-            0xbf9ef0,
+            0,
             0x133b378,
         ),
         (
@@ -116,26 +183,12 @@ fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
             0xaf82c4,
             369,
             "setCartRouge.bin",
-            0xbf9f18,
+            1,
             0x133b3a5,
         ),
     ] {
         let ids = crate::kart_course::read_piece_ids(&r, &pe, descriptor_rva, expected)?;
-        let pa = pe.rva_to_offset(physics_rva, 40)?;
-        let f = |i: usize| r.f32(pa + 4 * i);
-        let physics = KartPhysics {
-            acceleration: f(0)?,
-            brake_power: f(1)?,
-            deceleration: f(2)?,
-            speed_cap: f(3)?,
-            weight: f(4)?,
-            unknown1: f(5)?,
-            drift_handling: f(6)?,
-            drift_speed_threshold: f(7)?,
-            unknown2: f(8)?,
-            top_speed: f(9)?,
-        };
-        let physics_sha256 = crate::manifest::sha256(r.span(pa, 40)?);
+        let profile = read_kart_profile(&r, &pe, profile_slot)?;
         let ranks = r.span(pe.rva_to_offset(rank_times_rva, 45)?, 45)?;
         let mut rank_times = Vec::with_capacity(5);
         for &[level, dm, ds, cm, cs, bm, bs, am, asec] in ranks.as_chunks::<9>().0 {
@@ -155,9 +208,9 @@ fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
             KartRoute {
                 name,
                 descriptor_rva,
-                physics_rva,
-                physics_sha256,
-                physics,
+                physics_rva: profile.source_rva,
+                physics_sha256: profile.sha256,
+                physics: profile.physics,
                 rank_times_rva,
                 rank_times_sha256: crate::manifest::sha256(ranks),
                 rank_times,
