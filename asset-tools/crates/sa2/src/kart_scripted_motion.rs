@@ -2,8 +2,15 @@
 use crate::{city_rel::CityRel, kart_progress, Error, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Input {
+    audio: Option<AudioInput>,
+    #[serde(flatten)]
+    state: State,
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct State {
     vehicle_state: i32,
     position: [f32; 3],
@@ -14,7 +21,35 @@ pub struct State {
     global_22494: i32,
 }
 
-pub fn step(bytes: &[u8], mut s: State) -> Result<State> {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AudioInput {
+    work_44: i32,
+    profile: u32,
+}
+#[derive(Serialize)]
+pub struct Update {
+    #[serde(flatten)]
+    state: State,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio: Option<AudioDispatch>,
+}
+#[derive(Serialize)]
+#[serde(tag = "path", rename_all = "snake_case")]
+enum AudioDispatch {
+    Disabled,
+    NormalState5820,
+    Engine8006b188 {
+        cue: u32,
+        task_relative_handle: u32,
+        arg5: i32,
+        arg6: i32,
+        position: [f32; 3],
+    },
+}
+
+pub fn step(bytes: &[u8], input: Input) -> Result<Update> {
+    let mut s = input.state;
     kart_progress::verify(bytes)?;
     let rel = CityRel::read_identified(bytes, 80)?;
     let constants = rel.data(4)?;
@@ -37,5 +72,29 @@ pub fn step(bytes: &[u8], mut s: State) -> Result<State> {
     }
     s.work_68 = 0;
     s.work_dc = 0;
-    Ok(s)
+    let audio = input
+        .audio
+        .map(|a| -> Result<_> {
+            if a.work_44 == 0 {
+                return Ok(AudioDispatch::Disabled);
+            }
+            if s.vehicle_state == 0 {
+                return Ok(AudioDispatch::NormalState5820);
+            }
+            if a.profile >= 16 {
+                return Err(Error::invalid("kart cue profile outside supported table"));
+            }
+            let data = rel.data(5)?;
+            let at = 0x3924 + a.profile as usize * 24;
+            let cue = u32::from_be_bytes(data[at..at + 4].try_into().unwrap());
+            Ok(AudioDispatch::Engine8006b188 {
+                cue,
+                task_relative_handle: cue,
+                arg5: 1,
+                arg6: -20,
+                position: s.position,
+            })
+        })
+        .transpose()?;
+    Ok(Update { state: s, audio })
 }

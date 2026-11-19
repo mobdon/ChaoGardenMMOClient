@@ -421,3 +421,11 @@ all three angles. State 9 shifts Z and increments the shared counter; an old
 signed value above 120 clears global_22494 and returns the vehicle to state 0.
 Neither callback selects a route. Both dispatch paths still run 0x5774 and the
 contact pass after movement. The command covers only movement before those calls.
+
+Supply optional `audio: {work_44, profile}` to also resolve the following
+CartD 0x5774 sound dispatch. The updated state selects the path: a disabled
+work_44 exits immediately; states 8/9 submit the profile cue, task-relative
+handle and updated position to engine 0x8006b188. An enabled kart leaving
+state 9 for 0 instead reaches the normal sound path at 0x5820, reported as
+unresolved. This describes engine requests, not playback. The horizontal
+speed computed on entry does not affect these scripted cue arguments.
