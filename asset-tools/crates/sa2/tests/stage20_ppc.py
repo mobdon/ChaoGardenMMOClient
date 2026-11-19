@@ -159,3 +159,34 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         timer=get(work+4,"h")[0]
         assert json.loads(out.read_text())["controller"]==dict(dispatch=dispatched,continueAt=end,mode=get(work,"b")[0],timerWrite=None if timer==-12 else timer,operations=ops)
 print(len(cases),"walker dispatch and opening observations matched")
+# Enter at 0x1428 with r3 already set as by 0x1424, past the dispatch test's stop hook.
+def tail_call(cpu,pc,*_):
+    site=pc-base[1];calls.append(site)
+    if site==0x142c:assert cpu.reg_read(R.UC_PPC_REG_3)==work and cpu.reg_read(R.UC_PPC_REG_4)==pose1
+    elif site==0x1494:
+        assert cpu.reg_read(R.UC_PPC_REG_3)==target
+        put(task+12,"I",target if remains else 0)
+    elif site==0x1514:assert cpu.reg_read(R.UC_PPC_REG_3)==task and cpu.reg_read(R.UC_PPC_REG_4)==work+8
+    else:cpu.reg_write(R.UC_PPC_REG_3,next(returns)&0xffffffff)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x142c,0x1440,0x144c,0x1458,0x1494,0x1514):
+    u.hook_add(UC_HOOK_CODE,tail_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for flag,queries,word in [(0x4000,[],1),(0,[9],1),(0,[0,12],1),(0,[0,0,13],1),(0,[0,0,0],0),(0,[0,0,0],1)]:
+        for value,cooldown,child,remains in [(0.,0,False,False),(-1.,-3,True,True),(7.,3,False,False),(11.,5,True,False)]:
+            calls=[];returns=iter(queries)
+            put(task+12,"I",target if child else 0);put(player0+16,"H",flag);put(0x801cbd88+124,"I",word)
+            put(work,"bbh",4,3,32767);put(work+6,"h",cooldown);put(player1+72,"f",value)
+            for r,v in [(3,work),(25,task),(26,player1),(27,pose1),(29,work),(30,0x801e732c),(31,player0)]:
+                u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
+            u.emu_start(base[1]+0x1428,base[1]+0x1518,count=100);assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1518
+            t=dict(mode=4,submode=3,counter=32767,cooldown=cooldown,slot0_flags=flag,queries=queries,engine_word=word,
+                   slot1_value=value,child=child,child_after_remove=remains if 0x1494 in calls else None)
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],tail=t)))
+            out=Path(tmp)/f"{idx}.json";idx+=1
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            m,s,c=get(work,"bbh")
+            assert json.loads(out.read_text())["tail"]==dict(mode=m,submode=s,counter=c,cooldown=get(work+6,"h")[0],
+                         slot1Value=get(player1+72,"f")[0],scaled=get(work+8,"f")[0],calls=calls)
+print(idx,"walker shared tail observations matched")

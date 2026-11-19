@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 struct Request {
     startup: Option<Startup>,
     controller: Option<Controller>,
+    tail: Option<Tail>,
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
@@ -156,6 +157,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let Request {
         startup,
         controller,
+        tail,
         mut mode,
         mut position,
         targets,
@@ -185,6 +187,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     }
     if let Some(c) = controller {
         report["controller"] = dispatch_controller(&rel, c)?;
+    }
+    if let Some(t) = tail {
+        report["tail"] = walker_tail(t, constant)?;
     }
     Ok(report)
 }
@@ -277,4 +282,68 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         return Err(invalid());
     }
     Ok(json!({"dispatch":target,"continueAt":next,"mode":mode,"timerWrite":timer,"operations":ops}))
+}
+
+/// Observations after helper 1:0x0, including the child link after a removal request.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Tail {
+    mode: i8,
+    submode: i8,
+    counter: i16,
+    cooldown: i16,
+    slot0_flags: u16,
+    queries: Vec<i32>,
+    engine_word: u32,
+    slot1_value: f32,
+    child: bool,
+    child_after_remove: Option<bool>,
+}
+fn walker_tail(mut t: Tail, constant: impl Fn(u32) -> Result<f32>) -> Result<Value> {
+    let mut calls = vec![0x142c];
+    let mut q = t.queries.into_iter();
+    let mut reset = t.slot0_flags & 0x4000 != 0;
+    for (site, stop) in [(0x1440, 9), (0x144c, 12), (0x1458, 13)] {
+        if reset {
+            break;
+        }
+        calls.push(site);
+        reset = q
+            .next()
+            .ok_or_else(|| Error::invalid("missing walker tail query"))?
+            == stop;
+    }
+    if q.next().is_some() {
+        return Err(Error::invalid("unused walker tail query"));
+    }
+    reset |= t.engine_word == 0;
+    if reset {
+        t.slot1_value = constant(0x147e)?;
+        if t.child {
+            calls.push(0x1494);
+            t.child = t
+                .child_after_remove
+                .take()
+                .ok_or_else(|| Error::invalid("missing post-removal child observation"))?;
+        }
+        t.mode = 0;
+        t.submode = 0;
+        t.counter = 0;
+    } else {
+        t.counter = t.counter.wrapping_add(1);
+        if t.cooldown > 0 {
+            t.cooldown -= 1;
+        }
+    }
+    if t.child_after_remove.is_some() {
+        return Err(Error::invalid("unused post-removal child observation"));
+    }
+    let scaled = constant(0x14d2)? * t.slot1_value;
+    if t.slot1_value > constant(0x14f2)? && !t.child {
+        calls.push(0x1514);
+    }
+    Ok(
+        json!({"mode":t.mode,"submode":t.submode,"counter":t.counter,"cooldown":t.cooldown,
+        "slot1Value":t.slot1_value,"scaled":scaled,"calls":calls}),
+    )
 }
