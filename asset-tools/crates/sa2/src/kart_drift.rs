@@ -41,8 +41,8 @@ pub struct Update {
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryTick {
     pub(crate) contact: Option<DriftContact>,
-    heading: i32,
-    position: [f32; 3],
+    heading: Option<i32>,
+    position: Option<[f32; 3]>,
     velocity: [f32; 3],
     work_74: i32,
     buttons_held: Option<u32>,
@@ -57,6 +57,20 @@ pub(crate) struct DriftContact {
     pub(crate) work_44: i32,
 }
 impl StoryTick {
+    pub(crate) fn bind_task_pose(&mut self, position: [f32; 3], yaw: i32) -> Result<()> {
+        if self.heading.is_some_and(|v| v != yaw)
+            || self
+                .position
+                .is_some_and(|p| p.map(f32::to_bits) != position.map(f32::to_bits))
+        {
+            return Err(Error::invalid(
+                "drift task pose conflicts with preceding vehicle frame",
+            ));
+        }
+        self.position = Some(position);
+        self.heading = Some(yaw);
+        Ok(())
+    }
     pub(crate) fn world_velocity(&self) -> [f32; 3] {
         self.velocity
     }
@@ -121,8 +135,12 @@ impl DriftCarry {
             bytes,
             Input {
                 sustained,
-                heading: s.heading,
-                position: s.position,
+                heading: s
+                    .heading
+                    .ok_or_else(|| Error::invalid("missing drift task heading"))?,
+                position: s
+                    .position
+                    .ok_or_else(|| Error::invalid("missing drift task position"))?,
                 velocity: s.velocity,
                 work_68: self.angular_offset,
                 work_a4: self.index,

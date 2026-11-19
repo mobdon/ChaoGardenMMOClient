@@ -789,7 +789,9 @@ pub fn story_sequence(
             }
             SequenceEvent::DriftTick { mut drift_tick } => {
                 completed_pose = None;
-                inherited_pose = None;
+                if let Some((position, _, yaw)) = inherited_pose.take() {
+                    drift_tick.bind_task_pose(position, yaw)?;
+                }
                 recovered_pose = None;
                 let start = snapshot.take();
                 let mut context = drift_tick.contact.take();

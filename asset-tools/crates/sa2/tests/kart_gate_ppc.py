@@ -477,6 +477,22 @@ if len(sys.argv)>4:
                 assert (drift_result["work_a4"],drift_result["work_a8"])==((0,-21) if expected==2 else (1,9))
                 assert ("play" in drive["audio"]["calls"][-1])==(expected==2)
             winding=dict(drift_tick=dict(heading=0,position=[1,2,3],velocity=[0,0,0],work_74=0))
+            # Compare independent and continued task poses at both drift dispatches.
+            # Keep dispatch velocity explicit: it is a work vector, not a task field.
+            for prior_ticks in (0,5):
+                lead=q["updates"]+[dict(drift_tick=dict(winding["drift_tick"],buttons_held=4)) for _ in range(prior_ticks)]
+                pose=dict(frame,segment=5,position=[3,8,-2],angles=[12,65537,-33],velocity=[1,2,3])
+                row=dict(velocity=[0,2,0],work_74=0)
+                if prior_ticks:row["work_fc"]=0
+                def read_drift(tail):
+                    req.write_text(json.dumps(dict(q,updates=lead+[dict(vehicle_post_move=pose)]+tail)))
+                    out=req.with_name(path.stem+f"-drift-task-pose-{prior_ticks}-{len(tail)}.json")
+                    subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                    return json.loads(out.read_text())["updates"][-1]["driftTick"]
+                sample_event=dict(primary_stick_x=0,buttons_held=4)
+                explicit=read_drift([sample_event,dict(drift_tick=dict(row,position=pose["position"],heading=65537))])
+                continued=read_drift([dict(continue_vehicle_update={}),sample_event,dict(drift_tick=row)])
+                assert continued==explicit and continued["heading"]==65537
             for _ in range(5):
                 q["updates"].extend([dict(primary_stick_x=99,buttons_held=4),winding])
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-windup.json")
