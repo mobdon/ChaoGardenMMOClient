@@ -613,6 +613,8 @@ enum SequenceEvent {
     Gate(GateObservation),
     ControllerSample {
         primary_stick_x: i16,
+        buttons_held: Option<u32>,
+        buttons_pressed: Option<u32>,
     },
     BoostTick {
         boost_tick: crate::kart_vehicle_init::StoryBoostInput,
@@ -736,19 +738,26 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
-            SequenceEvent::ControllerSample { primary_stick_x } => {
+            SequenceEvent::ControllerSample {
+                primary_stick_x,
+                buttons_held,
+                buttons_pressed,
+            } => {
                 let sum = history
                     .as_mut()
                     .ok_or_else(|| Error::invalid("missing initial controller history"))?
                     .sample(primary_stick_x);
-                sample = Some((primary_stick_x, sum));
+                sample = Some((primary_stick_x, sum, buttons_held, buttons_pressed));
                 updates.push(json!({"primaryStickX":primary_stick_x,"steeringSum":sum}));
                 continue;
             }
             SequenceEvent::BoostTick { mut boost_tick } => {
                 recovered_pose = None;
-                if let (Some(d), Some(v)) = (boost_tick.drive.as_mut(), sample.take()) {
-                    d.bind_sample(v)?;
+                if let Some((stick, sum, held, pressed)) = sample.take() {
+                    boost_tick.bind_pressed(pressed)?;
+                    if let Some(d) = boost_tick.drive.as_mut() {
+                        d.bind_sample((stick, sum), held)?;
+                    }
                 }
                 if let Some(r) = boost_tick
                     .drive

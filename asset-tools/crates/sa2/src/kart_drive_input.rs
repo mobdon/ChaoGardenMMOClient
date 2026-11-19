@@ -118,7 +118,7 @@ pub(crate) struct StoryDrive {
     position_step: Option<StoryPosition>,
     heading: i32,
     work_a4: i32,
-    buttons: u32,
+    buttons: Option<u32>,
     work_28c: i32,
     stick_x: Option<i16>,
     steering_sum: Option<i32>,
@@ -131,12 +131,22 @@ struct StoryPosition {
     transformed_vector: [f32; 3],
 }
 impl StoryDrive {
-    pub(crate) fn bind_sample(&mut self, (stick, sum): (i16, i32)) -> Result<()> {
+    pub(crate) fn bind_sample(
+        &mut self,
+        (stick, sum): (i16, i32),
+        held: Option<u32>,
+    ) -> Result<()> {
         if self.stick_x.is_some_and(|v| v != stick) || self.steering_sum.is_some_and(|v| v != sum) {
             return Err(Error::invalid(
                 "drive steering conflicts with sampled controller",
             ));
         }
+        if self.buttons.zip(held).is_some_and(|(a, b)| a != b) {
+            return Err(Error::invalid(
+                "drive buttons conflict with sampled held word",
+            ));
+        }
+        self.buttons = held.or(self.buttons);
         self.stick_x = Some(stick);
         self.steering_sum = Some(sum);
         Ok(())
@@ -155,6 +165,9 @@ impl StoryDrive {
         bytes: &[u8],
         exe: &[u8],
     ) -> Result<Motion> {
+        let buttons = self
+            .buttons
+            .ok_or_else(|| Error::invalid("missing held buttons for story driving"))?;
         let constants = rel.data(4)?;
         let velocity_xz = [velocity[0], velocity[2]];
         if velocity_xz != [0.; 2] && self.magnitude_return.is_none() {
@@ -192,8 +205,8 @@ impl StoryDrive {
                     as f32,
             self.stick_x
                 .ok_or_else(|| Error::invalid("missing drive stick sample"))?,
-            self.buttons & 4 != 0,
-            self.buttons & 0x402 != 0 && self.work_28c <= 10,
+            buttons & 4 != 0,
+            buttons & 0x402 != 0 && self.work_28c <= 10,
             constants,
         )?;
         if let Some(work_284) = self.audio_work_284 {
@@ -215,8 +228,8 @@ impl StoryDrive {
                         profile: story_mode as usize,
                         alternate: false,
                         work_284,
-                        work_110: i32::from(self.buttons & 4 != 0),
-                        work_114: i32::from(self.buttons & 0x402 != 0 && self.work_28c <= 10),
+                        work_110: i32::from(buttons & 4 != 0),
+                        work_114: i32::from(buttons & 0x402 != 0 && self.work_28c <= 10),
                         piece_id,
                         magnitude_return: self.magnitude_return,
                     },

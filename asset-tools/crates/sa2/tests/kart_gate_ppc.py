@@ -388,4 +388,21 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-steering.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"drive steering conflicts" in rejected.stderr
+            # Holding boost without a press leaves it ready; the press word
+            # then activates it while the held brake selects the braking branch.
+            go=boost(work_dc=0,slot_flag=0)
+            stop=boost(normalized_velocity=[1,0,0])
+            for event in (go,stop):
+                event["boost_tick"]["drive"]=dict(work_28c=0,heading=0,work_a4=2,magnitude_return=20)
+            q.update(primary_charge=20,updates=[dict(primary_stick_x=0,buttons_held=0x204,buttons_pressed=0),go,
+                dict(primary_stick_x=0,buttons_held=0x202,buttons_pressed=0x200),stop])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-controller-buttons.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());first,last=[doc["updates"][i]["boostTick"] for i in (1,3)]
+            assert (first["boost"]["slot_flag"],first["boost"]["work_dc"],first["drive"]["work_a4"])==(1,0,1)
+            assert (last["boost"]["slot_flag"],last["boost"]["work_dc"],last["drive"]["work_a4"])==(0,120,10)
+            stop["boost_tick"]["boost"]["buttons_pressed"]=0
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-press.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"sampled press word" in rejected.stderr
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

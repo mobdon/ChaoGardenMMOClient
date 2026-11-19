@@ -98,6 +98,22 @@ pub(crate) struct StoryBoostInput {
     normalize: Option<Normalize>,
     boost: BoostInput,
 }
+impl StoryBoostInput {
+    pub(crate) fn bind_pressed(&mut self, pressed: Option<u32>) -> Result<()> {
+        if self
+            .boost
+            .buttons_pressed
+            .zip(pressed)
+            .is_some_and(|(a, b)| a != b)
+        {
+            return Err(crate::Error::invalid(
+                "boost buttons conflict with sampled press word",
+            ));
+        }
+        self.boost.buttons_pressed = pressed.or(self.boost.buttons_pressed);
+        Ok(())
+    }
+}
 /// Per-vehicle work +0xd8/+0xdc and the controller's readiness word.
 pub(crate) fn story_boost(
     bytes: &[u8],
