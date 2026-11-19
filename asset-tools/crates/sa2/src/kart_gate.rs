@@ -610,6 +610,9 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    BoostTick {
+        boost_tick: crate::kart_vehicle_init::StoryBoostInput,
+    },
     BalloonReward {
         balloon_reward: BalloonReward,
     },
@@ -711,6 +714,7 @@ pub fn story_sequence(
     let mut finish = None;
     let mut timer_words = None;
     let mut charge = s.primary_charge;
+    let mut boost_timers = None;
     let mut parent = None;
     let mut crossing_positions = None;
     let mut route = None;
@@ -722,6 +726,20 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::BoostTick { boost_tick } => {
+                let (next, timers, result) = crate::kart_vehicle_init::story_boost(
+                    bytes,
+                    boost_tick,
+                    mode as usize,
+                    charge.ok_or_else(|| Error::invalid("missing primary charge for boost"))?,
+                    boost_timers,
+                    scan_flag,
+                )?;
+                charge = Some(next);
+                boost_timers = Some(timers);
+                updates.push(json!({"boostTick":result}));
+                continue;
+            }
             SequenceEvent::BalloonReward { balloon_reward: v } => {
                 let placement = objects
                     .placements

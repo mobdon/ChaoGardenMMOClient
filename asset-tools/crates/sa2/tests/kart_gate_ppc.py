@@ -290,4 +290,21 @@ if len(sys.argv)>4:
                 amount=[5,10,20][rows[i][1]-1];charge+=amount
                 assert event["balloonReward"]==dict(placement=i,charge=charge,display=[10,amount])
             assert doc["primaryCharge"]==charge==(54 if "Rouge" in path.name else 94)
+            # Feed the same earned charge into readiness, a later press, and
+            # the following active frame. Only initialize duration/readiness once.
+            boost_inputs=dict(work_70=0,position=[1,2,3],work_44=1)
+            def boost(**changes):
+                return dict(boost_tick=dict(velocity=[0,0,0],
+                            boost=dict(boost_inputs,**changes)))
+            q.update(primary_charge=0,updates=[pickups[0],boost(work_dc=0,slot_flag=0,buttons_pressed=0),
+                boost(buttons_pressed=0x200,normalized_velocity=[1,0,0]),boost()])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-earned-boost.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text())
+            ready,start,active=[u["boostTick"]["boost"] for u in doc["updates"][1:]]
+            assert doc["updates"][0]["balloonReward"]["charge"]==20 and doc["primaryCharge"]==0
+            assert (ready["slot_flag"],ready["work_dc"],ready["work_d8"])==(1,0,0)
+            assert (start["slot_flag"],start["work_dc"],active["work_dc"])==(0,120,119)
+            assert ready["speed_cap"]==(12 if "Rouge" in path.name else 10)
+            assert active["acceleration"]>ready["acceleration"] and active["calls"]
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

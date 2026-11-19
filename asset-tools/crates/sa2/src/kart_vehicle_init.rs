@@ -88,6 +88,57 @@ pub struct Profile {
     velocity: [f32; 3],
     shared_velocity_write: Option<[f32; 3]>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryBoostInput {
+    velocity: [f32; 3],
+    normalize: Option<Normalize>,
+    boost: BoostInput,
+}
+/// Per-vehicle work +0xd8/+0xdc and the controller's readiness word.
+pub(crate) fn story_boost(
+    bytes: &[u8],
+    mut input: StoryBoostInput,
+    story_profile: usize,
+    charge: i32,
+    timers: Option<(i32, i32)>,
+    flag: Option<u32>,
+) -> Result<(i32, (i32, i32), Profile)> {
+    let b = &mut input.boost;
+    if b.work_70 != 0 {
+        return Err(crate::Error::invalid("expected primary controller slot"));
+    }
+    let bind = |word: &mut Option<i32>, retained| -> Result<()> {
+        if word.zip(retained).is_some_and(|(x, y)| x != y) {
+            return Err(crate::Error::invalid(
+                "boost observation conflicts with retained kart state",
+            ));
+        }
+        *word = retained.or(*word);
+        Ok(())
+    };
+    bind(&mut b.work_d8, Some(charge))?;
+    bind(&mut b.work_dc, timers.map(|t| t.0))?;
+    bind(&mut b.slot_flag, timers.map(|t| t.1))?;
+    bind(&mut b.work_44, flag.map(|v| v as i32))?;
+    let output = profile(
+        bytes,
+        ProfileInput {
+            profile: story_profile,
+            alternate: false,
+            boost: Some(input.boost),
+            profile8_write: None,
+            event: None,
+            velocity: input.velocity,
+            normalize: input.normalize,
+        },
+    )?;
+    let b = output
+        .boost
+        .as_ref()
+        .ok_or_else(|| crate::Error::invalid("missing story boost output"))?;
+    Ok((b.work_d8, (b.work_dc, b.slot_flag), output))
+}
 /// Resolve the physics row copied by 0x2284 and bound the incoming 3D velocity.
 pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
     kart_progress::verify(bytes)?;
@@ -230,13 +281,13 @@ fn profile_event(event_pair: Option<[i32; 2]>, e: EventInput) -> Result<Event> {
 #[serde(deny_unknown_fields)]
 struct BoostInput {
     work_70: i32,
-    work_d8: i32,
-    work_dc: i32,
-    slot_flag: i32,
+    work_d8: Option<i32>,
+    work_dc: Option<i32>,
+    slot_flag: Option<i32>,
     buttons_pressed: Option<u32>,
     normalized_velocity: Option<[f32; 3]>,
     position: [f32; 3],
-    work_44: i32,
+    work_44: Option<i32>,
     piece_id: Option<u8>,
 }
 #[derive(Serialize)]
@@ -272,9 +323,15 @@ fn boost_step(
 ) -> Result<Boost> {
     let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
     let mut b = Boost {
-        work_d8: s.work_d8,
-        work_dc: s.work_dc,
-        slot_flag: s.slot_flag,
+        work_d8: s
+            .work_d8
+            .ok_or_else(|| crate::Error::invalid("missing boost work_d8"))?,
+        work_dc: s
+            .work_dc
+            .ok_or_else(|| crate::Error::invalid("missing boost work_dc"))?,
+        slot_flag: s
+            .slot_flag
+            .ok_or_else(|| crate::Error::invalid("missing boost slot_flag"))?,
         acceleration,
         speed_cap,
         velocity,
@@ -319,7 +376,9 @@ fn boost_step(
         b.calls.push(BoostCall::ProfileEvent(profile_event(
             pair,
             EventInput {
-                work_44: s.work_44,
+                work_44: s
+                    .work_44
+                    .ok_or_else(|| crate::Error::invalid("missing boost vehicle flag"))?,
                 selector: 1,
                 piece_id: s.piece_id,
             },
