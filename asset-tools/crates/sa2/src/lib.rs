@@ -1,6 +1,7 @@
 //! Local, bounded readers. Source decoding and gameplay implementation are separate.
 pub mod archive;
 pub mod audio;
+pub mod big_foot;
 pub mod board;
 pub mod board_draw;
 pub mod board_model;
