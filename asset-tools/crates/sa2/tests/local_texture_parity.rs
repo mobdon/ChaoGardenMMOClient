@@ -37,7 +37,7 @@ fn sa_tools_texture_pixel_parity() {
     let game = std::env::var("SA2_GAME_PATH").expect("SA2_GAME_PATH");
     let local = std::env::var("SA2_LOCAL_ROOT").expect("SA2_LOCAL_ROOT");
     let mut checked = 0;
-    let mut unresolved = 0;
+    let mut unresolved = std::collections::BTreeMap::new();
     let mut alpha_counts = [0u64; 256];
     let mut record_alpha = |rgba: &[u8]| {
         for pixel in rgba.chunks_exact(4) {
@@ -77,7 +77,7 @@ fn sa_tools_texture_pixel_parity() {
         let entries = archive::read_gvm(&decoded).unwrap();
         let total = entries.len();
         let before = checked;
-        let unknown_before = unresolved;
+        let unknown_before = unresolved.len();
         for entry in entries {
             let target = Path::new(&local)
                 .join("extracted")
@@ -92,7 +92,13 @@ fn sa_tools_texture_pixel_parity() {
             );
             let header = texture::read_gvr_header(entry.data).unwrap();
             if matches!(header.data_format, 8 | 9) && header.flags & 8 == 0 {
-                unresolved += 1;
+                let identity = (archive_name.to_owned(), entry.name.clone());
+                assert!(
+                    unresolved
+                        .insert(identity, Sha256::digest(entry.data))
+                        .is_none(),
+                    "duplicate external-palette entry in {archive_name}"
+                );
                 continue;
             }
             let actual = texture::decode_gvr(entry.data, None).unwrap();
@@ -111,7 +117,7 @@ fn sa_tools_texture_pixel_parity() {
             hashes.update(Sha256::digest(&actual.rgba));
             checked += 1;
         }
-        println!("{archive_name}: {total} entries, {} exact RGBA comparisons, {} explicit external-palette unknowns, source {source_hash:x}",checked-before,unresolved-unknown_before);
+        println!("{archive_name}: {total} entries, {} exact RGBA comparisons, {} explicit external-palette unknowns, source {source_hash:x}",checked-before,unresolved.len()-unknown_before);
         assert_eq!(
             Sha256::digest(fs::read(source).unwrap()),
             source_hash,
@@ -143,6 +149,12 @@ fn sa_tools_texture_pixel_parity() {
         );
         assert_eq!((actual.width, actual.height), (width, height));
         assert_eq!(actual.rgba, expected, "palette {name}");
+        let identity = ("al_body".to_owned(), (*name).to_owned());
+        assert_eq!(
+            unresolved.remove(&identity),
+            Some(Sha256::digest(entry.data)),
+            "verified bank must resolve the same indexed source"
+        );
         record_alpha(&actual.rgba);
         hashes.update(palette_hash);
         hashes.update(name.as_bytes());
@@ -155,6 +167,9 @@ fn sa_tools_texture_pixel_parity() {
         "palette source changed"
     );
     assert!(checked > 200, "expected substantial verified corpus");
+    for ((archive, name), digest) in &unresolved {
+        println!("unresolved palette {archive}/{name} GVRT sha256 {digest:x}");
+    }
     let transparent = alpha_counts[0];
     let partial: u64 = alpha_counts[1..255].iter().sum();
     let opaque = alpha_counts[255];
@@ -162,7 +177,7 @@ fn sa_tools_texture_pixel_parity() {
         transparent > 0 && partial > 0 && opaque > 0,
         "reference corpus must exercise all three alpha cases"
     );
-    println!("verified {checked} RGBA textures including {transparent} transparent, {partial} partially transparent and {opaque} opaque pixels; {} external-palette mappings remain unknown after 3 verified child banks; source corpus {:x}; pixel aggregate {:x}",unresolved-3,sources.finalize(),hashes.finalize());
+    println!("verified {checked} RGBA textures including {transparent} transparent, {partial} partially transparent and {opaque} opaque pixels; {} external-palette mappings remain unknown after 3 verified child banks; source corpus {:x}; pixel aggregate {:x}",unresolved.len(),sources.finalize(),hashes.finalize());
 }
 
 #[test]
