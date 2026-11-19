@@ -193,17 +193,20 @@ print(idx,"walker shared tail observations matched")
 
 def seven_call(cpu,pc,*_):
     site=pc-base[1];calls.append(site)
-    if site in (0x1358,0x1374):return # Execute the stage transition helper itself.
-    value=near if site==0x1344 else draw
+    if site in (0x1344,0x1358,0x1374):return # Execute the stage transition helper itself.
+    value=draw
     cpu.reg_write(R.UC_PPC_REG_3,value&0xffffffff);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for site in (0x1344,0x1358,0x1374,0x398,0x558,0x5c4):
     u.hook_add(UC_HOOK_CODE,seven_call,begin=base[1]+site,end=base[1]+site)
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     idx=0
-    for slot,near in [(6,0),(6,1),(7,None),(-1,None)]:
+    u.mem_map(0x803ad000,4096)
+    for slot,word,flag in [(6,None,0),(6,None,-1),(6,0,0),(6,0,1),(6,1,0),(6,0x80000000,-128),(7,None,0),(-1,None,0)]:
         for counter in (-1,120,121):
             for draw in (0,16383,32767):
-                calls=[];put(player1+1,"b",slot);put(work,"bbhh",7,0,counter,-1)
+                calls=[];put(0x801e738c,"I",task);put(task+64,"I",0 if word is None else 0x100900)
+                if word is not None:put(0x100c8c,"I",word)
+                put(0x803ad494,"b",flag);put(player1+1,"b",slot);put(work,"bbhh",7,0,counter,-1)
                 for r,v in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(0,slot&255)]:
                     u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
                 # Prior dispatch coverage checks the first instruction loads slot-one byte 1.
@@ -211,7 +214,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
                 m,_,ctr,timer=get(work,"bbhh")
                 c=dict(mode=7,engine_bytes=[0,0,0],player_flags=[0,0],
-                       state_seven=dict(slot_byte=slot,counter=counter,helper_result=near,draw=draw if m!=7 else None))
+                       state_seven=dict(slot_byte=slot,counter=counter,decision=dict(work_word=word,engine_byte=flag) if slot==6 else None,draw=draw if m!=7 else None))
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
                 subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)

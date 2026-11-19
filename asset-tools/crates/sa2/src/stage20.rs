@@ -290,9 +290,13 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         let mut ops = Vec::new();
         let engage = if v.slot_byte == 6 {
             ops.push(0x1344);
-            v.helper_result.ok_or_else(invalid)? != 0
+            match (v.decision, v.helper_result) {
+                (Some(d), None) => d.active(),
+                (None, Some(observed)) => observed != 0,
+                _ => return Err(invalid()),
+            }
         } else {
-            if v.helper_result.is_some() {
+            if v.helper_result.is_some() || v.decision.is_some() {
                 return Err(invalid());
             }
             false
@@ -398,5 +402,20 @@ struct StateSeven {
     slot_byte: i8,
     counter: i16,
     helper_result: Option<i32>,
+    decision: Option<WalkerDecision>,
     draw: Option<i32>,
+}
+
+/// State 7's predicate at 1:0x15c ignores the two position arguments.
+/// None denotes a null slot-one work link, not a missing slot-one task.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WalkerDecision {
+    work_word: Option<u32>,
+    engine_byte: i8,
+}
+impl WalkerDecision {
+    fn active(&self) -> bool {
+        self.work_word.is_some_and(|word| word != 0) || self.engine_byte != 0
+    }
 }
