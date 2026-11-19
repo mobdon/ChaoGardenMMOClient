@@ -556,3 +556,45 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
         "constructor":init,"matrixStride":48,"matrixCaptures":captures,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
     )
 }
+/// Callback dispatch only. The selected handler runs before the contact check;
+/// its state changes must be visible to that check.
+pub fn weakpoint_update_plan(bytes: &[u8], gate_byte: i8, mode: i8) -> Result<serde_json::Value> {
+    if crate::manifest::sha256(bytes)
+        != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
+    {
+        return Err(Error::invalid("unsupported Finalhazard stage revision"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 88)?;
+    let code = rel.data(1)?;
+    let branch = |at: usize| -> Result<i64> {
+        let w = u32::from_be_bytes(code[at..at + 4].try_into().unwrap());
+        if w & 0xfc00_0003 != 0x4800_0001 {
+            return Err(Error::invalid("unexpected weakpoint update call"));
+        }
+        Ok(at as i64 + i64::from(((w & 0x03ff_fffc) << 6) as i32 >> 6))
+    };
+    let entry = rel
+        .reference(1, 0x83c4)
+        .ok_or_else(|| Error::invalid("missing collision entry"))?;
+    if (entry.module, entry.kind, entry.addend) != (0, 10, 0x8000f4ec) {
+        return Err(Error::invalid("unexpected collision entry"));
+    }
+    let mut calls = Vec::new();
+    if gate_byte == 0 {
+        let handler = match mode {
+            1 => Some(0x8390),
+            2 => Some(0x839c),
+            3 => Some(0x83a8),
+            5 => Some(0x83b4),
+            _ => None,
+        };
+        if let Some(site) = handler {
+            calls.push(serde_json::json!({"role":"modeHandler","section1":branch(site)?}));
+        }
+        calls.push(serde_json::json!({"role":"contactCheck","section1":branch(0x83bc)?}));
+        calls.push(serde_json::json!({"role":"CCL_Entry","engineAddress":entry.addend}));
+    }
+    Ok(
+        serde_json::json!({"mode":mode,"gateByte":gate_byte,"calls":calls,"scope":"Ordered calls only; collision registration is not a hit."}),
+    )
+}
