@@ -824,6 +824,7 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    BodyCollision,
     /// Inputs at 0x1d74. Supply the final player byte separately because the
     /// stage reads it again after the damage and collision calls.
     CommonTail {
@@ -1169,6 +1170,40 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             return Ok(
                 serde_json::json!({"target":target,"flags_before_damage":flags,
                 "previous_player_after_tail":player_after_updates,"call_sites":sites}),
+            );
+        }
+        PlacementClock::BodyCollision => {
+            let table = |site: u32| -> Result<&[u8]> {
+                let p = rel
+                    .reference(1, site)
+                    .ok_or_else(|| Error::invalid("missing body collision table"))?;
+                if (p.module, p.section, p.kind) != (88, 5, 6)
+                    || rel.reference(1, site + 4)
+                        != Some(crate::city_rel::Reference { kind: 4, ..p })
+                {
+                    return Err(Error::invalid("body collision table reference mismatch"));
+                }
+                Ok(&rel.data(5)?[p.addend as usize..])
+            };
+            let desc = table(0x566)?;
+            let bindings = table(0x942)?;
+            let count = (word(0x56c) & 0xffff) as usize;
+            let mut slots = Vec::with_capacity(count);
+            for i in 0..count {
+                let d = &desc[i * 48..][..48];
+                let b = &bindings[i * 32..][..32];
+                let raw = |off| u32::from_be_bytes(d[off..off + 4].try_into().unwrap());
+                let f = |off| f32::from_bits(raw(off));
+                let local = |off| f32::from_be_bytes(b[off..off + 4].try_into().unwrap());
+                let joint = b[0] as i8;
+                slots.push(serde_json::json!({"slot":i,"kind":d[0],"form":d[1],"push":d[2],"damage":d[3],
+                    "attributes":raw(4),"center":[f(8),f(12),f(16)],"parameters":[f(20),f(24),f(28),f(32)],
+                    "rotation":[raw(36) as i32,raw(40) as i32,raw(44) as i32],"binding_index":joint,
+                    "updates_center":joint>0,"binding_offset":[local(4),local(8),local(12)]}));
+            }
+            return Ok(
+                serde_json::json!({"list_id":word(0x570)&0xffff,"slots":slots,
+                "scope":"Initial descriptors and body center-update bindings; collision response and live transform buffers are external."}),
             );
         }
         PlacementClock::InitialHealth => {
