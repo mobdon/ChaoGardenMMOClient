@@ -2,12 +2,12 @@
 use crate::{kart_progress, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct State {
     position: [f32; 3],
     lead: f32,
-    latch: i32,
+    pub(crate) latch: i32,
 }
 
 #[derive(Deserialize)]
@@ -30,7 +30,7 @@ pub enum Input {
 
 #[derive(Serialize)]
 pub struct Output {
-    state: State,
+    pub(crate) state: State,
     cue_id: Option<i32>,
     installs_callbacks: bool,
 }
@@ -38,6 +38,9 @@ pub struct Output {
 pub fn step(bytes: &[u8], input: Input) -> Result<Output> {
     kart_progress::verify(bytes)?;
     let constants = crate::city_rel::CityRel::read_identified(bytes, 80)?.data(4)?;
+    step_constants(constants, input)
+}
+pub(crate) fn step_constants(constants: &[u8], input: Input) -> Result<Output> {
     let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
     let mut cue_id = None;
     let (state, installs_callbacks) = match input {
@@ -122,7 +125,7 @@ pub struct ControllerInput {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ControllerSignals {
     remove_task: bool,
-    pursuit_latch: i32,
+    pursuit_latch: Option<i32>,
     race_finish_latch: i32,
     engine_byte_09: i8,
     engine_byte_42: i8,
@@ -134,20 +137,33 @@ impl ControllerSignals {
         elapsed: i32,
         flag_3ce24: i32,
         engine_byte_16: i8,
-    ) -> ControllerInput {
-        ControllerInput {
+        target_latch: Option<i32>,
+    ) -> Result<ControllerInput> {
+        if self
+            .pursuit_latch
+            .zip(target_latch)
+            .is_some_and(|(a, b)| a != b)
+        {
+            return Err(crate::Error::invalid(
+                "controller latch conflicts with pursuit target",
+            ));
+        }
+        let latch = target_latch
+            .or(self.pursuit_latch)
+            .ok_or_else(|| crate::Error::invalid("missing pursuit latch before target spawn"))?;
+        Ok(ControllerInput {
             remaining,
             elapsed,
             flag_3ce24,
             engine_byte_16,
             remove_task: self.remove_task,
-            pursuit_latch: self.pursuit_latch,
+            pursuit_latch: latch,
             race_finish_latch: self.race_finish_latch,
             engine_byte_09: self.engine_byte_09,
             engine_byte_42: self.engine_byte_42,
             race_results: None,
             lap_clock: None,
-        }
+        })
     }
 }
 #[derive(Serialize)]

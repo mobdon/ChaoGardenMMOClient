@@ -608,6 +608,12 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    SpawnTarget {
+        target_spawn: TargetSpawn,
+    },
+    UpdateTarget {
+        target_tick: TargetTick,
+    },
     Vehicle {
         vehicle_countdown: VehicleCountdown,
     },
@@ -617,6 +623,20 @@ enum SequenceEvent {
     Controller {
         controller: crate::kart_story_target::ControllerSignals,
     },
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetSpawn {
+    segment_xz: [[f32; 2]; 4],
+    parent_task_y: f32,
+    latch: i32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetTick {
+    active_word: i32,
+    parent_work_x: f32,
+    parent_work_7c: f32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -656,9 +676,44 @@ pub fn story_sequence(
     let mut clock = s.controller_state;
     let mut vehicle = s.vehicle_state;
     let mut timeout = None;
+    let mut target: Option<crate::kart_story_target::State> = None;
+    let constants = rel.data(4)?;
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::SpawnTarget { target_spawn: v } => {
+                if target.is_some() {
+                    return Err(Error::invalid("pursuit target already spawned"));
+                }
+                let out = crate::kart_story_target::step_constants(
+                    constants,
+                    crate::kart_story_target::Input::Spawn {
+                        segment_xz: v.segment_xz,
+                        parent_task_y: v.parent_task_y,
+                        mode,
+                        latch: v.latch,
+                    },
+                )?;
+                target = Some(out.state);
+                updates.push(json!({"target":out}));
+                continue;
+            }
+            SequenceEvent::UpdateTarget { target_tick: v } => {
+                let state = target.ok_or_else(|| Error::invalid("missing pursuit target"))?;
+                let out = crate::kart_story_target::step_constants(
+                    constants,
+                    crate::kart_story_target::Input::Tick {
+                        state,
+                        active_word: v.active_word,
+                        parent_work_x: v.parent_work_x,
+                        parent_work_7c: v.parent_work_7c,
+                        mode,
+                    },
+                )?;
+                target = Some(out.state);
+                updates.push(json!({"target":out}));
+                continue;
+            }
             SequenceEvent::Vehicle {
                 vehicle_countdown: VehicleCountdown {},
             } => {
@@ -699,7 +754,8 @@ pub fn story_sequence(
                     clock.elapsed,
                     clock.flag_3ce24,
                     clock.engine_byte_16,
-                ))?;
+                    target.map(|t| t.latch),
+                )?)?;
                 timer = r.remaining as u32;
                 clock = ControllerState {
                     elapsed: r.elapsed,
@@ -740,6 +796,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }

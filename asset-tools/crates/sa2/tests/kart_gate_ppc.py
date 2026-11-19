@@ -116,4 +116,17 @@ if len(sys.argv)>4:
                     assert results[2]["vehicleCountdown"]["timer"] is None
                     assert results[4]["vehicleCountdown"]["next"]=="vehicle_272c"
                     assert results[-2]["timeoutTick"]["action"] is None and results[-1]["timeoutTick"]["action"]==8
+            # The target owns the catch latch. Do not inject it into the controller.
+            signals=dict(remove_task=False,race_finish_latch=0,engine_byte_09=0,engine_byte_42=0)
+            spawn=dict(target_spawn=dict(segment_xz=[[0,0],[10,10],[20,20],[30,30]],parent_task_y=40,latch=0))
+            catch=dict(target_tick=dict(active_word=1,parent_work_x=80,parent_work_7c=2500))
+            q.update(timer_word=2,controller_state=dict(elapsed=299,flag_3ce24=0,engine_byte_16=0),
+                     updates=[spawn,dict(controller=signals),catch,dict(controller=signals),dict(controller=signals)])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-catch.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());assert doc["timerWord"]==1 and doc["target"]["latch"]==1
+            assert doc["updates"][2]["target"]["cue_id"]==(0x701 if "Tails" in path.name else 0x708)
+            first,second=[d["controller"] for d in doc["updates"][-2:]]
+            assert first["elapsed"]==300 and ["engine_8005eb24",0] in first["calls"]
+            assert second["elapsed"]==301 and ["engine_8005eb24",0] not in second["calls"]
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")
