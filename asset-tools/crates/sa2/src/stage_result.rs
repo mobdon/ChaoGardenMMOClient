@@ -92,6 +92,13 @@ pub struct StoryProgress<'a> {
     boss_flags: &'a [u8],
 }
 
+impl StoryProgress<'_> {
+    /// Embedded SEQ_DATA fields; the outer header section is separate.
+    pub fn section_numbers(&self) -> (u8, u8, u8) {
+        (self.sequence_number, self.section, self.next_section)
+    }
+}
+
 pub fn story_progress(snapshot: &[u8]) -> Result<StoryProgress<'_>> {
     // Offsets are from the start of the in-memory structure, not a file header.
     const SEQ: usize = 0x3237;
