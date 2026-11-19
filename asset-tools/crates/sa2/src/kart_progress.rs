@@ -23,7 +23,7 @@ pub struct Update {
     pub tested_indices: Vec<i32>,
     pub debug_indices: Vec<i32>,
 }
-fn verify(bytes: &[u8]) -> Result<()> {
+pub(crate) fn verify(bytes: &[u8]) -> Result<()> {
     if manifest::sha256(bytes) != "71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c"
     {
         return Err(Error::invalid("unsupported CartD.rel revision"));

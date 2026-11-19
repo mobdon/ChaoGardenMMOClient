@@ -162,3 +162,17 @@ the result tasks or a verified stage clear. The local oracle
 `tests/kart_field_ppc.py CLI CartD.rel PRIVATE_TMP_DIR` intercepts the calls
 and compares their order, arguments, places, latch and timers against the
 installed field loop; it supplies sorted indices for known-score fixtures.
+
+The restricted finish call at 0xd4f8 requests a task whose update is 0xd540.
+`kart-finish-menu CartD.rel OUTPUT.json INPUT.json` steps its logic. Supply
+`state` (signed byte `mode`, byte `selection`, unsigned 16-bit `timer`,
+and word `flag_3ce24`), two native `input_words`, and the observed
+`confirm_mask`. Starting at timer zero, mode 0 opens the selection on update
+301. In mode 1 direction 0x40 takes priority over 0x80, then confirmation,
+then idle timeout. The two confirm branches request distinct native services;
+idle timeout requests removal after 3601 idle updates. The output records
+calls, not their side effects, and does not label either option as a story
+clear. This reader does not render the display callback or run the scheduler.
+`tests/kart_finish_menu_ppc.py CLI CartD.rel PRIVATE_TMP_DIR` executes the
+original callback, checking state, call order, and arguments on both timer
+boundaries, direction conflicts, confirmation, wraparound and inactive modes.
