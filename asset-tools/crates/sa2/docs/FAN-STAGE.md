@@ -349,3 +349,20 @@ and clears +0xa4. Exactly 20 does not start a drift. The nested drift output
 contains the final +0xa4; the outer value is the earlier pedal update. This
 does not implement the subsequent state-2 driving routine. The input oracle
 also executes the position-ring reads, native split thresholds and state writes.
+
+`kart-drift-windup CartD.rel OUTPUT.json INPUT.json` runs the state-2
+callback selected by the dispatch table at section 5 +0x3b94. The five
+windup updates read their angular increments directly from the installed
+table. Direction uses the signed stick saved at entry (+0xa8), not the
+current stick. The fifth update resets +0xa4 and selects state 3. The
+shared 0x399c routine rotates planar velocity, scales its local Z by
+drift handling, normalizes it and restores speed (with a reduction when
+acceleration is released), then advances position. The report labels its
+math as projected: engine atan2, vector rotation, length, normalization
+and vector addition are modeled. Later callbacks can change position.
+
+`tests/kart_drift_windup_ppc.py CLI CartD.rel PRIVATE_DIR` runs the
+original state-2 callback for both five-tick directions and compares each
+state, heading, local velocity and position before later collision updates.
+The test uses modeled engine imports and supplied velocities, not a game
+trajectory or evidence of exact engine trigonometric rounding.
