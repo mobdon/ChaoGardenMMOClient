@@ -1,0 +1,13 @@
+# First-stage Rust runtime
+
+The offline runner opens the revision-0 ASOE image identified in the catalog. Rust reads the stage, sprite scripts, ring placement and starting coordinates directly from the image. Each accepted input advances one simulation frame. A missing or unsupported source fails before any replay outputs are published.
+
+From this crate, run `cargo run --release --bin sonic-advance-native -- replay <ROM> <existing-.local-directory> 600`. The process prints a JSON receipt and writes it beside a P6 RGB frame and a compact JSON array of the 600 post-step snapshots. The trace digest covers the JSON bytes. The frame digest covers the RGB bytes after the PPM header. The runner accepts 1 through 36,000 requested frames. Existing paths are preserved. Each file is published from a synced temporary file by hard link, with the receipt published last. An ordinary publication error removes newly created siblings. A process crash can leave siblings without a receipt.
+
+With `--features native-window`, `play <ROM>` opens a 240 × 160 framebuffer. Arrows or A/D move, Space or Z jumps, P pauses, R restarts and Escape exits. `demo <ROM> <frames>` drives the same loop from the headless exercise inputs. The window targets 60 updates per second and advances once per active update. Slow rendering slows wall-clock playback.
+
+Set `SONIC_ADVANCE_ASOE_ROM` to the local image and run `cargo test --release --test runtime -- --include-ignored` for the CLI reference test. The exercise waits 30 frames, then holds right, with jump held on frames 100 through 119 of each 180-frame cycle. The initial position is (104, 444). The test checks the emitted frame, trace, receipt and refusal to replace a pre-existing receipt after preparing its sibling outputs. These hashes establish reproducibility of this Rust build. Retail gameplay timing has no independent trace comparison here.
+
+The tested 600-frame run recorded three jumps, four landings and one ring, ending at Q8 coordinates (111969, 103936). The trace SHA-256 is `29cd8b446f1d464ba39847e14b737d8674e04343163e74e5ff5c4c55df46e898`. The final RGB SHA-256 is `7ca7b26477218ef12ee0984ed877a1d28aeb29e32d6ff263c56f245a97dcd1b8`.
+
+The camera centers and clamps to the map. Collision covers the supported upright dry movement paths. Falling out stops the run. Native camera behavior, full physics, stage progression, enemies, bosses, sound, game menus and persistent saves remain open. Rings only affect the local run. The window was observed opening on Windows. Keyboard behavior and visual parity during interactive play remain unverified.

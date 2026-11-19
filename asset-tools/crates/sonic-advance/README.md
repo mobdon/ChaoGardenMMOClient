@@ -1,5 +1,9 @@
 # Sonic Advance ASOE asset tools
 
+The native Rust port continuation now includes a runnable first-stage testbed:
+[port status and local play commands](docs/PORT-STATUS.md). Full-game parity
+remains unfinished; the existing catalog/decoder evidence below is unchanged.
+
 Standalone Rust tooling for the supplied USA revision-0 source only. The full
 8 MiB ROM must have SHA-256
 `afc29e3325baf68a1822e88b25fcb59c8bdc29b8cdc48fa21c56defbd60ca020`.
