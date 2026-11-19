@@ -159,8 +159,12 @@ try {
     && skating.every(row => row.cadence > 0 && row.cadence <= .20)
     && skating.at(-1).cadence > skating[0].cadence
     && skating.at(-1).cadence > .12);
-  const airborne = samples.filter(row => !row.grounded && row.jumpOffset > .001);
-  check('actual airborne snapshots immediately disable skating', airborne.length > 0 && airborne.every(row => !row.skate && row.blend === 0));
+  const airborne = rows('jump').filter(row => !row.grounded && row.jumpOffset > .001);
+  check('actual jump disables active skating without coasting', airborne.length > 0
+    && airborne.every(row => !row.skate && row.cadenceState === 'airborne'));
+  check('actual jump fades out the skate pose', airborne.every((row, index) => row.blend < 1
+    && (index === 0 || row.blend <= airborne[index - 1].blend))
+    && (airborne.length < 3 || airborne.at(-1).blend === 0));
   const mounted = rows('mech-move');
   check('actual moving mech keeps pilot Idle and skating disabled', mounted.length > 2
     && mounted.every(row => row.vehicle && row.gait === 'Idle' && !row.skate && row.blend === 0)
