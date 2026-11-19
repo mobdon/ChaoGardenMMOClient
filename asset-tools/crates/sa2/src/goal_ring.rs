@@ -43,6 +43,10 @@ pub struct Program {
     pub child_entry: u32,
     pub child_parent_callback: u32,
     pub child_scale_bits: u32,
+    #[serde(skip)]
+    regular_shapes: [crate::collision_record::CollisionRecord; 2],
+    #[serde(skip)]
+    regular_shape_offset: u32,
     pub radii: [f32; 2],
     pub spin: [i32; 2],
     pub rise: f32,
@@ -959,6 +963,25 @@ impl Program {
         if (r.module, r.kind) != (info.module, 6) {
             return Err(invalid());
         }
+        if r.section != 5 {
+            return Err(invalid());
+        }
+        for (off, kind) in [(0x28e, 4), (0x2aa, 6), (0x2ae, 4)] {
+            let other = rel.reference(1, init + off).ok_or_else(invalid)?;
+            if (other.module, other.section, other.kind, other.addend)
+                != (r.module, r.section, kind, r.addend)
+            {
+                return Err(invalid());
+            }
+        }
+        for off in [0x29c, 0x2b8] {
+            let call = rel.reference(1, init + off).ok_or_else(invalid)?;
+            if (call.module, call.kind, call.addend) != (0, 10, 0x8000f8b8) {
+                return Err(invalid());
+            }
+        }
+        let regular_shape_offset = r.addend;
+        let regular_shapes = shape_pair(regular_shape_offset)?;
         let data = rel.data(r.section)?;
         let mut radii = [0.; 2];
         for (i, radius) in radii.iter_mut().enumerate() {
@@ -1041,6 +1064,8 @@ impl Program {
             child_entry,
             child_parent_callback,
             child_scale_bits,
+            regular_shapes,
+            regular_shape_offset,
             radii,
             spin,
             rise,
@@ -1486,6 +1511,11 @@ impl Program {
         }
         Ok(json!(pairs))
     }
+    pub fn regular_collision_setup(&self, effective_angle_x: i32) -> Value {
+        let i = usize::from(effective_angle_x % 3 == 1);
+        json!({"engine":0x8000f8b8u32,"target":"task","relOffset":self.regular_shape_offset+48*i as u32,
+               "count":1,"id":4,"shape":self.regular_shapes[i]})
+    }
     pub fn child_start(&self, byte1: i8, input: ChildStart) -> Result<Value> {
         self.child_start_with_mode(byte1, input)
             .map(|(_, report)| report)
@@ -1843,6 +1873,6 @@ pub fn replay(
         None
     };
     Ok(
-        json!({"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
+        json!({"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
     )
 }

@@ -751,3 +751,20 @@ for selector,(byte1,linked,parent),mask in itertools.product(
                 work40Bits=word_at(WORK+40),calls=calls,callbacks20_24_32=[word_at(TASK+i)-BASE for i in (20,24,32)])
     obs=dict(work32=selector,task_link=bool(linked),parent_link=bool(parent),query_returns=answers)
     print('Z',byte1,json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
+
+# Observe actual arguments to the regular goal's collision initializer.
+def regular_setup(uc,pc,*_):
+    assert reg(3)==TASK
+    offset=reg(4)-(DATA+5*0x100000)
+    f=struct.unpack_from('>bBbbI7f3i',d,ss[5][0]+offset)
+    shape=dict(kind=f[0],form=f[1],push=f[2],damage=f[3],attr=f[4],center=f[5:8],parameters=f[8:12],angles=f[12:])
+    setup.append(dict(engine=pc,target='task',relOffset=offset,count=reg(5),id=reg(6),shape=shape))
+    uc.emu_stop()
+service=0x8000f8b8
+u.hook_add(UC_HOOK_CODE,regular_setup,begin=service,end=service)
+for angle in [-2147483648,-4,-3,-2,-1,0,1,2,3,4,32767,2147483647]:
+    setup=[]
+    put(WORK+8,'i',angle);setreg(30,TASK);setreg(31,WORK)
+    u.emu_start(BASE+0x2d464,BASE+0x2d4c4,count=40)
+    assert len(setup)==1
+    print('G',angle,json.dumps(setup[0],separators=(',',':')))
