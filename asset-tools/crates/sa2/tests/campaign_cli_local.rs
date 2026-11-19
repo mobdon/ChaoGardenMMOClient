@@ -389,6 +389,19 @@ fn story_run_stops_before_gameplay() {
             assert_eq!(v["stop"]["movie"]["packCount"], 14099);
             assert_eq!(v["stop"]["movie"]["videoPackets"], 12632);
             assert_eq!(v["stop"]["movie"]["audioPackets"]["c1"], 732);
+            let video = &v["stop"]["movie"]["videoStream"];
+            assert_eq!(
+                video["sha256"],
+                "6e3edbdfdd019dbab1ce70be78b751c076891b704895bbc7dbb3d9c51d577640"
+            );
+            assert_eq!(
+                (
+                    video["width"].as_u64(),
+                    video["height"].as_u64(),
+                    video["pictures"].as_u64()
+                ),
+                (Some(640), Some(480), Some(891))
+            );
             let tracks = &v["stop"]["movie"]["audioTracks"];
             for (key, adx, pcm) in [
                 (
