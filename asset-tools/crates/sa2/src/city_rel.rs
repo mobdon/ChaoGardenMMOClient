@@ -304,8 +304,37 @@ pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
             _ => Err(invalid()),
         }
     };
-    Ok(
-        serde_json::json!({"module":module,"prolog":entry,"descriptor":descriptor,"name":name,
-        "registerTarget":call.addend,"startup":callback(12)?,"teardown":callback(16)?,"entry":callback(20)?}),
-    )
+    let mut registration = serde_json::json!({"module":module,"prolog":entry,"descriptor":descriptor,"name":name,
+        "registerTarget":call.addend,"startup":callback(12)?,"teardown":callback(16)?,"entry":callback(20)?});
+    if module == 82 {
+        // Section 1:6f64 assembles a stack vector for the direct call at 6fa8.
+        // The SHA-256 gate above pins the instructions and register assignments.
+        let pair = |at, section| -> Result<u32> {
+            let hi = rel.reference(1, at).ok_or_else(invalid)?;
+            let lo = rel.reference(1, at + 4).ok_or_else(invalid)?;
+            if (hi.module, hi.section, hi.kind) != (module, section, 6)
+                || lo != (Reference { kind: 4, ..hi })
+            {
+                return Err(invalid());
+            }
+            Ok(hi.addend)
+        };
+        let scalar = |at| -> Result<f32> {
+            let off = pair(at, 4)? as usize;
+            Ok(f32::from_be_bytes(
+                rel.data(4)?
+                    .get(off..off + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        let x = scalar(0x6f7a)?;
+        let yz = scalar(0x6f8a)?;
+        registration["bossTaskSetup"] = serde_json::json!({
+            "constructorSection1Offset":0, "position":[x,yz,yz], "yaw":-16384,
+            "nextTaskSection1Offset":pair(0x6fae, 1)?
+        });
+    }
+    Ok(registration)
 }
