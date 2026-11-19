@@ -1,8 +1,10 @@
 # Sonic Advance 2 A2NE asset tools and native Rust port
 
-Read-only Rust catalog and converters for **one verified USA revision 0 cartridge** and its embedded Tiny Chao Garden. All code, tests, metadata and documentation stay inside this workstream's crate. The crate has its own workspace/lockfile so it does not change the shared asset workspace before the other tracks agree a contract.
+Rust catalog, converters and standalone Tiny Garden practice runner for **one verified USA revision 0 cartridge** and its embedded Tiny Chao Garden. All code, tests, metadata and documentation stay inside this workstream's crate. The crate has its own workspace/lockfile so it does not change the shared asset workspace before the other tracks agree a contract.
 
 The crate includes a [local Rust course runner](docs/NATIVE-HARNESS.md) for Sonic in the fourteen normal acts. It reads actual course maps, collisions, placements, sprite scripts and palettes. The runner executes two enemy species, damage, homing, ring loss and recollection, checkpoints, ordinary course goals, results, and the in-memory campaign journal. The local audio preview interprets original sequences and samples. Each act 1 can advance to act 2; act 2 reports its boss destination. **The full retail game is not ported.** See the [coverage matrix](docs/NATIVE-PORT.md#full-native-game-coverage-boundary) for remaining gameplay, presentation, audio and campaign work.
+
+The Garden runner executes Rust translations of the original behaviors. Its test oracles can separately execute locally supplied cartridge instructions to check parity. Opening an asset catalog alone does not play the Garden.
 
 ## Exact source gate
 
@@ -14,6 +16,21 @@ The crate includes a [local Rust course runner](docs/NATIVE-HARNESS.md) for Soni
 The payload starts at cartridge offset `0xAED70`; type-0x10 LZ77 consumes exactly 155,273 bytes. Full-ROM size/SHA-256, header, source SHA-1, decoded SHA-1/SHA-256, consumed length and every native CRC table entry are checked before using any catalog offset. A different region/revision is rejected even if its header looks valid.
 
 `rom` offsets are relative to the cartridge file (native base `0x08000000`). `garden` offsets refer to the **decoded payload**, loaded at `0x02000000`; they cannot be added to `0xAED70` to locate compressed data. Evidence is pinned to SAT-R/sa2 commit `2dd3f17d30cd3c156e508aac0017620ae485b9ba`, using the dedicated `chao_garden/mb_chao_garden.sha1` rather than the subproject README's main-ROM hash.
+
+## Play the cartridge Tiny Garden locally
+
+Build the standalone Rust runner and open the desktop viewer with your own verified A2NE ROM. Start with blank flash or supply an existing flash image as a read-only input. The viewer sends buttons and displays the pixels returned by Rust; gameplay and save state stay in that single local process.
+
+```powershell
+$manifest = 'asset-tools/crates/sonic-advance-2/Cargo.toml'
+cargo build --locked --release --manifest-path $manifest --bin a2ne-garden
+$exe = 'asset-tools/crates/sonic-advance-2/target/release/a2ne-garden.exe'
+python asset-tools/crates/sonic-advance-2/tools/play_garden.py $exe $env:A2NE_ROM
+```
+
+Arrows move, Z is A, X is B, and Enter is Start where supported. Use the Garden buttons for hatching, shop, feeding, weeds and game entry. Click the Garden to place a held item. **Save copy** writes a new file under an explicit `.local` directory; it refuses to overwrite an existing file. Append the saved path after the ROM to reopen the same Chao. The executable also works without Python/Tk: enter `memory` or `bounce`, use `pad MASK [FRAMES]` and request `status`, `frame .local/view.pam`, or `save .local/new.sav`.
+
+The tested cartridge path covers Memory and Bounce, native ring credit, hatching, purchasing and feeding fruit, weeds, and flash recovery. The command controls enter selected Garden callbacks directly. Free roaming Chao behavior, all toy interactions, full menus, native sound and physical transfer are unfinished. Search, Janken and Ball do not belong to the A2NE cartridge. See [Garden execution evidence](docs/GARDEN-PORT.md) for exact coverage.
 
 ## Build and use
 

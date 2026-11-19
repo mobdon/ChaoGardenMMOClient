@@ -24,14 +24,33 @@ pub mod native_player;
 pub mod native_results_ui;
 pub mod native_rings;
 pub mod native_runtime;
-#[path = "reused/native_save.rs"]
-pub mod native_save;
 pub mod native_scatter;
 pub mod native_sonic;
 pub mod native_special_rings;
 pub mod native_springs;
 pub mod native_stage;
+
+pub mod native_garden_art;
+pub mod native_garden_background;
+pub mod native_garden_behavior;
+pub mod native_garden_home_art;
+pub mod native_garden_memory;
+pub mod native_garden_progress;
+pub mod native_garden_second;
+pub mod native_garden_session;
+#[path = "reused/native_growth.rs"]
+pub mod native_growth;
+#[path = "reused/native_hatching.rs"]
+pub mod native_hatching;
+#[path = "reused/native_save.rs"]
+pub mod native_save;
+#[path = "reused/native_shop_state.rs"]
+pub mod native_shop_state;
+#[path = "reused/native_weeds.rs"]
+pub mod native_weeds;
 pub mod save_layout;
+#[path = "reused/shop.rs"]
+pub mod shop;
 pub mod tables;
 pub mod transfer;
 

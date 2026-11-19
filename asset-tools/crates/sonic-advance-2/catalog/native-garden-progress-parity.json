@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "sourceGitBlobs": {
+    "chao_garden_src_save.c": "cf321666f783207195fb42299473fa920aacd9cc",
+    "chao_garden_include_save.h": "14833d791e1846d56db545b21ece0dae36fbf8f6",
+    "chao_garden_asm_code.s": "7ec760b4772bbab9d4e25282324f248728521c07"
+  },
+  "payloadSha256": "84d4df3f397e25885768d212a46287db706857651102b9145595cfda30cee7ca",
+  "routines": {
+    "initializer": {
+      "offset": 34832,
+      "bytes": 28,
+      "sha256": "6b8eeff2b85a821dc6c5281e6ce42ee53d489203cb346daf78d3ffb30713a03d"
+    },
+    "bounded-random": {
+      "offset": 5460,
+      "bytes": 52,
+      "sha256": "26147c463456ce7b7af5d684b3c9cbf5adb6d6b9feec4599ec1cc1ced0f1ddd5"
+    },
+    "signed-credit": {
+      "offset": 41692,
+      "bytes": 40,
+      "sha256": "972534c7558d41d3cd94d53dbea85dbb1f873a36e8a445de95169b9158f825b5"
+    },
+    "memory-return-first": {
+      "offset": 48564,
+      "bytes": 30,
+      "sha256": "0821295f270fff8afa8bd8411dfecc7dcfc6e40ab082fcdbe43ff234b708b075"
+    },
+    "memory-return-second": {
+      "offset": 53620,
+      "bytes": 34,
+      "sha256": "3f5b4958c864fe1362dc0d5d5ed1469d21fe3ddd385c9dab8d3833ac3d02a077"
+    },
+    "bounce-return": {
+      "offset": 63008,
+      "bytes": 100,
+      "sha256": "e19cb236e756038606d0e22178eadc89b7c690b1f2e41998b7f9beedf6ad3243"
+    }
+  },
+  "outputs": {
+    "initializer": {
+      "cases": 4096,
+      "rowBytes": 12,
+      "bytes": 49152,
+      "sha256": "23880cf8aa938f394493636230f1326379de305dcbb1ed688130cfb57f030563"
+    },
+    "signed": {
+      "cases": 4096,
+      "rowBytes": 12,
+      "bytes": 49152,
+      "sha256": "d557c9f9134dc4b4e208cc1def5df1eff04c8b13c494bc3fa91b4542f657b6ed"
+    },
+    "bounce": {
+      "cases": 4096,
+      "rowBytes": 40,
+      "bytes": 163840,
+      "sha256": "19e7388b31bc78b5dfd3bacaf2887ec940fad6552c93bf8d3268ba27f7da176c"
+    },
+    "memory-exit": {
+      "cases": 4096,
+      "rowBytes": 48,
+      "bytes": 196608,
+      "sha256": "9edda4d85d71ec9b847e901bcc68784775ceaf93f25fe7573cef807aa7c27578"
+    },
+    "save": {
+      "cases": 64,
+      "rowBytes": 135436,
+      "bytes": 8667904,
+      "sha256": "b5f69330e0e240ca6ebc77e703821aa0542e97e08fd4c21ce12319c66867219d"
+    }
+  },
+  "boundary": "Actual-payload Thumb initializer/reward/return execution; bounded BIOS signed-Div shim, graphics/results-ready/task-restore explicit service stubs. Exact original save C with named in-memory flash/random/audio bindings; no physical flash or real-save compatibility claim"
+}

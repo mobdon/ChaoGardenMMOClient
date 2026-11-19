@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "game": "A2NE embedded Tiny Chao Garden / Chao Bounce",
+  "result": "pass",
+  "source": {
+    "romSha256": "f2b7a3329401a02706d87560f61da3e6da2ca42f2b9ae98a86d78e0529cb7260",
+    "payloadBytes": 191340,
+    "payloadSha256": "84d4df3f397e25885768d212a46287db706857651102b9145595cfda30cee7ca",
+    "payloadSha1": "2c7da8e1c9af85986eecf4effae39197cdac9abf",
+    "adaptedEngineSha256": "17540667c39bc9ec91864a737d46d9fd572e6d1fa173d574619b5772f015f253",
+    "probeSha256": "fbd05c0867a30d3ac536512290c30583e955916a3933f76df1c57de7ea2518f7",
+    "verifierSha256": "439a642a1ede4f59b58a54b4fb31444fb40b8a9aa3b8800d80c5a28a8652b41f",
+    "verifierGitLfSha256": "36d75b04db5942fa2019f9f23fb1ff7bc91b688bc6f0805ae7315f8caecca5a0"
+  },
+  "oracle": {
+    "kind": "Actual payload Thumb callback graph, Unicorn 2.1.4",
+    "numericalBiosReferenceSha256": "5482575dfb1849c2672144e7c5b13737cb1f920608dc76d03f509f9d5d48fb97",
+    "nativeTaskAllocationAndScheduling": true,
+    "graphicsServices": "Bounded BIOS copy/decompression and affine models",
+    "audioServices": "Counted callbacks, skipped output"
+  },
+  "matrix": {
+    "stages": 4,
+    "policiesPerStage": 8,
+    "frameLimitPerTrace": 2000,
+    "traces": 32,
+    "nativeFrames": 48503,
+    "springPoseChecks": 366675,
+    "springAffineInputChecks": 73695,
+    "movingObjectAffineInputChecks": 37776,
+    "distinctSubmittedPoses": 85,
+    "independentNumericalBiosVectors": 6347,
+    "audioCallbacksSkipped": 502,
+    "presentationBiosOperationsModeled": 231530,
+    "corpusSha256": "9914955b8c44efb9ed5ce31e092576f45e036764fcc482d4f13f4e8f36e8e6ad",
+    "controlledStateCoverage": "Policy 7 clears targets to exercise clear/next-stage branches; this is not an input-only four-stage victory."
+  },
+  "completePractice": {
+    "initialState": "Untouched BouncePractice::new default spawn",
+    "input": "For zero-based frame f, hold A=1 when f % 60 == 0 and hold 0 otherwise",
+    "controlledStateWrites": false,
+    "nativeFrames": 1097,
+    "won": false,
+    "nativeRings": 7,
+    "springPoseChecks": 9805,
+    "springAffineInputChecks": 1961,
+    "audioCallbacksSkipped": 20,
+    "presentationBiosOperationsModeled": 4291,
+    "corpusSha256": "b531071a089109f07162ba007b07d18da93e98025881b93fb5d4a11957e92819",
+    "publicViewTranscriptSha256": "f80c7e0f8fe557798ed369dec9c651927db2dc1d283df3b30343f0df6c29d639"
+  },
+  "limits": [
+    "Numerical BIOS boundary is explicit, not authentic BIOS machine code or GBA cycle parity.",
+    "Graphics/audio output, physical flash and transfer hardware are not proven by these task comparisons.",
+    "The complete input-only round is a native loss; no input-only four-stage win is claimed.",
+    "Cartridge-only practice; no MMO adapter, canonical service reward or durable reward transaction is claimed.",
+    "Original program bytes, art, tables, numerical traces and generated binary output remain private local files."
+  ]
+}
