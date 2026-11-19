@@ -40,7 +40,7 @@ pub struct Frame {
     previous_position: [f32; 3],
     velocity: [f32; 3],
     angles: [i32; 3],
-    work_ec: u32,
+    pub(crate) work_ec: u32,
     #[serde(skip_serializing)]
     magnitude_return: Option<f32>,
     #[serde(skip_serializing)]
@@ -105,12 +105,17 @@ pub struct Update {
     #[serde(skip_serializing_if = "Option::is_none")]
     limousine: Option<Limousine>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    frame: Option<Frame>,
+    pub(crate) frame: Option<Frame>,
     pub(crate) vehicle_state: Option<i32>,
     pub(crate) timer: Option<u16>,
     cue_id: Option<i32>,
     action: Option<i32>,
     next: &'static str,
+}
+impl Update {
+    pub(crate) fn spawned_target(&self) -> Option<crate::kart_story_target::State> {
+        self.limousine.as_ref().map(|v| v.target.state)
+    }
 }
 fn spawn(r: &mut Update, remaining: i32, mode: i32) {
     r.timer = Some(if remaining > 0 { 120 } else { 0 });
@@ -188,7 +193,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                         if frame.work_ec == 0 {
                             match (frame.limousine_allocation.take(), frame.d968_return) {
                                 (Some(a), None) if a.task_handle != 0 && a.segment == frame.segment && a.segment >= 0 => {
-                                    let target = crate::kart_story_target::step(bytes, crate::kart_story_target::Input::Spawn {
+                                    let target = crate::kart_story_target::step_constants(constants, crate::kart_story_target::Input::Spawn {
                                         segment_xz: a.segment_xz, parent_task_y: frame.position[1], mode, latch: a.latch,
                                     })?;
                                     r.limousine = Some(Limousine {

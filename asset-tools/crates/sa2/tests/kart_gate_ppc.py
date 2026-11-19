@@ -129,4 +129,19 @@ if len(sys.argv)>4:
             first,second=[d["controller"] for d in doc["updates"][-2:]]
             assert first["elapsed"]==300 and ["engine_8005eb24",0] in first["calls"]
             assert second["elapsed"]==301 and ["engine_8005eb24",0] not in second["calls"]
+            # Exactly 20 segments from the end does not spawn. One segment
+            # closer allocates the target; the same handle suppresses a duplicate.
+            allocation=dict(task_handle=0x1234,segment=75,segment_xz=[[0,0],[10,10],[20,20],[30,30]],latch=0)
+            frame=dict(cooldown=0,work_288=0,work_108=0,engine_byte_23=0,engine_halfword_68=0,
+                       global_24d60=0,segment=80,segment_count=100,position=[17,40,7],
+                       previous_position=[6,5,4],velocity=[3,4,12],angles=[0,0,0],work_ec=0)
+            q["updates"]=[dict(vehicle_post_move=frame),
+                          dict(vehicle_post_move=dict(frame,segment=81,limousine_allocation=allocation)),
+                          dict(vehicle_post_move=dict(frame,segment=81,work_ec=0x1234)),catch,dict(controller=signals)]
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-route.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());before,spawned,existing=[v["vehiclePostMove"] for v in doc["updates"][:3]]
+            assert "limousine" not in before and "limousine" not in existing
+            assert spawned["frame"]["segment"]==75 and spawned["limousine"]["task_handle"]==doc["targetHandle"]==0x1234
+            assert doc["target"]["latch"]==1 and doc["controllerState"]["elapsed"]==300 and doc["timerWord"]==2
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

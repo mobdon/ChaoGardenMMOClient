@@ -608,6 +608,9 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    PostMove {
+        vehicle_post_move: Box<crate::kart_timeout::Frame>,
+    },
     SpawnTarget {
         target_spawn: TargetSpawn,
     },
@@ -676,11 +679,46 @@ pub fn story_sequence(
     let mut clock = s.controller_state;
     let mut vehicle = s.vehicle_state;
     let mut timeout = None;
+    let mut target_handle = None;
     let mut target: Option<crate::kart_story_target::State> = None;
     let constants = rel.data(4)?;
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::PostMove {
+                vehicle_post_move: frame,
+            } => {
+                if target_handle.is_some_and(|handle| handle != frame.work_ec) {
+                    return Err(Error::invalid(
+                        "vehicle target handle changed between post-move callbacks",
+                    ));
+                }
+                let state = vehicle.ok_or_else(|| {
+                    Error::invalid("vehicle_post_move requires initial vehicle_state")
+                })?;
+                let r = crate::kart_timeout::step_verified(
+                    bytes,
+                    crate::kart_timeout::Input::VehiclePostMove {
+                        frame: *frame,
+                        remaining: timer as i32,
+                        vehicle_state: state,
+                        mode,
+                    },
+                )?;
+                vehicle = r.vehicle_state;
+                if let Some(t) = r.timer {
+                    timeout = Some(t);
+                }
+                if let Some(spawned) = r.spawned_target() {
+                    if target.is_some() {
+                        return Err(Error::invalid("pursuit target already spawned"));
+                    }
+                    target = Some(spawned);
+                }
+                target_handle = r.frame.as_ref().map(|f| f.work_ec);
+                updates.push(json!({"vehiclePostMove":r}));
+                continue;
+            }
             SequenceEvent::SpawnTarget { target_spawn: v } => {
                 if target.is_some() {
                     return Err(Error::invalid("pursuit target already spawned"));
@@ -796,6 +834,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }
