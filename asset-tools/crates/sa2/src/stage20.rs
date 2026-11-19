@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    exit: Option<StageExit>,
     fog_blend: Option<FogBlend>,
     fog_header: Option<[u32; 4]>,
     background_draw: Option<BackgroundDraw>,
@@ -15,6 +16,62 @@ struct Request {
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StageExit {
+    code_base: u32,
+    slots: [u32; 4],
+    layout_handle: u32,
+}
+fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
+    let invalid = || Error::invalid("missing stage 20 exit relocation");
+    let field = |site, module, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == module && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let engine = |site, args: Value| -> Result<Value> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(invalid)?;
+        Ok(json!({"engine":r.addend,"args":args}))
+    };
+    let mut ops = vec![
+        json!({"local":0x21bcc}),
+        json!({"local":0x11bf0}),
+        engine(0x1a80, json!([]))?,
+        engine(0x1a84, json!([]))?,
+    ];
+    let mut slots = e.slots;
+    for (idx, base, offset, reference) in [
+        (3, 0x1a8e, 40, 0x1a9e),
+        (0, 0x1ab6, 0, 0x1ac2),
+        (1, 0x1ada, 8, 0x1aea),
+        (2, 0x1b02, 36, 0x1b12),
+    ] {
+        if slots[idx] == e.code_base.wrapping_add(field(reference, 19, 1)?) {
+            slots[idx] = 0;
+            ops.push(json!({"clear":field(base,0,6)?+offset}));
+        }
+    }
+    ops.push(json!({"local":0xcac4}));
+    ops.push(engine(0x1b28, json!([]))?);
+    for (site, left, right) in [(0x1b3c, 0x1b32, 0x1b3a), (0x1b50, 0x1b46, 0x1b4e)] {
+        ops.push(engine(
+            site,
+            json!([field(left, 19, 5)?, field(right, 19, 5)?]),
+        )?);
+    }
+    ops.push(engine(0x1b54, json!([]))?);
+    if e.layout_handle != 0 {
+        ops.push(engine(0x1b6c, json!([e.layout_handle]))?);
+        ops.push(json!({"clearBss":field(0x1b5e,19,6)?}));
+    }
+    ops.push(engine(0x1b78, json!([]))?);
+    Ok(json!({"slots":slots,"layoutHandle":0,"operations":ops}))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -483,6 +540,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        exit,
         fog_blend,
         fog_header,
         background_draw,
@@ -514,6 +572,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(e) = exit {
+        report["exit"] = stage_exit(&rel, e)?;
+    }
     if let Some(v) = fog_blend {
         let mut calls = Vec::new();
         let mut emit = |site, args: Value| -> Result<()> {

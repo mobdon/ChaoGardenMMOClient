@@ -1021,3 +1021,35 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["fogBlend"]==calls
 print(idx,"two-buffer fog submissions matched")
+
+# Execute the registered exit with matching / replaced callbacks and both layout states.
+put(base[1]+0x1b5a,"H",(layout_bss+32768)>>16);put(base[1]+0x1b5e,"H",layout_bss&65535)
+def exit_service(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site in (0x1aac,0x1ad0,0x1af8,0x1b20):ops.append(dict(clear=reg(5)));return
+    if site==0x1b74:ops.append(dict(clearBss=reg(31)-layout_bss));return
+    if site in (0x1a78,0x1a7c,0x1b24):
+        ops.append(dict(local=site+(get(pc,"I")[0]&0x03fffffc)))
+    else:
+        args=[reg(3)] if site==0x1b6c else [reg(3)-base[5],reg(4)-base[5]] if site in (0x1b3c,0x1b50) else []
+        ops.append(dict(engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1a78,0x1a7c,0x1a80,0x1a84,0x1aac,0x1ad0,0x1af8,0x1b20,0x1b24,0x1b28,0x1b3c,0x1b50,0x1b54,0x1b6c,0x1b74,0x1b78):
+    u.hook_add(UC_HOOK_CODE,exit_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for mask in range(16):
+        for handle in (0,0x89abcdef):
+            offsets=(0,8,36,40);targets=(0x27770,0x10c44,0xcaec,0xd2fc)
+            slots=[base[1]+t if mask&(1<<j) else (0 if j%2 else base[1]+t+4) for j,t in enumerate(targets)]
+            for off,val in zip(offsets,slots):put(hook_table+off,"I",val)
+            ops=[];put(layout_bss,"I",handle);u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_LR,stop)
+            u.emu_start(get(base[5]+88932+16,"I")[0],stop,count=170)
+            assert u.reg_read(R.UC_PPC_REG_PC)==stop
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],exit=dict(
+                code_base=base[1],slots=slots,layout_handle=handle))))
+            out=Path(tmp)/f"{idx}.json";idx+=1
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            assert json.loads(out.read_text())["exit"]==dict(slots=[get(hook_table+o,"I")[0] for o in offsets],
+                layoutHandle=get(layout_bss,"I")[0],operations=ops)
+print(idx,"registered stage exit paths matched")
