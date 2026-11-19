@@ -185,3 +185,96 @@ mod bonus_reference {
         }
     }
 }
+
+/// Player-task work used at the accepted-contact call (taskwk +0x14 and +8).
+pub struct ContactPlayer {
+    pub position_bits: [u32; 3],
+    pub rotation: [i32; 3],
+}
+
+/// Arguments to module zero's 0x8001c9f4 at City Escape text +0x447a4.
+/// The implementation of that engine call is not part of the stage REL.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CheckpointContactCall {
+    pub slot: usize,
+    pub position_bits: [u32; 3],
+    pub rotation: [i32; 3],
+    pub checkpoint_byte: u8,
+}
+
+pub struct ContactState {
+    pub mode: i8,
+    pub slot_timers: [i32; 2],
+}
+
+/// Consume a collision-engine observation. None represents no hit; the tuple
+/// holds the resolved player slot and the contact object's word at offset 8.
+impl ContactState {
+    pub fn accept(
+        &mut self,
+        hit: Option<(i32, u32)>,
+        players: &[ContactPlayer; 2],
+        checkpoint_byte: u8,
+    ) -> Result<Option<CheckpointContactCall>> {
+        if self.mode != 1 {
+            return Ok(None);
+        }
+        let Some((slot, word)) = hit else {
+            return Ok(None);
+        };
+        if slot == -1 || word != 0 {
+            return Ok(None);
+        }
+        let p = usize::try_from(slot)
+            .ok()
+            .and_then(|i| players.get(i))
+            .ok_or_else(|| Error::invalid("checkpoint player resolver returned invalid slot"))?;
+        let slot = slot as usize;
+        self.mode = 2;
+        self.slot_timers[slot] = 300;
+        Ok(Some(CheckpointContactCall {
+            slot,
+            position_bits: p.position_bits,
+            rotation: p.rotation,
+            checkpoint_byte,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    use super::*;
+    #[test]
+    fn accepts_only_once_and_selects_the_contacting_player() {
+        let players = [
+            ContactPlayer {
+                position_bits: [0, 1, 2],
+                rotation: [3, 4, 5],
+            },
+            ContactPlayer {
+                position_bits: [6, 7, 8],
+                rotation: [-9, 10, 11],
+            },
+        ];
+        let mut state = ContactState {
+            mode: 1,
+            slot_timers: [12, 13],
+        };
+        for hit in [None, Some((-1, 0)), Some((1, 1))] {
+            assert_eq!(state.accept(hit, &players, 255).unwrap(), None);
+        }
+        assert!(state.accept(Some((2, 0)), &players, 255).is_err());
+        assert_eq!(state.slot_timers, [12, 13]);
+        assert_eq!(
+            state.accept(Some((1, 0)), &players, 255).unwrap(),
+            Some(CheckpointContactCall {
+                slot: 1,
+                position_bits: [6, 7, 8],
+                rotation: [-9, 10, 11],
+                checkpoint_byte: 255
+            })
+        );
+        assert_eq!((state.mode, state.slot_timers), (2, [12, 300]));
+        assert_eq!(state.accept(Some((0, 0)), &players, 89).unwrap(), None);
+    }
+}
