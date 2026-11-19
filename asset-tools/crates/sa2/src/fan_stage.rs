@@ -191,6 +191,8 @@ pub struct MountedStage<'a> {
     pub entry_pose: Option<EntryPose>,
     /// Authored single-player end pose; does not trigger completion or respawn.
     pub end_pose: Option<EntryPose>,
+    pub mission2_end_pose: Option<EntryPose>,
+    pub mission3_end_pose: Option<EntryPose>,
     pub kart_route: Option<&'a KartRoute>,
     pub object_table: Option<&'a ObjectList>,
     pub layers: Vec<Layer>,
@@ -366,7 +368,7 @@ impl Campaign {
             10 => "SuperShadow",
             _ => return Err(Error::invalid("unknown story character")),
         };
-        let single_pose = |kind| -> Result<Option<EntryPose>> {
+        let lookup_pose = |kind, variant| -> Result<Option<EntryPose>> {
             let mut rows = self
                 .positions
                 .iter()
@@ -374,7 +376,7 @@ impl Campaign {
             let pose = rows.next().and_then(|r| {
                 r.poses
                     .iter()
-                    .find(|p| p.variant == Variant::Single)
+                    .find(|p| p.variant == variant)
                     .map(|p| EntryPose {
                         character: r.character,
                         row_va: r.row_va,
@@ -387,8 +389,10 @@ impl Campaign {
             }
             Ok(pose)
         };
-        let entry_pose = single_pose(PositionKind::Start)?;
-        let end_pose = single_pose(PositionKind::End)?;
+        let entry_pose = lookup_pose(PositionKind::Start, Variant::Single)?;
+        let end_pose = lookup_pose(PositionKind::End, Variant::Single)?;
+        let mission2_end_pose = lookup_pose(PositionKind::MissionEnd, Variant::Mission2)?;
+        let mission3_end_pose = lookup_pose(PositionKind::MissionEnd, Variant::Mission3)?;
         let mut gaps = vec![];
         if entry_pose.is_none() {
             gaps.push(format!(
@@ -480,6 +484,8 @@ impl Campaign {
             level_section: config.map(|c| c.section.as_str()),
             entry_pose,
             end_pose,
+            mission2_end_pose,
+            mission3_end_pose,
             kart_route,
             unavailable_systems: &[
                 "retail task scheduling and dynamic contacts",

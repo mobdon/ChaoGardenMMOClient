@@ -208,6 +208,16 @@ fn mounted_campaign_routes() {
                     [516, 898]
                 );
                 assert!(stage.entry_pose.as_ref().unwrap().character == "Sonic");
+                for (pose, yaw, xyz) in [
+                    (&stage.mission2_end_pose, 0xc000, [-1570., -6060., 8860.]),
+                    (&stage.mission3_end_pose, 0x4000, [7700., -13145., 5570.]),
+                ] {
+                    let p = pose.as_ref().unwrap();
+                    assert_eq!(
+                        (p.character, p.row_va, p.yaw, p.position),
+                        ("Sonic", 0x174a2e0, yaw, xyz)
+                    );
+                }
                 let end = stage.end_pose.as_ref().unwrap();
                 assert_eq!(
                     (end.row_va, end.yaw, end.position),
