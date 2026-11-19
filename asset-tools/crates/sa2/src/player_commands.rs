@@ -1582,7 +1582,8 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
             extras.push(Extra::read(
                 path,
                 format!("requests/{}", basename(path)?),
-                4096,
+                // Handoff replays carry one small object per frame.
+                1 << 18,
                 "placement-clock",
             )?);
             sa2_asset_tools::finalhazard::placement_clock(

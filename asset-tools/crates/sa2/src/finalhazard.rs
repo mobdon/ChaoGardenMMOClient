@@ -898,6 +898,21 @@ pub enum PlacementClock {
         camera_mode: i32,
         second_lookup: Option<i32>,
     },
+    /// Frames of the player handoff (switch states 1..3) from the slot
+    /// setup at 0xf458 through the shared tail's timer increment.
+    SwitchReplay {
+        player: u8,
+        switch_state: u8,
+        timer: i16,
+        countdown: i16,
+        visits: [i8; 2],
+        /// Engine pointer tables at 0x801e7368, 0x801e7328 and 0x801e7348.
+        player1: [u32; 2],
+        player2: [u32; 2],
+        player_tasks: [u32; 2],
+        table_words: [u32; 4],
+        frames: Vec<HandoffFrame>,
+    },
     SwitchTick {
         player: u8,
         switch_state: u8,
@@ -1073,6 +1088,95 @@ fn phase_constant<'a>(
 }
 fn phase_write_allowed(task: Option<PhaseGateTask>) -> bool {
     task.is_some_and(|task| task.mode != 13 && task.flags & 4 == 0)
+}
+/// Engine results one handoff frame observes.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffFrame {
+    pub poll: i32,
+    /// Byte 1 of each 0x801e7328 entry and word 0xc of each 0x801e7368 entry.
+    pub characters: [i8; 2],
+    pub yaws: [i32; 2],
+    pub camera_mode: i32,
+    #[serde(default)]
+    pub second_lookup: Option<i32>,
+    /// Result of the local section 1 + 0xeb38 call after the state 3 camera.
+    #[serde(default)]
+    pub cue_result: i32,
+    /// Word 0x7c of the engine global at 0x801cbd88.
+    #[serde(default)]
+    pub global_7c: u32,
+}
+fn engine_import(rel: &crate::city_rel::CityRel<'_>, site: u32) -> Result<u32> {
+    rel.reference(1, site)
+        .filter(|r| r.kind == 10 && r.module == 0)
+        .map(|r| r.addend)
+        .ok_or_else(|| Error::invalid("missing handoff engine import"))
+}
+struct HandoffCamera {
+    packet: [u32; 6],
+    table_offset: u32,
+    /// Second camera-mode result and the engine call it is passed to.
+    reset: Option<(i32, u32)>,
+    submit: u32,
+    /// Engine call sites in native order: mode read, [second read, reset], submit.
+    sites: Vec<u32>,
+}
+/// Camera request submitted when the handoff enters state 2 (section 1 +
+/// 0xf5cc..0xf6a8) or state 3 (0xf724..0xf7fc).
+#[allow(clippy::too_many_arguments)]
+fn handoff_camera(
+    rel: &crate::city_rel::CityRel<'_>,
+    code: &[u8],
+    entered_state: u8,
+    character: i8,
+    yaw: i32,
+    position_pointer: u32,
+    table_words: &[u32; 4],
+    camera_mode: i32,
+    second_lookup: Option<i32>,
+) -> Result<HandoffCamera> {
+    // Table input order follows ascending offsets: 354,364,37c,39c.
+    let (index, load, scalar, submit) = match (entered_state, character == 9) {
+        (2, true) => (1, 0xf650, 0xf66e, 0xf6a8),
+        (2, false) => (3, 0xf664, 0xf66e, 0xf6a8),
+        (3, true) => (0, 0xf7a4, 0xf7c2, 0xf7fc),
+        (3, false) => (2, 0xf7b8, 0xf7c2, 0xf7fc),
+        _ => {
+            return Err(Error::invalid(
+                "handoff camera requires entry to state two or three",
+            ))
+        }
+    };
+    let scalar_bits = u32::from_be_bytes(phase_constant(rel, scalar, 4)?.try_into().unwrap());
+    // Above mode 13 the stage reads the mode again (submit - 0x18) and
+    // passes that result to a second engine call (submit - 0xc).
+    let mut sites = vec![submit - 0x28];
+    let reset = if camera_mode > 13 {
+        sites.extend([submit - 0x18, submit - 0xc]);
+        Some((
+            second_lookup.ok_or_else(|| Error::invalid("missing second camera lookup result"))?,
+            engine_import(rel, submit - 0xc)?,
+        ))
+    } else {
+        None
+    };
+    sites.push(submit);
+    let load_word = u32::from_be_bytes(code[load..load + 4].try_into().unwrap());
+    Ok(HandoffCamera {
+        packet: [
+            scalar_bits,
+            0x8000i32.wrapping_sub(yaw) as u32,
+            table_words[index],
+            position_pointer,
+            0x51,
+            0,
+        ],
+        table_offset: load_word & 0xffff,
+        reset,
+        submit: engine_import(rel, submit)?,
+        sites,
+    })
 }
 fn body_impulse(
     rel: &crate::city_rel::CityRel<'_>,
@@ -1716,51 +1820,184 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             if player > 1 {
                 return Err(Error::invalid("invalid camera target slot"));
             }
-            // Table input order follows ascending offsets: 354,364,37c,39c.
-            let (index, load, scalar, submit) = match (entered_state, character == 9) {
-                (2, true) => (1, 0xf650, 0xf66e, 0xf6a8),
-                (2, false) => (3, 0xf664, 0xf66e, 0xf6a8),
-                (3, true) => (0, 0xf7a4, 0xf7c2, 0xf7fc),
-                (3, false) => (2, 0xf7b8, 0xf7c2, 0xf7fc),
-                _ => {
-                    return Err(Error::invalid(
-                        "handoff camera requires entry to state two or three",
-                    ))
-                }
-            };
-            let scalar_bits =
-                u32::from_be_bytes(phase_constant(&rel, scalar, 4)?.try_into().unwrap());
-            let angle = 0x8000i32.wrapping_sub(yaw);
-            // Above mode 13 the stage reads the mode again (submit - 0x18) and
-            // passes that result to a second engine call (submit - 0xc).
-            let import = |site: u32| {
-                rel.reference(1, site)
-                    .filter(|r| r.kind == 10 && r.module == 0)
-                    .map(|r| r.addend)
-                    .ok_or_else(|| Error::invalid("missing handoff camera import"))
-            };
-            let reset = if camera_mode > 13 {
-                Some((
-                    second_lookup
-                        .ok_or_else(|| Error::invalid("missing second camera lookup result"))?,
-                    import(submit - 0xc)?,
-                ))
-            } else {
-                None
-            };
-            let target = import(submit)?;
-            let packet = [
-                scalar_bits,
-                angle as u32,
-                table_words[index],
+            let c = handoff_camera(
+                &rel,
+                code,
+                entered_state,
+                character,
+                yaw,
                 position_pointer,
-                0x51,
-                0,
-            ];
+                &table_words,
+                camera_mode,
+                second_lookup,
+            )?;
             return Ok(
-                serde_json::json!({"camera_slot":0,"player":player,"packet_words":packet,
-                "resource_table_offset":word(load)&0xffff,"reset_argument":reset.map(|r| r.0),
-                "reset_address":reset.map(|r| r.1),"submit_address":target}),
+                serde_json::json!({"camera_slot":0,"player":player,"packet_words":c.packet,
+                "resource_table_offset":c.table_offset,"reset_argument":c.reset.map(|r| r.0),
+                "reset_address":c.reset.map(|r| r.1),"submit_address":c.submit}),
+            );
+        }
+        PlacementClock::SwitchReplay {
+            mut player,
+            mut switch_state,
+            mut timer,
+            mut countdown,
+            visits,
+            player1,
+            player2,
+            player_tasks,
+            table_words,
+            frames,
+        } => {
+            if player > 1 || !(1..=3).contains(&switch_state) {
+                return Err(Error::invalid(
+                    "handoff replay requires player 0/1 and switch state 1..3",
+                ));
+            }
+            let call = |site: u32, args: &[u32]| -> Result<serde_json::Value> {
+                Ok(serde_json::json!({"site":site,"call":engine_import(&rel, site)?,"args":args}))
+            };
+            let store =
+                |site: u32, region: &str, slot: Option<u8>, offset: u32, size: u32, value: i64| {
+                    let mask = (1i64 << (8 * size)) - 1;
+                    serde_json::json!({"site":site,"store":region,"slot":slot,"offset":offset,
+                    "size":size,"value":value & mask})
+                };
+            let local = |site: u32, target: u32| serde_json::json!({"site":site,"local":target});
+            let mut out = Vec::new();
+            for (n, f) in frames.iter().enumerate() {
+                if switch_state == 0 {
+                    return Err(Error::invalid(format!(
+                        "frame {n} follows the return to normal dispatch"
+                    )));
+                }
+                let mut ev = Vec::new();
+                // r31 keeps the slot that was active when the frame began.
+                let r31 = player;
+                ev.push(store(
+                    if r31 == 0 { 0xf47c } else { 0xf498 },
+                    "global",
+                    None,
+                    0x4b,
+                    1,
+                    r31.into(),
+                ));
+                if f.global_7c == 14400 {
+                    ev.push(call(0xf4c4, &[0xe, 0, 0, 0])?);
+                }
+                if countdown > 0 {
+                    countdown -= 1;
+                    ev.push(store(0xf4d8, "task", None, 0xe, 2, countdown.into()));
+                }
+                let camera = |ev: &mut Vec<serde_json::Value>, state: u8, slot: u8| -> Result<()> {
+                    let slot = slot as usize;
+                    let c = handoff_camera(
+                        &rel,
+                        code,
+                        state,
+                        f.characters[slot],
+                        f.yaws[slot],
+                        player1[slot].wrapping_add(0x14),
+                        &table_words,
+                        f.camera_mode,
+                        f.second_lookup,
+                    )?;
+                    let (&submit, reads) = c.sites.split_last().unwrap();
+                    ev.push(call(reads[0], &[0])?);
+                    if let Some((second, _)) = c.reset {
+                        ev.push(call(reads[1], &[0])?);
+                        ev.push(call(reads[2], &[0, second as u32])?);
+                    }
+                    ev.push(serde_json::json!({"site":submit,"call":c.submit,"args":[0],
+                        "packet":c.packet,"resource_table_offset":c.table_offset}));
+                    Ok(())
+                };
+                match switch_state {
+                    1 if timer > word(0xf514) as i16 => {
+                        ev.push(call(0xf52c, &[0xff, 0, 0, 0])?);
+                        if f.poll != 0 {
+                            switch_state = 2;
+                            timer = 0;
+                            player ^= 1;
+                            ev.extend([
+                                store(0xf53c, "task", None, 1, 1, 2),
+                                store(0xf544, "task", None, 8, 2, 0),
+                                store(
+                                    if r31 == 0 { 0xf55c } else { 0xf564 },
+                                    "task",
+                                    None,
+                                    0,
+                                    1,
+                                    player.into(),
+                                ),
+                                call(0xf580, &[player_tasks[0], player2[0]])?,
+                                call(0xf588, &[0])?,
+                                call(0xf594, &[player_tasks[1], player2[1]])?,
+                                call(0xf59c, &[1])?,
+                                // These two writes target the outgoing slot.
+                                store(0xf5b8, "player1", Some(r31), 0, 1, 0x42),
+                                store(0xf5c8, "player2", Some(r31), 0x176, 2, 0x6b),
+                            ]);
+                            camera(&mut ev, 2, player)?;
+                        }
+                    }
+                    2 => {
+                        ev.push(call(0xf6c0, &[0, 0, 0, 0])?);
+                        if f.poll != 0 {
+                            switch_state = 3;
+                            timer = 0;
+                            ev.extend([
+                                store(0xf6d0, "task", None, 1, 1, 3),
+                                store(0xf6d8, "task", None, 8, 2, 0),
+                                store(0xf6f4, "player1", Some(r31), 0, 1, 0x42),
+                                store(0xf70c, "player2", Some(r31), 0x176, 2, 0x64),
+                                store(0xf718, "player2", Some(r31), 0x17c, 2, 0x57),
+                                call(0xf720, &[0])?,
+                            ]);
+                            camera(&mut ev, 3, player)?;
+                            ev.push(local(0xf800, 0xeb38));
+                            if f.cue_result != -1 {
+                                let v = visits[r31 as usize];
+                                let (site, cue) = match (player, v) {
+                                    (0, v) if v > 1 => (0xf848, 0x872),
+                                    (0, _) => (0xf838, 0x871),
+                                    (_, v) if v > 0 => (0xf87c, 0x874),
+                                    _ => (0xf86c, 0x873),
+                                };
+                                countdown = 20;
+                                ev.push(call(site, &[cue, 3])?);
+                                ev.push(store(0xf884, "task", None, 0xe, 2, 20));
+                            }
+                        }
+                    }
+                    3 if timer > word(0xf890) as i16 => {
+                        switch_state = 0;
+                        timer = 0;
+                        ev.extend([
+                            store(0xf89c, "task", None, 1, 1, 0),
+                            store(0xf8a0, "task", None, 8, 2, 0),
+                            call(0xf8a4, &[])?,
+                            call(0xf8ac, &[3])?,
+                            store(0xf8bc, "global", None, 0x3a, 1, 1),
+                            call(0xf8c4, &[0])?,
+                        ]);
+                    }
+                    _ => {}
+                }
+                // Shared tail: two local updates, then the handoff timer.
+                timer = timer.wrapping_add(1);
+                ev.extend([
+                    local(0xff1c, 0xee8c),
+                    local(0xff28, 0xf070),
+                    store(0xff34, "task", None, 8, 2, timer.into()),
+                ]);
+                out.push(serde_json::json!({"frame":n,"events":ev,"player":player,
+                    "switch_state":switch_state,"timer":timer,"countdown":countdown}));
+            }
+            return Ok(
+                serde_json::json!({"frames":out,"player":player,"switch_state":switch_state,
+                "timer":timer,"countdown":countdown,"returned_to_normal_dispatch":switch_state==0,
+                "scope":"Handoff frames 0xf458..0xff34 with engine and local calls observed; their effects are external."}),
             );
         }
         PlacementClock::InitialHealth => {
