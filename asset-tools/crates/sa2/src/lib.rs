@@ -21,6 +21,7 @@ pub mod event;
 pub mod event_camera;
 pub mod glb_cli;
 pub mod input;
+mod key_pickup;
 pub mod manifest;
 pub mod model;
 pub mod motion;

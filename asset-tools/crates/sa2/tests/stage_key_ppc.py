@@ -1,6 +1,7 @@
 """Local PowerPC oracle: execute the installed key task and compare mounted Rust frames."""
 import hashlib,json,os,struct,subprocess,sys,tempfile
 from pathlib import Path
+import key_pickup_reference as pickup
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
 game=Path(os.environ["SA2_GAME_PATH"]); gd=game/"resource/gd_PC"
@@ -35,6 +36,7 @@ def image(level):
         m,s,a,k=refs[1,cb+off];assert m==words(d,0) and words(d,sec(s)+a)==val
     for off,addr in [(0x50,2147718768),(0x78,2147948664),(0x12c,2147510004),(0x170,2147897672),(0x17c,2147948664),(0x188,2147546348)]:
         m,_,a,k=refs[1,cb+off];assert (m,k,a)==(0,10,addr)
+    pickup.verify(d,sec,refs,target(cb+0x15c))
     return d,sec,refs
 for level in (3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,21,22,23,24,25,26,27,28,30,32,40,43,44):image(level)
 d,sec,refs=image(13)
@@ -86,11 +88,33 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/'.local') as tmp:
             if 'freeTask' in calls:break
         else:raise AssertionError('expected task cleanup')
         request={'stage_flags':0,'frames':[{}, {'impact':{'rolls':[[0]*3]*14}}, {}, {}, {}, {}, {'release':{'has_condition':True,'flag_20':False,'broken':False,'has_key':False}}],'key':{'allocation_ok':True,'frames':keyframes}}
+        if case==0:
+            steps=[{'op':'transform','point':[-30.,35.,-85.]}]+[{'op':'advance','scalar':v} for v in [6.,5.99,3.,2.99,1.5,1.49]+[1.]*13]
+            steps[2]['vector_after_call']=[-9.,-2.,-4.]
+            # Sixteen multiplications by 0.9 cross 0.2.
+            steps.append({'op':'destroy','still_owner':True})
+            request['key']['pickup']={'existing_task':False,'allocation_ok':True,'steps':steps}
         req=tmp/'input.json';req.write_text(json.dumps(request));out=tmp/f'output{case}.json'
         subprocess.run([sys.argv[1],'--source-root',str(game),'fan-replay',str(game/'sonic2app.exe'),str(out),os.environ['SA2_PC_CONFIG'],'Hero Story Sequence','13','0','136',str(req)],check=True)
         frames=json.loads(out.read_text())['replay']['key']['frames']
         for tick,(v,n) in enumerate(zip(frames,native,strict=True)):
             calls=[next(iter(c)) if isinstance(c,dict) else c for c in v['calls']]
             assert (v['age'],v['yaw'],v['mode'],bits(v['position'][1]),bits(v['speed']),calls)==n,(case,tick,v,n)
+        if case==0:
+            key=json.loads(out.read_text())['replay']['key']
+            g=key['pickup'];assert g['allocated'] and g['sound']==0x8006
+            for v,n in zip(g['frames'],pickup.observe(d,sec,refs,steps,frames[-1]['position']),strict=True):
+                assert (tuple(map(bits,v['position'])),v['timer'],bits(v['scale']),v['gameByte44'],v['cleanupRequested'])==n,(v,n)
+            for i,(exists,ok,ops) in enumerate([(True,True,[]),(False,False,[]),(False,True,[{'op':'destroy','still_owner':False}])]):
+                config={'existing_task':exists,'allocation_ok':ok,'steps':ops}
+                request['key']['pickup']=config
+                req.write_text(json.dumps(request));extra=tmp/f'pickup{i}.json'
+                subprocess.run([sys.argv[1],'--source-root',str(game),'fan-replay',str(game/'sonic2app.exe'),str(extra),os.environ['SA2_PC_CONFIG'],'Hero Story Sequence','13','0','136',str(req)],check=True)
+                result=json.loads(extra.read_text())['replay']['key']['pickup']
+                ref=pickup.observe(d,sec,refs,ops,frames[-1]['position'],exists,ok)
+                assert result['allocated']==bool(ref)
+                if ref:
+                    assert result['frames'][0]['calls']==['setCollected'] and result['gameByte44']==ref[0][3]==1
+            print('Pickup constructor, 21-frame path and early destruction matched installed PPC')
         count+=len(frames)
 print(count,'mounted key frames matched installed PPC')

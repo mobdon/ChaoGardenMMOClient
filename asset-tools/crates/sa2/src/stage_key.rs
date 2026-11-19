@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 pub(crate) struct Request {
     allocation_ok: bool,
     frames: Vec<Frame>,
+    pickup: Option<crate::key_pickup::Request>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,18 +21,19 @@ struct Frame {
     #[serde(default)]
     player_contact: bool,
 }
-pub(crate) fn replay(mut pos: [f32; 3], floor: f32, req: Request) -> Result<Value> {
+pub(crate) fn replay(mut pos: [f32; 3], floor: f32, mut req: Request) -> Result<Value> {
     if req.frames.len() > 4096 {
         return Err(Error::invalid("expected at most 4096 key updates"));
     }
     if !req.allocation_ok {
-        if !req.frames.is_empty() {
+        if !req.frames.is_empty() || req.pickup.is_some() {
             return Err(Error::invalid("unallocated key cannot update"));
         }
         return Ok(json!({"allocated":false,"frames":[]}));
     }
     let (mut speed, mut age, mut yaw, mut mode) = (2.5f32, 0, 0i32, 1u8);
     let mut frames = Vec::new();
+    let mut pickup = None;
     for f in req.frames {
         let query = age > 3600 || f.game_byte_44 != 0;
         if query != f.within_800.is_some() {
@@ -73,6 +75,10 @@ pub(crate) fn replay(mut pos: [f32; 3], floor: f32, req: Request) -> Result<Valu
                 speed = 2.5;
                 mode = 1;
                 calls.push(json!({"startPickupTask":pos}));
+                if let Some(task) = req.pickup.take() {
+                    pickup = Some(crate::key_pickup::replay(pos, f.game_byte_44, task)?);
+                }
+
                 calls.push(json!("freeTask")); // spawned by a container, no SET condition
                 finished = true;
             } else {
@@ -85,5 +91,12 @@ pub(crate) fn replay(mut pos: [f32; 3], floor: f32, req: Request) -> Result<Valu
             break;
         }
     }
-    Ok(json!({"allocated":true,"initCollision":{"count":1,"id":6},"frames":frames}))
+    if req.pickup.is_some() {
+        return Err(Error::invalid("pickup replay requires key contact"));
+    }
+    let mut out = json!({"allocated":true,"initCollision":{"count":1,"id":6},"frames":frames});
+    if let Some(task) = pickup {
+        out["pickup"] = task;
+    }
+    Ok(out)
 }
