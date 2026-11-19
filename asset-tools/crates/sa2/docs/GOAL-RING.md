@@ -130,5 +130,16 @@ two callbacks, requests 24 bytes, conditionally installs the global hook,
 and prepends a record containing the three original position words, two
 stage constants and the previous head pointer. Code and label pointers in
 the report are module section offsets. The comparison runs the original
-helper inside action 6 with both player slots. Later list processing and
-engine task scheduling are outside the replay.
+helper inside action 6 with both player slots. Engine task scheduling remains external.
+
+
+Supply `position_list.schedule` to follow the manager after insertion:
+`previous` contains the existing nodes in head-to-tail order (address,
+value, limit), and `updates` is the number of scheduled callbacks. The
+inserted node is added automatically. Each callback advances the value by
+the installed module constant. A node exactly at its limit survives; one
+above it is clamped, unlinked and freed. Frames record releases, survivors
+and the first empty-list removal request. To observe teardown separately,
+supply `cleanup: [owns_manager_slot, owns_global_hook]`. Teardown releases
+remaining nodes in order and clears only the slots it still owns. A
+removal request alone does not prove the scheduler executed teardown.

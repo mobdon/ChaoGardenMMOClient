@@ -69,6 +69,7 @@ struct PositionRoutine {
     callbacks: [u32; 2],
     hook: u32,
     initial: [u32; 2],
+    step: f32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +79,21 @@ pub struct PositionInput {
     pub node: Option<u32>,
     pub hook: Option<u32>,
     pub old_head: Option<u32>,
+    pub schedule: Option<ManagerSchedule>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PositionNode {
+    pub address: u32,
+    pub value: f32,
+    pub limit: f32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagerSchedule {
+    pub previous: Vec<PositionNode>,
+    pub updates: u8,
+    pub cleanup: Option<[bool; 2]>,
 }
 impl PositionRoutine {
     fn run(&self, p: &PositionInput, pos: [f32; 3]) -> Result<Value> {
@@ -100,11 +116,54 @@ impl PositionRoutine {
         if manager != 0 {
             calls.push(json!([0x801194b4u32, 1, 24]));
         }
-        Ok(
-            json!({"calls":calls,"manager":manager,"callbackWrites":p.created.filter(|v|*v!=0).map(|_|self.callbacks),
+        let mut result = json!({"calls":calls,"manager":manager,"callbackWrites":p.created.filter(|v|*v!=0).map(|_|self.callbacks),
             "hookWrite":p.hook.filter(|v|*v==0).map(|_|self.hook),"node":node,
-            "insert":p.old_head.map(|old|json!({"positionBits":pos.map(f32::to_bits),"work12Bits":self.initial[0],"work16Bits":self.initial[1],"next":old,"newHead":node}))}),
-        )
+            "insert":p.old_head.map(|old|json!({"positionBits":pos.map(f32::to_bits),"work12Bits":self.initial[0],"work16Bits":self.initial[1],"next":old,"newHead":node}))});
+        if let Some(schedule) = &p.schedule {
+            if manager == 0
+                || schedule.previous.len() > 1024
+                || (node != 0
+                    && p.old_head != Some(schedule.previous.first().map_or(0, |n| n.address)))
+            {
+                return Err(bad());
+            }
+            let mut seen = std::collections::HashSet::new();
+            let mut list = Vec::new();
+            if node != 0 {
+                seen.insert(node);
+                list.push((
+                    node,
+                    f32::from_bits(self.initial[0]),
+                    f32::from_bits(self.initial[1]),
+                ));
+            }
+            for n in &schedule.previous {
+                if n.address == 0 || !seen.insert(n.address) {
+                    return Err(bad());
+                }
+                list.push((n.address, n.value, n.limit));
+            }
+            let mut frames = Vec::new();
+            for _ in 0..schedule.updates {
+                let mut freed = Vec::new();
+                list.retain_mut(|(addr, value, limit)| {
+                    *value += self.step;
+                    if *value > *limit {
+                        freed.push(json!([addr, limit.to_bits()]));
+                        false
+                    } else {
+                        true
+                    }
+                });
+                frames.push(json!({"released":freed,"remaining":list.iter().map(|(a,v,_)|[ *a,v.to_bits() ]).collect::<Vec<_>>(),"removeManager":list.is_empty()}));
+                if list.is_empty() {
+                    break;
+                }
+            }
+            let cleanup=schedule.cleanup.map(|[owns_manager,owns_hook]|json!({"released":list.iter().map(|n|n.0).collect::<Vec<_>>(),"clearManager":owns_manager,"clearHook":owns_hook}));
+            result["schedule"] = json!({"frames":frames,"cleanup":cleanup});
+        }
+        Ok(result)
     }
 }
 #[derive(Debug)]
@@ -436,9 +495,28 @@ impl Program {
                             }
                         }
                         let constant = |off| word(rel.data(4)?, data(off, 4)? as usize);
+                        let tick = data(0x42, 1)?;
+                        let cleanup = data(0x72, 1)?;
+                        for (site, target) in [
+                            (tick + 0x80, 0x801194e0),
+                            (tick + 0xac, 0x80071888),
+                            (cleanup + 0x28, 0x801194e0),
+                        ] {
+                            if !rel.reference(1, site).is_some_and(|r| {
+                                r.kind == 10 && r.module == 0 && r.addend == target
+                            }) {
+                                return Err(invalid());
+                            }
+                        }
+                        let step = rel
+                            .reference(1, tick + 0x32)
+                            .filter(|r| r.kind == 4 && r.module == info.module && r.section == 4)
+                            .ok_or_else(invalid)?;
+                        let step = f32::from_bits(word(rel.data(4)?, step.addend as usize)?);
                         ActionRoutine::Position(PositionRoutine {
                             entry,
-                            task_entry: data(0x42, 1)?,
+                            task_entry: tick,
+                            step,
                             label: data(0x4a, 5)?,
                             callbacks: [data(0x66, 1)?, data(0x72, 1)?],
                             hook: data(0xc2, 1)?,

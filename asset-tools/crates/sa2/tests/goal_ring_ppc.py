@@ -480,6 +480,38 @@ def position_return(cpu,pc,*_):
 cpu.hook_add(UC_HOOK_CODE,position_helper,begin=BASE+helper,end=BASE+helper)
 for pc in alloc_sites:cpu.hook_add(UC_HOOK_CODE,position_alloc,begin=pc,end=pc)
 cpu.hook_add(UC_HOOK_CODE,position_return,begin=BASE+helper+0x134,end=BASE+helper+0x134)
+# Run the manager on the linked records created by the actual insertion helper.
+manager_services={}
+for begin,end in [(0x309d4,0x30aa4),(0x30b34,0x30bc8)]:
+    code=bytearray(d[ss[1][0]+begin:ss[1][0]+end])
+    for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+        section=off=0
+        while True:
+            delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+            if kind==203:break
+            if kind==202:section=s;off=0;continue
+            off+=delta
+            if section!=1 or not begin<=off<end:continue
+            if kind==10 and module==0:manager_services[BASE+off]=val
+            elif kind in (4,6):
+                if module:
+                    if s==4:cpu.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4])
+                    val+=BASE if s==1 else DATA+(0x400000 if s==6 else 0)
+                struct.pack_into('>H',code,off-begin,(val if kind==4 else (val+0x8000)>>16)&65535)
+    cpu.mem_write(BASE+begin,bytes(code))
+def manager_service(cpu,pc,*_):
+    arg=cpu.reg_read(R.UC_PPC_REG_3)
+    if manager_services[pc]==0x801194e0:released.append([arg,read32(arg+12)])
+    else:
+        assert manager_services[pc]==0x80071888 and arg==manager
+        removals.append(arg)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in manager_services:cpu.hook_add(UC_HOOK_CODE,manager_service,begin=pc,end=pc)
+def manager_run(entry):
+    cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,manager)
+    cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x238)
+    cpu.emu_start(BASE+entry,BASE+0x238,count=400)
+    assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x238
 for before,slot in itertools.product(range(11),(0,1)):
     for flags,(linked,byte1,parent) in itertools.product((0,0x4000),((True,0,None),(False,0,None),(False,1,False),(False,-1,True))):
         gate=slot;after=10-before;events=[];calls=[];pos=[1.5,-7.25,30.]
@@ -488,7 +520,13 @@ for before,slot in itertools.product(range(11),(0,1)):
             prev=manager if byte1 else 0
             created=(manager if slot or linked else 0) if not prev else None
             node=(nodeaddr if slot or byte1 else 0) if prev or created else None
-            old=(0x1314 if slot else 0) if node else None
+            previous=[]
+            if prev:
+                for idx,(val,limit) in enumerate([(0,10),(18,20),(3,15),(100,103)]):
+                    previous.append(dict(address=TASK+0xa00+idx*24,value=val,limit=limit))
+                for idx,n in enumerate(previous):
+                    cpu.mem_write(n["address"]+12,struct.pack(">ffI",n["value"],n["limit"],previous[idx+1]["address"] if idx+1<len(previous) else 0))
+            old=(previous[0]["address"] if previous else 0) if node else None
             hook=(0x3456 if parent else 0) if node else None
             list_input=dict(manager=prev,created=created,node=node,old_head=old,hook=hook)
             write32(manager_slot,prev);write32(global_hook,hook or 0);write32(manager+60,old or 0)
@@ -505,6 +543,25 @@ for before,slot in itertools.product(range(11),(0,1)):
         events.append(['engine',REGISTER,'task'])
         obs=dict(flags=4,cached=slot,activation=dict(player_flags=flags,indices=None if flags else [before,after],position=pos,linked_task=linked,byte1=byte1,parent_linked=parent,tail=dict(work36=1.25,game_byte_55=gate)))
         result=dict(calls=[],playerIndex=slot,events=events,mode=cpu.mem_read(WORK,1)[0],work36Bits=struct.unpack('>I',cpu.mem_read(WORK+36,4))[0])
+        if list_input and (prev or created):
+            updates=53 if slot else 1
+            frames=[]
+            for _ in range(updates):
+                released=[];removals=[];manager_run(0x309d4)
+                remaining=[];cursor=read32(manager+60)
+                while cursor:
+                    assert len(remaining)<8
+                    remaining.append([cursor,read32(cursor+12)]);cursor=read32(cursor+20)
+                frames.append(dict(released=released,remaining=remaining,removeManager=bool(removals)))
+                if removals:break
+            owns=[bool(slot),bool(linked or parent)]
+            write32(manager_slot,manager if owns[0] else 0x1234)
+            write32(global_hook,BASE+0x30bc8 if owns[1] else 0x5678)
+            released=[];manager_run(0x30b34)
+            assert read32(manager+60)==0 and read32(manager_slot)==(0 if owns[0] else 0x1234) and read32(global_hook)==(0 if owns[1] else 0x5678)
+            list_input['schedule']=dict(previous=previous,updates=updates,cleanup=owns)
+            record=next(ev[1] for ev in events if ev[0]=="positionList")
+            record["schedule"]=dict(frames=frames,cleanup=dict(released=[item[0] for item in released],clearManager=owns[0],clearHook=owns[1]))
         if list_input:obs['activation']['position_list']=list_input
         if after==2 and flags==0:
             obs["activation"]["action_links"]=dict(byte1=byte1,parent_link=parent if byte1 else None,task_link=None if byte1 and parent else linked)
