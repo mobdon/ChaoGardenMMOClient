@@ -823,6 +823,15 @@ pub enum PlacementClock {
     Periodic {
         timer: u16,
     },
+    InitialHealth,
+    DamageCheck {
+        health: f32,
+        mode: i8,
+        submode: i8,
+        flags: u16,
+        weakpoint_flags: Option<u16>,
+        gate_task: Option<PhaseGateTask>,
+    },
     /// Arguments and task state at the paired selector/transition calls.
     NextPhase {
         work28: f32,
@@ -854,6 +863,26 @@ pub struct PhaseGateTask {
     pub mode: i8,
     pub flags: u16,
 }
+fn phase_constant<'a>(
+    rel: &crate::city_rel::CityRel<'a>,
+    site: usize,
+    section: u8,
+) -> Result<&'a [u8]> {
+    let p = rel
+        .reference(1, site as u32)
+        .ok_or_else(|| Error::invalid("missing encounter constant"))?;
+    if (p.module, p.section, p.kind) != (88, section, 6)
+        || rel.reference(1, site as u32 + 4) != Some(crate::city_rel::Reference { kind: 4, ..p })
+    {
+        return Err(Error::invalid("unexpected encounter constant reference"));
+    }
+    rel.data(section)?
+        .get(p.addend as usize..p.addend as usize + 4)
+        .ok_or_else(|| Error::invalid("truncated encounter constant"))
+}
+fn phase_write_allowed(task: Option<PhaseGateTask>) -> bool {
+    task.is_some_and(|task| task.mode != 13 && task.flags & 4 == 0)
+}
 pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json::Value> {
     if crate::manifest::sha256(bytes)
         != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
@@ -881,6 +910,40 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 }
             }
             (timer, Some(submode))
+        }
+        PlacementClock::InitialHealth => {
+            let data = phase_constant(&rel, 0x52a, 5)?;
+            return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
+        }
+        PlacementClock::DamageCheck {
+            mut health,
+            mut mode,
+            mut submode,
+            mut flags,
+            weakpoint_flags,
+            gate_task,
+        } => {
+            let hit = mode != 3 && weakpoint_flags.is_some_and(|f| f & 4 != 0);
+            let mut requested = None;
+            if hit {
+                let constant = |site| -> Result<f32> {
+                    Ok(f32::from_be_bytes(
+                        phase_constant(&rel, site, 4)?[..4].try_into().unwrap(),
+                    ))
+                };
+                health -= constant(0x79a)?;
+                let next = if health > constant(0x7b2)? { 3 } else { 13 };
+                requested = Some(next);
+                if phase_write_allowed(gate_task) {
+                    mode = next;
+                    submode = 0;
+                }
+                flags |= 4;
+            }
+            return Ok(
+                serde_json::json!({"health":health,"mode":mode,"submode":submode,"flags":flags,
+                "requested_mode":requested,"continue_at":if hit {0x900} else {0x7f0}}),
+            );
         }
         PlacementClock::NextPhase {
             work28,
@@ -918,7 +981,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             let selected = table[next as usize] as i8;
             // 0xdc4 requires a zero gate result. Its nonzero path tests
             // whether the same value equals both 3 and 13, so cannot write.
-            let apply = gate_task.is_some_and(|task| task.mode != 13 && task.flags & 4 == 0);
+            let apply = phase_write_allowed(gate_task);
             return Ok(
                 serde_json::json!({"cursor":next,"selected":selected,"applied":apply,
                 "mode":if apply {selected} else {mode},"submode":if apply {0} else {submode}}),
