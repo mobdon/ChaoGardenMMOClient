@@ -1,6 +1,7 @@
 //! Replay a fixed SET spring with explicitly supplied CCL, player and matrix observations.
 use crate::set::Placement;
 use crate::spring::{SpringCall, SpringKind, SpringMode, SpringPlayer, StageSpring};
+use crate::spring_draw::{self, Draw, Format};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,7 @@ struct Request {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Frame {
+    display_after_update: Option<Format>,
     hit: Option<u8>,
     player: Option<Player>,
     #[serde(default)]
@@ -30,6 +32,8 @@ struct Player {
 
 #[derive(Serialize)]
 struct Tick {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display: Option<Vec<Draw>>,
     mode: SpringMode,
     selected_slot: u8,
     contact_timer: u8,
@@ -130,7 +134,21 @@ pub fn replay<'a>(
         }) {
             return Err(Error::invalid("spring update overflowed"));
         }
+        let display = match frame.display_after_update {
+            Some(_) if matches!(spring.mode, SpringMode::Init | SpringMode::Removed) => {
+                return Err(Error::invalid(
+                    "spring display requires an initialized live task",
+                ));
+            }
+            Some(format) => {
+                let mut commands = Vec::new();
+                spring_draw::display(&spring, format, |command| commands.push(command));
+                Some(commands)
+            }
+            None => None,
+        };
         frames.push(Tick {
+            display,
             mode: spring.mode,
             selected_slot: spring.slot,
             contact_timer: spring.contact_timer,

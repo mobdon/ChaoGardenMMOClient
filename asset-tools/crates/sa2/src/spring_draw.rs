@@ -2,13 +2,14 @@
 //! Node numbers refer to SpringGjObjN (GC) or SpringObjN (chunk).
 use crate::spring::{SpringKind, StageSpring};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Format {
     Gc,
     Chunk,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub enum Draw {
     BindSpringTextures,
     Push,

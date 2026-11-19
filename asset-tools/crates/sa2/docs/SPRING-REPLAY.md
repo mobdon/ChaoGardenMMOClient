@@ -38,3 +38,4 @@ With the tools and environment configured in [the ring reference instructions](S
 cargo test --test stage_spring_host
 cargo test --test input_trace -- --include-ignored
 ```
+A frame may include `"display_after_update":"gc"` or `"display_after_update":"chunk"` to run that display callback after its update. The frame then includes the ordered native model references and matrix commands. Omit the field when no display callback is scheduled. A display request before initialization is rejected. This supplies display timing explicitly and does not bind models or verify rendered pixels.

@@ -65,3 +65,24 @@ fn upright_vector_matches_explicit_observation_and_tilt_requires_one() {
         }
     }
 }
+
+#[test]
+fn explicitly_scheduled_display_uses_updated_compression() {
+    let mut p = placement();
+    p.rotation = [0; 3];
+    let req = br#"{"frames":[{},{},{},{"hit":0,"display_after_update":"gc"}]}"#;
+    let result = serde_json::to_value(replay(&p, SpringKind::B, req).unwrap()).unwrap();
+    let frames = result["frames"].as_array().unwrap();
+    assert!(frames[0].get("display").is_none());
+    let ops = frames[3]["display"].as_array().unwrap();
+    assert!(ops.contains(&json!({"GcBaseModel":2})));
+    let compression = frames[3]["compression"].as_f64().unwrap();
+    assert!(compression > 0.0);
+    assert!(ops.contains(&json!({"Translate":[0.0,4.0*compression,0.0]})));
+    assert!(replay(
+        &p,
+        SpringKind::B,
+        br#"{"frames":[{"range_out":true,"display_after_update":"chunk"}]}"#
+    )
+    .is_err());
+}

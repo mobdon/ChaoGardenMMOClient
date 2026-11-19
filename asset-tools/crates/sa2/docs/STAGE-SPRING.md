@@ -11,7 +11,7 @@ Both springs initialize their collision shape with ID 4 and set collision-work f
 | ObjectSpring (A) | Calls SetSpringVelocityP with the transformed local vector. | Sound precedes the player update. Recovery step changes to 18 degrees at phase 290. |
 | ObjectSpringB (B) | Calls SetVelocityYAndRotationAndNoconTimeP with scale.y + 5, native angles, and truncated nonnegative scale.x. | Sound follows the player update. Recovery step changes to 15 degrees. The slow movement branch also places the player at spring position plus the rotated vector, with the vector's Y scaled by 0.8. |
 
-The stage host supplies player collision, matrix and trigonometric services, player-motion callees and rendering. The implementation returns sound and motion calls without playing audio, inventing collision results or moving a controller after launch. The A and B render callbacks and their original art are outside this port.
+The stage host supplies player collision, matrix and trigonometric services, player-motion callees and rendering. The implementation returns sound and motion calls without playing audio, inventing collision results or moving a controller after launch. The display command sequences are implemented separately below; the renderer must bind their original art.
 
 ## Reproduce the C comparison
 
