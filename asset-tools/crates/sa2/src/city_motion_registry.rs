@@ -34,6 +34,15 @@ impl RegistryCall {
     }
 }
 
+/// Host supplies the two main-executable callbacks and live player work.
+pub trait ExitPlayerWork {
+    fn present(&self, slot: usize) -> bool;
+    fn reset_motion(&mut self, slot: usize) -> Result<()>;
+    fn player_number(&self, slot: usize) -> i8;
+    fn motion_flags(&mut self, slot: usize) -> &mut u16;
+    fn refresh_player(&mut self, slot: usize) -> Result<()>;
+}
+
 pub struct CityDefaults(Vec<(usize, Slot)>);
 
 impl CityDefaults {
@@ -51,6 +60,19 @@ impl CityDefaults {
                 return Err(Error::invalid(
                     "unrecognized City Escape motion lifecycle call",
                 ));
+            }
+        }
+        for (at, target) in [
+            (0x11774, 0x8003d56c),
+            (0x117b4, 0x80054fd4),
+            (0x117d0, 0x8003d56c),
+            (0x11810, 0x80054fd4),
+        ] {
+            let r = rel
+                .reference(1, at)
+                .ok_or_else(|| Error::invalid("missing exit player callback"))?;
+            if (r.module, r.kind, r.addend) != (0, 10, target) {
+                return Err(Error::invalid("unexpected exit player callback"));
             }
         }
         let mut entries = Vec::new();
@@ -87,6 +109,29 @@ impl CityDefaults {
             RegistryCall::PrologRegister => self.register(slots),
             RegistryCall::EpilogClearAfterPlayerReset => self.clear_matching(slots),
         }
+    }
+
+    /// Reset each present player before removing stage defaults. The target of
+    /// the flag write is read after reset; the refresh still uses the outer slot.
+    pub fn exit_with_players(
+        &self,
+        slots: &mut [Slot; 300],
+        work: &mut impl ExitPlayerWork,
+    ) -> Result<()> {
+        for slot in 0..2 {
+            if !work.present(slot) {
+                continue;
+            }
+            work.reset_motion(slot)?;
+            let target = work.player_number(slot);
+            if !(0..2).contains(&target) || !work.present(target as usize) {
+                return Err(Error::invalid("unavailable City Escape player flag target"));
+            }
+            *work.motion_flags(target as usize) |= 4;
+            work.refresh_player(slot)?;
+        }
+        self.clear_matching(slots);
+        Ok(())
     }
 
     pub fn register(&self, slots: &mut [Slot; 300]) {
@@ -134,5 +179,55 @@ mod tests {
         assert_eq!(slots[147], Slot::default());
         assert_eq!((slots[121], slots[145]), (foreign, foreign));
         assert_eq!(slots.iter().filter(|s| s.address.is_some()).count(), 2);
+    }
+}
+
+#[cfg(test)]
+mod exit_tests {
+    use super::*;
+    #[derive(Default)]
+    struct Work {
+        flags: [u16; 2],
+        calls: Vec<(usize, bool)>,
+        numbers: [i8; 2],
+    }
+    impl ExitPlayerWork for Work {
+        fn present(&self, _: usize) -> bool {
+            true
+        }
+        fn reset_motion(&mut self, s: usize) -> Result<()> {
+            self.calls.push((s, false));
+            self.numbers[s] = 1 - s as i8;
+            Ok(())
+        }
+        fn player_number(&self, s: usize) -> i8 {
+            self.numbers[s]
+        }
+        fn motion_flags(&mut self, s: usize) -> &mut u16 {
+            &mut self.flags[s]
+        }
+        fn refresh_player(&mut self, s: usize) -> Result<()> {
+            assert_ne!(self.flags[1 - s] & 4, 0);
+            self.calls.push((s, true));
+            Ok(())
+        }
+    }
+    #[test]
+    fn exit_uses_post_reset_player_number_then_refreshes_original_slot() {
+        let entry = Slot {
+            tag: 2,
+            address: Some(MotionAddress::External(11)),
+        };
+        let defaults = CityDefaults(vec![(145, entry)]);
+        let mut slots = [Slot::default(); 300];
+        defaults.register(&mut slots);
+        let mut work = Work {
+            flags: [8, 16],
+            ..Default::default()
+        };
+        defaults.exit_with_players(&mut slots, &mut work).unwrap();
+        assert_eq!(work.flags, [12, 20]);
+        assert_eq!(work.calls, [(0, false), (0, true), (1, false), (1, true)]);
+        assert_eq!(slots[145], Slot::default());
     }
 }
