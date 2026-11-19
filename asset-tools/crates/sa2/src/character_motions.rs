@@ -62,12 +62,10 @@ impl Bank {
         if matches.next().is_some() {
             return Err(Error::invalid("ambiguous motion slot in supplied bank"));
         }
-        if (row.flags, row.interpolation_and_slots) != (3, 2) {
-            return Err(Error::invalid(
-                "unsupported character motion channel layout",
-            ));
+        if (row.flags, row.interpolation_and_slots) == (3, 2) {
+            return board_motion::bank_motion(&self.data, row.offset, row.parts);
         }
-        board_motion::bank_motion(&self.data, row.offset, row.parts)
+        extended_motion(&self.data, row)
     }
 }
 /// Sample a Sonic animation state from an explicitly supplied character/common bank.
@@ -191,4 +189,118 @@ fn sample_character(
     Ok(
         serde_json::json!({"character":character,"state":state,"bank":bank_name,"row":row,"motionOffset":motion.offset,"pose":pose}),
     )
+}
+
+// These additional layouts occur in the installed character archives. Morph
+// keys address arrays whose lengths are supplied by the associated geometry.
+fn extended_motion(bytes: &[u8], row: &Entry) -> Result<Motion> {
+    use crate::motion::{Keyframe, MotionChannel, MotionPart};
+    let channels: &[(&str, usize)] = match (row.flags, row.interpolation_and_slots) {
+        (7, 3) => &[("position", 3), ("rotationBams", 3), ("scale", 3)],
+        (0x30, 2) => &[("vertexPointer", 1), ("normalPointer", 1)],
+        (0x1c1, 4) => &[
+            ("position", 3),
+            ("target", 3),
+            ("rollBams", 1),
+            ("angleBams", 1),
+        ],
+        _ => {
+            return Err(Error::invalid(
+                "unsupported character motion channel layout",
+            ))
+        }
+    };
+    let span = |at: u32, n: usize| {
+        bytes
+            .get(at as usize..)
+            .and_then(|b| b.get(..n))
+            .ok_or_else(|| Error::invalid("MTN span outside bank"))
+    };
+    let word = |b: &[u8], i: usize| u32::from_be_bytes(b[i..i + 4].try_into().unwrap());
+    if !(1..=4096).contains(&row.frames) {
+        return Err(Error::invalid("invalid MTN frame count"));
+    }
+    let base = word(span(row.offset, 4)?, 0);
+    let stride = channels.len() * 8;
+    if base == 0 {
+        return Err(Error::invalid("null MTN descriptor table"));
+    }
+    let descriptors = span(base, stride * usize::from(row.parts))?;
+    let mut budget = 65536usize;
+    let mut parts = Vec::new();
+    for (index, d) in descriptors.chunks_exact(stride).enumerate() {
+        let mut decoded = Vec::new();
+        for (slot, &(kind, width)) in channels.iter().enumerate() {
+            let ptr = word(d, slot * 4);
+            let count = word(d, (channels.len() + slot) * 4) as usize;
+            if count > 4096 || (count == 0) != (ptr == 0) {
+                return Err(Error::invalid("invalid MTN key extent"));
+            }
+            budget = budget
+                .checked_sub(count)
+                .ok_or_else(|| Error::invalid("MTN key budget exceeded"))?;
+            let size = (width + 1) * 4;
+            let mut keys = Vec::new();
+            let mut previous = None;
+            for k in span(ptr, count * size)?.chunks_exact(size) {
+                let raw_words: Vec<_> = (0..=width).map(|i| word(k, i * 4)).collect();
+                let frame = raw_words[0];
+                if frame >= row.frames || previous.is_some_and(|v| v >= frame) {
+                    return Err(Error::invalid("invalid MTN key time"));
+                }
+                previous = Some(frame);
+                let mut floats = vec![];
+                let mut integers = vec![];
+                match kind {
+                    "position" | "target" | "scale" => {
+                        floats.extend(raw_words[1..].iter().map(|&v| f32::from_bits(v)));
+                        if floats.iter().any(|v| !v.is_finite()) {
+                            return Err(Error::invalid("nonfinite MTN key"));
+                        }
+                    }
+                    "vertexPointer" | "normalPointer" => {
+                        let p = raw_words[1];
+                        if p != 0 {
+                            span(p, 12)?;
+                        }
+                        integers.push(p as i32);
+                    }
+                    _ => integers.extend(raw_words[1..].iter().map(|&v| v as i32)),
+                }
+                keys.push(Keyframe {
+                    frame: frame as i32,
+                    raw_words,
+                    floats,
+                    integers,
+                });
+            }
+            decoded.push(MotionChannel {
+                kind: kind.into(),
+                source_offset: ptr,
+                key_count: count as u32,
+                keys,
+            });
+        }
+        parts.push(MotionPart {
+            index: index as u32,
+            channels: decoded,
+        });
+    }
+    Ok(Motion {
+        version: 0,
+        offset: row.offset,
+        frame_count: row.frames,
+        type_flags: row.flags,
+        interpolation_and_slots: row.interpolation_and_slots,
+        short_rotation: false,
+        part_count: u32::from(row.parts),
+        labels: Default::default(),
+        metadata: vec![],
+        parts,
+        unknowns: if row.flags == 0x30 {
+            vec!["Morph array lengths require the matching geometry; key values retain file-relative offsets.".into()]
+        } else {
+            vec![]
+        },
+    })
 }
