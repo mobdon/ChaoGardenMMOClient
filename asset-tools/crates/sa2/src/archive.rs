@@ -290,3 +290,20 @@ mod tests {
         assert!(read_pak(&b).is_err());
     }
 }
+
+pub fn texture_bank_report(prs: &[u8], count: usize) -> Result<serde_json::Value> {
+    let data = crate::archive::decompress_prs(prs, 16 * 1024 * 1024)?;
+    let entries = crate::archive::read_gvm(&data)?;
+    if entries.len() != count {
+        return Err(Error::invalid(
+            "GVM count disagrees with native texture list",
+        ));
+    }
+    let mut rows = Vec::new();
+    for e in entries {
+        let image = crate::texture::decode_gvr(e.data, None)?;
+        rows.push(serde_json::json!({"index":e.index,"name":e.name,"globalIndex":e.global_index,"width":image.width,"height":image.height,
+            "rgbaSha256":crate::manifest::sha256(&image.rgba),"nonopaquePixels":image.rgba.as_chunks::<4>().0.iter().filter(|p|p[3]!=255).count()}));
+    }
+    Ok(serde_json::json!({"textures":rows,"archiveSha256":crate::manifest::sha256(prs)}))
+}

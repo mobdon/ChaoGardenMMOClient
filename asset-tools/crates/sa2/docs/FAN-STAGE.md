@@ -465,3 +465,11 @@ come from native registration and object, texture-list and motion offsets
 refer to CartD section 5. The command describes submissions; it does not
 render the objects. Operation `delete` reports the callback's two null writes
 on the child. The original does not clear the parent's vehicle handle here.
+
+`kart-target-textures CartD.rel OUTPUT.json MODE` follows the native texture
+registration to the sibling source archive, validates its SHA-256 and texture
+count, and reports each decoded entry's global index, dimensions, RGBA hash
+and nonopaque pixel count. The output does not contain texture pixels.
+Independent ArchiveTool PNG conversions matched all 9 cartLim and 21 limtails
+entries byte for byte after RGBA decode (17,573 nonopaque pixels total).
+This verifies texture content, not UV assignment or rendered appearance.

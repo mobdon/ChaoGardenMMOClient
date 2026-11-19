@@ -296,16 +296,12 @@ pub fn presentation(bytes: &[u8], input: PresentationInput) -> Result<Presentati
             let constants = rel.data(4)?;
             let f = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());
             let animated = mode != 0;
-            let (name, texture_list_section5, object_section5, rotation_y) = if animated {
-                (0x2ee194, 0x290468, 0x29cc3c, 0x8000)
+            let (texture_bank, texture_list_section5, _) = bank(&rel, mode)?;
+            let (object_section5, rotation_y) = if animated {
+                (0x29cc3c, 0x8000)
             } else {
-                (0x2ee18c, 0x2836cc, 0x290174, -0x4000)
+                (0x290174, -0x4000)
             };
-            let texture_bank = std::ffi::CStr::from_bytes_until_nul(&data[name..])
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_owned();
             let next = if animated {
                 let frames = u32::from_be_bytes(data[0x29e5d0..0x29e5d4].try_into().unwrap());
                 let advanced = shared_frame + f(0x488);
@@ -329,4 +325,37 @@ pub fn presentation(bytes: &[u8], input: PresentationInput) -> Result<Presentati
             })
         }
     }
+}
+
+fn bank(rel: &crate::city_rel::CityRel<'_>, mode: i32) -> Result<(String, usize, usize)> {
+    let (name, list) = if mode == 0 {
+        (0xdd36, 0xdd3e)
+    } else {
+        (0xdd4e, 0xdd56)
+    };
+    let target = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 80 && r.section == 5 && r.kind == 4)
+            .map(|r| r.addend as usize)
+            .ok_or_else(|| crate::Error::invalid("missing pursuit texture registration"))
+    };
+    let data = rel.data(5)?;
+    let name = std::ffi::CStr::from_bytes_until_nul(&data[target(name)?..])
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let offset = target(list)?;
+    let count = u32::from_be_bytes(data[offset + 4..offset + 8].try_into().unwrap());
+    Ok((name.to_owned(), offset, count as usize))
+}
+
+pub fn texture_resource(bytes: &[u8], mode: i32) -> Result<(String, usize, &'static str)> {
+    kart_progress::verify(bytes)?;
+    let (name, _, count) = bank(&crate::city_rel::CityRel::read_identified(bytes, 80)?, mode)?;
+    let hash = if mode == 0 {
+        "5578ba03cce6eb265ecf2374b178749c56d94358e877fbb8eae382b752c2dea8"
+    } else {
+        "c09e3bab59cc6d6078899a9f4aa1a754c82651ca3ba3c862c644e553b3be4a35"
+    };
+    Ok((format!("{name}.prs"), count, hash))
 }
