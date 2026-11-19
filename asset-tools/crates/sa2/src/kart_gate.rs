@@ -609,6 +609,9 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    SlotProgress {
+        slot_progress: SlotTests,
+    },
     PostMove {
         vehicle_post_move: Box<crate::kart_timeout::Frame>,
     },
@@ -628,6 +631,14 @@ enum SequenceEvent {
         controller: crate::kart_story_target::ControllerSignals,
         timing: Option<crate::kart_lap_clock::TimingSignals>,
     },
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlotTests {
+    work_44: u32,
+    debug_enabled: bool,
+    segment_tests: Vec<bool>,
+    highest: Option<i32>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -685,11 +696,37 @@ pub fn story_sequence(
     let mut target_handle = None;
     let mut finish = None;
     let mut parent = None;
+    let mut route = None;
+    let mut highest = None;
     let mut target: Option<crate::kart_story_target::State> = None;
     let constants = rel.data(4)?;
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::SlotProgress { slot_progress: v } => {
+                let (piece, course_length) = route
+                    .ok_or_else(|| Error::invalid("slot progress requires vehicle route state"))?;
+                if highest.zip(v.highest).is_some_and(|(a, b)| a != b) {
+                    return Err(Error::invalid("conflicting highest checkpoint"));
+                }
+                let r = crate::kart_progress::update_verified(crate::kart_progress::Input {
+                    piece,
+                    course_length,
+                    counter: count as i32,
+                    highest: highest
+                        .or(v.highest)
+                        .ok_or_else(|| Error::invalid("missing initial highest checkpoint"))?,
+                    work_44: v.work_44,
+                    debug_enabled: v.debug_enabled,
+                    mode,
+                    segment_tests: v.segment_tests,
+                })?;
+                route = Some((r.piece, course_length));
+                highest = Some(r.highest);
+                count = r.counter as u32;
+                updates.push(json!({"slotProgress":r}));
+                continue;
+            }
             SequenceEvent::PostMove {
                 vehicle_post_move: mut frame,
             } => {
@@ -723,6 +760,10 @@ pub fn story_sequence(
                 }
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
                 parent = r.frame.as_ref().map(|f| f.pursuit_parent());
+                route = r.frame.as_ref().map(|f| f.route());
+                if let Some(h) = r.frame.as_ref().and_then(|f| f.highest()) {
+                    highest = Some(h);
+                }
                 finish = r.frame.as_ref().map(|f| f.global_24d60);
                 if let Some(n) = r.frame.as_ref().and_then(|f| f.checkpoint_counter()) {
                     count = n;
@@ -832,7 +873,7 @@ pub fn story_sequence(
                     mode,
                 )?;
                 input.lap_clock=match (timing,lap){
-                    (Some(signals),Some(c))=>Some(signals.with_clock(c,count as i32)),
+                    (Some(signals),Some(c))=>Some(signals.with_clock(c,count as i32,highest)?),
                     (None,None)=>None,
                     _=>return Err(Error::invalid("lap replay requires both initial lap_clock and timing on controller events")),
                 };
@@ -880,6 +921,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "lapClock":lap,"finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "primaryRoute":route,"highestCheckpoint":highest,"lapClock":lap,"finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }

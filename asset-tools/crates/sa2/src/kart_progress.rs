@@ -32,6 +32,9 @@ pub(crate) fn verify(bytes: &[u8]) -> Result<()> {
 }
 pub fn update(bytes: &[u8], s: Input) -> Result<Update> {
     verify(bytes)?;
+    update_verified(s)
+}
+pub(crate) fn update_verified(s: Input) -> Result<Update> {
     if s.course_length <= 0 || s.segment_tests.len() > 11 {
         return Err(Error::invalid(
             "invalid course length or segment observation count",

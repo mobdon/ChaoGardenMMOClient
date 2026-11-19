@@ -51,6 +51,12 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn route(&self) -> (i32, i32) {
+        (self.segment, self.segment_count)
+    }
+    pub(crate) fn highest(&self) -> Option<i32> {
+        self.dispatch.as_ref().map(|v| v.work_c8)
+    }
     pub(crate) fn bind_story_dispatch(&mut self, latch: Option<i32>, counter: u32) -> Result<()> {
         if let Some(d) = &mut self.dispatch {
             if d.work_c4.is_some_and(|v| v as u32 != counter)

@@ -197,4 +197,17 @@ if len(sys.argv)>4:
             assert lap["ticks"]==61 and lap["first"]==[[0,1,0],[0,1,1],[0,0,0]]
             assert doc["timerWord"]==397+int(rows[a][8])*60
             assert doc["updates"][2]["controller"]["lap_clock"]==doc["updates"][3]["controller"]["lap_clock"]==lap
+            # A gate credit reaches the next non-cumulative split via the
+            # primary slot progress pass; no independent split index is given.
+            first=dict(vehicle_post_move=dict(frame,segment=5))
+            test=dict(slot_progress=dict(work_44=0,debug_enabled=False,highest=0,segment_tests=[False,True]))
+            q.update(primary_kart_counter=0,updates=[first,credit,test,
+                dict(slot_progress=dict(work_44=0,debug_enabled=False,segment_tests=[True])),
+                dict(controller=dict(signals,pursuit_latch=0),timing=dict(inhibit=False,cumulative=False))])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-progress.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text())
+            assert doc["primaryRoute"]==[8,100] and doc["highestCheckpoint"]==doc["primaryKartCounter"]==1
+            assert doc["updates"][2]["slotProgress"]["tested_indices"]==[6,7]
+            assert doc["lapClock"]["first"]==[[0,0,0],[0,1,0],[0,0,0]]
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

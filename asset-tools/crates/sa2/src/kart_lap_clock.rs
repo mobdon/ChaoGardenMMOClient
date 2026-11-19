@@ -28,19 +28,29 @@ pub struct ClockInput {
 pub(crate) struct TimingSignals {
     inhibit: bool,
     cumulative: bool,
-    first_highest: i32,
+    first_highest: Option<i32>,
     second_highest: Option<i32>,
 }
 impl TimingSignals {
-    pub(crate) fn with_clock(self, clock: Clock, first_counter: i32) -> ClockInput {
-        ClockInput {
+    pub(crate) fn with_clock(
+        self,
+        clock: Clock,
+        first_counter: i32,
+        highest: Option<i32>,
+    ) -> Result<ClockInput> {
+        if highest.zip(self.first_highest).is_some_and(|(a, b)| a != b) {
+            return Err(Error::invalid("lap timing conflicts with slot progress"));
+        }
+        Ok(ClockInput {
             clock,
             first_counter,
             inhibit: self.inhibit,
             cumulative: self.cumulative,
-            first_highest: self.first_highest,
+            first_highest: highest
+                .or(self.first_highest)
+                .ok_or_else(|| Error::invalid("missing highest checkpoint for lap timing"))?,
             second_highest: self.second_highest,
-        }
+        })
     }
 }
 fn subtract(a: Time, b: Time) -> Time {
