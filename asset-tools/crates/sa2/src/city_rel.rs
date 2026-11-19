@@ -341,6 +341,40 @@ impl<'a> CityRel<'a> {
             serde_json::json!({"sourceLayer":layout.source_layer,"frameCounter":tick,"playerWorld":player,"arrows":rows,"scope":"Evaluated after range acceptance, using original SET poses. No task scheduling or renderer."}),
         )
     }
+    /// Verify the three immediate arguments and external target at each board input call.
+    pub fn board_input_handoffs(&self) -> Result<serde_json::Value> {
+        let code = self.data(1)?;
+        let mut sites = Vec::new();
+        for at in [0xa04u32, 0xa20, 0xa98, 0xab4] {
+            let reference = self
+                .reference(1, at)
+                .filter(|r| r.module == 0 && r.kind == 10 && r.addend == 0x8003a2a0)
+                .ok_or_else(invalid)?;
+            let fetch = |p: u32| -> Result<u32> {
+                Ok(u32::from_be_bytes(
+                    code.get(p as usize..p as usize + 4)
+                        .ok_or_else(invalid)?
+                        .try_into()
+                        .unwrap(),
+                ))
+            };
+            if fetch(at)? != 0x48000001 {
+                return Err(invalid());
+            }
+            let mut args = [0i32; 3];
+            for (i, arg) in args.iter_mut().enumerate() {
+                let op = fetch(at - 12 + 4 * i as u32)?;
+                if op >> 16 != 0x3800 + 32 * (3 + i as u32) {
+                    return Err(invalid());
+                }
+                *arg = i32::from(op as i16);
+            }
+            sites.push(serde_json::json!({"codeSectionOffset":at,"target":reference.addend,"arguments":args}));
+        }
+        Ok(
+            serde_json::json!({"callee":"SetInputP","callSites":sites,"scope":"Imported calls only; does not identify the resulting player mode."}),
+        )
+    }
     fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
         let data = self.data(5)?;
         let local = |o| {
