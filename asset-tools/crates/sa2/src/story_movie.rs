@@ -188,11 +188,17 @@ fn index_video(report: &mut Value, video: &[u8]) -> Result<()> {
         })
         .collect();
     let mut schedule = Vec::new();
+    let mut group = 0usize;
     for (offset, h) in video
         .windows(6)
         .enumerate()
-        .filter(|(_, v)| v[..4] == [0, 0, 1, 0])
+        .filter(|(_, v)| v[..3] == [0, 0, 1] && matches!(v[3], 0 | 0xb8))
     {
+        if h[3] == 0xb8 {
+            group += 1;
+            continue;
+        }
+        let temporal = u16::from_be_bytes([h[4], h[5]]) >> 6;
         let index = anchors
             .partition_point(|a| a.0 <= offset)
             .checked_sub(1)
@@ -204,16 +210,25 @@ fn index_video(report: &mut Value, video: &[u8]) -> Result<()> {
             3 => "B",
             _ => return Err(Error::invalid("unsupported movie picture coding")),
         };
-        schedule.push((pts,json!({"pts":pts,"packetOffset":packet,"streamOffset":offset,"codedIndex":schedule.len(),"coding":kind})));
+        schedule.push(((group,temporal),json!({"group":group,"temporalReference":temporal,"packetPts":pts,"pts":pts,"packetOffset":packet,"streamOffset":offset,"codedIndex":schedule.len(),"coding":kind})));
     }
     schedule.sort_by_key(|a| a.0);
     let pictures = schedule.len();
     if schedule.windows(2).any(|w| w[0].0 == w[1].0) {
-        report["presentationOrderUnavailable"] =
-            json!("multiple pictures share a packet timestamp; picture timing unresolved");
-    } else {
-        report["presentationOrder"] = Value::Array(schedule.into_iter().map(|(_, p)| p).collect());
+        return Err(Error::invalid(
+            "duplicate temporal reference within movie group",
+        ));
     }
+    let exact = schedule
+        .windows(2)
+        .all(|w| w[0].1["packetPts"].as_u64() < w[1].1["packetPts"].as_u64());
+    if !exact {
+        for (_, pic) in &mut schedule {
+            pic["pts"] = Value::Null;
+        }
+    }
+    report["pictureTimestampsResolved"] = json!(exact);
+    report["presentationOrder"] = Value::Array(schedule.into_iter().map(|(_, p)| p).collect());
     report["videoStream"] = json!({"bytes":video.len(),"sha256":manifest::sha256(video),"width":width,"height":height,"pictures":pictures,"sequenceRateCode":h[7]&15});
     Ok(())
 }
@@ -225,9 +240,6 @@ pub fn picture_602(b: &[u8], frame: u32) -> Result<Value> {
 pub fn movie_picture(id: i16, b: &[u8], frame: u32) -> Result<Value> {
     let (mut report, _, video) = demux_movie(id, b)?;
     index_video(&mut report, &video)?;
-    if report.get("presentationOrderUnavailable").is_some() {
-        return Err(Error::invalid("movie picture timing unresolved"));
-    }
     let pic = report["presentationOrder"]
         .get(frame as usize)
         .ok_or_else(|| Error::invalid("frame outside movie presentation order"))?;

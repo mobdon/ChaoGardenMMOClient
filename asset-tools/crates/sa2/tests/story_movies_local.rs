@@ -101,6 +101,25 @@ fn compare_all_movie_streams() {
             _ => unreachable!(),
         };
         assert_eq!(report["videoStream"]["pictures"], pictures);
-        assert_eq!(report["presentationOrder"].is_array(), ordered);
+        assert_eq!(report["pictureTimestampsResolved"], ordered);
+        let reference = match id {
+            401 => "5f2b13da605198f8d0fa5aa5b0a1a4a835c43f335f3f3022a1e852bf38883d74",
+            409 => "789878af724ad5e4c058534757145a5fe20f1a9663596ee21416fdac51bd0718",
+            411 => "9ab56091e306ef98f1d8d066609d4619d37e356a5f9ef787d55679b1a64e313b",
+            420 => "0696eae9cd46e69eaad2b5c093ca530a03b72e342621cc0f2cb61807dde2f203",
+            429 => "2e7477afd4c08c6cbebba7e10fd514b3a265c145235e9c05688e5e6ef59f59b3",
+            430 => "31365c49cdbf5af7dc6b824d8e532f08e2977cc69b26e11abc0d82e6c471050e",
+            524 => "f9040cc6ba262c8d90955ec40940a087c56f307fff8e7d64a549e27fb42780d6",
+            532 => "b267e192cc03b93e6b638b677aabe706d7e6677ad88021fd3fb24fdb3d9c02cc",
+            602 => "11f03e0d5adace9772b2daa188c38bc902e86c49992850802975443754fe97df",
+            _ => unreachable!(),
+        };
+        let mut rows = Vec::new();
+        for pic in report["presentationOrder"].as_array().unwrap() {
+            assert_eq!(pic["pts"].is_number(), ordered);
+            rows.extend((pic["codedIndex"].as_u64().unwrap() as u32).to_be_bytes());
+            rows.extend(pic["coding"].as_str().unwrap().bytes());
+        }
+        assert_eq!(sa2_asset_tools::manifest::sha256(&rows), reference);
     }
 }
