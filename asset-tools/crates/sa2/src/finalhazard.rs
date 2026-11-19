@@ -1118,7 +1118,7 @@ pub struct VoiceChannel {
 /// the exact reciprocal root (as Unicorn/QEMU computes frsqrte); hardware
 /// estimates converge to the same double except in rare final roundings.
 fn stage_sqrt(x: f32) -> f32 {
-    if !(x > 0.0) {
+    if x.is_nan() || x <= 0.0 {
         return x;
     }
     let x = x as f64;
