@@ -502,6 +502,7 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
     // The collision update indexes a position buffer, not the hierarchy.
     // The draw callback fills 27 positions from 20-byte joint lookup records.
     let mut body_origins = Vec::new();
+    let mut body_centers = Vec::new();
     if let Some(pose) = pose {
         if pair(0x41ae, 6)? != pair(0x956, 6)? {
             return Err(Error::invalid(
@@ -509,6 +510,18 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
             ));
         }
         let data = rel.data(5)?;
+        let descriptors = pair(0x566, 5)? as usize;
+        let source_origin = pair(0x4172, 4)? as usize;
+        if rel.data(4)?.get(source_origin..source_origin + 12) != Some(&[0; 12])
+            || rel
+                .reference(1, 0x984)
+                .map(|r| (r.module, r.kind, r.addend))
+                != Some((0, 10, 0x80027ab4))
+        {
+            return Err(Error::invalid(
+                "unsupported body capture origin or center operation",
+            ));
+        }
         let bindings = pair(0x942, 5)? as usize;
         let count = (instruction(0x56c) & 0xffff) as usize;
         let capture_count = instruction(0x42e4) & 0xffff;
@@ -519,7 +532,9 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
         for slot in 0..count {
             let b = bindings + 32 * slot;
             let index = data[b] as i8;
+            let descriptor = descriptors + slot * 48;
             if index <= 0 {
+                body_centers.push(serde_json::json!({"slot":slot,"form":data[descriptor+1],"center":vec3(descriptor+8),"animated":false}));
                 continue;
             }
             if index as u32 >= capture_count {
@@ -538,6 +553,10 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
             let local = vec3(record as usize + 4);
             let origin = crate::pose::transform_point(&node.world_matrix, local);
             let offset = vec3(b + 4);
+            // The collision helper takes the captured position and the slot
+            // offset separately: only the capture offset rotates with the joint.
+            let center: [f32; 3] = std::array::from_fn(|i| origin[i] as f32 + offset[i] as f32);
+            body_centers.push(serde_json::json!({"slot":slot,"form":data[descriptor+1],"center":center,"animated":true}));
             body_origins.push(
                 serde_json::json!({"slot":slot,"captureIndex":index,"joint":joint,
                 "jointOffset":local,"bossLocalCapture":origin,"collisionOffset":offset}),
@@ -598,7 +617,7 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
     }
     Ok(
         serde_json::json!({"modelSection5":model,"tableSection5":base,"matrixArraySection6":matrices,
-        "constructor":init,"matrixStride":48,"matrixCaptures":captures,"bodyCollisionPoseBindings":body_origins,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
+        "constructor":init,"matrixStride":48,"matrixCaptures":captures,"bossLocalCollisionCenters":body_centers,"bodyCollisionPoseBindings":body_origins,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
     )
 }
 /// Callback dispatch only. The selected handler runs before the contact check;
