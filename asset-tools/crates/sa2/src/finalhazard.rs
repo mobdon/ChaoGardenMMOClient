@@ -888,6 +888,18 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    HitReaction {
+        submode: i8,
+        flags: u16,
+        cursor: i8,
+        child14: bool,
+        child18: bool,
+        animation_flags: u16,
+        frame: f32,
+        completion_poll: i32,
+        gate_after_clear: Option<PhaseGateTask>,
+    },
+
     BossDrawTransform {
         position: [f32; 3],
         rotation_bams: [i32; 3],
@@ -1503,6 +1515,68 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             return Ok(
                 serde_json::json!({"model_to_stage":matrix,"fixed_yaw_bams":fixed,
                 "scope":"Boss draw transform before camera projection; native trigonometric rounding is not emulated."}),
+            );
+        }
+        PlacementClock::HitReaction {
+            mut submode,
+            mut flags,
+            mut cursor,
+            mut child14,
+            mut child18,
+            animation_flags,
+            frame,
+            completion_poll,
+            gate_after_clear,
+        } => {
+            let mut sites = Vec::new();
+            let mut mode = 3;
+            let mut start_switch = false;
+            match submode {
+                0 => {
+                    if child14 {
+                        sites.push(0x1114);
+                        child14 = false;
+                    }
+                    if child18 {
+                        sites.push(0x112c);
+                        child18 = false;
+                    }
+                    sites.extend([0x1144, 0x1158]);
+                    submode = 1;
+                }
+                1 if animation_flags & 2 == 0 => {
+                    sites.extend([
+                        0x1190, 0x1198, 0x11ac, 0x11b4, 0x11d0, 0x11d8, 0x11e4, 0x11ec,
+                    ]);
+                    submode = 2;
+                }
+                2 => {
+                    let limit = |site| -> Result<f32> {
+                        Ok(f32::from_be_bytes(
+                            phase_constant(&rel, site, 4)?.try_into().unwrap(),
+                        ))
+                    };
+                    if frame > limit(0x1206)? && frame < limit(0x121a)? {
+                        sites.extend([0x1240, 0x1250]);
+                    }
+                    sites.push(0x1258);
+                    if completion_poll != 0 {
+                        flags &= !4;
+                        cursor = -1;
+                        sites.extend([0x1274, 0x128c, 0x1298, 0x12b0]);
+                        if phase_write_allowed(gate_after_clear) {
+                            mode = 1;
+                            submode = 0;
+                        }
+                        start_switch = true;
+                    }
+                }
+                _ => {}
+            }
+            return Ok(
+                serde_json::json!({"mode":mode,"submode":submode,"flags":flags,"cursor":cursor,
+                "child14":child14,"child18":child18,"start_player_switch":start_switch,
+                "call_sites":sites,"global_halfword_0a":0}),
             );
         }
         PlacementClock::InitialHealth => {
