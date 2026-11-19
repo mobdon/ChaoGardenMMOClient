@@ -991,6 +991,9 @@ fn run() -> Result<()> {
                 let colors = p
                     .get(offset..offset + length)
                     .ok_or_else(|| Error::invalid("palette dependency range"))?;
+                // A palette file and bank together select one rendered variant.
+                m.assets[0].id =
+                    format!("{}.palette.{}.bank.{bank}", m.assets[0].id, s.logical_path);
                 m.assets[0].dependencies.push(Dependency {
                     source_id: s.id.clone(),
                     role: "external-palette".into(),

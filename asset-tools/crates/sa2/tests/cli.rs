@@ -276,6 +276,29 @@ fn palette_dependency_records_exact_bank_bytes_and_preserves_alpha() {
             .unwrap(),
     );
     let manifest = json_file(sidecar(&output));
+    let palette_variant = |palette_path: &Path, index: &str, filename: &str| {
+        let path = case.path.join(filename);
+        succeeded(
+            case.command()
+                .arg("texture")
+                .arg(&gvr)
+                .arg(&path)
+                .arg(palette_path)
+                .arg(index)
+                .output()
+                .unwrap(),
+        );
+        json_file(sidecar(&path))["assets"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let id = manifest["assets"][0]["id"].as_str().unwrap();
+    let bank_zero = palette_variant(&gvp, "0", "first-bank.png");
+    let alternate = case.file("alternate.gvp", &palette_bytes);
+    assert_ne!(id, bank_zero);
+    assert_ne!(id, palette_variant(&alternate, "1", "alternate.png"));
+    assert_eq!(id, palette_variant(&gvp, "1", "repeat.png"));
     let dependency = &manifest["assets"][0]["dependencies"][0];
     assert_eq!(dependency["sourceId"], manifest["sources"][1]["id"]);
     assert_eq!(dependency["role"], "external-palette");
