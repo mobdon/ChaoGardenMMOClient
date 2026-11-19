@@ -9,10 +9,11 @@ d=(game/"resource/gd_PC/stg16D.rel").read_bytes()
 assert hashlib.sha256(d).hexdigest()=="5078ec861c527beaee651cc0272fbfba36793b0afb8f6c132c12718ffdf9282d"
 w=lambda i:struct.unpack_from(">I",d,i)[0]
 u=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
-base={s:0x81000000+s*0x200000 for s in (1,4,5)}
+base={s:0x81000000+s*0x200000 for s in (1,4,5,6)}
 for s,b in base.items():
     row=w(16)+8*s;at=w(row)&~1;n=w(row+4)
-    u.mem_map(b,(n+4095)&~4095);u.mem_write(b,d[at:at+n])
+    u.mem_map(b,(n+4095)&~4095);
+    if s!=6:u.mem_write(b,d[at:at+n])
 def put(at,fmt,*v):u.mem_write(at,struct.pack(">"+fmt,*v))
 def get(at,fmt):return struct.unpack(">"+fmt,u.mem_read(at,struct.calcsize(">"+fmt)))
 engines={}
@@ -49,8 +50,21 @@ def startup(entry):
     def watch(uc,pc,size,_):
         site=pc-base[1]
         if site==0x8afc:args=[reg(i) for i in (3,4,5)]
-        elif site==0x8b18:args=[reg(3),reg(4),reg(5)-base[1],text(reg(6))]
+        elif site in (0x8b18,0x8c64):args=[reg(3),reg(4),reg(5)-base[1],text(reg(6))]
         elif site==0x8b24:args=[reg(3)-base[5]]
+        elif site==0x8b80:
+            args=[reg(3),reg(4)];uc.reg_write(R.UC_PPC_REG_3,handle)
+        elif site==0x8b9c:
+            assert reg(4)==handle and get(base[6]+20,"I")[0]==handle
+            args=[reg(3)-base[5],dict(returnFrom=0x8b80,bssOffset=20)]
+        elif site in (0x8ba0,0x8ba4):args=[]
+        elif site in (0x8bc4,0x8bd8,0x8be8):
+            count=2 if site==0x8bd8 else 3
+            vals=[struct.unpack(">d",struct.pack(">Q",uc.reg_read(getattr(R,"UC_PPC_REG_FPR"+str(i)))))[0] for i in range(1,count+1)]
+            calls.append(dict(engine=engines[site],floats=vals));uc.reg_write(R.UC_PPC_REG_PC,pc+4);return
+        elif site in (0x8bfc,0x8c08,0x8c14,0x8c20):args=[reg(3),reg(4)-base[5]]
+        elif site in (0x8c2c,0x8c38):args=[reg(3),reg(4)]
+        elif site in (0x8c40,0x8c48):args=[reg(3)]
         else:
             tex,obj=reg(3),reg(4);args=[tex-base[5],obj-base[5]]
             if site in (0x8b40,0x8b68):
@@ -63,16 +77,17 @@ def startup(entry):
                 groups.append(dict(textures=args[0],objects=args[1],textureRows=rows,objectOffsets=entries))
         calls.append(dict(engine=engines[site],args=args))
         uc.reg_write(R.UC_PPC_REG_PC,pc+4)
-    hooks=[u.hook_add(UC_HOOK_CODE,watch,begin=base[1]+s,end=base[1]+s) for s in engines if entry<=s<0x8b78]
+    hooks=[u.hook_add(UC_HOOK_CODE,watch,begin=base[1]+s,end=base[1]+s) for s in engines if entry<=s<0x8c68]
     try:
         u.reg_write(R.UC_PPC_REG_1,stage+4000)
-        u.emu_start(base[1]+entry,base[1]+0x8b78,count=100)
-        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x8b78 and len(calls)==7
+        u.emu_start(base[1]+entry,base[1]+0x8c68,count=200)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x8c68 and len(calls)==23
     finally:
         for h in hooks:u.hook_del(h)
     return dict(calls=calls,groups=groups)
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for allocated in (True,False):
+        handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
         result={};u.mem_write(stage,bytes(512));put(child+0x34,"I",work)
         invoke(w(52));result["startupResources"]=startup(result["startup"]);invoke(result["entry"])
         result.update(nextMain=get(stage+0x10,"I")[0]-base[1],created=None)

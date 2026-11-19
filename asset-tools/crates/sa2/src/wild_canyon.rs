@@ -80,6 +80,21 @@ pub fn enter(module: &[u8], allocated: bool) -> Result<Value> {
             .ok_or_else(invalid)
     };
     let groups = [group(0x8b28, 0x8b34)?, group(0x8b50, 0x8b5c)?];
+    let scalar = |pc| -> Result<f32> {
+        let i = pair(pc, 4)? as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(4)?
+                .get(i..i + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let table = pair(0x8bf0, 5)?;
+    let first = scalar(0x8ba8)?;
+    let second = scalar(0x8bb4)?;
+    // Keep the engine return opaque. It is saved and passed on without a null check.
+    let saved = json!({"returnFrom":0x8b80,"bssOffset":pair(0x8b84,6)?});
     let calls = json!([
         {"engine":engine(0x8afc)?,"args":[50,50,170]},
         {"engine":engine(0x8b18)?,"args":[2,0,pair(0x8b08,1)?,name(pair(0x8b10,5)?)?]},
@@ -87,7 +102,18 @@ pub fn enter(module: &[u8], allocated: bool) -> Result<Value> {
         {"engine":engine(0x8b40)?,"args":[groups[0]["textures"],groups[0]["objects"]]},
         {"engine":engine(0x8b4c)?,"args":[groups[0]["textures"],groups[0]["objects"]]},
         {"engine":engine(0x8b68)?,"args":[groups[1]["textures"],groups[1]["objects"]]},
-        {"engine":engine(0x8b74)?,"args":[groups[1]["textures"],groups[1]["objects"]]}
+        {"engine":engine(0x8b74)?,"args":[groups[1]["textures"],groups[1]["objects"]]},
+        {"engine":engine(0x8b80)?,"args":[0,2048]},
+        {"engine":engine(0x8b9c)?,"args":[pair(0x8b90,5)?,saved]},
+        {"engine":engine(0x8ba0)?,"args":[]},{"engine":engine(0x8ba4)?,"args":[]},
+        {"engine":engine(0x8bc4)?,"floats":[first,second,first]},
+        {"engine":engine(0x8bd8)?,"floats":[second,scalar(0x8bcc)?]},
+        {"engine":engine(0x8be8)?,"floats":[second,second,second]},
+        {"engine":engine(0x8bfc)?,"args":[0,table]},{"engine":engine(0x8c08)?,"args":[1,table+32]},
+        {"engine":engine(0x8c14)?,"args":[2,table]},{"engine":engine(0x8c20)?,"args":[3,table]},
+        {"engine":engine(0x8c2c)?,"args":[0,0]},{"engine":engine(0x8c38)?,"args":[0,1]},
+        {"engine":engine(0x8c40)?,"args":[0]},{"engine":engine(0x8c48)?,"args":[2]},
+        {"engine":engine(0x8c64)?,"args":[2,1,pair(0x8c54,1)?,name(pair(0x8c5c,5)?)?]}
     ]);
     let child = if allocated {
         let mut position = [0.; 3];
