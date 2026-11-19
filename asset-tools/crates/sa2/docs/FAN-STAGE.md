@@ -590,3 +590,11 @@ All vehicles using a replaced index read that same row. An omitted set uses
 the original table. A negative selected cue suppresses the engine request
 even when the place/finish logic issues its local selector call. In particular,
 the alternate row for profile 4 silences all three of those requests.
+
+`kart-race-tuning CartD.rel OUTPUT.json INPUT.json` applies the shared setup
+writes at 0x5ce8. Pass the mode and, on repeated setups, previous_tuning.
+Modes 2–4 change only selected coefficients. Mode 5 requires the live record
+selected by 0x12c: it copies ten words into profile 8 and selects one of two
+tuning triples using engine word +0xb4. Pass the resulting tuning to
+kart-guided-drive and profile8_write to kart-active-profile. Setup does not
+establish where the live mode-5 record was originally populated.

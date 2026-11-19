@@ -19,8 +19,9 @@ for mod,at in struct.iter_unpack(">II",data[o:o+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t==1 and mod==80 and k in (4,6) and 0x42c8<=l<0x46f8:
-            p=base[s]+a
+        if t==1 and k in (4,6) and (0x42c8<=l<0x46f8 or 0x5ce8<=l<0x5e78 or 0x12c<=l<0x140):
+            p=base[s]+a if mod==80 else 0x85003000
+            assert mod==80 or a==0x801cbd88
             u.mem_write(base[1]+l,struct.pack(">H",(p if k==4 else (p+32768)>>16)&65535))
 ram=0x85000000;u.mem_map(ram,65536)
 parent,tw,wk,child,cw=[ram+x for x in (256,512,1024,2048,2304)]
@@ -57,6 +58,31 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         q=dict(guidance=g,segment=4 if i>=4 else 1,segment_count=5 if i%2 else 9,quad_segment=4,quad=[[4,8],[6,2],[5,-3],[7,11]],
                position=[-3,15,5],previous_ground_position=[1,2,3],velocity_y=3,work_74=i%2,place=[1,2,-1,4][i%4],
                player_slot=i%2,lap=i%3,acceleration=1,deceleration=-4,weight=.5,engine=e)
+        mode=[0,2,3,4,5,5,1,6][i]
+        previous=list(get(base[5]+0x36c0,"3f"))
+        setup=dict(mode=mode,previous_tuning=previous)
+        put(base[6]+0x1a0,"i",mode)
+        before=bytes(u.mem_read(base[5]+0x380c,40))
+        if mode==5:
+            words=list(struct.unpack(">10I",struct.pack(">10f",*(j+.25 for j in range(10)))))
+            setup["mode5"]=dict(engine_word_b4=i%2,profile_words=words,tuning_28=[.8,.2,.25],tuning_34=[.9,.3,.125])
+            put(base[5]+0x13f8,"I",ram+0x3100);put(ram+0x3100,"I",ram+0x3200)
+            put(ram+0x3200,"10I6f",*words,*setup["mode5"]["tuning_28"],*setup["mode5"]["tuning_34"])
+            put(ram+0x30b4,"i",i%2)
+        req=Path(td)/"setup.json";out=Path(td)/f"setup-{i}.json";req.write_text(json.dumps(setup))
+        subprocess.run([cli,"kart-race-tuning",rel,out,req],check=True);configured=json.loads(out.read_text())
+        u.reg_write(R.UC_PPC_REG_LR,base[1]+0x200)
+        u.emu_start(base[1]+0x5ce8,base[1]+0x200,count=180)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x200
+        assert struct.pack(">3f",*configured["tuning"])==bytes(u.mem_read(base[5]+0x36c0,12))
+        assert bytes(u.mem_read(base[5]+0x380c,40))==(before if mode!=5 else struct.pack(">10I",*configured["profile8_write"]))
+        q["tuning"]=configured["tuning"]
+        if mode==5:
+            req.write_text(json.dumps(dict(profile=8,alternate=False,profile8_write=configured["profile8_write"],velocity=[0,0,0])))
+            prof=Path(td)/f"profile-{i}.json"
+            subprocess.run([cli,"kart-active-profile",rel,prof,req],check=True)
+            row=json.loads(prof.read_text())
+            assert row["acceleration"]==.25 and row["velocity_limit"]==9.25
         req=Path(td)/"in.json";out=Path(td)/f"{i}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-guided-drive",rel,out,req],check=True);got=json.loads(out.read_text())
         for key,v in g.items():put(wk+int(key[5:],16),"f" if key=="work_264" else "i",v)

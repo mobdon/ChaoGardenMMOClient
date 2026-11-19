@@ -53,6 +53,7 @@ pub fn init(bytes: &[u8], s: Input) -> Result<Init> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileInput {
+    profile8_write: Option<[u32; 10]>,
     profile: usize,
     alternate: bool,
     velocity: [f32; 3],
@@ -102,6 +103,13 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
     let row: [f32; 10] = std::array::from_fn(|j| {
         f32::from_be_bytes(data[offset + 4 * j..offset + 4 * j + 4].try_into().unwrap())
     });
+    let row = if s.profile == 8 {
+        s.profile8_write
+            .map(|r| r.map(f32::from_bits))
+            .unwrap_or(row)
+    } else {
+        row
+    };
     let cue_words = cue_row(data, s.profile, s.alternate)?;
     let event_pair = (s.profile < 8).then(|| {
         let at = if s.alternate {

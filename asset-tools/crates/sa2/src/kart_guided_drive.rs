@@ -13,6 +13,7 @@ pub struct Guidance {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
+    tuning: Option<[f32; 3]>,
     guidance: Guidance,
     segment: i32,
     segment_count: i32,
@@ -73,10 +74,13 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Tick> {
     if !(-2147483648.0..2147483648.0).contains(&desired) {
         return Err(Error::invalid("unsupported target angle"));
     }
-    let bonus = if s.place > 1 { f(data, 0x36c8) } else { 0. };
+    let [scale, place_factor, extra] = s
+        .tuning
+        .unwrap_or_else(|| std::array::from_fn(|j| f(data, 0x36c0 + 4 * j)));
+    let bonus = if s.place > 1 { extra } else { 0. };
     let base = f(c, 0x27c) + f(c, 0x21c) * (5i32.wrapping_sub(s.player_slot) as f32);
     let base = base + f(c, 0x210) * (2i32.wrapping_sub(s.lap) as f32);
-    let cap = f(data, 0x36c0) * (bonus + (base + s.place as f32 * f(data, 0x36c4)));
+    let cap = scale * (bonus + (base + s.place as f32 * place_factor));
     g.work_264 = if s.engine.angle_difference < 364 {
         (g.work_264 + s.acceleration).min(cap)
     } else {
@@ -139,4 +143,61 @@ impl Guidance {
             work_274: yaw.wrapping_sub(0x4000),
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetupInput {
+    mode: i32,
+    previous_tuning: Option<[f32; 3]>,
+    mode5: Option<Mode5>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Mode5 {
+    engine_word_b4: i32,
+    profile_words: [u32; 10],
+    tuning_28: [f32; 3],
+    tuning_34: [f32; 3],
+}
+#[derive(Serialize)]
+pub struct Setup {
+    tuning: [f32; 3],
+    profile8_write: Option<[u32; 10]>,
+}
+/// Module-wide writes made by race setup at 0x5ce8..0x5e74.
+pub fn setup(bytes: &[u8], s: SetupInput) -> Result<Setup> {
+    kart_progress::verify(bytes)?;
+    let rel = CityRel::read_identified(bytes, 80)?;
+    let c = rel.data(4)?;
+    let d = rel.data(5)?;
+    let f = |p: &[u8], i: usize| f32::from_be_bytes(p[i..i + 4].try_into().unwrap());
+    let mut tuning = s
+        .previous_tuning
+        .unwrap_or_else(|| std::array::from_fn(|j| f(d, 0x36c0 + j * 4)));
+    let mut profile8_write = None;
+    match s.mode {
+        2 => tuning[0] = f(c, 0x270),
+        3 => tuning[0] = f(c, 0x2a4),
+        4 => {
+            tuning[0] = f(c, 0x214);
+            tuning[2] = f(c, 0x210);
+        }
+        5 => {
+            let row = s
+                .mode5
+                .ok_or_else(|| Error::invalid("mode 5 requires the selected live setup record"))?;
+            profile8_write = Some(row.profile_words);
+            tuning = if row.engine_word_b4 == 1 {
+                row.tuning_34
+            } else {
+                row.tuning_28
+            };
+        }
+        _ => {}
+    }
+    Ok(Setup {
+        tuning,
+        profile8_write,
+    })
 }
