@@ -49,7 +49,7 @@ cpu.reg_write(R.UC_PPC_REG_MSR, cpu.reg_read(R.UC_PPC_REG_MSR) | 0x2000)
 CODE = 0x10000  # section 1 offset X lives at CODE + X
 # The handoff frame plus the stage-local calls it can run natively: square
 # root, voice gate, arena bounds and timed voice lines.
-LOCALS = [(0x40CC, 0x4158), (0xEB38, 0xEC04), (0xEE8C, 0xF3F8)]
+LOCALS = [(0x40CC, 0x4158), (0xEB38, 0xEE8C), (0xEE8C, 0xF3F8)]
 RANGES = [(FIRST, STOP)] + LOCALS
 for a, b in RANGES:
     cpu.mem_write(CODE + a, data[code + a:code + b])
@@ -83,7 +83,9 @@ for pos in range(0x40008, 0x40030, 4):
     cpu.mem_write(JUMPS + pos - 0x40008, struct.pack(">I", CODE + add))
 VOICE = windows[(0, 9, 0x803AD3D0)]
 PRESENT = windows[(0, 7, 0x801E7388)]
-CHANNELS = 0x8A000
+CHANNELS, BOSS = 0x8A000, 0x8B000
+HOLD = windows[(88, 6, 0x664)]
+rings = [0, 0]
 GLOBAL = windows[(0, 6, 0x801CBD88)]
 TABLE1, TABLE2, TABLE3 = (windows[(0, 7, a)] for a in (0x801E7368, 0x801E7328, 0x801E7348))
 RESOURCES = windows[(0, 7, 0x801E5928)]
@@ -162,6 +164,14 @@ def code_hook(u, pc, size, _):
                 ret = frame["poll"]
             elif off in MODE:
                 ret = frame["camera_mode"] if off in (0xF680, 0xF7D4) else frame["second_lookup"]
+            elif off == 0xFDC8:  # camera mode read after a ring-out
+                ret = frame["camera_mode"]
+            elif target == 0x80062A24:  # ring count (modeled counter)
+                ret = rings[r3]
+            elif target == 0x80063584:  # add rings (modeled as exact addition)
+                rings[r3] = (rings[r3] + struct.unpack(">i", struct.pack(">I", r4))[0])
+            elif target == 0x80022BC4:
+                ret = stage["sound_queries"][r3]
         if target not in SAVE | RESTORE and target not in (0x8011B314,):
             u.reg_write(R.UC_PPC_REG_3, ret & 0xFFFFFFFF)
         u.reg_write(R.UC_PPC_REG_PC, pc + 4)
@@ -172,13 +182,22 @@ def code_hook(u, pc, size, _):
     target = off + li
     if target == 0x40CC:  # stage square root: always run natively
         return
+    if target == 0x9F4:  # local boss lookup: answer with the supplied flags
+        events.append(dict(site=off, local=target))
+        flags = stage["boss_flags"]
+        if flags is not None:
+            u.mem_write(BOSS + 0x34, struct.pack(">I", BOSS + 0x100))
+            u.mem_write(BOSS + 0x104, struct.pack(">h", flags))
+        u.reg_write(R.UC_PPC_REG_3, 0 if flags is None else BOSS)
+        u.reg_write(R.UC_PPC_REG_PC, pc + 4)
+        return
     if off == 0xF3DC:  # voice-task helper 0x18ed0 stays external
         events.append(dict(site=off, local=target, args=regs(4, 5, 6, 7),
                            vector=list(struct.unpack(">3f", u.mem_read(r3, 12)))))
         u.reg_write(R.UC_PPC_REG_PC, pc + 4)
         return
     events.append(dict(site=off, local=target))
-    if stage is not None and target in (0xEB38, 0xEE8C, 0xF070):
+    if stage is not None and target in (0xEB38, 0xEC04, 0xEE8C, 0xF070):
         return  # run the stage-local call natively
     u.reg_write(R.UC_PPC_REG_3, frame["cue_result"] & 0xFFFFFFFF if target == 0xEB38 else 0)
     u.reg_write(R.UC_PPC_REG_PC, pc + 4)
@@ -202,12 +221,15 @@ cpu.mem_write(windows[(88, 6, 0x4A8)], struct.pack(">I", WORK))
 
 def run(start):
     """Emulate one replay and return the native per-frame events and state."""
-    player, state, timer, countdown, visits, line, frames_in = start
+    player, state, timer, countdown, visits, line, extra, frames_in = start
     cpu.mem_write(WORK, bytes(0x100))
     cpu.mem_write(WORK, struct.pack(">bbbb", player, state, *visits))
     cpu.mem_write(WORK + 6, struct.pack(">b", line))
     cpu.mem_write(WORK + 8, struct.pack(">h", timer))
     cpu.mem_write(WORK + 0xE, struct.pack(">h", countdown))
+    cpu.mem_write(WORK + 4, struct.pack(">bb", extra["reason"], extra["switch_count"]))
+    cpu.mem_write(WORK + 0xA, struct.pack(">hh", extra["ring_clock"], extra["pool"]))
+    rings[:] = extra["rings"]
     native = []
     global frame, events
     for frame in frames_in:
@@ -230,6 +252,8 @@ def run(start):
             for s in range(2):
                 cpu.mem_write(PRESENT + 4 * s, struct.pack(">I", 0x9000 if stage["present"][s] else 0))
                 cpu.mem_write(player1[s] + 0x14, struct.pack(">3f", *stage["positions"][s]))
+                cpu.mem_write(player2[s] + 0x176, struct.pack(">2h", *stage["actions"][s]))
+            cpu.mem_write(HOLD, struct.pack(">I", stage["global_664"]))
         cpu.reg_write(R.UC_PPC_REG_1, STACK)
         cpu.reg_write(R.UC_PPC_REG_29, TASK)
         cpu.reg_write(R.UC_PPC_REG_30, WORK)
@@ -241,14 +265,18 @@ def run(start):
         ln, = struct.unpack(">b", cpu.mem_read(WORK + 6, 1))
         after = dict(player=p, switch_state=st, timer=t, countdown=c)
         if stage is not None:
-            after["line"] = ln
+            r4, r5 = struct.unpack(">bb", cpu.mem_read(WORK + 4, 2))
+            rc, pl = struct.unpack(">hh", cpu.mem_read(WORK + 0xA, 4))
+            after.update(line=ln, reason=r4, switch_count=r5, ring_clock=rc, pool=pl,
+                         rings=list(rings), visits=list(struct.unpack(">bb", cpu.mem_read(WORK + 2, 2))))
         native.append((events, after))
-        if st == 0:
+        if st == 4 or (st == 0 and stage is None):
             break
     return native
 
 
-RUST_ONLY = {"resource_table_offset", "radial_clamp", "result", "voice", "spoke"}
+RUST_ONLY = {"resource_table_offset", "radial_clamp", "result", "voice", "spoke", "cue",
+             "played", "motion_write"}
 
 
 def flatten(rust_events):
@@ -276,7 +304,11 @@ def stage_frame(rng):
         positions=positions,
         distances=[f32(rng.choice((math.hypot(p[0], p[2]), 1500.0, 0.0))) for p in positions],
         global_42=rng.choice((0, 0, 0, 0, 1)), global_43=rng.choice((0, 0, 0, 0, 1)),
-        task_0c=rng.choice((0, 0, 0, 0x9100)))
+        task_0c=rng.choice((0, 0, 0, 0x9100)),
+        global_664=rng.choice((0, 0, 0, 0, 0, 1)),
+        boss_flags=rng.choice((None, 0, 0, 4, -1)),
+        actions=[[rng.choice((0, 0, 0, 0x6D, 0x74)) for _ in range(2)] for _ in range(2)],
+        sound_queries=[rng.choice((0, 1, 1)) for _ in range(2)])
 
 
 rng = random.Random(421)
@@ -285,16 +317,25 @@ replays = frames_total = staged = spoken = 0
 seen = set()
 with tempfile.TemporaryDirectory(dir=".local") as directory:
     p = Path(directory)
-    for case in range(240):
+    for case in range(400):
         player = case & 1
         state = (1, 2, 3)[case // 2 % 3]
+        normal = case >= 240  # replays that start in state 0 (or out of range)
+        if normal:
+            state = rng.choice((0, 0, 0, 0, 7, -1))
         timer = rng.choice((0, 100, 119, 120, 121, 179, 180, 181, -3, 32767))
         countdown = rng.choice((0, 1, 5, -2))
         visits = [rng.choice((-1, 0, 1, 2, 3)) for _ in range(2)]
         line = rng.choice((0, 0, 3, 9, 10, -1))
         with_stage = case >= 160
+        extra = dict(reason=0, switch_count=0, ring_clock=0, pool=0, rings=[0, 0])
+        if normal:
+            extra = dict(reason=rng.choice((0, 0, 1)), switch_count=rng.choice((-1, 0, 2, 3, 5)),
+                         ring_clock=rng.choice((0, 55, 60, 61)),
+                         pool=rng.choice((30, 40, 50)),
+                         rings=[rng.choice((1, 2, 5, 16, 17, 40)) for _ in range(2)])
         poll_rate = rng.choice((0.0, 0.1, 0.5, 1.0))
-        clock = rng.choice((0, 1796, 9000, 17396))
+        clock = rng.choice((0, 1796, 9000, 17396, 17950) if normal else (0, 1796, 9000, 17396))
         frames_in = []
         for k in range(rng.choice((1, 3, 40, 400))):
             mode = rng.choice((-1, 13, 14, 20))
@@ -308,12 +349,23 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
                 global_7c=(clock + k) if with_stage else rng.choice((0, 14399, 14400, 14401)))
             if with_stage:
                 fr["stage"] = stage_frame(rng)
+            if normal:
+                for pos in fr["stage"]["positions"]:
+                    pos[2] = f32(rng.choice((-60.0, -50.0, -40.0, 0.0, 40.0, 50.0, 60.0)))
             frames_in.append(fr)
-        native = run((player, state, timer, countdown, visits, line, frames_in))
+        if normal and rng.random() < 0.3:
+            # Land the first drain exactly on the 18000-frame boundary (or one before).
+            extra["ring_clock"] = 60
+            base = rng.choice((17999, 18000))
+            for k, fr in enumerate(frames_in):
+                fr["global_7c"] = base + k
+            frames_in[0]["stage"].update(global_664=0, global_42=0, global_43=0)
+        native = run((player, state, timer, countdown, visits, line, extra, frames_in))
         frames_in = frames_in[:len(native)]
         inp = dict(path="switch_replay", player=player, switch_state=state, timer=timer,
                    countdown=countdown, visits=visits, player1=player1, player2=player2,
-                   player_tasks=player_tasks, table_words=table, line=line, frames=frames_in)
+                   player_tasks=player_tasks, table_words=table, line=line, frames=frames_in,
+                   **extra)
         q = p / "request.json"
         out = p / f"{case}.json"
         q.write_text(json.dumps(inp))
@@ -339,7 +391,10 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
 required = {0xF47C, 0xF498, 0xF4C4, 0xF4D8, 0xF52C, 0xF55C, 0xF564, 0xF5C8, 0xF690, 0xF69C,
             0xF6A8, 0xF6C0, 0xF718, 0xF7E4, 0xF7F0, 0xF7FC, 0xF800, 0xF838, 0xF848, 0xF86C,
             0xF87C, 0xF884, 0xF8BC, 0xF8C4, 0xFF34, 0xEBC0, 0xEF74, 0xF038, 0xF0E8, 0xF380,
-            0xF3A4, 0xF3DC}
+            0xF3A4, 0xF3DC, 0xFC28, 0xFC54, 0xFC68, 0xFC8C, 0xFC9C, 0xFCC0, 0xFD18, 0xFD7C,
+            0xFDA4, 0xFDD8, 0xFDDC, 0xFE90, 0xFEC4, 0xFECC, 0xFEDC, 0xFEFC, 0xFF10, 0xED08}
+# The ring transfer inside 0xec04 needs reason 1, which blocks the state 0 trigger;
+# only the boss's own call reaches it, so it is not required here.
 assert required <= seen, sorted(hex(s) for s in required - seen)
 print(f"{replays} installed PPC handoff replays ({frames_total} frames, {staged} with stage "
       f"calls run natively, {spoken} voice lines) matched")

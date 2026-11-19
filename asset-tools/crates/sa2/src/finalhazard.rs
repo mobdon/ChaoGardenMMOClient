@@ -928,11 +928,12 @@ pub enum PlacementClock {
         camera_mode: i32,
         second_lookup: Option<i32>,
     },
-    /// Frames of the player handoff (switch states 1..3) from the slot
-    /// setup at 0xf458 through the shared tail's timer increment.
+    /// Frames of the stage player task from the slot setup at 0xf458 through
+    /// the shared tail's timer increment: handoff states 1..3, and state 0
+    /// (ring drain and handoff trigger) for frames that carry `stage`.
     SwitchReplay {
         player: u8,
-        switch_state: u8,
+        switch_state: i8,
         timer: i16,
         countdown: i16,
         visits: [i8; 2],
@@ -944,6 +945,20 @@ pub enum PlacementClock {
         /// Work byte 6, the next timed voice line (used by frames with `stage`).
         #[serde(default)]
         line: i8,
+        /// Work byte 4 (switch reason), byte 5 (switch count), short 0xa
+        /// (ring clock) and short 0xc (ring pool).
+        #[serde(default)]
+        reason: i8,
+        #[serde(default)]
+        switch_count: i8,
+        #[serde(default)]
+        ring_clock: i16,
+        #[serde(default)]
+        pool: i16,
+        /// Ring counts behind the engine's 0x80062a24 (get) and 0x80063584
+        /// (add). The replay assumes the add call adds its delta exactly.
+        #[serde(default)]
+        rings: [i32; 2],
         frames: Vec<HandoffFrame>,
     },
     SwitchTick {
@@ -1163,6 +1178,66 @@ fn stage_f32(
         .ok_or_else(|| Error::invalid("truncated arena constant"))?;
     Ok(f32::from_be_bytes(bytes.try_into().unwrap()))
 }
+struct SwitchStartResult {
+    cue: u16,
+    /// (slot, ring delta) in native call order: incoming, then outgoing.
+    adjustments: Vec<(usize, i32)>,
+    motion: Option<u16>,
+    switch_count: i8,
+    target_count: i16,
+    visits: [i8; 2],
+}
+/// Section 1 + 0xec04: the handoff start (state 1) decisions.
+#[allow(clippy::too_many_arguments)]
+fn switch_start(
+    code: &[u8],
+    player: u8,
+    mut visits: [i8; 2],
+    reason: i8,
+    mut switch_count: i8,
+    mut target_count: i16,
+    player_counts: [i32; 2],
+    character: i8,
+) -> SwitchStartResult {
+    let word = |offset: usize| u32::from_be_bytes(code[offset..offset + 4].try_into().unwrap());
+    let from = player as usize;
+    let to = 1 - from;
+    let cue_site = match (visits[from] == 0, reason == 1, player) {
+        (true, _, 0) => 0xec78,
+        (true, _, _) => 0xec80,
+        (false, true, 0) => 0xeca0,
+        (false, true, _) => 0xeca8,
+        (false, false, 0) => 0xecb8,
+        _ => 0xecc0,
+    };
+    let cue = word(cue_site) as u16;
+    let mut adjustments = Vec::new();
+    let mut motion = None;
+    if reason == 1 {
+        switch_count = switch_count.wrapping_add(1);
+        target_count = word(if (0..4).contains(&switch_count) {
+            0xed64
+        } else {
+            0xed7c
+        }) as i16;
+        adjustments.push((to, i32::from(target_count).wrapping_sub(player_counts[to])));
+        adjustments.push((from, player_counts[from].wrapping_neg()));
+        motion = match character {
+            9 => Some(word(0xee20) as u16),
+            10 => Some(word(0xee2c) as u16),
+            _ => None,
+        };
+    }
+    visits[from] = visits[from].saturating_add(1);
+    SwitchStartResult {
+        cue,
+        adjustments,
+        motion,
+        switch_count,
+        target_count,
+        visits,
+    }
+}
 /// Section 1 + 0xeb38. Returns -1 when a channel holds a voice that is not
 /// category 3; busy category-3 channels are stopped through the engine.
 fn voice_gate(
@@ -1333,6 +1408,18 @@ pub struct StageFrame {
     pub global_43: i8,
     #[serde(default)]
     pub task_0c: u32,
+    /// State 0 only: module word section 6 + 0x664, the result chain of the
+    /// local 0x9f4 call (None when it or its word 0x34 is null; else the
+    /// halfword at +4 of that object), words 0x176/0x178 of both
+    /// 0x801e7328 entries, and the two 0x80022bc4 query results.
+    #[serde(default)]
+    pub global_664: u32,
+    #[serde(default)]
+    pub boss_flags: Option<i16>,
+    #[serde(default)]
+    pub actions: [[i16; 2]; 2],
+    #[serde(default)]
+    pub sound_queries: [i32; 2],
 }
 /// Engine results one handoff frame observes.
 #[derive(serde::Deserialize)]
@@ -1975,35 +2062,20 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             if player > 1 {
                 return Err(Error::invalid("invalid switch player slot"));
             }
-            let from = player as usize;
-            let to = 1 - from;
-            let cue_site = match (visits[from] == 0, reason == 1, player) {
-                (true, _, 0) => 0xec78,
-                (true, _, _) => 0xec80,
-                (false, true, 0) => 0xeca0,
-                (false, true, _) => 0xeca8,
-                (false, false, 0) => 0xecb8,
-                _ => 0xecc0,
-            };
-            let cue = word(cue_site) as u16;
-            let mut adjustments = Vec::new();
-            let mut motion = None;
-            if reason == 1 {
-                switch_count = switch_count.wrapping_add(1);
-                target_count = word(if (0..4).contains(&switch_count) {
-                    0xed64
-                } else {
-                    0xed7c
-                }) as i16;
-                adjustments.push((to, i32::from(target_count).wrapping_sub(player_counts[to])));
-                adjustments.push((from, player_counts[from].wrapping_neg()));
-                motion = match character {
-                    9 => Some(word(0xee20) as u16),
-                    10 => Some(word(0xee2c) as u16),
-                    _ => None,
-                };
-            }
-            visits[from] = visits[from].saturating_add(1);
+            let s = switch_start(
+                code,
+                player,
+                visits,
+                reason,
+                switch_count,
+                target_count,
+                player_counts,
+                character,
+            );
+            let (cue, adjustments, motion) = (s.cue, s.adjustments, s.motion);
+            visits = s.visits;
+            switch_count = s.switch_count;
+            target_count = s.target_count;
             return Ok(
                 serde_json::json!({"active_player":player,"switch_state":1,"timer":0,"reason":0,"global3a":0,
                 "visits":visits,"switch_count":switch_count,"target_count":target_count,"count_adjustments":adjustments,
@@ -2089,18 +2161,21 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             mut switch_state,
             mut timer,
             mut countdown,
-            visits,
+            mut visits,
             player1,
             player2,
             player_tasks,
             table_words,
             mut line,
+            mut reason,
+            mut switch_count,
+            mut ring_clock,
+            mut pool,
+            mut rings,
             frames,
         } => {
-            if player > 1 || !(1..=3).contains(&switch_state) {
-                return Err(Error::invalid(
-                    "handoff replay requires player 0/1 and switch state 1..3",
-                ));
+            if player > 1 {
+                return Err(Error::invalid("handoff replay requires player 0/1"));
             }
             let call = |site: u32, args: &[u32]| -> Result<serde_json::Value> {
                 Ok(serde_json::json!({"site":site,"call":engine_import(&rel, site)?,"args":args}))
@@ -2112,11 +2187,33 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                     "size":size,"value":value & mask})
                 };
             let local = |site: u32, target: u32| serde_json::json!({"site":site,"local":target});
+            // Section 1 + 0xfec8: two engine queries, then a pair of calls
+            // ordered by the active player.
+            let sound_tail =
+                |ev: &mut Vec<serde_json::Value>, s: &StageFrame, player: u8| -> Result<()> {
+                    ev.push(call(0xfecc, &[0])?);
+                    if s.sound_queries[0] != 0 {
+                        ev.push(call(0xfedc, &[1])?);
+                        if s.sound_queries[1] != 0 {
+                            if player == 0 {
+                                ev.extend([call(0xfefc, &[0])?, call(0xff04, &[1])?]);
+                            } else {
+                                ev.extend([call(0xff10, &[1])?, call(0xff18, &[0])?]);
+                            }
+                        }
+                    }
+                    Ok(())
+                };
             let mut out = Vec::new();
             for (n, f) in frames.iter().enumerate() {
-                if switch_state == 0 {
+                if switch_state == 0 && f.stage.is_none() {
                     return Err(Error::invalid(format!(
-                        "frame {n} follows the return to normal dispatch"
+                        "frame {n} is in state 0 and needs a stage block"
+                    )));
+                }
+                if switch_state == 4 {
+                    return Err(Error::invalid(format!(
+                        "frame {n} is in state 4 (0xf8cc), which is not ported"
                     )));
                 }
                 let mut ev = Vec::new();
@@ -2241,6 +2338,147 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                             call(0xf8c4, &[0])?,
                         ]);
                     }
+                    0 => {
+                        let s = f.stage.as_ref().unwrap();
+                        let me = r31 as usize;
+                        let other = 1 - me;
+                        // Engine ring services, modeled as a plain counter.
+                        let get = |ev: &mut Vec<serde_json::Value>,
+                                   rings: &[i32; 2],
+                                   site: u32,
+                                   p: usize|
+                         -> Result<i32> {
+                            ev.push(call(site, &[p as u32])?);
+                            Ok(rings[p])
+                        };
+                        let add = |ev: &mut Vec<serde_json::Value>,
+                                   rings: &mut [i32; 2],
+                                   site: u32,
+                                   p: usize,
+                                   d: i32|
+                         -> Result<()> {
+                            ev.push(call(site, &[p as u32, d as u32])?);
+                            rings[p] = rings[p].wrapping_add(d);
+                            Ok(())
+                        };
+                        // Ring drain: once every 61 frames unless a hold is active.
+                        if s.global_664 == 0 && s.global_42 != 1 && s.global_43 != 1 {
+                            ring_clock = ring_clock.wrapping_add(1);
+                            ev.push(store(0xfc28, "task", None, 0xa, 2, ring_clock.into()));
+                            if ring_clock > 60 {
+                                ring_clock = 0;
+                                ev.push(store(0xfc54, "task", None, 0xa, 2, 0));
+                                if f.global_7c >= 18000 {
+                                    for (p, (g, a)) in
+                                        [(0xfc68, 0xfc74), (0xfc7c, 0xfc88)].into_iter().enumerate()
+                                    {
+                                        let r = get(&mut ev, &rings, g, p)?;
+                                        add(&mut ev, &mut rings, a, p, r.wrapping_neg())?;
+                                    }
+                                    pool = 0;
+                                    ev.push(store(0xfc8c, "task", None, 0xc, 2, 0));
+                                } else {
+                                    add(&mut ev, &mut rings, 0xfc9c, me, -1)?;
+                                    let held = i32::from(pool)
+                                        .wrapping_sub(get(&mut ev, &rings, 0xfca4, me)?);
+                                    let r = get(&mut ev, &rings, 0xfcb4, other)?;
+                                    add(&mut ev, &mut rings, 0xfcc0, other, held.wrapping_sub(r))?;
+                                }
+                                // Warnings at 15 and 4 rings; at 0 the active
+                                // player is defeated and the task enters state 4.
+                                let warn = |ev: &mut Vec<serde_json::Value>,
+                                            countdown: &mut i16,
+                                            sites: (u32, u32, u32),
+                                            cue: u32|
+                                 -> Result<()> {
+                                    let (result, inner) = voice_gate(&rel, s.channels.as_ref())?;
+                                    ev.push(serde_json::json!({"site":sites.0,"local":0xeb38,
+                                        "result":result,"events":inner}));
+                                    if result == 0 {
+                                        ev.push(call(sites.1, &[cue, 3])?);
+                                        *countdown = 20;
+                                        ev.push(store(sites.2, "task", None, 0xe, 2, 20));
+                                    }
+                                    Ok(())
+                                };
+                                if get(&mut ev, &rings, 0xfcc8, me)? as i16 == 15 {
+                                    let cue = if player == 0 { 0x869 } else { 0x867 };
+                                    warn(&mut ev, &mut countdown, (0xfd04, 0xfd18, 0xfd20), cue)?;
+                                } else if get(&mut ev, &rings, 0xfd2c, me)? as i16 == 4 {
+                                    let cue = if player == 0 { 0x86a } else { 0x868 };
+                                    warn(&mut ev, &mut countdown, (0xfd68, 0xfd7c, 0xfd84), cue)?;
+                                } else if get(&mut ev, &rings, 0xfd90, me)? as i16 == 0 {
+                                    switch_state = 4;
+                                    ev.extend([
+                                        call(0xfda4, &[me as u32])?,
+                                        store(0xfdac, "task", None, 1, 1, 4),
+                                        call(0xfdb4, &[3])?,
+                                        call(0xfdc0, &[0, 0xb])?,
+                                        call(0xfdc8, &[0])?,
+                                        call(0xfdd8, &[0, f.camera_mode as u32, 0])?,
+                                    ]);
+                                }
+                            }
+                        }
+                        // Handoff trigger: the active player crosses its Z limit.
+                        ev.push(local(0xfddc, 0x9f4));
+                        let held = s.boss_flags.is_some_and(|b| b & 4 != 0);
+                        let posing = s.actions[0].contains(&0x6d) || s.actions[1].contains(&0x74);
+                        if !held && reason != 1 && !posing && player1[me] != 0 {
+                            let z = s.positions[me][2];
+                            let crossed = if me == 0 {
+                                z < stage_f32(&rel, 0xfe7e, 5, 0)?
+                            } else {
+                                z > stage_f32(&rel, 0xfeb2, 5, 0)?
+                            };
+                            if crossed {
+                                let r = switch_start(
+                                    code,
+                                    player,
+                                    visits,
+                                    reason,
+                                    switch_count,
+                                    pool,
+                                    rings,
+                                    f.characters[me],
+                                );
+                                let mut inner = vec![call(0xec38, &[])?, call(0xec40, &[3])?];
+                                let (gate, gate_events) = voice_gate(&rel, s.channels.as_ref())?;
+                                inner.push(serde_json::json!({"site":0xeccc,"local":0xeb38,
+                                    "result":gate,"events":gate_events}));
+                                let played = gate == 0 && s.global_42 != 1 && s.global_43 != 1;
+                                if played {
+                                    inner.push(call(0xed08, &[r.cue.into(), 3])?);
+                                }
+                                for (&(p, d), (g, a)) in r
+                                    .adjustments
+                                    .iter()
+                                    .zip([(0xedb8, 0xedd4), (0xeddc, 0xede8)])
+                                {
+                                    get(&mut inner, &rings, g, p)?;
+                                    add(&mut inner, &mut rings, a, p, d)?;
+                                }
+                                switch_state = 1;
+                                timer = 0;
+                                reason = 0;
+                                visits = r.visits;
+                                switch_count = r.switch_count;
+                                pool = r.target_count;
+                                ev.push(
+                                    serde_json::json!({"site":if me == 0 {0xfe90} else {0xfec4},
+                                    "local":0xec04,"cue":r.cue,"played":played,
+                                    "motion_write":r.motion,"events":inner}),
+                                );
+                            }
+                        }
+                        sound_tail(&mut ev, s, player)?;
+                    }
+                    s if !(0..=4).contains(&s) => {
+                        let st = f.stage.as_ref().ok_or_else(|| {
+                            Error::invalid(format!("frame {n} needs a stage block"))
+                        })?;
+                        sound_tail(&mut ev, st, player)?;
+                    }
                     _ => {}
                 }
                 // Shared tail: two local updates, then the handoff timer.
@@ -2274,7 +2512,9 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 timer = timer.wrapping_add(1);
                 ev.push(store(0xff34, "task", None, 8, 2, timer.into()));
                 out.push(serde_json::json!({"frame":n,"events":ev,"player":player,
-                    "switch_state":switch_state,"timer":timer,"countdown":countdown,"line":line}));
+                    "switch_state":switch_state,"timer":timer,"countdown":countdown,"line":line,
+                    "reason":reason,"switch_count":switch_count,"ring_clock":ring_clock,
+                    "pool":pool,"rings":rings,"visits":visits}));
             }
             return Ok(
                 serde_json::json!({"frames":out,"player":player,"switch_state":switch_state,

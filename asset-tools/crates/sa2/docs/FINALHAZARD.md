@@ -11,7 +11,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | Path | Section 1 code | What it reproduces |
 | --- | --- | --- |
 | `switch_camera` | 0xf5cc–0xf6a8, 0xf724–0xf7fc | Six-word camera request when the handoff enters state 2 or 3 |
-| `switch_replay` | 0xf458–0xff34 per frame | Handoff states 1–3 through the shared tail's timer store |
+| `switch_replay` | 0xf458–0xff34 per frame | Stage player task: state 0 (ring drain, handoff trigger) and handoff states 1–3 |
 | `voice_gate` | 0xeb38 | Whether a stage voice may play |
 | `arena_clamp` | 0xee8c, 0x40cc | Per-frame arena bounds for both players |
 | `timed_voice` | 0xf070 | Timed boss voice lines |
@@ -38,6 +38,19 @@ state 3 writes action 0x42, 0x176 = 0x64 and 0x17c = 0x57 to the incoming player
 always targets the incoming player. After the state 3 camera, the voice gate decides the cue
 (0x871–0x874 by player and visit count) and the 20-frame countdown. State 3 returns to normal
 dispatch after 180 frames; a frame after that is rejected.
+
+State 0 is the normal fight, and its frames need `stage`. With no hold active (module word
+section 6 + 0x664, globals 0x42/0x43), the ring clock (work + 0xa) counts up. Every 61st frame it
+drains a ring. Before frame 18000 the active player loses one ring and the other holds the rest of
+the pool (work + 0xc); from 18000 on, both are emptied. Fifteen and four rings play warnings
+0x869/0x867 and 0x86a/0x868 through the voice gate. At zero rings the active player is defeated:
+the engine is told through 0x8003b914, and the task enters state 4. The handoff starts (0xec04)
+once the active player passes Z −50 (player 0) or +50 (player 1). That needs no boss hold flag 4,
+switch reason other than 1, and neither slot posing (0x6d on slot 0, 0x74 on slot 1). A pair of
+engine sound calls ordered by the active player ends the frame. The engine's ring services are
+modeled as a plain counter (`rings`), assuming the add call adds exactly. State 4 (0xf8cc, random
+debris) is not ported, and a frame in state 4 is rejected. The ring transfer inside 0xec04 needs
+switch reason 1, which blocks this trigger; only the boss's own call reaches it.
 
 A frame without `stage` reports the voice gate and the tail's two local calls as call sites only;
 its `cue_result` stands in for the gate. With a `stage` block (`channels`, `present`, `positions`,
@@ -72,7 +85,7 @@ instructions with relocated data and compare them against the Rust output:
 | Test | Cases |
 | --- | --- |
 | `tests/finalhazard_switch_camera_ppc.py` | 336 camera packets: both states, both slots, characters 9/10/−1, yaw wraparound, modes −1/13/14/20 |
-| `tests/finalhazard_handoff_replay_ppc.py` | 240 replays, 15,296 frames; every call, argument and non-stack store in order. Stage calls run natively in 80 replays. Every branch must be reached |
+| `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 31,130 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
 Deliberate one-line faults were caught by each test. These are offline comparisons with the
