@@ -824,6 +824,13 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    /// Dispatch after the player-switch branch, at section 1 + 0x1cc4.
+    Dispatch {
+        mode: i8,
+        wait_word: i32,
+        timer: u16,
+    },
+
     /// Imported return values at section 1 + 0x1b3c and 0x1b4c.
     DefeatHandoff {
         completion_poll: i32,
@@ -1012,6 +1019,46 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             }
             return Ok(
                 serde_json::json!({"imports":imports,"submode":if completion_poll==0 {1} else {2},"global_halfword_0a":0}),
+            );
+        }
+        PlacementClock::Dispatch {
+            mode,
+            wait_word,
+            mut timer,
+        } => {
+            let mut handler = None;
+            if wait_word == 1 {
+                timer = timer.wrapping_sub(1);
+                if timer == 0 {
+                    calls.push(0xd04);
+                }
+            } else if (0..=13).contains(&mode) {
+                let invalid = || Error::invalid("invalid Finalhazard mode dispatch");
+                let base = rel.reference(1, 0x1d02).ok_or_else(invalid)?;
+                if (base.module, base.kind, base.section) != (88, 6, 5)
+                    || rel.reference(1, 0x1d06)
+                        != Some(crate::city_rel::Reference { kind: 4, ..base })
+                {
+                    return Err(invalid());
+                }
+                let case = rel
+                    .reference(5, base.addend + 4 * mode as u32)
+                    .ok_or_else(invalid)?;
+                if (case.module, case.kind, case.section) != (88, 1, 1) {
+                    return Err(invalid());
+                }
+                if case.addend != 0x1d74 {
+                    let pc = case.addend + 4;
+                    let instruction = word(pc as usize);
+                    if instruction & 0xfc00_0003 != 0x4800_0001 {
+                        return Err(invalid());
+                    }
+                    let displacement = ((instruction << 6) as i32 >> 6) & !3;
+                    handler = Some(pc.wrapping_add_signed(displacement));
+                }
+            }
+            return Ok(
+                serde_json::json!({"handler":handler,"timer":timer,"stageCalls":calls,"continue_at":0x1d74}),
             );
         }
         PlacementClock::InitialHealth => {
