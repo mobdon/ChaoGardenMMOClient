@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "sourceGitBlobs": {
+    "src_core.c": "467638473172572ced7c26b26f11e52b105d4858",
+    "src_game_math.c": "a336e7d10c44d246a2ba1f7f2b8bd56ade19c758",
+    "include_core.h": "7da347250fa488b8002227e59a1bf8522e1ade41",
+    "include_global.h": "75ea7eee87fbd03c8ac2b0bc37845a710aadfdac",
+    "src_task.c": "081acd785c6ca3f316ce9a202015a21e72b1491d",
+    "include_task.h": "1b2ee9d35defc9831dacf97fafd2f71823e25df2"
+  },
+  "oracleCanonicalSha256": "0e63d58e36e39d51d57c2933775e59c6ebfc020e00e05f1f395cfcd1346f8a72",
+  "inputFrames": 72,
+  "mathRngOutputs": 192,
+  "lcgOutputs": 192,
+  "fixedPointCases": 7,
+  "taskCallbackEvents": 16,
+  "scope": "native C logical behavior with host register/storage stubs; no GBA heap or interrupt parity"
+}

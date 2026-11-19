@@ -1,12 +1,19 @@
-//! Source inspection only. Native data is never an authenticated MMO reward.
+//! Verified local asset inspection and an incomplete native Rust execution port.
+//! Native data is never an authenticated MMO reward.
 #![forbid(unsafe_code)]
 
 pub mod catalog;
 #[path = "reused/gba.rs"]
 pub mod gba;
 pub mod graphics;
+pub mod native_animation;
+pub mod native_collision;
+pub mod native_game;
+pub mod native_player;
+pub mod native_runtime;
 #[path = "reused/native_save.rs"]
 pub mod native_save;
+pub mod native_stage;
 pub mod save_layout;
 pub mod tables;
 pub mod transfer;

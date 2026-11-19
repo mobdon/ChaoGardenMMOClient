@@ -1,0 +1,11 @@
+{
+  "segments": [
+    {"keys": 0, "frames": 2},
+    {"keys": 16, "frames": 60},
+    {"keys": 17, "frames": 20},
+    {"keys": 16, "frames": 35},
+    {"keys": 0, "frames": 40},
+    {"keys": 32, "frames": 40},
+    {"keys": 0, "frames": 30}
+  ]
+}

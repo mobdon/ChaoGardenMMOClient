@@ -1,0 +1,101 @@
+{
+  "kind": "Rust harness integration regression; not an independent retail-loop oracle",
+  "rom_sha256": "f2b7a3329401a02706d87560f61da3e6da2ca42f2b9ae98a86d78e0529cb7260",
+  "input_sha256": "c44b208a9fe06ae9d1d805fab3947f5e8d70216325800c62df0f831c784241e8",
+  "frames": 227,
+  "final_q_world_x": 105155,
+  "final_q_world_y": 173105,
+  "rgba_sha256": "23b86a1f728015a073015e52e03e1aa21743d06248116c93cb97a70150cba4de",
+  "transitions": [
+    [
+      0,
+      "Ground",
+      0,
+      0
+    ],
+    [
+      3,
+      "Ground",
+      9,
+      0
+    ],
+    [
+      44,
+      "Ground",
+      9,
+      1
+    ],
+    [
+      63,
+      "InitJump",
+      9,
+      1
+    ],
+    [
+      64,
+      "Jumping",
+      11,
+      0
+    ],
+    [
+      70,
+      "Jumping",
+      11,
+      1
+    ],
+    [
+      115,
+      "Jumping",
+      11,
+      2
+    ],
+    [
+      122,
+      "TouchGround",
+      11,
+      2
+    ],
+    [
+      123,
+      "Ground",
+      9,
+      2
+    ],
+    [
+      158,
+      "Ground",
+      7,
+      0
+    ],
+    [
+      163,
+      "InitSkid",
+      7,
+      0
+    ],
+    [
+      164,
+      "Turning",
+      6,
+      0
+    ],
+    [
+      173,
+      "TouchGround",
+      6,
+      0
+    ],
+    [
+      174,
+      "Ground",
+      9,
+      0
+    ],
+    [
+      203,
+      "Ground",
+      0,
+      0
+    ]
+  ]
+}

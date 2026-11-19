@@ -1,0 +1,15 @@
+:root { color-scheme: dark; font: 16px/1.55 system-ui, sans-serif; background: #101823; color: #e9f1f5; }
+body { margin: 0; padding: 40px 20px; }
+main { max-width: 850px; margin: auto; }
+.eyebrow { color: #9ed1cf; letter-spacing: .12em; font-size: .8rem; }
+h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.15; margin: 12px 0; }
+canvas { display: block; width: min(100%, 720px); height: auto; margin: 24px 0 16px; image-rendering: pixelated; background: #000; border: 1px solid #455464; border-radius: 3px; }
+canvas:focus-visible, button:focus-visible { outline: 3px solid #8ce1cb; outline-offset: 4px; }
+.controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+button { border: 1px solid #67807d; border-radius: 5px; background: #183f38; color: #edfff9; padding: 9px 20px; font: inherit; cursor: pointer; }
+button:disabled { opacity: .5; }
+output { display: block; color: #a1e5cb; }
+.boundary { color: #afbcc8; font-size: .9rem; max-width: 720px; }
+details { margin-top: 24px; }
+pre { overflow: auto; font-size: 12px; background: #0a1019; padding: 16px; }
+@media (max-width: 550px) { body { padding: 20px 12px; } .controls span { flex-basis: 100%; } }

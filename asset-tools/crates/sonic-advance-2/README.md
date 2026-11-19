@@ -1,8 +1,8 @@
-# Sonic Advance 2 A2NE asset tools
+# Sonic Advance 2 A2NE asset tools and native Rust port
 
 Read-only Rust catalog and converters for **one verified USA revision 0 cartridge** and its embedded Tiny Chao Garden. All code, tests, metadata and documentation stay inside this workstream's crate. The crate has its own workspace/lockfile so it does not change the shared asset workspace before the other tracks agree a contract.
 
-This is an asset-tool port. It does not execute the ROM, implement main-game mechanics, synthesize audio, import native progression into the MMO, or establish that opaque data is reachable/unused content.
+The asset tools now also provide an initial executable Rust engine slice: native input/tasks/RNG, player movement primitives, Leaf Forest terrain collision and sprite animation. A separate local runner connects movement, jumping, landing, braking and turning. **The whole game is not ported.** Native camera/render ordering, entities, audio synthesis, most callbacks and the other subsystems in the [coverage matrix](docs/NATIVE-PORT.md) remain unfinished. The [local runner guide](docs/NATIVE-HARNESS.md) distinguishes executed native routines from host adaptations.
 
 ## Exact source gate
 
@@ -26,7 +26,7 @@ cargo clippy --locked --manifest-path $crate --all-targets -- -D warnings
 cargo fmt --manifest-path $crate --check
 $env:A2NE_ROM = (Resolve-Path '.local/gba/A2NE-f2b7a3329401.gba').Path
 python asset-tools/crates/sonic-advance-2/tests/independent_parity.py
-cargo test --locked --manifest-path $crate -- --include-ignored
+cargo test --locked --manifest-path $crate --test source_parity --test source_maps --test source_save_transfer -- --ignored
 cargo run --locked --manifest-path $crate -- catalog $env:A2NE_ROM
 cargo run --locked --manifest-path $crate -- extract $env:A2NE_ROM rom.tiny-garden.lz77 .local/a2ne-extracted
 cargo run --locked --manifest-path $crate -- save .local/native-flash.sav
