@@ -45,9 +45,31 @@ pub struct Frame {
     magnitude_return: Option<f32>,
     #[serde(skip_serializing)]
     d968_return: Option<u32>,
+    #[serde(skip_serializing)]
+    limousine_allocation: Option<Allocation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Allocation {
+    task_handle: u32,
+    segment: i32,
+    segment_xz: [[f32; 2]; 4],
+    latch: i32,
+}
+#[derive(Serialize)]
+struct Limousine {
+    task_handle: u32,
+    exec_offset: u32,
+    display_offset: u32,
+    delete_offset: u32,
+    target: crate::kart_story_target::Output,
+    task_38: &'static str,
+    task_40: &'static str,
 }
 #[derive(Serialize)]
 pub struct Update {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limousine: Option<Limousine>,
     #[serde(skip_serializing_if = "Option::is_none")]
     frame: Option<Frame>,
     vehicle_state: Option<i32>,
@@ -69,6 +91,7 @@ fn spawn(r: &mut Update, remaining: i32, mode: i32) {
 pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
     kart_progress::verify(bytes)?;
     let mut r = Update {
+        limousine: None,
         frame: None,
         vehicle_state: None,
         timer: None,
@@ -126,9 +149,22 @@ pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
                         frame.segment = frame.segment_count.wrapping_sub(25);
                         frame.position[0] -= f(0x1fc);
                         if frame.work_ec == 0 {
-                            frame.work_ec = frame.d968_return.ok_or_else(|| {
-                                crate::Error::invalid("missing CartD d968 task return")
-                            })?;
+                            match (frame.limousine_allocation.take(), frame.d968_return) {
+                                (Some(a), None) if a.task_handle != 0 && a.segment == frame.segment && a.segment >= 0 => {
+                                    let target = crate::kart_story_target::step(bytes, crate::kart_story_target::Input::Spawn {
+                                        segment_xz: a.segment_xz, parent_task_y: frame.position[1], mode, latch: a.latch,
+                                    })?;
+                                    r.limousine = Some(Limousine {
+                                        task_handle: a.task_handle, exec_offset: 0xda80,
+                                        display_offset: 0xdbe0, delete_offset: 0xdd00,
+                                        target,
+                                        task_38: "vehicle_taskwork", task_40: "vehicle_work",
+                                    });
+                                    frame.work_ec = a.task_handle;
+                                }
+                                (None, Some(handle)) => frame.work_ec = handle,
+                                _ => return Err(crate::Error::invalid("supply a nonnull limousine allocation and matching repositioned segment, or an observed d968_return")),
+                            }
                         }
                     }
                 }

@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x2648<=l<0x2814 or 0x9814<=l<0x9948) or k not in (4,6):continue
+        if t!=1 or not (0x2648<=l<0x2814 or 0xd968<=l<0xda80 or 0x9814<=l<0x9948) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -39,7 +39,12 @@ def hook(m,addr,*args):
         assert struct.unpack(">3f",u.mem_read(vehicle+0x7c,12))==(3.,4.,12.)
         m.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",13.))[0])
         m.reg_write(R.UC_PPC_REG_PC,addr+4);return
+    if pc==0xd99c:
+        assert [m.reg_read(getattr(R,f"UC_PPC_REG_{j}")) for j in range(3,7)]==[2,2,base[1]+0xda80,base[5]+0x2ee178]
+        m.reg_write(R.UC_PPC_REG_3,child)
+        m.reg_write(R.UC_PPC_REG_PC,addr+4);return
     if pc==0x280c:
+        if alloc:return
         assert m.reg_read(R.UC_PPC_REG_3)==task
         m.reg_write(R.UC_PPC_REG_3,65432)
         m.reg_write(R.UC_PPC_REG_PC,addr+4);return
@@ -50,7 +55,7 @@ def hook(m,addr,*args):
         events.append(("spawn",None));m.reg_write(R.UC_PPC_REG_3,task)
     else:events.append(("cue" if pc in (0x9908,0x9914) else "action",arg))
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
-for pc in [*stops,0x27a4,0x280c,0x98ac,0x9908,0x9914,0x985c,0x9868]:
+for pc in [*stops,0x27a4,0x280c,0xd99c,0x98ac,0x9908,0x9914,0x985c,0x9868]:
     u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
     cases=[dict(operation="vehicle_countdown",remaining=n,vehicle_state=v,mode=m)
@@ -67,7 +72,15 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
                 work_108=17,engine_byte_23=byte,engine_halfword_68=half,global_24d60=flag,segment=segment,
                 segment_count=100,position=[17,8,7],previous_position=[6,5,4],velocity=[3,4,12],
                 angles=[-9,55,88],work_ec=handle,magnitude_return=13,d968_return=65432)))
+    child,child_tw=ram+0x4000,ram+0x5000
+    for mode in (0,1):
+        q=json.loads(json.dumps(cases[14]));q["mode"]=mode
+        del q["frame"]["d968_return"]
+        q["frame"]["limousine_allocation"]=dict(task_handle=child,segment=75,
+            segment_xz=[[1,2],[3,4],[-32.5,95.25],[7,8]],latch=mode)
+        cases.append(q)
     for i,q in enumerate(cases):
+        alloc=q.get("frame",{}).get("limousine_allocation")
         req=Path(td)/"in.json";out=Path(td)/f"{i}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-timeout",rel,out,req],check=True);doc=json.loads(out.read_text())
         events=[];op=q["operation"];u.reg_write(R.UC_PPC_REG_1,ram+0xf000)
@@ -80,6 +93,11 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             f=q["frame"]; pose=ram+0x2000
             u.reg_write(R.UC_PPC_REG_MSR,8192)
             u.reg_write(R.UC_PPC_REG_29,task);u.reg_write(R.UC_PPC_REG_31,pose)
+            if alloc:
+                put(task+0x34,"I",pose);put(task+0x38,"I",vehicle);put(child+0x34,"I",child_tw)
+                put(base[6]+0x3ce2c,"i",alloc["latch"])
+                for idx,pair in enumerate(alloc["segment_xz"]):
+                    u.mem_write(base[6]+0x26d84+32*alloc["segment"]+8*idx,struct.pack(">2f",*pair))
             mapping=dict(cooldown=(vehicle+0x290,"i"),work_288=(vehicle+0x288,"i"),work_108=(vehicle+0x108,"i"),
                 engine_byte_23=(engine+0x23,"b"),engine_halfword_68=(engine+0x68,"h"),
                 global_24d60=(base[6]+0x24d60,"i"),segment=(vehicle+0xbc,"i"),segment_count=(base[6]+0x24d80,"i"),
@@ -95,8 +113,17 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             for key,(addr,fmt) in mapping.items():
                 v=struct.unpack(">"+fmt,u.mem_read(addr,struct.calcsize(">"+fmt)))
                 assert doc["frame"][key]==(list(v) if len(v)>1 else v[0]),(i,key,v,doc)
+        if alloc:
+            limo=doc["limousine"];state=limo["target"]["state"]
+            assert limo["task_handle"]==get(vehicle+0xec,"I")==child
+            assert [limo[k]+base[1] for k in ("display_offset","delete_offset")]==[get(child+j,"I") for j in (20,24)]
+            assert limo["exec_offset"]==0xda80
+            assert [get(child+j,"I") for j in (0x38,0x40)]==[pose,vehicle]
+            assert state["position"]==list(struct.unpack(">3f",u.mem_read(child_tw+20,12)))
+            assert state["lead"]==get(child_tw+32,"f") and state["latch"]==get(base[6]+0x3ce2c,"i")
+        else:assert "limousine" not in doc
         spawned=("spawn",None) in events
         assert doc["timer"]==(get(tw+6,"H") if spawned or op=="tick" else None)
         assert [v for k,v in events if k=="cue"]==([] if doc["cue_id"] is None else [doc["cue_id"]])
         assert [v for k,v in events if k=="action"]==([] if doc["action"] is None else [doc["action"]])
-print("Matched twenty vehicle post-movement, route boundary, timeout and delayed-action paths.")
+print("Matched 22 vehicle and limousine initialization paths, including vehicle post-movement, route boundary, timeout and delayed-action paths.")

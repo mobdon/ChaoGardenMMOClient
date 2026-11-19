@@ -446,3 +446,12 @@ to 1 resets the kart pose and segment; otherwise the kart shifts X and goes
 back to segment_count minus 25. The former requires the observed magnitude
 return and the latter requires the 0xd968 task return if no handle exists.
 Neither path proves a completed stage or runs the following vehicle routines.
+
+At the non-reset route boundary, `frame.limousine_allocation` can now replace
+the opaque `d968_return`. Supply a nonzero allocated task handle, the new
+segment index (count minus 25), its four X/Z points and the current pursuit
+latch. The constructor uses point 2 and the parent height. The returned
+`limousine.target.state` feeds `kart-story-target` tick directly. The parent
+stores the same handle in work_ec; a nonzero existing handle skips creation.
+Allocation and scheduling remain external; the constructor records the
+original exec, display and delete callbacks as offsets in CartD text.
