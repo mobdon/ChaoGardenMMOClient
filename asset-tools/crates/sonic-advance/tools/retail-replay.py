@@ -1,6 +1,6 @@
 """Sample the original title or a Sonic spindash from a cold boot. No save files or frame dumps.
 
-Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input|--character-video|--confirm-sonic|--confirm-tails|--confirm-knuckles|--confirm-amy|--act-intro|--act-intro-skip]
+Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--garden-input|--title|--menu|--menu-tiny|--character-input|--character-video|--confirm-sonic|--confirm-tails|--confirm-knuckles|--confirm-amy|--act-intro|--act-intro-skip]
 The DLL and ROM are identified before any external code runs. Outputs only
 selected numbers and pixel hashes. No graphical or memory buffers are written.
 """
@@ -60,6 +60,8 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
         title = True
         title_origin = 1250
         title_ticks = (0, 1, 2, 3, 4, 9, 10, 11, 19, 20, 21, 39, 40, 41, 48, 49, 50, 57, 58, 59, 69, 70, 71, 75, 95, 117, 118, 119)
+    if menu == 'garden-input':
+        title_ticks = (450, 451, 452, 466, 470, 471, 472)
     frame = -1
 
     def bind(kind, signature, func):
@@ -142,7 +144,14 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
                 if frame in (1480,1520,1560)[:confirm]: buttons.add(7)
                 if frame == 1600: buttons.add(8)
             if skip and frame == 1720: buttons.add(8)
+            if menu == 'garden-input':
+                if 1701 <= frame < 1721: buttons.add(7)
+                if frame == 1721: buttons.add(8)
             core.retro_run()
+            if menu == 'garden-input' and frame - title_origin in title_ticks:
+                state = ct.string_at(mem['iwram'] + 0x3830, 11)
+                rows.append([frame, *struct.unpack('<4H3B', state), video_frames[frame-title_origin]])
+                if frame == 1722: return rows
             if intro and frame >= 1657:
                 x,y=struct.unpack("<ii",ct.string_at(mem["iwram"]+0x5a20,8))
                 flags,=struct.unpack("<I",ct.string_at(mem["iwram"]+0x5a30,4))
@@ -183,10 +192,10 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
 if __name__ == "__main__":
     mode = sys.argv[3] if len(sys.argv) == 4 else None
     confirm_modes = ("--confirm-sonic", "--confirm-tails", "--confirm-knuckles", "--confirm-amy")
-    if len(sys.argv) not in (3, 4) or mode not in ("--act-intro","--act-intro-skip") + confirm_modes + (None, "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
+    if len(sys.argv) not in (3, 4) or mode not in ("--act-intro","--act-intro-skip") + confirm_modes + (None, "--garden-input", "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
         sys.exit(__doc__)
     print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]),
-                            mode == "--title", {"--menu":"regular", "--menu-tiny":"tiny"}.get(mode),
+                            mode == "--title", {"--garden-input":"garden-input", "--menu":"regular", "--menu-tiny":"tiny"}.get(mode),
                             mode in ("--character-input","--character-video"), mode == "--character-video", confirm_modes.index(mode) if mode in confirm_modes else (0 if mode in ("--act-intro","--act-intro-skip") else None),
                             mode in ("--act-intro","--act-intro-skip"), mode=="--act-intro-skip"),
                      indent=None if mode == "--character-input" else 2))

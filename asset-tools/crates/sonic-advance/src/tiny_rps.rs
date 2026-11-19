@@ -116,7 +116,7 @@ pub struct Round {
     targets: [Target; 10],
     lanes: [Lane; 3],
     selected: usize,
-    previous: u16,
+    keys: crate::garden_keys::GardenKeys,
     seconds: u8,
     subframe: u8,
     lives: u8,
@@ -157,7 +157,7 @@ impl Round {
             targets,
             lanes,
             selected: 1,
-            previous: 0,
+            keys: Default::default(),
             seconds: 30,
             subframe: 0,
             lives: 5,
@@ -207,8 +207,8 @@ impl Round {
         if self.end.is_some() {
             return;
         }
-        let pressed = held & !self.previous;
-        self.previous = held;
+        self.keys.poll(held, true);
+        let pressed = self.keys.pressed;
         self.spectator.step(&mut self.rand);
         self.move_targets();
         for i in 0..3 {

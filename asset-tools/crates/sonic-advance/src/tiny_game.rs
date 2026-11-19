@@ -62,7 +62,7 @@ pub struct MemoryRound {
     misses: u8,
     points: u8,
     #[serde(skip)]
-    previous_keys: u16,
+    keys: crate::garden_keys::GardenKeys,
 }
 impl MemoryRound {
     pub fn from_board(board: [u8; 30]) -> Result<Self> {
@@ -87,7 +87,7 @@ impl MemoryRound {
             pairs: 0,
             misses: 0,
             points: 0,
-            previous_keys: 0,
+            keys: Default::default(),
         })
     }
     pub fn board(&self) -> &[u8; 30] {
@@ -148,8 +148,8 @@ impl MemoryRound {
         if self.outcome != Outcome::Playing {
             return;
         }
-        let pressed = held & !self.previous_keys;
-        self.previous_keys = held;
+        self.keys.poll(held, true);
+        let pressed = self.keys.pressed;
         match self.phase {
             Phase::First | Phase::Second => self.select(pressed),
             Phase::Reveal if self.flip[1] == 30 => {
