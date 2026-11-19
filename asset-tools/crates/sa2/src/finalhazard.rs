@@ -340,3 +340,49 @@ fn weight_report(exe: &[u8], pose: Option<&crate::pose::Pose>) -> Result<serde_j
         serde_json::json!({"vertices":finished,"space":"each contribution is in its source joint's local space"}),
     )
 }
+
+/// Expand the boss's cached polygon list at its draw site. Material and strip
+/// commands keep their source order; source and executing joints are distinct.
+pub fn polygon_schedule(exe: &[u8]) -> Result<serde_json::Value> {
+    use crate::model::PolygonChunk;
+    let [boss, _] = read(exe)?;
+    let attachments = geometry(exe)?;
+    let mut cache = std::collections::BTreeMap::<u8, (u32, &[PolygonChunk])>::new();
+    let mut ops = Vec::new();
+    let mut saves = Vec::new();
+    let mut draws = Vec::new();
+    let mut emit = |source: u32, at: u32, c: &PolygonChunk| -> Result<()> {
+        match c.kind {
+            0=>(),
+            8|17..=23|64..=66=>ops.push(serde_json::json!({"sourceJoint":source,"drawJoint":at,"fileOffset":c.offset,"kind":c.kind})),
+            _=>return Err(Error::invalid("unsupported Finalhazard polygon operation")),
+        }
+        Ok(())
+    };
+    for joint in boss {
+        let Some(a) = joint.attachment_rva else {
+            continue;
+        };
+        let chunks = &attachments[&a].polygon_chunks;
+        for (i, c) in chunks.iter().enumerate() {
+            match c.kind {
+                4 => {
+                    cache.insert(c.flags, (joint.rva, &chunks[i + 1..]));
+                    saves.push(serde_json::json!({"slot":c.flags,"joint":joint.rva}));
+                    break;
+                }
+                5 => {
+                    let &(source, list) = cache
+                        .get(&c.flags)
+                        .ok_or_else(|| Error::invalid("unbound Finalhazard polygon list"))?;
+                    draws.push(serde_json::json!({"slot":c.flags,"joint":joint.rva}));
+                    for cmd in list {
+                        emit(source, joint.rva, cmd)?;
+                    }
+                }
+                _ => emit(joint.rva, joint.rva, c)?,
+            }
+        }
+    }
+    Ok(serde_json::json!({"cacheWrites":saves,"cacheDraws":draws,"operations":ops}))
+}
