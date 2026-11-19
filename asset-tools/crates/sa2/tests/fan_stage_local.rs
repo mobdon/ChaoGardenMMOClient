@@ -100,15 +100,36 @@ fn mounted_campaign_routes() {
             assert_eq!(stage.dispatch.level, level);
             for (layer_idx, layer) in stage.layers.iter().enumerate() {
                 for place in &layer.placements {
-                    if level == 13
-                        || !stage
-                            .object_table
-                            .and_then(|t| t.entries.get(place.definition_index?))
-                            .is_some_and(|d| d.function_va == 0x6d99a0 && d.name == "SAVEPOINT")
+                    if !stage
+                        .object_table
+                        .and_then(|t| t.entries.get(place.definition_index?))
+                        .is_some_and(|d| d.function_va == 0x6d99a0 && d.name == "SAVEPOINT")
                     {
                         continue;
                     }
                     let request=br#"{"engine_result":1,"stage_byte":1,"hit":[1,0],"players":[{"rotation":[0,0,0],"position_bits":[0,0,0]},{"rotation":[1,2,3],"position_bits":[4,5,6]}]}"#;
+                    let mut frame: serde_json::Value = serde_json::from_slice(request).unwrap();
+                    if level == 13 {
+                        frame.as_object_mut().unwrap().remove("engine_result");
+                        frame.as_object_mut().unwrap().remove("stage_byte");
+                        frame["contact_speed"] = serde_json::json!(1.0);
+                        frame["bonus_inputs"] = serde_json::json!([{"value":19,"equipment":0},{"value":60,"equipment":0}]);
+                        let req = serde_json::json!({"engine_result":1,"stage_byte":1,"frames":[frame,frame]});
+                        let seq = stage
+                            .replay_object(
+                                layer_idx,
+                                place.placement_index,
+                                &serde_json::to_vec(&req).unwrap(),
+                            )
+                            .unwrap();
+                        assert_eq!(
+                            seq["frames"][0]["itemDelivery"]["notifyArgs"],
+                            serde_json::json!([1, 1])
+                        );
+                        assert_eq!(seq["frames"][0]["itemDelivery"]["engineCalls"][1]["r4"], 20);
+                        assert!(seq["frames"][1]["itemDelivery"].is_null());
+                        continue;
+                    }
                     let out = stage
                         .replay_object(layer_idx, place.placement_index, request)
                         .unwrap();

@@ -195,6 +195,8 @@ pub struct MountedStage<'a> {
     pub mission3_end_pose: Option<EntryPose>,
     pub kart_route: Option<&'a KartRoute>,
     pub object_table: Option<&'a ObjectList>,
+    #[serde(skip)]
+    city_items: Option<crate::checkpoint::CityItemTable>,
     pub layers: Vec<Layer>,
     pub terrain: Option<Terrain>,
     /// Resource/entry-specific gaps. These are separate from missing gameplay systems.
@@ -245,6 +247,7 @@ impl MountedStage<'_> {
             .resolve(layer, index)
             .ok_or_else(|| Error::invalid("placement outside mounted layer"))?;
         city_replay::mounted_replay(
+            self.city_items.as_ref(),
             self.dispatch.level,
             &placement.placement,
             definition.ok_or_else(|| Error::invalid("unresolved native object ID"))?,
@@ -492,7 +495,20 @@ impl Campaign {
                 dispatch.level
             ));
         }
+        let city_items = if dispatch.level == 13 {
+            let table = load("stg13D.rel")?
+                .as_deref()
+                .map(crate::checkpoint::CityItemTable::read)
+                .transpose()?;
+            if table.is_none() {
+                gaps.push("Missing City Escape REL; checkpoint item dispatch unavailable.".into());
+            }
+            table
+        } else {
+            None
+        };
         Ok(MountedStage {
+            city_items,
             dispatch,
             level_section: config.map(|c| c.section.as_str()),
             entry_pose,

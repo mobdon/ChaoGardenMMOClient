@@ -274,12 +274,16 @@ pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Opti
     }
 }
 pub(crate) fn mounted_replay(
+    items: Option<&crate::checkpoint::CityItemTable>,
     level: u16,
     p: &Placement,
     d: &ObjectDefinition,
     request: &[u8],
 ) -> Result<Value> {
     let name = mounted_callback(level, p, d);
+    if name == Some("ObjectSavePoint") {
+        return checkpoint_frames(p, decode(request)?, items);
+    }
     if name == Some("CheckpointContact") {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -297,7 +301,7 @@ pub(crate) fn mounted_replay(
         }
         let r = match decode::<ReplayRequest>(request)? {
             ReplayRequest::Single(r) => r,
-            ReplayRequest::Frames(r) => return checkpoint_frames(p, r),
+            ReplayRequest::Frames(r) => return checkpoint_frames(p, r, None),
         };
         let mut state = crate::checkpoint::ContactState {
             mode: 1,
@@ -429,9 +433,13 @@ struct CheckpointBonusInput {
 }
 
 fn checkpoint(p: &Placement, request: &[u8]) -> Result<Value> {
-    checkpoint_frames(p, decode(request)?)
+    checkpoint_frames(p, decode(request)?, None)
 }
-fn checkpoint_frames(p: &Placement, req: CheckpointReplay) -> Result<Value> {
+fn checkpoint_frames(
+    p: &Placement,
+    req: CheckpointReplay,
+    items: Option<&crate::checkpoint::CityItemTable>,
+) -> Result<Value> {
     use crate::checkpoint::{CheckpointPlacement, CheckpointSpin, CheckpointTicks, ContactState};
     let placement = CheckpointPlacement {
         rotation: p.rotation.map(i32::from),
@@ -451,16 +459,31 @@ fn checkpoint_frames(p: &Placement, req: CheckpointReplay) -> Result<Value> {
     let mut frames = Vec::new();
     for f in bounded(req.frames)? {
         let call = state.tick(f.hit, &f.players, byte, f.contact_speed)?;
-        let selection = call.as_ref().and_then(|c| {
-            let input = &f.bonus_inputs.as_ref()?[c.slot];
+        let mut delivery = None;
+        let selection = if let (Some(c), Some(inputs)) = (&call, &f.bonus_inputs) {
+            let input = &inputs[c.slot];
             let selected = crate::checkpoint::contact_bonus(input.value, input.equipment);
+            if let (Some(table), Some(bonus)) = (items, &selected) {
+                let id = i32::from(bonus.item_id);
+                if let Some(dispatch) = table.dispatch(c.slot, input.equipment, id)? {
+                    let mut calls = Vec::new();
+                    table.visit_checkpoint_item(c.slot, input.equipment, id, |event| {
+                        calls.push(event)
+                    })?;
+                    delivery = Some(
+                        json!({"notifyArgs":dispatch.notify_args,"handlerOffset":dispatch.handler_offset,"engineCalls":calls}),
+                    );
+                }
+            }
             Some(
                 json!({"slot":c.slot,"itemId":selected.as_ref().map(|b|b.item_id),
                 "counterIncrement":selected.map_or(0,|b|b.counter_increment)}),
             )
-        });
+        } else {
+            None
+        };
         frames.push(
-            json!({"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
+            json!({"itemDelivery":delivery,"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
             "angles":state.spin.angles,"steps":state.spin.steps,"bonusSelection":selection,"handoff":call}),
         );
     }

@@ -574,6 +574,7 @@ mod approach_tests {
 
 /// City Escape's stage-local item delivery table (11 pairs in REL section 5).
 /// Offsets refer to section 1 of the identified REL, not PC executable addresses.
+#[derive(Debug)]
 pub struct CityItemTable {
     entries: [(i32, u32); 11],
 }
@@ -723,7 +724,7 @@ mod item_tests {
 
 /// Arguments explicitly set by a stage item handler before it calls the
 /// external engine. Float arguments retain their original binary32 bits.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ItemEngineCall {
     pub target: u32,
     pub r3: i32,
