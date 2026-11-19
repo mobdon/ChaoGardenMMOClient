@@ -531,3 +531,44 @@ pub fn hot_shot_mode_two_step(bytes: &[u8], request: &[u8]) -> Result<serde_json
         "scope":"Scalar and control writes; helper effects and subsequent boss executor work are excluded."}),
     )
 }
+
+/// Mode 2 submode 4 writes through the jump to the shared tail at 1:15a8.
+pub fn hot_shot_mode_two_exit(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        x: f32,
+        private28: f32,
+        work_angles: [u32; 3],
+        flags: u16,
+        timer: u16,
+        ready: bool,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    if !s.x.is_finite() || !s.private28.is_finite() {
+        return Err(Error::invalid("expected finite boss state"));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let scalar = |at| hot_shot_scalar(&rel, at);
+    let mode = if !s.ready {
+        2
+    } else if s.private28 < scalar(0x1542)? {
+        9
+    } else {
+        3
+    };
+    let angles = [0x210, 0x250, 0x300]
+        .into_iter()
+        .zip(s.work_angles)
+        .map(|(inc, v)| v.wrapping_add(inc))
+        .collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({"mode":mode,"submode":if s.ready {0} else {4},
+        "workAngles":angles,"work00":if s.x>scalar(0x14ea)? {scalar(0x14fe)?} else {scalar(0x1512)?},
+        "flags":if s.ready {s.flags & !0x200} else {s.flags},
+        "timer":if s.ready {0} else {s.timer}, "workByte3Write":s.ready.then_some(0),
+        "privateByte2Write":(mode==3).then_some(2),"requestedControllerState":s.ready.then_some(3),
+        "scope":"Submode four writes before shared tail; readiness is supplied, helper effects are not simulated."}),
+    )
+}
