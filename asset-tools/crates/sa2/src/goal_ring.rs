@@ -1848,7 +1848,7 @@ struct ChildDispatch {
 #[serde(deny_unknown_fields)]
 struct TextureSetup {
     work56: u32,
-    size_return: u32,
+    size_return: Option<u32>,
     allocation_return: u32,
 }
 #[derive(Deserialize)]
@@ -1902,7 +1902,19 @@ pub fn replay(
     );
     let texture_setup = match (&init, &r.texture_setup) {
         (InitRoute::Contact { .. }, Some(t)) => {
-            Some(p.regular_texture_setup(t.work56, t.size_return, t.allocation_return)?)
+            let reference_size = crate::texture::gx_buffer_size(64, 64, 2, false, 0)?;
+            let mut setup = p.regular_texture_setup(
+                t.work56,
+                t.size_return.unwrap_or(reference_size),
+                t.allocation_return,
+            )?;
+            setup["sizeSource"] = json!(if t.size_return.is_some() {
+                "observed"
+            } else {
+                "GX reference"
+            });
+            setup["gxReferenceBytes"] = json!(reference_size);
+            Some(setup)
         }
         (_, None) => None,
         _ => {

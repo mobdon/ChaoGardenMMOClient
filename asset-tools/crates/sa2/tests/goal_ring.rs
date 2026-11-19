@@ -425,6 +425,7 @@ fn mounted_goal_cli() {
         &request,
         serde_json::to_vec(&serde_json::json!({
             "game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":inputs,
+            "texture_setup":{"work56":4096,"allocation_return":8192},
             "lifecycle":{"initial_timer":0,"game_byte_37":0,"task_field_30_present":false,"release":{"work56":4096,"nested":8192}}
         }))
         .unwrap(),
@@ -432,6 +433,10 @@ fn mounted_goal_cli() {
     .unwrap();
     let doc = run("198").unwrap();
     let frames = doc["replay"]["frames"].as_array().unwrap();
+    assert_eq!(
+        doc["replay"]["textureSetup"]["calls"][1],
+        serde_json::json!([0x801194b4u32, 1, 4096])
+    );
     assert_eq!(
         doc["replay"]["observedRelease"]["events"][0],
         serde_json::json!(["free", 0x801194e0u32, 8192])
