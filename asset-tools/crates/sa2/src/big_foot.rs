@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 struct Request {
     work_allocation_ok: bool,
     frames: Vec<Frame>,
+    intro: Option<Intro>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +17,72 @@ struct Frame {
     vector_result: Option<[f32; 3]>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Intro {
+    updates: u16,
+    helper_task_created: bool,
+    exit: Option<IntroExit>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IntroExit {
+    query_result: i32,
+    player_position: Option<[f32; 3]>,
+}
+fn intro(position: [f32; 3], cfg: Intro, scalar: &impl Fn(u32) -> Result<f32>) -> Result<Value> {
+    if cfg.updates > 451 || (cfg.updates == 451) != cfg.exit.is_some() {
+        return Err(Error::invalid("expected at most 451 mode-one callbacks, with exit observations only on the final callback"));
+    }
+    let mut mode = 1;
+    let mut submode = 0;
+    let mut timer = 0u16;
+    let mut flags = 1;
+    let focus = [position[0], position[1] + scalar(0xdc4)?, position[2]];
+    let mut rows = Vec::new();
+    for _ in 0..cfg.updates {
+        let mut calls = vec![];
+        if submode == 0 {
+            calls.push(json!({"openingView":{"slot":0,"args":[scalar(0xe0c)?,24576,scalar(0xe34)?,scalar(0xe44)?,0x471c],"focus":focus}}));
+            calls.push(json!({"setPlayerPosition":{"slot":0,"position":[-position[0],0.,0.]}}));
+            calls.push(json!({"setMotionLinkSync":6}));
+            calls.push(json!("createHelper53da8"));
+            calls.push(json!("createHelper59bc4"));
+            calls.push(json!("setup54b74"));
+            timer = 450;
+            submode = 1;
+        } else {
+            timer -= 1;
+            if timer == 0 {
+                let exit = cfg.exit.as_ref().unwrap();
+                calls.push(json!("endOpeningView"));
+                calls.push(json!({"nextView":{"slot":0,"focus":focus,"args":[scalar(0xf44)?,scalar(0xf54)?,10,1,0,scalar(0xf64)?,scalar(0xf8c)?,0]}}));
+                calls.push(json!("engineCall80022c1c"));
+                flags |= 0x1000;
+                if cfg.helper_task_created {
+                    calls.push(json!("freeHelper59bc4"));
+                }
+                let index = exit.query_result.wrapping_sub(1);
+                if (index >= 0) != exit.player_position.is_some() {
+                    return Err(Error::invalid(
+                        "exit requires player position only on the spawn branch",
+                    ));
+                }
+                if let Some([x, y, z]) = exit.player_position {
+                    let point = [x, y + scalar(0x547b4)?, z];
+                    if !point.iter().all(|v| v.is_finite()) {
+                        return Err(Error::invalid("invalid exit position"));
+                    }
+                    calls.push(json!({"local2e4b4":{"position":point,"slot":0,"argument":index.min(2),"kind":2}}));
+                }
+                mode = 2;
+                submode = 0;
+            }
+        }
+        rows.push(json!({"mode":mode,"submode":submode,"timer":timer,"flags":flags,"calls":calls}));
+    }
+    Ok(json!({"focus":focus,"frames":rows}))
+}
 pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let invalid = || Error::invalid("unverified Big Foot stage program");
     let info = stage_land::catalog()
@@ -67,6 +134,11 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     } else {
         json!({"created":false,"calls":["freeBossTask"]})
     };
+    let intro_trace = match req.intro {
+        Some(i) if req.work_allocation_ok => Some(intro(position, i, &scalar)?),
+        Some(_) => return Err(Error::invalid("intro requires an allocated boss")),
+        None => None,
+    };
     let mut frames = Vec::new();
     for f in req.frames {
         let [x, y, z] = f.player_position;
@@ -91,7 +163,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         }
         frames.push(json!({"calledVectorHelper":outside,"playerPosition":result}));
     }
-    Ok(
-        json!({"boss":boss,"stageExecutor":local(0x6704,1)?,"arenaRadius":radius,"frames":frames,"scope":"Boss setup and slot-zero arena constraint; player motion, vector helper, combat and mission resolution are not executed."}),
-    )
+    let mut output = json!({"boss":boss,"stageExecutor":local(0x6704,1)?,"arenaRadius":radius,"frames":frames,"scope":"Boss setup and slot-zero arena constraint; player motion, vector helper, combat and mission resolution are not executed."});
+    if let Some(trace) = intro_trace {
+        output["intro"] = trace;
+    }
+    Ok(output)
 }
