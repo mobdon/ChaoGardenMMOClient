@@ -186,7 +186,7 @@ impl<'a> CityRel<'a> {
             _ => Err(invalid()),
         }
     }
-    pub fn board_resources(&self) -> Result<Vec<BoardResources>> {
+    fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
         let data = self.data(5)?;
         let local = |o| {
             self.local_pointer(5, o)?
@@ -194,6 +194,30 @@ impl<'a> CityRel<'a> {
                 .map(|(_, v)| v)
                 .ok_or_else(invalid)
         };
+        let names = local(texture)?;
+        let i = texture as usize + 4;
+        let count = u32::from_be_bytes(data.get(i..i + 4).ok_or_else(invalid)?.try_into().unwrap());
+        if count > 256 {
+            return Err(invalid());
+        }
+        let mut textures = Vec::new();
+        for j in 0..count {
+            let at = local(names + 12 * j)? as usize;
+            let tail = data.get(at..).ok_or_else(invalid)?;
+            let end = tail
+                .iter()
+                .take(256)
+                .position(|b| *b == 0)
+                .ok_or_else(invalid)?;
+            textures.push(
+                std::str::from_utf8(&tail[..end])
+                    .map_err(|_| invalid())?
+                    .to_owned(),
+            );
+        }
+        Ok(textures)
+    }
+    pub fn board_resources(&self) -> Result<Vec<BoardResources>> {
         let mut result = Vec::new();
         for (variant, texture, model, other) in [
             ("single_player", 0x222, 0x23a, 0x22e),
@@ -203,28 +227,7 @@ impl<'a> CityRel<'a> {
             ("two_player_default", 0x302, 0x30e, 0x31a),
         ] {
             let texture = self.resource(texture)?;
-            let names = local(texture)?;
-            let i = texture as usize + 4;
-            let count =
-                u32::from_be_bytes(data.get(i..i + 4).ok_or_else(invalid)?.try_into().unwrap());
-            if count > 256 {
-                return Err(invalid());
-            }
-            let mut textures = Vec::new();
-            for j in 0..count {
-                let at = local(names + 12 * j)? as usize;
-                let tail = data.get(at..).ok_or_else(invalid)?;
-                let end = tail
-                    .iter()
-                    .take(256)
-                    .position(|b| *b == 0)
-                    .ok_or_else(invalid)?;
-                textures.push(
-                    std::str::from_utf8(&tail[..end])
-                        .map_err(|_| invalid())?
-                        .to_owned(),
-                );
-            }
+            let textures = self.texture_names(texture)?;
             result.push(BoardResources {
                 variant,
                 texture_list: texture,
@@ -902,7 +905,7 @@ pub fn hot_shot_target_display(bytes: &[u8], request: &[u8]) -> Result<serde_jso
     let offset = hot_shot_scalar(&rel, 0x4d512)?;
     let ground = hot_shot_scalar(&rel, 0x4d54e)?;
     Ok(
-        serde_json::json!({"hidden":false,"textureListSection5":ptr(0x4d492)?,"phase":s.phase,
+        serde_json::json!({"hidden":false,"textureNames":rel.texture_names(ptr(0x4d492)?)?,"textureListSection5":ptr(0x4d492)?,"phase":s.phase,
         "draws":[{"objectSection5":ptr(0x4d526)?,"motionSection5":ptr(0x4d52e)?,
         "translation":[x,y.max(floor),z],"rotations":[fixed,s.varied],"rotationArgument":1,
         "scale":s.scale,"localTranslation":[0.,offset,0.]},

@@ -1426,7 +1426,35 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
             let path = Path::new(&args[3]);
             let req = Extra::read(path, basename(path)?.to_owned(), 65536, "boss-state")?;
             let step = if command == "hot-shot-target-display" {
-                sa2_asset_tools::city_rel::hot_shot_target_display(&bytes, &req.bytes)?
+                {
+                    let mut draw =
+                        sa2_asset_tools::city_rel::hot_shot_target_display(&bytes, &req.bytes)?;
+                    if let Some(names) = draw["textureNames"].as_array() {
+                        let path = input.with_file_name("grobo_eff2_tex.prs");
+                        let tex = Extra::read(
+                            &path,
+                            source_label(&path, root)?,
+                            16 * 1024 * 1024,
+                            "target-texture-archive",
+                        )?;
+                        let decoded =
+                            sa2_asset_tools::archive::decompress_prs(&tex.bytes, 32 * 1024 * 1024)?;
+                        let entries = sa2_asset_tools::archive::read_gvm(&decoded)?;
+                        if names.len() != entries.len()
+                            || !names
+                                .iter()
+                                .zip(&entries)
+                                .all(|(n, e)| n.as_str() == Some(e.name.as_str()))
+                        {
+                            return Err(Error::invalid(
+                                "target texture list does not match installed GVM",
+                            ));
+                        }
+                        draw["textureEntries"] = json!(entries);
+                        extras.push(tex);
+                    }
+                    draw
+                }
             } else if command == "hot-shot-target-rotation" {
                 sa2_asset_tools::city_rel::hot_shot_target_rotation(&bytes, &req.bytes)?
             } else if command == "hot-shot-target-clock" {
