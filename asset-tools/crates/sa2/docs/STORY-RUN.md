@@ -53,3 +53,9 @@ To export one original soundtrack locally, use:
     sa2-assets --source-root GAME movie-audio GAME/resource/gd_PC/event/e0602_m.sfd .local/event602-c1.wav 602 c1
 
 Use c0 or c1 as encoded in the movie; event 401 has only c0. The converter verifies the movie against the supplied event ID, writes a native-rate PCM WAV, and records the source and output hashes in its sidecar. Its manifest asset ID includes the event and stream. Track ID does not establish a language.
+
+To export the unchanged video elementary stream from any verified movie, use:
+
+    sa2-assets --source-root GAME movie-video GAME/resource/gd_PC/event/e0602_m.sfd .local/event602.m1v 602
+
+The output is encoded MPEG-1 video only. The sidecar identifies event and E0 stream, keeps the movie and export hashes, and labels the representation opaque. Use the movie inspection report for container timestamps; .m1v does not carry the audio or PES timing.
