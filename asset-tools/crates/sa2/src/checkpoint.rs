@@ -394,11 +394,47 @@ impl CheckpointTicks {
         checkpoint_byte: u8,
         contact_speed: f32,
     ) -> Result<Option<CheckpointContactCall>> {
+        self.tick_with_speed(hit, players, checkpoint_byte, |_| contact_speed)
+    }
+
+    /// Resolve the stage's external magnitude and angle helpers only after
+    /// acceptance. The player work vector lives at +0x64; task yaw is +0xc.
+    pub fn tick_with_approach(
+        &mut self,
+        hit: Option<(i32, u32)>,
+        players: &[ContactPlayer; 2],
+        placement: CheckpointPlacement,
+        checkpoint_byte: u8,
+        magnitude: impl FnOnce(usize) -> f32,
+        difference: impl FnOnce(i32, i32) -> i32,
+    ) -> Result<Option<CheckpointContactCall>> {
+        self.tick_with_speed(hit, players, checkpoint_byte, |call| {
+            let speed = magnitude(call.slot);
+            let angle = difference(
+                0x4000_i32.wrapping_sub(call.rotation[1]),
+                placement.rotation[1] & 0xff00,
+            );
+            if ((angle as f32).abs() as i32) > 0x4000 {
+                -speed
+            } else {
+                speed
+            }
+        })
+    }
+
+    fn tick_with_speed(
+        &mut self,
+        hit: Option<(i32, u32)>,
+        players: &[ContactPlayer; 2],
+        checkpoint_byte: u8,
+        contact_speed: impl FnOnce(&CheckpointContactCall) -> f32,
+    ) -> Result<Option<CheckpointContactCall>> {
         match self.contact.mode {
             1 => {
                 let old_timers = self.contact.slot_timers;
                 let call = self.contact.accept(hit, players, checkpoint_byte)?;
-                if call.is_some() {
+                if let Some(accepted) = &call {
+                    let contact_speed = contact_speed(accepted);
                     let scaled = (10.0_f32 * contact_speed) * f32::from_bits(0x43360b61);
                     if !scaled.is_finite() || !(-2147483648.0..2147483648.0).contains(&scaled) {
                         self.contact.mode = 1;
@@ -478,5 +514,58 @@ mod tick_tests {
             state.tick(None, &players, 1, 0.).unwrap();
         }
         assert_eq!(state.contact.slot_timers, [-1, 0]);
+    }
+}
+
+#[cfg(test)]
+mod approach_tests {
+    use super::*;
+    #[test]
+    fn sign_changes_only_beyond_a_quarter_turn() {
+        let players = std::array::from_fn(|_| ContactPlayer {
+            position_bits: [0; 3],
+            rotation: [0, -123, 0],
+        });
+        for (angle, step) in [
+            (16384, 1820),
+            (-16384, 1820),
+            (16385, -1820),
+            (-16385, -1820),
+        ] {
+            let mut state = CheckpointTicks {
+                contact: ContactState {
+                    mode: 1,
+                    slot_timers: [0; 2],
+                },
+                spin: CheckpointSpin {
+                    angles: [0; 2],
+                    steps: [0; 2],
+                    counters: [0; 2],
+                },
+            };
+            let placement = CheckpointPlacement {
+                rotation: [0, 0x8003, 0],
+            };
+            state
+                .tick_with_approach(None, &players, placement, 3, |_| panic!(), |_, _| panic!())
+                .unwrap();
+            state
+                .tick_with_approach(
+                    Some((1, 0)),
+                    &players,
+                    placement,
+                    3,
+                    |slot| {
+                        assert_eq!(slot, 1);
+                        1.0
+                    },
+                    |a, b| {
+                        assert_eq!((a, b), (0x4000 + 123, 0x8000));
+                        angle
+                    },
+                )
+                .unwrap();
+            assert_eq!(state.spin.steps[1], step);
+        }
     }
 }
