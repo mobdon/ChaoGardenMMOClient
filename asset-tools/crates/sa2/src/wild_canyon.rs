@@ -134,6 +134,44 @@ pub fn enter(module: &[u8], allocated: bool) -> Result<Value> {
     Ok(
         json!({"descriptor":name(desc)?,"startup":callback(12u32)?,"teardown":callback(16u32)?,"entry":callback(20u32)?,
         "create":{"arguments":[2,2],"name":name(pair(0x9164,5)?)?,"main":pair(0x915c,1)?},
+        "lightFile":name(pair(0x8c68,5)?)?,"gcSuffix":name(pair(0xace4,5)?)?,
+        "music":{"volumeArgument":0,"engineByteZero":name(pair(0x8c94,5)?)?,"engineByteNonzero":name(pair(0x8ca4,5)?)?},
         "startupResources":{"calls":calls,"groups":groups},"created":child,"nextMain":pair(0x91c0,1)?}),
+    )
+}
+
+/// Decode the two complete files used by the installed stage. The native helper
+/// writes nine words per derived row before the GC file replaces all twelve.
+pub fn light_tables(source: &[u8], gc: &[u8]) -> Result<Value> {
+    if source.len() != 12 * 32 || gc.len() != 12 * 48 {
+        return Err(Error::invalid(
+            "expected complete Wild Canyon lighting files",
+        ));
+    }
+    let words = |row: &[u8]| {
+        row.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|v| u32::from_be_bytes(*v))
+            .collect::<Vec<_>>()
+    };
+    let mut derived = Vec::new();
+    for row in source.as_chunks::<32>().0 {
+        let w = words(row);
+        let scaled = |i: usize| (f32::from_bits(w[3]) * f32::from_bits(w[i])).to_bits();
+        derived.push([
+            w[0],
+            w[1],
+            w[2],
+            scaled(5),
+            scaled(6),
+            scaled(7),
+            w[4],
+            w[4],
+            w[4],
+        ]);
+    }
+    Ok(
+        json!({"derivedWords":derived,"activeWords":gc.as_chunks::<48>().0.iter().map(|row|words(row)).collect::<Vec<_>>() }),
     )
 }

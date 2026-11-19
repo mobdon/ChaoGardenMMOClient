@@ -244,7 +244,31 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                         .iter()
                         .find(|e| e.logical == "resource/gd_PC/stg16D.rel")
                         .ok_or_else(|| Error::invalid("missing mounted Wild Canyon REL"))?;
-                    json!({"dispatch":stage.dispatch,"stageTask":sa2_asset_tools::wild_canyon::enter(&module.bytes,number(&args[6])?)?})
+                    let task =
+                        sa2_asset_tools::wild_canyon::enter(&module.bytes, number(&args[6])?)?;
+                    let light = task["lightFile"]
+                        .as_str()
+                        .ok_or_else(|| Error::invalid("missing lighting filename"))?;
+                    let stem = light
+                        .strip_suffix(".bin")
+                        .ok_or_else(|| Error::invalid("unexpected lighting filename"))?;
+                    let suffix = task["gcSuffix"]
+                        .as_str()
+                        .ok_or_else(|| Error::invalid("missing lighting suffix"))?;
+                    let gc_name = format!("{stem}{suffix}");
+                    let read = |name: &str| {
+                        Extra::read(
+                            &gd.join(name),
+                            format!("resource/gd_PC/{name}"),
+                            1024,
+                            "stage-lighting",
+                        )
+                    };
+                    let src = read(light)?;
+                    let gc = read(&gc_name)?;
+                    let lights = sa2_asset_tools::wild_canyon::light_tables(&src.bytes, &gc.bytes)?;
+                    extras.extend([src, gc]);
+                    json!({"dispatch":stage.dispatch,"stageTask":task,"lighting":lights})
                 } else if command == "fan-big-foot" {
                     if stage.dispatch.level != 60 {
                         return Err(Error::invalid("expected Big Foot story dispatch"));
