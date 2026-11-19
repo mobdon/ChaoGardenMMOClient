@@ -14,14 +14,14 @@ pub struct Input {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Controls {
-    profile: usize,
+    pub(crate) profile: usize,
     #[serde(default)]
-    alternate: bool,
-    work_284: i32,
-    work_110: i32,
-    work_114: i32,
-    piece_id: Option<u8>,
-    magnitude_return: Option<f32>,
+    pub(crate) alternate: bool,
+    pub(crate) work_284: i32,
+    pub(crate) work_110: i32,
+    pub(crate) work_114: i32,
+    pub(crate) piece_id: Option<u8>,
+    pub(crate) magnitude_return: Option<f32>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +53,10 @@ pub struct Output {
 }
 pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
     kart_progress::verify(bytes)?;
+    let rel = CityRel::read_identified(bytes, 80)?;
+    tick_verified(&rel, s)
+}
+pub(crate) fn tick_verified(rel: &CityRel, s: Input) -> Result<Output> {
     let c = s.controls;
     let mut out = Output {
         work_284: c.work_284,
@@ -61,7 +65,6 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
     if s.work_44 == 0 || !matches!(s.vehicle_state, 0..=3 | 8 | 9) {
         return Ok(out);
     }
-    let rel = CityRel::read_identified(bytes, 80)?;
     let [engine, brake, ..] = kart_vehicle_init::cue_row(rel.data(5)?, c.profile, c.alternate)?;
     let position = s.position;
     if s.vehicle_state >= 8 {

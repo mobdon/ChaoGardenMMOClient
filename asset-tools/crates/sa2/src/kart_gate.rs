@@ -734,6 +734,7 @@ pub fn story_sequence(
                     charge.ok_or_else(|| Error::invalid("missing primary charge for boost"))?,
                     boost_timers,
                     scan_flag,
+                    vehicle,
                 )?;
                 charge = Some(next);
                 boost_timers = Some(timers);

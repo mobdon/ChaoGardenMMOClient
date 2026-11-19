@@ -100,6 +100,8 @@ struct Drive {
 #[derive(Serialize)]
 pub(crate) struct Motion {
     #[serde(skip_serializing_if = "Option::is_none")]
+    audio: Option<crate::kart_driving_audio::Output>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     contact: Option<crate::kart_contact::Update>,
     #[serde(skip_serializing_if = "Option::is_none")]
     drift: Option<DriftUpdate>,
@@ -115,6 +117,7 @@ pub(crate) struct Motion {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryDrive {
+    audio_work_284: Option<i32>,
     contact: Option<crate::kart_contact::StoryContact>,
     position_step: Option<StoryPosition>,
     heading: i32,
@@ -140,8 +143,11 @@ impl StoryDrive {
         weight: f32,
         work_44: Option<i32>,
         story_mode: i32,
-        constants: &[u8],
+        vehicle_state: Option<i32>,
+        piece_id: Option<u8>,
+        rel: &crate::city_rel::CityRel,
     ) -> Result<Motion> {
+        let constants = rel.data(4)?;
         let velocity_xz = [velocity[0], velocity[2]];
         if velocity_xz != [0.; 2] && self.magnitude_return.is_none() {
             return Err(Error::invalid(
@@ -177,6 +183,33 @@ impl StoryDrive {
             self.buttons & 0x402 != 0 && self.work_28c <= 10,
             constants,
         )?;
+        if let Some(work_284) = self.audio_work_284 {
+            let position = motion
+                .position_step
+                .as_ref()
+                .ok_or_else(|| Error::invalid("story audio requires drive position step"))?
+                .position;
+            motion.audio = Some(crate::kart_driving_audio::tick_verified(
+                rel,
+                crate::kart_driving_audio::Input {
+                    position,
+                    velocity_xz,
+                    vehicle_state: vehicle_state
+                        .ok_or_else(|| Error::invalid("missing story vehicle state for audio"))?,
+                    work_44: work_44
+                        .ok_or_else(|| Error::invalid("missing vehicle flag for audio"))?,
+                    controls: crate::kart_driving_audio::Controls {
+                        profile: story_mode as usize,
+                        alternate: false,
+                        work_284,
+                        work_110: i32::from(self.buttons & 4 != 0),
+                        work_114: i32::from(self.buttons & 0x402 != 0 && self.work_28c <= 10),
+                        piece_id,
+                        magnitude_return: self.magnitude_return,
+                    },
+                },
+            )?);
+        }
         if let Some(query) = self.contact {
             let to = motion
                 .position_step
@@ -243,6 +276,7 @@ fn drive_step(
         .map(|i| drift_update(i, heading, speed, work_a4, accelerate, stick_x, constants))
         .transpose()?;
     Ok(Motion {
+        audio: None,
         contact: None,
         drift,
         position_step,

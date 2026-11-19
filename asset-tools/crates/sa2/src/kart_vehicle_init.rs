@@ -106,6 +106,7 @@ pub(crate) fn story_boost(
     charge: i32,
     timers: Option<(i32, i32)>,
     flag: Option<u32>,
+    vehicle_state: Option<i32>,
 ) -> Result<(i32, (i32, i32), Profile)> {
     let task_position = input.boost.position;
     let b = &mut input.boost;
@@ -126,6 +127,7 @@ pub(crate) fn story_boost(
     bind(&mut b.slot_flag, timers.map(|t| t.1))?;
     bind(&mut b.work_44, flag.map(|v| v as i32))?;
     let drive_flag = b.work_44;
+    let piece_id = b.piece_id;
     let mut output = profile(
         bytes,
         ProfileInput {
@@ -156,7 +158,9 @@ pub(crate) fn story_boost(
             output.weight,
             drive_flag,
             story_profile as i32,
-            rel.data(4)?,
+            vehicle_state,
+            piece_id,
+            &rel,
         )?);
     }
     Ok((b.work_d8, (b.work_dc, b.slot_flag), output))

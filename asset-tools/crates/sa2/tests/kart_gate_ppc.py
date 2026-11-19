@@ -292,13 +292,13 @@ if len(sys.argv)>4:
             assert doc["primaryCharge"]==charge==(54 if "Rouge" in path.name else 94)
             # Feed the same earned charge into readiness, a later press, and
             # the following active frame. Only initialize duration/readiness once.
-            boost_inputs=dict(work_70=0,position=[1,2,3],work_44=1)
+            boost_inputs=dict(work_70=0,piece_id=0,position=[1,2,3],work_44=1)
             def boost(**changes):
                 return dict(boost_tick=dict(velocity=[0,0,0],
                             boost=dict(boost_inputs,**changes)))
             q.update(primary_charge=0,updates=[pickups[0],boost(work_dc=0,slot_flag=0,buttons_pressed=0),
                 boost(buttons_pressed=0x200,normalized_velocity=[0.6,0.8,0]),boost()])
-            driving=dict(buttons=4,work_28c=0,heading=17,work_a4=2,stick_x=0,steering_sum=0)
+            driving=dict(audio_work_284=0,buttons=4,work_28c=0,heading=17,work_a4=2,stick_x=0,steering_sum=0)
             driving["contact"]=dict(previous_position=[7,4,5],result=dict(return_word=1,resolved_position=[8,5,7]))
             driving["position_step"]=dict(work_74=0,transformed_vector=[-1.25,0.75,2])
             for event in q["updates"][1:]:
@@ -326,4 +326,8 @@ if len(sys.argv)>4:
                 collision=profile["drive"]["contact"]
                 assert collision["request"]["from"]==[7,4,5] and collision["request"]["to"]==pos["position"]
                 assert collision["response"]["position"]==[8,5,7] and collision["response"]["velocity"]==[1,1,2]
+                calls=profile["drive"]["audio"]["calls"]
+                assert calls[1]["play"]["cue"]==profile["cue_words"][0]
+                assert calls[1]["play"]["position"]==collision["request"]["to"]
+                assert calls[-1]["pitch"]["value"]==(3072 if vy else 0)
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")
