@@ -471,6 +471,7 @@ pub struct GateInput {
     global_22494: i32,
     global_2ec208: i32,
     controller: Option<GateController>,
+    post_contact_fall: Option<crate::kart_fall_recovery::Input>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -487,6 +488,8 @@ pub struct GateOutput {
     controller: Option<GateController>,
     callbacks: &'static [u32],
     resume_offset: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fall: Option<crate::kart_fall_recovery::Output>,
 }
 
 /// CartD 0x2214..0x2284. Controller data belongs to the selected player slot.
@@ -513,7 +516,17 @@ pub fn update_gate(bytes: &[u8], mut input: GateInput) -> Result<GateOutput> {
     } else {
         (&[], 0x2284)
     };
+    let fall = match (resume_offset, input.post_contact_fall) {
+        (0x287c, Some(s)) => Some(crate::kart_fall_recovery::tick(bytes, s)?),
+        (_, Some(_)) => {
+            return Err(Error::invalid(
+                "fall observation supplied on a path that skips the callback",
+            ))
+        }
+        (_, None) => None,
+    };
     Ok(GateOutput {
+        fall,
         state: input.state,
         controller: input.controller,
         callbacks,

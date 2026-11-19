@@ -109,3 +109,5 @@ pub mod kart_ramp;
 pub mod kart_story_target;
 pub mod kart_timeout;
 pub mod checkpoint;
+
+pub mod kart_fall_recovery;
