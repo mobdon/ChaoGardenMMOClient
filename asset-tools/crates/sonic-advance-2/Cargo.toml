@@ -1,0 +1,19 @@
+[package]
+name = "sonic-advance-2-assets"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Fingerprint-gated, local Sonic Advance 2 A2NE asset inspection"
+
+# Deliberately standalone until the four asset tracks agree a common workspace.
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+
+[[bin]]
+name = "a2ne-assets"
+path = "src/main.rs"
