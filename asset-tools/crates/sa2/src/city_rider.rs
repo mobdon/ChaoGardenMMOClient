@@ -9,6 +9,10 @@ pub fn rig(prs: &[u8], model_id: u16) -> Result<model::Model> {
     if manifest::sha256(prs) != MODEL_SHA {
         return Err(Error::invalid("unsupported Sonic model archive revision"));
     }
+    archive_rig(prs, model_id, "sonicmdl-rig")
+}
+
+pub(crate) fn archive_rig(prs: &[u8], model_id: u16, format: &str) -> Result<model::Model> {
     let mut data = archive::decompress_prs(prs, 2 * 1024 * 1024)?;
     // Directory offsets and all node transform fields are 32-bit big-endian words.
     // The generic node reader leaves geometry opaque; never decode mesh payloads this way.
@@ -26,11 +30,12 @@ pub fn rig(prs: &[u8], model_id: u16) -> Result<model::Model> {
             break;
         }
     }
-    let root_offset = root.ok_or_else(|| Error::invalid("missing Sonic model directory entry"))?;
+    let root_offset =
+        root.ok_or_else(|| Error::invalid("missing character model directory entry"))?;
     let nodes = model::read_nodes_at(&data, root_offset, data.len())?;
     Ok(model::Model {
         root_offset,
-        format: "sonicmdl-rig".into(),
+        format: format.into(),
         version: 0,
         nodes,
         attachments: vec![],
