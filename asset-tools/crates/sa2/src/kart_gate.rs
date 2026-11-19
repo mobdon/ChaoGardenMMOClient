@@ -584,7 +584,9 @@ pub struct GateSequence {
     primary_kart_counter: u32,
     sequence: u32,
     registered_tasks: [u32; 6],
-    updates: Vec<GateObservation>,
+    #[serde(default)]
+    controller_state: ControllerState,
+    updates: Vec<SequenceEvent>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -593,6 +595,21 @@ struct GateObservation {
     collision_flags: u16,
     first_contact: u32,
     final_flags: u32,
+}
+#[derive(Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ControllerState {
+    elapsed: i32,
+    flag_3ce24: i32,
+    engine_byte_16: i8,
+}
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+enum SequenceEvent {
+    Gate(GateObservation),
+    Controller {
+        controller: crate::kart_story_target::ControllerSignals,
+    },
 }
 /// Replay admitted active callbacks only. External countdown or traffic changes
 /// between callbacks are not implied by the order of supplied contacts.
@@ -621,7 +638,27 @@ pub fn story_sequence(
     }
     let (mut timer, mut count, mut seq) = (s.timer_word, s.primary_kart_counter, s.sequence);
     let mut updates = Vec::new();
+    let mut clock = s.controller_state;
     for event in s.updates {
+        let event = match event {
+            SequenceEvent::Gate(g) => g,
+            SequenceEvent::Controller { controller } => {
+                let r = crate::kart_story_target::controller_verified(controller.input(
+                    timer as i32,
+                    clock.elapsed,
+                    clock.flag_3ce24,
+                    clock.engine_byte_16,
+                ))?;
+                timer = r.remaining as u32;
+                clock = ControllerState {
+                    elapsed: r.elapsed,
+                    flag_3ce24: r.flag_3ce24,
+                    engine_byte_16: r.engine_byte_16,
+                };
+                updates.push(json!({"controller":r}));
+                continue;
+            }
+        };
         let latch = latches
             .get_mut(&event.placement)
             .ok_or_else(|| Error::invalid("placement is not a story time gate"))?;
@@ -652,6 +689,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }

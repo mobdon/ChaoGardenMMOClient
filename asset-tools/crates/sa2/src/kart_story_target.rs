@@ -109,30 +109,66 @@ pub struct ControllerInput {
     remove_task: bool,
     pursuit_latch: i32,
     race_finish_latch: i32,
-    elapsed: i32,
-    remaining: i32,
+    pub(crate) elapsed: i32,
+    pub(crate) remaining: i32,
     engine_byte_09: i8,
     engine_byte_42: i8,
-    flag_3ce24: i32,
-    engine_byte_16: i8,
+    pub(crate) flag_3ce24: i32,
+    pub(crate) engine_byte_16: i8,
 }
 
+/// Inputs at a scheduled controller callback; clock words come from the shared state.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ControllerSignals {
+    remove_task: bool,
+    pursuit_latch: i32,
+    race_finish_latch: i32,
+    engine_byte_09: i8,
+    engine_byte_42: i8,
+}
+impl ControllerSignals {
+    pub(crate) fn input(
+        self,
+        remaining: i32,
+        elapsed: i32,
+        flag_3ce24: i32,
+        engine_byte_16: i8,
+    ) -> ControllerInput {
+        ControllerInput {
+            remaining,
+            elapsed,
+            flag_3ce24,
+            engine_byte_16,
+            remove_task: self.remove_task,
+            pursuit_latch: self.pursuit_latch,
+            race_finish_latch: self.race_finish_latch,
+            engine_byte_09: self.engine_byte_09,
+            engine_byte_42: self.engine_byte_42,
+            race_results: None,
+            lap_clock: None,
+        }
+    }
+}
 #[derive(Serialize)]
 pub struct ControllerUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     lap_clock: Option<crate::kart_lap_clock::Clock>,
     #[serde(skip_serializing_if = "Option::is_none")]
     race_results: Option<ResultActions>,
-    elapsed: i32,
-    remaining: i32,
-    flag_3ce24: i32,
-    engine_byte_16: i8,
+    pub(crate) elapsed: i32,
+    pub(crate) remaining: i32,
+    pub(crate) flag_3ce24: i32,
+    pub(crate) engine_byte_16: i8,
     calls: Vec<(&'static str, Option<i32>)>,
     next: &'static str,
 }
 
 pub fn controller(bytes: &[u8], s: ControllerInput) -> Result<ControllerUpdate> {
     kart_progress::verify(bytes)?;
+    controller_verified(s)
+}
+pub(crate) fn controller_verified(s: ControllerInput) -> Result<ControllerUpdate> {
     let mut r = ControllerUpdate {
         lap_clock: None,
         race_results: None,

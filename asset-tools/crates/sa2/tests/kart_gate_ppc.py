@@ -21,7 +21,7 @@ for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==203:break
         if k==202:target=s;loc=0;continue
         loc+=inc
-        if target==1 and (0xb74c<=loc<0xb81c or 0x1714<=loc<0x17e8):
+        if target==1 and (0xb74c<=loc<0xb81c or 0x1714<=loc<0x17e8 or 0x85e0<=loc<0x861c):
             if k==10:callsites[loc]=a
             if k in (4,6):
                 ptr=a if mod==0 else base[s]+a;variables[loc]=ptr
@@ -76,6 +76,13 @@ if len(sys.argv)>4:
             for p in slots.values():put(p+6,"H",0);put(p+0x2c,"I",coll)
             events=[];expected=[]
             for index,flags,first in [(b,1,0),(b,1,other),(a,0,primary),(b,1,primary),(a,1,primary),(a,1,other)]:
+                # Run the countdown instructions on the very same emulated memory word.
+                assert variables[0xb79e]==variables[0x860a]
+                b9,b42=(1,0) if len(events)==2 else (0,0)
+                put(variables[0x85e2]+9,"b",b9);put(variables[0x85e2]+0x42,"b",b42)
+                u.emu_start(base[1]+0x85e0,base[1]+0x861c,count=32)
+                events.append(dict(controller=dict(remove_task=False,pursuit_latch=0,race_finish_latch=0,engine_byte_09=b9,engine_byte_42=b42)))
+                expected.append(get(variables[0xb79e]+12,"i"))
                 p=slots[index];put(p+0x24,"f",rows[index][8]);put(coll+4,"H",flags);put(coll+20,"I",first)
                 put(variables[0xb7f2]+0x7c,"I",4)
                 u.reg_write(R.UC_PPC_REG_1,ram+0xf000);u.reg_write(R.UC_PPC_REG_31,p);u.reg_write(R.UC_PPC_REG_30,task)
@@ -88,5 +95,6 @@ if len(sys.argv)>4:
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             doc=json.loads(out.read_text());assert doc["sequence"]==2
             for event,ref in zip(doc["updates"],expected,strict=True):
+                if isinstance(ref,int):assert event["controller"]["remaining"]==ref;continue
                 r=event["result"];assert (r["latch"],r["timer_word"],r["primary_kart_counter"],r["calls"])==ref
-    print("Matched 24 ordered gate updates across four installed story layouts.")
+    print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")
