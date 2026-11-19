@@ -135,6 +135,7 @@ fn background_updates(rel: &CityRel<'_>, b: Background) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Startup {
+    fog_load: Option<FogLoad>,
     layout_handle: Option<u32>,
     background_allocated: Option<bool>,
     callback_slots_occupied: Option<[bool; 4]>,
@@ -204,6 +205,48 @@ fn walker_setup(rel: &CityRel<'_>, w: Walker) -> Result<Value> {
     Ok(json!(ops))
 }
 /// Registered startup up to the first unconditional resource call (1:0x176c).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FogLoad {
+    task_present: bool,
+    file_status: Option<i32>,
+    scratch: Option<Vec<u8>>,
+    task_allocated: Option<bool>,
+}
+fn fog_load(rel: &CityRel<'_>, v: FogLoad) -> Result<Value> {
+    let invalid = || Error::invalid("invalid stage 20 fog observations");
+    if v.task_present {
+        if v.file_status.is_some() || v.scratch.is_some() || v.task_allocated.is_some() {
+            return Err(invalid());
+        }
+        return Ok(json!({"skipped":true}));
+    }
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let bytes = match (v.file_status, v.scratch) {
+        (Some(0), Some(bytes)) if bytes.len() == 528 => bytes,
+        (Some(status), None) if status != 0 => {
+            let mut bytes = vec![0; 528];
+            let at = ptr(0x1163e, 4)? as usize;
+            bytes[8..12].copy_from_slice(rel.data(4)?.get(at..at + 4).ok_or_else(invalid)?);
+            bytes
+        }
+        _ => return Err(invalid()),
+    };
+    let allocated = v.task_allocated.ok_or_else(invalid)?;
+    let name_at = ptr(0x11cf6, 5)? as usize;
+    let data = rel.data(5)?.get(name_at..).ok_or_else(invalid)?;
+    let name = std::str::from_utf8(&data[..data.iter().position(|&b| b == 0).ok_or_else(invalid)?])
+        .map_err(|_| invalid())?;
+    Ok(
+        json!({"skipped":false,"loadResult":i32::from(v.file_status==Some(0)),
+        "destination":bytes,"create":[0,1,ptr(0x11cee,1)?,name],"cleanup":if allocated{Some(ptr(0x11d12,1)?)}else{None}}),
+    )
+}
 fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
     let mut queries = s.character_queries.into_iter();
     let mut calls = Vec::new();
@@ -245,6 +288,9 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
         }
     }
     let mut report = json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls});
+    if s.fog_load.is_some() && s.callback_slots_occupied.is_none() {
+        return Err(Error::invalid("fog load requires final startup"));
+    }
     if s.callback_slots_occupied.is_some() && s.background_allocated.is_none() {
         return Err(Error::invalid("final startup requires scene setup"));
     }
@@ -387,6 +433,9 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
                     json!([name(0x1a42)?, pointer(0x1a4a, 4)?]),
                 )?);
                 report["finalSetup"] = json!(final_ops);
+                if let Some(fog) = s.fog_load {
+                    report["fogLoad"] = fog_load(rel, fog)?;
+                }
                 report["continueAt"] = Value::Null;
             }
         }

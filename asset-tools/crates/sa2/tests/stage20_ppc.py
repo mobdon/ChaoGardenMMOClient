@@ -914,3 +914,52 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         report=json.loads(out.read_text())["startup"]
         assert report["continueAt"] is None and report["finalSetup"]==final_ops
 print("16 startup finalization paths matched")
+
+# Enter the actual startup fog helper. Only file, memory and task services are supplied.
+for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
+    while True:
+        n,k,s,v=struct.unpack_from(">HBBI",d,i);i+=8
+        if k==203:break
+        if k==202:t=s;off=0;continue
+        off+=n
+        if mod==19 and t==1 and s==6 and 0x11c78<=off<0x11d38 and k in (4,6):
+            addr=layout_bss+v
+            put(base[1]+off,"H",(addr if k==4 else (addr+32768)>>16)&65535)
+fog_dst=layout_bss+4
+def fog_service(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x11694:
+        assert bytes(cpu.mem_read(reg(3),14)).split(b"\0")[0]==b"stg20_fog.bin"
+        cpu.reg_write(R.UC_PPC_REG_3,status&0xffffffff)
+    elif site==0x11634:
+        assert (reg(3),reg(4),reg(5))==(fog_dst,0,528);cpu.mem_write(reg(3),bytes(528))
+    elif site==0x116ac:
+        assert (reg(3),reg(4),reg(5))==(fog_dst,0x80fffe60,528);cpu.mem_write(reg(3),scratch)
+    elif site==0x11cd8:fog_report["loadResult"]=reg(3)
+    elif site==0x11cf8:
+        fog_report["create"]=[reg(3),reg(4),reg(5)-base[1],bytes(cpu.mem_read(reg(6),32)).split(b"\0")[0].decode()]
+        cpu.reg_write(R.UC_PPC_REG_3,msg if allocated else 0)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x11684,0x11694,0x11634,0x116ac,0x11cd8,0x11cdc,0x11cf8):
+    u.hook_add(UC_HOOK_CODE,fog_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    cases=[(True,None,None)]+[(False,status,ok) for status in (0,-1,1) for ok in (False,True)]
+    for idx,(present,status,allocated) in enumerate(cases):
+        fog_report=dict(skipped=present);scratch=bytes((j*19)%256 for j in range(528))
+        u.mem_write(fog_dst,b"\x55"*528);put(layout_bss+0x6d4,"I",msg if present else 0);put(msg+24,"I",0)
+        for r,val in [(1,0x100e00),(3,base[5]+0x15bb4),(4,fog_dst)]:u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+        u.reg_write(R.UC_PPC_REG_LR,stop);u.emu_start(base[1]+0x11c78,stop,count=220)
+        assert u.reg_read(R.UC_PPC_REG_PC)==stop
+        obs=dict(task_present=present)
+        if not present:
+            obs.update(file_status=status,task_allocated=allocated)
+            if status==0:obs["scratch"]=list(scratch)
+            fog_report.update(destination=list(u.mem_read(fog_dst,528)),cleanup=get(msg+24,"I")[0]-base[1] if allocated else None)
+            assert get(layout_bss+0x6d4,"I")[0]==(msg if allocated else 0)
+        else:assert bytes(u.mem_read(fog_dst,528))==b"\x55"*528
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],startup=dict(
+            character_queries=[7],slot_one_present=False,layout_handle=0,background_allocated=False,callback_slots_occupied=[False]*4,fog_load=obs))))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())["startup"]["fogLoad"]==fog_report
+print(len(cases),"fog manager and file-service paths matched")
