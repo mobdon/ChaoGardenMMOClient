@@ -64,6 +64,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   camera.attachControl(canvas, true);
   camera.inputs.attached.keyboard?.detachControl();
   if (camera.inputs.attached.pointers) camera.inputs.attached.pointers.buttons = [2];
+  // Babylon maps right drag to pan; remap it because garden panning is disabled.
+  camera.movement.input.setInteractions('pointer', { button: 2 }, 'rotate');
   const hemi = new HemisphericLight('sky-light', new Vector3(0, 1, 0), scene);
   hemi.intensity = 0.6;
   hemi.groundColor = Color3.FromHexString('#496b68');
@@ -113,6 +115,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   let time = 0;
   let inputTimer = 0;
   let inputPace = 0;
+  let renderDelta = 0;
   const gaitControls = createGaitControls(canvas);
   let flameTexture = null;
   let flameMaterialPromise = null;
@@ -1477,7 +1480,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   scene.onAfterAnimationsObservable.add(() => {
     for (const item of playerMeshes.values()) item.imported?.skate?.apply();
     for (const item of playerMeshes.values()) groundImportedFeet(item);
-    for (const item of playerMeshes.values()) item.imported?.steadyHead?.apply();
+    for (const item of playerMeshes.values()) {
+      const skate = item.imported?.skate?.diagnostics;
+      item.imported?.steadyHead?.update(renderDelta, { mounted: !!item.vehicleKey,
+        gait: item.nativeGait || 'Idle', skateBlend: skate?.blend || 0, skatePhase: skate?.phase || 0 });
+      item.imported?.steadyHead?.apply();
+    }
     for (const item of animatedDecor) if (item.kind === 'npc') groundImportedFeet(item.chao);
   });
   scene.onBeforeRenderObservable.add(() => {
@@ -1497,6 +1505,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   engine.runRenderLoop(() => {
     if (disposed) return;
     const dt = Math.min(0.05, engine.getDeltaTime() / 1000);
+    renderDelta = dt;
     time += dt;
     if (flameTexture) flameTexture.uOffset = (Math.floor(time * 18) % 16) / 16;
     inputTimer += dt;
@@ -1565,7 +1574,6 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         const speed = movingPose ? motion.speed : 0;
         item.nativeVisualSpeed = movingPose ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
         item.nativeGait = chooseNativeGait(speed, item.nativeGait);
-        item.imported.steadyHead?.update(dt, { mounted: !!item.vehicleKey });
         const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
         if (animation && item.imported.current !== animation) {
           item.imported.current?.stop();
@@ -1669,6 +1677,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     canvas.dataset.headScreenPosition = headScreen ? `${headScreen.x.toFixed(4)},${headScreen.y.toFixed(4)}` : '';
     canvas.dataset.headStabilized = String(head?.active || false);
     canvas.dataset.headStabilityBlend = (head?.blend || 0).toFixed(3);
+    canvas.dataset.headMotionMode = head?.mode || 'native';
+    canvas.dataset.headStrokeBob = (head?.bobOffsetY || 0).toFixed(6);
     canvas.dataset.headActorPosition = head?.position?.map(value => value.toFixed(6)).join(',') || '';
     canvas.dataset.skateActive = String(skate?.active || false);
     canvas.dataset.skateState = skate?.state || 'unavailable';
@@ -1679,6 +1689,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     canvas.dataset.shoeExhaust = String((self?.ownerGear?.footwear || []).filter(entry => entry.nativeEffects?.some(effect => effect.mesh.isEnabled())).length);
     canvas.dataset.nativeShoeEffects = (self?.ownerGear?.footwear || []).flatMap(entry => entry.nativeEffects || []).filter(effect => effect.mesh.isEnabled()).map(effect => effect.modelId).join(',');
     canvas.dataset.skateClip = skate?.clip || '';
+    canvas.dataset.skatePhase = (skate?.phase || 0).toFixed(6);
     canvas.dataset.chaoMotion = skate?.active ? `ShadowSkate${skate.clip}` : self?.imported?.run && self.imported.current === self.imported.run ? 'NativeRun119' : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
     canvas.dataset.chaoMotionRate = (self?.imported?.current?.speedRatio || 1).toFixed(3);
   });
