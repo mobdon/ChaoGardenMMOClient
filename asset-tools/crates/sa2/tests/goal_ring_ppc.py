@@ -482,7 +482,7 @@ for pc in alloc_sites:cpu.hook_add(UC_HOOK_CODE,position_alloc,begin=pc,end=pc)
 cpu.hook_add(UC_HOOK_CODE,position_return,begin=BASE+helper+0x134,end=BASE+helper+0x134)
 # Run the manager on the linked records created by the actual insertion helper.
 manager_services={}
-for begin,end in [(0x309d4,0x30aa4),(0x30b34,0x30bc8)]:
+for begin,end in [(0x309d4,0x30aa4),(0x30b34,0x30bc8),(0x30bc8,0x30c54)]:
     code=bytearray(d[ss[1][0]+begin:ss[1][0]+end])
     for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         section=off=0
@@ -501,14 +501,24 @@ for begin,end in [(0x309d4,0x30aa4),(0x30b34,0x30bc8)]:
     cpu.mem_write(BASE+begin,bytes(code))
 def manager_service(cpu,pc,*_):
     arg=cpu.reg_read(R.UC_PPC_REG_3)
+    if manager_services[pc]==0x8011b314:
+        assert cpu.reg_read(R.UC_PPC_REG_4)==TASK+0xc00
+        point=lambda a:struct.unpack(">fff",cpu.mem_read(a,12))
+        f32=lambda x:struct.unpack(">f",struct.pack(">f",x))[0]
+        sq=[f32(f32(a-b)**2) for a,b in zip(point(arg),point(TASK+0xc00))]
+        dist=f32(f32(f32(sq[0]+sq[1])+sq[2])**0.5)
+        visits.append([arg,struct.unpack(">I",struct.pack(">f",dist))[0]])
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",dist),"big"))
+        cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+        return
     if manager_services[pc]==0x801194e0:released.append([arg,read32(arg+12)])
     else:
         assert manager_services[pc]==0x80071888 and arg==manager
         removals.append(arg)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in manager_services:cpu.hook_add(UC_HOOK_CODE,manager_service,begin=pc,end=pc)
-def manager_run(entry):
-    cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,manager)
+def manager_run(entry,arg=manager):
+    cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,arg)
     cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x238)
     cpu.emu_start(BASE+entry,BASE+0x238,count=400)
     assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x238
@@ -523,8 +533,9 @@ for before,slot in itertools.product(range(11),(0,1)):
             previous=[]
             if prev:
                 for idx,(val,limit) in enumerate([(0,10),(18,20),(3,15),(100,103)]):
-                    previous.append(dict(address=TASK+0xa00+idx*24,value=val,limit=limit))
+                    previous.append(dict(address=TASK+0xa00+idx*24,value=val,limit=limit,position=[pos[0]+12*idx,pos[1],pos[2]]))
                 for idx,n in enumerate(previous):
+                    cpu.mem_write(n["address"],struct.pack(">fff",*n["position"]))
                     cpu.mem_write(n["address"]+12,struct.pack(">ffI",n["value"],n["limit"],previous[idx+1]["address"] if idx+1<len(previous) else 0))
             old=(previous[0]["address"] if previous else 0) if node else None
             hook=(0x3456 if parent else 0) if node else None
@@ -546,6 +557,8 @@ for before,slot in itertools.product(range(11),(0,1)):
         if list_input and (prev or created):
             updates=53 if slot else 1
             frames=[]
+            query=[pos[0]+(10 if slot else 12),pos[1],pos[2]]
+            cpu.mem_write(TASK+0xc00,struct.pack(">fff",*query))
             for _ in range(updates):
                 released=[];removals=[];manager_run(0x309d4)
                 remaining=[];cursor=read32(manager+60)
@@ -553,13 +566,15 @@ for before,slot in itertools.product(range(11),(0,1)):
                     assert len(remaining)<8
                     remaining.append([cursor,read32(cursor+12)]);cursor=read32(cursor+20)
                 frames.append(dict(released=released,remaining=remaining,removeManager=bool(removals)))
+                visits=[];manager_run(0x30bc8,TASK+0xc00)
+                frames[-1]["rangeQuery"]=dict(visited=visits,hit=bool(cpu.reg_read(R.UC_PPC_REG_3)))
                 if removals:break
             owns=[bool(slot),bool(linked or parent)]
             write32(manager_slot,manager if owns[0] else 0x1234)
             write32(global_hook,BASE+0x30bc8 if owns[1] else 0x5678)
             released=[];manager_run(0x30b34)
             assert read32(manager+60)==0 and read32(manager_slot)==(0 if owns[0] else 0x1234) and read32(global_hook)==(0 if owns[1] else 0x5678)
-            list_input['schedule']=dict(previous=previous,updates=updates,cleanup=owns)
+            list_input['schedule']=dict(previous=previous,updates=updates,cleanup=owns,query=query)
             record=next(ev[1] for ev in events if ev[0]=="positionList")
             record["schedule"]=dict(frames=frames,cleanup=dict(released=[item[0] for item in released],clearManager=owns[0],clearHook=owns[1]))
         if list_input:obs['activation']['position_list']=list_input

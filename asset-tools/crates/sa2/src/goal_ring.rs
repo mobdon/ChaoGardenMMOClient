@@ -84,6 +84,7 @@ pub struct PositionInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PositionNode {
+    pub position: Option<[f32; 3]>,
     pub address: u32,
     pub value: f32,
     pub limit: f32,
@@ -91,6 +92,7 @@ pub struct PositionNode {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagerSchedule {
+    pub query: Option<[f32; 3]>,
     pub previous: Vec<PositionNode>,
     pub updates: u8,
     pub cleanup: Option<[bool; 2]>,
@@ -135,18 +137,22 @@ impl PositionRoutine {
                     node,
                     f32::from_bits(self.initial[0]),
                     f32::from_bits(self.initial[1]),
+                    Some(pos),
                 ));
             }
             for n in &schedule.previous {
                 if n.address == 0 || !seen.insert(n.address) {
                     return Err(bad());
                 }
-                list.push((n.address, n.value, n.limit));
+                if schedule.query.is_some() && n.position.is_none() {
+                    return Err(bad());
+                }
+                list.push((n.address, n.value, n.limit, n.position));
             }
             let mut frames = Vec::new();
             for _ in 0..schedule.updates {
                 let mut freed = Vec::new();
-                list.retain_mut(|(addr, value, limit)| {
+                list.retain_mut(|(addr, value, limit, _)| {
                     *value += self.step;
                     if *value > *limit {
                         freed.push(json!([addr, limit.to_bits()]));
@@ -155,7 +161,20 @@ impl PositionRoutine {
                         true
                     }
                 });
-                frames.push(json!({"released":freed,"remaining":list.iter().map(|(a,v,_)|[ *a,v.to_bits() ]).collect::<Vec<_>>(),"removeManager":list.is_empty()}));
+                frames.push(json!({"released":freed,"remaining":list.iter().map(|(a,v,_,_)|[ *a,v.to_bits() ]).collect::<Vec<_>>(),"removeManager":list.is_empty()}));
+                if let Some(point) = schedule.query {
+                    let mut visits = Vec::new();
+                    let mut hit = false;
+                    for &(addr, radius, _, center) in &list {
+                        let distance = crate::board::point_distance(center.ok_or_else(bad)?, point);
+                        visits.push(json!([addr, distance.to_bits()]));
+                        if distance < radius {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    frames.last_mut().unwrap()["rangeQuery"] = json!({"visited":visits,"hit":hit});
+                }
                 if list.is_empty() {
                     break;
                 }
@@ -496,6 +515,18 @@ impl Program {
                         }
                         let constant = |off| word(rel.data(4)?, data(off, 4)? as usize);
                         let tick = data(0x42, 1)?;
+                        let hook = data(0xc2, 1)?;
+                        if manifest::sha256(
+                            instructions
+                                .get(hook as usize..hook as usize + 0x8c)
+                                .ok_or_else(invalid)?,
+                        ) != "f5f9cd8d2ee5822a0cda8f90c980b8e2eb7eb917852b4c32722d9a8875f89585"
+                            || !rel.reference(1, hook + 0x44).is_some_and(|r| {
+                                r.module == 0 && r.kind == 10 && r.addend == 0x8011b314
+                            })
+                        {
+                            return Err(invalid());
+                        }
                         let cleanup = data(0x72, 1)?;
                         for (site, target) in [
                             (tick + 0x80, 0x801194e0),

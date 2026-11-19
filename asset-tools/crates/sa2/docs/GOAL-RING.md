@@ -143,3 +143,15 @@ and the first empty-list removal request. To observe teardown separately,
 supply `cleanup: [owns_manager_slot, owns_global_hook]`. Teardown releases
 remaining nodes in order and clears only the slots it still owns. A
 removal request alone does not prove the scheduler executed teardown.
+
+To invoke the stage range callback on the surviving list after each
+scheduled update, supply a world-space XYZ point in `schedule.query` and
+`position` on each previous node. The newly inserted node uses the actual
+action position. The callback follows list order, returning true on the
+first point-to-point distance strictly below the node's current radius.
+Equality is a miss; an empty list returns false. The report records visited
+addresses and distance bits. This explicit callback replay does not imply
+the global engine slot currently points to it. It uses the shared Rust
+point-distance calculation used for board and path geometry. The installed
+comparison executes the original range callback with independently computed
+distances; exact retail library square-root rounding remains unverified.
