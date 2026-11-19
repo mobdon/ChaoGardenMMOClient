@@ -162,3 +162,92 @@ mod tests {
         }
     }
 }
+
+/// Imported task allocation, random generator and task deletion. A host is bound
+/// to the current Muteki parent, which is also the native allocation's parent.
+pub trait MutekiHost {
+    type Child;
+    fn delete_parent(&mut self);
+    fn allocate_child(&mut self, flags: u32, update: u32) -> Option<Self::Child>;
+    fn random_sample(&mut self) -> i32;
+    fn initialize_child(&mut self, child: Self::Child, angles: [i32; 2], player: u8, display: u32);
+}
+
+/// CartD +0x6d7c. work_108 belongs to the vehicle selected by signed player byte.
+pub fn tick_muteki(timer: &mut u16, player: u8, work_108: i32, host: &mut impl MutekiHost) {
+    if work_108 == 0 {
+        host.delete_parent();
+        return;
+    }
+    *timer = timer.wrapping_add(1);
+    for _ in 0..1 + (*timer & 1) {
+        if let Some(child) = host.allocate_child(2, 0x6ef0) {
+            // Section 4 +0x2c0, +0x2bc. Native random samples are 15-bit.
+            let mut angle = || ((host.random_sample() as f32 / 32768.0) * 65536.0) as i32;
+            let angles = [angle(), angle()];
+            host.initialize_child(child, angles, player, 0x6f2c);
+        }
+    }
+}
+
+/// CartD +0x6ef0. Returns true when the native routine requests deletion.
+pub fn tick_muteki_child(age: &mut u8) -> bool {
+    if *age >= 16 {
+        true
+    } else {
+        *age += 1;
+        false
+    }
+}
+
+#[cfg(test)]
+mod muteki_tests {
+    use super::*;
+    #[derive(Default)]
+    struct Host {
+        attempts: u32,
+        draws: i32,
+        deleted: bool,
+        particles: Vec<([i32; 2], u8)>,
+    }
+    impl MutekiHost for Host {
+        type Child = ();
+        fn delete_parent(&mut self) {
+            self.deleted = true;
+        }
+        fn allocate_child(&mut self, flags: u32, update: u32) -> Option<()> {
+            assert_eq!((flags, update), (2, 0x6ef0));
+            self.attempts += 1;
+            (self.attempts != 1).then_some(())
+        }
+        fn random_sample(&mut self) -> i32 {
+            self.draws += 1;
+            32768 - self.draws
+        }
+        fn initialize_child(&mut self, _: (), angles: [i32; 2], player: u8, display: u32) {
+            assert_eq!(display, 0x6f2c);
+            self.particles.push((angles, player));
+        }
+    }
+    #[test]
+    fn wraps_then_alternates_attempts_and_only_draws_for_allocated_children() {
+        let mut h = Host::default();
+        let mut timer = u16::MAX;
+        tick_muteki(&mut timer, 1, 1, &mut h);
+        assert_eq!((timer, h.attempts, h.draws), (0, 1, 0));
+        tick_muteki(&mut timer, 1, -1, &mut h);
+        assert_eq!(h.particles, vec![([65534, 65532], 1), ([65530, 65528], 1)]);
+        tick_muteki(&mut timer, 1, 0, &mut h);
+        assert!(h.deleted);
+        assert_eq!((timer, h.attempts, h.draws), (1, 3, 4));
+    }
+    #[test]
+    fn age_sixteen_is_visible_before_next_update_requests_deletion() {
+        let mut age = 0;
+        for _ in 0..16 {
+            assert!(!tick_muteki_child(&mut age));
+        }
+        assert!(tick_muteki_child(&mut age));
+        assert_eq!(age, 16);
+    }
+}
