@@ -29,6 +29,8 @@ pub struct Program {
     record_constants: [f32; 5],
     #[serde(skip)]
     record_pool: u32,
+    #[serde(skip)]
+    effect_update: (u32, [f32; 6]),
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     #[serde(skip)]
@@ -608,6 +610,52 @@ impl Program {
             scalar(0xd2)?,
             scalar(0x11e)?,
         ];
+        let (1, update) = rel
+            .local_pointer(5, record_pool + 32)?
+            .ok_or_else(invalid)?
+        else {
+            return Err(invalid());
+        };
+        if manifest::sha256(
+            instructions
+                .get(update as usize..update as usize + 0x198)
+                .ok_or_else(invalid)?,
+        ) != "9fd6ff66108eb265b3c2381ed3e4c2338c99f71a1bc586bd6093549250f78648"
+        {
+            return Err(invalid());
+        }
+        let call = rel.reference(1, update + 0xb8).ok_or_else(invalid)?;
+        if (call.module, call.kind, call.addend) != (0, 10, 0x80112050) {
+            return Err(invalid());
+        }
+        let uref = |off| -> Result<usize> {
+            let h = rel.reference(1, update + off).ok_or_else(invalid)?;
+            let l = rel.reference(1, update + off + 4).ok_or_else(invalid)?;
+            if (h.module, h.section, h.kind) != (info.module, 4, 6)
+                || (l.module, l.section, l.kind, l.addend) != (info.module, 4, 4, h.addend)
+            {
+                return Err(invalid());
+            }
+            Ok(h.addend as usize)
+        };
+        let floats = rel.data(4)?;
+        let bias = uref(0x122)?;
+        if word(floats, bias)? != 0x43300000 || word(floats, bias + 4)? != 0 {
+            return Err(invalid());
+        }
+        let pooldata = rel.data(5)?;
+        let poolword = |off: usize| word(pooldata, record_pool as usize + off);
+        let effect_update = (
+            poolword(12)?,
+            [
+                f32::from_bits(poolword(16)?),
+                f32::from_bits(poolword(20)?),
+                f32::from_bits(poolword(24)?),
+                f32::from_bits(poolword(28)?),
+                f32::from_bits(word(floats, uref(0xbe)?)?),
+                f32::from_bits(word(floats, uref(0xce)?)?),
+            ],
+        );
         let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
         for i in 0..93 {
@@ -1382,6 +1430,7 @@ impl Program {
             spawn_constants,
             spawn_helper,
             record_constants,
+            effect_update,
             record_pool,
             fallback_message_offset,
             slot_words_offset,
@@ -1567,6 +1616,10 @@ impl Program {
                 return Err(Error::invalid("inconsistent effect record observations"));
             }
             let [unit, span, center, angle, half] = self.record_constants;
+            let mut frames = None;
+            if r.update.is_some() && !s.created {
+                return Err(Error::invalid("missing effect record for update"));
+            }
             let fields = if let Some([a, b]) = r.random {
                 let one = angle * ((a as f32 * unit) * span - center);
                 let two = angle * (b as f32 * unit - half);
@@ -1576,6 +1629,57 @@ impl Program {
                 {
                     return Err(Error::invalid("effect angle outside verified range"));
                 }
+                if let Some(u) = r.update {
+                    if u.returns.is_empty() || u.returns.len() > 2048 {
+                        return Err(Error::invalid("expected 1..2048 observed effect updates"));
+                    }
+                    let (limit, [advance, drag, gravity, growth, amplitude, factor]) =
+                        self.effect_update;
+                    let (mut p, mut v, mut size, mut rotation, mut age, mut phase, mut tint) = (
+                        pos,
+                        velocity,
+                        scale,
+                        one as i32,
+                        u.frame,
+                        0u32,
+                        color.ok_or_else(invalid)?,
+                    );
+                    let mut updates = Vec::new();
+                    let mut live = true;
+                    for val in u.returns {
+                        if !live {
+                            return Err(Error::invalid(
+                                "update supplied after effect returned zero",
+                            ));
+                        }
+                        rotation = rotation.wrapping_add(two as i32);
+                        size += growth;
+                        for (pos, speed) in p.iter_mut().zip(&mut v) {
+                            *pos += *speed;
+                            *speed *= drag;
+                        }
+                        v[1] += gravity;
+                        age += advance;
+                        let tilt = factor * (amplitude * val);
+                        if ![age, tilt]
+                            .into_iter()
+                            .all(|x| (-2147483648.0..2147483648.0).contains(&x))
+                        {
+                            return Err(Error::invalid(
+                                "effect update conversion outside verified range",
+                            ));
+                        }
+                        if ((age as i32 as i16) as i32 as u32) >= limit {
+                            age = limit.wrapping_sub(1) as f32;
+                            tint = (tint & 0xffffff) | ((tint >> 1) & 0xff000000);
+                            live = tint >> 24 != 0;
+                        }
+                        updates.push(json!({"query":phase,"word0":rotation,"scaleBits":size.to_bits(),"positionBits":p.map(f32::to_bits),
+                            "velocityBits":v.map(f32::to_bits),"frameBits":age.to_bits(),"word28":(tilt as i32).wrapping_add(0x4000),"color":tint,"keep":live,"word56":phase.wrapping_add(0x222)}));
+                        phase = phase.wrapping_add(0x222);
+                    }
+                    frames = Some(updates);
+                }
                 Some(
                     json!({"word0":one as i32,"scale4":scale.to_bits(),"position8":pos.map(f32::to_bits),
                     "velocity32":velocity.map(f32::to_bits),"word44":two as i32,"word56":0}),
@@ -1584,6 +1688,9 @@ impl Program {
                 None
             };
             out["record"] = json!({"request":[0x80032910u32,self.record_pool],"returned":r.address,"writes":fields});
+            if let Some(frames) = frames {
+                out["record"]["updates"] = json!(frames);
+            }
         }
         Ok(out)
     }
@@ -1794,7 +1901,14 @@ pub struct ConsumerGate {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RecordUpdate {
+    frame: f32,
+    returns: Vec<f32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RecordInput {
+    update: Option<RecordUpdate>,
     address: u32,
     random: Option<[i32; 2]>,
 }

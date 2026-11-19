@@ -1086,6 +1086,33 @@ def spawn_call(cpu,pc,*_):
     cpu.reg_write(R.UC_PPC_REG_LR,pc+4);cpu.reg_write(R.UC_PPC_REG_PC,hbase)
 for pc in draw_sites:sc.hook_add(UC_HOOK_CODE,spawn_draw,begin=pc,end=pc)
 sc.hook_add(UC_HOOK_CODE,spawn_call,begin=BASE+0x1c8,end=BASE+0x1c8)
+update=0x1c7ec
+ubase=BASE+0x2000;sc.mem_map(ubase,4096)
+ublock=bytearray(d[ss[1][0]+update:ss[1][0]+update+0x198])
+pool=0x20e888
+sc.mem_write(TASK+0x700,d[ss[5][0]+pool:ss[5][0]+pool+32])
+def phase_query(cpu,pc,*_):
+    queries.append(cpu.reg_read(R.UC_PPC_REG_3))
+    cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack('>d',value),'big'))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section==5 and off==pool+32:
+            assert (kind,s,val)==(1,1,update)
+        if section!=1 or not update<=off<update+len(ublock):continue
+        if kind==10:
+            assert module==0 and val==0x80112050
+            pc=ubase+off-update;sc.hook_add(UC_HOOK_CODE,phase_query,begin=pc,end=pc)
+        else:
+            assert module==12 and s==4 and kind in (4,6)
+            sc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8]);val+=DATA
+            struct.pack_into('>H',ublock,off-update,(val if kind==4 else (val+0x8000)>>16)&65535)
+sc.mem_write(ubase,bytes(ublock))
 for first,color in itertools.product([[0,1,16384,32767,12345],[307,21003,5189,20001,3]], [None,[16384,16385,0],[32767,0,32767]]):
     created=color is not None;address=TASK+0x600 if created else 0
     extra=first[:2] if created else None
@@ -1110,4 +1137,23 @@ for first,color in itertools.product([[0,1,16384,32767,12345],[307,21003,5189,20
     else:assert raw==b'\x12'*60
     record.update(returned=address,writes=fields);observed['record']=record
     obs=dict(position=pos,motion=motion,random=first,created=created,color_random=color,record=dict(address=address,random=extra))
+    if created:
+        age=0.0 if color[0]==16384 else 3.99
+        sc.mem_write(address+24,struct.pack('>f',age))
+        frames=[];values=[]
+        for tick in range(600):
+            value=[.25,-.5,1.,0.][tick%4];queries=[];values.append(value)
+            sc.reg_write(R.UC_PPC_REG_3,TASK+0x700);sc.reg_write(R.UC_PPC_REG_4,address);sc.reg_write(R.UC_PPC_REG_LR,ubase+0x300)
+            sc.emu_start(ubase,ubase+0x300,count=128)
+            assert sc.reg_read(R.UC_PPC_REG_PC)==ubase+0x300 and len(queries)==1
+            live=sc.reg_read(R.UC_PPC_REG_3)
+            assert live in (0,1)
+            raw=sc.mem_read(address,60)
+            def at_word(i,fmt):return struct.unpack_from('>'+fmt,raw,i)[0]
+            frames.append(dict(query=queries[0],word0=at_word(0,'i'),scaleBits=at_word(4,'I'),positionBits=struct.unpack_from('>III',raw,8),
+                               velocityBits=struct.unpack_from('>III',raw,32),frameBits=at_word(24,'I'),word28=at_word(28,'i'),color=at_word(20,'I'),keep=bool(live),word56=at_word(56,'I')))
+            if not live:break
+        assert not live
+        record['updates']=frames
+        obs['record']['update']=dict(frame=age,returns=values)
     print('SPAWN',json.dumps(obs,separators=(',',':')),json.dumps(observed,separators=(',',':')))
