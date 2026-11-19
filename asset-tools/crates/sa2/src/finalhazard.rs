@@ -139,3 +139,24 @@ pub fn textures(exe: &[u8], prs: &[u8]) -> Result<serde_json::Value> {
     }
     Ok(serde_json::json!({"texlistRva":0x13049d8,"bindings":bindings}))
 }
+
+/// Four native MOTION_TABLE records. Selection and mode interpretation belong
+/// to the encounter controller; the table itself does not trigger transitions.
+pub fn motions(exe: &[u8]) -> Result<serde_json::Value> {
+    let image = object_table::verify_image(exe)?;
+    let r = Reader { data: exe };
+    let mut rows = Vec::new();
+    for (i, label) in ["intro", "idle", "damaged", "defeated"]
+        .into_iter()
+        .enumerate()
+    {
+        let at = image.rva_to_offset(0x4ac678 + 28 * i as u32, 28)?;
+        let va = r.u32(at)?;
+        image.va_to_offset(va, 12)?;
+        let motion = crate::board_motion::pc_transform_motion(exe, va - image.image_base, 46)?;
+        rows.push(serde_json::json!({"index":i,"label":label,"mode":r.u16(at+4)? as i16,
+            "posture":r.u16(at+6)? as i16,"next":r.u32(at+8)? as i32,"linkStep":r.u32(at+12)? as i32,
+            "start":r.f32(at+16)?,"end":r.f32(at+20)?,"speed":r.f32(at+24)?,"motion":motion}));
+    }
+    Ok(serde_json::json!({"tableRva":0x4ac678,"entries":rows}))
+}
