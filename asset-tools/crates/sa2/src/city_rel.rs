@@ -263,6 +263,12 @@ impl<'a> CityRel<'a> {
         let descriptor = local(header)?;
         let model = local(descriptor + 8)?;
         let texlist = self.local_pointer(5, descriptor + 4)?;
+        let alternate = self.local_pointer(5, descriptor + 0x1c)?;
+        if alternate.is_some() {
+            return Err(Error::invalid("unsupported alternate SARROW descriptor"));
+        }
+        let section = self.data(5)?;
+        let root_geometry = self.local_pointer(5, model + 4)?;
         let mut rows = Vec::new();
         if mode == 0 {
             let mut node = local(model + 0x2c)?;
@@ -285,14 +291,20 @@ impl<'a> CityRel<'a> {
                 } else {
                     constant(0x270)
                 };
-                rows.push(serde_json::json!({"index":index,"nodeOffset":node,"geometry":self.local_pointer(5,node+4)?,"weight":weight,"draw":weight>constant(0x274)}));
+                let translation = section
+                    .get(node as usize + 8..node as usize + 20)
+                    .ok_or_else(invalid)?;
+                let translation: [f32; 3] = std::array::from_fn(|i| {
+                    f32::from_be_bytes(translation[4 * i..4 * i + 4].try_into().unwrap())
+                });
+                rows.push(serde_json::json!({"index":index,"nodeOffset":node,"localTranslation":translation,"geometry":self.local_pointer(5,node+4)?,"weight":weight,"draw":weight>constant(0x274)}));
                 if index < 2 {
                     node = local(node + 0x30)?;
                 }
             }
         }
         Ok(
-            serde_json::json!({"visibleMode":mode==0,"modelOffset":model,"textureList":texlist,"children":rows,"scope":"Normal SARROW path only. Draw decisions and weights, not rendered pixels."}),
+            serde_json::json!({"visibleMode":mode==0,"modelOffset":model,"textureList":texlist,"alternateDescriptor":alternate,"rootGeometry":root_geometry,"drawRootGeometry":mode==0 && root_geometry.is_some(),"children":rows,"scope":"Original SARROW descriptor has no alternate draw resource. Child translations are object-local; no pixel rendering."}),
         )
     }
     fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
