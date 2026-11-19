@@ -93,7 +93,11 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             q.update({key:doc[key] for key in ("work_a4","work_68","position","heading")})
 reg(30,work);put(work+0x10c,"I",0x80000001)
 u.mem_write(work+0x7c,struct.pack(">3f",-20,7,0.125))
-run(0x21d8,0x2214)
+reg(29,task);pose=struct.pack(">3f",-0.0,11.25,-39.5)
+u.mem_write(tw+0x14,pose);u.mem_write(work+0x14,bytes(12))
+run(0x2170,0x2214)
+assert bytes(u.mem_read(work+0x14,12))==pose
+assert bytes(u.mem_read(base[6]+0x21468+0x14,12))==pose
 assert bytes(u.mem_read(base[6]+0x21468+0x7c,12))==struct.pack(">3f",-20,7,0.125)
 assert get(base[6]+0x21468+0x10c,"I")==0x80000001 and get(work+0x10c,"I")==0
 for at in [0x24c0,0x2520]:

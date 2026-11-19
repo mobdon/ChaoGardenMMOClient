@@ -163,7 +163,7 @@ pub struct Update {
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryContact {
     pub(crate) recovery: Option<crate::kart_fall_recovery::StoryRecovery>,
-    previous_position: [f32; 3],
+    previous_position: Option<[f32; 3]>,
     result: Option<Contact>,
     wall: Option<WallInput>,
     tail: Option<TailInput>,
@@ -185,6 +185,19 @@ impl StoryResponse {
     }
 }
 impl StoryContact {
+    pub(crate) fn bind_origin(&mut self, position: Option<[f32; 3]>) -> Result<()> {
+        if self
+            .previous_position
+            .zip(position)
+            .is_some_and(|(a, b)| a.map(f32::to_bits) != b.map(f32::to_bits))
+        {
+            return Err(crate::Error::invalid(
+                "contact origin conflicts with update-start position",
+            ));
+        }
+        self.previous_position = position.or(self.previous_position);
+        Ok(())
+    }
     pub(crate) fn apply(
         self,
         data: &[u8],
@@ -208,7 +221,9 @@ impl StoryContact {
             ));
         }
         let input = Input {
-            previous_position: self.previous_position,
+            previous_position: self
+                .previous_position
+                .ok_or_else(|| crate::Error::invalid("missing vehicle-work contact origin"))?,
             proposed_position,
             velocity,
             work_28c,

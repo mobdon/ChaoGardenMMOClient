@@ -348,11 +348,18 @@ if len(sys.argv)>4:
             assert suffix["impact"]["state"]==4 and suffix["recovery"]["engine_call_8001ef18"]==8
             assert suffix["recovery"]["vehicle"]["state"]==doc["vehicleState"]==10
             observed=last["contact"]["recovery"].pop("previous_velocity_xz")
-            q["updates"].insert(-1,dict(primary_update_velocity=[0,0,0]))
+            origin=last["contact"].pop("previous_position")
+            q["updates"].insert(-1,dict(primary_update_velocity=[0,0,0],primary_update_position=origin))
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-saved-speed.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             saved=json.loads(out.read_text())["updates"][-1]["boostTick"]["drive"]["contact"]
             assert saved["impact"]["state"]==0 and saved["recovery"]["vehicle"]["state"]==10
+            assert saved["request"]["from"]==origin
+            last["contact"]["previous_position"]=[1,2,3]
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-contact-origin.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"contact origin conflicts" in rejected.stderr
+            last["contact"]["previous_position"]=origin
             q["updates"].pop(-2)
             last["contact"]["recovery"]["previous_velocity_xz"]=observed
             # A later recovery tick rewinds the course. Its two saved poses

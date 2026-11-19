@@ -613,6 +613,7 @@ enum SequenceEvent {
     Gate(GateObservation),
     UpdateStart {
         primary_update_velocity: [f32; 3],
+        primary_update_position: Option<[f32; 3]>,
     },
     DriftTick {
         drift_tick: crate::kart_drift::StoryTick,
@@ -748,8 +749,12 @@ pub fn story_sequence(
             SequenceEvent::Gate(g) => g,
             SequenceEvent::UpdateStart {
                 primary_update_velocity,
+                primary_update_position,
             } => {
-                if snapshot.replace(primary_update_velocity).is_some() {
+                if snapshot
+                    .replace((primary_update_velocity, primary_update_position))
+                    .is_some()
+                {
                     return Err(Error::invalid("overlapping primary update snapshots"));
                 }
                 updates.push(json!({"previousVelocity":primary_update_velocity,"work_10c":0}));
@@ -763,9 +768,10 @@ pub fn story_sequence(
                     if scan_flag.is_some_and(|flag| flag != ctx.work_44 as u32) {
                         return Err(Error::invalid("drift contact conflicts with vehicle flag"));
                     }
+                    ctx.query.bind_origin(start.and_then(|(_, p)| p))?;
                     if let Some(r) = &mut ctx.query.recovery {
                         r.bind_progress(route, count)?;
-                        if let Some(v) = start {
+                        if let Some((v, _)) = start {
                             r.bind_snapshot(v)?;
                         }
                     }
@@ -834,7 +840,10 @@ pub fn story_sequence(
             }
             SequenceEvent::BoostTick { mut boost_tick } => {
                 let start = snapshot.take();
-                if let (Some(v), Some(d)) = (start, boost_tick.drive.as_mut()) {
+                if let (Some((v, p)), Some(d)) = (start, boost_tick.drive.as_mut()) {
+                    if let Some(c) = d.contact.as_mut() {
+                        c.bind_origin(p)?;
+                    }
                     d.begin_update()?;
                     if let Some(r) = d.contact.as_mut().and_then(|c| c.recovery.as_mut()) {
                         r.bind_snapshot(v)?;
