@@ -1,6 +1,6 @@
 """Sample the original title or a Sonic spindash from a cold boot. No save files or frame dumps.
 
-Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny]
+Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input]
 The DLL and ROM are identified before any external code runs. Outputs only
 selected numbers and pixel hashes. No graphical or memory buffers are written.
 """
@@ -15,6 +15,12 @@ import sys
 ROM_HASH = "afc29e3325baf68a1822e88b25fcb59c8bdc29b8cdc48fa21c56defbd60ca020"
 CORE_HASH = "d775ecef6da1da5489ff2e0a37c13826b510c73711f89e78cb8d757c6f8c1426"
 P, U, S = ct.c_void_p, ct.c_uint, ct.c_size_t
+
+
+CHARACTER_PULSES = {1430:(7,), 1450:(6,7), 1453:(7,), 1456:(7,),
+    1500:(6,), 1520:(4,), 1522:(7,), 1540:(5,),
+    1542:(7,), 1560:(10,), 1562:(7,), 1580:(11,),
+    1582:(7,), 1600:(8,)}
 
 
 class MemoryRegion(ct.Structure):
@@ -38,7 +44,7 @@ def verified(path, limit, digest):
     return data
 
 
-def replay(rom, dll, title=False, menu=None):
+def replay(rom, dll, title=False, menu=None, character=False):
     data = verified(rom, 8388608, ROM_HASH)
     verified(dll, 32 * 1024 * 1024, CORE_HASH)
     core = ct.CDLL(str(dll.resolve()))
@@ -120,7 +126,20 @@ def replay(rom, dll, title=False, menu=None):
                 if 1350 <= frame < 1353 or 1490 <= frame < 1493: buttons.add(8)
                 if 1800 <= frame <= 1808: buttons.add(5)
                 if frame in (1801, 1803, 1805): buttons.add(8)
+            if character and frame >= 1353:
+                buttons.clear()
+                # Every pulse has a released frame before it (no key repeat).
+                # Libretro keys: right, left, up, down, L, R, A.
+                buttons.update(CHARACTER_PULSES.get(frame, ()))
             core.retro_run()
+            if character and 1415 <= frame <= 1600:
+                # Fixed task allocation on this cold-boot route only.
+                raw_state = ct.string_at(mem["iwram"] + 0x26f4 + 0x24, 0x16)
+                age, angle, settled, target, direction, _, remaining = struct.unpack_from("<IH5B", raw_state)
+                mask = sum({7:16,6:32,4:64,5:128,10:512,11:256,8:1}[b] for b in buttons)
+                rows.append([frame, mask, age, angle, settled, target, direction, remaining, raw_state[0x15]])
+                if frame == 1600:
+                    return rows
             if not title and frame >= 1799:
                 p = ct.string_at(mem["iwram"] + 0x5a20, 72)
                 x, y, vx, vy, speed, _, height = struct.unpack_from("<iihhhbb", p)
@@ -142,6 +161,6 @@ def replay(rom, dll, title=False, menu=None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] not in ("--title","--menu","--menu-tiny")):
+    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] not in ("--title","--menu","--menu-tiny","--character-input")):
         sys.exit(__doc__)
-    print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]), len(sys.argv) == 4, {"--menu":"regular","--menu-tiny":"tiny"}.get(sys.argv[-1])), indent=2))
+    print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]), len(sys.argv) == 4 and sys.argv[-1] != "--character-input", {"--menu":"regular","--menu-tiny":"tiny"}.get(sys.argv[-1]), sys.argv[-1] == "--character-input"), indent=None if sys.argv[-1] == "--character-input" else 2))

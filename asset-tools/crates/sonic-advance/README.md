@@ -3,7 +3,7 @@
 The native Rust port continuation now includes a shared desktop and browser stage runtime:
 [port status and local play commands](docs/PORT-STATUS.md). Full-game parity
 remains unfinished. Start now opens the [English main menu](docs/MAIN-MENU.md);
-its five destinations are signals only.
+its five destinations are signals only. [Character selection input](docs/CHARACTER-SELECT.md) is verified separately and awaits the native screen renderer.
 
 Standalone Rust tooling for the supplied USA revision-0 source only. The full
 8 MiB ROM must have SHA-256

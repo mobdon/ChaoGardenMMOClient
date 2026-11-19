@@ -4,6 +4,7 @@
 pub mod animation;
 pub mod binary;
 pub mod catalog;
+pub mod character_select;
 pub mod entities;
 pub mod flash;
 pub mod garden;
