@@ -44,8 +44,8 @@ struct Engine {
 #[derive(Serialize)]
 pub struct Tick {
     pub(crate) guidance: Guidance,
-    position: [f32; 3],
-    previous_ground_position: [f32; 3],
+    pub(crate) position: [f32; 3],
+    pub(crate) previous_ground_position: [f32; 3],
     yaw: i32,
     angle_input_zx: [f32; 2],
     target_angle: i32,
@@ -138,6 +138,7 @@ fn tick_verified(rel: &CityRel, s: Input) -> Result<Tick> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryDrive {
+    pub(crate) after_movement: Option<GuidedTail>,
     position: Option<[f32; 3]>,
     velocity_y: Option<f32>,
     previous_ground_position: [f32; 3],
@@ -145,7 +146,24 @@ pub(crate) struct StoryDrive {
     place: i32,
     engine: Engine,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GuidedTail {
+    pub(crate) velocity: [f32; 3],
+    pub(crate) work_28c: i32,
+    pub(crate) query: crate::kart_contact::StoryContact,
+    pub(crate) fall: Option<crate::kart_fall_recovery::GuidedFall>,
+}
 impl StoryDrive {
+    pub(crate) fn bind_velocity_y(&mut self, y: f32) -> Result<()> {
+        if self.velocity_y.is_some_and(|v| v.to_bits() != y.to_bits()) {
+            return Err(Error::invalid(
+                "guided contact velocity conflicts with movement",
+            ));
+        }
+        self.velocity_y = Some(y);
+        Ok(())
+    }
     pub(crate) fn run(
         self,
         rel: &CityRel,

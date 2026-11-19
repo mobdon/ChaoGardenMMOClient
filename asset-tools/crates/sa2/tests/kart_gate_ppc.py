@@ -347,6 +347,30 @@ if len(sys.argv)>4:
                 req.write_text(json.dumps(reference));out=req.with_name(path.stem+f"-guided-reference-{prior['work_254']}.json")
                 subprocess.run([cli,"kart-guided-drive",rel,out,req],check=True)
                 assert actual==json.loads(out.read_text())
+            # State 7 contacts the course, skips impact, then recovers relative
+            # to the guidance pair just written by movement (NOT the entry pair).
+            for lives in (0,2):
+                hit=dict(result=dict(return_word=0,resolved_position=[6,-100000,4]),
+                    wall=dict(normal=[0,1,0],impulse=[0,0,0],work_70=0,cooldown=0,
+                              mode=mode,vehicle_state=7,engine_byte_23=0),
+                    tail=dict(post_alignment_angles=[0,0,0],observed_raw_magnitude=0,work_d4=0,
+                              observed_local_velocity=[0,0,0],ring=dict(slot=0,cursor=0,
+                              velocities=[[0,0,0]]*60,rotations=[[0,0,0]]*60)))
+                contact=dict(velocity=[0,0,0],work_28c=0,query=hit,fall=dict(task_mode=0,
+                    work_fc_104=[0,0,0],work_cc=0,timer=0,engine_halfword_64=lives))
+                timeline=guide_q["updates"][:2]+[dict(guided_drive=dict(go,after_movement=contact))]
+                if lives:timeline.append(dict(guided_drive=turn))
+                req.write_text(json.dumps(dict(q,updates=timeline)));out=req.with_name(path.stem+f"-guided-fall-{lives}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                doc=json.loads(out.read_text());response=doc["updates"][2]["guidedContact"];fall=response["recovery"]
+                assert response["request"]["from"]==real["position"] and response["request"]["to"]==guided_first["position"]
+                assert "impact" not in response and fall["vehicle"]["state"]==doc["vehicleState"]==(7 if lives else 10)
+                assert fall["engine_call_8001ef18"]==(4 if lives else 8)
+                if lives:
+                    assert fall["vehicle"]["position"][::2]==quads[2][1]
+                    after=doc["updates"][-1]["guidedDrive"]
+                    assert (after["guidance"]["work_254"],after["guidance"]["work_25c"])==(3,2)
+                    assert abs(after["angle_input_zx"][0]-(quads[3][2][1]-turn["position"][2]))<0.01
             # Both waypoint users read the segment AFTER the end-of-course
             # rewrite. Check the installed projection against an explicit replay.
             for reset in (0,1):

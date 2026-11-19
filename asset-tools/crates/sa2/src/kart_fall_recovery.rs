@@ -265,6 +265,46 @@ pub(crate) enum ImpactCheck {
     Run,
     Skip,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GuidedFall {
+    task_mode: u8,
+    saved_angles: Option<[i32; 3]>,
+    work_fc_104: [i32; 3],
+    work_cc: i32,
+    timer: i32,
+    engine_halfword_64: Option<i16>,
+    angle_radians: Option<f64>,
+}
+impl GuidedFall {
+    pub(crate) fn bind(
+        self,
+        motion: &crate::kart_guided_drive::Tick,
+        route: (i32, i32),
+        lap: u32,
+    ) -> StoryRecovery {
+        StoryRecovery {
+            previous_velocity_xz: None,
+            work_b8: None,
+            fields: RecoveryFields {
+                task_mode: self.task_mode,
+                saved_angles: self.saved_angles,
+                grounded_position: motion.previous_ground_position,
+                work_68: 0,
+                work_fc_104: self.work_fc_104,
+                segment: Some(route.0),
+                lap: Some(lap as i32),
+                work_cc: self.work_cc,
+                work_254: motion.guidance.work_254,
+                work_25c: motion.guidance.work_25c,
+                work_260: motion.guidance.work_260,
+                timer: self.timer,
+                engine_halfword_64: self.engine_halfword_64,
+                angle_radians: self.angle_radians,
+            },
+        }
+    }
+}
 impl StoryRecovery {
     pub(crate) fn bind_snapshot(
         &mut self,
@@ -360,6 +400,7 @@ impl ShortUpdate {
     }
 }
 pub(crate) struct RecoveredProgress {
+    pub guided_segments: [i32; 2],
     pub state: i32,
     pub work_68: i32,
     pub route: (i32, i32),
@@ -380,6 +421,7 @@ impl Output {
     pub(crate) fn progress(&self) -> RecoveredProgress {
         let v = &self.vehicle;
         RecoveredProgress {
+            guided_segments: [v.work_254, v.work_25c],
             state: v.state,
             work_68: v.work_68,
             route: (v.segment, self.course_length),

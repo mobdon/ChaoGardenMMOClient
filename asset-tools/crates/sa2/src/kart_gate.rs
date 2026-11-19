@@ -815,12 +815,16 @@ pub fn story_sequence(
                     .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
                 continue;
             }
-            SequenceEvent::GuidedDrive { guided_drive } => {
+            SequenceEvent::GuidedDrive { mut guided_drive } => {
                 if vehicle != Some(7) {
                     return Err(Error::invalid("guided drive requires vehicle state 7"));
                 }
                 let work = guided_work.ok_or_else(|| Error::invalid("missing finish guidance"))?;
                 load_story_quads(&mut guided_quads)?;
+                let tail = guided_drive.after_movement.take();
+                if let Some(t) = &tail {
+                    guided_drive.bind_velocity_y(t.velocity[1])?;
+                }
                 let next = guided_drive.run(
                     &rel,
                     work,
@@ -830,12 +834,59 @@ pub fn story_sequence(
                     inherited_pose.take(),
                     mode as usize,
                 )?;
-                guided_work = Some(next.guidance);
-                snapshot = None;
+                let mut guidance = next.guidance;
+                let mut event = json!({"guidedDrive":next});
+                let start = snapshot.take();
                 completed_pose = None;
                 recovered_pose = None;
                 sample = None;
-                updates.push(json!({"guidedDrive":next}));
+                if let Some(mut t) = tail {
+                    t.query
+                        .bind_origin(start.and_then(|s| s.primary_update_position))?;
+                    if t.query.recovery.is_some() {
+                        return Err(Error::invalid(
+                            "use guided fall observations after movement",
+                        ));
+                    }
+                    if let Some(fall) = t.fall {
+                        let mut fields = fall.bind(
+                            &next,
+                            route.ok_or_else(|| Error::invalid("missing guided vehicle route"))?,
+                            count,
+                        );
+                        if let Some(s) = start {
+                            fields.bind_angles(s.primary_update_angles)?;
+                        }
+                        t.query.recovery = Some(fields);
+                    }
+                    let response = t.query.apply(
+                        constants,
+                        bytes,
+                        exe,
+                        0,
+                        vehicle,
+                        next.position,
+                        t.velocity,
+                        t.work_28c,
+                        0,
+                        mode,
+                        crate::kart_fall_recovery::ImpactCheck::Skip,
+                    )?;
+                    if let Some(r) = response.recovered_progress() {
+                        vehicle = Some(r.state);
+                        [guidance.work_254, guidance.work_25c] = r.guided_segments;
+                        route = Some(r.route);
+                        progressed_route = route;
+                        count = r.counter;
+                        crossing_positions = Some(r.positions);
+                        recovered_pose = Some(r);
+                    } else {
+                        vehicle = response.wall_state().or(vehicle);
+                    }
+                    event["guidedContact"] = json!(response);
+                }
+                guided_work = (vehicle == Some(7)).then_some(guidance);
+                updates.push(event);
                 continue;
             }
             SequenceEvent::ScriptedTick { mut scripted_tick } => {

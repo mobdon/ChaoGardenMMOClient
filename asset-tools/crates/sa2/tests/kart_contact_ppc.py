@@ -49,7 +49,7 @@ def hook(m,addr,*_):
     pc=addr-base[1];args=[m.reg_read(getattr(R,f"UC_PPC_REG_{i}")) for i in range(3,7)]
     a,b,c,d=args
     if pc==0x4b50:
-        if combined>=2:assert get(work+0x30,"i")==result["impact"]["state"]
+        if 2<=combined<=3:assert get(work+0x30,"i")==result["impact"]["state"]
         return
     if pc==0x2d0c:
         assert a==work+0x118
@@ -100,9 +100,10 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
     cases=[(None,0,0),(0,4,1),(0,2147483647,0),(1,30,1),(1,31,0),(-1,31,1),(3,-1,1)]+[(1,0,1)]*5+[(0,0,0)]
     runs=[(False,i) for i in range(len(cases))]
     if exe:runs.extend((True,i) for i in range(7,len(cases)))
-    if exe:runs.extend((arm,i) for arm in (2,3) for i in range(7,len(cases)))
+    if exe:runs.extend((arm,i) for arm in (2,3,4) for i in range(7,len(cases)))
     for combined,i in runs:
         word,count,enabled=cases[i]
+        if combined==4:enabled=0
         hit=None if word is None else dict(return_word=word,resolved_position=[11,-3.125,19])
         q=dict(previous_position=[8,-2,30],proposed_position=[10,-4,20],velocity=[2,-2,-10],
                player_slot=1,work_28c=count,work_44=enabled,result=hit)
@@ -110,11 +111,12 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             j=i-7
             w=dict(normal=[1,[0,.125,0,.25,0,0][j],-1],impulse=[1,2,3],work_70=-1 if j==4 else j%2,
                    cooldown=5 if j==2 else 0,mode=j%2,vehicle_state=2,engine_byte_23=3)
-            if combined>=2:
+            if 2<=combined<=3:
                 hit["resolved_position"][2]=34
                 w["mode"]=[0,1,2,1,0,3][j]
             if not combined:w["vehicle_state"]=(8,9,0)[j%3]
             if combined==3:w["vehicle_state"]=2+j%2
+            if combined==4:w["vehicle_state"]=7
             q["wall"]=w;hit["returned_from"]=[1,2,3]
             for off,fmt,v in [(0x70,"i",w["work_70"]),(0x290,"i",w["cooldown"]),(0x30,"i",w["vehicle_state"])]:put(work+off,fmt,v)
             put(engine+0x23,"b",3);put(base[6]+0x1a0,"i",w["mode"])
@@ -151,7 +153,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             height=min([100000]+[p["translation"][1] for p in route["projected_occurrence_poses"][1:]])
             if j:
                 hit["returned_from"][1]=height-8;hit["resolved_position"][1]=height-10
-            if combined>=2:saved["work_68"]=[0,1,-1,3,0,-3][j]
+            if 2<=combined<=3:saved["work_68"]=[0,1,-1,3,0,-3][j]
             fields=dict(task_mode=(tw,"B"),saved_angles=(work+8,"3i"),grounded_position=(work+0x268,"3f"),
                 work_68=(work+0x68,"i"),work_fc_104=(work+0xfc,"3i"),segment=(work+0xbc,"i"),lap=(work+0xc4,"i"),
                 work_cc=(work+0xcc,"i"),work_254=(work+0x254,"i"),work_25c=(work+0x25c,"i"),timer=(work+0x294,"i"))
@@ -162,7 +164,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             for k,quad in enumerate(route["projected_segment_xz"]):
                 u.mem_write(base[6]+0x26d84+k*32,struct.pack(">8f",*(x for v in quad for x in v)))
             request=dict(contact=q,**saved)
-            if combined>=2:
+            if 2<=combined<=3:
                 before=[7.5,7.500001,10,5,15,0][j]
                 put(base[6]+0x21468+0x7c,"f",before);put(base[6]+0x21468+0x84,"f",0)
                 put(work+0xb8,"i",77)
@@ -173,10 +175,10 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
                 audio_out=Path(td)/f"pre-audio-{combined}-{i}.json"
                 subprocess.run([cli,"kart-driving-audio",rel,audio_out,req],check=True)
             req.write_text(json.dumps(request));out=Path(td)/f"combined-{combined}-{i}.json"
-            subprocess.run([cli,"kart-normal-contact" if combined>=2 else "kart-contact-recovery",rel,out,exe,route["course"],req],check=True)
+            subprocess.run([cli,"kart-normal-contact" if 2<=combined<=3 else "kart-contact-recovery",rel,out,exe,route["course"],req],check=True)
             result=json.loads(out.read_text());doc=result["contact"];signals=[];calls=[]
             impact_calls=[];reg(29,task)
-            if combined>=2:
+            if 2<=combined<=3:
                 reg(30,work);put(work+0x10c,"I",0x80000001)
                 starts=(0x23f8,0x244c) if combined==2 else (0x24a0,0x2500)
                 run(starts[j%2],0x2648)
@@ -185,6 +187,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
                 impact=result["impact"]
                 assert get(work+0xb8,"i")==impact["work_b8"]
                 assert impact_calls==[val for val in (impact["engine_8006b710"],impact["engine_80011714"]) if val is not None]
+            elif combined==4:run(0x25a0,0x2648)
             else:run(0x2258,0x287c)
             assert struct.pack(">3f",*doc["response"]["tail"]["projected_local_velocity"])==bytes(u.mem_read(work+0x88,12))
             assert calls==doc["response"]["calls"]
@@ -228,4 +231,4 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             wall["impulse"]=got["impulse"];expected["wall"]=wall
         assert expected==doc["response"]
 print("Matched thirteen contact cases with supplied engine results, including six scripted dispatch tails.")
-if exe:print("Six shortened updates, six normal and six drift contact-to-recovery suffixes matched through the final branch.")
+if exe:print("Six shortened updates, six normal, six drift and six guided contact-to-recovery suffixes matched through the final branch.")
