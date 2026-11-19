@@ -260,6 +260,7 @@ pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Opti
         (0x6c4480, "SPRA   ") => Some("ObjectSpring"),
         (0x6c4e90, "SPRB   ") => Some("ObjectSpringB"),
         (0x6d95e0, "CHAOPIPE" | "chaopipe") => Some("ObjectChaoPipe"),
+        (0x6de3b0, "CONTCHAO" | "contchao") => Some("ContainerChao"),
         _ if level == 13 => callback_name(p, d),
         _ => None,
     }
@@ -271,6 +272,16 @@ pub(crate) fn mounted_replay(
     request: &[u8],
 ) -> Result<Value> {
     let name = mounted_callback(level, p, d);
+    if name == Some("ContainerChao") {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ContainerRequest {
+            stage_flags: u32,
+            frames: Vec<crate::stage_container::Frame>,
+        }
+        let req = decode::<ContainerRequest>(request)?;
+        return crate::stage_container::replay(p, req.stage_flags, bounded(req.frames)?);
+    }
     if name == Some("ObjectChaoPipe") {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]

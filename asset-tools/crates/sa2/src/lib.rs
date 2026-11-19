@@ -34,6 +34,7 @@ pub mod set;
 pub mod spring;
 pub mod stage;
 pub mod stage_catalog;
+mod stage_container;
 pub mod stage_gameplay;
 pub mod stage_paths;
 mod stage_pipe;

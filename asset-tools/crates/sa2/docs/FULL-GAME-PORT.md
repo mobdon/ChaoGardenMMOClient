@@ -86,7 +86,7 @@ For an inventory of the original object behaviors that still need implementation
 
     sa2-assets fan-tasks GAME/sonic2app.exe .local/tasks.json PC_SA2
 
-Across the normal story SETs, 24,162 placement visits reduce to 24,003 distinct placed rows after repeated visits to the same layout and object table are counted once. All map to 634 distinct native task addresses. The report groups names and level IDs by address and counts rows with partial callback adapters (1,307 including shared ring, spring and whistle pipe tasks). A resolved address identifies a task; it does not execute it. This inventory excludes objects created dynamically and systems outside those normal SETs. For example, 877 placements reference the emerald task: they do not by themselves implement treasure hunting.
+Across the normal story SETs, 24,162 placement visits reduce to 24,003 distinct placed rows after repeated visits to the same layout and object table are counted once. All map to 634 distinct native task addresses. The report groups names and level IDs by address and counts rows with partial callback adapters (1,390 including shared ring, spring, whistle pipe and Chao container tasks). A resolved address identifies a task; it does not execute it. This inventory excludes objects created dynamically and systems outside those normal SETs. For example, 877 placements reference the emerald task: they do not by themselves implement treasure hunting.
 
 For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-space platform collision model. Its motion, placement and live contact handler remain open.
 
