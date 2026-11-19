@@ -191,3 +191,118 @@ int main(void) {
  }
 }
 "#;
+#[test]
+#[ignore = "requires pinned upstream ring source and host C compiler"]
+fn compare_magnet_c() {
+    use sa2_asset_tools::ring_magnet::{select, Player};
+    use std::{env, fs, process::Command};
+    let checkout = std::path::PathBuf::from(env::var_os("SA2B_REFERENCE").unwrap());
+    let revision = Command::new("git")
+        .current_dir(&checkout)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(revision.stdout).unwrap().trim(),
+        "874a480379260dce01e8988d6ab13c0deddcee4c"
+    );
+    let c = fs::read_to_string(checkout.join("src/OBJECT/o_ring.c")).unwrap();
+    let body = c
+        .split_once("static BOOL o_ring_8(task *tp) {")
+        .unwrap()
+        .1
+        .split_once("\n}")
+        .unwrap()
+        .0;
+    let shim = SHIM
+        .replace(
+            "int mode,smode,id,btimer;",
+            "int mode,smode,id,btimer; unsigned short wtimer;",
+        )
+        .replace(
+            "static struct {int item;} pw",
+            "typedef struct {int item;V spd;} playerwk; static playerwk pw",
+        );
+    let glue = r#"
+#undef o_ring_8
+#define TRUE 1
+#define FALSE 0
+typedef unsigned char u8;
+typedef V NJS_VECTOR;
+static float vout; static int target;
+static float njScalor(V *v){V zero={0};return njDistanceP2P(v,&zero);}
+static void CalcAdvanceAsPossible(V *from,V *to,float step,V*out){assert(from==out);vout=step;target=(int)to->y;}
+"#;
+    let driver = r#"
+int main(void){
+for(int mask=0;mask<4;mask++)for(int a=0;a<5;a++)for(int b=0;b<5;b++)for(int t=0;t<2;t++){
+float distances[]={0,24,49,50,60};
+taskwk w={0},players[2]={0}; Info infos[2]={0}; Col pc[2]={0}; ringfwk fw={0};task task={0};task.twp=&w;task.fwp=&fw;w.wtimer=t?65535:0;
+for(int i=0;i<2;i++){pw[i].item=mask&(1<<i)?2:0;pw[i].spd=(V){3,4,0};players[i].pos.x=distances[i?b:a];infos[i].center.y=i+1;pc[i].info=&infos[i];players[i].cwp=&pc[i];playertwp[i]=&players[i];}
+entry=0;vout=0;target=0;int active=o_ring_8(&task);union{float f;unsigned int u;}bits={vout};
+printf("%d %d %u %d %d %u\n",active,target,bits.u,entry,(int)fw._4,(unsigned)w.wtimer);
+} return 0;}
+"#;
+    let dir = env::temp_dir().join(format!("sa2-magnet-oracle-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("oracle.c");
+    let exe = dir.join(format!("oracle{}", env::consts::EXE_SUFFIX));
+    fs::write(
+        &src,
+        format!("{shim}\n{glue}\nstatic BOOL o_ring_8(task *tp) {{{body}\n}}\n{driver}"),
+    )
+    .unwrap();
+    let mut cc = Command::new(env::var_os("CC").unwrap_or_else(|| "cc".into()));
+    if env::var_os("SA2B_ZIG_CC").is_some() {
+        cc.arg("cc");
+    }
+    assert!(cc
+        .args(["-ffp-contract=off"])
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .arg("-lm")
+        .status()
+        .unwrap()
+        .success());
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success());
+    let mut expected = String::new();
+    for mask in 0..4 {
+        for a in [0., 24., 49., 50., 60.] {
+            for b in [0., 24., 49., 50., 60.] {
+                for timer in [0u16, u16::MAX] {
+                    let players = std::array::from_fn(|i| {
+                        Some(Player {
+                            position: [if i == 0 { a } else { b }, 0., 0.],
+                            collision_center: [0., (i + 1) as f32, 0.],
+                            speed: [3., 4., 0.],
+                        })
+                    });
+                    let choice = select(
+                        [0.; 3],
+                        timer,
+                        std::array::from_fn(|i| Some(if mask & (1 << i) != 0 { 2 } else { 0 })),
+                        players,
+                    )
+                    .unwrap();
+                    let active = u32::from(choice.is_some());
+                    let advance = choice.and_then(|c| c.advance);
+                    let (target, bits, timer) = advance.map_or((0, 0, timer), |r| {
+                        (r.center[1] as u32, r.step.to_bits(), timer.wrapping_add(1))
+                    });
+                    expected +=
+                        &format!("{active} {target} {bits} {active} {} {timer}\n", active * 3);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .replace("\r\n", "\n"),
+        expected
+    );
+    fs::remove_file(src).unwrap();
+    fs::remove_file(exe).unwrap();
+}

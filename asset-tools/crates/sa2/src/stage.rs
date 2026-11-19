@@ -90,7 +90,11 @@ fn count_u16(r: &Reader<'_>, at: usize) -> Result<usize> {
     Ok(n as usize)
 }
 
-fn basic(data: &[u8], offset: u32, budget: &mut DecodeBudget) -> Result<BasicAttachment> {
+pub(crate) fn basic(
+    data: &[u8],
+    offset: u32,
+    budget: &mut DecodeBudget,
+) -> Result<BasicAttachment> {
     let r = Reader { data };
     let at = offset as usize;
     r.span(at, 40)?;

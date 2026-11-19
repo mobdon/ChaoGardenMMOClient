@@ -154,7 +154,7 @@ fn channel(
     })
 }
 
-fn motion(image: &Image<'_, '_>, header: u32) -> Result<Motion> {
+fn motion(image: &Image<'_, '_>, header: u32, part_count: u32) -> Result<Motion> {
     let h = image.span(header, 12)?;
     let frames = image.u32(h, 4);
     if !(1..=4096).contains(&frames) || image.u16(h, 8) != 3 || image.u16(h, 10) != 2 {
@@ -162,7 +162,7 @@ fn motion(image: &Image<'_, '_>, header: u32) -> Result<Motion> {
     }
     let descriptors = image.required_pointer(header)?;
     let mut parts = Vec::new();
-    for index in 0..2 {
+    for index in 0..part_count {
         let descriptor = descriptors + 16 * index;
         let desc = image.span(descriptor, 16)?;
         parts.push(MotionPart {
@@ -180,7 +180,7 @@ fn motion(image: &Image<'_, '_>, header: u32) -> Result<Motion> {
         type_flags: 3,
         interpolation_and_slots: 2,
         short_rotation: false,
-        part_count: 2,
+        part_count,
         labels: BTreeMap::new(),
         metadata: Vec::new(),
         parts,
@@ -189,12 +189,24 @@ fn motion(image: &Image<'_, '_>, header: u32) -> Result<Motion> {
 }
 
 pub fn read(rel: &CityRel<'_>) -> Result<BoardMotionBank> {
-    read_table(&Image::Rel(rel), TABLE as u32)
+    read_table(&Image::Rel(rel), TABLE as u32, 145, 2)
 }
 
 pub const PC_DLL_SHA256: &str = "6ee749548ea124d22d9cbfb6f3323f6d6a9a330d9838dd2f5656be2d9b87ff59";
 
 pub fn read_pc(bytes: &[u8]) -> Result<BoardMotionBank> {
+    pc_table(bytes, 145, 2)
+}
+/// Stage-provided Sonic rider motions, indexed by native animation number.
+pub fn rider_slots(bytes: &[u8]) -> Result<BTreeMap<u16, Motion>> {
+    if bytes.starts_with(b"MZ") {
+        Ok(pc_table(bytes, 121, 62)?.slots)
+    } else {
+        let rel = CityRel::read(bytes)?;
+        Ok(read_table(&Image::Rel(&rel), TABLE as u32, 121, 62)?.slots)
+    }
+}
+fn pc_table(bytes: &[u8], first: i16, parts: u16) -> Result<BoardMotionBank> {
     if manifest::sha256(bytes) != PC_DLL_SHA256 {
         return Err(Error::invalid("unsupported PC board data DLL"));
     }
@@ -205,10 +217,10 @@ pub fn read_pc(bytes: &[u8]) -> Result<BoardMotionBank> {
         .find(|e| e.name == "header_stg13" && e.forwarded_to.is_none())
         .ok_or_else(|| Error::invalid("missing native City Escape motion list export"))?
         .rva;
-    read_table(&Image::Pc(bytes, pe), table)
+    read_table(&Image::Pc(bytes, pe), table, first, parts)
 }
 
-fn read_table(image: &Image<'_, '_>, base: u32) -> Result<BoardMotionBank> {
+fn read_table(image: &Image<'_, '_>, base: u32, first: i16, parts: u16) -> Result<BoardMotionBank> {
     let table = image.span(base, TABLE_SIZE)?;
     let mut slots = BTreeMap::new();
     for (i, row) in table.as_chunks::<8>().0.iter().enumerate() {
@@ -221,14 +233,17 @@ fn read_table(image: &Image<'_, '_>, base: u32) -> Result<BoardMotionBank> {
             }
             break;
         }
-        if !(145..=168).contains(&id) {
+        if !(first..first + 24).contains(&id) {
             continue;
         }
-        if image.u16(row, 2) != 2 {
+        if image.u16(row, 2) != parts {
             return Err(Error::invalid("board motion part count mismatch"));
         }
         let header = image.required_pointer(base + (i * 8 + 4) as u32)?;
-        if slots.insert(id as u16, motion(image, header)?).is_some() {
+        if slots
+            .insert(id as u16, motion(image, header, parts.into())?)
+            .is_some()
+        {
             return Err(Error::invalid("duplicate board motion slot"));
         }
     }

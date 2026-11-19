@@ -349,3 +349,44 @@ fn board_pose_and_entry_ground_from_both_stage_modules() {
     }
     assert_eq!(poses[0], poses[1]);
 }
+#[test]
+#[ignore = "requires installed SA2 and PC mappings"]
+fn story_run_stops_before_gameplay() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
+    let exe = game.join("sonic2app.exe");
+    let case = local_case(game.clone());
+    for (route, ids, frames, pending) in [
+        ("Hero", vec![0], vec![1655], 13),
+        ("Dark", vec![100], vec![1189], 11),
+        ("Last", vec![200, 201], vec![866, 1169], 602),
+    ] {
+        let files: Vec<_> = ids
+            .iter()
+            .map(|id| game.join(format!("resource/gd_PC/event/e{id:04}.prs")))
+            .collect();
+        let mut deps = vec![("native-table-mapping", ini.as_path())];
+        deps.extend(files.iter().map(|p| ("story-event-image", p.as_path())));
+        let v = case.good(
+            "story-run",
+            &exe,
+            route,
+            &[ini.to_str().unwrap(), &format!("{route} Story Sequence")],
+            &deps,
+        );
+        let events = v["events"].as_array().unwrap();
+        assert_eq!(events.len(), ids.len());
+        for ((event, id), n) in events.iter().zip(ids).zip(frames) {
+            assert_eq!(event["event"], id);
+            assert_eq!(event["frames"], n);
+            assert_eq!(event["lastFrame"]["global_frame"], n - 1);
+        }
+        let (reason, field) = if route == "Last" {
+            ("missingMainEvent", "event")
+        } else {
+            ("awaitingLevelRuntime", "level")
+        };
+        assert_eq!(v["stop"]["kind"], reason);
+        assert_eq!(v["stop"]["action"][field], pending);
+    }
+}

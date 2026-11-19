@@ -1,0 +1,1997 @@
+//! Stage 20 registered entry task: initial service request and position tracking.
+use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+use serde::Deserialize;
+use serde_json::{json, Value};
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    splash_secondary: Option<SplashSecondary>,
+    splash_display: Option<SplashDisplay>,
+    splash_update: Option<SplashUpdate>,
+    splash_spawn: Option<SplashSpawn>,
+    exit: Option<StageExit>,
+    fog_blend: Option<FogBlend>,
+    fog_header: Option<[u32; 4]>,
+    background_draw: Option<BackgroundDraw>,
+    background: Option<Background>,
+    startup: Option<Startup>,
+    controller: Option<Controller>,
+    tail: Option<Tail>,
+    mode: i8,
+    position: [f32; 3],
+    targets: Vec<Option<[f32; 3]>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashSpawn {
+    position: [f32; 3],
+    rotation: Option<[u32; 3]>,
+    first: f32,
+    second: f32,
+    allocated: Option<bool>,
+    initial_phase: Option<f32>,
+}
+fn splash_spawn(rel: &CityRel<'_>, s: SplashSpawn) -> Result<Value> {
+    let invalid = || Error::invalid("inconsistent splash spawn observation");
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend as usize)
+            .ok_or_else(invalid)
+    };
+    let scalar = |site, section| -> Result<f32> {
+        let at = ptr(site, section)?;
+        Ok(f32::from_be_bytes(
+            rel.data(section)?
+                .get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut create = None;
+    let mut writes = None;
+    if s.first > scalar(0xcb22, 4)? {
+        let allocated = s.allocated.ok_or_else(invalid)?;
+        let label = &rel.data(5)?[ptr(0xcb46, 5)?..];
+        let name =
+            std::str::from_utf8(&label[..label.iter().position(|&b| b == 0).ok_or_else(invalid)?])
+                .map_err(|_| invalid())?;
+        create = Some(json!([2, 3, ptr(0xcb3e, 1)?, name]));
+        if allocated {
+            writes = Some(
+                json!({"position":s.position,"rotationWrite":s.rotation,"work32":s.first,
+                "task76":s.second*scalar(0xcb9a,5)?,"work36":scalar(0xcbae,5)?,
+                "work40":s.initial_phase.ok_or_else(invalid)?,"callback28":ptr(0xcbce,1)?,"callback24":ptr(0xcbda,1)?}),
+            );
+        }
+    } else if s.allocated.is_some() {
+        return Err(invalid());
+    }
+    if writes.is_none() && s.initial_phase.is_some() {
+        return Err(invalid());
+    }
+    Ok(
+        json!({"create":create,"writes":writes,"continueAt":if s.second>scalar(0xcbe6,4)?{0xcbf4}else{0xcfd8}}),
+    )
+}
+/// Tail reached after the radial loop. RNG results are supplied in call order.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashSecondary {
+    position: [f32; 3],
+    first: f32,
+    second: f32,
+    hook_slot: u32,
+    random: Option<[i32; 3]>,
+    allocations: Option<[bool; 3]>,
+}
+fn splash_secondary(rel: &CityRel<'_>, s: SplashSecondary) -> Result<Value> {
+    let mut calls = Vec::new();
+    if s.hook_slot != 0 {
+        let random = s
+            .random
+            .ok_or_else(|| Error::invalid("missing splash RNG observations"))?;
+        let scalar = |site| -> Result<f32> {
+            let missing = || Error::invalid("missing secondary splash constant");
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 19 && r.kind == 4 && r.section == 4)
+                .ok_or_else(missing)?;
+            let at = r.addend as usize;
+            Ok(f32::from_be_bytes(
+                rel.data(4)?
+                    .get(at..at + 4)
+                    .ok_or_else(missing)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        let scale = scalar(0xce96)?;
+        let bias = scalar(0xce5e)?;
+        let spread = scalar(0xcea6)?;
+        let r = random.map(|v| v as f32 * scale);
+        let x = [
+            (bias + bias * s.second) + spread * r[0],
+            bias + (scalar(0xcf36)? * s.second + bias * r[1]),
+            bias + (scalar(0xcfa2)? * s.second + spread * r[2]),
+        ];
+        let y = scalar(0xcec6)?;
+        let z = scalar(0xced6)?;
+        for (i, (x, k)) in x.into_iter().zip([0xceee, 0xcf5a, 0xcfca]).enumerate() {
+            let strength = (scalar(k)? * s.first).to_bits();
+            let mut call = json!({"local":0x164bc,"position":s.position,"vectorBits":[x.to_bits(),y.to_bits(),z.to_bits()],"strengthBits":strength});
+            if let Some(allocated) = s.allocations {
+                let ptr = |site, section| {
+                    rel.reference(1, site)
+                        .filter(|r| r.module == 19 && r.kind == 4 && r.section == section)
+                        .map(|r| r.addend)
+                        .ok_or_else(|| Error::invalid("missing ripple factory reference"))
+                };
+                let label = rel
+                    .data(5)?
+                    .get(ptr(0x164f6, 5)? as usize..)
+                    .and_then(|bytes| bytes.split(|&b| b == 0).next())
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .ok_or_else(|| Error::invalid("invalid ripple task label"))?;
+                let engine = rel
+                    .reference(1, 0x164f8)
+                    .filter(|r| r.module == 0 && r.kind == 10)
+                    .ok_or_else(|| Error::invalid("missing ripple allocator"))?;
+                call["create"] = json!([engine.addend, 2, 3, ptr(0x164ee, 1)?, label]);
+                call["writes"] = if allocated[i] {
+                    json!({"position":s.position,"task56Bits":x.to_bits(),"task60Bits":z.to_bits(),
+                    "work32Bits":strength,"work36Bits":scalar(0x16566)?.to_bits(),"task64Bits":scalar(0x16576)?.to_bits(),"callback24":ptr(0x16586,1)?})
+                } else {
+                    Value::Null
+                };
+            }
+            calls.push(call);
+        }
+    } else if s.random.is_some() || s.allocations.is_some() {
+        return Err(Error::invalid(
+            "inactive splash hook consumes no RNG or allocation observations",
+        ));
+    }
+    Ok(json!(calls))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashUpdate {
+    phase: f32,
+    work36: f32,
+    counter: u16,
+    frames: u8,
+}
+
+fn splash_update(rel: &CityRel<'_>, mut s: SplashUpdate) -> Result<Value> {
+    let word = |site, delta| -> Result<u32> {
+        let err = || Error::invalid("missing splash update data");
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.kind == 4 && r.module == 19)
+            .ok_or_else(err)?;
+        let at = r.addend as usize + delta;
+        Ok(u32::from_be_bytes(
+            rel.data(r.section)?
+                .get(at..at + 4)
+                .ok_or_else(err)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let f = |site| word(site, 0).map(f32::from_bits);
+    let step = f(0xd016)?;
+    let one = f(0xd05a)?;
+    let limit = word(0xd02e, 4)? as f32 - one;
+    let (late, factor, early, delta, minimum) =
+        (f(0xd0b2)?, f(0xd0ca)?, f(0xd0e6)?, f(0xd0fe)?, f(0xd116)?);
+    let mut frames = Vec::new();
+    for _ in 0..s.frames {
+        s.phase += step;
+        let removal = if s.phase >= limit {
+            s.phase = limit;
+            Some(0xd074)
+        } else {
+            if s.phase >= one {
+                s.counter = s.counter.wrapping_add(1);
+                if s.counter >= 8 {
+                    s.counter = 4;
+                }
+            }
+            if s.phase > late {
+                let scaled = s.work36 * factor;
+                s.work36 *= scaled;
+            } else if s.phase > early {
+                s.work36 += delta;
+            }
+            (s.work36 <= minimum).then_some(0xd128)
+        };
+        frames.push(json!({"phaseBits":s.phase.to_bits(),"work36Bits":s.work36.to_bits(),"counter":s.counter,"removalSite":removal}));
+        if removal.is_some() {
+            break;
+        }
+    }
+    Ok(json!(frames))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashDisplay {
+    position: [f32; 3],
+    rotation: [u32; 3],
+    work32: f32,
+    work36: f32,
+    task76: f32,
+    phase: f32,
+    counter: u16,
+    material_word: u16,
+}
+
+fn splash_display(rel: &CityRel<'_>, s: SplashDisplay) -> Result<Value> {
+    let missing = || Error::invalid("missing splash display reference");
+    let data = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.kind == 4)
+            .ok_or_else(missing)
+    };
+    let ptr = |site| data(site).map(|r| r.addend);
+    let scalar = |site| -> Result<f32> {
+        let r = data(site)?;
+        let at = r.addend as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(r.section)?
+                .get(at..at + 4)
+                .ok_or_else(missing)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut calls = Vec::new();
+    let mut call = |site, args: Value| -> Result<()> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(missing)?;
+        calls.push(json!([site, r.addend, args]));
+        Ok(())
+    };
+    call(0xd170, json!([ptr(0xd16e)?]))?;
+    let group = s.counter >> 2;
+    let (site, first, other) = if group == 0 {
+        (0xd1b4, scalar(0xd18a)? - scalar(0xd196)?, scalar(0xd1a6)?)
+    } else {
+        (0xd1e4, s.work36 - scalar(0xd1c6)?, scalar(0xd1d6)?)
+    };
+    call(site, json!([first, other, other, other]))?;
+    call(0xd1e8, json!([]))?;
+    call(0xd1f0, json!(s.position))?;
+    for (site, angle) in [
+        (0xd1fc, s.rotation[2]),
+        (0xd208, s.rotation[0]),
+        (0xd214, s.rotation[1]),
+    ] {
+        call(site, json!([0, angle]))?;
+    }
+    call(0xd228, json!([0, s.work32, s.task76, s.work32]))?;
+    let material_word = (s.material_word & 0xc000) | group;
+    let draw = json!([ptr(0xd256)?, ptr(0xd262)?, ptr(0xd26e)?, s.phase]);
+    call(0xd278, draw.clone())?;
+    let xz = scalar(0xd286)?;
+    call(0xd29c, json!([0, xz, scalar(0xd292)?, xz]))?;
+    call(0xd2b0, draw)?;
+    call(0xd2b4, json!([]))?;
+    call(0xd2d0, json!([scalar(0xd2be)?; 4].as_slice()))?;
+    Ok(json!({"calls":calls,"materialOffset":ptr(0xd232)?+14,"materialWord":material_word}))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StageExit {
+    resources: Option<ExitResources>,
+    code_base: u32,
+    slots: [u32; 4],
+    layout_handle: u32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExitResources {
+    message_handles: [u32; 2],
+    message_counts: [i32; 2],
+    fog_manager: u32,
+    fog_link: u32,
+}
+fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
+    let invalid = || Error::invalid("missing stage 20 exit relocation");
+    let field = |site, module, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == module && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let engine = |site, args: Value| -> Result<Value> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(invalid)?;
+        Ok(json!({"engine":r.addend,"args":args}))
+    };
+    let mut ops = vec![
+        json!({"local":0x21bcc}),
+        json!({"local":0x11bf0}),
+        engine(0x1a80, json!([]))?,
+        engine(0x1a84, json!([]))?,
+    ];
+    let expand_cleanup = e.resources.is_some();
+    if let Some(r) = e.resources {
+        let mut counts = r.message_counts;
+        let mut releases = Vec::new();
+        for (i, site) in [0x21bf0, 0x21c20].into_iter().enumerate() {
+            if r.message_handles[i] != 0 {
+                releases.push(engine(site, json!([r.message_handles[i]]))?);
+                counts[i] = -1;
+            }
+        }
+        ops[0]["cleanup"] = json!({"calls":releases,"handles":[0,0],"counts":counts});
+        let mut calls = Vec::new();
+        let mut link = r.fog_link;
+        if r.fog_manager != 0 {
+            calls.push(engine(0x11c14, json!([r.fog_manager]))?);
+            link = 0;
+        }
+        let bits = |site| -> Result<u32> {
+            let p = field(site, 19, 4)? as usize;
+            Ok(u32::from_be_bytes(
+                rel.data(4)?
+                    .get(p..p + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        for (site, args) in [
+            (0x11c30, json!([0])),
+            (0x11c4c, json!([bits(0x11c3a)?, bits(0x11c46)?])),
+            (0x11c54, json!([u32::MAX])),
+            (0x11c58, json!([])),
+            (0x11c5c, json!([])),
+            (0x11c60, json!([])),
+        ] {
+            calls.push(engine(site, args)?);
+        }
+        ops[1]["cleanup"] = json!({"calls":calls,"manager":0,"link":link});
+    }
+    let mut slots = e.slots;
+    for (idx, base, offset, reference) in [
+        (3, 0x1a8e, 40, 0x1a9e),
+        (0, 0x1ab6, 0, 0x1ac2),
+        (1, 0x1ada, 8, 0x1aea),
+        (2, 0x1b02, 36, 0x1b12),
+    ] {
+        if slots[idx] == e.code_base.wrapping_add(field(reference, 19, 1)?) {
+            slots[idx] = 0;
+            ops.push(json!({"clear":field(base,0,6)?+offset}));
+        }
+    }
+    let mut splash = json!({"local":0xcac4});
+    if expand_cleanup {
+        splash["release"] = engine(0xcad8, json!([field(0xcad6, 19, 5)?]))?;
+    }
+    ops.push(splash);
+    ops.push(engine(0x1b28, json!([]))?);
+    for (site, left, right) in [(0x1b3c, 0x1b32, 0x1b3a), (0x1b50, 0x1b46, 0x1b4e)] {
+        ops.push(engine(
+            site,
+            json!([field(left, 19, 5)?, field(right, 19, 5)?]),
+        )?);
+    }
+    ops.push(engine(0x1b54, json!([]))?);
+    if e.layout_handle != 0 {
+        ops.push(engine(0x1b6c, json!([e.layout_handle]))?);
+        ops.push(json!({"clearBss":field(0x1b5e,19,6)?}));
+    }
+    ops.push(engine(0x1b78, json!([]))?);
+    Ok(json!({"slots":slots,"layoutHandle":0,"operations":ops}))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FogBlend {
+    first: [u32; 4],
+    second: [u32; 4],
+    factor: f32,
+    service_returns: Option<[u32; 2]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BackgroundDraw {
+    callback_offset: u8,
+    selected_position: [f32; 3],
+}
+fn background_draw_calls(rel: &CityRel<'_>, d: BackgroundDraw) -> Result<Value> {
+    let invalid = || Error::invalid("invalid duel background callback");
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let secondary = match d.callback_offset {
+        20 => false,
+        32 => true,
+        _ => return Err(invalid()),
+    };
+    let entry = ptr(if secondary { 0x18ee } else { 0x18e2 }, 1)?;
+    let base = if secondary { 0x1cc4 } else { 0x1d6c };
+    if entry != base {
+        return Err(invalid());
+    }
+    let data = rel.data(4)?;
+    let at = ptr(base + 0x3a, 4)? as usize;
+    let y = f32::from_be_bytes(
+        data.get(at..at + 4)
+            .ok_or_else(invalid)?
+            .try_into()
+            .unwrap(),
+    );
+    let [x, _, z] = d.selected_position;
+    let mut calls = Vec::new();
+    let engine = |site, args: Value| -> Result<Value> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(invalid)?;
+        Ok(json!({"engine":r.addend,"args":args}))
+    };
+    for site in [base + 0x4c, base + 0x50, base + 0x54] {
+        calls.push(engine(site, json!([]))?);
+    }
+    calls.push(engine(base + 0x60, json!([0, [x, y, z]]))?);
+    calls.push(engine(base + 0x6c, json!([ptr(base + 0x6a, 5)?]))?);
+    if secondary {
+        let at = ptr(0x1d3e, 5)? as usize + 8;
+        let data = rel.data(5)?;
+        let mut position = [0.; 3];
+        for (axis, value) in position.iter_mut().enumerate() {
+            let p = at + 4 * axis;
+            *value =
+                f32::from_be_bytes(data.get(p..p + 4).ok_or_else(invalid)?.try_into().unwrap());
+        }
+        calls.push(engine(0x1d44, json!([0, position]))?);
+        calls.push(json!({"local":0x1efc,"args":[]}));
+    } else {
+        calls.push(engine(0x1de4, json!([ptr(0x1de2, 5)?]))?);
+    }
+    let tail = if secondary { 0x1d50 } else { 0x1dec };
+    calls.push(engine(tail, json!([1]))?);
+    calls.push(engine(tail + 4, json!([]))?);
+    calls.push(engine(tail + 8, json!([]))?);
+    Ok(json!({"entry":entry,"calls":calls}))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Background {
+    records: Vec<[u32; 6]>,
+    frames: u16,
+}
+fn background_updates(rel: &CityRel<'_>, b: Background) -> Result<Value> {
+    let invalid = || Error::invalid("invalid duel background table");
+    let reference = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend as usize)
+            .ok_or_else(invalid)
+    };
+    let float = |site, section| -> Result<f32> {
+        let p = reference(site, section)?;
+        Ok(f32::from_be_bytes(
+            rel.data(section)?
+                .get(p..p + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let capacity = reference(0x1e4a, 6)?
+        .checked_sub(reference(0x1e12, 6)?)
+        .ok_or_else(invalid)?
+        / 24;
+    if b.records.len() > capacity {
+        return Err(invalid());
+    }
+    let delta = float(0x1ca2, 4)?;
+    let threshold = (float(0x1e22, 4)? * float(0x1e2e, 5)?) as i32;
+    let mut rows = b.records;
+    let mut count = rows.len();
+    for _ in 0..b.frames {
+        let mut dst = 0;
+        for src in 0..count {
+            rows[dst] = rows[src];
+            let row = &mut rows[dst];
+            row[4] = row[4].wrapping_add(1);
+            if row[4].wrapping_sub(row[5]) as i32 <= threshold {
+                for word in &mut row[..2] {
+                    *word = (f32::from_bits(*word) + delta).to_bits();
+                }
+                dst += 1;
+            }
+        }
+        count = dst;
+    }
+    Ok(json!({"activeCount":count,"storage":rows}))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Startup {
+    splash_query: Option<i32>,
+    fog_load: Option<FogLoad>,
+    layout_handle: Option<u32>,
+    background_allocated: Option<bool>,
+    callback_slots_occupied: Option<[bool; 4]>,
+    character_queries: Vec<i32>,
+    slot_one_present: bool,
+    walker: Option<Walker>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Walker {
+    task_allocated: bool,
+    work_allocated: Option<bool>,
+    character: Option<i8>,
+    slot_value: Option<f32>,
+}
+fn walker_setup(rel: &CityRel<'_>, w: Walker) -> Result<Value> {
+    let invalid = || Error::invalid("inconsistent walker initialization observation");
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let data = rel.data(5)?;
+    let label = |site| -> Result<&str> {
+        let at = ptr(site, 5)? as usize;
+        let tail = data.get(at..).ok_or_else(invalid)?;
+        std::str::from_utf8(&tail[..tail.iter().position(|&v| v == 0).ok_or_else(invalid)?])
+            .map_err(|_| invalid())
+    };
+    let engine = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let mut ops =
+        vec![json!({"engine":engine(0x15b4)?,"args":[0,0,ptr(0x15aa,1)?,label(0x15b2)?]})];
+    if w.task_allocated != w.work_allocated.is_some() {
+        return Err(invalid());
+    }
+    if let Some(ok) = w.work_allocated {
+        ops.push(json!({"engine":engine(0x15cc)?,"args":[1,24]}));
+        if !ok {
+            ops.push(json!({"engine":engine(0x15e0)?,"args":["task"]}));
+        }
+    }
+    if w.work_allocated == Some(true) {
+        let at = ptr(0x15f2, 4)? as usize;
+        let factor = f32::from_be_bytes(rel.data(4)?[at..at + 4].try_into().unwrap());
+        let v = w.slot_value.ok_or_else(invalid)? * factor;
+        ops.push(json!({"taskWorkOffset":64,"value":"work"}));
+        ops.push(json!({"local":0x3361c,"args":["task",v]}));
+        ops.push(json!({"workByte":0,"value":0}));
+        let resource = match w.character.ok_or_else(invalid)? {
+            6 => Some((0x1642, 0x164a, 0x164c, 0x1656)),
+            7 => Some((0x166e, 0x1676, 0x1678, 0x1682)),
+            _ => None,
+        };
+        if let Some((name, list, site, dest)) = resource {
+            ops.push(json!({"engine":engine(site)?,"args":[label(name)?,ptr(list,5)?]}));
+            ops.push(json!({"taskCallbackOffset":24,"local":ptr(dest,1)?}));
+        }
+    } else if w.character.is_some() || w.slot_value.is_some() {
+        return Err(invalid());
+    }
+    Ok(json!(ops))
+}
+/// Registered startup up to the first unconditional resource call (1:0x176c).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FogLoad {
+    task_present: bool,
+    file_status: Option<i32>,
+    scratch: Option<Vec<u8>>,
+    task_allocated: Option<bool>,
+}
+fn fog_load(rel: &CityRel<'_>, v: FogLoad) -> Result<Value> {
+    let invalid = || Error::invalid("invalid stage 20 fog observations");
+    if v.task_present {
+        if v.file_status.is_some() || v.scratch.is_some() || v.task_allocated.is_some() {
+            return Err(invalid());
+        }
+        return Ok(json!({"skipped":true}));
+    }
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let bytes = match (v.file_status, v.scratch) {
+        (Some(0), Some(bytes)) if bytes.len() == 528 => bytes,
+        (Some(status), None) if status != 0 => {
+            let mut bytes = vec![0; 528];
+            let at = ptr(0x1163e, 4)? as usize;
+            bytes[8..12].copy_from_slice(rel.data(4)?.get(at..at + 4).ok_or_else(invalid)?);
+            bytes
+        }
+        _ => return Err(invalid()),
+    };
+    let allocated = v.task_allocated.ok_or_else(invalid)?;
+    let name_at = ptr(0x11cf6, 5)? as usize;
+    let data = rel.data(5)?.get(name_at..).ok_or_else(invalid)?;
+    let name = std::str::from_utf8(&data[..data.iter().position(|&b| b == 0).ok_or_else(invalid)?])
+        .map_err(|_| invalid())?;
+    Ok(
+        json!({"skipped":false,"loadResult":i32::from(v.file_status==Some(0)),
+        "destination":bytes,"create":[0,1,ptr(0x11cee,1)?,name],"cleanup":if allocated{Some(ptr(0x11d12,1)?)}else{None}}),
+    )
+}
+fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
+    let mut queries = s.character_queries.into_iter();
+    let mut calls = Vec::new();
+    let mut engine = |site: u32, args: &[i32]| -> Result<()> {
+        let target = rel
+            .reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .ok_or_else(|| Error::invalid("missing duel startup call"))?;
+        calls.push(json!({"site":site,"engine":target.addend,"args":args}));
+        Ok(())
+    };
+    let mut query = || {
+        queries
+            .next()
+            .ok_or_else(|| Error::invalid("missing slot-zero character observation"))
+    };
+    engine(0x16e8, &[0])?;
+    if query()? == 7 {
+        engine(0x16f8, &[1])?;
+    } else {
+        engine(0x1704, &[0])?;
+        if query()? == 6 {
+            engine(0x1714, &[1])?;
+        }
+    }
+    if queries.next().is_some() {
+        return Err(Error::invalid("unused slot-zero character observation"));
+    }
+    if s.slot_one_present {
+        engine(0x1730, &[1])?;
+        calls.push(json!({"site":0x1744,"slot":1,"workByte":2,"value":3}));
+        let r = rel
+            .reference(1, 0x174c)
+            .ok_or_else(|| Error::invalid("missing duel startup call"))?;
+        calls.push(json!({"site":0x174c,"engine":r.addend,"args":[1]}));
+        calls.push(json!({"site":0x1750,"local":0x1584,"args":[]}));
+        for (site, slot) in [(0x175c, 0), (0x1768, 1)] {
+            calls.push(json!({"site":site,"local":0x139e4,"args":[slot,0]}));
+        }
+    }
+    let mut report = json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls});
+    if s.fog_load.is_some() && s.callback_slots_occupied.is_none() {
+        return Err(Error::invalid("fog load requires final startup"));
+    }
+    if s.splash_query.is_some() && s.callback_slots_occupied.is_none() {
+        return Err(Error::invalid("splash query requires final startup"));
+    }
+    if s.callback_slots_occupied.is_some() && s.background_allocated.is_none() {
+        return Err(Error::invalid("final startup requires scene setup"));
+    }
+    if s.background_allocated.is_some() && s.layout_handle.is_none() {
+        return Err(Error::invalid("background setup requires layout setup"));
+    }
+    if let Some(handle) = s.layout_handle {
+        let invalid = || Error::invalid("invalid duel layout setup relocation");
+        let pointer = |site, section| {
+            rel.reference(1, site)
+                .filter(|r| r.module == 19 && r.kind == 4 && r.section == section)
+                .map(|r| r.addend)
+                .ok_or_else(invalid)
+        };
+        let data = rel.data(5)?;
+        let name = |site| -> Result<&str> {
+            let bytes = data.get(pointer(site, 5)? as usize..).ok_or_else(invalid)?;
+            let end = bytes.iter().position(|&b| b == 0).ok_or_else(invalid)?;
+            std::str::from_utf8(&bytes[..end]).map_err(|_| invalid())
+        };
+        let mut operations = Vec::new();
+        let mut record = |site, args: Value| -> Result<()> {
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            operations.push(json!({"site":site,"engine":r.addend,"args":args}));
+            Ok(())
+        };
+        record(0x1778, json!([128, pointer(0x1776, 5)?]))?;
+        for (first, second, left, right) in [
+            (0x1794, 0x17a0, 0x1782, 0x178e),
+            (0x17bc, 0x17c8, 0x17aa, 0x17b6),
+        ] {
+            let args = json!([pointer(left, 5)?, pointer(right, 5)?]);
+            record(first, args.clone())?;
+            record(second, args)?;
+        }
+        record(0x17e0, json!([name(0x17d2)?, name(0x17da)?, 1024]))?;
+        record(0x17fc, json!([pointer(0x17f6, 5)?, handle]))?;
+        report["layoutSetup"] = json!({"operations":operations,"storedHandle":{"section":6,"offset":pointer(0x17ea,6)?,"value":handle}});
+        report["continueAt"] = json!(0x1800);
+        if let Some(allocated) = s.background_allocated {
+            let mut ops = Vec::new();
+            let service = |site, args: Value| -> Result<Value> {
+                let r = rel
+                    .reference(1, site)
+                    .filter(|r| r.module == 0 && r.kind == 10)
+                    .ok_or_else(invalid)?;
+                Ok(json!({"site":site,"engine":r.addend,"args":args}))
+            };
+            let constant = |site| -> Result<f32> {
+                let at = pointer(site, 4)? as usize;
+                Ok(f32::from_be_bytes(
+                    rel.data(4)?
+                        .get(at..at + 4)
+                        .ok_or_else(invalid)?
+                        .try_into()
+                        .unwrap(),
+                ))
+            };
+            let x = constant(0x180e)?;
+            let y = constant(0x181a)?;
+            for (site, args) in [
+                (0x1800, json!([])),
+                (0x1804, json!([])),
+                (0x1824, json!([x, y, x])),
+                (0x1838, json!([y, constant(0x1832)?])),
+                (0x1848, json!([y, y, y])),
+            ] {
+                ops.push(service(site, args)?);
+            }
+            let table = pointer(0x1856, 5)?;
+            for (slot, site) in [0x185c, 0x1868, 0x1874, 0x1880].into_iter().enumerate() {
+                ops.push(service(
+                    site,
+                    json!([slot, table + if slot == 1 { 32 } else { 0 }]),
+                )?);
+            }
+            for (site, args) in [
+                (0x188c, json!([0, 0])),
+                (0x1898, json!([0, 1])),
+                (0x18a0, json!([0])),
+                (0x18a8, json!([2])),
+            ] {
+                ops.push(service(site, args)?);
+            }
+            ops.push(json!({"site":0x18b4,"local":0x7b54,"args":[name(0x18b2)?]}));
+            ops.push(service(
+                0x18d0,
+                json!([2, 1, pointer(0x18c6, 1)?, name(0x18ce)?]),
+            )?);
+            let mut callbacks = Vec::new();
+            if allocated {
+                for (offset, site) in [(20, 0x18e2), (32, 0x18ee), (24, 0x18fa)] {
+                    callbacks.push(json!([offset, pointer(site, 1)?]));
+                }
+            }
+            report["sceneSetup"] = json!({"operations":ops,"callbacks":callbacks});
+            report["continueAt"] = json!(0x1900);
+            if let Some(occupied) = s.callback_slots_occupied {
+                let absolute = |site| {
+                    rel.reference(1, site)
+                        .filter(|r| r.module == 0 && r.kind == 4)
+                        .map(|r| r.addend)
+                        .ok_or_else(invalid)
+                };
+                let mut final_ops = vec![service(0x1908, json!([pointer(0x1906, 5)?]))?];
+                for (i, (table, offset, target)) in [
+                    (0x1912, 0, 0x1926),
+                    (0x1932, 8, 0x194a),
+                    (0x1956, 36, 0x196e),
+                    (0x197e, 40, 0x1996),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if i == 3 {
+                        let mut splash = json!({"local":0xca28,"args":[]});
+                        if let Some(q) = s.splash_query {
+                            let (site, file, list) = splash_sites(q);
+                            splash["calls"] = json!([
+                                service(0xca34, json!([]))?,
+                                service(site, json!([name(file)?, pointer(list, 5)?]))?
+                            ]);
+                        }
+                        final_ops.push(splash);
+                    }
+                    if !occupied[i] {
+                        final_ops.push(json!({"address":absolute(table)?+offset,"localCallback":pointer(target,1)?}));
+                    }
+                }
+                final_ops.push(json!({"local":0x11c78,"args":[name(0x19a2)?,pointer(0x19aa,6)?]}));
+                for site in [0x19b0, 0x19b4] {
+                    final_ops.push(service(site, json!([]))?);
+                }
+                final_ops.push(json!({"local":0x21c50,"args":[name(0x19be)?]}));
+                let mut slots = vec![json!({"engine":absolute(0x19ca)?})];
+                for site in [0x19de, 0x19ea, 0x19f6] {
+                    slots.push(json!({"local":pointer(site,1)?}));
+                }
+                slots.resize(14, Value::Null);
+                final_ops.push(json!({"address":absolute(0x19d2)?,"slots":slots}));
+                final_ops.push(service(0x1a2c, json!([0]))?);
+                final_ops.push(service(0x1a38, json!([name(0x1a36)?]))?);
+                final_ops.push(service(
+                    0x1a4c,
+                    json!([name(0x1a42)?, pointer(0x1a4a, 4)?]),
+                )?);
+                report["finalSetup"] = json!(final_ops);
+                if let Some(fog) = s.fog_load {
+                    report["fogLoad"] = fog_load(rel, fog)?;
+                }
+                report["continueAt"] = Value::Null;
+            }
+        }
+    }
+    if let Some(w) = s.walker {
+        if !s.slot_one_present {
+            return Err(Error::invalid("walker requires slot one"));
+        }
+        report["walker"] = walker_setup(rel, w)?;
+    }
+    Ok(report)
+}
+fn splash_sites(q: i32) -> (u32, u32, u32) {
+    match q {
+        34 | 37 | 38 | 65 => (0xca80, 0xca76, 0xca7e),
+        18 => (0xca98, 0xca8e, 0xca96),
+        _ => (0xcab0, 0xcaa6, 0xcaae),
+    }
+}
+
+fn identified_module(module: &[u8]) -> Result<CityRel<'_>> {
+    let invalid = || Error::invalid("unexpected stage 20 entry module");
+    let source = stage_land::catalog()
+        .iter()
+        .find(|s| s.filename == "stg20D.rel")
+        .ok_or_else(invalid)?;
+    if module.len() != source.size || manifest::sha256(module) != source.sha256 {
+        return Err(invalid());
+    }
+    CityRel::read_identified(module, source.module)
+}
+pub fn splash_resource(module: &[u8], q: i32) -> Result<(String, usize)> {
+    let rel = identified_module(module)?;
+    let (_, name, list) = splash_sites(q);
+    let at = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+            .map(|r| r.addend as usize)
+            .ok_or_else(|| Error::invalid("missing splash list reference"))
+    };
+    let data = rel.data(5)?;
+    let raw = &data[at(name)?..];
+    let text = std::str::from_utf8(
+        &raw[..raw
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::invalid("missing archive name"))?],
+    )
+    .map_err(|_| Error::invalid("invalid archive name"))?;
+    let p = at(list)? + 4;
+    Ok((
+        format!("{}.prs", text.to_ascii_lowercase()),
+        u32::from_be_bytes(data[p..p + 4].try_into().unwrap()) as usize,
+    ))
+}
+pub fn splash_textures(prs: &[u8], count: usize) -> Result<Value> {
+    let data = crate::archive::decompress_prs(prs, 16 * 1024 * 1024)?;
+    let entries = crate::archive::read_gvm(&data)?;
+    if entries.len() != count {
+        return Err(Error::invalid(
+            "splash GVM count disagrees with stage texture list",
+        ));
+    }
+    let mut rows = Vec::new();
+    for e in entries {
+        let image = crate::texture::decode_gvr(e.data, None)?;
+        rows.push(json!({"index":e.index,"name":e.name,"globalIndex":e.global_index,"width":image.width,"height":image.height,
+            "rgbaSha256":manifest::sha256(&image.rgba),"nonopaquePixels":image.rgba.as_chunks::<4>().0.iter().filter(|p|p[3]!=255).count()}));
+    }
+    Ok(json!({"textures":rows,"archiveSha256":manifest::sha256(prs)}))
+}
+pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
+    let invalid = || Error::invalid("unexpected stage 20 entry module");
+    let rel = identified_module(module)?;
+    let constant = |pc| -> Result<f32> {
+        let r = rel.reference(1, pc).ok_or_else(invalid)?;
+        if (r.module, r.section, r.kind) != (19, 4, 4) {
+            return Err(invalid());
+        }
+        let at = r.addend as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(4)?
+                .get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let Request {
+        splash_secondary: secondary,
+        splash_display: display,
+        splash_update: update,
+        splash_spawn: spawn,
+        exit,
+        fog_blend,
+        fog_header,
+        background_draw,
+        background,
+        startup,
+        controller,
+        tail,
+        mut mode,
+        mut position,
+        targets,
+    } = serde_json::from_slice(request)?;
+    let mut frames = Vec::with_capacity(targets.len());
+    for target in targets {
+        let mut call = None;
+        if mode == 0 {
+            let f = constant(0x1bd6)?;
+            call = Some(
+                json!({"engine":0x800c82dcu32,"slot":0,"positionAtCall":position,"float4":f,"float8":f,
+                "word12":10,"byte16":1,"byte17":0,"float20":constant(0x1bee)?,"float24":constant(0x1c16)?,"word28":0}),
+            );
+            mode = 1;
+        }
+        if mode == 1 {
+            if let Some(p) = target {
+                position = p;
+                position[1] += constant(0x1c6a)?;
+            }
+        }
+        frames.push(json!({"mode":mode,"position":position,"call":call}));
+    }
+    let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(s) = secondary {
+        report["splashSecondary"] = splash_secondary(&rel, s)?;
+    }
+    if let Some(s) = display {
+        report["splashDisplay"] = splash_display(&rel, s)?;
+    }
+    if let Some(s) = update {
+        report["splashUpdate"] = splash_update(&rel, s)?;
+    }
+    if let Some(s) = spawn {
+        report["splashSpawn"] = splash_spawn(&rel, s)?;
+    }
+    if let Some(e) = exit {
+        report["exit"] = stage_exit(&rel, e)?;
+    }
+    if let Some(v) = fog_blend {
+        let mut calls = Vec::new();
+        let mut emit = |site, args: Value| -> Result<()> {
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            calls.push(json!({"engine":r.addend,"args":args}));
+            Ok(())
+        };
+        let far = constant(0x1181e)?;
+        if [v.first[2], v.second[2]]
+            .iter()
+            .all(|&w| f32::from_bits(w) >= far)
+        {
+            if v.service_returns.is_some() {
+                return Err(invalid());
+            }
+            emit(0x11844, json!([0]))?;
+            emit(0x11858, json!([constant(0x1184e)?.to_bits(), v.first[2]]))?;
+            emit(0x1186c, json!([v.first[1].rotate_left(8)]))?;
+            emit(0x11870, json!([]))?;
+        } else {
+            let t = v.factor.clamp(constant(0x11896)?, constant(0x1187e)?);
+            let mix = |i: usize| {
+                let a = f32::from_bits(v.first[i]);
+                let b = f32::from_bits(v.second[i]);
+                (a + t * (b - a)).to_bits()
+            };
+            let [color, distance] = v.service_returns.ok_or_else(invalid)?;
+            emit(0x118b4, json!([v.first[1], v.second[1], t.to_bits()]))?;
+            emit(0x118d0, json!([mix(2)]))?;
+            let (sites, kind, near) = if v.first[0] & 2 != 0 {
+                let idx = (v.first[0] >> 16) & 15;
+                if idx >= 6 {
+                    return Err(Error::invalid("unmapped stage 20 fog mode"));
+                }
+                let r = rel
+                    .reference(1, 0x118f6)
+                    .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+                    .ok_or_else(invalid)?;
+                let at = (r.addend + idx * 4) as usize;
+                let kind = u32::from_be_bytes(
+                    rel.data(5)?
+                        .get(at..at + 4)
+                        .ok_or_else(invalid)?
+                        .try_into()
+                        .unwrap(),
+                );
+                ([0x11900, 0x11938, 0x1194c, 0x11950, 0x11954], kind, mix(3))
+            } else {
+                (
+                    [0x11960, 0x11990, 0x119a4, 0x119a8, 0x119ac],
+                    5,
+                    constant(0x1196a)?.to_bits(),
+                )
+            };
+            emit(sites[0], json!([kind]))?;
+            emit(sites[1], json!([near, (distance as f32).to_bits()]))?;
+            emit(sites[2], json!([color.rotate_left(8)]))?;
+            emit(sites[3], json!([]))?;
+            emit(sites[4], json!([]))?;
+        }
+        report["fogBlend"] = json!(calls);
+    }
+    if let Some([flags, argb, max, min]) = fog_header {
+        let mut calls = Vec::new();
+        let mut emit = |site, args: Value| -> Result<()> {
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            calls.push(json!({"engine":r.addend,"args":args}));
+            Ok(())
+        };
+        let far = f32::from_bits(max) >= constant(0x116fa)?;
+        let (sites, kind, near) = if far {
+            (
+                vec![0x11710, 0x11724, 0x11738, 0x1173c],
+                0,
+                constant(0x1171a)?.to_bits(),
+            )
+        } else if flags & 2 != 0 {
+            let index = ((flags >> 16) & 15) as usize;
+            if index >= 6 {
+                return Err(Error::invalid("unmapped stage 20 fog mode"));
+            }
+            let table = rel
+                .reference(1, 0x11762)
+                .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+                .ok_or_else(invalid)?
+                .addend as usize;
+            let at = table + 4 * index;
+            let kind = u32::from_be_bytes(
+                rel.data(5)?
+                    .get(at..at + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            );
+            (vec![0x1176c, 0x11778, 0x1178c, 0x11790, 0x11794], kind, min)
+        } else {
+            (
+                vec![0x117a0, 0x117b4, 0x117c8, 0x117cc, 0x117d0],
+                5,
+                constant(0x117aa)?.to_bits(),
+            )
+        };
+        for (i, site) in sites.into_iter().enumerate() {
+            emit(
+                site,
+                match i {
+                    0 => json!([kind]),
+                    1 => json!([near, max]),
+                    2 => json!([argb.rotate_left(8)]),
+                    _ => json!([]),
+                },
+            )?;
+        }
+        report["fogApply"] = json!(calls);
+    }
+    if let Some(d) = background_draw {
+        report["backgroundDraw"] = background_draw_calls(&rel, d)?;
+    }
+    if let Some(bg) = background {
+        report["background"] = background_updates(&rel, bg)?;
+    }
+    if let Some(s) = startup {
+        report["startup"] = opponent_startup(&rel, s)?;
+    }
+    if let Some(c) = controller {
+        report["controller"] = dispatch_controller(&rel, c)?;
+    }
+    if let Some(t) = tail {
+        let bounds = t
+            .slot1_position
+            .map(|pos| arena_bounds(&rel, pos))
+            .transpose()?;
+        report["tail"] = walker_tail(t, constant)?;
+        if let Some(bounds) = bounds {
+            report["tail"]["arenaBounds"] = bounds;
+        }
+    }
+    Ok(report)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Controller {
+    state_two: Option<StateTwo>,
+    state_five: Option<StateFive>,
+    state_four: Option<StateFour>,
+    state_six: Option<StateSix>,
+    state_seven: Option<StateSeven>,
+    state_eight: Option<StateEight>,
+    state_one: Option<StateOne>,
+    mode: i8,
+    engine_bytes: [i8; 3],
+    player_flags: [u16; 2],
+    opening: Option<Opening>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateSix {
+    counter: i16,
+    limit: i16,
+    slot_byte: i8,
+    scalar: f32,
+    range: Option<RangeObservation>,
+    timer: Option<SixTimer>,
+    steering: Option<SixSteering>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SixTimer {
+    slot_byte: i8,
+    draw: i32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SixSteering {
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    final_vector: [f32; 3],
+    angle_return: f64,
+    final_slot_byte: i8,
+    wave: Option<SixWave>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SixWave {
+    phase_word: u32,
+    service_return: f32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateFour {
+    range: RangeObservation,
+    close_range: Option<CloseRange>,
+    slot_byte: i8,
+    scalar: f32,
+    counter: i16,
+    limit: i16,
+    draw: Option<i32>,
+    steering: Option<FourSteering>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FourSteering {
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    phase_words: [u32; 2],
+    axis_returns: [f32; 2],
+    angle_return: f64,
+    final_slot_byte: i8,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateFive {
+    player_word: i16,
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    angle_return: Option<f64>,
+    range: RangeObservation,
+    decision: Option<WalkerDecision>,
+    slot_byte: i8,
+    counter: i16,
+    pulse_draw: Option<i32>,
+    timer_draw: Option<i32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateTwo {
+    decision: SteeringDecision,
+    after_steering: Option<AfterSteering>,
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    angle_return: f64,
+    slot_byte: i8,
+    turn: Option<TurnObservation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AfterSteering {
+    expiry: Option<WalkerExpiry>,
+    pose_word: u16,
+    scalar: f32,
+    counter: i16,
+    limit: i16,
+    range: Option<RangeObservation>,
+    close_range: Option<CloseRange>,
+    draw: Option<i32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WalkerExpiry {
+    decision: WalkerDecision,
+    draws: Vec<i32>,
+    slot_bytes: Vec<i8>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseRange {
+    cooldown: i16,
+    services: Option<CloseServices>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseServices {
+    queries: [i32; 2],
+    slot_byte: i8,
+    variant: i8,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RangeObservation {
+    slot0_byte: i8,
+    distance_return: f64,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SteeringDecision {
+    Observed(i32),
+    Inputs(SteeringInputs),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SteeringInputs {
+    slot0_byte: i8,
+    distance_return: f64,
+    facing: Option<FacingObservation>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FacingObservation {
+    angle_return: f64,
+    previous_yaw: i32,
+    difference_return: i32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TurnObservation {
+    previous_yaw: i32,
+    result: i32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Opening {
+    query: i32,
+    character: i8,
+    yaw: u32,
+    position: [f32; 3],
+}
+fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
+    let invalid = || Error::invalid("unexpected walker controller observation");
+    let field = |pc, sect| {
+        rel.reference(1, pc)
+            .filter(|r| r.module == 19 && r.section == sect && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let number = |section: u8, at: u32| -> Result<f32> {
+        let p = at as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(section)?
+                .get(p..p + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let [a, b, d] = c.engine_bytes;
+    let gated = a == 1 || b & 2 != 0 || d == 1;
+    let mut mode = c.mode;
+    if !gated && c.player_flags.iter().any(|f| f & 0x4000 != 0) {
+        mode = 9;
+    }
+    let target = if gated {
+        0x1518
+    } else if !(0..=10).contains(&mode) {
+        0x1424
+    } else {
+        rel.local_pointer(5, field(0x816, 5)? + 4 * mode as u32)?
+            .filter(|(s, _)| *s == 1)
+            .ok_or_else(invalid)?
+            .1
+    };
+    let mut ops = Vec::new();
+    let mut timer = None;
+    let mut next = target;
+    if target == 0x828 {
+        let o = c.opening.ok_or_else(invalid)?;
+        ops.push(json!([0x828]));
+        if o.query == 16 {
+            ops.extend([json!([0x838, 3]), json!([0x83c])]);
+            mode = 1;
+            timer = Some(360);
+            if matches!(o.character, 6 | 7) {
+                ops.push(json!([
+                    if o.character == 6 { 0x86c } else { 0x888 },
+                    0,
+                    field(if o.character == 6 { 0x86a } else { 0x886 }, 5)?
+                ]));
+            }
+            let pos = [
+                o.position[0],
+                number(4, field(0x8ca, 4)?)? + number(5, field(0x8d6, 5)? + 4)?,
+                o.position[2],
+            ];
+            ops.push(json!([
+                0x91c,
+                0,
+                number(4, field(0x892, 4)?)?,
+                o.yaw.wrapping_sub(0xf000),
+                pos,
+                number(4, field(0x8f2, 4)?)?,
+                number(4, field(0x902, 4)?)?,
+                0x6000
+            ]));
+        }
+        next = 0x1424;
+    } else if c.opening.is_some() {
+        return Err(invalid());
+    }
+    let mut report = json!({"dispatch":target,"continueAt":next,"mode":mode,"timerWrite":timer,"operations":ops});
+    if let Some(v) = c.state_seven {
+        if target != 0x1328 {
+            return Err(invalid());
+        }
+        let mut ops = Vec::new();
+        let engage = if v.slot_byte == 6 {
+            ops.push(0x1344);
+            match (v.decision, v.helper_result) {
+                (Some(d), None) => d.active(),
+                (None, Some(observed)) => observed != 0,
+                _ => return Err(invalid()),
+            }
+        } else {
+            if v.helper_result.is_some() || v.decision.is_some() {
+                return Err(invalid());
+            }
+            false
+        };
+        let sites = if engage {
+            ops.extend([0x1358, 0x398]);
+            Some((6, 0x3c6, 0x3d6, 0x3e6))
+        } else if v.counter > 120 {
+            ops.push(0x1374);
+            if v.slot_byte == 7 {
+                ops.push(0x558);
+                Some((2, 0x586, 0x596, 0x5a6))
+            } else {
+                ops.push(0x5c4);
+                Some((2, 0x5f2, 0x602, 0x612))
+            }
+        } else {
+            None
+        };
+        let mut counter = v.counter;
+        if let Some((m, scale, range, base)) = sites {
+            let draw = v.draw.ok_or_else(invalid)? as f32;
+            let f = |site| number(4, field(site, 4)?);
+            let value = f(base)? + f(range)? * (f(scale)? * draw);
+            timer = Some(value.trunc() as i32 as i16 as i32);
+            mode = m;
+            counter = 0;
+        } else if v.draw.is_some() {
+            return Err(invalid());
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"timerWrite":timer,"counter":counter,"operations":ops});
+    }
+    let heading = |site, angle: f64| -> Result<i32> {
+        let at = field(site, 4)? as usize;
+        let bytes = rel.data(4)?.get(at..at + 8).ok_or_else(invalid)?;
+        let units = (angle * f64::from_be_bytes(bytes.try_into().unwrap())).trunc();
+        if !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&units) {
+            return Err(invalid());
+        }
+        Ok(0x4000i32.wrapping_sub(units as i32))
+    };
+    let close_entry = |close: CloseRange| -> Result<Value> {
+        let mut calls = Vec::new();
+        let mut call = |site, args: Vec<i32>| -> Result<()> {
+            let service = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            calls.push(json!({"engine":service.addend,"args":args}));
+            Ok(())
+        };
+        let cooldown = match (close.cooldown > 0, close.services) {
+            (true, None) => close.cooldown,
+            (false, Some(s)) => {
+                for (slot, result) in s.queries.into_iter().enumerate() {
+                    call(0x694, vec![3, slot as i32])?;
+                    if result == 1 {
+                        call(0x6a4, vec![slot as i32])?;
+                    }
+                }
+                let request = match (s.slot_byte, s.variant) {
+                    (7, 61) => Some((0x6ec, 0x816)),
+                    (7, _) => Some((0x6fc, 0x817)),
+                    (6, 62) => Some((0x71c, 0x8d6)),
+                    (6, _) => Some((0x72c, 0x8d7)),
+                    _ => None,
+                };
+                if let Some((site, id)) = request {
+                    call(site, vec![id, 3])?;
+                }
+                480
+            }
+            _ => return Err(invalid()),
+        };
+        Ok(json!({"cooldown":cooldown,"calls":calls}))
+    };
+    if let Some(v) = c.state_six {
+        if target != 0x11a8 {
+            return Err(invalid());
+        }
+        let f = |site| number(4, field(site, 4)?);
+        mode = if v.counter > v.limit {
+            2
+        } else if v.slot_byte == 6 && v.scalar < f(0x11e2)? {
+            8
+        } else {
+            6
+        };
+        match (mode == 6 && v.slot_byte == 6, v.range) {
+            (true, Some(r)) => {
+                if (r.slot0_byte == 7 && r.distance_return < f64::from(f(0x2ba)?))
+                    || r.distance_return <= f64::from(f(0x2d6)?)
+                {
+                    mode = 2;
+                }
+            }
+            (false, None) => {}
+            _ => return Err(invalid()),
+        }
+        let mut steering = None;
+        match (mode, v.timer, v.steering) {
+            (2, Some(t), None) => {
+                let (s, r, b) = if t.slot_byte == 7 {
+                    (0x586, 0x596, 0x5a6)
+                } else {
+                    (0x5f2, 0x602, 0x612)
+                };
+                timer = Some((f(b)? + f(r)? * (f(s)? * t.draw as f32)) as i32 as i16 as i32);
+            }
+            (8, None, None) => {}
+            (6, None, Some(h)) => {
+                let (wave_arg, scalar) = match (h.final_slot_byte, h.wave) {
+                    (6, None) => (None, f(0x12de)?),
+                    (6, Some(_)) | (_, None) => return Err(invalid()),
+                    (_, Some(w)) => (
+                        Some(w.phase_word << 10),
+                        f(0x1316)? + f(0x1306)? * w.service_return,
+                    ),
+                };
+                steering = Some(
+                    json!({"vectorArgs":[h.slot0,h.slot1],"angleArgs":[h.final_vector[0],h.final_vector[2]],
+                    "yaw":heading(0x12a2,h.angle_return)?,"waveArg":wave_arg,"scalar":scalar}),
+                );
+            }
+            _ => return Err(invalid()),
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"counter":if mode==6{v.counter}else{0},
+            "timerWrite":timer,"steering":steering});
+    }
+    if let Some(v) = c.state_four {
+        if target != 0xe9c {
+            return Err(invalid());
+        }
+        let f = |site| number(4, field(site, 4)?);
+        let near = (v.range.slot0_byte == 7 && v.range.distance_return < f64::from(f(0x2ba)?))
+            || v.range.distance_return <= f64::from(f(0x2d6)?);
+        let mut steering = None;
+        let mut close = None;
+        mode = if near {
+            5
+        } else if v.slot_byte == 6 && v.scalar < f(0xede)? {
+            8
+        } else if v.counter > v.limit {
+            2
+        } else {
+            4
+        };
+        match (mode, v.close_range, v.draw, v.steering) {
+            (5, Some(c), None, None) => close = Some(close_entry(c)?),
+            (8, None, None, None) => {}
+            (2, None, Some(d), None) => {
+                let (scale, range, base) = if v.slot_byte == 7 {
+                    (0x586, 0x596, 0x5a6)
+                } else {
+                    (0x5f2, 0x602, 0x612)
+                };
+                timer = Some((f(base)? + f(range)? * (f(scale)? * d as f32)) as i32 as i16 as i32);
+            }
+            (4, None, None, Some(h)) => {
+                let radius = f(0xf3e)?;
+                let x = (h.slot0[0] + radius * h.axis_returns[0]) - h.slot1[0];
+                let z = (h.slot0[2] + radius * h.axis_returns[1]) - h.slot1[2];
+                steering = Some(
+                    json!({"axisArgs":h.phase_words.map(|w|w<<8),"angleArgs":[x,z],
+                    "yaw":heading(0xf86,h.angle_return)?,"scalar":f(if h.final_slot_byte==6 {0xfc2}else{0xfd6})?}),
+                );
+            }
+            _ => return Err(invalid()),
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"counter":if mode==4 {v.counter}else{0},
+            "steering":steering,"timerWrite":timer,"closeRange":close});
+    }
+    if let Some(v) = c.state_five {
+        if target != 0xfe4 {
+            return Err(invalid());
+        }
+        let f = |site| number(4, field(site, 4)?);
+        let steering = match (v.player_word & 3 != 0, v.angle_return) {
+            (true, Some(angle)) => Some(
+                json!({"angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],
+                "yaw":heading(0x1016,angle)?,"scalar":f(0x1042)?}),
+            ),
+            (false, None) => None,
+            _ => return Err(invalid()),
+        };
+        let near = (v.range.slot0_byte == 7 && v.range.distance_return < f64::from(f(0x2ba)?))
+            || v.range.distance_return <= f64::from(f(0x2d6)?);
+        let engage = match (near, v.decision) {
+            (true, None) => false,
+            (false, Some(d)) => d.active(),
+            _ => return Err(invalid()),
+        };
+        let pulse_sites = match (engage, v.slot_byte) {
+            (false, 6) if v.counter & 31 == 0 => Some((0x10da, 0x10ea)),
+            (false, 7) if v.counter & 63 == 0 => Some((0x1146, 0x1156)),
+            _ => None,
+        };
+        let pulse = match (pulse_sites, v.pulse_draw) {
+            (Some((scale, limit)), Some(draw)) => (draw as f32) * f(scale)? < f(limit)?,
+            (None, None) => false,
+            _ => return Err(invalid()),
+        };
+        if engage {
+            mode = 6;
+        } else if !pulse && v.counter > 64 {
+            mode = 4;
+        }
+        let sites = match (mode, v.slot_byte) {
+            (6, 7) => Some((0x366, 0x376, 0x376)),
+            (6, _) => Some((0x3c6, 0x3d6, 0x3e6)),
+            (4, 7) => Some((0x476, 0x486, 0x486)),
+            (4, _) => Some((0x4d6, 0x4e6, 0x4f6)),
+            _ => None,
+        };
+        timer = match (sites, v.timer_draw) {
+            (Some((scale, range, base)), Some(draw)) => {
+                Some((f(base)? + f(range)? * (f(scale)? * draw as f32)) as i32 as i16 as i32)
+            }
+            (None, None) => None,
+            _ => return Err(invalid()),
+        };
+        report = json!({"dispatch":target,"continueAt":0x1424,"steering":steering,"mode":mode,
+            "counter":if mode!=5 || pulse {0}else{v.counter},"timerWrite":timer,
+            "byteWrites":if pulse {vec![0x803ad485u32,0x803ad495]}else{vec![]}});
+    }
+    if let Some(v) = c.state_two {
+        if target != 0xad4 {
+            return Err(invalid());
+        }
+        let mut decision_trace = None;
+        let direct = match v.decision {
+            SteeringDecision::Observed(value) => value != 0,
+            SteeringDecision::Inputs(inputs) => {
+                let near = inputs.slot0_byte == 7
+                    && inputs.distance_return < f64::from(number(4, field(0x1fa, 4)?)?);
+                let (direct, difference) = match (near, inputs.facing) {
+                    (true, None) => (true, None),
+                    (false, Some(f)) => (
+                        f.difference_return < 0x3000,
+                        Some([heading(0x232, f.angle_return)?, f.previous_yaw]),
+                    ),
+                    _ => return Err(invalid()),
+                };
+                decision_trace = Some(json!({"direct":direct,"distanceArgs":[v.slot0,v.slot1],
+                    "angleArgs":if near {None} else {Some([v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]])},
+                    "differenceArgs":difference}));
+                direct
+            }
+        };
+        let desired = heading(if direct { 0xb0e } else { 0xb8e }, v.angle_return)?;
+        let (yaw, turn_args, scalar_site) = match (direct, v.turn) {
+            (true, None) => (desired, None, if v.slot_byte == 6 { 0xb4a } else { 0xb5e }),
+            (false, Some(t)) => (t.result, Some([t.previous_yaw, desired, 0x180]), 0xbc6),
+            _ => return Err(invalid()),
+        };
+        report = json!({"dispatch":target,"continueAt":0xbd0,"mode":mode,
+            "angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],
+            "turnArgs":turn_args,"yaw":yaw,"scalar":number(4,field(scalar_site,4)?)?});
+        if let Some(trace) = decision_trace {
+            report["decision"] = trace;
+        }
+        if let Some(a) = v.after_steering {
+            let f = |site| number(4, field(site, 4)?);
+            let mut counter = a.counter;
+            let mut pulse = false;
+            let mut next = 0x1424;
+            let mut draw_used = false;
+            if v.slot_byte == 6 && a.pose_word != 0 && a.scalar < f(0xbf6)? {
+                if a.range.is_some() {
+                    return Err(invalid());
+                }
+                mode = 8;
+                counter = 0;
+            } else {
+                let r = a.range.ok_or_else(invalid)?;
+                if (r.slot0_byte == 7 && r.distance_return < f64::from(f(0x2ba)?))
+                    || r.distance_return <= f64::from(f(0x2d6)?)
+                {
+                    next = 0x640;
+                } else {
+                    let sites = match v.slot_byte {
+                        6 if counter & 31 == 0 => Some((0xc8e, 0xc9e)),
+                        7 if counter & 63 == 0 => Some((0xcfa, 0xd0a)),
+                        _ => None,
+                    };
+                    if let Some((scale, threshold)) = sites {
+                        draw_used = true;
+                        pulse = (a.draw.ok_or_else(invalid)? as f32) * f(scale)? < f(threshold)?;
+                    }
+                    if !pulse && counter > a.limit {
+                        next = 0xd48;
+                    }
+                }
+            }
+            if let Some(e) = a.expiry {
+                if next != 0xd48 {
+                    return Err(invalid());
+                }
+                let mut draws = e.draws.into_iter();
+                let mut bytes = e.slot_bytes.into_iter();
+                let mut draw = || draws.next().map(|n| n as f32).ok_or_else(invalid);
+                let mut byte = || bytes.next().ok_or_else(invalid);
+                mode = if e.decision.active() {
+                    6
+                } else if draw()? * f(0xd9e)? < f(0xdae)? {
+                    4
+                } else {
+                    let six = byte()? == 6 && draw()? * f(0xd9e)? > f(0xe0e)?;
+                    if six || (byte()? == 7 && draw()? * f(0xe5a)? < f(0xe6a)?) {
+                        7
+                    } else {
+                        5
+                    }
+                };
+                if mode == 4 || mode == 6 {
+                    let (s, r, b) = match (mode, byte()?) {
+                        (6, 7) => (0x366, 0x376, 0x376),
+                        (6, _) => (0x3c6, 0x3d6, 0x3e6),
+                        (4, 7) => (0x476, 0x486, 0x486),
+                        _ => (0x4d6, 0x4e6, 0x4f6),
+                    };
+                    timer = Some((f(b)? + f(r)? * (f(s)? * draw()?)) as i32 as i16 as i32);
+                }
+                if draws.next().is_some() || bytes.next().is_some() {
+                    return Err(invalid());
+                }
+                if mode == 5 && a.close_range.is_none() {
+                    return Err(invalid());
+                }
+                next = if mode == 5 { 0x640 } else { 0x1424 };
+                counter = 0;
+                report["timerWrite"] = json!(timer);
+            }
+            if let Some(close) = a.close_range {
+                if next != 0x640 {
+                    return Err(invalid());
+                }
+                counter = 0;
+                mode = 5;
+                next = 0x1424;
+                report["closeRange"] = close_entry(close)?;
+            }
+            if !draw_used && a.draw.is_some() {
+                return Err(invalid());
+            }
+            report["continueAt"] = json!(next);
+            report["mode"] = json!(mode);
+            report["counter"] = json!(counter);
+            report["byteWrites"] = json!(if pulse {
+                vec![0x803ad485u32, 0x803ad495]
+            } else {
+                vec![]
+            });
+        }
+    }
+    if let Some(v) = c.state_eight {
+        if target != 0x137c {
+            return Err(invalid());
+        }
+        let mut counter = v.counter;
+        let mut ops = vec![0x1394];
+        let yaw = heading(0x139e, v.angle_return)?;
+        let pulse = v.pose_word != 0 && counter & 7 == 0;
+        if v.pose_word == 0 {
+            let draw = v.draw.ok_or_else(invalid)? as f32;
+            let (site, scale, range, base) = if v.slot_byte == 7 {
+                (0x448, 0x476, 0x486, 0x486)
+            } else {
+                (0x4a8, 0x4d6, 0x4e6, 0x4f6)
+            };
+            let f = |site| number(4, field(site, 4)?);
+            timer = Some((f(base)? + f(range)? * (f(scale)? * draw)) as i32 as i16 as i32);
+            mode = 4;
+            counter = 0;
+            ops.extend([0x13e8, site]);
+        } else {
+            if v.draw.is_some() {
+                return Err(invalid());
+            }
+            if pulse {
+                counter = 0;
+            }
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"timerWrite":timer,"counter":counter,
+            "angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],"yaw":yaw,"scalar":number(4,field(0x13ca,4)?)?,
+            "byteWrites":if pulse{vec![0x803ad485u32,0x803ad495]}else{vec![]},"operations":ops});
+    }
+    if let Some(v) = c.state_one {
+        if target != 0x924 {
+            return Err(invalid());
+        }
+        let mut counter = v.counter;
+        let mut sub = v.submode;
+        let mut ops = Vec::new();
+        let mut cooldown = None;
+        let mut messenger = None;
+        if counter > v.limit {
+            if sub == 0 {
+                sub = 1;
+                let query = v.query.ok_or_else(invalid)?;
+                ops.push(json!([0x988]));
+                if query != 0 {
+                    let group = match query {
+                        1 => 0,
+                        2 => 1,
+                        _ => 2,
+                    } + if v.slot0_byte == 7 { 3 } else { 0 };
+                    let base = field(0x94e, 5)?;
+                    let pos = [
+                        number(5, base)?,
+                        number(5, base + 4)? + number(4, field(0x972, 4)?)?,
+                        number(5, base + 8)?,
+                    ];
+                    ops.push(json!([0x9f8, pos, 0, 0, group, 2, 0]));
+                    if let Some(allocated) = v.messenger_allocated {
+                        let name_offset = field(0x26206, 5)? as usize;
+                        let data = &rel.data(5)?[name_offset..];
+                        let name = std::str::from_utf8(
+                            &data[..data.iter().position(|b| *b == 0).ok_or_else(invalid)?],
+                        )
+                        .map_err(|_| invalid())?;
+                        let initial = number(4, field(0x26272, 4)?)?;
+                        messenger = Some(json!({"create":[3,2,field(0x261fe,1)?,name],
+                            "created":if allocated{Some(json!({"position":pos,"rotation":[0,0,0],"group":group as f32,
+                            "parameter":initial,"taskWord":2,"initialize":0x25cac,"extraWord80":0,"extraFloat48":initial,
+                            "mode":6,"extraPosition":pos,"finalCall":[0x800b,0,0,0]}))}else{None}}));
+                    }
+                }
+            } else if v.query.is_some() {
+                return Err(invalid());
+            }
+            ops.extend([
+                json!([0xa00, 0]),
+                json!([0xa04]),
+                json!([0xa18]),
+                json!([0xa84, 0]),
+            ]);
+            let f = |site| number(4, field(site, 4)?);
+            let value = f(0xa66)? + f(0xa56)? * (f(0xa46)? * v.draw.ok_or_else(invalid)? as f32);
+            timer = Some(value as i32 as i16 as i32);
+            counter = 0;
+            mode = 7;
+        } else {
+            if v.draw.is_some() || v.query.is_some() {
+                return Err(invalid());
+            }
+            if counter == 120 {
+                match v.character {
+                    6 => ops.push(json!([0xac4, 0x8d3])),
+                    7 => ops.push(json!([0xac4, 0x813])),
+                    _ => {}
+                }
+                cooldown = Some(180);
+            }
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"submode":sub,"counter":counter,
+            "timerWrite":timer,"cooldownWrite":cooldown,"operations":ops});
+        if let Some(value) = messenger {
+            report["messenger"] = value;
+        } else if v.messenger_allocated.is_some() {
+            return Err(invalid());
+        }
+    }
+    Ok(report)
+}
+
+/// Observations after helper 1:0x0, including the child link after a removal request.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Tail {
+    slot1_position: Option<[f32; 3]>,
+    mode: i8,
+    submode: i8,
+    counter: i16,
+    cooldown: i16,
+    slot0_flags: u16,
+    queries: Vec<i32>,
+    engine_word: u32,
+    slot1_value: f32,
+    child: bool,
+    child_after_remove: Option<bool>,
+}
+/// The native helper passes a corrected copy to the engine; it does not write the pose.
+fn arena_bounds(rel: &CityRel<'_>, mut position: [f32; 3]) -> Result<Value> {
+    let invalid = || Error::invalid("missing duel arena bound or position service");
+    let data = rel.data(5)?;
+    let value = |site, displacement: usize| -> Result<f32> {
+        let reference = rel
+            .reference(1, site)
+            .filter(|r| r.module == 19 && r.kind == 4 && r.section == 5)
+            .ok_or_else(invalid)?;
+        let at = reference.addend as usize + displacement;
+        Ok(f32::from_be_bytes(
+            data.get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut changed = false;
+    for (axis, (center, upper, lower)) in
+        [(0x32, 0x3e, 0x62), (0x86, 0x92, 0xb6), (0xda, 0xe6, 0x10a)]
+            .into_iter()
+            .enumerate()
+    {
+        let origin = value(center, axis * 4)?;
+        let max = origin + value(upper, axis * 4)?;
+        let min = origin + value(lower, 12 + axis * 4)?;
+        if position[axis] > max {
+            position[axis] = max;
+            changed = true;
+        }
+        if position[axis] < min {
+            position[axis] = min;
+            changed = true;
+        }
+    }
+    let service = rel
+        .reference(1, 0x13c)
+        .filter(|r| r.module == 0 && r.kind == 10)
+        .ok_or_else(invalid)?;
+    Ok(
+        json!({"result":i32::from(changed),"call":changed.then(||json!({"engine":service.addend,"slot":1,"position":position}))}),
+    )
+}
+
+fn walker_tail(mut t: Tail, constant: impl Fn(u32) -> Result<f32>) -> Result<Value> {
+    let mut calls = vec![0x142c];
+    let mut q = t.queries.into_iter();
+    let mut reset = t.slot0_flags & 0x4000 != 0;
+    for (site, stop) in [(0x1440, 9), (0x144c, 12), (0x1458, 13)] {
+        if reset {
+            break;
+        }
+        calls.push(site);
+        reset = q
+            .next()
+            .ok_or_else(|| Error::invalid("missing walker tail query"))?
+            == stop;
+    }
+    if q.next().is_some() {
+        return Err(Error::invalid("unused walker tail query"));
+    }
+    reset |= t.engine_word == 0;
+    if reset {
+        t.slot1_value = constant(0x147e)?;
+        if t.child {
+            calls.push(0x1494);
+            t.child = t
+                .child_after_remove
+                .take()
+                .ok_or_else(|| Error::invalid("missing post-removal child observation"))?;
+        }
+        t.mode = 0;
+        t.submode = 0;
+        t.counter = 0;
+    } else {
+        t.counter = t.counter.wrapping_add(1);
+        if t.cooldown > 0 {
+            t.cooldown -= 1;
+        }
+    }
+    if t.child_after_remove.is_some() {
+        return Err(Error::invalid("unused post-removal child observation"));
+    }
+    let scaled = constant(0x14d2)? * t.slot1_value;
+    if t.slot1_value > constant(0x14f2)? && !t.child {
+        calls.push(0x1514);
+    }
+    Ok(
+        json!({"mode":t.mode,"submode":t.submode,"counter":t.counter,"cooldown":t.cooldown,
+        "slot1Value":t.slot1_value,"scaled":scaled,"calls":calls}),
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateSeven {
+    slot_byte: i8,
+    counter: i16,
+    helper_result: Option<i32>,
+    decision: Option<WalkerDecision>,
+    draw: Option<i32>,
+}
+
+/// State 7's predicate at 1:0x15c ignores the two position arguments.
+/// None denotes a null slot-one work link, not a missing slot-one task.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WalkerDecision {
+    work_word: Option<u32>,
+    engine_byte: i8,
+}
+impl WalkerDecision {
+    fn active(&self) -> bool {
+        self.work_word.is_some_and(|word| word != 0) || self.engine_byte != 0
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateEight {
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    angle_return: f64,
+    pose_word: u16,
+    slot_byte: i8,
+    counter: i16,
+    draw: Option<i32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateOne {
+    messenger_allocated: Option<bool>,
+    counter: i16,
+    limit: i16,
+    submode: i8,
+    character: i8,
+    slot0_byte: i8,
+    query: Option<i32>,
+    draw: Option<i32>,
+}
