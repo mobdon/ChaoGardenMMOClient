@@ -14,6 +14,8 @@ pub struct Program {
     pub slot_words_offset: u32,
     #[serde(skip)]
     dispatch_codes: Vec<Option<u16>>,
+    #[serde(skip)]
+    consumer_scale: [f32; 2],
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     #[serde(skip)]
@@ -382,6 +384,36 @@ impl Program {
             .reference(1, switch + 0x16)
             .filter(|r| r.module == info.module && r.kind == 4 && r.section == 5)
             .ok_or_else(invalid)?;
+        let tail = switch + 0x2ec;
+        if manifest::sha256(
+            instructions
+                .get(tail as usize..tail as usize + 0x68)
+                .ok_or_else(invalid)?,
+        ) != "e3b60013ab7a1eba2322458dd8f9256f7334dc88244578ab314780bb2c3e5fea"
+        {
+            return Err(invalid());
+        }
+        for (off, kind, addr) in [
+            (2, 6, 0x801cbd88),
+            (6, 4, 0x801cbd88),
+            (0x10, 10, 0x80112050),
+        ] {
+            let r = rel.reference(1, tail + off).ok_or_else(invalid)?;
+            if (r.module, r.kind, r.addend) != (0, kind, addr) {
+                return Err(invalid());
+            }
+        }
+        let scalar = |off| -> Result<f32> {
+            let hi = rel.reference(1, tail + off).ok_or_else(invalid)?;
+            let lo = rel.reference(1, tail + off + 4).ok_or_else(invalid)?;
+            if (hi.module, hi.section, hi.kind) != (info.module, 4, 6)
+                || (lo.module, lo.section, lo.kind, lo.addend) != (info.module, 4, 4, hi.addend)
+            {
+                return Err(invalid());
+            }
+            Ok(f32::from_bits(word(rel.data(4)?, lo.addend as usize)?))
+        };
+        let consumer_scale = [scalar(0x16)?, scalar(0x26)?];
         let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
         for i in 0..93 {
@@ -1149,6 +1181,7 @@ impl Program {
             contact_offset: start,
             local_effect: target,
             dispatch_codes,
+            consumer_scale,
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
@@ -1278,6 +1311,18 @@ pub fn apply_slot_writes(words: &mut [u32; 2], calls: &[Call], helper: u32) {
     }
 }
 impl Program {
+    pub fn consumer_update(&self, frame: i32, value: f32, counter: i32) -> Result<Value> {
+        let scaled = (self.consumer_scale[0] * value) * self.consumer_scale[1];
+        if !scaled.is_finite() || !(-2147483648.0..2147483648.0).contains(&scaled) {
+            return Err(Error::invalid(
+                "consumer return outside verified conversion range",
+            ));
+        }
+        Ok(
+            json!({"call":[0x80112050u32,frame.wrapping_mul(0x380)],"work44":scaled as i32,
+                  "work112":if counter<1000 {counter+1} else {counter}}),
+        )
+    }
     /// Only the observed word-2 branch of the stage task; other modes have separate paths.
     pub fn consume_goal_word(
         &self,
@@ -1415,7 +1460,15 @@ impl Program {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ConsumerUpdate {
+    frame: i32,
+    service_return: f32,
+    counter: i32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConsumerInput {
+    update: Option<ConsumerUpdate>,
     message: Option<MessageContext>,
     slot: u8,
     query: i32,
@@ -2090,6 +2143,9 @@ pub fn replay(
         let code = p.consume_goal_word(&mut slot_words, c.slot, c.query)?;
         let mut out =
             json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0});
+        if let Some(u) = c.update {
+            out["update"] = p.consumer_update(u.frame, u.service_return, u.counter)?;
+        }
         if let Some(m) = c.message {
             out["messageCall"] = p.message_call(
                 code.ok_or_else(|| Error::invalid("no message selected"))?,

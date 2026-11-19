@@ -862,3 +862,39 @@ for work,size,alloc in [(WORK,2048,TASK+0x600),(WORK+0x200,4096,0)]:
     assert tex.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d3e0
     width,ptr=struct.unpack('>II',tex.mem_read(work+140,8))
     print('TEX',work,size,alloc,json.dumps(dict(calls=calls,lodFloatBits=lod,work140=width,work144=ptr),separators=(',',':')))
+
+# Continue the word-2 consumer from its mode reset to the common exit.
+tail=0x3bd8c
+block=bytearray(d[ss[1][0]+tail:ss[1][0]+tail+0x68])
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not tail<=off<tail+len(block):continue
+        if kind==10:
+            assert module==0
+            service=val
+            continue
+        if module:
+            assert module==12 and s==4
+            addr=DATA+4*0x100000+val
+            u.mem_write(addr,d[ss[4][0]+val:ss[4][0]+val+4])
+        else:addr=val
+        assert kind in (4,6)
+        struct.pack_into('>H',block,off-tail,(addr if kind==4 else (addr+0x8000)>>16)&65535)
+u.mem_write(BASE+tail,bytes(block))
+def observe_tail(cpu,pc,*_):
+    arg=reg(3)
+    calls.append([service,arg if arg<2**31 else arg-2**32])
+    cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack('>d',value),'big'))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+u.hook_add(UC_HOOK_CODE,observe_tail,begin=BASE+tail+16,end=BASE+tail+16)
+for frame,value,counter in itertools.product([-2147483647,-2,0,37,2147483647],[-1.,-.375,0.,.125,1.],[-1,999,1000,1001]):
+    calls=[];put(GLOBAL+0x7c,'i',frame);put(TASK+64,'I',WORK);put(WORK+112,'i',counter)
+    setreg(1,TASK+0xc00);setreg(27,TASK)
+    u.emu_start(BASE+tail,BASE+0x3bedc,count=64)
+    assert len(calls)==1 and u.reg_read(R.UC_PPC_REG_PC)==BASE+0x3bedc
+    print('TAIL',frame,value,counter,json.dumps(dict(call=calls[0],work44=get(WORK+44,'i'),work112=get(WORK+112,'i')),separators=(',',':')))
