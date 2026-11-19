@@ -141,7 +141,77 @@ def emerald_paths():
     finally:
         for h in hooks:u.hook_del(h)
     return paths
+def shape_record(ptr):
+    kind,form,push,damage,attr,*words=get(ptr,"bBbbI7f3i")
+    return dict(kind=kind,form=form,push=push,damage=damage,attr=attr,
+                center=words[:3],parameters=words[3:7],angles=words[7:])
+def alternate_setup(data, at, path):
+    center=path["center"]
+    rx,ry,rz=struct.unpack_from(">3H",data,at+2)
+    xyz=struct.unpack_from(">6f",data,at+8)
+    extra=stage+1200; shape=stage+1400; ccl=stage+1500
+    local=(11.,-17.,23.); world=(101.,-103.,107.)
+    steps=[]; setup={}
+    def floats(cpu, n):
+        return [struct.unpack(">d",cpu.reg_read(getattr(R,"UC_PPC_REG_FPR"+str(i))).to_bytes(8,"big"))[0] for i in range(1,n+1)]
+    def observe(cpu,pc,size,_):
+        site=pc-base[1];steps.append(site)
+        if site==0x220e4:
+            setup["allocation"]=[reg(3),reg(4)];cpu.reg_write(R.UC_PPC_REG_3,extra)
+        elif site==0x22108:cpu.reg_write(R.UC_PPC_REG_3,0x1234)
+        elif site==0x2213c:
+            assert get(reg(4),"I")== (0x34,) and reg(3)==work
+            setup["initialDistance"]=floats(cpu,1)[0];put(reg(6),"fff",*local)
+        elif site==0x2214c:put(reg(4),"fff",*center)
+        elif site==0x22160:setup["translate"]=list(get(reg(3),"fff"))
+        elif site in (0x2216c,0x22178):setup.setdefault("rotationWords",[]).append(reg(4))
+        elif site==0x2219c:setup["translateAfterRotation"]=floats(cpu,3)
+        elif site==0x221ac:
+            assert get(reg(4),"fff")==local and reg(5)==extra
+            put(extra,"fff",*world)
+        elif site==0x221f8:
+            setup.update(typeWord=reg(3),lowByte=reg(4));assert get(reg(5),"fff")==world
+        elif site==0x22210:cpu.reg_write(R.UC_PPC_REG_3,0)
+        elif site==0x22230:
+            setup.update(shapeOffset=reg(4)-base[5],sourceShape=shape_record(reg(4)),count=reg(5),id=reg(6))
+            cpu.mem_write(shape,bytes(cpu.mem_read(reg(4),48)))
+            put(work+0x2c,"I",ccl);put(ccl+12,"I",shape)
+        elif site==0x2227c:
+            assert reg(3)==ccl and get(shape+8,"fff")==world
+            setup["shapeParameter"]=get(shape+20,"f")[0]
+            assert shape_record(shape)==setup["sourceShape"]|dict(center=list(world),parameters=[setup["shapeParameter"],*setup["sourceShape"]["parameters"][1:]])
+        cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+    sites=(0x220e4,0x22108,0x2213c,0x2214c,0x22150,0x22158,0x22160,0x2216c,0x22178,
+           0x2219c,0x221ac,0x221b0,0x221f8,0x22210,0x22230,0x2227c)
+    hooks=[u.hook_add(UC_HOOK_CODE,observe,begin=base[1]+s,end=base[1]+s) for s in sites]
+    try:
+        put(child+0x30,"II",1,work);put(work,"B",0);put(work+8,"III",rx,ry,rz);put(work+20,"6f",*xyz)
+        u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child);u.reg_write(R.UC_PPC_REG_LR,stop)
+        u.emu_start(base[1]+0x220ac,stop,count=300)
+        assert u.reg_read(R.UC_PPC_REG_PC)==stop and steps==list(sites),steps
+    finally:
+        for hook in hooks:u.hook_del(hook)
+    assert setup["rotationWords"]==[0,0]
+    # Independent homogeneous matrix composition with f32 storage between calls.
+    f32=lambda v:struct.unpack(">f",struct.pack(">f",v))[0]
+    m=[[float(i==j) for j in range(4)] for i in range(4)]
+    for vector in (setup["translate"],setup["translateAfterRotation"]):
+        t=[[float(i==j) for j in range(4)] for i in range(4)]
+        for i,v in enumerate(vector):t[i][3]=v
+        m=[[f32(sum(row[k]*t[k][j] for k in range(4))) for j in range(4)] for row in m]
+    setup["derivedWorldVertices"]=[[f32(sum(a*b for a,b in zip(row,[*v,1.]))) for row in m[:3]] for v in path["points"]]
+    # Independently evaluate the first interior point for these installed placements.
+    import math
+    a,b=path["points"][:2];sq=[f32(f32(x-y)**2) for x,y in zip(a,b)]
+    length=f32(math.sqrt(f32(f32(sq[0]+sq[1])+sq[2])))
+    d=setup["initialDistance"];assert 0<d<length
+    left=f32(f32(length-d)/length);right=f32(1-left)
+    local=[f32(f32(x*left)+f32(y*right)) for x,y in zip(a,b)]
+    world=[f32(sum(v*k for v,k in zip(row,[*local,1.]))) for row in m[:3]]
+    setup["freshCursorPosition"]=dict(segment=0,fraction=right,local=local,world=world,wrapped=False)
+    return setup
 def emerald_tasks():
+    paths=emerald_paths()
     expected=[]
     def intercept(cpu,pc,size,_):
         if pc==base[1]+0x1fd20:
@@ -153,7 +223,8 @@ def emerald_tasks():
             cpu.reg_write(R.UC_PPC_REG_3,answer)
         elif pc==base[1]+0x20818:
             assert reg(3)==child
-            setup.update(shapeOffset=reg(4)-base[5],count=reg(5),id=reg(6))
+            setup.update(shapeOffset=reg(4)-base[5],sourceShape=shape_record(reg(4)),count=reg(5),id=reg(6))
+            cpu.mem_write(stage+800,bytes(cpu.mem_read(reg(4),48)))
             put(work+0x2c,"I",stage+704);put(stage+716,"I",stage+800)
         else:
             assert reg(3)==child
@@ -194,9 +265,11 @@ def emerald_tasks():
                         if not mode and answer:assert "count" not in setup
                         else:
                             setup.update(shapeParameter=get(stage+820,"f")[0],skipIfModeZeroAndQueryNonzero=True)
+                            assert shape_record(stage+800)==setup["sourceShape"]|dict(parameters=[setup["shapeParameter"],*setup["sourceShape"]["parameters"][1:]])
                             if row["commonSetup"] is None:row["commonSetup"]=setup
                             else:assert row["commonSetup"]==setup
                 row["pathIndex"]=(int(struct.unpack_from(">f",data,32+32*index+20)[0])%12 if row["initialize"]==0x220ac else None)
+                row["alternateSetup"]=None if row["pathIndex"] is None else alternate_setup(data,32+32*index,paths[row["pathIndex"]])
                 expected.append(row)
     finally:
         for h in hooks:u.hook_del(h)
@@ -268,20 +341,28 @@ def contact_cases(tasks,tmp):
     rejected=subprocess.run([sys.argv[1],"--source-root",str(game),"fan-emerald-contact",str(game/"sonic2app.exe"),str(invalid),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(req)],capture_output=True,text=True)
     assert rejected.returncode!=0 and "no live emerald update" in rejected.stderr and not invalid.exists()
     print(len(cases),"complete common emerald updates matched native callbacks")
-with tempfile.TemporaryDirectory(dir=".local") as tmp:
-    for allocated in (True,False):
-        handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
-        result={};u.mem_write(stage,bytes(512));put(child+0x34,"I",work)
-        invoke(w(52));result["startupResources"]=startup(result["startup"]);invoke(result["entry"])
-        result.update(nextMain=get(stage+0x10,"I")[0]-base[1],created=None)
-        if allocated:result["created"]=dict(position=list(get(work+20,"fff")),callbackAt20=get(child+0x20,"I")[0]-base[1])
-        invoke(result["nextMain"])
-        out=Path(tmp)/f"out-{allocated}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"fan-wild-canyon",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(allocated).lower()],check=True)
-        doc=json.loads(out.read_text())
-        state,music,rows=lighting(0);other,alt,rows2=lighting(255)
-        assert state==other and rows==rows2==doc["lighting"]
-        result.update(state,music=music|alt,emeraldTasks=emerald_tasks(),emeraldPaths=emerald_paths())
-        assert doc["stageTask"]==result and doc["dispatch"]["character"]==4 and doc["dispatch"]["level"]==16
-    contact_cases(result["emeraldTasks"],tmp)
-print("Wild Canyon Hero dispatch, module registration and both stage-task allocation routes matched")
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory(dir=".local") as tmp:
+        for allocated in (True,False):
+            handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
+            result={};u.mem_write(stage,bytes(512));put(child+0x34,"I",work)
+            invoke(w(52));result["startupResources"]=startup(result["startup"]);invoke(result["entry"])
+            result.update(nextMain=get(stage+0x10,"I")[0]-base[1],created=None)
+            if allocated:result["created"]=dict(position=list(get(work+20,"fff")),callbackAt20=get(child+0x20,"I")[0]-base[1])
+            invoke(result["nextMain"])
+            out=Path(tmp)/f"out-{allocated}.json"
+            subprocess.run([sys.argv[1],"--source-root",str(game),"fan-wild-canyon",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(allocated).lower()],check=True)
+            doc=json.loads(out.read_text())
+            exe=(game/"sonic2app.exe").read_bytes()
+            for record in doc["pcCollisionTemplates"]:
+                src=bytes(u.mem_read(base[5]+record["relOffset"],48))
+                needle=struct.pack("<bBbbI7f3i",*struct.unpack(">bBbbI7f3i",src))
+                assert exe.count(needle)==1 and exe.index(needle)==record["pcFileOffset"]
+                assert record["pcSha256"]==hashlib.sha256(needle).hexdigest() and record["relSha256"]==hashlib.sha256(src).hexdigest()
+            assert len(doc["pcCollisionTemplates"])==2
+            state,music,rows=lighting(0);other,alt,rows2=lighting(255)
+            assert state==other and rows==rows2==doc["lighting"]
+            result.update(state,music=music|alt,emeraldTasks=emerald_tasks(),emeraldPaths=emerald_paths())
+            assert doc["stageTask"]==result and doc["dispatch"]["character"]==4 and doc["dispatch"]["level"]==16
+        contact_cases(result["emeraldTasks"],tmp)
+    print("Wild Canyon Hero dispatch, module registration and both stage-task allocation routes matched")

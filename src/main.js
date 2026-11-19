@@ -28,7 +28,11 @@ let saving = false;
 let pendingSave;
 let lastSlotUpdate = 0;
 let storageWarning = false;
-const audio = createGameAudio($('#audio-toggle'), $('#garden'));
+let watchPending = null;
+let watchTimer;
+const audio = createGameAudio($('#audio-toggle'), $('#garden'), {
+  volumeInput: $('#music-volume'), volumeOutput: $('#music-volume-value'), voiceButton: $('#voices-toggle'),
+});
 const stageSelect = createStageSelect(stagesDialog, { onAction: action, onChange: updatePaused });
 $('#stages-open').addEventListener('click', () => stageSelect.open());
 
@@ -39,6 +43,36 @@ function nearNPC(anchor) {
 function send(message) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
 }
+
+function updateWatchButton() {
+  const button = $('#watch-toggle');
+  const available = !!player && Object.hasOwn(player, 'watch');
+  const watching = available && !!player.watch;
+  const eligible = watching || ['hub', 'garden', 'hero', 'dark'].includes(player?.zone);
+  button.disabled = !available || !eligible || socket?.readyState !== WebSocket.OPEN || saving || !!watchPending;
+  button.setAttribute('aria-pressed', String(watching));
+  button.textContent = watchPending ? (watchPending.action === 'watch-stop' ? 'Taking control…' : 'Starting Watch…') : watching ? 'Watch on · Take control' : 'Watch off';
+  button.title = watching ? 'Take keyboard control of your Chao' : eligible ? 'Let your Chao wander and rest in the shared garden' : 'Return to a garden before starting Watch';
+  $('#garden').dataset.watchMode = watching ? 'watch' : 'manual';
+}
+
+function clearWatchPending() {
+  clearTimeout(watchTimer); watchPending = null; updateWatchButton();
+}
+
+$('#watch-toggle').addEventListener('keydown', event => event.stopPropagation());
+$('#watch-toggle').addEventListener('click', () => {
+  if ($('#watch-toggle').disabled) return;
+  const message = player.watch
+    ? { type: 'action', action: 'watch-stop', sessionId: player.watch.id }
+    : { type: 'action', action: 'watch-start' };
+  watchPending = { action: message.action, playerId: player.id, previousId: player.watch?.id };
+  garden?.clearInput();
+  send(message); updateWatchButton();
+  watchTimer = setTimeout(() => {
+    clearWatchPending(); toast('The garden has not confirmed the Watch change. Please try again.', 'error');
+  }, 5000);
+});
 
 function action(name) {
   if (!player) { toast('Enter the garden to start your adventure.'); return; }
@@ -70,7 +104,7 @@ try {
   toast('The 3D renderer could not start. Enable browser hardware acceleration and reload.', 'error');
 }
 
-function updatePaused() { garden?.setPaused(saving || welcome.open || setupDialog.open || shopDialog.open || stagesDialog.open || !player); }
+function updatePaused() { garden?.setPaused(saving || welcome.open || setupDialog.open || shopDialog.open || stagesDialog.open || !player); updateWatchButton(); }
 
 function rememberChao(savedAt) {
   if (!player || !sessionToken) return;
@@ -134,6 +168,8 @@ window.addEventListener('keydown', (event) => {
 function connected(isConnected) {
   $('#connection-dot').className = `status-dot ${isConnected ? 'connected' : 'error'}`;
   $('#connection-text').textContent = isConnected ? 'Local garden · connected' : 'Reconnecting…';
+  if (!isConnected && watchPending) clearWatchPending();
+  else updateWatchButton();
 }
 
 const zones = {
@@ -167,6 +203,13 @@ function render(next) {
   snapshot = next;
   player = next.players.find((p) => p.id === next.selfId);
   if (!player) return;
+  if (watchPending && (watchPending.playerId !== player.id || (Object.hasOwn(player, 'watch') &&
+    (watchPending.action === 'watch-stop' ? player.watch === null : !!player.watch && player.watch.id !== watchPending.previousId)))) {
+    const takingControl = watchPending.action === 'watch-stop';
+    clearWatchPending();
+    if (takingControl) $('#garden').focus({ preventScroll: true });
+  }
+  updateWatchButton();
   if (Date.now() - lastSlotUpdate > 10000) rememberChao();
   $('#garden').dataset.playerX = player.x.toFixed(3);
   $('#garden').dataset.playerZ = player.z.toFixed(3);
@@ -260,8 +303,10 @@ function connect(token) {
     try { message = JSON.parse(data); } catch { return; }
     if (message.type === 'snapshot') render(message);
     if (message.type === 'notice') toast(message.text, message.kind);
+    if (message.type === 'notice' && message.kind === 'error' && watchPending) clearWatchPending();
     if (message.type === 'notice' && message.kind === 'error' && pendingSave) pendingSave.reject(new Error(message.text));
     if (message.type === 'event') {
+      if (message.kind === 'watch-saved' && watchPending && message.accepted === false) clearWatchPending();
       if (message.kind === 'saved' && message.playerId === player?.id) {
         rememberChao(message.serverTime);
         pendingSave?.resolve();
@@ -442,5 +487,5 @@ document.querySelectorAll('[data-direction]').forEach((button) => {
   button.addEventListener('pointerdown', (event) => { event.preventDefault(); button.setPointerCapture(event.pointerId); garden?.setTouchInput(...direction[button.dataset.direction]); });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(type, () => garden?.setTouchInput(0, 0));
 });
-window.addEventListener('beforeunload', () => { clearTimeout(reconnectTimer); socket?.close(); garden?.dispose(); audio.dispose(); });
-if (import.meta.hot) import.meta.hot.dispose(() => { clearTimeout(reconnectTimer); socket?.close(); garden?.dispose(); audio.dispose(); });
+window.addEventListener('beforeunload', () => { clearTimeout(reconnectTimer); clearTimeout(watchTimer); socket?.close(); garden?.dispose(); audio.dispose(); });
+if (import.meta.hot) import.meta.hot.dispose(() => { clearTimeout(reconnectTimer); clearTimeout(watchTimer); socket?.close(); garden?.dispose(); audio.dispose(); });

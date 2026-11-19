@@ -1,4 +1,11 @@
 //! City Escape ObjectBoardCol placement callback.
+/// Host evaluation of Ninja njDistanceP2P. The PPC library's exact square-root
+/// rounding is not established by the matching City Escape call sites.
+pub(crate) fn point_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let [x, y, z] = std::array::from_fn(|i| a[i] - b[i]);
+    (x * x + y * y + z * z).sqrt()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BoardPlayer {
     pub position: [f32; 3],
@@ -43,8 +50,7 @@ impl BoardTrigger {
         let odd = self.ang_x & 1 != 0;
         for (slot, player) in players.iter().enumerate() {
             let Some(player) = player else { continue };
-            let delta = std::array::from_fn::<_, 3, _>(|i| player.position[i] - self.position[i]);
-            let distance = (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt();
+            let distance = point_distance(player.position, self.position);
             let bit = 1 << slot;
             if distance < self.radius_parameter + 10.0 && self.latched & bit == 0 {
                 self.latched |= bit;

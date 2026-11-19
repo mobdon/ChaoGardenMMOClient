@@ -2,6 +2,43 @@
 use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
 use serde_json::{json, Value};
 
+use crate::collision_record::collision_record;
+
+/// Match file-backed Steam executable records to the two REL templates,
+/// normalizing only the byte order of the eleven 32-bit fields.
+pub fn pc_collision_templates(exe: &[u8], module: &[u8]) -> Result<Value> {
+    let pe = crate::pe::read_pe(exe)?;
+    let rel = CityRel::read_identified(module, 15)?;
+    let data = rel.data(5)?;
+    let mut matches = Vec::new();
+    for (source, rva) in [(0x976ccusize, 0x7435ccu32), (0x97730, 0x7435fc)] {
+        let template = data
+            .get(source..source + 48)
+            .ok_or_else(|| Error::invalid("missing emerald shape template"))?;
+        let at = pe.rva_to_offset(rva, 48)?;
+        let pc = exe
+            .get(at..at + 48)
+            .ok_or_else(|| Error::invalid("missing PC emerald shape record"))?;
+        if pc[..4] != template[..4]
+            || pc[4..]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(template[4..].as_chunks::<4>().0.iter())
+                .any(|(a, b)| !a.iter().eq(b.iter().rev()))
+        {
+            return Err(Error::invalid(
+                "PC and REL emerald collision records disagree",
+            ));
+        }
+        matches.push(
+            json!({"pcRva":rva,"pcFileOffset":at,"relSection":5,"relOffset":source,
+            "pcSha256":manifest::sha256(pc),"relSha256":manifest::sha256(template)}),
+        );
+    }
+    Ok(json!(matches))
+}
+
 pub fn enter(
     module: &[u8],
     allocated: bool,
@@ -70,6 +107,7 @@ pub fn enter(
         return Err(invalid());
     }
     let mut paths = Vec::new();
+    let mut path_geometry = Vec::new();
     for index in 0..count {
         let header = section_ptr(path_table + 4 * index)?;
         let at = header as usize;
@@ -99,6 +137,7 @@ pub fn enter(
         paths.push(
             json!({"headerOffset":header,"pointsOffset":points,"points":vertices,"center":center}),
         );
+        path_geometry.push((center, vertices));
     }
     let mut emeralds = Vec::new();
     for (layer_index, layer) in stage.layers.iter().enumerate() {
@@ -134,9 +173,10 @@ pub fn enter(
                     ))
                 };
                 let add = f32::from_bits(word(rel.data(4)?, pair(0x2081c, 4)? as usize)?);
+                let shape_offset = pair(0x20808, 5)?;
                 Some(
                     json!({"typeWord":word(data,row as usize)?,"lowByte":bound.placement.rotation[0]&255,
-                    "position":bound.placement.position,"shapeOffset":pair(0x20808,5)?,"count":1,"id":6,
+                    "position":bound.placement.position,"shapeOffset":shape_offset,"sourceShape":collision_record(data,shape_offset)?,"count":1,"id":6,
                     "shapeParameter":bound.placement.parameters[1]+add,"skipIfModeZeroAndQueryNonzero":true}),
                 )
             } else {
@@ -151,9 +191,57 @@ pub fn enter(
             } else {
                 None
             };
+            let alternate_setup = if let Some(i) = path_index {
+                let parameter = |pc| f32_at(rel.data(4)?, pair(pc, 4)? as usize);
+                let p = &bound.placement;
+                let (center, vertices) = &path_geometry[i as usize];
+                let translation = crate::emerald_path::unrotated_path_translation(
+                    p.position,
+                    [p.rotation[1], p.rotation[2]],
+                    *center,
+                );
+                let world_vertices = translation.map(|t| {
+                    vertices
+                        .iter()
+                        .map(|&v| crate::emerald_path::translate_path_point(t, v))
+                        .collect::<Vec<_>>()
+                });
+                let initial_distance = parameter(0x22120)? + p.parameters[2];
+                let fresh = if let Some(t) = translation {
+                    let (segment, fraction, local, wrapped) =
+                        crate::emerald_path::advance_position(
+                            vertices,
+                            0,
+                            0.,
+                            initial_distance,
+                            |j| {
+                                crate::board::point_distance(
+                                    vertices[j],
+                                    vertices[(j + 1) % vertices.len()],
+                                )
+                            },
+                        )?;
+                    Some(
+                        json!({"segment":segment,"fraction":fraction,"local":local,"world":crate::emerald_path::translate_path_point(t,local),"wrapped":wrapped}),
+                    )
+                } else {
+                    None
+                };
+                let shape_offset = pair(0x22220, 5)?;
+                Some(json!({
+                    "allocation":[1,24], "initialDistance":initial_distance,"freshCursorPosition":fresh,
+                    "translate":p.position, "rotationWords":[p.rotation[1],p.rotation[2]],
+                    "translateAfterRotation":center.map(|v| -v),"derivedWorldVertices":world_vertices,
+                    "typeWord":u32::from_be_bytes(data[row as usize..row as usize+4].try_into().unwrap()),
+                    "lowByte":p.rotation[0]&255, "shapeOffset":shape_offset,"sourceShape":collision_record(data,shape_offset)?,
+                    "count":1,"id":6,"shapeParameter":parameter(0x22234)? + p.parameters[1]
+                }))
+            } else {
+                None
+            };
             emeralds.push(json!({"layer":layer.filename,"index":bound.placement_index,"object":def.name,"variant":variant,
                 "main":code(row+20)?,"destroy":code(row+28)?,"display":display,"defaultDisplaySlot":32,
-                "nonzeroQueryDisplaySlot":conditional.then_some(20),"initialize":init,"commonSetup":setup,"pathIndex":path_index}));
+                "nonzeroQueryDisplaySlot":conditional.then_some(20),"initialize":init,"commonSetup":setup,"pathIndex":path_index,"alternateSetup":alternate_setup}));
         }
     }
     let ptr = |at| -> Result<Option<u32>> {
@@ -268,31 +356,9 @@ pub fn light_tables(source: &[u8], gc: &[u8]) -> Result<Value> {
             "expected complete Wild Canyon lighting files",
         ));
     }
-    let words = |row: &[u8]| {
-        row.as_chunks::<4>()
-            .0
-            .iter()
-            .map(|v| u32::from_be_bytes(*v))
-            .collect::<Vec<_>>()
-    };
-    let mut derived = Vec::new();
-    for row in source.as_chunks::<32>().0 {
-        let w = words(row);
-        let scaled = |i: usize| (f32::from_bits(w[3]) * f32::from_bits(w[i])).to_bits();
-        derived.push([
-            w[0],
-            w[1],
-            w[2],
-            scaled(5),
-            scaled(6),
-            scaled(7),
-            w[4],
-            w[4],
-            w[4],
-        ]);
-    }
+    let derived = crate::stage_lighting::derive(source)?;
     Ok(
-        json!({"derivedWords":derived,"activeWords":gc.as_chunks::<48>().0.iter().map(|row|words(row)).collect::<Vec<_>>() }),
+        json!({"derivedWords":derived,"activeWords":gc.as_chunks::<48>().0.iter().map(crate::stage_lighting::words).collect::<Vec<_>>() }),
     )
 }
 
@@ -428,14 +494,14 @@ pub fn contacts(
             }
             calls.push(json!([0x20b38]));
             let slot = next()?;
-            if matches!(kind, 4..=6) {
+            if crate::emerald_path::checks_player_action(kind) {
                 let action = t
                     .player_actions
                     .get(usize::try_from(slot).unwrap_or(usize::MAX))
                     .ok_or_else(|| Error::invalid("invalid player lookup index"))?;
-                if action.is_some_and(|v| !matches!(v, 0x3e | 0x42)) {
+                if crate::emerald_path::needs_mode_query(*action) {
                     calls.push(json!([0x1fb28]));
-                    if !matches!(next()?, 8 | 16 | 18 | 41 | 46) {
+                    if !crate::emerald_path::mode_allows_pickup(next()?) {
                         break 'gate "continue";
                     }
                 }

@@ -126,6 +126,45 @@ fn mounted_campaign_routes() {
                             "08154159fc8b6a97bf113308b85e7f93959d818a938d07e55ee025e79a2e1aea",
                         )
                     };
+                    // Digests independently reconstructed from split.exe CART.ini text exports.
+                    let (physics_hash, rank_hash) = if sequence == "Hero Story Sequence" {
+                        (
+                            "80dfb47e1c6817c627d72095a4f0946ef1df771d9d6ca2d4564d9457615bc2d1",
+                            "e93fbf731c121e96617daa04f8bd0e5b3ed9c77050c810d841302b0e92942ff1",
+                        )
+                    } else {
+                        (
+                            "964c33e34e1bcb895dffb5c91ba621fa6e539658c6102558e2dbed900fd366f7",
+                            "b21c02017fc0ee175568a057b7632b0719e6695eb1ade51cd46eb4bbbae5c25b",
+                        )
+                    };
+                    let f = &route.physics;
+                    let physics = [
+                        f.acceleration,
+                        f.brake_power,
+                        f.deceleration,
+                        f.speed_cap,
+                        f.weight,
+                        f.unknown1,
+                        f.drift_handling,
+                        f.drift_speed_threshold,
+                        f.unknown2,
+                        f.top_speed,
+                    ]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect::<Vec<_>>();
+                    let mut times = Vec::new();
+                    for r in &route.rank_times {
+                        times.push(r.level);
+                        for time in [r.d, r.c, r.b, r.a] {
+                            times.extend(time);
+                        }
+                    }
+                    assert_eq!(sa2_asset_tools::manifest::sha256(&physics), physics_hash);
+                    assert_eq!(sa2_asset_tools::manifest::sha256(&times), rank_hash);
+                    assert_eq!(route.physics_sha256, physics_hash);
+                    assert_eq!(route.rank_times_sha256, rank_hash);
                     assert_eq!(stage.layers.len(), 1);
                     assert_eq!(stage.layers[0].placements.len(), n);
                     assert_eq!(sa2_asset_tools::manifest::sha256(&route.course_parts), h);
@@ -169,6 +208,21 @@ fn mounted_campaign_routes() {
                     [516, 898]
                 );
                 assert!(stage.entry_pose.as_ref().unwrap().character == "Sonic");
+                for (pose, yaw, xyz) in [
+                    (&stage.mission2_end_pose, 0xc000, [-1570., -6060., 8860.]),
+                    (&stage.mission3_end_pose, 0x4000, [7700., -13145., 5570.]),
+                ] {
+                    let p = pose.as_ref().unwrap();
+                    assert_eq!(
+                        (p.character, p.row_va, p.yaw, p.position),
+                        ("Sonic", 0x174a2e0, yaw, xyz)
+                    );
+                }
+                let end = stage.end_pose.as_ref().unwrap();
+                assert_eq!(
+                    (end.row_va, end.yaw, end.position),
+                    (0x1748538, 0x4000, [3955., -22175., 16130.])
+                );
                 if let Some(world) = stage.collision_world().unwrap() {
                     let hit = world
                         .raycast([0., 1000., 0.], [0., -1., 0.], 2000.)

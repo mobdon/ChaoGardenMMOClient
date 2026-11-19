@@ -1,0 +1,119 @@
+{
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "repository": "SAT-R/sa2",
+  "romSha256": "afc29e3325baf68a1822e88b25fcb59c8bdc29b8cdc48fa21c56defbd60ca020",
+  "sources": [
+    {
+      "path": "data/sa1/data1.s",
+      "sha256": "da1ff6b97c2b55c1f8db298de1869d89fdbe61e2324450477e2d3fc65fff3ebb"
+    },
+    {
+      "path": "data/sa1/data_0_2.s",
+      "sha256": "60f27805f63e81c2cfe9a55bd274f258905cb4cea993859bd7692ae1d71715c3"
+    },
+    {
+      "path": "data/sa1/data_0_4.s",
+      "sha256": "638d23df957560a63b242c97b531916da647d4ab7db53474b84648606e1a0332"
+    },
+    {
+      "path": "data/sa1/data_0_6_2.s",
+      "sha256": "d202907baf59759da4a81b092f149458a975139a8add9846d3233ed9932d7893"
+    },
+    {
+      "path": "data/sa1/data_sound_test.s",
+      "sha256": "520681d0361f550e7fa23b58a44042c8c0948680469d75264a35e4d9a3eeae71"
+    },
+    {
+      "path": "data/sa1/obj_gfx.s",
+      "sha256": "cc17eff1af951d98ad824fd641f299cc1d6c6aed532cefb40a5890c4e5c59af2"
+    },
+    {
+      "path": "include/constants/anim_commands.h",
+      "sha256": "8ca91536a9544427c4a3ed141b1c1a959dd5c13f58a0425ee8879680e98a0942"
+    },
+    {
+      "path": "include/constants/sa1/tilemaps.h",
+      "sha256": "8b1db62bce2e0d0440a816f087993dc8a30dcc312d8dfebd2aefc65ad81d0200"
+    },
+    {
+      "path": "include/core.h",
+      "sha256": "6b940bf2d0dff3499fe0ae787773a7598a2cb16eee1d791c229d3b7eb1cac0ef"
+    },
+    {
+      "path": "include/data/sa1/sprite_data.h",
+      "sha256": "9fc2d8cfeae133245da865a2f95fd1e70eecff4c0fee25ffb8ba652c15851538"
+    },
+    {
+      "path": "include/tilemap.h",
+      "sha256": "b6d78ba62949d0653590fb3f3e364c59558a76beb1578130972b477ef5540e3c"
+    },
+    {
+      "path": "sound/sa1/direct_sound_data.inc",
+      "sha256": "b1a62781d10de76748c36516e6f0b240c227009357ed3ce59dc1c34760ffad77"
+    },
+    {
+      "path": "sound/sa1/songs/song001.s",
+      "sha256": "6c84a19138876a2355f27dc6e9eb8444f42683cff0c4289cd03254001c0f3c89"
+    },
+    {
+      "path": "sound/sa1/song_table.inc",
+      "sha256": "06c3b799001393b558cae0cd81f7646cac3deb620637ce0139538788f7dfc15c"
+    },
+    {
+      "path": "sound/sa1/voice_groups.inc",
+      "sha256": "f8973fffa38da9e7a10085fdef3187e2211186641042302746402cf12bb98f71"
+    },
+    {
+      "path": "sound/shared/music_player_table.inc",
+      "sha256": "2ca74d5015a388bb750b9c7bb2a283792a1d2e394b02ee3ee4ba6ebbdb3b9a8a"
+    },
+    {
+      "path": "src/data/sa1/animations/animations.c",
+      "sha256": "6493c2936e64a35243127d6fb804ada84abe7832d33f25c888f72cd35eb5de33"
+    },
+    {
+      "path": "src/data/sa1/animations/animation_table.c",
+      "sha256": "2e36ef7a09c142dbc4886fe5cc02525744ecac662f791a69b2bf2ed7475e1b91"
+    },
+    {
+      "path": "src/data/sa1/sprite_dimensions.c",
+      "sha256": "dd2bbf117c006289ffacbb2346d822747fe92a2e27033f09bb79d5c901f11423"
+    },
+    {
+      "path": "src/data/sa1/sprite_tables.c",
+      "sha256": "1985799c86d9f94148be5e58646ef1fac4501399f4e331403b48dfbd1e713615"
+    },
+    {
+      "path": "src/data/sa1/tilemap_table.c",
+      "sha256": "add9fc8f48adb84058a1756c0ed52701abf8ffb8cdc448a123fa9a014c8f6279"
+    },
+    {
+      "path": "src/data/sa1/ui_graphics_data.c",
+      "sha256": "1f5aea875ee9b33ffc65045b3c6bd58f97625c2090926a40faee74fb644a1bd5"
+    },
+    {
+      "path": "src/data/sa1/ui_graphics_table.c",
+      "sha256": "ed4bb487e8fc2b35674eea28e6afea16e5cd0a4ee922503e778e14b6f1031d82"
+    }
+  ],
+  "locators": {
+    "uiScalarRows": 65,
+    "uiScalarPatternSha256": "791b0076147ff64d4c589bc6c2ad5439b370f7615954334d710e3460520fa178",
+    "firstAnimationPrefixSha256": "db7a63dcbd6d02abcfe118ae262e536659860d25e4513faf8dfb70760ebecc18",
+    "spriteEntryCountObserved": 906,
+    "tilemapEntryCountObserved": 89,
+    "songTableEntryCountObserved": 308,
+    "spriteNullSlotsObserved": 140
+  },
+  "limitations": [
+    "Tile/palette representation parity is recorded separately in tests/graphics-parity.json; no visual or audio playback parity claimed.",
+    "Table roles identified structurally; item/stage/animation semantics require caller audit in US source.",
+    "Garden payload art, palettes, audio, UI and minigame asset table roots remain unknown in this research pass.",
+    "All opaque bounded spans preserve unknown bytes; contiguous boundaries are not necessarily complete native array lengths."
+  ],
+  "sourceArchiveSha256": "694735c56c1cac7791e1891f1552f5054a6cc5ddb441db0f20328eb6c39791d9",
+  "sourceArchiveBytes": 2759774,
+  "sourceRomBytes": 8388608,
+  "sourceRomSha1": "d842afa7dd1e84de08addb94a51506f1bcafd551",
+  "catalogRecordCount": 667
+}

@@ -45,17 +45,62 @@ pub struct Campaign {
 pub struct KartRoute {
     pub name: &'static str,
     pub descriptor_rva: u32,
+    pub physics_rva: u32,
+    pub physics_sha256: String,
+    pub physics: KartPhysics,
+    pub rank_times_rva: u32,
+    pub rank_times_sha256: String,
+    pub rank_times: Vec<KartRankRow>,
     pub course_parts: Vec<u8>,
     pub set_filename: &'static str,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KartPhysics {
+    pub acceleration: f32,
+    pub brake_power: f32,
+    pub deceleration: f32,
+    pub speed_cap: f32,
+    pub weight: f32,
+    pub unknown1: f32,
+    pub drift_handling: f32,
+    pub drift_speed_threshold: f32,
+    pub unknown2: f32,
+    pub top_speed: f32,
+}
+#[derive(Debug, Serialize)]
+pub struct KartRankRow {
+    pub level: u8,
+    /// Each pair stores native minutes and seconds, in that order.
+    pub d: [u8; 2],
+    pub c: [u8; 2],
+    pub b: [u8; 2],
+    pub a: [u8; 2],
 }
 /// The two kart stage dispatches use separate course descriptors rather than a static landtable.
 fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
     let pe = crate::pe::read_pe(exe)?;
     let r = crate::model::Reader { data: exe };
     let mut routes = BTreeMap::new();
-    for (ch, name, descriptor_rva, expected, set_filename) in [
-        (6, "Route 101", 0xaf82bc, 321, "setCartTails.bin"),
-        (5, "Route 280", 0xaf82c4, 369, "setCartRouge.bin"),
+    for (ch, name, descriptor_rva, expected, set_filename, physics_rva, rank_times_rva) in [
+        (
+            6,
+            "Route 101",
+            0xaf82bc,
+            321,
+            "setCartTails.bin",
+            0xbf9ef0,
+            0x133b378,
+        ),
+        (
+            5,
+            "Route 280",
+            0xaf82c4,
+            369,
+            "setCartRouge.bin",
+            0xbf9f18,
+            0x133b3a5,
+        ),
     ] {
         let at = pe.rva_to_offset(descriptor_rva, 8)?;
         let count = r.u32(at + 4)? as usize;
@@ -63,11 +108,46 @@ fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
             return Err(Error::invalid("unknown kart course row"));
         }
         let ptr = pe.va_to_offset(r.u32(at)?, count)?;
+        let pa = pe.rva_to_offset(physics_rva, 40)?;
+        let f = |i: usize| r.f32(pa + 4 * i);
+        let physics = KartPhysics {
+            acceleration: f(0)?,
+            brake_power: f(1)?,
+            deceleration: f(2)?,
+            speed_cap: f(3)?,
+            weight: f(4)?,
+            unknown1: f(5)?,
+            drift_handling: f(6)?,
+            drift_speed_threshold: f(7)?,
+            unknown2: f(8)?,
+            top_speed: f(9)?,
+        };
+        let physics_sha256 = crate::manifest::sha256(r.span(pa, 40)?);
+        let ranks = r.span(pe.rva_to_offset(rank_times_rva, 45)?, 45)?;
+        let mut rank_times = Vec::with_capacity(5);
+        for &[level, dm, ds, cm, cs, bm, bs, am, asec] in ranks.as_chunks::<9>().0 {
+            if level != 70 || [ds, cs, bs, asec].iter().any(|s| *s >= 60) {
+                return Err(Error::invalid("unexpected kart rank row"));
+            }
+            rank_times.push(KartRankRow {
+                level,
+                d: [dm, ds],
+                c: [cm, cs],
+                b: [bm, bs],
+                a: [am, asec],
+            });
+        }
         routes.insert(
             ch,
             KartRoute {
                 name,
                 descriptor_rva,
+                physics_rva,
+                physics_sha256,
+                physics,
+                rank_times_rva,
+                rank_times_sha256: crate::manifest::sha256(ranks),
+                rank_times,
                 course_parts: r.span(ptr, count)?.to_vec(),
                 set_filename,
             },
@@ -109,6 +189,10 @@ pub struct MountedStage<'a> {
     pub dispatch: LevelDispatch,
     pub level_section: Option<&'a str>,
     pub entry_pose: Option<EntryPose>,
+    /// Authored single-player end pose; does not trigger completion or respawn.
+    pub end_pose: Option<EntryPose>,
+    pub mission2_end_pose: Option<EntryPose>,
+    pub mission3_end_pose: Option<EntryPose>,
     pub kart_route: Option<&'a KartRoute>,
     pub object_table: Option<&'a ObjectList>,
     pub layers: Vec<Layer>,
@@ -257,15 +341,8 @@ impl Campaign {
     pub fn levels(&self) -> &[LevelDispatch] {
         &self.levels
     }
-    fn kart_route(&self, dispatch: &LevelDispatch) -> Option<&KartRoute> {
-        if dispatch.level == 70 {
-            self.kart_routes.get(&dispatch.character)
-        } else {
-            None
-        }
-    }
-    fn entry_pose(&self, dispatch: &LevelDispatch) -> Result<(&'static str, Option<EntryPose>)> {
-        let ch = match dispatch.character {
+    fn actor_name(dispatch: &LevelDispatch) -> Result<&'static str> {
+        Ok(match dispatch.character {
             0 => "Sonic",
             1 => "Shadow",
             2 => "Tails",
@@ -277,14 +354,23 @@ impl Campaign {
             9 => "SuperSonic",
             10 => "SuperShadow",
             _ => return Err(Error::invalid("unknown story character")),
-        };
-        let mut rows = self.positions.iter().filter(|r| {
-            r.stage == dispatch.level && r.kind == PositionKind::Start && r.character == ch
-        });
-        let entry_pose = rows.next().and_then(|r| {
+        })
+    }
+    fn lookup_pose(
+        &self,
+        dispatch: &LevelDispatch,
+        ch: &str,
+        kind: PositionKind,
+        variant: Variant,
+    ) -> Result<Option<EntryPose>> {
+        let mut rows = self
+            .positions
+            .iter()
+            .filter(|r| r.stage == dispatch.level && r.kind == kind && r.character == ch);
+        let pose = rows.next().and_then(|r| {
             r.poses
                 .iter()
-                .find(|p| p.variant == Variant::Single)
+                .find(|p| p.variant == variant)
                 .map(|p| EntryPose {
                     character: r.character,
                     row_va: r.row_va,
@@ -293,16 +379,24 @@ impl Campaign {
                 })
         });
         if rows.next().is_some() {
-            return Err(Error::invalid("ambiguous campaign start row"));
+            return Err(Error::invalid("ambiguous campaign position row"));
         }
-        Ok((ch, entry_pose))
+        Ok(pose)
+    }
+    fn kart_route(&self, dispatch: &LevelDispatch) -> Option<&KartRoute> {
+        if dispatch.level == 70 {
+            self.kart_routes.get(&dispatch.character)
+        } else {
+            None
+        }
     }
     /// Group story references without treating a stage ID as physical map identity.
     pub fn stage_reuse(&self) -> Result<serde_json::Value> {
         let mut groups = BTreeMap::<u16, Vec<serde_json::Value>>::new();
         for dispatch in &self.levels {
             let config = self.configs.get(&dispatch.level);
-            let (actor, pose) = self.entry_pose(dispatch)?;
+            let actor = Self::actor_name(dispatch)?;
+            let pose = self.lookup_pose(dispatch, actor, PositionKind::Start, Variant::Single)?;
             let kart = self.kart_route(dispatch);
             groups.entry(dispatch.level).or_default().push(serde_json::json!({
                 "dispatch":dispatch, "actor":actor, "entryPose":pose,
@@ -330,7 +424,12 @@ impl Campaign {
             .find(|d| d.sequence == sequence && d.action_index == action_index)
             .ok_or_else(|| Error::invalid("not an authored single-player campaign level action"))?
             .clone();
-        let (ch, entry_pose) = self.entry_pose(&dispatch)?;
+        let ch = Self::actor_name(&dispatch)?;
+        let lookup_pose = |kind, variant| self.lookup_pose(&dispatch, ch, kind, variant);
+        let entry_pose = lookup_pose(PositionKind::Start, Variant::Single)?;
+        let end_pose = lookup_pose(PositionKind::End, Variant::Single)?;
+        let mission2_end_pose = lookup_pose(PositionKind::MissionEnd, Variant::Mission2)?;
+        let mission3_end_pose = lookup_pose(PositionKind::MissionEnd, Variant::Mission3)?;
         let mut gaps = vec![];
         if entry_pose.is_none() {
             gaps.push(format!(
@@ -417,6 +516,9 @@ impl Campaign {
             dispatch,
             level_section: config.map(|c| c.section.as_str()),
             entry_pose,
+            end_pose,
+            mission2_end_pose,
+            mission3_end_pose,
             kart_route,
             unavailable_systems: &[
                 "retail task scheduling and dynamic contacts",

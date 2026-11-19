@@ -13,6 +13,7 @@ pub mod city_replay;
 pub mod city_rider;
 pub mod city_stage;
 pub mod collision;
+mod collision_record;
 pub mod damage_ring;
 pub mod damage_ring_stage;
 pub mod death_zones;
@@ -79,8 +80,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod city_land;
 
+pub mod emerald_path;
 pub mod fan_stage;
 pub mod goal_ring;
+pub mod kart_course;
+pub mod message_bank;
 pub mod mission_ranks;
+pub mod stage20;
+pub mod stage_fog;
 pub mod stage_land;
+pub mod stage_lighting;
 pub mod task_coverage;
