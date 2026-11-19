@@ -211,6 +211,8 @@ pub struct ShortUpdate {
     recovery: Output,
     #[serde(skip_serializing_if = "Option::is_none")]
     impact: Option<Impact>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_contact_audio: Option<crate::kart_driving_audio::Output>,
 }
 /// Shortened update body, 0x2258..0x2280. Last two callbacks immediately return.
 pub fn contact_course_tick(
@@ -225,6 +227,7 @@ pub fn contact_course_tick(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NormalContact {
+    audio: Option<crate::kart_driving_audio::Controls>,
     update: ContactRecovery,
     previous_velocity_xz: [f32; 2],
     work_b8: i32,
@@ -245,13 +248,19 @@ pub fn normal_contact_tick(
     name: &str,
     s: NormalContact,
 ) -> Result<ShortUpdate> {
-    contact_sequence(
+    let audio = s
+        .audio
+        .map(|v| s.update.contact.driving_audio(bytes, v))
+        .transpose()?;
+    let mut result = contact_sequence(
         bytes,
         exe,
         name,
         s.update,
         Some((s.previous_velocity_xz, s.work_b8)),
-    )
+    )?;
+    result.pre_contact_audio = audio;
+    Ok(result)
 }
 fn contact_sequence(
     bytes: &[u8],
@@ -330,6 +339,7 @@ fn contact_sequence(
         },
     )?;
     Ok(ShortUpdate {
+        pre_contact_audio: None,
         contact,
         recovery,
         impact,

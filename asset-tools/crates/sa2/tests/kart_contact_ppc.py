@@ -158,13 +158,19 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
                 before=[7.5,7.500001,10,5,15,0][j]
                 put(base[6]+0x21468+0x7c,"f",before);put(base[6]+0x21468+0x84,"f",0)
                 put(work+0xb8,"i",77)
-                request=dict(update=request,previous_velocity_xz=[before,0],work_b8=77)
+                controls=dict(profile=2,work_284=0,work_110=1,work_114=0,piece_id=49,magnitude_return=11)
+                request=dict(update=request,previous_velocity_xz=[before,0],work_b8=77,audio=controls)
+                req.write_text(json.dumps(dict(work_44=enabled,vehicle_state=w["vehicle_state"],
+                    velocity_xz=[q["velocity"][0],q["velocity"][2]],position=q["proposed_position"],controls=controls)))
+                audio_out=Path(td)/f"pre-audio-{i}.json"
+                subprocess.run([cli,"kart-driving-audio",rel,audio_out,req],check=True)
             req.write_text(json.dumps(request));out=Path(td)/f"combined-{combined}-{i}.json"
             subprocess.run([cli,"kart-normal-contact" if combined==2 else "kart-contact-recovery",rel,out,exe,route["course"],req],check=True)
             result=json.loads(out.read_text());doc=result["contact"];signals=[];calls=[]
             impact_calls=[];reg(29,task)
             if combined==2:
                 reg(30,work);run(0x23f8 if j%2==0 else 0x244c,0x2648)
+                assert result["pre_contact_audio"]==json.loads(audio_out.read_text())
                 impact=result["impact"]
                 assert get(work+0xb8,"i")==impact["work_b8"]
                 assert impact_calls==[val for val in (impact["engine_8006b710"],impact["engine_80011714"]) if val is not None]

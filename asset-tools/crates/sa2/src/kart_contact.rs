@@ -281,6 +281,28 @@ pub(crate) struct FallCarry {
     pub saved_position: [f32; 3],
 }
 
+impl Input {
+    pub(crate) fn driving_audio(
+        &self,
+        bytes: &[u8],
+        controls: crate::kart_driving_audio::Controls,
+    ) -> Result<crate::kart_driving_audio::Output> {
+        let wall = self
+            .wall
+            .as_ref()
+            .ok_or_else(|| crate::Error::invalid("missing pre-contact vehicle state"))?;
+        crate::kart_driving_audio::tick(
+            bytes,
+            crate::kart_driving_audio::Input {
+                work_44: self.work_44,
+                vehicle_state: wall.vehicle_state,
+                velocity_xz: [self.velocity[0], self.velocity[2]],
+                position: self.proposed_position,
+                controls,
+            },
+        )
+    }
+}
 pub(crate) fn step_for_fall(bytes: &[u8], s: Input) -> Result<(Update, FallCarry)> {
     let wall = s
         .wall

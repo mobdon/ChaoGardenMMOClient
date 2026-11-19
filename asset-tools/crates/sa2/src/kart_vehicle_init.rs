@@ -207,8 +207,8 @@ pub(crate) fn cue_row(data: &[u8], profile: usize, alternate: bool) -> Result<[i
 #[derive(Serialize)]
 pub(crate) struct CourseMode {
     piece_id: u8,
-    engine_8006c97c_arg: i32,
-    return_word: i32,
+    pub(crate) engine_8006c97c_arg: i32,
+    pub(crate) return_word: i32,
 }
 pub(crate) fn course_mode(piece_id: u8) -> CourseMode {
     let inside = (0x32..=0x47).contains(&(piece_id as i8));

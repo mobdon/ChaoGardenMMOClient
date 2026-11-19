@@ -111,3 +111,5 @@ pub mod kart_timeout;
 pub mod checkpoint;
 
 pub mod kart_fall_recovery;
+
+pub mod kart_driving_audio;
