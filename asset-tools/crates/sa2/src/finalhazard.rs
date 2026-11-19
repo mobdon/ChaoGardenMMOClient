@@ -888,6 +888,21 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
+    /// `channels` is None when the engine channel table pointer is null.
+    VoiceGate {
+        channels: Option<[VoiceChannel; 2]>,
+    },
+    /// Section 1 + 0xee8c: per-frame arena bounds for both players.
+    ArenaClamp {
+        switch_state: i8,
+        /// Non-null entries of the engine table at 0x801e7388.
+        present: [bool; 2],
+        /// Words 0x14..0x1c of each 0x801e7368 entry.
+        positions: [[f32; 3]; 2],
+        /// Results of the engine distance call (0x8011b314) for each slot.
+        distances: [f32; 2],
+    },
     SwitchCamera {
         entered_state: u8,
         player: u8,
@@ -1088,6 +1103,47 @@ fn phase_constant<'a>(
 }
 fn phase_write_allowed(task: Option<PhaseGateTask>) -> bool {
     task.is_some_and(|task| task.mode != 13 && task.flags & 4 == 0)
+}
+/// One entry (stride 0x1c) of the engine voice-channel table at 0x803ad3d0.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceChannel {
+    /// Word 0x30.
+    pub state: i32,
+    /// Byte 0x25.
+    pub category: i8,
+}
+/// Section 1 + 0x40cc: frsqrte, three double-precision Newton steps, x*y,
+/// frsp. Nonpositive and NaN inputs return unchanged. The estimate here is
+/// the exact reciprocal root (as Unicorn/QEMU computes frsqrte); hardware
+/// estimates converge to the same double except in rare final roundings.
+fn stage_sqrt(x: f32) -> f32 {
+    if !(x > 0.0) {
+        return x;
+    }
+    let x = x as f64;
+    let mut y = 1.0 / x.sqrt();
+    for _ in 0..3 {
+        y = 0.5 * y * (3.0 - x * (y * y));
+    }
+    (x * y) as f32
+}
+fn stage_f32(
+    rel: &crate::city_rel::CityRel<'_>,
+    site: usize,
+    section: u8,
+    offset: usize,
+) -> Result<f32> {
+    let p = rel
+        .reference(1, site as u32)
+        .ok_or_else(|| Error::invalid("missing arena constant"))?;
+    phase_constant(rel, site, section)?;
+    let at = p.addend as usize + offset;
+    let bytes = rel
+        .data(section)?
+        .get(at..at + 4)
+        .ok_or_else(|| Error::invalid("truncated arena constant"))?;
+    Ok(f32::from_be_bytes(bytes.try_into().unwrap()))
 }
 /// Engine results one handoff frame observes.
 #[derive(serde::Deserialize)]
@@ -1998,6 +2054,81 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 serde_json::json!({"frames":out,"player":player,"switch_state":switch_state,
                 "timer":timer,"countdown":countdown,"returned_to_normal_dispatch":switch_state==0,
                 "scope":"Handoff frames 0xf458..0xff34 with engine and local calls observed; their effects are external."}),
+            );
+        }
+        PlacementClock::VoiceGate { channels } => {
+            let mut stops = Vec::new();
+            let mut result = 0;
+            for (i, ch) in channels.iter().flatten().enumerate() {
+                // States 5, 0 and -1 are idle; anything else holds a voice.
+                if matches!(ch.state, 5 | 0 | -1) {
+                    continue;
+                }
+                if ch.category != 3 {
+                    result = -1;
+                    break;
+                }
+                stops.push(serde_json::json!({"site":0xebc0,"call":engine_import(&rel, 0xebc0)?,"args":[i]}));
+            }
+            return Ok(serde_json::json!({"result":result,"events":stops}));
+        }
+        PlacementClock::ArenaClamp {
+            switch_state,
+            present,
+            positions,
+            distances,
+        } => {
+            let mut events = Vec::new();
+            if switch_state != 4 {
+                let center = [
+                    stage_f32(&rel, 0xeede, 5, 0)?,
+                    stage_f32(&rel, 0xeede, 5, 4)?,
+                    stage_f32(&rel, 0xeede, 5, 8)?,
+                ];
+                let plane_y = stage_f32(&rel, 0xeee6, 4, 0)?;
+                let radius = stage_f32(&rel, 0xeeee, 5, 0)?;
+                let one = stage_f32(&rel, 0xeef6, 4, 0)?;
+                let x_max = stage_f32(&rel, 0xeefe, 5, 0)?;
+                let y_max = stage_f32(&rel, 0xef06, 5, 0)?;
+                let y_min = stage_f32(&rel, 0xef0e, 5, 0)?;
+                for slot in 0..2 {
+                    if !present[slot] {
+                        continue;
+                    }
+                    let [px, py, pz] = positions[slot];
+                    events.push(
+                        serde_json::json!({"site":0xef74,"call":engine_import(&rel, 0xef74)?,
+                        "vectors":[[px, plane_y, pz], [center[0], plane_y, center[2]]]}),
+                    );
+                    let (mut x, mut z) = (px, pz);
+                    let clamped = distances[slot] > radius;
+                    if clamped {
+                        let dx = px - center[0];
+                        let dz = pz - center[2];
+                        let scale = one / stage_sqrt(dx * dx + dz * dz);
+                        let reach = (radius - one) * scale;
+                        x = center[0] + dx * reach;
+                        z = center[2] + dz * reach;
+                    }
+                    if x > x_max {
+                        x = x_max;
+                    }
+                    let mut y = py;
+                    if y > y_max {
+                        y = y_max;
+                    }
+                    if y < y_min {
+                        y = y_min;
+                    }
+                    events.push(
+                        serde_json::json!({"site":0xf038,"call":engine_import(&rel, 0xf038)?,
+                        "args":[slot],"floats":[x, y, z],"radial_clamp":clamped}),
+                    );
+                }
+            }
+            return Ok(
+                serde_json::json!({"skipped":switch_state == 4,"events":events,
+                "scope":"Stage-side bounds only; the distance and position-set calls are engine code."}),
             );
         }
         PlacementClock::InitialHealth => {
