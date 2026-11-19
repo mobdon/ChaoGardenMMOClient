@@ -182,6 +182,52 @@ pub fn balloon_layout(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<ser
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set_bytes),
-        "pcCallbackVa":pc.function_va,"relCallback":0xa138,"balloons":rows}),
+        "pcCallbackVa":pc.function_va,"relCallback":0xa138,"collision":balloon_collision(&rel,exe)?,"balloons":rows}),
+    )
+}
+
+// Registration at CartD +0xa1b4 loads an address pair, then count and list ID.
+// Check the complete PC row too: another PC descriptor shares these dimensions.
+fn balloon_collision(rel: &crate::city_rel::CityRel<'_>, exe: &[u8]) -> Result<serde_json::Value> {
+    let invalid = || Error::invalid("mismatched balloon collision descriptor");
+    let hi = rel.reference(1, 0xa1b6).ok_or_else(invalid)?;
+    let lo = rel.reference(1, 0xa1ba).ok_or_else(invalid)?;
+    let call = rel.reference(1, 0xa1c4).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind) != (80, 5, 6)
+        || (lo.module, lo.section, lo.kind) != (80, 5, 4)
+        || hi.addend != lo.addend
+        || (call.module, call.section, call.kind) != (0, 2, 10)
+    {
+        return Err(invalid());
+    }
+    let data = rel.data(5)?;
+    let row = data
+        .get(hi.addend as usize..)
+        .and_then(|s| s.get(..48))
+        .ok_or_else(invalid)?;
+    let pc_offset = 0xaf3458;
+    let pc = exe.get(pc_offset..pc_offset + 48).ok_or_else(invalid)?;
+    if row[..4] != pc[..4] {
+        return Err(invalid());
+    }
+    let word = |i: usize| u32::from_be_bytes(row[i..i + 4].try_into().unwrap());
+    for i in (4..48).step_by(4) {
+        if word(i).to_le_bytes() != pc[i..i + 4] {
+            return Err(invalid());
+        }
+    }
+    let text = rel.data(1)?;
+    let immediate = |i: usize, op: u16| -> Result<u16> {
+        let inst = text.get(i..i + 4).ok_or_else(invalid)?;
+        if inst[..2] != op.to_be_bytes() {
+            return Err(invalid());
+        }
+        Ok(u16::from_be_bytes([inst[2], inst[3]]))
+    };
+    Ok(
+        serde_json::json!({"relSection":5,"relOffset":hi.addend,"matchingPcFileOffset":pc_offset,
+        "installCall":call.addend,"count":immediate(0xa1bc,0x38a0)?,"listId":immediate(0xa1c0,0x38c0)?,
+        "header":row[..4],"attributes":word(4),"localCenter":([8,12,16].map(|i|f32::from_bits(word(i)))),
+        "parameters":([20,24,28,32].map(|i|f32::from_bits(word(i)))),"angles":([36,40,44].map(|i|word(i) as i32))}),
     )
 }
