@@ -59,3 +59,5 @@ To export the unchanged video elementary stream from any verified movie, use:
     sa2-assets --source-root GAME movie-video GAME/resource/gd_PC/event/e0602_m.sfd .local/event602.m1v 602
 
 The output is encoded MPEG-1 video only. The sidecar identifies event and E0 stream, keeps the movie and export hashes, and labels the representation opaque. Use the movie inspection report for container timestamps; .m1v does not carry the audio or PES timing.
+
+When story-run reaches a level it now includes the authored character’s single-player entryPose and native playerDefaults in the pending level record. The pose uses the same character/stage selector as the stage mount and retains its source row address; defaults include their own executable row address and hash. Missing start rows remain null. These are initial conditions only: the runner does not advance the controller or clear the mission.

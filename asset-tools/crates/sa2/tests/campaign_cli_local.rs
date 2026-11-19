@@ -446,6 +446,14 @@ fn story_run_stops_before_gameplay() {
             }
             ("awaitingMoviePlayback", "event")
         } else {
+            let name = if route == "Hero" {
+                "Sonic"
+            } else {
+                "MechEggman"
+            };
+            assert_eq!(v["stop"]["entryPose"]["character"], name);
+            assert_eq!(v["stop"]["playerDefaults"]["character"], name);
+            assert!(v["stop"]["entryPose"]["rowVa"].is_u64());
             ("awaitingLevelRuntime", "level")
         };
         assert_eq!(v["stop"]["kind"], reason);

@@ -229,6 +229,33 @@ pub struct EntryPose {
     pub position: [f32; 3],
     pub yaw: u16,
 }
+/// Select a pose for the authored character only; missing rows stay absent.
+pub fn select_pose(
+    positions: &[crate::stage_positions::PositionRow],
+    level: u16,
+    ch: &str,
+    kind: PositionKind,
+    variant: Variant,
+) -> Result<Option<EntryPose>> {
+    let mut rows = positions
+        .iter()
+        .filter(|r| r.stage == level && r.kind == kind && r.character == ch);
+    let pose = rows.next().and_then(|r| {
+        r.poses
+            .iter()
+            .find(|p| p.variant == variant)
+            .map(|p| EntryPose {
+                character: r.character,
+                row_va: r.row_va,
+                position: p.position,
+                yaw: p.yaw,
+            })
+    });
+    if rows.next().is_some() {
+        return Err(Error::invalid("ambiguous campaign position row"));
+    }
+    Ok(pose)
+}
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Layer {
@@ -488,27 +515,8 @@ impl Campaign {
         let ch = character_defaults
             .character
             .ok_or_else(|| Error::invalid("unnamed story character slot"))?;
-        let lookup_pose = |kind, variant| -> Result<Option<EntryPose>> {
-            let mut rows = self
-                .positions
-                .iter()
-                .filter(|r| r.stage == dispatch.level && r.kind == kind && r.character == ch);
-            let pose = rows.next().and_then(|r| {
-                r.poses
-                    .iter()
-                    .find(|p| p.variant == variant)
-                    .map(|p| EntryPose {
-                        character: r.character,
-                        row_va: r.row_va,
-                        position: p.position,
-                        yaw: p.yaw,
-                    })
-            });
-            if rows.next().is_some() {
-                return Err(Error::invalid("ambiguous campaign position row"));
-            }
-            Ok(pose)
-        };
+        let lookup_pose =
+            |kind, variant| select_pose(&self.positions, dispatch.level, ch, kind, variant);
         let entry_pose = lookup_pose(PositionKind::Start, Variant::Single)?;
         let end_pose = lookup_pose(PositionKind::End, Variant::Single)?;
         let mission2_end_pose = lookup_pose(PositionKind::MissionEnd, Variant::Mission2)?;

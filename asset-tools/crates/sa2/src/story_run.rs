@@ -23,10 +23,28 @@ pub(super) fn run(
         };
         let stop = |reason| json!({"kind":reason,"action":d.action,"actionIndex":events.len(),"entryRva":d.source_rva});
         let story::Action::Event { event: id } = d.action else {
-            break stop(match d.action {
-                story::Action::Level { .. } => "awaitingLevelRuntime",
-                _ => "awaitingCredits",
-            });
+            if let story::Action::Level { character, level } = d.action {
+                let defaults = sa2_asset_tools::player_physics::read(exe)?
+                    .into_iter()
+                    .find(|p| p.slot == character as usize)
+                    .ok_or_else(|| Error::invalid("unknown story character slot"))?;
+                let name = defaults
+                    .character
+                    .ok_or_else(|| Error::invalid("unnamed story character slot"))?;
+                use sa2_asset_tools::stage_positions::{self, PositionKind, Variant};
+                let pose = sa2_asset_tools::fan_stage::select_pose(
+                    &stage_positions::for_stage(exe, level as u16)?,
+                    level as u16,
+                    name,
+                    PositionKind::Start,
+                    Variant::Single,
+                )?;
+                let mut result = stop("awaitingLevelRuntime");
+                result["entryPose"] = json!(pose);
+                result["playerDefaults"] = json!(defaults);
+                break result;
+            }
+            break stop("awaitingCredits");
         };
         let logical = format!("resource/gd_PC/event/e{id:04}.prs");
         let path = install.join(&logical);
