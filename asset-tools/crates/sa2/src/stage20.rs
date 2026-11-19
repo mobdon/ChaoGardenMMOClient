@@ -54,6 +54,7 @@ fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
         engine(0x1a80, json!([]))?,
         engine(0x1a84, json!([]))?,
     ];
+    let expand_cleanup = e.resources.is_some();
     if let Some(r) = e.resources {
         let mut counts = r.message_counts;
         let mut releases = Vec::new();
@@ -104,7 +105,11 @@ fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
             ops.push(json!({"clear":field(base,0,6)?+offset}));
         }
     }
-    ops.push(json!({"local":0xcac4}));
+    let mut splash = json!({"local":0xcac4});
+    if expand_cleanup {
+        splash["release"] = engine(0xcad8, json!([field(0xcad6, 19, 5)?]))?;
+    }
+    ops.push(splash);
     ops.push(engine(0x1b28, json!([]))?);
     for (site, left, right) in [(0x1b3c, 0x1b32, 0x1b3a), (0x1b50, 0x1b46, 0x1b4e)] {
         ops.push(engine(
@@ -249,6 +254,7 @@ fn background_updates(rel: &CityRel<'_>, b: Background) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Startup {
+    splash_query: Option<i32>,
     fog_load: Option<FogLoad>,
     layout_handle: Option<u32>,
     background_allocated: Option<bool>,
@@ -405,6 +411,9 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
     if s.fog_load.is_some() && s.callback_slots_occupied.is_none() {
         return Err(Error::invalid("fog load requires final startup"));
     }
+    if s.splash_query.is_some() && s.callback_slots_occupied.is_none() {
+        return Err(Error::invalid("splash query requires final startup"));
+    }
     if s.callback_slots_occupied.is_some() && s.background_allocated.is_none() {
         return Err(Error::invalid("final startup requires scene setup"));
     }
@@ -523,7 +532,19 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
                 .enumerate()
                 {
                     if i == 3 {
-                        final_ops.push(json!({"local":0xca28,"args":[]}));
+                        let mut splash = json!({"local":0xca28,"args":[]});
+                        if let Some(q) = s.splash_query {
+                            let (site, file, list) = match q {
+                                34 | 37 | 38 | 65 => (0xca80, 0xca76, 0xca7e),
+                                18 => (0xca98, 0xca8e, 0xca96),
+                                _ => (0xcab0, 0xcaa6, 0xcaae),
+                            };
+                            splash["calls"] = json!([
+                                service(0xca34, json!([]))?,
+                                service(site, json!([name(file)?, pointer(list, 5)?]))?
+                            ]);
+                        }
+                        final_ops.push(splash);
                     }
                     if !occupied[i] {
                         final_ops.push(json!({"address":absolute(table)?+offset,"localCallback":pointer(target,1)?}));

@@ -1093,3 +1093,31 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         assert operations[0]["cleanup"]==dict(calls=release_msg,handles=list(get(layout_bss+0xd80,"II")),counts=list(get(base[5]+0x4749c,"ii")))
         assert operations[1]["cleanup"]==dict(calls=release_fog,manager=get(layout_bss+0x6d4,"I")[0],link=get(0x803ad7c8,"I")[0])
 print("8 integrated message and fog cleanup paths matched")
+
+def splash_service(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0xca34:
+        args=[];cpu.reg_write(R.UC_PPC_REG_3,query&0xffffffff)
+    elif site==0xcad8:args=[reg(3)-base[5]]
+    else:args=[bytes(cpu.mem_read(reg(3),24)).split(b"\0")[0].decode(),reg(4)-base[5]]
+    splash_calls.append(dict(site=site,engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0xca34,0xca80,0xca98,0xcab0,0xcad8):
+    u.hook_add(UC_HOOK_CODE,splash_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,query in enumerate((-2147483648,17,18,19,33,34,35,36,37,38,39,64,65,66,2147483647)):
+        splash_calls=[]
+        for entry in (0xca28,0xcac4):
+            u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_LR,stop)
+            u.emu_start(base[1]+entry,stop,count=60);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+        release=splash_calls.pop();del release["site"]
+        assert (game/"resource/gd_PC"/(splash_calls[1]["args"][0]+".prs")).is_file()
+        req=Path(tmp)/"req.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],startup=dict(
+            character_queries=[7],slot_one_present=False,layout_handle=0,background_allocated=False,callback_slots_occupied=[False]*4,splash_query=query),
+            exit=dict(code_base=base[1],slots=[0]*4,layout_handle=0,resources=dict(message_handles=[0,0],message_counts=[0,0],fog_manager=0,fog_link=0)))))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        rep=json.loads(out.read_text())
+        assert next(o for o in rep["startup"]["finalSetup"] if o.get("local")==0xca28)["calls"]==splash_calls
+        assert next(o for o in rep["exit"]["operations"] if o.get("local")==0xcac4)["release"]==release
+print(idx+1,"splash resource selections and releases matched")
