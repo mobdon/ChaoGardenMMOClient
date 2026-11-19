@@ -1,9 +1,12 @@
-//! Version-specific, read-only native asset tools. No game engine or save importer.
+//! Version-specific A3VE asset tools and incomplete Rust game source port.
+//! No native save importer or MMO authority is installed by this crate.
 pub mod audio;
 pub mod binary;
 pub mod catalog;
+pub mod game;
 pub mod garden;
 pub mod graphics;
+pub mod runtime_host;
 pub mod tables;
 
 use sha1::{Digest, Sha1};

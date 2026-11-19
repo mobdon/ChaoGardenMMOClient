@@ -1,10 +1,12 @@
-# Sonic Pinball Party A3VE asset tools
+# Sonic Pinball Party A3VE Rust port and asset tools
 
-Read-only Rust tooling for the supplied USA/multilanguage **A3VE revision 0**. This crate owns its manifest, readers, tests and documentation; it changes no shared asset workspace or gameplay code. It is independently buildable pending agreement on the common manifest contract.
+Rust tooling and source-port work for the supplied USA/multilanguage **A3VE revision 0**. All changes remain inside this independently buildable crate. The full game is **not yet ported or playable**; [PORT-STATUS.md](docs/PORT-STATUS.md) records implemented routines, explicit dependency boundaries and remaining acceptance gates.
 
 The whole 8,388,608-byte source must match SHA-256 `5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b` before any version-specific CLI offset is used. ROMs, native saves, reference downloads and converted art remain local. The committed catalog contains offsets, hashes and evidence labels, never asset contents.
 
-Implemented: bounded BIOS LZ77/RLE, BGR555 palettes, 4bpp/8bpp tiles, text background rendering, OAM fields, 23 visual descriptors with variant indirection, 200 audio headers, the distinct embedded Tiny Garden payload, and opaque Garden save/flash inspection. Sprite assembly, animation scripts, instrument synthesis, native transfer packets and full pinball mechanics remain incomplete. Chao Ball resources have a traced loader and candidate semantic identification; runtime confirmation remains pending.
+Asset tools implement bounded BIOS LZ77/RLE, BGR555 palettes, 4bpp/8bpp tiles, text background rendering, OAM fields, 23 visual descriptors with variant indirection, a 200-entry audio-header catalog, the distinct embedded Tiny Garden payload, and opaque Garden save/flash inspection. The separate Rust game modules translate input, ball/flipper helpers, collision paths, frame control, OAM composition, palette processing and audio routing/player lifecycle. Their verified scopes are narrower than a complete game. Chao Ball resources have a traced loader and candidate semantic identification; runtime confirmation remains pending.
+
+Tiny Garden is the current priority. Joined Rust execution matches 600 native home callbacks across five languages and Chao present/absent states, and 2,160 Chao Ball frames across all four rounds and three input profiles. All 64 care action states, shop purchases, native save control, song routing and the local transfer endpoint have separate native tests. Full boot, the other minigame branch, audio output, physical transfer and complete sessions still prevent an end-to-end Garden pass. See [GARDEN-SYSTEMS.md](docs/GARDEN-SYSTEMS.md) for original subsystem roots and [GARDEN-VALIDATION.md](docs/GARDEN-VALIDATION.md) for the exact acceptance boundary.
 
 See [CATALOG.md](docs/CATALOG.md) for coverage/unknowns, [GARDEN.md](docs/GARDEN.md) for save/transfer/minigame evidence, [PINBALL-MECHANICS.md](docs/PINBALL-MECHANICS.md) for the separate mechanics backlog, and [MANIFEST.md](docs/MANIFEST.md) for the proposed interchange contract.
 
@@ -13,6 +15,7 @@ With Rust 1.88+ and Python 3.10+ available, run from the client checkout/worktre
 ```powershell
 $sppManifest = 'asset-tools/crates/sonic-pinball-party/Cargo.toml'
 $env:SPP_ROM = 'C:/path/to/your/local/A3VE.gba'
+$env:A3VE_ROM = $env:SPP_ROM
 cargo test --locked --manifest-path $sppManifest
 cargo test --locked --manifest-path $sppManifest -- --include-ignored
 cargo fmt --manifest-path $sppManifest -- --check
@@ -44,6 +47,21 @@ cargo run --locked --manifest-path $sppManifest -- extract $env:SPP_ROM tiny-gar
 cargo run --locked --manifest-path $sppManifest -- tiles $env:SPP_ROM garden-01614c garden-minigame-obj-palettes 4 $sppOutput
 ```
 
-`tiles` writes an RGBA PAM tile sheet with the explicitly selected depth and palette. It does not guess sprite poses or timing. The library also renders native 32/64-tile text maps with screen-block ordering, flips and palette banks. Native source verification is opt-in: ordinary tests use synthetic bytes and metadata; the three ignored tests require `SPP_ROM`. No native save was supplied, so save validation currently has native code/table evidence plus synthetic records, not a real-save parity claim.
+`tiles` writes an RGBA PAM tile sheet with the explicitly selected depth and palette. It does not guess sprite poses or timing. The library also renders native 32/64-tile text maps with screen-block ordering, flips and palette banks. Native source verification is opt-in: ordinary tests use synthetic bytes and metadata; ignored tests require the local ROM variables above. No native save was supplied, so save validation currently has native code/table evidence plus synthetic records, not a real-save parity claim.
 
-All decoder/graphics logic was implemented for this tool. Local A3VE bytes and independently implemented Python checks establish the fingerprints. No third-party decompilation code, game code or art is incorporated. Advance 2 comparisons are research evidence only, and no Advance offset or Chao-field schema is inherited.
+The original asset CLI remains the default binary. Source-port diagnostics are explicit:
+
+```powershell
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- status $env:SPP_ROM
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- verify $env:SPP_ROM
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- run $env:SPP_ROM
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- garden-audit $env:SPP_ROM
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- garden-board $env:SPP_ROM 0 1
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- board $env:SPP_ROM 3 --headless
+```
+
+`garden-board` takes a native round index 0..3 and a u32 PRNG seed. It runs complete puzzle setup and one joined task/frame callback on explicitly synthetic RAM with the authenticated local payload. It does not render a full screen or read a native save. `garden-audit` attempts eight system paths on separate explicit snapshots. It reports each completed call count and the exact first missing address, then returns failure because full Garden acceptance remains incomplete. Successful callback probes do not mean power-on, trusted rewards, audio playback or real-device acceptance.
+
+`run` executes the Rust startup wrapper and stops at its first unported dependency, currently ROM `0x6EF4`. `board` renders original background pixels; on Windows, omit `--headless` for the finite diagnostic window and manual Up/Down viewport control. These commands do not run an emulator, alter a native save, or contact the MMO service.
+
+All readers and Rust source translations were written for this work. Native ROM instructions, BIOS bytes, third-party implementation source, art and audio are not embedded. Local A3VE bytes, independent Python checks and bounded reference execution establish the evidence. Advance comparisons are research only; no Advance offset or Chao-field schema is inherited.
