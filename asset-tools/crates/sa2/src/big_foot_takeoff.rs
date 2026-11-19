@@ -10,7 +10,7 @@ pub(super) struct Tick {
     motion_id: i32,
     motion_ready: Option<bool>,
 }
-pub(super) fn run(ticks: Vec<Tick>) -> Result<Value> {
+pub(super) fn run(ticks: Vec<Tick>) -> Result<(Value, bool)> {
     if ticks.len() > 2048 {
         return Err(Error::invalid("too many takeoff callbacks"));
     }
@@ -122,5 +122,5 @@ pub(super) fn run(ticks: Vec<Tick>) -> Result<Value> {
         }
         rows.push(json!({"mode":mode,"submode":sub,"flags":flags,"timer":timer,"position":[x,y,z],"velocityY":vy,"acceleration":[ax,ay],"phase":phase,"intensity":thrust,"burst":burst,"calls":calls}));
     }
-    Ok(json!(rows))
+    Ok((json!(rows), mode == 3))
 }

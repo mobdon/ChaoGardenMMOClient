@@ -4,6 +4,8 @@ use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
 mod collision;
 #[path = "big_foot_damage.rs"]
 mod damage;
+#[path = "big_foot_flight.rs"]
+mod flight;
 #[path = "big_foot_takeoff.rs"]
 mod takeoff;
 use serde::Deserialize;
@@ -18,6 +20,7 @@ struct Request {
     collision: Option<Vec<collision::Tick>>,
     damage: Option<Vec<damage::Frame>>,
     takeoff: Option<Vec<takeoff::Tick>>,
+    first_flight: Option<flight::Flight>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -179,8 +182,19 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     if let Some(trace) = intro_trace {
         output["intro"] = trace;
     }
+    let mut flight_ready = false;
     if let Some(ticks) = req.takeoff {
-        output["takeoff"] = takeoff::run(ticks)?;
+        let (trace, ready) = takeoff::run(ticks)?;
+        output["takeoff"] = trace;
+        flight_ready = ready;
+    }
+    if let Some(ticks) = req.first_flight {
+        if !flight_ready {
+            return Err(Error::invalid(
+                "first flight requires the mode-three takeoff handoff",
+            ));
+        }
+        output["firstFlight"] = flight::run(ticks)?;
     }
     if let Some(ticks) = req.collision {
         if !req.work_allocation_ok {
