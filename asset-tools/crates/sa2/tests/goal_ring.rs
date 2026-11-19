@@ -356,12 +356,27 @@ fn mounted_goal_cli() {
     assert_eq!(v["frames"][2]["calls"], serde_json::json!(["Register"]));
     assert_eq!(run("349").unwrap()["replay"]["init"], "ChildTask");
     assert!(run("7").is_none());
-    fs::write(&request,r#"{"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"}],"child":{"existing":false,"allocation":true,"linked_after":true},"child_dispatch":{"mode":0,"byte1":1,"start":{"work32":2.0,"task_link":false,"parent_link":false,"query_returns":[]}}}"#).unwrap();
+    fs::write(&request,r#"{"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"}],"child":{"existing":false,"allocation":true,"linked_after":true},"child_dispatch":{"mode":0,"byte1":1,"first_update":{"game_byte_55":1},"start":{"work32":2.0,"task_link":false,"parent_link":false,"query_returns":[]}}}"#).unwrap();
     let child = run("349").unwrap();
     assert_eq!(child["replay"]["childDispatch"]["start"]["mode"], 1);
     assert_eq!(child["replay"]["childDispatch"]["start"]["task60"], 2);
     assert_eq!(child["replay"]["childDispatch"]["rangeChecked"], false);
     assert!(child["replay"]["childDispatch"]["taskCall"]["local"].is_u64());
+    assert_eq!(
+        child["replay"]["childDispatch"]["firstUpdate"]["handlerFrames"][0]["mode"],
+        2
+    );
+    let mut alternate: serde_json::Value =
+        serde_json::from_slice(&fs::read(&request).unwrap()).unwrap();
+    alternate["child_dispatch"]["start"]["task_link"] = true.into();
+    alternate["child_dispatch"]["start"]["query_returns"] = serde_json::json!([1, 1]);
+    alternate["child_dispatch"]["first_update"] = serde_json::json!({});
+    fs::write(&request, serde_json::to_vec(&alternate).unwrap()).unwrap();
+    let child = run("349").unwrap();
+    let dispatch = &child["replay"]["childDispatch"];
+    assert_eq!(dispatch["start"]["mode"], 4);
+    assert_eq!(dispatch["firstUpdate"]["taskCall"]["engine"], 0x8000f4ecu32);
+    assert_eq!(dispatch["firstUpdate"]["resetModeAfterCall"], false);
     let mut inputs = vec![serde_json::json!({"kind":"none"}); 64];
     inputs[0] = serde_json::json!({"kind":"player","slot":0});
     fs::write(

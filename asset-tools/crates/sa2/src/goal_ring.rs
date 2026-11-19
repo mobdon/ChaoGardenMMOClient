@@ -1433,6 +1433,10 @@ impl Program {
         }
     }
     pub fn child_start(&self, byte1: i8, input: ChildStart) -> Result<Value> {
+        self.child_start_with_mode(byte1, input)
+            .map(|(_, report)| report)
+    }
+    fn child_start_with_mode(&self, byte1: i8, input: ChildStart) -> Result<(i8, Value)> {
         if byte1 == 0 && input.parent_link {
             return Err(Error::invalid(
                 "parent link unavailable for standalone child",
@@ -1471,10 +1475,12 @@ impl Program {
             if alt { 4 } else { 2 }
         ]));
         calls.push(json!([0x80018d28u32, "task"]));
-        Ok(
-            json!({"mode":if alt{4}else{1},"task60":index,"work36Bits":initial,"work40Bits":initial,"calls":calls,
+        let mode = if alt { 4 } else { 1 };
+        Ok((
+            mode,
+            json!({"mode":mode,"task60":index,"work36Bits":initial,"work40Bits":initial,"calls":calls,
             "callbacks20_24_32":[self.child_callbacks[0],self.child_handlers[4],self.child_callbacks[1]]}),
-        )
+        ))
     }
     pub fn child_dispatch(&self, mode: i8, byte1: i8, range_out: Option<bool>) -> Result<Value> {
         if (byte1 == 0) != range_out.is_some() {
@@ -1584,7 +1590,14 @@ pub struct ChildStart {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FirstUpdate {
+    range_out: Option<bool>,
+    game_byte_55: Option<i8>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ChildDispatch {
+    first_update: Option<FirstUpdate>,
     start: Option<ChildStart>,
     contact: Option<ChildContact>,
     mode_one: Option<ModeOneInput>,
@@ -1662,11 +1675,28 @@ pub fn replay(
                 }
                 report["contact"] = p.child_contact(c)?;
             }
+            if d.first_update.is_some() && d.start.is_none() {
+                return Err(Error::invalid("first update requires child initialization"));
+            }
             if let Some(input) = d.start {
                 if d.mode != 0 || d.range_out == Some(true) {
                     return Err(Error::invalid("initialization requires active mode 0"));
                 }
-                report["start"] = p.child_start(d.byte1, input)?;
+                let (mode, start) = p.child_start_with_mode(d.byte1, input)?;
+                report["start"] = start;
+                if let Some(next) = d.first_update {
+                    let mut update = p.child_dispatch(mode, d.byte1, next.range_out)?;
+                    if (mode == 1 && next.range_out != Some(true)) != next.game_byte_55.is_some() {
+                        return Err(Error::invalid(
+                            "game byte required only for an active mode-1 update",
+                        ));
+                    }
+                    if let Some(byte) = next.game_byte_55 {
+                        let initial = f32::from_bits(p.child_start_data[0]);
+                        update["handlerFrames"] = p.child_mode_one(initial, initial, &[byte])?;
+                    }
+                    report["firstUpdate"] = update;
+                }
             }
             if let Some(input) = d.mode_one {
                 if d.mode != 1 || d.range_out == Some(true) {
