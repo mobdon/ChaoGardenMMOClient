@@ -25,7 +25,7 @@ for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==202:target=s;off=0;continue
         off+=inc
         if mod==0 and target==1 and k==10:engines[off]=a
-        if mod==0 and target==1 and k in (4,6) and (0xac90<=off<=0xaeec or 0x8c68<=off<0x8cb0):v=a
+        if mod==0 and target==1 and k in (4,6) and (0xac90<=off<=0xaeec or 0x8c68<=off<0x8cb0 or 0x20a68<=off<0x20a70 or 0x1fae8<=off<0x1faf0):v=a
         elif mod==15 and s in base and target in base:v=base[s]+a
         else:continue
         if k==1:put(base[target]+off,"I",v)
@@ -116,7 +116,7 @@ def lighting(flag):
     finally:
         for h in hooks:u.hook_del(h)
     return state,music,rows
-for pg in {v&~4095 for v in (2149471344,2149471344+383,2149470768,2149470768+575,2150329376,2149367176,0x80fffe60,0x80fffe60+575)}:u.mem_map(pg,4096)
+for pg in {v&~4095 for v in (2149479272,2149471344,2149471344+383,2149470768,2149470768+575,2150329376,2149367176,0x80fffe60,0x80fffe60+575)}:u.mem_map(pg,4096)
 def emerald_tasks():
     expected=[]
     def intercept(cpu,pc,size,_):
@@ -176,6 +176,58 @@ def emerald_tasks():
     finally:
         for h in hooks:u.hook_del(h)
     return expected
+def contact_cases(tasks,tmp):
+    cases=[];expected=[]
+    ccl=stage+1100;other=stage+1400;hit=stage+1800
+    stops={0x20bf8:"continue",0x20ca8:"return"}
+    def watch(cpu,pc,size,_):
+        site=pc-base[1]
+        if site in stops:
+            row.setdefault("outcome",stops[site]);cpu.emu_stop();return
+        args=[site];value=0
+        if site in (0x2097c,0x209e0,0x20a5c,0x208cc,0x20b38,0x1fb28,0x20b94):
+            if site==0x209e0:args.extend(reg(i) for i in (3,4,5))
+            value=answers[site];case["queries"].append(value)
+        elif site==0x20bd0:
+            args.extend([reg(3),reg(4),reg(5),list(get(reg(6),"fff"))]);row["outcome"]="pickupRequested"
+        elif site in (0x20be4,0x20bf0):assert reg(3)==child
+        elif site==0x208c0 and remaining:
+            byte=remaining.pop(0);case["player_hits"].append(byte);put(hit+1,"b",byte);value=hit
+        row["calls"].append(args);cpu.reg_write(R.UC_PPC_REG_3,value&0xffffffff)
+        cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+    sites=[*stops,0x2097c,0x209e0,0x20a5c,0x2088c,0x208c0,0x208cc,0x20b38,0x1fb28,0x20b94,0x20bd0,0x20be4,0x20bf0]
+    hooks=[u.hook_add(UC_HOOK_CODE,watch,begin=base[1]+s,end=base[1]+s) for s in sites]
+    try:
+        for task in tasks:
+            if task["main"]!=0x20940:continue
+            data=(game/"resource/gd_PC"/task["layer"]).read_bytes()
+            rx=struct.unpack_from(">H",data,32+32*task["index"]+2)[0]
+            for n in range(18):
+                mode=[0,5,1,0,1,0][n%6];sm=[0,-1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,3][n]
+                flags=int(n!=8);hn=int(n in (9,10,11));owner=n%3;gb=int(n==11)
+                answers={0x2097c:int(n==3),0x209e0:[-1,0,1,2,3,4][n%6],0x20a5c:26,0x208cc:8 if n%2 else 0}
+                remaining=[1,0] if n in (12,14) else ([-1] if n in (13,15) else [])
+                case=dict(layer=task["layer"],index=task["index"],mode=mode,submode=sm,collision_flags=flags,
+                    hit_num=hn,engine_byte_1e=gb,owner_id=owner,queries=[],player_hits=[])
+                actions=[(None,0x42,3)[n%3],(0x3e,-1,5)[n%3]];pos=[13.,float(n),float(rx)];parent=n%2==0
+                case.update(player_actions=actions,position=pos,has_set_entry=parent)
+                answers.update({0x20b38:n%2,0x20b94:1-n%2,0x1fb28:[8,16,18,41,46,0][n%6]})
+                for j,action in enumerate(actions):
+                    a=stage+1900+j*32;put(2149479272+4*j,"I",a if action is not None else 0)
+                    if action is not None:put(a,"b",action)
+                put(child+0x30,"I",stage if parent else 0);put(work+20,"fff",*pos)
+                put(child+0x34,"I",work);put(work,"bb",mode,sm);put(work+8,"I",rx);put(work+0x2c,"I",ccl)
+                put(ccl+4,"H",flags);put(ccl+0x9c,"I",child);put(ccl+0xa2,"h",hn);put(ccl+0xa4,"I",other)
+                put(other,"H",owner);put(2149367176+0x1e,"b",gb)
+                row={"calls":[]};u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child)
+                u.emu_start(base[1]+0x20940,stop,count=400);assert "outcome" in row
+                row["submode"]=get(work+1,"b")[0];cases.append(case);expected.append(row)
+    finally:
+        for h in hooks:u.hook_del(h)
+    req=Path(tmp)/"contacts.json";out=Path(tmp)/"result.json";req.write_text(json.dumps(cases))
+    subprocess.run([sys.argv[1],"--source-root",str(game),"fan-emerald-contact",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(req)],check=True)
+    for a,e in zip(json.loads(out.read_text())["contacts"],expected,strict=True):assert a==e,(a,e)
+    print(len(cases),"mounted emerald contact decisions matched native callbacks")
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for allocated in (True,False):
         handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
@@ -191,4 +243,5 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         assert state==other and rows==rows2==doc["lighting"]
         result.update(state,music=music|alt,emeraldTasks=emerald_tasks())
         assert doc["stageTask"]==result and doc["dispatch"]["character"]==4 and doc["dispatch"]["level"]==16
+    contact_cases(result["emeraldTasks"],tmp)
 print("Wild Canyon Hero dispatch, module registration and both stage-task allocation routes matched")

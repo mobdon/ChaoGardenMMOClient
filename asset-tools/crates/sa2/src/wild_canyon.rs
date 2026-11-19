@@ -232,3 +232,130 @@ pub fn light_tables(source: &[u8], gc: &[u8]) -> Result<Value> {
         json!({"derivedWords":derived,"activeWords":gc.as_chunks::<48>().0.iter().map(|row|words(row)).collect::<Vec<_>>() }),
     )
 }
+
+/// Replay the common emerald callback from entry through its pickup and removal requests.
+/// All engine query results are ordered observations, consumed only when called.
+pub fn contacts(
+    module: &[u8],
+    stage: &crate::fan_stage::MountedStage<'_>,
+    request: &[u8],
+) -> Result<Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Tick {
+        layer: String,
+        index: usize,
+        mode: i8,
+        submode: i8,
+        collision_flags: u16,
+        hit_num: i16,
+        engine_byte_1e: i8,
+        owner_id: u16,
+        player_actions: [Option<i8>; 2],
+        has_set_entry: bool,
+        position: [f32; 3],
+        queries: Vec<i32>,
+        player_hits: Vec<i8>,
+    }
+    let rows = enter(module, false, stage)?;
+    let tasks = rows["emeraldTasks"]
+        .as_array()
+        .ok_or_else(|| Error::invalid("missing emerald tasks"))?;
+    let ticks: Vec<Tick> = serde_json::from_slice(request)?;
+    if ticks.len() > 2048 {
+        return Err(Error::invalid("too many emerald contacts"));
+    }
+    let mut frames = Vec::new();
+    for t in ticks {
+        let task = tasks
+            .iter()
+            .find(|v| v["layer"] == t.layer && v["index"] == t.index && v["main"] == 0x20940)
+            .ok_or_else(|| Error::invalid("expected mounted common emerald"))?;
+        let kind = task["commonSetup"]["typeWord"]
+            .as_u64()
+            .ok_or_else(|| Error::invalid("missing emerald type"))?;
+        let low = task["commonSetup"]["lowByte"]
+            .as_u64()
+            .ok_or_else(|| Error::invalid("missing emerald identifier"))?;
+        if !t.position.iter().all(|x| x.is_finite()) {
+            return Err(Error::invalid("invalid emerald position"));
+        }
+        let mut q = t.queries.into_iter();
+        let mut next = || {
+            q.next()
+                .ok_or_else(|| Error::invalid("missing emerald engine observation"))
+        };
+        let mut hits = t.player_hits.into_iter();
+        let mut sm = t.submode;
+        let mut calls = Vec::new();
+        let outcome = 'gate: {
+            if t.mode == 0 {
+                calls.push(json!([0x2097c]));
+                if next()? != 0 {
+                    break 'gate "return";
+                }
+            }
+            if sm == 1 {
+                calls.push(json!([0x209e0, kind, low, 0]));
+                match next()? {
+                    0 => sm = 3,
+                    1..=3 => sm = 2,
+                    _ => (),
+                }
+            } else if sm < 1 {
+                sm = 1;
+            }
+            if sm != 2 || t.mode == 5 || t.collision_flags & 1 == 0 {
+                break 'gate "continue";
+            }
+            if t.hit_num != 0 {
+                calls.push(json!([0x20a5c]));
+                if next()? == 26 && t.engine_byte_1e == 0 && kind == 9 {
+                    break 'gate "continue";
+                }
+            }
+            calls.push(json!([0x2088c]));
+            loop {
+                calls.push(json!([0x208c0]));
+                match hits.next() {
+                    Some(0) => break,
+                    Some(_) => continue,
+                    None => {
+                        calls.push(json!([0x208cc]));
+                        if next()? == 8 && (matches!(kind, 4 | 5) || (kind == 9 && low == 2)) {
+                            break 'gate "continue";
+                        }
+                        break;
+                    }
+                }
+            }
+            if t.owner_id > 1 {
+                break 'gate "continue";
+            }
+            calls.push(json!([0x20b38]));
+            let slot = next()?;
+            if matches!(kind, 4..=6) {
+                let action = t
+                    .player_actions
+                    .get(usize::try_from(slot).unwrap_or(usize::MAX))
+                    .ok_or_else(|| Error::invalid("invalid player lookup index"))?;
+                if action.is_some_and(|v| !matches!(v, 0x3e | 0x42)) {
+                    calls.push(json!([0x1fb28]));
+                    if !matches!(next()?, 8 | 16 | 18 | 41 | 46) {
+                        break 'gate "continue";
+                    }
+                }
+            }
+            calls.push(json!([0x20b94]));
+            let collector = next()?;
+            calls.push(json!([0x20bd0, kind, low, collector, t.position]));
+            calls.push(json!([if t.has_set_entry { 0x20be4 } else { 0x20bf0 }]));
+            "pickupRequested"
+        };
+        if q.next().is_some() || hits.next().is_some() {
+            return Err(Error::invalid("unused emerald observation"));
+        }
+        frames.push(json!({"submode":sm,"outcome":outcome,"calls":calls}));
+    }
+    Ok(json!(frames))
+}
