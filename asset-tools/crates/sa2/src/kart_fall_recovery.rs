@@ -348,7 +348,15 @@ pub(crate) struct RecoveredProgress {
     pub velocity: [f32; 3],
     pub angles: [i32; 3],
 }
+impl Impact {
+    pub(crate) fn spin_step(&self) -> Option<i32> {
+        (self.state == 4).then_some(self.work_b8)
+    }
+}
 impl Output {
+    pub(crate) fn spin_offset(&self) -> Option<i32> {
+        (self.vehicle.state == 4).then_some(self.vehicle.work_68)
+    }
     pub(crate) fn progress(&self) -> RecoveredProgress {
         let v = &self.vehicle;
         RecoveredProgress {

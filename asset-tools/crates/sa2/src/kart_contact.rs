@@ -178,6 +178,12 @@ pub(crate) struct StoryResponse {
     impact: Option<crate::kart_fall_recovery::Impact>,
 }
 impl StoryResponse {
+    pub(crate) fn spin_carry(&self) -> Option<(i32, i32)> {
+        Some((
+            self.recovery.as_ref()?.spin_offset()?,
+            self.impact.as_ref()?.spin_step()?,
+        ))
+    }
     pub(crate) fn recovered_progress(
         &self,
     ) -> Option<crate::kart_fall_recovery::RecoveredProgress> {

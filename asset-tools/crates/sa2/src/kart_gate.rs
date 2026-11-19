@@ -625,6 +625,9 @@ enum SequenceEvent {
     ContinueVehicle {
         continue_vehicle_update: EmptyUpdate,
     },
+    SpinTick {
+        spin_tick: crate::kart_drive_input::StorySpin,
+    },
     DriftTick {
         drift_tick: crate::kart_drift::StoryTick,
     },
@@ -741,6 +744,7 @@ pub fn story_sequence(
     let mut snapshot = None;
     let mut completed_pose = None;
     let mut inherited_pose = None;
+    let mut spin_carry = None;
     let mut windup: Option<crate::kart_drift::DriftCarry> = None;
     let mut history = s.controller_history;
     if let Some(h) = &history {
@@ -785,6 +789,26 @@ pub fn story_sequence(
                 }
                 updates
                     .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
+                continue;
+            }
+            SequenceEvent::SpinTick { spin_tick } => {
+                if vehicle != Some(4) {
+                    return Err(Error::invalid("spin tick requires vehicle state 4"));
+                }
+                let carry = spin_carry
+                    .take()
+                    .ok_or_else(|| Error::invalid("missing preceding story spin impact"))?;
+                let r = spin_tick.advance(bytes, carry)?;
+                vehicle = Some(r.state());
+                if r.state() == 4 {
+                    spin_carry = Some(r.carry());
+                }
+                completed_pose = None;
+                inherited_pose = None;
+                recovered_pose = None;
+                snapshot = None;
+                sample = None;
+                updates.push(json!({"spinTick":r}));
                 continue;
             }
             SequenceEvent::DriftTick { mut drift_tick } => {
@@ -910,6 +934,9 @@ pub fn story_sequence(
                     scan_flag,
                     vehicle,
                 )?;
+                if let Some(response) = result.drive.as_ref().and_then(|d| d.contact.as_ref()) {
+                    spin_carry = response.spin_carry();
+                }
                 if let Some(entry) = result.drive.as_ref().and_then(|d| d.windup_entry()) {
                     windup = Some(crate::kart_drift::DriftCarry::new(
                         entry,

@@ -630,6 +630,31 @@ pub struct SpinInput {
     magnitude_return: Option<f32>,
     position_step: PositionInput,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StorySpin {
+    heading: i32,
+    velocity_xz: [f32; 2],
+    angle_radians: Option<f64>,
+    magnitude_return: Option<f32>,
+    position_step: PositionInput,
+}
+impl StorySpin {
+    pub(crate) fn advance(self, bytes: &[u8], (work_68, work_b8): (i32, i32)) -> Result<Spin> {
+        spin(
+            bytes,
+            SpinInput {
+                heading: self.heading,
+                work_68,
+                work_b8,
+                velocity_xz: self.velocity_xz,
+                angle_radians: self.angle_radians,
+                magnitude_return: self.magnitude_return,
+                position_step: self.position_step,
+            },
+        )
+    }
+}
 #[derive(Serialize)]
 pub struct Spin {
     heading: i32,
@@ -638,6 +663,14 @@ pub struct Spin {
     vehicle_state: i32,
     local_displacement: [f32; 3],
     position_step: PositionStep,
+}
+impl Spin {
+    pub(crate) fn state(&self) -> i32 {
+        self.vehicle_state
+    }
+    pub(crate) fn carry(&self) -> (i32, i32) {
+        (self.work_68, self.work_b8)
+    }
 }
 /// State 4 decays the signed angular step and calls 0x30dc on crossing zero.
 pub fn spin(bytes: &[u8], s: SpinInput) -> Result<Spin> {

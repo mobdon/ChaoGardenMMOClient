@@ -347,6 +347,23 @@ if len(sys.argv)>4:
             doc=json.loads(out.read_text());suffix=doc["updates"][-1]["boostTick"]["drive"]["contact"]
             assert suffix["impact"]["state"]==4 and suffix["recovery"]["engine_call_8001ef18"]==8
             assert suffix["recovery"]["vehicle"]["state"]==doc["vehicleState"]==10
+            # The same speed loss above the fall threshold leaves the kart in state 4.
+            spin_q=json.loads(json.dumps(q))
+            c=spin_q["updates"][-1]["boost_tick"]["drive"]["contact"]
+            c["previous_position"]=c["result"]["resolved_position"]=[7,5,5]
+            spin_input=dict(heading=17,velocity_xz=[0,0],position_step=dict(position=[7,5,5],
+                            velocity_y=0,weight=doc["updates"][-1]["boostTick"]["weight"],work_74=0,
+                            transformed_vector=[0,0,0]))
+            spin_q["updates"].extend([dict(spin_tick=spin_input)]*102)
+            req.write_text(json.dumps(spin_q));out=req.with_name(path.stem+"-impact-spin.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            spins=json.loads(out.read_text())
+            contact=spins["updates"][-103]["boostTick"]["drive"]["contact"]
+            assert contact["recovery"]["vehicle"]["state"]==4 and contact["impact"]["work_b8"]==-1820
+            turns=[u["spinTick"] for u in spins["updates"][-102:]]
+            assert turns[0]["work_68"]==contact["recovery"]["vehicle"]["work_68"]-1820
+            assert [v["work_b8"] for v in turns]==[-1820+18*i for i in range(1,103)]
+            assert [v["vehicle_state"] for v in turns]==[4]*101+[0] and spins["vehicleState"]==0
             observed=last["contact"]["recovery"].pop("previous_velocity_xz")
             origin=last["contact"].pop("previous_position")
             q["updates"].insert(-1,dict(primary_update_velocity=[0,0,0],primary_update_position=origin))
