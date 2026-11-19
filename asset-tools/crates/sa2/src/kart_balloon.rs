@@ -251,3 +251,154 @@ mod muteki_tests {
         assert_eq!(age, 16);
     }
 }
+
+/// Fields retained between calls to the native balloon task (+0xa138).
+#[derive(Debug, Default)]
+pub struct Balloon {
+    pub mode: i8,
+    pub phase: u8,
+    pub timer: u16,
+    pub scale: [f32; 3],
+}
+
+/// Host observations and callbacks not owned by the balloon task.
+/// Each contact entry is visited in original order. The host resolves its task
+/// through CartD +0x1714 and applies the award and sound calls for matched karts.
+pub trait BalloonHost {
+    fn install_collision(&mut self);
+    fn collision_flags(&self) -> u16;
+    fn contact_count(&self) -> i16;
+    fn is_kart_contact(&self, index: i16) -> bool;
+    fn apply_contact(&mut self, index: i16);
+    fn trig(&mut self, angle: i32) -> (f32, f32);
+    fn register_collision(&mut self);
+    fn cleanup(&mut self, has_entry: bool);
+}
+
+impl Balloon {
+    /// Dispatch table: CartD section 5 +0x2ed3cc. The caller owns display slots.
+    pub fn tick(&mut self, outside_range: bool, has_entry: bool, host: &mut impl BalloonHost) {
+        if outside_range && self.mode != 4 {
+            return;
+        }
+        match self.mode {
+            0..=2 => {
+                if self.mode == 0 {
+                    host.install_collision();
+                }
+                if self.mode != 2 {
+                    self.scale = [0.0; 3];
+                    self.mode = 2;
+                }
+                for v in &mut self.scale {
+                    *v += f32::from_bits(0x3d088889);
+                }
+                if self.scale[0] >= 1.0 {
+                    self.mode = 3;
+                }
+                host.register_collision();
+            }
+            3 => {
+                if host.collision_flags() & 1 != 0 {
+                    let mut i = 0;
+                    while i < host.contact_count() {
+                        if host.is_kart_contact(i) {
+                            self.mode = 4;
+                            self.timer = 0;
+                            host.apply_contact(i);
+                        }
+                        i += 1;
+                    }
+                }
+                let angle = ((self.phase as f32 * 1.40625) * f32::from_bits(0x43360b61)) as i32;
+                let (s, c) = host.trig(angle);
+                self.scale = [1.0 + 0.02 * s, 1.0, 1.0 + 0.02 * c];
+                self.phase = self.phase.wrapping_add(1);
+                host.register_collision();
+            }
+            4 => {
+                for v in &mut self.scale {
+                    *v += 0.03;
+                }
+                self.timer = self.timer.wrapping_add(1);
+                if self.timer > 60 {
+                    self.mode = 5;
+                    self.timer = 3600;
+                }
+            }
+            5 => {
+                self.timer = self.timer.wrapping_sub(1);
+                if self.timer == 0 {
+                    self.mode = 1;
+                }
+            }
+            6 => host.cleanup(has_entry),
+            _ => (),
+        }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    #[derive(Default)]
+    struct Host {
+        installs: usize,
+        registrations: usize,
+        hits: usize,
+    }
+    impl BalloonHost for Host {
+        fn install_collision(&mut self) {
+            self.installs += 1;
+        }
+        fn collision_flags(&self) -> u16 {
+            1
+        }
+        fn contact_count(&self) -> i16 {
+            3
+        }
+        fn is_kart_contact(&self, i: i16) -> bool {
+            i != 1
+        }
+        fn apply_contact(&mut self, i: i16) {
+            assert_eq!(i as usize, self.hits * 2);
+            self.hits += 1;
+        }
+        fn trig(&mut self, angle: i32) -> (f32, f32) {
+            assert_eq!(angle, 0);
+            (0.0, 1.0)
+        }
+        fn register_collision(&mut self) {
+            self.registrations += 1;
+        }
+        fn cleanup(&mut self, _: bool) {
+            panic!()
+        }
+    }
+    #[test]
+    fn collect_out_of_range_pop_and_in_range_respawn() {
+        let mut b = Balloon::default();
+        let mut h = Host::default();
+        for _ in 0..30 {
+            b.tick(false, true, &mut h);
+        }
+        assert_eq!(b.mode, 3);
+        b.tick(false, true, &mut h);
+        assert_eq!(
+            (b.mode, b.timer, b.scale, h.hits),
+            (4, 0, [1.0, 1.0, 1.02], 2)
+        );
+        for _ in 0..61 {
+            b.tick(true, true, &mut h);
+        }
+        assert_eq!((b.mode, b.timer), (5, 3600));
+        b.tick(true, true, &mut h);
+        assert_eq!(b.timer, 3600);
+        for _ in 0..3600 {
+            b.tick(false, true, &mut h);
+        }
+        assert_eq!((b.mode, b.timer, h.registrations), (1, 0, 31));
+        b.tick(false, true, &mut h);
+        assert_eq!((b.mode, h.installs, h.registrations), (2, 1, 32));
+    }
+}
