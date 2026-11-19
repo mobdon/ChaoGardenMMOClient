@@ -544,9 +544,9 @@ fn walk_ahx(bytes: &[u8], mut visit: impl FnMut(&[u8]) -> Result<()>) -> Result<
 pub fn decode_ahx_wav(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>> {
     use symphonia_bundle_mp3::MpaDecoder;
     use symphonia_core::{
-        audio::{AudioBufferRef, Signal},
-        codecs::{CodecParameters, Decoder, CODEC_TYPE_MP2},
-        formats::Packet,
+        audio::{Audio, GenericAudioBufferRef},
+        codecs::audio::{well_known::CODEC_ID_MP2, AudioCodecParameters, AudioDecoder},
+        packet::PacketRef,
     };
     let h = read_ahx_header(bytes)?;
     let size = h
@@ -581,7 +581,7 @@ pub fn decode_ahx_wav(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>> {
     out.extend(size.to_le_bytes());
     let err = |e: symphonia_core::errors::Error| Error::invalid(e.to_string());
     let mut decoder = MpaDecoder::try_new(
-        CodecParameters::new().for_codec(CODEC_TYPE_MP2),
+        AudioCodecParameters::new().for_codec(CODEC_ID_MP2),
         &Default::default(),
     )
     .map_err(err)?;
@@ -590,17 +590,25 @@ pub fn decode_ahx_wav(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>> {
         if frame.len() > 1044 {
             return Err(Error::invalid("oversize AHX frame"));
         }
-        let mut packet = vec![0; 1044];
+        let mut packet = [0; 1044];
         packet[..frame.len()].copy_from_slice(frame);
-        let packet = Packet::new_from_boxed_slice(0, 0, 1152, packet.into_boxed_slice());
-        let AudioBufferRef::F32(buf) = decoder.decode(&packet).map_err(err)? else {
+        let packet = PacketRef::new(
+            0,
+            (h.sample_count - left as u32).into(),
+            1152u32.into(),
+            &packet,
+        );
+        let GenericAudioBufferRef::F32(buf) = decoder.decode_ref(&packet).map_err(err)? else {
             return Err(Error::invalid("unexpected AHX sample format"));
         };
-        if buf.frames() != 1152 || buf.spec().channels.count() != 1 {
+        if buf.frames() != 1152 || buf.num_planes() != 1 {
             return Err(Error::invalid("unexpected AHX frame shape"));
         }
         let n = left.min(1152);
-        for sample in &buf.chan(0)[..n] {
+        for sample in &buf
+            .plane(0)
+            .ok_or_else(|| Error::invalid("missing AHX channel"))?[..n]
+        {
             out.extend(sample.to_le_bytes());
         }
         left -= n;
