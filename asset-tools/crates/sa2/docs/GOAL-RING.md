@@ -155,3 +155,13 @@ the global engine slot currently points to it. It uses the shared Rust
 point-distance calculation used for board and path geometry. The installed
 comparison executes the original range callback with independently computed
 distances; exact retail library square-root rounding remains unverified.
+
+Supply `schedule.display_word` to call the stage display routine on each
+post-update list with that observed engine word (offset 0x7c). For each
+surviving node it sets up the transform, translates to the node, rotates by
+the low 32 bits of the word times 0x120 and calls the stage draw helper with
+the current radius and radius divided by limit. The trace preserves float
+argument bits and the order of the transform calls, including the final
+pop. Empty lists emit no calls. Previous nodes need their XYZ positions.
+The trace is limited to 8192 displayed records across the supplied updates.
+These are submissions; neither the nested draw helper nor pixels are verified here.

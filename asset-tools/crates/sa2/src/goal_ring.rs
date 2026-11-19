@@ -70,6 +70,7 @@ struct PositionRoutine {
     hook: u32,
     initial: [u32; 2],
     step: f32,
+    display_helper: u32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,6 +93,7 @@ pub struct PositionNode {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagerSchedule {
+    pub display_word: Option<u32>,
     pub query: Option<[f32; 3]>,
     pub previous: Vec<PositionNode>,
     pub updates: u8,
@@ -144,12 +146,15 @@ impl PositionRoutine {
                 if n.address == 0 || !seen.insert(n.address) {
                     return Err(bad());
                 }
-                if schedule.query.is_some() && n.position.is_none() {
+                if (schedule.query.is_some() || schedule.display_word.is_some())
+                    && n.position.is_none()
+                {
                     return Err(bad());
                 }
                 list.push((n.address, n.value, n.limit, n.position));
             }
             let mut frames = Vec::new();
+            let mut display_records = 0;
             for _ in 0..schedule.updates {
                 let mut freed = Vec::new();
                 list.retain_mut(|(addr, value, limit, _)| {
@@ -174,6 +179,38 @@ impl PositionRoutine {
                         }
                     }
                     frames.last_mut().unwrap()["rangeQuery"] = json!({"visited":visits,"hit":hit});
+                }
+                if let Some(word) = schedule.display_word {
+                    display_records += list.len();
+                    if display_records > 8192 {
+                        return Err(Error::invalid(
+                            "position display trace exceeds 8192 records",
+                        ));
+                    }
+                    let mut display = Vec::new();
+                    for &(addr, radius, limit, center) in &list {
+                        display.push(json!(["engine", 0x80115d50u32]));
+                        display.push(json!([
+                            "engine",
+                            0x80115e24u32,
+                            addr,
+                            center.ok_or_else(bad)?.map(f32::to_bits)
+                        ]));
+                        display.push(json!([
+                            "engine",
+                            0x801154e0u32,
+                            0,
+                            word.wrapping_mul(0x120)
+                        ]));
+                        display.push(json!([
+                            "local",
+                            self.display_helper,
+                            radius.to_bits(),
+                            (radius / limit).to_bits()
+                        ]));
+                        display.push(json!(["engine", 0x80115d9cu32]));
+                    }
+                    frames.last_mut().unwrap()["display"] = json!(display);
                 }
                 if list.is_empty() {
                     break;
@@ -514,6 +551,27 @@ impl Program {
                             }
                         }
                         let constant = |off| word(rel.data(4)?, data(off, 4)? as usize);
+                        let draw = data(0x66, 1)?;
+                        for (off, target) in [
+                            (0x3c, 0x80115d50),
+                            (0x44, 0x80115e24),
+                            (0x54, 0x801154e0),
+                            (0x64, 0x80115d9c),
+                        ] {
+                            if !rel.reference(1, draw + off).is_some_and(|r| {
+                                r.module == 0 && r.kind == 10 && r.addend == target
+                            }) {
+                                return Err(invalid());
+                            }
+                        }
+                        let site = draw + 0x60;
+                        let ins = word(instructions, site as usize)?;
+                        if ins & 0xfc000003 != 0x48000001 {
+                            return Err(invalid());
+                        }
+                        let display_helper = site
+                            .checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
+                            .ok_or_else(invalid)?;
                         let tick = data(0x42, 1)?;
                         let hook = data(0xc2, 1)?;
                         if manifest::sha256(
@@ -547,6 +605,7 @@ impl Program {
                         ActionRoutine::Position(PositionRoutine {
                             entry,
                             task_entry: tick,
+                            display_helper,
                             step,
                             label: data(0x4a, 5)?,
                             callbacks: [data(0x66, 1)?, data(0x72, 1)?],
