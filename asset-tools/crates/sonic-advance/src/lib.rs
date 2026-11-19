@@ -4,8 +4,14 @@
 pub mod animation;
 pub mod binary;
 pub mod catalog;
+pub mod collision;
+pub mod entities;
 pub mod garden;
 pub mod graphics;
+pub mod movement;
+pub mod runtime;
+pub mod sprite;
+pub mod stage;
 pub mod tables;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

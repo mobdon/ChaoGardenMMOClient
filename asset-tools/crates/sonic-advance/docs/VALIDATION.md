@@ -48,3 +48,7 @@ No native gameplay, sound playback, visual placement, hardware JoyBus exchange,
 native save roundtrip or complete garden asset graph was validated. Those gates
 remain open in [FINDINGS.md](FINDINGS.md). The common schema is proposed, pending
 integration review, as described in [SCHEMA-PROPOSAL.md](SCHEMA-PROPOSAL.md).
+
+The subsequent native stage slice has its own dated evidence and browser limits
+in [RUNTIME-VALIDATION.md](RUNTIME-VALIDATION.md). The receipt above preserves the
+original catalog/tooling verification scope.

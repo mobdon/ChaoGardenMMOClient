@@ -1,0 +1,9 @@
+[
+  {"mask": 0, "ticks": 20},
+  {"mask": 16, "ticks": 120},
+  {"mask": 17, "ticks": 30},
+  {"mask": 0, "ticks": 100},
+  {"mask": 32, "ticks": 180},
+  {"mask": 33, "ticks": 30},
+  {"mask": 0, "ticks": 50}
+]
