@@ -227,6 +227,32 @@ fn city_escape_floor_adapter() {
     let frames = result["frames"].as_array().unwrap();
     assert_eq!(frames.len(), 422);
     assert_eq!(
+        result["initialModel"]["position"],
+        frames[0]["modelBeforeUpdate"]["position"]
+    );
+    assert_eq!(
+        frames[1]["modelBeforeUpdate"]["position"],
+        frames[0]["task"]["flight"]["position"]
+    );
+    for (index, hidden) in [
+        (241, true),
+        (242, true),
+        (243, false),
+        (244, false),
+        (245, true),
+    ] {
+        assert_eq!(frames[index]["modelBeforeUpdate"]["hidden"], hidden);
+    }
+    assert_eq!(
+        frames[241]["modelBeforeUpdate"]["shadow_y"],
+        serde_json::json!(
+            frames[240]["task"]["surface"]["coordinate"]
+                .as_f64()
+                .unwrap() as f32
+                + 0.4f32
+        )
+    );
+    assert_eq!(
         frames
             .iter()
             .filter(|f| !f["staticProbe"]["hit"].is_null())

@@ -189,6 +189,7 @@ pub struct DroppedRing {
     pub collision_delay: u8,
     pub age: u8,
     pub spin: f32,
+    resting_shadow: f32,
     tick_even_if_paused: bool,
 }
 fn fallback(g: Vector, p: Vector) -> f32 {
@@ -232,9 +233,37 @@ impl DroppedRing {
             collision_delay: clock.next_delay(),
             age: 0,
             spin: ((random * 360. * (65536f32 / 360.)) as i32) as f32,
+            resting_shadow: 0.,
             tick_even_if_paused: paused,
         })
     }
+    /// Initialize the model returned by CreateRingObject at the end of launch.
+    pub fn initialize_model(&self, m: &mut crate::ring_models::Model) {
+        m.position = self.flight.position;
+        m.yaw = (self.spin * (65536f32 / 360.)) as i32;
+        m.shadow_angles = [0, m.yaw, 0];
+        m.shadow_y = m.position[1] + 3.44;
+    }
+
+    /// Tobitiri copies task state before its mode switch, after CheckRangeOut.
+    pub fn sync_model(&self, m: &mut crate::ring_models::Model, paused: bool, range_out: bool) {
+        if range_out || self.phase == Phase::Destroyed {
+            return;
+        }
+        m.position = self.flight.position;
+        m.yaw = (self.spin * (65536f32 / 360.)) as i32;
+        m.shadow_angles = [self.surface.pitch, m.yaw, self.surface.roll];
+        if self.phase == Phase::Flying {
+            m.shadow_y = self.surface.coordinate + 0.4;
+            if !self.tick_even_if_paused && paused {
+                m.hidden = self.age <= 46;
+            }
+        } else {
+            m.shadow_y = self.resting_shadow + 0.4;
+            m.hidden = self.timer & 2 == 0;
+        }
+    }
+
     /// hit is the separately resolved CCL player slot and its item bits.
     /// The host supplies the selected GetShadowPosXYZ result only on native probe ticks.
     pub fn tick(
@@ -306,6 +335,7 @@ impl DroppedRing {
         if active {
             self.timer = self.timer.wrapping_add(1);
             if self.timer > 240 {
+                self.resting_shadow = self.surface.coordinate;
                 self.phase = Phase::Resting;
                 self.flight.velocity[0] = 0.;
                 self.flight.velocity[2] = 0.;

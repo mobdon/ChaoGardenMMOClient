@@ -4,13 +4,14 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Handle(u64);
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct Model {
     pub position: [f32; 3],
     pub yaw: i32,
     pub shadow_y: f32,
     pub shadow_angles: [i32; 3],
     pub hidden: bool,
+    #[serde(skip)]
     retired: bool,
 }
 
