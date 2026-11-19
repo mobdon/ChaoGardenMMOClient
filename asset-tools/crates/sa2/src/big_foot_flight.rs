@@ -3,6 +3,8 @@
 mod aim;
 #[path = "big_foot_landing.rs"]
 mod landing;
+#[path = "big_foot_volley.rs"]
+mod volley;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -14,6 +16,7 @@ pub(super) struct Flight {
     repeat_passes: Vec<Pass>,
     aim: Option<Vec<aim::Tick>>,
     landing: Option<Vec<landing::Tick>>,
+    ground_volley: Option<[volley::Launch; 8]>,
     center_approach: Option<Vec<CenterTick>>,
     extra_byte2: Option<u8>,
     steering: Option<Steering>,
@@ -35,6 +38,7 @@ pub(super) struct Trace {
     pub center: Option<Value>,
     pub aim: Option<Value>,
     pub landing: Option<Value>,
+    pub volley: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +57,7 @@ pub(super) fn run(
         repeat_passes,
         center_approach,
         landing,
+        ground_volley,
         aim,
         ticks,
         mut steering,
@@ -82,6 +87,7 @@ pub(super) fn run(
         center: None,
         aim: None,
         landing: None,
+        volley: None,
     };
     for (index, Pass { ticks, turnaround }) in std::iter::once(Pass { ticks, turnaround })
         .chain(repeat_passes)
@@ -267,12 +273,23 @@ pub(super) fn run(
         return Err(Error::invalid("aim requires center approach"));
     }
     if let Some(ticks) = landing {
-        trace.landing = Some(landing::run(
+        let (rows, next) = landing::run(
             landing_entry
                 .ok_or_else(|| Error::invalid("landing requires completed aim countdown"))?,
             ticks,
             spawn_order,
-        )?);
+        )?;
+        trace.landing = Some(rows);
+        if let Some(observations) = ground_volley {
+            trace.volley = Some(volley::run(
+                next.ok_or_else(|| {
+                    Error::invalid("ground volley requires finished landing animation")
+                })?,
+                observations,
+            )?);
+        }
+    } else if ground_volley.is_some() {
+        return Err(Error::invalid("ground volley requires landing"));
     }
     Ok(trace)
 }

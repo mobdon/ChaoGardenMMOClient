@@ -214,6 +214,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
             spawn_order,
         )?;
         output["firstFlight"] = trace.first;
+        if let Some(volley) = trace.volley {
+            output["groundVolley"] = volley;
+        }
         if let Some(landing) = trace.landing {
             output["landing"] = landing;
         }

@@ -21,11 +21,19 @@ pub(super) enum Tick {
     },
 }
 
-pub(super) fn run(mut s: Entry, ticks: Vec<Tick>, spawn_order: &[u8; 16]) -> Result<Value> {
+pub(super) fn run(
+    mut s: Entry,
+    ticks: Vec<Tick>,
+    spawn_order: &[u8; 16],
+) -> Result<(Value, Option<super::volley::Entry>)> {
     if ticks.len() > 2048 {
         return Err(Error::invalid("too many landing updates"));
     }
     let (mut mode, mut sub) = (5, 6);
+    let anchors: [u32; 8] = std::array::from_fn(|i| {
+        let base = if spawn_order[i * 2] == 0 { 48 } else { 0 };
+        base + 12 * u32::from(spawn_order[i * 2 + 1])
+    });
     let mut thrust = 0.8f32;
     let mut rows = Vec::new();
     for t in ticks {
@@ -66,9 +74,8 @@ pub(super) fn run(mut s: Entry, ticks: Vec<Tick>, spawn_order: &[u8; 16]) -> Res
                     if heading_difference == Some(0) && s.angles[0] == 0 && s.angles[2] == 0 {
                         calls.push(json!({"engine2558":[11,0,0,10]}));
                         calls.push(json!({"motion":5}));
-                        for pair in spawn_order.as_chunks::<2>().0 {
-                            let offset = if pair[0] == 0 { 48 } else { 0 };
-                            calls.push(json!({"helper57524":[offset+12*u32::from(pair[1]),120]}));
+                        for offset in anchors {
+                            calls.push(json!({"helper57524":[offset,120]}));
                         }
                         s.flags |= 0x100;
                         calls.push(json!({"disableCollision":8}));
@@ -108,5 +115,12 @@ pub(super) fn run(mut s: Entry, ticks: Vec<Tick>, spawn_order: &[u8; 16]) -> Res
         rows.push(json!({"mode":mode,"submode":sub,"flags":s.flags,"angles":s.angles,"rates":s.rates,"intensity":thrust,
             "vertical":vertical,"height":height,"calls":calls}));
     }
-    Ok(json!(rows))
+    Ok((
+        json!(rows),
+        (mode == 8).then_some(super::volley::Entry {
+            flags: s.flags,
+            angles: s.angles,
+            anchors,
+        }),
+    ))
 }
