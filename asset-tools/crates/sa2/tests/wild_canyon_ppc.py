@@ -141,6 +141,10 @@ def emerald_paths():
     finally:
         for h in hooks:u.hook_del(h)
     return paths
+def shape_record(ptr):
+    kind,form,push,damage,attr,*words=get(ptr,"bBbbI7f3i")
+    return dict(kind=kind,form=form,push=push,damage=damage,attr=attr,
+                center=words[:3],parameters=words[3:7],angles=words[7:])
 def alternate_setup(data, at, path):
     center=path["center"]
     rx,ry,rz=struct.unpack_from(">3H",data,at+2)
@@ -169,11 +173,13 @@ def alternate_setup(data, at, path):
             setup.update(typeWord=reg(3),lowByte=reg(4));assert get(reg(5),"fff")==world
         elif site==0x22210:cpu.reg_write(R.UC_PPC_REG_3,0)
         elif site==0x22230:
-            setup.update(shapeOffset=reg(4)-base[5],count=reg(5),id=reg(6))
+            setup.update(shapeOffset=reg(4)-base[5],sourceShape=shape_record(reg(4)),count=reg(5),id=reg(6))
+            cpu.mem_write(shape,bytes(cpu.mem_read(reg(4),48)))
             put(work+0x2c,"I",ccl);put(ccl+12,"I",shape)
         elif site==0x2227c:
             assert reg(3)==ccl and get(shape+8,"fff")==world
             setup["shapeParameter"]=get(shape+20,"f")[0]
+            assert shape_record(shape)==setup["sourceShape"]|dict(center=list(world),parameters=[setup["shapeParameter"],*setup["sourceShape"]["parameters"][1:]])
         cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
     sites=(0x220e4,0x22108,0x2213c,0x2214c,0x22150,0x22158,0x22160,0x2216c,0x22178,
            0x2219c,0x221ac,0x221b0,0x221f8,0x22210,0x22230,0x2227c)
@@ -217,7 +223,8 @@ def emerald_tasks():
             cpu.reg_write(R.UC_PPC_REG_3,answer)
         elif pc==base[1]+0x20818:
             assert reg(3)==child
-            setup.update(shapeOffset=reg(4)-base[5],count=reg(5),id=reg(6))
+            setup.update(shapeOffset=reg(4)-base[5],sourceShape=shape_record(reg(4)),count=reg(5),id=reg(6))
+            cpu.mem_write(stage+800,bytes(cpu.mem_read(reg(4),48)))
             put(work+0x2c,"I",stage+704);put(stage+716,"I",stage+800)
         else:
             assert reg(3)==child
@@ -258,6 +265,7 @@ def emerald_tasks():
                         if not mode and answer:assert "count" not in setup
                         else:
                             setup.update(shapeParameter=get(stage+820,"f")[0],skipIfModeZeroAndQueryNonzero=True)
+                            assert shape_record(stage+800)==setup["sourceShape"]|dict(parameters=[setup["shapeParameter"],*setup["sourceShape"]["parameters"][1:]])
                             if row["commonSetup"] is None:row["commonSetup"]=setup
                             else:assert row["commonSetup"]==setup
                 row["pathIndex"]=(int(struct.unpack_from(">f",data,32+32*index+20)[0])%12 if row["initialize"]==0x220ac else None)

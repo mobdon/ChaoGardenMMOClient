@@ -2,6 +2,38 @@
 use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
 use serde_json::{json, Value};
 
+/// A big-endian CCL_INFO as supplied by the stage to CCL_Init. Do not
+/// interpret the attribute bits or overwrite the stage's source record.
+#[derive(serde::Serialize)]
+struct CollisionRecord {
+    kind: i8,
+    form: u8,
+    push: i8,
+    damage: i8,
+    attr: u32,
+    center: [f32; 3],
+    parameters: [f32; 4],
+    angles: [i32; 3],
+}
+fn collision_record(data: &[u8], offset: u32) -> Result<CollisionRecord> {
+    let raw = data
+        .get(offset as usize..)
+        .and_then(|v| v.get(..48))
+        .ok_or_else(|| Error::invalid("truncated emerald collision record"))?;
+    let word = |i: usize| u32::from_be_bytes(raw[i..i + 4].try_into().unwrap());
+    let f = |i| f32::from_bits(word(i));
+    Ok(CollisionRecord {
+        kind: raw[0] as i8,
+        form: raw[1],
+        push: raw[2] as i8,
+        damage: raw[3] as i8,
+        attr: word(4),
+        center: std::array::from_fn(|i| f(8 + 4 * i)),
+        parameters: std::array::from_fn(|i| f(20 + 4 * i)),
+        angles: std::array::from_fn(|i| word(36 + 4 * i) as i32),
+    })
+}
+
 pub fn enter(
     module: &[u8],
     allocated: bool,
@@ -136,9 +168,10 @@ pub fn enter(
                     ))
                 };
                 let add = f32::from_bits(word(rel.data(4)?, pair(0x2081c, 4)? as usize)?);
+                let shape_offset = pair(0x20808, 5)?;
                 Some(
                     json!({"typeWord":word(data,row as usize)?,"lowByte":bound.placement.rotation[0]&255,
-                    "position":bound.placement.position,"shapeOffset":pair(0x20808,5)?,"count":1,"id":6,
+                    "position":bound.placement.position,"shapeOffset":shape_offset,"sourceShape":collision_record(data,shape_offset)?,"count":1,"id":6,
                     "shapeParameter":bound.placement.parameters[1]+add,"skipIfModeZeroAndQueryNonzero":true}),
                 )
             } else {
@@ -189,12 +222,13 @@ pub fn enter(
                 } else {
                     None
                 };
+                let shape_offset = pair(0x22220, 5)?;
                 Some(json!({
                     "allocation":[1,24], "initialDistance":initial_distance,"freshCursorPosition":fresh,
                     "translate":p.position, "rotationWords":[p.rotation[1],p.rotation[2]],
                     "translateAfterRotation":center.map(|v| -v),"derivedWorldVertices":world_vertices,
                     "typeWord":u32::from_be_bytes(data[row as usize..row as usize+4].try_into().unwrap()),
-                    "lowByte":p.rotation[0]&255, "shapeOffset":pair(0x22220,5)?,
+                    "lowByte":p.rotation[0]&255, "shapeOffset":shape_offset,"sourceShape":collision_record(data,shape_offset)?,
                     "count":1,"id":6,"shapeParameter":parameter(0x22234)? + p.parameters[1]
                 }))
             } else {
