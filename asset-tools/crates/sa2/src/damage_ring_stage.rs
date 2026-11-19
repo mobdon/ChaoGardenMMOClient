@@ -113,7 +113,10 @@ pub fn replay(stage: &stage::Stage, request: &[u8]) -> Result<Value> {
         if let Some(e) = error {
             return Err(e);
         }
-        frames.push(json!({"task":ring,"events":event,"staticProbe":query}));
+        let calls = event.pickup_and_removal_calls(ring.flight.position, |a| trig(i32::from(a)));
+        frames.push(
+            json!({"task":ring,"events":event,"staticProbe":query,"pickupAndRemovalCalls":calls}),
+        );
         if ring.phase == Phase::Destroyed {
             break;
         }

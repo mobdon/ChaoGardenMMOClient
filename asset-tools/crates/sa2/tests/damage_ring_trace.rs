@@ -243,5 +243,9 @@ fn city_escape_floor_adapter() {
     assert_eq!(frames[240]["task"]["phase"], "Resting");
     assert_eq!(frames[420]["task"]["phase"], "Expired");
     assert_eq!(frames[421]["task"]["phase"], "Destroyed");
+    assert_eq!(
+        frames[421]["pickupAndRemovalCalls"],
+        serde_json::json!(["DestroyTask"])
+    );
     assert!(frames.iter().all(|f| f["events"]["credit_slot"].is_null()));
 }

@@ -304,4 +304,18 @@ fn terrain_ring_follows_small_changes_and_scatters_at_eight() {
     assert_eq!(f[12]["child"]["task"]["age"], 1);
     assert_eq!(f[13]["child"]["events"]["credit_slot"], 1);
     assert_eq!(f[14]["child"]["events"]["destroy"], true);
+    assert_eq!(
+        f[13]["child"]["pickupAndRemovalCalls"],
+        json!([{"AddNumRing":[1,1]},{"SECallRing":1},{"AddMechHP":[1,0.1f32]}])
+    );
+    let teardown = f[14]["child"]["pickupAndRemovalCalls"].as_array().unwrap();
+    assert_eq!(teardown.len(), 5);
+    let y = f[13]["child"]["task"]["flight"]["position"][1]
+        .as_f64()
+        .unwrap() as f32;
+    assert_eq!(
+        teardown[0]["MakeParticle"]["position"][1],
+        json!((y + 7.2f32) - 1.5)
+    );
+    assert_eq!(teardown[4], "DestroyTask");
 }

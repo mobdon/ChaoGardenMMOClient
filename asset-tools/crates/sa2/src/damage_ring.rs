@@ -151,6 +151,35 @@ pub struct Tick {
     pub particles: bool,
     pub destroy: bool,
 }
+/// External pickup and removal calls from Tobitiri modes 1, 2, 4 and 3.
+#[derive(Debug, Serialize)]
+pub enum PickupCall {
+    AddNumRing(u8, i32),
+    SECallRing(u8),
+    AddMechHP(u8, f32),
+    MakeParticle(crate::stage_gameplay::PickupParticle),
+    DestroyTask,
+}
+impl Tick {
+    pub fn pickup_and_removal_calls(
+        &self,
+        position: Vector,
+        trig: impl FnMut(u16) -> (f32, f32),
+    ) -> Vec<PickupCall> {
+        use PickupCall::*;
+        let mut calls = Vec::new();
+        if let Some(slot) = self.credit_slot {
+            calls.extend([AddNumRing(slot, 1), SECallRing(slot), AddMechHP(slot, 0.1)]);
+        }
+        if self.particles {
+            calls.extend(crate::stage_gameplay::pickup_particles(position, trig).map(MakeParticle));
+        }
+        if self.destroy {
+            calls.push(DestroyTask);
+        }
+        calls
+    }
+}
 #[derive(Debug, Serialize)]
 pub struct DroppedRing {
     pub flight: Flight,

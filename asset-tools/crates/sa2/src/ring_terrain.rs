@@ -227,6 +227,11 @@ impl ChildFrame {
                 Some(events)
             }
         };
-        Ok(json!({"task":child,"events":events,"trig":"host f64 sin/cos rounded to f32"}))
+        let calls = events.as_ref().zip(child.as_ref()).map(|(event, task)| {
+            event.pickup_and_removal_calls(task.flight.position, |a| trig(i32::from(a)))
+        });
+        Ok(
+            json!({"task":child,"events":events,"pickupAndRemovalCalls":calls,"trig":"host f64 sin/cos rounded to f32"}),
+        )
     }
 }
