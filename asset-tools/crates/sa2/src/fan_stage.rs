@@ -257,20 +257,14 @@ impl Campaign {
     pub fn levels(&self) -> &[LevelDispatch] {
         &self.levels
     }
-    /// The resolver receives a pinned basename relative to resource/gd_PC. None means
-    /// locally unavailable; a mismatched source is an error. No filesystem writes.
-    pub fn mount(
-        &self,
-        sequence: &str,
-        action_index: usize,
-        mut load: impl FnMut(&str) -> Result<Option<Vec<u8>>>,
-    ) -> Result<MountedStage<'_>> {
-        let dispatch = self
-            .levels
-            .iter()
-            .find(|d| d.sequence == sequence && d.action_index == action_index)
-            .ok_or_else(|| Error::invalid("not an authored single-player campaign level action"))?
-            .clone();
+    fn kart_route(&self, dispatch: &LevelDispatch) -> Option<&KartRoute> {
+        if dispatch.level == 70 {
+            self.kart_routes.get(&dispatch.character)
+        } else {
+            None
+        }
+    }
+    fn entry_pose(&self, dispatch: &LevelDispatch) -> Result<(&'static str, Option<EntryPose>)> {
         let ch = match dispatch.character {
             0 => "Sonic",
             1 => "Shadow",
@@ -301,6 +295,42 @@ impl Campaign {
         if rows.next().is_some() {
             return Err(Error::invalid("ambiguous campaign start row"));
         }
+        Ok((ch, entry_pose))
+    }
+    /// Group story references without treating a stage ID as physical map identity.
+    pub fn stage_reuse(&self) -> Result<serde_json::Value> {
+        let mut groups = BTreeMap::<u16, Vec<serde_json::Value>>::new();
+        for dispatch in &self.levels {
+            let config = self.configs.get(&dispatch.level);
+            let (actor, pose) = self.entry_pose(dispatch)?;
+            let kart = self.kart_route(dispatch);
+            groups.entry(dispatch.level).or_default().push(serde_json::json!({
+                "dispatch":dispatch, "actor":actor, "entryPose":pose,
+                "configuredGeometry":config.and_then(|c|c.geometry.as_deref()),
+                "configuredSetPrefix":config.map(|c|&c.set_prefix),
+                "kartCourse":kart.map(|k|serde_json::json!({"name":k.name,"descriptorRva":k.descriptor_rva,
+                    "partsSha256":sha256(&k.course_parts),"parts":k.course_parts.len(),"set":k.set_filename}))
+            }));
+        }
+        Ok(
+            serde_json::json!({"storyEntries":self.levels.len(),"distinctLevelIds":groups.len(),"groups":groups}),
+        )
+    }
+    /// The resolver receives a pinned basename relative to resource/gd_PC. None means
+    /// locally unavailable; a mismatched source is an error. No filesystem writes.
+    pub fn mount(
+        &self,
+        sequence: &str,
+        action_index: usize,
+        mut load: impl FnMut(&str) -> Result<Option<Vec<u8>>>,
+    ) -> Result<MountedStage<'_>> {
+        let dispatch = self
+            .levels
+            .iter()
+            .find(|d| d.sequence == sequence && d.action_index == action_index)
+            .ok_or_else(|| Error::invalid("not an authored single-player campaign level action"))?
+            .clone();
+        let (ch, entry_pose) = self.entry_pose(&dispatch)?;
         let mut gaps = vec![];
         if entry_pose.is_none() {
             gaps.push(format!(
@@ -309,11 +339,7 @@ impl Campaign {
             ));
         }
         let config = self.configs.get(&dispatch.level);
-        let kart_route = if dispatch.level == 70 {
-            self.kart_routes.get(&dispatch.character)
-        } else {
-            None
-        };
+        let kart_route = self.kart_route(&dispatch);
         let object_table = if kart_route.is_some() {
             self.tables.get("Kart Object List")
         } else {
