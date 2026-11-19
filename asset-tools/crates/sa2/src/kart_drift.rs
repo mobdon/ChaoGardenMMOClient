@@ -37,6 +37,100 @@ pub struct Update {
     position: [f32; 3],
     math_source: &'static str,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryTick {
+    heading: i32,
+    position: [f32; 3],
+    velocity: [f32; 3],
+    work_74: i32,
+    buttons_held: Option<u32>,
+    work_fc: Option<i32>,
+    angle_service_return: Option<i32>,
+}
+pub(crate) struct DriftCarry {
+    work_fc: Option<i32>,
+    angular_offset: i32,
+    index: i32,
+    entry_stick: i32,
+    tuning: [f32; 3],
+}
+impl DriftCarry {
+    pub(crate) fn new(
+        (angular_offset, index, entry_stick): (i32, i32, i32),
+        tuning: [f32; 3],
+    ) -> Self {
+        Self {
+            work_fc: None,
+            angular_offset,
+            index,
+            entry_stick,
+            tuning,
+        }
+    }
+    pub(crate) fn advance(
+        &mut self,
+        bytes: &[u8],
+        s: StoryTick,
+        held: Option<u32>,
+        stick: Option<i16>,
+        state: i32,
+    ) -> Result<Update> {
+        if held.zip(s.buttons_held).is_some_and(|(a, b)| a != b) {
+            return Err(Error::invalid("drift buttons conflict with controller"));
+        }
+        let held = held
+            .or(s.buttons_held)
+            .ok_or_else(|| Error::invalid("missing held buttons for drift windup"))?;
+        let sustained = if state == 3 {
+            if s.work_fc.zip(self.work_fc).is_some_and(|(a, b)| a != b) {
+                return Err(Error::invalid("conflicting sustained drift rotation"));
+            }
+            Some(Sustained {
+                stick_x: stick
+                    .ok_or_else(|| Error::invalid("sustained drift requires controller sample"))?,
+                speed_threshold: self.tuning[2],
+                work_fc: self
+                    .work_fc
+                    .or(s.work_fc)
+                    .ok_or_else(|| Error::invalid("missing initial sustained drift rotation"))?,
+                angle_service_return: s.angle_service_return,
+            })
+        } else {
+            if s.work_fc.is_some() || s.angle_service_return.is_some() {
+                return Err(Error::invalid(
+                    "unexpected sustained drift inputs during windup",
+                ));
+            }
+            None
+        };
+        let next = tick(
+            bytes,
+            Input {
+                sustained,
+                heading: s.heading,
+                position: s.position,
+                velocity: s.velocity,
+                work_68: self.angular_offset,
+                work_a4: self.index,
+                work_a8: self.entry_stick,
+                work_74: s.work_74,
+                accelerate: held & 4 != 0,
+                drift_handling: self.tuning[0],
+                weight: self.tuning[1],
+            },
+        )?;
+        self.angular_offset = next.work_68;
+        self.index = next.work_a4;
+        self.work_fc = next.work_fc;
+        Ok(next)
+    }
+}
+impl Update {
+    pub(crate) fn state(&self) -> i32 {
+        self.vehicle_state
+    }
+}
 fn rotate([x, y, z]: [f32; 3], angle: i32) -> [f32; 3] {
     let (s, c) = (f64::from(angle as u16) * (std::f64::consts::TAU / 65536.)).sin_cos();
     [

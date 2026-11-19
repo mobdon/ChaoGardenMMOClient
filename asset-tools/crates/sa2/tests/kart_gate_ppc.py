@@ -417,6 +417,24 @@ if len(sys.argv)>4:
                 assert drift_result["vehicle_state"]==doc["vehicleState"]==expected and drift_result["work_10c"]==5
                 assert (drift_result["work_a4"],drift_result["work_a8"])==((0,-21) if expected==2 else (1,9))
                 assert ("play" in drive["audio"]["calls"][-1])==(expected==2)
+            winding=dict(drift_tick=dict(heading=0,position=[1,2,3],velocity=[0,0,0],work_74=0))
+            for _ in range(5):
+                q["updates"].extend([dict(primary_stick_x=99,buttons_held=4),winding])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-windup.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());wind=[u["driftTick"] for u in doc["updates"] if "driftTick" in u]
+            assert [v["work_a4"] for v in wind]==[1,2,3,4,0]
+            assert [v["vehicle_state"] for v in wind]==[2,2,2,2,3] and doc["vehicleState"]==3
+            assert wind[-1]["work_68"]>0 and wind[-1]["math_source"]=="mathematical_projection"
+            moving=dict(winding["drift_tick"],velocity=[0,0,20],work_fc=5)
+            q["updates"].extend([dict(primary_stick_x=10,buttons_held=4),dict(drift_tick=moving),
+                                 dict(primary_stick_x=0,buttons_held=0),winding])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-sustained-exit.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());active,exit_tick=[doc["updates"][i]["driftTick"] for i in (-3,-1)]
+            assert (active["vehicle_state"],active["work_fc"])==(3,96)
+            assert (exit_tick["vehicle_state"],exit_tick["work_fc"],doc["vehicleState"])==(0,187,0)
+            q["updates"]=q["updates"][:2]
             q["vehicle_state"]=1
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-wrong-drift-routine.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)

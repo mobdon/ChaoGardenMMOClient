@@ -611,6 +611,9 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    DriftTick {
+        drift_tick: crate::kart_drift::StoryTick,
+    },
     ControllerSample {
         primary_stick_x: i16,
         buttons_held: Option<u32>,
@@ -721,6 +724,7 @@ pub fn story_sequence(
     let mut timer_words = None;
     let mut charge = s.primary_charge;
     let mut boost_timers = None;
+    let mut windup: Option<crate::kart_drift::DriftCarry> = None;
     let mut history = s.controller_history;
     if let Some(h) = &history {
         h.validate()?;
@@ -738,6 +742,28 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::DriftTick { drift_tick } => {
+                let state = vehicle
+                    .filter(|s| matches!(s, 2 | 3))
+                    .ok_or_else(|| Error::invalid("drift tick requires state 2 or 3"))?;
+                let row = sample.take();
+                let next = windup
+                    .as_mut()
+                    .ok_or_else(|| Error::invalid("missing normal-drive drift entry"))?
+                    .advance(
+                        bytes,
+                        drift_tick,
+                        row.and_then(|(_, _, held, _)| held),
+                        row.map(|(stick, _, _, _)| stick),
+                        state,
+                    )?;
+                vehicle = Some(next.state());
+                if vehicle == Some(0) {
+                    windup = None;
+                }
+                updates.push(json!({"driftTick":next}));
+                continue;
+            }
             SequenceEvent::ControllerSample {
                 primary_stick_x,
                 buttons_held,
@@ -777,6 +803,12 @@ pub fn story_sequence(
                     scan_flag,
                     vehicle,
                 )?;
+                if let Some(entry) = result.drive.as_ref().and_then(|d| d.windup_entry()) {
+                    windup = Some(crate::kart_drift::DriftCarry::new(
+                        entry,
+                        result.drift_tuning(),
+                    ));
+                }
                 if let Some(state) = result.drive.as_ref().and_then(|d| d.drift_state()) {
                     vehicle = Some(state);
                 }

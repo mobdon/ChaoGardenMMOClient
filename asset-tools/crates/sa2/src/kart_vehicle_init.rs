@@ -98,6 +98,11 @@ pub(crate) struct StoryBoostInput {
     normalize: Option<Normalize>,
     boost: BoostInput,
 }
+impl Profile {
+    pub(crate) fn drift_tuning(&self) -> [f32; 3] {
+        [self.drift_handling, self.weight, self.speed_threshold]
+    }
+}
 impl StoryBoostInput {
     pub(crate) fn bind_pressed(&mut self, pressed: Option<u32>) -> Result<()> {
         if self

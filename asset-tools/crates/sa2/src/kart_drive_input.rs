@@ -140,6 +140,10 @@ struct StoryDrift {
     work_a8: i32,
 }
 impl Motion {
+    pub(crate) fn windup_entry(&self) -> Option<(i32, i32, i32)> {
+        let d = self.drift.as_ref()?;
+        (d.vehicle_state == 2).then_some((self.work_68, d.work_a4, d.work_a8))
+    }
     pub(crate) fn drift_state(&self) -> Option<i32> {
         self.drift.as_ref().map(|d| d.vehicle_state)
     }
