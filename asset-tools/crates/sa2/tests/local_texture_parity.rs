@@ -38,7 +38,12 @@ fn sa_tools_texture_pixel_parity() {
     let local = std::env::var("SA2_LOCAL_ROOT").expect("SA2_LOCAL_ROOT");
     let mut checked = 0;
     let mut unresolved = 0;
-    let mut alpha_pixels = 0;
+    let mut alpha_counts = [0u64; 256];
+    let mut record_alpha = |rgba: &[u8]| {
+        for pixel in rgba.chunks_exact(4) {
+            alpha_counts[usize::from(pixel[3])] += 1;
+        }
+    };
     let mut hashes = Sha256::new();
     let mut sources = Sha256::new();
     let mut corpus = vec![
@@ -100,13 +105,7 @@ fn sa_tools_texture_pixel_parity() {
                 entry.name
             );
             assert_eq!(actual.rgba, expected, "{} {}", archive_name, entry.name);
-            alpha_pixels += actual
-                .rgba
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .filter(|p| p[3] < 255)
-                .count();
+            record_alpha(&actual.rgba);
             hashes.update(source_hash);
             hashes.update(entry.name.as_bytes());
             hashes.update(Sha256::digest(&actual.rgba));
@@ -144,6 +143,7 @@ fn sa_tools_texture_pixel_parity() {
         );
         assert_eq!((actual.width, actual.height), (width, height));
         assert_eq!(actual.rgba, expected, "palette {name}");
+        record_alpha(&actual.rgba);
         hashes.update(palette_hash);
         hashes.update(name.as_bytes());
         hashes.update(Sha256::digest(&actual.rgba));
@@ -155,7 +155,14 @@ fn sa_tools_texture_pixel_parity() {
         "palette source changed"
     );
     assert!(checked > 200, "expected substantial verified corpus");
-    println!("verified {checked} RGBA textures including {alpha_pixels} nonopaque pixels; {} external-palette mappings remain unknown after 3 verified child banks; source corpus {:x}; pixel aggregate {:x}",unresolved-3,sources.finalize(),hashes.finalize());
+    let transparent = alpha_counts[0];
+    let partial: u64 = alpha_counts[1..255].iter().sum();
+    let opaque = alpha_counts[255];
+    assert!(
+        transparent > 0 && partial > 0 && opaque > 0,
+        "reference corpus must exercise all three alpha cases"
+    );
+    println!("verified {checked} RGBA textures including {transparent} transparent, {partial} partially transparent and {opaque} opaque pixels; {} external-palette mappings remain unknown after 3 verified child banks; source corpus {:x}; pixel aggregate {:x}",unresolved-3,sources.finalize(),hashes.finalize());
 }
 
 #[test]
