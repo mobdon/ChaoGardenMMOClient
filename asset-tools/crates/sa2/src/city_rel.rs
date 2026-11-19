@@ -821,3 +821,41 @@ pub fn hot_shot_target_clock(bytes: &[u8], request: &[u8]) -> Result<serde_json:
         "skipsUpdate":s.global37!=0,"scope":"Target update gate and phase counter only."}),
     )
 }
+
+/// Orientation arithmetic of an enabled target update (1:4d128..4d340).
+pub fn hot_shot_target_rotation(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        fixed: [i32; 3],
+        varied: [i32; 3],
+        engine_samples: [i32; 3],
+    }
+    let mut s: State = serde_json::from_slice(request)?;
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let hi = rel.reference(1, 0x4d12e).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind) != (82, 5, 6)
+        || rel.reference(1, 0x4d132) != Some(Reference { kind: 4, ..hi })
+    {
+        return Err(invalid());
+    }
+    let start = hi.addend as usize;
+    let table = rel.data(5)?.get(start..start + 24).ok_or_else(invalid)?;
+    let step = |i: usize| i32::from_be_bytes(table[i * 4..i * 4 + 4].try_into().unwrap());
+    let scale = hot_shot_scalar(&rel, 0x4d18e)?;
+    let base = hot_shot_scalar(&rel, 0x4d19e)?;
+    for i in 0..3 {
+        s.fixed[i] = s.fixed[i].wrapping_add(step(i));
+        let weight = base + base * (scale * s.engine_samples[i] as f32);
+        let next = s.varied[i] as f32 + step(i + 3) as f32 * weight;
+        // Keep out-of-range fctiwz behavior unresolved for the installed hardware.
+        if !(-2147483648.0..2147483648.0).contains(&next) {
+            return Err(Error::invalid(
+                "target rotation exceeds verified fctiwz range",
+            ));
+        }
+        s.varied[i] = next as i32;
+    }
+    Ok(serde_json::json!({"fixed":s.fixed,"varied":s.varied}))
+}
