@@ -453,6 +453,30 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
         }
         Ok(hi.addend)
     };
+    // Constructor passes one CCL_INFO and list ID 3. Its bank byte is
+    // copied from the caller; entry remains zero in calloc'd work at creation.
+    let code = rel.data(1)?;
+    let instruction = |at: usize| u32::from_be_bytes(code[at..at + 4].try_into().unwrap());
+    if instruction(0x85c8) != 0x9ba30000
+        || instruction(0x8610) != 0x38a00001
+        || instruction(0x8614) != 0x38c00003
+        || pair(0x857e, 1)? != 0x83dc
+    {
+        return Err(Error::invalid("unexpected weakpoint constructor"));
+    }
+    let desc = pair(0x860a, 4)? as usize;
+    let constants = rel.data(4)?;
+    let c = constants
+        .get(desc..desc + 48)
+        .ok_or_else(|| Error::invalid("short weakpoint collision descriptor"))?;
+    let float = |i: usize| f32::from_be_bytes(c[i..i + 4].try_into().unwrap());
+    if c[1] != 0 {
+        return Err(Error::invalid("expected weakpoint collision sphere"));
+    }
+    let init = serde_json::json!({"bankSource":"constructor argument low byte","initialEntry":0,
+        "collision":{"descriptorSection4":desc,"count":1,"listId":3,"kind":c[0],"form":"sphere",
+        "push":c[2],"damageByte":c[3],"attributes":u32::from_be_bytes(c[4..8].try_into().unwrap()),
+        "localCenter":[float(8),float(12),float(16)],"radius":float(20)}});
     let base = pair(0x844e, 5)?;
     let matrices = pair(0x847e, 6)?;
     let lookup = pair(0x41a2, 5)?;
@@ -529,6 +553,6 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
     }
     Ok(
         serde_json::json!({"modelSection5":model,"tableSection5":base,"matrixArraySection6":matrices,
-        "matrixStride":48,"matrixCaptures":captures,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
+        "constructor":init,"matrixStride":48,"matrixCaptures":captures,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
     )
 }
