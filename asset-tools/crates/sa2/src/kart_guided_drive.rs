@@ -127,3 +127,16 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Tick> {
         advanced,
     })
 }
+
+impl Guidance {
+    pub(crate) fn at_spawn(slot: i32, yaw: i32, speed: f32) -> Self {
+        Self {
+            work_254: slot.wrapping_add(1),
+            work_258: 1,
+            work_25c: slot,
+            work_260: 1,
+            work_264: speed,
+            work_274: yaw.wrapping_sub(0x4000),
+        }
+    }
+}

@@ -550,3 +550,12 @@ either component has magnitude at least 0.5, wrapping heading to 16 bits.
 The transition tick still applies local displacement and vertical motion.
 Magnitude and angle imports use observed results; the position step labels
 its transformed vector as observed or mathematically projected.
+
+`kart-vehicle-init CartD.rel OUTPUT.json INPUT.json` covers the vehicle
+initializer at 0x2898. Supply the spawn pose, player slot, control word and
+four words from the selected live profile. A controlled vehicle starts in
+state 0 with its slot enabled for history; an uncontrolled vehicle starts
+in state 7 with history disabled and guidance usable by kart-guided-drive.
+The first target is slot plus one (without a course-length wrap here).
+Only the listed writes are initialized: this callback does not clear the
+whole work area or populate the live profile table.

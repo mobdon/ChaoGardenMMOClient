@@ -94,6 +94,7 @@ pub mod stage_land;
 pub mod stage_lighting;
 pub mod task_coverage;
 pub mod kart_contact;
+pub mod kart_vehicle_init;
 pub mod kart_guided_drive;
 pub mod kart_scripted_motion;
 pub mod kart_course;
