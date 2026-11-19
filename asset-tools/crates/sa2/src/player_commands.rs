@@ -1,19 +1,36 @@
 use super::*;
+#[path = "story_run.rs"]
+mod story_run;
 use sa2_asset_tools::{
     death_zones, demo, event, event_camera, stage_catalog, stage_paths, stage_positions, story,
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="city-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
+pub(super) const USAGE:&str="fan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
-        "player-physics" | "city-board-resources" => Some(3),
+        "duel-platform"
+        | "mission-ranks"
+        | "player-physics"
+        | "stage-fog"
+        | "stage-light-table"
+        | "stage-light-base"
+        | "message-bank"
+        | "stage-registration"
+        | "city-board-resources" => Some(3),
+        "fan-goal" | "fan-replay" => Some(9),
         "campaign-camera" => Some(8),
-        "event-camera" => Some(6),
-        "city-board-pose" | "stage-bind" | "campaign-frame" => Some(7),
-        "city-spawn-ground" => Some(5),
+        "event-camera" | "fan-stage" => Some(6),
+        "fan-emerald-contact"
+        | "fan-wild-canyon"
+        | "fan-big-foot"
+        | "city-rider-pose"
+        | "city-board-pose"
+        | "stage-bind"
+        | "campaign-frame" => Some(7),
+        "damage-ring" | "stage-raycast" | "story-run" | "city-spawn-ground" => Some(5),
         "stage-positions" | "death-zones" | "stage-paths" | "story" | "event-frame"
-        | "demo-frame" => Some(4),
+        | "demo-frame" | "fan-levels" | "fan-tasks" | "stage20-splash" | "stage20-entry" => Some(4),
         _ => None,
     }
 }
@@ -170,6 +187,264 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
     let label = source_label(input, root)?;
     let mut extras = Vec::new();
     let doc = match command {
+        "stage20-entry" => {
+            let path = Path::new(&args[3]);
+            let req = Extra::read(
+                path,
+                basename(path)?.to_owned(),
+                1024 * 1024,
+                "entry-observations",
+            )?;
+            let result = sa2_asset_tools::stage20::replay(&bytes, &req.bytes)?;
+            extras.push(req);
+            result
+        }
+        "duel-platform" => serde_json::to_value(sa2_asset_tools::duel_platform::read(&bytes)?)?,
+        "mission-ranks" => serde_json::to_value(sa2_asset_tools::mission_ranks::read(&bytes)?)?,
+        "fan-emerald-contact"
+        | "fan-wild-canyon"
+        | "fan-big-foot"
+        | "fan-stage"
+        | "fan-levels"
+        | "fan-tasks"
+        | "fan-replay"
+        | "fan-goal" => {
+            let cfg = Path::new(&args[3]);
+            for (name, role) in [
+                ("ADVERTISE.ini", "story-mapping"),
+                ("sa2lvl.ini", "level-mapping"),
+                ("ObjectLists.ini", "object-list-mapping"),
+            ] {
+                extras.push(Extra::mapping(cfg.join(name).as_os_str(), role)?);
+            }
+            let catalog = sa2_asset_tools::fan_stage::Campaign::new(
+                &bytes,
+                extras[0].text()?,
+                extras[1].text()?,
+                extras[2].text()?,
+            )?;
+            let gd = input
+                .parent()
+                .ok_or_else(|| Error::invalid("missing install root"))?
+                .join("resource/gd_PC");
+            if command == "fan-tasks" {
+                let mut cached = std::collections::BTreeMap::<String, usize>::new();
+                let coverage = sa2_asset_tools::task_coverage::read(&catalog, |name| {
+                    if let Some(&index) = cached.get(name) {
+                        return Ok(Some(extras[index].bytes.clone()));
+                    }
+                    let path = gd.join(name);
+                    if !path.try_exists()? {
+                        return Ok(None);
+                    }
+                    let src = Extra::read(
+                        &path,
+                        format!("resource/gd_PC/{name}"),
+                        2 * 1024 * 1024,
+                        "campaign-set",
+                    )?;
+                    cached.insert(name.into(), extras.len());
+                    let data = src.bytes.clone();
+                    extras.push(src);
+                    Ok(Some(data))
+                })?;
+                serde_json::to_value(coverage)?
+            } else if command == "fan-levels" {
+                serde_json::to_value(catalog.levels())?
+            } else {
+                let stage = catalog.mount(text_arg(&args[4])?, number(&args[5])?, |name| {
+                    let path = gd.join(name);
+                    if !path.try_exists()? {
+                        return Ok(None);
+                    }
+                    let src = Extra::read(
+                        &path,
+                        format!("resource/gd_PC/{name}"),
+                        64 * 1024 * 1024,
+                        "mounted-resource",
+                    )?;
+                    let data = src.bytes.clone();
+                    extras.push(src);
+                    Ok(Some(data))
+                })?;
+                if matches!(command, "fan-wild-canyon" | "fan-emerald-contact") {
+                    if stage.dispatch.level != 16 {
+                        return Err(Error::invalid("expected Wild Canyon dispatch"));
+                    }
+                    let module = extras
+                        .iter()
+                        .find(|e| e.logical == "resource/gd_PC/stg16D.rel")
+                        .ok_or_else(|| Error::invalid("missing mounted Wild Canyon REL"))?;
+                    if command == "fan-emerald-contact" {
+                        let path = Path::new(&args[6]);
+                        let request = Extra::read(
+                            path,
+                            format!("requests/{}", basename(path)?),
+                            1024 * 1024,
+                            "emerald-contact-request",
+                        )?;
+                        let report = sa2_asset_tools::wild_canyon::contacts(
+                            &module.bytes,
+                            &stage,
+                            &request.bytes,
+                        )?;
+                        extras.push(request);
+                        json!({"dispatch":stage.dispatch,"contacts":report})
+                    } else {
+                        let task = sa2_asset_tools::wild_canyon::enter(
+                            &module.bytes,
+                            number(&args[6])?,
+                            &stage,
+                        )?;
+                        let light = task["lightFile"]
+                            .as_str()
+                            .ok_or_else(|| Error::invalid("missing lighting filename"))?;
+                        let stem = light
+                            .strip_suffix(".bin")
+                            .ok_or_else(|| Error::invalid("unexpected lighting filename"))?;
+                        let suffix = task["gcSuffix"]
+                            .as_str()
+                            .ok_or_else(|| Error::invalid("missing lighting suffix"))?;
+                        let gc_name = format!("{stem}{suffix}");
+                        let read = |name: &str| {
+                            Extra::read(
+                                &gd.join(name),
+                                format!("resource/gd_PC/{name}"),
+                                1024,
+                                "stage-lighting",
+                            )
+                        };
+                        let src = read(light)?;
+                        let gc = read(&gc_name)?;
+                        let lights =
+                            sa2_asset_tools::wild_canyon::light_tables(&src.bytes, &gc.bytes)?;
+
+                        let templates = sa2_asset_tools::wild_canyon::pc_collision_templates(
+                            &bytes,
+                            &module.bytes,
+                        )?;
+                        extras.extend([src, gc]);
+                        json!({"dispatch":stage.dispatch,"stageTask":task,"lighting":lights,"pcCollisionTemplates":templates})
+                    }
+                } else if command == "fan-big-foot" {
+                    if stage.dispatch.level != 60 {
+                        return Err(Error::invalid("expected Big Foot story dispatch"));
+                    }
+                    let module = extras
+                        .iter()
+                        .find(|e| e.logical == "resource/gd_PC/boss_bigfootD.rel")
+                        .ok_or_else(|| Error::invalid("missing mounted Big Foot REL"))?;
+                    let p = Path::new(&args[6]);
+                    let request = Extra::read(
+                        p,
+                        format!("requests/{}", basename(p)?),
+                        1024 * 1024,
+                        "boss-stage-request",
+                    )?;
+                    let replay = sa2_asset_tools::big_foot::replay(&module.bytes, &request.bytes)?;
+                    extras.push(request);
+                    json!({"dispatch":stage.dispatch,"replay":replay})
+                } else if matches!(command, "fan-replay" | "fan-goal") {
+                    let p = Path::new(&args[8]);
+                    let request = Extra::read(
+                        p,
+                        format!("requests/{}", basename(p)?),
+                        1024 * 1024,
+                        "object-replay-request",
+                    )?;
+                    let layer: usize = number(&args[6])?;
+                    let row: usize = number(&args[7])?;
+                    let replay = if command == "fan-goal" {
+                        let name = format!("resource/gd_PC/stg{:02}D.rel", stage.dispatch.level);
+                        let module = extras
+                            .iter()
+                            .find(|e| e.logical == name)
+                            .ok_or_else(|| Error::invalid("missing mounted goal module"))?;
+                        let effects = Extra::read(
+                            &gd.join("efftex_common.prs"),
+                            "resource/gd_PC/efftex_common.prs".into(),
+                            32 * 1024 * 1024,
+                            "goal-effect-textures",
+                        )?;
+                        let result = sa2_asset_tools::goal_ring::replay(
+                            &stage,
+                            layer,
+                            row,
+                            &module.bytes,
+                            &bytes,
+                            &effects.bytes,
+                            &request.bytes,
+                        )?;
+                        extras.push(effects);
+                        result
+                    } else {
+                        stage.replay_object(layer, row, &request.bytes)?
+                    };
+                    extras.push(request);
+                    json!({"dispatch":stage.dispatch,"layer":stage.layers[layer].filename,"placementIndex":row,"replay":replay,"scope":"offline native callback with supplied engine observations"})
+                } else {
+                    serde_json::to_value(stage)?
+                }
+            }
+        }
+        "damage-ring" => {
+            let p = Path::new(&args[4]);
+            let src = Extra::read(
+                p,
+                format!("requests/{}", basename(p)?),
+                64 * 1024,
+                "damage-ring-request",
+            )?;
+            let stage = sa2_asset_tools::stage_land::read_named(&bytes, text_arg(&args[3])?)?;
+            let doc = sa2_asset_tools::damage_ring_stage::replay(&stage, &src.bytes)?;
+            extras.push(src);
+            doc
+        }
+        "stage-raycast" => {
+            let p = Path::new(&args[4]);
+            let src = Extra::read(
+                p,
+                format!("requests/{}", basename(p)?),
+                64 * 1024,
+                "ray-request",
+            )?;
+            let req: RayRequest = serde_json::from_slice(&src.bytes)?;
+            let symbol = text_arg(&args[3])?;
+            let stage = sa2_asset_tools::stage_land::read_named(&bytes, symbol)?;
+            let world = collision::bake_stage(&stage, req.uniform_scale)?;
+            let hit = world.raycast(req.origin, req.direction, req.max_distance)?;
+            extras.push(src);
+            json!({"symbol":symbol,"request":req,"hit":hit,"bounds":world.bounds,"scope":"static geometric query"})
+        }
+        "story-run" => {
+            extras.push(Extra::mapping(&args[3], "native-table-mapping")?);
+            story_run::run(
+                &bytes,
+                input
+                    .parent()
+                    .ok_or_else(|| Error::invalid("missing install directory"))?,
+                &mut extras,
+                text_arg(&args[4])?,
+            )?
+        }
+        "city-rider-pose" => {
+            for (arg, role) in [(3, "pc-executable"), (4, "sonic-rider-model")] {
+                let path = Path::new(&args[arg]);
+                extras.push(Extra::read(
+                    path,
+                    source_label(path, root)?,
+                    128 * 1024 * 1024,
+                    role,
+                )?);
+            }
+            sa2_asset_tools::city_rider::sample(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                number(&args[5])?,
+                finite_argument(&args[6])?,
+            )?
+        }
         "city-board-pose" | "city-spawn-ground" => {
             let exe = Path::new(&args[3]);
             extras.push(Extra::read(
@@ -218,6 +493,49 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                     "scope":"Downward rays from the three authored PC start variants against the supplied module's static collision; these are not observed player contacts."})
             }
         }
+        "stage20-splash" => {
+            let (name, count) =
+                sa2_asset_tools::stage20::splash_resource(&bytes, number(&args[3])?)?;
+            let path = input.with_file_name(&name);
+            let archive = Extra::read(
+                &path,
+                source_label(&path, root)?,
+                16 * 1024 * 1024,
+                "splash-textures",
+            )?;
+            let report = sa2_asset_tools::stage20::splash_textures(&archive.bytes, count)?;
+            extras.push(archive);
+            report
+        }
+        "stage-fog" => sa2_asset_tools::stage_fog::read(&bytes)?,
+        "stage-light-table" => {
+            let filename = basename(input)?;
+            if filename.ends_with("_gc.bin") {
+                sa2_asset_tools::stage_lighting::resolve(None, Some(&bytes))?
+            } else {
+                let stem = filename
+                    .strip_suffix(".bin")
+                    .ok_or_else(|| Error::invalid("expected lighting .bin filename"))?;
+                let path = input.with_file_name(format!("{stem}_gc.bin"));
+                if path.try_exists()? {
+                    extras.push(Extra::read(
+                        &path,
+                        source_label(&path, root)?,
+                        576,
+                        "stage-light-override",
+                    )?);
+                }
+                sa2_asset_tools::stage_lighting::resolve(
+                    Some(&bytes),
+                    extras.last().map(|e| e.bytes.as_slice()),
+                )?
+            }
+        }
+        "stage-light-base" => {
+            json!({"derivedWords":sa2_asset_tools::stage_lighting::derive(&bytes)?})
+        }
+        "message-bank" => sa2_asset_tools::message_bank::read_prs(&bytes)?,
+        "stage-registration" => sa2_asset_tools::city_rel::stage_registration(&bytes)?,
         "city-board-resources" => {
             let rel = sa2_asset_tools::city_rel::CityRel::read(&bytes)?;
             json!({"dataSection":5,"resources":rel.board_resources()?})

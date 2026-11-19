@@ -46,7 +46,8 @@ fn checks_dispatch_and_ring_observations() {
     assert!(run(&p, &d, json!([hit])).is_err());
     let mut shield = empty.clone();
     shield["player_items"][1] = json!(2);
-    assert!(run(&p, &d, json!([shield])).is_err());
+    assert!(run(&p, &d, json!([shield])).is_ok()); // Init never calls the magnetic helper.
+    assert!(run(&p, &d, json!([shield, shield])).is_err()); // Active shield requires observed player data.
     p.parameters[0] = -1.0;
     assert!(run(&p, &d, json!([empty])).is_err());
     d.name = "RING".into();

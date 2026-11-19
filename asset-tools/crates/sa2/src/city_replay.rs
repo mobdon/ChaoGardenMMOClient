@@ -37,6 +37,9 @@ fn bounded<F>(frames: Vec<F>) -> Result<Vec<F>> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RingFrame {
+    #[serde(default)]
+    magnet_players: [Option<crate::ring_magnet::Player>; 2],
+    advance_result: Option<[f32; 3]>,
     range_out: bool,
     spin_enabled: bool,
     player_items: [Option<u16>; 2],
@@ -50,17 +53,31 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
     let request = decode::<Frames<RingFrame>>(request)?;
     let mut ring = StageRing::new(p.position, i32::from(p.rotation[1] as i16));
     let mut frames = Vec::new();
+    let mut magnet_timer = 0u16;
+    let mut magnet_angle = 0f32;
     for frame in bounded(request.frames)? {
-        if frame.range_out
-            || frame
-                .player_items
-                .iter()
-                .flatten()
-                .any(|item| item & 2 != 0)
-        {
-            return Err(Error::invalid(
-                "fixed ring requires an in-range task and no player magnetic shield",
-            ));
+        if frame.range_out {
+            return Err(Error::invalid("fixed ring requires an in-range task"));
+        }
+        let magnetic = if ring.mode == RingMode::Active {
+            crate::ring_magnet::select(
+                ring.position,
+                magnet_timer,
+                frame.player_items,
+                frame.magnet_players,
+            )?
+        } else {
+            None
+        };
+        let advance = magnetic.as_ref().and_then(|m| m.advance.as_ref());
+        match (advance, frame.advance_result) {
+            (Some(_), Some(p)) if p.iter().all(|n| n.is_finite()) => {}
+            (None, None) => {}
+            _ => {
+                return Err(Error::invalid(
+                    "expected finite advance_result exactly when CalcAdvanceAsPossible is called",
+                ))
+            }
         }
         if frame.ccl_hit_slot.is_some() && ring.mode != RingMode::Active {
             return Err(Error::invalid("ring contact requires an active task"));
@@ -79,7 +96,7 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
             }
             None => None,
         };
-        let events = ring.step(hit, frame.spin_enabled);
+        let events = ring.step(hit, frame.spin_enabled && magnetic.is_none());
         let mut calls = Vec::new();
         if let Some(slot) = events.player_reward {
             calls.extend([
@@ -92,13 +109,26 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
         if events.particles {
             calls.push(json!(["o_ring_0"]));
         }
+        if let Some(a) = advance {
+            calls.push(json!([
+                "CalcAdvanceAsPossible",
+                ring.position,
+                a.center,
+                a.step
+            ]));
+            ring.position = frame.advance_result.unwrap();
+            magnet_timer = magnet_timer.wrapping_add(1);
+        }
+        if magnetic.is_some() {
+            magnet_angle += 3.;
+        }
         if events.register_collision {
             calls.push(json!(["CCL_Entry"]));
         }
         if events.dead_out {
             calls.push(json!(["DeadOut"]));
         }
-        frames.push(json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"calls":calls}));
+        frames.push(json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"position":ring.position,"magneticSlot":magnetic.map(|m|m.slot),"magneticTimer":magnet_timer,"magneticAngle":magnet_angle,"calls":calls}));
     }
     Ok(json!({"callback":"Ring","frames":frames}))
 }
@@ -223,9 +253,54 @@ pub fn callback_name(p: &Placement, d: &ObjectDefinition) -> Option<&'static str
         _ => None,
     }
 }
+/// Shared task identity comes from the verified stage table, not a universal SET index.
+pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Option<&'static str> {
+    match (d.function_va, d.name.as_str()) {
+        (0x6c0f80, "RING" | "RING   ") => (p.parameters[0] != -1.).then_some("Ring"),
+        (0x6c4480, "SPRA   ") => Some("ObjectSpring"),
+        (0x6c4e90, "SPRB   ") => Some("ObjectSpringB"),
+        (0x6d95e0, "CHAOPIPE" | "chaopipe") => Some("ObjectChaoPipe"),
+        (0x6de3b0, "CONTCHAO" | "contchao") => Some("ContainerChao"),
+        _ if level == 13 => callback_name(p, d),
+        _ => None,
+    }
+}
+pub(crate) fn mounted_replay(
+    level: u16,
+    p: &Placement,
+    d: &ObjectDefinition,
+    request: &[u8],
+) -> Result<Value> {
+    let name = mounted_callback(level, p, d);
+    if name == Some("ContainerChao") {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ContainerRequest {
+            stage_flags: u32,
+            frames: Vec<crate::stage_container::Frame>,
+            key: Option<crate::stage_key::Request>,
+        }
+        let req = decode::<ContainerRequest>(request)?;
+        return crate::stage_container::replay(p, req.stage_flags, bounded(req.frames)?, req.key);
+    }
+    if name == Some("ObjectChaoPipe") {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PipeRequest {
+            slot_zero_character: i8,
+            frames: Vec<crate::stage_pipe::Frame>,
+        }
+        let req = decode::<PipeRequest>(request)?;
+        return crate::stage_pipe::replay(p, req.slot_zero_character, bounded(req.frames)?);
+    }
+    replay_named(name, p, request)
+}
 /// The caller verifies the executable and resolves the entry in the stage 13 list.
 /// Names include native padding. Only explicitly mapped callbacks are supported.
 pub fn replay(placement: &Placement, def: &ObjectDefinition, request: &[u8]) -> Result<Value> {
+    replay_named(callback_name(placement, def), placement, request)
+}
+fn replay_named(name: Option<&str>, placement: &Placement, request: &[u8]) -> Result<Value> {
     if !placement
         .position
         .iter()
@@ -234,10 +309,10 @@ pub fn replay(placement: &Placement, def: &ObjectDefinition, request: &[u8]) -> 
     {
         return Err(Error::invalid("nonfinite placement"));
     }
-    match callback_name(placement, def) {
+    match name {
         Some("Ring") => ring(placement, request),
         Some(name @ ("ObjectSpring" | "ObjectSpringB")) => {
-            let kind = if placement.object_id == 3 {
+            let kind = if name == "ObjectSpring" {
                 SpringKind::A
             } else {
                 SpringKind::B

@@ -7,7 +7,7 @@ const SEC: u8 = 5;
 const HEADER: usize = 0x162d1c - 0x5dd40;
 const BASE: usize = 16;
 enum Source<'a, 'b> {
-    Rel(&'a CityRel<'b>),
+    Rel(&'a CityRel<'b>, u8),
     Win32(&'a crate::pe::PeImage),
 }
 struct View<'a, 'b> {
@@ -22,7 +22,7 @@ impl View<'_, '_> {
             .get(p..p + 2)
             .ok_or_else(|| Error::invalid("City land halfword outside section"))?;
         let n = match self.source {
-            Source::Rel(_) => u16::from_be_bytes(b.try_into().unwrap()),
+            Source::Rel(_, _) => u16::from_be_bytes(b.try_into().unwrap()),
             Source::Win32(_) => u16::from_le_bytes(b.try_into().unwrap()),
         };
         self.out[BASE + p..BASE + p + 2].copy_from_slice(&n.to_le_bytes());
@@ -34,7 +34,7 @@ impl View<'_, '_> {
             .get(p..p + 4)
             .ok_or_else(|| Error::invalid("City land word outside section"))?;
         let n = match self.source {
-            Source::Rel(_) => u32::from_be_bytes(b.try_into().unwrap()),
+            Source::Rel(_, _) => u32::from_be_bytes(b.try_into().unwrap()),
             Source::Win32(_) => u32::from_le_bytes(b.try_into().unwrap()),
         };
         self.out[BASE + p..BASE + p + 4].copy_from_slice(&n.to_le_bytes());
@@ -50,8 +50,8 @@ impl View<'_, '_> {
                     Some(pe.va_to_offset(raw, 1)?)
                 }
             }
-            Source::Rel(rel) => match rel.local_pointer(SEC, p as u32)? {
-                Some((SEC, n)) if (n as usize) < self.src.len() => Some(n as usize),
+            Source::Rel(rel, sec) => match rel.local_pointer(sec, p as u32)? {
+                Some((dest, n)) if dest == sec && (n as usize) < self.src.len() => Some(n as usize),
                 None => None,
                 _ => return Err(Error::invalid("City land pointer outside data section")),
             },
@@ -132,11 +132,11 @@ pub fn read_collision_stage(bytes: &[u8]) -> Result<stage::Stage> {
     let rel = CityRel::read(bytes)?;
     let src = rel.data(SEC)?;
     let v = View {
-        source: Source::Rel(&rel),
+        source: Source::Rel(&rel, SEC),
         src,
         out: vec![0; src.len() + BASE],
     };
-    decode(v, HEADER)
+    decode(v, HEADER, true, 2912, 2376)
 }
 /// Reads the named export from the installed DLL without loading or executing it.
 pub fn read_win32_collision_stage(bytes: &[u8]) -> Result<stage::Stage> {
@@ -160,23 +160,70 @@ pub fn read_win32_collision_stage(bytes: &[u8]) -> Result<stage::Stage> {
             out: vec![0; bytes.len() + BASE],
         },
         h,
+        true,
+        2912,
+        2376,
     )
 }
-fn decode(mut v: View<'_, '_>, h: usize) -> Result<stage::Stage> {
+pub(crate) fn read_rel_table(
+    rel: &CityRel<'_>,
+    sec: u8,
+    h: usize,
+    battle: bool,
+    count: u16,
+    visual: i16,
+) -> Result<stage::Stage> {
+    let src = rel.data(sec)?;
+    decode(
+        View {
+            source: Source::Rel(rel, sec),
+            src,
+            out: vec![0; src.len() + BASE],
+        },
+        h,
+        battle,
+        count,
+        visual,
+    )
+}
+fn decode(
+    mut v: View<'_, '_>,
+    h: usize,
+    battle: bool,
+    expected_count: u16,
+    expected_visual: i16,
+) -> Result<stage::Stage> {
+    // The shared stage reader treats Battle visual attachments as opaque. Use that
+    // path for the static view, then restore the Chunk format labels for SA2.
     v.out[..8].copy_from_slice(b"SA2BLVL\x03");
     v.out[8..12].copy_from_slice(&((h + BASE) as u32).to_le_bytes());
 
     let count = v.half(h)? as usize;
-    let visual = v.half(h + 2)? as usize;
-    if count != 2912 || visual != 2376 {
+    let visual = v.half(h + 2)? as i16;
+    if count != expected_count as usize
+        || visual != expected_visual
+        || visual < -1
+        || (visual as i32 > count as i32 && (battle || count != 514 || visual != 516))
+    {
         return Err(Error::invalid(
-            "City land entry counts differ from installed profile",
+            "land entry counts differ from installed profile",
         ));
     }
     v.words(h + 4, 3)?;
     let table = v
         .ptr(h + 16)?
         .ok_or_else(|| Error::invalid("City land table missing"))?;
+    // Final Rush's Chunk UV table declares 516 visual entries but contains only
+    // 514, all visible. SA Tools writes 514/514. Validate every native flag
+    // before normalizing the derived view; catalog retains the source's 516.
+    if visual as i32 > count as i32 {
+        for i in 0..count {
+            if v.word(table + i * 32 + 28)? != 0x8000_0000 {
+                return Err(Error::invalid("unexpected UV table surface flags"));
+            }
+        }
+        v.out[BASE + h + 2..BASE + h + 4].copy_from_slice(&(count as u16).to_le_bytes());
+    }
     // Texture loading and dynamic land animation are outside the static collision view.
     let mut seen_nodes = BTreeSet::new();
     let mut seen_basic = BTreeSet::new();
@@ -185,9 +232,14 @@ fn decode(mut v: View<'_, '_>, h: usize) -> Result<stage::Stage> {
         v.words(e, 4)?;
         let root = v.ptr(e + 16)?;
         v.words(e + 20, 3)?;
+        let basic = if visual < 0 {
+            v.word(e + 28)? & 0x8000_0000 == 0
+        } else {
+            i >= visual as usize
+        };
         let mut stack: Vec<_> = root.into_iter().collect();
         while let Some(n) = stack.pop() {
-            if !seen_nodes.insert((i >= visual, n)) {
+            if !seen_nodes.insert((basic, n)) {
                 continue;
             }
             v.word(n)?;
@@ -198,8 +250,10 @@ fn decode(mut v: View<'_, '_>, h: usize) -> Result<stage::Stage> {
                     stack.push(x)
                 }
             }
-            if i < visual {
-                v.word(n + 52)?;
+            if !basic {
+                if battle {
+                    v.word(n + 52)?;
+                }
             } else if let Some(a) = a {
                 if seen_basic.insert(a) {
                     v.attach(a)?
@@ -207,5 +261,43 @@ fn decode(mut v: View<'_, '_>, h: usize) -> Result<stage::Stage> {
             }
         }
     }
-    stage::read_stage(&v.out)
+    let mut result = stage::read_stage(&v.out)?;
+    if !battle {
+        result.format = "sa2".into();
+        for e in &mut result.entries {
+            if e.geometry_format == "gc-opaque" {
+                e.geometry_format = "chunk".into();
+                for node in &mut e.nodes {
+                    node.quaternion_scalar = None;
+                }
+            }
+        }
+        result.unknowns=vec!["This static collision view retains native Basic meshes; Chunk visual attachments are omitted.".into()];
+    }
+    Ok(result)
+}
+
+/// Rebase a single unlinked Win32 Basic object using the same pointer and
+/// polygon layouts as installed land. The private offsets are file offsets + 16.
+pub(crate) fn win32_basic_object(
+    bytes: &[u8],
+    image: &crate::pe::PeImage,
+    rva: u32,
+) -> Result<crate::duel_platform::Platform> {
+    let root = image.rva_to_offset(rva, 52)?;
+    let mut v = View {
+        source: Source::Win32(image),
+        src: bytes,
+        out: vec![0; bytes.len() + BASE],
+    };
+    v.word(root)?;
+    let base = v
+        .ptr(root + 4)?
+        .ok_or_else(|| Error::invalid("missing Basic model"))?;
+    v.words(root + 8, 9)?;
+    if v.ptr(root + 44)?.is_some() || v.ptr(root + 48)?.is_some() {
+        return Err(Error::invalid("expected a single Basic platform object"));
+    }
+    v.attach(base)?;
+    crate::duel_platform::decode(&v.out, (root + BASE) as u32)
 }

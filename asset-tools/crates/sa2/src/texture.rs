@@ -4,6 +4,56 @@ use crate::{Error, Result};
 use serde::Serialize;
 use std::io::Write;
 
+/// GXGetTexBufferSize for supported GX storage formats and valid SDK dimensions.
+/// max_lod counts levels (including the base); it is ignored without mipmaps.
+pub fn gx_buffer_size(
+    width: u16,
+    height: u16,
+    format: u32,
+    mipmaps: bool,
+    max_lod: u8,
+) -> Result<u32> {
+    let (mut w, mut h) = (u32::from(width), u32::from(height));
+    if !(1..=1024).contains(&w)
+        || !(1..=1024).contains(&h)
+        || (mipmaps && !(w.is_power_of_two() && h.is_power_of_two()))
+    {
+        return Err(Error::invalid("invalid GX texture dimensions"));
+    }
+    let (tw, th, bytes) = match format {
+        0 | 8 | 14 | 0x20 | 0x30 => (8, 8, 32),
+        1 | 2 | 9 | 0x11 | 0x22 | 0x27..=0x2a | 0x39 | 0x3a => (8, 4, 32),
+        3..=5 | 10 | 0x13 | 0x23 | 0x2b | 0x2c | 0x3c => (4, 4, 32),
+        6 | 0x16 => (4, 4, 64),
+        _ => return Err(Error::invalid("unsupported GX texture buffer format")),
+    };
+    let mut size = 0;
+    for _ in 0..if mipmaps { max_lod } else { 1 } {
+        size += w.div_ceil(tw) * h.div_ceil(th) * bytes;
+        if w == 1 && h == 1 {
+            break;
+        }
+        w = (w / 2).max(1);
+        h = (h / 2).max(1);
+    }
+    Ok(size)
+}
+
+#[cfg(test)]
+mod gx_size_tests {
+    use super::*;
+    #[test]
+    fn partial_tiles_and_mip_tail() {
+        assert_eq!(gx_buffer_size(64, 64, 2, false, 0).unwrap(), 4096);
+        assert_eq!(gx_buffer_size(9, 5, 2, false, 30).unwrap(), 128);
+        assert_eq!(gx_buffer_size(8, 2, 6, true, 1).unwrap(), 128);
+        assert_eq!(gx_buffer_size(8, 2, 6, true, 255).unwrap(), 320);
+        assert_eq!(gx_buffer_size(8, 2, 6, true, 0).unwrap(), 0);
+        assert!(gx_buffer_size(9, 5, 2, true, 1).is_err());
+        assert!(gx_buffer_size(4, 4, 7, false, 1).is_err());
+    }
+}
+
 fn span(data: &[u8], at: usize, len: usize) -> Result<&[u8]> {
     data.get(
         at..at
