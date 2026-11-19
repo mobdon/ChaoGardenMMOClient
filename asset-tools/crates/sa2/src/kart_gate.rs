@@ -687,8 +687,9 @@ pub fn story_sequence(
         let event = match event {
             SequenceEvent::Gate(g) => g,
             SequenceEvent::PostMove {
-                vehicle_post_move: frame,
+                vehicle_post_move: mut frame,
             } => {
+                frame.bind_story_dispatch(target.map(|t| t.latch), count)?;
                 if target_handle.is_some_and(|handle| handle != frame.work_ec) {
                     return Err(Error::invalid(
                         "vehicle target handle changed between post-move callbacks",
@@ -718,6 +719,9 @@ pub fn story_sequence(
                 }
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
                 parent = r.frame.as_ref().map(|f| f.pursuit_parent());
+                if let Some(n) = r.frame.as_ref().and_then(|f| f.checkpoint_counter()) {
+                    count = n;
+                }
                 updates.push(json!({"vehiclePostMove":r}));
                 continue;
             }

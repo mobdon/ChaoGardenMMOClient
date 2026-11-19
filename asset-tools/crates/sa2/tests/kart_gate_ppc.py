@@ -151,6 +151,17 @@ if len(sys.argv)>4:
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             follow=json.loads(out.read_text())["target"]
             assert follow["position"][0]==6+100
+            # Both the controller and vehicle consume the actual catch. A
+            # finish flag takes priority and clamps the SAME credited counter.
+            dispatch=dict(work_c8=12,work_44=0,work_68=98)
+            q.update(primary_kart_counter=4)
+            q["updates"] += [credit,dict(vehicle_post_move=dict(frame,work_ec=0x1234,dispatch=dispatch)),
+                             dict(vehicle_post_move=dict(frame,global_24d60=1,work_ec=0x1234,dispatch=dispatch))]
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-vehicle-catch.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());caught,finished=[v["vehiclePostMove"] for v in doc["updates"][-2:]]
+            assert caught["vehicle_state"]==8 and caught["frame"]["dispatch"]["work_c4"]==5
+            assert finished["frame"]["dispatch"]["work_c8"]==doc["primaryKartCounter"]==3
             # Zero remaining time bypasses parent reads and the catch.
             q.update(timer_word=1,updates=[spawn,dict(controller=signals),dict(target_tick={})])
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-inactive.json")

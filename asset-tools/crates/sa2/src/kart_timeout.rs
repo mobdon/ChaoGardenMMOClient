@@ -51,6 +51,23 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn bind_story_dispatch(&mut self, latch: Option<i32>, counter: u32) -> Result<()> {
+        if let Some(d) = &mut self.dispatch {
+            if d.work_c4.is_some_and(|v| v as u32 != counter)
+                || d.pursuit_latch.zip(latch).is_some_and(|(a, b)| a != b)
+            {
+                return Err(crate::Error::invalid(
+                    "vehicle dispatch conflicts with shared story state",
+                ));
+            }
+            d.work_c4 = Some(counter as i32);
+            d.pursuit_latch = latch.or(d.pursuit_latch);
+        }
+        Ok(())
+    }
+    pub(crate) fn checkpoint_counter(&self) -> Option<u32> {
+        self.dispatch.as_ref()?.work_c4.map(|v| v as u32)
+    }
     pub(crate) fn pursuit_parent(&self) -> [f32; 2] {
         [self.previous_position[0], self.velocity[0]]
     }
@@ -58,8 +75,8 @@ impl Frame {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Dispatch {
-    pursuit_latch: i32,
-    work_c4: i32,
+    pursuit_latch: Option<i32>,
+    work_c4: Option<i32>,
     work_c8: i32,
     work_44: i32,
     work_68: i32,
@@ -219,8 +236,11 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             r.next = "vehicle_2814";
             if let Some(d) = &mut frame.dispatch {
                 if frame.global_24d60 != 0 {
-                    if d.work_c4 > 3 {
-                        d.work_c4 = 3;
+                    if d.work_c4
+                        .ok_or_else(|| crate::Error::invalid("missing vehicle checkpoint count"))?
+                        > 3
+                    {
+                        d.work_c4 = Some(3);
                         d.work_c8 = 3;
                     }
                     if d.work_44 != 0 {
@@ -265,7 +285,13 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                             from_xz: [frame.position[0], frame.position[2]],
                         });
                     }
-                } else if d.pursuit_latch != 0 {
+                } else if r
+                    .spawned_target()
+                    .map(|s| s.latch)
+                    .or(d.pursuit_latch)
+                    .ok_or_else(|| crate::Error::invalid("missing vehicle pursuit latch"))?
+                    != 0
+                {
                     vehicle_state = 8;
                 }
                 r.next = "engine_8000f4ec";
