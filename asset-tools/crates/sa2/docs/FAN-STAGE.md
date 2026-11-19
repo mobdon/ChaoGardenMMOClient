@@ -490,3 +490,10 @@ key word matches the corresponding PC motion export, including signed game
 angles and signed zero in float values. The limousine has no submitted motion.
 These are authored keys; fractional-frame interpolation and skinned draw output
 are not verified by the key comparison.
+
+Each pursuit attachment now includes its authored bounding sphere and type-41
+vertex chunks, in source order, with original index offsets, flags, positions
+and normals. No coordinate or unit conversion is applied. The independent PC
+export comparison matched every position and normal word: 1,458 vertices on
+the limousine and 1,183 on the Tornado. These are vertex streams; polygon
+connectivity, material selection and UVs are not implied by this comparison.

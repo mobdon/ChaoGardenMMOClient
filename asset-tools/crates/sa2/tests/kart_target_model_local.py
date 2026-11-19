@@ -20,9 +20,9 @@ def offset(rva):
         if start<=rva<start+size:return raw+rva-start
     raise ValueError(rva)
 directory=offset(read("I",opt+96)[0])
-count,functions,names,ordinals=read("4I",directory+24)
+export_count,functions,names,ordinals=read("4I",directory+24)
 def export(name):
-    for i in range(count):
+    for i in range(export_count):
         at=offset(read("I",offset(names)+i*4)[0])
         if dll[at:dll.index(0,at)]==name.encode():
             ordinal,=read("H",offset(ordinals)+i*2)
@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
         out=Path(td)/f"{mode}.json"
         subprocess.run([cli,"--source-root",game,"kart-target-model",gd/"CartD.rel",out,str(mode)],check=True)
         report=json.loads(out.read_text());rows=report["nodes"]
-        stack=[(export(name),None)];seen=set()
+        stack=[(export(name),None)];seen=set();vertices=0
         for row in rows:
             va,parent=stack.pop();assert va not in seen;seen.add(va)
             at=offset(va-base)
@@ -41,10 +41,26 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
             assert (parent,flags,bool(attach))==(row["parent"],row["flags"],row["attach"] is not None),(name,len(seen))
             for key,fmt,field in (("position","3f",8),("angles","3i",20),("scale","3f",32)):
                 assert struct.pack("<"+fmt,*row[key])==dll[at+field:at+field+12],(name,len(seen),key)
+            if attach:
+                a=offset(attach-base);g=row["geometry"]
+                assert struct.pack("<4f",*g["center"],g["radius"])==dll[a+8:a+24]
+                vptr,=read("I",a)
+                if vptr:
+                    v=offset(vptr-base)
+                    for chunk in g["chunks"]:
+                        kind,flags,size,index,count=read("BB3H",v)
+                        assert (kind,flags,index,count)==(41,chunk["flags"],chunk["index_offset"],len(chunk["vertices"]))
+                        assert size==1+count*6
+                        for j,vert in enumerate(chunk["vertices"]):
+                            atv=v+8+j*24
+                            assert struct.pack("<6f",*vert["position"],*vert["normal"])==dll[atv:atv+24],(name,len(seen),j)
+                        vertices+=count;v+=4+size*4
+                    assert read("B",v)==(255,)
+                else:assert not g["chunks"]
             if sibling:stack.append((sibling,parent))
             if child:stack.append((child,len(seen)-1))
         assert not stack
-        print(f"{name}: {len(rows)} matching nodes")
+        print(f"{name}: {len(rows)} matching nodes, {vertices} matching vertices")
         if mode==0:
             assert report["motion"] is None and all("motion" not in row for row in rows)
             continue

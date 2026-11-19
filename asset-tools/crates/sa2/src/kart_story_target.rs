@@ -405,6 +405,9 @@ pub fn model(bytes: &[u8], mode: i32) -> Result<serde_json::Value> {
         let index = nodes.len();
         nodes.push(serde_json::json!({"parent":parent,"offset":offset,"flags":word(0),"attach":ptr(4)?,
             "position":xyz(8),"angles":[word(20) as i32,word(24) as i32,word(28) as i32],"scale":xyz(32)}));
+        if let Some(attach) = ptr(4)? {
+            nodes[index]["geometry"] = vertices(&rel, attach)?;
+        }
         if let Some(sibling) = ptr(48)? {
             pending.push((sibling, parent));
         }
@@ -471,4 +474,51 @@ fn bind_motion(
         }
     }
     Ok(serde_json::json!({"offset":offset,"frames":frames,"type":7,"interpolation_word":3}))
+}
+
+fn vertices(rel: &crate::city_rel::CityRel<'_>, attach: u32) -> Result<serde_json::Value> {
+    let data = rel.data(5)?;
+    let invalid = || crate::Error::invalid("unexpected pursuit vertex stream");
+    let word = |at: usize| -> Result<u32> {
+        Ok(u32::from_be_bytes(
+            data.get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let xyz = |at| -> Result<[f32; 3]> {
+        Ok([word(at)?, word(at + 4)?, word(at + 8)?].map(f32::from_bits))
+    };
+    let mut chunks = Vec::new();
+    if let Some((section, start)) = rel.local_pointer(5, attach)? {
+        if section != 5 {
+            return Err(invalid());
+        }
+        let mut cursor = start as usize;
+        loop {
+            let header = word(cursor)?;
+            if header as u8 == 255 {
+                break;
+            }
+            if header as u8 != 41 {
+                return Err(invalid());
+            }
+            let indices = word(cursor + 4)?;
+            let count = (indices >> 16) as usize;
+            if header >> 16 != (1 + count * 6) as u32 {
+                return Err(invalid());
+            }
+            let mut entries = Vec::with_capacity(count);
+            for i in 0..count {
+                let at = cursor + 8 + i * 24;
+                entries.push(serde_json::json!({"position":xyz(at)?,"normal":xyz(at+12)?}));
+            }
+            chunks.push(serde_json::json!({"flags":(header>>8) as u8,"index_offset":indices as u16,"vertices":entries}));
+            cursor += 8 + count * 24;
+        }
+    }
+    Ok(
+        serde_json::json!({"center":xyz(attach as usize+8)?,"radius":f32::from_bits(word(attach as usize+20)?),"chunks":chunks}),
+    )
 }
