@@ -199,6 +199,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
 struct Controller {
     state_seven: Option<StateSeven>,
     state_eight: Option<StateEight>,
+    state_one: Option<StateOne>,
     mode: i8,
     engine_bytes: [i8; 3],
     player_flags: [u16; 2],
@@ -368,6 +369,63 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
             "angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],"yaw":yaw,"scalar":number(4,field(0x13ca,4)?)?,
             "byteWrites":if pulse{vec![0x803ad485u32,0x803ad495]}else{vec![]},"operations":ops});
     }
+    if let Some(v) = c.state_one {
+        if target != 0x924 {
+            return Err(invalid());
+        }
+        let mut counter = v.counter;
+        let mut sub = v.submode;
+        let mut ops = Vec::new();
+        let mut cooldown = None;
+        if counter > v.limit {
+            if sub == 0 {
+                sub = 1;
+                let query = v.query.ok_or_else(invalid)?;
+                ops.push(json!([0x988]));
+                if query != 0 {
+                    let group = match query {
+                        1 => 0,
+                        2 => 1,
+                        _ => 2,
+                    } + if v.slot0_byte == 7 { 3 } else { 0 };
+                    let base = field(0x94e, 5)?;
+                    let pos = [
+                        number(5, base)?,
+                        number(5, base + 4)? + number(4, field(0x972, 4)?)?,
+                        number(5, base + 8)?,
+                    ];
+                    ops.push(json!([0x9f8, pos, 0, 0, group, 2, 0]));
+                }
+            } else if v.query.is_some() {
+                return Err(invalid());
+            }
+            ops.extend([
+                json!([0xa00, 0]),
+                json!([0xa04]),
+                json!([0xa18]),
+                json!([0xa84, 0]),
+            ]);
+            let f = |site| number(4, field(site, 4)?);
+            let value = f(0xa66)? + f(0xa56)? * (f(0xa46)? * v.draw.ok_or_else(invalid)? as f32);
+            timer = Some(value as i32 as i16 as i32);
+            counter = 0;
+            mode = 7;
+        } else {
+            if v.draw.is_some() || v.query.is_some() {
+                return Err(invalid());
+            }
+            if counter == 120 {
+                match v.character {
+                    6 => ops.push(json!([0xac4, 0x8d3])),
+                    7 => ops.push(json!([0xac4, 0x813])),
+                    _ => {}
+                }
+                cooldown = Some(180);
+            }
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"submode":sub,"counter":counter,
+            "timerWrite":timer,"cooldownWrite":cooldown,"operations":ops});
+    }
     Ok(report)
 }
 
@@ -468,5 +526,17 @@ struct StateEight {
     pose_word: u16,
     slot_byte: i8,
     counter: i16,
+    draw: Option<i32>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateOne {
+    counter: i16,
+    limit: i16,
+    submode: i8,
+    character: i8,
+    slot0_byte: i8,
+    query: Option<i32>,
     draw: Option<i32>,
 }

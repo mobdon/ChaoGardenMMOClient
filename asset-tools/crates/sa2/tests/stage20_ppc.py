@@ -261,3 +261,31 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 timerWrite=timer if m==4 else None,operations=ops,angleArgs=args,yaw=yaw,scalar=scalar,
                 byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
 print(idx,"state eight updates matched")
+
+def one_call(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x9f8:ops.append([site,list(get(reg(3),"fff")),*[reg(i) for i in range(4,9)]])
+    elif site in (0xa00,0xa84,0xac4):ops.append([site,reg(3)])
+    else:ops.append([site])
+    if site in (0x988,0xa18):cpu.reg_write(R.UC_PPC_REG_3,(query if site==0x988 else draw)&0xffffffff)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x988,0x9f8,0xa00,0xa04,0xa18,0xa84,0xac4):
+    u.hook_add(UC_HOOK_CODE,one_call,begin=base[1]+site,end=base[1]+site)
+cases=[(ctr,lim,0,ch,0,None,None) for ctr,lim in [(119,360),(120,120),(120,360),(121,360),(360,360)] for ch in (6,7,-1)]
+cases += [(ctr,lim,0,6,b,q,draw) for ctr,lim in [(120,119),(361,360)] for b in (6,7)
+          for q,draw in [(0,0),(1,123),(2,32767),(3,20000),(-1,12000)]]
+cases += [(361,360,s,7,6,None,16384) for s in (-1,1)]
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,(counter,limit,sub,ch,b,query,draw) in enumerate(cases):
+        ops=[];put(work,"bbhhh",1,sub,counter,limit,-1);put(player1+3,"b",ch);put(player0+1,"b",b)
+        for r,v in [(1,0x100e00),(26,player1),(29,work),(31,player0)]:u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
+        u.emu_start(base[1]+0x924,base[1]+0x1424,count=180);assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+        m,s,ctr,t,cool=get(work,"bbhhh")
+        c=dict(mode=1,engine_bytes=[0,0,0],player_flags=[0,0],state_one=dict(counter=counter,limit=limit,
+               submode=sub,character=ch,slot0_byte=b,query=query,draw=draw))
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())["controller"]==dict(dispatch=0x924,continueAt=0x1424,mode=m,submode=s,counter=ctr,
+                   timerWrite=t if m==7 else None,cooldownWrite=None if cool==-1 else cool,operations=ops)
+print(len(cases),"state one timing and transition paths matched")
