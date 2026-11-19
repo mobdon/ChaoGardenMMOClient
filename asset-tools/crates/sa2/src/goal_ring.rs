@@ -74,6 +74,8 @@ pub struct Program {
     texture_lod_bits: [u32; 2],
     pub radii: [f32; 2],
     pub spin: [i32; 2],
+    shadow_unset: u32,
+    shadow_lift: f32,
     update_period: u32,
     update_window: u32,
     pub rise: f32,
@@ -1442,6 +1444,11 @@ impl Program {
                 "5f53be3b11c6a6c740dc6ad10951e8e332d7d91425cc658989992ff56e2c6755",
             ),
             (
+                0x3fc,
+                0x64,
+                "f71c40ff683f066ca642043ea644764f38da6e86d8c5ddb926f04972dcd08e34",
+            ),
+            (
                 0x5f8,
                 0x68,
                 "96efb20d8a54e6dbe19cb4d2020ca30e248e21466929d49fba85e4bd0dc11650",
@@ -1457,17 +1464,23 @@ impl Program {
                 return Err(invalid());
             }
         }
-        let constant = |hi, lo| -> Result<u32> {
+        let section_word = |hi, lo, section| -> Result<u32> {
             let a = rel.reference(1, init + hi).ok_or_else(invalid)?;
             let b = rel.reference(1, init + lo).ok_or_else(invalid)?;
             if (
                 a.module, a.section, a.kind, b.module, b.section, b.kind, b.addend,
-            ) != (info.module, 5, 6, info.module, 5, 4, a.addend)
+            ) != (info.module, section, 6, info.module, section, 4, a.addend)
             {
                 return Err(invalid());
             }
-            word(rel.data(5)?, a.addend as usize)
+            word(rel.data(section)?, a.addend as usize)
         };
+        let constant = |hi, lo| section_word(hi, lo, 5);
+        let shadow_unset = section_word(0x3fe, 0x402, 4)?;
+        if section_word(0x2c6, 0x2ca, 4)? != shadow_unset {
+            return Err(invalid());
+        }
+        let shadow_lift = f32::from_bits(section_word(0x43e, 0x442, 4)?);
         let update_period = constant(0x396, 0x39a)?;
         let update_window = constant(0x3ae, 0x3b2)?;
         let range = rel.reference(1, init + 0x378).ok_or_else(invalid)?;
@@ -1479,7 +1492,11 @@ impl Program {
             constant(0x60e, 0x612)? as i32,
         ];
         let rise = f32::from_bits(constant(0x632, 0x636)?);
-        for (offset, addr) in [(0xaf8, 0x80065148), (0xb04, 0x80071878)] {
+        for (offset, addr) in [
+            (0x458, 0x80067888),
+            (0xaf8, 0x80065148),
+            (0xb04, 0x80071878),
+        ] {
             let r = rel.reference(1, init + offset).ok_or_else(invalid)?;
             if (r.module, r.kind, r.addend) != (0, 10, addr) {
                 return Err(invalid());
@@ -1527,6 +1544,8 @@ impl Program {
             regular_shape_offset,
             radii,
             spin,
+            shadow_unset,
+            shadow_lift,
             update_period,
             update_window,
             rise,
@@ -2522,6 +2541,7 @@ enum GoalFrame {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UpdateEntry {
+    shadow_return_bits: Option<u32>,
     frame_counter: u32,
     range_out: Option<bool>,
 }
@@ -2544,6 +2564,8 @@ struct InitAttempt {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    #[serde(default)]
+    track_shadow: bool,
     #[serde(default)]
     init_retries: Vec<InitAttempt>,
     texture_setup: Option<TextureSetup>,
@@ -2748,6 +2770,12 @@ pub fn replay(
         y: center[1],
         timer: r.lifecycle.as_ref().map_or(0, |v| v.initial_timer),
     };
+    let mut shadow_bits = p.shadow_unset;
+    if r.track_shadow && r.lifecycle.is_none() {
+        return Err(Error::invalid(
+            "shadow tracking requires regular goal lifecycle",
+        ));
+    }
     let mut slot_words = r.initial_slot_words.unwrap_or(p.initial_slot_words);
     let mut frames = vec![];
     for observation in r.frames {
@@ -2760,6 +2788,12 @@ pub fn replay(
                 "per-frame motion gate requires regular goal lifecycle",
             ));
         }
+        if r.track_shadow && entry.is_none() {
+            return Err(Error::invalid(
+                "shadow tracking requires sampled update entries",
+            ));
+        }
+        let mut shadow = None;
         let entry = if let Some(input) = entry {
             let Some(byte3) = p.update_entry(
                 state.latched,
@@ -2769,9 +2803,29 @@ pub fn replay(
                 game_byte,
             )?
             else {
+                if input.shadow_return_bits.is_some() {
+                    return Err(Error::invalid("range exit precedes shadow query"));
+                }
                 frames.push(json!({"rangeOut":true,"calls":[],"latched":state.latched,"moduleSlotWords":slot_words}));
                 break;
             };
+            let query =
+                r.track_shadow && shadow_bits == p.shadow_unset && input.frame_counter & 31 == 0;
+            if query != input.shadow_return_bits.is_some() {
+                return Err(Error::invalid(
+                    "supply shadow return bits only on a scheduled tracked query",
+                ));
+            }
+            if r.track_shadow {
+                let mut call = None;
+                if let Some(bits) = input.shadow_return_bits {
+                    call = Some(
+                        json!({"target":0x80067888u32,"positionBits":[center[0].to_bits(),(motion.y+p.shadow_lift).to_bits(),center[2].to_bits()],"rotation":[0,motion.yaw,0]}),
+                    );
+                    shadow_bits = bits;
+                }
+                shadow = Some(json!({"query":call,"work40Bits":shadow_bits}));
+            }
             let checked = input.range_out.is_some();
             Some(json!({"rangeChecked":checked,"workByte3":byte3}))
         } else {
@@ -2788,6 +2842,9 @@ pub fn replay(
         }
         let calls = state.step(angle_x, game_byte, hit, p.local_effect)?;
         let mut frame = json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched});
+        if let Some(shadow) = shadow {
+            frame["shadow"] = shadow;
+        }
         if let Some(entry) = entry {
             frame["entry"] = entry;
         }
