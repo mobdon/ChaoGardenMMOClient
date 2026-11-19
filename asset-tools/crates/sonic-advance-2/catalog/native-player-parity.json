@@ -1,0 +1,12 @@
+{
+  "reference_commit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "cases": 8192,
+  "operations": 16,
+  "seed": 2729320486,
+  "words_per_case": 30,
+  "output_bytes": 983040,
+  "output_sha256": "bd66d22713b3c99c9737d1ff8dfa1c6761c8230ebef44f6e2d890bcb99769a09",
+  "source_sha256": "300f37f946203ab4bb20fbbd5c62b20b0a5e9f55618ffc58bbd8f2b13d49bdb8",
+  "sine_sha256": "78caf4fc1cb643a1f24d8e9d9efb1822cda68335adc1799d517582939d9c5c99",
+  "boundary": "Native scalar routines; wall probes/effects/next callback are inert host boundaries. No whole-frame claim."
+}

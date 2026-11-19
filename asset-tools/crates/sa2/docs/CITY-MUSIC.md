@@ -1,0 +1,13 @@
+# City Escape music tasks
+
+The Rust API emits native call names and original filenames in invocation order. A host supplies the results of range, sphere and game-state queries and dispatches the calls. The unnamed audio functions retain their reference symbols. Reading, decoding or playing an ADX stream is a separate operation.
+
+`prolog(variant, two_player)` models only the music portion of CityEscapeProlog. The field named variant is `lbl_801CC168.unk_0x0`. With a zero field, one-player starts `c_escap1.adx`, while two-player creates a BgmStart task. A nonzero field starts the literal `t9_sonic.adx`; an installation can lack that file. The BgmStart counter starts at zero for a newly loaded stage module. State 7 resets it, as does state 16 when both players have mode 54. In state 16 otherwise, the counter increments: updates 1–8 invoke fn_80011DF4, update 9 makes no audio call, and update 10 sets volume to zero and starts the stage song. The counter keeps advancing after playback starts.
+
+The ADX SET task installs callbacks only within range and outside STAGE_SHORTCITY_2P (Downtown Race). Its exec callback uses the engine's either-player sphere query with the authored position and Scale.X. The inputs `range_out` and `player_in_sphere` represent the native predicate results. Inside the sphere, modes 0, 2 and 4 cause the task to call fn_80011DF4 then fn_80011FB0 with `c_escap2.adx`. The game-state switch runs afterward on the updated mode. Calling destroy consumes the Rust task and emits the restore calls using the native game state and fn_8001CC18(0) result. The host schedules destruction; an out-of-range tick alone emits no audio call.
+
+## Source comparison
+
+The source is roeming/SA2B at `874a480379260dce01e8988d6ab13c0deddcee4c`. Its configure.py marks `src/stg13_cityescape/o_ce_adx_chg.c` Matching and `src/stg13_cityescape/cityescape.c` NonMatching. Their checkout SHA-256 values are respectively `26993f3c200c5bfb9d85b9f4dcac2e044198f41d70f3a32e83ecabbded84df09` and `8819800915890967b055a0db3df7c5f34354ba7a0c5a226e6c1ae2b1f2494aed`. This evidence establishes host behavior against the GameCube C source. It does not establish PC executable equivalence or audible playback.
+
+Run `python tests/city_music_reference.py <SA2B-checkout> <zig> cc` to extract the original function bodies, compile them with a host C compiler and substitute controlled engine calls. The 418 cases cover the prolog, spawn, exec, destruction and BgmStart branches. Their ordered audio calls and resulting task fields produce 1,905 bytes, SHA-256 `e87cb5630e85a7d9ddcfdcdc46a9f34168d9992933b2af9db8c7ca6b35221917`. The Rust test runs the same cases and checks the digest.

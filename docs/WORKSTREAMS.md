@@ -4,6 +4,8 @@ Updated November 18, 2026. This is the handoff for user-created chats, not a cla
 
 ## Coordination rules
 
+- Read root AGENTS.md first. The user's Rust requirement applies to all game systems, shared mechanics and asset readers/converters; shared browser mechanics use the agreed Rust/WASM boundary. Existing browser/Android presentation must consume the actual Rust core/protocol. The generated Expo/Nest/TypeScript simulation batch is unaccepted; see the server coordination board and its dated Vibe review reports before further integration.
+- Use the server repository's `docs/coordination/BOARD.md`, `PROTOCOL.md` and `WORKSTREAMS.md` for Vibe Coder/repository coordination. This chat does not update the private Vibe website board. Claim a workstream and record its branch, dependencies, evidence and PR there; do not assume an unreported chat is running.
 - This original chat owns integration, release QA, the playable preview, TASKS.md and cross-repository contracts.
 - Use a separate branch/worktree for each implementation chat. Start from the verified published source; do not let multiple chats mutate the same checkout/index. Branches use codex/ prefix. Open reviewable PRs; the integration chat coordinates merges.
 - Client root is C:/Users/Admin/Documents/ChatGPT/mmo. Server root is C:/Users/Admin/Documents/ChatGPT/mmo/server. Do not combine the two Git histories.
@@ -18,6 +20,14 @@ Updated November 18, 2026. This is the handoff for user-created chats, not a cla
 
 Start Tiny Garden, Android widget, AFK training and device pairing together. The four game-specific Rust asset tracks can run independently after agreeing the common manifest format. Care, movement and competitions consume those outputs. Capacity/deployment measures the integrated service. This original chat integrates throughout.
 
+Movement handoff: client commit `279a7b7` already publishes `src/chao-locomotion.js`, its scene hooks, native Run119 build/verification tools and focused tests. The native movement stream should use that dependency rather than rebuild the helper; keep `src/scene.js` changes as a small reviewed patch. The exact `chao-locomotion.glb` server route works in the current local runtime but its source patch remains separately unpublished while Vibe's server build is blocked. Preserve opaque bodies, flame/gem alpha and depth-occluded bloom. The movement chat reports an isolated `codex/native-chao-movement` branch; it is not a merged delivery.
+
+The current JumpUp132 / JumpDown135 / reverse137 proposal, real snapshot-field requirements and `createGarden` proof boundaries are recorded in [NATIVE-MOVEMENT-INTEGRATION.md](NATIVE-MOVEMENT-INTEGRATION.md). Use that handoff before changing the shared scene; the proposal remains unmerged.
+
+Integration's `codex/footwear-motion-fix` fixes the frozen visible shoes independently of that proposal: actual 006/013 sockets/overlay targets, skin-centered chest emerald and guarded heel jets. [FOOTWEAR-FIX.md](FOOTWEAR-FIX.md) records original-asset, real Rust round-trip and actual UI evidence. Preserve these attachment changes in a future movement merge. Read-only review of native movement commit86f41f9 confirmed invalid-height handling is fixed; duplicate-time history resets and the legacy water fallback mismatch remain for that stream's acceptance.
+
+Follow-up integration on `codex/native-presentation-fixes` replaces adapted shoe sprites with original Shadow 92–99 geometry/materials, corrects inward toe basis, reduces uniform shoe fit to 0.90 and embeds the chest gem deeper. Keep these presentation changes when rebasing movement; native joints stay unchanged. Exact native emitter draw matrices/timing remain untraced. See [NATIVE-SHOE-EFFECTS.md](NATIVE-SHOE-EFFECTS.md). Always search and use native effects/assets first.
+
 ## Copy-and-paste chat briefs
 
 ### 1. Client — Tiny Garden app
@@ -29,7 +39,7 @@ Work in ChaoGardenMMOClient on Tiny Garden mobile UI/PWA only. Read docs/WORKSTR
 ### 2. Client — Android home-screen widget
 
 ```text
-Work in ChaoGardenMMOClient on the real Android Tiny Garden widget. Read docs/WORKSTREAMS.md and docs/TINY-GARDEN.md first. Android is the selected first platform. Own android/ and widget.html/src/widget.js/src/widget.css; web preview is not an installed widget. Build compact/wide/large layouts with native Chao art, chest/orbit emerald identity, live needs/stats, real training status and one-tap Tiny Garden entry. Use authenticated read-only snapshots and secure revocable device pairing; label cached/stale data. Keep Rust authority on the server; native Android glue may use Kotlin/RemoteViews or Glance. Respect OS background limits; no pretend continuously running widget game. Build/lint and test an actual APK/widget when toolchain/device access exists; report missing prerequisites honestly. Isolated codex/ branch, coordinate API requirements, PR plus proof.
+Work in ChaoGardenMMOClient on the real Android Tiny Garden widget. Read docs/WORKSTREAMS.md and docs/TINY-GARDEN.md first. Android is the selected first platform. Own android/ and widget.html/src/widget.js/src/widget.css; web preview is not an installed widget. Build compact/wide/large layouts with native Chao art, chest/orbit emerald identity, live needs/stats, real training status and one-tap Tiny Garden entry. The widget is specifically Tiny Garden: check on the same Chao and use quick pet/care actions; open the full Tiny Garden app for minigames and AFK training controls. Use authenticated snapshots, server-validated care/training intents and secure revocable device pairing; label cached/stale data. Keep Rust authority on the server; native Android glue may use Kotlin/RemoteViews or Glance. Respect OS background limits; no pretend continuously running widget game. Build/lint and test an actual APK/widget when toolchain/device access exists; report missing prerequisites honestly. Isolated codex/ branch, coordinate API requirements, PR plus proof.
 ```
 
 ### 3. Server — Durable AFK training
