@@ -341,6 +341,75 @@ impl Campaign {
     pub fn levels(&self) -> &[LevelDispatch] {
         &self.levels
     }
+    fn actor_name(dispatch: &LevelDispatch) -> Result<&'static str> {
+        Ok(match dispatch.character {
+            0 => "Sonic",
+            1 => "Shadow",
+            2 => "Tails",
+            3 => "Eggman",
+            4 => "Knuckles",
+            5 => "Rouge",
+            6 => "MechTails",
+            7 => "MechEggman",
+            9 => "SuperSonic",
+            10 => "SuperShadow",
+            _ => return Err(Error::invalid("unknown story character")),
+        })
+    }
+    fn lookup_pose(
+        &self,
+        dispatch: &LevelDispatch,
+        ch: &str,
+        kind: PositionKind,
+        variant: Variant,
+    ) -> Result<Option<EntryPose>> {
+        let mut rows = self
+            .positions
+            .iter()
+            .filter(|r| r.stage == dispatch.level && r.kind == kind && r.character == ch);
+        let pose = rows.next().and_then(|r| {
+            r.poses
+                .iter()
+                .find(|p| p.variant == variant)
+                .map(|p| EntryPose {
+                    character: r.character,
+                    row_va: r.row_va,
+                    position: p.position,
+                    yaw: p.yaw,
+                })
+        });
+        if rows.next().is_some() {
+            return Err(Error::invalid("ambiguous campaign position row"));
+        }
+        Ok(pose)
+    }
+    fn kart_route(&self, dispatch: &LevelDispatch) -> Option<&KartRoute> {
+        if dispatch.level == 70 {
+            self.kart_routes.get(&dispatch.character)
+        } else {
+            None
+        }
+    }
+    /// Group story references without treating a stage ID as physical map identity.
+    pub fn stage_reuse(&self) -> Result<serde_json::Value> {
+        let mut groups = BTreeMap::<u16, Vec<serde_json::Value>>::new();
+        for dispatch in &self.levels {
+            let config = self.configs.get(&dispatch.level);
+            let actor = Self::actor_name(dispatch)?;
+            let pose = self.lookup_pose(dispatch, actor, PositionKind::Start, Variant::Single)?;
+            let kart = self.kart_route(dispatch);
+            groups.entry(dispatch.level).or_default().push(serde_json::json!({
+                "dispatch":dispatch, "actor":actor, "entryPose":pose,
+                "configuredGeometry":config.and_then(|c|c.geometry.as_deref()),
+                "configuredSetPrefix":config.map(|c|&c.set_prefix),
+                "kartCourse":kart.map(|k|serde_json::json!({"name":k.name,"descriptorRva":k.descriptor_rva,
+                    "partsSha256":sha256(&k.course_parts),"parts":k.course_parts.len(),"set":k.set_filename}))
+            }));
+        }
+        Ok(
+            serde_json::json!({"storyEntries":self.levels.len(),"distinctLevelIds":groups.len(),"groups":groups}),
+        )
+    }
     /// The resolver receives a pinned basename relative to resource/gd_PC. None means
     /// locally unavailable; a mismatched source is an error. No filesystem writes.
     pub fn mount(
@@ -355,40 +424,8 @@ impl Campaign {
             .find(|d| d.sequence == sequence && d.action_index == action_index)
             .ok_or_else(|| Error::invalid("not an authored single-player campaign level action"))?
             .clone();
-        let ch = match dispatch.character {
-            0 => "Sonic",
-            1 => "Shadow",
-            2 => "Tails",
-            3 => "Eggman",
-            4 => "Knuckles",
-            5 => "Rouge",
-            6 => "MechTails",
-            7 => "MechEggman",
-            9 => "SuperSonic",
-            10 => "SuperShadow",
-            _ => return Err(Error::invalid("unknown story character")),
-        };
-        let lookup_pose = |kind, variant| -> Result<Option<EntryPose>> {
-            let mut rows = self
-                .positions
-                .iter()
-                .filter(|r| r.stage == dispatch.level && r.kind == kind && r.character == ch);
-            let pose = rows.next().and_then(|r| {
-                r.poses
-                    .iter()
-                    .find(|p| p.variant == variant)
-                    .map(|p| EntryPose {
-                        character: r.character,
-                        row_va: r.row_va,
-                        position: p.position,
-                        yaw: p.yaw,
-                    })
-            });
-            if rows.next().is_some() {
-                return Err(Error::invalid("ambiguous campaign position row"));
-            }
-            Ok(pose)
-        };
+        let ch = Self::actor_name(&dispatch)?;
+        let lookup_pose = |kind, variant| self.lookup_pose(&dispatch, ch, kind, variant);
         let entry_pose = lookup_pose(PositionKind::Start, Variant::Single)?;
         let end_pose = lookup_pose(PositionKind::End, Variant::Single)?;
         let mission2_end_pose = lookup_pose(PositionKind::MissionEnd, Variant::Mission2)?;
@@ -401,11 +438,7 @@ impl Campaign {
             ));
         }
         let config = self.configs.get(&dispatch.level);
-        let kart_route = if dispatch.level == 70 {
-            self.kart_routes.get(&dispatch.character)
-        } else {
-            None
-        };
+        let kart_route = self.kart_route(&dispatch);
         let object_table = if kart_route.is_some() {
             self.tables.get("Kart Object List")
         } else {
