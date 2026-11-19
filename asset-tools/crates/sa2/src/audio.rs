@@ -33,6 +33,42 @@ fn le32(input: &[u8], offset: usize) -> Result<u32> {
     Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
+/// Header fields of the unencrypted mono AHX variant found in the voice banks.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AhxHeader {
+    pub channels: u8,
+    pub sample_rate: u32,
+    pub sample_count: u32,
+    pub data_offset: usize,
+}
+
+pub fn read_ahx_header(bytes: &[u8]) -> Result<AhxHeader> {
+    if be16(bytes, 0)? != 0x8000
+        || range(bytes, 4, 4)? != [0x10, 0, 0, 1]
+        || be16(bytes, 18)? != 0x0600
+    {
+        return Err(Error::invalid("unsupported AHX header"));
+    }
+    let data_offset = usize::from(be16(bytes, 2)?) + 4;
+    if data_offset < 26
+        || range(bytes, data_offset - 6, 6)? != b"(c)CRI"
+        || data_offset >= bytes.len()
+    {
+        return Err(Error::invalid("invalid AHX payload offset or marker"));
+    }
+    let sample_rate = be32(bytes, 8)?;
+    if sample_rate == 0 {
+        return Err(Error::invalid("zero AHX sample rate"));
+    }
+    Ok(AhxHeader {
+        channels: bytes[7],
+        sample_rate,
+        sample_count: be32(bytes, 12)?,
+        data_offset,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AfsEntry {

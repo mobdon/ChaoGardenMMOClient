@@ -388,7 +388,16 @@ fn inspect(bytes: &[u8], name: &str) -> Result<Value> {
     } else if bytes.starts_with(b"GVPL") {
         Ok(serde_json::to_value(texture::read_gvp(bytes)?)?)
     } else if bytes.starts_with(b"AFS\0") {
-        Ok(serde_json::to_value(audio::read_afs(bytes)?)?)
+        let mut rows = Vec::new();
+        for entry in audio::read_afs(bytes)? {
+            let header = audio::read_ahx_header(entry.bytes(bytes)?).ok();
+            let mut row = serde_json::to_value(entry)?;
+            if let Some(header) = header {
+                row["ahx"] = serde_json::to_value(header)?;
+            }
+            rows.push(row);
+        }
+        Ok(Value::Array(rows))
     } else if bytes.starts_with(b"MZ") {
         let image = pe::read_pe(bytes)?;
         let chao = if image.exports.iter().any(|e| e.name == "AL_RootObject") {
@@ -397,6 +406,8 @@ fn inspect(bytes: &[u8], name: &str) -> Result<Value> {
             None
         };
         Ok(json!({"image":image,"chaoCandidates":chao}))
+    } else if name.ends_with(".ahx") {
+        Ok(serde_json::to_value(audio::read_ahx_header(bytes)?)?)
     } else if name.ends_with(".adx") {
         Ok(serde_json::to_value(audio::read_adx_header(bytes)?)?)
     } else if name.ends_with(".pak") {
