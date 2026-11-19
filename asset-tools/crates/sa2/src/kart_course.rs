@@ -82,3 +82,82 @@ mod tests {
         }
     }
 }
+/// Borrow the root Basic attachment's native position bank (little-endian XYZ
+/// binary32 triples). Child objects, node transforms and polygons are separate.
+pub fn root_collision_positions<'a>(
+    dll: &'a [u8],
+    pe: &crate::pe::PeImage,
+    piece: &CoursePiece,
+) -> Result<Option<&'a [[u8; 12]]>> {
+    let Some(root) = piece.collision else {
+        return Ok(None);
+    };
+    let r = crate::model::Reader { data: dll };
+    r.span(root, 52)?;
+    let attachment = r.u32(root + 4)?;
+    if attachment == 0 {
+        return Ok(None);
+    }
+    let at = pe.va_to_offset(attachment, 40)?;
+    r.span(at, 40)?;
+    let count = r.u32(at + 8)? as usize;
+    if count > 262_144 {
+        return Err(Error::invalid("kart Basic vertex count exceeds limit"));
+    }
+    if count == 0 {
+        return Ok(Some(&[]));
+    }
+    let size = count * 12;
+    let first = pe.va_to_offset(r.u32(at)?, size)?;
+    Ok(Some(r.span(first, size)?.as_chunks::<12>().0))
+}
+
+#[cfg(test)]
+mod collision_reference {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires Steam DLL and independent SA Tools kart models"]
+    fn compare_root_vertex_banks() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let models =
+            std::path::PathBuf::from(std::env::var_os("SA2_KART_MODEL_REFERENCE").unwrap());
+        let dll = std::fs::read(root.join("resource/gd_PC/DLL/Win32/Data_DLL.dll")).unwrap();
+        let pe = read_pe(&dll).unwrap();
+        let table = read_course_table(&dll).unwrap();
+        let mut compared = 0;
+        let mut normalized_zeros = 0;
+        for (i, piece) in table.pieces.iter().enumerate() {
+            let path = models.join(format!("{i:03}.sa1mdl"));
+            let Some(bank) = root_collision_positions(&dll, &pe, piece).unwrap() else {
+                assert!(!path.exists(), "missing native attachment for piece {i}");
+                continue;
+            };
+            let bytes = std::fs::read(path).unwrap();
+            let r = crate::model::Reader { data: &bytes };
+            let root = r.u32(8).unwrap() as usize;
+            let attach = r.u32(root + 4).unwrap() as usize;
+            let first = r.u32(attach).unwrap() as usize;
+            let count = r.u32(attach + 8).unwrap() as usize;
+            let reference = r.span(first, count * 12).unwrap();
+            assert_eq!(bank.len(), count);
+            for (a, b) in bank
+                .as_flattened()
+                .chunks_exact(4)
+                .zip(reference.chunks_exact(4))
+            {
+                if a != b {
+                    assert_eq!(
+                        (a, b),
+                        (&0x80000000u32.to_le_bytes()[..], &0u32.to_le_bytes()[..]),
+                        "piece {i}"
+                    );
+                    normalized_zeros += 1;
+                }
+            }
+            compared += 1;
+        }
+        assert_eq!(compared, 81);
+        assert_eq!(normalized_zeros, 191);
+    }
+}
