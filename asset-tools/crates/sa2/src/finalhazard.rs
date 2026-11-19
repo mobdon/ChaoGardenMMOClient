@@ -598,3 +598,55 @@ pub fn weakpoint_update_plan(bytes: &[u8], gate_byte: i8, mode: i8) -> Result<se
         serde_json::json!({"mode":mode,"gateByte":gate_byte,"calls":calls,"scope":"Ordered calls only; collision registration is not a hit."}),
     )
 }
+/// Task-work writes from section 1, 0x7684. Contact-query results are supplied
+/// by the collision engine; intermediate effect/physics calls remain external.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeakpointContactState {
+    pub flags: u16,
+    pub timer: i16,
+    pub mode: i8,
+}
+
+impl WeakpointContactState {
+    /// Pair contains the other collider's query result followed by this
+    /// weakpoint's result for collider zero. PPC cmpw compares signed words.
+    pub fn contact(&mut self, hit: Option<(i32, i32)>) -> bool {
+        if self.flags & 4 != 0 || !hit.is_some_and(|(other, own)| other > own) {
+            return false;
+        }
+        self.flags |= 4;
+        self.timer = 90;
+        self.mode = 5;
+        true
+    }
+}
+#[cfg(test)]
+mod contact_tests {
+    use super::*;
+    #[test]
+    fn contact_requires_strict_signed_advantage_and_latches() {
+        let initial = WeakpointContactState {
+            flags: 0x20,
+            timer: -2,
+            mode: 2,
+        };
+        let mut s = initial;
+        for hit in [None, Some((2, 2)), Some((-1, 0))] {
+            assert!(!s.contact(hit));
+            assert_eq!(s, initial);
+        }
+        assert!(s.contact(Some((0, -1))));
+        assert_eq!(
+            s,
+            WeakpointContactState {
+                flags: 0x24,
+                timer: 90,
+                mode: 5
+            }
+        );
+        s.timer = 89;
+        assert!(!s.contact(Some((99, 0))));
+        assert_eq!(s.timer, 89);
+    }
+}
