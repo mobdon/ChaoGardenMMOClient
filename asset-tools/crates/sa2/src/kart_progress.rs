@@ -321,6 +321,8 @@ fn rank_slots(slots: &[StandingSlot]) -> Result<Standings> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RaceField {
+    #[serde(default)]
+    alternate_profiles: std::collections::BTreeSet<u8>,
     pub finish_latched: bool,
     pub post_finish_ticks: i32,
     pub suppress_place_calls: bool,
@@ -371,6 +373,7 @@ enum CueResolution {
 fn resolve_cues(
     bytes: &[u8],
     slots: &[RaceSlot],
+    alternate_profiles: &std::collections::BTreeSet<u8>,
     calls: &[(usize, &str, Option<u8>)],
 ) -> Result<Vec<CueRequest>> {
     let module = crate::city_rel::CityRel::read_identified(bytes, 80)?;
@@ -385,9 +388,15 @@ fn resolve_cues(
         let resolution = match work_48 {
             None => CueResolution::NeedsKartIndex,
             Some(index @ 0..=15) => {
-                // Section 1 +0x5c72, 0x5c8e and 0x5caa all relocate to this table.
-                let at = 0x3924 + usize::from(index) * 24 + 8 + usize::from(kind) * 4;
-                let id = i32::from_be_bytes(data[at..at + 4].try_into().unwrap());
+                let row = crate::kart_vehicle_init::cue_row(
+                    data,
+                    usize::from(index),
+                    alternate_profiles.contains(&index),
+                )?;
+                let id = *row
+                    .get(2 + usize::from(kind))
+                    .filter(|_| kind < 3)
+                    .ok_or_else(|| Error::invalid("unknown field cue selector"))?;
                 if id < 0 {
                     CueResolution::Silent
                 } else {
@@ -411,6 +420,15 @@ pub fn field_update(bytes: &[u8], mut field: RaceField) -> Result<RaceFieldUpdat
     verify(bytes)?;
     if field.slots.len() > 6 {
         return Err(Error::invalid("at most six occupied kart slots"));
+    }
+    if field
+        .alternate_profiles
+        .iter()
+        .any(|i| !(2..=7).contains(i))
+    {
+        return Err(Error::invalid(
+            "only kart profiles 2 through 7 have replacements",
+        ));
     }
     let mut calls = Vec::new();
     if field.finish_latched {
@@ -454,7 +472,7 @@ pub fn field_update(bytes: &[u8], mut field: RaceField) -> Result<RaceFieldUpdat
             }
         }
     }
-    let cue_requests = resolve_cues(bytes, &field.slots, &calls)?;
+    let cue_requests = resolve_cues(bytes, &field.slots, &field.alternate_profiles, &calls)?;
     Ok(RaceFieldUpdate {
         cue_requests,
         finish_latched: field.finish_latched,

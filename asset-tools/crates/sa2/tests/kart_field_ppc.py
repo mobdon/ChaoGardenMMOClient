@@ -23,7 +23,7 @@ for mod,at in struct.iter_unpack(">II",data[off:off+n]):
         if kind==203:break
         if kind==202:target,loc=sec,0;continue
         loc+=delta
-        if mod==80 and target==1 and sec==5 and 0x5c38<=loc<0x5cc0 and kind in (4,6):
+        if mod==80 and target==1 and sec==5 and (0x5c38<=loc<0x5cc0 or 0x2a2c<=loc<0x2b14) and kind in (4,6):
             ptr=bank+add
             u.mem_write(code+loc,struct.pack(">H",(ptr if kind==4 else (ptr+32768)>>16)&65535))
 def reg(n,v): u.reg_write(getattr(R,"UC_PPC_REG_"+str(n)),v)
@@ -57,9 +57,13 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         (2,False,False,False,701,301,False),(2,False,False,False,700,301,False),
         (2,False,False,False,701,300,False),(2,False,False,False,701,301,True),
         (3,True,False,False,701,301,False),(3,False,False,False,701,301,False),
-        (2,False,True,False,701,301,False),(3,True,False,True,701,301,False)] + [(count,False,False,False,701,301,False) for index in range(16) for count in (2,3)]):
+        (2,False,True,False,701,301,False),(3,True,False,True,701,301,False)] + [(count,False,False,False,701,301,False) for index in list(range(16))+list(range(2,8)) for count in (2,3)]):
         slots=[]; calls=[]; cues=[]
         observed_index=None if k<8 else (k-8)//2
+        if k>=40:
+            observed_index=2+(k-40)//2
+            reg(3,observed_index);u.reg_write(R.UC_PPC_REG_LR,code+0x200)
+            run(0x2a2c,0x200)
         put(ram+0x300,int(latched));put(ram+0x304,23);put(ram+0x308,int(suppress))
         put(ram+0x400+0x7c,clock);u.mem_write(ram+0x500,bytes([restricted]))
         for i in range(6):
@@ -74,6 +78,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             slots.append(dict(**row,standing=dict(counter=counter,segment=i,segment_length=10,distance_to_next=1)))
         field=dict(finish_latched=latched,post_finish_ticks=23,suppress_place_calls=suppress,
                    restrict_finish=restricted,race_clock=clock,slots=slots)
+        if k>=40:field["alternate_profiles"]=list(range(2,observed_index+1))
         req=Path(td)/"req.json";out=Path(td)/f"{k}.json";req.write_text(json.dumps(field))
         subprocess.run([cli,"kart-field-update",rel,out,req],check=True)
         result=json.loads(out.read_text())
@@ -91,4 +96,4 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         assert get(ram+0x304) == result["post_finish_ticks"]
         for i,row in enumerate(result["slots"]):
             for name,off in fields.items():assert row[name]==get(ram+0x1100+0x500*i+off)
-print("Matched 40 field updates, all 16 cue rows, three selectors, and missing-index reports.")
+print("Matched 52 field updates, all 16 original cue rows and six native replacements, three selectors, and missing-index reports.")

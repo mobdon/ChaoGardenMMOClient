@@ -583,3 +583,10 @@ of CartD 0x979c before event dispatch. The helper maps signed piece values
 50 through 71 inclusive to engine 0x8006c97c argument 0 and returns 1;
 all other values submit -127 and return 0. The outer event return is
 independent. The engine's downstream audio effect is not inferred.
+
+For place and finish cues, kart-field-update accepts alternate_profiles:
+the set of profile indices already replaced in the module (2 through 7).
+All vehicles using a replaced index read that same row. An omitted set uses
+the original table. A negative selected cue suppresses the engine request
+even when the place/finish logic issues its local selector call. In particular,
+the alternate row for profile 4 silences all three of those requests.
