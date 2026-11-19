@@ -888,6 +888,13 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    SwitchTick {
+        player: u8,
+        switch_state: u8,
+        timer: i16,
+        poll: i32,
+    },
+
     SwitchStart {
         player: u8,
         visits: [i8; 2],
@@ -1640,6 +1647,50 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 serde_json::json!({"active_player":player,"switch_state":1,"timer":0,"reason":0,"global3a":0,
                 "visits":visits,"switch_count":switch_count,"target_count":target_count,"count_adjustments":adjustments,
                 "outgoing_motion_write":motion,"selected_cue":cue,"play_cue":cue_gate==0 && global42!=1 && global43!=1}),
+            );
+        }
+        PlacementClock::SwitchTick {
+            mut player,
+            mut switch_state,
+            mut timer,
+            poll,
+        } => {
+            if player > 1 || !(1..=3).contains(&switch_state) {
+                return Err(Error::invalid(
+                    "switch tick requires player 0/1 and handoff state 1..3",
+                ));
+            }
+            let mut poll_site = None;
+            let mut restored = false;
+            match switch_state {
+                1 if timer > word(0xf514) as i16 => {
+                    poll_site = Some(0xf52c);
+                    if poll != 0 {
+                        player ^= 1;
+                        switch_state = 2;
+                        timer = 0;
+                    }
+                }
+                2 => {
+                    poll_site = Some(0xf6c0);
+                    if poll != 0 {
+                        switch_state = 3;
+                        timer = 0;
+                    }
+                }
+                3 if timer > word(0xf890) as i16 => {
+                    switch_state = 0;
+                    timer = 0;
+                    restored = true;
+                }
+                _ => {}
+            }
+            // Shared tail after the stage's player and cue updates.
+            timer = timer.wrapping_add(1);
+            return Ok(
+                serde_json::json!({"active_player":player,"switch_state":switch_state,
+                "timer":timer,"poll_site":poll_site,"restore_global3a":restored,
+                "scope":"Slot and timing transitions only; player/camera calls remain external."}),
             );
         }
         PlacementClock::InitialHealth => {
