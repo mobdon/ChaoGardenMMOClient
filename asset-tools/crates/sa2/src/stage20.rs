@@ -15,6 +15,7 @@ struct Request {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Startup {
+    layout_handle: Option<u32>,
     character_queries: Vec<i32>,
     slot_one_present: bool,
     walker: Option<Walker>,
@@ -122,6 +123,43 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
         }
     }
     let mut report = json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls});
+    if let Some(handle) = s.layout_handle {
+        let invalid = || Error::invalid("invalid duel layout setup relocation");
+        let pointer = |site, section| {
+            rel.reference(1, site)
+                .filter(|r| r.module == 19 && r.kind == 4 && r.section == section)
+                .map(|r| r.addend)
+                .ok_or_else(invalid)
+        };
+        let data = rel.data(5)?;
+        let name = |site| -> Result<&str> {
+            let bytes = data.get(pointer(site, 5)? as usize..).ok_or_else(invalid)?;
+            let end = bytes.iter().position(|&b| b == 0).ok_or_else(invalid)?;
+            std::str::from_utf8(&bytes[..end]).map_err(|_| invalid())
+        };
+        let mut operations = Vec::new();
+        let mut record = |site, args: Value| -> Result<()> {
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            operations.push(json!({"site":site,"engine":r.addend,"args":args}));
+            Ok(())
+        };
+        record(0x1778, json!([128, pointer(0x1776, 5)?]))?;
+        for (first, second, left, right) in [
+            (0x1794, 0x17a0, 0x1782, 0x178e),
+            (0x17bc, 0x17c8, 0x17aa, 0x17b6),
+        ] {
+            let args = json!([pointer(left, 5)?, pointer(right, 5)?]);
+            record(first, args.clone())?;
+            record(second, args)?;
+        }
+        record(0x17e0, json!([name(0x17d2)?, name(0x17da)?, 1024]))?;
+        record(0x17fc, json!([pointer(0x17f6, 5)?, handle]))?;
+        report["layoutSetup"] = json!({"operations":operations,"storedHandle":{"section":6,"offset":pointer(0x17ea,6)?,"value":handle}});
+        report["continueAt"] = json!(0x1800);
+    }
     if let Some(w) = s.walker {
         if !s.slot_one_present {
             return Err(Error::invalid("walker requires slot one"));

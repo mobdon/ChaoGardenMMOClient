@@ -695,3 +695,34 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["tail"]["arenaBounds"]==dict(result=result,call=next(iter(corrections),None))
 print(idx+1,"arena boundary positions matched")
+
+# Relocate section-six BSS references used by the startup's SET handle store.
+layout_bss=0x81e00000
+u.mem_map(layout_bss,4096)
+put(base[1]+0x17e6,"H",(layout_bss+32768)>>16)
+put(base[1]+0x17ea,"H",layout_bss&65535)
+def capture_layout(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x1778:args=[reg(3),reg(4)-base[5]]
+    elif site==0x17e0:
+        args=[bytes(cpu.mem_read(reg(i),32)).split(b"\0")[0].decode() for i in (3,4)]+[reg(5)]
+        cpu.reg_write(R.UC_PPC_REG_3,handle)
+    elif site==0x17fc:args=[reg(3)-base[5],reg(4)]
+    else:args=[reg(i)-base[5] for i in (3,4)]
+    layout_calls.append(dict(site=site,engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1778,0x1794,0x17a0,0x17bc,0x17c8,0x17e0,0x17fc):
+    u.hook_add(UC_HOOK_CODE,capture_layout,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,handle in enumerate((0,0x12345678,0xffffffff)):
+        layout_calls=[];put(layout_bss,"I",~handle&0xffffffff)
+        u.emu_start(base[1]+0x176c,base[1]+0x1800,count=100)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1800
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
+            startup=dict(character_queries=[7],slot_one_present=False,layout_handle=handle))))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        result=json.loads(out.read_text())["startup"]
+        assert result["continueAt"]==0x1800 and result["layoutSetup"]==dict(operations=layout_calls,
+            storedHandle=dict(section=6,offset=0,value=get(layout_bss,"I")[0]))
+print("3 startup layout traces matched")
