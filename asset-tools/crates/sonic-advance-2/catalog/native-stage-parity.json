@@ -1,0 +1,18 @@
+{
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "sourceGitBlobSha1": "a62362ae875a5f54eb6a1c08343967e93071a210",
+  "functions": [
+    "sub_801E4E4",
+    "sub_801E6D4",
+    "sub_801EB44",
+    "sub_801EC3C",
+    "sub_801ED24",
+    "sub_801EE64",
+    "sub_801EF94"
+  ],
+  "seed": 2731417602,
+  "queries": 4096,
+  "outputBytes": 196608,
+  "outputSha256": "51a2d4870e0a02bb384255516e38aa6e812a9e2e196f28d40214318d56dfc8d3",
+  "policy": "Original pinned C compiled locally with NON_MATCHING and -fwrapv; source and outputs stay local"
+}
