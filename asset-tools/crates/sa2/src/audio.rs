@@ -470,3 +470,67 @@ mod tests {
         assert_eq!(source, fs::read(path).unwrap(), "source unchanged");
     }
 }
+/// Count frames by walking Layer II allocation and scalefactor fields. This
+/// deliberately accepts only the fixed mono profile observed in SA2's banks.
+/// Reference: vgmstream src/coding/mpeg_custom_utils_ahx.c.
+pub fn ahx_frame_count(bytes: &[u8]) -> Result<usize> {
+    let header = read_ahx_header(bytes)?;
+    let len = header
+        .payload_length
+        .ok_or_else(|| Error::invalid("unknown AHX footer"))?;
+    let mut payload = range(bytes, header.data_offset, len)?;
+    let mut count = 0;
+    while !payload.is_empty() && payload != [0] {
+        if !payload.starts_with(&[0xff, 0xf5, 0xe0, 0xc0]) {
+            return Err(Error::invalid("invalid AHX frame boundary"));
+        }
+        let mut bit = 32usize;
+        let mut field = |width: usize| -> Result<usize> {
+            let mut value = 0;
+            for _ in 0..width {
+                let byte = payload
+                    .get(bit / 8)
+                    .ok_or_else(|| Error::invalid("short AHX side information"))?;
+                value = value * 2 + usize::from((byte >> (7 - bit % 8)) & 1);
+                bit += 1;
+            }
+            Ok(value)
+        };
+        let mut allocated = 0;
+        let mut sample_bits = 0;
+        for band in 0..30 {
+            let width = match band {
+                0..=3 => 4,
+                4..=10 => 3,
+                _ => 2,
+            };
+            let index = field(width)?;
+            if index > 0 {
+                allocated += 1;
+                let triplet = match (width, index) {
+                    (_, 1) => 5,
+                    (_, 2) => 7,
+                    (4, 3) => 9,
+                    (4, 4) | (_, 3) => 10,
+                    (4, n) => 3 * (n - 1),
+                    (_, n) => 3 * n,
+                };
+                sample_bits += 12 * triplet;
+            }
+        }
+        let mut scales = 0;
+        for _ in 0..allocated {
+            scales += [18, 12, 6, 12][field(2)?];
+        }
+        payload = payload
+            .get((bit + scales + sample_bits).div_ceil(8)..)
+            .ok_or_else(|| Error::invalid("short AHX frame"))?;
+        count += 1;
+    }
+    if count != header.sample_count.div_ceil(1152) as usize {
+        return Err(Error::invalid(
+            "AHX frame count disagrees with sample count",
+        ));
+    }
+    Ok(count)
+}

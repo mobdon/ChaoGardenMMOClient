@@ -391,9 +391,11 @@ fn inspect(bytes: &[u8], name: &str) -> Result<Value> {
         let mut rows = Vec::new();
         for entry in audio::read_afs(bytes)? {
             let header = audio::read_ahx_header(entry.bytes(bytes)?).ok();
-            let mut row = serde_json::to_value(entry)?;
+            let mut row = serde_json::to_value(&entry)?;
             if let Some(header) = header {
                 row["ahx"] = serde_json::to_value(header)?;
+                row["ahx"]["frameCount"] =
+                    serde_json::to_value(audio::ahx_frame_count(entry.bytes(bytes)?).ok())?;
             }
             rows.push(row);
         }
@@ -407,7 +409,9 @@ fn inspect(bytes: &[u8], name: &str) -> Result<Value> {
         };
         Ok(json!({"image":image,"chaoCandidates":chao}))
     } else if name.ends_with(".ahx") {
-        Ok(serde_json::to_value(audio::read_ahx_header(bytes)?)?)
+        let mut value = serde_json::to_value(audio::read_ahx_header(bytes)?)?;
+        value["frameCount"] = serde_json::to_value(audio::ahx_frame_count(bytes).ok())?;
+        Ok(value)
     } else if name.ends_with(".adx") {
         Ok(serde_json::to_value(audio::read_adx_header(bytes)?)?)
     } else if name.ends_with(".pak") {
