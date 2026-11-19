@@ -96,5 +96,6 @@ pub mod task_coverage;
 pub mod kart_course;
 pub mod kart_gate;
 pub mod kart_objects;
+pub mod kart_progress;
 pub mod kart_ramp;
 pub mod checkpoint;
