@@ -38,6 +38,6 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
+pub mod garden_cartridge;
 pub mod garden_keys;
 pub mod garden_screen;
-pub mod garden_cartridge;

@@ -25,7 +25,9 @@ fn every_confirmation_frame_matches_retail_for_all_characters() {
             if f >= 1601 {
                 s.render_into(&mut out).unwrap();
                 let raw: Vec<_> = out
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|p| {
                         (u16::from(p[0] >> 3)
                             | (u16::from(p[1] >> 3) << 5)

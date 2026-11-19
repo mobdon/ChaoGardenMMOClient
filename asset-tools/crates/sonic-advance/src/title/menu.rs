@@ -145,8 +145,8 @@ impl MainMenu {
                 93 + 14 * i as i32 - i32::from(s.anchor_y),
             );
             for (n, pixel) in s.image.pixels.iter().enumerate() {
-                let x = x0 + (n % s.image.width as usize) as i32;
-                let y = y0 + (n / s.image.width as usize) as i32;
+                let x = x0 + (n % s.image.width) as i32;
+                let y = y0 + (n / s.image.width) as i32;
                 if pixel[3] != 0
                     && (0..WIDTH as i32).contains(&x)
                     && (0..HEIGHT as i32).contains(&y)
@@ -158,7 +158,7 @@ impl MainMenu {
         }
         if self.state.blend != 0 {
             let k = u16::from(self.state.blend);
-            for pixel in out.chunks_exact_mut(4) {
+            for pixel in out.as_chunks_mut::<4>().0 {
                 for (i, channel) in pixel[..3].iter_mut().enumerate() {
                     let c = u16::from(*channel >> 3);
                     let v = if self.state.selected == 4 {

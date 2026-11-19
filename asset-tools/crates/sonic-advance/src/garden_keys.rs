@@ -52,7 +52,8 @@ mod tests {
     use super::*;
     #[test]
     fn cold_boot_menu_to_garden_input() {
-        let samples: Vec<(usize, u16, u16, u16, u16, u8, u8, u8, String)> =
+        type RetailInputSample = (usize, u16, u16, u16, u16, u8, u8, u8, String);
+        let samples: Vec<RetailInputSample> =
             serde_json::from_str(include_str!("../tests/retail-garden-input.json")).unwrap();
         let mut state = GardenKeys::default();
         let mut checked = 0;

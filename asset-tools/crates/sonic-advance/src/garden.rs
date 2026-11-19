@@ -85,11 +85,11 @@ pub fn prepare_launch(rom: &[u8], loaded_save: &[u8], frame: u32) -> Result<Vec<
     let checksum = word(0x42c)?;
     let language = u32::from(loaded_save[0x19]);
     let mut program = catalog::garden(rom)?.bytes;
-    for (slot, value) in
-        program[8..20]
-            .chunks_exact_mut(4)
-            .zip([score, language, frame.wrapping_add(checksum)])
-    {
+    for (slot, value) in program[8..20].as_chunks_mut::<4>().0.iter_mut().zip([
+        score,
+        language,
+        frame.wrapping_add(checksum),
+    ]) {
         slot.copy_from_slice(&value.to_le_bytes());
     }
     Ok(program)

@@ -189,7 +189,7 @@ impl<'a> Screen<'a> {
         out.copy_from_slice(&self.backgrounds[self.bg]);
         if self.opening != 0 {
             let k = u16::from(self.opening + 1);
-            for pixel in out.chunks_exact_mut(4) {
+            for pixel in out.as_chunks_mut::<4>().0 {
                 for (i, c) in pixel[..3].iter_mut().enumerate() {
                     let v = u16::from(*c >> 3);
                     let v = if i == 2 {
@@ -208,7 +208,7 @@ impl<'a> Screen<'a> {
             } else {
                 &self.portraits[id]
             };
-            let w = s.image.width as usize;
+            let w = s.image.width;
             for (n, p) in s.image.pixels.iter().enumerate() {
                 let px = x - i32::from(s.anchor_x) + (n % w) as i32;
                 let py = 110 - i32::from(s.anchor_y) + (n / w) as i32;
@@ -239,7 +239,7 @@ impl<'a> Screen<'a> {
         );
         let k = u16::from(self.confirm_age.saturating_sub(39).min(16));
         if k > 0 {
-            for pixel in out.chunks_exact_mut(4) {
+            for pixel in out.as_chunks_mut::<4>().0 {
                 for (i, c) in pixel[..3].iter_mut().enumerate() {
                     let v = u16::from(*c >> 3);
                     let v = if i == 2 {

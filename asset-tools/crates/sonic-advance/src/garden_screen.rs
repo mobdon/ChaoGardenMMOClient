@@ -19,11 +19,11 @@ pub fn background(program: &GardenEvidence<'_>) -> Result<Vec<u16>> {
 }
 
 fn render(tiles: &[u8], map: &[u8], palette: &[u8]) -> Result<Vec<u16>> {
-    if tiles.len() % 64 != 0 || map.len() != 880 || palette.len() != 512 {
+    if !tiles.len().is_multiple_of(64) || map.len() != 880 || palette.len() != 512 {
         return Err(Error("invalid Garden BG3 resource lengths".into()));
     }
     let mut pixels = vec![0; WIDTH * HEIGHT];
-    for (cell, entry) in map.chunks_exact(2).enumerate() {
+    for (cell, entry) in map.as_chunks::<2>().0.iter().enumerate() {
         let word = u16::from_le_bytes([entry[0], entry[1]]);
         let tile = binary::range(tiles, usize::from(word & 1023) * 64, 64)?;
         for y in 0..8 {
@@ -37,16 +37,6 @@ fn render(tiles: &[u8], map: &[u8], palette: &[u8]) -> Result<Vec<u16>> {
         }
     }
     Ok(pixels)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn rejects_missing_tile_and_short_map() {
-        assert!(render(&[0; 64], &[1; 880], &[0; 512]).is_err());
-        assert!(render(&[0; 64], &[0; 878], &[0; 512]).is_err());
-    }
 }
 
 /// Four active OBJ entries sampled on the cold-boot route at frame 1700.
@@ -91,4 +81,14 @@ pub fn entry_objects(program: &GardenEvidence<'_>) -> Result<Vec<GardenObject>> 
         });
     }
     Ok(objects)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rejects_missing_tile_and_short_map() {
+        assert!(render(&[0; 64], &[1; 880], &[0; 512]).is_err());
+        assert!(render(&[0; 64], &[0; 878], &[0; 512]).is_err());
+    }
 }

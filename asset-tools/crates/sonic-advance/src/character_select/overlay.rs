@@ -81,10 +81,8 @@ impl Overlay {
         out: &mut [u8],
         bank: usize,
         tile: usize,
-        w: usize,
-        h: usize,
-        x: i32,
-        y: i32,
+        [w, h]: [usize; 2],
+        [x, y]: [i32; 2],
         pal: &[[u8; 4]],
     ) {
         for j in 0..h {
@@ -133,7 +131,14 @@ impl Overlay {
             0
         };
         for i in 0..8 {
-            self.obj(out, 4, 0, 32, 16, banner_x + i * 32, banner_y, &self.common);
+            self.obj(
+                out,
+                4,
+                0,
+                [32, 16],
+                [banner_x + i * 32, banner_y],
+                &self.common,
+            );
         }
         let count = if self.scroll > 0x3c00 {
             0
@@ -147,10 +152,8 @@ impl Overlay {
                 out,
                 if confirmed { 5 } else { 3 },
                 ((self.base + i) % if confirmed { 2 } else { 8 }) * 8,
-                32,
-                16,
-                (self.scroll >> 6) + 32 * i as i32,
-                banner_y,
+                [32, 16],
+                [(self.scroll >> 6) + 32 * i as i32, banner_y],
                 &self.common,
             );
         }
@@ -168,10 +171,8 @@ impl Overlay {
                     out,
                     0,
                     tile,
-                    32,
-                    32,
-                    band_x + i * 32,
-                    y,
+                    [32, 32],
+                    [band_x + i * 32, y],
                     &self.bands[self.name],
                 );
             }
@@ -190,10 +191,8 @@ impl Overlay {
                 out,
                 2,
                 self.name * 96 + 16 * i,
-                32,
-                32,
-                x + i as i32 * 32,
-                if t < 34 { 84 + dy } else { 132 },
+                [32, 32],
+                [x + i as i32 * 32, if t < 34 { 84 + dy } else { 132 }],
                 &self.common,
             );
         }
@@ -213,7 +212,7 @@ impl Overlay {
             let i = (frame % 60 / 10) as usize;
             ([16, 12, 8, 4, 8, 12][i], [194, 198, 202, 206, 202, 198][i])
         };
-        self.obj(out, 1, 0, 32, 32, l, 40, &self.common);
-        self.obj(out, 1, 16, 32, 32, r, 40, &self.common);
+        self.obj(out, 1, 0, [32, 32], [l, 40], &self.common);
+        self.obj(out, 1, 16, [32, 32], [r, 40], &self.common);
     }
 }

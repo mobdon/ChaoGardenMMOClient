@@ -15,7 +15,9 @@ fn carousel_matches_complete_retail_frames() {
         let want = &hashes[&frame.to_string()];
         scene.render_into(&mut out).unwrap();
         let packed: Vec<u8> = out
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| {
                 (u16::from(p[0] >> 3) | (u16::from(p[1] >> 3) << 5) | (u16::from(p[2] >> 3) << 10))
                     .to_le_bytes()
