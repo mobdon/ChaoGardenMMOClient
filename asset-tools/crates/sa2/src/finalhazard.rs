@@ -816,8 +816,20 @@ pub fn request_placement(bytes: &[u8], req: PlacementRequest) -> Result<serde_js
 #[derive(serde::Deserialize)]
 #[serde(tag = "path", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlacementClock {
-    Entry { submode: i8, timer: u16 },
-    Periodic { timer: u16 },
+    Entry {
+        submode: i8,
+        timer: u16,
+    },
+    Periodic {
+        timer: u16,
+    },
+    /// State at the submode dispatch, after the common 0xaf0 update.
+    Attack {
+        mode: i8,
+        submode: i8,
+        task_timer: u16,
+        placement_timer: u16,
+    },
 }
 pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json::Value> {
     if crate::manifest::sha256(bytes)
@@ -846,6 +858,45 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 }
             }
             (timer, Some(submode))
+        }
+        PlacementClock::Attack {
+            mode,
+            mut submode,
+            mut task_timer,
+            mut placement_timer,
+        } => {
+            if submode == 0 {
+                calls.extend([0x3e58, 0x62a0]);
+                task_timer = word(0x16fc) as u16;
+                submode = 1;
+            }
+            match submode {
+                1 => {
+                    task_timer = task_timer.wrapping_sub(1);
+                    if task_timer == 0 {
+                        calls.push(0x63e8);
+                        if mode == 11 {
+                            submode = 2;
+                        } else {
+                            calls.push(0x6460);
+                            placement_timer = word(0x1758) as u16;
+                            submode = 4;
+                        }
+                    }
+                }
+                4 => {
+                    placement_timer = placement_timer.wrapping_sub(1);
+                    if placement_timer == 0 {
+                        calls.push(0x86b8);
+                        placement_timer = word(0x1820) as u16;
+                    }
+                }
+                _ => return Err(Error::invalid("attack clock requires submode 0, 1 or 4")),
+            }
+            return Ok(
+                serde_json::json!({"submode":submode,"task_timer":task_timer,
+                "placement_timer":placement_timer,"stageCalls":calls,"requestPlacement":calls.contains(&0x86b8)}),
+            );
         }
         PlacementClock::Periodic { timer } => {
             let mut next = timer.wrapping_sub(1);
@@ -879,12 +930,17 @@ pub fn cancel_placement(bytes: &[u8], input: CancelPlacement) -> Result<serde_js
     let rel = crate::city_rel::CityRel::read_identified(bytes, 88)?;
     let mut calls = Vec::new();
     for (site, arg5) in [(0x8848, 1), (0x8858, 0)] {
-        let target = rel.reference(1, site)
+        let target = rel
+            .reference(1, site)
             .ok_or_else(|| Error::invalid("missing weakpoint cancellation call"))?;
-        calls.push(serde_json::json!({"module":target.module,"address":target.addend,"r4":0,"r5":arg5}));
+        calls.push(
+            serde_json::json!({"module":target.module,"address":target.addend,"r4":0,"r5":arg5}),
+        );
     }
     let mut state = input.state;
     state.pending = [-1, -1];
     state.submode = 0;
-    Ok(serde_json::json!({"mode":3,"state":state,"task_flags":input.task_flags & !4,"external_calls":calls}))
+    Ok(
+        serde_json::json!({"mode":3,"state":state,"task_flags":input.task_flags & !4,"external_calls":calls}),
+    )
 }
