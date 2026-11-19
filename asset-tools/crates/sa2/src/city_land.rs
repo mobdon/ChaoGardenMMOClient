@@ -277,6 +277,145 @@ fn decode(
     Ok(result)
 }
 
+/// One placed kart course piece: native object file offsets in the Win32 DLL
+/// and the course-relative pose that places that occurrence.
+pub(crate) struct KartOccurrence {
+    pub display: Option<usize>,
+    pub collision: Option<usize>,
+    pub pose: crate::kart_course::CoursePose,
+}
+/// Synthetic wrapper node size: a 52-byte object plus the zeroed Battle word.
+const KART_WRAPPER: usize = 56;
+/// Assemble placed kart pieces into a private Battle-layout land view. Every
+/// native object, attachment, polygon and material word is copied unchanged
+/// (pointers rebased as for installed land). Each occurrence gets one
+/// synthetic parent node whose position and Y rotation are the course pose;
+/// the native root and its hierarchy stay below it untouched. Display objects
+/// come first (GC attachments stay opaque), then the Basic collision objects.
+pub(crate) fn win32_kart_course(
+    bytes: &[u8],
+    image: &crate::pe::PeImage,
+    occurrences: &[KartOccurrence],
+) -> Result<stage::Stage> {
+    let visual: Vec<_> = occurrences
+        .iter()
+        .filter_map(|o| Some((o.display?, o, false)))
+        .collect();
+    let basic: Vec<_> = occurrences
+        .iter()
+        .filter_map(|o| Some((o.collision?, o, true)))
+        .collect();
+    let count = visual.len() + basic.len();
+    if count > i16::MAX as usize {
+        return Err(Error::invalid("kart course entry count exceeds land limit"));
+    }
+    let h = (BASE + bytes.len()).next_multiple_of(4);
+    let table = h + 32;
+    let wrappers = table + count * 32;
+    let mut v = View {
+        source: Source::Win32(image),
+        src: bytes,
+        out: vec![0; wrappers + count * KART_WRAPPER],
+    };
+    v.out[..8].copy_from_slice(b"SA2BLVL\x03");
+    v.out[8..12].copy_from_slice(&(h as u32).to_le_bytes());
+    v.out[h..h + 2].copy_from_slice(&(count as u16).to_le_bytes());
+    v.out[h + 2..h + 4].copy_from_slice(&(visual.len() as u16).to_le_bytes());
+    v.out[h + 16..h + 20].copy_from_slice(&(table as u32).to_le_bytes());
+    let mut seen_nodes = BTreeSet::new();
+    let mut seen_basic = BTreeSet::new();
+    let mut spheres = Vec::with_capacity(count);
+    for (i, (root, o, is_basic)) in visual.into_iter().chain(basic).enumerate() {
+        let mut stack = vec![root];
+        while let Some(n) = stack.pop() {
+            if !seen_nodes.insert((is_basic, n)) {
+                continue;
+            }
+            v.word(n)?;
+            let a = v.ptr(n + 4)?;
+            v.words(n + 8, 9)?;
+            for j in [44, 48] {
+                if let Some(x) = v.ptr(n + j)? {
+                    stack.push(x)
+                }
+            }
+            if is_basic {
+                if let Some(a) = a {
+                    if seen_basic.insert(a) {
+                        v.attach(a)?
+                    }
+                }
+            }
+        }
+        // Root attachment sphere in root space: Basic keeps center/radius at
+        // +24/+36, GC at +20/+32. Entry bounds are placed after evaluation.
+        let mut sphere = None;
+        if let Some(a) = v.ptr(root + 4)? {
+            let (c, r) = if is_basic { (24, 36) } else { (20, 32) };
+            let mut center = [0f64; 3];
+            for (k, value) in center.iter_mut().enumerate() {
+                *value = f64::from(f32::from_bits(v.word(a + c + 4 * k)?));
+            }
+            let radius = f64::from(f32::from_bits(v.word(a + r)?));
+            if !radius.is_finite() || radius < 0. || !center.iter().all(|c| c.is_finite()) {
+                return Err(Error::invalid("invalid kart attachment bounds"));
+            }
+            sphere = Some((center, radius));
+        }
+        spheres.push(((BASE + root) as u32, sphere));
+        let e = table + i * 32;
+        let w = wrappers + i * KART_WRAPPER;
+        v.out[e + 16..e + 20].copy_from_slice(&(w as u32).to_le_bytes());
+        let surface = if is_basic {
+            crate::collision::SURFACE_SOLID
+        } else {
+            crate::collision::SURFACE_VISIBLE
+        };
+        v.out[e + 28..e + 32].copy_from_slice(&surface.to_le_bytes());
+        let position = o.pose.position.map(|c| c as f32);
+        if !position.iter().all(|c| c.is_finite()) {
+            return Err(Error::invalid("nonfinite kart course pose"));
+        }
+        let mut words = [0u32; 13];
+        for k in 0..3 {
+            words[2 + k] = position[k].to_bits();
+            words[8 + k] = 1f32.to_bits();
+        }
+        words[6] = u32::from(o.pose.heading);
+        words[11] = (BASE + root) as u32;
+        for (k, word) in words.into_iter().enumerate() {
+            v.out[w + 4 * k..w + 4 * k + 4].copy_from_slice(&word.to_le_bytes());
+        }
+    }
+    let mut result = stage::read_stage(&v.out)?;
+    for (e, (root, sphere)) in result.entries.iter_mut().zip(spheres) {
+        // Win32 objects are 52 bytes; the trailing Battle word is not native data.
+        for node in &mut e.nodes {
+            node.quaternion_scalar = None;
+        }
+        let Some((center, radius)) = sphere else {
+            continue;
+        };
+        let evaluated = crate::pose::evaluate_nodes(&e.nodes)?;
+        let m = &evaluated
+            .iter()
+            .find(|n| n.offset == root)
+            .ok_or_else(|| Error::invalid("kart root missing below course node"))?
+            .world_matrix;
+        let stretch = (0..3)
+            .map(|c| (0..3).map(|r| m[r][c] * m[r][c]).sum::<f64>().sqrt())
+            .fold(0., f64::max);
+        e.bounds_center = crate::pose::transform_point(m, center).map(|c| c as f32);
+        e.bounds_radius = (radius * stretch) as f32;
+    }
+    result.unknowns = vec![
+        "Pieces are placed by the native course displacement and yaw table; one synthetic parent node per occurrence carries that pose, with its position rounded to binary32".into(),
+        "Entry surface flags and bounds are derived (display visible, collision solid); they are not read from the course rows".into(),
+        "GC display attachments remain opaque; textures, draw order, scenery objects and the race scene are separate".into(),
+    ];
+    Ok(result)
+}
+
 /// Rebase a single unlinked Win32 Basic object using the same pointer and
 /// polygon layouts as installed land. The private offsets are file offsets + 16.
 pub(crate) fn win32_basic_object(

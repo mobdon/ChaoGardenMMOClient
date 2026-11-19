@@ -288,6 +288,31 @@ pub fn course_layout(
     Ok(poses)
 }
 
+/// Static terrain for an ordered course: every occurrence's native display
+/// and Basic collision objects from the pinned Steam Data_DLL, placed by
+/// course_layout from the origin. Visual entries precede collision entries.
+pub fn course_terrain(dll: &[u8], ids: &[u8]) -> Result<crate::stage::Stage> {
+    if sha256(dll) != crate::board_motion::PC_DLL_SHA256 {
+        return Err(Error::invalid("unsupported kart DLL revision"));
+    }
+    let pe = read_pe(dll)?;
+    let table = read_course_table(dll)?;
+    let poses = course_layout(&table, ids, CoursePose::default())?;
+    let occurrences: Vec<_> = ids
+        .iter()
+        .zip(poses)
+        .map(|(&id, pose)| {
+            let piece = &table.pieces[usize::from(id)];
+            crate::city_land::KartOccurrence {
+                display: piece.display,
+                collision: piece.collision,
+                pose,
+            }
+        })
+        .collect();
+    crate::city_land::win32_kart_course(dll, &pe, &occurrences)
+}
+
 #[cfg(test)]
 mod layout_reference {
     use super::*;
@@ -563,4 +588,149 @@ pub fn course_raycast(
         hit: nearest,
         without_collision,
     })
+}
+
+#[cfg(test)]
+mod terrain_reference {
+    use super::*;
+
+    /// The assembled land view must bake to exactly the triangles of the
+    /// direct per-piece walk: same piece order, strip order, source indices
+    /// and winding, with positions equal up to the binary32 pose rounding.
+    #[test]
+    #[ignore = "requires installed Steam SA2"]
+    fn story_terrain_matches_piece_walk() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let exe = std::fs::read(root.join("sonic2app.exe")).unwrap();
+        let dll = std::fs::read(root.join("resource/gd_PC/DLL/Win32/Data_DLL.dll")).unwrap();
+        let pe = read_pe(&dll).unwrap();
+        let table = read_course_table(&dll).unwrap();
+        for course in courses(&exe).unwrap() {
+            let ids = course.piece_ids;
+            let stage = course_terrain(&dll, ids).unwrap();
+            let shown = ids
+                .iter()
+                .filter(|&&i| table.pieces[usize::from(i)].display.is_some())
+                .count();
+            let solid: Vec<_> = ids
+                .iter()
+                .zip(course_layout(&table, ids, CoursePose::default()).unwrap())
+                .filter(|(&i, _)| table.pieces[usize::from(i)].collision.is_some())
+                .collect();
+            assert_eq!(stage.visual_count as usize, shown, "{}", course.name);
+            assert_eq!(stage.entries.len(), shown + solid.len());
+            let world = crate::collision::bake_stage(&stage, 1.).unwrap();
+            assert_eq!(world.meshes.len(), solid.len());
+            let mut worst = 0f64;
+            let mut triangles = 0;
+            for (mesh, (&id, pose)) in world.meshes.iter().zip(&solid) {
+                let mut expected = vec![];
+                visit_piece_triangles(&dll, &pe, &table.pieces[usize::from(id)], *pose, |t| {
+                    expected.push(t)
+                })
+                .unwrap();
+                assert_eq!(mesh.triangles.len(), expected.len());
+                for (tri, t) in mesh.triangles.iter().zip(&expected) {
+                    assert_eq!(tri.map(|i| i as u16), t.vertex_indices);
+                    for k in 0..3 {
+                        let p = mesh.vertices[tri[k] as usize];
+                        for c in 0..3 {
+                            worst = worst.max((p[c] - t.points[k][c]).abs());
+                        }
+                    }
+                }
+                triangles += expected.len();
+            }
+            eprintln!(
+                "{}: entries={} visual={} collision={} triangles={triangles} max_position_delta={worst}",
+                course.name,
+                stage.entries.len(),
+                shown,
+                solid.len()
+            );
+            assert!(worst < 0.01, "{}: {worst}", course.name);
+            match course.name {
+                "101" => assert_eq!(triangles, 13643),
+                "280" => assert_eq!(triangles, 18439),
+                _ => {}
+            }
+        }
+    }
+    /// Independent check of the display half against SA Tools 786 GC models
+    /// split from the same DLL: native root transform words, hierarchy size,
+    /// opaque/translucent mesh counts (alpha passes) and attachment sphere.
+    #[test]
+    #[ignore = "requires Steam DLL and independent SA Tools kart models"]
+    fn story_display_entries_match_sa_tools() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let models =
+            std::path::PathBuf::from(std::env::var_os("SA2_KART_MODEL_REFERENCE").unwrap());
+        let exe = std::fs::read(root.join("sonic2app.exe")).unwrap();
+        let dll = std::fs::read(root.join("resource/gd_PC/DLL/Win32/Data_DLL.dll")).unwrap();
+        let table = read_course_table(&dll).unwrap();
+        let d = crate::model::Reader { data: &dll };
+        for course in courses(&exe).unwrap().into_iter().take(2) {
+            let stage = course_terrain(&dll, course.piece_ids).unwrap();
+            let poses = course_layout(&table, course.piece_ids, CoursePose::default()).unwrap();
+            let shown: Vec<_> = course
+                .piece_ids
+                .iter()
+                .zip(poses)
+                .filter(|(&i, _)| table.pieces[usize::from(i)].display.is_some())
+                .collect();
+            let (mut translucent, mut opaque) = (0, 0);
+            for (entry, (&id, pose)) in stage.entries.iter().zip(&shown) {
+                let bytes = std::fs::read(models.join(format!("{id:03}.sa2bmdl"))).unwrap();
+                assert_eq!(&bytes[..8], b"SA2BMDL");
+                let r = crate::model::Reader { data: &bytes };
+                let count = |reader: &crate::model::Reader<'_>, start: usize, bias: usize| {
+                    let (mut n, mut stack) = (0, vec![start]);
+                    while let Some(o) = stack.pop() {
+                        n += 1;
+                        for j in [44, 48] {
+                            let p = reader.u32(o + j).unwrap() as usize;
+                            if p != 0 {
+                                stack.push(p - bias);
+                            }
+                        }
+                    }
+                    n
+                };
+                let m = r.u32(8).unwrap() as usize;
+                let wrapper = &entry.nodes[0];
+                let native = &entry.nodes[1];
+                assert_eq!(wrapper.attach_offset, 0);
+                assert_eq!(wrapper.rotation_bams, [0, i32::from(pose.heading), 0]);
+                assert_eq!(entry.nodes.len(), 1 + count(&r, m, 0));
+                assert_eq!(native.flags, r.u32(m).unwrap());
+                for k in 0..3 {
+                    assert_eq!(native.position[k].to_bits(), r.u32(m + 8 + 4 * k).unwrap());
+                    assert_eq!(
+                        native.rotation_bams[k] as u32,
+                        r.u32(m + 20 + 4 * k).unwrap()
+                    );
+                    assert_eq!(native.scale[k].to_bits(), r.u32(m + 32 + 4 * k).unwrap());
+                }
+                let a = r.u32(m + 4).unwrap() as usize;
+                let n = native.attach_offset as usize - 16;
+                for k in [16, 18] {
+                    assert_eq!(d.u16(n + k).unwrap(), r.u16(a + k).unwrap());
+                }
+                for k in 0..4 {
+                    assert_eq!(
+                        d.u32(n + 20 + 4 * k).unwrap(),
+                        r.u32(a + 20 + 4 * k).unwrap()
+                    );
+                }
+                opaque += usize::from(r.u16(a + 16).unwrap());
+                translucent += usize::from(r.u16(a + 18).unwrap());
+                assert_eq!(entry.bounds_radius.to_bits(), r.u32(a + 32).unwrap());
+            }
+            eprintln!(
+                "{}: display entries={} opaque meshes={opaque} translucent meshes={translucent}",
+                course.name,
+                shown.len()
+            );
+        }
+    }
 }
