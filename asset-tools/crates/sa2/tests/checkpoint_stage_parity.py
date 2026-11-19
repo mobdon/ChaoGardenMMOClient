@@ -13,6 +13,7 @@ def load(path):
     section = word(16) + 8
     start = word(section) & ~1
     imports = {}
+    local = {}
     for module, cursor in struct.iter_unpack(">II", data[word(40):word(40)+word(44)]):
         target, off = None, 0
         while True:
@@ -26,15 +27,18 @@ def load(path):
             off += inc
             if target == 1 and module == 0:
                 imports[off] = (kind, sec, addend)
-    return data[start:start+word(section+4)], imports
+            if target == 1 and module == word(0) and kind in (4,6):
+                sec_base=word(word(16)+8*sec)&~1
+                local[off]=(kind,sec,addend,data[sec_base+addend:sec_base+addend+8])
+    return data[start:start+word(section+4)], imports, local
 
 
 city_path = root/"stg13D.rel"
 assert hashlib.sha256(city_path.read_bytes()).hexdigest() == "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b"
-city, reference = load(city_path)
+city, reference, city_local = load(city_path)
 matched = []
 for path in sorted(root.glob("stg*D.rel")):
-    text, imports = load(path)
+    text, imports, local = load(path)
     segment = city[0x446d8:0x44738]
     start = text.find(segment)
     if start == -1:
@@ -48,6 +52,29 @@ for path in sorted(root.glob("stg*D.rel")):
         expected={off-a:v for off,v in reference.items() if a<=off<b}
         actual={off-shift-a:v for off,v in imports.items() if a+shift<=off<b+shift}
         assert actual == expected, path
+    # The only varying instruction in the spin arithmetic calls fabsf.
+    for a,b in [(0x43e10,0x43e44),(0x44980,0x44a24),(0x44a28,0x44b78),(0x44bb0,0x44bfc)]:
+        assert text[a+shift:b+shift] == city[a:b], path
+    def branch_body(code,at):
+        insn=int.from_bytes(code[at:at+4],"big")
+        assert insn & 0xfc000003 == 0x48000001
+        displacement=insn&0x03fffffc
+        if displacement & 0x02000000: displacement-=0x04000000
+        dest=at+displacement
+        return code[dest:dest+8]
+    assert branch_body(text,0x44a24+shift)==branch_body(city,0x44a24)
+    for a,b in [(0x4473c,0x44760),(0x44980,0x44b78),(0x44bb0,0x44bfc)]:
+        offsets={off for off in city_local if a<=off<b}
+        assert offsets=={off-shift for off in local if a+shift<=off<b+shift}
+        for off in offsets:
+            k,sec,addr,raw=city_local[off]
+            kk,ss,other,actual=local[off+shift]
+            assert (k,sec)==(kk,ss)
+            if sec==4:
+                size=8 if addr==0x1238 else 4
+                assert raw[:size]==actual[:size],path
+            else:
+                assert sec==6 and addr==0xdd0 and other==local[0x44986+shift][2],path
     matched.append(path.stem)
 assert len(matched)==50, matched
 print("50 stage modules match the contact gate, player-state handoff instructions and external references.")

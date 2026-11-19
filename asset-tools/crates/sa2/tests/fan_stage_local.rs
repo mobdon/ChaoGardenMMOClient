@@ -118,6 +118,22 @@ fn mounted_campaign_routes() {
                     );
                     assert_eq!(out["handoff"]["rotation"], serde_json::json!([1, 2, 3]));
                     assert_eq!(out["slotTimers"], serde_json::json!([0, 300]));
+                    let mut frame: serde_json::Value = serde_json::from_slice(request).unwrap();
+                    let obj = frame.as_object_mut().unwrap();
+                    obj.remove("engine_result");
+                    obj.remove("stage_byte");
+                    obj.insert("contact_speed".into(), serde_json::json!(1.0));
+                    let req = serde_json::json!({"engine_result":1,"stage_byte":1,"frames":[frame,frame]});
+                    let seq = stage
+                        .replay_object(
+                            layer_idx,
+                            place.placement_index,
+                            &serde_json::to_vec(&req).unwrap(),
+                        )
+                        .unwrap();
+                    assert_eq!(seq["frames"][0]["handoff"], out["handoff"]);
+                    assert_eq!(seq["frames"][1]["slotTimers"], serde_json::json!([0, 299]));
+                    assert_eq!(seq["frames"][1]["steps"], serde_json::json!([-44, 1810]));
                     checkpoint_levels.insert(level);
                     checkpoint_count += 1;
                 }

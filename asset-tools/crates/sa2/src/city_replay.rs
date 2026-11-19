@@ -289,7 +289,16 @@ pub(crate) fn mounted_replay(
             hit: Option<(i32, u32)>,
             players: [crate::checkpoint::ContactPlayer; 2],
         }
-        let r: ContactRequest = decode(request)?;
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ReplayRequest {
+            Frames(CheckpointReplay),
+            Single(ContactRequest),
+        }
+        let r = match decode::<ReplayRequest>(request)? {
+            ReplayRequest::Single(r) => r,
+            ReplayRequest::Frames(r) => return checkpoint_frames(p, r),
+        };
         let mut state = crate::checkpoint::ContactState {
             mode: 1,
             slot_timers: [0; 2],
@@ -413,8 +422,10 @@ struct CheckpointFrame {
 }
 
 fn checkpoint(p: &Placement, request: &[u8]) -> Result<Value> {
+    checkpoint_frames(p, decode(request)?)
+}
+fn checkpoint_frames(p: &Placement, req: CheckpointReplay) -> Result<Value> {
     use crate::checkpoint::{CheckpointPlacement, CheckpointSpin, CheckpointTicks, ContactState};
-    let req: CheckpointReplay = decode(request)?;
     let placement = CheckpointPlacement {
         rotation: p.rotation.map(i32::from),
     };
