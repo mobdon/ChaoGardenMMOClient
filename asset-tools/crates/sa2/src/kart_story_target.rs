@@ -126,7 +126,8 @@ pub struct ControllerInput {
 pub(crate) struct ControllerSignals {
     remove_task: bool,
     pursuit_latch: Option<i32>,
-    race_finish_latch: i32,
+    race_finish_latch: Option<i32>,
+    race_results: Option<ResultContext>,
     engine_byte_09: i8,
     engine_byte_42: i8,
 }
@@ -138,6 +139,8 @@ impl ControllerSignals {
         flag_3ce24: i32,
         engine_byte_16: i8,
         target_latch: Option<i32>,
+        finish: Option<i32>,
+        mode: i32,
     ) -> Result<ControllerInput> {
         if self
             .pursuit_latch
@@ -151,6 +154,23 @@ impl ControllerSignals {
         let latch = target_latch
             .or(self.pursuit_latch)
             .ok_or_else(|| crate::Error::invalid("missing pursuit latch before target spawn"))?;
+        if self
+            .race_finish_latch
+            .zip(finish)
+            .is_some_and(|(a, b)| a != b)
+        {
+            return Err(crate::Error::invalid(
+                "controller finish flag conflicts with vehicle work",
+            ));
+        }
+        if self.race_results.as_ref().is_some_and(|r| r.mode != mode) {
+            return Err(crate::Error::invalid(
+                "results mode conflicts with installed story layout",
+            ));
+        }
+        let finish = finish
+            .or(self.race_finish_latch)
+            .ok_or_else(|| crate::Error::invalid("missing finish flag before vehicle update"))?;
         Ok(ControllerInput {
             remaining,
             elapsed,
@@ -158,10 +178,10 @@ impl ControllerSignals {
             engine_byte_16,
             remove_task: self.remove_task,
             pursuit_latch: latch,
-            race_finish_latch: self.race_finish_latch,
+            race_finish_latch: finish,
             engine_byte_09: self.engine_byte_09,
             engine_byte_42: self.engine_byte_42,
-            race_results: None,
+            race_results: self.race_results,
             lap_clock: None,
         })
     }

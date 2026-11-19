@@ -162,6 +162,21 @@ if len(sys.argv)>4:
             doc=json.loads(out.read_text());caught,finished=[v["vehiclePostMove"] for v in doc["updates"][-2:]]
             assert caught["vehicle_state"]==8 and caught["frame"]["dispatch"]["work_c4"]==5
             assert finished["frame"]["dispatch"]["work_c8"]==doc["primaryKartCounter"]==3
+            # Vehicle writes the finish flag at the native engine threshold;
+            # the controller must see that write without a second observation.
+            ctx=dict(mode=int("Rouge" in path.name),first_slot_place=1,multiplayer_byte=0,engine_byte_23=0,
+                     menu_active=False,engine_word_b4=0,time=[1,2,3],record=[2,0,0],
+                     record_index=0,completion_index=0,check_return=None)
+            finish_signals=dict(remove_task=False,engine_byte_09=0,engine_byte_42=0,race_results=ctx)
+            post=dict(vehicle_post_move=dict(frame,engine_byte_23=1,engine_halfword_68=100))
+            for already_caught in (0,1):
+                q.update(updates=[dict(target_spawn=dict(spawn["target_spawn"],latch=already_caught)),post,dict(controller=finish_signals)])
+                req.write_text(json.dumps(q));out=req.with_name(f"{path.stem}-finish-{already_caught}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                doc=json.loads(out.read_text());r=doc["updates"][-1]["controller"]
+                assert doc["finishFlag"]==1 and doc["vehicleState"]==10 and r["remaining"]==2 and r["elapsed"]==300
+                if already_caught:assert "race_results" not in r and ["engine_8005eb24",0] in r["calls"]
+                else:assert r["race_results"]["calls"]==[["engine_8001ef18",[8]]] and not r["race_results"]["writes"]
             # Zero remaining time bypasses parent reads and the catch.
             q.update(timer_word=1,updates=[spawn,dict(controller=signals),dict(target_tick={})])
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-inactive.json")

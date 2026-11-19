@@ -33,7 +33,7 @@ pub struct Frame {
     work_108: i32,
     engine_byte_23: i8,
     engine_halfword_68: i16,
-    global_24d60: i32,
+    pub(crate) global_24d60: i32,
     segment: i32,
     segment_count: i32,
     position: [f32; 3],

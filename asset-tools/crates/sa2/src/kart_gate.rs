@@ -680,6 +680,7 @@ pub fn story_sequence(
     let mut vehicle = s.vehicle_state;
     let mut timeout = None;
     let mut target_handle = None;
+    let mut finish = None;
     let mut parent = None;
     let mut target: Option<crate::kart_story_target::State> = None;
     let constants = rel.data(4)?;
@@ -719,6 +720,7 @@ pub fn story_sequence(
                 }
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
                 parent = r.frame.as_ref().map(|f| f.pursuit_parent());
+                finish = r.frame.as_ref().map(|f| f.global_24d60);
                 if let Some(n) = r.frame.as_ref().and_then(|f| f.checkpoint_counter()) {
                     count = n;
                 }
@@ -823,6 +825,8 @@ pub fn story_sequence(
                     clock.flag_3ce24,
                     clock.engine_byte_16,
                     target.map(|t| t.latch),
+                    finish,
+                    mode,
                 )?)?;
                 timer = r.remaining as u32;
                 clock = ControllerState {
@@ -864,6 +868,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }
