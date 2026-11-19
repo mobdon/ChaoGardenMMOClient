@@ -39,6 +39,8 @@ def load(path):
 city_path = root/"stg13D.rel"
 assert hashlib.sha256(city_path.read_bytes()).hexdigest() == "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b"
 city, reference, city_local, city_ptr = load(city_path)
+assert reference[0x43cc8] == (10, 2, 0x80065148)
+assert [reference[i][2] for i in (0x43dcc,0x43dd4)] == [0x800651f4,0x800651c0]
 matched = []
 layouts = []
 for path in sorted(root.glob("stg*D.rel")):
@@ -51,7 +53,7 @@ for path in sorted(root.glob("stg*D.rel")):
     shift = start-0x446d8
     # The local spin-speed call lies between these spans and is excluded.
     assert text[0x4473c+shift:0x447a8+shift] == city[0x4473c:0x447a8], path
-    for a,b in [(0x43cac,0x43cc0),(0x43d84,0x43dbc),(0x446d8,0x44738),(0x4473c,0x447a8)]:
+    for a,b in [(0x43cac,0x43cd8),(0x43d6c,0x43e00),(0x446d8,0x44738),(0x4473c,0x447a8)]:
         assert text[a+shift:b+shift] == city[a:b], path
         expected={off-a:v for off,v in reference.items() if a<=off<b}
         actual={off-shift-a:v for off,v in imports.items() if a+shift<=off<b+shift}
