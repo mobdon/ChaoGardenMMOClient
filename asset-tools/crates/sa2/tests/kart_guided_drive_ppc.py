@@ -71,6 +71,20 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             put(ram+0x30b4,"i",i%2)
         req=Path(td)/"setup.json";out=Path(td)/f"setup-{i}.json";req.write_text(json.dumps(setup))
         subprocess.run([cli,"kart-race-tuning",rel,out,req],check=True);configured=json.loads(out.read_text())
+        if mode==5:
+            buf=ram+0x3100; header=struct.pack(">6I",256,24,3,48,7,96)
+            payload=header+bytes(256-len(header))+bytes(u.mem_read(buf+256,64))
+            src=Path(td)/"buffer.bin";src.write_bytes(payload)
+            dest=Path(td)/f"buffer-{i}.json"
+            subprocess.run([cli,"kart-buffer-tuning",rel,dest,src,str(i%2)],check=True)
+            parsed=json.loads(dest.read_text())
+            assert parsed["setup"]==configured
+            u.mem_write(buf,payload);u.reg_write(R.UC_PPC_REG_31,buf)
+            # Execute the original post-load fixups; imported loader is outside this test.
+            u.reg_write(R.UC_PPC_REG_4,base[5]+0x13f8)
+            u.emu_start(base[1]+0x44,base[1]+0x90,count=32)
+            assert list(get(buf,"6I"))==[buf+parsed["profile_offset"],buf+parsed["transfer_arguments"][0][0],3,
+                                        buf+parsed["transfer_arguments"][1][0],7,buf+parsed["resource_offset"]]
         u.reg_write(R.UC_PPC_REG_LR,base[1]+0x200)
         u.emu_start(base[1]+0x5ce8,base[1]+0x200,count=180)
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x200

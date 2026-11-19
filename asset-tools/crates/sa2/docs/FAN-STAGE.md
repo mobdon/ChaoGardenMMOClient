@@ -598,3 +598,5 @@ selected by 0x12c: it copies ten words into profile 8 and selects one of two
 tuning triples using engine word +0xb4. Pass the resulting tuning to
 kart-guided-drive and profile8_write to kart-active-profile. Setup does not
 establish where the live mode-5 record was originally populated.
+
+`kart-buffer-tuning CartD.rel OUTPUT.json PRE_RELOCATION_BUFFER.bin ENGINE_WORD_B4` reads the engine-supplied big-endian buffer before CartD fixes its pointers. Section 5 +0x13f8 points at section 6 +0x1a8 (fileless BSS). On success the loader passes that address to engine import 0x800d241c, then text +0x44..0x8c adds the base to header words at +0, +4, +12 and +20. The two offset/argument pairs are reported without interpreting the transfer data. Only the selected profile is dereferenced. The installed payload identity and imported loader are unresolved; synthetic buffers check the fixups and both engine selectors against original instructions. No stage clear or runtime integration is implied.

@@ -201,3 +201,50 @@ pub fn setup(bytes: &[u8], s: SetupInput) -> Result<Setup> {
         profile8_write,
     })
 }
+
+/// Read the pre-fixup engine buffer using relative offsets (CartD text 0..0x13c).
+pub fn buffer_tuning(
+    bytes: &[u8],
+    buffer: &[u8],
+    engine_word_b4: i32,
+) -> Result<serde_json::Value> {
+    let header = buffer
+        .get(..24)
+        .ok_or_else(|| Error::invalid("truncated kart setup header"))?;
+    let word = |s: &[u8], i: usize| u32::from_be_bytes(s[i..i + 4].try_into().unwrap());
+    let offset = word(header, 0) as usize;
+    let record = buffer
+        .get(offset..)
+        .and_then(|s| s.get(..64))
+        .ok_or_else(|| Error::invalid("kart profile outside setup buffer"))?;
+    if offset < 24 {
+        return Err(Error::invalid(
+            "overlapping kart profile and relocation header unsupported",
+        ));
+    }
+    let row = Mode5 {
+        engine_word_b4,
+        profile_words: std::array::from_fn(|i| word(record, i * 4)),
+        tuning_28: std::array::from_fn(|i| f32::from_bits(word(record, 40 + i * 4))),
+        tuning_34: std::array::from_fn(|i| f32::from_bits(word(record, 52 + i * 4))),
+    };
+    let result = setup(
+        bytes,
+        SetupInput {
+            mode: 5,
+            previous_tuning: None,
+            mode5: Some(row),
+        },
+    )?;
+    if !result.tuning.iter().all(|v| v.is_finite()) {
+        return Err(Error::invalid(
+            "selected tuning cannot be represented as JSON",
+        ));
+    }
+    Ok(serde_json::json!({
+        "profile_offset": offset,
+        "transfer_arguments": [[word(header,4),word(header,8)], [word(header,12),word(header,16)]],
+        "resource_offset": word(header,20),
+        "setup": result,
+    }))
+}
