@@ -116,8 +116,7 @@ pub fn demux_av_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
     ))
 }
 
-pub fn inspect_602(b: &[u8]) -> Result<Value> {
-    let (mut report, tracks, video) = demux_av_602(b)?;
+fn index_video(report: &mut Value, video: &[u8]) -> Result<()> {
     let h = video
         .get(..8)
         .filter(|v| v[..4] == [0, 0, 1, 0xb3])
@@ -164,7 +163,25 @@ pub fn inspect_602(b: &[u8]) -> Result<Value> {
     }
     let pictures = schedule.len();
     report["presentationOrder"] = Value::Array(schedule.into_iter().map(|(_, p)| p).collect());
-    report["videoStream"] = json!({"bytes":video.len(),"sha256":manifest::sha256(&video),"width":width,"height":height,"pictures":pictures,"sequenceRateCode":h[7]&15});
+    report["videoStream"] = json!({"bytes":video.len(),"sha256":manifest::sha256(video),"width":width,"height":height,"pictures":pictures,"sequenceRateCode":h[7]&15});
+    Ok(())
+}
+
+/// Inspect one picture in presentation order without decoding the audio tracks.
+pub fn picture_602(b: &[u8], frame: u32) -> Result<Value> {
+    let (mut report, _, video) = demux_av_602(b)?;
+    index_video(&mut report, &video)?;
+    let pic = report["presentationOrder"]
+        .get(frame as usize)
+        .ok_or_else(|| Error::invalid("frame outside movie presentation order"))?;
+    Ok(
+        json!({"kind":"moviePicture","presentationIndex":frame,"picture":pic,"videoStream":report["videoStream"],"clockHz":report["clockHz"]}),
+    )
+}
+
+pub fn inspect_602(b: &[u8]) -> Result<Value> {
+    let (mut report, tracks, video) = demux_av_602(b)?;
+    index_video(&mut report, &video)?;
     for (key, data) in ["c0", "c1"].into_iter().zip(tracks) {
         let pcm = crate::audio::decode_adx(&data, 3_000_000)?;
         let bytes: Vec<u8> = pcm.samples.iter().flat_map(|v| v.to_le_bytes()).collect();

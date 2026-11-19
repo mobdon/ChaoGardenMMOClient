@@ -452,3 +452,42 @@ fn story_run_stops_before_gameplay() {
         assert_eq!(v["stop"]["action"][field], pending);
     }
 }
+
+#[test]
+#[ignore = "requires installed Last Story movie and PC mapping"]
+fn seek_last_story_movie() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
+    let movie = game.join("resource/gd_PC/event/e0602_m.sfd");
+    let exe = game.join("sonic2app.exe");
+    let case = local_case(game);
+    let args = [ini.to_str().unwrap(), "Last Story Sequence", "2", "1"];
+    let result = case.good(
+        "campaign-frame",
+        &exe,
+        "movie-picture",
+        &args,
+        &[
+            ("native-table-mapping", &ini),
+            ("story-event-movie", &movie),
+        ],
+    );
+    let p = &result["content"]["picture"];
+    assert_eq!(p["pts"], 3006);
+    assert_eq!(p["packetOffset"], 165900);
+    assert_eq!(p["coding"], "B");
+    case.bad(
+        "campaign-frame",
+        &exe,
+        "past-end",
+        &[args[0], args[1], "2", "891"],
+        "outside movie presentation order",
+    );
+    case.bad(
+        "campaign-camera",
+        &exe,
+        "movie-camera",
+        &[args[0], args[1], "2", "1", "0"],
+        "no event camera slot",
+    );
+}

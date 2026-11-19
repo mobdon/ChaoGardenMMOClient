@@ -213,6 +213,20 @@ fn campaign(
                 } else {
                     scene_packet(&clip, frame)?
                 }
+            } else if id == 602
+                && install
+                    .join("resource/gd_PC/event/e0602_m.sfd")
+                    .try_exists()?
+            {
+                if args.get(7).is_some() {
+                    return Err(Error::invalid("movie pictures have no event camera slot"));
+                }
+                let i = load(
+                    extras,
+                    "resource/gd_PC/event/e0602_m.sfd".into(),
+                    "story-event-movie",
+                )?;
+                sa2_asset_tools::story_movie::picture_602(&extras[i].bytes, frame)?
             } else {
                 json!({"available":false,"missingMainEvent":logical,"reason":"No matching main event PRS; movie or special-event dispatch is not implemented."})
             }
