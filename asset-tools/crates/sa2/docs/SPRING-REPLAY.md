@@ -10,7 +10,6 @@ The SET index is zero-based file order. For an upright placement whose SET Y sca
 
 ```json
 {
-  "out_point": [0, 7, 0],
   "frames": [
     {},
     {},
@@ -21,7 +20,7 @@ The SET index is zero-based file order. For an upright placement whose SET Y sca
 }
 ```
 
-Use the actual matrix result for the selected placement. out_point is in the rotated basis and excludes the spring's world position. The callback effectively transforms (0, 5 + scale.y, 0) using the native unit matrix and rotate-Z, rotate-X, rotate-Y sequence. SET rotations are converted from stored unsigned words to sign-extended angles, following the PC [OBJ_EDITENTRY declaration](https://github.com/roeming/SA2B/blob/874a480379260dce01e8988d6ab13c0deddcee4c/include/samt/sonic/set.h#L45-L58). Animation uses host double-precision sin/cos evaluated at the wrapped 16-bit angle and rounded to f32. The report records that approximation. The host does not infer a transform or apply the launch callees.
+For tilted placements supply the observed matrix result. For zero X and Z rotations the host derives the vertical vector directly from SET scale, regardless of yaw. An explicit observation always takes precedence; the report distinguishes supplied_out_point (null when omitted) from effective_out_point. out_point is in the rotated basis and excludes the spring's world position. The callback effectively transforms (0, 5 + scale.y, 0) using the native unit matrix and rotate-Z, rotate-X, rotate-Y sequence. SET rotations are converted from stored unsigned words to sign-extended angles, following the PC [OBJ_EDITENTRY declaration](https://github.com/roeming/SA2B/blob/874a480379260dce01e8988d6ab13c0deddcee4c/include/samt/sonic/set.h#L45-L58). Animation uses host double-precision sin/cos evaluated at the wrapped 16-bit angle and rounded to f32. The report records that approximation. The host does not reconstruct tilted transforms or apply the launch callees.
 
 An empty frame has no collision hit. A hit of 0 or 1 denotes the slot identified by direct task-pointer comparison. A hit of 2 denotes a non-null CCL result that matched neither player pointer. On the subsequent Touch tick, player supplies the selected slot's current state. An absent player on that tick leaves the task in Touch. A frame with range_out true returns before the task update. The adapter accepts up to 2,048 frames and 1 MiB of JSON; unknown fields, invalid slot values, nonfinite input and inconsistent player observations are rejected. The report records callback state and ordered effect requests for each frame. See [native spring callback coverage](STAGE-SPRING.md) for what the core executes.
 
