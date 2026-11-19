@@ -97,3 +97,5 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 [Goal-ring contact](GOAL-RING.md) covers native initialization decisions and activation calls across the 28 mapped story levels. The mission controller and automatic story advancement remain unimplemented.
 
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.
+
+[Finalhazard handoff](FINALHAZARD.md) covers the timed player handoff with its camera request, the stage voice gate and timed voice lines, and the per-frame arena bounds. The fight is not playable.
