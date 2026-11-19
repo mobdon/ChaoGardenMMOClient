@@ -198,6 +198,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct Controller {
     state_seven: Option<StateSeven>,
+    state_eight: Option<StateEight>,
     mode: i8,
     engine_bytes: [i8; 3],
     player_flags: [u16; 2],
@@ -329,6 +330,44 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         }
         report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"timerWrite":timer,"counter":counter,"operations":ops});
     }
+    if let Some(v) = c.state_eight {
+        if target != 0x137c {
+            return Err(invalid());
+        }
+        let mut counter = v.counter;
+        let mut ops = vec![0x1394];
+        let factor_at = field(0x139e, 4)? as usize;
+        let factor = f64::from_be_bytes(rel.data(4)?[factor_at..factor_at + 8].try_into().unwrap());
+        let units = (v.angle_return * factor).trunc();
+        if !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&units) {
+            return Err(invalid());
+        }
+        let yaw = 0x4000i32.wrapping_sub(units as i32);
+        let pulse = v.pose_word != 0 && counter & 7 == 0;
+        if v.pose_word == 0 {
+            let draw = v.draw.ok_or_else(invalid)? as f32;
+            let (site, scale, range, base) = if v.slot_byte == 7 {
+                (0x448, 0x476, 0x486, 0x486)
+            } else {
+                (0x4a8, 0x4d6, 0x4e6, 0x4f6)
+            };
+            let f = |site| number(4, field(site, 4)?);
+            timer = Some((f(base)? + f(range)? * (f(scale)? * draw)) as i32 as i16 as i32);
+            mode = 4;
+            counter = 0;
+            ops.extend([0x13e8, site]);
+        } else {
+            if v.draw.is_some() {
+                return Err(invalid());
+            }
+            if pulse {
+                counter = 0;
+            }
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"timerWrite":timer,"counter":counter,
+            "angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],"yaw":yaw,"scalar":number(4,field(0x13ca,4)?)?,
+            "byteWrites":if pulse{vec![0x803ad485u32,0x803ad495]}else{vec![]},"operations":ops});
+    }
     Ok(report)
 }
 
@@ -418,4 +457,16 @@ impl WalkerDecision {
     fn active(&self) -> bool {
         self.work_word.is_some_and(|word| word != 0) || self.engine_byte != 0
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateEight {
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    angle_return: f64,
+    pose_word: u16,
+    slot_byte: i8,
+    counter: i16,
+    draw: Option<i32>,
 }

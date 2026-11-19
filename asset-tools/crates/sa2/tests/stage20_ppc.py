@@ -121,7 +121,11 @@ u.mem_map(0x801cb000,8192)
 player0,player1,pose0,pose1=(0x100500,0x100600,0x100700,0x100800)
 put(0x801e7328,"II",player0,player1);put(0x801e7368,"II",pose0,pose1)
 branches={get(base[5]+0x298+i*4,"I")[0]-base[1] for i in range(11)}
+running_eight=False
 def opening_call(cpu,pc,*_):
+    if running_eight:
+        if pc==base[1]+0x1424:cpu.emu_stop()
+        return
     global dispatched
     site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
     if site in branches|{0x1424,0x1518}:
@@ -221,3 +225,39 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0x1328,continueAt=0x1424,
                            mode=m,timerWrite=timer if m!=7 else None,counter=ctr,operations=calls)
 print(idx,"state seven transitions matched")
+
+running_eight=True
+u.mem_map(0x801e4000,8192)
+def eight_call(cpu,pc,*_):
+    site=pc-base[1];ops.append(site)
+    if site==0x13e8:return
+    if site==0x1394:
+        args.extend(struct.unpack(">d",cpu.reg_read(r).to_bytes(8,"big"))[0] for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2))
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",angle),"big"))
+    else:cpu.reg_write(R.UC_PPC_REG_3,draw)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1394,0x13e8,0x448,0x4a8):
+    u.hook_add(UC_HOOK_CODE,eight_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for pose,slot,draw in [(0,6,0),(0,7,32767),(0,-1,16384),(1,6,None),(65535,7,None)]:
+        for counter,angle in [(-8,-2.75),(0,0.),(7,1.7),(8,3.14)]:
+            ops=[];args=[];p0=[4.,11.,-31.];p1=[20.,-12.,41.]
+            put(work,"bbhh",8,0,counter,-1);put(pose0+20,"fff",*p0);put(pose1+20,"fff",*p1)
+            put(pose1+6,"H",pose);put(player1+1,"b",slot)
+            pulse_bytes=[0x803ad485,0x803ad495]
+            for addr in pulse_bytes:put(addr,"B",0)
+            for r,v in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work)]:
+                u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
+            u.emu_start(base[1]+0x137c,base[1]+0x1424,count=160);assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+            m,_,ctr,timer=get(work,"bbhh")
+            c=dict(mode=8,engine_bytes=[0,0,0],player_flags=[0,0],state_eight=dict(slot0=p0,slot1=p1,
+                   angle_return=angle,pose_word=pose,slot_byte=slot,counter=counter,draw=draw))
+            req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+            out=Path(tmp)/f"{idx}.json";idx+=1
+            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            yaw,scalar=get(0x801e5000,"if")
+            assert json.loads(out.read_text())["controller"]==dict(dispatch=0x137c,continueAt=0x1424,mode=m,counter=ctr,
+                timerWrite=timer if m==4 else None,operations=ops,angleArgs=args,yaw=yaw,scalar=scalar,
+                byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
+print(idx,"state eight updates matched")
