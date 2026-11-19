@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x2ca4<=l<0x2fa0) or k not in (4,6):continue
+        if t!=1 or not (0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -50,6 +50,13 @@ def hook(m,addr,*_):
     elif pc==0x2d50:
         scale=struct.unpack(">d",struct.pack(">Q",m.reg_read(R.UC_PPC_REG_FPR1)))[0]
         calls.append(dict(Effect10860=dict(position=vec(a),velocity=vec(b),scale=scale)))
+    elif pc==0x2fac:
+        assert (a,b,c)==(tw+8,work+0x7c,work+0x88)
+        assert list(struct.unpack(">3i",u.mem_read(a,12)))==tail["post_alignment_angles"]
+        u.mem_write(c,struct.pack(">3f",*tail["observed_local_velocity"]))
+    elif pc==0x2fcc:
+        assert a==work+0x7c
+        m.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",tail["observed_raw_magnitude"]))[0])
     elif pc==0x2f18:calls.append("Cart9884")
     elif pc in (0x2ee8,0x2ef4):calls.append(dict(Engine80011714=a))
     elif pc==0x2f30:
@@ -65,7 +72,7 @@ def hook(m,addr,*_):
         assert c==work+0x7c
         u.mem_write(c,struct.pack(">3f",*(x-y for x,y in zip(vec(a),vec(b)))))
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
-for pc in (0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0,0x2e90,0x2ea4,0x2ee8,0x2ef4,0x2f18,0x2f30,0x2f40,0x2f54,0x2f74):
+for pc in (0x2d0c,0x2d50,0x2d70,0x2d84,0x2df0,0x2e90,0x2ea4,0x2ee8,0x2ef4,0x2f18,0x2f30,0x2f40,0x2f54,0x2f74,0x2fac,0x2fcc):
     u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
     for i,(word,count,enabled) in enumerate([(None,0,0),(0,4,1),(0,2147483647,0),
@@ -75,12 +82,28 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
                player_slot=1,work_28c=count,work_44=enabled,result=hit)
         if i>=7:
             j=i-7
-            w=dict(normal=[1,[0,.125,0,.25,0,0][j],-1],impulse=[1,2,3],work_70=-1 if j==4 else 0,
+            w=dict(normal=[1,[0,.125,0,.25,0,0][j],-1],impulse=[1,2,3],work_70=-1 if j==4 else j%2,
                    cooldown=5 if j==2 else 0,mode=j%2,vehicle_state=2,engine_byte_23=3)
             q["wall"]=w;hit["returned_from"]=[1,2,3]
             for off,fmt,v in [(0x70,"i",w["work_70"]),(0x290,"i",w["cooldown"]),(0x30,"i",2)]:put(work+off,fmt,v)
             put(engine+0x23,"b",3);put(base[6]+0x1a0,"i",w["mode"])
             for off,key in [(0x190,"normal"),(0x98,"impulse")]:u.mem_write(work+off,struct.pack(">3f",*w[key]))
+            slot=w["work_70"]
+            angles=[0 if word else -7,123456,0 if word else -19]
+            u.mem_write(tw+8,struct.pack(">3i",-7,123456,-19))
+            ring=None
+            if slot>=0:
+                cursor=59 if j%2 else 8
+                ring=dict(slot=slot,cursor=cursor,velocities=[[k,-k,2*k] for k in range(60)],rotations=[[k+7,k-9,k*3] for k in range(60)])
+                cp=base[6]+0x222a4+4*slot
+                vp=base[6]+0x21764+slot*720
+                rp=base[6]+0x21d04+slot*720
+                put(cp,"i",cursor)
+                for k in range(60):
+                    u.mem_write(vp+k*12,struct.pack(">3f",*ring["velocities"][k]))
+                    u.mem_write(rp+k*12,struct.pack(">3i",*ring["rotations"][k]))
+            tail=dict(observed_local_velocity=[-4,3,2],observed_raw_magnitude=11.5,post_alignment_angles=angles,work_d4=2147483645,ring=ring)
+            q["tail"]=tail;put(work+0xd4,"i",tail["work_d4"])
         req=Path(td)/"q.json";out=Path(td)/f"{i}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-contact-step",rel,out,req],check=True);doc=json.loads(out.read_text())
         for addr,key in [(work+20,"previous_position"),(tw+20,"proposed_position"),(work+0x7c,"velocity")]:
@@ -92,12 +115,19 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             assert doc["response"] is None and u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x2d0c
             continue
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x200
-        reg(3,task);run(0x2da8,0x2fa0 if i>=7 else (0x2e00 if word else 0x2f5c))
+        reg(3,task);run(0x2da8,0x200 if i>=7 else (0x2e00 if word else 0x2f5c))
         expected=dict(work_74=get(work+0x74,"i"),work_28c=get(work+0x28c,"i"),
                       velocity=vec(work+0x7c),position=vec(tw+20),calls=calls,
                       next="contact_2e00" if word else "no_contact_2f5c")
         if i>=7:
-            expected["next"]="velocity_transform_2fa0"
+            expected["next"]="returned"
+            hist=None
+            if ring:
+                ring["cursor"]=get(cp,"i")
+                ring["velocities"]=[vec(vp+12*k) for k in range(60)]
+                ring["rotations"]=[list(struct.unpack(">3i",u.mem_read(rp+12*k,12))) for k in range(60)]
+                hist=[ring["velocities"][(ring["cursor"]-1-k)%60] for k in range(30)]
+            expected["tail"]=dict(observed_local_velocity=vec(work+0x88),work_d4=get(work+0xd4,"i"),ring=ring,motion_history=hist)
             got=doc["response"]["wall"]
             wall=dict(wall_hit=any(isinstance(c,dict) and c.get("Engine8006b710")==[18,0,0,0] for c in calls),
                       impulse=vec(work+0x98),cooldown=get(work+0x290,"i"),vehicle_state=get(work+0x30,"i"),align_to_normal=bool(word))
