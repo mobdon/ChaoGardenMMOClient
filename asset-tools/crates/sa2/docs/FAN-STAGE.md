@@ -200,3 +200,22 @@ An omitted index stays unresolved, including for a slot with a known place.
 The local field oracle runs the original selector for all 16 rows and three
 selectors, intercepting the engine at the cue submission. IDs represent
 requests, not a verified mapping into a localized audio bank or playback.
+
+`kart-story-target CartD.rel OUTPUT.json INPUT.json` ports the task named
+CartLimousineExec, with `operation` set to `spawn` or `tick`. Spawn uses the
+current crossing quad's third X/Z pair and the parent task's Y, starts with
+2000 units of lead, and adds 100 to Y in mode 1. Active ticks read the parent
+work X and float at +0x7c. Lead changes by (7 minus that float), up to 4000.
+Exactly 100 does not trigger the latch. On the first tick below 100, modes 0
+and 1 request cues 0x701 and 0x708 respectively. That tick still uses the
+computed lead; later active ticks follow at a fixed 100-unit X offset.
+Y and Z are unchanged by these updates. The latch is shared native state;
+spawning does not clear it. This command does not assign a story clear,
+advance the parent vehicle, or render the target.
+
+Run `python tests/kart_story_target_ppc.py CLI CartD.rel PRIVATE_TMP_DIR`
+to compare spawn and chained updates with the original callback. The test
+supplies successful allocation and intercepts the cue service. The installed
+event_adx archives did not provide a named directory establishing a mapping
+from kart cue IDs to localized clips; matching numeric indices alone is
+insufficient to establish playback.
