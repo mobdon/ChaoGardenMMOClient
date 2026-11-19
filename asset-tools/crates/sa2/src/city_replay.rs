@@ -262,6 +262,13 @@ pub fn mounted_callback(level: u16, p: &Placement, d: &ObjectDefinition) -> Opti
         (0x6c4e90, "SPRB   ") => Some("ObjectSpringB"),
         (0x6d95e0, "CHAOPIPE" | "chaopipe") => Some("ObjectChaoPipe"),
         (0x6de3b0, "CONTCHAO" | "contchao") => Some("ContainerChao"),
+        // Installed modules with verified checkpoint gate and handoff spans.
+        (0x6d99a0, "SAVEPOINT")
+            if level != 13
+                && matches!(level,0|3..=18|21..=28|30..=32|34..=38|40..=41|43..=44|46..=55|57..=59) =>
+        {
+            Some("CheckpointContact")
+        }
         _ if level == 13 => callback_name(p, d),
         _ => None,
     }
@@ -273,6 +280,24 @@ pub(crate) fn mounted_replay(
     request: &[u8],
 ) -> Result<Value> {
     let name = mounted_callback(level, p, d);
+    if name == Some("CheckpointContact") {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ContactRequest {
+            checkpoint_byte: u8,
+            hit: Option<(i32, u32)>,
+            players: [crate::checkpoint::ContactPlayer; 2],
+        }
+        let r: ContactRequest = decode(request)?;
+        let mut state = crate::checkpoint::ContactState {
+            mode: 1,
+            slot_timers: [0; 2],
+        };
+        let handoff = state.accept(r.hit, &r.players, r.checkpoint_byte)?;
+        return Ok(
+            json!({"callback":"CheckpointContact","mode":state.mode,"slotTimers":state.slot_timers,"handoff":handoff,"scope":"One idle contact check; checkpoint byte and hit are observed."}),
+        );
+    }
     if name == Some("ContainerChao") {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]

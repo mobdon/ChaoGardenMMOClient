@@ -81,6 +81,8 @@ fn mounted_campaign_routes() {
     let (mut mounts, mut placements, mut unresolved, mut starts, mut grounds) = (0, 0, 0, 0, 0);
     let mut terrain_ids = BTreeSet::new();
     let mut gaps = vec![];
+    let mut checkpoint_levels = std::collections::BTreeSet::new();
+    let mut checkpoint_count = 0;
     for (sequence, expected) in [
         ("Hero Story Sequence", HERO),
         ("Dark Story Sequence", DARK),
@@ -96,6 +98,26 @@ fn mounted_campaign_routes() {
         for &(ordinal, _, level) in expected {
             let stage = campaign.mount(sequence, ordinal, installed).unwrap();
             assert_eq!(stage.dispatch.level, level);
+            for (layer_idx, layer) in stage.layers.iter().enumerate() {
+                for place in &layer.placements {
+                    if level == 13
+                        || !stage
+                            .object_table
+                            .and_then(|t| t.entries.get(place.definition_index?))
+                            .is_some_and(|d| d.function_va == 0x6d99a0 && d.name == "SAVEPOINT")
+                    {
+                        continue;
+                    }
+                    let request=br#"{"checkpoint_byte":7,"hit":[1,0],"players":[{"rotation":[0,0,0],"position_bits":[0,0,0]},{"rotation":[1,2,3],"position_bits":[4,5,6]}]}"#;
+                    let out = stage
+                        .replay_object(layer_idx, place.placement_index, request)
+                        .unwrap();
+                    assert_eq!(out["handoff"]["rotation"], serde_json::json!([1, 2, 3]));
+                    assert_eq!(out["slotTimers"], serde_json::json!([0, 300]));
+                    checkpoint_levels.insert(level);
+                    checkpoint_count += 1;
+                }
+            }
             if stage.entry_pose.is_some() {
                 starts += 1;
             }
@@ -260,6 +282,8 @@ fn mounted_campaign_routes() {
             }
         }
     }
+    assert_eq!(checkpoint_count, 76);
+    assert_eq!(checkpoint_levels.len(), 18);
     assert_eq!(campaign.levels().len(), 49);
     assert_eq!(unique.len(), 84);
     assert_eq!(mounts, 94);
