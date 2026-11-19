@@ -650,3 +650,50 @@ mod contact_tests {
         assert_eq!(s.timer, 89);
     }
 }
+/// Tail of mode 5 (section 1 + 0x82b0). Earlier animation/effect calls
+/// supply work[0x24] anew each tick, so it must not be treated as a persistent fade.
+pub fn weakpoint_mode5_tail(
+    bytes: &[u8],
+    timer: u16,
+    submode: u8,
+    work24: f32,
+) -> Result<serde_json::Value> {
+    if crate::manifest::sha256(bytes)
+        != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
+        || !work24.is_finite()
+    {
+        return Err(Error::invalid("invalid Finalhazard mode-five observation"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 88)?;
+    let constant = |at: u32, section: u8, delta: usize| -> Result<f32> {
+        let hi = rel
+            .reference(1, at)
+            .ok_or_else(|| Error::invalid("missing mode-five constant"))?;
+        let lo = rel
+            .reference(1, at + 4)
+            .ok_or_else(|| Error::invalid("missing mode-five constant"))?;
+        if (hi.module, hi.kind, hi.section) != (88, 6, section)
+            || lo != (crate::city_rel::Reference { kind: 4, ..hi })
+        {
+            return Err(Error::invalid("invalid mode-five relocation"));
+        }
+        let i = hi.addend as usize + delta;
+        Ok(f32::from_be_bytes(
+            rel.data(section)?[i..i + 4].try_into().unwrap(),
+        ))
+    };
+    let mut mode = 5;
+    let mut sub = submode;
+    let mut value = work24;
+    let next = if timer != 0 {
+        timer - 1
+    } else {
+        value -= constant(0x82ce, 5, 8)?;
+        if value < constant(0x82e6, 4, 0)? {
+            mode = 3;
+            sub = 0;
+        }
+        0
+    };
+    Ok(serde_json::json!({"mode":mode,"submode":sub,"timer":next,"work24":value}))
+}
