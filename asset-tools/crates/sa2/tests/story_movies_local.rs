@@ -77,6 +77,145 @@ fn compare_all_movie_streams() {
             ],
         ),
     ];
+    // FFmpeg stream copy -> vgmstream-cli -i -> WAV data chunk (no loop repetitions).
+    let pcm_reference = &[
+        (
+            401,
+            "c0",
+            536000,
+            2,
+            48000,
+            "7b840c813ec502b664c896271c92d17cf3e496e0cd41d037d07683da5635f6dc",
+        ),
+        (
+            409,
+            "c0",
+            480690,
+            2,
+            44100,
+            "8d072976ea82215961c6780f315ab96695f3adf6dac44b2cce418d764e7c78bb",
+        ),
+        (
+            409,
+            "c1",
+            480690,
+            2,
+            44100,
+            "8d072976ea82215961c6780f315ab96695f3adf6dac44b2cce418d764e7c78bb",
+        ),
+        (
+            411,
+            "c0",
+            3488299,
+            2,
+            44100,
+            "ad50ba492446c4cfab930215a3e2506f8e17b5e0056e3626d6e112d810e5a367",
+        ),
+        (
+            411,
+            "c1",
+            3488299,
+            2,
+            44100,
+            "7f89f46870bd4d41e321b35f9f27dbf9bde2d6e14eebbf6cbfae40be4d93df51",
+        ),
+        (
+            420,
+            "c0",
+            3514770,
+            2,
+            44100,
+            "76ab56f47f9acf9db8968bc492fb0f0a8f2467b600b3f7b1466386155b442faf",
+        ),
+        (
+            420,
+            "c1",
+            3514770,
+            2,
+            44100,
+            "421fcfc808ff337a7270c873a2c112448f92a651c53e392c3a8f3a03f0e5513d",
+        ),
+        (
+            429,
+            "c0",
+            1060914,
+            2,
+            44100,
+            "1cd261abf717e310cbe920353b1e0632cee137ee955bd059069f649fd9c59816",
+        ),
+        (
+            429,
+            "c1",
+            1060914,
+            2,
+            44100,
+            "18ab061749f23734db9c67ccae45153aab75cb4cf5f6de67e546b0a7b1c1d514",
+        ),
+        (
+            430,
+            "c0",
+            910841,
+            2,
+            44100,
+            "dc28f480ba3b42a0a91ef573e9090706f914ea1221e4ec75c116c2983d181390",
+        ),
+        (
+            430,
+            "c1",
+            910841,
+            2,
+            44100,
+            "d35fffee199876eaf02c6d1aa0be08d737f5590406fb28b3351a22fe9390199a",
+        ),
+        (
+            524,
+            "c0",
+            1486170,
+            2,
+            44100,
+            "407666c65f465eb64406983f95f2e68b8c580a168427441a98f878e9bd1e7802",
+        ),
+        (
+            524,
+            "c1",
+            1486170,
+            2,
+            44100,
+            "93f3359fdd507534f201b42b1f5d4d52ff5f763e47946c958c109afc3816e73c",
+        ),
+        (
+            532,
+            "c0",
+            1471485,
+            2,
+            44100,
+            "075bcfe270681bc66d00099d00b54d4962bee0e40359a71fc484d4f30e68d34f",
+        ),
+        (
+            532,
+            "c1",
+            1471485,
+            2,
+            44100,
+            "24e124310f7b656ea18f192db6cd8339d7d765411f4c854c088578d543ce95b2",
+        ),
+        (
+            602,
+            "c0",
+            1311093,
+            2,
+            44100,
+            "c52ab2a4f956d2b77428c8b95d2b0ddb306e807c99a10ca471f0e46faccccd07",
+        ),
+        (
+            602,
+            "c1",
+            1311093,
+            2,
+            44100,
+            "cbb1cc93c3778b215b92d05fd499cf9ba7ed78c339e1d42b08d9bb03dcc59f87",
+        ),
+    ];
     for &(id, hashes) in cases {
         let b = std::fs::read(root.join(format!("e{id:04}_m.sfd"))).unwrap();
         let report = story_movie::inspect_movie(id, &b).unwrap_or_else(|e| panic!("{id}: {e}"));
@@ -88,6 +227,15 @@ fn compare_all_movie_streams() {
             report["audioTracks"].as_object().unwrap().len(),
             hashes.len() - 1
         );
+        for &(_, key, frames, channels, rate, digest) in
+            pcm_reference.iter().filter(|row| row.0 == id)
+        {
+            let track = &report["audioTracks"][key];
+            assert_eq!(track["pcmS16leSha256"], digest, "{id}/{key}");
+            assert_eq!(track["header"]["sampleCount"], frames);
+            assert_eq!(track["header"]["channels"], channels);
+            assert_eq!(track["header"]["sampleRate"], rate);
+        }
         let (pictures, ordered) = match id {
             401 => (335, false),
             409 => (327, false),
