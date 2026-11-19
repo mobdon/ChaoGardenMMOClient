@@ -8,9 +8,9 @@ Run the headless Rust dispatcher from the checkout. It reads the authored sequen
 | --- | --- | --- |
 | Hero | 0 (1,655) | 1: level 13, City Escape |
 | Dark | 100 (1,189) | 1: level 11, Iron Gate |
-| Last | 200 (866), 201 (1,169) | 2: event 602; no matching main event PRS |
+| Last | 200 (866), 201 (1,169) | 2: event 602; installed Sofdec movie awaits playback |
 
-This is a content run without drawing, elapsed-time playback, or Chao controls. No story clear is acknowledged. Controlling a Chao in City Escape still needs verified movement, collision response, stage objects, mission completion and a presentation adapter. A fan-game growth rule and once-only durable reward belong to the canonical Rust server; the dispatcher neither reads nor writes a save. Event 602 needs a verified alternate event handler.
+This is a content run without drawing, elapsed-time playback, or Chao controls. No story clear is acknowledged. Controlling a Chao in City Escape still needs verified movement, collision response, stage objects, mission completion and a presentation adapter. A fan-game growth rule and once-only durable reward belong to the canonical Rust server; the dispatcher neither reads nor writes a save. For event 602 the dispatcher verifies the installed e0602_m.sfd hash and walks the MPEG pack and packet boundaries through the end marker. It reports 14,099 packs, 12,632 video packets and 732 packets in each of two audio streams. The local manifest includes the original movie hash. This does not decode frames, select a language or acknowledge movie completion.
 
 ## Paired City Escape poses
 

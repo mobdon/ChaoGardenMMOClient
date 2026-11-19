@@ -31,6 +31,22 @@ pub(super) fn run(
         let logical = format!("resource/gd_PC/event/e{id:04}.prs");
         let path = install.join(&logical);
         if !path.try_exists()? {
+            if id == 602 {
+                let movie = format!("resource/gd_PC/event/e{id:04}_m.sfd");
+                let path = install.join(&movie);
+                if path.try_exists()? {
+                    let src = Extra::read(
+                        &path,
+                        movie,
+                        (128usize * 1024 * 1024 - byte_total).min(64 * 1024 * 1024) as u64,
+                        "story-event-movie",
+                    )?;
+                    let mut result = stop("awaitingMoviePlayback");
+                    result["movie"] = sa2_asset_tools::story_movie::inspect_602(&src.bytes)?;
+                    extras.push(src);
+                    break result;
+                }
+            }
             break stop("missingMainEvent");
         }
         let remaining = (128usize * 1024 * 1024).saturating_sub(byte_total);

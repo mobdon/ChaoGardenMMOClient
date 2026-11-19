@@ -121,3 +121,4 @@ pub mod kart_registry;
 pub mod spring_draw;
 mod ring_terrain;
 pub mod ring_models;
+pub mod story_movie;

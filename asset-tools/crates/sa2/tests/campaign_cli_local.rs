@@ -367,6 +367,10 @@ fn story_run_stops_before_gameplay() {
             .collect();
         let mut deps = vec![("native-table-mapping", ini.as_path())];
         deps.extend(files.iter().map(|p| ("story-event-image", p.as_path())));
+        let movie = game.join("resource/gd_PC/event/e0602_m.sfd");
+        if route == "Last" {
+            deps.push(("story-event-movie", movie.as_path()));
+        }
         let v = case.good(
             "story-run",
             &exe,
@@ -382,7 +386,10 @@ fn story_run_stops_before_gameplay() {
             assert_eq!(event["lastFrame"]["global_frame"], n - 1);
         }
         let (reason, field) = if route == "Last" {
-            ("missingMainEvent", "event")
+            assert_eq!(v["stop"]["movie"]["packCount"], 14099);
+            assert_eq!(v["stop"]["movie"]["videoPackets"], 12632);
+            assert_eq!(v["stop"]["movie"]["audioPackets"]["c1"], 732);
+            ("awaitingMoviePlayback", "event")
         } else {
             ("awaitingLevelRuntime", "level")
         };
