@@ -262,14 +262,15 @@ pub struct Balloon {
 }
 
 /// Host observations and callbacks not owned by the balloon task.
-/// Each contact entry is visited in original order. The host resolves its task
-/// through CartD +0x1714 and applies the award and sound calls for matched karts.
+/// Each contact entry is visited in original order. Rust resolves its task
+/// through CartD +0x1714 and passes the matched slot to the host for award and sound calls.
 pub trait BalloonHost {
     fn install_collision(&mut self);
     fn collision_flags(&self) -> u16;
     fn contact_count(&self) -> i16;
-    fn is_kart_contact(&self, index: i16) -> bool;
-    fn apply_contact(&mut self, index: i16);
+    fn contact_task(&self, index: i16) -> u32;
+    fn vehicle_tasks(&self) -> [u32; 6];
+    fn apply_contact(&mut self, index: i16, slot: usize);
     fn trig(&mut self, angle: i32) -> (f32, f32);
     fn register_collision(&mut self);
     fn cleanup(&mut self, has_entry: bool);
@@ -307,10 +308,12 @@ impl Balloon {
                 if host.collision_flags() & 1 != 0 {
                     let mut i = 0;
                     while i < host.contact_count() {
-                        if host.is_kart_contact(i) {
+                        if let Some(slot) =
+                            crate::kart_registry::slot(&host.vehicle_tasks(), host.contact_task(i))
+                        {
                             self.mode = 4;
                             self.timer = 0;
-                            host.apply_contact(i);
+                            host.apply_contact(i, slot);
                         }
                         i += 1;
                     }
@@ -363,10 +366,14 @@ mod lifecycle_tests {
         fn contact_count(&self) -> i16 {
             3
         }
-        fn is_kart_contact(&self, i: i16) -> bool {
-            i != 1
+        fn contact_task(&self, i: i16) -> u32 {
+            [88, 99, 42][i as usize]
         }
-        fn apply_contact(&mut self, i: i16) {
+        fn vehicle_tasks(&self) -> [u32; 6] {
+            [0, 42, 0, 0, 0, 88]
+        }
+        fn apply_contact(&mut self, i: i16, slot: usize) {
+            assert_eq!(slot, [5, 1][self.hits]);
             assert_eq!(i as usize, self.hits * 2);
             self.hits += 1;
         }

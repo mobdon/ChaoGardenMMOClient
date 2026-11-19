@@ -93,11 +93,14 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
                 if s.contacts.len() > i16::MAX as usize {
                     return Err(Error::invalid("collision list exceeds native signed count"));
                 }
+                let tasks = o
+                    .registry
+                    .each_ref()
+                    .map(|k| k.as_ref().map_or(0, |k| k.task));
                 for task in s.contacts {
-                    if task == 0 {
-                        continue;
-                    }
-                    if let Some(k) = o.registry.iter_mut().flatten().find(|k| k.task == task) {
+                    if let Some(k) = crate::kart_registry::slot(&tasks, task)
+                        .and_then(|slot| o.registry[slot].as_mut())
+                    {
                         o.state.mode = 3;
                         if k.work_44 != 0 {
                             o.calls.push(Call::Engine80063584([k.work_70, 1]));

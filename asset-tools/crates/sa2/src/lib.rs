@@ -117,3 +117,4 @@ pub mod kart_driving_audio;
 pub mod kart_pickup;
 pub mod kart_balloon;
 pub mod kart_object_range;
+pub mod kart_registry;
