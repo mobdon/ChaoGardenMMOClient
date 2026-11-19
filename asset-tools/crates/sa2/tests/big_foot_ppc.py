@@ -20,7 +20,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0x3c8,0x6b8),(0x19b0,0x19c0),(0x1a80,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x19c0),(0x1a80,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
@@ -56,14 +56,18 @@ def hook(uc,pc,size,_):
     if off in (0x10,0xda0,0x1024):saved[:]=[reg(i) for i in range(26,32)]
     if off in (0x250,0x1004,0x1618):
         for i,v in enumerate(saved,26):setreg(i,v)
+    if off in (0x1e20,0x1e2c):
+        assert reg(3)==BOSS
+        if off==0x1e2c:assert reg(4)==0
+        turn_helpers.append(off)
     if off==0x414:setreg(3,0x1234)
     if off==0x41c:
         assert reg(3)==0x1234 and reg(4)==old_yaw
         setreg(3,delta&0xffffffff)
-    if off in (0x48c,0x4c4,0x1a84,0x1aa8):
+    if off in (0x48c,0x4c4,0x1a84,0x1aa8,0x1d8c,0x1db0):
         if off in (0x48c,0x4c4):assert reg(3)==((-2*delta)&0xffffffff)
         else:assert reg(3)==old_yaw
-        value={0x1a84:yaw_sin,0x1aa8:yaw_cos}.get(off,turn_sin)
+        value={0x1a84:yaw_sin,0x1aa8:yaw_cos,0x1d8c:yaw_sin,0x1db0:yaw_cos}.get(off,turn_sin)
         u.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",value))[0])
     if off in (0x1764,0x18d8,0x1990):flight_calls.append(off)
     if off==0x34:
@@ -123,7 +127,7 @@ def hook(uc,pc,size,_):
         assert get(reg(3),"fff")==tuple(position)
         put(reg(3),"fff",*vector);calls.append(off)
     u.reg_write(R.UC_PPC_REG_PC,pc+4)
-for off in (0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
+for off in (0x1e20,0x1e2c,0x1d8c,0x1db0,0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
     u.hook_add(UC_HOOK_CODE,hook,begin=B+off,end=B+off)
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
@@ -235,7 +239,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
             assert row==expected,(case,i,row,expected)
         # Continue directly from the native takeoff with the first flight decision blocks.
         table=T+0x3500;page(table);put(CCL+12,"I",table);put(table+0x154,"I",0x80)
-        original_counter=[0,1,255][case];put(EXTRA+2,"B",original_counter)
+        original_counter=get(EXTRA+2,"B")[0];assert original_counter==3
         first=[];expected_flight=[];side=-1 if case==1 else 1
         steering=dict(angles=list(get(WORK+8,"iii")),rates=[0.25,-0.625,1.25],previous_speed_squared=0.375)
         put(motion+0x6c,"fff",*steering["rates"]);put(motion+0xb4,"f",steering["previous_speed_squared"])
@@ -261,10 +265,31 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
                 acceleration=list(get(motion+12,"fff")),angles=list(get(WORK+8,"iii")),rates=list(get(motion+0x6c,"fff")),
                 speedSquared=get(motion+0xb4,"f")[0],phase=list(get(motion+0x84,"iii")))
         assert expected_flight[-1]["mode"]==4
-        request=json.loads(req.read_text());request["first_flight"]=dict(extra_byte2=original_counter,ticks=first,steering=steering)
+        request=json.loads(req.read_text());request["first_flight"]=dict(ticks=first,steering=steering)
+        # Continue without resetting the native motion or Rust steering state.
+        turn=[];expected_turn=[]
+        cases=[(side*166,side*2)]*18+[(side*166,0),(side*166,-side),(side*150,-side),(side*149.99,-side)]
+        if case==2:cases=[(0,1),(150,1),(149,1)] # entry falls through and reverses immediately
+        for i,(x,vx) in enumerate(cases):
+            z=[64.,-64.,48.][case];obs=dict(boss_xz=[x,z],velocity_x=vx)
+            if i==0:obs["player_xz"]=[19.,z*2]
+            put(PLAYER+20,"fff",19.+i,0,z*2+i);put(WORK+20,"f",x);put(WORK+28,"f",z)
+            old_yaw=get(WORK+12,"I")[0];delta=8192 if i%2 else -100;turn_sin=None if i%2 else 0.015625
+            yaw_sin,yaw_cos=0.125,-0.9375;vz=-2.5+i/8;acc=[i/4,0.5,2.]
+            put(motion,"f",vx);put(motion+8,"f",vz);put(motion+12,"fff",*acc)
+            obs["motion"]=dict(velocity_z=vz,acceleration=acc,yaw_sin_cos=[yaw_sin,yaw_cos],heading_difference=delta,turn_sine=turn_sin)
+            turn_helpers=[];invoke(0x1bcc,BOSS);assert turn_helpers==[0x1e20,0x1e2c]
+            turn.append(obs);expected_turn.append(dict(mode=get(WORK,"B")[0],submode=get(WORK+1,"B")[0],flags=get(WORK+4,"H")[0],
+                targetXZ=[get(motion+k,"f")[0] for k in (0x54,0x5c)],steering=dict(velocityXZ=[get(motion+k,"f")[0] for k in (0,8)],
+                acceleration=list(get(motion+12,"fff")),angles=list(get(WORK+8,"iii")),rates=list(get(motion+0x6c,"fff")),
+                speedSquared=get(motion+0xb4,"f")[0],phase=list(get(motion+0x84,"iii")))))
+        assert expected_turn[-1]["mode"]==3 and get(EXTRA+2,"B")[0]==2
+        request["first_flight"]["turnaround"]=turn
         req.write_text(json.dumps(request));out=tmp/f"flight{case}.json"
         subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
         for a,e in zip(json.loads(out.read_text())["replay"]["firstFlight"],expected_flight,strict=True):assert a==e,(a,e)
+        for a,e in zip(json.loads(out.read_text())["replay"]["turnaround"],expected_turn,strict=True):assert a==e,(a,e)
+        print("turnaround updates matched:",len(expected_turn),"next mode:",expected_turn[-1]["mode"])
         print("mode-two callbacks:",len(take_native),"; first-pass steering updates matched:",len(expected_flight))
     observations=[];expected=[]
     motion=T+0xd00;put(BOSS+0x34,"I",WORK);put(BOSS+0x38,"I",motion)
