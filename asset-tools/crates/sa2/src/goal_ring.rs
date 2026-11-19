@@ -16,6 +16,9 @@ pub struct Program {
     dispatch_codes: Vec<Option<u16>>,
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
+    pub child_entry: u32,
+    pub child_parent_callback: u32,
+    pub child_scale_bits: u32,
     pub radii: [f32; 2],
     pub spin: [i32; 2],
     pub rise: f32,
@@ -163,6 +166,27 @@ impl Program {
             .filter(|r| r.module == info.module && r.kind == 4 && r.section == 5)
             .ok_or_else(invalid)?
             .addend;
+        let child = init + 0x110;
+        if manifest::sha256(
+            instructions
+                .get(child as usize..child as usize + 0x80)
+                .ok_or_else(invalid)?,
+        ) != "d9442669cc51ee371849de8fec3f5e240622c0f4d1a34f9af172ea963f7881ca"
+            || !rel
+                .reference(1, child + 0x1c)
+                .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x80070790)
+        {
+            return Err(invalid());
+        }
+        let child_ref = |off, section| {
+            rel.reference(1, child + off)
+                .filter(|r| r.module == info.module && r.section == section && r.kind == 4)
+                .map(|r| r.addend)
+                .ok_or_else(invalid)
+        };
+        let child_entry = child_ref(0x16, 1)?;
+        let child_parent_callback = child_ref(0x2e, 1)?;
+        let child_scale_bits = word(rel.data(4)?, child_ref(0x3a, 4)? as usize)?;
         // Verify the actual callees even though the code hashes cover unrelocated branches.
         for (off, addr) in [
             (0x14, 0x800066f4),
@@ -249,6 +273,9 @@ impl Program {
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
+            child_entry,
+            child_parent_callback,
+            child_scale_bits,
             radii,
             spin,
             rise,
@@ -492,7 +519,36 @@ struct ConsumerInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ChildObservation {
+    pub existing: bool,
+    pub allocation: Option<bool>,
+    /// Parent child link re-read after the optional engine allocation call.
+    pub linked_after: bool,
+}
+impl Program {
+    pub fn child_placement(&self, v: ChildObservation, position: [f32; 3]) -> Result<Value> {
+        if v.existing == v.allocation.is_some() || (v.existing && !v.linked_after) {
+            return Err(Error::invalid(
+                "inconsistent goal child allocation observations",
+            ));
+        }
+        let create=v.allocation.map(|_|json!({"engine":0x80070790u32,"priority":2,"entry":self.child_entry,"parent":"goalTask"}));
+        let initialized = if v.allocation == Some(true) {
+            Some(
+                json!({"parentCallback32":self.child_parent_callback,"childWork32Bits":self.child_scale_bits,"childWorkByte1":1}),
+            )
+        } else {
+            None
+        };
+        Ok(
+            json!({"create":create,"initialized":initialized,"linkedChildPosition":v.linked_after.then_some(position)}),
+        )
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Request {
+    child: Option<ChildObservation>,
     post_contact_consumer: Option<ConsumerInput>,
     slot_zero_timer: Option<u16>,
     range_out: bool,
@@ -534,6 +590,17 @@ pub fn replay(
         r.range_out,
         r.allocation_ok,
     );
+    if let Some(child) = r.child {
+        if !matches!(init, InitRoute::ChildTask) {
+            return Err(Error::invalid(
+                "child observations require child goal route",
+            ));
+        }
+        let writes = p.child_placement(child, row.placement.position)?;
+        return Ok(
+            json!({"program":p,"init":init,"child":writes,"dispatchedFrames":0,"scope":"Child placement only; child executor not run."}),
+        );
+    }
     let InitRoute::Contact { angle_x } = init else {
         return Ok(
             json!({"program":p,"init":init,"dispatchedFrames":0,"scope":"Fresh native goal task did not enter the contact executor."}),

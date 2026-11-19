@@ -48,3 +48,12 @@ The report records the engine address and register arguments. In City Escape
 the fallback string identifies an out-of-range message setting. No message
 text is exported. Message presentation, the separate main-engine call on
 goal contact, and mission completion remain outside this replay.
+
+For a placement that selects `ChildTask`, the optional `child` input supplies
+`existing`, `allocation` (null if no allocation runs), and `linked_after`.
+The parent only requests a child if none is attached. On success it installs
+its own callback and initializes two fields on the returned child's work.
+It then reads the parent link again and copies the placement position to the
+linked child if present. An allocator return and the re-read link are distinct
+observations. The mounted replay reports these writes without running the
+child's callback or simulating a level clear.

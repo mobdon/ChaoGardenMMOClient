@@ -170,3 +170,27 @@ for code,count,gamebyte in itertools.product((5,90,109),(-1,5,90,109,110),(-128,
     u.emu_start(BASE+h,BASE+h+0x98,count=60)
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+h+0x98 and len(observed)==1
     print('T',code,count,gamebyte,*observed[0])
+
+# Child selection and creation are separate from following the parent's link.
+create_child=0x80070790;map_page(create_child)
+def create_hook(cpu,pc,*_):
+    assert reg(3)==2 and reg(5)==TASK
+    created.append(reg(4)-BASE)
+    put(TASK+12,'I',linked_task if linked else 0)
+    setreg(3,returned_task if allocated else 0)
+put(create_child,'I',0x4e800020)
+u.hook_add(UC_HOOK_CODE,create_hook,begin=create_child,end=create_child)
+u.mem_write(DATA+4*0x100000+3140,d[ss[4][0]+3140:ss[4][0]+3144])
+returned_task,linked_task,returned_work,linked_work=[TASK+x for x in (0x200,0x300,0x400,0x500)]
+u.hook_add(UC_HOOK_CODE,lambda cpu,*_:cpu.emu_stop(),begin=BASE+0x2d394,end=BASE+0x2d394)
+for existing,allocated,linked in [(1,-1,1),*[(0,a,l) for a,l in itertools.product((0,1),repeat=2)]]:
+    created=[];put(TASK+12,'I',linked_task if existing else 0);put(TASK+32,'I',0)
+    for t,work in ((returned_task,returned_work),(linked_task,linked_work)):
+        put(t+52,'I',work);u.mem_write(work,bytes([0xcd])*64)
+    put(WORK+20,'fff',1.5,-20.,3.75);setreg(30,TASK);setreg(31,WORK)
+    u.emu_start(BASE+0x2d318,BASE+0x2d4dc,count=64)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d394
+    assert bytes(u.mem_read(linked_work+20,12))==(struct.pack('>fff',1.5,-20.,3.75) if linked else bytes([0xcd])*12)
+    if allocated!=1:
+        assert get(TASK+32,'I')==0 and bytes(u.mem_read(returned_work,64))==bytes([0xcd])*64
+    print('K',existing,allocated,linked,next(iter(created),-1),get(TASK+32,'I')-BASE if allocated==1 else -1,get(returned_work+32,'I'),get(returned_work+1,'B'))

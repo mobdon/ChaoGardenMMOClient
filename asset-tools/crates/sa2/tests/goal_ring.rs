@@ -48,7 +48,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 5];
+    let mut counts = [0; 6];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     for line in stdout.lines() {
@@ -73,6 +73,35 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "K" {
+            let observed = sa2_asset_tools::goal_ring::ChildObservation {
+                existing: n(1) != 0,
+                allocation: (n(2) >= 0).then(|| n(2) == 1),
+                linked_after: n(3) != 0,
+            };
+            let report = program
+                .child_placement(observed, [1.5, -20., 3.75])
+                .unwrap();
+            if n(4) < 0 {
+                assert!(report["create"].is_null());
+            } else {
+                assert_eq!(report["create"]["entry"], n(4));
+            }
+            if n(5) < 0 {
+                assert!(report["initialized"].is_null());
+            } else {
+                assert_eq!(report["initialized"]["parentCallback32"], n(5));
+                assert_eq!(
+                    report["initialized"]["childWork32Bits"],
+                    v[6].parse::<u32>().unwrap()
+                );
+                assert_eq!(report["initialized"]["childWorkByte1"], n(7));
+            }
+            assert_eq!(
+                report["linkedChildPosition"],
+                serde_json::json!((n(3) != 0).then_some([1.5, -20., 3.75]))
+            );
+            counts[5] += 1;
         } else if v[0] == "T" {
             use sa2_asset_tools::goal_ring::{IndexedMessage, MessageContext};
             let code = n(1) as u16;
@@ -180,7 +209,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194, 45]);
+    assert_eq!(counts, [720, 280, 40, 194, 45, 5]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]
