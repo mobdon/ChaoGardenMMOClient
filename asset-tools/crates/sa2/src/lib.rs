@@ -124,3 +124,4 @@ mod ring_terrain;
 pub mod ring_models;
 pub mod story_movie;
 pub mod city_motion_registry;
+pub mod finalhazard;
