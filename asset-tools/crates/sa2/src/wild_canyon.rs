@@ -246,7 +246,8 @@ pub fn contacts(
         layer: String,
         index: usize,
         mode: i8,
-        submode: i8,
+        submode: Option<i8>,
+        spin_angle: Option<u32>,
         collision_flags: u16,
         hit_num: i16,
         engine_byte_1e: i8,
@@ -261,6 +262,29 @@ pub fn contacts(
     let tasks = rows["emeraldTasks"]
         .as_array()
         .ok_or_else(|| Error::invalid("missing emerald tasks"))?;
+    let rel = CityRel::read_identified(module, 15)?;
+    let hi = rel
+        .reference(1, 0x20c96)
+        .ok_or_else(|| Error::invalid("missing spin table"))?;
+    let lo = rel
+        .reference(1, 0x20c9a)
+        .ok_or_else(|| Error::invalid("missing spin table"))?;
+    if (
+        hi.module, hi.section, hi.kind, lo.module, lo.section, lo.kind,
+    ) != (15, 5, 6, 15, 5, 4)
+        || hi.addend != lo.addend
+    {
+        return Err(Error::invalid("unknown spin table"));
+    }
+    let offset = hi.addend as usize + 40;
+    let spin_step = u32::from_be_bytes(
+        rel.data(5)?
+            .get(offset..offset + 4)
+            .ok_or_else(|| Error::invalid("missing spin step"))?
+            .try_into()
+            .unwrap(),
+    );
+    let mut states = std::collections::BTreeMap::new();
     let ticks: Vec<Tick> = serde_json::from_slice(request)?;
     if ticks.len() > 2048 {
         return Err(Error::invalid("too many emerald contacts"));
@@ -286,7 +310,14 @@ pub fn contacts(
                 .ok_or_else(|| Error::invalid("missing emerald engine observation"))
         };
         let mut hits = t.player_hits.into_iter();
-        let mut sm = t.submode;
+        let key = (t.layer, t.index);
+        let (mut sm, mut spin) = match (t.submode, t.spin_angle) {
+            (Some(sm), angle) => (sm, angle.unwrap_or(0)),
+            (None, None) => *states
+                .get(&key)
+                .ok_or_else(|| Error::invalid("no live emerald update to resume"))?,
+            (None, Some(_)) => return Err(Error::invalid("cannot override spin while resuming")),
+        };
         let mut calls = Vec::new();
         let outcome = 'gate: {
             if t.mode == 0 {
@@ -355,7 +386,21 @@ pub fn contacts(
         if q.next().is_some() || hits.next().is_some() {
             return Err(Error::invalid("unused emerald observation"));
         }
-        frames.push(json!({"submode":sm,"outcome":outcome,"calls":calls}));
+        if outcome == "continue" {
+            if matches!(t.mode, 4 | 5) && sm >= 2 {
+                calls.push(json!([0x20c64, kind, low, t.position]));
+            }
+            if sm == 2 && t.mode != 5 {
+                calls.push(json!([0x20c8c]));
+                spin = spin.wrapping_add(spin_step);
+            }
+        }
+        if outcome == "pickupRequested" {
+            states.remove(&key);
+        } else {
+            states.insert(key, (sm, spin));
+        }
+        frames.push(json!({"submode":sm,"spinAngle":spin,"outcome":outcome,"calls":calls}));
     }
     Ok(json!(frames))
 }

@@ -183,11 +183,14 @@ def contact_cases(tasks,tmp):
     def watch(cpu,pc,size,_):
         site=pc-base[1]
         if site in stops:
-            row.setdefault("outcome",stops[site]);cpu.emu_stop();return
+            row.setdefault("outcome",stops[site])
+            return
         args=[site];value=0
         if site in (0x2097c,0x209e0,0x20a5c,0x208cc,0x20b38,0x1fb28,0x20b94):
             if site==0x209e0:args.extend(reg(i) for i in (3,4,5))
             value=answers[site];case["queries"].append(value)
+        elif site==0x20c64:args.extend([reg(3),reg(4),list(get(reg(5),"fff"))])
+        elif site==0x20c8c:assert reg(3)==child
         elif site==0x20bd0:
             args.extend([reg(3),reg(4),reg(5),list(get(reg(6),"fff"))]);row["outcome"]="pickupRequested"
         elif site in (0x20be4,0x20bf0):assert reg(3)==child
@@ -195,20 +198,25 @@ def contact_cases(tasks,tmp):
             byte=remaining.pop(0);case["player_hits"].append(byte);put(hit+1,"b",byte);value=hit
         row["calls"].append(args);cpu.reg_write(R.UC_PPC_REG_3,value&0xffffffff)
         cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
-    sites=[*stops,0x2097c,0x209e0,0x20a5c,0x2088c,0x208c0,0x208cc,0x20b38,0x1fb28,0x20b94,0x20bd0,0x20be4,0x20bf0]
+    sites=[*stops,0x2097c,0x209e0,0x20a5c,0x2088c,0x208c0,0x208cc,0x20b38,0x1fb28,0x20b94,0x20bd0,0x20be4,0x20bf0,0x20c64,0x20c8c]
     hooks=[u.hook_add(UC_HOOK_CODE,watch,begin=base[1]+s,end=base[1]+s) for s in sites]
     try:
         for task in tasks:
             if task["main"]!=0x20940:continue
             data=(game/"resource/gd_PC"/task["layer"]).read_bytes()
             rx=struct.unpack_from(">H",data,32+32*task["index"]+2)[0]
-            for n in range(18):
-                mode=[0,5,1,0,1,0][n%6];sm=[0,-1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,3][n]
+            for n in range(22):
+                mode=[0,5,1,0,1,0][n%6];sm=[0,-1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,3,0,0,0,0][n]
                 flags=int(n!=8);hn=int(n in (9,10,11));owner=n%3;gb=int(n==11)
                 answers={0x2097c:int(n==3),0x209e0:[-1,0,1,2,3,4][n%6],0x20a5c:26,0x208cc:8 if n%2 else 0}
+                if n>=18:answers[0x209e0]=2
                 remaining=[1,0] if n in (12,14) else ([-1] if n in (13,15) else [])
                 case=dict(layer=task["layer"],index=task["index"],mode=mode,submode=sm,collision_flags=flags,
                     hit_num=hn,engine_byte_1e=gb,owner_id=owner,queries=[],player_hits=[])
+                if n>=18:mode=4 if n!=21 else 5;sm=0 if n==18 else get(work+1,"b")[0];case.update(mode=mode,collision_flags=0);flags=0
+                if n<=18:
+                    spin=(0xffffff00+n)&0xffffffff;case.update(submode=sm,spin_angle=spin);put(child+0x4c,"I",spin)
+                else:del case["submode"]
                 actions=[(None,0x42,3)[n%3],(0x3e,-1,5)[n%3]];pos=[13.,float(n),float(rx)];parent=n%2==0
                 case.update(player_actions=actions,position=pos,has_set_entry=parent)
                 answers.update({0x20b38:n%2,0x20b94:1-n%2,0x1fb28:[8,16,18,41,46,0][n%6]})
@@ -220,14 +228,21 @@ def contact_cases(tasks,tmp):
                 put(ccl+4,"H",flags);put(ccl+0x9c,"I",child);put(ccl+0xa2,"h",hn);put(ccl+0xa4,"I",other)
                 put(other,"H",owner);put(2149367176+0x1e,"b",gb)
                 row={"calls":[]};u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child)
-                u.emu_start(base[1]+0x20940,stop,count=400);assert "outcome" in row
-                row["submode"]=get(work+1,"b")[0];cases.append(case);expected.append(row)
+                u.reg_write(R.UC_PPC_REG_LR,stop);u.emu_start(base[1]+0x20940,stop,count=400)
+                assert u.reg_read(R.UC_PPC_REG_PC)==stop and "outcome" in row
+                row.update(submode=get(work+1,"b")[0],spinAngle=get(child+0x4c,"I")[0]);cases.append(case);expected.append(row)
     finally:
         for h in hooks:u.hook_del(h)
     req=Path(tmp)/"contacts.json";out=Path(tmp)/"result.json";req.write_text(json.dumps(cases))
     subprocess.run([sys.argv[1],"--source-root",str(game),"fan-emerald-contact",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(req)],check=True)
     for a,e in zip(json.loads(out.read_text())["contacts"],expected,strict=True):assert a==e,(a,e)
-    print(len(cases),"mounted emerald contact decisions matched native callbacks")
+    picked=next(case for case,result in zip(cases,expected) if result["outcome"]=="pickupRequested")
+    resume={k:v for k,v in picked.items() if k not in ("submode","spin_angle")}
+    req.write_text(json.dumps([picked,resume]))
+    invalid=Path(tmp)/"invalid.json"
+    rejected=subprocess.run([sys.argv[1],"--source-root",str(game),"fan-emerald-contact",str(game/"sonic2app.exe"),str(invalid),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(req)],capture_output=True,text=True)
+    assert rejected.returncode!=0 and "no live emerald update" in rejected.stderr and not invalid.exists()
+    print(len(cases),"complete common emerald updates matched native callbacks")
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for allocated in (True,False):
         handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
