@@ -572,3 +572,45 @@ pub fn hot_shot_mode_two_exit(bytes: &[u8], request: &[u8]) -> Result<serde_json
         "scope":"Submode four writes before shared tail; readiness is supplied, helper effects are not simulated."}),
     )
 }
+
+/// Mode 2 submode 3, up to the shared tail, using the position observed after helper calls.
+pub fn hot_shot_settle(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        y: f32,
+        work04: f32,
+        work10: f32,
+        angles: [u32; 2],
+        flags: u16,
+        timer: u16,
+        controller_state: i32,
+        ready: Option<bool>,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    if ![s.y, s.work04, s.work10].iter().all(|v| v.is_finite())
+        || (s.controller_state == 1) != s.ready.is_some()
+    {
+        return Err(Error::invalid(
+            "expected finite state and readiness only for controller state one",
+        ));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let c = |at| hot_shot_scalar(&rel, at);
+    let target = c(0x13ce)?;
+    let delta = (s.y - target).clamp(c(0x1412)?, c(0x13f6)?);
+    let damped = s.work04 * c(0x13e2)?;
+    let corrected = s.work10 - c(0x142e)? * delta;
+    let (lo, hi) = (c(0x1446)?, c(0x145a)?);
+    let settled = delta > lo && delta < hi && damped > lo && damped < hi;
+    let ready = s.ready == Some(true);
+    Ok(
+        serde_json::json!({"mode":2,"submode":if settled {4} else {3},
+        "timer":if settled {30} else {s.timer},"y":if settled {target} else {s.y},
+        "work04":if settled {0.} else {damped},"work10":if settled {0.} else {corrected},
+        "angles":[s.angles[0].wrapping_add(0x210),s.angles[1].wrapping_add(0x250)],
+        "flags":if ready {s.flags & !1} else {s.flags},"requestedControllerState":ready.then_some(2),
+        "scope":"Submode-three writes before shared tail; position is observed after helpers."}),
+    )
+}
