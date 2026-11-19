@@ -276,3 +276,68 @@ mod cue_tests {
         assert_eq!(task.timer, u16::MAX);
     }
 }
+
+/// Frame state of CartD timeExtExec (+0xc858), starting from a zeroed task.
+#[derive(Default, Clone, Copy, Serialize)]
+pub struct TimeExtension {
+    mode: u8,
+    phase: u8,
+    timer: u16,
+    position: [f32; 2],
+    display: Option<u32>,
+}
+impl TimeExtension {
+    /// True requests task deletion after this update.
+    pub fn tick(&mut self) -> bool {
+        if self.mode == 0 {
+            self.display = Some(0xca10);
+            self.position = [700., 200.];
+            self.mode = 1;
+            return false;
+        }
+        match self.phase {
+            0 | 2 => {
+                self.position[0] = (700 - 25 * i32::from(self.timer)) as f32;
+                self.timer = self.timer.wrapping_add(1);
+                if self.phase == 2 {
+                    return self.timer > 40;
+                }
+                if self.timer > 20 {
+                    self.timer = 0;
+                    self.phase = 1;
+                }
+            }
+            1 => {
+                self.position[0] = 200.;
+                self.timer = self.timer.wrapping_add(1);
+                if self.timer > 120 {
+                    self.timer = 20;
+                    self.phase = 2;
+                }
+            }
+            _ => (),
+        }
+        false
+    }
+}
+pub fn time_extension(bytes: &[u8]) -> Result<serde_json::Value> {
+    let rel = verified_module(bytes)?;
+    for (site, target) in [(0xc83a, 0xc858), (0xc9ce, 0xca10)] {
+        if !rel
+            .reference(1, site)
+            .is_some_and(|r| (r.module, r.section, r.kind, r.addend) == (80, 1, 4, target))
+        {
+            return Err(Error::invalid("unexpected time extension callback"));
+        }
+    }
+    let mut state = TimeExtension::default();
+    let mut frames = Vec::new();
+    for _ in 0..256 {
+        let delete = state.tick();
+        frames.push(serde_json::json!({"state":state,"delete":delete}));
+        if delete {
+            return Ok(serde_json::json!({"frames":frames}));
+        }
+    }
+    Err(Error::invalid("time extension task did not release"))
+}
