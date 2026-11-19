@@ -18,3 +18,17 @@ The file boundary supplies the physical record count. The final records in demo1
 `tests/demo_reference.py` extracts the local SA2 Mod Loader `struct DemoInput` verbatim from `SA2Structs.h` (SHA-256 `8294f874dbba9e3b9094f78f19b87500fb71ad33e665724bd28316b773e644d5`). Its `Buttons` substitute has the same 32-bit representation as `enum Buttons : int` in `SA2Enums.h` (SHA-256 `752f665c5cb0d1dc99aad35ee4abd5a0a883f558ced0cab42935cee2d541bd24`). A host C compiler checks the struct size and provides offsets and widths for every named member. The driver emits little-endian, player-major fields, followed by the two unknown bytes. Rust compares its output with these four independent digests across all 12,160 records and 24,320 player samples. The synthetic test adds signed, high-bit, unknown-byte, NaN payload and seek boundary cases.
 
 Run `python tests/demo_reference.py <SA2Structs.h> <resource/gd_PC> <zig.exe> cc` to regenerate the four digests. Set `SA2_SET_DIR` to the local `resource/gd_PC` directory and run `cargo test --locked --test demo_pc -- --include-ignored`.
+
+### City Escape single-player input evidence
+
+The installed demo13.prs decompresses to 917,504 bytes. Searching the entire
+decoded buffer at every byte alignment finds 2,240 occurrences of big-endian
+binary32 1.0; every one begins at offset 32 modulo 44, the player-one magnitude
+slot in the independently verified raw layout. None uses the little-endian
+encoding. This supports the same record alignment for the input-bearing part
+of the single-player buffer. It does not establish its playback interval.
+
+Do not pass the entire buffer to the raw reader or trim it at the final nonzero
+byte: its size leaves a 32-byte remainder after complete 44-byte records, and
+its last byte is nonzero. The recording supplies no identified per-frame
+position, velocity or contact reference for the board descent.
