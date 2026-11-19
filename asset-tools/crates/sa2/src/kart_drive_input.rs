@@ -100,6 +100,8 @@ struct Drive {
 #[derive(Serialize)]
 pub(crate) struct Motion {
     #[serde(skip_serializing_if = "Option::is_none")]
+    contact: Option<crate::kart_contact::Update>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     drift: Option<DriftUpdate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     position_step: Option<PositionStep>,
@@ -113,6 +115,7 @@ pub(crate) struct Motion {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryDrive {
+    contact: Option<crate::kart_contact::StoryContact>,
     position_step: Option<StoryPosition>,
     heading: i32,
     work_a4: i32,
@@ -135,6 +138,8 @@ impl StoryDrive {
         tuning: [f32; 4],
         task_position: [f32; 3],
         weight: f32,
+        work_44: Option<i32>,
+        story_mode: i32,
         constants: &[u8],
     ) -> Result<Motion> {
         let velocity_xz = [velocity[0], velocity[2]];
@@ -145,7 +150,7 @@ impl StoryDrive {
         }
         let [acceleration, brake_power, deceleration, speed_cap] = tuning;
         let scale = f32::from_be_bytes(constants[0x200..0x204].try_into().unwrap());
-        drive_step(
+        let mut motion = drive_step(
             Drive {
                 heading: self.heading,
                 work_a4: self.work_a4,
@@ -171,7 +176,23 @@ impl StoryDrive {
             self.buttons & 4 != 0,
             self.buttons & 0x402 != 0 && self.work_28c <= 10,
             constants,
-        )
+        )?;
+        if let Some(query) = self.contact {
+            let to = motion
+                .position_step
+                .as_ref()
+                .ok_or_else(|| Error::invalid("story contact requires drive position step"))?
+                .position;
+            motion.contact = Some(query.apply(
+                constants,
+                to,
+                velocity,
+                self.work_28c,
+                work_44.ok_or_else(|| Error::invalid("missing vehicle flag for story contact"))?,
+                story_mode,
+            )?);
+        }
+        Ok(motion)
     }
 }
 /// 0x31b4..0x33a4: heading and local displacement before engine matrix calls.
@@ -222,6 +243,7 @@ fn drive_step(
         .map(|i| drift_update(i, heading, speed, work_a4, accelerate, stick_x, constants))
         .transpose()?;
     Ok(Motion {
+        contact: None,
         drift,
         position_step,
         magnitude_source,

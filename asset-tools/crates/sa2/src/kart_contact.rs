@@ -159,10 +159,55 @@ pub struct Update {
     response: Option<Response>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryContact {
+    previous_position: [f32; 3],
+    result: Option<Contact>,
+    wall: Option<WallInput>,
+    tail: Option<TailInput>,
+}
+impl StoryContact {
+    pub(crate) fn apply(
+        self,
+        data: &[u8],
+        proposed_position: [f32; 3],
+        velocity: [f32; 3],
+        work_28c: i32,
+        work_44: i32,
+        mode: i32,
+    ) -> Result<Update> {
+        if self
+            .wall
+            .as_ref()
+            .is_some_and(|w| w.mode != mode || w.work_70 != 0)
+        {
+            return Err(crate::Error::invalid(
+                "wall context conflicts with primary story kart",
+            ));
+        }
+        step_with_constants(
+            data,
+            Input {
+                previous_position: self.previous_position,
+                proposed_position,
+                velocity,
+                work_28c,
+                work_44,
+                player_slot: 0,
+                result: self.result,
+                wall: self.wall,
+                tail: self.tail,
+            },
+        )
+    }
+}
 pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
     kart_progress::verify(bytes)?;
     let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
-    let data = rel.data(4)?;
+    step_with_constants(rel.data(4)?, s)
+}
+fn step_with_constants(data: &[u8], s: Input) -> Result<Update> {
     let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
     let request = Request {
         from: s.previous_position,

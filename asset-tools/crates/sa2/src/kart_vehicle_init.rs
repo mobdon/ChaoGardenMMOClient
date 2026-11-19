@@ -125,6 +125,7 @@ pub(crate) fn story_boost(
     bind(&mut b.work_dc, timers.map(|t| t.0))?;
     bind(&mut b.slot_flag, timers.map(|t| t.1))?;
     bind(&mut b.work_44, flag.map(|v| v as i32))?;
+    let drive_flag = b.work_44;
     let mut output = profile(
         bytes,
         ProfileInput {
@@ -153,6 +154,8 @@ pub(crate) fn story_boost(
             ],
             task_position,
             output.weight,
+            drive_flag,
+            story_profile as i32,
             rel.data(4)?,
         )?);
     }
