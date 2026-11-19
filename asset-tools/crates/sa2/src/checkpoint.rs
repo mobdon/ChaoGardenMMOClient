@@ -668,9 +668,112 @@ mod item_tests {
             );
             assert_eq!(t.dispatch(1, 0x4000, id).unwrap(), None);
         }
+        for (id, points, amount, scalar, last) in [
+            (0, 100, Some(10), Some(0.5f32), 0x80035a88),
+            (1, 200, Some(20), Some(1.0), 0x80035a88),
+            (2, 50, Some(5), Some(0.25), 0x80035a88),
+            (3, 200, None, None, 0x80037278),
+            (6, 200, None, None, 0x80037394),
+            (8, 200, None, None, 0x800374b0),
+        ] {
+            let mut calls = Vec::new();
+            assert!(t
+                .visit_checkpoint_item(1, 0, id, |c| calls.push(c))
+                .unwrap());
+            assert_eq!(
+                calls[0],
+                ItemEngineCall {
+                    target: 0x80063524,
+                    r3: points,
+                    r4: None,
+                    f1_bits: None
+                }
+            );
+            assert_eq!(calls.len(), if amount.is_some() { 3 } else { 2 });
+            if amount.is_some() {
+                assert_eq!(
+                    calls[1],
+                    ItemEngineCall {
+                        target: 0x80063584,
+                        r3: 1,
+                        r4: amount,
+                        f1_bits: None
+                    }
+                );
+            }
+            assert_eq!(
+                calls.last(),
+                Some(&ItemEngineCall {
+                    target: last,
+                    r3: 1,
+                    r4: None,
+                    f1_bits: scalar.map(f32::to_bits)
+                })
+            );
+            assert!(!t
+                .visit_checkpoint_item(1, 0x4000, id, |_| panic!())
+                .unwrap());
+        }
         for id in [-1, 7, 11] {
             assert_eq!(t.dispatch(0, 0, id).unwrap(), None);
         }
         assert!(t.dispatch(2, 0, 1).is_err());
+    }
+}
+
+/// Arguments explicitly set by a stage item handler before it calls the
+/// external engine. Float arguments retain their original binary32 bits.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ItemEngineCall {
+    pub target: u32,
+    pub r3: i32,
+    pub r4: Option<i32>,
+    pub f1_bits: Option<u32>,
+}
+
+impl CityItemTable {
+    /// Execute the stage-local part of the six handlers reachable from
+    /// checkpoint bonus selection. A host supplies the external engine calls.
+    pub fn visit_checkpoint_item(
+        &self,
+        slot: usize,
+        equipment: u16,
+        item: i32,
+        mut visit: impl FnMut(ItemEngineCall),
+    ) -> Result<bool> {
+        let Some(dispatch) = self.dispatch(slot, equipment, item)? else {
+            return Ok(false);
+        };
+        let player = dispatch.handler_args[1];
+        let (points, amount, scalar, target) = match dispatch.handler_offset {
+            0x303c0 => (100, Some(10), Some(0x3f000000), 0x80035a88),
+            0x30520 => (200, Some(20), Some(0x3f800000), 0x80035a88),
+            0x30498 => (50, Some(5), Some(0x3e800000), 0x80035a88),
+            0x30570 => (200, None, None, 0x80037278),
+            0x30628 => (200, None, None, 0x80037394),
+            0x304e8 => (200, None, None, 0x800374b0),
+            _ => return Err(Error::invalid("unsupported checkpoint item handler")),
+        };
+        visit(ItemEngineCall {
+            target: 0x80063524,
+            r3: points,
+            r4: None,
+            f1_bits: None,
+        });
+        if let Some(n) = amount {
+            visit(ItemEngineCall {
+                target: 0x80063584,
+                r3: player,
+                r4: Some(n),
+                f1_bits: None,
+            });
+        }
+        visit(ItemEngineCall {
+            target,
+            r3: player,
+            r4: None,
+            f1_bits: scalar,
+        });
+        Ok(true)
     }
 }
