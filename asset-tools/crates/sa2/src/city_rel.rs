@@ -859,3 +859,53 @@ pub fn hot_shot_target_rotation(bytes: &[u8], request: &[u8]) -> Result<serde_js
     }
     Ok(serde_json::json!({"fixed":s.fixed,"varied":s.varied}))
 }
+
+/// Resolve the two animated draws made by the target's display callback (1:4d42c).
+pub fn hot_shot_target_display(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        flags: u16,
+        position: [f32; 3],
+        varied: [i32; 3],
+        scale: [f32; 3],
+        phase: f32,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    identify_hot_shot(bytes)?;
+    if s.flags & 0x200 != 0 {
+        return Ok(serde_json::json!({"hidden":true,"draws":[]}));
+    }
+    if !s.position.iter().chain(&s.scale).all(|v| v.is_finite()) || !s.phase.is_finite() {
+        return Err(Error::invalid("expected finite target display state"));
+    }
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let ptr = |at| -> Result<u32> {
+        let hi = rel.reference(1, at).ok_or_else(invalid)?;
+        if (hi.module, hi.section, hi.kind) != (82, 5, 6)
+            || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
+        {
+            return Err(invalid());
+        }
+        Ok(hi.addend)
+    };
+    let base = ptr(0x4d4da)? as usize;
+    let data = rel.data(5)?;
+    let fixed: Vec<i32> = data
+        .get(base..base + 12)
+        .ok_or_else(invalid)?
+        .chunks_exact(4)
+        .map(|w| i32::from_be_bytes(w.try_into().unwrap()))
+        .collect();
+    let [x, y, z] = s.position;
+    let floor = hot_shot_scalar(&rel, 0x4d4aa)?;
+    let offset = hot_shot_scalar(&rel, 0x4d512)?;
+    let ground = hot_shot_scalar(&rel, 0x4d54e)?;
+    Ok(
+        serde_json::json!({"hidden":false,"textureListSection5":ptr(0x4d492)?,"phase":s.phase,
+        "draws":[{"objectSection5":ptr(0x4d526)?,"motionSection5":ptr(0x4d52e)?,
+        "translation":[x,y.max(floor),z],"rotations":[fixed,s.varied],"rotationArgument":1,
+        "scale":s.scale,"localTranslation":[0.,offset,0.]},
+        {"objectSection5":ptr(0x4d562)?,"motionSection5":ptr(0x4d56a)?,"translation":[x,ground,z]}]}),
+    )
+}
