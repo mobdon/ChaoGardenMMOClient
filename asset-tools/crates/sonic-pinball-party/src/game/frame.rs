@@ -95,6 +95,11 @@ pub trait FrameMemory {
     fn read_u32(&self, address: u32) -> Result<u32, FrameError>;
     fn write_u8(&mut self, address: u32, value: u8) -> Result<(), FrameError>;
     fn write_u16(&mut self, address: u32, value: u16) -> Result<(), FrameError>;
+    /// Optional exact bulk transaction. Backends that do not bind a complete
+    /// writable span must fail; the default never partially writes a buffer.
+    fn write_bytes(&mut self, address: u32, _bytes: &[u8]) -> Result<(), FrameError> {
+        Err(FrameError::MissingWrite { address, width: 1 })
+    }
 }
 
 pub trait FrameCalls {

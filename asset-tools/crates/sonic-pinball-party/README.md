@@ -6,6 +6,8 @@ The whole 8,388,608-byte source must match SHA-256 `5690eb0a58ac24616fd6747a8aed
 
 Asset tools implement bounded BIOS LZ77/RLE, BGR555 palettes, 4bpp/8bpp tiles, text background rendering, OAM fields, 23 visual descriptors with variant indirection, a 200-entry audio-header catalog, the distinct embedded Tiny Garden payload, and opaque Garden save/flash inspection. The separate Rust game modules translate input, ball/flipper helpers, collision paths, frame control, OAM composition, palette processing and audio routing/player lifecycle. Their verified scopes are narrower than a complete game. Chao Ball resources have a traced loader and candidate semantic identification; runtime confirmation remains pending.
 
+Tiny Garden is the current priority. Its Rust board setup now runs for all four native rounds and enters the first frame, which stops at unported `0x02001420`. Care, shop, audio, saves/transfers and complete minigame sessions still prevent an end-to-end Garden pass. See [GARDEN-SYSTEMS.md](docs/GARDEN-SYSTEMS.md) for exact original subsystem roots.
+
 See [CATALOG.md](docs/CATALOG.md) for coverage/unknowns, [GARDEN.md](docs/GARDEN.md) for save/transfer/minigame evidence, [PINBALL-MECHANICS.md](docs/PINBALL-MECHANICS.md) for the separate mechanics backlog, and [MANIFEST.md](docs/MANIFEST.md) for the proposed interchange contract.
 
 With Rust 1.88+ and Python 3.10+ available, run from the client checkout/worktree root:
@@ -53,8 +55,11 @@ The original asset CLI remains the default binary. Source-port diagnostics are e
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- status $env:SPP_ROM
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- verify $env:SPP_ROM
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- run $env:SPP_ROM
+cargo run --locked --manifest-path $sppManifest --bin spp-game -- garden-board $env:SPP_ROM 0 1
 cargo run --locked --manifest-path $sppManifest --bin spp-game -- board $env:SPP_ROM 3 --headless
 ```
+
+`garden-board` takes a native round index 0..3 and a u32 PRNG seed. It runs complete puzzle setup on explicitly synthetic RAM, attempts the first frame, prints its exact missing dependency and returns failure while that dependency is unported. It does not run home Garden, render a full screen or read a native save.
 
 `run` executes the Rust startup wrapper and stops at its first unported dependency, currently ROM `0x6EF4`. `board` renders original background pixels; on Windows, omit `--headless` for the finite diagnostic window and manual Up/Down viewport control. These commands do not run an emulator, alter a native save, or contact the MMO service.
 

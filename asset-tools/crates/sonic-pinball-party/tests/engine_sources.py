@@ -15,16 +15,22 @@ ROM_SHA256 = "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
 def registry():
     spans = []
 
-    def visit(value, fixture, path):
+    def visit(value, fixture, path, parent_space="rom"):
         if isinstance(value, dict):
+            space = value.get("space", parent_space)
             if all(key in value for key in ("offset", "length", "sha256")):
-                spans.append({"fixture": fixture, "key": path, "name": value.get("name", path),
-                              "offset": value["offset"], "length": value["length"], "sha256": value["sha256"]})
+                if space not in ("rom", "garden"):
+                    raise ValueError("Unknown source address space: "+str(space))
+                item = {"fixture": fixture, "key": path, "name": value.get("name", path),
+                        "offset": value["offset"], "length": value["length"], "sha256": value["sha256"]}
+                if space != "rom":
+                    item["space"] = space
+                spans.append(item)
             for key, child in value.items():
-                visit(child, fixture, path+"."+key if path else key)
+                visit(child, fixture, path+"."+key if path else key, space)
         elif isinstance(value, list):
             for index, child in enumerate(value):
-                visit(child, fixture, path+"["+str(index)+"]")
+                visit(child, fixture, path+"["+str(index)+"]", parent_space)
 
     # The oracle driver is the reviewed publication manifest. Unregistered
     # scratch/in-progress fixtures must not silently change a release registry.
@@ -60,10 +66,15 @@ if __name__ == "__main__":
             rom = f.read(0x800001)
         if len(rom) != 0x800000 or hashlib.sha256(rom).hexdigest() != ROM_SHA256:
             raise ValueError("Exact local A3VE rev0 required")
+        import reference_parity
+        garden, consumed = reference_parity.decode(rom[reference_parity.GARDEN_OFFSET:], reference_parity.GARDEN_LENGTH)
+        if consumed != reference_parity.GARDEN_STORED or hashlib.sha256(garden).hexdigest() != reference_parity.GARDEN_SHA256:
+            raise ValueError("Embedded Garden source identity differs")
         for span in actual["spans"]:
             offset, length = span["offset"], span["length"]
-            if offset < 0 or length <= 0 or offset+length > len(rom):
-                raise ValueError("Source span outside cartridge: "+str(span))
-            if hashlib.sha256(rom[offset:offset+length]).hexdigest() != span["sha256"]:
+            source = garden if span.get("space", "rom") == "garden" else rom
+            if offset < 0 or length <= 0 or offset+length > len(source):
+                raise ValueError("Source span outside its address space: "+str(span))
+            if hashlib.sha256(source[offset:offset+length]).hexdigest() != span["sha256"]:
                 raise ValueError("Source hash differs: "+str(span))
     print(json.dumps({"evidenceSpans": len(actual["spans"]), "sourceSha256": ROM_SHA256, "wholeGamePorted": False}))

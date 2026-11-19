@@ -94,6 +94,7 @@ pub trait IntroCallbackResources {
 
 /// Exact local-ROM authentication and bounded shared type10 decoding. No native
 /// ROM contents, decoded graphics or audio are embedded in this source.
+#[derive(Clone)]
 pub struct IntroCallbackRom<'a> {
     rom: &'a [u8],
     intro: IntroRom<'a>,

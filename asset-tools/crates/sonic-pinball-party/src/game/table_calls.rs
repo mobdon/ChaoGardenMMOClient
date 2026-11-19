@@ -3,8 +3,9 @@
 use super::{
     frame::{FrameError, FrameMemory, NativeCall},
     lifecycle::{self, LifecycleCalls},
-    lifecycle_tables, table_actions, table_bootstrap, table_collision_setup, table_events,
-    table_frame, table_presentation, table_presentation_frame,
+    lifecycle_tables, scoring, table_actions, table_bootstrap, table_collision_setup, table_events,
+    table_frame, table_objects, table_presentation, table_presentation_frame, table_triggers,
+    table_triggers_next,
 };
 
 pub struct TableCalls<B> {
@@ -28,6 +29,12 @@ impl<B: LifecycleCalls> LifecycleCalls for TableCalls<B> {
             (0x2fd68, []) => table_frame::presentation(memory, self),
             (0xabb4, []) => table_frame::control(memory, self),
             (0xab78, &[context]) => table_frame::update(memory, self, context),
+            (0x1fc30, _) => table_objects::TableObjectCalls(self).call(memory, offset, args),
+            (0x30c58 | 0x33d40, _) => scoring::ScoringCalls(self).call(memory, offset, args),
+            (0x34044 | 0x34168, _) => table_triggers::TriggerCalls(self).call(memory, offset, args),
+            (0x344e8 | 0x347dc, _) => {
+                table_triggers_next::DirectionalTriggerCalls(self).call(memory, offset, args)
+            }
             (0x2e51c | 0x5c544, []) => {
                 lifecycle_tables::TableCalls(self).call(memory, offset, args)
             }

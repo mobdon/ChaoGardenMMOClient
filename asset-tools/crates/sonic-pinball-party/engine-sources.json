@@ -5,6 +5,38 @@
   "scope": "Source evidence spans only; includes partial ports, boundaries and resources. See docs/PORT-STATUS.md for behavior coverage.",
   "spans": [
     {
+      "fixture": "tests/affine-vectors.json",
+      "key": "routines.write",
+      "name": "routines.write",
+      "offset": 9068,
+      "length": 424,
+      "sha256": "cff51620833677adc55149ace6674d3e610a8b1ed5d50fd2b2d824aab3df3d7e"
+    },
+    {
+      "fixture": "tests/affine-vectors.json",
+      "key": "routines.allocate",
+      "name": "routines.allocate",
+      "offset": 9492,
+      "length": 76,
+      "sha256": "53d7a8166bde047e8e9ce3588e61f2659fa45d00b906e21f8967531de4448285"
+    },
+    {
+      "fixture": "tests/affine-vectors.json",
+      "key": "routines.sine",
+      "name": "routines.sine",
+      "offset": 420984,
+      "length": 512,
+      "sha256": "9287394fa9384eeaaa175244a8cb0a9af4b0ff78d0bb0f58869173d342410d30"
+    },
+    {
+      "fixture": "tests/affine-vectors.json",
+      "key": "routines.cosine",
+      "name": "routines.cosine",
+      "offset": 421496,
+      "length": 512,
+      "sha256": "b41552b15b70b61ebfaf7d857b9f99849fd89889f4d273733d1e069def5ac745"
+    },
+    {
       "fixture": "tests/animation-vectors.json",
       "key": "routines.initialize",
       "name": "routines.initialize",
@@ -557,6 +589,851 @@
       "sha256": "d40e9ce59f3b4f3a78c04c8e42cca0e774a9f84298d394ce0404edc4f077b472"
     },
     {
+      "fixture": "tests/garden-frame-vectors.json",
+      "key": "routines[0]",
+      "name": "main",
+      "offset": 360,
+      "length": 52,
+      "sha256": "32b8a7e43b9990c6c92610cdd8a9bc3f09f43a7ad28adb5def7cbd7094007f6a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-frame-vectors.json",
+      "key": "routines[1]",
+      "name": "input",
+      "offset": 3024,
+      "length": 192,
+      "sha256": "86b2bae354163a140f74ea8a0000999bd84c9020a63d1891d2031a90962f1ce3",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-frame-vectors.json",
+      "key": "routines[2]",
+      "name": "callbackTrampoline",
+      "offset": 74904,
+      "length": 2,
+      "sha256": "81904e68a8b9a2427e9e87e2c61b1098057608d18357d70d9281e8513941cf53",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "routines[0]",
+      "name": "registerScript",
+      "offset": 5692,
+      "length": 52,
+      "sha256": "b072578615dc6e52b9acc3cc116b5807560ecabb5f19376ff2982e2ae48488be",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "routines[1]",
+      "name": "mapStamp",
+      "offset": 5912,
+      "length": 72,
+      "sha256": "1ea0a9a7a33516d2b16df64a8f24309fc9dbfa4d70870ea0d51d93b73b6ae9e8",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "routines[2]",
+      "name": "initialize",
+      "offset": 53908,
+      "length": 624,
+      "sha256": "d43e126197c66c6f15fbe3927eff5c0f6f76a1ff491c772339dfe158c6b0a7aa",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[0]",
+      "name": "objectPalette",
+      "offset": 90220,
+      "length": 224,
+      "sha256": "15927abd5d354edf7c87c1282f4b55c124430d985bf935c5945453181a7331d9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[1]",
+      "name": "backgroundPalette",
+      "offset": 94324,
+      "length": 416,
+      "sha256": "1dfb6add24d0c66b29e5b5a27d9cf88599017a198495e5d7168ac6c873f6d33a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[2]",
+      "name": "mapFirst",
+      "offset": 187748,
+      "length": 60,
+      "sha256": "063a5c750a0de44d16cd341810bc6739f6691770627d7cc806b4c301c3c4e1e9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[3]",
+      "name": "mapFirstAlternate",
+      "offset": 187808,
+      "length": 24,
+      "sha256": "b68b2112574772105da1fa222b10c1f5b5be3e911aef8bb45e6b10e39132c465",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[4]",
+      "name": "mapSecond",
+      "offset": 187832,
+      "length": 54,
+      "sha256": "c8334e27ff972e99363acfda5aa0bdad9b3f14a698d6d0bf216f292c5a6cc880",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[5]",
+      "name": "mapThird",
+      "offset": 187886,
+      "length": 48,
+      "sha256": "762fc0d0f51e603198a2de182b59cb94c935a6537feaad1ed071f2e88304e99e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[6]",
+      "name": "mapLeft",
+      "offset": 187934,
+      "length": 80,
+      "sha256": "40c615278c72c84cf1b8b525deb1127057f2bcc36dda9d01d341efaa5f8c1487",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[7]",
+      "name": "mapRight",
+      "offset": 188014,
+      "length": 320,
+      "sha256": "ff1cb604b6ef3f74c46e87591fb67b6222cc1fc8d2297672bc0b0f47a12304ff",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[8]",
+      "name": "registerTable",
+      "offset": 188532,
+      "length": 64,
+      "sha256": "806901e0ce2ef77e5e3e24b880f1048322c994371a61005195170af556fbed4a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[9]",
+      "name": "backgroundTilesLz77",
+      "offset": 94740,
+      "length": 8109,
+      "sha256": "d3a6c072ea314f12db73fac21ab64048dc1f50a8af1ba9e666dde3a8c5576187",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-graphics-vectors.json",
+      "key": "resources[10]",
+      "name": "objectTilesLz77",
+      "offset": 90444,
+      "length": 3878,
+      "sha256": "c187d348641b37fdf9afcbf067d32c1330cd8efcbe47749d781fec7bab4798d0",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-palette-vectors.json",
+      "key": "routines[0]",
+      "name": "gardenPaletteUpdate",
+      "offset": 7528,
+      "length": 152,
+      "sha256": "925d4befceac5d71ab610b5eeb3e71ae6792fc3d532c0b205ca70af91d1ce467",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.resetEntryAndIrq",
+      "name": "sources.resetEntryAndIrq",
+      "offset": 0,
+      "length": 196,
+      "sha256": "2c2a7bc57627bdec6775bc3a6524e426b15aab49aa6118f6b1cf04573f30ab6a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.thumbMain",
+      "name": "sources.thumbMain",
+      "offset": 360,
+      "length": 52,
+      "sha256": "32b8a7e43b9990c6c92610cdd8a9bc3f09f43a7ad28adb5def7cbd7094007f6a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.boardSetupPrefix",
+      "name": "sources.boardSetupPrefix",
+      "offset": 54532,
+      "length": 448,
+      "sha256": "17eac4eff3685de2e8e90d9c52ebd4d3fe5d0779dfd3adef4a3b0ffa4512e8e8",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.setupTailAndLiterals",
+      "name": "sources.setupTailAndLiterals",
+      "offset": 54980,
+      "length": 264,
+      "sha256": "a4965d71d6e538d1122193897eedbc629d4a96b865ecff24b4f7b08d91e5728b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.frameCallback",
+      "name": "sources.frameCallback",
+      "offset": 55244,
+      "length": 216,
+      "sha256": "c85b555e957585c2587d9f28efb835b494ebe5441e4c14c05360653b50f64ff8",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.initializeObjects",
+      "name": "sources.initializeObjects",
+      "offset": 3216,
+      "length": 116,
+      "sha256": "c74c9e2cf2914b3b16a6d8418c38997cf1e5d805cf554d532e552e0108bf267a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.allocateObject",
+      "name": "sources.allocateObject",
+      "offset": 3332,
+      "length": 172,
+      "sha256": "168464f8e6d170a06a4fea0aef4cb34ceadbe6a119cb48d82fb5956f1b9cad98",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.initializeOam",
+      "name": "sources.initializeOam",
+      "offset": 4752,
+      "length": 80,
+      "sha256": "78d82657ae7a1490c06c184e0b520cb6f2b663f86055671f7076d6afc3b5f09d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.uploadOam",
+      "name": "sources.uploadOam",
+      "offset": 4832,
+      "length": 24,
+      "sha256": "9ec32d38531fc6fe89fc2eec84318af546cd642694fc584004fa1602393f8b40",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.displayWriteQueue",
+      "name": "sources.displayWriteQueue",
+      "offset": 5756,
+      "length": 156,
+      "sha256": "b3dc51d4f7bdfa9749d89d33bf9678e496713cddccebe7ea0486dd8f4e245dfc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.biosCopy",
+      "name": "sources.biosCopy",
+      "offset": 72416,
+      "length": 8,
+      "sha256": "f854515ec2371b52f97c8e757eb70fb42640e3ec1af829827b174e67fff34cda",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.rng",
+      "name": "sources.rng",
+      "offset": 5428,
+      "length": 32,
+      "sha256": "1bda6b24868e07d883082aa5ba2ca44ee58445c29a45f22f9efb58dd09692aed",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.biosDiv",
+      "name": "sources.biosDiv",
+      "offset": 72424,
+      "length": 4,
+      "sha256": "8e93a1720c694e06005b83e2dbaf36a800649ab8948fc4e15efa39309f4c5ce6",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.roundCountsAndTags",
+      "name": "sources.roundCountsAndTags",
+      "offset": 188680,
+      "length": 15,
+      "sha256": "05bd5e3cf3adc76038e0412ab229624f1de02edc133eca095b5d838d543f8457",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.directions",
+      "name": "sources.directions",
+      "offset": 188699,
+      "length": 14,
+      "sha256": "4f1370f58df1b81bdd10770b2ebb61935b63bd36ad1b1884921c88c3b0ffcc47",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.flipRay",
+      "name": "sources.flipRay",
+      "offset": 59764,
+      "length": 232,
+      "sha256": "b51bcf7fde049dd3db32330eb9aa305d6b6c5330fa65922b7c2da6b269e1723b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-payload-vectors.json",
+      "key": "sources.flipSevenDirections",
+      "name": "sources.flipSevenDirections",
+      "offset": 59996,
+      "length": 172,
+      "sha256": "e211821847303d72a77c111bf51fdd065a0fb0eeda038206a6ac7ac7eb3814d4",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "storedGarden",
+      "name": "storedGarden",
+      "offset": 854384,
+      "length": 152552,
+      "sha256": "72fd1b2645fc1358ad131a697dac1c53b4ae57f195759ff78e1535ebda70d29f"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.armResetAndIrq",
+      "name": "codeSpans.armResetAndIrq",
+      "offset": 0,
+      "length": 196,
+      "sha256": "2c2a7bc57627bdec6775bc3a6524e426b15aab49aa6118f6b1cf04573f30ab6a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.initialization",
+      "name": "codeSpans.initialization",
+      "offset": 196,
+      "length": 164,
+      "sha256": "7b506458757d373a076b78a18dcfecb522eb8b2fdc980fb89345efa4c13f4a84",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.mainLoop",
+      "name": "codeSpans.mainLoop",
+      "offset": 360,
+      "length": 52,
+      "sha256": "32b8a7e43b9990c6c92610cdd8a9bc3f09f43a7ad28adb5def7cbd7094007f6a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.saveLoader",
+      "name": "codeSpans.saveLoader",
+      "offset": 584,
+      "length": 356,
+      "sha256": "25cdd363c8dfbc6b6605bc11614c6f378c039cc52788cc4360a5bdd6941a2e92",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.saveWriter",
+      "name": "codeSpans.saveWriter",
+      "offset": 940,
+      "length": 144,
+      "sha256": "febb036c5b5a31d039e3047f150466b7367ff6122d1820e8c2f0a1e18067e512",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.saveInitializer",
+      "name": "codeSpans.saveInitializer",
+      "offset": 1084,
+      "length": 68,
+      "sha256": "eed92d3d6deeac9554f08812f57b3897db3db5ccaea36b7a93606f6ef03fd027",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.joybusInitialize",
+      "name": "codeSpans.joybusInitialize",
+      "offset": 1152,
+      "length": 272,
+      "sha256": "95209ade487569aaaa849dffd660451f6de87f94e21b059c311466c8e70e803b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.joybusMaintenance",
+      "name": "codeSpans.joybusMaintenance",
+      "offset": 1424,
+      "length": 296,
+      "sha256": "87850bc1fd58007f7dde078a99194dafaf4a69b36276271d34e4b826ed9eb82f",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.joybusIrqGroup",
+      "name": "codeSpans.joybusIrqGroup",
+      "offset": 1720,
+      "length": 1304,
+      "sha256": "65ef37578af54d815cd5c1b2c67c27788dbc40c04bd5c201eddb571dd5598d9a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.input",
+      "name": "codeSpans.input",
+      "offset": 3024,
+      "length": 156,
+      "sha256": "8bad175b1212b6b021e9d76e435b32379d0c6a87decede83bdfb2a50d4461314",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.inputInitialize",
+      "name": "codeSpans.inputInitialize",
+      "offset": 3180,
+      "length": 36,
+      "sha256": "9dfb197990d9ffb1976f56e23382d5f24cd1dd8c0e31d96b74bd9c4675930158",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.taskInitialize",
+      "name": "codeSpans.taskInitialize",
+      "offset": 3216,
+      "length": 116,
+      "sha256": "c74c9e2cf2914b3b16a6d8418c38997cf1e5d805cf554d532e552e0108bf267a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.taskAllocate",
+      "name": "codeSpans.taskAllocate",
+      "offset": 3332,
+      "length": 172,
+      "sha256": "168464f8e6d170a06a4fea0aef4cb34ceadbe6a119cb48d82fb5956f1b9cad98",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.taskDispatch",
+      "name": "codeSpans.taskDispatch",
+      "offset": 3756,
+      "length": 40,
+      "sha256": "9f2bc32c517324764cc4b4daaed554baca0b38c64317fb0225f55864713d2272",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.oamComposition",
+      "name": "codeSpans.oamComposition",
+      "offset": 4232,
+      "length": 244,
+      "sha256": "15820948718dfac281dfda0dc9f9dd7848e59ac9a9561e1bb5a6c086d415694d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.oamUpload",
+      "name": "codeSpans.oamUpload",
+      "offset": 4832,
+      "length": 24,
+      "sha256": "9ec32d38531fc6fe89fc2eec84318af546cd642694fc584004fa1602393f8b40",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.queuedBgTransfer",
+      "name": "codeSpans.queuedBgTransfer",
+      "offset": 5152,
+      "length": 252,
+      "sha256": "a01b5cb53ae43c71940df3480c029d29c69d5d18ab14543b1a7b376271d29a3d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.gardenInitialize",
+      "name": "codeSpans.gardenInitialize",
+      "offset": 6344,
+      "length": 656,
+      "sha256": "b9457f72a85b2f7bf4b3ee73dc00ae4cd94820ccf23e07176f4de3d43b6e25fc",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.gardenStaticLoader",
+      "name": "codeSpans.gardenStaticLoader",
+      "offset": 7264,
+      "length": 264,
+      "sha256": "37dfa53fc38f5ccf96e15354c915c13863c396aa99fbb9d1760711fd1fe1bc39",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.gardenFrame",
+      "name": "codeSpans.gardenFrame",
+      "offset": 7528,
+      "length": 152,
+      "sha256": "925d4befceac5d71ab610b5eeb3e71ae6792fc3d532c0b205ca70af91d1ce467",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.pauseAndSaveUi",
+      "name": "codeSpans.pauseAndSaveUi",
+      "offset": 8588,
+      "length": 472,
+      "sha256": "1f985cc100c67c977961a6e1f266614d6b4b75c6e7472eb0565e283e8a04318c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.ringsAndStatsHud",
+      "name": "codeSpans.ringsAndStatsHud",
+      "offset": 10540,
+      "length": 1128,
+      "sha256": "a3dd758a4122d631d495ac957cee49dde3238f429d7b938ff1f9678e5ff35014",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.communicationTaskGroup",
+      "name": "codeSpans.communicationTaskGroup",
+      "offset": 11960,
+      "length": 1388,
+      "sha256": "46c867596a4d5ee4d32b5c3c5c16957a77682608e5209654ca54f27add33d342",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.objectSpawner",
+      "name": "codeSpans.objectSpawner",
+      "offset": 13348,
+      "length": 272,
+      "sha256": "85a58d91e775536e1780c2e3d27a6ba6ec2f85ebfe2d659807d2a42a17b859d9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.chaoInitialize",
+      "name": "codeSpans.chaoInitialize",
+      "offset": 16864,
+      "length": 568,
+      "sha256": "91217ee971fc7ce7287a3a6fabeef7b3e0533b104c004cb1efe9aa37369bc738",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.chaoFrameAndActions",
+      "name": "codeSpans.chaoFrameAndActions",
+      "offset": 17432,
+      "length": 6720,
+      "sha256": "b9f190d0fe89d2b29a1b060e4f5f1592e5ee9e8792f3268a21e6dc00c0e937ed",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.highestSongCallWitness",
+      "name": "codeSpans.highestSongCallWitness",
+      "offset": 19398,
+      "length": 64,
+      "sha256": "1079294c88651825c0001840c6e128f2959580ae41e1322f3c0f618163d1fe47",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.chaoMovement",
+      "name": "codeSpans.chaoMovement",
+      "offset": 24152,
+      "length": 164,
+      "sha256": "d6c301969987ea3835d362dfe5f3684fd0865bd3f2f22b9b5bd0cd051862989a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.chaoStateSelection",
+      "name": "codeSpans.chaoStateSelection",
+      "offset": 24316,
+      "length": 1652,
+      "sha256": "36589100c780da5de31ecb769b05f3e001a93e0735bb2e68195018c700dfa39a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.shopInitialize",
+      "name": "codeSpans.shopInitialize",
+      "offset": 29952,
+      "length": 392,
+      "sha256": "77ade55b6cf80de42372f58b0b346820231b8d2258be784ce83b40f5dd5a3f2a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.shopPanel",
+      "name": "codeSpans.shopPanel",
+      "offset": 30344,
+      "length": 752,
+      "sha256": "ed2f913ffbd94f64d8cfffac1f332234c6c7cc28c0a04d26ca90e34ecec2ddea",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.purchaseCategory0",
+      "name": "codeSpans.purchaseCategory0",
+      "offset": 31096,
+      "length": 392,
+      "sha256": "274fbb2bb3ccf9210f5c331ddae6140e9c03e1dc644bfed072b54bd25cc93e3d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.purchaseCategory1",
+      "name": "codeSpans.purchaseCategory1",
+      "offset": 31488,
+      "length": 332,
+      "sha256": "cdbb7a30955be24878485c2f4c5a51ce481625d402b0ad4c63a27041dfd7ee01",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.purchaseCategory2",
+      "name": "codeSpans.purchaseCategory2",
+      "offset": 31820,
+      "length": 340,
+      "sha256": "320037ec695af04add11623d4ed5dcb7e9a06c8f8729617827bc6a7ac9abd05e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.foodInteraction",
+      "name": "codeSpans.foodInteraction",
+      "offset": 32160,
+      "length": 620,
+      "sha256": "4a698278ded4621c62540cc9eaa47fbd9b11d14dfd17693d1bb73d0ea2a6e7b5",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.otherItemInteractions",
+      "name": "codeSpans.otherItemInteractions",
+      "offset": 32780,
+      "length": 792,
+      "sha256": "4d9d693a8735ba2370ba89ed7cd16c2c388bde041cbdbe96f65e79e322657845",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.inventoryItemInitialize",
+      "name": "codeSpans.inventoryItemInitialize",
+      "offset": 33572,
+      "length": 192,
+      "sha256": "0098d3a90f509ed9b57e997384b8d2d4b37ac358868727d97c220f7eb0efd53c",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.soundInitialize",
+      "name": "codeSpans.soundInitialize",
+      "offset": 67048,
+      "length": 120,
+      "sha256": "d30e3b7303bcedf45aad2972b163beb6f491ee3d33c24a065c62b4bbdf51b8e1",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.soundMain",
+      "name": "codeSpans.soundMain",
+      "offset": 67168,
+      "length": 12,
+      "sha256": "be97755229b87ccfc5d520e15242c95995c59ad569dce54f4e9eb0fbc9c3bb5d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.songStart",
+      "name": "codeSpans.songStart",
+      "offset": 67180,
+      "length": 44,
+      "sha256": "12628e8926a91827d7b875c4d73b42c0407510c64dbe55f0bc70f6e500d2907b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "codeSpans.songStartOrRestart",
+      "name": "codeSpans.songStartOrRestart",
+      "offset": 67224,
+      "length": 76,
+      "sha256": "20a1d66edbace4b6d7be82cc8478c08718210f043c2f36b56e9f36e710fb0219",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.chaoStatePointers",
+      "name": "dataSpans.chaoStatePointers",
+      "offset": 17876,
+      "length": 256,
+      "sha256": "bc28317d2050abd69dd85beed9824cc92bedd072c1eddb4e10a2040d9472bd6e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.foodEffects",
+      "name": "dataSpans.foodEffects",
+      "offset": 75420,
+      "length": 49,
+      "sha256": "b33ae558a366ac031e7326d7ade4d3a38f3818f21c6139f6a97a8ceeaa3c49bd",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.shopCategoryOrder",
+      "name": "dataSpans.shopCategoryOrder",
+      "offset": 75469,
+      "length": 7,
+      "sha256": "57355ac3303c148f11aef7cb179456b9232cde33a818dfda2c2fcb9325749a6b",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.shopPrices0",
+      "name": "dataSpans.shopPrices0",
+      "offset": 75476,
+      "length": 28,
+      "sha256": "e9eaed988f3156a9b8c28f72dc48adac7c1735915afd280c7a2406529cc2dc19",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.shopPrices1",
+      "name": "dataSpans.shopPrices1",
+      "offset": 75504,
+      "length": 48,
+      "sha256": "53168556e91578a45777528ddd9f9ce8ed0ae63bbdfc0afb8850ca8fdc055b2d",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.shopPrices2",
+      "name": "dataSpans.shopPrices2",
+      "offset": 75552,
+      "length": 12,
+      "sha256": "0935002e4c7afc324f5aca05efcb6b3d674834a5cd1e6391f2fdf7e66c940909",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.soundPlayers",
+      "name": "dataSpans.soundPlayers",
+      "offset": 105440,
+      "length": 48,
+      "sha256": "376f11609385beff83adf58f0e4c8908ae4f3f11b201ee46ec828d02adba8d7a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.soundSongRecords",
+      "name": "dataSpans.soundSongRecords",
+      "offset": 105488,
+      "length": 296,
+      "sha256": "4daf243e3b087f32dd522837437f589adec8cb507706ab61b3a0342d6f0df812",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballMap0",
+      "name": "dataSpans.ballMap0",
+      "offset": 187748,
+      "length": 60,
+      "sha256": "063a5c750a0de44d16cd341810bc6739f6691770627d7cc806b4c301c3c4e1e9",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballMap1",
+      "name": "dataSpans.ballMap1",
+      "offset": 187808,
+      "length": 24,
+      "sha256": "b68b2112574772105da1fa222b10c1f5b5be3e911aef8bb45e6b10e39132c465",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballMap2",
+      "name": "dataSpans.ballMap2",
+      "offset": 187832,
+      "length": 54,
+      "sha256": "c8334e27ff972e99363acfda5aa0bdad9b3f14a698d6d0bf216f292c5a6cc880",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballMap3",
+      "name": "dataSpans.ballMap3",
+      "offset": 187886,
+      "length": 48,
+      "sha256": "762fc0d0f51e603198a2de182b59cb94c935a6537feaad1ed071f2e88304e99e",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballMap4",
+      "name": "dataSpans.ballMap4",
+      "offset": 187934,
+      "length": 80,
+      "sha256": "40c615278c72c84cf1b8b525deb1127057f2bcc36dda9d01d341efaa5f8c1487",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballMap5",
+      "name": "dataSpans.ballMap5",
+      "offset": 188014,
+      "length": 320,
+      "sha256": "ff1cb604b6ef3f74c46e87591fb67b6222cc1fc8d2297672bc0b0f47a12304ff",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballRegisters",
+      "name": "dataSpans.ballRegisters",
+      "offset": 188532,
+      "length": 64,
+      "sha256": "806901e0ce2ef77e5e3e24b880f1048322c994371a61005195170af556fbed4a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballBgPalette",
+      "name": "dataSpans.ballBgPalette",
+      "offset": 94324,
+      "length": 416,
+      "sha256": "1dfb6add24d0c66b29e5b5a27d9cf88599017a198495e5d7168ac6c873f6d33a",
+      "space": "garden"
+    },
+    {
+      "fixture": "tests/garden-systems-vectors.json",
+      "key": "dataSpans.ballObjPalette",
+      "name": "dataSpans.ballObjPalette",
+      "offset": 90220,
+      "length": 224,
+      "sha256": "15927abd5d354edf7c87c1282f4b55c124430d985bf935c5945453181a7331d9",
+      "space": "garden"
+    },
+    {
       "fixture": "tests/graphics_frame-vectors.json",
       "key": "routines.begin",
       "name": "routines.begin",
@@ -603,6 +1480,38 @@
       "offset": 10476,
       "length": 24,
       "sha256": "1eb2c0655d62462cb604e3c7aadccc57d29b566f74f9c62fdb77cf9b0335840c"
+    },
+    {
+      "fixture": "tests/graphics_ports-vectors.json",
+      "key": "routines.begin",
+      "name": "routines.begin",
+      "offset": 7620,
+      "length": 160,
+      "sha256": "7f8e7679814242dbdc3ce96dfcbe4eda9ce1dd353ddc7c0a7dded26dd22c6523"
+    },
+    {
+      "fixture": "tests/graphics_ports-vectors.json",
+      "key": "routines.affine",
+      "name": "routines.affine",
+      "offset": 9068,
+      "length": 424,
+      "sha256": "cff51620833677adc55149ace6674d3e610a8b1ed5d50fd2b2d824aab3df3d7e"
+    },
+    {
+      "fixture": "tests/graphics_ports-vectors.json",
+      "key": "routines.submit",
+      "name": "routines.submit",
+      "offset": 9748,
+      "length": 124,
+      "sha256": "2da13e38a8d7500ff026faa9057c867cfb52da8bf9969f48cfb67f216261fbbc"
+    },
+    {
+      "fixture": "tests/graphics_ports-vectors.json",
+      "key": "routines.compose",
+      "name": "routines.compose",
+      "offset": 9984,
+      "length": 492,
+      "sha256": "7e5c1f49a3aec57c60cbedbb7dc51effb0bc99accd8c4202848a49518704b7e0"
     },
     {
       "fixture": "tests/interpolation-vectors.json",
@@ -707,6 +1616,78 @@
       "offset": 12200,
       "length": 20,
       "sha256": "dae4eb333910023603615b122cb0df837441d1f817f7c43062c48e0bc6609f40"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.sequence",
+      "name": "routines.sequence",
+      "offset": 26660,
+      "length": 1484,
+      "sha256": "0aa6d8f5d6311feaccf5b74b00472d59264109d136336eec24e83d54848998d4"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.copy",
+      "name": "routines.copy",
+      "offset": 398248,
+      "length": 96,
+      "sha256": "79749a95af8d1e1b6b7f16d76da958e2faee958f09e7e4e4d1509e9840a85a44"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.unsignedDivide",
+      "name": "routines.unsignedDivide",
+      "offset": 396924,
+      "length": 120,
+      "sha256": "3fd4d608396f6a8895ab88e55a2383833b2986e1634d294bc1ac92f6d5406c6f"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.interpolation",
+      "name": "routines.interpolation",
+      "offset": 26172,
+      "length": 188,
+      "sha256": "5e70c01cb0cf642b1af8f9d88fa2c1d5d5f3c955f9c9dbdc9aea223cae6e7069"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.submission",
+      "name": "routines.submission",
+      "offset": 9748,
+      "length": 124,
+      "sha256": "2da13e38a8d7500ff026faa9057c867cfb52da8bf9969f48cfb67f216261fbbc"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.pop",
+      "name": "routines.pop",
+      "offset": 12200,
+      "length": 20,
+      "sha256": "dae4eb333910023603615b122cb0df837441d1f817f7c43062c48e0bc6609f40"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.queueReset",
+      "name": "routines.queueReset",
+      "offset": 9600,
+      "length": 12,
+      "sha256": "44ff7825697236b23fd7bca272f60cdc4ff61309773d5e33fd69997115687179"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.complete",
+      "name": "routines.complete",
+      "offset": 26452,
+      "length": 16,
+      "sha256": "0a0d209f759fe5f94b0e3749fde74cbc6fd59fe32b65cf14ba1da6e94b59f903"
+    },
+    {
+      "fixture": "tests/intro-sequence-vectors.json",
+      "key": "routines.startup",
+      "name": "routines.startup",
+      "offset": 33256,
+      "length": 120,
+      "sha256": "634a6001b14c77aaa88ff8cc8e1bca4874d14b4ad53b07c673f156541caf6b54"
     },
     {
       "fixture": "tests/intro-vectors.json",
@@ -861,6 +1842,94 @@
       "sha256": "9c9e60ec4bd598b1551293dc50521c9b4d011cb3822e53865d16647cb01ac008"
     },
     {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.entry",
+      "name": "routines.entry",
+      "offset": 118604,
+      "length": 752,
+      "sha256": "0e62bcfd63813183ed28473f883ca92981cddb57b93f9b4626cf8acbcd7f4901"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.resume",
+      "name": "routines.resume",
+      "offset": 112284,
+      "length": 12,
+      "sha256": "63813c56101a64f13c7cc33ffd0ddf548a13abb410f5ce7485d9cbc4f9bf5fb7"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.resumeSecond",
+      "name": "routines.resumeSecond",
+      "offset": 112296,
+      "length": 40,
+      "sha256": "7fef9a6dcea4e035ea8b6704fe3d7f0f6bc667edcdb99e6f793212ad1231cbc6"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.resumeThird",
+      "name": "routines.resumeThird",
+      "offset": 112336,
+      "length": 40,
+      "sha256": "729926b9e7a7fa47c3f9ee2680e3cdb6ca73e5229000026a3173d298ae1a0565"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.lookup",
+      "name": "routines.lookup",
+      "offset": 112376,
+      "length": 68,
+      "sha256": "a53e5dd163a24c155a6b4729cf1cc83a0189fcaa9baee598c8b8b0b8862bce54"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.selection",
+      "name": "routines.selection",
+      "offset": 103904,
+      "length": 2076,
+      "sha256": "be6d4acefdb8d62c9e4c5ee0539f2be0eebce3adedc96bcb5570cd72ef20aad6"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.selectionFade",
+      "name": "routines.selectionFade",
+      "offset": 89632,
+      "length": 56,
+      "sha256": "1036c98fd5245ffa72c781292597575d677de409156e71d18d6a53990f3927ef"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.slideOut",
+      "name": "routines.slideOut",
+      "offset": 89688,
+      "length": 72,
+      "sha256": "8ae5130affa7d59ece08957cb2765e0968e20aaa9ac621edbb8dc19c85ecef2f"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.slideIn",
+      "name": "routines.slideIn",
+      "offset": 89760,
+      "length": 72,
+      "sha256": "83d1b4c921949287e3b133eb6453fb1ac241e266523b7d967f001b8629a0234c"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.cancelFade",
+      "name": "routines.cancelFade",
+      "offset": 89832,
+      "length": 84,
+      "sha256": "f6ccdc11a2eec9b363756d5f93b2d5a3f49afd917cb5ef888d31ca34395f39ec"
+    },
+    {
+      "fixture": "tests/mode-menu-vectors.json",
+      "key": "routines.paletteIntro",
+      "name": "routines.paletteIntro",
+      "offset": 105980,
+      "length": 380,
+      "sha256": "c24286469d9a3a9514b6cc4f8a48f0276718615e8b0b34dd2222bd31de9cbf18"
+    },
+    {
       "fixture": "tests/mplay-vectors.json",
       "key": "routines[0]",
       "name": "open",
@@ -915,6 +1984,142 @@
       "offset": 388948,
       "length": 152,
       "sha256": "5bc6c1b30b9ef6694b19f65e9cb4717464094575425fe9bb2696f51abb1615fa"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[0]",
+      "name": "tick",
+      "offset": 385960,
+      "length": 616,
+      "sha256": "4aed271a94f8dd45897ee0b891ccf1101219125a813807c9d2178f379602e625"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[1]",
+      "name": "note",
+      "offset": 386692,
+      "length": 512,
+      "sha256": "d6674254ab734e962dcde6274c080175cc66fd8bba6f855d7d8dee3cf0a10ca1"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[2]",
+      "name": "pitch",
+      "offset": 387348,
+      "length": 100,
+      "sha256": "d0a5917a15e89ff2b3a224d270d63c04e263b3d09c88af825804377d9eacde9c"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[3]",
+      "name": "multiply",
+      "offset": 384248,
+      "length": 16,
+      "sha256": "1addb8be644cbaa9421a91f6cd6d91407907e9c92320f56ae49804b98fc29a81"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[4]",
+      "name": "keys",
+      "offset": 1007592,
+      "length": 180,
+      "sha256": "52e19ba195ffad7aa82ac71bf26543d912f3e3a763e40c755ce0e71b674ef9e7"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[5]",
+      "name": "scales",
+      "offset": 1007772,
+      "length": 48,
+      "sha256": "6b73747d3fb29635eeda13481d08a06e5371958ee746967aa892fa5390509404"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[6]",
+      "name": "psg_pitch",
+      "offset": 390160,
+      "length": 168,
+      "sha256": "54c17aaded94bc0d4fd4d86ce69df0e0dc15679d7b3046643be4ff45632dc6e1"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[7]",
+      "name": "psg_keys",
+      "offset": 1007844,
+      "length": 132,
+      "sha256": "2ab14116232b5768777f67dd371a380bd88fdc97858aa050306b132d05faa03e"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[8]",
+      "name": "psg_scales",
+      "offset": 1007976,
+      "length": 24,
+      "sha256": "34e0ae7c2f912add79c2e61ed8347ff085000bc39f0173883ccbaff150205ee5"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[9]",
+      "name": "noise",
+      "offset": 1008000,
+      "length": 60,
+      "sha256": "197f0679262884d48dd459dcfe690c0a41e8a73cf76cb62838119fc9cb0e7ab6"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[10]",
+      "name": "waits",
+      "offset": 1008076,
+      "length": 49,
+      "sha256": "952d81c712713fc630d9d622d5f79eec8189f2a4cf05a78442857b635f0d23f8"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[11]",
+      "name": "dispatch",
+      "offset": 1007448,
+      "length": 144,
+      "sha256": "07070902ece8f71e1302f45bc09ae93555c715dc7c578a7eda7901a981f6358f"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[12]",
+      "name": "unlink",
+      "offset": 385352,
+      "length": 32,
+      "sha256": "c3d23903d0b87a7b19fcd84aa0234c674e3014a9a2835853727defeaad3422dc"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[13]",
+      "name": "unlink_wrapper",
+      "offset": 388496,
+      "length": 20,
+      "sha256": "2f962ba32754a3208bbbd994a2427ed0c4e9f8b281f4bc0c5464d6b130cf3f30"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[14]",
+      "name": "clear_lfo",
+      "offset": 387268,
+      "length": 28,
+      "sha256": "4317009f4748028f27c2ac3672106a2c22d1eb90ad97d417fbe8f76d31477982"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[15]",
+      "name": "parameters",
+      "offset": 389980,
+      "length": 180,
+      "sha256": "00879cc3e04cd6caf909a6f1763a16ae1ceff8b9f40b83afea83b283b3dc35f5"
+    },
+    {
+      "fixture": "tests/notes-vectors.json",
+      "key": "routines[16]",
+      "name": "volume",
+      "offset": 386644,
+      "length": 48,
+      "sha256": "04988bf8e911a12b477d9aafa24342b68e83960a06796e555869cc67b24bd4d2"
     },
     {
       "fixture": "tests/nudge-native-vectors.json",
@@ -1043,6 +2248,70 @@
       "offset": 392884,
       "length": 4,
       "sha256": "07967ebdc3979cd4fd4de37fd22b3e6de8965b00dae4ac5585577c9709839652"
+    },
+    {
+      "fixture": "tests/psg-vectors.json",
+      "key": "routines[0]",
+      "name": "key_off",
+      "offset": 390328,
+      "length": 80,
+      "sha256": "67a2670376360f300df5a7d18b458792da50002de9bcde7580342dcf8c366fcf"
+    },
+    {
+      "fixture": "tests/psg-vectors.json",
+      "key": "routines[1]",
+      "name": "gain",
+      "offset": 390408,
+      "length": 104,
+      "sha256": "584762a3caa5fe9d71f2afd7fe58f2e5a8d2ef8efb2c4d68df84a621b84c9b88"
+    },
+    {
+      "fixture": "tests/psg-vectors.json",
+      "key": "routines[2]",
+      "name": "update",
+      "offset": 390512,
+      "length": 1100,
+      "sha256": "1a723c2dca0fd2363118819467f369cd5814accdc367a432e760158af600e5a3"
+    },
+    {
+      "fixture": "tests/psg-vectors.json",
+      "key": "routines[3]",
+      "name": "curve",
+      "offset": 1008060,
+      "length": 16,
+      "sha256": "86480498f3bc57863a295f2c9a9752be09fd91cb28c998650fa2b7ae3bdefd24"
+    },
+    {
+      "fixture": "tests/psg-vectors.json",
+      "key": "routines[4]",
+      "name": "lookup_extent",
+      "offset": 1008060,
+      "length": 256,
+      "sha256": "2a91d7b83d8f677f2901d30d3c05074db85ee857a6416fdad13db84e45e318a7"
+    },
+    {
+      "fixture": "tests/scoring-vectors.json",
+      "key": "routines[0]",
+      "name": "score_award",
+      "offset": 199768,
+      "length": 76,
+      "sha256": "5ecce8e193e1e5c392904090dea35188e3d8943015b21efa87cb716139475725"
+    },
+    {
+      "fixture": "tests/scoring-vectors.json",
+      "key": "routines[1]",
+      "name": "four_contact_event",
+      "offset": 212288,
+      "length": 772,
+      "sha256": "8d341fd0669d26f5d52c1740b8f261cb9896045f96f7f3cad43ef2bc047e80b1"
+    },
+    {
+      "fixture": "tests/scoring-vectors.json",
+      "key": "routines[2]",
+      "name": "progress_message",
+      "offset": 199968,
+      "length": 212,
+      "sha256": "5d5430a0c2a31a56b4dede0fdf4d16ef08106b7ea37e5c04c2524ecd435c9b5b"
     },
     {
       "fixture": "tests/sequence-extended-vectors.json",
@@ -1219,6 +2488,94 @@
       "offset": 385484,
       "length": 12,
       "sha256": "010e01a515d6e7eee6249524429999a1b68537114c487bd9ace668ecf5841cf0"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[0]",
+      "name": "tick",
+      "offset": 385960,
+      "length": 616,
+      "sha256": "4aed271a94f8dd45897ee0b891ccf1101219125a813807c9d2178f379602e625"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[1]",
+      "name": "fade",
+      "offset": 389780,
+      "length": 200,
+      "sha256": "79f701b4059c25040b466e336b099e718eb6bd85d0d0fcb3aee7cc2e218aa39f"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[2]",
+      "name": "parameters",
+      "offset": 389980,
+      "length": 180,
+      "sha256": "00879cc3e04cd6caf909a6f1763a16ae1ceff8b9f40b83afea83b283b3dc35f5"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[3]",
+      "name": "volume",
+      "offset": 386644,
+      "length": 48,
+      "sha256": "04988bf8e911a12b477d9aafa24342b68e83960a06796e555869cc67b24bd4d2"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[4]",
+      "name": "end_tie",
+      "offset": 387204,
+      "length": 64,
+      "sha256": "3e069790b65fccbf8336f5eea85d29e3fbc9fc91a2d6dcd363df78663584ad9d"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[5]",
+      "name": "clear_lfo",
+      "offset": 387268,
+      "length": 28,
+      "sha256": "4317009f4748028f27c2ac3672106a2c22d1eb90ad97d417fbe8f76d31477982"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[6]",
+      "name": "raw_next",
+      "offset": 387296,
+      "length": 12,
+      "sha256": "e4238e77b732dc6af7508b2c5602ff2be8caac3462dadeeadd9a5d437dd31120"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[7]",
+      "name": "speed",
+      "offset": 387308,
+      "length": 20,
+      "sha256": "8735de46279db18f4c72f2c0c315877a1f90e673db2edb263b2f911a36cd5162"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[8]",
+      "name": "depth",
+      "offset": 387328,
+      "length": 20,
+      "sha256": "00ae8370e42929ddb727f93cd133ae72abb36a748bf3452625f99cb4504b4596"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[9]",
+      "name": "dispatch",
+      "offset": 1007448,
+      "length": 144,
+      "sha256": "07070902ece8f71e1302f45bc09ae93555c715dc7c578a7eda7901a981f6358f"
+    },
+    {
+      "fixture": "tests/sequencer-vectors.json",
+      "key": "routines[10]",
+      "name": "waits",
+      "offset": 1008076,
+      "length": 49,
+      "sha256": "952d81c712713fc630d9d622d5f79eec8189f2a4cf05a78442857b635f0d23f8"
     },
     {
       "fixture": "tests/sound-vectors.json",
@@ -1661,6 +3018,14 @@
       "sha256": "9789e08b7d0f1ed9c72f430b288916b202f832913e105c3a8e0f222ff3dbef8a"
     },
     {
+      "fixture": "tests/table_objects-vectors.json",
+      "key": "routines[0]",
+      "name": "table_object_placement",
+      "offset": 130096,
+      "length": 2296,
+      "sha256": "ce16b6209787f6a7ecd282614145ed5978cf08ed973b7f31054b7217f39dcaed"
+    },
+    {
       "fixture": "tests/table_presentation-vectors.json",
       "key": "routines[0]",
       "name": "presentation_start",
@@ -1739,6 +3104,166 @@
       "offset": 197792,
       "length": 1388,
       "sha256": "d9ee1dabb13ad9be708a944a5e9d1edc397fb7f397ab0dfda8c8515f6f2fbd5b"
+    },
+    {
+      "fixture": "tests/table_triggers-vectors.json",
+      "key": "routines[0]",
+      "name": "four_contact",
+      "offset": 213060,
+      "length": 292,
+      "sha256": "6970fca33f7403bd072c53374aa0b91601f50e604a5fc44329b3da3d08b4cc56"
+    },
+    {
+      "fixture": "tests/table_triggers-vectors.json",
+      "key": "routines[1]",
+      "name": "six_contact",
+      "offset": 213352,
+      "length": 896,
+      "sha256": "fb7359cb6883ffd29efedf0513d796de43a46f4b2a307236820e0365e9918c6e"
+    },
+    {
+      "fixture": "tests/table_triggers_next-vectors.json",
+      "key": "routines[0]",
+      "name": "directional_contacts",
+      "offset": 214248,
+      "length": 756,
+      "sha256": "3db755efdb76dc7a51e84ab4609488c744c420a6025098083061df9808271d78"
+    },
+    {
+      "fixture": "tests/table_triggers_next-vectors.json",
+      "key": "routines[1]",
+      "name": "alternate_directional_contacts",
+      "offset": 215004,
+      "length": 720,
+      "sha256": "62dcec5e063ba955392b5c080c65dcab4524ca2847260e1c2a005873935fe24c"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.constructor",
+      "name": "routines.constructor",
+      "offset": 33376,
+      "length": 248,
+      "sha256": "20f0aee31ce1d955ce0f937d5a505594576d7c2a7f77817f0a97241f70566033"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.interpolation",
+      "name": "routines.interpolation",
+      "offset": 33624,
+      "length": 188,
+      "sha256": "6be9df84ca1afb15d80592c35a31e0c26f3a80c83336427a28723671272fad97"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.paletteFade",
+      "name": "routines.paletteFade",
+      "offset": 33812,
+      "length": 60,
+      "sha256": "5aaf676095101137f31e063b0cab70aee985a2fe64dc3b80681071ca6f1ce206"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.specialFade",
+      "name": "routines.specialFade",
+      "offset": 33872,
+      "length": 68,
+      "sha256": "6080092411e89b5590b0d9135e9694b338ad1de08bfdc5156c40f220bc6ecf4b"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.timeoutFade",
+      "name": "routines.timeoutFade",
+      "offset": 33940,
+      "length": 140,
+      "sha256": "1d41bba6a53804cd6132bd16a158efa1649778fb0a3087ffeb6275af60e3c35f"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.idle",
+      "name": "routines.idle",
+      "offset": 34080,
+      "length": 908,
+      "sha256": "7b03442714d8f30d6deac044680c6f8d0506ddd3900c6c0ea5db9c006e5213e9"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.localizedResources",
+      "name": "routines.localizedResources",
+      "offset": 34988,
+      "length": 344,
+      "sha256": "2a98cd6b2d996c14a60f97a9b51f25d9dd506fc9efd5dbb88a4c00c56ae3c76b"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.scroll",
+      "name": "routines.scroll",
+      "offset": 35332,
+      "length": 168,
+      "sha256": "b224663ed3f7e7648a47a1622f64a88f2e5d730209940fa78ca45f0de8430625"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.wait",
+      "name": "routines.wait",
+      "offset": 35500,
+      "length": 52,
+      "sha256": "102d961982ee56340786865cb323c42e4f0fb057b33685bb4bd17f0b81b5fa85"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.finish",
+      "name": "routines.finish",
+      "offset": 35552,
+      "length": 64,
+      "sha256": "974c2893370f2fe7848a21a6b5f8e914c2315e58df586c81a8af594ef88d53fd"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.initialize",
+      "name": "routines.initialize",
+      "offset": 35616,
+      "length": 1452,
+      "sha256": "83d672253cdb7d97fa94847b2251b74c72f820d82c2e2d6860c0325cb4c082f7"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.resume",
+      "name": "routines.resume",
+      "offset": 37068,
+      "length": 12,
+      "sha256": "20c0317cdef25e3c5d803d63095c2d27c6cb97d1dcac6ef76fb999aebc269d91"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.restart",
+      "name": "routines.restart",
+      "offset": 37080,
+      "length": 40,
+      "sha256": "682569eb547d69f1056377127e922093a1e83390f8f3935b4167c0a94b138130"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.update",
+      "name": "routines.update",
+      "offset": 37120,
+      "length": 196,
+      "sha256": "2e1755108431f28d2b73210c4b80a4760e1284ae560fa8637fa7dffe324fb452"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.entry",
+      "name": "routines.entry",
+      "offset": 37316,
+      "length": 160,
+      "sha256": "3f0eb4fb5d93aa1c18cca186038ba5b79cf1a96d3975ad77def00136309f1631"
+    },
+    {
+      "fixture": "tests/title-vectors.json",
+      "key": "routines.queueReset",
+      "name": "routines.queueReset",
+      "offset": 9600,
+      "length": 12,
+      "sha256": "44ff7825697236b23fd7bca272f60cdc4ff61309773d5e33fd69997115687179"
     }
   ]
 }

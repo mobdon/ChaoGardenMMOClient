@@ -151,6 +151,7 @@ pub trait IntroResources {
 }
 
 /// Authenticated local-only reader; no resource bytes are embedded in source.
+#[derive(Clone)]
 pub struct IntroRom<'a> {
     rom: &'a [u8],
 }

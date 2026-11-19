@@ -17,9 +17,18 @@ pub struct SourceSpan {
     pub fixture: String,
     pub key: String,
     pub name: String,
+    #[serde(default)]
+    pub space: SourceSpace,
     pub offset: usize,
     pub length: usize,
     pub sha256: String,
+}
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceSpace {
+    #[default]
+    Rom,
+    Garden,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,10 +49,12 @@ pub fn registry() -> Result<SourceRegistry, String> {
     let mut keys = std::collections::BTreeSet::new();
     for span in &registry.spans {
         if span.length == 0
-            || !span
-                .offset
-                .checked_add(span.length)
-                .is_some_and(|end| end <= catalog::ROM_LEN)
+            || !span.offset.checked_add(span.length).is_some_and(|end| {
+                end <= match span.space {
+                    SourceSpace::Rom => catalog::ROM_LEN,
+                    SourceSpace::Garden => catalog::GARDEN_LEN,
+                }
+            })
             || span.sha256.len() != 64
             || !span.sha256.bytes().all(|b| b.is_ascii_hexdigit())
             || !keys.insert((&span.fixture, &span.key))
@@ -59,8 +70,21 @@ pub fn registry() -> Result<SourceRegistry, String> {
 pub fn verify_rom(rom: &[u8]) -> Result<SourceReport, String> {
     catalog::validate_rom(rom).map_err(|e| e.to_string())?;
     let registry = registry()?;
+    let garden = if registry
+        .spans
+        .iter()
+        .any(|s| s.space == SourceSpace::Garden)
+    {
+        Some(catalog::extract_garden(rom).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
     for span in &registry.spans {
-        let bytes = binary::span(rom, span.offset, span.length).map_err(|e| e.to_string())?;
+        let source = match span.space {
+            SourceSpace::Rom => rom,
+            SourceSpace::Garden => &garden.as_ref().expect("Garden requested above").bytes,
+        };
+        let bytes = binary::span(source, span.offset, span.length).map_err(|e| e.to_string())?;
         if sha256(bytes) != span.sha256 {
             return Err(format!(
                 "engine source fingerprint differs: {}:{}",
