@@ -768,3 +768,26 @@ for angle in [-2147483648,-4,-3,-2,-1,0,1,2,3,4,32767,2147483647]:
     u.emu_start(BASE+0x2d464,BASE+0x2d4c4,count=40)
     assert len(setup)==1
     print('G',angle,json.dumps(setup[0],separators=(',',':')))
+
+# Run from the four callback installs through collision setup and final work writes.
+def binding_query(uc,pc,*_):
+    used.append(next(answers))
+    setreg(3,used[-1])
+    uc.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x2d438,0x2d444):
+    u.hook_add(UC_HOOK_CODE,binding_query,begin=BASE+site,end=BASE+site)
+u.mem_write(DATA+4*0x100000+0xc48,d[ss[4][0]+0xc48:ss[4][0]+0xc4c])
+for angle,inputs in [(1,[]),(4,[]),(0,[57]),(0,[6,0]),(-2,[0,6]),(3,[0,57])]:
+    setup=[];used=[];answers=iter(inputs)
+    for off in (16,20,24,32,44):put(TASK+off,'I',0x11223344)
+    put(WORK+8,'i',angle);put(WORK+1,'B',255);put(WORK+3,'B',255);put(WORK+40,'I',0xdeadbeef)
+    setreg(30,TASK);setreg(31,WORK)
+    u.emu_start(BASE+0x2d3e0,BASE+0x2d4dc,count=128)
+    assert used==inputs and len(setup)==1 and u.reg_read(R.UC_PPC_REG_PC)==service
+    u.emu_start(u.reg_read(R.UC_PPC_REG_LR),BASE+0x2d4dc,count=32)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d4dc
+    extra=get(TASK+44,'I')
+    result=dict(callbacks16_20_24_32=[get(TASK+i,'I')-BASE for i in (16,20,24,32)],
+                callback44Write=None if extra==0x11223344 else extra-BASE,queryReturns=used,
+                workByte3=get(WORK+3,'B'),workByte1=get(WORK+1,'B'),work40Bits=get(WORK+40,'I'))
+    print('BIND',angle,json.dumps(used,separators=(',',':')),json.dumps(result,separators=(',',':')))

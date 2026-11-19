@@ -47,6 +47,10 @@ pub struct Program {
     regular_shapes: [crate::collision_record::CollisionRecord; 2],
     #[serde(skip)]
     regular_shape_offset: u32,
+    #[serde(skip)]
+    regular_callbacks: [u32; 5],
+    #[serde(skip)]
+    regular_work40: u32,
     pub radii: [f32; 2],
     pub spin: [i32; 2],
     pub rise: f32,
@@ -980,6 +984,31 @@ impl Program {
                 return Err(invalid());
             }
         }
+        let paired = |off, section| -> Result<u32> {
+            let hi = rel.reference(1, init + off).ok_or_else(invalid)?;
+            let lo = rel.reference(1, init + off + 4).ok_or_else(invalid)?;
+            if (hi.module, hi.section, hi.kind) != (info.module, section, 6)
+                || (lo.module, lo.section, lo.kind, lo.addend)
+                    != (info.module, section, 4, hi.addend)
+            {
+                return Err(invalid());
+            }
+            Ok(lo.addend)
+        };
+        let regular_callbacks = [
+            paired(0x1fe, 1)?,
+            paired(0x1da, 1)?,
+            paired(0x1f2, 1)?,
+            paired(0x1e6, 1)?,
+            paired(0x24a, 1)?,
+        ];
+        let regular_work40 = word(rel.data(4)?, paired(0x2c6, 4)? as usize)?;
+        for off in [0x230, 0x23c] {
+            let call = rel.reference(1, init + off).ok_or_else(invalid)?;
+            if (call.module, call.kind, call.addend) != (0, 10, 0x8001dcf4) {
+                return Err(invalid());
+            }
+        }
         let regular_shape_offset = r.addend;
         let regular_shapes = shape_pair(regular_shape_offset)?;
         let data = rel.data(r.section)?;
@@ -1064,6 +1093,8 @@ impl Program {
             child_entry,
             child_parent_callback,
             child_scale_bits,
+            regular_callbacks,
+            regular_work40,
             regular_shapes,
             regular_shape_offset,
             radii,
@@ -1511,6 +1542,18 @@ impl Program {
         }
         Ok(json!(pairs))
     }
+    pub fn regular_task_bind(&self, angle: i32, queries: &[i32]) -> Result<Value> {
+        let extra = match (angle % 3, queries) {
+            (1, []) => false,
+            (1, _) => return Err(Error::invalid("unused goal binding query")),
+            (_, [57]) => true,
+            (_, [first, second]) if *first != 57 => *second == 6,
+            _ => return Err(Error::invalid("expected observed goal binding queries")),
+        };
+        Ok(json!({"callbacks16_20_24_32":&self.regular_callbacks[..4],
+            "callback44Write":extra.then_some(self.regular_callbacks[4]),
+            "queryReturns":queries,"workByte3":0,"workByte1":0,"work40Bits":self.regular_work40}))
+    }
     pub fn regular_collision_setup(&self, effective_angle_x: i32) -> Value {
         let i = usize::from(effective_angle_x % 3 == 1);
         json!({"engine":0x8000f8b8u32,"target":"task","relOffset":self.regular_shape_offset+48*i as u32,
@@ -1692,6 +1735,7 @@ struct ChildDispatch {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    bind_query_returns: Option<Vec<i32>>,
     child_dispatch: Option<ChildDispatch>,
     child: Option<ChildObservation>,
     post_contact_consumer: Option<ConsumerInput>,
@@ -1736,6 +1780,15 @@ pub fn replay(
         r.range_out,
         r.allocation_ok,
     );
+    let task_bind = match (&init, &r.bind_query_returns) {
+        (InitRoute::Contact { angle_x }, Some(q)) => Some(p.regular_task_bind(*angle_x, q)?),
+        (_, None) => None,
+        _ => {
+            return Err(Error::invalid(
+                "binding queries require successful contact initialization",
+            ))
+        }
+    };
     if r.child_dispatch.is_some() && (!matches!(init, InitRoute::ChildTask) || r.child.is_none()) {
         return Err(Error::invalid(
             "child dispatch requires child placement context",
@@ -1873,6 +1926,6 @@ pub fn replay(
         None
     };
     Ok(
-        json!({"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
+        json!({"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
     )
 }
