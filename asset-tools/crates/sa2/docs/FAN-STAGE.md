@@ -301,3 +301,17 @@ above ten suppresses the latter. These are selected controller records and
 intermediate vehicle inputs, not physical controller bindings or integrated
 kart steering. Run `tests/kart_drive_input_ppc.py CLI CartD.rel PRIVATE_DIR`
 to compare 134 frames through the original helpers in both slots and banks.
+
+Each frame can also include a `drive` context for the driving routine at
+0x3188. Supply the current heading, work word +0xa4, race place, multiplayer
+flag, X/Z velocity, and the four active physics values (acceleration, brake
+power, deceleration and speed cap). For nonzero X/Z velocity, supply the
+observed `magnitude_return` from 0x80114eac. Zero velocity bypasses that call.
+The same computed steering and button flags drive the heading subtraction
+and the local displacement: acceleration takes precedence over braking,
+and multiplayer place scales acceleration and braking. The returned
+`motion` contains the heading, updated work words and local vector before
+CartD transforms it at 0x33a4. These are intermediate tick results; imported
+matrix rounding, collision and final world position are not verified.
+The input oracle also compares these heading and displacement writes for
+all 134 samples, including both button flags held together.
