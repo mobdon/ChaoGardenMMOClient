@@ -355,6 +355,11 @@ if len(sys.argv)>4:
                             velocity_y=0,weight=doc["updates"][-1]["boostTick"]["weight"],work_74=0,
                             transformed_vector=[0,0,0]))
             spin_q["updates"].extend([dict(spin_tick=spin_input)]*102)
+            # The exit tick still follows state 4 dispatch, even after movement writes 0.
+            exit_query=json.loads(json.dumps(c))
+            for key in ("work_b8","previous_velocity_xz"):del exit_query["recovery"][key]
+            spin_audio=dict(work_44=1,work_284=0,work_110=1,work_114=0,piece_id=0)
+            spin_q["updates"][-1]=dict(spin_tick=dict(spin_input,audio=spin_audio,contact=dict(work_44=1,work_28c=0,query=exit_query)))
             req.write_text(json.dumps(spin_q));out=req.with_name(path.stem+"-impact-spin.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             spins=json.loads(out.read_text())
@@ -364,6 +369,31 @@ if len(sys.argv)>4:
             assert turns[0]["work_68"]==contact["recovery"]["vehicle"]["work_68"]-1820
             assert [v["work_b8"] for v in turns]==[-1820+18*i for i in range(1,103)]
             assert [v["vehicle_state"] for v in turns]==[4]*101+[0] and spins["vehicleState"]==0
+            assert spins["updates"][-1]["spinAudio"]["calls"][1]["play"]["position"]==turns[-1]["position_step"]["position"]
+            exit_contact=spins["updates"][-1]["spinContact"]
+            assert "impact" not in exit_contact and exit_contact["recovery"]["vehicle"]["state"]==0
+            # A fast incoming frame stops at the contact point. A normal impact
+            # check would restart spin here. State 4 goes directly to fall recovery.
+            mid=json.loads(json.dumps(exit_query))
+            mid["wall"]["vehicle_state"]=4
+            del mid["previous_position"]
+            mid["recovery"]["work_68"]=turns[0]["work_68"]
+            short=dict(spin_q,updates=spin_q["updates"][:-102]+[
+                dict(primary_update_velocity=[20,0,0],primary_update_position=[7,5,5]),
+                dict(spin_tick=dict(spin_input,audio=spin_audio,contact=dict(work_44=1,work_28c=0,query=mid))),dict(spin_tick=spin_input)])
+            req.write_text(json.dumps(short));out=req.with_name(path.stem+"-spin-contact.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            seq=json.loads(out.read_text())["updates"];suffix=seq[-2]["spinContact"]
+            assert seq[-2]["spinAudio"]["calls"]==[]
+            assert "impact" not in suffix and seq[-2]["work_10c"]==2 and suffix["recovery"]["vehicle"]["state"]==4
+            assert suffix["request"]["to"]==turns[0]["position_step"]["position"] and seq[-1]["spinTick"]==turns[1]
+            short["updates"].pop()
+            mid.pop("recovery");mid.pop("tail");mid["result"]["return_word"]=1
+            mid["wall"].update(normal=[1,0,0],engine_byte_23=3)
+            req.write_text(json.dumps(short));out=req.with_name(path.stem+"-spin-wall-stop.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            stop=json.loads(out.read_text())
+            assert stop["vehicleState"]==stop["updates"][-1]["spinContact"]["response"]["wall"]["vehicle_state"]==10
             observed=last["contact"]["recovery"].pop("previous_velocity_xz")
             origin=last["contact"].pop("previous_position")
             q["updates"].insert(-1,dict(primary_update_velocity=[0,0,0],primary_update_position=origin))

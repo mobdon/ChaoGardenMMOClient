@@ -257,9 +257,13 @@ pub(crate) struct Impact {
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryRecovery {
     previous_velocity_xz: Option<[f32; 2]>,
-    work_b8: i32,
+    work_b8: Option<i32>,
     #[serde(flatten)]
     fields: RecoveryFields,
+}
+pub(crate) enum ImpactCheck {
+    Run,
+    Skip,
 }
 impl StoryRecovery {
     pub(crate) fn bind_snapshot(
@@ -276,6 +280,10 @@ impl StoryRecovery {
                 "impact speed conflicts with vehicle update snapshot",
             ));
         }
+        self.previous_velocity_xz = Some(before);
+        self.bind_angles(angles)
+    }
+    pub(crate) fn bind_angles(&mut self, angles: Option<[i32; 3]>) -> Result<()> {
         if self
             .fields
             .saved_angles
@@ -287,7 +295,6 @@ impl StoryRecovery {
             ));
         }
         self.fields.saved_angles = angles.or(self.fields.saved_angles);
-        self.previous_velocity_xz = Some(before);
         Ok(())
     }
     pub(crate) fn bind_progress(&mut self, route: Option<(i32, i32)>, counter: u32) -> Result<()> {
@@ -313,6 +320,7 @@ impl StoryRecovery {
         mode: i32,
         contact: crate::kart_contact::Input,
         work_68: i32,
+        impact: ImpactCheck,
     ) -> Result<ShortUpdate> {
         if self.fields.work_68 != work_68 {
             return Err(Error::invalid(
@@ -327,11 +335,22 @@ impl StoryRecovery {
                 contact,
                 fields: self.fields,
             },
-            Some((
-                self.previous_velocity_xz
-                    .ok_or_else(|| Error::invalid("missing previous velocity for impact"))?,
-                self.work_b8,
-            )),
+            match impact {
+                ImpactCheck::Skip => {
+                    if self.previous_velocity_xz.is_some() || self.work_b8.is_some() {
+                        return Err(Error::invalid(
+                            "spin recovery does not run impact comparison",
+                        ));
+                    }
+                    None
+                }
+                ImpactCheck::Run => Some((
+                    self.previous_velocity_xz
+                        .ok_or_else(|| Error::invalid("missing previous velocity for impact"))?,
+                    self.work_b8
+                        .ok_or_else(|| Error::invalid("missing impact spin step"))?,
+                )),
+            },
         )
     }
 }
@@ -342,6 +361,7 @@ impl ShortUpdate {
 }
 pub(crate) struct RecoveredProgress {
     pub state: i32,
+    pub work_68: i32,
     pub route: (i32, i32),
     pub counter: u32,
     pub positions: ([f32; 3], [f32; 3]),
@@ -361,6 +381,7 @@ impl Output {
         let v = &self.vehicle;
         RecoveredProgress {
             state: v.state,
+            work_68: v.work_68,
             route: (v.segment, self.course_length),
             counter: v.lap as u32,
             positions: (v.position, v.saved_position),

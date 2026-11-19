@@ -178,6 +178,9 @@ pub(crate) struct StoryResponse {
     impact: Option<crate::kart_fall_recovery::Impact>,
 }
 impl StoryResponse {
+    pub(crate) fn wall_state(&self) -> Option<i32> {
+        Some(self.contact.response.as_ref()?.wall.as_ref()?.vehicle_state)
+    }
     pub(crate) fn spin_carry(&self) -> Option<(i32, i32)> {
         Some((
             self.recovery.as_ref()?.spin_offset()?,
@@ -216,6 +219,7 @@ impl StoryContact {
         work_28c: i32,
         work_44: i32,
         mode: i32,
+        impact_check: crate::kart_fall_recovery::ImpactCheck,
     ) -> Result<StoryResponse> {
         if self.wall.as_ref().is_some_and(|w| {
             w.mode != mode
@@ -240,8 +244,9 @@ impl StoryContact {
             tail: self.tail,
         };
         let (contact, recovery, impact) = if let Some(recovery) = self.recovery {
-            let (contact, recovery, impact) =
-                recovery.run(bytes, exe, mode, input, work_68)?.into_story();
+            let (contact, recovery, impact) = recovery
+                .run(bytes, exe, mode, input, work_68, impact_check)?
+                .into_story();
             (contact, Some(recovery), impact)
         } else {
             (step_with_constants(data, input)?, None, None)

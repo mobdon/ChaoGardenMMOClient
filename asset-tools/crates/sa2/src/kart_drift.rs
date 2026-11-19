@@ -40,7 +40,7 @@ pub struct Update {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryTick {
-    pub(crate) contact: Option<DriftContact>,
+    pub(crate) contact: Option<DriveContact>,
     heading: Option<i32>,
     position: Option<[f32; 3]>,
     velocity: [f32; 3],
@@ -51,7 +51,7 @@ pub(crate) struct StoryTick {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DriftContact {
+pub(crate) struct DriveContact {
     pub(crate) query: crate::kart_contact::StoryContact,
     pub(crate) work_28c: i32,
     pub(crate) work_44: i32,

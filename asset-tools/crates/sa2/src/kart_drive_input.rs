@@ -314,6 +314,7 @@ impl StoryDrive {
                 self.work_28c,
                 work_44.ok_or_else(|| Error::invalid("missing vehicle flag for story contact"))?,
                 story_mode,
+                crate::kart_fall_recovery::ImpactCheck::Run,
             )?);
         }
         Ok(motion)
@@ -666,6 +667,7 @@ impl StoryRecoveryDrive {
                 self.work_28c,
                 flag()?,
                 mode,
+                crate::kart_fall_recovery::ImpactCheck::Run,
             )?);
         }
         Ok(motion)
@@ -753,16 +755,66 @@ pub struct SpinInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StorySpin {
+    pub(crate) audio: Option<SpinAudio>,
+    pub(crate) contact: Option<crate::kart_drift::DriveContact>,
     heading: i32,
     velocity_xz: [f32; 2],
     angle_radians: Option<f64>,
     magnitude_return: Option<f32>,
     position_step: PositionInput,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SpinAudio {
+    pub(crate) work_44: i32,
+    work_284: i32,
+    work_110: i32,
+    work_114: i32,
+    piece_id: Option<u8>,
+}
+impl SpinAudio {
+    pub(crate) fn run(
+        self,
+        rel: &crate::city_rel::CityRel,
+        mode: i32,
+        motion: &Spin,
+        velocity: [f32; 3],
+        magnitude_return: Option<f32>,
+    ) -> Result<crate::kart_driving_audio::Output> {
+        crate::kart_driving_audio::tick_verified(
+            rel,
+            crate::kart_driving_audio::Input {
+                work_44: self.work_44,
+                vehicle_state: motion.vehicle_state,
+                position: motion.position(),
+                velocity_xz: [velocity[0], velocity[2]],
+                controls: crate::kart_driving_audio::Controls {
+                    profile: mode as usize,
+                    alternate: false,
+                    work_284: self.work_284,
+                    work_110: self.work_110,
+                    work_114: self.work_114,
+                    piece_id: self.piece_id,
+                    magnitude_return,
+                },
+            },
+        )
+    }
+}
 impl StorySpin {
-    pub(crate) fn advance(self, bytes: &[u8], (work_68, work_b8): (i32, i32)) -> Result<Spin> {
-        spin(
-            bytes,
+    pub(crate) fn magnitude(&self) -> Option<f32> {
+        self.magnitude_return
+    }
+    pub(crate) fn world_velocity(&self) -> [f32; 3] {
+        [
+            self.velocity_xz[0],
+            self.position_step.velocity_y,
+            self.velocity_xz[1],
+        ]
+    }
+    pub(crate) fn advance(self, constants: &[u8], (work_68, work_b8): (i32, i32)) -> Result<Spin> {
+        spin_with_constants(
+            constants,
             SpinInput {
                 heading: self.heading,
                 work_68,
@@ -785,6 +837,9 @@ pub struct Spin {
     position_step: PositionStep,
 }
 impl Spin {
+    pub(crate) fn position(&self) -> [f32; 3] {
+        self.position_step.position
+    }
     pub(crate) fn state(&self) -> i32 {
         self.vehicle_state
     }
@@ -796,7 +851,9 @@ impl Spin {
 pub fn spin(bytes: &[u8], s: SpinInput) -> Result<Spin> {
     kart_progress::verify(bytes)?;
     let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
-    let data = rel.data(4)?;
+    spin_with_constants(rel.data(4)?, s)
+}
+fn spin_with_constants(data: &[u8], s: SpinInput) -> Result<Spin> {
     let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
     let mut work_68 = s.work_68.wrapping_add(s.work_b8);
     let work_b8 = if s.work_b8 > 0 {

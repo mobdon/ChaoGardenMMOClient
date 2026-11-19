@@ -103,8 +103,8 @@ assert bytes(u.mem_read(work+0x14,12))==pose
 assert bytes(u.mem_read(base[6]+0x21468+0x14,12))==pose
 assert bytes(u.mem_read(base[6]+0x21468+0x7c,12))==struct.pack(">3f",-20,7,0.125)
 assert get(base[6]+0x21468+0x10c,"I")==0x80000001 and get(work+0x10c,"I")==0
-for at in [0x24c0,0x2520]:
+for at,mask in [(0x24c0,4),(0x2520,4),(0x2570,2)]:
     for word in [0,0x80000001]:
         put(work+0x10c,"I",word);run(at,at+12)
-        assert get(work+0x10c,"I")==word|4
+        assert get(work+0x10c,"I")==word|mask
 print("Matched 10 windup and 14 sustained-drift updates with modeled engine math.")

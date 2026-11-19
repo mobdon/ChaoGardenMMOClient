@@ -791,14 +791,18 @@ pub fn story_sequence(
                     .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
                 continue;
             }
-            SequenceEvent::SpinTick { spin_tick } => {
+            SequenceEvent::SpinTick { mut spin_tick } => {
                 if vehicle != Some(4) {
                     return Err(Error::invalid("spin tick requires vehicle state 4"));
                 }
                 let carry = spin_carry
                     .take()
                     .ok_or_else(|| Error::invalid("missing preceding story spin impact"))?;
-                let r = spin_tick.advance(bytes, carry)?;
+                let velocity = spin_tick.world_velocity();
+                let context = spin_tick.contact.take();
+                let audio = spin_tick.audio.take();
+                let magnitude = spin_tick.magnitude();
+                let r = spin_tick.advance(constants, carry)?;
                 vehicle = Some(r.state());
                 if r.state() == 4 {
                     spin_carry = Some(r.carry());
@@ -806,9 +810,65 @@ pub fn story_sequence(
                 completed_pose = None;
                 inherited_pose = None;
                 recovered_pose = None;
-                snapshot = None;
+                let start = snapshot.take();
+                let mut event = json!({"spinTick":r});
+                if let Some(a) = audio {
+                    if scan_flag.is_some_and(|flag| flag != a.work_44 as u32)
+                        || context.as_ref().is_some_and(|c| c.work_44 != a.work_44)
+                    {
+                        return Err(Error::invalid("spin audio conflicts with vehicle flag"));
+                    }
+                    event["spinAudio"] = json!(a.run(&rel, mode, &r, velocity, magnitude)?);
+                }
+                if let Some(mut ctx) = context {
+                    if scan_flag.is_some_and(|flag| flag != ctx.work_44 as u32) {
+                        return Err(Error::invalid("spin contact conflicts with vehicle flag"));
+                    }
+                    ctx.query
+                        .bind_origin(start.and_then(|v| v.primary_update_position))?;
+                    if let Some(rec) = &mut ctx.query.recovery {
+                        rec.bind_progress(route, count)?;
+                        if let Some(v) = start {
+                            rec.bind_angles(v.primary_update_angles)?;
+                        }
+                    }
+                    let response = ctx.query.apply(
+                        constants,
+                        bytes,
+                        exe,
+                        r.carry().0,
+                        vehicle,
+                        r.position(),
+                        velocity,
+                        ctx.work_28c,
+                        ctx.work_44,
+                        mode,
+                        crate::kart_fall_recovery::ImpactCheck::Skip,
+                    )?;
+                    if let Some(recovered) = response.recovered_progress() {
+                        vehicle = Some(recovered.state);
+                        spin_carry =
+                            (recovered.state == 4).then_some((recovered.work_68, r.carry().1));
+                        route = Some(recovered.route);
+                        progressed_route = route;
+                        count = recovered.counter;
+                        crossing_positions = Some(recovered.positions);
+                        recovered_pose = Some(recovered);
+                    }
+                    if let Some(state) = response.wall_state().filter(|_| recovered_pose.is_none())
+                    {
+                        vehicle = Some(state);
+                        if state != 4 {
+                            spin_carry = None;
+                        }
+                    }
+                    event["spinContact"] = json!(response);
+                }
+                if start.is_some() {
+                    event["work_10c"] = json!(2);
+                }
                 sample = None;
-                updates.push(json!({"spinTick":r}));
+                updates.push(event);
                 continue;
             }
             SequenceEvent::DriftTick { mut drift_tick } => {
@@ -861,6 +921,7 @@ pub fn story_sequence(
                         ctx.work_28c,
                         ctx.work_44,
                         mode,
+                        crate::kart_fall_recovery::ImpactCheck::Run,
                     )?;
                     if let Some(recovered) = response.recovered_progress() {
                         vehicle = Some(recovered.state);
