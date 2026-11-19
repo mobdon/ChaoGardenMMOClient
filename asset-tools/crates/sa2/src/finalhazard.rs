@@ -499,6 +499,51 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
             }
         }
     }
+    // The collision update indexes a position buffer, not the hierarchy.
+    // The draw callback fills 27 positions from 20-byte joint lookup records.
+    let mut body_origins = Vec::new();
+    if let Some(pose) = pose {
+        if pair(0x41ae, 6)? != pair(0x956, 6)? {
+            return Err(Error::invalid(
+                "body collision uses a different capture buffer",
+            ));
+        }
+        let data = rel.data(5)?;
+        let bindings = pair(0x942, 5)? as usize;
+        let count = (instruction(0x56c) & 0xffff) as usize;
+        let capture_count = instruction(0x42e4) & 0xffff;
+        let vec3 = |at: usize| {
+            [0, 4, 8]
+                .map(|n| f32::from_be_bytes(data[at + n..at + n + 4].try_into().unwrap()) as f64)
+        };
+        for slot in 0..count {
+            let b = bindings + 32 * slot;
+            let index = data[b] as i8;
+            if index <= 0 {
+                continue;
+            }
+            if index as u32 >= capture_count {
+                return Err(Error::invalid("body capture index out of bounds"));
+            }
+            let record = lookup + 20 * index as u32;
+            let target = rel.local_pointer(5, record + 16)?;
+            let joint = hierarchy
+                .iter()
+                .position(|&n| target == Some((5, n)))
+                .ok_or_else(|| Error::invalid("unmapped collision joint"))?;
+            let node = pose
+                .nodes
+                .get(joint)
+                .ok_or_else(|| Error::invalid("missing collision pose joint"))?;
+            let local = vec3(record as usize + 4);
+            let origin = crate::pose::transform_point(&node.world_matrix, local);
+            let offset = vec3(b + 4);
+            body_origins.push(
+                serde_json::json!({"slot":slot,"captureIndex":index,"joint":joint,
+                "jointOffset":local,"bossLocalCapture":origin,"collisionOffset":offset}),
+            );
+        }
+    }
     let mut captures = Vec::new();
     let mut joints = [0usize; 5];
     for (slot, call) in [0x4278, 0x4290, 0x42a8, 0x42bc, 0x42d0]
@@ -553,7 +598,7 @@ fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<se
     }
     Ok(
         serde_json::json!({"modelSection5":model,"tableSection5":base,"matrixArraySection6":matrices,
-        "constructor":init,"matrixStride":48,"matrixCaptures":captures,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
+        "constructor":init,"matrixStride":48,"matrixCaptures":captures,"bodyCollisionPoseBindings":body_origins,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
     )
 }
 /// Callback dispatch only. The selected handler runs before the contact check;
