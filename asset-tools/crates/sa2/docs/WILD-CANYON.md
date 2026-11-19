@@ -1,0 +1,7 @@
+# Wild Canyon stage entry
+
+Run `fan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR "Hero Story Sequence" 5 true` with the source root set to the local install. Use false to observe failed background task allocation. Outputs and their source manifests belong in an ignored directory.
+
+The PC story table selects character 4 and level 16. The mounted stg16D.rel is pinned by its land catalog hash. The module prolog at section 1 offset 0x8ab0 registers STG16; its descriptor identifies startup, teardown and the stage task. The first stage task (0x9140) requests Bg2Exec; on success it sets the field at 0x20 and the task-work position from the REL. Both paths install the empty successor at 0x91e0. The local PPC comparison executes the registration, both allocation routes and the successor.
+
+The background position is not a player spawn. The startup and teardown callbacks are identified but not executed. Treasure placement, collection, Knuckles control, stage completion and the preceding Big Foot story clear are not verified by this command.

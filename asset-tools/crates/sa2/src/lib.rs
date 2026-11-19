@@ -47,6 +47,7 @@ pub mod story;
 pub mod texture;
 pub mod visual;
 pub mod visual_glb;
+pub mod wild_canyon;
 
 use std::fmt;
 
