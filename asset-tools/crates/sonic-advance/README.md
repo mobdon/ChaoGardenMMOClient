@@ -55,3 +55,5 @@ outputs stay local. This crate contains original tool code, synthetic fixtures,
 hashes and metadata only. It has no dependency on the independent server checkout
 or other games' crates. The manifest schema remains a coordination proposal:
 [docs/SCHEMA-PROPOSAL.md](docs/SCHEMA-PROPOSAL.md).
+
+[Act 1 opening: verified timing, graphics and remaining work](docs/ACT-INTRO.md).

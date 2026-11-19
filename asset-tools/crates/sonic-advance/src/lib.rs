@@ -1,6 +1,7 @@
 //! Local-only readers for the fingerprinted Sonic Advance USA ASOE revision 0.
 #![forbid(unsafe_code)]
 
+pub mod act_intro;
 pub mod animation;
 pub mod binary;
 pub mod catalog;

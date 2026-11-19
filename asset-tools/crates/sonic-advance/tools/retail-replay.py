@@ -1,6 +1,6 @@
 """Sample the original title or a Sonic spindash from a cold boot. No save files or frame dumps.
 
-Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input|--character-video|--confirm-sonic|--confirm-tails|--confirm-knuckles|--confirm-amy]
+Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input|--character-video|--confirm-sonic|--confirm-tails|--confirm-knuckles|--confirm-amy|--act-intro|--act-intro-skip]
 The DLL and ROM are identified before any external code runs. Outputs only
 selected numbers and pixel hashes. No graphical or memory buffers are written.
 """
@@ -44,7 +44,7 @@ def verified(path, limit, digest):
     return data
 
 
-def replay(rom, dll, title=False, menu=None, character=False, character_video=False, confirm=None):
+def replay(rom, dll, title=False, menu=None, character=False, character_video=False, confirm=None, intro=False, skip=False):
     data = verified(rom, 8388608, ROM_HASH)
     verified(dll, 32 * 1024 * 1024, CORE_HASH)
     core = ct.CDLL(str(dll.resolve()))
@@ -82,7 +82,8 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
     def video(pointer, width, height, pitch):
         tick = frame - title_origin
         sample_character = character_video and 1401 <= frame <= 1600
-        sample_character |= confirm is not None and 1601 <= frame <= 1657
+        sample_character |= confirm is not None and not intro and 1601 <= frame <= 1657
+        sample_character |= intro and 1657 <= frame <= (1731 if skip else 1884)
         if not pointer or not (sample_character or (title and tick in title_ticks)):
             return
         if pixel_format != 2 or (width, height) != (240, 160) or not 480 <= pitch <= 2048:
@@ -117,7 +118,7 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
         loaded = core.retro_load_game(ct.byref(game))
         if not loaded:
             raise ValueError("emulator rejected local source")
-        for frame in range(title_origin + max(title_ticks) + 1 if title else 1823):
+        for frame in range(title_origin + max(title_ticks) + 1 if title else (1885 if intro else 1823)):
             buttons.clear()
             if frame in (60, 61) or 1050 <= frame < 1053:
                 buttons.add(3)  # Start: boot and title
@@ -140,8 +141,14 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
                 buttons.clear()
                 if frame in (1480,1520,1560)[:confirm]: buttons.add(7)
                 if frame == 1600: buttons.add(8)
+            if skip and frame == 1720: buttons.add(8)
             core.retro_run()
-            if confirm is not None and frame == 1657:
+            if intro and frame >= 1657:
+                x,y=struct.unpack("<ii",ct.string_at(mem["iwram"]+0x5a20,8))
+                flags,=struct.unpack("<I",ct.string_at(mem["iwram"]+0x5a30,4))
+                rows.append([frame,x,y,flags,video_frames[frame]])
+                if frame == (1731 if skip else 1884): return rows
+            if confirm is not None and not intro and frame == 1657:
                 if len(video_frames) != 57: raise ValueError("incomplete confirmation video")
                 return video_frames
             if character and 1415 <= frame <= 1600:
@@ -153,7 +160,7 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
                 if frame == 1600:
                     if character_video and len(video_frames) != 200: raise ValueError("incomplete carousel video")
                     return video_frames if character_video else rows
-            if not title and frame >= 1799:
+            if not intro and not title and frame >= 1799:
                 p = ct.string_at(mem["iwram"] + 0x5a20, 72)
                 x, y, vx, vy, speed, _, height = struct.unpack_from("<iihhhbb", p)
                 charge, = struct.unpack_from("<h", p, 0x16)
@@ -176,9 +183,10 @@ def replay(rom, dll, title=False, menu=None, character=False, character_video=Fa
 if __name__ == "__main__":
     mode = sys.argv[3] if len(sys.argv) == 4 else None
     confirm_modes = ("--confirm-sonic", "--confirm-tails", "--confirm-knuckles", "--confirm-amy")
-    if len(sys.argv) not in (3, 4) or mode not in confirm_modes + (None, "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
+    if len(sys.argv) not in (3, 4) or mode not in ("--act-intro","--act-intro-skip") + confirm_modes + (None, "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
         sys.exit(__doc__)
     print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]),
                             mode == "--title", {"--menu":"regular", "--menu-tiny":"tiny"}.get(mode),
-                            mode in ("--character-input","--character-video"), mode == "--character-video", confirm_modes.index(mode) if mode in confirm_modes else None),
+                            mode in ("--character-input","--character-video"), mode == "--character-video", confirm_modes.index(mode) if mode in confirm_modes else (0 if mode in ("--act-intro","--act-intro-skip") else None),
+                            mode in ("--act-intro","--act-intro-skip"), mode=="--act-intro-skip"),
                      indent=None if mode == "--character-input" else 2))
