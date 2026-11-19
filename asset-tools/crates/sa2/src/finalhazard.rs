@@ -811,3 +811,52 @@ pub fn request_placement(bytes: &[u8], req: PlacementRequest) -> Result<serde_js
         serde_json::json!({"mode":mode,"state":s,"selected":selected,"scope":"Placement request writes, given the engine-selected bucket. Engine callbacks and RNG state are external."}),
     )
 }
+/// Two separate caller paths into the placement-request routine. A periodic
+/// tick is valid only when the encounter dispatch reaches section 1 + 0x17f0.
+#[derive(serde::Deserialize)]
+#[serde(tag = "path", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlacementClock {
+    Entry { submode: i8, timer: u16 },
+    Periodic { timer: u16 },
+}
+pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json::Value> {
+    if crate::manifest::sha256(bytes)
+        != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
+    {
+        return Err(Error::invalid("unsupported Finalhazard stage revision"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 88)?;
+    let code = rel.data(1)?;
+    let word = |offset: usize| u32::from_be_bytes(code[offset..offset + 4].try_into().unwrap());
+    let mut calls = Vec::new();
+    let (timer, submode) = match input {
+        PlacementClock::Entry {
+            mut submode,
+            mut timer,
+        } => {
+            if submode == 0 {
+                timer = word(0x1038) as u16;
+                calls.push(0x86b8);
+                submode = 1;
+            }
+            if submode == 1 {
+                timer = timer.wrapping_sub(1);
+                if timer == 0 {
+                    calls.extend([0xd40, 0xdc4]);
+                }
+            }
+            (timer, Some(submode))
+        }
+        PlacementClock::Periodic { timer } => {
+            let mut next = timer.wrapping_sub(1);
+            if next == 0 {
+                calls.push(0x86b8);
+                next = word(0x1820) as u16;
+            }
+            (next, None)
+        }
+    };
+    Ok(
+        serde_json::json!({"timer":timer,"submode":submode,"stageCalls":calls,"requestPlacement":calls.contains(&0x86b8)}),
+    )
+}
