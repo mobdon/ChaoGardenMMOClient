@@ -204,6 +204,9 @@ impl StoryDrive {
         bytes: &[u8],
         exe: &[u8],
     ) -> Result<Motion> {
+        let state = vehicle_state
+            .filter(|s| *s == 0)
+            .ok_or_else(|| Error::invalid("story drive requires normal driving state"))?;
         let buttons = self
             .buttons
             .ok_or_else(|| Error::invalid("missing held buttons for story driving"))?;
@@ -233,9 +236,6 @@ impl StoryDrive {
                 drift: self
                     .drift
                     .map(|d| -> Result<DriftInput> {
-                        let state = vehicle_state.filter(|s| *s == 0).ok_or_else(|| {
-                            Error::invalid("story drift entry requires normal driving state")
-                        })?;
                         Ok(DriftInput {
                             motion_history: Some(d.motion_history),
                             ring: None,

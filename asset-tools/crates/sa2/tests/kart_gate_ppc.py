@@ -330,6 +330,21 @@ if len(sys.argv)>4:
                 assert calls[1]["play"]["cue"]==profile["cue_words"][0]
                 assert calls[1]["play"]["position"]==collision["request"]["to"]
                 assert calls[-1]["pitch"]["value"]==(3072 if vy else 0)
+            # State 0 wall response can disable driving without a fall observation.
+            for cooldown,expected in [(0,10),(1,0)]:
+                wall_q=json.loads(json.dumps(q))
+                contact=wall_q["updates"][-1]["boost_tick"]["drive"]["contact"]
+                contact["wall"]=dict(normal=[1,0,0],impulse=[0,0,0],work_70=0,cooldown=cooldown,
+                                     mode=int("Rouge" in path.name),vehicle_state=0,engine_byte_23=3)
+                req.write_text(json.dumps(wall_q));out=req.with_name(path.stem+f"-drive-wall-{cooldown}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                res=json.loads(out.read_text());hit=res["updates"][-1]["boostTick"]["drive"]["contact"]["response"]
+                assert hit["wall"]["vehicle_state"]==res["vehicleState"]==expected
+                if expected==10:
+                    wall_q["updates"].append(wall_q["updates"][-1])
+                    req.write_text(json.dumps(wall_q));out=req.with_name(path.stem+"-disabled-drive.json")
+                    rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+                    assert rejected.returncode!=0 and b"requires normal driving state" in rejected.stderr
             # A supplied below-course result reaches impact and recovery in
             # their dispatch order, without a second contact or position input.
             last=q["updates"][-1]["boost_tick"]["drive"]
@@ -664,5 +679,13 @@ if len(sys.argv)>4:
                 assert suffix["request"]["from"]==start["position"] and suffix["request"]["to"]==motion["position_step"]["position"]
                 assert suffix["impact"]["state"]==suffix["recovery"]["vehicle"]["state"]==seq["vehicleState"]==4
                 assert seq["updates"][-1]["spinTick"]["work_b8"]==suffix["impact"]["work_b8"]+18
+                collision.pop("recovery");collision.pop("tail")
+                collision["result"]["return_word"]=1
+                collision["wall"].update(normal=[1,0,0],engine_byte_23=3)
+                q["updates"].pop()
+                req.write_text(json.dumps(q));out=req.with_name(path.stem+f"-one-wall-{difference}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                wall_doc=json.loads(out.read_text());motion=wall_doc["updates"][-1]["boostTick"]["recovery_drive"]
+                assert motion["vehicle_state"]==state and motion["contact"]["response"]["wall"]["vehicle_state"]==wall_doc["vehicleState"]==10
 
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

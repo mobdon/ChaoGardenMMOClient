@@ -21,7 +21,9 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0 or 0xc74<=l<0xd00 or 0x4a58<=l<0x4eb4 or 0x30dc<=l<0x3188) or k not in (4,6):continue
+        if mod==80 and t==5 and 0x3b94<=l<0x3bc0 and k==1:
+            u.mem_write(base[5]+l,struct.pack(">I",base[s]+a))
+        if t!=1 or not (0x23c0<=l<0x23c8 or 0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0 or 0xc74<=l<0xd00 or 0x4a58<=l<0x4eb4 or 0x30dc<=l<0x3188) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -36,6 +38,10 @@ def run(start,end):
     assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+end
 tw=ram+0x1000;put(task+0x34,"I",tw)
 reg(1,ram+0xf000);u.reg_write(R.UC_PPC_REG_MSR,8192)
+# Dispatch reads the state written by the prior wall/impact/fall chain.
+reg(30,work)
+for state,target in enumerate((0x23d8,0x242c,0x2480,0x24e0,0x2540,0x2648,0x2624,0x2590,0x25cc,0x25f8,0x2648)):
+    put(work+0x30,"i",state);run(0x23b4,target)
 from kart_matrix_imports import install_inverse_rotation
 install_inverse_rotation(u,base[1])
 def vec(a):return list(struct.unpack(">3f",u.mem_read(a,12)))

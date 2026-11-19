@@ -1013,9 +1013,6 @@ pub fn story_sequence(
                 if let Some(r) = &result.recovery_drive {
                     vehicle = Some(r.state());
                 }
-                if let Some(response) = result.contact() {
-                    spin_carry = response.spin_carry();
-                }
                 if let Some(entry) = result.drive.as_ref().and_then(|d| d.windup_entry()) {
                     windup = Some(crate::kart_drift::DriftCarry::new(
                         entry,
@@ -1025,6 +1022,10 @@ pub fn story_sequence(
                 if let Some(state) = result.drive.as_ref().and_then(|d| d.drift_state()) {
                     vehicle = Some(state);
                 }
+                if let Some(response) = result.contact() {
+                    vehicle = response.wall_state().or(vehicle);
+                    spin_carry = response.spin_carry();
+                }
                 if let Some(recovered) = result.contact().and_then(|c| c.recovered_progress()) {
                     vehicle = Some(recovered.state);
                     route = Some(recovered.route);
@@ -1032,6 +1033,9 @@ pub fn story_sequence(
                     count = recovered.counter;
                     crossing_positions = Some(recovered.positions);
                     recovered_pose = Some(recovered);
+                }
+                if !matches!(vehicle, Some(2 | 3)) {
+                    windup = None;
                 }
                 charge = Some(next);
                 boost_timers = Some(timers);
