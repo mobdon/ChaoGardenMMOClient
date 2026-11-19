@@ -36,17 +36,36 @@ fn read(data: &[u8]) -> Result<Value> {
             .get(start..end)
             .filter(|_| start >= first)
             .ok_or_else(invalid)?;
-        let payload = slice.strip_suffix(&[0]).ok_or_else(invalid)?;
+        // Some numbered banks store a line feed after the string terminator.
+        let (payload, trailer) = match slice.strip_suffix(&[0, 10]) {
+            Some(payload) => (payload, &slice[slice.len() - 1..]),
+            None => (
+                slice.strip_suffix(&[0]).ok_or_else(invalid)?,
+                &slice[slice.len()..],
+            ),
+        };
         if payload.contains(&0) {
             return Err(invalid());
         }
-        rows.push(json!({"group":group,"offset":start,"payload":payload,"sha256":manifest::sha256(payload)}));
+        rows.push(json!({"group":group,"offset":start,"payload":payload,"postTerminatorBytes":trailer,"sha256":manifest::sha256(payload)}));
     }
     Ok(json!({"decodedSha256":manifest::sha256(data),"groups":rows}))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn separates_line_feed_after_nul_from_message_content() {
+        let bank = read(&[
+            0, 0, 0, 12, 0, 0, 0, 16, 255, 255, 255, 255, 65, 10, 0, 10, 66, 0,
+        ])
+        .unwrap();
+        let rows = &bank["groups"];
+        assert_eq!(rows[0]["payload"], json!([65, 10]));
+        assert_eq!(rows[0]["postTerminatorBytes"], json!([10]));
+        assert_eq!(rows[1]["payload"], json!([66]));
+        assert_eq!(rows[1]["postTerminatorBytes"], json!([]));
+    }
     #[test]
     fn rejects_bad_sentinel_offsets_and_unterminated_strings() {
         for data in [
