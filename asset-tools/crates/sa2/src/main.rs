@@ -540,7 +540,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -901,7 +901,21 @@ fn run() -> Result<()> {
         }
         "extract" => extract(input, &label, &bytes, output)?,
         "texture" => {
-            let palette_bytes = if args.len() == 5 {
+            let selecting_mip = args.len() == 5 && args[3] == "--mip";
+            let level = if selecting_mip {
+                if !bytes.starts_with(b"DDS ") {
+                    return Err(Error::invalid("--mip requires DDS input"));
+                }
+                args[4]
+                    .to_str()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .ok_or_else(|| Error::invalid("invalid mip level"))?
+            } else {
+                0
+            };
+            let palette_bytes = if selecting_mip {
+                None
+            } else if args.len() == 5 {
                 Some(read_source(Path::new(&args[3]))?)
             } else if args.len() == 3 {
                 None
@@ -941,7 +955,7 @@ fn run() -> Result<()> {
                 if palette.is_some() {
                     return Err(Error::invalid("DDS does not consume a GVP palette"));
                 }
-                texture::decode_dds(&bytes)?
+                texture::decode_dds_mip(&bytes, level)?
             } else {
                 texture::decode_gvr(
                     &bytes,
@@ -957,7 +971,7 @@ fn run() -> Result<()> {
             let source = Source::from_bytes(&label, &bytes)?;
             let mut m = Manifest::new(vec![source]);
             let source = &m.sources[0];
-            m.assets.push(asset(source,"rgba".into(),"texture",whole_span(source),Some(output_record(output,"png-rgba8",&png)?),Representation::Decoded,vec![format!("Base mip only; pixels are unscaled straight RGBA. External palette bank: {}. No material opacity or eye adaptation.",if palette.is_some(){bank.to_string()}else{"none".into()})]));
+            m.assets.push(asset(source,"rgba".into(),"texture",whole_span(source),Some(output_record(output,"png-rgba8",&png)?),Representation::Decoded,vec![format!("Mip level {level}; pixels are unscaled straight RGBA. External palette bank: {}. No material opacity or eye adaptation.",if palette.is_some(){bank.to_string()}else{"none".into()})]));
             if let Some(p) = palette_bytes {
                 let palette_path = Path::new(&args[3]);
                 ensure_unchanged(palette_path, &p)?;

@@ -191,6 +191,7 @@ fn pak_payload_parity_and_dds_decode() {
     let entries = archive::read_pak(&bytes).unwrap();
     let mut checked = 0;
     let mut pixel_records = Vec::new();
+    let mut mip_records = Vec::new();
     let mut digest = Sha256::new();
     for entry in entries {
         let relative = entry.name.replace('\\', "/");
@@ -213,10 +214,26 @@ fn pak_payload_parity_and_dds_decode() {
             record.extend(actual.height.to_le_bytes());
             record.extend(Sha256::digest(&actual.rgba));
             pixel_records.push(record);
+            let levels = u32::from_le_bytes(entry.data[28..32].try_into().unwrap());
+            for level in 0..levels {
+                let image = texture::decode_dds_mip(entry.data, level).unwrap();
+                let mut record = Sha256::digest(entry.data).to_vec();
+                record.extend(level.to_le_bytes());
+                record.extend(image.width.to_le_bytes());
+                record.extend(image.height.to_le_bytes());
+                record.extend(Sha256::digest(&image.rgba));
+                mip_records.push(record);
+            }
         }
     }
     assert_eq!(Sha256::digest(fs::read(source).unwrap()), original_hash);
     assert_eq!(checked, 118);
+    assert_eq!(mip_records.len(), 856);
+    mip_records.sort_unstable();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(mip_records.concat())),
+        "c3caa924678a4a3b32c1d11adb421734e7a1dbf87cefe7f679e19201f2b1ba78"
+    );
     let decoded = pixel_records.len();
     assert_eq!(decoded, 117);
     pixel_records.sort_unstable();
