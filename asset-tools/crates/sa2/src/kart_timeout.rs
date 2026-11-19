@@ -47,6 +47,40 @@ pub struct Frame {
     d968_return: Option<u32>,
     #[serde(skip_serializing)]
     limousine_allocation: Option<Allocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dispatch: Option<Dispatch>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Dispatch {
+    pursuit_latch: i32,
+    work_c4: i32,
+    work_c8: i32,
+    work_44: i32,
+    work_68: i32,
+    #[serde(skip_serializing)]
+    target: Option<Target>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    guidance: Option<Guidance>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Target {
+    segment: i32,
+    quad: [[f32; 2]; 4],
+    magnitude_return: Option<f32>,
+    angle_return: f64,
+}
+#[derive(Serialize)]
+struct Guidance {
+    work_254: i32,
+    work_258: i32,
+    work_25c: i32,
+    work_260: i32,
+    work_264: f32,
+    work_274: i32,
+    target_xz: [f32; 2],
+    from_xz: [f32; 2],
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -169,8 +203,61 @@ pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
                     }
                 }
             }
-            r.vehicle_state = Some(vehicle_state);
             r.next = "vehicle_2814";
+            if let Some(d) = &mut frame.dispatch {
+                if frame.global_24d60 != 0 {
+                    if d.work_c4 > 3 {
+                        d.work_c4 = 3;
+                        d.work_c8 = 3;
+                    }
+                    if d.work_44 != 0 {
+                        let t = d.target.as_ref().ok_or_else(|| {
+                            crate::Error::invalid(
+                                "state 7 requires its target segment and observed angle",
+                            )
+                        })?;
+                        if frame.segment_count <= 0
+                            || !(0..frame.segment_count).contains(&frame.segment)
+                        {
+                            return Err(crate::Error::invalid("invalid state 7 course segment"));
+                        }
+                        let ahead = frame.segment.wrapping_add(2) % frame.segment_count;
+                        let near = frame.segment.wrapping_add(1) % frame.segment_count;
+                        if t.segment != ahead || ahead < 0 || near < 0 {
+                            return Err(crate::Error::invalid("wrong state 7 target quad"));
+                        }
+                        let speed = if frame.velocity == [0.; 3] {
+                            f(0x200)
+                        } else {
+                            t.magnitude_return.ok_or_else(|| {
+                                crate::Error::invalid("missing observed state 7 magnitude")
+                            })?
+                        };
+                        let angle = f64::from_be_bytes(constants[0x208..0x210].try_into().unwrap())
+                            * t.angle_return;
+                        if !(-2147483648.0..2147483648.0).contains(&angle) {
+                            return Err(crate::Error::invalid("unsupported state 7 angle"));
+                        }
+                        vehicle_state = 7;
+                        d.work_44 = 0;
+                        d.work_68 = 0;
+                        d.guidance = Some(Guidance {
+                            work_254: ahead,
+                            work_258: 1,
+                            work_25c: near,
+                            work_260: 1,
+                            work_264: speed,
+                            work_274: angle as i32,
+                            target_xz: t.quad[1],
+                            from_xz: [frame.position[0], frame.position[2]],
+                        });
+                    }
+                } else if d.pursuit_latch != 0 {
+                    vehicle_state = 8;
+                }
+                r.next = "engine_8000f4ec";
+            }
+            r.vehicle_state = Some(vehicle_state);
             r.frame = Some(frame);
         }
         Input::VehicleCountdown {

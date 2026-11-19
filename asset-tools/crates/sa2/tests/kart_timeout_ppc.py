@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x2648<=l<0x2814 or 0xd968<=l<0xda80 or 0x9814<=l<0x9948) or k not in (4,6):continue
+        if t!=1 or not (0x2648<=l<0x287c or 0x2b14<=l<0x2ca4 or 0xd968<=l<0xda80 or 0x9814<=l<0x9948) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -30,10 +30,23 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 ram=0x85000000;u.mem_map(ram,0x10000)
 task,tw,vehicle=ram+256,ram+512,ram+1024
 put(task+0x34,"I",tw)
-stops={0x272c:"vehicle_272c",0x2814:"vehicle_2814",0x200:"return"}
+stops={0x2878:"engine_8000f4ec",0x272c:"vehicle_272c",0x2814:"vehicle_2814",0x200:"return"}
 def hook(m,addr,*args):
     pc=addr-base[1]
     if pc==0x272c and op=="vehicle_post_move":return
+    if pc==0x2814 and dispatch:return
+    if pc in (0x2bcc,0x2c5c,0x2c68):
+        target=dispatch["target"]
+        if pc==0x2c5c:
+            a,b,c=[m.reg_read(getattr(R,f"UC_PPC_REG_{j}")) for j in (3,4,5)]
+            x,z=target["quad"][1]
+            assert get(a,"f")==x and get(a+8,"f")==z and get(b,"f")==get(pose+20,"f") and get(b+8,"f")==get(pose+28,"f")
+            u.mem_write(c,struct.pack(">3f",x-get(b,"f"),0,z-get(b+8,"f")))
+        else:
+            if pc==0x2bcc:assert m.reg_read(R.UC_PPC_REG_3)==vehicle+0x7c
+            value=target["angle_return" if pc==0x2c68 else "magnitude_return"]
+            m.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",value))[0])
+        m.reg_write(R.UC_PPC_REG_PC,addr+4);return
     if pc==0x27a4:
         assert m.reg_read(R.UC_PPC_REG_3)==vehicle+0x7c
         assert struct.unpack(">3f",u.mem_read(vehicle+0x7c,12))==(3.,4.,12.)
@@ -55,7 +68,7 @@ def hook(m,addr,*args):
         events.append(("spawn",None));m.reg_write(R.UC_PPC_REG_3,task)
     else:events.append(("cue" if pc in (0x9908,0x9914) else "action",arg))
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
-for pc in [*stops,0x27a4,0x280c,0xd99c,0x98ac,0x9908,0x9914,0x985c,0x9868]:
+for pc in [*stops,0x2bcc,0x2c5c,0x2c68,0x27a4,0x280c,0xd99c,0x98ac,0x9908,0x9914,0x985c,0x9868]:
     u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
     cases=[dict(operation="vehicle_countdown",remaining=n,vehicle_state=v,mode=m)
@@ -79,7 +92,15 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         q["frame"]["limousine_allocation"]=dict(task_handle=child,segment=75,
             segment_xz=[[1,2],[3,4],[-32.5,95.25],[7,8]],latch=mode)
         cases.append(q)
+    for j,(flag,latch,enabled) in enumerate([(0,1,1),(0,0,1),(1,1,0),(1,0,1),(1,1,1)]):
+        q=json.loads(json.dumps(cases[12]));f=q["frame"];q["mode"]=2
+        f.update(global_24d60=flag,segment=99)
+        f["dispatch"]=dict(pursuit_latch=latch,work_c4=5 if j!=3 else 2,work_c8=17,work_44=enabled,work_68=98,
+            target=dict(segment=1,quad=[[1,2],[37,45],[5,6],[7,8]],angle_return=-0.75,magnitude_return=13))
+        if j==4:f["velocity"]=[0,0,0]
+        cases.append(q)
     for i,q in enumerate(cases):
+        dispatch=q.get("frame",{}).get("dispatch")
         alloc=q.get("frame",{}).get("limousine_allocation")
         req=Path(td)/"in.json";out=Path(td)/f"{i}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-timeout",rel,out,req],check=True);doc=json.loads(out.read_text())
@@ -98,6 +119,12 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
                 put(base[6]+0x3ce2c,"i",alloc["latch"])
                 for idx,pair in enumerate(alloc["segment_xz"]):
                     u.mem_write(base[6]+0x26d84+32*alloc["segment"]+8*idx,struct.pack(">2f",*pair))
+            if dispatch:
+                put(task+0x34,"I",pose);put(task+0x38,"I",vehicle)
+                put(base[6]+0x3ce2c,"i",dispatch["pursuit_latch"])
+                for key,off in [("work_c4",0xc4),("work_c8",0xc8),("work_44",0x44),("work_68",0x68)]:
+                    put(vehicle+off,"i",dispatch[key])
+                t=dispatch["target"];u.mem_write(base[6]+0x26d84+32*t["segment"],struct.pack(">8f",*(v for pair in t["quad"] for v in pair)))
             mapping=dict(cooldown=(vehicle+0x290,"i"),work_288=(vehicle+0x288,"i"),work_108=(vehicle+0x108,"i"),
                 engine_byte_23=(engine+0x23,"b"),engine_halfword_68=(engine+0x68,"h"),
                 global_24d60=(base[6]+0x24d60,"i"),segment=(vehicle+0xbc,"i"),segment_count=(base[6]+0x24d80,"i"),
@@ -113,6 +140,15 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             for key,(addr,fmt) in mapping.items():
                 v=struct.unpack(">"+fmt,u.mem_read(addr,struct.calcsize(">"+fmt)))
                 assert doc["frame"][key]==(list(v) if len(v)>1 else v[0]),(i,key,v,doc)
+        if dispatch:
+            got=doc["frame"]["dispatch"]
+            for key,off in [("work_c4",0xc4),("work_c8",0xc8),("work_44",0x44),("work_68",0x68)]:
+                assert got[key]==get(vehicle+off,"i")
+            if doc["vehicle_state"]==7:
+                g=got["guidance"]
+                for off in (0x254,0x258,0x25c,0x260,0x264,0x274):
+                    assert g[f"work_{off:x}"]==get(vehicle+off,"f" if off==0x264 else "i")
+            else:assert "guidance" not in got
         if alloc:
             limo=doc["limousine"];state=limo["target"]["state"]
             assert limo["task_handle"]==get(vehicle+0xec,"I")==child
@@ -126,4 +162,4 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         assert doc["timer"]==(get(tw+6,"H") if spawned or op=="tick" else None)
         assert [v for k,v in events if k=="cue"]==([] if doc["cue_id"] is None else [doc["cue_id"]])
         assert [v for k,v in events if k=="action"]==([] if doc["action"] is None else [doc["action"]])
-print("Matched 22 vehicle and limousine initialization paths, including vehicle post-movement, route boundary, timeout and delayed-action paths.")
+print("Matched 27 vehicle and limousine initialization paths, including vehicle post-movement, route boundary, timeout and delayed-action paths.")

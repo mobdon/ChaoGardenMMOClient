@@ -513,3 +513,12 @@ not invent engine defaults. Resolve a UV strip's textureId against the index
 in the named kart-target-textures bank. A retained texture ID on an untextured
 strip does not imply texture sampling. All 121 strip material snapshots match
 a separate walk of the PC exports; this does not verify final compositing.
+
+Optional `frame.dispatch` continues vehicle_post_move from 0x2814 to the
+last engine call (0x8000f4ec). The updated global_24d60 takes precedence
+over the pursuit latch. A set latch alone selects state 8; a set global
+with work_44 enabled enters state 7, clears control and work_68, selects
+point 1 on the next two wrapped segments and initializes speed and angle.
+Supply the quad for segment +2 and the observed engine angle return, plus
+the magnitude return for nonzero velocity. This covers entry into state 7,
+not subsequent state 7 steering or the final engine callback.
