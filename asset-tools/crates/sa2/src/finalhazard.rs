@@ -759,3 +759,55 @@ pub fn weakpoint_retract(bytes: &[u8], mut state: RetractState) -> Result<serde_
         "stageHelperCalls":calls,"scope":"Caller supplies queued bytes. External level/volume effects and helper internals are not simulated."}),
     )
 }
+/// Placement request after the engine converts its random sample into a bucket.
+/// Section 1 + 0x743c maps that bucket to an entry; 0x86b8 applies it.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacementRequest {
+    pub state: RetractState,
+    pub mode: i8,
+    pub requested_bank: i8,
+    pub bucket: u8,
+}
+pub fn request_placement(bytes: &[u8], req: PlacementRequest) -> Result<serde_json::Value> {
+    if crate::manifest::sha256(bytes)
+        != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
+    {
+        return Err(Error::invalid("unsupported Finalhazard stage revision"));
+    }
+    let mut s = req.state;
+    if !(0..2).contains(&req.requested_bank)
+        || !(0..2).contains(&s.current[0])
+        || !(0..8).contains(&s.current[1])
+    {
+        return Err(Error::invalid("invalid weakpoint bank or entry"));
+    }
+    let same = req.requested_bank == s.current[0];
+    if req.bucket >= if same { 7 } else { 8 } {
+        return Err(Error::invalid("weakpoint selector bucket out of range"));
+    }
+    let entry = req.bucket as i8 + i8::from(same && req.bucket as i8 >= s.current[1]);
+    let selected = [req.requested_bank, entry];
+    let mut mode = req.mode;
+    match mode {
+        2 => {
+            s.pending = selected;
+            mode = 3;
+            s.submode = 0;
+        }
+        3 => {
+            s.current = selected;
+        }
+        _ => {
+            s.current = selected;
+            s.scale[0] = 1.;
+            s.scale[2] = 1.;
+            s.collider_attributes &= !0x10;
+            mode = 1;
+            s.submode = 0;
+        }
+    }
+    Ok(
+        serde_json::json!({"mode":mode,"state":s,"selected":selected,"scope":"Placement request writes, given the engine-selected bucket. Engine callbacks and RNG state are external."}),
+    )
+}
