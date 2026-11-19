@@ -54,7 +54,7 @@ impl Bank {
         }
         Ok(Self { data, rows })
     }
-    pub fn motion(&self, slot: u16) -> Result<Motion> {
+    fn entry(&self, slot: u16) -> Result<&Entry> {
         let mut matches = self.rows.iter().filter(|r| r.slot == slot);
         let row = matches
             .next()
@@ -62,6 +62,28 @@ impl Bank {
         if matches.next().is_some() {
             return Err(Error::invalid("ambiguous motion slot in supplied bank"));
         }
+        Ok(row)
+    }
+    pub fn camera(&self, slot: u16, frame: f32) -> Result<crate::event_camera::CameraChannels> {
+        let row = self.entry(slot)?;
+        if (row.parts, row.flags, row.interpolation_and_slots) != (1, 0x1c1, 4) {
+            return Err(Error::invalid(
+                "selected character motion is not a one-part linear camera",
+            ));
+        }
+        let at = row.offset as usize;
+        let descriptor = u32::from_be_bytes(
+            self.data
+                .get(at..)
+                .and_then(|b| b.get(..4))
+                .ok_or_else(|| Error::invalid("invalid camera header"))?
+                .try_into()
+                .unwrap(),
+        );
+        crate::event_camera::sample_channels(&self.data, descriptor, frame, row.frames)
+    }
+    pub fn motion(&self, slot: u16) -> Result<Motion> {
+        let row = self.entry(slot)?;
         if (row.flags, row.interpolation_and_slots) == (3, 2) {
             return board_motion::bank_motion(&self.data, row.offset, row.parts);
         }
