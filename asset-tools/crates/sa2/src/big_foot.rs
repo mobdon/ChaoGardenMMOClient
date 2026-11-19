@@ -192,9 +192,12 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         let entry = flight_entry.ok_or_else(|| {
             Error::invalid("first flight requires the mode-three takeoff handoff")
         })?;
-        let (first, turnaround) = flight::run(ticks, entry)?;
-        output["firstFlight"] = first;
-        if let Some(frames) = turnaround {
+        let trace = flight::run(ticks, entry)?;
+        output["firstFlight"] = trace.first;
+        if !trace.repeats.is_empty() {
+            output["repeatPasses"] = json!(trace.repeats);
+        }
+        if let Some(frames) = trace.turnaround {
             output["turnaround"] = frames;
         }
     }

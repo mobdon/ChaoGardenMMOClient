@@ -1,4 +1,4 @@
-//! Target selection for the first airborne pass (the takeoff callback clears bit 0x200).
+//! Big Foot flight passes and turnarounds from the native takeoff up to entry into mode 5.
 use crate::{Error, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Flight {
+    #[serde(default)]
+    repeat_passes: Vec<Pass>,
     extra_byte2: Option<u8>,
     steering: Option<Steering>,
     ticks: Vec<Tick>,
@@ -14,7 +16,21 @@ pub(super) struct Flight {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Pass {
+    ticks: Vec<Tick>,
+    turnaround: Option<Vec<TurnTick>>,
+}
+
+pub(super) struct Trace {
+    pub first: Value,
+    pub turnaround: Option<Value>,
+    pub repeats: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Tick {
+    helper_angles: Option<[i32; 3]>,
     player_xz: [f32; 2],
     boss_x: f32,
     velocity_x: f32,
@@ -24,6 +40,7 @@ struct Tick {
 pub(super) fn run(
     Flight {
         extra_byte2,
+        repeat_passes,
         ticks,
         mut steering,
         turnaround,
@@ -33,9 +50,9 @@ pub(super) fn run(
         mut flags,
         pass_count,
     }: super::takeoff::Handoff,
-) -> Result<(Value, Option<Value>)> {
-    if ticks.len() > 2048 {
-        return Err(Error::invalid("too many first-flight updates"));
+) -> Result<Trace> {
+    if repeat_passes.len() > 2 {
+        return Err(Error::invalid("at most two repeat passes follow takeoff"));
     }
     if extra_byte2.is_some_and(|v| v != pass_count) {
         return Err(Error::invalid(
@@ -43,101 +60,174 @@ pub(super) fn run(
         ));
     }
     let (mut mode, mut sub, mut counter) = (3, 0, pass_count);
-    let mut frames = Vec::new();
-    for t in ticks {
-        let [px, pz] = t.player_xz;
-        if mode != 3
-            || ![px, pz, t.boss_x, t.velocity_x]
-                .iter()
-                .all(|v| v.is_finite())
-        {
-            return Err(Error::invalid("invalid first-flight update"));
-        }
-        let entered = sub == 0;
-        let target = if sub <= 1 {
-            sub = 1;
-            if (px - t.boss_x).abs() < 10.0 {
-                sub = 2;
-                [px, 0.]
-            } else {
-                [px, pz.clamp(-90., 90.)]
-            }
-        } else {
-            let right = t.velocity_x > 0.;
-            if (right && t.boss_x > 120.) || (!right && t.boss_x < -120.) {
-                mode = 4;
-                sub = 0;
-                counter = counter.wrapping_sub(1);
-            }
-            [if right { 120. } else { -120. }, 0.]
-        };
-        let mut row = json!({"mode":mode,"submode":sub,"targetXZ":target,"extraByte2":counter,
-            "enableShape7Attribute16":entered,"callHelper55d78":mode==4});
-        match (&mut steering, t.motion) {
-            (Some(state), Some(m)) => {
-                row["steering"] = state.step(&mut phase, t.velocity_x, m, 0.1, 0.96)?
-            }
-            (None, None) => (),
-            _ => return Err(Error::invalid("supply motion on every steering update")),
-        }
-        frames.push(row);
-    }
-    let Some(turnaround) = turnaround else {
-        return Ok((json!(frames), None));
+    let mut trace = Trace {
+        first: Value::Null,
+        turnaround: None,
+        repeats: Vec::new(),
     };
-    if mode != 4 || turnaround.len() > 2048 {
-        return Err(Error::invalid(
-            "turnaround requires the arena edge handoff and at most 2048 updates",
-        ));
-    }
-    let mut target = [0.; 2];
-    let mut turned = Vec::new();
-    for t in turnaround {
-        let [x, z] = t.boss_xz;
-        if mode != 4 || ![x, z, t.velocity_x].iter().all(|v| v.is_finite()) {
-            return Err(Error::invalid("invalid turnaround update"));
+    for (index, Pass { ticks, turnaround }) in std::iter::once(Pass { ticks, turnaround })
+        .chain(repeat_passes)
+        .enumerate()
+    {
+        let armed = flags & 0x200 != 0;
+        if mode != 3
+            || sub != 0
+            || counter != pass_count - index as u8
+            || armed != (index != 0)
+            || ticks.len() > 2048
+        {
+            return Err(Error::invalid(
+                "pass requires the previous turnaround handoff",
+            ));
         }
-        if (sub == 0) != t.player_xz.is_some() {
-            return Err(Error::invalid("turnaround reads the player only on entry"));
-        }
-        if let Some([px, pz]) = t.player_xz {
-            if !px.is_finite() || !pz.is_finite() {
-                return Err(Error::invalid("invalid player position"));
+        let mut frames = Vec::new();
+        for t in ticks {
+            let [px, pz] = t.player_xz;
+            if mode != 3
+                || ![px, pz, t.boss_x, t.velocity_x]
+                    .iter()
+                    .all(|v| v.is_finite())
+            {
+                return Err(Error::invalid("invalid first-flight update"));
             }
-            target = [
-                px,
-                if (z > 48. && pz > z) || (z < -48. && pz < z) {
-                    0.9 * z
+            let entered = sub == 0;
+            let sweeping = sub == 2;
+            let target = if sub <= 1 {
+                sub = 1;
+                if (px - t.boss_x).abs() < 10.0 {
+                    sub = 2;
+                    [px, 0.]
                 } else {
-                    pz
-                },
-            ];
-            sub = 1;
-        }
-        if sub == 1 {
-            if (x > 0. && t.velocity_x < 0.) || (x <= 0. && t.velocity_x > 0.) {
-                sub = 2;
-            }
-        } else if x.abs() < 150. {
-            if counter == 0 {
-                mode = 5;
+                    [px, pz.clamp(-90., 90.)]
+                }
             } else {
-                mode = 3;
-                flags |= 0x200;
+                let right = t.velocity_x > 0.;
+                if (right && t.boss_x > 120.) || (!right && t.boss_x < -120.) {
+                    mode = 4;
+                    sub = 0;
+                    counter = counter.wrapping_sub(1);
+                }
+                [if right { 120. } else { -120. }, 0.]
+            };
+            let mut row = json!({"mode":mode,"submode":sub,"targetXZ":target,"extraByte2":counter,
+            "enableShape7Attribute16":entered,"callHelper55d78":mode==4});
+            let mut calls = Vec::new();
+            if armed {
+                if entered {
+                    calls.extend([
+                        json!("create55248"),
+                        json!("attach5649c"),
+                        json!({"helperEnabled":1}),
+                    ]);
+                }
+                if sweeping
+                    && ((t.velocity_x > 0. && px < t.boss_x)
+                        || (t.velocity_x <= 0. && px > t.boss_x))
+                {
+                    calls.push(json!({"helperEnabled":0}));
+                }
+                if mode == 4 {
+                    calls.push(json!("freeHelper"));
+                }
             }
-            sub = 0;
-        }
-        let mut row = json!({"mode":mode,"submode":sub,"targetXZ":target,"flags":flags});
-        match (&mut steering, t.motion) {
-            (Some(state), Some(m)) => {
-                row["steering"] = state.step(&mut phase, t.velocity_x, m, 0.09, 0.92)?
+            if armed && mode != 4 {
+                let [pitch, yaw, roll] = t
+                    .helper_angles
+                    .ok_or_else(|| Error::invalid("missing helper angles on active repeat pass"))?;
+                calls.push(
+                    json!({"helperAngles":[pitch,yaw,roll.wrapping_add(0x1000).clamp(-3072,6144)]}),
+                );
+            } else if t.helper_angles.is_some() {
+                return Err(Error::invalid("unexpected helper angles"));
             }
-            (None, None) => (),
-            _ => return Err(Error::invalid("supply motion on every steering update")),
+            if armed {
+                row["helperCalls"] = json!(calls);
+            }
+            match (&mut steering, t.motion) {
+                (Some(state), Some(m)) => {
+                    row["steering"] = state.step(
+                        &mut phase,
+                        t.velocity_x,
+                        m,
+                        if armed {
+                            FlightLaw::Repeat
+                        } else {
+                            FlightLaw::First
+                        },
+                    )?
+                }
+                (None, None) => (),
+                _ => return Err(Error::invalid("supply motion on every steering update")),
+            }
+            frames.push(row);
         }
-        turned.push(row);
+        let mut turn_output = None;
+        if let Some(turnaround) = turnaround {
+            if mode != 4 || turnaround.len() > 2048 {
+                return Err(Error::invalid(
+                    "turnaround requires the arena edge handoff and at most 2048 updates",
+                ));
+            }
+            let mut target = [0.; 2];
+            let mut turned = Vec::new();
+            for t in turnaround {
+                let [x, z] = t.boss_xz;
+                if mode != 4 || ![x, z, t.velocity_x].iter().all(|v| v.is_finite()) {
+                    return Err(Error::invalid("invalid turnaround update"));
+                }
+                if (sub == 0) != t.player_xz.is_some() {
+                    return Err(Error::invalid("turnaround reads the player only on entry"));
+                }
+                if let Some([px, pz]) = t.player_xz {
+                    if !px.is_finite() || !pz.is_finite() {
+                        return Err(Error::invalid("invalid player position"));
+                    }
+                    target = [
+                        px,
+                        if (z > 48. && pz > z) || (z < -48. && pz < z) {
+                            0.9 * z
+                        } else {
+                            pz
+                        },
+                    ];
+                    sub = 1;
+                }
+                if sub == 1 {
+                    if (x > 0. && t.velocity_x < 0.) || (x <= 0. && t.velocity_x > 0.) {
+                        sub = 2;
+                    }
+                } else if x.abs() < 150. {
+                    if counter == 0 {
+                        mode = 5;
+                    } else {
+                        mode = 3;
+                        flags |= 0x200;
+                    }
+                    sub = 0;
+                }
+                let mut row = json!({"mode":mode,"submode":sub,"targetXZ":target,"flags":flags});
+                match (&mut steering, t.motion) {
+                    (Some(state), Some(m)) => {
+                        row["steering"] =
+                            state.step(&mut phase, t.velocity_x, m, FlightLaw::Turnaround)?
+                    }
+                    (None, None) => (),
+                    _ => return Err(Error::invalid("supply motion on every steering update")),
+                }
+                turned.push(row);
+            }
+            turn_output = Some(json!(turned));
+        }
+        if index == 0 {
+            trace.first = json!(frames);
+            trace.turnaround = turn_output;
+        } else {
+            trace
+                .repeats
+                .push(json!({"pass":frames,"turnaround":turn_output}));
+        }
     }
-    Ok((json!(frames), Some(json!(turned))))
+    Ok(trace)
 }
 
 #[derive(Deserialize)]
@@ -158,15 +248,19 @@ struct Motion {
     turn_sine: Option<f32>,
 }
 
+enum FlightLaw {
+    First,
+    Repeat,
+    Turnaround,
+}
+
 impl Steering {
-    fn step(
-        &mut self,
-        phase: &mut [i32; 3],
-        vx: f32,
-        m: Motion,
-        thrust: f32,
-        damping: f32,
-    ) -> Result<Value> {
+    fn step(&mut self, phase: &mut [i32; 3], vx: f32, m: Motion, law: FlightLaw) -> Result<Value> {
+        let (thrust, damping, turn_gain) = match law {
+            FlightLaw::First => (0.1, 0.96, 0.081),
+            FlightLaw::Repeat => (0.1, 0.94, 0.07),
+            FlightLaw::Turnaround => (0.09, 0.92, 0.081),
+        };
         let mut acc = m.acceleration;
         if !self
             .rates
@@ -199,7 +293,7 @@ impl Steering {
             (false, None) => turn.signum(),
             _ => return Err(Error::invalid("turn_sine must match the native lookup")),
         };
-        self.rates[1] += sine * 0.081 - 0.06 * self.rates[1];
+        self.rates[1] += sine * turn_gain - 0.06 * self.rates[1];
         // The original computes the angle feedback in double precision, then rounds once.
         let feedback =
             |drive: f32, angle: i32| (f64::from(drive) - 0.0054931640625 * f64::from(angle)) as f32;
