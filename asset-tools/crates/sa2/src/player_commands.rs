@@ -244,8 +244,11 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                         .iter()
                         .find(|e| e.logical == "resource/gd_PC/stg16D.rel")
                         .ok_or_else(|| Error::invalid("missing mounted Wild Canyon REL"))?;
-                    let task =
-                        sa2_asset_tools::wild_canyon::enter(&module.bytes, number(&args[6])?)?;
+                    let task = sa2_asset_tools::wild_canyon::enter(
+                        &module.bytes,
+                        number(&args[6])?,
+                        &stage,
+                    )?;
                     let light = task["lightFile"]
                         .as_str()
                         .ok_or_else(|| Error::invalid("missing lighting filename"))?;

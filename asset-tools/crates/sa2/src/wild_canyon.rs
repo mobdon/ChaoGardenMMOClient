@@ -2,7 +2,11 @@
 use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
 use serde_json::{json, Value};
 
-pub fn enter(module: &[u8], allocated: bool) -> Result<Value> {
+pub fn enter(
+    module: &[u8],
+    allocated: bool,
+    stage: &crate::fan_stage::MountedStage<'_>,
+) -> Result<Value> {
     let invalid = || Error::invalid("unverified Wild Canyon stage program");
     let info = stage_land::catalog()
         .iter()
@@ -36,6 +40,59 @@ pub fn enter(module: &[u8], allocated: bool) -> Result<Value> {
         std::str::from_utf8(&tail[..tail.iter().position(|&b| b == 0).ok_or_else(invalid)?])
             .map_err(|_| invalid())
     };
+    let code = |row| {
+        rel.local_pointer(5, row)?
+            .filter(|(s, _)| *s == 1)
+            .map(|(_, v)| v)
+            .ok_or_else(invalid)
+    };
+    let mut emeralds = Vec::new();
+    for (layer_index, layer) in stage.layers.iter().enumerate() {
+        for bound in &layer.placements {
+            let Some((_, Some(def))) = stage.resolve(layer_index, bound.placement_index) else {
+                continue;
+            };
+            if !matches!(def.name.as_str(), "EMERALD" | "EMERALD_F") {
+                continue;
+            }
+            let object = 0x7c6f8 + 16 * u32::from(bound.placement.object_id);
+            let label = rel
+                .local_pointer(5, object + 12)?
+                .filter(|(s, _)| *s == 5)
+                .ok_or_else(invalid)?
+                .1;
+            if name(label)? != def.name || code(object + 8)? != 0x1fcb0 {
+                return Err(invalid());
+            }
+            let variant = (bound.placement.rotation[0] >> 8) % 11;
+            let row = pair(0x1fcd4, 5)? + 36 * u32::from(variant);
+            let display = code(row + 24)?;
+            let conditional = display == pair(0x1fd10, 1)?;
+            let init = code(row + 8)?;
+            let setup = if init == 0x20780 {
+                let word = |bytes: &[u8], at: usize| -> Result<u32> {
+                    Ok(u32::from_be_bytes(
+                        bytes
+                            .get(at..at + 4)
+                            .ok_or_else(invalid)?
+                            .try_into()
+                            .unwrap(),
+                    ))
+                };
+                let add = f32::from_bits(word(rel.data(4)?, pair(0x2081c, 4)? as usize)?);
+                Some(
+                    json!({"typeWord":word(data,row as usize)?,"lowByte":bound.placement.rotation[0]&255,
+                    "position":bound.placement.position,"shapeOffset":pair(0x20808,5)?,"count":1,"id":6,
+                    "shapeParameter":bound.placement.parameters[1]+add,"skipIfModeZeroAndQueryNonzero":true}),
+                )
+            } else {
+                None
+            };
+            emeralds.push(json!({"layer":layer.filename,"index":bound.placement_index,"object":def.name,"variant":variant,
+                "main":code(row+20)?,"destroy":code(row+28)?,"display":display,"defaultDisplaySlot":32,
+                "nonzeroQueryDisplaySlot":conditional.then_some(20),"initialize":init,"commonSetup":setup}));
+        }
+    }
     let ptr = |at| -> Result<Option<u32>> {
         match rel.local_pointer(5, at)? {
             Some((5, v)) => Ok(Some(v)),
@@ -134,7 +191,7 @@ pub fn enter(module: &[u8], allocated: bool) -> Result<Value> {
     Ok(
         json!({"descriptor":name(desc)?,"startup":callback(12u32)?,"teardown":callback(16u32)?,"entry":callback(20u32)?,
         "create":{"arguments":[2,2],"name":name(pair(0x9164,5)?)?,"main":pair(0x915c,1)?},
-        "lightFile":name(pair(0x8c68,5)?)?,"gcSuffix":name(pair(0xace4,5)?)?,
+        "emeraldTasks":emeralds,"lightFile":name(pair(0x8c68,5)?)?,"gcSuffix":name(pair(0xace4,5)?)?,
         "music":{"volumeArgument":0,"engineByteZero":name(pair(0x8c94,5)?)?,"engineByteNonzero":name(pair(0x8ca4,5)?)?},
         "startupResources":{"calls":calls,"groups":groups},"created":child,"nextMain":pair(0x91c0,1)?}),
     )

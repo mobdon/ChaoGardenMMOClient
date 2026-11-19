@@ -117,6 +117,65 @@ def lighting(flag):
         for h in hooks:u.hook_del(h)
     return state,music,rows
 for pg in {v&~4095 for v in (2149471344,2149471344+383,2149470768,2149470768+575,2150329376,2149367176,0x80fffe60,0x80fffe60+575)}:u.mem_map(pg,4096)
+def emerald_tasks():
+    expected=[]
+    def intercept(cpu,pc,size,_):
+        if pc==base[1]+0x1fd20:
+            observed.append("query");cpu.reg_write(R.UC_PPC_REG_3,answer)
+        elif pc==base[1]+0x207e0:
+            setup.update(typeWord=reg(3),lowByte=reg(4),position=list(get(reg(5),"fff")))
+        elif pc==base[1]+0x207f8:
+            assert reg(3)==child
+            cpu.reg_write(R.UC_PPC_REG_3,answer)
+        elif pc==base[1]+0x20818:
+            assert reg(3)==child
+            setup.update(shapeOffset=reg(4)-base[5],count=reg(5),id=reg(6))
+            put(work+0x2c,"I",stage+704);put(stage+716,"I",stage+800)
+        else:
+            assert reg(3)==child
+            observed.append(cpu.reg_read(R.UC_PPC_REG_LR)-base[1])
+        cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+    hooks=[u.hook_add(UC_HOOK_CODE,intercept,begin=base[1]+s,end=base[1]+s) for s in (0x1fd20,0x1fe34,0x207e0,0x207f8,0x20818)]
+    try:
+        for layer in ("set0016_s.bin","set0016_u.bin"):
+            data=(game/"resource/gd_PC"/layer).read_bytes()
+            for index in range(struct.unpack_from(">I",data)[0]):
+                packed,rx=struct.unpack_from(">HH",data,32+32*index)
+                obj=base[5]+0x7c6f8+(packed&4095)*16
+                main,label=get(obj+8,"II");label=text(label)
+                if label not in ("EMERALD","EMERALD_F"):continue
+                row=dict(layer=layer,index=index,object=label,variant=(rx>>8)%11)
+                for answer in (0,1):
+                    observed=[];u.mem_write(child,bytes(128));put(child+0x34,"I",work);put(work+8,"I",rx)
+                    u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child);u.reg_write(R.UC_PPC_REG_LR,stop)
+                    u.emu_start(main,stop,count=160);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+                    update,display14,destroy,_,display20=get(child+16,"5I")
+                    assert bool(display14)!=bool(display20)
+                    if answer==0:
+                        assert display20
+                        row.update(main=update-base[1],destroy=destroy-base[1],display=display20-base[1],
+                            defaultDisplaySlot=32,initialize=observed[-1])
+                    else:
+                        assert (display14 or display20)-base[1]==row["display"]
+                        assert bool(display14)==("query" in observed)
+                        row["nonzeroQueryDisplaySlot"]=20 if display14 else None
+                row["commonSetup"]=None
+                if row["initialize"]==0x20780:
+                    for mode,answer in ((0,0),(0,1),(1,1)):
+                        setup={};put(work,"B",mode);put(work+8,"I",rx)
+                        xyz=struct.unpack_from(">fff",data,32+32*index+8)
+                        put(work+20,"fff",*xyz);put(work+0x24,"f",struct.unpack_from(">f",data,32+32*index+24)[0])
+                        u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child);u.reg_write(R.UC_PPC_REG_LR,stop)
+                        u.emu_start(base[1]+row["initialize"],stop,count=110);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+                        if not mode and answer:assert "count" not in setup
+                        else:
+                            setup.update(shapeParameter=get(stage+820,"f")[0],skipIfModeZeroAndQueryNonzero=True)
+                            if row["commonSetup"] is None:row["commonSetup"]=setup
+                            else:assert row["commonSetup"]==setup
+                expected.append(row)
+    finally:
+        for h in hooks:u.hook_del(h)
+    return expected
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for allocated in (True,False):
         handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
@@ -130,6 +189,6 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         doc=json.loads(out.read_text())
         state,music,rows=lighting(0);other,alt,rows2=lighting(255)
         assert state==other and rows==rows2==doc["lighting"]
-        result.update(state,music=music|alt)
+        result.update(state,music=music|alt,emeraldTasks=emerald_tasks())
         assert doc["stageTask"]==result and doc["dispatch"]["character"]==4 and doc["dispatch"]["level"]==16
 print("Wild Canyon Hero dispatch, module registration and both stage-task allocation routes matched")
