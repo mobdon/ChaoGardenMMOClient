@@ -333,3 +333,19 @@ checks the position bytes after this arithmetic for 134 cases with supplied
 or projected vectors. Matrix and vector-add imports are represented at the
 call boundary; these positions precede the remaining vehicle and collision
 updates and are not a verified trajectory.
+
+Optional `drive.drift` follows the normal driving routine through its drift
+entry decision. Supply the 30 position-history samples (newest first),
+the active profile's drift speed threshold, vehicle state, +0x10c flags and
++0xa8. Rust computes the offset of the newest position from the 30-sample
+mean. When the rotated `local_offset` is observed it also reports the native
++0xf0 and +0xf8 writes; absent that observation those fields remain null.
+The vector-add/subtract engine imports are represented arithmetically.
+
+Speed must exceed the profile threshold and the updated +0xa4 must be
+positive before flag bit 0 is set. With acceleration held and absolute raw
+stick above 20, the vehicle enters state 2, saves the signed stick at +0xa8
+and clears +0xa4. Exactly 20 does not start a drift. The nested drift output
+contains the final +0xa4; the outer value is the earlier pedal update. This
+does not implement the subsequent state-2 driving routine. The input oracle
+also executes the position-ring reads, native split thresholds and state writes.

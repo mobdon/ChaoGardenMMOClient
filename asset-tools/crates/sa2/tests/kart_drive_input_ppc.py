@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x3034<=l<0x30dc or 0x31b4<=l<0x3428 or 0x5360<=l<0x5498) or k not in (4,6):continue
+        if t!=1 or not (0x3034<=l<0x30dc or 0x31b4<=l<0x368c or 0x52b0<=l<0x5308 or 0x5360<=l<0x5498) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -31,10 +31,24 @@ ram=0x85000000;u.mem_map(ram,65536)
 task,work=ram+256,ram+512;put(task+0x38,"I",work)
 def reg(i,val):u.reg_write(getattr(R,f"UC_PPC_REG_{i}"),val)
 def run(start,end):
-    u.emu_start(base[1]+start,base[1]+end,count=1000)
+    u.emu_start(base[1]+start,base[1]+end,count=4000)
     assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+end
 hist=base[6]+0x222ac;cur=base[6]+0x2248c
 reg(1,ram+0xf000);u.reg_write(R.UC_PPC_REG_MSR,8192)
+def vec_hook(m,addr,*args):
+    pc=addr-base[1]
+    a,b,dest=[m.reg_read(getattr(R,f"UC_PPC_REG_{n}")) for n in (3,4,5)]
+    read=lambda p:struct.unpack(">3f",u.mem_read(p,12))
+    if pc==0x352c:
+        assert bytes(u.mem_read(b,12))==struct.pack(">3f",*dr["history_offset"])
+        vals=di["local_offset"]
+    else:
+        left,right=read(a),read(b)
+        vals=[x+y if pc==0x34b8 else x-y for x,y in zip(left,right)]
+    u.mem_write(dest,struct.pack(">3f",*vals))
+    m.reg_write(R.UC_PPC_REG_PC,addr+4)
+for addr in (0x34b8,0x351c,0x352c):
+    u.hook_add(UC_HOOK_CODE,vec_hook,begin=base[1]+addr,end=base[1]+addr)
 with tempfile.TemporaryDirectory(dir=tmp) as td:
     for slot in (0,1):
         history=[n*17-420 for n in range(60)];cursor=57
@@ -47,6 +61,12 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             if n%4==2:f["drive"]["magnitude_return"]=None
             f["drive"]["position_step"]=dict(position=[3.125,4.5,-9],velocity_y=(-1,0,4.5)[n%3],
                 weight=0.375,work_74=n%2,transformed_vector=[-1.25,0.75,2] if n%4==1 else None)
+            f["drive"]["drift"]=dict(positions=[[n+i*.25,3-i*2,n-3*i] for i in range(30)],
+                local_offset=[[-3,-2.5,1,2.5,3][n%5],0,-1.5],speed_threshold=(4,5,6)[n%3 if n%4 else 0],
+                vehicle_state=1,work_10c=4,work_a8=99)
+            if n in (4,11,25):
+                f["stick_x"]=(20,-20,21)[(4,11,25).index(n)]
+                f["drive"]["drift"]["speed_threshold"]=4
         q=dict(history=history,cursor=cursor,frames=frames)
         req=Path(td)/"q.json";out=Path(td)/f"{slot}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-drive-input",rel,out,req],check=True);doc=json.loads(out.read_text())
@@ -104,6 +124,17 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             put(base[6]+0x21450,"f",pp["weight"])
             run(0x33b8,0x3428)
             assert bytes(u.mem_read(tw+0x14,12))==struct.pack(">3f",*res["position"])
+            di=drive["drift"];dr=motion["drift"]
+            poscursor=(3+n)%60;put(base[6]+0x222a4+4*slot,"i",poscursor)
+            for i,v in enumerate(di["positions"]):
+                u.mem_write(base[6]+0x21764+720*slot+12*((poscursor-i-1)%60),struct.pack(">3f",*v))
+            put(work+0x70,"i",slot);put(work+0x30,"i",di["vehicle_state"])
+            put(work+0x10c,"I",di["work_10c"]);put(work+0xa8,"i",di["work_a8"])
+            put(base[6]+0x2145c,"f",di["speed_threshold"])
+            run(0x346c,0x368c)
+            for key,off in [("work_f0",0xf0),("work_f8",0xf8),("vehicle_state",0x30),
+                            ("work_10c",0x10c),("work_a8",0xa8),("work_a4",0xa4)]:
+                assert dr[key]==get(work+off,"i"),(key,n,slot,dr)
         assert get(cur+4*slot,"i")==doc["cursor"]
         assert bytes(u.mem_read(hist+240*slot,240))==struct.pack(">60i",*doc["history"])
-print("Matched 134 native controller samples, including heading, local movement and post-transform position arithmetic.")
+print("Matched 134 native controller samples, including heading, local movement and drift-entry state writes.")

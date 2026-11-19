@@ -60,6 +60,7 @@ pub fn replay(bytes: &[u8], mut s: Input) -> Result<Output> {
                 drive_step(
                     d,
                     steering_input,
+                    f.stick_x,
                     work_110 != 0,
                     work_114 != 0,
                     rel.data(4)?,
@@ -84,6 +85,7 @@ pub fn replay(bytes: &[u8], mut s: Input) -> Result<Output> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Drive {
+    drift: Option<DriftInput>,
     position_step: Option<PositionInput>,
     heading: i32,
     work_a4: i32,
@@ -99,6 +101,8 @@ struct Drive {
 #[derive(Serialize)]
 struct Motion {
     #[serde(skip_serializing_if = "Option::is_none")]
+    drift: Option<DriftUpdate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     position_step: Option<PositionStep>,
     magnitude_source: &'static str,
     heading: i32,
@@ -110,6 +114,7 @@ struct Motion {
 fn drive_step(
     d: Drive,
     steer: f32,
+    stick_x: i16,
     accelerate: bool,
     brake: bool,
     constants: &[u8],
@@ -148,7 +153,11 @@ fn drive_step(
         .position_step
         .map(|p| position(p, heading, z, f(0x234)))
         .transpose()?;
+    let drift = d
+        .drift
+        .map(|i| drift_update(i, speed, work_a4, accelerate, stick_x, constants));
     Ok(Motion {
+        drift,
         position_step,
         magnitude_source,
         heading,
@@ -212,4 +221,72 @@ fn position(
         world_displacement,
         transform_source,
     })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DriftInput {
+    /// The 30 position-history reads returned by 0x52b0, newest first.
+    positions: [[f32; 3]; 30],
+    /// Return of the rotation helper 0x5498, if observed.
+    local_offset: Option<[f32; 3]>,
+    speed_threshold: f32,
+    vehicle_state: i32,
+    work_10c: u32,
+    work_a8: i32,
+}
+#[derive(Serialize)]
+struct DriftUpdate {
+    history_offset: [f32; 3],
+    work_f0: Option<i32>,
+    work_f8: Option<i32>,
+    vehicle_state: i32,
+    work_10c: u32,
+    work_a8: i32,
+    work_a4: i32,
+}
+fn drift_update(
+    s: DriftInput,
+    speed: f32,
+    mut a4: i32,
+    accelerate: bool,
+    stick: i16,
+    constants: &[u8],
+) -> DriftUpdate {
+    let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
+    let mut sum = [0f32; 3];
+    for pos in s.positions {
+        for (acc, x) in sum.iter_mut().zip(pos) {
+            *acc += x;
+        }
+    }
+    let history_offset = std::array::from_fn(|i| s.positions[0][i] - sum[i] * f(0x238));
+    let work_f0 = s.local_offset.map(|[x, _, z]| {
+        if x < f(0x23c) {
+            640
+        } else if x > f(0x240) {
+            -640
+        } else {
+            (z * f(0x244)) as i32
+        }
+    });
+    let work_f8 = s.local_offset.map(|v| (v[0] * f(0x248)) as i32);
+    let (mut vehicle_state, mut work_10c, mut work_a8) = (s.vehicle_state, s.work_10c, s.work_a8);
+    if speed > s.speed_threshold && a4 > 0 {
+        work_10c |= 1;
+        if accelerate && f32::from(stick).abs() > f(0x1e0) {
+            vehicle_state = 2;
+            work_a8 = i32::from(stick);
+            a4 = 0;
+        }
+    }
+    DriftUpdate {
+        history_offset,
+        work_f0,
+        work_f8,
+        vehicle_state,
+        work_10c,
+        work_a8,
+        work_a4: a4,
+    }
 }
