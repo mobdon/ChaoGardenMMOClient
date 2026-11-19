@@ -112,6 +112,26 @@ for latch,task_mode,out,tick,byte in itertools.product((0,1),(0,1),(0,1),(24,25,
     u.emu_start(BASE+0x2d55c,BASE+end,count=64)
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+end
     print('ENTRY',latch,task_mode,out,tick,byte,get(WORK+3,'B'))
+# Follow the native height-query call and cache across frame boundaries.
+shadow_helper=0x80067888
+map_page(shadow_helper);put(shadow_helper,'I',0x4e800020)
+u.mem_write(DATA+4*0x100000+0xc48,d[ss[4][0]+0xc48:ss[4][0]+0xc50])
+shadow_calls=[]
+def shadow_hook(cpu,pc,size,_):
+    angles=struct.unpack(">iii",cpu.mem_read(reg(3),12))
+    xyz=tuple(struct.unpack(">d",cpu.reg_read(getattr(R,'UC_PPC_REG_FPR'+str(i))).to_bytes(8,'big'))[0] for i in (1,2,3))
+    shadow_calls.append((angles,xyz))
+    cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",shadow_result),'big'))
+u.hook_add(UC_HOOK_CODE,shadow_hook,begin=shadow_helper,end=shadow_helper)
+setreg(1,TASK+0x800);setreg(27,WORK);setreg(29,GLOBAL+0x7c)
+put(WORK+12,'i',-271);put(WORK+0x14,'fff',4.5,-8.25,17.0)
+put(WORK+0x28,'f',-1000000.)
+for tick,shadow_result,expected in [(31,0.,False),(32,-1000000.,True),(63,0.,False),(64,-0.,True),(96,123.,False)]:
+    shadow_calls.clear();put(GLOBAL+0x7c,'I',tick)
+    u.emu_start(BASE+0x2d604,BASE+0x2d668,count=64)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d668
+    assert shadow_calls==([((0,-271,0),(4.5,-5.25,17.0))] if expected else [])
+    assert get(WORK+0x28,'I')==int.from_bytes(struct.pack(">f",-1000000. if tick<64 else -0.),'big')
 for pc in (BASE+0x2d868,BASE+0x2da4c,BASE+0x2dd10):
     u.hook_add(UC_HOOK_CODE,lambda uc,pc,size,data:uc.emu_stop(),begin=pc,end=pc)
 for active,gate,timer,ptr in itertools.product((0,1),(0,1),(0,58,59,60,65535),(0,1)):

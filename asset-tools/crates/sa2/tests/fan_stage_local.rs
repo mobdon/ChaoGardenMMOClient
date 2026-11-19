@@ -627,6 +627,39 @@ fn mounted_story_goal_samples_live_game_bytes() {
             frames[2]["entry"],
             serde_json::json!({"rangeChecked":false,"workByte3":0})
         );
+        let mut shadow = request.clone();
+        shadow["track_shadow"] = true.into();
+        shadow["frames"] = serde_json::json!([
+            {"hit":{"kind":"none"},"game_byte_23":0,"entry":{"range_out":false,"frame_counter":31}},
+            {"hit":{"kind":"none"},"game_byte_23":0,"entry":{"range_out":false,"frame_counter":32,"shadow_return_bits":(-1000000f32).to_bits()}},
+            {"hit":{"kind":"none"},"game_byte_23":0,"entry":{"range_out":false,"frame_counter":64,"shadow_return_bits":(-0.0f32).to_bits()}},
+            {"hit":{"kind":"none"},"game_byte_23":0,"entry":{"range_out":false,"frame_counter":96}}]);
+        let tracked = sa2_asset_tools::goal_ring::replay(
+            &stage,
+            layer,
+            row,
+            &module,
+            &exe,
+            &effects,
+            &serde_json::to_vec(&shadow).unwrap(),
+        )
+        .unwrap();
+        let samples = tracked["frames"].as_array().unwrap();
+        let center = stage.layers[layer].placements[row].placement.position;
+        for index in [1, 2] {
+            let q = &samples[index]["shadow"]["query"];
+            assert_eq!(
+                q["positionBits"],
+                serde_json::json!([
+                    center[0].to_bits(),
+                    (center[1] + 3.).to_bits(),
+                    center[2].to_bits()
+                ])
+            );
+            assert_eq!(q["rotation"][1], samples[index - 1]["regularMotion"]["yaw"]);
+        }
+        assert!(samples[0]["shadow"]["query"].is_null() && samples[3]["shadow"]["query"].is_null());
+        assert_eq!(samples[3]["shadow"]["work40Bits"], (-0.0f32).to_bits());
         if dispatch.level == 13 {
             let mut out = request.clone();
             out["frames"][1]["entry"]["range_out"] = true.into();
