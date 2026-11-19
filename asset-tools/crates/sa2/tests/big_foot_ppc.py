@@ -20,7 +20,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0,0x35c),(0xd90,0x1014),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0,0x35c),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
@@ -43,8 +43,8 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|8192)
 def hook(uc,pc,size,_):
     off=pc-B
-    if off in (0x10,0xda0):saved[:]=[reg(i) for i in range(26,32)]
-    if off in (0x250,0x1004):
+    if off in (0x10,0xda0,0x1024):saved[:]=[reg(i) for i in range(26,32)]
+    if off in (0x250,0x1004,0x1618):
         for i,v in enumerate(saved,26):setreg(i,v)
     if off==0x34:
         assert (reg(3),reg(4),u.mem_read(reg(6),16))==(2,2,b"BossBigFootExec\0")
@@ -68,11 +68,21 @@ def hook(uc,pc,size,_):
         arg=reg(4);intro_calls.append({"nextView":{"slot":reg(3),"focus":list(get(get(arg,"I")[0],"fff")),"args":[*get(arg+4,"ffI"),*get(arg+16,"BB"),*get(arg+20,"ffI")]}})
     if off==0x54764:setreg(3,query & 0xffffffff)
     if off==0x547dc:intro_calls.append({"local2e4b4":{"position":list(get(reg(3),"fff")),"slot":reg(5),"argument":reg(6),"kind":reg(7)}})
+    if off in (0x1134,0x1248,0x12c0,0x145c):
+        assert ready is not None;setreg(3,int(ready));motion_queries.append(off)
+    if off==0x10b8:take_calls.append({"enableCollision":reg(4)})
+    if off in (0x10c0,0x1150):take_calls.append({0x10c0:"helper58c78",0x1150:"helper58d30"}[off])
+    if off in (0x10d8,0x115c,0x1268,0x12e0,0x149c):take_calls.append({"motion":reg(4)})
+    if off in (0x112c,0x1234,0x12fc,0x14b4):take_calls.append({"helper6b8":list(get(reg(4),"fff")) if reg(4) else None})
+    if off==0x12f0:take_calls.append({"turnArgs":[reg(4),reg(5)]})
+    if off in (0x11a0,0x15a0,0x15c4):
+        take_calls.append({"effectDescriptor":680 if off==0x11a0 else 704})
+        if off==0x15c4:take_calls[-1].update(byte0=get(reg(4),"B")[0],float4=get(reg(4)+4,"f")[0])
     if off==0x6790:
         assert get(reg(3),"fff")==tuple(position)
         put(reg(3),"fff",*vector);calls.append(off)
     u.reg_write(R.UC_PPC_REG_PC,pc+4)
-for off in (0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004):
+for off in (0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
     u.hook_add(UC_HOOK_CODE,hook,begin=B+off,end=B+off)
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
@@ -124,5 +134,39 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
         for row,expected in zip(json.loads(out.read_text())["replay"]["intro"]["frames"],trace,strict=True):
             assert ((row["mode"],row["submode"]),row["timer"],row["flags"],row["calls"])==expected,(case,row,expected)
+        # Follow the exact mode-one handoff. The unported outer physics and animation
+        # callbacks are represented by per-tick observations on both sides.
+        motion=T+0xd00;anim=T+0xe00
+        put(BOSS+0x38,"I",motion);put(EXTRA+12,"I",anim)
+        take_inputs=[];take_native=[];visits=[0]*5
+        for _ in range(160):
+            sub=get(WORK+1,"B")[0];visits[sub]+=1;n=visits[sub]
+            x=[90.,-90.,0.][case];y=0.;vy=0.;motion_id=0;ready=None
+            if sub==1:ready=n>=33+case
+            if sub==2:
+                motion_id=1 if n<3 else 2;ready=n==2 if motion_id==1 else None
+                vy=2. if n<5 else -0.25
+            if sub==3:
+                motion_id=1 if n==1 else 2;ready=True if motion_id==1 else None
+                y=[3.,20.,10.,10.][min(n-1,3)];vy=1. if n<20 else 0.01
+            if sub==4:ready=n==4
+            put(WORK+20,"fff",x,y,0);put(motion+4,"f",vy);put(anim+4,"i",motion_id)
+            entry={"position":[x,y,0],"velocity_y":vy,"motion_id":motion_id}
+            if ready is not None:entry["motion_ready"]=ready
+            take_inputs.append(entry);take_calls=[];motion_queries=[];invoke(0x1014,BOSS)
+            assert bool(motion_queries)==(ready is not None)
+            take_native.append({"mode":get(WORK,"B")[0],"submode":get(WORK+1,"B")[0],
+                "flags":get(WORK+4,"H")[0],"timer":get(WORK+6,"H")[0],"position":list(get(WORK+20,"fff")),
+                "velocityY":get(motion+4,"f")[0],"acceleration":[get(motion,"f")[0],get(motion+16,"f")[0]],
+                "phase":list(get(motion+0x84,"iii")),"intensity":get(motion+0xb8,"f")[0],
+                "burst":get(motion+0xbc,"f")[0],"calls":take_calls})
+            if get(WORK,"B")[0]==3:break
+        assert all(visits) and take_native[-1]["mode"]==3
+        req.write_text(json.dumps({"work_allocation_ok":True,"frames":[],"intro":intro,"takeoff":take_inputs}))
+        out=tmp/f"takeoff{case}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
+        for i,(row,expected) in enumerate(zip(json.loads(out.read_text())["replay"]["takeoff"],take_native,strict=True)):
+            assert row==expected,(case,i,row,expected)
+        print("mode-two callbacks verified:",len(take_native))
 print("1,353 mode-one callbacks matched the native player placement, state, timer and helper calls")
 print("Both Big Foot setup routes and 202 arena callbacks matched installed PPC")

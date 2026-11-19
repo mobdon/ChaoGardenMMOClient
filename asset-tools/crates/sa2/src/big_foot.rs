@@ -1,5 +1,7 @@
 //! Big Foot's stage task creates the boss, then runs the slot-zero arena constraint.
 use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+#[path = "big_foot_takeoff.rs"]
+mod takeoff;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -9,6 +11,7 @@ struct Request {
     work_allocation_ok: bool,
     frames: Vec<Frame>,
     intro: Option<Intro>,
+    takeoff: Option<Vec<takeoff::Tick>>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +137,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     } else {
         json!({"created":false,"calls":["freeBossTask"]})
     };
+    if req.takeoff.is_some() && !req.intro.as_ref().is_some_and(|i| i.updates == 451) {
+        return Err(Error::invalid("takeoff requires a completed intro"));
+    }
     let intro_trace = match req.intro {
         Some(i) if req.work_allocation_ok => Some(intro(position, i, &scalar)?),
         Some(_) => return Err(Error::invalid("intro requires an allocated boss")),
@@ -166,6 +172,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let mut output = json!({"boss":boss,"stageExecutor":local(0x6704,1)?,"arenaRadius":radius,"frames":frames,"scope":"Boss setup and slot-zero arena constraint; player motion, vector helper, combat and mission resolution are not executed."});
     if let Some(trace) = intro_trace {
         output["intro"] = trace;
+    }
+    if let Some(ticks) = req.takeoff {
+        output["takeoff"] = takeoff::run(ticks)?;
     }
     Ok(output)
 }
