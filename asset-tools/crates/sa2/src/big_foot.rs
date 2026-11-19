@@ -182,19 +182,17 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     if let Some(trace) = intro_trace {
         output["intro"] = trace;
     }
-    let mut flight_ready = false;
+    let mut flight_phase = None;
     if let Some(ticks) = req.takeoff {
         let (trace, ready) = takeoff::run(ticks)?;
         output["takeoff"] = trace;
-        flight_ready = ready;
+        flight_phase = ready;
     }
     if let Some(ticks) = req.first_flight {
-        if !flight_ready {
-            return Err(Error::invalid(
-                "first flight requires the mode-three takeoff handoff",
-            ));
-        }
-        output["firstFlight"] = flight::run(ticks)?;
+        let phase = flight_phase.ok_or_else(|| {
+            Error::invalid("first flight requires the mode-three takeoff handoff")
+        })?;
+        output["firstFlight"] = flight::run(ticks, phase)?;
     }
     if let Some(ticks) = req.collision {
         if !req.work_allocation_ok {
