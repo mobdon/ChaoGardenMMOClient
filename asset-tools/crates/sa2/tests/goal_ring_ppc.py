@@ -791,3 +791,32 @@ for angle,inputs in [(1,[]),(4,[]),(0,[57]),(0,[6,0]),(-2,[0,6]),(3,[0,57])]:
                 callback44Write=None if extra==0x11223344 else extra-BASE,queryReturns=used,
                 workByte3=get(WORK+3,'B'),workByte1=get(WORK+1,'B'),work40Bits=get(WORK+40,'I'))
     print('BIND',angle,json.dumps(used,separators=(',',':')),json.dumps(result,separators=(',',':')))
+
+# Execute the installed destructor and nested helper. Observe actual free arguments
+# and memory stores; the allocator itself is external.
+from unicorn import UC_HOOK_MEM_WRITE
+release_cpu=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+release_cpu.mem_map(TASK,0x2000)
+for start,size in [(0x2d4f4,0x44),(0x18aa8,0x40)]:
+    release_cpu.mem_map((BASE+start)&~4095,4096)
+    release_cpu.mem_write(BASE+start,d[ss[1][0]+start:ss[1][0]+start+size])
+def release_free(cpu,pc,*_):
+    events.append(['free',0x801194e0,cpu.reg_read(R.UC_PPC_REG_3)])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+def release_store(cpu,access,address,size,value,_):
+    assert size==4 and value==0
+    events.append(['clearTask56'] if address==TASK+56 else ['clearNested',address])
+for off in [0x2d518,0x18ac8]:
+    release_cpu.hook_add(UC_HOOK_CODE,release_free,begin=BASE+off,end=BASE+off)
+for addr in [TASK+56,WORK+0x90]:
+    release_cpu.hook_add(UC_HOOK_MEM_WRITE,release_store,begin=addr,end=addr+3)
+for nested in [0,TASK+0x300]:
+    events=[]
+    release_cpu.mem_write(TASK+56,struct.pack('>I',WORK))
+    release_cpu.mem_write(WORK+0x90,struct.pack('>I',nested))
+    release_cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00)
+    release_cpu.reg_write(R.UC_PPC_REG_3,TASK)
+    release_cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x2d538)
+    release_cpu.emu_start(BASE+0x2d4f4,BASE+0x2d538,count=80)
+    assert release_cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d538
+    print('FREE',WORK,nested,json.dumps(dict(callback=0x2d4f4,events=events),separators=(',',':')))

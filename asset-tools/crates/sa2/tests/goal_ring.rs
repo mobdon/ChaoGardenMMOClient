@@ -56,7 +56,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 14];
+    let mut counts = [0; 15];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     let variants = [13, 16, 18]
@@ -83,6 +83,13 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "FREE" {
+            assert_eq!(
+                program.regular_release(n(1) as u32, n(2) as u32).unwrap(),
+                serde_json::from_str::<serde_json::Value>(v[3]).unwrap(),
+                "{line}"
+            );
+            counts[14] += 1;
         } else if v[0] == "BIND" {
             let queries: Vec<i32> = serde_json::from_str(v[2]).unwrap();
             assert_eq!(
@@ -315,7 +322,7 @@ fn compare_installed_init_and_contact() {
     }
     assert_eq!(
         counts,
-        [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176, 1280, 12, 6]
+        [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176, 1280, 12, 6, 2]
     );
 }
 #[test]
@@ -409,13 +416,17 @@ fn mounted_goal_cli() {
         &request,
         serde_json::to_vec(&serde_json::json!({
             "game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":inputs,
-            "lifecycle":{"initial_timer":0,"game_byte_37":0,"task_field_30_present":false}
+            "lifecycle":{"initial_timer":0,"game_byte_37":0,"task_field_30_present":false,"release":{"work56":4096,"nested":8192}}
         }))
         .unwrap(),
     )
     .unwrap();
     let doc = run("198").unwrap();
     let frames = doc["replay"]["frames"].as_array().unwrap();
+    assert_eq!(
+        doc["replay"]["observedRelease"]["events"][0],
+        serde_json::json!(["free", 0x801194e0u32, 8192])
+    );
     assert_eq!(frames.len(), 61);
     assert_eq!(frames[0]["regularMotion"]["timer"], 0);
     assert_eq!(frames[59]["regularMotion"]["timer"], 59);

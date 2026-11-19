@@ -1002,6 +1002,35 @@ impl Program {
             paired(0x1e6, 1)?,
             paired(0x24a, 1)?,
         ];
+        let release = regular_callbacks[2];
+        let raw = instructions
+            .get(release as usize..release as usize + 0x44)
+            .ok_or_else(invalid)?;
+        let branch = word(raw, 0x1c)?;
+        if branch & 0xfc000003 != 0x48000001 {
+            return Err(invalid());
+        }
+        let helper = (release + 0x1c)
+            .checked_add_signed(((branch & 0x03fffffc) << 6) as i32 >> 6)
+            .ok_or_else(invalid)?;
+        let mut normalized = raw.to_vec();
+        normalized[0x1c..0x20].fill(0);
+        if manifest::sha256(&normalized)
+            != "985f7141046f18f151e467c82158a2168b939b603d1d616647d7a7da49402cf4"
+            || manifest::sha256(
+                instructions
+                    .get(helper as usize..helper as usize + 0x40)
+                    .ok_or_else(invalid)?,
+            ) != "6c08d3fc09ccc70c20bb904c229f74c6ebdcec7dcceb184b998632aa2df8b8a6"
+        {
+            return Err(invalid());
+        }
+        for site in [release + 0x24, helper + 0x20] {
+            let call = rel.reference(1, site).ok_or_else(invalid)?;
+            if (call.module, call.kind, call.addend) != (0, 10, 0x801194e0) {
+                return Err(invalid());
+            }
+        }
         let regular_work40 = word(rel.data(4)?, paired(0x2c6, 4)? as usize)?;
         for off in [0x230, 0x23c] {
             let call = rel.reference(1, init + off).ok_or_else(invalid)?;
@@ -1289,7 +1318,14 @@ impl RegularMotion {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReleaseObservation {
+    work56: u32,
+    nested: u32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LifecycleInput {
+    release: Option<ReleaseObservation>,
     game_byte_37: i8,
     task_field_30_present: bool,
     initial_timer: u16,
@@ -1541,6 +1577,19 @@ impl Program {
             );
         }
         Ok(json!(pairs))
+    }
+    pub fn regular_release(&self, work56: u32, nested: u32) -> Result<Value> {
+        if work56 == 0 {
+            return Err(Error::invalid("goal release dereferences missing work"));
+        }
+        let mut events = Vec::new();
+        if nested != 0 {
+            events.push(json!(["free", 0x801194e0u32, nested]));
+            events.push(json!(["clearNested", work56.wrapping_add(0x90)]));
+        }
+        events.push(json!(["free", 0x801194e0u32, work56]));
+        events.push(json!(["clearTask56"]));
+        Ok(json!({"callback":self.regular_callbacks[2],"events":events}))
     }
     pub fn regular_task_bind(&self, angle: i32, queries: &[i32]) -> Result<Value> {
         let extra = match (angle % 3, queries) {
@@ -1911,6 +1960,16 @@ pub fn replay(
             break;
         }
     }
+    let released = if let Some(obs) = r.lifecycle.as_ref().and_then(|l| l.release.as_ref()) {
+        if !frames.last().is_some_and(|f| !f["cleanupCall"].is_null()) {
+            return Err(Error::invalid(
+                "observed release requires a cleanup request",
+            ));
+        }
+        Some(p.regular_release(obs.work56, obs.nested)?)
+    } else {
+        None
+    };
     let consumer = if let Some(c) = r.post_contact_consumer {
         let code = p.consume_goal_word(&mut slot_words, c.slot, c.query)?;
         let mut out =
@@ -1926,6 +1985,6 @@ pub fn replay(
         None
     };
     Ok(
-        json!({"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
+        json!({"observedRelease":released,"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
     )
 }
