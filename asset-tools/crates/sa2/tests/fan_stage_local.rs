@@ -108,10 +108,14 @@ fn mounted_campaign_routes() {
                     {
                         continue;
                     }
-                    let request=br#"{"checkpoint_byte":7,"hit":[1,0],"players":[{"rotation":[0,0,0],"position_bits":[0,0,0]},{"rotation":[1,2,3],"position_bits":[4,5,6]}]}"#;
+                    let request=br#"{"engine_result":1,"stage_byte":1,"hit":[1,0],"players":[{"rotation":[0,0,0],"position_bits":[0,0,0]},{"rotation":[1,2,3],"position_bits":[4,5,6]}]}"#;
                     let out = stage
                         .replay_object(layer_idx, place.placement_index, request)
                         .unwrap();
+                    assert_eq!(
+                        out["handoff"]["checkpoint_byte"],
+                        place.placement.rotation[1] & 255
+                    );
                     assert_eq!(out["handoff"]["rotation"], serde_json::json!([1, 2, 3]));
                     assert_eq!(out["slotTimers"], serde_json::json!([0, 300]));
                     checkpoint_levels.insert(level);

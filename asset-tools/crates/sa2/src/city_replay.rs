@@ -284,7 +284,8 @@ pub(crate) fn mounted_replay(
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct ContactRequest {
-            checkpoint_byte: u8,
+            engine_result: u32,
+            stage_byte: i8,
             hit: Option<(i32, u32)>,
             players: [crate::checkpoint::ContactPlayer; 2],
         }
@@ -293,9 +294,13 @@ pub(crate) fn mounted_replay(
             mode: 1,
             slot_timers: [0; 2],
         };
-        let handoff = state.accept(r.hit, &r.players, r.checkpoint_byte)?;
+        let byte = crate::checkpoint::CheckpointPlacement {
+            rotation: p.rotation.map(i32::from),
+        }
+        .work_byte(r.engine_result, r.stage_byte);
+        let handoff = state.accept(r.hit, &r.players, byte)?;
         return Ok(
-            json!({"callback":"CheckpointContact","mode":state.mode,"slotTimers":state.slot_timers,"handoff":handoff,"scope":"One idle contact check; checkpoint byte and hit are observed."}),
+            json!({"callback":"CheckpointContact","mode":state.mode,"slotTimers":state.slot_timers,"handoff":handoff,"scope":"One idle contact check; placement supplies checkpoint byte; gate inputs and hit are observed."}),
         );
     }
     if name == Some("ContainerChao") {

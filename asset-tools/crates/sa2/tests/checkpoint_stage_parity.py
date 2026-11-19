@@ -43,7 +43,8 @@ for path in sorted(root.glob("stg*D.rel")):
     shift = start-0x446d8
     # The local spin-speed call lies between these spans and is excluded.
     assert text[0x4473c+shift:0x447a8+shift] == city[0x4473c:0x447a8], path
-    for a,b in [(0x446d8,0x44738),(0x4473c,0x447a8)]:
+    for a,b in [(0x43cac,0x43cc0),(0x43d84,0x43dbc),(0x446d8,0x44738),(0x4473c,0x447a8)]:
+        assert text[a+shift:b+shift] == city[a:b], path
         expected={off-a:v for off,v in reference.items() if a<=off<b}
         actual={off-shift-a:v for off,v in imports.items() if a+shift<=off<b+shift}
         assert actual == expected, path
