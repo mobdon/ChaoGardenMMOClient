@@ -53,6 +53,7 @@ pub fn init(bytes: &[u8], s: Input) -> Result<Init> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileInput {
+    boost: Option<BoostInput>,
     profile8_write: Option<[u32; 10]>,
     profile: usize,
     alternate: bool,
@@ -68,6 +69,8 @@ struct Normalize {
 }
 #[derive(Serialize)]
 pub struct Profile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boost: Option<Boost>,
     section5_offset: usize,
     cue_words: [i32; 6],
     event_pair: Option<[i32; 2]>,
@@ -121,27 +124,7 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
             i32::from_be_bytes(data[at + 4 * j..at + 4 * j + 4].try_into().unwrap())
         })
     });
-    let event = s
-        .event
-        .map(|e| -> Result<_> {
-            let eligible = e.work_44 != 0 && event_pair.is_some();
-            let id = if eligible {
-                *event_pair
-                    .as_ref()
-                    .unwrap()
-                    .get(e.selector)
-                    .ok_or_else(|| crate::Error::invalid("kart event selector must be 0 or 1"))?
-            } else {
-                -1
-            };
-            Ok(Event {
-                return_word: i32::from(eligible),
-                call_cart_979c: id >= 0,
-                course_mode: e.piece_id.filter(|_| id >= 0).map(course_mode),
-                engine_args: (id >= 0).then_some([id, 0, 0, 0]),
-            })
-        })
-        .transpose()?;
+    let event = s.event.map(|e| profile_event(event_pair, e)).transpose()?;
     let mut velocity = s.velocity;
     let mut shared_velocity_write = None;
     if velocity != [0.; 3] {
@@ -153,7 +136,12 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
             shared_velocity_write = Some(velocity);
         }
     }
+    let boost = s
+        .boost
+        .map(|b| boost_step(rel.data(4)?, b, event_pair, velocity, row[0], row[3]))
+        .transpose()?;
     Ok(Profile {
+        boost,
         section5_offset: offset,
         cue_words,
         event_pair,
@@ -217,4 +205,127 @@ pub(crate) fn course_mode(piece_id: u8) -> CourseMode {
         engine_8006c97c_arg: if inside { 0 } else { -127 },
         return_word: i32::from(inside),
     }
+}
+
+fn profile_event(event_pair: Option<[i32; 2]>, e: EventInput) -> Result<Event> {
+    let eligible = e.work_44 != 0 && event_pair.is_some();
+    let id = if eligible {
+        *event_pair
+            .as_ref()
+            .unwrap()
+            .get(e.selector)
+            .ok_or_else(|| crate::Error::invalid("kart event selector must be 0 or 1"))?
+    } else {
+        -1
+    };
+    Ok(Event {
+        return_word: i32::from(eligible),
+        call_cart_979c: id >= 0,
+        course_mode: e.piece_id.filter(|_| id >= 0).map(course_mode),
+        engine_args: (id >= 0).then_some([id, 0, 0, 0]),
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoostInput {
+    work_70: i32,
+    work_d8: i32,
+    work_dc: i32,
+    slot_flag: i32,
+    buttons_pressed: Option<u32>,
+    normalized_velocity: Option<[f32; 3]>,
+    position: [f32; 3],
+    work_44: i32,
+    piece_id: Option<u8>,
+}
+#[derive(Serialize)]
+struct Boost {
+    work_d8: i32,
+    work_dc: i32,
+    slot_flag: i32,
+    acceleration: f32,
+    speed_cap: f32,
+    velocity: [f32; 3],
+    calls: Vec<BoostCall>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BoostCall {
+    Effect800bf43c {
+        slot: i32,
+        kind: i32,
+        position: [f32; 3],
+        velocity: [f32; 3],
+    },
+    ProfileEvent(Event),
+    Engine8002f76c([i32; 4]),
+}
+/// 0x4eb4: readiness, activation and per-frame changes before driving.
+fn boost_step(
+    data: &[u8],
+    s: BoostInput,
+    pair: Option<[i32; 2]>,
+    velocity: [f32; 3],
+    acceleration: f32,
+    speed_cap: f32,
+) -> Result<Boost> {
+    let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
+    let mut b = Boost {
+        work_d8: s.work_d8,
+        work_dc: s.work_dc,
+        slot_flag: s.slot_flag,
+        acceleration,
+        speed_cap,
+        velocity,
+        calls: vec![],
+    };
+    if s.work_70 < 0 {
+        return Ok(b);
+    }
+    if s.work_70 > 1 {
+        return Err(crate::Error::invalid(
+            "unsupported controller slot for kart boost",
+        ));
+    }
+    if b.work_d8 >= 20 {
+        b.slot_flag = 1;
+        b.work_d8 = 0;
+    }
+    if b.work_dc != 0 {
+        b.acceleration *= f(0x298);
+        b.speed_cap *= f(0x298);
+        b.work_dc = b.work_dc.wrapping_sub(1);
+        let mut position = s.position;
+        position[1] -= f(0x29c);
+        b.calls.push(BoostCall::Effect800bf43c {
+            slot: s.work_70,
+            kind: 5,
+            position,
+            velocity,
+        });
+    } else if b.slot_flag != 0
+        && s.buttons_pressed
+            .ok_or_else(|| crate::Error::invalid("missing controller press word"))?
+            & 0x200
+            != 0
+    {
+        b.slot_flag = 0;
+        b.work_dc = 120;
+        b.velocity = s
+            .normalized_velocity
+            .ok_or_else(|| crate::Error::invalid("missing activation normalization result"))?
+            .map(|v| v * f(0x1e0));
+        b.calls.push(BoostCall::ProfileEvent(profile_event(
+            pair,
+            EventInput {
+                work_44: s.work_44,
+                selector: 1,
+                piece_id: s.piece_id,
+            },
+        )?));
+        b.calls
+            .push(BoostCall::Engine8002f76c([s.work_70, 4, 50, 120]));
+    }
+    Ok(b)
 }
