@@ -15,6 +15,7 @@ use std::{
 
 const MAX_INPUT: u64 = 512 * 1024 * 1024;
 mod player_commands;
+mod story_effects;
 fn city_collision(bytes: &[u8]) -> Result<stage::Stage> {
     if bytes.starts_with(b"MZ") {
         sa2_asset_tools::city_land::read_win32_collision_stage(bytes)
@@ -555,7 +556,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -594,6 +595,7 @@ fn run() -> Result<()> {
             | "event-subtitles"
             | "event-music"
             | "event-voices"
+            | "event-effects"
             | "event-lighting"
             | "event-cues"
             | "ahx"
@@ -1249,6 +1251,18 @@ fn run() -> Result<()> {
                     bytes: &exe,
                     role: "cutscene-voice-table",
                 }],
+            )?;
+        }
+        "event-effects" => {
+            let report = story_effects::read(&archive::decompress_prs(&bytes, MAX_DECODED)?)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "event-effects-json",
+                &[],
             )?;
         }
         "event-lighting" => {
