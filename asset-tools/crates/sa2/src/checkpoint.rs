@@ -571,3 +571,106 @@ mod approach_tests {
         }
     }
 }
+
+/// City Escape's stage-local item delivery table (11 pairs in REL section 5).
+/// Offsets refer to section 1 of the identified REL, not PC executable addresses.
+pub struct CityItemTable {
+    entries: [(i32, u32); 11],
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ItemDispatch {
+    /// Arguments for the first direct call at text +0x30724.
+    pub notify_args: [i32; 2],
+    pub handler_offset: u32,
+    /// Arguments for the subsequent indirect item call.
+    pub handler_args: [i32; 2],
+}
+
+impl CityItemTable {
+    pub fn read(module: &[u8]) -> Result<Self> {
+        let rel = crate::city_rel::CityRel::read(module)?;
+        let data = rel.data(5)?;
+        let code = rel.data(1)?;
+        let mut entries = [(0, 0); 11];
+        for (i, row) in entries.iter_mut().enumerate() {
+            let at = 0x2216e8 + i * 8;
+            let id = i32::from_be_bytes(
+                data.get(at..at + 4)
+                    .ok_or_else(|| Error::invalid("truncated item ID"))?
+                    .try_into()
+                    .unwrap(),
+            );
+            let link = rel
+                .reference(5, (at + 4) as u32)
+                .ok_or_else(|| Error::invalid("missing item handler relocation"))?;
+            if (link.module, link.section, link.kind) != (12, 1, 1)
+                || link.addend % 4 != 0
+                || code.get(link.addend as usize..).is_none_or(|s| s.len() < 4)
+            {
+                return Err(Error::invalid("invalid item handler target"));
+            }
+            *row = (id, link.addend);
+        }
+        Ok(Self { entries })
+    }
+
+    /// Mirrors the item helper's early exits and first matching ID. Returns
+    /// the two calls in order; does not apply the handler's gameplay effects.
+    pub fn dispatch(&self, slot: usize, equipment: u16, item: i32) -> Result<Option<ItemDispatch>> {
+        if slot >= 2 {
+            return Err(Error::invalid("invalid item player slot"));
+        }
+        if equipment & 0x4000 != 0 || item == 7 {
+            return Ok(None);
+        }
+        Ok(self
+            .entries
+            .iter()
+            .find(|(id, _)| *id == item)
+            .map(|&(id, handler_offset)| ItemDispatch {
+                notify_args: [slot as i32, id],
+                handler_offset,
+                handler_args: [0, slot as i32],
+            }))
+    }
+}
+
+#[cfg(test)]
+mod item_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires installed City Escape module"]
+    fn installed_item_dispatch_targets() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let t =
+            CityItemTable::read(&std::fs::read(root.join("resource/gd_PC/stg13D.rel")).unwrap())
+                .unwrap();
+        for (id, offset) in [
+            (0, 0x303c0),
+            (1, 0x30520),
+            (2, 0x30498),
+            (3, 0x30570),
+            (4, 0x305a8),
+            (5, 0x305e4),
+            (6, 0x30628),
+            (8, 0x304e8),
+            (9, 0x30664),
+            (10, 0x30410),
+        ] {
+            assert_eq!(
+                t.dispatch(1, 0, id).unwrap(),
+                Some(ItemDispatch {
+                    notify_args: [1, id],
+                    handler_offset: offset,
+                    handler_args: [0, 1]
+                })
+            );
+            assert_eq!(t.dispatch(1, 0x4000, id).unwrap(), None);
+        }
+        for id in [-1, 7, 11] {
+            assert_eq!(t.dispatch(0, 0, id).unwrap(), None);
+        }
+        assert!(t.dispatch(2, 0, 1).is_err());
+    }
+}
