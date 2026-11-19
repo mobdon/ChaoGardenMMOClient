@@ -94,7 +94,7 @@ pub struct Profile {
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryBoostInput {
     pub(crate) drive: Option<crate::kart_drive_input::StoryDrive>,
-    velocity: [f32; 3],
+    velocity: Option<[f32; 3]>,
     normalize: Option<Normalize>,
     boost: BoostInput,
 }
@@ -104,6 +104,24 @@ impl Profile {
     }
 }
 impl StoryBoostInput {
+    pub(crate) fn bind_previous_frame(
+        &mut self,
+        position: [f32; 3],
+        velocity: [f32; 3],
+    ) -> Result<()> {
+        for (word, value) in [
+            (&mut self.boost.position, position),
+            (&mut self.velocity, velocity),
+        ] {
+            if word.is_some_and(|v| v.map(f32::to_bits) != value.map(f32::to_bits)) {
+                return Err(crate::Error::invalid(
+                    "boost input conflicts with preceding vehicle frame",
+                ));
+            }
+            *word = Some(value);
+        }
+        Ok(())
+    }
     pub(crate) fn bind_pressed(&mut self, pressed: Option<u32>) -> Result<()> {
         if self
             .boost
@@ -130,7 +148,10 @@ pub(crate) fn story_boost(
     flag: Option<u32>,
     vehicle_state: Option<i32>,
 ) -> Result<(i32, (i32, i32), Profile)> {
-    let task_position = input.boost.position;
+    let task_position = input
+        .boost
+        .position
+        .ok_or_else(|| crate::Error::invalid("missing story kart position"))?;
     let b = &mut input.boost;
     if b.work_70 != 0 {
         return Err(crate::Error::invalid("expected primary controller slot"));
@@ -158,7 +179,9 @@ pub(crate) fn story_boost(
             boost: Some(input.boost),
             profile8_write: None,
             event: None,
-            velocity: input.velocity,
+            velocity: input
+                .velocity
+                .ok_or_else(|| crate::Error::invalid("missing story kart velocity"))?,
             normalize: input.normalize,
         },
     )?;
@@ -338,7 +361,7 @@ struct BoostInput {
     slot_flag: Option<i32>,
     buttons_pressed: Option<u32>,
     normalized_velocity: Option<[f32; 3]>,
-    position: [f32; 3],
+    position: Option<[f32; 3]>,
     work_44: Option<i32>,
     piece_id: Option<u8>,
 }
@@ -405,7 +428,9 @@ fn boost_step(
         b.acceleration *= f(0x298);
         b.speed_cap *= f(0x298);
         b.work_dc = b.work_dc.wrapping_sub(1);
-        let mut position = s.position;
+        let mut position = s
+            .position
+            .ok_or_else(|| crate::Error::invalid("missing boost effect position"))?;
         position[1] -= f(0x29c);
         b.calls.push(BoostCall::Effect800bf43c {
             slot: s.work_70,

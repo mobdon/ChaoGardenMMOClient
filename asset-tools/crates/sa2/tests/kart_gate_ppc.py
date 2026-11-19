@@ -398,6 +398,24 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-recovery-pose.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"vehicle pose conflicts" in rejected.stderr
+            # Start the next full update from the post-move frame. The saved
+            # origin is the live task position, not the prior saved position.
+            del after["previous_position"]
+            next_boost=dict(work_70=0,work_44=1)
+            resume=dict(boost_tick=dict(boost=next_boost))
+            q["updates"].extend([dict(continue_vehicle_update={}),resume])
+            out=req.with_name(path.stem+"-contiguous-update.json")
+            speed=sum(x*x for x in carried["velocity"])**0.5
+            if speed:resume["boost_tick"]["normalize"]=dict(magnitude=speed,vector=[x/speed for x in carried["velocity"]])
+            req.write_text(json.dumps(q))
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            seq=json.loads(out.read_text())["updates"]
+            assert seq[-2]["savedPosition"]==carried["position"]!=carried["previous_position"]
+            assert seq[-2]["savedAngles"]==carried["angles"] and seq[-1]["boostTick"]["velocity"]==carried["velocity"]
+            next_boost["position"]=[999,999,999]
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-conflicting-continuation.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"preceding vehicle frame" in rejected.stderr
             # Native history writes at the cursor but reads starting at the
             # NEXT cursor. Work across wrap and replace a contradictory sum.
             initial=[0]*60;initial[0]=100

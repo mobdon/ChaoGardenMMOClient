@@ -607,6 +607,9 @@ struct ControllerState {
     flag_3ce24: i32,
     engine_byte_16: i8,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyUpdate {}
 #[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrimaryUpdate {
@@ -619,6 +622,9 @@ struct PrimaryUpdate {
 enum SequenceEvent {
     Gate(GateObservation),
     UpdateStart(PrimaryUpdate),
+    ContinueVehicle {
+        continue_vehicle_update: EmptyUpdate,
+    },
     DriftTick {
         drift_tick: crate::kart_drift::StoryTick,
     },
@@ -733,6 +739,8 @@ pub fn story_sequence(
     let mut charge = s.primary_charge;
     let mut boost_timers = None;
     let mut snapshot = None;
+    let mut completed_pose = None;
+    let mut inherited_pose = None;
     let mut windup: Option<crate::kart_drift::DriftCarry> = None;
     let mut history = s.controller_history;
     if let Some(h) = &history {
@@ -751,7 +759,27 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::ContinueVehicle {
+                continue_vehicle_update: EmptyUpdate {},
+            } => {
+                let (position, velocity, angles) = completed_pose.take().ok_or_else(|| {
+                    Error::invalid("continuation requires completed post-move frame")
+                })?;
+                if snapshot.is_some() {
+                    return Err(Error::invalid("overlapping primary update snapshots"));
+                }
+                snapshot = Some(PrimaryUpdate {
+                    primary_update_velocity: velocity,
+                    primary_update_position: Some(position),
+                    primary_update_angles: Some(angles),
+                });
+                inherited_pose = Some((position, velocity));
+                updates.push(json!({"previousVelocity":velocity,"savedPosition":position,"savedAngles":angles,"work_10c":0}));
+                continue;
+            }
             SequenceEvent::UpdateStart(start) => {
+                completed_pose = None;
+                inherited_pose = None;
                 if snapshot.replace(start).is_some() {
                     return Err(Error::invalid("overlapping primary update snapshots"));
                 }
@@ -760,6 +788,8 @@ pub fn story_sequence(
                 continue;
             }
             SequenceEvent::DriftTick { mut drift_tick } => {
+                completed_pose = None;
+                inherited_pose = None;
                 recovered_pose = None;
                 let start = snapshot.take();
                 let mut context = drift_tick.contact.take();
@@ -839,6 +869,10 @@ pub fn story_sequence(
                 continue;
             }
             SequenceEvent::BoostTick { mut boost_tick } => {
+                completed_pose = None;
+                if let Some((p, v)) = inherited_pose.take() {
+                    boost_tick.bind_previous_frame(p, v)?;
+                }
                 let start = snapshot.take();
                 if let (Some(v), Some(d)) = (start, boost_tick.drive.as_mut()) {
                     if let Some(c) = d.contact.as_mut() {
@@ -1030,6 +1064,9 @@ pub fn story_sequence(
                 }
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
                 parent = r.frame.as_ref().and_then(|f| f.pursuit_parent());
+                snapshot = None;
+                inherited_pose = None;
+                completed_pose = r.frame.as_ref().and_then(|f| f.next_update_pose());
                 crossing_positions = r.frame.as_ref().and_then(|f| f.crossing_positions());
                 scan_flag = r.frame.as_ref().and_then(|f| f.course_scan_flag());
                 route = r.frame.as_ref().and_then(|f| f.route());

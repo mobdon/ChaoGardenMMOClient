@@ -92,6 +92,9 @@ impl Frame {
         self.global_24d60 = retained.or(self.global_24d60);
         Ok(())
     }
+    pub(crate) fn next_update_pose(&self) -> Option<([f32; 3], [f32; 3], [i32; 3])> {
+        Some((self.position?, self.velocity?, self.angles?))
+    }
     pub(crate) fn crossing_positions(&self) -> Option<([f32; 3], [f32; 3])> {
         self.position.zip(self.previous_position)
     }
