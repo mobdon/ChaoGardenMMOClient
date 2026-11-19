@@ -129,3 +129,59 @@ mod spin_reference {
         }
     }
 }
+
+/// Result of the bonus-selection branch after an accepted City Escape
+/// checkpoint contact. IDs are the original arguments to helper 0x3069c.
+/// The increment is applied to two native signed halfword counters.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CheckpointBonus {
+    pub item_id: u8,
+    pub counter_increment: i16,
+}
+
+/// The original helper's return is compared as a signed halfword. The two low
+/// equipment bits are consulted only for the highest tier.
+pub fn contact_bonus(value: i16, equipment: u16) -> Option<CheckpointBonus> {
+    let (item_id, counter_increment) = match value {
+        ..=19 => return None,
+        20..=39 => (2, 5),
+        40..=59 => (0, 10),
+        60..=79 => (1, 20),
+        80..=89 => (8, 0),
+        _ if equipment & 3 != 0 => (6, 0),
+        _ => (3, 0),
+    };
+    Some(CheckpointBonus {
+        item_id,
+        counter_increment,
+    })
+}
+
+#[cfg(test)]
+mod bonus_reference {
+    use super::*;
+    #[test]
+    fn contact_tier_boundaries() {
+        for (v, flags, expected) in [
+            (i16::MIN, 0, None),
+            (19, 0, None),
+            (20, 0, Some((2, 5))),
+            (39, 3, Some((2, 5))),
+            (40, 0, Some((0, 10))),
+            (59, 0, Some((0, 10))),
+            (60, 0, Some((1, 20))),
+            (79, 0, Some((1, 20))),
+            (80, 0, Some((8, 0))),
+            (89, 3, Some((8, 0))),
+            (90, 0, Some((3, 0))),
+            (90, 1, Some((6, 0))),
+            (90, 2, Some((6, 0))),
+            (i16::MAX, 4, Some((3, 0))),
+        ] {
+            assert_eq!(
+                contact_bonus(v, flags).map(|b| (b.item_id, b.counter_increment)),
+                expected
+            );
+        }
+    }
+}
