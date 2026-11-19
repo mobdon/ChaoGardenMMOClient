@@ -583,3 +583,54 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                     timerWrite=timer if m==2 else None,closeRange=dict(cooldown=cool,calls=calls) if m==5 else None,
                     steering=dict(axisArgs=axis_args,angleArgs=angle_args,yaw=yaw,scalar=out_scalar) if axis_args else None)
 print(idx,"state-four updates matched")
+
+def six_service(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x1258:
+        assert reg(3)==reg(1)+16 and reg(4)==pose1+20
+        seen["vectorArgs"]=[list(get(reg(i),"fff")) for i in (3,4)]
+    elif site==0x1264:assert reg(3)==0
+    elif site==0x1270:assert (reg(3),reg(4))==(0,0x4000)
+    elif site==0x1280:assert (reg(3),reg(4),reg(5))==(0,reg(1)+16,reg(1)+16)
+    elif site==0x128c:
+        assert reg(3)==reg(1)+16
+        put(reg(3),"fff",*end_vector)
+    elif site==0x1298:
+        seen["angleArgs"]=[reg_float(cpu,r) for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2)]
+        put(player1+1,"b",final_slot)
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",angle),"big"))
+    elif site==0x12fc:
+        seen["waveArg"]=reg(3)
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",wave),"big"))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1258,0x125c,0x1264,0x1270,0x1280,0x1284,0x128c,0x1298,0x12fc):
+    u.hook_add(UC_HOOK_CODE,six_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for slot in (6,7,-1):
+        for ctr,limit,scalar,dist in [(1,0,-1.,50.),(0,0,-1.,50.),(0,0,20.,99.),(-1,0,20.,100.)]:
+            for final_slot in (6,7):
+                observed={};seen={};calls=[];draw=21234;phase=0xffaabbcc;wave=-0.3125;angle=1.45;end_vector=[1.5,-2.25,6.]
+                put(phase_addr,"I",phase);put(work,"bbhh",6,0,ctr,limit);put(player0+1,"b",7)
+                put(player1+1,"b",slot);put(player1+72,"f",scalar);put(0x801e5000,"if",-999,-999.)
+                for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
+                    u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+                u.emu_start(base[1]+0x11a8,base[1]+0x1424,count=220)
+                assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+                m,_,counter,timer=get(work,"bbhh");yaw,scalar_out=get(0x801e5000,"if")
+                v=dict(counter=ctr,limit=limit,slot_byte=slot,scalar=scalar)
+                if "distance" in observed:v["range"]=dict(slot0_byte=7,distance_return=dist)
+                if m==2:v["timer"]=dict(slot_byte=slot,draw=draw)
+                if m==6:
+                    h=dict(slot0=p0,slot1=p1,final_vector=end_vector,angle_return=angle,final_slot_byte=final_slot)
+                    if "waveArg" in seen:h["wave"]=dict(phase_word=phase,service_return=wave)
+                    v["steering"]=h
+                else:assert (yaw,scalar_out)==(-999,-999.)
+                c=dict(mode=6,engine_bytes=[0,0,0],player_flags=[0,0],state_six=v)
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                if m==6:seen.update(yaw=yaw,scalar=scalar_out);seen.setdefault("waveArg",None)
+                assert json.loads(out.read_text())["controller"]==dict(dispatch=0x11a8,continueAt=0x1424,mode=m,counter=counter,
+                    timerWrite=timer if m==2 else None,steering=seen if m==6 else None)
+print(idx,"state-six updates matched")

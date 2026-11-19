@@ -200,6 +200,7 @@ struct Controller {
     state_two: Option<StateTwo>,
     state_five: Option<StateFive>,
     state_four: Option<StateFour>,
+    state_six: Option<StateSix>,
     state_seven: Option<StateSeven>,
     state_eight: Option<StateEight>,
     state_one: Option<StateOne>,
@@ -207,6 +208,39 @@ struct Controller {
     engine_bytes: [i8; 3],
     player_flags: [u16; 2],
     opening: Option<Opening>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateSix {
+    counter: i16,
+    limit: i16,
+    slot_byte: i8,
+    scalar: f32,
+    range: Option<RangeObservation>,
+    timer: Option<SixTimer>,
+    steering: Option<SixSteering>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SixTimer {
+    slot_byte: i8,
+    draw: i32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SixSteering {
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    final_vector: [f32; 3],
+    angle_return: f64,
+    final_slot_byte: i8,
+    wave: Option<SixWave>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SixWave {
+    phase_word: u32,
+    service_return: f32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -481,6 +515,59 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         };
         Ok(json!({"cooldown":cooldown,"calls":calls}))
     };
+    if let Some(v) = c.state_six {
+        if target != 0x11a8 {
+            return Err(invalid());
+        }
+        let f = |site| number(4, field(site, 4)?);
+        mode = if v.counter > v.limit {
+            2
+        } else if v.slot_byte == 6 && v.scalar < f(0x11e2)? {
+            8
+        } else {
+            6
+        };
+        match (mode == 6 && v.slot_byte == 6, v.range) {
+            (true, Some(r)) => {
+                if (r.slot0_byte == 7 && r.distance_return < f64::from(f(0x2ba)?))
+                    || r.distance_return <= f64::from(f(0x2d6)?)
+                {
+                    mode = 2;
+                }
+            }
+            (false, None) => {}
+            _ => return Err(invalid()),
+        }
+        let mut steering = None;
+        match (mode, v.timer, v.steering) {
+            (2, Some(t), None) => {
+                let (s, r, b) = if t.slot_byte == 7 {
+                    (0x586, 0x596, 0x5a6)
+                } else {
+                    (0x5f2, 0x602, 0x612)
+                };
+                timer = Some((f(b)? + f(r)? * (f(s)? * t.draw as f32)) as i32 as i16 as i32);
+            }
+            (8, None, None) => {}
+            (6, None, Some(h)) => {
+                let (wave_arg, scalar) = match (h.final_slot_byte, h.wave) {
+                    (6, None) => (None, f(0x12de)?),
+                    (6, Some(_)) | (_, None) => return Err(invalid()),
+                    (_, Some(w)) => (
+                        Some(w.phase_word << 10),
+                        f(0x1316)? + f(0x1306)? * w.service_return,
+                    ),
+                };
+                steering = Some(
+                    json!({"vectorArgs":[h.slot0,h.slot1],"angleArgs":[h.final_vector[0],h.final_vector[2]],
+                    "yaw":heading(0x12a2,h.angle_return)?,"waveArg":wave_arg,"scalar":scalar}),
+                );
+            }
+            _ => return Err(invalid()),
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"counter":if mode==6{v.counter}else{0},
+            "timerWrite":timer,"steering":steering});
+    }
     if let Some(v) = c.state_four {
         if target != 0xe9c {
             return Err(invalid());
