@@ -85,6 +85,7 @@ pub mod fan_stage;
 pub mod goal_ring;
 pub mod message_bank;
 pub mod mission_ranks;
+pub mod stage_result;
 pub mod stage20;
 pub mod stage_fog;
 pub mod stage_land;
