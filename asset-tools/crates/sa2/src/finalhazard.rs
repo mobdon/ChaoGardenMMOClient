@@ -860,3 +860,31 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         serde_json::json!({"timer":timer,"submode":submode,"stageCalls":calls,"requestPlacement":calls.contains(&0x86b8)}),
     )
 }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelPlacement {
+    pub state: RetractState,
+    pub task_flags: u16,
+}
+
+/// Section 1 + 0x866c cancels the queued placement before starting retraction.
+/// Report the two imported calls in dispatch order; their effects remain external.
+pub fn cancel_placement(bytes: &[u8], input: CancelPlacement) -> Result<serde_json::Value> {
+    if crate::manifest::sha256(bytes)
+        != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
+    {
+        return Err(Error::invalid("unsupported Finalhazard stage revision"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 88)?;
+    let mut calls = Vec::new();
+    for (site, arg5) in [(0x8848, 1), (0x8858, 0)] {
+        let target = rel.reference(1, site)
+            .ok_or_else(|| Error::invalid("missing weakpoint cancellation call"))?;
+        calls.push(serde_json::json!({"module":target.module,"address":target.addend,"r4":0,"r5":arg5}));
+    }
+    let mut state = input.state;
+    state.pending = [-1, -1];
+    state.submode = 0;
+    Ok(serde_json::json!({"mode":3,"state":state,"task_flags":input.task_flags & !4,"external_calls":calls}))
+}
