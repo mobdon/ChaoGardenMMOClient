@@ -37,6 +37,7 @@ fn bounded<F>(frames: Vec<F>) -> Result<Vec<F>> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RingFrame {
+    terrain: Option<crate::ring_terrain::Observations>,
     #[serde(default)]
     magnet_players: [Option<crate::ring_magnet::Player>; 2],
     advance_result: Option<[f32; 3]>,
@@ -47,9 +48,7 @@ struct RingFrame {
 }
 
 fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
-    if p.parameters[0] == -1.0 {
-        return Err(Error::invalid("terrain-following ring path is unsupported"));
-    }
+    let mut terrain = (p.parameters[0] == -1.0).then(crate::ring_terrain::Terrain::default);
     let request = decode::<Frames<RingFrame>>(request)?;
     let mut ring = StageRing::new(p.position, i32::from(p.rotation[1] as i16));
     let mut frames = Vec::new();
@@ -96,6 +95,7 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
             }
             None => None,
         };
+        let previous_mode = ring.mode;
         let events = ring.step(hit, frame.spin_enabled && magnetic.is_none());
         let mut calls = Vec::new();
         if let Some(slot) = events.player_reward {
@@ -130,6 +130,20 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
         }
         if events.register_collision {
             calls.push(json!(["CCL_Entry"]));
+        }
+        if let Some(terrain) = &mut terrain {
+            terrain.tick(
+                previous_mode,
+                &mut ring,
+                p.rotation[0] == 1,
+                magnetic.is_some(),
+                frame.terrain.unwrap_or_default(),
+                &mut calls,
+            )?;
+        } else if frame.terrain.is_some() {
+            return Err(Error::invalid(
+                "unexpected terrain observations for fixed ring",
+            ));
         }
         if events.dead_out {
             calls.push(json!(["DeadOut"]));

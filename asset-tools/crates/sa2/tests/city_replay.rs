@@ -260,3 +260,31 @@ fn physical_board_keeps_rider_observations_separate_from_detached_motion() {
     assert!(run(json!([bind, destroy, draw])).is_err());
     assert!(run(json!([{"op":"bind","allocation_ok":false},attach])).is_err());
 }
+
+#[test]
+fn terrain_ring_follows_small_changes_and_scatters_at_eight() {
+    let (mut p, d) = ring_fixture();
+    p.parameters[0] = -1.;
+    let tick = |terrain| json!({"terrain":terrain,"range_out":false,"spin_enabled":false,"player_items":[null,null]});
+    let init = tick(json!({"timer":0,"shadow":{"height":11,"yaw_after":-1}}));
+    let probe = |h| json!({"reference_position":[0,0,0],"shadow":{"height":h,"yaw_after":2}});
+    let mut frames = vec![init, tick(probe(17))];
+    frames.extend((0..8).map(|_| tick(json!({}))));
+    let mut last = probe(9);
+    last["allocated"] = json!(true);
+    last["random"] = json!(0.25);
+    frames.extend([tick(last), tick(json!({}))]);
+    let trace = replay(
+        &p,
+        &d,
+        &serde_json::to_vec(&json!({"frames":frames})).unwrap(),
+    )
+    .unwrap();
+    let f = &trace["frames"];
+    assert_eq!(f[1]["position"], json!([0., 6., 0.]));
+    assert_eq!(
+        f[10]["calls"][3],
+        json!(["InitTobitiri", [0., -4., 0.], 16384])
+    );
+    assert_eq!(f[11]["calls"], json!([["DeadOut"]]));
+}
