@@ -360,14 +360,23 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                             .iter()
                             .find(|e| e.logical == name)
                             .ok_or_else(|| Error::invalid("missing mounted goal module"))?;
-                        sa2_asset_tools::goal_ring::replay(
+                        let effects = Extra::read(
+                            &gd.join("efftex_common.prs"),
+                            "resource/gd_PC/efftex_common.prs".into(),
+                            32 * 1024 * 1024,
+                            "goal-effect-textures",
+                        )?;
+                        let result = sa2_asset_tools::goal_ring::replay(
                             &stage,
                             layer,
                             row,
                             &module.bytes,
                             &bytes,
+                            &effects.bytes,
                             &request.bytes,
-                        )?
+                        )?;
+                        extras.push(effects);
+                        result
                     } else {
                         stage.replay_object(layer, row, &request.bytes)?
                     };

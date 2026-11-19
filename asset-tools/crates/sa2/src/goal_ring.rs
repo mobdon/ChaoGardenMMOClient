@@ -30,6 +30,8 @@ pub struct Program {
     #[serde(skip)]
     record_pool: u32,
     #[serde(skip)]
+    effect_textures: Vec<String>,
+    #[serde(skip)]
     effect_update: (u32, [f32; 6]),
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
@@ -644,6 +646,36 @@ impl Program {
             return Err(invalid());
         }
         let pooldata = rel.data(5)?;
+        let ptr = |at| -> Result<u32> {
+            match rel.local_pointer(5, at)? {
+                Some((5, p)) => Ok(p),
+                _ => Err(invalid()),
+            }
+        };
+        let list = ptr(record_pool + 4)?;
+        let entries = ptr(list)?;
+        let count = word(pooldata, list as usize + 4)?;
+        if count != word(pooldata, record_pool as usize + 12)? || !(1..=256).contains(&count) {
+            return Err(invalid());
+        }
+        let mut effect_textures = Vec::new();
+        for i in 0..count {
+            let off = ptr(entries + i * 12)? as usize;
+            let tail = pooldata.get(off..).ok_or_else(invalid)?;
+            let end = tail
+                .iter()
+                .take(64)
+                .position(|&c| c == 0)
+                .ok_or_else(invalid)?;
+            if end == 0 {
+                return Err(invalid());
+            }
+            effect_textures.push(
+                std::str::from_utf8(&tail[..end])
+                    .map_err(|_| invalid())?
+                    .to_owned(),
+            );
+        }
         let poolword = |off: usize| word(pooldata, record_pool as usize + off);
         let effect_update = (
             poolword(12)?,
@@ -1432,6 +1464,7 @@ impl Program {
             record_constants,
             effect_update,
             record_pool,
+            effect_textures,
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
@@ -1585,6 +1618,33 @@ impl Program {
         };
         Ok(
             json!({"player":v.player,"queries":queries,"positionBits":position.map(f32::to_bits),"deltaBits":delta.map(f32::to_bits)}),
+        )
+    }
+    pub fn effect_texture_receipt(&self, prs: &[u8]) -> Result<Value> {
+        let data = crate::archive::decompress_prs(prs, 32 * 1024 * 1024)?;
+        let entries = crate::archive::read_gvm(&data)?;
+        let mut frames = Vec::new();
+        for name in &self.effect_textures {
+            let mut candidates = entries.iter().filter(|e| e.name.eq_ignore_ascii_case(name));
+            let e = candidates
+                .next()
+                .ok_or_else(|| Error::invalid("missing native effect frame"))?;
+            if candidates.next().is_some() {
+                return Err(Error::invalid("ambiguous native effect frame"));
+            }
+            let img = crate::texture::decode_gvr(e.data, None)?;
+            let alpha = img
+                .rgba
+                .iter()
+                .skip(3)
+                .step_by(4)
+                .copied()
+                .collect::<Vec<_>>();
+            frames.push(json!({"name":name,"index":e.index,"gvmOffset":e.offset,"globalIndex":e.global_index,"gvrSha256":manifest::sha256(e.data),
+                "width":img.width,"height":img.height,"rgbaSha256":manifest::sha256(&img.rgba),"alphaSha256":manifest::sha256(&alpha)}));
+        }
+        Ok(
+            json!({"prsSha256":manifest::sha256(prs),"gvmSha256":manifest::sha256(&data),"frames":frames}),
         )
     }
     pub fn consumer_spawn(&self, s: ConsumerSpawn) -> Result<Value> {
@@ -2422,6 +2482,7 @@ pub fn replay(
     index: usize,
     module: &[u8],
     exe: &[u8],
+    effect_archive: &[u8],
     request: &[u8],
 ) -> Result<Value> {
     let (row, def) = stage.resolve(layer, index).ok_or_else(invalid)?;
@@ -2651,6 +2712,6 @@ pub fn replay(
         None
     };
     Ok(
-        json!({"textureSetup":texture_setup,"observedRelease":released,"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
+        json!({"effectTextures":p.effect_texture_receipt(effect_archive)?,"textureSetup":texture_setup,"observedRelease":released,"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
     )
 }
