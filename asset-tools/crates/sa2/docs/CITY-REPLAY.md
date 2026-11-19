@@ -8,6 +8,7 @@ The stage host resolves a placement from one of the five installed City Escape S
 | 3 | `SPRA   ` | 0x6C4480 | ObjectSpring | 2 |
 | 4 | `SPRB   ` | 0x6C4E90 | ObjectSpringB | 27 |
 | 59 | `BOARDCOL` | 0x5EA210 | ObjectBoardCol | 13 |
+| 77 | `BOARD` | 0x5EBC50 | ObjectBoard | 4 |
 | 81 | `ADXCHG` | 0x5E2D70 | ObjectCeAdxChg | 2 |
 
 The trace input is at most 1 MiB. Placement replays accept 1–2,048 frames. The callback implementations use reconstructed GameCube C. Matching names and PC table addresses identify the Steam placements; retail PC instruction parity is unverified. Per-callback reference traces and documented approximations are in STAGE-GAMEPLAY.md, STAGE-SPRING.md, STAGE-BOARD.md and CITY-MUSIC.md.
@@ -33,6 +34,8 @@ The trace input is at most 1 MiB. Placement replays accept 1–2,048 frames. The
 ```json
 {"two_player":false,"frames":[{"range_out":false,"players":[null,null]},{"range_out":false,"players":[{"position":[0,0,0],"mode":76},null]}]}
 ```
+
+**Physical board.** See [City Escape opening](CITY-BOARD.md) for bind, rider tick, draw and destroy operations, the original PPC update comparison and the boundary at detached motion.
 
 **ADX change.** The bind step requires the engine's Downtown Race (`STAGE_SHORTCITY_2P`) predicate explicitly. A two-player SET filename alone does not establish it. The tick takes the native either-player sphere result using the selected placement's center and Scale.X. Supply the unnamed destructor predicate from fn_8001CC18(0). An out-of-range or Downtown Race bind leaves the task unbound. Tick and destruction require a bound task.
 

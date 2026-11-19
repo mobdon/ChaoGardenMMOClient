@@ -130,14 +130,7 @@ fn camera(packet: &Value, global: u32, scene: u32, local: u32, motion: i32, hash
     assert_eq!(manifest::sha256(&bytes), hash);
 }
 
-#[test]
-#[ignore = "requires SA2_GAME_PATH and SA2_PC_CONFIG with original matching PC sources"]
-fn opening_cameras_cut_and_city_stage_entry() {
-    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
-    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
-    let ini_arg = ini.to_str().unwrap();
-    let exe = game.join("sonic2app.exe");
-    let gd = game.join("resource/gd_PC");
+fn local_case(game: PathBuf) -> Case {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
@@ -153,7 +146,18 @@ fn opening_cameras_cut_and_city_stage_entry() {
             .as_nanos()
     ));
     fs::create_dir(&dir).unwrap();
-    let case = Case { dir, game };
+    Case { dir, game }
+}
+
+#[test]
+#[ignore = "requires SA2_GAME_PATH and SA2_PC_CONFIG with original matching PC sources"]
+fn opening_cameras_cut_and_city_stage_entry() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
+    let ini_arg = ini.to_str().unwrap();
+    let exe = game.join("sonic2app.exe");
+    let gd = game.join("resource/gd_PC");
+    let case = local_case(game);
     let config_dep = ("native-table-mapping", ini.as_path());
     let story = case.good("story", &exe, "story", &[ini_arg], &[config_dep]);
     assert_eq!(story.as_object().unwrap().len(), 15);
@@ -298,4 +302,50 @@ fn opening_cameras_cut_and_city_stage_entry() {
         &[ini_arg, hero, "999", "0"],
         "action outside",
     );
+}
+
+#[test]
+#[ignore = "requires original SA2_GAME_PATH"]
+fn board_pose_and_entry_ground_from_both_stage_modules() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let exe = game.join("sonic2app.exe");
+    let gd = game.join("resource/gd_PC");
+    let case = local_case(game);
+    let mut poses = Vec::new();
+    for (name, module, space) in [
+        ("rel", gd.join("stg13D.rel"), "rel_section_5"),
+        ("dll", gd.join("DLL/Win32/Data_DLL.dll"), "pe_rva"),
+    ] {
+        let dep = [("pc-executable", exe.as_path())];
+        let sample = case.good(
+            "city-board-pose",
+            &module,
+            &format!("pose-{name}"),
+            &[exe.to_str().unwrap(), "street", "121", "3.25"],
+            &dep,
+        );
+        assert_eq!(sample["motionAddressSpace"], space);
+        assert_eq!(sample["defaultMotionSlot"], 145);
+        assert_eq!(sample["pose"]["nodes"].as_array().unwrap().len(), 2);
+        poses.push(sample["pose"].clone());
+        let ground = case.good(
+            "city-spawn-ground",
+            &module,
+            &format!("ground-{name}"),
+            &[exe.to_str().unwrap(), "10000"],
+            &dep,
+        );
+        for entry in ground["probes"].as_array().unwrap() {
+            assert_eq!(entry["hit"]["entryIndex"], 2715);
+            assert!((entry["hit"]["distance"].as_f64().unwrap() - 513.4246521).abs() < 1e-4);
+        }
+        case.bad(
+            "city-board-pose",
+            &module,
+            &format!("late-{name}"),
+            &[exe.to_str().unwrap(), "street", "121", "1000"],
+            "outside motion duration",
+        );
+    }
+    assert_eq!(poses[0], poses[1]);
 }

@@ -2,7 +2,12 @@
 pub mod archive;
 pub mod audio;
 pub mod board;
+pub mod board_draw;
+pub mod board_model;
+pub mod board_motion;
+mod board_replay;
 pub mod city_music;
+pub mod city_rel;
 pub mod city_replay;
 pub mod city_stage;
 pub mod collision;
@@ -17,6 +22,8 @@ pub mod model;
 pub mod motion;
 pub mod object_table;
 pub mod pe;
+pub mod physical_board;
+pub mod player_physics;
 pub mod pose;
 pub mod set;
 pub mod spring;
@@ -58,3 +65,5 @@ impl From<serde_json::Error> for Error {
     }
 }
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub mod city_land;

@@ -96,11 +96,12 @@ fn music_binding_requires_observed_stage_and_correct_lifecycle() {
 
 #[test]
 #[ignore = "requires SA2_SET_DIR pointing at the installed resource/gd_PC directory"]
-fn installed_city_layouts_dispatch_to_all_five_callbacks() {
+fn installed_city_layouts_dispatch_to_all_six_callbacks() {
     let dir = std::path::PathBuf::from(std::env::var_os("SA2_SET_DIR").unwrap());
     let exe = std::fs::read(dir.join("../../sonic2app.exe")).unwrap();
     let image = object_table::verify_image(&exe).unwrap();
     let table = object_table::read_table(&exe, &image, object_table::CITY_LIST_RVA).unwrap();
+    let mut board_indices = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for file in [
         "set0013_s.bin",
@@ -110,7 +111,7 @@ fn installed_city_layouts_dispatch_to_all_five_callbacks() {
         "set0013_2p_u.bin",
     ] {
         let placements = set::parse_set(&std::fs::read(dir.join(file)).unwrap()).unwrap();
-        for p in placements {
+        for (index, p) in placements.into_iter().enumerate() {
             let def = &table[p.object_id as usize];
             let Some(name) = callback_name(&p, def) else {
                 continue;
@@ -121,6 +122,15 @@ fn installed_city_layouts_dispatch_to_all_five_callbacks() {
                 }
                 "ObjectSpring" | "ObjectSpringB" => {
                     json!({"out_point":[0,0,0],"frames":[{"range_out":false}]})
+                }
+                "ObjectBoard" => {
+                    board_indices.push((file, index, p.rotation[0] & 1));
+                    let slot = (p.rotation[0] & 1) as usize;
+                    let mut players = [None, None];
+                    players[slot] = Some(
+                        json!({"position":[1,2,3],"angles":[4,5,6],"speed":[7,8,9],"action":121,"motion_mode":3,"frame":0.25}),
+                    );
+                    json!({"frames":[{"op":"bind","allocation_ok":true},{"op":"tick","players":players}]})
                 }
                 "ObjectBoardCol" => {
                     // Exercise both disagreements: two-player engine state on a regular
@@ -144,6 +154,12 @@ fn installed_city_layouts_dispatch_to_all_five_callbacks() {
             };
             let result = replay(&p, def, &serde_json::to_vec(&input).unwrap()).unwrap();
             assert_eq!(result["callback"], name);
+            if name == "ObjectBoard" {
+                let state = &result["frames"][1]["state"];
+                assert_eq!(state["slot"], p.rotation[0] & 1);
+                assert_eq!(state["angles"], json!([4, 32763, 6]));
+                assert_eq!(state["cached_frame"], 0.25);
+            }
             if name == "ObjectBoardCol" && p.parameters[0] + 10.0 > 0.0 {
                 let last = result["frames"][2]["calls"].as_array().unwrap();
                 assert_eq!(last.len(), usize::from(!file.contains("_2p_")), "{file}");
@@ -151,7 +167,16 @@ fn installed_city_layouts_dispatch_to_all_five_callbacks() {
             seen.insert(name);
         }
     }
-    assert_eq!(seen.len(), 5);
+    assert_eq!(seen.len(), 6);
+    assert_eq!(
+        board_indices,
+        [
+            ("set0013_s.bin", 103, 0),
+            ("set0013_hd_s.bin", 97, 0),
+            ("set0013_2p_s.bin", 244, 0),
+            ("set0013_2p_s.bin", 245, 1)
+        ]
+    );
 }
 
 #[test]
@@ -176,4 +201,47 @@ fn board_requires_engine_mode_and_rearms_only_in_two_player() {
             usize::from(mode)
         );
     }
+}
+
+#[test]
+fn physical_board_keeps_rider_observations_separate_from_detached_motion() {
+    let (mut p, mut d) = ring_fixture();
+    p.object_id = 77;
+    p.rotation[0] = 1;
+    d.function_va = 0x5ebc50;
+    d.name = "BOARD".into();
+    let run = |frames| {
+        replay(
+            &p,
+            &d,
+            &serde_json::to_vec(&json!({"frames":frames})).unwrap(),
+        )
+    };
+    let bind = json!({"op":"bind","allocation_ok":true});
+    let rider = json!({"position":[1,2,3],"speed":[1,0,-4],"angles":[5,-9,7],"action":121,"frame":3.25,"motion_mode":3});
+    let wrong_slot = json!({"op":"tick","players":[rider,null]});
+    let attach = json!({"op":"tick","players":[null,rider]});
+    let mut detached = attach.clone();
+    detached["players"][1]["action"] = json!(145);
+    let draw = json!({"op":"draw","two_player":true,"players":[null,{"character":8,"action":121,"motion_mode":2,"frame":4.0}],
+        "motions":[{"index":145,"pointer":42}]});
+    let destroy = json!({"op":"destroy"});
+    let out = run(json!([bind, wrong_slot, attach, draw, detached, destroy])).unwrap();
+    let f = out["frames"].as_array().unwrap();
+    assert_eq!(f[1]["state"]["mode"], 0);
+    assert_eq!(f[2]["state"]["angles"], json!([5, 32777, 7]));
+    assert_eq!(f[3]["plan"]["selected"]["texture"], "lbl_13_data_107268");
+    let blend = f[3]["plan"]["draw"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|op| op.get("draw_blend"))
+        .unwrap();
+    assert_eq!(blend["cached_frame"], 3.25);
+    assert!(f[4].get("state").is_none());
+    assert_eq!(f[4]["calls"], json!([["fn_800DE3F8"], ["CheckRangeOut"]]));
+    assert_eq!(f[5]["workCleared"], true);
+    assert!(run(json!([bind, attach, detached, attach])).is_err());
+    assert!(run(json!([bind, destroy, draw])).is_err());
+    assert!(run(json!([{"op":"bind","allocation_ok":false},attach])).is_err());
 }

@@ -7,13 +7,15 @@ the retail game engine, Chao simulation, missions or device transfer protocol.
 
 The CLI emits native structured JSON, raw archive entries, lossless RGBA PNGs and
 native-rate PCM WAVs. A Rust GLB exporter also handles the verified static Chunk
-subset (seven cinematic emeralds and the neutral garden palm). Other models
+subset (seven cinematic emeralds, the neutral garden palm and five City Escape boards). Other models
 still use the existing SA Tools/Blender pipeline.
 
 The full SA2 + BATTLE Rust program is tracked in
 [GitHub issue 11](https://github.com/mobdon/ChaoGardenMMOClient/issues/11) and
 [FULL-GAME-PORT.md](docs/FULL-GAME-PORT.md). This crate is its resource/evaluation
 foundation; the full game is not yet ported.
+
+The [City Escape board guide](docs/CITY-BOARD.md) has commands for the original board GLB, board animation poses, static ground under Sonic’s spawn, and object replay.
 
 The [campaign and stage guide](docs/CAMPAIGN-ENTRY.md) shows how to sample a
 native opening camera and open City Escape from Hero Story using a local Steam
