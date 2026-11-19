@@ -60,3 +60,44 @@ fn exact_local_garden_table_and_opaque_bytes_match() {
     );
     assert_eq!(evidence.crc_table().len(), 512);
 }
+
+#[test]
+fn launch_rejects_truncated_loaded_save_and_rom() {
+    for size in [0, 0x19, 0x428, 0x42b, 0x42f] {
+        assert!(garden::prepare_launch(&[], &vec![0; size], 0).is_err());
+    }
+    assert!(garden::prepare_launch(&[], &[0; 0x430], 0).is_err());
+}
+
+#[test]
+#[ignore = "requires local SONIC_ADVANCE_ASOE_ROM"]
+fn retail_launch_image_matches_native_stores() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    for (score, language, frame, checksum, digest) in [
+        (0u32, 0, 0, 0u32, catalog::GARDEN_SHA256),
+        (
+            0x12345678,
+            0xfe,
+            0xfffffff0,
+            0x31,
+            "bf1b4012860efefdfedb8e2cb3a513e5a17d59238c66373103566e02f6cdf603",
+        ),
+        (
+            u32::MAX,
+            0xff,
+            u32::MAX,
+            u32::MAX,
+            "83ed720728e49ac9c80f934e6cf783ad39e9c4e74a4bff5172e16e9d2e4ed0fd",
+        ),
+    ] {
+        let mut save = [0xa5; 0x430];
+        save[0x19] = language;
+        save[0x428..0x42c].copy_from_slice(&score.to_le_bytes());
+        save[0x42c..].copy_from_slice(&checksum.to_le_bytes());
+        assert_eq!(
+            binary::sha256(&garden::prepare_launch(&rom, &save, frame).unwrap()),
+            digest
+        );
+    }
+}
