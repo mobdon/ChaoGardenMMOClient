@@ -18,6 +18,8 @@ pub struct Program {
     consumer_scale: [f32; 2],
     #[serde(skip)]
     consumer_blend: [f32; 2],
+    #[serde(skip)]
+    vector_constants: [f32; 5],
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     #[serde(skip)]
@@ -434,6 +436,51 @@ impl Program {
         }
         let delta = common.checked_sub(tail).ok_or_else(invalid)?;
         let consumer_blend = [scalar(delta + 0x62)?, scalar(delta + 0x8a)?];
+        let local_target = |site: u32| -> Result<u32> {
+            let b = word(instructions, site as usize)?;
+            if b & 0xfc000003 != 0x48000001 {
+                return Err(invalid());
+            }
+            site.checked_add_signed(((b & 0x03fffffc) << 6) as i32 >> 6)
+                .ok_or_else(invalid)
+        };
+        let helper = local_target(local_target(common + 0xa0)? + 0x34)?;
+        if manifest::sha256(
+            instructions
+                .get(helper as usize..helper as usize + 0x29c)
+                .ok_or_else(invalid)?,
+        ) != "2e4c0c2e4c2108442a11724f6dc643504cdf300c52d228db40526fd7825d5a7b"
+        {
+            return Err(invalid());
+        }
+        let constant = |off| -> Result<f32> {
+            let h = rel.reference(1, helper + off).ok_or_else(invalid)?;
+            let l = rel.reference(1, helper + off + 4).ok_or_else(invalid)?;
+            if (h.module, h.kind, h.section) != (info.module, 6, 4)
+                || (l.module, l.kind, l.section, l.addend) != (info.module, 4, 4, h.addend)
+            {
+                return Err(invalid());
+            }
+            Ok(f32::from_bits(word(rel.data(4)?, h.addend as usize)?))
+        };
+        for (off, kind, addr) in [
+            (0x34, 10, 0x80037da0),
+            (0x50, 10, 0x80037da0),
+            (0x1f2, 6, 0x801e7368),
+            (0x1f6, 4, 0x801e7368),
+        ] {
+            let r = rel.reference(1, helper + off).ok_or_else(invalid)?;
+            if (r.module, r.kind, r.addend) != (0, kind, addr) {
+                return Err(invalid());
+            }
+        }
+        let vector_constants = [
+            constant(0xc2)?,
+            constant(0x102)?,
+            constant(0x146)?,
+            constant(0x20a)?,
+            constant(0x24a)?,
+        ];
         let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
         for i in 0..93 {
@@ -1203,6 +1250,7 @@ impl Program {
             dispatch_codes,
             consumer_scale,
             consumer_blend,
+            vector_constants,
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
@@ -1332,6 +1380,32 @@ pub fn apply_slot_writes(words: &mut [u32; 2], calls: &[Call], helper: u32) {
     }
 }
 impl Program {
+    pub fn consumer_vectors(&self, v: ConsumerVectors) -> Result<Value> {
+        if v.player > 1 || (v.point18.is_none() && v.point3.is_some()) {
+            return Err(Error::invalid("invalid player vector observations"));
+        }
+        let [scale, y_scale, reach, present, absent] = self.vector_constants;
+        let queries = if v.point18.is_some() {
+            vec![18, 3]
+        } else {
+            vec![18]
+        };
+        let (position, delta) = if let (Some(a), Some(b)) = (v.point18, v.point3) {
+            if v.player_position.is_some() {
+                return Err(Error::invalid("unused fallback player position"));
+            }
+            let mut diff: [f32; 3] = std::array::from_fn(|i| (b[i] - a[i]) * scale);
+            diff[1] *= y_scale;
+            (std::array::from_fn(|i| diff[i] * reach + b[i]), diff)
+        } else if let Some(pos) = v.player_position {
+            (pos, [present; 3])
+        } else {
+            ([absent; 3], [absent; 3])
+        };
+        Ok(
+            json!({"player":v.player,"queries":queries,"positionBits":position.map(f32::to_bits),"deltaBits":delta.map(f32::to_bits)}),
+        )
+    }
     pub fn consumer_countdown(&self, timer: i32, c: ConsumerCountdown) -> Value {
         let active = timer != 0;
         let [blend, decay] = self.consumer_blend;
@@ -1500,7 +1574,16 @@ pub struct ConsumerCountdown {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ConsumerVectors {
+    player: u8,
+    point18: Option<[f32; 3]>,
+    point3: Option<[f32; 3]>,
+    player_position: Option<[f32; 3]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConsumerUpdate {
+    vectors: Option<ConsumerVectors>,
     countdown: Option<ConsumerCountdown>,
     frame: i32,
     service_return: f32,
@@ -2186,6 +2269,14 @@ pub fn replay(
             json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0});
         if let Some(u) = c.update {
             out["update"] = p.consumer_update(u.frame, u.service_return, u.counter)?;
+            if let Some(v) = u.vectors {
+                if u.countdown.is_none() {
+                    return Err(Error::invalid(
+                        "vector helper requires the common countdown update",
+                    ));
+                }
+                out["update"]["vectors"] = p.consumer_vectors(v)?;
+            }
             if let Some(fields) = u.countdown {
                 out["update"]["countdown"] = p.consumer_countdown(120, fields);
             }

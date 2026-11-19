@@ -932,3 +932,51 @@ for timer,linked,(flags,byte1),(left,right) in itertools.product(
     result=dict(work52=cget(WORK+52,'i'),flags=cget(entity+4,'H'),linkedFlags=cget(otherwork+4,'H') if linked else None,
                 byte1=cget(entity+1,'B'),work88Bits=cget(WORK+88,'I'),work92Bits=cget(WORK+92,'I'))
     print('COUNT',timer,json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
+
+# Execute the player-vector helper called at the start of the next local routine.
+entry=0x393c8
+block=bytearray(d[ss[1][0]+entry:ss[1][0]+entry+0x29c])
+cpu=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+for page,size in [(BASE,4096),(DATA,0x10000),(TASK,4096),(0x801e7000,4096)]:cpu.mem_map(page,size)
+cpu.reg_write(R.UC_PPC_REG_MSR,8192)
+sites=[]
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not entry<=off<entry+len(block):continue
+        if kind==10:
+            assert module==0 and val==0x80037da0
+            sites.append(BASE+off-entry);continue
+        if module:
+            assert s==4 and module==12
+            cpu.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4]);val+=DATA
+        assert kind in (4,6)
+        struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
+cpu.mem_write(BASE,bytes(block))
+def vector_query(cpu,pc,*_):
+    assert cpu.reg_read(R.UC_PPC_REG_3)==slot and cpu.reg_read(R.UC_PPC_REG_6)==0
+    key=cpu.reg_read(R.UC_PPC_REG_4);calls.append(key)
+    value={18:first,3:second}[key]
+    if value:cpu.mem_write(cpu.reg_read(R.UC_PPC_REG_5),struct.pack('>fff',*value))
+    cpu.reg_write(R.UC_PPC_REG_3,int(value is not None));cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in sites:cpu.hook_add(UC_HOOK_CODE,vector_query,begin=pc,end=pc)
+for slot,(first,second,fallback) in itertools.product([0,1],[
+        (None,None,None),(None,None,[1.,-2.,3.]),([2.,3.,4.],None,None),
+        ([0.,1.,3.],None,[-8.,4.,.25]),([-.3,.7,12.],[.01,-2.,.125],None)]):
+    calls=[]
+    cpu.mem_write(0x801e7368+slot*4,struct.pack('>I',TASK+0x200 if fallback else 0))
+    if fallback:cpu.mem_write(TASK+0x214,struct.pack('>fff',*fallback))
+    cpu.mem_write(TASK+0x400,b'\xdd'*32)
+    for regid,val in [(1,TASK+0xf00),(3,slot),(4,TASK+0x400),(5,TASK+0x410)]:
+        cpu.reg_write(getattr(R,'UC_PPC_REG_'+str(regid)),val)
+    cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x300)
+    cpu.emu_start(BASE,BASE+0x300,count=256)
+    assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x300
+    obs=dict(player=slot,point18=first,point3=second,player_position=fallback)
+    result=dict(player=slot,queries=calls,positionBits=struct.unpack('>III',cpu.mem_read(TASK+0x400,12)),
+                deltaBits=struct.unpack('>III',cpu.mem_read(TASK+0x410,12)))
+    print('VEC',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
