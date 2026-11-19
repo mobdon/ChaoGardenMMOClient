@@ -14,6 +14,7 @@ pub struct GateTick {
     pub primary_kart_counter: u32,
     /// External global word observed after the callback's other calls.
     pub final_flags: u32,
+    pub story_cues: Option<StoryCueContext>,
 }
 #[derive(Serialize)]
 pub struct GateResult {
@@ -21,8 +22,68 @@ pub struct GateResult {
     pub timer_word: u32,
     pub primary_kart_counter: u32,
     pub work_byte_3: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub story_cues: Option<StoryCueResult>,
     /// Calls are listed in execution order. Local addresses are section-1 offsets.
     pub calls: Vec<&'static str>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoryCueContext {
+    mode: i32,
+    /// Separate from the primary kart checkpoint counter (section 6 +0x3ce18).
+    sequence: u32,
+}
+#[derive(Serialize)]
+pub struct StoryCueResult {
+    next_sequence: u32,
+    time_extension_task: u32,
+    cue: u32,
+    delayed: Option<DelayedCue>,
+}
+#[derive(Serialize)]
+pub struct DelayedCue {
+    pub index: u8,
+    pub timer: u16,
+    pub cue: u32,
+}
+impl DelayedCue {
+    /// CartD +0xba48 tests the old timer, then plays the cue and releases the task.
+    pub fn tick(&mut self) -> Option<u32> {
+        let expired = self.timer == 0;
+        self.timer = self.timer.wrapping_sub(1);
+        expired.then_some(self.cue)
+    }
+}
+fn story_cues(rel: &CityRel<'_>, ctx: StoryCueContext) -> Result<StoryCueResult> {
+    if !matches!(ctx.mode, 0 | 1) || ctx.sequence >= 3 {
+        return Err(Error::invalid(
+            "unsupported story gate dialogue table index",
+        ));
+    }
+    let at = rel
+        .reference(1, 0xb9b2)
+        .filter(|r| (r.module, r.section, r.kind) == (80, 5, 4))
+        .ok_or_else(|| Error::invalid("missing gate cue table"))?
+        .addend as usize;
+    let index = ctx.sequence + 3 * ctx.mode as u32;
+    let data = rel.data(5)?;
+    let entry = data
+        .get(at + 8 * index as usize..)
+        .and_then(|s| s.get(..8))
+        .ok_or_else(|| Error::invalid("truncated gate cue row"))?;
+    let cue = u32::from_be_bytes(entry[..4].try_into().unwrap());
+    let delayed = matches!(index, 1 | 4).then(|| DelayedCue {
+        index: index as u8,
+        timer: 240,
+        cue: u32::from_be_bytes(entry[4..].try_into().unwrap()),
+    });
+    Ok(StoryCueResult {
+        next_sequence: ctx.sequence + 1,
+        time_extension_task: 0xc858,
+        cue,
+        delayed,
+    })
 }
 fn verified_module(bytes: &[u8]) -> Result<CityRel<'_>> {
     if manifest::sha256(bytes) != "71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c"
@@ -37,6 +98,7 @@ pub fn tick(bytes: &[u8], s: GateTick) -> Result<GateResult> {
         return Err(Error::invalid("unknown GATE2 callback"));
     }
     let mut r = GateResult {
+        story_cues: None,
         latch: s.latch,
         timer_word: s.timer_word,
         primary_kart_counter: s.primary_kart_counter,
@@ -61,6 +123,7 @@ pub fn tick(bytes: &[u8], s: GateTick) -> Result<GateResult> {
                 .wrapping_add((ticks as i32 as u32).wrapping_mul(60));
             r.primary_kart_counter = r.primary_kart_counter.wrapping_add(1);
             r.calls.extend(["cart:1:c820", "cart:1:b940"]);
+            r.story_cues = s.story_cues.map(|ctx| story_cues(&rel, ctx)).transpose()?;
         }
         r.calls.push("main:8000f4ec(gate_task)");
     }
@@ -194,4 +257,22 @@ pub fn story_layout(bytes: &[u8], exe: &[u8], set: &[u8]) -> Result<serde_json::
         "display":target(0xb64a,1)?,"cleanup":target(0xb656,1)?,"collisionDescriptor":target(0xb666,5)?,
         "collisionCount":1,"collisionList":5,"template":template,"registrationFlags":0x20000001,"gates":gates}),
     )
+}
+
+#[cfg(test)]
+mod cue_tests {
+    use super::*;
+    #[test]
+    fn release_uses_timer_before_decrement() {
+        let mut task = DelayedCue {
+            index: 1,
+            timer: 240,
+            cue: 0x704,
+        };
+        for _ in 0..240 {
+            assert_eq!(task.tick(), None);
+        }
+        assert_eq!(task.tick(), Some(0x704));
+        assert_eq!(task.timer, u16::MAX);
+    }
 }
