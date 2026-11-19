@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Matrix, NullEngine, Quaternion, Scene, TransformNode, Vector3 } from '@babylonjs/core';
-import { createShadowSkate, observeSkateMotion, SkateCadence, SKATE_ROTATION_LIMITS, SKATE_ROTATION_WEIGHTS, SKATE_SOURCE_RATES } from '../src/shadow-skate.js';
+import { createShadowSkate, observeSkateMotion, SkateCadence, SKATE_COAST_HEIGHT, SKATE_COAST_SECONDS, SKATE_ROTATION_LIMITS, SKATE_ROTATION_WEIGHTS, SKATE_SOURCE_RATES } from '../src/shadow-skate.js';
 
 const ready = { grounded: true, footwear: true, mounted: false, swimming: false, fresh: true, available: true };
 
@@ -15,12 +15,47 @@ test('skating has reachable speed hysteresis and exits for air, mechs, missing s
   const slowerRate = cadence.rate;
   cadence.update(.1, { ...ready, speed: 1.994 }); assert.ok(cadence.rate > slowerRate);
   cadence.update(.05, { ...ready, speed: 1.29 }); assert.equal(cadence.active, false); assert.ok(cadence.blend > 0 && cadence.blend < 1);
-  for (const blocked of [{ grounded: false }, { mounted: true }, { footwear: false }, { swimming: true }, { fresh: false }, { available: false }]) {
+  for (const blocked of [{ mounted: true }, { footwear: false }, { swimming: true }, { fresh: false }, { available: false }]) {
     cadence.update(.1, { ...ready, speed: 1.994 });
     cadence.update(.01, { ...ready, speed: 1.994, ...blocked });
     assert.equal(cadence.active, false); assert.equal(cadence.blend, 0);
     assert.equal(cadence.visualSpeed, 0); assert.equal(cadence.phase, 0); assert.equal(cadence.rate, 0);
   }
+});
+
+test('descending terrain gaps carry the skate pose without claiming ground contact', () => {
+  const cadence = new SkateCadence();
+  const settle = () => { for (let i = 0; i < 60; i++) cadence.update(1 / 60, { ...ready, speed: 1.994 }); };
+  settle(); cadence.phase = .45;
+  for (let frame = 0; frame < 18; frame++) {
+    cadence.update(1 / 60, { ...ready, speed: 1.994, grounded: false, airGap: .007, descending: true, descendingGround: true });
+    assert.equal(cadence.state, 'coasting'); assert.equal(cadence.blend, 1);
+    assert.equal(cadence.phase, .45, 'a terrain gap cannot reset the source cycle');
+  }
+  cadence.update(1 / 60, { ...ready, speed: 1.994 });
+  assert.equal(cadence.state, 'skating'); assert.equal(cadence.blend, 1);
+  for (let frame = 0; frame < 180; frame++) {
+    cadence.update(1 / 60, { ...ready, speed: 1.994, grounded: false, airGap: .007, descending: true, descendingGround: true, serverTime: 1000 + Math.floor(frame / 6) * 100 });
+    assert.equal(cadence.state, 'coasting'); assert.equal(cadence.blend, 1, 'fresh near-floor downhill evidence keeps the pose through a sustained slope');
+  }
+  cadence.update(.1, { ...ready, speed: 1.994, grounded: false, airGap: .007, descending: true, descendingGround: true, serverTime: 4000, fresh: false });
+  assert.equal(cadence.blend, 0, 'stale authority immediately clears even a renewed coast');
+  // Real takeoff, a larger fall and an unbounded close-ground descent must
+  // leave the skate pose. None may start skating from idle in mid-air.
+  for (const air of [{ airGap: .01, descending: false, descendingGround: true }, { airGap: .01, descending: true, descendingGround: false }, { airGap: SKATE_COAST_HEIGHT + .001, descending: true, descendingGround: true }, { airGap: NaN, descending: true, descendingGround: true }]) {
+    settle();
+    cadence.update(1 / 60, { ...ready, speed: 1.994, grounded: false, ...air });
+    assert.equal(cadence.state, 'airborne'); assert.equal(cadence.active, false);
+    assert.ok(cadence.blend > .98 && cadence.blend < 1, 'air transition eases instead of snapping');
+    assert.ok(cadence.rate > .1 && cadence.rate <= .2, 'source cadence continues during the fade');
+    for (let i = 0; i < 20; i++) cadence.update(1 / 60, { ...ready, speed: 1.994, grounded: false, ...air });
+    assert.equal(cadence.blend, 0); assert.equal(cadence.phase, 0);
+  }
+  settle();
+  for (let i = 0; i < Math.ceil((SKATE_COAST_SECONDS + .4) * 60); i++) cadence.update(1 / 60, { ...ready, speed: 1.994, grounded: false, airGap: .01, descending: true, descendingGround: true });
+  assert.equal(cadence.blend, 0, 'coast has a bounded duration');
+  cadence.update(.1, { ...ready, speed: 1.994, grounded: false, airGap: .01, descending: true, descendingGround: true });
+  assert.equal(cadence.active, false, 'midair motion cannot enter a new skate');
 });
 
 test('whole-body overlay eases in and out while native cadence builds from slow strokes', () => {
@@ -71,6 +106,10 @@ test('cadence measures server displacement and ignores teleports and invalid clo
   assert.equal(next.valid, true); assert.ok(Math.abs(next.speed - 1.994) < 1e-8); assert.equal(next.grounded, true);
   const jump = observeSkateMotion(next, { x: .3988, z: 6, zone: 'hub', jumpOffset: .1 }, 1200, 300);
   assert.equal(jump.grounded, false);
+  const downhillStart = observeSkateMotion(null, { x: 0, y: .7, groundY: .7, z: 6, zone: 'garden', jumpOffset: 0 }, 1000, 100);
+  const downhill = observeSkateMotion(downhillStart, { x: .1994, y: .66, groundY: .642, z: 6, zone: 'garden', jumpOffset: .018 }, 1100, 200);
+  assert.equal(downhill.grounded, false); assert.equal(downhill.descending, true); assert.equal(downhill.descendingGround, true); assert.equal(downhill.airGap, .018);
+  assert.equal(observeSkateMotion(downhill, { x: .3988, y: .7, z: 6, zone: 'garden', jumpOffset: .04 }, 1200, 300).descending, false);
   assert.equal(observeSkateMotion(next, { x: 10, z: 6, zone: 'hub', jumpOffset: 0 }, 1200, 300).valid, false);
   assert.equal(observeSkateMotion(next, { x: .2, z: 6, zone: 'hub', jumpOffset: 0 }, 1100, 300).valid, false);
   assert.equal(observeSkateMotion(next, { x: .2, z: 6, zone: 'garden', jumpOffset: 0 }, 1200, 300).valid, false);
@@ -150,6 +189,10 @@ test('model-space rotation retarget preserves every original transform position,
     stress.restoreBase(); stress.update(1 / 60, { ...ready, speed: 1.6 }); stress.apply();
     assert.ok(stress.diagnostics.phase > phase, 'speed-band changes preserve cycle phase');
     stress.restoreBase(); stress.update(1 / 60, { ...ready, speed: 1.994, grounded: false }); stress.apply();
+    assert.ok(stress.diagnostics.blend > 0 && stress.diagnostics.blend < 1, 'actual rig eases out on takeoff');
+    for (let i = 0; i < 20; i++) {
+      stress.restoreBase(); stress.update(1 / 60, { ...ready, speed: 1.994, grounded: false }); stress.apply();
+    }
     assert.equal(stress.diagnostics.phase, 0);
     rest.forEach(entry => assert.ok(Math.abs(Quaternion.Dot(entry.node.rotationQuaternion, entry.q)) > 1 - 1e-6));
     stress.dispose();

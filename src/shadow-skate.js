@@ -10,6 +10,10 @@ export const SKATE_REFERENCE_SPEED = 1.8;
 export const SKATE_BLEND_SECONDS = 0.42;
 export const SKATE_BLEND_OUT_SECONDS = 0.28;
 export const SKATE_SPEED_BLEND_SECONDS = 0.32;
+// Cosmetic carry across short descending air gaps reported by the authority
+// on sloping terrain. This never changes ground contact, height or movement.
+export const SKATE_COAST_HEIGHT = .015;
+export const SKATE_COAST_SECONDS = .4;
 // Verified AnimationInfo states8/9/10, not direct resource-state172/173/174.
 // Mapping this MMO's observed speed bands onto these native rates is a
 // presentation adaptation; the retail movement-dependent timing is untraced.
@@ -72,8 +76,11 @@ export function observeSkateMotion(previous, player, serverTime, observedAt) {
   const valid = Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(serverTime)
     && elapsed > 0 && elapsed <= 1 && player.zone === previous?.zone
     && distance <= elapsed * 3 + 0.025;
-  return { x, z, zone: player.zone, serverTime, observedAt,
+  return { x, y: player.y, groundY: player.groundY, z, zone: player.zone, serverTime, observedAt,
     speed: valid ? distance / elapsed : 0, valid,
+    airGap: Number.isFinite(player.jumpOffset) && player.jumpOffset >= 0 ? player.jumpOffset : Infinity,
+    descending: valid && Number.isFinite(player.y) && Number.isFinite(previous?.y) && player.y <= previous.y + .0005,
+    descendingGround: valid && Number.isFinite(player.groundY) && Number.isFinite(previous?.groundY) && player.groundY < previous.groundY - .000001,
     grounded: Number.isFinite(player.jumpOffset) && player.jumpOffset <= 0.001,
     swimming: player.zone === 'garden' && (x + 8) ** 2 + z ** 2 < 25 };
 }
@@ -83,19 +90,42 @@ export class SkateCadence {
     this.active = false; this.blend = 0; this.phase = 0;
     this.speed = 0; this.visualSpeed = 0; this.rate = 0; this.state = 'idle';
     this.blendProgress = 0;
+    this.coastSeconds = 0; this.coastSample = null; this.coasting = false;
   }
 
   update(dt, { speed = 0, grounded = false, footwear = false, mounted = false,
-    swimming = false, fresh = false, available = false, sourceRates = SKATE_SOURCE_RATES } = {}) {
+    swimming = false, fresh = false, available = false, airGap = Infinity, descending = false, descendingGround = false, serverTime = null,
+    sourceRates = SKATE_SOURCE_RATES } = {}) {
     dt = frameDelta(dt);
     this.speed = Number.isFinite(speed) ? Math.max(0, Math.min(3, speed)) : 0;
-    const blocked = !grounded || !footwear || mounted || swimming || !fresh || !available;
+    const blocked = !footwear || mounted || swimming || !fresh || !available;
+    const wasCoasting = this.coasting;
+    this.coasting = false;
     if (blocked) {
       this.active = false; this.blendProgress = 0;
       this.visualSpeed = 0; this.phase = 0;
+      this.coastSeconds = 0; this.coastSample = null;
     }
-    else if (this.active) this.active = this.speed >= SKATE_EXIT_SPEED;
-    else this.active = this.speed >= SKATE_ENTER_SPEED;
+    else if (!grounded) {
+      const closeDescent = descending && descendingGround && Number.isFinite(airGap)
+        && airGap >= 0 && airGap <= SKATE_COAST_HEIGHT;
+      // Each new authoritative downhill observation can renew the short pose
+      // carry. A continuous slope may publish tiny gaps for seconds, whereas
+      // a stopped stream, takeoff or cliff must not keep it alive.
+      if (closeDescent && Number.isFinite(serverTime) && (this.coastSample === null || serverTime > this.coastSample)) {
+        this.coastSeconds = 0; this.coastSample = serverTime;
+      }
+      this.coastSeconds += dt;
+      this.coasting = this.active && (wasCoasting || this.blend === 1) && closeDescent
+        && this.coastSeconds <= SKATE_COAST_SECONDS
+        && this.speed >= SKATE_EXIT_SPEED;
+      this.active = this.coasting;
+    }
+    else {
+      this.coastSeconds = 0; this.coastSample = null;
+      if (this.active) this.active = this.speed >= SKATE_EXIT_SPEED;
+      else this.active = this.speed >= SKATE_ENTER_SPEED;
+    }
     const target = this.active ? 1 : 0;
     const duration = this.active ? SKATE_BLEND_SECONDS : SKATE_BLEND_OUT_SECONDS;
     this.blendProgress += Math.sign(target - this.blendProgress)
@@ -106,7 +136,7 @@ export class SkateCadence {
     const { ids, mix } = sourceBlend(this.visualSpeed);
     const nativeRate = sourceRates[ids[0]] + (sourceRates[ids[1]] - sourceRates[ids[0]]) * mix;
     this.rate = this.blend ? nativeRate * Math.min(1, this.visualSpeed / SKATE_ENTER_SPEED) : 0;
-    this.state = mounted ? 'mounted' : !grounded ? 'airborne' : swimming ? 'swimming'
+    this.state = mounted ? 'mounted' : this.coasting ? 'coasting' : !grounded ? 'airborne' : swimming ? 'swimming'
       : !fresh ? 'stale' : !footwear ? 'normal' : !available ? 'unavailable'
         : this.active ? this.blend < 1 ? 'blending-in' : 'skating'
           : this.blend > 0 ? 'blending-out' : this.speed > 0.08 ? 'walking' : 'idle';
@@ -225,6 +255,7 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
 
   return { update, apply, restoreBase,
     get diagnostics() { return { active: cadence.blend > 0, state: cadence.state,
+      coasting: cadence.coasting,
       speed: cadence.speed, visualSpeed: cadence.visualSpeed, phase: cadence.phase,
       rate: cadence.rate, blend: cadence.blend, clip: clipName }; },
     dispose() { disposed = true; restoreBase(); },
