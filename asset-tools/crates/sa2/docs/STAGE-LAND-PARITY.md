@@ -84,5 +84,9 @@ For Finalhazard, `finalhazard-geometry EXE OUTPUT.json` reads the 28 native
 Chunk attachments by RVA; stream offsets within each attachment are raw file
 offsets. Against the two local SA Tools splits, all 28 bounding spheres and
 all 48 vertex chunk kinds matched. Comparing polygon words in stream order
-gave 134 exact matches across 145 chunks. The other 11 are unresolved;
-the export retains the executable words. These model bounds are not hitboxes.
+gave 134 exact matches across 145 chunks. The other 11 (ten boss, one weakpoint) differ only in the high byte
+of the ambient NRGB word of type 19 (NJD_CM_DA): 255 in the executable,
+zero in the split. Ninja's njcnk_material.h identifies N as NOOP. Ambient
+RGB and diffuse ARGB, including alpha, match. The Rust export keeps the
+original byte. Reproduce with tests/finalhazard_polygon_reference.py and the
+geometry JSON, rig JSON, and local split models directory as arguments. These model bounds are not hitboxes.
