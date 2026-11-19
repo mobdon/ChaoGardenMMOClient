@@ -95,3 +95,85 @@ pub fn initialize(bytes: &[u8], pose: TaskPose) -> Result<RampInit> {
         task_word_28,
     })
 }
+
+/// Observations at entry to the active (non-initializing) task branch.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RampTick {
+    pub cooldown: f32,
+    pub collision_flags: u16,
+    pub registered_tasks: [u32; 6],
+    pub yaw: i32,
+    pub work_20: f32,
+    pub work_24: f32,
+    pub contacts: Vec<Contact>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Contact {
+    pub task: u32,
+    /// Observed after the opaque kart response call.
+    pub post_response_work_44: u32,
+    pub post_response_work_70: u32,
+    pub helper_5b90_result: Option<i32>,
+}
+#[derive(Serialize)]
+pub struct Dispatch {
+    pub contact_index: usize,
+    pub task: u32,
+    pub matrix_input: [f32; 3],
+    pub yaw: i32,
+    pub call_8002f8c4: Option<[u32; 4]>,
+    pub called_5b90: bool,
+}
+#[derive(Serialize)]
+pub struct TickResult {
+    pub cooldown: f32,
+    pub dispatches: Vec<Dispatch>,
+}
+pub fn tick(bytes: &[u8], input: RampTick) -> Result<TickResult> {
+    if manifest::sha256(bytes) != HASH {
+        return Err(Error::invalid("unsupported CartD.rel revision"));
+    }
+    if input.contacts.len() > i16::MAX as usize
+        || ![input.cooldown, input.work_20, input.work_24]
+            .into_iter()
+            .all(f32::is_finite)
+    {
+        return Err(Error::invalid("invalid ramp tick observations"));
+    }
+    let mut cooldown = (input.cooldown - 1.).max(0.);
+    let mut dispatches = Vec::new();
+    if input.collision_flags & 1 != 0 {
+        for (contact_index, c) in input.contacts.into_iter().enumerate() {
+            if c.task == 0 || !input.registered_tasks.contains(&c.task) {
+                continue;
+            }
+            let called_5b90 = cooldown == 0.;
+            if called_5b90
+                && c.helper_5b90_result
+                    .ok_or_else(|| Error::invalid("missing invoked ramp helper result"))?
+                    != 0
+            {
+                cooldown = 30.;
+            }
+            dispatches.push(Dispatch {
+                contact_index,
+                task: c.task,
+                matrix_input: [0., input.work_24, input.work_20],
+                yaw: input.yaw,
+                call_8002f8c4: (c.post_response_work_44 != 0).then_some([
+                    c.post_response_work_70,
+                    4,
+                    15,
+                    0,
+                ]),
+                called_5b90,
+            });
+        }
+    }
+    Ok(TickResult {
+        cooldown,
+        dispatches,
+    })
+}
