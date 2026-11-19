@@ -1,8 +1,13 @@
-//! Deterministic SA1 dry-land Sonic movement, with an explicitly upright
-//! collision adapter. The arithmetic/update order comes from the SA1 paths,
-//! not the SA2 boost/top-speed defaults. Loops, water, rolling/spindash,
-//! interactables and damage are not implemented by this module.
+//! Deterministic dry-land Sonic movement and native directional terrain probes.
 use crate::{binary, Error, Result};
+
+mod sensors;
+mod spin;
+use spin::{Spin, SpinMode};
+mod spikes;
+pub use sensors::{ContactMode, SensorHit};
+pub(crate) use spikes::PlatformContact;
+pub use spikes::{SpikeContact, UprightSpikes};
 
 pub const ONE: i32 = 256;
 pub const GROUND_ACCELERATION: i32 = 8;
@@ -43,14 +48,20 @@ pub struct GroundContact {
 }
 
 /// The terrain adapter is bounded, fallible, and read-only. It is intentionally
-/// distinct from the retail four-direction sensor/loop collision routines.
+/// usable by synthetic worlds which provide only upright contact.
 pub trait SurfaceQuery {
+    fn native_stage(&self) -> Option<&crate::stage::Stage<'_>> {
+        None
+    }
     fn bounds(&self) -> (i32, i32);
     fn ground_below(&self, x: i32, y: i32, max_distance: i32) -> Result<Option<GroundContact>>;
     fn solid_at(&self, x: i32, y: i32) -> Result<bool>;
 }
 
 impl SurfaceQuery for crate::stage::Stage<'_> {
+    fn native_stage(&self) -> Option<&crate::stage::Stage<'_>> {
+        Some(self)
+    }
     fn bounds(&self) -> (i32, i32) {
         (self.width_px() as i32, self.height_px() as i32)
     }
@@ -126,6 +137,10 @@ pub struct AnimationChoice {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameOutcome {
     pub jumped: bool,
+    /// Native M4A sound requested by roll entry, spindash start/rev, or release.
+    pub spin_sound: Option<u16>,
+    /// Native pitch control value applied only on an additional rev.
+    pub spin_pitch: Option<u16>,
     pub landed: bool,
     pub left_ground: bool,
     pub blocked_x: bool,
@@ -145,13 +160,24 @@ pub struct Player {
     pub ground_speed: i32,
     pub angle: u8,
     pub grounded: bool,
+    pub collision_layer: usize,
+    adhesion_timer: u8,
+    pub(crate) object_support: bool,
+    pub invulnerability_frames: u8,
+    pub speed_up: bool,
+    pub invincible: bool,
+    hurt: bool,
     pub facing_left: bool,
     pub half_height: i32,
     pub frame: u64,
     previous_jump: bool,
     jumping: bool,
+    jump_cut: bool,
+    spring_state: Option<u8>,
+    restart_animation: bool,
     braking: bool,
     trig: SineTable,
+    spin: Spin,
 }
 
 impl Player {
@@ -172,17 +198,35 @@ impl Player {
             ground_speed: 0,
             angle: 0,
             grounded: false,
+            collision_layer: DEFAULT_LAYER,
+            adhesion_timer: 0,
+            object_support: false,
+            invulnerability_frames: 0,
+            speed_up: false,
+            invincible: false,
+            hurt: false,
             facing_left: false,
             half_height: STANDING_HALF_HEIGHT,
             frame: 0,
             previous_jump: false,
             jumping: false,
+            jump_cut: false,
+            spring_state: None,
+            restart_animation: false,
             braking: false,
             trig,
+            spin: Spin::default(),
         })
     }
 
     pub fn sonic_first_stage(rom: &[u8]) -> Result<Self> {
+        Self::sonic_stage(rom, 0)
+    }
+
+    pub fn sonic_stage(rom: &[u8], stage_index: usize) -> Result<Self> {
+        if stage_index >= 18 {
+            return Err(Error("invalid ASOE spawn index".into()));
+        }
         binary::verify_asoe(rom)?;
         for (at, length, expected) in [
             (SPAWN_TABLE_OFFSET, 72, SPAWN_TABLE_SHA256),
@@ -192,27 +236,130 @@ impl Player {
                 return Err(Error("ASOE player data mismatch".into()));
             }
         }
-        let x = binary::u16_at(rom, SPAWN_TABLE_OFFSET)? as i16;
-        let y = binary::u16_at(rom, SPAWN_TABLE_OFFSET + 2)? as i16;
-        Self::at_pixels(i32::from(x), i32::from(y), SineTable::from_asoe(rom)?)
+        let at = SPAWN_TABLE_OFFSET + 4 * stage_index;
+        let x = binary::u16_at(rom, at)? as i16;
+        let y = binary::u16_at(rom, at + 2)? as i16;
+        let mut p = Self::at_pixels(i32::from(x), i32::from(y), SineTable::from_asoe(rom)?)?;
+        p.spin.load(rom)?;
+        Ok(p)
+    }
+
+    /// State written by a native upward or diagonal spring after contact.
+    pub fn apply_spring_state(&mut self, state: u8) {
+        if !matches!(state, 17 | 21) {
+            return;
+        }
+        self.spring_state = Some(state);
+        self.spin.mode = SpinMode::Standing;
+        self.spin.roll_jump = false;
+        self.restart_animation = true;
+        self.jump_cut = false;
+        self.jumping = false;
+        self.braking = false;
+        self.hurt = false;
+        self.shift_radius(STANDING_HALF_HEIGHT);
+        self.grounded = false;
+    }
+
+    pub fn apply_down_spring_state(&mut self) {
+        self.jump_cut = false;
+        self.grounded = false;
+    }
+
+    pub fn apply_side_spring_state(&mut self) {
+        self.spring_state = Some(if self.jumping || self.rolling() { 5 } else { 4 });
+        self.braking = false;
+        self.hurt = false;
+    }
+
+    /// Call after the sprite VM reports that the selected script ended.
+    pub fn animation_finished(&mut self) {
+        self.spin.mode = match self.spin.mode {
+            SpinMode::Revving => SpinMode::Charging,
+            SpinMode::Uncrouching => SpinMode::Standing,
+            m => m,
+        };
+        if matches!(self.spring_state, Some(17 | 18)) {
+            self.spring_state = Some(19);
+        }
+    }
+
+    pub fn take_animation_restart(&mut self) -> bool {
+        std::mem::take(&mut self.restart_animation)
+    }
+
+    pub fn invulnerable_to_damage(&self) -> bool {
+        self.invincible || self.invulnerability_frames != 0
+    }
+    pub fn can_collect_rings(&self) -> bool {
+        !self.hurt || self.invulnerability_frames == 0
+    }
+    fn speed_factor(&self) -> i32 {
+        if self.speed_up {
+            2
+        } else {
+            1
+        }
     }
 
     pub fn animation(&self) -> AnimationChoice {
         let speed = self.ground_speed.unsigned_abs();
-        let (animation, speed_q4_4) = if !self.grounded && self.jumping {
+        let walk = if speed >= GROUND_TOP_SPEED as u32 {
+            (5, 16)
+        } else {
+            (4, (speed >> 4).clamp(8, 16) as u8)
+        };
+        if !self.hurt {
+            let choice = match self.spring_state {
+                Some(17) => Some((11, 0, 16)),
+                Some(18) => Some((10, 1, 16)),
+                Some(19) => Some((10, 2, 16)),
+                Some(21) => Some((10, 0, 16)),
+                Some(4) => Some((walk.0, 0, walk.1)),
+                Some(5) => Some((8, 0, 16)),
+                _ => None,
+            };
+            if let Some((animation, variant, speed_q4_4)) = choice {
+                return AnimationChoice {
+                    animation,
+                    variant,
+                    speed_q4_4,
+                    flip_x: self.facing_left,
+                };
+            }
+        }
+        if !self.hurt {
+            let choice = match self.spin.mode {
+                SpinMode::Crouched => Some((3, 0)),
+                SpinMode::Uncrouching => Some((3, 1)),
+                SpinMode::Charging => Some((18, 0)),
+                SpinMode::Revving => Some((18, 1)),
+                SpinMode::Rolling => Some((8, 0)),
+                _ => None,
+            };
+            if let Some((animation, variant)) = choice {
+                return AnimationChoice {
+                    animation,
+                    variant,
+                    speed_q4_4: 16,
+                    flip_x: self.facing_left,
+                };
+            }
+        }
+        let (animation, speed_q4_4) = if self.hurt {
+            (19, 16)
+        } else if !self.grounded && self.jumping {
             (8, 16)
         } else if !self.grounded {
             // Initial/falling animation selection is a presentation adaptation;
-            // the movement states for springs/hurt/scripted falls are absent.
+            // other scripted falling states can select different animations.
             (0, 16)
         } else if self.braking {
             (if speed < 384 { 7 } else { 9 }, 16)
         } else if self.ground_speed == 0 {
             (0, 16)
-        } else if speed >= GROUND_TOP_SPEED as u32 {
-            (5, 16)
         } else {
-            (4, (speed >> 4).clamp(8, 16) as u8)
+            walk
         };
         AnimationChoice {
             animation,
@@ -225,8 +372,20 @@ impl Player {
     /// Exactly one 60 Hz input frame. A failing terrain query or invalid state
     /// leaves the previous state intact. There is no caller-supplied dt/gain.
     pub fn step(&mut self, input: Input, world: &impl SurfaceQuery) -> Result<FrameOutcome> {
+        self.step_controls(input, false, world)
+    }
+
+    pub fn step_controls(
+        &mut self,
+        input: Input,
+        down: bool,
+        world: &impl SurfaceQuery,
+    ) -> Result<FrameOutcome> {
+        // Stage input preprocessing gives horizontal input precedence over Down.
+        let down = down && !(input.left || input.right);
         let (width, height) = world.bounds();
-        if !(32..=1_000_000).contains(&width)
+        if self.collision_layer > 1
+            || !(32..=1_000_000).contains(&width)
             || !(32..=1_000_000).contains(&height)
             || ![self.vx, self.vy, self.ground_speed]
                 .iter()
@@ -240,6 +399,7 @@ impl Player {
             ));
         }
         let mut next = self.clone();
+
         let mut outcome = FrameOutcome::default();
         let pressed_jump = input.jump && !self.previous_jump;
         next.previous_jump = input.jump;
@@ -249,53 +409,70 @@ impl Player {
             .ok_or_else(|| Error("frame counter overflow".into()))?;
 
         if next.grounded {
-            if !upright(next.angle) {
+            if world.native_stage().is_none() && !upright(next.angle) {
                 return Err(Error(
                     "non-upright player contact requires native loop sensors".into(),
                 ));
             }
-            if pressed_jump && next.head_clear(world, 4)? {
+            if next.spin_charge_frame(down, pressed_jump, &mut outcome)? {
+                if let Some(stage) = world.native_stage() {
+                    next.follow_support(stage, &mut outcome)?;
+                }
+            } else if pressed_jump && next.head_clear(world, 4)? {
+                next.spin.roll_jump = next.rolling();
+                next.spin.mode = SpinMode::Standing;
                 let normal = next.angle.wrapping_sub(64);
                 next.vx += qmul(JUMP_IMPULSE, next.trig.cos(normal));
                 next.vy += qmul(JUMP_IMPULSE, next.trig.sin(normal));
                 // Native shrink keeps the same foot contact (+5px on floors).
-                next.y += (STANDING_HALF_HEIGHT - SPIN_HALF_HEIGHT) * ONE;
-                next.half_height = SPIN_HALF_HEIGHT;
+                next.shift_radius(SPIN_HALF_HEIGHT);
+
                 next.grounded = false;
                 next.jumping = true;
+                next.jump_cut = true;
+                next.spring_state = None;
                 next.braking = false;
                 outcome.jumped = true;
                 // The SA1 grounded jump branch does not integrate this frame.
             } else {
-                if next.ground_speed != 0 {
-                    next.ground_speed += (next.trig.sin(next.angle) * 3) >> 5;
-                }
-                next.braking = false;
-                match (input.left, input.right) {
-                    (true, false) => next.accelerate_ground(-1),
-                    (false, true) => next.accelerate_ground(1),
-                    (false, false) => {
-                        next.ground_speed = toward_zero(next.ground_speed, GROUND_FRICTION);
-                    }
-                    (true, true) => {} // Both directions suppress friction in SA1.
+                let was_rolling = next.rolling();
+                next.ground_motion(input, down);
+                if !was_rolling && next.rolling() {
+                    outcome.spin_sound = Some(109);
                 }
                 next.vx = qmul(next.ground_speed, next.trig.cos(next.angle));
                 next.vy = qmul(next.ground_speed, next.trig.sin(next.angle));
-                next.move_upright(world, true, &mut outcome)?;
+                if let Some(stage) = world.native_stage() {
+                    next.move_native(stage, true, &mut outcome)?;
+                } else {
+                    next.move_upright(world, true, &mut outcome)?;
+                }
             }
         } else {
-            if next.jumping && !input.jump && next.vy < -RELEASE_JUMP_SPEED {
+            if next.jump_cut && !input.jump && next.vy < -RELEASE_JUMP_SPEED {
                 next.vy = -RELEASE_JUMP_SPEED;
             }
-            next.vx = air_horizontal(next.vx, next.vy, input)?;
-            if input.left {
-                next.facing_left = true;
-            } else if input.right {
-                next.facing_left = false;
+            if !next.hurt {
+                let air_input = if next.spin.roll_jump {
+                    Input::default()
+                } else {
+                    input
+                };
+                next.vx =
+                    air_horizontal_with_factor(next.vx, next.vy, air_input, next.speed_factor())?;
+                if air_input.left {
+                    next.facing_left = true;
+                } else if air_input.right {
+                    next.facing_left = false;
+                }
             }
-            next.move_upright(world, false, &mut outcome)?;
+            if let Some(stage) = world.native_stage() {
+                next.move_native(stage, false, &mut outcome)?;
+            } else {
+                next.move_upright(world, false, &mut outcome)?;
+            }
             // Native gravity is applied after integrating the old vertical speed.
-            if !next.grounded {
+            if world.native_stage().is_none() && !next.grounded {
                 next.vy = next
                     .vy
                     .checked_add(GRAVITY)
@@ -304,6 +481,21 @@ impl Player {
                 next.angle = toward_zero(angle, 2) as u8;
             }
         }
+        if outcome.landed {
+            next.spin.mode = SpinMode::Standing;
+            next.spin.roll_jump = false;
+        }
+        if next.grounded {
+            next.hurt = false;
+            next.spring_state = None;
+            next.jump_cut = false;
+        } else if next.spring_state == Some(21) && next.vy >= -384 {
+            next.spring_state = Some(18);
+        }
+        if !next.hurt {
+            next.invulnerability_frames = next.invulnerability_frames.saturating_sub(1);
+        }
+        next.object_support = false;
         outcome.fell_out = next.y >= (height + 64) * ONE;
         if ![next.vx, next.vy, next.ground_speed]
             .iter()
@@ -319,10 +511,14 @@ impl Player {
         let aligned = self.ground_speed * direction;
         if aligned >= 0 {
             self.facing_left = direction < 0;
-            self.ground_speed =
-                directional_acceleration(self.ground_speed, direction, GROUND_ACCELERATION);
+            self.ground_speed = directional_acceleration(
+                self.ground_speed,
+                direction,
+                GROUND_ACCELERATION * self.speed_factor(),
+                GROUND_TOP_SPEED * self.speed_factor(),
+            );
         } else {
-            self.ground_speed += direction * GROUND_DECELERATION;
+            self.ground_speed += direction * GROUND_DECELERATION * self.speed_factor();
             if self.ground_speed * direction > 0 {
                 self.ground_speed = direction * GROUND_DECELERATION;
             }
@@ -332,6 +528,9 @@ impl Player {
 
     fn head_clear(&self, world: &impl SurfaceQuery, distance: i32) -> Result<bool> {
         let x = self.x >> 8;
+        if let Some(stage) = world.native_stage() {
+            return Ok(self.jump_clearance(stage)? >= distance);
+        }
         let top = (self.y >> 8) - self.half_height;
         for d in 1..=distance {
             for dx in [-HALF_WIDTH, HALF_WIDTH] {
@@ -477,11 +676,11 @@ fn toward_zero(value: i32, amount: i32) -> i32 {
     }
 }
 
-fn directional_acceleration(speed: i32, direction: i32, acceleration: i32) -> i32 {
+fn directional_acceleration(speed: i32, direction: i32, acceleration: i32, top: i32) -> i32 {
     let attempted = speed + direction * acceleration;
-    if attempted * direction > GROUND_TOP_SPEED {
-        if speed * direction < GROUND_TOP_SPEED {
-            direction * GROUND_TOP_SPEED
+    if attempted * direction > top {
+        if speed * direction < top {
+            direction * top
         } else {
             speed
         }
@@ -493,6 +692,14 @@ fn directional_acceleration(speed: i32, direction: i32, acceleration: i32) -> i3
 /// The SA1 source's unsigned condition is preserved exactly: rising dry-air
 /// velocities in the ordinary jump range receive signed arithmetic >>5 drag.
 pub fn air_horizontal(speed: i32, vertical_speed: i32, input: Input) -> Result<i32> {
+    air_horizontal_with_factor(speed, vertical_speed, input, 1)
+}
+fn air_horizontal_with_factor(
+    speed: i32,
+    vertical_speed: i32,
+    input: Input,
+    factor: i32,
+) -> Result<i32> {
     if !(-32767..=32767).contains(&speed) || !(-32767..=32767).contains(&vertical_speed) {
         return Err(Error("air velocity outside native range".into()));
     }
@@ -506,7 +713,12 @@ pub fn air_horizontal(speed: i32, vertical_speed: i32, input: Input) -> Result<i
     let mut speed = if direction == 0 {
         speed
     } else {
-        directional_acceleration(speed, direction, AIR_ACCELERATION)
+        directional_acceleration(
+            speed,
+            direction,
+            AIR_ACCELERATION * factor,
+            GROUND_TOP_SPEED * factor,
+        )
     };
     if (vertical_speed as i16 as u16) > ((-67 * ONE - 1) as i16 as u16) {
         speed -= speed >> 5;

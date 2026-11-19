@@ -1,72 +1,15 @@
-# Sonic Advance native Rust port status
+# Sonic Advance ASOE: shared Rust port
 
-User-directed continuation, November 18, 2026: implement the actual game in Rust
-beyond asset extraction, and publish the source to GitHub. The whole-game port
-remains in progress. This branch adds a runnable first-stage testbed using Rust
-mechanics and original source-local presentation. It is not ROM instruction
-execution, a complete retail engine, or a rollout into the MMO service.
+Desktop and browser now step the same `NativeRun`. The browser loads a private ASOE ROM into memory, renders the English title in Rust and can enter Neo Green Hill Acts 1 and 2 from the practice selector. Start opens the English main menu. Single Player enters the native character carousel and a fresh solo Sonic confirmation reaches the playable Act 1 spawn. The stage introduction is still missing. Desktop can load the first twelve ordinary act slots. Loading a slot does not prove its completion.
 
-The isolated branch is `codex/sonic-advance-native-runtime`, based on the exact
-asset-tooling PR #4 head `c5ccc2533162c0ad34262dfd4438c3848713e97b`.
-Changes remain under `asset-tools/crates/sonic-advance/`. Shared schemas,
-other games' crates, server histories, live previews and saves are untouched.
-Astra completed the runtime integration, export failure handling and tests.
+This continuation is stacked on desktop PR #13, which is based on catalog PR #4. It incorporates the verified title and browser presentation from PR #14 at `54e04a0d6505296400d9aa8e34bad1d34115350e`. Its flat/upright player and second gameplay loop were not imported. Both of that branch's reported terrain regressions now have tests against the original game. The same native dust clips (746/747) are driven by the shared sprite VM.
 
-## Implemented in this pass
+| System | Implemented here | Still open |
+| --- | --- | --- |
+| [Terrain](STAGE-EVIDENCE.md) and [Sonic](PLAYER-EVIDENCE.md) | Original stage and collision graphs, four-direction sensors, collision layers, dry run/jump/roll/spindash, ordinary single-player camera | Full traversal through every act, water/inverted gravity, other characters and abilities |
+| [Entities](ENTITY-EVIDENCE.md) | All 54 layouts; layer switches, [springs](SPRING-EVIDENCE.md), upright spikes, [item monitors](ITEM-EVIDENCE.md), [checkpoint/goal posts](POST-EVIDENCE.md), rings and [HUD](HUD-EVIDENCE.md) | Enemies, bosses, remaining hazards and platforms, scattered rings, complete results and special modes |
+| [Music](AUDIO-EVIDENCE.md) | Score and voice readers; [offline stereo synthesis](MIX-EVIDENCE.md) for Neo Green Hill and ring effect | Hardware waveform fidelity and interactive audio device playback |
+| [Saves](FLASH-EVIDENCE.md) and [transfer](TRANSFER-EVIDENCE.md) | Read-only native slot selection and Tiny Garden data-phase handshake comparisons | End-to-end hardware exchange and validated save writing |
+| Tiny Garden | [Chao Memory](TINY-GAME-EVIDENCE.md) and [Rock-Paper-Scissors](TINY-RPS-EVIDENCE.md) game logic tested against native execution | Garden room/care/shop, full minigame presentation, lifecycle and integration |
 
-- Source-gated loading of all 18 foreground/collision graphs, native signed
-  height/angle profiles, palettes, tiles, backgrounds and foreground occlusion.
-- A bounded native sprite animation state machine and normal OAM composition,
-  including Sonic Idle/Walk/Run/Spin and the native ring animation/effect.
-- Signed fixed-point SA1 dry movement constants, ground acceleration/braking,
-  friction, slope contribution, air control, jump release and gravity, with an
-  explicitly upright collision adapter. Spawn and sine samples come from ASOE.
-- All 18 RLE ring layouts, live-body pickup rectangles and ephemeral collection.
-- A Rust 240x160 framebuffer, optional native desktop window, keyboard adapter,
-  deterministic replay and local-only trace/image/hash receipts.
-
-Detailed evidence and limits: [stage](STAGE-EVIDENCE.md),
-[sprite](SPRITE-EVIDENCE.md), [player](PLAYER-EVIDENCE.md),
-[rings](RING-EVIDENCE.md), [runtime](RUNTIME-EVIDENCE.md).
-
-## Run locally
-
-Activate this project's existing Rust toolchain if necessary. From the isolated
-worktree, set `SONIC_ADVANCE_ASOE_ROM` to the private supplied ROM. No ROM or
-converted assets are downloaded by the game tool.
-
-```powershell
-cargo run --locked --manifest-path asset-tools/crates/sonic-advance/Cargo.toml --features native-window --bin sonic-advance-native -- play $env:SONIC_ADVANCE_ASOE_ROM
-```
-
-Controls: arrows or A/D to move, Space or Z to jump, P to pause, R to restart the
-local practice run, Escape to close. Restart discards only that local run; there
-is no profile/save writer. The window reports unsupported paths rather than
-silently substituting another mechanic.
-
-```powershell
-cargo run --locked --manifest-path asset-tools/crates/sonic-advance/Cargo.toml --bin sonic-advance-native -- replay $env:SONIC_ADVANCE_ASOE_ROM .local 600
-```
-
-The output directory must already exist and resolve to a directory named
-`.local`. Replay emits local PPM/JSON artifacts using derived names and rejects
-existing files. These original-image artifacts remain ignored and private.
-
-## Remaining whole-game gates
-
-| Native subsystem | Current status and next required proof |
-| --- | --- |
-| Terrain and player traversal | Upright dry subset runs. Port all four collision sensors, full loops, layer triggers, rolling/spindash, water and character-specific states; compare retail frame traces. A parsed stage graph is not a completed playable stage. |
-| Entities and stage progression | Rings are loaded/collected locally. Enemies, springs, platforms, hazards, checkpoints, bosses, goals, death/lives and stage/act transitions remain. |
-| Scheduler, menus and effects | A bounded local 60 Hz runner exists. Original task order, title/options/character select, camera triggers, palette/tile animation and remaining graphics modes are unfinished. |
-| Audio | Native animation sound events are represented. Port sequence/voice/sample traversal, synthesis/mixing and playback with audio parity. |
-| Saving and transfers | No native save writer/import authority exists. Trace exact ASOE save lifecycle, corruption/recovery and JoyBus semantics before local compatibility work. |
-| Tiny Garden and minigames | The embedded program is fingerprinted. Its full native art graph, behavior/care/shop/minigame logic and Chaos type fallback remain separate unported systems. |
-| Other modes and characters | Multiplayer/link, special stages, remaining characters and all their abilities need independent execution and fidelity evidence. |
-| MMO/WASM integration | No new network contract or service reward path is provided. Any future browser shared mechanics must use the agreed Rust/WASM boundary; canonical progression stays in the separate Rust authority. |
-
-The current testbed can block on geometry requiring unported collision modes.
-It does not complete an act or establish retail playthrough parity. Native
-window creation/build and framebuffer output were checked; complete interactive
-keyboard acceptance remains open. No merge, deployment or live migration is
-authorized by this source publication.
+For commands and reproducible evidence see [validation](NATIVE-VALIDATION.md). The stand-alone practice runtime makes no network reward, save or account mutations. No native assets, ROMs, flash images, generated WASM or screenshots are published.

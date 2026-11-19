@@ -11,3 +11,5 @@
 *.ppm
 *.trace.json
 *.receipt.json
+
+/wasm/target/

@@ -73,3 +73,24 @@ impl<'a> GardenEvidence<'a> {
         &self.raw[CRC_TABLE_OFFSET..CRC_TABLE_OFFSET + CRC_TABLE_LEN]
     }
 }
+
+/// Prepare the decompressed EWRAM program immediately before the retail soft reset.
+/// The three stores are ASOE ROM offsets 0xe08e, 0xe094 and 0xe0a4.
+pub fn prepare_launch(rom: &[u8], loaded_save: &[u8], frame: u32) -> Result<Vec<u8>> {
+    let word = |offset| -> Result<u32> {
+        let bytes = binary::range(loaded_save, offset, 4)?;
+        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+    };
+    let score = word(0x428)?;
+    let checksum = word(0x42c)?;
+    let language = u32::from(loaded_save[0x19]);
+    let mut program = catalog::garden(rom)?.bytes;
+    for (slot, value) in program[8..20].as_chunks_mut::<4>().0.iter_mut().zip([
+        score,
+        language,
+        frame.wrapping_add(checksum),
+    ]) {
+        slot.copy_from_slice(&value.to_le_bytes());
+    }
+    Ok(program)
+}

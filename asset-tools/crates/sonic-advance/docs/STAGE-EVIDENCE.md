@@ -95,9 +95,7 @@ At a native 240×160 viewport, Zone 1's cloud-row shifts and water-row horizonta
 offsets follow the pinned native background function. The supplied camera x is
 treated as its relative x input; camera-origin changes remain the runner's
 responsibility. Other stages currently display their actual static background.
-Foreground animated tiles currently use their native initial frame. Per-stage
-palette cycles, deformation, later animation frames, window/blend/affine modes,
-native camera tracking and every original render effect remain incomplete.
+The first foreground's animated prefix is uploaded from the source tiles and subsequent contiguous frames. In Neo Green Hill Act 1 this is 448 bytes at offsets 0x4A7670, 0x4AF130, 0x4AF2F0 and 0x4AF4B0, advancing every ten updates and wrapping after forty. Six additional Act 2 screen comparisons cover the first four phases and wrap. Palette cycles and the remaining zone-specific display effects are incomplete.
 
 ## Tests and independent parity
 

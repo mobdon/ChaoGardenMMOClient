@@ -78,6 +78,25 @@ struct Layer<'a> {
 }
 
 #[derive(Debug)]
+struct TileAnimation<'a> {
+    frames_after_base: &'a [u8],
+    frame_bytes: usize,
+    count: u8,
+    delay: u8,
+}
+
+impl TileAnimation<'_> {
+    fn frame(&self, tick: u64) -> Option<&[u8]> {
+        let phase = (tick / u64::from(self.delay.max(1))) % u64::from(self.count);
+        if phase == 0 {
+            return None;
+        }
+        let at = (phase as usize - 1) * self.frame_bytes;
+        Some(&self.frames_after_base[at..at + self.frame_bytes])
+    }
+}
+
+#[derive(Debug)]
 struct Background<'a> {
     tiles: &'a [u8],
     map: &'a [u8],
@@ -91,6 +110,7 @@ struct Background<'a> {
 pub struct Stage<'a> {
     stage_index: usize,
     layers: [Layer<'a>; 2],
+    tile_animation: Option<TileAnimation<'a>>,
     background: Background<'a>,
     heights: &'a [u8],
     rotations: &'a [u8],
@@ -238,10 +258,30 @@ impl<'a> Stage<'a> {
             &mut spans,
         )?;
         let mut built_layers = Vec::new();
+        let mut tile_animation = None;
         let mut shared_palette = None;
         let mut referenced_tiles = 0;
         for i in 0..2 {
             let header = tables::foreground_map(rom, map_offsets[i], 65536)?;
+            if i == 0 && header.tileset.animation_frames > 1 {
+                let bytes = usize::from(header.tileset.animation_tile_bytes);
+                if bytes == 0 || bytes % 32 != 0 || bytes > header.tileset.tiles.len() {
+                    return Err(Error("invalid foreground animation frame size".into()));
+                }
+                let at = header.tileset.tile_offset + header.tileset.tiles.len();
+                tile_animation = Some(TileAnimation {
+                    frames_after_base: span(
+                        rom,
+                        "foreground-animation-frames",
+                        at,
+                        bytes * usize::from(header.tileset.animation_frames - 1),
+                        &mut spans,
+                    )?,
+                    frame_bytes: bytes,
+                    count: header.tileset.animation_frames,
+                    delay: header.tileset.animation_delay,
+                });
+            }
             span(
                 rom,
                 &format!("foreground-{i}-header"),
@@ -351,6 +391,7 @@ impl<'a> Stage<'a> {
             .map_err(|_| Error("missing stage layer".into()))?;
         Ok(Self {
             stage_index,
+            tile_animation,
             layers,
             background,
             heights,
@@ -528,7 +569,7 @@ impl<'a> Stage<'a> {
         camera_y: i32,
         width: usize,
         height: usize,
-        _tick: u64,
+        tick: u64,
         output: &mut [u32],
     ) -> Result<()> {
         let count = width
@@ -538,6 +579,7 @@ impl<'a> Stage<'a> {
             return Err(Error("viewport dimensions or pixel budget invalid".into()));
         }
         let layer = &self.layers[0];
+        let animated = self.tile_animation.as_ref().and_then(|a| a.frame(tick));
         for screen_y in 0..height {
             for screen_x in 0..width {
                 let world_x = i64::from(camera_x) + screen_x as i64;
@@ -549,7 +591,7 @@ impl<'a> Stage<'a> {
                 {
                     let word = layer.word_at(world_x as usize, world_y as usize);
                     if let Some(value) = tile_pixel(
-                        layer.tiles,
+                        tile_source(layer.tiles, animated, word),
                         &layer.palette,
                         word,
                         world_x as usize & 7,
@@ -566,7 +608,7 @@ impl<'a> Stage<'a> {
     /// RGB0 pixels, opaque final viewport. Foreground index zero is transparent.
     /// Zone 1's native HBlank cloud/water offsets are reproduced at 240x160;
     /// other stages use their actual static background with no guessed effects.
-    /// Foreground animation tiles currently retain their native initial frame.
+    /// Tick counts foreground animation updates from the initial character data.
     pub fn render_view(
         &self,
         camera_x: i32,
@@ -582,6 +624,7 @@ impl<'a> Stage<'a> {
         if width == 0 || height == 0 || count > MAX_VIEW_PIXELS || count != output.len() {
             return Err(Error("viewport dimensions or pixel budget invalid".into()));
         }
+        let animated = self.tile_animation.as_ref().and_then(|a| a.frame(tick));
         for screen_y in 0..height {
             let bg_shift = if self.stage_index < 2 && width == 240 && height == 160 {
                 match screen_y {
@@ -607,8 +650,13 @@ impl<'a> Stage<'a> {
                 {
                     for layer in self.layers.iter().rev() {
                         let w = layer.word_at(world_x as usize, world_y as usize);
+                        let uploaded = if layer.tiles.as_ptr() == self.layers[0].tiles.as_ptr() {
+                            animated
+                        } else {
+                            None
+                        };
                         if let Some(value) = tile_pixel(
-                            layer.tiles,
+                            tile_source(layer.tiles, uploaded, w),
                             &layer.palette,
                             w,
                             world_x as usize & 7,
@@ -632,6 +680,12 @@ impl Layer<'_> {
         let local = ((y / 8) % CHUNK_TILES) * CHUNK_TILES + (x / 8) % CHUNK_TILES;
         word(self.metatiles, chunk * CHUNK_TILES * CHUNK_TILES + local)
     }
+}
+
+fn tile_source<'a>(base: &'a [u8], prefix: Option<&'a [u8]>, entry: u16) -> &'a [u8] {
+    prefix
+        .filter(|p| usize::from(entry & 1023) < p.len() / 32)
+        .unwrap_or(base)
 }
 
 fn tile_pixel(

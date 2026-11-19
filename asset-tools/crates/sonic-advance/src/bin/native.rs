@@ -66,12 +66,12 @@ fn publish(directory: &Path, stem: &str, files: &[(&str, &[u8])]) -> Result<()> 
     Ok(())
 }
 
-fn replay(rom: &[u8], output: &Path, frames: u32) -> Result<()> {
+fn replay(rom: &[u8], output: &Path, frames: u32, stage: usize) -> Result<()> {
     if frames == 0 || frames > runtime::MAX_REPLAY_FRAMES {
         return Err(Error("replay frame budget must be 1 through 36000".into()));
     }
     let directory = local_directory(output)?;
-    let mut run = runtime::NativeRun::load(rom)?;
+    let mut run = runtime::NativeRun::load_stage(rom, stage)?;
     let initial = run.snapshot();
     let mut trace = Vec::new();
     let mut observations = Observations::default();
@@ -80,8 +80,10 @@ fn replay(rom: &[u8], output: &Path, frames: u32) -> Result<()> {
         observations.jumps += u32::from(outcome.jumped);
         observations.landings += u32::from(outcome.landed);
         observations.horizontal_blocks += u32::from(outcome.blocked_x);
-        trace.push(run.snapshot());
-        if outcome.fell_out {
+        let snapshot = run.snapshot();
+        let stopped = snapshot.death.is_some() || snapshot.goal.is_some_and(|g| g.results_ready);
+        trace.push(snapshot);
+        if stopped {
             break;
         }
     }
@@ -91,7 +93,7 @@ fn replay(rom: &[u8], output: &Path, frames: u32) -> Result<()> {
     let trace = serde_json::to_vec(&trace).map_err(|e| Error(e.to_string()))?;
     let receipt = Receipt {
         source_sha256: binary::ROM_SHA256,
-        status: "local-native-first-stage-testbed; complete-game-parity-unfinished",
+        status: "local-native-stage-practice",
         frames: run.snapshot().frame as u32,
         initial,
         final_state: run.snapshot(),
@@ -105,7 +107,11 @@ fn replay(rom: &[u8], output: &Path, frames: u32) -> Result<()> {
     for p in image {
         ppm.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
     }
-    let stem = format!("asoe-native-{frames}-{}", &digest[..16]);
+    let stem = if stage == 0 {
+        format!("asoe-native-{frames}-{}", &digest[..16])
+    } else {
+        format!("asoe-native-stage{stage}-{frames}-{}", &digest[..16])
+    };
     let json = serde_json::to_vec_pretty(&receipt).map_err(|e| Error(e.to_string()))?;
     publish(
         &directory,
@@ -125,11 +131,11 @@ fn replay(rom: &[u8], output: &Path, frames: u32) -> Result<()> {
 }
 
 #[cfg(feature = "native-window")]
-fn play(rom: &[u8], demo_frames: Option<u32>) -> Result<()> {
+fn play(rom: &[u8], demo_frames: Option<u32>, stage: usize) -> Result<()> {
     use minifb::{Key, KeyRepeat, Scale, Window, WindowOptions};
-    let mut run = runtime::NativeRun::load(rom)?;
+    let mut run = runtime::NativeRun::load_stage(rom, stage)?;
     let mut window = Window::new(
-        "Sonic Advance | Rust native first-stage testbed",
+        "Sonic Advance | Rust stage practice",
         runtime::WIDTH,
         runtime::HEIGHT,
         WindowOptions {
@@ -145,12 +151,21 @@ fn play(rom: &[u8], demo_frames: Option<u32>) -> Result<()> {
     let mut status = String::new();
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if window.is_key_pressed(Key::R, KeyRepeat::No) {
-            run = runtime::NativeRun::load(rom)?;
+            run = runtime::NativeRun::load_stage(rom, run.snapshot().stage_index)?;
             status.clear();
             paused = false;
         }
         if window.is_key_pressed(Key::P, KeyRepeat::No) {
             paused = !paused;
+        }
+        if window.is_key_pressed(Key::Enter, KeyRepeat::No) && !status.is_empty() {
+            match run.continue_stage() {
+                Ok(()) => {
+                    status.clear();
+                    paused = false;
+                }
+                Err(error) => status = error.to_string(),
+            }
         }
         if !paused && status.is_empty() {
             let input = if demo_frames.is_some() {
@@ -162,18 +177,34 @@ fn play(rom: &[u8], demo_frames: Option<u32>) -> Result<()> {
                     jump: window.is_key_down(Key::Space) || window.is_key_down(Key::Z),
                 }
             };
-            match run.step(input) {
-                Ok(frame) if frame.fell_out => {
-                    status = "Fell out - R restarts this local run".into()
+            let down = demo_frames.is_none()
+                && (window.is_key_down(Key::Down) || window.is_key_down(Key::S));
+            match run.step_controls(input, down) {
+                Ok(_) => {
+                    let s = run.snapshot();
+                    if s.death.is_some() {
+                        status = if s.lives == 0 {
+                            "Game over | R restarts"
+                        } else {
+                            "Life lost | Enter to retry"
+                        }
+                        .into();
+                    } else if s.goal.is_some_and(|g| g.results_ready) {
+                        status = if s.stage_index + 1 < runtime::PRACTICE_ACTS {
+                            "Goal reached | Enter for the next act"
+                        } else {
+                            "Goal reached | End of supported acts"
+                        }
+                        .into();
+                    }
                 }
-                Ok(_) => {}
                 Err(error) => status = format!("Unsupported path: {error}; R restarts"),
             }
         }
         run.render(&mut pixels)?;
         let snapshot = run.snapshot();
-        window.set_title(&format!("Sonic Advance | Rust testbed | x={} y={} local rings={} | {} | Arrows/AD Space/Z R P Esc",
-            snapshot.x_q8 >> 8, snapshot.y_q8 >> 8, snapshot.local_rings,
+        window.set_title(&format!("Sonic Advance | Zone {} Act {} | x={} y={} rings={} lives={} | {} | Arrows/AD Space/Z R P Esc",
+            snapshot.stage_index / 2 + 1, snapshot.stage_index % 2 + 1, snapshot.x_q8 >> 8, snapshot.y_q8 >> 8, snapshot.local_rings, snapshot.lives,
             if status.is_empty() { if paused { "Paused" } else { "Offline practice" } } else { &status }));
         window
             .update_with_buffer(&pixels, runtime::WIDTH, runtime::HEIGHT)
@@ -188,7 +219,7 @@ fn play(rom: &[u8], demo_frames: Option<u32>) -> Result<()> {
 }
 
 #[cfg(not(feature = "native-window"))]
-fn play(_: &[u8], _: Option<u32>) -> Result<()> {
+fn play(_: &[u8], _: Option<u32>, _: usize) -> Result<()> {
     Err(Error(
         "build with --features native-window to open the Rust window".into(),
     ))
@@ -197,12 +228,22 @@ fn play(_: &[u8], _: Option<u32>) -> Result<()> {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() < 2 {
-        return Err(Error("usage: sonic-advance-native play ROM | demo ROM FRAMES | replay ROM EXISTING_LOCAL_DIR FRAMES".into()));
+        return Err(Error("usage: sonic-advance-native play ROM [STAGE] | demo ROM FRAMES [STAGE] | replay ROM EXISTING_LOCAL_DIR FRAMES [STAGE]".into()));
     }
+    let stage_arg = |at: usize| -> Result<usize> {
+        match args.get(at) {
+            None => Ok(0),
+            Some(arg) => arg
+                .to_str()
+                .and_then(|s| s.parse().ok())
+                .filter(|&n| n < runtime::PRACTICE_ACTS)
+                .ok_or_else(|| Error("practice stage index must be 0 through 11".into())),
+        }
+    };
     let rom = binary::read_bounded(Path::new(&args[1]), binary::ROM_LEN)?;
-    if args[0] == "play" && args.len() == 2 {
-        play(&rom, None)
-    } else if args[0] == "demo" && args.len() == 3 {
+    if args[0] == "play" && (2..=3).contains(&args.len()) {
+        play(&rom, None, stage_arg(2)?)
+    } else if args[0] == "demo" && (3..=4).contains(&args.len()) {
         let frames: u32 = args[2]
             .to_str()
             .and_then(|s| s.parse().ok())
@@ -210,13 +251,13 @@ fn run() -> Result<()> {
         if frames == 0 || frames > runtime::MAX_REPLAY_FRAMES {
             return Err(Error("demo frame budget must be 1 through 36000".into()));
         }
-        play(&rom, Some(frames))
-    } else if args[0] == "replay" && args.len() == 4 {
+        play(&rom, Some(frames), stage_arg(3)?)
+    } else if args[0] == "replay" && (4..=5).contains(&args.len()) {
         let frames = args[3]
             .to_str()
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| Error("invalid replay frame count".into()))?;
-        replay(&rom, Path::new(&args[2]), frames)
+        replay(&rom, Path::new(&args[2]), frames, stage_arg(4)?)
     } else {
         Err(Error(
             "invalid native runner command or argument count".into(),

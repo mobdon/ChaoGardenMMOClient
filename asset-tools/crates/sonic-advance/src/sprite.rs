@@ -335,6 +335,7 @@ pub struct SpritePlayer {
     delay_q8: i16,
     object_tiles: Vec<u8>,
     palette: [[u8; 4]; 256],
+    palette_bank_offset: u8,
 }
 
 impl SpritePlayer {
@@ -357,11 +358,38 @@ impl SpritePlayer {
             delay_q8: 0,
             object_tiles: vec![0; OBJECT_BYTES],
             palette: [[0, 0, 0, 255]; 256],
+            palette_bank_offset: 0,
         }
     }
 
     pub fn delay_q8(&self) -> i16 {
         self.delay_q8
+    }
+
+    /// Install a full native palette bank and the sprite's 4bpp OAM palette offset.
+    pub fn set_palette_override(
+        &mut self,
+        source: &impl AnimationSource,
+        source_bank: u32,
+        destination_bank: u8,
+        add_bank: u8,
+    ) -> Result<()> {
+        if destination_bank >= 16 || add_bank >= 16 {
+            return Err(Error("OBJ palette bank outside 4-bit field".into()));
+        }
+        let colors = graphics::decode_palette(source.palette(source_bank, 16)?, 16)?;
+        if colors.len() != 16 {
+            return Err(Error("truncated OBJ palette bank".into()));
+        }
+        let start = usize::from(destination_bank) * 16;
+        self.palette[start..start + 16].copy_from_slice(&colors);
+        self.palette_bank_offset = add_bank;
+        Ok(())
+    }
+
+    pub fn restart_variant(&mut self, variant: u8) {
+        self.variant = variant;
+        self.previous = None;
     }
 
     /// A failed step does not publish partial tile/palette/state mutations.
@@ -735,7 +763,7 @@ fn compose(
         let bank = if object.eight_bit {
             0
         } else {
-            usize::from(object.palette_bank) * 16
+            usize::from((object.palette_bank + player.palette_bank_offset) & 15) * 16
         };
         for local_y in 0..usize::from(object.height) {
             for local_x in 0..usize::from(object.width) {

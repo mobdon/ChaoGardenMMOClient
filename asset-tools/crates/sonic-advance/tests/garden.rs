@@ -60,3 +60,80 @@ fn exact_local_garden_table_and_opaque_bytes_match() {
     );
     assert_eq!(evidence.crc_table().len(), 512);
 }
+
+#[test]
+fn launch_rejects_truncated_loaded_save_and_rom() {
+    for size in [0, 0x19, 0x428, 0x42b, 0x42f] {
+        assert!(garden::prepare_launch(&[], &vec![0; size], 0).is_err());
+    }
+    assert!(garden::prepare_launch(&[], &[0; 0x430], 0).is_err());
+}
+
+#[test]
+#[ignore = "requires local SONIC_ADVANCE_ASOE_ROM"]
+fn retail_launch_image_matches_native_stores() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    for (score, language, frame, checksum, digest) in [
+        (0u32, 0, 0, 0u32, catalog::GARDEN_SHA256),
+        (
+            0x12345678,
+            0xfe,
+            0xfffffff0,
+            0x31,
+            "bf1b4012860efefdfedb8e2cb3a513e5a17d59238c66373103566e02f6cdf603",
+        ),
+        (
+            u32::MAX,
+            0xff,
+            u32::MAX,
+            u32::MAX,
+            "83ed720728e49ac9c80f934e6cf783ad39e9c4e74a4bff5172e16e9d2e4ed0fd",
+        ),
+    ] {
+        let mut save = [0xa5; 0x430];
+        save[0x19] = language;
+        save[0x428..0x42c].copy_from_slice(&score.to_le_bytes());
+        save[0x42c..].copy_from_slice(&checksum.to_le_bytes());
+        assert_eq!(
+            binary::sha256(&garden::prepare_launch(&rom, &save, frame).unwrap()),
+            digest
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires local SONIC_ADVANCE_ASOE_ROM"]
+fn garden_background_matches_retail_vram_and_palette() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    let program = catalog::garden(&rom).unwrap();
+    let evidence = garden::GardenEvidence::parse(&program.bytes).unwrap();
+    let colors = sonic_advance_assets::garden_screen::background(&evidence).unwrap();
+    let bytes: Vec<_> = colors.into_iter().flat_map(u16::to_le_bytes).collect();
+    assert_eq!(
+        binary::sha256(&bytes),
+        "1a964b65aab3269fb68bb12c528d0858e25bc95bc26d5739641350391e012ebc"
+    );
+}
+
+#[test]
+#[ignore = "requires local SONIC_ADVANCE_ASOE_ROM"]
+fn garden_objects_match_live_oam_tiles_and_palettes() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    let program = catalog::garden(&rom).unwrap();
+    let evidence = garden::GardenEvidence::parse(&program.bytes).unwrap();
+    let objects = sonic_advance_assets::garden_screen::entry_objects(&evidence).unwrap();
+    let expected = [
+        "1fb8e2fed1b577809195651cf045959214c51781dd4fa04266e8c2f12e9ddd4b",
+        "c8fa19543c60ec65c9118d8d057d04710943aa66efe0034944ba3d9fbd1e569b",
+        "6bcd8873f41a029963860d662f5928fd9b7c8ff6da9d651d2d5a9af7171b6ae3",
+        "28f2c61c85b28e2c771404b9a823f01f2f045d12564f1305aac766a896120c1c",
+    ];
+    assert_eq!(objects.len(), expected.len());
+    for (obj, digest) in objects.iter().zip(expected) {
+        let bytes: Vec<_> = obj.colors.iter().flat_map(|c| c.to_le_bytes()).collect();
+        assert_eq!(binary::sha256(&bytes), digest);
+    }
+}

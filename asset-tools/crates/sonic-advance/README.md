@@ -1,8 +1,11 @@
 # Sonic Advance ASOE asset tools
 
-The native Rust port continuation now includes a runnable first-stage testbed:
+The native Rust port continuation now includes a shared desktop and browser stage runtime:
 [port status and local play commands](docs/PORT-STATUS.md). Full-game parity
-remains unfinished; the existing catalog/decoder evidence below is unchanged.
+remains unfinished. Start now opens the [English main menu](docs/MAIN-MENU.md);
+Single Player opens the [original character carousel](docs/CHARACTER-SELECT.md).
+All four characters play their confirmation animation. A fresh solo Sonic run
+continues to the playable spawn in Neo Green Hill Act 1.
 
 Standalone Rust tooling for the supplied USA revision-0 source only. The full
 8 MiB ROM must have SHA-256
@@ -52,3 +55,5 @@ outputs stay local. This crate contains original tool code, synthetic fixtures,
 hashes and metadata only. It has no dependency on the independent server checkout
 or other games' crates. The manifest schema remains a coordination proposal:
 [docs/SCHEMA-PROPOSAL.md](docs/SCHEMA-PROPOSAL.md).
+
+[Act 1 opening: verified timing, graphics and remaining work](docs/ACT-INTRO.md).
