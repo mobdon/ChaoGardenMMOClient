@@ -375,6 +375,7 @@ pub fn model(bytes: &[u8], mode: i32) -> Result<serde_json::Value> {
     let mut pending = vec![(root, None::<usize>)];
     let mut seen = std::collections::BTreeSet::new();
     let mut nodes = Vec::new();
+    let mut material = crate::visual::Material::default();
     while let Some((offset, parent)) = pending.pop() {
         if !seen.insert(offset) {
             return Err(Error::invalid("repeated pursuit object node"));
@@ -406,7 +407,7 @@ pub fn model(bytes: &[u8], mode: i32) -> Result<serde_json::Value> {
         nodes.push(serde_json::json!({"parent":parent,"offset":offset,"flags":word(0),"attach":ptr(4)?,
             "position":xyz(8),"angles":[word(20) as i32,word(24) as i32,word(28) as i32],"scale":xyz(32)}));
         if let Some(attach) = ptr(4)? {
-            nodes[index]["geometry"] = vertices(&rel, attach)?;
+            nodes[index]["geometry"] = vertices(&rel, attach, &mut material)?;
         }
         if let Some(sibling) = ptr(48)? {
             pending.push((sibling, parent));
@@ -420,7 +421,10 @@ pub fn model(bytes: &[u8], mode: i32) -> Result<serde_json::Value> {
     } else {
         Some(bind_motion(&rel, &mut nodes)?)
     };
-    Ok(serde_json::json!({"root":root,"section":5,"nodes":nodes,"motion":motion}))
+    let (texture_bank, _, texture_count) = bank(&rel, mode)?;
+    Ok(
+        serde_json::json!({"root":root,"section":5,"nodes":nodes,"motion":motion,"textureBank":texture_bank,"textureCount":texture_count}),
+    )
 }
 
 fn bind_motion(
@@ -476,7 +480,11 @@ fn bind_motion(
     Ok(serde_json::json!({"offset":offset,"frames":frames,"type":7,"interpolation_word":3}))
 }
 
-fn vertices(rel: &crate::city_rel::CityRel<'_>, attach: u32) -> Result<serde_json::Value> {
+fn vertices(
+    rel: &crate::city_rel::CityRel<'_>,
+    attach: u32,
+    material: &mut crate::visual::Material,
+) -> Result<serde_json::Value> {
     let data = rel.data(5)?;
     let invalid = || crate::Error::invalid("unexpected pursuit vertex stream");
     let word = |at: usize| -> Result<u32> {
@@ -524,7 +532,7 @@ fn vertices(rel: &crate::city_rel::CityRel<'_>, attach: u32) -> Result<serde_jso
         }
     }
     Ok(
-        serde_json::json!({"center":xyz(attach as usize+8)?,"radius":f32::from_bits(word(attach as usize+20)?),"chunks":chunks,"polygons":polygons(rel,attach,&indices)?}),
+        serde_json::json!({"center":xyz(attach as usize+8)?,"radius":f32::from_bits(word(attach as usize+20)?),"chunks":chunks,"polygons":polygons(rel,attach,&indices,material)?}),
     )
 }
 
@@ -532,6 +540,7 @@ fn polygons(
     rel: &crate::city_rel::CityRel<'_>,
     attach: u32,
     indices: &std::collections::BTreeMap<u16, usize>,
+    material: &mut crate::visual::Material,
 ) -> Result<Vec<serde_json::Value>> {
     let invalid = || crate::Error::invalid("unexpected pursuit polygon stream");
     let mut result = Vec::new();
@@ -581,7 +590,13 @@ fn polygons(
         } else {
             None
         };
-        result.push(serde_json::json!({"chunk":chunk,"strips":strips}));
+        let mut command = serde_json::json!({"chunk":chunk,"strips":strips});
+        if kind >= 64 {
+            command["material"] = serde_json::to_value(&*material)?;
+        } else {
+            material.apply(&chunk)?;
+        }
+        result.push(command);
         at += words * 2;
     }
     Ok(result)

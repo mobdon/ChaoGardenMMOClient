@@ -505,3 +505,11 @@ words and triangle indices into that strip. The independent PC export comparison
 matches all polygon command words, 6,351 corners and 4,383 nondegenerate
 triangles across both models. Caller-side rendering and material state across
 draws are still outside this report.
+
+Each strip command now includes the most recent authored material values in
+model traversal order: diffuse and ambient RGBA, specular RGB/exponent, blend
+flags and texture selection words. Unset fields remain null; the report does
+not invent engine defaults. Resolve a UV strip's textureId against the index
+in the named kart-target-textures bank. A retained texture ID on an untextured
+strip does not imply texture sampling. All 121 strip material snapshots match
+a separate walk of the PC exports; this does not verify final compositing.

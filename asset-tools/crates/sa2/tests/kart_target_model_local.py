@@ -34,6 +34,12 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
         subprocess.run([cli,"--source-root",game,"kart-target-model",gd/"CartD.rel",out,str(mode)],check=True)
         report=json.loads(out.read_text());rows=report["nodes"]
         stack=[(export(name),None)];seen=set();vertices=triangles=corners=0
+        texout=Path(td)/f"bank{mode}.json"
+        subprocess.run([cli,"--source-root",game,"kart-target-textures",gd/"CartD.rel",texout,str(mode)],check=True)
+        bank=json.loads(texout.read_text())["textures"]
+        assert report["textureCount"]==len(bank) and report["textureBank"]==("cartLim","limtails")[mode]
+        material=dict.fromkeys(["diffuseRgba","ambientRgba","specularRgbe","blendFlags","textureId","textureWords"])
+        batches=0
         for row in rows:
             va,parent=stack.pop();assert va not in seen;seen.add(va)
             at=offset(va-base)
@@ -61,7 +67,21 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
                 for batch in g["polygons"]:
                     c=batch["chunk"];kind=c["kind"];words=c["rawWords"]
                     assert struct.pack("<"+"H"*len(words),*words)==dll[poly:poly+2*len(words)],(name,len(seen),kind)
+                    if kind==8:
+                        h,tex=read("HH",poly)
+                        material.update(textureId=tex&0x1fff,textureWords=[h,tex])
+                    elif 17<=kind<=23:
+                        material["blendFlags"]=dll[poly+1];pos=poly+4
+                        for bit,key in ((1,"diffuseRgba"),(2,"ambientRgba"),(4,"specularRgbe")):
+                            if kind&bit:
+                                b,gc,r,alpha=dll[pos:pos+4];pos+=4
+                                material[key]=[r,gc,b,alpha]
                     if kind in (64,65):
+                        batches+=1
+                        assert batch["material"]==material
+                        if kind==65:
+                            idx=material["textureId"];assert bank[idx]["index"]==idx and bank[idx]["name"]
+
                         cursor=poly+6
                         for strip in batch["strips"]:
                             n,=read("h",cursor);cursor+=2
@@ -86,7 +106,7 @@ with tempfile.TemporaryDirectory(dir=".local") as td:
             if sibling:stack.append((sibling,parent))
             if child:stack.append((child,len(seen)-1))
         assert not stack
-        print(f"{name}: {len(rows)} matching nodes, {vertices} matching vertices, {corners} corners, {triangles} triangles")
+        print(f"{name}: {len(rows)} matching nodes, {vertices} matching vertices, {batches} material batches, {corners} corners, {triangles} triangles")
         if mode==0:
             assert report["motion"] is None and all("motion" not in row for row in rows)
             continue
