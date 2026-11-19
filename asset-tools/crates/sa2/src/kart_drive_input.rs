@@ -102,7 +102,7 @@ pub(crate) struct Motion {
     #[serde(skip_serializing_if = "Option::is_none")]
     audio: Option<crate::kart_driving_audio::Output>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    contact: Option<crate::kart_contact::Update>,
+    pub(crate) contact: Option<crate::kart_contact::StoryResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     drift: Option<DriftUpdate>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -146,6 +146,8 @@ impl StoryDrive {
         vehicle_state: Option<i32>,
         piece_id: Option<u8>,
         rel: &crate::city_rel::CityRel,
+        bytes: &[u8],
+        exe: &[u8],
     ) -> Result<Motion> {
         let constants = rel.data(4)?;
         let velocity_xz = [velocity[0], velocity[2]];
@@ -218,6 +220,10 @@ impl StoryDrive {
                 .position;
             motion.contact = Some(query.apply(
                 constants,
+                bytes,
+                exe,
+                motion.work_68,
+                vehicle_state,
                 to,
                 velocity,
                 self.work_28c,

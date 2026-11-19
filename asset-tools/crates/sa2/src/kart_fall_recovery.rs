@@ -190,6 +190,12 @@ fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output
 #[serde(deny_unknown_fields)]
 pub struct ContactRecovery {
     contact: crate::kart_contact::Input,
+    #[serde(flatten)]
+    fields: RecoveryFields,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryFields {
     task_mode: u8,
     saved_angles: [i32; 3],
     grounded_position: [f32; 3],
@@ -234,13 +240,57 @@ pub struct NormalContact {
 }
 
 #[derive(Serialize)]
-struct Impact {
+pub(crate) struct Impact {
     state: i32,
     work_b8: i32,
     engine_8006b710: Option<[i32; 4]>,
     engine_80011714: Option<i32>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryRecovery {
+    previous_velocity_xz: [f32; 2],
+    work_b8: i32,
+    #[serde(flatten)]
+    fields: RecoveryFields,
+}
+impl StoryRecovery {
+    pub(crate) fn run(
+        self,
+        bytes: &[u8],
+        exe: &[u8],
+        mode: i32,
+        contact: crate::kart_contact::Input,
+        work_68: i32,
+    ) -> Result<ShortUpdate> {
+        if self.fields.work_68 != work_68 {
+            return Err(Error::invalid(
+                "recovery steering conflicts with normal drive",
+            ));
+        }
+        contact_sequence(
+            bytes,
+            exe,
+            if mode == 0 { "101" } else { "280" },
+            ContactRecovery {
+                contact,
+                fields: self.fields,
+            },
+            Some((self.previous_velocity_xz, self.work_b8)),
+        )
+    }
+}
+impl ShortUpdate {
+    pub(crate) fn into_story(self) -> (crate::kart_contact::Update, Output, Option<Impact>) {
+        (self.contact, self.recovery, self.impact)
+    }
+}
+impl Output {
+    pub(crate) fn state(&self) -> i32 {
+        self.vehicle.state
+    }
+}
 /// The common contact-to-recovery suffix of state 0 and 1 (0x23f8/0x244c).
 pub fn normal_contact_tick(
     bytes: &[u8],
@@ -270,6 +320,7 @@ fn contact_sequence(
     previous: Option<([f32; 2], i32)>,
 ) -> Result<ShortUpdate> {
     let (contact, c) = crate::kart_contact::step_for_fall(bytes, s.contact)?;
+    let s = s.fields;
     let impact = previous
         .map(|(before, work_b8)| -> Result<Impact> {
             let rel = CityRel::read_identified(bytes, 80)?;

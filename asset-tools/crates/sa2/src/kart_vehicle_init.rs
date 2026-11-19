@@ -70,7 +70,7 @@ struct Normalize {
 #[derive(Serialize)]
 pub struct Profile {
     #[serde(skip_serializing_if = "Option::is_none")]
-    drive: Option<crate::kart_drive_input::Motion>,
+    pub(crate) drive: Option<crate::kart_drive_input::Motion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     boost: Option<Boost>,
     section5_offset: usize,
@@ -101,6 +101,7 @@ pub(crate) struct StoryBoostInput {
 /// Per-vehicle work +0xd8/+0xdc and the controller's readiness word.
 pub(crate) fn story_boost(
     bytes: &[u8],
+    exe: &[u8],
     mut input: StoryBoostInput,
     story_profile: usize,
     charge: i32,
@@ -161,6 +162,8 @@ pub(crate) fn story_boost(
             vehicle_state,
             piece_id,
             &rel,
+            bytes,
+            exe,
         )?);
     }
     Ok((b.work_d8, (b.work_dc, b.slot_flag), output))

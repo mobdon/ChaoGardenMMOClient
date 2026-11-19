@@ -162,44 +162,72 @@ pub struct Update {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryContact {
+    recovery: Option<crate::kart_fall_recovery::StoryRecovery>,
     previous_position: [f32; 3],
     result: Option<Contact>,
     wall: Option<WallInput>,
     tail: Option<TailInput>,
 }
+#[derive(Serialize)]
+pub(crate) struct StoryResponse {
+    #[serde(flatten)]
+    contact: Update,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery: Option<crate::kart_fall_recovery::Output>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    impact: Option<crate::kart_fall_recovery::Impact>,
+}
+impl StoryResponse {
+    pub(crate) fn recovered_state(&self) -> Option<i32> {
+        self.recovery.as_ref().map(|r| r.state())
+    }
+}
 impl StoryContact {
     pub(crate) fn apply(
         self,
         data: &[u8],
+        bytes: &[u8],
+        exe: &[u8],
+        work_68: i32,
+        vehicle_state: Option<i32>,
         proposed_position: [f32; 3],
         velocity: [f32; 3],
         work_28c: i32,
         work_44: i32,
         mode: i32,
-    ) -> Result<Update> {
-        if self
-            .wall
-            .as_ref()
-            .is_some_and(|w| w.mode != mode || w.work_70 != 0)
-        {
+    ) -> Result<StoryResponse> {
+        if self.wall.as_ref().is_some_and(|w| {
+            w.mode != mode
+                || w.work_70 != 0
+                || vehicle_state.is_some_and(|state| state != w.vehicle_state)
+        }) {
             return Err(crate::Error::invalid(
                 "wall context conflicts with primary story kart",
             ));
         }
-        step_with_constants(
-            data,
-            Input {
-                previous_position: self.previous_position,
-                proposed_position,
-                velocity,
-                work_28c,
-                work_44,
-                player_slot: 0,
-                result: self.result,
-                wall: self.wall,
-                tail: self.tail,
-            },
-        )
+        let input = Input {
+            previous_position: self.previous_position,
+            proposed_position,
+            velocity,
+            work_28c,
+            work_44,
+            player_slot: 0,
+            result: self.result,
+            wall: self.wall,
+            tail: self.tail,
+        };
+        let (contact, recovery, impact) = if let Some(recovery) = self.recovery {
+            let (contact, recovery, impact) =
+                recovery.run(bytes, exe, mode, input, work_68)?.into_story();
+            (contact, Some(recovery), impact)
+        } else {
+            (step_with_constants(data, input)?, None, None)
+        };
+        Ok(StoryResponse {
+            contact,
+            recovery,
+            impact,
+        })
     }
 }
 pub fn step(bytes: &[u8], s: Input) -> Result<Update> {

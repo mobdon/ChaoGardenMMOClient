@@ -330,4 +330,21 @@ if len(sys.argv)>4:
                 assert calls[1]["play"]["cue"]==profile["cue_words"][0]
                 assert calls[1]["play"]["position"]==collision["request"]["to"]
                 assert calls[-1]["pitch"]["value"]==(3072 if vy else 0)
+            # A supplied below-course result reaches impact and recovery in
+            # their dispatch order, without a second contact or position input.
+            last=q["updates"][-1]["boost_tick"]["drive"]
+            last["contact"]=dict(previous_position=[7,-100000,5],
+                result=dict(return_word=0,resolved_position=[7,-100000,5]),
+                wall=dict(normal=[0,1,0],impulse=[0,0,0],work_70=0,cooldown=0,mode=int("Rouge" in path.name),
+                          vehicle_state=0,engine_byte_23=0),
+                tail=dict(post_alignment_angles=[0,0,0],observed_raw_magnitude=0,work_d4=0,observed_local_velocity=[0,0,0],
+                          ring=dict(slot=0,cursor=0,velocities=[[1,2,3]]*60,rotations=[[0,0,0]]*60)),
+                recovery=dict(previous_velocity_xz=[20,0],work_b8=7,task_mode=0,saved_angles=[0,0,0],
+                    grounded_position=[0,0,0],work_68=0,work_fc_104=[0,0,0],segment=0,lap=0,
+                    work_cc=0,work_254=0,work_25c=0,timer=0,work_260=0,engine_halfword_64=0))
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-boost-fall.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());suffix=doc["updates"][-1]["boostTick"]["drive"]["contact"]
+            assert suffix["impact"]["state"]==4 and suffix["recovery"]["engine_call_8001ef18"]==8
+            assert suffix["recovery"]["vehicle"]["state"]==doc["vehicleState"]==10
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

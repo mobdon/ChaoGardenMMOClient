@@ -729,6 +729,7 @@ pub fn story_sequence(
             SequenceEvent::BoostTick { boost_tick } => {
                 let (next, timers, result) = crate::kart_vehicle_init::story_boost(
                     bytes,
+                    exe,
                     boost_tick,
                     mode as usize,
                     charge.ok_or_else(|| Error::invalid("missing primary charge for boost"))?,
@@ -736,6 +737,14 @@ pub fn story_sequence(
                     scan_flag,
                     vehicle,
                 )?;
+                if let Some(next_state) = result
+                    .drive
+                    .as_ref()
+                    .and_then(|d| d.contact.as_ref())
+                    .and_then(|c| c.recovered_state())
+                {
+                    vehicle = Some(next_state);
+                }
                 charge = Some(next);
                 boost_timers = Some(timers);
                 updates.push(json!({"boostTick":result}));
