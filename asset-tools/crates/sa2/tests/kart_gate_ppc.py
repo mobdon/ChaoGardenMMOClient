@@ -347,4 +347,15 @@ if len(sys.argv)>4:
             doc=json.loads(out.read_text());suffix=doc["updates"][-1]["boostTick"]["drive"]["contact"]
             assert suffix["impact"]["state"]==4 and suffix["recovery"]["engine_call_8001ef18"]==8
             assert suffix["recovery"]["vehicle"]["state"]==doc["vehicleState"]==10
+            # A later recovery tick rewinds the course. Its two saved poses
+            # differ only vertically, so the next scan needs no injected hits.
+            recovery=last["contact"]["recovery"]
+            recovery.update(segment=3,timer=181,engine_halfword_64=2)
+            del recovery["lap"]
+            q["updates"].append(dict(slot_progress=dict(work_44=1,debug_enabled=False,highest=0)))
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-recovered-scan.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());r=doc["updates"][-2]["boostTick"]["drive"]["contact"]["recovery"]
+            assert r["engine_call_8001ef18"]==4 and r["vehicle"]["segment"]==doc["primaryRoute"][0]==1
+            assert doc["primaryRoute"][1]>100 and doc["updates"][-1]["slotProgress"]["tested_indices"][0]==2
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

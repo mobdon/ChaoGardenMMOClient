@@ -162,7 +162,7 @@ pub struct Update {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryContact {
-    recovery: Option<crate::kart_fall_recovery::StoryRecovery>,
+    pub(crate) recovery: Option<crate::kart_fall_recovery::StoryRecovery>,
     previous_position: [f32; 3],
     result: Option<Contact>,
     wall: Option<WallInput>,
@@ -178,8 +178,10 @@ pub(crate) struct StoryResponse {
     impact: Option<crate::kart_fall_recovery::Impact>,
 }
 impl StoryResponse {
-    pub(crate) fn recovered_state(&self) -> Option<i32> {
-        self.recovery.as_ref().map(|r| r.state())
+    pub(crate) fn recovered_progress(
+        &self,
+    ) -> Option<crate::kart_fall_recovery::RecoveredProgress> {
+        self.recovery.as_ref().map(|r| r.progress())
     }
 }
 impl StoryContact {

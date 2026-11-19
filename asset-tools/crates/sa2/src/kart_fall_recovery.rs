@@ -45,6 +45,8 @@ pub struct Input {
 }
 #[derive(Serialize)]
 pub struct Output {
+    #[serde(skip)]
+    course_length: i32,
     vehicle: Vehicle,
     engine_call_8001ef18: Option<i32>,
 }
@@ -99,6 +101,7 @@ fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output
             {
                 v.state = 10;
                 return Ok(Output {
+                    course_length: count,
                     vehicle: v,
                     engine_call_8001ef18: Some(8),
                 });
@@ -111,6 +114,7 @@ fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output
         if !guided {
             if v.timer == 1 {
                 return Ok(Output {
+                    course_length: count,
                     vehicle: v,
                     engine_call_8001ef18: call,
                 });
@@ -121,6 +125,7 @@ fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output
                 v.position = v.saved_position;
                 v.angles = v.saved_angles;
                 return Ok(Output {
+                    course_length: count,
                     vehicle: v,
                     engine_call_8001ef18: call,
                 });
@@ -180,6 +185,7 @@ fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output
         }
     }
     Ok(Output {
+        course_length: count,
         vehicle: v,
         engine_call_8001ef18: call,
     })
@@ -201,8 +207,8 @@ struct RecoveryFields {
     grounded_position: [f32; 3],
     work_68: i32,
     work_fc_104: [i32; 3],
-    segment: i32,
-    lap: i32,
+    segment: Option<i32>,
+    lap: Option<i32>,
     work_cc: i32,
     work_254: i32,
     work_25c: i32,
@@ -256,6 +262,22 @@ pub(crate) struct StoryRecovery {
     fields: RecoveryFields,
 }
 impl StoryRecovery {
+    pub(crate) fn bind_progress(&mut self, route: Option<(i32, i32)>, counter: u32) -> Result<()> {
+        if self.fields.lap.is_some_and(|n| n as u32 != counter)
+            || self
+                .fields
+                .segment
+                .zip(route)
+                .is_some_and(|(a, (b, _))| a != b)
+        {
+            return Err(Error::invalid(
+                "fall recovery conflicts with primary kart progress",
+            ));
+        }
+        self.fields.lap = Some(counter as i32);
+        self.fields.segment = route.map(|r| r.0).or(self.fields.segment);
+        Ok(())
+    }
     pub(crate) fn run(
         self,
         bytes: &[u8],
@@ -286,9 +308,21 @@ impl ShortUpdate {
         (self.contact, self.recovery, self.impact)
     }
 }
+pub(crate) struct RecoveredProgress {
+    pub state: i32,
+    pub route: (i32, i32),
+    pub counter: u32,
+    pub positions: ([f32; 3], [f32; 3]),
+}
 impl Output {
-    pub(crate) fn state(&self) -> i32 {
-        self.vehicle.state
+    pub(crate) fn progress(&self) -> RecoveredProgress {
+        let v = &self.vehicle;
+        RecoveredProgress {
+            state: v.state,
+            route: (v.segment, self.course_length),
+            counter: v.lap as u32,
+            positions: (v.position, v.saved_position),
+        }
     }
 }
 /// The common contact-to-recovery suffix of state 0 and 1 (0x23f8/0x244c).
@@ -365,8 +399,12 @@ fn contact_sequence(
         grounded_position: s.grounded_position,
         work_68: s.work_68,
         work_fc_104: s.work_fc_104,
-        segment: s.segment,
-        lap: s.lap,
+        segment: s
+            .segment
+            .ok_or_else(|| Error::invalid("missing recovery segment"))?,
+        lap: s
+            .lap
+            .ok_or_else(|| Error::invalid("missing recovery lap"))?,
         work_cc: s.work_cc,
         work_254: s.work_254,
         work_25c: s.work_25c,

@@ -93,7 +93,7 @@ pub struct Profile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryBoostInput {
-    drive: Option<crate::kart_drive_input::StoryDrive>,
+    pub(crate) drive: Option<crate::kart_drive_input::StoryDrive>,
     velocity: [f32; 3],
     normalize: Option<Normalize>,
     boost: BoostInput,

@@ -726,7 +726,15 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
-            SequenceEvent::BoostTick { boost_tick } => {
+            SequenceEvent::BoostTick { mut boost_tick } => {
+                if let Some(r) = boost_tick
+                    .drive
+                    .as_mut()
+                    .and_then(|d| d.contact.as_mut())
+                    .and_then(|c| c.recovery.as_mut())
+                {
+                    r.bind_progress(route, count)?;
+                }
                 let (next, timers, result) = crate::kart_vehicle_init::story_boost(
                     bytes,
                     exe,
@@ -737,13 +745,17 @@ pub fn story_sequence(
                     scan_flag,
                     vehicle,
                 )?;
-                if let Some(next_state) = result
+                if let Some(recovered) = result
                     .drive
                     .as_ref()
                     .and_then(|d| d.contact.as_ref())
-                    .and_then(|c| c.recovered_state())
+                    .and_then(|c| c.recovered_progress())
                 {
-                    vehicle = Some(next_state);
+                    vehicle = Some(recovered.state);
+                    route = Some(recovered.route);
+                    progressed_route = route;
+                    count = recovered.counter;
+                    crossing_positions = Some(recovered.positions);
                 }
                 charge = Some(next);
                 boost_timers = Some(timers);

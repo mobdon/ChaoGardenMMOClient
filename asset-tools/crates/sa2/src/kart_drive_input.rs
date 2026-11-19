@@ -118,7 +118,7 @@ pub(crate) struct Motion {
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryDrive {
     audio_work_284: Option<i32>,
-    contact: Option<crate::kart_contact::StoryContact>,
+    pub(crate) contact: Option<crate::kart_contact::StoryContact>,
     position_step: Option<StoryPosition>,
     heading: i32,
     work_a4: i32,
