@@ -41,6 +41,8 @@ pub struct AhxHeader {
     pub sample_rate: u32,
     pub sample_count: u32,
     pub data_offset: usize,
+    /// Encoded byte length when the installed-bank footer is recognized.
+    pub payload_length: Option<usize>,
 }
 
 pub fn read_ahx_header(bytes: &[u8]) -> Result<AhxHeader> {
@@ -66,6 +68,9 @@ pub fn read_ahx_header(bytes: &[u8]) -> Result<AhxHeader> {
         sample_rate,
         sample_count: be32(bytes, 12)?,
         data_offset,
+        payload_length: bytes[data_offset..]
+            .strip_suffix(b"\x80\x01\x00\x0cAHXE(c)CRI\x00\x00")
+            .map(|payload| payload.len()),
     })
 }
 
