@@ -1,5 +1,5 @@
 """Compare kart controller flags, stick history and steering input using original instructions."""
-import json,struct,subprocess,sys,tempfile
+import math,json,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
-        if t!=1 or not (0x3034<=l<0x30dc or 0x31b4<=l<0x33a4 or 0x5360<=l<0x5498) or k not in (4,6):continue
+        if t!=1 or not (0x3034<=l<0x30dc or 0x31b4<=l<0x3428 or 0x5360<=l<0x5498) or k not in (4,6):continue
         if mod==80:p=base[s]+a
         elif a==0x801cbd88:p=engine
         else:continue
@@ -44,6 +44,9 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             f["drive"]=dict(heading=2147483647-n,work_a4=n-1,place=1+n%6,multiplayer=bool(slot),
                             velocity_xz=[0,0] if n%3==0 else [3,4],magnitude_return=None if n%3==0 else 5,
                             acceleration=0.125,brake_power=-0.75,deceleration=-0.0625,speed_cap=10)
+            if n%4==2:f["drive"]["magnitude_return"]=None
+            f["drive"]["position_step"]=dict(position=[3.125,4.5,-9],velocity_y=(-1,0,4.5)[n%3],
+                weight=0.375,work_74=n%2,transformed_vector=[-1.25,0.75,2] if n%4==1 else None)
         q=dict(history=history,cursor=cursor,frames=frames)
         req=Path(td)/"q.json";out=Path(td)/f"{slot}.json";req.write_text(json.dumps(q))
         subprocess.run([cli,"kart-drive-input",rel,out,req],check=True);doc=json.loads(out.read_text())
@@ -68,7 +71,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             put(work+0x7c,"f",drive["velocity_xz"][0]);put(work+0x84,"f",drive["velocity_xz"][1])
             for j,key in enumerate(["acceleration","brake_power","deceleration","speed_cap"]):
                 put(base[6]+0x21440+4*j,"f",drive[key])
-            if drive["magnitude_return"] is None:run(0x31b4,0x33a4)
+            if drive["velocity_xz"]==[0,0]:run(0x31b4,0x33a4)
             else:
                 run(0x31b4,0x32a8)
                 assert struct.unpack(">3f",u.mem_read(u.reg_read(R.UC_PPC_REG_3),12))==(3,0,4)
@@ -79,6 +82,28 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             assert get(tw+12,"i")==get(base[5]+0x3bc4,"i")==motion["heading"]
             assert get(work+0xa4,"i")==motion["work_a4"] and get(work+0x68,"i")==motion["work_68"]
             assert bytes(u.mem_read(u.reg_read(R.UC_PPC_REG_4),12))==struct.pack(">3f",*motion["local_displacement"])
+            # Inspect the local vector; provide a mathematical Y rotation or an explicit
+            # observation at the matrix boundary, and emulate the imported vector add.
+            pp=drive["position_step"];res=motion["position_step"];buf=u.reg_read(R.UC_PPC_REG_4)
+            observed=pp["transformed_vector"]
+            if observed is None:
+                theta=math.radians((get(tw+12,"i")%65536)*360/65536)
+                v=get(buf+8,"f");world=[math.sin(theta)*v,0,math.cos(theta)*v]
+            else:world=observed
+            world=struct.unpack(">3f",struct.pack(">3f",*world))
+            assert struct.pack(">3f",*res["world_displacement"])==struct.pack(">3f",*world)
+            assert res["transform_source"]==("observed" if observed else "mathematical_projection")
+            assert motion["magnitude_source"]==("native_zero" if drive["velocity_xz"]==[0,0] else
+                "observed" if drive["magnitude_return"] is not None else "mathematical_projection")
+            u.mem_write(buf,struct.pack(">3f",*world))
+            run(0x33a8,0x33b4)
+            assert u.reg_read(R.UC_PPC_REG_3)==tw+0x14 and u.reg_read(R.UC_PPC_REG_5)==tw+0x14
+            assert u.reg_read(R.UC_PPC_REG_4)==buf
+            u.mem_write(tw+0x14,struct.pack(">3f",*(a+b for a,b in zip(pp["position"],world))))
+            put(work+0x80,"f",pp["velocity_y"]);put(work+0x74,"i",pp["work_74"])
+            put(base[6]+0x21450,"f",pp["weight"])
+            run(0x33b8,0x3428)
+            assert bytes(u.mem_read(tw+0x14,12))==struct.pack(">3f",*res["position"])
         assert get(cur+4*slot,"i")==doc["cursor"]
         assert bytes(u.mem_read(hist+240*slot,240))==struct.pack(">60i",*doc["history"])
-print("Matched 134 native controller samples, including native heading, input priority and exact local displacement.")
+print("Matched 134 native controller samples, including heading, local movement and post-transform position arithmetic.")

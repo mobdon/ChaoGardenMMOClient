@@ -305,7 +305,7 @@ to compare 134 frames through the original helpers in both slots and banks.
 Each frame can also include a `drive` context for the driving routine at
 0x3188. Supply the current heading, work word +0xa4, race place, multiplayer
 flag, X/Z velocity, and the four active physics values (acceleration, brake
-power, deceleration and speed cap). For nonzero X/Z velocity, supply the
+power, deceleration and speed cap). For nonzero X/Z velocity, optionally supply the
 observed `magnitude_return` from 0x80114eac. Zero velocity bypasses that call.
 The same computed steering and button flags drive the heading subtraction
 and the local displacement: acceleration takes precedence over braking,
@@ -315,3 +315,21 @@ CartD transforms it at 0x33a4. These are intermediate tick results; imported
 matrix rounding, collision and final world position are not verified.
 The input oracle also compares these heading and displacement writes for
 all 134 samples, including both button flags held together.
+
+With a `drive.position_step`, the report also computes the task position
+at 0x3428. Supply `position`, `velocity_y`, `weight` and `work_74`.
+An optional `transformed_vector` is the observed result of the matrix helper.
+Without it, Rust projects the local Z displacement using the updated heading;
+the private three-angle record at section 5 +0x3bc0 starts at zero and this
+path writes only Y. If the magnitude result is omitted for a moving kart,
+Rust also projects planar length mathematically. The report distinguishes
+both projections from observed engine results. Engine trigonometric and
+magnitude rounding have not been verified.
+
+The controller adds the world displacement to position first. Then it adds
+vertical velocity minus weight to Y, with quarter weight only for positive
+vertical velocity and nonzero work +0x74. The instruction comparison now
+checks the position bytes after this arithmetic for 134 cases with supplied
+or projected vectors. Matrix and vector-add imports are represented at the
+call boundary; these positions precede the remaining vehicle and collision
+updates and are not a verified trajectory.
