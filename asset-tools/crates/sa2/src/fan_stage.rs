@@ -96,7 +96,7 @@ pub struct KartRankRow {
     pub a: [u8; 2],
 }
 /// The two kart stage dispatches use separate course descriptors rather than a static landtable.
-fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
+pub(crate) fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
     let pe = crate::pe::read_pe(exe)?;
     let r = crate::model::Reader { data: exe };
     let mut routes = BTreeMap::new();

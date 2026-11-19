@@ -455,14 +455,7 @@ impl CollisionWorld {
                 "ray filter requires and rejects the same flag",
             ));
         }
-        let largest_component = direction.into_iter().map(f64::abs).fold(0.0, f64::max);
-        if largest_component == 0.0 {
-            return Err(Error::invalid("ray direction is zero"));
-        }
-        // A subnormal length can lose its diagonal factor; a large one can overflow.
-        let scaled = direction.map(|v| v / largest_component);
-        let norm = length(scaled);
-        let direction = scaled.map(|v| v / norm);
+        let direction = unit_direction(direction)?;
         let mut nearest = None;
         let mut closest = max_distance;
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
@@ -478,49 +471,13 @@ impl CollisionWorld {
                     })
                 });
                 let (a, b, c) = (a?, b?, c?);
-                if !finite(a) || !finite(b) || !finite(c) {
-                    return Err(Error::invalid("non-finite baked collision triangle"));
-                }
-                let e1 = subtract(b, a);
-                let e2 = subtract(c, a);
-                let normal = cross(e1, e2);
-                let normal_length = length(normal);
-                if !finite(e1) || !finite(e2) || !normal_length.is_finite() {
-                    return Err(Error::invalid("ray triangle arithmetic overflow"));
-                }
-                if normal_length == 0.0 {
+                let Some((distance, position, normal, barycentric, front_face)) =
+                    triangle_hit(origin, direction, closest, [a, b, c])?
+                else {
                     continue;
-                }
-                let p = cross(direction, e2);
-                let det = dot(e1, p);
-                if !det.is_finite() {
-                    return Err(Error::invalid("ray determinant overflow"));
-                }
-                if det.abs() <= normal_length * 1e-12 {
-                    continue;
-                }
-                let tvec = subtract(origin, a);
-                let q = cross(tvec, e1);
-                let u = dot(tvec, p) / det;
-                let v = dot(direction, q) / det;
-                let distance = dot(e2, q) / det;
-                if !u.is_finite() || !v.is_finite() || !distance.is_finite() {
-                    return Err(Error::invalid("ray intersection arithmetic overflow"));
-                }
-                if u < -1e-12
-                    || v < -1e-12
-                    || u + v > 1.0 + 1e-12
-                    || distance < 0.0
-                    || distance > closest
-                {
-                    continue;
-                }
+                };
                 if nearest.is_some() && distance == closest {
                     continue;
-                }
-                let position = std::array::from_fn(|i| origin[i] + direction[i] * distance);
-                if !finite(position) {
-                    return Err(Error::invalid("ray hit point overflow"));
                 }
                 closest = distance;
                 nearest = Some(RayHit {
@@ -531,12 +488,77 @@ impl CollisionWorld {
                     source_flags: mesh.surface_flags,
                     distance,
                     position,
-                    normal: normal.map(|v| v / normal_length),
-                    barycentric: [1.0 - u - v, u, v],
-                    front_face: dot(normal, direction) < 0.0,
+                    normal,
+                    barycentric,
+                    front_face,
                 });
             }
         }
         Ok(nearest)
     }
+}
+
+pub(crate) fn unit_direction(direction: [f64; 3]) -> Result<[f64; 3]> {
+    if !finite(direction) {
+        return Err(Error::invalid("nonfinite ray direction"));
+    }
+    let largest_component = direction.into_iter().map(f64::abs).fold(0.0, f64::max);
+    if largest_component == 0.0 {
+        return Err(Error::invalid("ray direction is zero"));
+    }
+    // A subnormal length can lose its diagonal factor; a large one can overflow.
+    let scaled = direction.map(|v| v / largest_component);
+    let norm = length(scaled);
+    Ok(scaled.map(|v| v / norm))
+}
+pub(crate) type TriangleHit = (f64, [f64; 3], [f64; 3], [f64; 3], bool);
+pub(crate) fn triangle_hit(
+    origin: [f64; 3],
+    direction: [f64; 3],
+    closest: f64,
+    [a, b, c]: [[f64; 3]; 3],
+) -> Result<Option<TriangleHit>> {
+    if !finite(a) || !finite(b) || !finite(c) {
+        return Err(Error::invalid("non-finite baked collision triangle"));
+    }
+    let e1 = subtract(b, a);
+    let e2 = subtract(c, a);
+    let normal = cross(e1, e2);
+    let normal_length = length(normal);
+    if !finite(e1) || !finite(e2) || !normal_length.is_finite() {
+        return Err(Error::invalid("ray triangle arithmetic overflow"));
+    }
+    if normal_length == 0.0 {
+        return Ok(None);
+    }
+    let p = cross(direction, e2);
+    let det = dot(e1, p);
+    if !det.is_finite() {
+        return Err(Error::invalid("ray determinant overflow"));
+    }
+    if det.abs() <= normal_length * 1e-12 {
+        return Ok(None);
+    }
+    let tvec = subtract(origin, a);
+    let q = cross(tvec, e1);
+    let u = dot(tvec, p) / det;
+    let v = dot(direction, q) / det;
+    let distance = dot(e2, q) / det;
+    if !u.is_finite() || !v.is_finite() || !distance.is_finite() {
+        return Err(Error::invalid("ray intersection arithmetic overflow"));
+    }
+    if u < -1e-12 || v < -1e-12 || u + v > 1.0 + 1e-12 || distance < 0.0 || distance > closest {
+        return Ok(None);
+    }
+    let position = std::array::from_fn(|i| origin[i] + direction[i] * distance);
+    if !finite(position) {
+        return Err(Error::invalid("ray hit point overflow"));
+    }
+    Ok(Some((
+        distance,
+        position,
+        normal.map(|v| v / normal_length),
+        [1. - u - v, u, v],
+        dot(normal, direction) < 0.,
+    )))
 }

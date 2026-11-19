@@ -414,3 +414,78 @@ pub fn visit_piece_triangles(
     }
     Ok(())
 }
+
+/// Geometric intersection in the route layout's native units, independent of kart dynamics.
+#[derive(Debug, serde::Serialize)]
+pub struct KartHit {
+    pub occurrence: usize,
+    pub piece_id: u8,
+    pub strip: usize,
+    pub triangle: usize,
+    pub vertex_indices: [u16; 3],
+    pub distance: f64,
+    pub position: [f64; 3],
+    pub normal: [f64; 3],
+    pub barycentric: [f64; 3],
+    pub front_face: bool,
+}
+pub fn story_raycast(
+    exe: &[u8],
+    dll: &[u8],
+    route: u16,
+    origin: [f64; 3],
+    direction: [f64; 3],
+    limit: f64,
+) -> Result<Option<KartHit>> {
+    let character = match route {
+        101 => 6,
+        280 => 5,
+        _ => return Err(Error::invalid("unknown story kart route")),
+    };
+    if !origin.iter().all(|v| v.is_finite()) || !limit.is_finite() || limit <= 0. {
+        return Err(Error::invalid("invalid kart ray origin or distance"));
+    }
+    let direction = crate::collision::unit_direction(direction)?;
+    crate::object_table::verify_image(exe)?;
+    if sha256(dll) != crate::board_motion::PC_DLL_SHA256 {
+        return Err(Error::invalid("unsupported kart DLL revision"));
+    }
+    let routes = crate::fan_stage::kart_routes(exe)?;
+    let ids = &routes[&character].course_parts;
+    let pe = read_pe(dll)?;
+    let table = read_course_table(dll)?;
+    let poses = course_layout(&table, ids, CoursePose::default())?;
+    let mut nearest = None;
+    let mut closest = limit;
+    for (occurrence, (&piece_id, pose)) in ids.iter().zip(poses).enumerate() {
+        let mut result = Ok(());
+        visit_piece_triangles(dll, &pe, &table.pieces[usize::from(piece_id)], pose, |t| {
+            if result.is_err() {
+                return;
+            }
+            match crate::collision::triangle_hit(origin, direction, closest, t.points) {
+                Err(e) => result = Err(e),
+                Ok(Some((distance, position, normal, barycentric, front_face)))
+                    if nearest.is_none() || distance < closest =>
+                {
+                    closest = distance;
+                    nearest = Some(KartHit {
+                        occurrence,
+                        piece_id,
+                        strip: t.strip,
+                        triangle: t.triangle,
+                        vertex_indices: t.vertex_indices,
+                        distance,
+                        position,
+                        normal,
+                        barycentric,
+                        front_face,
+                    });
+                }
+                _ => {}
+            }
+        })?;
+        result?;
+    }
+    Ok(nearest)
+}
