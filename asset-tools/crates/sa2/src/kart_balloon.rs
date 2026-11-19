@@ -8,9 +8,37 @@ pub enum Award {
         display: i16,
         notify: Option<i32>,
     },
-    VehicleCallback560c,
+    Invincibility,
 }
 
+/// Host boundary for the two imported calls. A failed allocation returns None.
+pub trait InvincibilityHost {
+    fn request_audio(&mut self, filename: &str);
+    fn create_task(
+        &mut self,
+        flags: u32,
+        priority: u32,
+        update: u32,
+        name: &str,
+    ) -> Option<(&mut u8, &mut u32)>;
+}
+
+/// CartD +0x560c and +0x6c44. Task callback addresses are section-1 offsets.
+/// Returned task fields correspond to work byte +1 and task word +0x14.
+pub fn activate_invincibility(
+    work_108: &mut i32,
+    work_288: &mut i32,
+    work_78: i32,
+    host: &mut impl InvincibilityHost,
+) {
+    *work_108 = 1;
+    *work_288 = 0x4ec;
+    host.request_audio("invncibl.adx");
+    if let Some((player, display)) = host.create_task(2, 3, 0x6d7c, "Muteki") {
+        *player = work_78 as u8;
+        *display = 0x6ca8;
+    }
+}
 /// Returns the native award for one matched contact. A negative driver still
 /// pops the balloon upstream. Random draws are requested only on the default arm.
 /// The imported random function returns a 15-bit sample; reject other inputs.
@@ -31,7 +59,7 @@ pub fn award(
             let amount = VALUES[(kind - 1) as usize];
             (amount, VALUES[(clock % 3) as usize], Some(amount))
         }
-        4 => return Ok(Award::VehicleCallback560c),
+        4 => return Ok(Award::Invincibility),
         _ => {
             let sample = random();
             if sample >= 32768 {
@@ -40,7 +68,7 @@ pub fn award(
             // Native f32 multiplies by 2^-15 and 4 are exact on this domain.
             let index = usize::from(sample) / 8192;
             if index == 3 {
-                return Ok(Award::VehicleCallback560c);
+                return Ok(Award::Invincibility);
             }
             (VALUES[index], VALUES[index], None)
         }
@@ -55,6 +83,49 @@ pub fn award(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activation_survives_missing_effect_task() {
+        struct Host {
+            allocated: bool,
+            player: u8,
+            display: u32,
+            audio: bool,
+        }
+        impl InvincibilityHost for Host {
+            fn request_audio(&mut self, filename: &str) {
+                assert_eq!(filename, "invncibl.adx");
+                self.audio = true;
+            }
+            fn create_task(
+                &mut self,
+                flags: u32,
+                priority: u32,
+                update: u32,
+                name: &str,
+            ) -> Option<(&mut u8, &mut u32)> {
+                assert!(self.audio);
+                assert_eq!((flags, priority, update, name), (2, 3, 0x6d7c, "Muteki"));
+                self.allocated
+                    .then_some((&mut self.player, &mut self.display))
+            }
+        }
+        for allocated in [false, true] {
+            let mut host = Host {
+                allocated,
+                player: 0,
+                display: 0,
+                audio: false,
+            };
+            let (mut flag, mut timer) = (0, 19);
+            activate_invincibility(&mut flag, &mut timer, 0x123, &mut host);
+            assert_eq!((flag, timer), (1, 1260));
+            assert_eq!(
+                (host.player, host.display),
+                if allocated { (0x23, 0x6ca8) } else { (0, 0) }
+            );
+        }
+    }
     #[test]
     fn fixed_amount_and_display_are_independent() {
         assert_eq!(
@@ -87,10 +158,7 @@ mod tests {
             );
         }
         for sample in [24576, 32767] {
-            assert_eq!(
-                award(0, 0, 1, 0, 0, || sample),
-                Ok(Award::VehicleCallback560c)
-            );
+            assert_eq!(award(0, 0, 1, 0, 0, || sample), Ok(Award::Invincibility));
         }
     }
 }
