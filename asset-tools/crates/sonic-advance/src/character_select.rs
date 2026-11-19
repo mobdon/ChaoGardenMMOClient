@@ -1,4 +1,6 @@
 //! Single-player selection task, starting after the screen's opening transition.
+mod overlay;
+pub mod screen;
 use crate::{Error, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

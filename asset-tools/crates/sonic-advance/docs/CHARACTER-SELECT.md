@@ -30,7 +30,40 @@ src/game/sa1/ui/character_select.c, Task_805A060 and CheckCPUPartnerUnlock.
 Run cargo test --release --offline --locked --lib character_select to compare
 the Rust state to the published numeric trace; the test needs no game files.
 
-Next integration: implement the native opening and carousel graphics, then pass the
-original input registers to Carousel from the shared host. The browser still pauses
-at Single Player. Sound, post-confirmation scene routing and multiplayer selection
-are outside this implementation.
+Single Player now opens the native carousel in the browser. The Rust screen draws
+the opening fade, BG1 tile strips, original character portraits, window brightness,
+arrows, scrolling header and character nameplate. Left/Right select, Z/Space
+confirm, and X returns to the menu. A/S supply the GBA L/R shoulder buttons.
+Confirmation currently stops at the selected character. The native confirmation
+animation, subsequent level-selection/start flow, return fade, and audio are pending.
+
+Run the same replay tool with --character-video to regenerate only hashes:
+200 consecutive complete displayed frames (1401–1600 inclusive), including
+entry, settling and turns in both directions, against the fingerprinted local
+mGBA core. Compare them with cargo test --release --locked --offline --test
+character_screen -- --ignored and SONIC_ADVANCE_ASOE_ROM set. The final video frame
+precedes the visual response to confirmation. This is emulator video parity
+on this route, not a hardware or all-input equivalence result.
+
+Animation 722 supplies character portraits; 723 supplies the backdrop. Four
+backgrounds use 600 4bpp tiles each in vertical strips of 8, 8, 8, 4 and 2 tiles.
+During rotation the four source variants display in order 3, 0, 2, 1. UI table
+entries 39–43 supply the bands, arrows, four names and scrolling header. The UI
+elements share the arrow palette except for the four character-specific band palettes.
+
+| Source region | ASOE file offset | Bytes | SHA-256 |
+|---|---:|---:|---|
+| Portrait scripts and variant pointers | 0xF6B54 | 600 | b784e679ca82b24dd64e97ddb3061c855b28b5a9d6b39dd32e16e0f31c1e77fc |
+| Background scripts and variant pointers | 0xF6DAC | 160 | 9632dd4309a8ca907a4f0c133b5094b683f8f0c3b140c79b81d73ee00ec2679d |
+| Background variant 0 | 0x3D33B4 | 19200 | 978612b0ce020d2918b1f35a23adee393465b60180d96acc0476f7895df1ba6b |
+| Background variant 1 | 0x3D7EB4 | 19200 | 36eb658ef023988b1a29fbacfc0839f79858445a7b3e0187444696bc9c3108ec |
+| Background variant 2 | 0x3DC9B4 | 19200 | 30d73c80751645f4c9bef23919c944e1d4c37cdbdcb55380174c91db6c81150f |
+| Background variant 3 | 0x3E14B4 | 19200 | 7669123b34996c0256c24446e5854b555de2c20b2d6fd56cf0e2a496a602bca8 |
+| Background palettes | 0x11B8B4 | 96 | 4f559ee55e8eeb6c76e7c963dc41d6e92220ad77d190226d8265e3cbd81a3cc3 |
+| Band tiles | 0x670B78 | 1024 | 84b66e773ba5b35fccc931eed2126426893390afc1d2446eb2e37d868d2535df |
+| Band palette windows | 0x670F78 | 26 | a730e16c65f93f6585b04570ccc4816de2f67d758757c56b44b97c998783adfb |
+| Arrow tiles | 0x670F98 | 1024 | f18d95bb36b606323bce41518d560f2cabce027b71294fcea687201a606d18b5 |
+| Shared object palette | 0x671398 | 32 | 4e98c3db478a026c7bdc64df880895eeaed50c4580eff00e6d12c82587f6a938 |
+| Character names | 0x6713B8 | 12288 | f5738ba611faf5513b120f9f8f637671766ce61a0fbc589bed827d76b2e75302 |
+| Header letters | 0x6743D8 | 2048 | 159edfc0258ddf0e71e9ae9caf5bafc8b027e4f3fbbfce512f990b70c9266640 |
+| Header backing | 0x674BF8 | 256 | 3d6876a0146de8576eb2395a858de1213d1b92c65b779df3a331cfd5a4584546 |

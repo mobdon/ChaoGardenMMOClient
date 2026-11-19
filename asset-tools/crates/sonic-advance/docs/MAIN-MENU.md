@@ -4,7 +4,7 @@ Accepted Start on the title opens the five-item Rust menu in the browser. Up/Dow
 wrap, holding a direction repeats, and a fresh A confirms. A black fade ends in a
 destination signal for Single Player (character select), Multiplayer, Time Attack
 or Options. Tiny Chao Garden fades to white. The adapter stops at the destination;
-it does not enter any of these scenes. Menu sounds and other languages are pending.
+Single Player now enters the [character carousel](CHARACTER-SELECT.md); the other four destinations are still signals only. Menu sounds and other languages are pending.
 
 Source ROM SHA-256: afc29e3325baf68a1822e88b25fcb59c8bdc29b8cdc48fa21c56defbd60ca020.
 The menu keeps the title backdrop. Animation 779 has five English label scripts;
@@ -46,6 +46,6 @@ Tiny Chao Garden via keyboard before switching to practice play.
 
 Handoff: continue from the destination enum in src/title/menu.rs. The WASM host
 owns the title-to-menu transition; the browser only sends buttons and renders.
-Character select is the next unconnected Single Player scene. Coordinate its
+The next unconnected Single Player transition is character confirmation. Coordinate its
 ownership before editing the host; this slice does not modify stage movement,
 flash/save logic, server authority, or the live preview.

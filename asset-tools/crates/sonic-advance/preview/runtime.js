@@ -17,7 +17,7 @@ const runState = document.querySelector('#run-state');
 const emptyState = document.querySelector('#empty-state');
 const decoder = new TextDecoder();
 const held = new Set();
-const acceptedKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'Enter', 'KeyZ', 'Space']);
+const acceptedKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'Enter', 'KeyZ', 'KeyX', 'KeyA', 'KeyS', 'Space']);
 let api;
 let loaded = false;
 let atTitle = false;
@@ -81,7 +81,21 @@ function showSnapshot() {
   const length = api.asoe_snapshot_len();
   if (length > 8192) throw new Error('The Rust snapshot exceeds the adapter limit.');
   const snapshot = JSON.parse(decoder.decode(new Uint8Array(api.memory.buffer, pointer, length)));
-  atTitle = snapshot.scene === 'title' || snapshot.scene === 'mainMenu';
+  atTitle = snapshot.scene === 'title' || snapshot.scene === 'mainMenu' || snapshot.scene === 'characters';
+  if (snapshot.scene === 'characters') {
+    document.querySelector('#stage-heading').textContent = 'Character select';
+    document.querySelector('#frame-value').textContent = String(snapshot.frame);
+    document.querySelector('#action-value').textContent = snapshot.character;
+    if (snapshot.confirmed) {
+      running = false;
+      held.clear();
+      controls();
+      message(snapshot.character + ' confirmed. The next Single Player scene is not connected yet.');
+    } else {
+      message('Left and Right choose a character. Z or Space confirms; X returns to the menu.');
+    }
+    return;
+  }
   if (snapshot.scene === 'mainMenu') {
     const m = snapshot.menu;
     const names = ['Single Player', 'Multiplayer', 'Time Attack', 'Options', 'Tiny Chao Garden'];
@@ -257,7 +271,7 @@ function animate(now) {
     const frames = Math.min(MAX_FRAME_BATCH, Math.floor(accumulator / FRAME_MS));
     if (frames > 0) {
       accumulator -= frames * FRAME_MS;
-      const mask = atTitle ? ((held.has('Enter') ? 8 : 0) | (held.has('ArrowUp') ? 64 : 0) | (held.has('ArrowDown') ? 128 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0)) : (held.has('ArrowLeft') ? 0x20 : 0) | (held.has('ArrowRight') ? 0x10 : 0) | (held.has('ArrowDown') ? 0x80 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0);
+      const mask = atTitle ? ((held.has('ArrowLeft') ? 32 : 0) | (held.has('ArrowRight') ? 16 : 0) | (held.has('KeyX') ? 2 : 0) | (held.has('KeyA') ? 512 : 0) | (held.has('KeyS') ? 256 : 0) | (held.has('Enter') ? 8 : 0) | (held.has('ArrowUp') ? 64 : 0) | (held.has('ArrowDown') ? 128 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0)) : (held.has('ArrowLeft') ? 0x20 : 0) | (held.has('ArrowRight') ? 0x10 : 0) | (held.has('ArrowDown') ? 0x80 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0);
       try {
         check(api.asoe_step(mask, frames));
         draw();

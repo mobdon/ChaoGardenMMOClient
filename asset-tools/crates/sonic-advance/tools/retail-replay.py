@@ -1,6 +1,6 @@
 """Sample the original title or a Sonic spindash from a cold boot. No save files or frame dumps.
 
-Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input]
+Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny|--character-input|--character-video]
 The DLL and ROM are identified before any external code runs. Outputs only
 selected numbers and pixel hashes. No graphical or memory buffers are written.
 """
@@ -44,7 +44,7 @@ def verified(path, limit, digest):
     return data
 
 
-def replay(rom, dll, title=False, menu=None, character=False):
+def replay(rom, dll, title=False, menu=None, character=False, character_video=False):
     data = verified(rom, 8388608, ROM_HASH)
     verified(dll, 32 * 1024 * 1024, CORE_HASH)
     core = ct.CDLL(str(dll.resolve()))
@@ -81,7 +81,8 @@ def replay(rom, dll, title=False, menu=None, character=False):
 
     def video(pointer, width, height, pitch):
         tick = frame - title_origin
-        if not title or tick not in title_ticks or not pointer:
+        sample_character = character_video and 1401 <= frame <= 1600
+        if not pointer or not (sample_character or (title and tick in title_ticks)):
             return
         if pixel_format != 2 or (width, height) != (240, 160) or not 480 <= pitch <= 2048:
             return
@@ -94,6 +95,9 @@ def replay(rom, dll, title=False, menu=None, character=False):
             for x, (value,) in enumerate(struct.iter_unpack("<H", row)):
                 color = (value >> 11) | (((value >> 6) & 31) << 5) | ((value & 31) << 10)
                 struct.pack_into("<H", packed, 2 * (y * width + x), color)
+        if sample_character:
+            video_frames[frame] = hashlib.sha256(packed).hexdigest()
+            return
         video_frames[tick] = hashlib.sha256(packed).hexdigest()
 
     bind("environment", (ct.c_bool, U, P), environment)
@@ -139,7 +143,8 @@ def replay(rom, dll, title=False, menu=None, character=False):
                 mask = sum({7:16,6:32,4:64,5:128,10:512,11:256,8:1}[b] for b in buttons)
                 rows.append([frame, mask, age, angle, settled, target, direction, remaining, raw_state[0x15]])
                 if frame == 1600:
-                    return rows
+                    if character_video and len(video_frames) != 200: raise ValueError("incomplete carousel video")
+                    return video_frames if character_video else rows
             if not title and frame >= 1799:
                 p = ct.string_at(mem["iwram"] + 0x5a20, 72)
                 x, y, vx, vy, speed, _, height = struct.unpack_from("<iihhhbb", p)
@@ -161,6 +166,10 @@ def replay(rom, dll, title=False, menu=None, character=False):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] not in ("--title","--menu","--menu-tiny","--character-input")):
+    mode = sys.argv[3] if len(sys.argv) == 4 else None
+    if len(sys.argv) not in (3, 4) or mode not in (None, "--title", "--menu", "--menu-tiny", "--character-input", "--character-video"):
         sys.exit(__doc__)
-    print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]), len(sys.argv) == 4 and sys.argv[-1] != "--character-input", {"--menu":"regular","--menu-tiny":"tiny"}.get(sys.argv[-1]), sys.argv[-1] == "--character-input"), indent=None if sys.argv[-1] == "--character-input" else 2))
+    print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]),
+                            mode == "--title", {"--menu":"regular", "--menu-tiny":"tiny"}.get(mode),
+                            mode in ("--character-input","--character-video"), mode == "--character-video"),
+                     indent=None if mode == "--character-input" else 2))
