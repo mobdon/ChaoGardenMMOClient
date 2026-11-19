@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { readFile } from 'node:fs/promises';
 
 const privateDirectory = /(?:^|\/)(?:\.local|\.codex-attachments|server|scripts|tests)(?:\/|$)/i;
 
@@ -30,8 +31,28 @@ function privateSourceBoundary() {
   };
 }
 
+// A single new locally imported asset can be previewed without replacing the
+// frozen Rust authority. The Rust service has the matching exact allowlist;
+// no original pixels are committed or included in a distributable build.
+function nativeChaoShadowPreview() {
+  return {
+    name: 'native-chao-shadow-preview',
+    configureServer(server) {
+      server.middlewares.use(async (request, response, next) => {
+        if ((request.url || '').split('?')[0] !== '/api/assets/chao-shadow.png') return next();
+        if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405).end(); return; }
+        try {
+          const bytes = await readFile(new URL('./.local/imports/chao-shadow.png', import.meta.url));
+          response.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': bytes.length, 'Cache-Control': 'no-store' });
+          response.end(request.method === 'HEAD' ? undefined : bytes);
+        } catch { response.writeHead(404).end('Local native shadow is unavailable.'); }
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [privateSourceBoundary()],
+  plugins: [privateSourceBoundary(), nativeChaoShadowPreview()],
   server: {
     host: '127.0.0.1',
     port: Number(process.env.FRONTEND_PORT || 5173),

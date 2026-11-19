@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed SA2-only local asset manifest v1",
+  "description": "Structure only; Rust validation checks references/ranges. Source/output bytes are never embedded or verified by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "contract", "game", "revision", "sources", "assets", "policies"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "contract": {"const": "proposed-sa2-only"},
+    "game": {"const": "sonic-adventure-2-battle"},
+    "revision": {"type": "string", "minLength": 1},
+    "sources": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/source"}},
+    "assets": {"type": "array", "maxItems": 100000, "items": {"$ref": "#/$defs/asset"}},
+    "policies": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "uint": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "id": {"type": "string", "pattern": "^sa2\\.pc\\..+"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*[\\\\:\\u0000-\\u001f])(?!.*//)(?!.*/$).+$"},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "logicalPath", "byteLength", "sha256"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "logicalPath": {"$ref": "#/$defs/path"},
+        "byteLength": {"$ref": "#/$defs/uint"}, "sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "span": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceId", "addressSpace", "parentId", "offset", "byteLength", "sha256"],
+      "properties": {
+        "sourceId": {"$ref": "#/$defs/id"}, "addressSpace": {"enum": ["file", "decoded-container"]},
+        "parentId": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/id"}]},
+        "offset": {"$ref": "#/$defs/uint"}, "byteLength": {"$ref": "#/$defs/uint"}, "sha256": {"$ref": "#/$defs/hash"}
+      },
+      "allOf": [{"if": {"properties": {"addressSpace": {"const": "file"}}}, "then": {"properties": {"parentId": {"type": "null"}}}, "else": {"properties": {"parentId": {"$ref": "#/$defs/id"}}}}]
+    },
+    "output": {
+      "type": "object", "additionalProperties": false,
+      "required": ["logicalPath", "format", "byteLength", "sha256"],
+      "properties": {
+        "logicalPath": {"$ref": "#/$defs/path"}, "format": {"type": "string", "minLength": 1},
+        "byteLength": {"$ref": "#/$defs/uint"}, "sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "dependency": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceId", "role", "offset", "byteLength", "sha256", "bank", "entryCount"],
+      "properties": {
+        "sourceId": {"$ref": "#/$defs/id"}, "role": {"type": "string"},
+        "offset": {"$ref": "#/$defs/uint"}, "byteLength": {"$ref": "#/$defs/uint"}, "sha256": {"$ref": "#/$defs/hash"},
+        "bank": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/uint"}]}, "entryCount": {"enum": [null, 16, 256]}
+      }
+    },
+    "asset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "category", "representation", "fidelity", "span", "output", "dependencies", "unknowns"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "category": {"type": "string"},
+        "representation": {"enum": ["decoded", "opaque", "unknown"]},
+        "fidelity": {"enum": ["verified", "adapted", "unknown"]},
+        "span": {"$ref": "#/$defs/span"}, "output": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/output"}]},
+        "dependencies": {"type": "array", "items": {"$ref": "#/$defs/dependency"}},
+        "unknowns": {"type": "array", "items": {"type": "string"}}
+      },
+      "allOf": [{"if": {"properties": {"fidelity": {"const": "unknown"}}}, "then": {"properties": {"unknowns": {"minItems": 1}}}}]
+    }
+  }
+}

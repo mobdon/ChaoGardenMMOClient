@@ -117,3 +117,18 @@ source contains reproducible tools and this ledger, without embedded game
 assets, saves or credentials. Remaining limits include wider slope/turn/foot
 sliding playtests, swimming/climbing/flying mechanics, all 298 activity clips,
 retail-state parity, later server revisions and a deployed release.
+
+## Integration with client main
+
+The resolved source keeps the `006` and `013` footwear joints, original shoe
+effects, bounded downhill skate coast and existing head and shadow presentation.
+Repeated same-room snapshot timestamps no longer reset movement history or
+extend freshness. A sampled native jump, fall or landing takes precedence over
+the fading skate pose. Skating can still coast over a qualifying descending
+terrain gap without reporting contact or lighting the shoe jets.
+
+Fresh isolated checks passed the 1,890-frame native rig proof, real Rust HTTP
+and WebSocket movement with two clients, and all 20 Chrome rendering checks
+across 30 phases. The Chrome proof used supplied snapshots. Positive-gap
+downhill behavior was covered by cadence tests and still needs live browser
+acceptance. Native sources and capture outputs stayed local.

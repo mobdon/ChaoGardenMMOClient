@@ -4,7 +4,19 @@ export const RUN_ENTER_SPEED = 1.05;
 export const RUN_EXIT_SPEED = 0.95;
 export const GAIT_INPUT_SCALE = { walk: 0.4, run: 0.62, auto: 1 };
 export const NATIVE_RUN_PLAY_SPEED = 0.21;
+export const LOCOMOTION_SPEED_BLEND_SECONDS = 0.24;
 const indexOf = node => node.name.match(/(?:^|-)(\d{3})_object_/)?.[1];
+
+// Ease only the animation's observed speed between server snapshots. Callers
+// clear this presentation value on stale/air/mounted states. It never feeds
+// movement input, root position, progression or any authoritative decision.
+export function smoothObservedSpeed(previous, speed, dt, seconds = LOCOMOTION_SPEED_BLEND_SECONDS) {
+  const current = Number.isFinite(previous) ? Math.max(0, Math.min(3, previous)) : 0;
+  const target = Number.isFinite(speed) ? Math.max(0, Math.min(3, speed)) : 0;
+  const elapsed = Math.max(0, Math.min(.1, Number.isFinite(dt) ? dt : 0));
+  const duration = Number.isFinite(seconds) && seconds > 0 ? seconds : LOCOMOTION_SPEED_BLEND_SECONDS;
+  return current + (target - current) * (1 - Math.exp(-elapsed / duration));
+}
 
 export function captureChaoPose(imported) {
   return new Map(imported.visual.getDescendants().flatMap(node => {
@@ -14,7 +26,10 @@ export function captureChaoPose(imported) {
 }
 
 function cloneNativeMotion(imported, source, targetPose, name, state) {
-  const native = source.animationGroups.find(group => group.name === name || group.name.endsWith(`-${name}`));
+  const native = source.animationGroups.find(group => {
+    const sourceName = group.name.toLowerCase();
+    return sourceName === name || sourceName.endsWith(`-${name}`) || sourceName.endsWith(`_${name}`);
+  });
   if (!native || imported.visual.isDisposed()) return null;
   const group = new AnimationGroup(`${imported.visual.name}-Native${state}`, imported.visual.getScene());
   for (const entry of native.targetedAnimations) {
@@ -100,10 +115,10 @@ export function updateNativeLocomotion(imported, state, dt, snapshot) {
   }
   if (animation) {
     if (sampled) animation.goToFrame(motion.frame);
-    else animation.speedRatio = nativeGaitRate(animation === imported.run ? 'Run' : animation === imported.walk ? 'Walk' : 'Idle', snapshot.speed);
+    else animation.speedRatio = nativeGaitRate(animation === imported.run ? 'Run' : animation === imported.walk ? 'Walk' : 'Idle', snapshot.visualSpeed ?? snapshot.speed);
   }
   imported.nativeMotionMode = motion.mode;
-  return { ...motion, available: animation === imported[motion.key] };
+  return { ...motion, rate: sampled ? motion.rate : animation?.speedRatio ?? motion.rate, available: !!animation && animation === imported[motion.key] };
 }
 
 export function chooseNativeGait(speed, previous = 'Idle') {
