@@ -298,8 +298,9 @@ mod layout_reference {
             .join("resource/gd_PC");
         let courses =
             std::path::PathBuf::from(std::env::var_os("SA2_KART_COURSE_REFERENCE").unwrap());
-        let table = read_course_table(&std::fs::read(game.join("DLL/Win32/Data_DLL.dll")).unwrap())
-            .unwrap();
+        let dll = std::fs::read(game.join("DLL/Win32/Data_DLL.dll")).unwrap();
+        let pe = read_pe(&dll).unwrap();
+        let table = read_course_table(&dll).unwrap();
         for (name, ch, count, lo, hi) in [
             ("101", "Tails", 321, 105., 111.),
             ("280", "Rouge", 369, 169., 175.),
@@ -312,6 +313,15 @@ mod layout_reference {
                 .collect();
             let poses = course_layout(&table, &ids, CoursePose::default()).unwrap();
             assert_eq!(poses.len(), count + 1);
+            let mut triangles = 0;
+            for (&id, &pose) in ids.iter().zip(&poses) {
+                visit_piece_triangles(&dll, &pe, &table.pieces[usize::from(id)], pose, |t| {
+                    assert!(t.points.iter().flatten().all(|v| v.is_finite()));
+                    triangles += 1;
+                })
+                .unwrap();
+            }
+            assert_eq!(triangles, if name == "101" { 13643 } else { 18439 });
             let placements = crate::set::parse_set(
                 &std::fs::read(game.join(format!("setCart{ch}.bin"))).unwrap(),
             )
@@ -336,4 +346,71 @@ mod layout_reference {
             assert!((lo..hi).contains(&median), "route {name}: {median}");
         }
     }
+}
+
+/// Positioned triangles of one course occurrence. Keep degenerate strip
+/// triangles in their source slots; callers can discard them for queries.
+pub struct PositionedKartTriangle {
+    pub strip: usize,
+    pub triangle: usize,
+    pub vertex_indices: [u16; 3],
+    pub points: [[f64; 3]; 3],
+}
+
+pub fn visit_piece_triangles(
+    dll: &[u8],
+    pe: &crate::pe::PeImage,
+    piece: &CoursePiece,
+    pose: CoursePose,
+    mut visit: impl FnMut(PositionedKartTriangle),
+) -> Result<()> {
+    let root = piece
+        .collision
+        .ok_or_else(|| Error::invalid("missing kart collision root"))?;
+    let r = crate::model::Reader { data: dll };
+    r.span(root, 52)?;
+    if r.u32(root + 44)? != 0
+        || r.u32(root + 48)? != 0
+        || (0..3).any(|i| {
+            r.u32(root + 20 + 4 * i).ok() != Some(0) || r.f32(root + 32 + 4 * i).ok() != Some(1.0)
+        })
+    {
+        return Err(Error::invalid(
+            "unsupported kart collision node transform or hierarchy",
+        ));
+    }
+    let offset = if r.u32(root)? & 1 != 0 {
+        [0.; 3]
+    } else {
+        r.vec3(root + 8)?
+    };
+    let bank = root_collision_positions(dll, pe, piece)?
+        .ok_or_else(|| Error::invalid("missing kart collision positions"))?;
+    let points: Vec<_> = bank
+        .iter()
+        .map(|v| {
+            pose.transform(std::array::from_fn(|i| {
+                f32::from_le_bytes(v[4 * i..4 * i + 4].try_into().unwrap()) + offset[i]
+            }))
+        })
+        .collect();
+    for (strip, s) in root_collision_strips(dll, pe, piece)?
+        .ok_or_else(|| Error::invalid("missing kart strips"))?
+        .into_iter()
+        .enumerate()
+    {
+        for (triangle, w) in s.indices.windows(3).enumerate() {
+            let mut idx = [w[0], w[1], w[2]];
+            if (triangle % 2 == 1) ^ s.reversed {
+                idx.swap(0, 1);
+            }
+            visit(PositionedKartTriangle {
+                strip,
+                triangle,
+                vertex_indices: idx,
+                points: idx.map(|i| points[usize::from(i)]),
+            });
+        }
+    }
+    Ok(())
 }
