@@ -32,12 +32,13 @@ u.hook_add(UC_HOOK_CODE,item_hook,items,begin=base+0x3069c,end=base+0x3069c)
 for value,flags,item,inc in [(-32768,0,None,0),(19,0,None,0),(20,0,2,5),(39,3,2,5),(40,0,0,10),(59,0,0,10),(60,0,1,20),(79,0,1,20),(80,0,8,0),(89,3,8,0),(90,0,3,0),(90,1,6,0),(90,2,6,0),(32767,4,3,0)]:
     items.clear()
     u.mem_write(mem+768+16,struct.pack(">H",flags))
-    for p in (mem+256+0x6e,mem+1024+16): u.mem_write(p,b"\0\0")
+    for p,seed in ((mem+256+0x6e,32766),(mem+1024+16,-40)): u.mem_write(p,struct.pack(">h",seed))
     u.reg_write(R.UC_PPC_REG_3,value & 65535)
     u.reg_write(R.UC_PPC_REG_29,0)
     u.reg_write(R.UC_PPC_REG_30,0)
     u.emu_start(base+0x44814,base+0x4494c,count=100)
     assert u.reg_read(R.UC_PPC_REG_PC)==base+0x4494c
     assert items==([] if item is None else [item])
-    for p in (mem+256+0x6e,mem+1024+16): assert struct.unpack(">h",u.mem_read(p,2))[0]==inc
+    for p,seed in ((mem+256+0x6e,32766),(mem+1024+16,-40)):
+        assert struct.unpack(">H",u.mem_read(p,2))[0]==(seed+inc)&65535
 print("14 installed checkpoint bonus cases passed")

@@ -14,6 +14,7 @@ def load(path):
     start = word(section) & ~1
     imports = {}
     local = {}
+    pointers = {}
     for module, cursor in struct.iter_unpack(">II", data[word(40):word(40)+word(44)]):
         target, off = None, 0
         while True:
@@ -25,20 +26,23 @@ def load(path):
                 target, off = sec, 0
                 continue
             off += inc
+            if target == 5 and module == word(0) and kind == 1 and sec == 1:
+                pointers[off] = addend
             if target == 1 and module == 0:
                 imports[off] = (kind, sec, addend)
             if target == 1 and module == word(0) and kind in (4,6):
                 sec_base=word(word(16)+8*sec)&~1
                 local[off]=(kind,sec,addend,data[sec_base+addend:sec_base+addend+8])
-    return data[start:start+word(section+4)], imports, local
+    return data[start:start+word(section+4)], imports, local, pointers
 
 
 city_path = root/"stg13D.rel"
 assert hashlib.sha256(city_path.read_bytes()).hexdigest() == "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b"
-city, reference, city_local = load(city_path)
+city, reference, city_local, city_ptr = load(city_path)
 matched = []
+layouts = []
 for path in sorted(root.glob("stg*D.rel")):
-    text, imports, local = load(path)
+    text, imports, local, pointers = load(path)
     segment = city[0x446d8:0x44738]
     start = text.find(segment)
     if start == -1:
@@ -90,6 +94,35 @@ for path in sorted(root.glob("stg*D.rel")):
     assert len(targets)==1,path
     assert {i-shift:t for i,t in imports.items() if 0x44814<=i-shift<0x4494c}=={
         i:t for i,t in reference.items() if 0x44814<=i<0x4494c},path
+    # Follow the checkpoint call into this module's dispatcher and table.
+    delta = targets.pop() - 0x3069c
+    for a,b in [(0x3069c,0x30724),(0x30728,0x30764)]:
+        assert text[a+delta:b+delta] == city[a:b], path
+    assert branch_body(text,0x30724+delta)==branch_body(city,0x30724),path
+    table = local[0x306ea+delta][2]
+    for off in (0x306e6,0x306ea,0x30716,0x3071a):
+        assert local[off+delta][:3]==(city_local[off][0],5,table),path
+    raw = path.read_bytes()
+    section_table = struct.unpack_from(">I",raw,16)[0]
+    data_start = struct.unpack_from(">I",raw,section_table+5*8)[0] & ~1
+    ids = [struct.unpack_from(">i",raw,data_start+table+8*j)[0] for j in range(11)]
+    assert sorted(ids)==list(range(11)),path
+    spans={0:(0x303c0,0x30410),1:(0x30520,0x30570),2:(0x30498,0x304e8),
+           3:(0x30570,0x305a8),6:(0x30628,0x30664),8:(0x304e8,0x30520)}
+    for item,(a,b) in spans.items():
+        start=pointers[table+8*ids.index(item)+4]
+        assert start==a+delta and text[start:start+b-a]==city[a:b],path
+        assert {i-start:v for i,v in imports.items() if start<=i<start+b-a}=={
+            i-a:v for i,v in reference.items() if a<=i<b},path
+        for i,v in city_local.items():
+            if a<=i<b:
+                other=local[start+i-a]
+                assert other[:2]==v[:2] and other[3][:4]==v[3][:4],path
+    layouts.append(f"    ({int(path.stem[3:-1])}, 0x{table:x}, 0x{0x3069c+delta:x}),")
     matched.append(path.stem)
 assert len(matched)==50, matched
 print("50 stage modules match the contact gate, player-state handoff instructions and external references.")
+
+layout_file = Path(__file__).resolve().parents[1]/"src/checkpoint_item_layouts.rs"
+assert layout_file.read_text().splitlines()[2:-1] == layouts
+print("Verified dispatcher layouts and six checkpoint item handlers in all 50 modules.")
