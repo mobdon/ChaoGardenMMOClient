@@ -70,3 +70,51 @@ pub fn read(snapshot: &[u8], slot: usize, mission: u8) -> Result<MissionResult> 
         best,
     })
 }
+
+/// Selected fields of the Steam SAVE_DATA and its embedded SEQ_DATA. Flags
+/// stay raw: a nonzero byte alone does not establish that an event played.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryProgress<'a> {
+    header_section: u8,
+    emblem_count: u8,
+    total_time_bits: u32,
+    total_rings_bits: u32,
+    equipment: &'a [u8],
+    next_section: u8,
+    section: u8,
+    sequence_number: u8,
+    in_sequence: u8,
+    reload_save: u8,
+    green_hill_flag: u8,
+    all_emblems_flag: u8,
+    event_flags: &'a [u8],
+    boss_flags: &'a [u8],
+}
+
+pub fn story_progress(snapshot: &[u8]) -> Result<StoryProgress<'_>> {
+    // Offsets are from the start of the in-memory structure, not a file header.
+    const SEQ: usize = 0x3237;
+    const EVENT: usize = 0x3437;
+    const BOSS: usize = EVENT + 86;
+    let data = snapshot
+        .get(..BOSS + 13)
+        .ok_or_else(|| Error::invalid("truncated Steam story progress fields"))?;
+    let word = |i: usize| u32::from_le_bytes(data[i..i + 4].try_into().unwrap());
+    Ok(StoryProgress {
+        header_section: data[0xc],
+        emblem_count: data[0xe],
+        total_time_bits: word(0x2c),
+        total_rings_bits: word(0x30),
+        equipment: &data[SEQ..SEQ + 29],
+        next_section: data[SEQ + 29],
+        section: data[SEQ + 30],
+        sequence_number: data[SEQ + 31],
+        in_sequence: data[SEQ + 32],
+        reload_save: data[SEQ + 35],
+        green_hill_flag: data[SEQ + 56],
+        all_emblems_flag: data[SEQ + 98],
+        event_flags: &data[EVENT..BOSS],
+        boss_flags: &data[BOSS..BOSS + 13],
+    })
+}

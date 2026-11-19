@@ -33,8 +33,17 @@ _Static_assert(offsetof(SAVE_DATA, stages)==offsetof(struct SaveData, Levels),"s
 _Static_assert(sizeof(STAGE_DATA)==sizeof(SaveLevelInfo),"row stride");
 _Static_assert(offsetof(STAGE_DATA,best)==offsetof(SaveLevelInfo,Scores),"record offset");
 _Static_assert(sizeof(STAGE_BEST)==sizeof(SaveLevelScore),"record stride");
+_Static_assert(offsetof(SAVE_DATA,emblemNum)==offsetof(struct SaveData,EmblemCount),"emblem offset");
+_Static_assert(offsetof(SAVE_DATA,totalTime_2)==offsetof(struct SaveData,PlayTime),"time offset");
+_Static_assert(offsetof(SAVE_DATA,u32TotalRing)==offsetof(struct SaveData,TotalRings),"ring offset");
 int main(int argc,char**argv){
  SAVE_DATA s; memset(&s,0xa5,sizeof s);
+ s.seqSection=51; s.emblemNum=140; s.totalTime_2=0x12345678; s.u32TotalRing=0xdeadbeef;
+ s.seqData.nextsec=14; s.seqData.sec=7; s.seqData.seqno=2; s.seqData.inseq=1;
+ s.seqData.flgReloadSave=3; s.seqData.flgGreenHill=4; s.seqData.emblemAll=5;
+ for(int i=0;i<29;i++) s.seqData.equipment[i]=i+200;
+ for(int i=0;i<86;i++) s.flgEvent[i]=i*3;
+ for(int i=0;i<13;i++) s.flgBoss[i]=255-i;
  for(int i=0;i<62;i++){
   STAGE_DATA *r=i<60?&s.stages[i]:&s.bigCart[i-60];
   for(int m=0;m<5;m++){
@@ -56,6 +65,15 @@ with tempfile.TemporaryDirectory(dir=output) as tmp:
     c.write_text(source)
     subprocess.run([*cc, str(c), "-o", str(exe)], check=True)
     subprocess.run([str(exe), str(image)], check=True)
+    progress=tmp/"progress.json"
+    subprocess.run([cli,"story-progress",str(image),str(progress)],check=True)
+    assert json.loads(progress.read_text()) == dict(headerSection=51,emblemCount=140,totalTimeBits=0x12345678,totalRingsBits=0xdeadbeef,
+        nextSection=14,section=7,sequenceNumber=2,inSequence=1,reloadSave=3,greenHillFlag=4,allEmblemsFlag=5,
+        equipment=list(range(200,229)),eventFlags=[i*3%256 for i in range(86)],bossFlags=[255-i for i in range(13)])
+    short_progress=tmp/"short-progress.bin"
+    short_progress.write_bytes(image.read_bytes()[:0x3499])
+    rejected=tmp/"short-progress.json"
+    assert subprocess.run([cli,"story-progress",str(short_progress),str(rejected)],capture_output=True).returncode and not rejected.exists()
     for slot in range(62):
         for m in range(5):
             out = tmp/f"{slot}-{m}.json"
