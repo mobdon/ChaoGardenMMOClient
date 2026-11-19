@@ -335,6 +335,41 @@ pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
             "constructorSection1Offset":0, "position":[x,yz,yz], "yaw":-16384,
             "nextTaskSection1Offset":pair(0x6fae, 1)?
         });
+        // The executor indexes a relocated jump table with the signed mode byte.
+        // Four entries jump directly to the common continuation.
+        let table = pair(0x5bd2, 5)?;
+        let mut handlers = Vec::new();
+        for index in 0..16 {
+            let (1, arm) = rel
+                .local_pointer(5, table + index * 4)?
+                .ok_or_else(invalid)?
+            else {
+                return Err(invalid());
+            };
+            if arm == 0x5c74 {
+                handlers.push(None);
+                continue;
+            }
+            let pc = arm as usize + 4;
+            let branch = u32::from_be_bytes(
+                code.get(pc..pc + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            );
+            if branch & 0xfc00_0003 != 0x4800_0001 {
+                return Err(invalid());
+            }
+            let displacement = ((branch << 6) as i32 >> 6) & !3;
+            let target = (pc as u32)
+                .checked_add_signed(displacement)
+                .ok_or_else(invalid)?;
+            if target as usize >= code.len() {
+                return Err(invalid());
+            }
+            handlers.push(Some(target));
+        }
+        registration["modeHandlerSection1Offsets"] = serde_json::json!(handlers);
         // Intro routine 1:c80, submode zero: three scalar stores to slot zero.
         let v = scalar(0xd42)?;
         registration["introPlayerWrite"] = serde_json::json!({"slot":0,"position":[v,v,v]});
