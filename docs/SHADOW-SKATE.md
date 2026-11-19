@@ -69,7 +69,7 @@ Data verification checks all original hashes, native intermediate hashes, nine c
 
 Browser acceptance must still inspect threshold crossing and hysteresis, slow/fast cadence, starts/stops and turns, left/right boot contact, arm/hand props, eye/flame/emerald attachments, return to idle/air/mech actions, two-client ownership presentation and unchanged Chao proportions. The different anatomy means retarget amplitude limits and pose blending are adaptations requiring visual judgment. This source-data audit does not certify them by itself.
 
-## Integrated presentation and transform proof
+## Initial integrated presentation and transform proof
 
 Ordinary Chao running now has a separate genuine source asset for the requested Walk → Run → Skate sequence. `scripts/build-chao-locomotion.js` selects only `alm_run` from the verified activity library and compacts unused animation buffers into `.local/imports/chao-locomotion.glb` (67,812 bytes), served by the narrow `/api/assets/chao-locomotion.glb` route. Native state119 identifies `animation_002D8310`, `common/alm_run.saanim`, `LoopProperty=1`, `EndFrame=5` and `PlaySpeed=0.21`. It is not the distinct `alm_run_stopped` clip.
 
@@ -88,3 +88,5 @@ To reduce the user's reported excessive head bob, the helper retains35% of the s
 The earlier November18,2026 live preview was driven with ordinary browser key input, selecting Walk, Run and Auto pace in three real takes. Read-only canvas diagnostics reported `Walk` at0.798 units/s, `NativeRun119` at1.236 with rate0.216, and the former `ShadowSkate174` cadence1.108 at1.994 units/s and blend1. These recordings predate the slower native-rate mapping, head stabilization and exact-mirror gear follow-up above; they do not accept those new changes. The owner remained on foot with native Air Shoes, Hammer Gloves and the original Chao rig. Idle and airborne fallback were checked. New browser checks must cover the complete updated transition, head movement, glove contact, mirrored boots, swimming, mounted transitions and two-client presentation.
 
 All182 captured1848×1252 PNG frames and phase-local timing are retained under ignored `.local/screenshots/movement-clip/`, with `frames.json` recording phase and diagnostic proof. The7.73-second `.local/screenshots/chao-walk-run-skate.mp4` export is1280×868 and preserves the source aspect ratio; the matching GIF is720×488. Exporting these recorded frames trims gaps between the three takes without fabricating animation or claiming one continuous input take. The live profile remains the same canonical138-ring Chao.
+
+Native Jump, Fall and Land clips use the source state slices documented in [Native movement validation](NATIVE-MOVEMENT-VALIDATION.md). The downhill coast retains the skate pose when authority still reports a qualifying near-floor gap.

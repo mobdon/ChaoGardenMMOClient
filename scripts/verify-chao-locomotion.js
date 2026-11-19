@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 async function glb(file){const bytes=await readFile(file);assert.equal(bytes.readUInt32LE(0),0x46546c67);assert.equal(bytes.readUInt32LE(8),bytes.length);const size=bytes.readUInt32LE(12);return{bytes,document:JSON.parse(bytes.subarray(20,20+size)),binary:bytes.subarray(28+size)};}
@@ -13,15 +14,17 @@ function accessorData(asset,index){
   return{descriptor:{type:a.type,count:a.count,componentType:a.componentType,normalized:a.normalized||false,min:a.min,max:a.max},bytes:Buffer.concat(parts)};
 }
 function equalAccessor(a,ai,b,bi){const x=accessorData(a,ai),y=accessorData(b,bi);assert.deepEqual(x.descriptor,y.descriptor);assert.ok(x.bytes.equals(y.bytes),'Accessor values changed.');}
-const source=await glb('.local/imports/activity-motions/chao-actions.glb'),output=await glb('.local/imports/chao-locomotion.glb');
-const original=source.document.animations.find(a=>a.name==='alm_run'),selected=output.document.animations[0];
-assert.equal(output.document.animations.length,1);assert.equal(selected.name,'alm_run');
+const assetRoot=resolve(process.env.CHAO_ASSET_ROOT || '.');
+const source=await glb(resolve(assetRoot,'.local/imports/activity-motions/chao-actions.glb')),output=await glb('.local/imports/chao-locomotion.glb');
+assert.deepEqual(output.document.animations.map(animation=>animation.name),['alm_run','alm_jump_up','alm_jump_down']);
 assert.deepEqual(output.document.nodes,source.document.nodes);assert.deepEqual(output.document.scenes,source.document.scenes);assert.deepEqual(output.document.materials,source.document.materials);assert.deepEqual(output.document.textures,source.document.textures);
+let samplers=0;
+for(const selected of output.document.animations){const original=source.document.animations.find(animation=>animation.name===selected.name);assert.ok(original);
 assert.deepEqual(selected.channels,original.channels);
 for(let i=0;i<original.samplers.length;i++){
   const a=original.samplers[i],b=selected.samplers[i];assert.equal(a.interpolation,b.interpolation);
   equalAccessor(source,a.input,output,b.input);equalAccessor(source,a.output,output,b.output);
-}
+}samplers+=original.samplers.length;}
 let meshAccessors=0;
 for(let m=0;m<source.document.meshes.length;m++)for(let p=0;p<source.document.meshes[m].primitives.length;p++){
   const a=source.document.meshes[m].primitives[p],b=output.document.meshes[m].primitives[p];assert.equal(a.material,b.material);assert.equal(a.mode,b.mode);assert.deepEqual(Object.keys(a.attributes),Object.keys(b.attributes));
@@ -33,11 +36,13 @@ for(let i=0;i<source.document.images.length;i++){
   const a=source.document.bufferViews[source.document.images[i].bufferView],b=output.document.bufferViews[output.document.images[i].bufferView];
   assert.ok(source.binary.subarray(a.byteOffset||0,(a.byteOffset||0)+a.byteLength).equals(output.binary.subarray(b.byteOffset||0,(b.byteOffset||0)+b.byteLength)));
 }
-const state=JSON.parse(await readFile('.local/extracted/activity-motions/manifest.json','utf8')).commonStates.find(row=>row.index===119);
-assert.equal(state.nativeName,'alm_run');assert.equal(state.nativeMotionLabel,'animation_002D8310');
+const states=JSON.parse(await readFile(resolve(assetRoot,'.local/extracted/activity-motions/manifest.json'),'utf8')).commonStates;
 const provenance=output.document.asset.extras.chaoLocomotion;
-assert.equal(provenance.nativeState,119);assert.equal(hash(await readFile(provenance.nativeFile)),provenance.sourceSha256);assert.deepEqual(provenance.tableProperties,state.tableProperties);
-const animatedNodes=new Set(selected.channels.map(channel=>channel.target.node));assert.equal(animatedNodes.size,40);assert.equal(selected.channels.length,120);
-const report={version:1,passed:true,sourceSha256:hash(source.bytes),outputSha256:hash(output.bytes),bytes:output.bytes.length,nativeState:119,clip:'alm_run',nativeMotionLabel:state.nativeMotionLabel,animatedNativeNodes:animatedNodes.size,channels:selected.channels.length,animationSamplersPreserved:original.samplers.length,meshAccessorsPreserved:meshAccessors,imagesPreserved:output.document.images.length,gltfNodes:output.document.nodes.length,sourceHierarchyRestAndGeometryPreserved:true,allRetainedAnimationAccessorBytesExact:true};
+assert.equal(provenance.version,2);assert.equal(provenance.clips.length,3);
+for(const clip of provenance.clips){const state=states.find(row=>row.index===clip.nativeState);assert.equal(clip.nativeName,state.nativeName);assert.equal(clip.nativeMotionLabel,state.nativeMotionLabel);
+assert.equal(hash(await readFile(resolve(assetRoot,clip.nativeFile))),clip.sourceSha256);
+assert.deepEqual(clip.states,states.filter(row=>row.nativeFile===state.nativeFile).map(row=>({index:row.index,tableProperties:row.tableProperties})));}
+for(const selected of output.document.animations){const animatedNodes=new Set(selected.channels.map(channel=>channel.target.node));assert.equal(animatedNodes.size,40);assert.equal(selected.channels.length,120);}
+const report={version:2,passed:true,sourceSha256:hash(source.bytes),outputSha256:hash(output.bytes),bytes:output.bytes.length,clips:provenance.clips.map(clip=>({nativeState:clip.nativeState,nativeName:clip.nativeName,nativeMotionLabel:clip.nativeMotionLabel})),animatedNativeNodes:40,channels:360,animationSamplersPreserved:samplers,meshAccessorsPreserved:meshAccessors,imagesPreserved:output.document.images.length,gltfNodes:output.document.nodes.length,sourceHierarchyRestAndGeometryPreserved:true,allRetainedAnimationAccessorBytesExact:true};
 await writeFile('.local/imports/chao-locomotion-verification.json',`${JSON.stringify(report,null,2)}\n`);
 console.log(JSON.stringify(report,null,2));

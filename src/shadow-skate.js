@@ -54,23 +54,35 @@ async function loadMotion() {
   return sharedMotion;
 }
 
-const finiteQuaternion = value => Array.isArray(value) && value.length === 4 && value.every(Number.isFinite) && Math.hypot(...value) > 0.5;
+const finiteQuaternion = value => Array.isArray(value) && value.length === 4 && value.every(Number.isFinite)
+  && Math.abs(Math.hypot(...value) - 1) < .01;
 const quaternion = value => Quaternion.FromArray(value).normalize();
 
 function supportedMotion(motion) {
   return motion?.version === 1 && motion.basis === 'right-handed glTF Y-up model space'
     && finiteQuaternion(motion.alignmentQuaternion)
     && Array.isArray(motion.bones) && Array.isArray(motion.clips)
+    && TARGETS.every(([, semantic]) => {
+      const bones = motion.bones.filter(bone => bone?.semantic === semantic);
+      return bones.length === 1 && finiteQuaternion(bones[0].restWorld);
+    })
     && [172, 173, 174].every(id => {
-      const clip = motion.clips.find(row => row.nativeId === id);
+      const clips = motion.clips.filter(row => row?.nativeId === id);
+      const clip = clips[0];
+      if (clips.length !== 1) return false;
       return clip && Number.isFinite(clip.durationSeconds) && clip.durationSeconds > 0
         && Array.isArray(clip.frames) && clip.frames.length > 1
-        && clip.frames.every(frame => Number.isFinite(frame.timeSeconds));
+        && clip.frames[0]?.timeSeconds === 0
+        && clip.frames.every((frame, index, frames) => Number.isFinite(frame?.timeSeconds)
+          && frame.timeSeconds >= 0 && frame.timeSeconds <= clip.durationSeconds
+          && (!index || frame.timeSeconds > frames[index - 1].timeSeconds)
+          && TARGETS.every(([, semantic]) => finiteQuaternion(frame.rotations?.[semantic])));
     });
 }
 
 export function observeSkateMotion(previous, player, serverTime, observedAt) {
   const x = player.x, z = player.z;
+  const jumpOffset = Number.isFinite(player.jumpOffset) && player.jumpOffset >= 0 ? player.jumpOffset : null;
   const elapsed = (serverTime - previous?.serverTime) / 1000;
   const distance = Math.hypot(x - previous?.x, z - previous?.z);
   const valid = Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(serverTime)
@@ -81,7 +93,10 @@ export function observeSkateMotion(previous, player, serverTime, observedAt) {
     airGap: Number.isFinite(player.jumpOffset) && player.jumpOffset >= 0 ? player.jumpOffset : Infinity,
     descending: valid && Number.isFinite(player.y) && Number.isFinite(previous?.y) && player.y <= previous.y + .0005,
     descendingGround: valid && Number.isFinite(player.groundY) && Number.isFinite(previous?.groundY) && player.groundY < previous.groundY - .000001,
-    grounded: Number.isFinite(player.jumpOffset) && player.jumpOffset <= 0.001,
+    jumpOffset,
+    verticalVelocity: valid && jumpOffset !== null && Number.isFinite(previous?.jumpOffset)
+      ? (jumpOffset - previous.jumpOffset) / elapsed : 0,
+    grounded: jumpOffset !== null && jumpOffset <= 0.001,
     swimming: player.zone === 'garden' && (x + 8) ** 2 + z ** 2 < 25 };
 }
 

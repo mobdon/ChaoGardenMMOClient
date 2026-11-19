@@ -8,7 +8,7 @@ import '@babylonjs/loaders/glTF/index.js';
 import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
-import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
+import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
 import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
 import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
@@ -422,13 +422,15 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       idle: entries.animationGroups.find(group => /idle/i.test(group.name)),
       walk: entries.animationGroups.find(group => /walk/i.test(group.name)),
       current: null,
+      motionState: createNativeMotionState(),
     };
     item.imported.gearSockets = captureGearSockets(item);
     const locomotionPose = captureChaoPose(item.imported);
     void loadLocalAsset('chao-locomotion').then(source => {
       if (source && !disposed && !item.root.isDisposed()) {
-        attachNativeRun(item.imported, source, locomotionPose);
+        attachNativeLocomotion(item.imported, source, locomotionPose);
         canvas.dataset.nativeRun = item.imported.run ? 'native119-loaded' : 'unavailable';
+        canvas.dataset.nativeAir = item.imported.jumpUp && item.imported.jumpDown ? 'native132-137-loaded' : 'unavailable';
       }
     });
     item.imported.skate = createShadowSkate(item.imported);
@@ -1424,7 +1426,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       item.absoluteY = Number.isFinite(data.groundY);
       item.heading = Number.isFinite(data.facing) ? data.facing : null;
       item.mech = data.mech || null;
-      item.motionSample = observeSkateMotion(item.motionSample, data, next.serverTime, performance.now());
+      const previous = item.motionSample;
+      if (!Number.isFinite(previous?.serverTime) || previous.zone !== data.zone || next.serverTime > previous.serverTime) {
+        item.motionSample = observeSkateMotion(previous, data, next.serverTime, performance.now());
+      }
       setOwnerGear(item, data.gear);
       setEquipment(item, data.equipped);
       item.root.setEnabled(data.zone === zone || !data.zone);
@@ -1478,12 +1483,14 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     for (const item of playerMeshes.values()) item.imported?.skate?.restoreBase();
   });
   scene.onAfterAnimationsObservable.add(() => {
-    for (const item of playerMeshes.values()) item.imported?.skate?.apply();
+    for (const item of playerMeshes.values()) {
+      if (!item.nativeMotion?.available || !Number.isFinite(item.nativeMotion.frame)) item.imported?.skate?.apply();
+    }
     for (const item of playerMeshes.values()) groundImportedFeet(item);
     for (const item of playerMeshes.values()) {
       const skate = item.imported?.skate?.diagnostics;
       item.imported?.steadyHead?.update(renderDelta, { mounted: !!item.vehicleKey,
-        gait: item.nativeGait || 'Idle', skateBlend: skate?.blend || 0, skatePhase: skate?.phase || 0 });
+        gait: item.nativeGait || 'Idle', skateBlend: item.nativeMotion?.available && Number.isFinite(item.nativeMotion.frame) ? 0 : skate?.blend || 0, skatePhase: skate?.phase || 0 });
       item.imported?.steadyHead?.apply();
     }
     for (const item of animatedDecor) if (item.kind === 'npc') groundImportedFeet(item.chao);
@@ -1555,32 +1562,36 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       if (item.imported) {
         const motion = item.motionSample;
         const fresh = !!motion?.valid && performance.now() - motion.observedAt < 350;
-        item.imported.skate?.update(dt, {
-          speed: fresh ? motion.speed : 0,
-          grounded: motion?.grounded || false,
-          airGap: motion?.airGap,
-          descending: motion?.descending || false,
-          descendingGround: motion?.descendingGround || false,
-          serverTime: motion?.serverTime,
-          swimming: motion?.swimming || false,
-          footwear: item.gear?.footwear === 'shadow-air-shoes' && !!item.ownerGear?.footwear?.length,
-          mounted: !!item.vehicleKey,
-          fresh,
-        });
-        const skateBlend = item.imported.skate?.diagnostics.blend || 0;
-        const groundJets = fresh && motion?.grounded && !motion?.swimming && !item.vehicleKey;
-        for (const entry of item.ownerGear?.footwear || []) updateNativeShoeEffects(entry.nativeEffects, groundJets ? skateBlend : 0, motion?.speed);
-        const movingPose = fresh && (motion?.grounded || skateBlend > 0) && !item.vehicleKey;
-        const speed = movingPose ? motion.speed : 0;
+        const imported = item.imported;
+        const skate = imported.skate;
+        skate?.restoreBase();
+
+        const grounded = !!motion?.grounded;
+        const speed = fresh ? motion.speed : 0;
+        const swimming = !!motion?.swimming;
+        const mounted = !!item.vehicleKey;
+        const movingPose = fresh && !swimming && !mounted && (grounded || skate?.diagnostics.blend > 0);
         item.nativeVisualSpeed = movingPose ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
-        item.nativeGait = chooseNativeGait(speed, item.nativeGait);
-        const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
-        if (animation && item.imported.current !== animation) {
-          item.imported.current?.stop();
-          animation.start(true, 1);
-          item.imported.current = animation;
+        const kinematics = { speed, visualSpeed: item.nativeVisualSpeed, grounded,
+          jumpOffset: motion?.jumpOffset, verticalVelocity: motion?.verticalVelocity, fresh, swimming, mounted };
+        const groundMotion = grounded
+          ? updateNativeLocomotion(imported, imported.motionState, dt, kinematics) : null;
+
+        skate?.update(dt, {
+          speed, grounded: grounded && groundMotion?.mode !== 'Land',
+          airGap: motion?.airGap, descending: motion?.descending, descendingGround: motion?.descendingGround,
+          serverTime: motion?.serverTime, swimming, mounted, fresh,
+          footwear: item.gear?.footwear === 'shadow-air-shoes' && !!item.ownerGear?.footwear?.length,
+        });
+        const skating = skate?.diagnostics;
+        item.nativeMotion = groundMotion ?? updateNativeLocomotion(imported, imported.motionState, dt, {
+          ...kinematics, grounded: !!skating?.coasting,
+        });
+        item.nativeGait = item.nativeMotion.mode;
+        const groundJets = fresh && grounded && !swimming && !mounted && item.nativeMotion.mode !== 'Land';
+        for (const entry of item.ownerGear?.footwear || []) {
+          updateNativeShoeEffects(entry.nativeEffects, groundJets ? skating?.blend || 0 : 0, motion?.speed);
         }
-        if (animation) animation.speedRatio = nativeGaitRate(animation === item.imported.run ? 'Run' : animation === item.imported.walk ? 'Walk' : 'Idle', item.nativeVisualSpeed);
       }
       if (item.vehicle) animateWalker(item, dt);
       for (const emerald of item.emeralds || []) {
@@ -1680,18 +1691,23 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     canvas.dataset.headMotionMode = head?.mode || 'native';
     canvas.dataset.headStrokeBob = (head?.bobOffsetY || 0).toFixed(6);
     canvas.dataset.headActorPosition = head?.position?.map(value => value.toFixed(6)).join(',') || '';
-    canvas.dataset.skateActive = String(skate?.active || false);
+    const playingNativeAir = self?.nativeMotion?.available && Number.isFinite(self.nativeMotion.frame);
+    const playingSkate = !playingNativeAir && !!skate?.active;
+    canvas.dataset.skateActive = String(playingSkate);
     canvas.dataset.skateState = skate?.state || 'unavailable';
     canvas.dataset.skateSpeed = (skate?.speed || 0).toFixed(3);
     canvas.dataset.skateRate = (skate?.rate || 0).toFixed(3);
-    canvas.dataset.skateBlend = (skate?.blend || 0).toFixed(3);
+    canvas.dataset.skateBlend = (playingNativeAir ? 0 : skate?.blend || 0).toFixed(3);
     canvas.dataset.footwearSockets = (self?.ownerGear?.footwear || []).map(entry => entry.fit.socket.name.match(/(\d{3})_object_/)?.[1] || '').join(',');
     canvas.dataset.shoeExhaust = String((self?.ownerGear?.footwear || []).filter(entry => entry.nativeEffects?.some(effect => effect.mesh.isEnabled())).length);
     canvas.dataset.nativeShoeEffects = (self?.ownerGear?.footwear || []).flatMap(entry => entry.nativeEffects || []).filter(effect => effect.mesh.isEnabled()).map(effect => effect.modelId).join(',');
     canvas.dataset.skateClip = skate?.clip || '';
     canvas.dataset.skatePhase = (skate?.phase || 0).toFixed(6);
-    canvas.dataset.chaoMotion = skate?.active ? `ShadowSkate${skate.clip}` : self?.imported?.run && self.imported.current === self.imported.run ? 'NativeRun119' : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
-    canvas.dataset.chaoMotionRate = (self?.imported?.current?.speedRatio || 1).toFixed(3);
+    canvas.dataset.chaoMotion = playingSkate ? `ShadowSkate${skate.clip}` : self?.nativeMotion?.available && self.nativeMotion.nativeState ? `Native${self.nativeMotion.mode}${self.nativeMotion.nativeState}` : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
+    canvas.dataset.chaoMotionState = self?.nativeMotion?.mode || 'Idle';
+    canvas.dataset.chaoMotionAvailable = String(!!self?.nativeMotion?.available);
+    canvas.dataset.chaoMotionFrame = Number.isFinite(self?.nativeMotion?.frame) ? self.nativeMotion.frame.toFixed(3) : '';
+    canvas.dataset.chaoMotionRate = (self?.nativeMotion?.rate ?? 1).toFixed(3);
   });
   onReady();
 
