@@ -247,6 +247,7 @@ pub fn callback_name(p: &Placement, d: &ObjectDefinition) -> Option<&'static str
         (0, "RING   ", 0x6c0f80) => Some("Ring"),
         (3, "SPRA   ", 0x6c4480) => Some("ObjectSpring"),
         (4, "SPRB   ", 0x6c4e90) => Some("ObjectSpringB"),
+        (8, "SAVEPOINT", 0x6d99a0) => Some("ObjectSavePoint"),
         (59, "BOARDCOL", 0x5ea210) => Some("ObjectBoardCol"),
         (77, "BOARD", 0x5ebc50) => Some("ObjectBoard"),
         (81, "ADXCHG", 0x5e2d70) => Some("ObjectCeAdxChg"),
@@ -326,6 +327,7 @@ fn replay_named(name: Option<&str>, placement: &Placement, request: &[u8]) -> Re
             placement,
             bounded(decode::<Frames<crate::board_replay::Step>>(request)?.frames)?,
         ),
+        Some("ObjectSavePoint") => checkpoint(placement, request),
         Some("ObjectBoardCol") => board(placement, request),
         Some("ObjectCeAdxChg") => adx(request),
         _ => Err(Error::invalid(
@@ -363,4 +365,50 @@ pub fn replay_bgm(request: &[u8]) -> Result<Value> {
         frames.push(json!({"counter":bgm.counter,"calls":calls}));
     }
     Ok(json!({"callback":"CityEscapeProlog/BgmStart","prolog":prolog,"frames":frames}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointReplay {
+    engine_result: u32,
+    stage_byte: i8,
+    frames: Vec<CheckpointFrame>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointFrame {
+    hit: Option<(i32, u32)>,
+    players: [crate::checkpoint::ContactPlayer; 2],
+    contact_speed: f32,
+}
+
+fn checkpoint(p: &Placement, request: &[u8]) -> Result<Value> {
+    use crate::checkpoint::{CheckpointPlacement, CheckpointSpin, CheckpointTicks, ContactState};
+    let req: CheckpointReplay = decode(request)?;
+    let placement = CheckpointPlacement {
+        rotation: p.rotation.map(i32::from),
+    };
+    let byte = placement.work_byte(req.engine_result, req.stage_byte);
+    let mut state = CheckpointTicks {
+        contact: ContactState {
+            mode: 1,
+            slot_timers: [0; 2],
+        },
+        spin: CheckpointSpin {
+            angles: [0x4000, -0x4000],
+            steps: [0; 2],
+            counters: [0; 2],
+        },
+    };
+    let mut frames = Vec::new();
+    for f in bounded(req.frames)? {
+        let call = state.tick(f.hit, &f.players, byte, f.contact_speed)?;
+        frames.push(
+            json!({"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
+            "angles":state.spin.angles,"steps":state.spin.steps,"handoff":call}),
+        );
+    }
+    Ok(
+        json!({"callback":"ObjectSavePoint","scope":"Initialized idle checkpoint; hit and signed speed are observations. Handoff is reported, not applied.","frames":frames}),
+    )
 }

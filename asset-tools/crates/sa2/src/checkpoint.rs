@@ -187,6 +187,8 @@ mod bonus_reference {
 }
 
 /// Player-task work used at the accepted-contact call (taskwk +0x14 and +8).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContactPlayer {
     pub position_bits: [u32; 3],
     pub rotation: [i32; 3],
@@ -194,7 +196,7 @@ pub struct ContactPlayer {
 
 /// Arguments to module zero's 0x8001c9f4 at City Escape text +0x447a4.
 /// The implementation of that engine call is not part of the stage REL.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
 pub struct CheckpointContactCall {
     pub slot: usize,
     pub position_bits: [u32; 3],
