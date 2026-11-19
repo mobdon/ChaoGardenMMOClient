@@ -553,17 +553,47 @@ fn checkpoint_frames(
 pub fn board_route(layout: &crate::city_stage::CityLayout, request: &[u8]) -> Result<Value> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct RiderMotion {
+        angles: [i32; 3],
+        speed: [f32; 3],
+        action: i16,
+        motion_mode: i16,
+        frame: f32,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct RouteFrame {
+        rider_motion: Option<[Option<RiderMotion>; 2]>,
         players: [Option<Player>; 2],
         range_out_slots: Vec<usize>,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Route {
+        physical_board: Option<BoardBind>,
         two_player: bool,
         frames: Vec<RouteFrame>,
     }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct BoardBind {
+        placement: usize,
+        allocation_ok: bool,
+    }
     let req: Route = decode(request)?;
+    let mut physical_steps = Vec::new();
+    let physical = if let Some(bind) = req.physical_board {
+        let (p, d) = layout.resolve(bind.placement)?;
+        if callback_name(p, d) != Some("ObjectBoard") {
+            return Err(Error::invalid("expected physical BOARD placement"));
+        }
+        physical_steps.push(crate::board_replay::Step::Bind {
+            allocation_ok: bind.allocation_ok,
+        });
+        Some((bind.placement, p, bind.allocation_ok))
+    } else {
+        None
+    };
     let mut tasks = Vec::new();
     for (slot, p) in layout.placements.iter().enumerate() {
         if callback_name(p, layout.resolve(slot)?.1) == Some("ObjectBoardCol") {
@@ -588,6 +618,35 @@ pub fn board_route(layout: &crate::city_stage::CityLayout, request: &[u8]) -> Re
         {
             return Err(Error::invalid("nonfinite board player position"));
         }
+        match (physical, f.rider_motion) {
+            (Some((_, _, true)), Some(motions)) => {
+                let mut riders = [None, None];
+                for (slot, (player, motion)) in f.players.iter().zip(motions).enumerate() {
+                    riders[slot] = match (player, motion) {
+                        (Some(p), Some(m)) => Some(crate::physical_board::BoardRider {
+                            position: p.position,
+                            angles: m.angles,
+                            speed: m.speed,
+                            action: m.action,
+                            motion_mode: m.motion_mode,
+                            frame: m.frame,
+                        }),
+                        (None, None) => None,
+                        _ => {
+                            return Err(Error::invalid(
+                                "rider motion must match observed player slots",
+                            ))
+                        }
+                    };
+                }
+                physical_steps.push(crate::board_replay::Step::Tick { players: riders });
+            }
+            (Some((_, _, true)), None) => {
+                return Err(Error::invalid("bound board requires rider observations"))
+            }
+            (_, Some(_)) => return Err(Error::invalid("rider observations require a bound board")),
+            (_, None) => {}
+        }
         let players = f.players.map(|p| {
             p.map(|p| BoardPlayer {
                 position: p.position,
@@ -604,9 +663,12 @@ pub fn board_route(layout: &crate::city_stage::CityLayout, request: &[u8]) -> Re
         }
         frames.push(json!({"calls":calls}));
     }
-    Ok(
-        json!({"placements":slots,"frames":frames,"scope":"Independent board callbacks in SET order; player motion, range decisions and input consumption are external."}),
-    )
+    let mut result = json!({"placements":slots,"frames":frames,"scope":"Independent board callbacks in SET order; player motion, range decisions and input consumption are external."});
+    if let Some((slot, p, _)) = physical {
+        result["physicalBoard"] =
+            json!({"placement":slot,"trace":crate::board_replay::replay(p,physical_steps)?});
+    }
+    Ok(result)
 }
 
 /// Evaluate fresh board callbacks at the actual Sonic single-player stage start.
