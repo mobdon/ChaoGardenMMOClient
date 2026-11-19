@@ -1,7 +1,48 @@
-//! Packet inventory for the verified PC Last Story event 602 movie.
+//! Stream readers for the nine verified PC story movies.
 use crate::{manifest, Error, Result};
 use serde_json::{json, Value};
 
+const MOVIES: &[(i16, &str)] = &[
+    (
+        401,
+        "73c243fb38cd0bca81904c08354f0b8dc481a7237c1ecb6383bc4aacd449f6c4",
+    ),
+    (
+        409,
+        "2f167b6ae7933d090f621cd0f7e97806ca101375d8b7f52ebdbae15af6e7b2de",
+    ),
+    (
+        411,
+        "34d44d60391a2c2c64bed7bf8464279384f78e511c201382b66b51c071121e31",
+    ),
+    (
+        420,
+        "e3646131be4b79f5327fa4c873a7a861063041f25d62b2a1f4f801fd2f47f0d8",
+    ),
+    (
+        429,
+        "4c5f1f171da70e4d8f6f017792ceaa6e2208869b5ea3fbfc887cf1cc36184f44",
+    ),
+    (
+        430,
+        "9cc34ae1ac7e24b6240f3a8da25f79b74a7ceed2675f9645b13e00f618e5613c",
+    ),
+    (
+        524,
+        "c1d750c4eb09fa37740011cb63053f373aced424546aeb17ec4b090860a17c5e",
+    ),
+    (
+        532,
+        "507557c1302bcdeb01bae138c173d9beaab7458ef5e07bf4a8b9db3cfaf5d786",
+    ),
+    (
+        602,
+        "64dc1ebc01d49f3622bbbfbca76f2e8ada27f0dae71be8e7bc147d12cecab32d",
+    ),
+];
+pub fn supported(id: i16) -> bool {
+    MOVIES.iter().any(|r| r.0 == id)
+}
 /// Decode a marker-delimited 33-bit MPEG timestamp without reducing it to milliseconds.
 fn timestamp(data: &[u8], prefix: u8) -> Result<u64> {
     let v = data
@@ -25,9 +66,17 @@ pub fn demux_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2])> {
 
 /// Encoded elementary streams, before picture decoding or presentation scheduling.
 pub fn demux_av_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
+    demux_movie(602, b)
+}
+pub fn demux_movie(id: i16, b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
+    let expected = MOVIES
+        .iter()
+        .find(|r| r.0 == id)
+        .ok_or_else(|| Error::invalid("unknown story movie ID"))?
+        .1;
     let mut video = Vec::new();
-    if manifest::sha256(b) != "64dc1ebc01d49f3622bbbfbca76f2e8ada27f0dae71be8e7bc147d12cecab32d" {
-        return Err(Error::invalid("unverified event 602 movie"));
+    if manifest::sha256(b) != expected {
+        return Err(Error::invalid("unverified story movie"));
     }
     let mut at = 0;
     let mut audio: [Vec<u8>; 2] = Default::default();
@@ -63,7 +112,7 @@ pub fn demux_av_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
                 || packet[4] & 1 == 0
                 || packet[6] & 1 == 0
             {
-                return Err(Error::invalid("unexpected event 602 audio PES header"));
+                return Err(Error::invalid("unexpected story movie audio PES header"));
             }
             timing.push(json!({"stream":id,"packetOffset":at,"streamOffset":audio[usize::from(id-0xc0)].len(),"pts":timestamp(&packet[2..],2)?,"dts":null}));
             audio[usize::from(id - 0xc0)].extend_from_slice(&packet[7..]);
@@ -158,19 +207,27 @@ fn index_video(report: &mut Value, video: &[u8]) -> Result<()> {
         schedule.push((pts,json!({"pts":pts,"packetOffset":packet,"streamOffset":offset,"codedIndex":schedule.len(),"coding":kind})));
     }
     schedule.sort_by_key(|a| a.0);
-    if schedule.windows(2).any(|w| w[0].0 == w[1].0) {
-        return Err(Error::invalid("ambiguous movie picture presentation time"));
-    }
     let pictures = schedule.len();
-    report["presentationOrder"] = Value::Array(schedule.into_iter().map(|(_, p)| p).collect());
+    if schedule.windows(2).any(|w| w[0].0 == w[1].0) {
+        report["presentationOrderUnavailable"] =
+            json!("multiple pictures share a packet timestamp; picture timing unresolved");
+    } else {
+        report["presentationOrder"] = Value::Array(schedule.into_iter().map(|(_, p)| p).collect());
+    }
     report["videoStream"] = json!({"bytes":video.len(),"sha256":manifest::sha256(video),"width":width,"height":height,"pictures":pictures,"sequenceRateCode":h[7]&15});
     Ok(())
 }
 
 /// Inspect one picture in presentation order without decoding the audio tracks.
 pub fn picture_602(b: &[u8], frame: u32) -> Result<Value> {
-    let (mut report, _, video) = demux_av_602(b)?;
+    movie_picture(602, b, frame)
+}
+pub fn movie_picture(id: i16, b: &[u8], frame: u32) -> Result<Value> {
+    let (mut report, _, video) = demux_movie(id, b)?;
     index_video(&mut report, &video)?;
+    if report.get("presentationOrderUnavailable").is_some() {
+        return Err(Error::invalid("movie picture timing unresolved"));
+    }
     let pic = report["presentationOrder"]
         .get(frame as usize)
         .ok_or_else(|| Error::invalid("frame outside movie presentation order"))?;
@@ -180,10 +237,16 @@ pub fn picture_602(b: &[u8], frame: u32) -> Result<Value> {
 }
 
 pub fn inspect_602(b: &[u8]) -> Result<Value> {
-    let (mut report, tracks, video) = demux_av_602(b)?;
+    inspect_movie(602, b)
+}
+pub fn inspect_movie(id: i16, b: &[u8]) -> Result<Value> {
+    let (mut report, tracks, video) = demux_movie(id, b)?;
     index_video(&mut report, &video)?;
     for (key, data) in ["c0", "c1"].into_iter().zip(tracks) {
-        let pcm = crate::audio::decode_adx(&data, 3_000_000)?;
+        if data.is_empty() {
+            continue;
+        }
+        let pcm = crate::audio::decode_adx(&data, 8_000_000)?;
         let bytes: Vec<u8> = pcm.samples.iter().flat_map(|v| v.to_le_bytes()).collect();
         report["audioTracks"][key] = json!({"header":pcm.header,"adxSha256":manifest::sha256(&data),"pcmS16leSha256":manifest::sha256(&bytes)});
     }

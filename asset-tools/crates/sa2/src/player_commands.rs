@@ -213,20 +213,24 @@ fn campaign(
                 } else {
                     scene_packet(&clip, frame)?
                 }
-            } else if id == 602
+            } else if sa2_asset_tools::story_movie::supported(id)
                 && install
-                    .join("resource/gd_PC/event/e0602_m.sfd")
+                    .join(format!("resource/gd_PC/event/e{id:04}_m.sfd"))
                     .try_exists()?
             {
                 if args.get(7).is_some() {
                     return Err(Error::invalid("movie pictures have no event camera slot"));
                 }
-                let i = load(
-                    extras,
-                    "resource/gd_PC/event/e0602_m.sfd".into(),
+                let name = format!("resource/gd_PC/event/e{id:04}_m.sfd");
+                let movie = Extra::read(
+                    &install.join(&name),
+                    name,
+                    80 * 1024 * 1024,
                     "story-event-movie",
                 )?;
-                sa2_asset_tools::story_movie::picture_602(&extras[i].bytes, frame)?
+                let i = extras.len();
+                extras.push(movie);
+                sa2_asset_tools::story_movie::movie_picture(id, &extras[i].bytes, frame)?
             } else {
                 json!({"available":false,"missingMainEvent":logical,"reason":"No matching main event PRS; movie or special-event dispatch is not implemented."})
             }
