@@ -183,4 +183,18 @@ if len(sys.argv)>4:
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             doc=json.loads(out.read_text())
             assert doc["target"]==doc["updates"][0]["target"]["state"] and not doc["updates"][-1]["target"]["installs_callbacks"]
+            # The shared timing pass selects a split using the gate's actual
+            # primary kart counter. Inhibiting lap updates does not pause countdown.
+            timing=dict(inhibit=False,cumulative=True,first_highest=0)
+            ctl=dict(controller=dict(signals,pursuit_latch=0),timing=timing)
+            blank=[[0,0,0] for _ in range(3)]
+            q.update(timer_word=400,primary_kart_counter=0,lap_clock=dict(ticks=59,display=[0,0,98],first=blank,second=blank),
+                     updates=[ctl,credit,ctl,dict(ctl,timing=dict(timing,inhibit=True)),post,
+                              dict(controller=dict(finish_signals,pursuit_latch=0),timing=timing)])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-lap.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());lap=doc["lapClock"]
+            assert lap["ticks"]==61 and lap["first"]==[[0,1,0],[0,1,1],[0,0,0]]
+            assert doc["timerWord"]==397+int(rows[a][8])*60
+            assert doc["updates"][2]["controller"]["lap_clock"]==doc["updates"][3]["controller"]["lap_clock"]==lap
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

@@ -2,7 +2,7 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 type Time = [i8; 3];
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Clock {
     ticks: i32,
@@ -21,6 +21,28 @@ pub struct ClockInput {
     second_highest: Option<i32>,
 }
 
+/// Inputs observed at the shared timing pass, excluding the retained clock and
+/// the primary kart counter already updated by the checkpoint callback.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TimingSignals {
+    inhibit: bool,
+    cumulative: bool,
+    first_highest: i32,
+    second_highest: Option<i32>,
+}
+impl TimingSignals {
+    pub(crate) fn with_clock(self, clock: Clock, first_counter: i32) -> ClockInput {
+        ClockInput {
+            clock,
+            first_counter,
+            inhibit: self.inhibit,
+            cumulative: self.cumulative,
+            first_highest: self.first_highest,
+            second_highest: self.second_highest,
+        }
+    }
+}
 fn subtract(a: Time, b: Time) -> Time {
     let value = |[m, s, c]: Time| i32::from(m) * 6000 + i32::from(s) * 100 + i32::from(c);
     let cs = value(a) - value(b);

@@ -586,6 +586,7 @@ pub struct GateSequence {
     registered_tasks: [u32; 6],
     #[serde(default)]
     controller_state: ControllerState,
+    lap_clock: Option<crate::kart_lap_clock::Clock>,
     vehicle_state: Option<i32>,
     updates: Vec<SequenceEvent>,
 }
@@ -625,6 +626,7 @@ enum SequenceEvent {
     },
     Controller {
         controller: crate::kart_story_target::ControllerSignals,
+        timing: Option<crate::kart_lap_clock::TimingSignals>,
     },
 }
 #[derive(Deserialize)]
@@ -677,6 +679,7 @@ pub fn story_sequence(
     let (mut timer, mut count, mut seq) = (s.timer_word, s.primary_kart_counter, s.sequence);
     let mut updates = Vec::new();
     let mut clock = s.controller_state;
+    let mut lap = s.lap_clock;
     let mut vehicle = s.vehicle_state;
     let mut timeout = None;
     let mut target_handle = None;
@@ -818,8 +821,8 @@ pub fn story_sequence(
                 updates.push(json!({"timeoutTick":result}));
                 continue;
             }
-            SequenceEvent::Controller { controller } => {
-                let r = crate::kart_story_target::controller_verified(controller.input(
+            SequenceEvent::Controller { controller, timing } => {
+                let mut input = controller.input(
                     timer as i32,
                     clock.elapsed,
                     clock.flag_3ce24,
@@ -827,7 +830,16 @@ pub fn story_sequence(
                     target.map(|t| t.latch),
                     finish,
                     mode,
-                )?)?;
+                )?;
+                input.lap_clock=match (timing,lap){
+                    (Some(signals),Some(c))=>Some(signals.with_clock(c,count as i32)),
+                    (None,None)=>None,
+                    _=>return Err(Error::invalid("lap replay requires both initial lap_clock and timing on controller events")),
+                };
+                let r = crate::kart_story_target::controller_verified(input)?;
+                if let Some(c) = r.lap_clock {
+                    lap = Some(c);
+                }
                 timer = r.remaining as u32;
                 clock = ControllerState {
                     elapsed: r.elapsed,
@@ -868,6 +880,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "lapClock":lap,"finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }

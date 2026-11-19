@@ -107,7 +107,7 @@ pub(crate) fn step_constants(constants: &[u8], input: Input) -> Result<Output> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerInput {
-    lap_clock: Option<crate::kart_lap_clock::ClockInput>,
+    pub(crate) lap_clock: Option<crate::kart_lap_clock::ClockInput>,
     race_results: Option<ResultContext>,
     remove_task: bool,
     pursuit_latch: i32,
@@ -189,7 +189,7 @@ impl ControllerSignals {
 #[derive(Serialize)]
 pub struct ControllerUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
-    lap_clock: Option<crate::kart_lap_clock::Clock>,
+    pub(crate) lap_clock: Option<crate::kart_lap_clock::Clock>,
     #[serde(skip_serializing_if = "Option::is_none")]
     race_results: Option<ResultActions>,
     pub(crate) elapsed: i32,
