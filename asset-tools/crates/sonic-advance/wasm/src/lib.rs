@@ -18,6 +18,7 @@ use std::cell::RefCell;
 #[derive(Default)]
 struct Host {
     input: Vec<u8>,
+    flash_copy: Vec<u8>,
     runtime: Option<NativeRun<'static>>,
     pixels: Vec<u8>,
     rgb: Vec<u32>,
@@ -355,4 +356,50 @@ pub extern "C" fn asoe_error_ptr() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn asoe_error_len() -> u32 {
     HOST.with(|cell| cell.borrow().error.len() as u32)
+}
+
+// A browser file input supplies a copy. No API here writes to the selected file.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn asoe_flash_buffer(length: u32) -> u32 {
+    if run(|host| {
+        source()?;
+        if length as usize != sonic_advance_assets::flash::FLASH_BYTES {
+            return Err(Error("expected a 64 KiB ASOE save".into()));
+        }
+        host.flash_copy = vec![0; length as usize];
+        Ok(())
+    }) != 0
+    {
+        return 0;
+    }
+    HOST.with(|cell| cell.borrow_mut().flash_copy.as_mut_ptr() as usize as u32)
+}
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn asoe_garden_save_copy() -> u32 {
+    if run(|host| {
+        let flash = &host.flash_copy;
+        let scan = sonic_advance_assets::flash::inspect(flash)?;
+        let sector = scan
+            .selected_game_sector
+            .ok_or_else(|| Error("no valid main game record for launch score".into()))?;
+        let offset = sector * sonic_advance_assets::flash::SECTOR_BYTES + 0x428;
+        let score = u32::from_le_bytes(flash[offset..offset + 4].try_into().unwrap());
+        let game = sonic_advance_assets::garden_cartridge::CartridgeGarden::load(flash, score)?;
+        let out = game.save_copy();
+        if sonic_advance_assets::flash::inspect(&out)?.selected_tiny_sector
+            != Some(scan.next_tiny_sector)
+        {
+            return Err(Error(
+                "new generation would not be selected on reload".into(),
+            ));
+        }
+        host.flash_copy = out;
+        Ok(())
+    }) != 0
+    {
+        return 0;
+    }
+    HOST.with(|cell| cell.borrow().flash_copy.as_ptr() as usize as u32)
 }

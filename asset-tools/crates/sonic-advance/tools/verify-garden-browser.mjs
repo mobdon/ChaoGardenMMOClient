@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
@@ -62,6 +64,30 @@ try {
   assert.match(await page.locator('#status').textContent(),/Round stopped/);
   await key('z');assert.equal(await action(),'Garden');await key('x');
   assert.equal(await page.locator('#stage-heading').textContent(),'Main menu');
+  await advance(400);await key('ArrowUp');await key('z');await advance(1500);
+  assert.equal(await action(),'Garden');
+  // All bytes supplied to the file picker are synthetic; no private save is required.
+  const flash=Buffer.alloc(65536,255);
+  flash.fill(0,0,0x430);flash.writeUInt32LE(0x4f524950,0);flash.writeUInt32LE(125,0x428);
+  flash.writeUInt32LE(0x4f524950+125,0x42c);
+  const r=flash.subarray(15*4096,15*4096+0x858);
+  for(let i=0;i<r.length;i++) r[i]=(31*i+7)&255;
+  r.writeUInt16LE(0x817,2);r.writeUInt32LE(17,4);r.writeUInt32LE(100,8);
+  r.writeUInt32LE(800,12);r.writeUInt32LE(0xfedcba98,0x18);
+  let crc=65535;
+  for(const b of r.subarray(2)){crc^=b;for(let j=0;j<8;j++)crc=(crc>>>1)^((crc&1)?0x8408:0);}
+  r.writeUInt16LE(crc^65535,0);
+  const saveCopy=async buffer=>{
+    await page.locator('#garden-flash-file').setInputFiles({name:'fixture.sav',mimeType:'application/octet-stream',buffer});
+    const download=page.waitForEvent('download',{timeout:5000});
+    await page.locator('#garden-flash-copy').click();
+    return readFile(await (await download).path());
+  };
+  const copy=await saveCopy(flash);
+  assert.equal(createHash('sha256').update(copy.subarray(10*4096,10*4096+0x858)).digest('hex'),'4d796f24d29c01ff2fee2d7a36b31f60132398715a0921bf05331a6685200c13');
+  const reopened=await saveCopy(copy);
+  assert.equal(reopened.readUInt32LE(11*4096+12),825);
+  assert.equal(reopened.readUInt32LE(11*4096+4),19);
   assert.deepEqual(errors,[]);
   console.log('Browser passed: title → Garden → seven Memory pairs → Garden → hands round → Garden → main menu.');
 } finally {await browser?.close();await new Promise(done=>server.close(done));}

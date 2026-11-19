@@ -33,6 +33,12 @@
           <button id="pause" type="button" disabled>Resume</button>
           <button id="reset" type="button" disabled>Reset stage</button>
         </div>
+        <div id="garden-save" hidden>
+          <label>Cartridge save (64 KiB) <input id="garden-flash-file" type="file" accept=".sav,.srm"></label>
+          <button type="button" id="garden-flash-copy">Download reconciled save copy</button>
+          <p>Applies the cartridge’s saved score to its Garden record. Practice points are separate.</p>
+          <output id="garden-flash-status"></output>
+        </div>
         <pre id="garden-view" hidden aria-label="Garden practice controls and state"></pre>
         <p id="status" class="status" role="status" aria-live="polite">Loading the local Rust runtime…</p>
         <p class="keyboard"><kbd>Enter</kbd> Start <span>·</span> <kbd>↑</kbd> <kbd>↓</kbd> select, <kbd>Z</kbd> / <kbd>Space</kbd> confirm <span>·</span> <kbd>←</kbd> <kbd>→</kbd> move <span>·</span> <kbd>Z</kbd> / <kbd>Space</kbd> jump <span>&middot;</span> Hold <kbd>&darr;</kbd>, tap jump, then release <kbd>&darr;</kbd> to spindash.</p>

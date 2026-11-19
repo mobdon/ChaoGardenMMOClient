@@ -85,6 +85,7 @@ function showSnapshot() {
   atTitle = snapshot.scene === 'tinyGarden' || snapshot.scene === 'title' || snapshot.scene === 'mainMenu' || snapshot.scene === 'characters';
   const gardenView = document.querySelector('#garden-view');
   gardenView.hidden = snapshot.scene !== 'tinyGarden';
+  document.querySelector('#garden-save').hidden = gardenView.hidden;
   if (!gardenView.hidden) {
     gardenView.textContent = snapshot.view;
     document.querySelector('#stage-heading').textContent = 'Tiny Chao Garden · local practice';
@@ -300,3 +301,23 @@ function animate(now) {
 controls();
 void startEngine();
 requestAnimationFrame(animate);
+
+document.querySelector('#garden-flash-copy').addEventListener('click', async () => {
+  const out = document.querySelector('#garden-flash-status');
+  try {
+    const file = document.querySelector('#garden-flash-file').files[0];
+    if (!file || file.size !== 65536) throw new Error('Choose a 65,536-byte cartridge save.');
+    const bytes = await file.arrayBuffer();
+    const ptr = api.asoe_flash_buffer(bytes.byteLength);
+    if (!ptr) throw new Error(wasmError());
+    new Uint8Array(api.memory.buffer, ptr, bytes.byteLength).set(new Uint8Array(bytes));
+    const result = api.asoe_garden_save_copy();
+    if (!result) throw new Error(wasmError());
+    const copy = new Uint8Array(api.memory.buffer, result, 65536).slice();
+    const url = URL.createObjectURL(new Blob([copy], {type:'application/octet-stream'}));
+    const link = document.createElement('a');
+    link.href = url; link.download = 'tiny-garden-copy.sav'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    out.textContent = 'Save copy prepared. Your selected file was not changed.';
+  } catch (error) { out.textContent = error.message; }
+});
