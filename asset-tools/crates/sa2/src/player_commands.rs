@@ -999,10 +999,25 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 "kart-gate-observations",
             )?);
             if command == "kart-story-gate-display" {
-                sa2_asset_tools::kart_gate::presentation(
+                let mut report = sa2_asset_tools::kart_gate::presentation(
                     &bytes,
                     serde_json::from_slice(&extras[0].bytes)?,
-                )?
+                )?;
+                if report["draw"].is_object() {
+                    let path = input.with_file_name("PRS").join("course.pak");
+                    extras.push(Extra::read(
+                        &path,
+                        source_label(&path, root)?,
+                        16 * 1024 * 1024,
+                        "kart-course-texture-bank",
+                    )?);
+                    sa2_asset_tools::kart_gate::bind_draw_textures(
+                        &bytes,
+                        &extras[1].bytes,
+                        &mut report,
+                    )?;
+                }
+                report
             } else if command == "kart-race-gate-tick" {
                 serde_json::to_value(sa2_asset_tools::kart_gate::racing_tick(
                     &bytes,

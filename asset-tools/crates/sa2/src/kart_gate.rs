@@ -461,7 +461,8 @@ pub fn presentation(bytes: &[u8], request: Presentation) -> Result<serde_json::V
             let model = target(0xb8f6)?;
             let mut table = target(0xb87a)?;
             let mut writes = Vec::new();
-            if byte_3 <= 1 {
+            let mut runtime = data.to_vec();
+            {
                 while let Some((_, object)) = rel.local_pointer(5, table)? {
                     if object == model {
                         let count = i32::from_be_bytes(
@@ -482,16 +483,93 @@ pub fn presentation(bytes: &[u8], request: Presentation) -> Result<serde_json::V
                                 )
                             });
                             let after = (before & 0xc000) + if byte_3 == 0 { 69 } else { 73 };
-                            writes.push(json!({"offset":at,"before":before,"after":after}));
+                            if byte_3 <= 1 {
+                                runtime[at as usize..at as usize + 2]
+                                    .copy_from_slice(&after.to_be_bytes());
+                                writes.push(json!({"offset":at,"before":before,"after":after}));
+                            } else {
+                                runtime[at as usize..at as usize + 2]
+                                    .copy_from_slice(&before.to_be_bytes());
+                            }
                         }
                     }
                     table += 12;
                 }
             }
+            if rel.local_pointer(5, model + 44)?.is_some()
+                || rel.local_pointer(5, model + 48)?.is_some()
+            {
+                return Err(invalid());
+            }
+            let attach = ptr(model + 4)?;
+            let geometry = crate::kart_story_target::vertices_from_data(
+                &rel,
+                &runtime,
+                attach,
+                &mut crate::visual::Material::default(),
+            )?;
+            let node = &data[model as usize..model as usize + 52];
+            let w = |i: usize| u32::from_be_bytes(node[i..i + 4].try_into().unwrap());
+            let v = |i: usize| [w(i), w(i + 4), w(i + 8)];
+            let pose = json!({"flags":w(0),"position":(v(8).map(f32::from_bits)),"angles":(v(20).map(|x|x as i32)),"scale":(v(32).map(f32::from_bits))});
             Ok(
-                json!({"draw":{"model":model,"textureList":target(0xb8ea)?,"position":position,
+                json!({"draw":{"model":model,"attach":attach,"node":pose,"geometry":geometry,"textureList":target(0xb8ea)?,"position":position,
                 "rotations":[["z",angles[2]],["x",angles[0]],["y",angles[1]]]},"writes":writes}),
             )
         }
     }
+}
+
+pub fn bind_draw_textures(bytes: &[u8], pak: &[u8], report: &mut serde_json::Value) -> Result<()> {
+    let rel = verified_module(bytes)?;
+    let data = rel.data(5)?;
+    let invalid = || Error::invalid("unresolved story gate texture");
+    let ptr = |at| {
+        rel.local_pointer(5, at)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v)
+            .ok_or_else(invalid)
+    };
+    let draw = &mut report["draw"];
+    let list =
+        u32::try_from(draw["textureList"].as_u64().ok_or_else(invalid)?).map_err(|_| invalid())?;
+    let names = ptr(list)?;
+    let count = u32::from_be_bytes(
+        data.get(list as usize + 4..list as usize + 8)
+            .ok_or_else(invalid)?
+            .try_into()
+            .unwrap(),
+    );
+    let bank = crate::archive::read_pak(pak)?;
+    let mut textures = std::collections::BTreeMap::new();
+    for polygon in draw["geometry"]["polygons"]
+        .as_array()
+        .ok_or_else(invalid)?
+    {
+        let Some(slot) = polygon["material"]["textureId"].as_u64() else {
+            continue;
+        };
+        if slot >= count as u64 {
+            return Err(invalid());
+        }
+        if textures.contains_key(&slot) {
+            continue;
+        }
+        let at = ptr(names + 12 * slot as u32)? as usize;
+        let name = std::ffi::CStr::from_bytes_until_nul(&data[at..])
+            .map_err(|_| invalid())?
+            .to_str()
+            .map_err(|_| invalid())?
+            .trim_end();
+        let member = format!("course\\{name}.dds");
+        let entry = bank
+            .iter()
+            .find(|e| e.name.eq_ignore_ascii_case(&member))
+            .ok_or_else(invalid)?;
+        let image = crate::texture::decode_dds(entry.data)?;
+        textures.insert(slot,serde_json::json!({"entry":entry.name,"offset":entry.offset,"length":entry.length,"width":image.width,
+            "height":image.height,"ddsSha256":crate::manifest::sha256(entry.data),"rgbaSha256":crate::manifest::sha256(&image.rgba)}));
+    }
+    draw["textures"] = serde_json::to_value(textures)?;
+    Ok(())
 }

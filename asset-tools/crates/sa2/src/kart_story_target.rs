@@ -579,13 +579,16 @@ fn polygons(
         let words = match kind {
             255 => break,
             8 => 2,
-            18..=21 | 23 | 64 | 65 => 2 + usize::from(word(at + 2)?),
+            17..=21 | 23 | 64 | 65 => 2 + usize::from(word(at + 2)?),
             _ => return Err(invalid()),
         };
         let raw = (0..words)
             .map(|i| word(at + 2 * i))
             .collect::<Result<Vec<_>>>()?;
         let diffuse_rgba = if (16..32).contains(&kind) && kind & 1 != 0 {
+            if raw.len() < 4 {
+                return Err(invalid());
+            }
             let [b, g] = raw[2].to_le_bytes();
             let [r, a] = raw[3].to_le_bytes();
             Some([r, g, b, a])

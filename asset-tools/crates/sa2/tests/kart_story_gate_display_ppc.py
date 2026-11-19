@@ -66,6 +66,25 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         r=rust(i,q);draw=r["draw"]
         assert calls==([] if draw is None else [0xb8b0,draw["position"],*draw["rotations"],draw["textureList"],draw["model"],0xb8fc])
         assert r["writes"]==([dict(offset=at,before=before,after=get(ptr,"H")[0])] if flag<2 and draw else [])
+        if draw:
+            root=base[5]+draw["model"];att=get(root+4,"I")[0]
+            assert att-base[5]==draw["attach"] and get(root+44,"2I")== (0,0)
+            vp=get(att,"I")[0]+8
+            vertices=draw["geometry"]["chunks"][0]["vertices"]
+            for v in vertices:
+                x,y,z,argb=get(vp,"3fI");vp+=16;a,red,green,blue=argb.to_bytes(4,"big")
+                assert struct.pack(">3f",*v["position"])==struct.pack(">3f",x,y,z)
+                assert v["diffuseRgba"]==[red,green,blue,a]
+            assert len(vertices)==244
+            for polygon in draw["geometry"]["polygons"]:
+                c=polygon["chunk"];w=c["rawWords"]
+                assert struct.pack(f">{len(w)}H",*w)==bytes(u.mem_read(base[5]+c["offset"],2*len(w)))
+            assert str(get(ptr,"H")[0]&0x1fff) in draw["textures"]
+            bank=(rel.parent/"PRS"/"course.pak").read_bytes()
+            for tx in draw["textures"].values():
+                rgba=Image.open(io.BytesIO(bank[tx["offset"]:][:tx["length"]])).convert("RGBA")
+                assert hashlib.sha256(rgba.tobytes()).hexdigest()==tx["rgbaSha256"]
+            print(f"Gate byte {flag}: {len(vertices)} vertices, {len(draw['textures'])} texture slots")
     for i,work in enumerate([0,wk],10):
         put(ring+56,"I",work);calls=[];run(0xb914)
         call=rust(i,dict(operation="cleanup",task=ring,work_38=work))["call"]
