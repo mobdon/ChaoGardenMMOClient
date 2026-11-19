@@ -123,6 +123,8 @@ fn mounted_campaign_routes() {
                     obj.remove("engine_result");
                     obj.remove("stage_byte");
                     obj.insert("contact_speed".into(), serde_json::json!(1.0));
+                    frame["bonus_inputs"] =
+                        serde_json::json!([{"value":19,"equipment":0},{"value":60,"equipment":0}]);
                     let req = serde_json::json!({"engine_result":1,"stage_byte":1,"frames":[frame,frame]});
                     let seq = stage
                         .replay_object(
@@ -132,6 +134,11 @@ fn mounted_campaign_routes() {
                         )
                         .unwrap();
                     assert_eq!(seq["frames"][0]["handoff"], out["handoff"]);
+                    assert_eq!(
+                        seq["frames"][0]["bonusSelection"],
+                        serde_json::json!({"slot":1,"itemId":1,"counterIncrement":20})
+                    );
+                    assert!(seq["frames"][1]["bonusSelection"].is_null());
                     assert_eq!(seq["frames"][1]["slotTimers"], serde_json::json!([0, 299]));
                     assert_eq!(seq["frames"][1]["steps"], serde_json::json!([-44, 1810]));
                     checkpoint_levels.insert(level);

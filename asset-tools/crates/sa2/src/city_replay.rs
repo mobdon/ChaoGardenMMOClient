@@ -419,6 +419,13 @@ struct CheckpointFrame {
     hit: Option<(i32, u32)>,
     players: [crate::checkpoint::ContactPlayer; 2],
     contact_speed: f32,
+    bonus_inputs: Option<[CheckpointBonusInput; 2]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointBonusInput {
+    value: i16,
+    equipment: u16,
 }
 
 fn checkpoint(p: &Placement, request: &[u8]) -> Result<Value> {
@@ -444,9 +451,17 @@ fn checkpoint_frames(p: &Placement, req: CheckpointReplay) -> Result<Value> {
     let mut frames = Vec::new();
     for f in bounded(req.frames)? {
         let call = state.tick(f.hit, &f.players, byte, f.contact_speed)?;
+        let selection = call.as_ref().and_then(|c| {
+            let input = &f.bonus_inputs.as_ref()?[c.slot];
+            let selected = crate::checkpoint::contact_bonus(input.value, input.equipment);
+            Some(
+                json!({"slot":c.slot,"itemId":selected.as_ref().map(|b|b.item_id),
+                "counterIncrement":selected.map_or(0,|b|b.counter_increment)}),
+            )
+        });
         frames.push(
             json!({"mode":state.contact.mode,"slotTimers":state.contact.slot_timers,
-            "angles":state.spin.angles,"steps":state.spin.steps,"handoff":call}),
+            "angles":state.spin.angles,"steps":state.spin.steps,"bonusSelection":selection,"handoff":call}),
         );
     }
     Ok(

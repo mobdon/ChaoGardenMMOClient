@@ -75,6 +75,21 @@ for path in sorted(root.glob("stg*D.rel")):
                 assert raw[:size]==actual[:size],path
             else:
                 assert sec==6 and addr==0xdd0 and other==local[0x44986+shift][2],path
+    # Selection only: compare every instruction except the six relative item
+    # calls. All six must target one helper with the same entry instructions.
+    calls={0x44854,0x44864,0x4487c,0x44894,0x448d8,0x4491c}
+    targets=set()
+    for off in range(0x44814,0x4494c,4):
+        i=off+shift
+        if off not in calls:
+            assert text[i:i+4]==city[off:off+4],path
+        else:
+            assert branch_body(text,i)==branch_body(city,off),path
+            displacement=int.from_bytes(text[i:i+4],"big")&0x03fffffc
+            targets.add(i+((displacement^0x02000000)-0x02000000))
+    assert len(targets)==1,path
+    assert {i-shift:t for i,t in imports.items() if 0x44814<=i-shift<0x4494c}=={
+        i:t for i,t in reference.items() if 0x44814<=i<0x4494c},path
     matched.append(path.stem)
 assert len(matched)==50, matched
 print("50 stage modules match the contact gate, player-state handoff instructions and external references.")
