@@ -2,6 +2,21 @@
 use crate::{manifest, Error, Result};
 use serde_json::{json, Value};
 
+/// Decode a marker-delimited 33-bit MPEG timestamp without reducing it to milliseconds.
+fn timestamp(data: &[u8], prefix: u8) -> Result<u64> {
+    let v = data
+        .get(..5)
+        .ok_or_else(|| Error::invalid("short MPEG timestamp"))?;
+    if v[0] >> 4 != prefix || (v[0] & v[2] & v[4] & 1) == 0 {
+        return Err(Error::invalid("invalid MPEG timestamp marker"));
+    }
+    Ok((u64::from(v[0] & 14) << 29)
+        | (u64::from(v[1]) << 22)
+        | (u64::from(v[2] & 254) << 14)
+        | (u64::from(v[3]) << 7)
+        | u64::from(v[4] >> 1))
+}
+
 /// Returns the original ADX streams in MPEG stream-ID order (C0, C1).
 pub fn demux_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2])> {
     let (report, audio, _) = demux_av_602(b)?;
@@ -16,6 +31,7 @@ pub fn demux_av_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
     }
     let mut at = 0;
     let mut audio: [Vec<u8>; 2] = Default::default();
+    let mut timing = Vec::new();
     let mut counts = [0u32; 256];
     loop {
         let h = b
@@ -49,6 +65,7 @@ pub fn demux_av_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
             {
                 return Err(Error::invalid("unexpected event 602 audio PES header"));
             }
+            timing.push(json!({"stream":id,"packetOffset":at,"streamOffset":audio[usize::from(id-0xc0)].len(),"pts":timestamp(&packet[2..],2)?,"dts":null}));
             audio[usize::from(id - 0xc0)].extend_from_slice(&packet[7..]);
         }
         if id == 0xe0 {
@@ -64,8 +81,21 @@ pub fn demux_av_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
             }
             header += match packet.get(header) {
                 Some(0x0f) => 1,
-                Some(v) if v >> 4 == 2 => 5,
-                Some(v) if v >> 4 == 3 => 10,
+                Some(v) if matches!(v >> 4, 2 | 3) => {
+                    let prefix = v >> 4;
+                    let pts = timestamp(&packet[header..], prefix)?;
+                    let dts = if prefix == 3 {
+                        Some(timestamp(&packet[header + 5..], 1)?)
+                    } else {
+                        None
+                    };
+                    timing.push(json!({"stream":id,"packetOffset":at,"streamOffset":video.len(),"pts":pts,"dts":dts}));
+                    if dts.is_some() {
+                        10
+                    } else {
+                        5
+                    }
+                }
                 _ => return Err(Error::invalid("unexpected video PES header")),
             };
             video.extend_from_slice(
@@ -80,7 +110,7 @@ pub fn demux_av_602(b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> {
         return Err(Error::invalid("unexpected movie end padding"));
     }
     Ok((
-        json!({"container":"Sofdec","packCount":counts[0xba],"videoPackets":counts[0xe0],"audioPackets":{"c0":counts[0xc0],"c1":counts[0xc1]},"endPaddingBytes":b.len()-at}),
+        json!({"container":"Sofdec","clockHz":90000,"timedPackets":timing,"packCount":counts[0xba],"videoPackets":counts[0xe0],"audioPackets":{"c0":counts[0xc0],"c1":counts[0xc1]},"endPaddingBytes":b.len()-at}),
         audio,
         video,
     ))

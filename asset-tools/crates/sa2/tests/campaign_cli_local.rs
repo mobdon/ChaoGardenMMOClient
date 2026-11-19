@@ -389,6 +389,22 @@ fn story_run_stops_before_gameplay() {
             assert_eq!(v["stop"]["movie"]["packCount"], 14099);
             assert_eq!(v["stop"]["movie"]["videoPackets"], 12632);
             assert_eq!(v["stop"]["movie"]["audioPackets"]["c1"], 732);
+            let timing = v["stop"]["movie"]["timedPackets"].as_array().unwrap();
+            let mut reference_bytes = Vec::new();
+            for pkt in timing {
+                reference_bytes.push(pkt["stream"].as_u64().unwrap() as u8);
+                for key in ["packetOffset", "streamOffset", "pts", "dts"] {
+                    let n = pkt[key]
+                        .as_u64()
+                        .unwrap_or_else(|| pkt["pts"].as_u64().unwrap());
+                    reference_bytes.extend(n.to_be_bytes());
+                }
+            }
+            assert_eq!(timing.len(), 2356);
+            assert_eq!(
+                sa2_asset_tools::manifest::sha256(&reference_bytes),
+                "955fb973f28976ee043d8aa825c21d057fb37c099ef4f6feb7899b85cef9a0e8"
+            );
             let video = &v["stop"]["movie"]["videoStream"];
             assert_eq!(
                 video["sha256"],
