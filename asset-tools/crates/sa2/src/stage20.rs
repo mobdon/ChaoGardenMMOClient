@@ -377,6 +377,7 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         let mut sub = v.submode;
         let mut ops = Vec::new();
         let mut cooldown = None;
+        let mut messenger = None;
         if counter > v.limit {
             if sub == 0 {
                 sub = 1;
@@ -395,6 +396,19 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
                         number(5, base + 8)?,
                     ];
                     ops.push(json!([0x9f8, pos, 0, 0, group, 2, 0]));
+                    if let Some(allocated) = v.messenger_allocated {
+                        let name_offset = field(0x26206, 5)? as usize;
+                        let data = &rel.data(5)?[name_offset..];
+                        let name = std::str::from_utf8(
+                            &data[..data.iter().position(|b| *b == 0).ok_or_else(invalid)?],
+                        )
+                        .map_err(|_| invalid())?;
+                        let initial = number(4, field(0x26272, 4)?)?;
+                        messenger = Some(json!({"create":[3,2,field(0x261fe,1)?,name],
+                            "created":if allocated{Some(json!({"position":pos,"rotation":[0,0,0],"group":group as f32,
+                            "parameter":initial,"taskWord":2,"initialize":0x25cac,"extraWord80":0,"extraFloat48":initial,
+                            "mode":6,"extraPosition":pos,"finalCall":[0x800b,0,0,0]}))}else{None}}));
+                    }
                 }
             } else if v.query.is_some() {
                 return Err(invalid());
@@ -425,6 +439,11 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         }
         report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"submode":sub,"counter":counter,
             "timerWrite":timer,"cooldownWrite":cooldown,"operations":ops});
+        if let Some(value) = messenger {
+            report["messenger"] = value;
+        } else if v.messenger_allocated.is_some() {
+            return Err(invalid());
+        }
     }
     Ok(report)
 }
@@ -532,6 +551,7 @@ struct StateEight {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StateOne {
+    messenger_allocated: Option<bool>,
     counter: i16,
     limit: i16,
     submode: i8,

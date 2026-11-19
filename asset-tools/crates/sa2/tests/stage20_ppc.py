@@ -262,11 +262,13 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
 print(idx,"state eight updates matched")
 
+messenger_case=None
 def one_call(cpu,pc,*_):
     site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
     if site==0x9f8:ops.append([site,list(get(reg(3),"fff")),*[reg(i) for i in range(4,9)]])
     elif site in (0xa00,0xa84,0xac4):ops.append([site,reg(3)])
     else:ops.append([site])
+    if site==0x9f8 and messenger_case is not None:return
     if site in (0x988,0xa18):cpu.reg_write(R.UC_PPC_REG_3,(query if site==0x988 else draw)&0xffffffff)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for site in (0x988,0x9f8,0xa00,0xa04,0xa18,0xa84,0xac4):
@@ -289,3 +291,43 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         assert json.loads(out.read_text())["controller"]==dict(dispatch=0x924,continueAt=0x1424,mode=m,submode=s,counter=ctr,
                    timerWrite=t if m==7 else None,cooldownWrite=None if cool==-1 else cool,operations=ops)
 print(len(cases),"state one timing and transition paths matched")
+
+def inspect_messenger(cpu,pc,*_):
+    global saved_registers
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    if site==0x26030:saved_registers=[reg(i) for i in range(25,32)]
+    elif site==0x262ec:
+        for i,val in enumerate(saved_registers,25):cpu.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),val)
+    elif site==0x26208:
+        label=bytes(cpu.mem_read(reg(6),32)).split(b"\0")[0].decode()
+        messenger.update(create=[reg(3),reg(4),reg(5)-base[1],label],created=None)
+        cpu.reg_write(R.UC_PPC_REG_3,msg if messenger_case else 0)
+    elif site==0x26284:
+        assert reg(3)==msg
+        put(msg+64,"I",extra)
+        messenger["created"]=dict(position=list(get(mwork+20,"fff")),rotation=list(get(mwork+8,"iii")),
+            group=get(mwork+32,"f")[0],parameter=get(mwork+36,"f")[0],taskWord=get(msg+76,"I")[0],initialize=0x25cac)
+    else:
+        messenger["created"].update(extraWord80=get(extra+80,"I")[0],extraFloat48=get(extra+48,"f")[0],
+            mode=get(mwork,"b")[0],extraPosition=list(get(extra,"fff")),finalCall=[reg(i) for i in range(3,7)])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x26030,0x262ec,0x26208,0x26284,0x262d4):
+    u.hook_add(UC_HOOK_CODE,inspect_messenger,begin=base[1]+site,end=base[1]+site)
+msg,mwork,extra=0x100900,0x100a00,0x100b00
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for messenger_case in (False,True):
+        for b in (6,7):
+            for query in (1,2,3):
+                draw=123;ops=[];messenger={}
+                u.mem_write(mwork,bytes([0xcd])*96);u.mem_write(extra,bytes([0xcd])*96);put(msg+52,"I",mwork)
+                put(work,"bbhhh",1,0,361,360,-1);put(player1+3,"b",6);put(player0+1,"b",b)
+                for r,v in [(1,0x100e00),(26,player1),(29,work),(31,player0)]:u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
+                u.emu_start(base[1]+0x924,base[1]+0x1424,count=350);assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+                c=dict(mode=1,engine_bytes=[0,0,0],player_flags=[0,0],state_one=dict(counter=361,limit=360,submode=0,
+                    character=6,slot0_byte=b,query=query,draw=draw,messenger_allocated=messenger_case))
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                assert json.loads(out.read_text())["controller"]["messenger"]==messenger
+print(idx,"opening messenger creations matched")
