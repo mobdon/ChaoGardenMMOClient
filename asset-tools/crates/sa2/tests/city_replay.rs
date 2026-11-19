@@ -319,3 +319,35 @@ fn terrain_ring_follows_small_changes_and_scatters_at_eight() {
     );
     assert_eq!(teardown[4], "DestroyTask");
 }
+
+#[test]
+fn range_return_skips_ring_initialization_pickup_and_retirement() {
+    let (p, d) = ring_fixture();
+    let normal = json!({"range_out":false,"spin_enabled":true,"player_items":[0,null]});
+    let mut outside = normal.clone();
+    outside["range_out"] = json!(true);
+    outside["player_items"] = json!([2, null]);
+    let mut hit = normal.clone();
+    hit["ccl_hit_slot"] = json!(0);
+    let frames = json!([outside, normal, outside, hit, outside, normal]);
+    let result = replay(
+        &p,
+        &d,
+        &serde_json::to_vec(&json!({"frames":frames})).unwrap(),
+    )
+    .unwrap();
+    let f = &result["frames"];
+    for (i, mode) in [(0, "Init"), (2, "Active"), (4, "Collected")] {
+        assert_eq!(f[i]["mode"], mode);
+        assert_eq!(f[i]["calls"], json!([["CheckRangeOut"]]));
+    }
+    assert_eq!(f[2]["yaw"], f[1]["yaw"]);
+    assert_eq!(f[5]["calls"], json!([["DeadOut"]]));
+    outside["ccl_hit_slot"] = json!(0);
+    assert!(replay(
+        &p,
+        &d,
+        &serde_json::to_vec(&json!({"frames":[outside]})).unwrap()
+    )
+    .is_err());
+}

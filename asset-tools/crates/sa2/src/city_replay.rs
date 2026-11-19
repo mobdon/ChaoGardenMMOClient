@@ -57,10 +57,18 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
     let mut magnet_timer = 0u16;
     let mut magnet_angle = 0f32;
     for frame in bounded(request.frames)? {
-        if frame.range_out {
-            return Err(Error::invalid("fixed ring requires an in-range task"));
+        // Fresh SET rings clear mwp in init; this host does not schedule linked mode-2 rings.
+        if frame.range_out
+            && (frame.ccl_hit_slot.is_some()
+                || frame.advance_result.is_some()
+                || frame.magnet_players.iter().any(Option::is_some)
+                || frame.terrain.is_some())
+        {
+            return Err(Error::invalid(
+                "parent ring observations supplied after range return",
+            ));
         }
-        let magnetic = if ring.mode == RingMode::Active {
+        let magnetic = if !frame.range_out && ring.mode == RingMode::Active {
             crate::ring_magnet::select(
                 ring.position,
                 magnet_timer,
@@ -98,7 +106,11 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
             None => None,
         };
         let previous_mode = ring.mode;
-        let events = ring.step(hit, frame.spin_enabled && magnetic.is_none());
+        let events = if frame.range_out {
+            Default::default()
+        } else {
+            ring.step(hit, frame.spin_enabled && magnetic.is_none())
+        };
         let mut calls = Vec::new();
         if let Some(slot) = events.player_reward {
             calls.extend([
@@ -133,7 +145,11 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
         if events.register_collision {
             calls.push(json!(["CCL_Entry"]));
         }
-        if let Some(terrain) = &mut terrain {
+        if frame.range_out {
+            if ring.mode != RingMode::Removed {
+                calls.push(json!(["CheckRangeOut"]));
+            }
+        } else if let Some(terrain) = &mut terrain {
             terrain.tick(
                 previous_mode,
                 &mut ring,
