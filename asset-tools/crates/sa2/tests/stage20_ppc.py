@@ -1121,3 +1121,41 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         assert next(o for o in rep["startup"]["finalSetup"] if o.get("local")==0xca28)["calls"]==splash_calls
         assert next(o for o in rep["exit"]["operations"] if o.get("local")==0xcac4)["release"]==release
 print(idx+1,"splash resource selections and releases matched")
+
+# Run the stage-owned spawn prefix; start after the register-save thunk.
+for off,k in ((0xcbba,6),(0xcbbe,4)):
+    address=layout_bss+0x6b0
+    put(base[1]+off,"H",((address+32768)>>16 if k==6 else address)&65535)
+def splash_allocate(cpu,pc,*_):
+    reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    create.extend([reg(3),reg(4),reg(5)-base[1],bytes(cpu.mem_read(reg(6),16)).split(b"\0")[0].decode()])
+    cpu.reg_write(R.UC_PPC_REG_3,msg if allocated else 0);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+u.hook_add(UC_HOOK_CODE,splash_allocate,begin=base[1]+0xcb48,end=base[1]+0xcb48)
+for site in (0xcbf4,0xcfd8):
+    u.hook_add(UC_HOOK_CODE,lambda cpu,*_:cpu.emu_stop(),begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for first,allocated in [(-1.,None),(0.,None),(1.5,False),(1.5,True)]:
+        for second in (-2.,0.,3.25):
+            for rotation in (None,[0xffff0001,0x1234,0x8000]):
+                pos=[-4.5,23.,1.25];phase=2.375;create=[]
+                u.mem_write(mwork,bytes([0xcd])*64);put(msg+52,"I",mwork);put(pose0,"fff",*pos)
+                if rotation:put(pose1,"III",*rotation)
+                put(layout_bss+0x6b0,"f",phase)
+                for r,val in [(1,0x100e00),(3,pose0),(4,pose1 if rotation else 0)]:u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+                for r,val in [(R.UC_PPC_REG_FPR1,first),(R.UC_PPC_REG_FPR2,second)]:u.reg_write(r,int.from_bytes(struct.pack(">d",val),"big"))
+                u.emu_start(base[1]+0xcb0c,stop,count=100)
+                dest=u.reg_read(R.UC_PPC_REG_PC)-base[1];assert dest in (0xcbf4,0xcfd8)
+                obs=dict(position=pos,rotation=rotation,first=first,second=second,allocated=allocated)
+                writes=None
+                if allocated:
+                    obs["initial_phase"]=phase
+                    if rotation is None:assert bytes(u.mem_read(mwork+8,12))==bytes([0xcd])*12
+                    writes=dict(position=list(get(mwork+20,"fff")),rotationWrite=list(get(mwork+8,"III")) if rotation else None,
+                        work32=get(mwork+32,"f")[0],work36=get(mwork+36,"f")[0],work40=get(mwork+40,"f")[0],
+                        task76=get(msg+76,"f")[0],callback28=get(msg+28,"I")[0]-base[1],callback24=get(msg+24,"I")[0]-base[1])
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_spawn=obs)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                assert json.loads(out.read_text())["splashSpawn"]==dict(create=create or None,writes=writes,continueAt=dest)
+print(idx,"splash creation and placement paths matched")

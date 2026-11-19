@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    splash_spawn: Option<SplashSpawn>,
     exit: Option<StageExit>,
     fog_blend: Option<FogBlend>,
     fog_header: Option<[u32; 4]>,
@@ -16,6 +17,60 @@ struct Request {
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashSpawn {
+    position: [f32; 3],
+    rotation: Option<[u32; 3]>,
+    first: f32,
+    second: f32,
+    allocated: Option<bool>,
+    initial_phase: Option<f32>,
+}
+fn splash_spawn(rel: &CityRel<'_>, s: SplashSpawn) -> Result<Value> {
+    let invalid = || Error::invalid("inconsistent splash spawn observation");
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend as usize)
+            .ok_or_else(invalid)
+    };
+    let scalar = |site, section| -> Result<f32> {
+        let at = ptr(site, section)?;
+        Ok(f32::from_be_bytes(
+            rel.data(section)?
+                .get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut create = None;
+    let mut writes = None;
+    if s.first > scalar(0xcb22, 4)? {
+        let allocated = s.allocated.ok_or_else(invalid)?;
+        let label = &rel.data(5)?[ptr(0xcb46, 5)?..];
+        let name =
+            std::str::from_utf8(&label[..label.iter().position(|&b| b == 0).ok_or_else(invalid)?])
+                .map_err(|_| invalid())?;
+        create = Some(json!([2, 3, ptr(0xcb3e, 1)?, name]));
+        if allocated {
+            writes = Some(
+                json!({"position":s.position,"rotationWrite":s.rotation,"work32":s.first,
+                "task76":s.second*scalar(0xcb9a,5)?,"work36":scalar(0xcbae,5)?,
+                "work40":s.initial_phase.ok_or_else(invalid)?,"callback28":ptr(0xcbce,1)?,"callback24":ptr(0xcbda,1)?}),
+            );
+        }
+    } else if s.allocated.is_some() {
+        return Err(invalid());
+    }
+    if writes.is_none() && s.initial_phase.is_some() {
+        return Err(invalid());
+    }
+    Ok(
+        json!({"create":create,"writes":writes,"continueAt":if s.second>scalar(0xcbe6,4)?{0xcbf4}else{0xcfd8}}),
+    )
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -656,6 +711,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        splash_spawn: spawn,
         exit,
         fog_blend,
         fog_header,
@@ -688,6 +744,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(s) = spawn {
+        report["splashSpawn"] = splash_spawn(&rel, s)?;
+    }
     if let Some(e) = exit {
         report["exit"] = stage_exit(&rel, e)?;
     }
