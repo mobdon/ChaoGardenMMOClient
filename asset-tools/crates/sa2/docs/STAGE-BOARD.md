@@ -53,3 +53,20 @@ int main(void){
  return 0;
 }
 ```
+
+### Player controller evidence
+
+The local PC function reference names the request writer `DoNextAction` at
+`0x46bff0` and Sonic's consumer `Sonic_CheckNextAction` at `0x7220e0`.
+Checking those virtual addresses through the PE section table of the installed
+Steam executable (SHA-256 `4b1e09d782a2d919cbed2324ba2c0c78ef5fbe1677d400edab39608191f12c16`)
+did not yield recognizable implementations of either function. The local
+launcher compatibility copy has the same hash and supplies no independent
+evidence. The GSNE8P symbol map identifies SetInputP at `0x8003a508`, whereas
+the installed City Escape REL call-site trace targets `0x8003a2a0`. Do not
+transfer function addresses between these builds without matching the code.
+
+A matching main executable or an independently verified controller trace is
+needed to establish what request 0x22 does to the rider. Route replay therefore
+takes the rider's animation as an observation; it cannot establish that either
+of the opening triggers caused that animation.
