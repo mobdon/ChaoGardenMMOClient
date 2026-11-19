@@ -49,7 +49,7 @@ MountedStage::resolve(layer, index) returns the original placement and optional 
 
 Run cargo test --locked --test fan_stage_local -- --ignored from this crate with SA2_GAME_PATH and SA2_PC_CONFIG pointing to the installation and SA Tools PC_SA2 config directory. The installed test checks all authored level dispatches, distinct SETs and resolution counts, exact kart course bytes, start and terrain coverage, all 40 collision-world builds, a City Escape ray, unavailable resources, a wrong SET, and rejection of an event ordinal. Only code, source identities, and observed counts are stored here.
 
-Big Foot’s boss task later places player slot zero at (-90, 0, 0) during its [intro callback](BIG-FOOT.md). The general start-row count above is unchanged.
+Big Footï¿½s boss task later places player slot zero at (-90, 0, 0) during its [intro callback](BIG-FOOT.md). The general start-row count above is unchanged.
 
 Both kart mounts also load their character-specific 40-byte story vehicle profile and five nine-byte rank-time rows from the Steam executable. Each row retains the level byte and the four D/C/B/A minute-second pairs; the two unidentified physics floats remain unknown1 and unknown2. Route 101 uses the Tornado car profile (speed cap 10), while Route 280 uses the Bat car profile (speed cap 12). Both have a separate top-speed field of 15. The mounted campaign test compares all named fields, thresholds and raw table hashes against independent SA Tools 786 split.exe binary exports of the two story physics and two rank-time sections in CART.ini. These are tuning and ranking inputs; steering, engine placement rounding, finish detection and rank assignment still require runtime verification.
 
@@ -75,7 +75,7 @@ Run `python tests/kart_ramp_ppc.py CLI CartD.rel PRIVATE_DIR` with Unicorn insta
 
 The report records transform inputs and subsequent conditional calls, not final kart velocity. Contact generation, the matrix result, the internals of the kart response at 0x5524 and external call effects are outside this replay. The request supplies post-response kart fields and the indexed course byte when required. See `tests/kart_ramp_contact_ppc.py` for 15 runnable inputs and the comparison with the actual contact loop, registry and secondary helper instructions; run with CLI, installed CartD.rel and an ignored temporary directory.
 
-The secondary helper at 0x5B90 returns zero for a cleared work+0x44 field or a signed work+0x48 slot of 8 or above. For mapped slots 0–7 and a nonzero work+0x44 it returns one, resetting the panel timer. Negative slots precede the verified table and are rejected. Helper 0x979C reads a signed course byte: 50–71 inclusive passes 0 to the imported routine at 0x8006C97C; other bytes pass -127. The subsequent call to 0x8006B710 selects its first argument from the native two-column table (ramp column 0), re-reading the slot after the first call. The replay accepts an optional changed slot for this reload, otherwise retaining the observed one. Call effects and the source of the live course index remain external.
+The secondary helper at 0x5B90 returns zero for a cleared work+0x44 field or a signed work+0x48 slot of 8 or above. For mapped slots 0ï¿½7 and a nonzero work+0x44 it returns one, resetting the panel timer. Negative slots precede the verified table and are rejected. Helper 0x979C reads a signed course byte: 50ï¿½71 inclusive passes 0 to the imported routine at 0x8006C97C; other bytes pass -127. The subsequent call to 0x8006B710 selects its first argument from the native two-column table (ramp column 0), re-reading the slot after the first call. The replay accepts an optional changed slot for this reload, otherwise retaining the observed one. Call effects and the source of the live course index remain external.
 
 `kart-ramp-response CartD.rel OUTPUT.json RESPONSE_INPUT.json` replays helper 0x5524 given the transformed vector received from the panel. When kart work+0x44 is nonzero it clears work+0x30 and +0x68 and copies the three vector words to +0x7C. Its nested yaw update (0x30DC) leaves task yaw untouched when both horizontal components have absolute value below 0.5; otherwise it scales the external angle result by the module's binary64 conversion constant, truncates and wraps the adjusted yaw to 16 bits. With work+0x44 zero, the helper writes a scalar at +0x264 and calls a turn helper using +0x274 and a 0x4000 limit. Null output fields mean no write or call.
 
@@ -102,7 +102,7 @@ maps each runtime segment index to [piece occurrence, quad within piece]. In
 `kart-progress-tick`, the historical fields `course_length` and `piece` mean
 runtime **segment count** and **segment index**. Route 101 has 321 authored
 pieces and 482 segments; Route 280 has 369 and 537. Beginner, Standard, and
-Expert have 123, 160, and 190 segments respectively. The directory does not
+Expert have 123, 160, and 190 segments respectively. The source-local directory does not
 supply world coordinates or determine whether a moving kart crossed a segment.
 
 The local oracle `tests/kart_crossing_ppc.py CartD.rel OUTPUT.json Courses/`
@@ -110,3 +110,19 @@ uses the independent SA Tools course splits and executes CartD 0x7388â€“0x7428.
 It compares the occurrence writes and every 32-byte source quad presented to
 the transform helper. It intercepts that helper; this does not verify its
 rotation, translation, intersection tests, or level completion.
+
+The same report includes `projected_segment_xz` in segment order and
+`projected_occurrence_poses` in piece order. CartD 0x72a4â€“0x7368 takes the
+previous piece displacement and turn from its 108-byte model row to place
+the next occurrence. Rust retains the full accumulated signed yaw, projects
+with mathematical sine/cosine, and rounds transformed vectors and accumulated
+translations to single precision. These quads can be passed to
+`kart-segment-geometry` for offline inspection; they are not observations of
+the original engine. The four external math calls starting at 0x93ac remain
+unported, including the final hit decision.
+
+Run `python tests/kart_projected_crossings.py OUTPUT.json Data_DLL.dll` with
+pefile installed for a second layout calculation using the PC export and
+double precision. Across the five installed courses the largest observed
+distance between the two projections was 0.01834 game units (Route 280).
+This comparison does not establish a tolerance for real gameplay contacts.

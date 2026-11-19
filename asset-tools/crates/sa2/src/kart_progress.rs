@@ -156,17 +156,22 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
     verify(bytes)?;
     let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
     let invalid = || Error::invalid("invalid CartD crossing directory");
-    let hi = rel.reference(1, 0x715a).ok_or_else(invalid)?;
-    let lo = rel.reference(1, 0x715e).ok_or_else(invalid)?;
-    if (hi.module, hi.section, hi.kind, lo.kind) != (80, 5, 6, 4)
-        || (hi.module, hi.section, hi.addend) != (lo.module, lo.section, lo.addend)
-    {
-        return Err(invalid());
-    }
+    let directory = |at| -> Result<u32> {
+        let hi = rel.reference(1, at).ok_or_else(invalid)?;
+        let lo = rel.reference(1, at + 4).ok_or_else(invalid)?;
+        if (hi.module, hi.section, hi.kind, lo.kind) != (80, 5, 6, 4)
+            || (hi.module, hi.section, hi.addend) != (lo.module, lo.section, lo.addend)
+        {
+            return Err(invalid());
+        }
+        Ok(hi.addend)
+    };
+    let crossings = directory(0x715a)?;
+    let models = directory(0x7172)? as usize;
     let data = rel.data(5)?;
     let mut pieces = Vec::new();
     for id in 0..85 {
-        let row = hi.addend + id * 8;
+        let row = crossings + id * 8;
         let at = row as usize + 4;
         let count = u32::from_be_bytes(
             data.get(at..at + 4)
@@ -198,14 +203,45 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
     let mut routes = Vec::new();
     for course in crate::kart_course::courses(exe)? {
         let mut segments = Vec::new();
+        let mut translation = [0f32; 3];
+        let mut yaw = 0i32;
+        let mut poses = Vec::new();
+        let mut projected = Vec::new();
         for (occurrence, &id) in course.piece_ids.iter().enumerate() {
-            for local in 0..pieces.get(id as usize).ok_or_else(invalid)?.len() {
+            let row = models + usize::from(id) * 108;
+            let fields = data.get(row + 8..row + 24).ok_or_else(invalid)?;
+            let word = |at: usize| u32::from_be_bytes(fields[at..at + 4].try_into().unwrap());
+            // Native task poses and transformed vectors use single precision.
+            // The imported engine sine/cosine and matrix rounding are unverified.
+            let (sin, cos) = (f64::from(yaw as u16) * std::f64::consts::TAU / 65536.).sin_cos();
+            let rotate = |x: f32, z: f32| {
+                [
+                    (cos * f64::from(x) + sin * f64::from(z)) as f32,
+                    (-sin * f64::from(x) + cos * f64::from(z)) as f32,
+                ]
+            };
+            poses.push(serde_json::json!({"translation":translation,"yaw_bams":yaw}));
+            for (local, quad) in pieces
+                .get(id as usize)
+                .ok_or_else(invalid)?
+                .iter()
+                .enumerate()
+            {
                 segments.push([occurrence, local]);
+                projected.push(quad.map(|[x, z]| {
+                    let [rx, rz] = rotate(x, z);
+                    [translation[0] + rx, translation[2] + rz]
+                }));
             }
+            let [dx, dz] = rotate(f32::from_bits(word(0)), f32::from_bits(word(8)));
+            translation[0] += dx;
+            translation[1] += f32::from_bits(word(4));
+            translation[2] += dz;
+            yaw = yaw.wrapping_add(word(12) as i32);
         }
         routes.push(
             serde_json::json!({"course":course.name, "piece_ids":course.piece_ids,
-            "segment_count":segments.len(), "segment_occurrence_and_local_index":segments}),
+            "projected_occurrence_poses":poses,"projected_segment_xz":projected,"segment_count":segments.len(), "segment_occurrence_and_local_index":segments}),
         );
     }
     Ok(serde_json::json!({"piece_local_xz_quads":pieces,"courses":routes}))
