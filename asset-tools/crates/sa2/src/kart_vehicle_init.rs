@@ -102,11 +102,31 @@ pub(crate) struct StoryBoostInput {
     boost: BoostInput,
 }
 impl Profile {
+    pub(crate) fn contact(&self) -> Option<&crate::kart_contact::StoryResponse> {
+        self.drive
+            .as_ref()
+            .and_then(|d| d.contact.as_ref())
+            .or_else(|| {
+                self.recovery_drive
+                    .as_ref()
+                    .and_then(|d| d.contact.as_ref())
+            })
+    }
     pub(crate) fn drift_tuning(&self) -> [f32; 3] {
         [self.drift_handling, self.weight, self.speed_threshold]
     }
 }
 impl StoryBoostInput {
+    pub(crate) fn contact_mut(&mut self) -> Option<&mut crate::kart_contact::StoryContact> {
+        self.drive
+            .as_mut()
+            .and_then(|d| d.contact.as_mut())
+            .or_else(|| {
+                self.recovery_drive
+                    .as_mut()
+                    .and_then(|d| d.contact.as_mut())
+            })
+    }
     pub(crate) fn bind_previous_frame(
         &mut self,
         position: [f32; 3],
@@ -208,7 +228,12 @@ pub(crate) fn story_boost(
         }
         let rel = CityRel::read_identified(bytes, 80)?;
         output.recovery_drive = Some(drive.step(
-            rel.data(4)?,
+            &rel,
+            bytes,
+            exe,
+            story_profile as i32,
+            drive_flag,
+            piece_id,
             sample.ok_or_else(|| {
                 crate::Error::invalid("state 1 requires sampled stick and held buttons")
             })?,

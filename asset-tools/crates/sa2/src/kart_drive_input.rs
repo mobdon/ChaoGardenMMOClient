@@ -553,6 +553,10 @@ pub struct RecoveryInput {
 }
 #[derive(Serialize)]
 pub struct Recovery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio: Option<crate::kart_driving_audio::Output>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) contact: Option<crate::kart_contact::StoryResponse>,
     vehicle_state: i32,
     heading: i32,
     work_68: i32,
@@ -563,6 +567,8 @@ pub struct Recovery {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryRecoveryDrive {
+    audio_work_284: Option<i32>,
+    pub(crate) contact: Option<crate::kart_contact::StoryContact>,
     heading: Option<i32>,
     work_68: i32,
     work_fc: i32,
@@ -585,14 +591,20 @@ impl StoryRecoveryDrive {
     }
     pub(crate) fn step(
         self,
-        data: &[u8],
+        rel: &crate::city_rel::CityRel,
+        bytes: &[u8],
+        exe: &[u8],
+        mode: i32,
+        work_44: Option<i32>,
+        piece_id: Option<u8>,
         sample: (i16, u32),
         position: [f32; 3],
         velocity: [f32; 3],
         [acceleration, brake_power, deceleration, speed_cap, weight]: [f32; 5],
     ) -> Result<Recovery> {
         let (stick_x, held) = sample;
-        recovery_with_constants(
+        let data = rel.data(4)?;
+        let mut motion = recovery_with_constants(
             data,
             RecoveryInput {
                 heading: self
@@ -620,7 +632,43 @@ impl StoryRecoveryDrive {
                     transformed_vector: Some(self.position_step.transformed_vector),
                 },
             },
-        )
+        )?;
+        let flag = || work_44.ok_or_else(|| Error::invalid("missing state 1 vehicle flag"));
+        if let Some(work_284) = self.audio_work_284 {
+            motion.audio = Some(crate::kart_driving_audio::tick_verified(
+                rel,
+                crate::kart_driving_audio::Input {
+                    position: motion.position_step.position,
+                    velocity_xz: [velocity[0], velocity[2]],
+                    vehicle_state: motion.vehicle_state,
+                    work_44: flag()?,
+                    controls: crate::kart_driving_audio::Controls {
+                        profile: mode as usize,
+                        alternate: false,
+                        work_284,
+                        work_110: i32::from(held & 4 != 0),
+                        work_114: i32::from(held & 0x402 != 0 && self.work_28c <= 10),
+                        piece_id,
+                        magnitude_return: self.magnitude_return,
+                    },
+                },
+            )?);
+        }
+        if let Some(contact) = self.contact {
+            motion.contact = Some(contact.apply(
+                data,
+                bytes,
+                exe,
+                motion.work_68,
+                Some(motion.vehicle_state),
+                motion.position_step.position,
+                velocity,
+                self.work_28c,
+                flag()?,
+                mode,
+            )?);
+        }
+        Ok(motion)
     }
 }
 impl Recovery {
@@ -680,6 +728,8 @@ fn recovery_with_constants(data: &[u8], s: RecoveryInput) -> Result<Recovery> {
         s.work_fc.wrapping_add(91)
     };
     Ok(Recovery {
+        audio: None,
+        contact: None,
         vehicle_state,
         heading,
         work_68,

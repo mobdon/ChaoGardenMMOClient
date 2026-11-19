@@ -900,12 +900,14 @@ pub fn story_sequence(
                     boost_tick.bind_previous_frame(p, v, yaw)?;
                 }
                 let start = snapshot.take();
-                if let (Some(v), Some(d)) = (start, boost_tick.drive.as_mut()) {
-                    if let Some(c) = d.contact.as_mut() {
+                if let Some(v) = start {
+                    if let Some(d) = boost_tick.drive.as_mut() {
+                        d.begin_update()?;
+                    }
+                    if let Some(c) = boost_tick.contact_mut() {
                         c.bind_origin(v.primary_update_position)?;
                     }
-                    d.begin_update()?;
-                    if let Some(r) = d.contact.as_mut().and_then(|c| c.recovery.as_mut()) {
+                    if let Some(r) = boost_tick.contact_mut().and_then(|c| c.recovery.as_mut()) {
                         r.bind_snapshot(v.primary_update_velocity, v.primary_update_angles)?;
                     }
                 }
@@ -917,12 +919,7 @@ pub fn story_sequence(
                         d.bind_sample((stick, sum), held)?;
                     }
                 }
-                if let Some(r) = boost_tick
-                    .drive
-                    .as_mut()
-                    .and_then(|d| d.contact.as_mut())
-                    .and_then(|c| c.recovery.as_mut())
-                {
+                if let Some(r) = boost_tick.contact_mut().and_then(|c| c.recovery.as_mut()) {
                     r.bind_progress(route, count)?;
                 }
                 let (next, timers, result) = crate::kart_vehicle_init::story_boost(
@@ -939,7 +936,7 @@ pub fn story_sequence(
                 if let Some(r) = &result.recovery_drive {
                     vehicle = Some(r.state());
                 }
-                if let Some(response) = result.drive.as_ref().and_then(|d| d.contact.as_ref()) {
+                if let Some(response) = result.contact() {
                     spin_carry = response.spin_carry();
                 }
                 if let Some(entry) = result.drive.as_ref().and_then(|d| d.windup_entry()) {
@@ -951,12 +948,7 @@ pub fn story_sequence(
                 if let Some(state) = result.drive.as_ref().and_then(|d| d.drift_state()) {
                     vehicle = Some(state);
                 }
-                if let Some(recovered) = result
-                    .drive
-                    .as_ref()
-                    .and_then(|d| d.contact.as_ref())
-                    .and_then(|c| c.recovered_progress())
-                {
+                if let Some(recovered) = result.contact().and_then(|c| c.recovered_progress()) {
                     vehicle = Some(recovered.state);
                     route = Some(recovered.route);
                     progressed_route = route;

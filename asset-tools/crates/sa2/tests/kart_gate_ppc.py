@@ -576,4 +576,28 @@ if len(sys.argv)>4:
                 req.write_text(json.dumps(native));out=req.with_name(path.stem+f"-standalone-one-{difference}.json")
                 subprocess.run([cli,"kart-recovery-drive",rel,out,req],check=True)
                 assert actual==json.loads(out.read_text())
+                # Native state 1 calls audio before contact, using the state just
+                # written by movement. The subsequent impact can still enter spin.
+                recovery["audio_work_284"]=0
+                collision=json.loads(json.dumps(spin_q["updates"][-103]["boost_tick"]["drive"]["contact"]))
+                collision.pop("previous_position")
+                collision["result"]["resolved_position"]=start["position"]
+                collision["wall"]["vehicle_state"]=state
+                fields=collision["recovery"]
+                for key in ("previous_velocity_xz","saved_angles","segment","lap"):fields.pop(key,None)
+                fields["work_68"]=actual["work_68"]
+                recovery["contact"]=collision
+                start["velocity"]=[20,0,0]
+                event["boost_tick"]["normalize"]=dict(magnitude=20,vector=[1,0,0])
+                q["updates"].append(dict(spin_tick=spin_input))
+                req.write_text(json.dumps(q));out=req.with_name(path.stem+f"-one-contact-{difference}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                seq=json.loads(out.read_text());motion=seq["updates"][-2]["boostTick"]["recovery_drive"]
+                suffix=motion["contact"];calls=motion["audio"]["calls"]
+                assert (calls[-1]["play"]["cue"]==16 if state else "pitch" in calls[-1])
+                assert all(c["play"]["position"]==motion["position_step"]["position"] for c in calls if "play" in c)
+                assert suffix["request"]["from"]==start["position"] and suffix["request"]["to"]==motion["position_step"]["position"]
+                assert suffix["impact"]["state"]==suffix["recovery"]["vehicle"]["state"]==seq["vehicleState"]==4
+                assert seq["updates"][-1]["spinTick"]["work_b8"]==suffix["impact"]["work_b8"]+18
+
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")
