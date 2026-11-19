@@ -27,6 +27,7 @@ struct Shadow {
 pub(crate) struct Terrain {
     timer: u8,
     height: f32,
+    pub spawn: Option<([f32; 3], i32)>,
 }
 impl Terrain {
     pub fn tick(
@@ -96,11 +97,10 @@ impl Terrain {
                                         Error::invalid("expected native random sample")
                                     })?;
                                 let [x, y, z] = ring.position;
-                                calls.push(json!([
-                                    "InitTobitiri",
-                                    [x, y - 10., z],
-                                    ((r * 360.) * (65536.0f32 / 360.)) as i32
-                                ]));
+                                let position = [x, y - 10., z];
+                                let yaw = ((r * 360.) * (65536.0f32 / 360.)) as i32;
+                                self.spawn = Some((position, yaw));
+                                calls.push(json!(["InitTobitiri", position, yaw]));
                             }
                         }
                     }
@@ -116,5 +116,117 @@ impl Terrain {
             return Err(Error::invalid("unused terrain ring observation"));
         }
         Ok(())
+    }
+}
+
+use crate::damage_ring::{DroppedRing, ProbeClock, Surface};
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ChildFrame {
+    Launch {
+        timer: u8,
+        gravity: [f32; 3],
+        pitch: i32,
+        roll: i32,
+        spin_random: f32,
+        paused: bool,
+    },
+    Tick {
+        gravity: [f32; 3],
+        paused: bool,
+        range_out: bool,
+        hit: Option<(u8, u16)>,
+        probe: Option<Probe>,
+    },
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Probe {
+    surface: Option<Surface>,
+}
+impl ChildFrame {
+    pub fn run(
+        self,
+        child: &mut Option<DroppedRing>,
+        spawn: Option<([f32; 3], i32)>,
+    ) -> Result<Value> {
+        let trig = |a: i32| {
+            let (s, c) = (f64::from(a as u16) * std::f64::consts::TAU / 65536.).sin_cos();
+            (s as f32, c as f32)
+        };
+        let events = match self {
+            Self::Launch {
+                timer,
+                gravity,
+                pitch,
+                roll,
+                spin_random,
+                paused,
+            } => {
+                let (pos, yaw) =
+                    spawn.ok_or_else(|| Error::invalid("no pending terrain child to launch"))?;
+                if timer > 8 || child.is_some() {
+                    return Err(Error::invalid("invalid child initialization"));
+                }
+                let mut clock = ProbeClock::default();
+                for _ in 0..timer {
+                    clock.next_delay();
+                }
+                *child = Some(DroppedRing::launch(
+                    pos,
+                    yaw,
+                    gravity,
+                    pitch,
+                    roll,
+                    spin_random,
+                    paused,
+                    &mut clock,
+                    trig,
+                )?);
+                None
+            }
+            Self::Tick {
+                gravity,
+                paused,
+                range_out,
+                hit,
+                mut probe,
+            } => {
+                let task = child
+                    .as_mut()
+                    .ok_or_else(|| Error::invalid("child tick before launch"))?;
+                if !gravity.iter().all(|v| v.is_finite())
+                    || hit.is_some_and(|(slot, _)| slot > 2)
+                    || probe
+                        .as_ref()
+                        .and_then(|p| p.surface)
+                        .is_some_and(|s| !s.coordinate.is_finite())
+                {
+                    return Err(Error::invalid("invalid child observations"));
+                }
+                let mut missing = false;
+                let events = task.tick(
+                    gravity,
+                    paused,
+                    range_out,
+                    hit,
+                    |_, _| match probe.take() {
+                        Some(p) => p.surface,
+                        None => {
+                            missing = true;
+                            None
+                        }
+                    },
+                    trig,
+                );
+                if missing || probe.is_some() {
+                    return Err(Error::invalid(
+                        "expected a probe observation exactly on child probe ticks",
+                    ));
+                }
+                Some(events)
+            }
+        };
+        Ok(json!({"task":child,"events":events,"trig":"host f64 sin/cos rounded to f32"}))
     }
 }

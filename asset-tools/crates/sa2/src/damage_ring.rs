@@ -72,7 +72,8 @@ fn rot_z(v: Vector, (s, c): (f32, f32)) -> Vector {
     [c * v[0] - s * v[1], s * v[0] + c * v[1], v[2]]
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Surface {
     pub coordinate: f32,
     pub pitch: i32,

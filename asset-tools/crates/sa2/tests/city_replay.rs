@@ -274,6 +274,16 @@ fn terrain_ring_follows_small_changes_and_scatters_at_eight() {
     last["allocated"] = json!(true);
     last["random"] = json!(0.25);
     frames.extend([tick(last), tick(json!({}))]);
+    frames[11]["child"] = json!({"op":"launch","timer":0,"gravity":[0,-1,0],"pitch":0,"roll":0,"spin_random":0.5,"paused":false});
+    let mut flight = tick(json!({}));
+    flight["child"] = json!({"op":"tick","gravity":[0,-1,0],"paused":false,"range_out":false,"probe":{"surface":null}});
+    frames.push(flight.clone());
+    let mut hit = flight;
+    hit["child"].as_object_mut().unwrap().remove("probe");
+    hit["child"]["hit"] = json!([1, 0]);
+    frames.push(hit.clone());
+    hit["child"].as_object_mut().unwrap().remove("hit");
+    frames.push(hit);
     let trace = replay(
         &p,
         &d,
@@ -287,4 +297,11 @@ fn terrain_ring_follows_small_changes_and_scatters_at_eight() {
         json!(["InitTobitiri", [0., -4., 0.], 16384])
     );
     assert_eq!(f[11]["calls"], json!([["DeadOut"]]));
+    assert_eq!(
+        f[11]["child"]["task"]["flight"]["position"],
+        json!([0., 6., 0.])
+    );
+    assert_eq!(f[12]["child"]["task"]["age"], 1);
+    assert_eq!(f[13]["child"]["events"]["credit_slot"], 1);
+    assert_eq!(f[14]["child"]["events"]["destroy"], true);
 }

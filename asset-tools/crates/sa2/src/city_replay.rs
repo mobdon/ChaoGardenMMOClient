@@ -37,6 +37,7 @@ fn bounded<F>(frames: Vec<F>) -> Result<Vec<F>> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RingFrame {
+    child: Option<crate::ring_terrain::ChildFrame>,
     terrain: Option<crate::ring_terrain::Observations>,
     #[serde(default)]
     magnet_players: [Option<crate::ring_magnet::Player>; 2],
@@ -52,6 +53,7 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
     let request = decode::<Frames<RingFrame>>(request)?;
     let mut ring = StageRing::new(p.position, i32::from(p.rotation[1] as i16));
     let mut frames = Vec::new();
+    let mut child = None;
     let mut magnet_timer = 0u16;
     let mut magnet_angle = 0f32;
     for frame in bounded(request.frames)? {
@@ -152,6 +154,10 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
         if let Some(particles) = pickup_particles {
             tick["pickupParticles"] = json!(particles);
             tick["particleTrig"] = json!("host f64 sin/cos rounded to f32");
+        }
+        if let Some(schedule) = frame.child {
+            tick["child"] =
+                schedule.run(&mut child, terrain.as_mut().and_then(|t| t.spawn.take()))?;
         }
         frames.push(tick);
     }
