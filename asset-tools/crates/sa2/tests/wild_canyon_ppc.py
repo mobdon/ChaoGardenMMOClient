@@ -268,20 +268,21 @@ def contact_cases(tasks,tmp):
     rejected=subprocess.run([sys.argv[1],"--source-root",str(game),"fan-emerald-contact",str(game/"sonic2app.exe"),str(invalid),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(req)],capture_output=True,text=True)
     assert rejected.returncode!=0 and "no live emerald update" in rejected.stderr and not invalid.exists()
     print(len(cases),"complete common emerald updates matched native callbacks")
-with tempfile.TemporaryDirectory(dir=".local") as tmp:
-    for allocated in (True,False):
-        handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
-        result={};u.mem_write(stage,bytes(512));put(child+0x34,"I",work)
-        invoke(w(52));result["startupResources"]=startup(result["startup"]);invoke(result["entry"])
-        result.update(nextMain=get(stage+0x10,"I")[0]-base[1],created=None)
-        if allocated:result["created"]=dict(position=list(get(work+20,"fff")),callbackAt20=get(child+0x20,"I")[0]-base[1])
-        invoke(result["nextMain"])
-        out=Path(tmp)/f"out-{allocated}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"fan-wild-canyon",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(allocated).lower()],check=True)
-        doc=json.loads(out.read_text())
-        state,music,rows=lighting(0);other,alt,rows2=lighting(255)
-        assert state==other and rows==rows2==doc["lighting"]
-        result.update(state,music=music|alt,emeraldTasks=emerald_tasks(),emeraldPaths=emerald_paths())
-        assert doc["stageTask"]==result and doc["dispatch"]["character"]==4 and doc["dispatch"]["level"]==16
-    contact_cases(result["emeraldTasks"],tmp)
-print("Wild Canyon Hero dispatch, module registration and both stage-task allocation routes matched")
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory(dir=".local") as tmp:
+        for allocated in (True,False):
+            handle=0x247c0000 if allocated else 0;put(base[6]+20,"I",0xffffffff)
+            result={};u.mem_write(stage,bytes(512));put(child+0x34,"I",work)
+            invoke(w(52));result["startupResources"]=startup(result["startup"]);invoke(result["entry"])
+            result.update(nextMain=get(stage+0x10,"I")[0]-base[1],created=None)
+            if allocated:result["created"]=dict(position=list(get(work+20,"fff")),callbackAt20=get(child+0x20,"I")[0]-base[1])
+            invoke(result["nextMain"])
+            out=Path(tmp)/f"out-{allocated}.json"
+            subprocess.run([sys.argv[1],"--source-root",str(game),"fan-wild-canyon",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(allocated).lower()],check=True)
+            doc=json.loads(out.read_text())
+            state,music,rows=lighting(0);other,alt,rows2=lighting(255)
+            assert state==other and rows==rows2==doc["lighting"]
+            result.update(state,music=music|alt,emeraldTasks=emerald_tasks(),emeraldPaths=emerald_paths())
+            assert doc["stageTask"]==result and doc["dispatch"]["character"]==4 and doc["dispatch"]["level"]==16
+        contact_cases(result["emeraldTasks"],tmp)
+    print("Wild Canyon Hero dispatch, module registration and both stage-task allocation routes matched")
