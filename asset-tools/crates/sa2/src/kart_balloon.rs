@@ -531,3 +531,73 @@ mod lifecycle_tests {
         assert_eq!((b.mode, h.installs, h.registrations), (2, 1, 32));
     }
 }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayInput {
+    mode: i8,
+    timer: u16,
+    position: [f32; 3],
+    yaw: i32,
+    scale: [f32; 3],
+    current_view_metric: f32,
+}
+
+/// CartD +0xa650. Keep the draw multiplier separate from the original DDS alpha.
+pub fn display(bytes: &[u8], pak: &[u8], s: DisplayInput) -> crate::Result<serde_json::Value> {
+    use serde_json::json;
+    crate::kart_progress::verify(bytes)?;
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let data = rel.data(5)?;
+    let constants = rel.data(4)?;
+    let f = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());
+    if s.current_view_metric >= f(0x1c0) || s.mode == 5 {
+        return Ok(json!({"draw":null}));
+    }
+    let invalid = || crate::Error::invalid("unresolved balloon display resource");
+    let target = |site| {
+        rel.reference(1, site)
+            .filter(|r| (r.module, r.section, r.kind) == (80, 5, 4))
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let ptr = |at| {
+        rel.local_pointer(5, at)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v)
+            .ok_or_else(invalid)
+    };
+    let list = target(0xa74a)?;
+    let object = target(0xa772)?;
+    let attach = ptr(object + 4)?;
+    if data[list as usize + 4..list as usize + 8] != 1u32.to_be_bytes() {
+        return Err(invalid());
+    }
+    let name = std::ffi::CStr::from_bytes_until_nul(&data[ptr(ptr(list)?)? as usize..])
+        .map_err(|_| invalid())?
+        .to_str()
+        .map_err(|_| invalid())?;
+    let member = format!("objtex_common\\{name}.dds");
+    let bank = crate::archive::read_pak(pak)?;
+    let mut matches = bank.iter().filter(|e| e.name.eq_ignore_ascii_case(&member));
+    let entry = matches.next().ok_or_else(invalid)?;
+    if matches.next().is_some() {
+        return Err(invalid());
+    }
+    let image = crate::texture::decode_dds(entry.data)?;
+    let geometry =
+        crate::kart_story_target::vertices(&rel, attach, &mut crate::visual::Material::default())?;
+    let popping = s.mode == 4;
+    let alpha = if popping {
+        (60 - i32::from(s.timer)) as f32 / f(0x3a8)
+    } else {
+        1.0
+    };
+    Ok(
+        json!({"draw":{"object":object,"attach":attach,"textureList":list,"geometry":geometry,
+        "position":s.position,"yaw":s.yaw,"scale":s.scale,"materialMultiplier":[alpha,1.0,1.0,1.0],
+        "controlMasks":if popping {[255,2048]} else {[-2049,0]},
+        "texture":{"entry":entry.name,"width":image.width,"height":image.height,
+        "ddsSha256":crate::manifest::sha256(entry.data),"rgbaSha256":crate::manifest::sha256(&image.rgba)}}}),
+    )
+}
