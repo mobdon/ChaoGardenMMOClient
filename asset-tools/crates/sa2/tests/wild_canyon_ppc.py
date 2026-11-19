@@ -15,6 +15,7 @@ for s,b in base.items():
     u.mem_map(b,(n+4095)&~4095);u.mem_write(b,d[at:at+n])
 def put(at,fmt,*v):u.mem_write(at,struct.pack(">"+fmt,*v))
 def get(at,fmt):return struct.unpack(">"+fmt,u.mem_read(at,struct.calcsize(">"+fmt)))
+engines={}
 for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
     off=0
     while True:
@@ -22,6 +23,7 @@ for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==203:break
         if k==202:target=s;off=0;continue
         off+=inc
+        if mod==0 and target==1 and k==10:engines[off]=a
         if mod!=15 or s not in base or target not in base:continue
         v=base[s]+a
         if k==1:put(base[target]+off,"I",v)
@@ -42,10 +44,37 @@ for site in (0x8ac4,0x916c):u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+site,end=
 def invoke(off):
     u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_LR,stop);u.reg_write(R.UC_PPC_REG_3,stage)
     u.emu_start(base[1]+off,stop,count=200);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+def startup(entry):
+    calls=[];groups=[]
+    def watch(uc,pc,size,_):
+        site=pc-base[1]
+        if site==0x8afc:args=[reg(i) for i in (3,4,5)]
+        elif site==0x8b18:args=[reg(3),reg(4),reg(5)-base[1],text(reg(6))]
+        elif site==0x8b24:args=[reg(3)-base[5]]
+        else:
+            tex,obj=reg(3),reg(4);args=[tex-base[5],obj-base[5]]
+            if site in (0x8b40,0x8b68):
+                rows=[];entries=[]
+                while True:
+                    label,lst=get(tex+8*len(rows),"II")
+                    if not label:break
+                    rows.append(dict(name=text(label),textureList=lst-base[5]))
+                while (ptr:=get(obj+4*len(entries),"I")[0]):entries.append(ptr-base[5])
+                groups.append(dict(textures=args[0],objects=args[1],textureRows=rows,objectOffsets=entries))
+        calls.append(dict(engine=engines[site],args=args))
+        uc.reg_write(R.UC_PPC_REG_PC,pc+4)
+    hooks=[u.hook_add(UC_HOOK_CODE,watch,begin=base[1]+s,end=base[1]+s) for s in engines if entry<=s<0x8b78]
+    try:
+        u.reg_write(R.UC_PPC_REG_1,stage+4000)
+        u.emu_start(base[1]+entry,base[1]+0x8b78,count=100)
+        assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x8b78 and len(calls)==7
+    finally:
+        for h in hooks:u.hook_del(h)
+    return dict(calls=calls,groups=groups)
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for allocated in (True,False):
         result={};u.mem_write(stage,bytes(512));put(child+0x34,"I",work)
-        invoke(w(52));invoke(result["entry"])
+        invoke(w(52));result["startupResources"]=startup(result["startup"]);invoke(result["entry"])
         result.update(nextMain=get(stage+0x10,"I")[0]-base[1],created=None)
         if allocated:result["created"]=dict(position=list(get(work+20,"fff")),callbackAt20=get(child+0x20,"I")[0]-base[1])
         invoke(result["nextMain"])
