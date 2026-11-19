@@ -88,7 +88,7 @@ impl PeImage {
         )
     }
 
-    fn c_string(&self, input: &[u8], rva: u32) -> Result<String> {
+    pub(crate) fn c_string(&self, input: &[u8], rva: u32) -> Result<String> {
         let mut output = Vec::new();
         for index in 0..512u32 {
             let at = self.rva_to_offset(

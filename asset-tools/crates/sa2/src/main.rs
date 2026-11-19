@@ -1,7 +1,9 @@
 use sa2_asset_tools::{
-    archive, audio, collision,
+    archive, audio, city_replay,
+    city_stage::CityLayout,
+    collision, glb_cli,
     manifest::{self, Asset, Dependency, Fidelity, Manifest, Output, Representation, Source, Span},
-    model, motion, pe, pose, stage, texture, Error, Result,
+    model, motion, object_table, pe, pose, set, stage, texture, visual, Error, Result,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,6 +14,7 @@ use std::{
 };
 
 const MAX_INPUT: u64 = 512 * 1024 * 1024;
+mod player_commands;
 const MAX_DECODED: usize = 128 * 1024 * 1024;
 
 fn read_source(path: &Path) -> Result<Vec<u8>> {
@@ -91,9 +94,13 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
+        .open(&path)?;
+    let result = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = result {
+        fs::remove_file(&path)?;
+        return Err(error.into());
+    }
     Ok(())
 }
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -191,11 +198,22 @@ fn save_conversion(
     ));
     m.validate()?;
     ensure_unchanged(input, source_bytes)?;
-    if sidecar(output).exists() {
+    write_pair(output, output_bytes, &m)
+}
+
+fn write_pair(output: &Path, data: &[u8], m: &Manifest) -> Result<()> {
+    let receipt = local_output(&sidecar(output))?;
+    if receipt.exists() {
         return Err(Error::invalid("manifest output exists"));
     }
-    write_new(output, output_bytes)?;
-    write_json(&sidecar(output), &m)
+    let mut encoded = serde_json::to_vec_pretty(m)?;
+    encoded.push(b'\n');
+    write_new(output, data)?;
+    if let Err(error) = write_new(&receipt, &encoded) {
+        fs::remove_file(local_output(output)?)?;
+        return Err(error);
+    }
+    Ok(())
 }
 fn ensure_unchanged(input: &Path, bytes: &[u8]) -> Result<()> {
     let (size, hash) = manifest::file_hash(input)?;
@@ -221,7 +239,26 @@ fn save_runtime_document(
     format: &str,
     dependencies: &[RuntimeDependency<'_>],
 ) -> Result<()> {
-    let data = serde_json::to_vec_pretty(value)?;
+    save_runtime_bytes(
+        input,
+        label,
+        bytes,
+        output,
+        &serde_json::to_vec_pretty(value)?,
+        format,
+        dependencies,
+    )
+}
+
+fn save_runtime_bytes(
+    input: &Path,
+    label: &str,
+    bytes: &[u8],
+    output: &Path,
+    data: &[u8],
+    format: &str,
+    dependencies: &[RuntimeDependency<'_>],
+) -> Result<()> {
     let source = Source::from_bytes(label, bytes)?;
     let mut m = Manifest::new(vec![source]);
     let source = &m.sources[0];
@@ -230,7 +267,7 @@ fn save_runtime_document(
         format!("native-evaluation.{format}"),
         format,
         whole_span(source),
-        Some(output_record(output, format, &data)?),
+        Some(output_record(output, format, data)?),
         Representation::Decoded,
         vec![
             "Supported source-backed native data evaluation only. Collision response, full renderer/skinning and retail gameplay remain separate; see the output's policies/unknowns and full-game tracker.".into(),
@@ -253,11 +290,7 @@ fn save_runtime_document(
     }
     m.validate()?;
     ensure_unchanged(input, bytes)?;
-    if sidecar(output).exists() {
-        return Err(Error::invalid("manifest output exists"));
-    }
-    write_new(output, &data)?;
-    write_json(&sidecar(output), &m)
+    write_pair(output, data, &m)
 }
 
 fn finite_argument(value: &std::ffi::OsStr) -> Result<f64> {
@@ -458,7 +491,8 @@ fn extract(input: &Path, label: &str, bytes: &[u8], directory: &Path) -> Result<
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.\nNo gameplay port or entitlement verification is implied.");
+        println!("{}", player_commands::USAGE);
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -479,6 +513,12 @@ fn run() -> Result<()> {
     let command = args[0]
         .to_str()
         .ok_or_else(|| Error::invalid("command encoding"))?;
+    if let Some(expected) = player_commands::arity(command) {
+        if expected != args.len() {
+            return Err(Error::invalid("unexpected arguments (see --help)"));
+        }
+        return player_commands::run(command, &args, source_root.as_deref());
+    }
     if !matches!(
         command,
         "catalog"
@@ -492,13 +532,20 @@ fn run() -> Result<()> {
             | "pose"
             | "collision"
             | "raycast"
+            | "set"
+            | "visual"
+            | "glb"
+            | "object-tables"
+            | "city-layout"
+            | "city-replay"
     ) {
         return Err(Error::invalid("unknown command (see --help)"));
     }
     let valid_arity = match command {
         "texture" | "pose" => matches!(args.len(), 3 | 5),
         "collision" => matches!(args.len(), 3 | 4),
-        "raycast" => args.len() == 4,
+        "raycast" | "glb" | "object-tables" | "city-layout" => args.len() == 4,
+        "city-replay" => args.len() == 6,
         _ => args.len() == 3,
     };
     if !valid_arity {
@@ -518,6 +565,133 @@ fn run() -> Result<()> {
     let bytes = read_source(input)?;
     let label = source_label(input, source_root.as_deref())?;
     match command {
+        "glb" => {
+            let (glb, files) = glb_cli::build(&model::read_model(&bytes)?, Path::new(&args[3]))?;
+            let deps = files
+                .iter()
+                .map(|f| {
+                    Ok(RuntimeDependency {
+                        path: &f.path,
+                        logical_path: if source_root.is_some() {
+                            source_label(&f.path, source_root.as_deref())?
+                        } else {
+                            f.logical_path.clone()
+                        },
+                        bytes: &f.bytes,
+                        role: &f.role,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            save_runtime_bytes(
+                input,
+                &label,
+                &bytes,
+                output,
+                &glb,
+                "native-static-glb",
+                &deps,
+            )?;
+        }
+        "object-tables" => {
+            let path = Path::new(&args[3]);
+            let config = read_source_limited(path, 1024 * 1024)?;
+            let tables = object_table::mapped_tables(
+                &bytes,
+                std::str::from_utf8(&config)
+                    .map_err(|_| Error::invalid("object mapping is not UTF-8"))?,
+            )?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &tables,
+                "pc-object-tables-json",
+                &[RuntimeDependency {
+                    path,
+                    logical_path: format!("mappings/{}", basename(path)?),
+                    bytes: &config,
+                    role: "object-list-mapping",
+                }],
+            )?;
+        }
+        "city-layout" | "city-replay" => {
+            let path = Path::new(&args[3]);
+            let image = read_source_limited(path, 128 * 1024 * 1024)?;
+            let city = CityLayout::load(&bytes, &image)?;
+            let mut deps = vec![RuntimeDependency {
+                path,
+                logical_path: source_label(path, source_root.as_deref())?,
+                bytes: &image,
+                role: "stage-object-executable",
+            }];
+            if command == "city-layout" {
+                save_runtime_document(
+                    input,
+                    &label,
+                    &bytes,
+                    output,
+                    &city,
+                    "city-escape-set-binding-json",
+                    &deps,
+                )?;
+            } else {
+                let request_path = Path::new(&args[5]);
+                let request = read_source_limited(request_path, 1024 * 1024)?;
+                deps.push(RuntimeDependency {
+                    path: request_path,
+                    logical_path: format!("queries/{}", basename(request_path)?),
+                    bytes: &request,
+                    role: "external-engine-observations",
+                });
+                let selector = args[4]
+                    .to_str()
+                    .ok_or_else(|| Error::invalid("invalid callback selector"))?;
+                let doc = if selector == "bgm" {
+                    json!({"sourceLayer":city.source_layer,"stageTask":"bgm","trace":city_replay::replay_bgm(&request)?})
+                } else {
+                    let index = selector
+                        .parse::<usize>()
+                        .map_err(|_| Error::invalid("expected placement index or bgm"))?;
+                    let (p, d) = city.resolve(index)?;
+                    json!({"sourceLayer":city.source_layer,"placementIndex":index,"placement":p,"definition":d,"trace":city_replay::replay(p,d,&request)?})
+                };
+                save_runtime_document(
+                    input,
+                    &label,
+                    &bytes,
+                    output,
+                    &doc,
+                    "city-escape-callback-json",
+                    &deps,
+                )?;
+            }
+        }
+        "set" => {
+            let placements = set::parse_set(&bytes)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &placements,
+                "stage-set-json",
+                &[],
+            )?;
+        }
+        "visual" => {
+            let model = model::read_model(&bytes)?;
+            let scene = visual::evaluate_static_model(&model)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &scene,
+                "native-static-visual-json",
+                &[],
+            )?;
+        }
         "pose" => {
             let model = model::read_model(&bytes)?;
             let motion_bytes = if args.len() == 5 {
@@ -710,11 +884,7 @@ fn run() -> Result<()> {
             }
             m.validate()?;
             ensure_unchanged(input, &bytes)?;
-            if sidecar(output).exists() {
-                return Err(Error::invalid("manifest output exists"));
-            }
-            write_new(output, &png)?;
-            write_json(&sidecar(output), &m)?;
+            write_pair(output, &png, &m)?;
         }
         "adx" => {
             let pcm = audio::decode_adx(&bytes, MAX_DECODED / 2)?;
