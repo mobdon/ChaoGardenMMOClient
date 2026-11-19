@@ -823,6 +823,15 @@ pub enum PlacementClock {
     Periodic {
         timer: u16,
     },
+    /// Mode 11 submode 2; null means the child slot is empty.
+    AttackChild {
+        child_mode: Option<i8>,
+    },
+    /// Mode 11 submode 3. Null group means no task; null slot means the
+    /// child or one of its two required work pointers is absent.
+    AttackGroup {
+        slots: Option<Vec<Option<u16>>>,
+    },
     /// State at the submode dispatch, after the common 0xaf0 update.
     Attack {
         mode: i8,
@@ -858,6 +867,41 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 }
             }
             (timer, Some(submode))
+        }
+        PlacementClock::AttackChild { child_mode } => {
+            let ready = matches!(child_mode, None | Some(4));
+            calls.push(0x6410);
+            if ready {
+                calls.push(0x3fc0);
+            }
+            return Ok(serde_json::json!({"submode":if ready {3} else {2},
+                "clear_child_slot":child_mode == Some(4),"stageCalls":calls}));
+        }
+        PlacementClock::AttackGroup { slots } => {
+            if slots.as_ref().is_some_and(|s| s.len() > 2) {
+                return Err(Error::invalid(
+                    "attack group has only two addressable child slots",
+                ));
+            }
+            // 0x403c overwrites its return byte for every slot, including
+            // missing children; an empty existing group returns zero.
+            let status: i8 = match slots.as_deref() {
+                None => -1,
+                Some([]) => 0,
+                Some(group) => group
+                    .last()
+                    .copied()
+                    .flatten()
+                    .map_or(-1, |flags| i8::from(flags & 0x200 != 0)),
+            };
+            calls.push(0x403c);
+            if status == 1 {
+                calls.extend([0xd40, 0xdc4]);
+            }
+            return Ok(
+                serde_json::json!({"group_status":status,"clear_group_slot":status == 1,
+                "select_next_phase":status == 1,"stageCalls":calls}),
+            );
         }
         PlacementClock::Attack {
             mode,
