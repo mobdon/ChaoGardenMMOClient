@@ -61,3 +61,5 @@ To export the unchanged video elementary stream from any verified movie, use:
 The output is encoded MPEG-1 video only. The sidecar identifies event and E0 stream, keeps the movie and export hashes, and labels the representation opaque. Use the movie inspection report for container timestamps; .m1v does not carry the audio or PES timing.
 
 When story-run reaches a level it now includes the authored character’s single-player entryPose and native playerDefaults in the pending level record. The pose uses the same character/stage selector as the stage mount and retains its source row address; defaults include their own executable row address and hash. Missing start rows remain null. These are initial conditions only: the runner does not advance the controller or clear the mission.
+
+For any authored level action, campaign-frame also selects entryPose and playerDefaults with the story-run selector. The full entryPoses list remains available for comparison. On shared level 19 Hero action 12 starts Sonic at (-60,64,0), yaw 0; Dark action 27 starts Shadow at (60,64,0), yaw 32768. An installed CLI regression checks both original pose row addresses.

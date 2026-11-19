@@ -235,7 +235,7 @@ fn campaign(
                 json!({"available":false,"missingMainEvent":logical,"reason":"No matching main event PRS; movie or special-event dispatch is not implemented."})
             }
         }
-        story::Action::Level { level, .. } => {
+        story::Action::Level { level, character } => {
             if args.len() == 8 {
                 return Err(Error::invalid(
                     "selected story action is a level, not an event camera",
@@ -256,7 +256,9 @@ fn campaign(
                     layers.push(json!({"source":layout.source_layer,"placements":layout.placements.len(),"partialCallbacks":layout.callback_counts,"unsupportedPlacements":layout.unsupported_placements}));
                 }
             }
-            json!({"entryPoses":stage_positions::for_stage(exe,level as u16)?,"normalCityLayers":layers,
+            let rows = stage_positions::for_stage(exe, level as u16)?;
+            let (pose, defaults) = story_run::level_player(exe, character, level, &rows)?;
+            json!({"entryPose":pose,"playerDefaults":defaults,"entryPoses":rows,"normalCityLayers":layers,
                 "scope":"Authored character poses and available layer bindings. No character dynamics, mission execution or stage-clear transition."})
         }
         story::Action::Credits => {

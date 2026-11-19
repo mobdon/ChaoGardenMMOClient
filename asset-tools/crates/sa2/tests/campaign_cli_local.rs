@@ -499,3 +499,31 @@ fn seek_last_story_movie() {
         "no event camera slot",
     );
 }
+
+#[test]
+#[ignore = "requires installed PC story and position tables"]
+fn shared_level_uses_opposing_campaign_spawn_rows() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
+    let exe = game.join("sonic2app.exe");
+    let case = local_case(game);
+    for (route, index, name, row, x, yaw) in [
+        ("Hero Story Sequence", "12", "Sonic", 24408192, -60., 0),
+        ("Dark Story Sequence", "27", "Shadow", 24409120, 60., 32768),
+    ] {
+        let r = case.good(
+            "campaign-frame",
+            &exe,
+            name,
+            &[ini.to_str().unwrap(), route, index, "0"],
+            &[("native-table-mapping", &ini)],
+        );
+        assert_eq!(r["action"]["level"], 19);
+        let p = &r["content"]["entryPose"];
+        assert_eq!(p["character"], name);
+        assert_eq!(p["rowVa"], row);
+        assert_eq!(p["position"], serde_json::json!([x, 64., 0.]));
+        assert_eq!(p["yaw"], yaw);
+        assert_eq!(r["content"]["playerDefaults"]["character"], name);
+    }
+}
