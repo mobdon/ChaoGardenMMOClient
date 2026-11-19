@@ -138,6 +138,15 @@ if len(sys.argv)>4:
             frame=dict(cooldown=0,work_288=0,work_108=0,engine_byte_23=0,engine_halfword_68=0,
                        global_24d60=0,segment=80,segment_count=100,position=[17,40,7],
                        previous_position=[6,5,4],velocity=[3,4,12],angles=[0,0,0],work_ec=0)
+            for passive_state in (5,6):
+                passive_q=dict(q,vehicle_state=passive_state,updates=[dict(vehicle_post_move=frame),
+                    dict(continue_vehicle_update={}),dict(passive_dispatch=dict(work_78=-1) if passive_state==6 else {}),
+                    dict(vehicle_post_move=frame)])
+                req.write_text(json.dumps(passive_q));out=req.with_name(path.stem+f"-passive-{passive_state}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                passive_doc=json.loads(out.read_text());pstep=passive_doc["updates"][-2]["passiveDispatch"]
+                assert pstep["vehicleState"]==passive_doc["vehicleState"]==passive_state and pstep["resumeOffset"]==0x2648
+                assert pstep["calls"]==([dict(engine_800c4fd0=dict(position=frame["position"],work_78=-1,r5=1,f1=3.0))] if passive_state==6 else [])
             q["updates"]=[dict(vehicle_post_move=frame),
                           dict(vehicle_post_move=dict(frame,segment=81,limousine_allocation=allocation)),
                           dict(vehicle_post_move=dict(frame,segment=81,work_ec=0x1234,velocity=[2500,4,12])),dict(target_tick={}),dict(controller=signals)]
@@ -466,6 +475,12 @@ if len(sys.argv)>4:
                 res=json.loads(out.read_text());hit=res["updates"][-1]["boostTick"]["drive"]["contact"]["response"]
                 assert hit["wall"]["vehicle_state"]==res["vehicleState"]==expected
                 if expected==10:
+                    wall_q["updates"].append(dict(passive_dispatch={}))
+                    req.write_text(json.dumps(wall_q));out=req.with_name(path.stem+"-disabled-dispatch.json")
+                    subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                    stopped=json.loads(out.read_text())
+                    assert stopped["updates"][-1]["passiveDispatch"]==dict(vehicleState=10,calls=[],resumeOffset=0x2648)
+                    wall_q["updates"].pop()
                     wall_q["updates"].append(wall_q["updates"][-1])
                     req.write_text(json.dumps(wall_q));out=req.with_name(path.stem+"-disabled-drive.json")
                     rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)

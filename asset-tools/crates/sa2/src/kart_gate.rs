@@ -610,6 +610,53 @@ struct ControllerState {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmptyUpdate {}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PassiveDispatch {
+    position: Option<[f32; 3]>,
+    work_78: Option<i32>,
+}
+impl PassiveDispatch {
+    fn step(
+        self,
+        state: Option<i32>,
+        pose: Option<[f32; 3]>,
+        constants: &[u8],
+    ) -> Result<serde_json::Value> {
+        use serde_json::json;
+        let calls = match state {
+            Some(5 | 10) => {
+                if self.work_78.is_some() || self.position.is_some() {
+                    return Err(Error::invalid("inactive kart dispatch takes no arguments"));
+                }
+                Vec::new()
+            }
+            Some(6) => {
+                if self
+                    .position
+                    .zip(pose)
+                    .is_some_and(|(a, b)| a.map(f32::to_bits) != b.map(f32::to_bits))
+                {
+                    return Err(Error::invalid(
+                        "state 6 task position conflicts with preceding frame",
+                    ));
+                }
+                let position = pose
+                    .or(self.position)
+                    .ok_or_else(|| Error::invalid("missing state 6 task position"))?;
+                let work_78 = self
+                    .work_78
+                    .ok_or_else(|| Error::invalid("missing state 6 work +0x78"))?;
+                vec![
+                    json!({"engine_800c4fd0":{"position":position,"work_78":work_78,"r5":1,
+                    "f1":f32::from_be_bytes(constants[0x1f0..0x1f4].try_into().unwrap())}}),
+                ]
+            }
+            _ => return Err(Error::invalid("passive dispatch requires state 5, 6 or 10")),
+        };
+        Ok(json!({"vehicleState":state,"calls":calls,"resumeOffset":0x2648}))
+    }
+}
 #[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrimaryUpdate {
@@ -624,6 +671,9 @@ enum SequenceEvent {
     UpdateStart(PrimaryUpdate),
     ContinueVehicle {
         continue_vehicle_update: EmptyUpdate,
+    },
+    PassiveDispatch {
+        passive_dispatch: PassiveDispatch,
     },
     GuidedDrive {
         guided_drive: crate::kart_guided_drive::StoryDrive,
@@ -813,6 +863,16 @@ pub fn story_sequence(
                 }
                 updates
                     .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
+                continue;
+            }
+            SequenceEvent::PassiveDispatch { passive_dispatch } => {
+                let pose = inherited_pose.take().map(|(p, _, _)| p);
+                let output = passive_dispatch.step(vehicle, pose, constants)?;
+                completed_pose = None;
+                recovered_pose = None;
+                snapshot = None;
+                sample = None;
+                updates.push(json!({"passiveDispatch":output}));
                 continue;
             }
             SequenceEvent::GuidedDrive { mut guided_drive } => {
