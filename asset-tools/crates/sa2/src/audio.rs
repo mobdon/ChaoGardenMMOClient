@@ -616,3 +616,36 @@ pub fn decode_ahx_wav(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>> {
     })?;
     Ok(out)
 }
+
+/// Read the fixed timing prefix shared by Battle event language and effect files.
+/// Layout reference: SA3D.SA2Event.Language.EventLanguageTimestamps.
+pub fn read_event_cues(data: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let prefix = range(data, 0, 256 * 8 + 512 * 72)?;
+    let mut subtitles = Vec::new();
+    let mut audio = Vec::new();
+    for (slot, row) in prefix[..2048].chunks_exact(8).enumerate() {
+        let frame = be32(row, 0)?;
+        let duration = be32(row, 4)?;
+        if frame != 0 || duration != 0 {
+            subtitles.push(json!({"slot":slot,"frame":frame,"durationFrames":duration}));
+        }
+    }
+    for (slot, row) in prefix[2048..].chunks_exact(72).enumerate() {
+        let frame = be32(row, 0)?;
+        let master = be16(row, 4)?;
+        let afs = be16(row, 6)?;
+        let name = &row[8..];
+        let name = &name[..name.iter().position(|&c| c == 0).unwrap_or(name.len())];
+        if frame == 0
+            && name.is_empty()
+            && ((master == 65535 && afs == 65535) || row.iter().all(|&c| c == 0))
+        {
+            continue;
+        }
+        let music =
+            std::str::from_utf8(name).map_err(|_| Error::invalid("non-UTF8 event music name"))?;
+        audio.push(json!({"slot":slot,"frame":frame,"masterListVoiceIndex":master,"afsVoiceIndex":afs,"musicName":music}));
+    }
+    Ok(json!({"audio":audio,"subtitles":subtitles,"trailingBytes":data.len()-prefix.len()}))
+}
