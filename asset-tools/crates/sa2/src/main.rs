@@ -556,7 +556,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, chao-collision, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-player-keys stg13D.rel OUTPUT.json\ncity-player-motions stg13D.rel OUTPUT.json\ncity-board-inputs stg13D.rel OUTPUT.json\ncity-arrow-world SET OUTPUT.json EXE stg13D.rel REQUEST.json\ncity-arrow-display stg13D.rel OUTPUT.json MODE FRAME_COUNTER\ncity-scenery-descriptors stg13D.rel OUTPUT.json\ncity-scenery-proximity stg13D.rel OUTPUT.json LOCAL_POSITIONS.json\ncity-board-start SET OUTPUT.json EXE\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm|board-route REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, chao-collision, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\nfinalhazard-weakpoint-glb EXE OUTPUT.glb modeltex_bosslast2.prs\ncity-player-keys stg13D.rel OUTPUT.json\ncity-player-motions stg13D.rel OUTPUT.json\ncity-board-inputs stg13D.rel OUTPUT.json\ncity-arrow-world SET OUTPUT.json EXE stg13D.rel REQUEST.json\ncity-arrow-display stg13D.rel OUTPUT.json MODE FRAME_COUNTER\ncity-scenery-descriptors stg13D.rel OUTPUT.json\ncity-scenery-proximity stg13D.rel OUTPUT.json LOCAL_POSITIONS.json\ncity-board-start SET OUTPUT.json EXE\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm|board-route REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -619,6 +619,7 @@ fn run() -> Result<()> {
             | "object-tables"
             | "city-board-start"
             | "city-layout"
+            | "finalhazard-weakpoint-glb"
             | "city-board-glb"
             | "city-board-model"
             | "city-collision"
@@ -629,6 +630,7 @@ fn run() -> Result<()> {
     }
     let valid_arity = match command {
         "texture" | "pose" => matches!(args.len(), 3 | 5),
+        "finalhazard-weakpoint-glb" => args.len() == 4,
         "city-board-glb" => args.len() == 5,
         "collision" | "city-collision" => matches!(args.len(), 3 | 4),
         "city-board-model" | "city-raycast" | "raycast" | "glb" | "object-tables"
@@ -841,6 +843,25 @@ fn run() -> Result<()> {
                 &evaluated,
                 "native-pose-json",
                 &dependencies,
+            )?;
+        }
+        "finalhazard-weakpoint-glb" => {
+            let archive = Path::new(&args[3]);
+            let textures = read_source_limited(archive, 32 * 1024 * 1024)?;
+            let glb = sa2_asset_tools::finalhazard::weakpoint_glb(&bytes, &textures)?;
+            save_runtime_bytes(
+                input,
+                &label,
+                &bytes,
+                output,
+                &glb,
+                "finalhazard-weakpoint-glb",
+                &[RuntimeDependency {
+                    path: archive,
+                    logical_path: source_label(archive, source_root.as_deref())?,
+                    bytes: &textures,
+                    role: "model-textures",
+                }],
             )?;
         }
         "city-board-glb" => {

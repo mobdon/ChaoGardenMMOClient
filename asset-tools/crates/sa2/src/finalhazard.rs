@@ -103,6 +103,13 @@ pub fn geometry(
 
 /// Resolve the original model texlist by name; archive order is not a binding.
 pub fn textures(exe: &[u8], prs: &[u8]) -> Result<serde_json::Value> {
+    texture_rows(exe, prs, |_, _| Ok(()))
+}
+fn texture_rows(
+    exe: &[u8],
+    prs: &[u8],
+    mut visit: impl FnMut(u16, &crate::texture::Image) -> Result<()>,
+) -> Result<serde_json::Value> {
     use crate::{archive, manifest::sha256, texture};
     let image = object_table::verify_image(exe)?;
     if sha256(prs) != "d4b805a4b0cd5de1ea696c9e031955d5e803e09f4252fa871563144b88bd0f48" {
@@ -130,6 +137,7 @@ pub fn textures(exe: &[u8], prs: &[u8]) -> Result<serde_json::Value> {
             return Err(Error::invalid("ambiguous Finalhazard texture"));
         }
         let tex = texture::decode_gvr(e.data, None)?;
+        visit(slot as u16, &tex)?;
         let mut alpha = [0usize; 3];
         for pixel in tex.rgba.chunks_exact(4) {
             alpha[match pixel[3] {
@@ -179,6 +187,10 @@ pub fn pose(exe: &[u8], clip: usize, frame: f64) -> Result<crate::pose::Pose> {
     if !(0.0..f64::from(motion.frame_count)).contains(&frame) {
         return Err(Error::invalid("frame outside Finalhazard clip"));
     }
+    let model = rig_model(&boss);
+    crate::pose::evaluate_model_pose(&model, Some(&motion), frame)
+}
+fn rig_model(boss: &[Joint]) -> crate::model::Model {
     let nodes = boss
         .iter()
         .map(|j| crate::model::Node {
@@ -194,8 +206,8 @@ pub fn pose(exe: &[u8], clip: usize, frame: f64) -> Result<crate::pose::Pose> {
             quaternion_scalar: None,
         })
         .collect();
-    let model = crate::model::Model {
-        format: "PC Chunk".into(),
+    crate::model::Model {
+        format: "sa2-chunk".into(),
         version: 0,
         root_offset: boss[0].rva,
         metadata: vec![],
@@ -203,6 +215,33 @@ pub fn pose(exe: &[u8], clip: usize, frame: f64) -> Result<crate::pose::Pose> {
         nodes,
         attachments: vec![],
         unknowns: vec![],
-    };
-    crate::pose::evaluate_model_pose(&model, Some(&motion), frame)
+    }
+}
+
+/// Standalone weakpoint in its authored local coordinates.
+pub fn weakpoint_glb(exe: &[u8], prs: &[u8]) -> Result<Vec<u8>> {
+    let [_, weakpoint] = read(exe)?;
+    let mut model = rig_model(&weakpoint);
+    let attachments = geometry(exe)?;
+    for (rva, mut attachment) in attachments {
+        if model.nodes.iter().any(|n| n.attach_offset == rva) {
+            attachment.offset = rva;
+            model.attachments.push(attachment);
+        }
+    }
+    let scene = crate::visual::evaluate_static_model(&model)?;
+    let mut pngs = std::collections::BTreeMap::new();
+    texture_rows(exe, prs, |id, image| {
+        if scene
+            .surfaces
+            .iter()
+            .any(|s| s.material.texture_id == Some(id))
+        {
+            let mut png = Vec::new();
+            image.write_png(&mut png)?;
+            pngs.insert(id, png);
+        }
+        Ok(())
+    })?;
+    crate::visual_glb::export(&scene, &pngs)
 }
