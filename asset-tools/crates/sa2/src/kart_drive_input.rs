@@ -45,8 +45,7 @@ pub fn replay(bytes: &[u8], mut s: Input) -> Result<Output> {
     let scale = f32::from_be_bytes(rel.data(4)?[0x200..0x204].try_into().unwrap());
     let mut frames = Vec::with_capacity(s.frames.len());
     for f in s.frames {
-        s.history[s.cursor] = i32::from(f.stick_x);
-        s.cursor = (s.cursor + 1) % 60;
+        append_sample(&mut s.history, &mut s.cursor, f.stick_x);
         // Reader starts at the new write cursor, not the last written sample.
         let sum = (0..10).fold(0i32, |sum, i| {
             sum.wrapping_add(s.history[(s.cursor + 60 - i) % 60])
@@ -456,5 +455,68 @@ pub fn spin(bytes: &[u8], s: SpinInput) -> Result<Spin> {
         vehicle_state: if exit { 0 } else { 4 },
         local_displacement: [0., 0., z],
         position_step: position(s.position_step, heading, z, f(0x234))?,
+    })
+}
+
+fn append_sample(history: &mut [i32], cursor: &mut usize, stick_x: i16) {
+    history[*cursor] = i32::from(stick_x);
+    *cursor = (*cursor + 1) % 60;
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateInput {
+    work_70: i32,
+    state: i32,
+    global_22494: i32,
+    global_2ec208: i32,
+    controller: Option<GateController>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GateController {
+    stick_x: i16,
+    history: Vec<i32>,
+    cursor: usize,
+}
+
+#[derive(Serialize)]
+pub struct GateOutput {
+    state: i32,
+    controller: Option<GateController>,
+    callbacks: &'static [u32],
+    resume_offset: u32,
+}
+
+/// CartD 0x2214..0x2284. Controller data belongs to the selected player slot.
+pub fn update_gate(bytes: &[u8], mut input: GateInput) -> Result<GateOutput> {
+    kart_progress::verify(bytes)?;
+    if input.work_70 >= 0 {
+        if input.work_70 > 1 {
+            return Err(Error::invalid("unsupported kart controller slot"));
+        }
+        let c = input
+            .controller
+            .as_mut()
+            .ok_or_else(|| Error::invalid("missing selected controller"))?;
+        if c.history.len() != 60 || c.cursor >= 60 {
+            return Err(Error::invalid("invalid selected kart history"));
+        }
+        append_sample(&mut c.history, &mut c.cursor, c.stick_x);
+    }
+    let (callbacks, resume_offset): (&[u32], u32) = if input.global_22494 != 0 {
+        input.state = 9;
+        (&[], 0x2284)
+    } else if input.global_2ec208 != 0 {
+        (&[0x2ca4, 0x2da8, 0x4b50, 0x3030, 0x302c], 0x287c)
+    } else {
+        (&[], 0x2284)
+    };
+    Ok(GateOutput {
+        state: input.state,
+        controller: input.controller,
+        callbacks,
+        resume_offset,
     })
 }
