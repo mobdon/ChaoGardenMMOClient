@@ -500,6 +500,48 @@ impl<'a> CityRel<'a> {
         }
         Ok(textures)
     }
+    fn board_nodes(&self, root: u32) -> Result<Vec<BoardNode>> {
+        // Ninja motion channels follow child-before-sibling traversal.
+        let mut pending = vec![(root, None)];
+        let mut seen = std::collections::BTreeSet::new();
+        let mut nodes = Vec::new();
+        while let Some((offset, parent)) = pending.pop() {
+            if !seen.insert(offset) {
+                return Err(invalid());
+            }
+            let bytes = self
+                .data(5)?
+                .get(offset as usize..)
+                .and_then(|tail| tail.get(..52))
+                .ok_or_else(invalid)?;
+            let word = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+            let vector = |at: usize| [word(at), word(at + 4), word(at + 8)];
+            let position = vector(8).map(f32::from_bits);
+            let scale = vector(32).map(f32::from_bits);
+            if !position.iter().chain(&scale).all(|v| v.is_finite()) {
+                return Err(invalid());
+            }
+            let idx = nodes.len();
+            for (field, up) in [(48, parent), (44, Some(idx))] {
+                if let Some((section, next)) = self.local_pointer(5, offset + field)? {
+                    if section != 5 {
+                        return Err(invalid());
+                    }
+                    pending.push((next, up));
+                }
+            }
+            nodes.push(BoardNode {
+                offset,
+                parent,
+                flags: word(0),
+                position,
+                rotation: vector(20).map(|v| v as i32),
+                scale,
+                geometry: self.local_pointer(5, offset + 4)?,
+            });
+        }
+        Ok(nodes)
+    }
     pub fn board_resources(&self) -> Result<Vec<BoardResources>> {
         let mut result = Vec::new();
         for (variant, texture, model, other) in [
@@ -511,11 +553,15 @@ impl<'a> CityRel<'a> {
         ] {
             let texture = self.resource(texture)?;
             let textures = self.texture_names(texture)?;
+            let model = self.resource(model)?;
+            let other_object = self.resource(other)?;
             result.push(BoardResources {
                 variant,
                 texture_list: texture,
-                model: self.resource(model)?,
-                other_object: self.resource(other)?,
+                model,
+                other_object,
+                model_nodes: self.board_nodes(model)?,
+                other_nodes: self.board_nodes(other_object)?,
                 textures,
             });
         }
@@ -524,7 +570,20 @@ impl<'a> CityRel<'a> {
 }
 
 #[derive(Serialize)]
+pub struct BoardNode {
+    pub offset: u32,
+    pub parent: Option<usize>,
+    pub flags: u32,
+    pub position: [f32; 3],
+    pub rotation: [i32; 3],
+    pub scale: [f32; 3],
+    pub geometry: Option<(u8, u32)>,
+}
+
+#[derive(Serialize)]
 pub struct BoardResources {
+    pub model_nodes: Vec<BoardNode>,
+    pub other_nodes: Vec<BoardNode>,
     pub variant: &'static str,
     /// All three offsets are relative to data section 5.
     pub texture_list: u32,
