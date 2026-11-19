@@ -888,6 +888,16 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    SwitchCamera {
+        entered_state: u8,
+        player: u8,
+        character: i8,
+        yaw: i32,
+        position_pointer: u32,
+        table_words: [u32; 4],
+        camera_mode: i32,
+        second_lookup: Option<i32>,
+    },
     SwitchTick {
         player: u8,
         switch_state: u8,
@@ -1691,6 +1701,66 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 serde_json::json!({"active_player":player,"switch_state":switch_state,
                 "timer":timer,"poll_site":poll_site,"restore_global3a":restored,
                 "scope":"Slot and timing transitions only; player/camera calls remain external."}),
+            );
+        }
+        PlacementClock::SwitchCamera {
+            entered_state,
+            player,
+            character,
+            yaw,
+            position_pointer,
+            table_words,
+            camera_mode,
+            second_lookup,
+        } => {
+            if player > 1 {
+                return Err(Error::invalid("invalid camera target slot"));
+            }
+            // Table input order follows ascending offsets: 354,364,37c,39c.
+            let (index, load, scalar, submit) = match (entered_state, character == 9) {
+                (2, true) => (1, 0xf650, 0xf66e, 0xf6a8),
+                (2, false) => (3, 0xf664, 0xf66e, 0xf6a8),
+                (3, true) => (0, 0xf7a4, 0xf7c2, 0xf7fc),
+                (3, false) => (2, 0xf7b8, 0xf7c2, 0xf7fc),
+                _ => {
+                    return Err(Error::invalid(
+                        "handoff camera requires entry to state two or three",
+                    ))
+                }
+            };
+            let scalar_bits =
+                u32::from_be_bytes(phase_constant(&rel, scalar, 4)?.try_into().unwrap());
+            let angle = 0x8000i32.wrapping_sub(yaw);
+            // Above mode 13 the stage reads the mode again (submit - 0x18) and
+            // passes that result to a second engine call (submit - 0xc).
+            let import = |site: u32| {
+                rel.reference(1, site)
+                    .filter(|r| r.kind == 10 && r.module == 0)
+                    .map(|r| r.addend)
+                    .ok_or_else(|| Error::invalid("missing handoff camera import"))
+            };
+            let reset = if camera_mode > 13 {
+                Some((
+                    second_lookup
+                        .ok_or_else(|| Error::invalid("missing second camera lookup result"))?,
+                    import(submit - 0xc)?,
+                ))
+            } else {
+                None
+            };
+            let target = import(submit)?;
+            let packet = [
+                scalar_bits,
+                angle as u32,
+                table_words[index],
+                position_pointer,
+                0x51,
+                0,
+            ];
+            return Ok(
+                serde_json::json!({"camera_slot":0,"player":player,"packet_words":packet,
+                "resource_table_offset":word(load)&0xffff,"reset_argument":reset.map(|r| r.0),
+                "reset_address":reset.map(|r| r.1),"submit_address":target}),
             );
         }
         PlacementClock::InitialHealth => {
