@@ -1050,7 +1050,7 @@ fn run() -> Result<()> {
         "adx" => {
             let pcm = audio::decode_adx(&bytes, MAX_DECODED / 2)?;
             let wav = pcm.to_wav()?;
-            save_conversion(input,&label,&bytes,output,&wav,"wav-pcm16",vec!["One pass at native rate/channels; loop points are inspection metadata. No AHX/CSB/encrypted ADX decoder.".into()])?;
+            save_conversion(input,&label,&bytes,output,&wav,"wav-pcm16",vec!["One pass at native rate/channels; declared loop points are stored in the WAV sampler chunk. No AHX/CSB/encrypted ADX decoder.".into()])?;
         }
         "transporter" => {
             let text = std::str::from_utf8(&bytes).map_err(|e| Error::invalid(e.to_string()))?;

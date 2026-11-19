@@ -461,3 +461,33 @@ fn dds_mip_outputs_have_distinct_ids_and_reject_missing_blocks() {
         assert!(!output.exists() && !sidecar(&output).exists());
     }
 }
+
+#[test]
+fn adx_loop_survives_wav_export_with_pcm_written_once() {
+    let case = Case::new();
+    let mut source = adx();
+    source.splice(26..26, [0u8; 24]);
+    source[2..4].copy_from_slice(&52u16.to_be_bytes());
+    source[24..28].copy_from_slice(&1u32.to_be_bytes());
+    source[28..32].copy_from_slice(&1u32.to_be_bytes());
+    source[36..40].copy_from_slice(&3u32.to_be_bytes());
+    let input = case.file("loop.adx", &source);
+    let output = case.path.join("loop.wav");
+    succeeded(
+        case.command()
+            .arg("adx")
+            .arg(input)
+            .arg(&output)
+            .output()
+            .unwrap(),
+    );
+    let wav = fs::read(output).unwrap();
+    let word = |at| u32::from_le_bytes(wav[at..at + 4].try_into().unwrap());
+    assert_eq!(word(4) as usize + 8, wav.len());
+    assert_eq!(&wav[36..40], b"smpl");
+    assert_eq!(word(40), 60);
+    assert_eq!(word(72), 1);
+    assert_eq!((word(88), word(92)), (1, 2));
+    assert_eq!(&wav[104..108], b"data");
+    assert_eq!(&wav[112..], &[1, 0, 3, 0, 7, 0]);
+}

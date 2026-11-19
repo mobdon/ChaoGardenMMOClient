@@ -262,8 +262,7 @@ pub fn decode_adx(input: &[u8], max_samples: usize) -> Result<PcmAudio> {
 }
 
 impl PcmAudio {
-    /// Canonical little-endian PCM WAV. Loop metadata stays in the manifest;
-    /// playback policy does not alter or repeat the source PCM samples.
+    /// Write PCM once and preserve a declared forward loop in a WAV sampler chunk.
     pub fn to_wav(&self) -> Result<Vec<u8>> {
         let expected_samples = (self.header.sample_count as usize)
             .checked_mul(usize::from(self.header.channels))
@@ -285,10 +284,20 @@ impl PcmAudio {
             .checked_mul(2)
             .and_then(|n| u32::try_from(n).ok())
             .ok_or_else(|| Error::invalid("WAV exceeds RIFF size limit"))?;
+        let sampler_size = if let Some(points) = &self.header.loop_points {
+            if points.start_sample >= points.end_sample
+                || points.end_sample > self.header.sample_count
+            {
+                return Err(Error::invalid("invalid WAV loop range"));
+            }
+            68
+        } else {
+            0
+        };
         let riff_size = data_size
-            .checked_add(36)
+            .checked_add(36 + sampler_size)
             .ok_or_else(|| Error::invalid("WAV RIFF size overflow"))?;
-        let mut output = Vec::with_capacity(data_size as usize + 44);
+        let mut output = Vec::with_capacity(riff_size as usize + 8);
         output.extend_from_slice(b"RIFF");
         output.extend_from_slice(&riff_size.to_le_bytes());
         output.extend_from_slice(b"WAVEfmt ");
@@ -299,6 +308,17 @@ impl PcmAudio {
         output.extend_from_slice(&byte_rate.to_le_bytes());
         output.extend_from_slice(&(u16::from(self.header.channels) * 2).to_le_bytes());
         output.extend_from_slice(&16u16.to_le_bytes());
+        if let Some(points) = &self.header.loop_points {
+            output.extend_from_slice(b"smpl");
+            output.extend_from_slice(&60u32.to_le_bytes());
+            let period_ns = 1_000_000_000 / self.header.sample_rate;
+            let sampler_header = [0, 0, period_ns, 60, 0, 0, 0, 1, 0];
+            // Forward loop, inclusive WAV endpoint, repeat indefinitely.
+            let sampler_loop = [0, 0, points.start_sample, points.end_sample - 1, 0, 0];
+            for word in sampler_header.into_iter().chain(sampler_loop) {
+                output.extend_from_slice(&word.to_le_bytes());
+            }
+        }
         output.extend_from_slice(b"data");
         output.extend_from_slice(&data_size.to_le_bytes());
         for sample in &self.samples {
