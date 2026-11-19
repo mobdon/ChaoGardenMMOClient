@@ -628,6 +628,7 @@ pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Va
         collision_flags: u32,
         work10: f32,
         angles: [u32; 3],
+        entry_player_position: Option<[f32; 3]>,
     }
     let mut s: State = serde_json::from_slice(request)?;
     if s.submode > 4 || !s.private28.is_finite() || !s.work10.is_finite() {
@@ -637,6 +638,32 @@ pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Va
     }
     identify_hot_shot(bytes)?;
     let rel = CityRel::read_identified(bytes, 82)?;
+    let target = if let Some(pos) = s.entry_player_position {
+        if s.submode != 0 || !pos.iter().all(|v| v.is_finite()) {
+            return Err(Error::invalid(
+                "target construction requires a finite player position on mode-nine entry",
+            ));
+        }
+        let address = |at, section| -> Result<u32> {
+            let hi = rel.reference(1, at).ok_or_else(invalid)?;
+            if (hi.module, hi.section, hi.kind) != (82, section, 6)
+                || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
+            {
+                return Err(invalid());
+            }
+            Ok(hi.addend)
+        };
+        let unit = hot_shot_scalar(&rel, 0x4ce3e)?;
+        Some(serde_json::json!({
+            "sourcePlayerSlot":0,"position":pos,"savedPosition":pos,"scale":vec![unit;3],
+            "work3c":hot_shot_scalar(&rel,0x4b86)?,"work44":hot_shot_scalar(&rel,0x4ce56)?,
+            "updateSection1":address(0x4cdb6,1)?,"displaySection1":address(0x4ce92,1)?,
+            "destroySection1":address(0x4ce9e,1)?,"collisionSection5":address(0x4ce6a,5)?,
+            "workSize":84,"bossWork54":pos
+        }))
+    } else {
+        None
+    };
     let mut mode = 9;
     let mut next_variant = None;
     // Entry deliberately falls through into the first countdown on this same update.
@@ -686,7 +713,7 @@ pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Va
     }
     Ok(
         serde_json::json!({"mode":mode,"submode":s.submode,"timer":s.timer,"remaining":s.remaining,
-        "privateByte2Write":next_variant,"flags":s.flags,"collisionFlags":s.collision_flags,
+        "targetOnSuccessfulAllocation":target,"privateByte2Write":next_variant,"flags":s.flags,"collisionFlags":s.collision_flags,
         "work10":s.work10+hot_shot_scalar(&rel,0x4dc6)?,
         "angles":[s.angles[0].wrapping_add(0x210),s.angles[1].wrapping_add(0x250),s.angles[2].wrapping_add(0x300)],
         "scope":"Mode-nine timing and selected writes. Target tracking, helper lifetimes and attack effects are not simulated."}),
