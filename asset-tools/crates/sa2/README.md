@@ -6,13 +6,18 @@ are changed. This ports asset readers and selected conversions; it does not port
 the retail game engine, Chao simulation, missions or device transfer protocol.
 
 The CLI emits native structured JSON, raw archive entries, lossless RGBA PNGs and
-native-rate PCM WAVs. The existing SA Tools/Blender pipeline remains the verified
-model extraction/GLB export path. Do not replace its live outputs with these tools.
+native-rate PCM WAVs. A Rust GLB exporter also handles the verified static Chunk
+subset (seven cinematic emeralds and the neutral garden palm). Other models
+still use the existing SA Tools/Blender pipeline.
 
 The full SA2 + BATTLE Rust program is tracked in
 [GitHub issue 11](https://github.com/mobdon/ChaoGardenMMOClient/issues/11) and
 [FULL-GAME-PORT.md](docs/FULL-GAME-PORT.md). This crate is its resource/evaluation
 foundation; the full game is not yet ported.
+
+The [campaign and stage guide](docs/CAMPAIGN-ENTRY.md) shows how to sample a
+native opening camera and open City Escape from Hero Story using a local Steam
+installation. It includes the installed-data checks and exact scope of the offline host.
 
 ```powershell
 # Use the original checkout's already prepared Rust session, or a normal Rust toolchain.
