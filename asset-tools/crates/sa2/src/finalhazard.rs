@@ -697,3 +697,65 @@ pub fn weakpoint_mode5_tail(
     };
     Ok(serde_json::json!({"mode":mode,"submode":sub,"timer":next,"work24":value}))
 }
+/// Mode-three state before the draw/placement helper. The helper receives
+/// the current placement before a pending one can replace it.
+#[derive(serde::Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetractState {
+    pub current: [i8; 2],
+    pub pending: [i8; 2],
+    pub work24: f32,
+    pub scale: [f32; 3],
+    pub collider_attributes: u32,
+    pub submode: u8,
+    pub work10: u32,
+    pub work14: f32,
+}
+pub fn weakpoint_retract(bytes: &[u8], mut state: RetractState) -> Result<serde_json::Value> {
+    if crate::manifest::sha256(bytes)
+        != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
+    {
+        return Err(Error::invalid("unsupported Finalhazard stage revision"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 88)?;
+    let ptr = rel
+        .reference(1, 0x7d9a)
+        .ok_or_else(|| Error::invalid("missing retraction speed"))?;
+    let lo = rel
+        .reference(1, 0x7d9e)
+        .ok_or_else(|| Error::invalid("missing retraction speed"))?;
+    if (ptr.module, ptr.section, ptr.kind) != (88, 5, 6)
+        || lo != (crate::city_rel::Reference { kind: 4, ..ptr })
+    {
+        return Err(Error::invalid("unsupported retraction speed reference"));
+    }
+    let at = ptr.addend as usize + 8;
+    let speed = f32::from_be_bytes(rel.data(5)?[at..at + 4].try_into().unwrap());
+    let old = state.current;
+    state.work24 -= speed;
+    state.scale[1] = (state.scale[1] - speed).max(0.);
+    let mut mode = 3;
+    let mut calls = vec![0x7548u32];
+    if state.work24 <= -1. {
+        state.work24 = -1.;
+        state.scale = [1., 0., 1.];
+        state.work10 = 0;
+        state.work14 = 0.;
+        state.submode = 0;
+        if state.pending[1] >= 0 {
+            state.collider_attributes &= !0x10;
+            state.current = state.pending;
+            state.pending = [-1, -1];
+            calls.push(0x1f94);
+            mode = 1;
+        } else {
+            state.collider_attributes |= 0x10;
+            mode = 4;
+        }
+        calls.push(0x8818);
+    }
+    Ok(
+        serde_json::json!({"state":state,"mode":mode,"placementUsedBeforeSwitch":old,
+        "stageHelperCalls":calls,"scope":"Caller supplies queued bytes. External level/volume effects and helper internals are not simulated."}),
+    )
+}
