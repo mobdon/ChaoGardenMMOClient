@@ -359,3 +359,58 @@ pub fn texture_resource(bytes: &[u8], mode: i32) -> Result<(String, usize, &'sta
     };
     Ok((format!("{name}.prs"), count, hash))
 }
+
+/// Preserve native preorder and transform words. Geometry pointers refer to local REL data.
+pub fn model(bytes: &[u8], mode: i32) -> Result<serde_json::Value> {
+    use crate::Error;
+    kart_progress::verify(bytes)?;
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let site = if mode == 0 { 0xdc3a } else { 0xdc66 };
+    let root = rel
+        .reference(1, site)
+        .filter(|r| r.module == 80 && r.kind == 4 && r.section == 5)
+        .ok_or_else(|| Error::invalid("missing pursuit object reference"))?
+        .addend;
+    let data = rel.data(5)?;
+    let mut pending = vec![(root, None::<usize>)];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut nodes = Vec::new();
+    while let Some((offset, parent)) = pending.pop() {
+        if !seen.insert(offset) {
+            return Err(Error::invalid("repeated pursuit object node"));
+        }
+        let row = data
+            .get(offset as usize..)
+            .and_then(|s| s.get(..52))
+            .ok_or_else(|| Error::invalid("truncated pursuit object"))?;
+        let word = |i: usize| u32::from_be_bytes(row[i..i + 4].try_into().unwrap());
+        let xyz = |i: usize| {
+            [
+                f32::from_bits(word(i)),
+                f32::from_bits(word(i + 4)),
+                f32::from_bits(word(i + 8)),
+            ]
+        };
+        let ptr = |field: u32| -> Result<Option<u32>> {
+            rel.local_pointer(5, offset + field)?
+                .map(|(s, o)| {
+                    if s == 5 {
+                        Ok(o)
+                    } else {
+                        Err(Error::invalid("unexpected pursuit node section"))
+                    }
+                })
+                .transpose()
+        };
+        let index = nodes.len();
+        nodes.push(serde_json::json!({"parent":parent,"offset":offset,"flags":word(0),"attach":ptr(4)?,
+            "position":xyz(8),"angles":[word(20) as i32,word(24) as i32,word(28) as i32],"scale":xyz(32)}));
+        if let Some(sibling) = ptr(48)? {
+            pending.push((sibling, parent));
+        }
+        if let Some(child) = ptr(44)? {
+            pending.push((child, Some(index)));
+        }
+    }
+    Ok(serde_json::json!({"root":root,"section":5,"nodes":nodes}))
+}

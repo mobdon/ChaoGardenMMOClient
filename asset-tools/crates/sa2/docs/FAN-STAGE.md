@@ -473,3 +473,12 @@ and nonopaque pixel count. The output does not contain texture pixels.
 Independent ArchiveTool PNG conversions matched all 9 cartLim and 21 limtails
 entries byte for byte after RGBA decode (17,573 nonopaque pixels total).
 This verifies texture content, not UV assignment or rendered appearance.
+
+`kart-target-model CartD.rel OUTPUT.json MODE` reads the original object
+hierarchy selected by the draw call. Nodes are in child-first order; each
+parent is an index into that list. Positions, signed game angles, scales
+and evaluation flags are local to the node. Attachments remain section-5
+references. Mode 0 selects the president's limousine (11 nodes); nonzero
+mode selects the Tornado (53 nodes). All 64 nodes match their corresponding
+PC Data_DLL exports for parentage, transform bits, flags and attachment
+presence. This comparison does not establish mesh or skinning parity.
