@@ -285,3 +285,19 @@ The comparison `tests/kart_timeout_ppc.py CLI CartD.rel PRIVATE_TMP_DIR`
 runs the vehicle branch, constructor and task updates against the installed
 PowerPC code with a successful allocation. It checks cue and action IDs;
 the action service's effects and the scheduler are not verified.
+
+`kart-drive-input CartD.rel OUTPUT.json INPUT.json` replays observations
+from one kart's selected controller row. Supply its 60-word `history`,
+write `cursor` and ordered `frames`. Each frame contains `buttons` (word
+at +8), `stick_x` (signed halfword at +0x1c) and `work_28c`. The return
+includes the final ring and cursor so another batch can continue it.
+
+CartD 0x5360 records the stick and advances the cursor. The steering path
+at 0x3220 sums ten entries starting at the **new write cursor**, stepping
+backward, then multiplies by the source float at section 4 +0x200. This
+differs from averaging the ten most recent samples. The 0x3034 helper tests
+mask 4 for work +0x110 and either bit of 0x402 for +0x114; a signed +0x28c
+above ten suppresses the latter. These are selected controller records and
+intermediate vehicle inputs, not physical controller bindings or integrated
+kart steering. Run `tests/kart_drive_input_ppc.py CLI CartD.rel PRIVATE_DIR`
+to compare 134 frames through the original helpers in both slots and banks.
