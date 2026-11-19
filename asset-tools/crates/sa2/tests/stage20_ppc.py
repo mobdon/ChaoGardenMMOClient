@@ -190,3 +190,31 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             assert json.loads(out.read_text())["tail"]==dict(mode=m,submode=s,counter=c,cooldown=get(work+6,"h")[0],
                          slot1Value=get(player1+72,"f")[0],scaled=get(work+8,"f")[0],calls=calls)
 print(idx,"walker shared tail observations matched")
+
+def seven_call(cpu,pc,*_):
+    site=pc-base[1];calls.append(site)
+    if site in (0x1358,0x1374):return # Execute the stage transition helper itself.
+    value=near if site==0x1344 else draw
+    cpu.reg_write(R.UC_PPC_REG_3,value&0xffffffff);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x1344,0x1358,0x1374,0x398,0x558,0x5c4):
+    u.hook_add(UC_HOOK_CODE,seven_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for slot,near in [(6,0),(6,1),(7,None),(-1,None)]:
+        for counter in (-1,120,121):
+            for draw in (0,16383,32767):
+                calls=[];put(player1+1,"b",slot);put(work,"bbhh",7,0,counter,-1)
+                for r,v in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(0,slot&255)]:
+                    u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
+                # Prior dispatch coverage checks the first instruction loads slot-one byte 1.
+                u.emu_start(base[1]+0x132c,base[1]+0x1424,count=150)
+                assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+                m,_,ctr,timer=get(work,"bbhh")
+                c=dict(mode=7,engine_bytes=[0,0,0],player_flags=[0,0],
+                       state_seven=dict(slot_byte=slot,counter=counter,helper_result=near,draw=draw if m!=7 else None))
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                assert json.loads(out.read_text())["controller"]==dict(dispatch=0x1328,continueAt=0x1424,
+                           mode=m,timerWrite=timer if m!=7 else None,counter=ctr,operations=calls)
+print(idx,"state seven transitions matched")

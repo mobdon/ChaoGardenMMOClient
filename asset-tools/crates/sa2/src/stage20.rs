@@ -197,6 +197,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Controller {
+    state_seven: Option<StateSeven>,
     mode: i8,
     engine_bytes: [i8; 3],
     player_flags: [u16; 2],
@@ -281,7 +282,50 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
     } else if c.opening.is_some() {
         return Err(invalid());
     }
-    Ok(json!({"dispatch":target,"continueAt":next,"mode":mode,"timerWrite":timer,"operations":ops}))
+    let mut report = json!({"dispatch":target,"continueAt":next,"mode":mode,"timerWrite":timer,"operations":ops});
+    if let Some(v) = c.state_seven {
+        if target != 0x1328 {
+            return Err(invalid());
+        }
+        let mut ops = Vec::new();
+        let engage = if v.slot_byte == 6 {
+            ops.push(0x1344);
+            v.helper_result.ok_or_else(invalid)? != 0
+        } else {
+            if v.helper_result.is_some() {
+                return Err(invalid());
+            }
+            false
+        };
+        let sites = if engage {
+            ops.extend([0x1358, 0x398]);
+            Some((6, 0x3c6, 0x3d6, 0x3e6))
+        } else if v.counter > 120 {
+            ops.push(0x1374);
+            if v.slot_byte == 7 {
+                ops.push(0x558);
+                Some((2, 0x586, 0x596, 0x5a6))
+            } else {
+                ops.push(0x5c4);
+                Some((2, 0x5f2, 0x602, 0x612))
+            }
+        } else {
+            None
+        };
+        let mut counter = v.counter;
+        if let Some((m, scale, range, base)) = sites {
+            let draw = v.draw.ok_or_else(invalid)? as f32;
+            let f = |site| number(4, field(site, 4)?);
+            let value = f(base)? + f(range)? * (f(scale)? * draw);
+            timer = Some(value.trunc() as i32 as i16 as i32);
+            mode = m;
+            counter = 0;
+        } else if v.draw.is_some() {
+            return Err(invalid());
+        }
+        report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"timerWrite":timer,"counter":counter,"operations":ops});
+    }
+    Ok(report)
 }
 
 /// Observations after helper 1:0x0, including the child link after a removal request.
@@ -346,4 +390,13 @@ fn walker_tail(mut t: Tail, constant: impl Fn(u32) -> Result<f32>) -> Result<Val
         json!({"mode":t.mode,"submode":t.submode,"counter":t.counter,"cooldown":t.cooldown,
         "slot1Value":t.slot1_value,"scaled":scaled,"calls":calls}),
     )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateSeven {
+    slot_byte: i8,
+    counter: i16,
+    helper_result: Option<i32>,
+    draw: Option<i32>,
 }
