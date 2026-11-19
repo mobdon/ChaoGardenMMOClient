@@ -1,0 +1,162 @@
+use sa2_asset_tools::duel_platform::{self, FrameInput, Generator, GeneratorState, Spawn};
+use std::{fs, path::PathBuf};
+
+fn game() -> PathBuf {
+    PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap())
+}
+fn synthetic() -> Generator {
+    Generator {
+        start_x: 0.0,
+        step_x: 300.0,
+        lookahead: 2100.0,
+        timer_scale: 0.4,
+        timer_floor: -3600.0,
+        result_x: -300.0,
+        result_timer: 0x8000,
+        deadline_frames: 3,
+        late_timer: 900,
+        fall_after: 900,
+        stand_timer: 720,
+        collision_radius_pad: 15.0,
+        collision_flags: 0x2800_0001,
+        collision_radius: 173.29166,
+    }
+}
+fn frame(a: Option<f32>, b: Option<f32>) -> FrameInput {
+    FrameInput {
+        players: [a, b],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn generator_follows_players_and_deadline() {
+    let g = synthetic();
+    let mut s = GeneratorState::default();
+    assert!(g.step(&mut s, &frame(Some(0.0), None)).unwrap().is_empty());
+    assert_eq!((s.mode, s.cursor_x, s.frames), (1, 0.0, 1));
+    let first = g.step(&mut s, &frame(Some(0.0), Some(0.0))).unwrap();
+    assert_eq!(first.len(), 7);
+    assert_eq!(first[6].x, 1800.0);
+    assert_eq!(first[1].timer, (-120i16) as u16);
+    assert!(first.iter().all(|p| p.persists(&g)));
+    // A player far ahead pulls the cursor; old platforms behind it fall at once.
+    let ahead = g.step(&mut s, &frame(Some(5000.0), None)).unwrap();
+    assert_eq!(ahead.first().unwrap().x, 2100.0);
+    assert_eq!(ahead.last().unwrap().x, 6900.0);
+    assert_eq!(ahead[0].timer, 1160);
+    assert!(!ahead[0].persists(&g));
+    assert_eq!((s.frames, s.flags), (3, 0));
+    // The counter passes three after this frame's spawning; later platforms
+    // are created already activated with timer 900.
+    assert!(g
+        .step(&mut s, &frame(Some(5000.0), None))
+        .unwrap()
+        .is_empty());
+    assert_eq!((s.frames, s.flags), (3, 0x1000));
+    let late = g.step(&mut s, &frame(Some(5300.0), None)).unwrap();
+    assert_eq!(
+        late,
+        vec![Spawn {
+            x: 7200.0,
+            timer: 900,
+            activated: true
+        }]
+    );
+}
+
+#[test]
+fn result_mode_spawns_one_platform_and_pause_holds_counter() {
+    let g = synthetic();
+    let mut s = GeneratorState::default();
+    let paused = FrameInput {
+        paused: true,
+        ..frame(None, None)
+    };
+    g.step(&mut s, &paused).unwrap();
+    assert_eq!(s.frames, 0);
+    let result = FrameInput {
+        result_mode: true,
+        ..frame(Some(0.0), Some(0.0))
+    };
+    let r = g.step(&mut s, &result).unwrap();
+    assert_eq!(r.len(), 1);
+    assert_eq!(
+        (r[0].x, r[0].timer, r[0].activated),
+        (-300.0, 0x8000, false)
+    );
+    assert!(g.step(&mut s, &frame(Some(9e3), None)).unwrap().is_empty());
+    assert_eq!(s.mode, 2);
+}
+
+#[test]
+fn nan_player_spawns_nothing() {
+    let g = synthetic();
+    let mut s = GeneratorState::default();
+    g.step(&mut s, &frame(None, None)).unwrap();
+    assert!(g
+        .step(&mut s, &frame(Some(f32::NAN), None))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+#[ignore = "requires installed stg42D.rel and sonic2app.exe"]
+fn installed_template_matches_executable_platform() {
+    let gd = game().join("resource/gd_PC");
+    let rel = fs::read(gd.join("stg42D.rel")).unwrap();
+    let exe = fs::read(game().join("sonic2app.exe")).unwrap();
+    let a = duel_platform::read_rel(&rel).unwrap();
+    let b = duel_platform::read(&exe).unwrap();
+    assert_eq!(
+        (a.node.flags, a.node.rotation_bams, a.node.scale),
+        (b.node.flags, b.node.rotation_bams, b.node.scale)
+    );
+    let (a, b) = (a.attachment, b.attachment);
+    assert_eq!(a.vertices, b.vertices);
+    assert_eq!(a.normals, b.normals);
+    assert_eq!(
+        (a.bounds_center, a.bounds_radius),
+        (b.bounds_center, b.bounds_radius)
+    );
+    assert_eq!(a.material_words, b.material_words);
+    assert_eq!(a.meshsets.len(), b.meshsets.len());
+    for (x, y) in a.meshsets.iter().zip(&b.meshsets) {
+        assert_eq!(
+            (x.material_id, x.polygon_type, x.attributes),
+            (y.material_id, y.polygon_type, y.attributes)
+        );
+        let p = |m: &sa2_asset_tools::stage::BasicMeshset| {
+            m.polygons
+                .iter()
+                .map(|p| (p.reversed, p.indices.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(p(x), p(y));
+    }
+
+    let g = duel_platform::generator(&rel).unwrap();
+    assert_eq!(
+        (g.start_x, g.step_x, g.lookahead, g.timer_floor, g.result_x),
+        (0.0, 300.0, 2100.0, -3600.0, -300.0)
+    );
+    assert_eq!(g.timer_scale.to_bits(), 0x3ecc_cccd);
+    assert_eq!(
+        (g.deadline_frames, g.fall_after, g.stand_timer),
+        (36000, 900, 720)
+    );
+    assert_eq!(g.collision_flags, 0x2800_0001);
+
+    let t = duel_platform::start_terrain(&rel, [Some(0.0), Some(0.0)]).unwrap();
+    let xs: Vec<f32> = t.platforms.iter().map(|p| p.x).collect();
+    assert_eq!(xs, [0.0, 300.0, 600.0, 900.0, 1200.0, 1500.0, 1800.0]);
+    assert!(t.platforms.iter().all(|p| p.persists));
+    assert_eq!(t.vertices.len(), 7 * 24);
+    assert_eq!(t.triangles.len() % 7, 0);
+    // Adjacent 300-unit platforms abut: one continuous deck from -150 to 1950.
+    let (lo, hi) = t
+        .vertices
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[0]), h.max(v[0])));
+    assert_eq!((lo, hi), (-150.0, 1950.0));
+}

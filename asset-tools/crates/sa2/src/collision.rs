@@ -139,7 +139,7 @@ fn include(bounds: &mut Option<Bounds>, point: [f64; 3]) {
     }
 }
 
-fn triangle_count(mesh: &BasicMeshset, poly: &BasicPolygon) -> Result<usize> {
+pub(crate) fn triangle_count(mesh: &BasicMeshset, poly: &BasicPolygon) -> Result<usize> {
     match mesh.polygon_type {
         0 if poly.indices.len() == 3 => Ok(1),
         1 if poly.indices.len() == 4 => Ok(2),
@@ -152,7 +152,7 @@ fn triangle_count(mesh: &BasicMeshset, poly: &BasicPolygon) -> Result<usize> {
 }
 /// Native quad indices form two triangles sharing edge 1--2. Strip parity
 /// toggles for every source triple, including degenerate triples.
-fn triangle_indices(mesh: &BasicMeshset, poly: &BasicPolygon, i: usize) -> [u32; 3] {
+pub(crate) fn triangle_indices(mesh: &BasicMeshset, poly: &BasicPolygon, i: usize) -> [u32; 3] {
     let v = &poly.indices;
     match mesh.polygon_type {
         0 => [v[0] as u32, v[1] as u32, v[2] as u32],
