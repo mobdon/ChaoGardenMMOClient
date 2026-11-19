@@ -377,3 +377,106 @@ impl CheckpointPlacement {
         ]
     }
 }
+
+/// Contact and spin portion of an initialized City Escape checkpoint callback.
+/// Range handling, collision queries, sounds, rewards and respawn remain with
+/// their respective systems. The contact speed is the result of REL 0x44bfc.
+pub struct CheckpointTicks {
+    pub contact: ContactState,
+    pub spin: CheckpointSpin,
+}
+
+impl CheckpointTicks {
+    pub fn tick(
+        &mut self,
+        hit: Option<(i32, u32)>,
+        players: &[ContactPlayer; 2],
+        checkpoint_byte: u8,
+        contact_speed: f32,
+    ) -> Result<Option<CheckpointContactCall>> {
+        match self.contact.mode {
+            1 => {
+                let old_timers = self.contact.slot_timers;
+                let call = self.contact.accept(hit, players, checkpoint_byte)?;
+                if call.is_some() {
+                    let scaled = (10.0_f32 * contact_speed) * f32::from_bits(0x43360b61);
+                    if !scaled.is_finite() || !(-2147483648.0..2147483648.0).contains(&scaled) {
+                        self.contact.mode = 1;
+                        self.contact.slot_timers = old_timers;
+                        return Err(Error::invalid(
+                            "checkpoint speed outside verified integer conversion",
+                        ));
+                    }
+                    self.spin.steps[1] = scaled.trunc() as i32 as i16;
+                }
+                Ok(call)
+            }
+            2 | 3 => {
+                if self.contact.mode == 2 && self.spin.advance() {
+                    self.contact.mode = 3;
+                }
+                for timer in &mut self.contact.slot_timers {
+                    if *timer > 0 {
+                        *timer -= 1;
+                    }
+                }
+                Ok(None)
+            }
+            _ => Err(Error::invalid(
+                "expected an initialized active checkpoint mode",
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tick_tests {
+    use super::*;
+    #[test]
+    fn contact_spin_and_timer_use_entry_mode() {
+        let players = std::array::from_fn(|_| ContactPlayer {
+            position_bits: [0; 3],
+            rotation: [0; 3],
+        });
+        let mut state = CheckpointTicks {
+            contact: ContactState {
+                mode: 1,
+                slot_timers: [-1, 0],
+            },
+            spin: CheckpointSpin {
+                angles: [0; 2],
+                steps: [0; 2],
+                counters: [0; 2],
+            },
+        };
+        assert!(state.tick(Some((1, 0)), &players, 1, f32::NAN).is_err());
+        assert_eq!(
+            (state.contact.mode, state.contact.slot_timers),
+            (1, [-1, 0])
+        );
+        assert!(state
+            .tick(Some((1, 0)), &players, 1, 0.001)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            (state.spin.steps, state.contact.slot_timers),
+            ([0, 1], [-1, 300])
+        );
+        assert!(state
+            .tick(Some((0, 0)), &players, 1, f32::NAN)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            (
+                state.contact.mode,
+                state.spin.angles,
+                state.contact.slot_timers
+            ),
+            (3, [0, 1], [-1, 299])
+        );
+        for _ in 0..300 {
+            state.tick(None, &players, 1, 0.).unwrap();
+        }
+        assert_eq!(state.contact.slot_timers, [-1, 0]);
+    }
+}
