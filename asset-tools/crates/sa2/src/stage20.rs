@@ -189,7 +189,14 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         report["controller"] = dispatch_controller(&rel, c)?;
     }
     if let Some(t) = tail {
+        let bounds = t
+            .slot1_position
+            .map(|pos| arena_bounds(&rel, pos))
+            .transpose()?;
         report["tail"] = walker_tail(t, constant)?;
+        if let Some(bounds) = bounds {
+            report["tail"]["arenaBounds"] = bounds;
+        }
     }
     Ok(report)
 }
@@ -917,6 +924,7 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Tail {
+    slot1_position: Option<[f32; 3]>,
     mode: i8,
     submode: i8,
     counter: i16,
@@ -928,6 +936,50 @@ struct Tail {
     child: bool,
     child_after_remove: Option<bool>,
 }
+/// The native helper passes a corrected copy to the engine; it does not write the pose.
+fn arena_bounds(rel: &CityRel<'_>, mut position: [f32; 3]) -> Result<Value> {
+    let invalid = || Error::invalid("missing duel arena bound or position service");
+    let data = rel.data(5)?;
+    let value = |site, displacement: usize| -> Result<f32> {
+        let reference = rel
+            .reference(1, site)
+            .filter(|r| r.module == 19 && r.kind == 4 && r.section == 5)
+            .ok_or_else(invalid)?;
+        let at = reference.addend as usize + displacement;
+        Ok(f32::from_be_bytes(
+            data.get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let mut changed = false;
+    for (axis, (center, upper, lower)) in
+        [(0x32, 0x3e, 0x62), (0x86, 0x92, 0xb6), (0xda, 0xe6, 0x10a)]
+            .into_iter()
+            .enumerate()
+    {
+        let origin = value(center, axis * 4)?;
+        let max = origin + value(upper, axis * 4)?;
+        let min = origin + value(lower, 12 + axis * 4)?;
+        if position[axis] > max {
+            position[axis] = max;
+            changed = true;
+        }
+        if position[axis] < min {
+            position[axis] = min;
+            changed = true;
+        }
+    }
+    let service = rel
+        .reference(1, 0x13c)
+        .filter(|r| r.module == 0 && r.kind == 10)
+        .ok_or_else(invalid)?;
+    Ok(
+        json!({"result":i32::from(changed),"call":changed.then(||json!({"engine":service.addend,"slot":1,"position":position}))}),
+    )
+}
+
 fn walker_tail(mut t: Tail, constant: impl Fn(u32) -> Result<f32>) -> Result<Value> {
     let mut calls = vec![0x142c];
     let mut q = t.queries.into_iter();

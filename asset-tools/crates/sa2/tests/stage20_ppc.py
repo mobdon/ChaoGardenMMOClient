@@ -672,3 +672,26 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             assert (rep["mode"],rep["counter"],rep["timerWrite"],rep["continueAt"])==(m,counter,timer if m in (4,6) else None,0x1424)
             if m==5:assert rep["closeRange"]==dict(cooldown=cool,calls=calls)
 print(idx,"integrated expiry transitions matched")
+
+# The tail's first local helper works on a copy, even when all three axes are out.
+def capture_correction(cpu,pc,*_):
+    corrections.append(dict(engine=engines[pc-base[1]],slot=cpu.reg_read(R.UC_PPC_REG_3),
+                            position=[reg_float(cpu,r) for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2,R.UC_PPC_REG_FPR3)]))
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+u.hook_add(UC_HOOK_CODE,capture_correction,begin=base[1]+0x13c,end=base[1]+0x13c)
+from itertools import product
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,pos in enumerate(product((-176.,-175.,15.,205.,206.),(-341.,-340.,-170.,-70.,-69.),(-321.,-320.,-20.,280.,281.))):
+        corrections=[];put(pose1+20,"fff",*pos)
+        for r,val in [(1,0x100e00),(3,work),(4,pose1)]:
+            u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+        u.reg_write(R.UC_PPC_REG_LR,stop);u.emu_start(base[1],stop,count=120)
+        assert u.reg_read(R.UC_PPC_REG_PC)==stop and get(pose1+20,"fff")==pos and len(corrections)<=1
+        result=u.reg_read(R.UC_PPC_REG_3)
+        tail=dict(mode=5,submode=0,counter=0,cooldown=0,slot0_flags=0,queries=[0,0,0],
+                  engine_word=1,slot1_value=0.,child=False,slot1_position=pos)
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],tail=tail)))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())["tail"]["arenaBounds"]==dict(result=result,call=next(iter(corrections),None))
+print(idx+1,"arena boundary positions matched")
