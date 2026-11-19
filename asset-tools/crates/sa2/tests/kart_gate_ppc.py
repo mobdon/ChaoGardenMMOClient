@@ -241,4 +241,19 @@ if len(sys.argv)>4:
                 req.write_text(json.dumps(q));out=req.with_name(path.stem+"-"+label+".json")
                 rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
                 assert rejected.returncode!=0 and not out.exists()
+            # State 7 clears work+0x44. The stationary progress scan must now
+            # use three forward probes and skip the reverse/debug branches.
+            guided=dict(stationary["vehicle_post_move"],global_24d60=1,velocity=[0,0,0],
+                        dispatch=dict(work_c8=0,work_44=1,work_68=98,target=dict(
+                            segment=7,quad=[[1,2],[37,45],[5,6],[7,8]],angle_return=0.0)))
+            scan=dict(debug_enabled=True)
+            q.update(updates=[dict(vehicle_post_move=guided),dict(slot_progress=scan)])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-guided-scan.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());step=doc["updates"][1]["slotProgress"]
+            assert doc["vehicleState"]==7 and step["tested_indices"]==[6,7,8] and not step["debug_indices"]
+            scan["work_44"]=1
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-scan.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"course scan flag conflicts" in rejected.stderr
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

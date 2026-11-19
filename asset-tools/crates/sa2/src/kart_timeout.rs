@@ -69,6 +69,9 @@ impl Frame {
         self.segment_count = Some(retained.1);
         Ok(())
     }
+    pub(crate) fn course_scan_flag(&self) -> Option<u32> {
+        self.dispatch.as_ref().map(|d| d.work_44 as u32)
+    }
     pub(crate) fn highest(&self) -> Option<i32> {
         self.dispatch.as_ref()?.work_c8
     }

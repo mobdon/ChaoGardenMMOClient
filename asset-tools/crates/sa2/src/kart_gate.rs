@@ -635,7 +635,7 @@ enum SequenceEvent {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SlotTests {
-    work_44: u32,
+    work_44: Option<u32>,
     debug_enabled: bool,
     #[serde(default)]
     segment_tests: Vec<bool>,
@@ -700,6 +700,7 @@ pub fn story_sequence(
     let mut crossing_positions = None;
     let mut route = None;
     let mut progressed_route = None;
+    let mut scan_flag = None;
     let mut highest = None;
     let mut target: Option<crate::kart_story_target::State> = None;
     let constants = rel.data(4)?;
@@ -714,6 +715,11 @@ pub fn story_sequence(
                 }
                 let (task, work) = crossing_positions
                     .ok_or_else(|| Error::invalid("missing kart pose for course update"))?;
+                if scan_flag.zip(v.work_44).is_some_and(|(a, b)| a != b) {
+                    return Err(Error::invalid(
+                        "course scan flag conflicts with vehicle dispatch",
+                    ));
+                }
                 let stationary = crate::kart_progress::planar_direction(task, work)? == [0.; 3];
                 let r = crate::kart_progress::update_motion(
                     crate::kart_progress::Input {
@@ -723,7 +729,9 @@ pub fn story_sequence(
                         highest: highest
                             .or(v.highest)
                             .ok_or_else(|| Error::invalid("missing initial highest checkpoint"))?,
-                        work_44: v.work_44,
+                        work_44: scan_flag
+                            .or(v.work_44)
+                            .ok_or_else(|| Error::invalid("missing course scan flag"))?,
                         debug_enabled: v.debug_enabled,
                         mode,
                         segment_tests: v.segment_tests,
@@ -774,6 +782,7 @@ pub fn story_sequence(
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
                 parent = r.frame.as_ref().map(|f| f.pursuit_parent());
                 crossing_positions = r.frame.as_ref().map(|f| f.crossing_positions());
+                scan_flag = r.frame.as_ref().and_then(|f| f.course_scan_flag());
                 route = r.frame.as_ref().and_then(|f| f.route());
                 if let Some(h) = r.frame.as_ref().and_then(|f| f.highest()) {
                     highest = Some(h);

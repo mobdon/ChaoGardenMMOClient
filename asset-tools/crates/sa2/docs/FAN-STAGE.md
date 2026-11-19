@@ -674,3 +674,5 @@ The four REL24 calls at CartD section 1 offsets 0x93ac, 0x93bc, 0x93c4 and 0x93d
 After a slot progress event, the next primary vehicle post-move callback consumes the selected segment and course length. Repeated observations must agree. Frames without a preceding progress update still require an observed route; scheduling and moving intersection outcomes remain external.
 
 Vehicle dispatch reads the same highest checkpoint (vehicle work +0xc8) retained by slot progress and lap timing. An observed value must agree once that field is known. On finish the native signed counter clamp writes both checkpoint fields to 3 when the current counter exceeds 3.
+
+Slot progress consumes vehicle work +0x44 when the latest post-move dispatch is present. State 7 clears this field, so a stationary scan after guidance tests three forward candidates and no reverse candidates. A post-move frame without dispatch needs an independent observation for the scan flag.
