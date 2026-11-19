@@ -120,3 +120,85 @@ impl Manager {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pass {
+    Models,
+    Shadows,
+}
+
+/// BindTexture selects _rename_ring_tex_0 or _rename_ring_tex_1 by pass.
+/// DrawShadow submits the original _rename_ring_tex_2 model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Draw {
+    FogEnabled(bool),
+    ApplyFog,
+    BindTexture(Pass),
+    Push,
+    Pop,
+    Translate([f32; 3]),
+    RotateX(i32),
+    RotateY(i32),
+    RotateZ(i32),
+    Scale([f32; 3]),
+    DrawModel(Mesh),
+    DrawShadow,
+}
+
+impl Manager {
+    /// Run the scheduled RingModelDisp or RingModelDisp2 with the host's current
+    /// view transform. The two native callbacks may be scheduled separately.
+    pub fn display(
+        &self,
+        pass: Pass,
+        disabled: bool,
+        disable_object_fog: bool,
+        view_z: impl FnMut([f32; 3]) -> f32,
+        mut emit: impl FnMut(Draw),
+    ) {
+        use Draw::*;
+        if disabled || !self.task {
+            return;
+        }
+        if disable_object_fog {
+            emit(FogEnabled(false));
+            emit(ApplyFog);
+        }
+        emit(BindTexture(pass));
+        emit(Push);
+        match pass {
+            Pass::Models => self.models(false, view_z, |_, m, mesh| {
+                for op in [
+                    Translate(m.position),
+                    RotateY(m.yaw),
+                    DrawModel(mesh),
+                    Pop,
+                    Push,
+                ] {
+                    emit(op);
+                }
+            }),
+            Pass::Shadows => self.shadows(false, |_, m| {
+                let [x, y, z] = m.shadow_angles;
+                for op in [
+                    Translate([m.position[0], m.shadow_y, m.position[2]]),
+                    RotateZ(z),
+                    RotateX(x),
+                    RotateY(y),
+                    Translate([0., 0.5, 0.]),
+                    Scale([0.8, 1., 0.4]),
+                    DrawShadow,
+                    Pop,
+                    Push,
+                ] {
+                    emit(op);
+                }
+            }),
+        }
+        emit(Pop);
+        if disable_object_fog {
+            emit(FogEnabled(true));
+            emit(ApplyFog);
+        }
+    }
+}
