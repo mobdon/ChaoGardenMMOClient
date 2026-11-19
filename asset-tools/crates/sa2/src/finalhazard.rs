@@ -888,6 +888,13 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    BossConstructor {
+        task_allocated: bool,
+        work_allocated: bool,
+        aux_allocated: bool,
+        collision_flags: u16,
+    },
+
     BodyContactGeometry {
         player: i8,
         center: [f32; 3],
@@ -1417,6 +1424,45 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             )?;
             return Ok(
                 serde_json::json!({"contact_point":point,"contact_vector":vector,"impulse":impulse}),
+            );
+        }
+        PlacementClock::BossConstructor {
+            task_allocated,
+            work_allocated,
+            aux_allocated,
+            collision_flags,
+        } => {
+            let mut sites = vec![0x448];
+            if task_allocated {
+                sites.extend([0x488, 0x498]);
+                if !work_allocated {
+                    sites.push(0x4ac);
+                } else {
+                    sites.push(0x4c0);
+                    if !aux_allocated {
+                        sites.push(0x4d0);
+                    }
+                }
+            }
+            if !(task_allocated && work_allocated && aux_allocated) {
+                return Ok(serde_json::json!({"created":false,"call_sites":sites}));
+            }
+            let position_ptr = rel
+                .reference(1, 0x4e2)
+                .ok_or_else(|| Error::invalid("missing constructor position"))?;
+            phase_constant(&rel, 0x4e2, 4)?;
+            let at = position_ptr.addend as usize;
+            let d = rel.data(4)?;
+            let position =
+                [0, 4, 8].map(|n| f32::from_be_bytes(d[at + n..at + n + 4].try_into().unwrap()));
+            let yaw = i32::from_be_bytes(phase_constant(&rel, 0x502, 5)?.try_into().unwrap());
+            let scale = f32::from_be_bytes(phase_constant(&rel, 0x512, 4)?.try_into().unwrap());
+            let health = phase_constant(&rel, 0x52a, 5)?[0] as i8 as f32;
+            sites.extend([0x574, 0x59c, 0x5ac, 0x5c4, 0x5f4, 0x60c]);
+            return Ok(
+                serde_json::json!({"created":true,"initial_position":position,
+                "initial_yaw_bams":yaw,"initial_scale":vec![scale;3],"health":health,
+                "collision_flags":collision_flags & !0x40,"call_sites":sites}),
             );
         }
         PlacementClock::InitialHealth => {
