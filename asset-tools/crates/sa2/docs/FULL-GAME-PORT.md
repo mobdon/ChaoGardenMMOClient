@@ -29,6 +29,11 @@ It does not replace the browser presentation or working
 canonical service. Shared schema adoption and runtime integration remain
 reviewed follow-ups, tracked through the server coordination board.
 
+The `codex/sa2-stage-gameplay` milestone follows the original campaign tables
+through the first Hero, Dark and Last event cameras and can mount both normal
+City Escape layers. [Run it locally and see exactly what was compared](CAMPAIGN-ENTRY.md).
+Passing these checks does not satisfy the main-game or integration gates below.
+
 ## Full-game acceptance gates
 
 | Area | Required completion evidence |
