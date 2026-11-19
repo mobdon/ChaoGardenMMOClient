@@ -492,3 +492,47 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             assert (report["mode"],report["counter"],report["continueAt"])==(get(work,"b")[0],get(work+2,"h")[0],0x1424)
             assert report["closeRange"]==dict(cooldown=get(work+6,"h")[0],calls=calls)
 print(idx,"close-range state-five entries matched")
+
+# Execute state 5 including its range, decision and transition helpers.
+def five_service(cpu,pc,*_):
+    site=pc-base[1]
+    if site==0x100c:
+        vals=[struct.unpack(">d",cpu.reg_read(r).to_bytes(8,"big"))[0] for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2)]
+        observed["angle"]=vals
+        cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",angle),"big"))
+    else:
+        observed["pulse" if site in (0x10ac,0x1118) else "timer"]=True
+        cpu.reg_write(R.UC_PPC_REG_3,(pulse_draw if site in (0x10ac,0x1118) else draw)&0xffffffff)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x100c,0x10ac,0x1118,0x338):
+    u.hook_add(UC_HOOK_CODE,five_service,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for slot in (6,7,-1):
+        for ctr,pulse_draw in [(0,0),(32,32767),(64,32767),(65,0),(128,0),(128,32767)]:
+            for dist,flag in [(70.,1),(100.,0),(101.,1)]:
+                word=idx%4;angle=-0.71;draw=21000;args=[];calls=[];ops=[];observed={}
+                put(work,"bbhh",5,0,ctr,-1);put(player0+28,"h",word);put(player0+1,"b",7)
+                put(player1+1,"b",slot);put(0x801e738c,"I",task);put(task+64,"I",0)
+                put(0x803ad494,"b",flag);put(0x801e5000,"if",-999,-999.)
+                for addr in pulse_bytes:put(addr,"B",0)
+                for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
+                    u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
+                u.emu_start(base[1]+0xfe4,base[1]+0x1424,count=320)
+                assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
+                m,_,counter,timer=get(work,"bbhh")
+                yaw,scalar=get(0x801e5000,"if")
+                v=dict(player_word=word,slot0=p0,slot1=p1,range=dict(slot0_byte=7,distance_return=dist),slot_byte=slot,counter=ctr)
+                if "angle" in observed:v["angle_return"]=angle
+                else:assert (yaw,scalar)==(-999,-999.)
+                if dist>=100:v["decision"]=dict(work_word=None,engine_byte=flag)
+                if "pulse" in observed:v["pulse_draw"]=pulse_draw
+                if m!=5:v["timer_draw"]=draw
+                c=dict(mode=5,engine_bytes=[0,0,0],player_flags=[0,0],state_five=v)
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                assert json.loads(out.read_text())["controller"]==dict(dispatch=0xfe4,continueAt=0x1424,mode=m,counter=counter,
+                    timerWrite=timer if m!=5 else None,steering=dict(angleArgs=observed["angle"],yaw=yaw,scalar=scalar) if word else None,
+                    byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
+print(idx,"state-five updates matched")

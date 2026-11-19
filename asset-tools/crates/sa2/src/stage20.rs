@@ -198,6 +198,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct Controller {
     state_two: Option<StateTwo>,
+    state_five: Option<StateFive>,
     state_seven: Option<StateSeven>,
     state_eight: Option<StateEight>,
     state_one: Option<StateOne>,
@@ -205,6 +206,20 @@ struct Controller {
     engine_bytes: [i8; 3],
     player_flags: [u16; 2],
     opening: Option<Opening>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateFive {
+    player_word: i16,
+    slot0: [f32; 3],
+    slot1: [f32; 3],
+    angle_return: Option<f64>,
+    range: RangeObservation,
+    decision: Option<WalkerDecision>,
+    slot_byte: i8,
+    counter: i16,
+    pulse_draw: Option<i32>,
+    timer_draw: Option<i32>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -408,6 +423,59 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         }
         Ok(0x4000i32.wrapping_sub(units as i32))
     };
+    if let Some(v) = c.state_five {
+        if target != 0xfe4 {
+            return Err(invalid());
+        }
+        let f = |site| number(4, field(site, 4)?);
+        let steering = match (v.player_word & 3 != 0, v.angle_return) {
+            (true, Some(angle)) => Some(
+                json!({"angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],
+                "yaw":heading(0x1016,angle)?,"scalar":f(0x1042)?}),
+            ),
+            (false, None) => None,
+            _ => return Err(invalid()),
+        };
+        let near = (v.range.slot0_byte == 7 && v.range.distance_return < f64::from(f(0x2ba)?))
+            || v.range.distance_return <= f64::from(f(0x2d6)?);
+        let engage = match (near, v.decision) {
+            (true, None) => false,
+            (false, Some(d)) => d.active(),
+            _ => return Err(invalid()),
+        };
+        let pulse_sites = match (engage, v.slot_byte) {
+            (false, 6) if v.counter & 31 == 0 => Some((0x10da, 0x10ea)),
+            (false, 7) if v.counter & 63 == 0 => Some((0x1146, 0x1156)),
+            _ => None,
+        };
+        let pulse = match (pulse_sites, v.pulse_draw) {
+            (Some((scale, limit)), Some(draw)) => (draw as f32) * f(scale)? < f(limit)?,
+            (None, None) => false,
+            _ => return Err(invalid()),
+        };
+        if engage {
+            mode = 6;
+        } else if !pulse && v.counter > 64 {
+            mode = 4;
+        }
+        let sites = match (mode, v.slot_byte) {
+            (6, 7) => Some((0x366, 0x376, 0x376)),
+            (6, _) => Some((0x3c6, 0x3d6, 0x3e6)),
+            (4, 7) => Some((0x476, 0x486, 0x486)),
+            (4, _) => Some((0x4d6, 0x4e6, 0x4f6)),
+            _ => None,
+        };
+        timer = match (sites, v.timer_draw) {
+            (Some((scale, range, base)), Some(draw)) => {
+                Some((f(base)? + f(range)? * (f(scale)? * draw as f32)) as i32 as i16 as i32)
+            }
+            (None, None) => None,
+            _ => return Err(invalid()),
+        };
+        report = json!({"dispatch":target,"continueAt":0x1424,"steering":steering,"mode":mode,
+            "counter":if mode!=5 || pulse {0}else{v.counter},"timerWrite":timer,
+            "byteWrites":if pulse {vec![0x803ad485u32,0x803ad495]}else{vec![]}});
+    }
     if let Some(v) = c.state_two {
         if target != 0xad4 {
             return Err(invalid());
