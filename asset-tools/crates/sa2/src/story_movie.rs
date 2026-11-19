@@ -138,7 +138,7 @@ pub fn demux_movie(id: i16, b: &[u8]) -> Result<(Value, [Vec<u8>; 2], Vec<u8>)> 
                     } else {
                         None
                     };
-                    timing.push(json!({"stream":id,"packetOffset":at,"streamOffset":video.len(),"pts":pts,"dts":dts}));
+                    timing.push(json!({"stream":id,"packetOffset":at,"streamOffset":video.len(),"payloadBytes":packet.len()-header-if prefix==3{10}else{5},"pts":pts,"dts":dts}));
                     if dts.is_some() {
                         10
                     } else {
@@ -184,18 +184,25 @@ fn index_video(report: &mut Value, video: &[u8]) -> Result<()> {
                 p["streamOffset"].as_u64().unwrap() as usize,
                 p["pts"].as_u64().unwrap(),
                 p["packetOffset"].as_u64().unwrap(),
+                p["payloadBytes"].as_u64().unwrap() as usize,
             )
         })
         .collect();
     let mut schedule = Vec::new();
+    let mut prefix_start = None;
+    let mut used_anchor = None;
+    let mut direct = Vec::new();
     let mut group = 0usize;
     for (offset, h) in video
         .windows(6)
         .enumerate()
-        .filter(|(_, v)| v[..3] == [0, 0, 1] && matches!(v[3], 0 | 0xb8))
+        .filter(|(_, v)| v[..3] == [0, 0, 1] && matches!(v[3], 0 | 0xb3 | 0xb8))
     {
-        if h[3] == 0xb8 {
-            group += 1;
+        if h[3] != 0 {
+            prefix_start.get_or_insert(offset);
+            if h[3] == 0xb8 {
+                group += 1;
+            }
             continue;
         }
         let temporal = u16::from_be_bytes([h[4], h[5]]) >> 6;
@@ -203,7 +210,14 @@ fn index_video(report: &mut Value, video: &[u8]) -> Result<()> {
             .partition_point(|a| a.0 <= offset)
             .checked_sub(1)
             .ok_or_else(|| Error::invalid("unanchored movie picture"))?;
-        let (_, pts, packet) = anchors[index];
+        let (start, pts, packet, bytes) = anchors[index];
+        let picture_start = prefix_start.take().unwrap_or(offset);
+        let owns_anchor =
+            picture_start >= start && offset < start + bytes && used_anchor != Some(index);
+        if owns_anchor {
+            used_anchor = Some(index);
+        }
+        direct.push(owns_anchor);
         let kind = match (h[5] >> 3) & 7 {
             1 => "I",
             2 => "P",
@@ -224,7 +238,9 @@ fn index_video(report: &mut Value, video: &[u8]) -> Result<()> {
         .all(|w| w[0].1["packetPts"].as_u64() < w[1].1["packetPts"].as_u64());
     if !exact {
         for (_, pic) in &mut schedule {
-            pic["pts"] = Value::Null;
+            if !direct[pic["codedIndex"].as_u64().unwrap() as usize] {
+                pic["pts"] = Value::Null;
+            }
         }
     }
     report["pictureTimestampsResolved"] = json!(exact);

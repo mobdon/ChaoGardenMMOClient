@@ -115,10 +115,33 @@ fn compare_all_movie_streams() {
             _ => unreachable!(),
         };
         let mut rows = Vec::new();
-        for pic in report["presentationOrder"].as_array().unwrap() {
-            assert_eq!(pic["pts"].is_number(), ordered);
+        let mut pts_rows = Vec::new();
+        for (i, pic) in report["presentationOrder"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            if let Some(pts) = pic["pts"].as_u64() {
+                pts_rows.extend((i as u32).to_be_bytes());
+                pts_rows.extend(pts.to_be_bytes());
+                pts_rows.extend(pic["packetOffset"].as_u64().unwrap().to_be_bytes());
+            } else {
+                assert!(!ordered);
+            }
+
             rows.extend((pic["codedIndex"].as_u64().unwrap() as u32).to_be_bytes());
             rows.extend(pic["coding"].as_str().unwrap().bytes());
+        }
+        if !ordered {
+            let reference = match id {
+                401 => "82873319ca9c25db49497a399aec39233fd4290f0ee920e15d0b1008f9fc0e33",
+                409 => "956a82b8b1cae48de41b4891b47eda076e13ba11db6d9bdf79092b8b164732cf",
+                420 => "5b0163a921b01c3ea7c8f5e60c2df1d5ee91939a0101ab91c628c836096625c8",
+                524 => "20e404c431136c8498f6dc2dffc5171b5e25381648a82d9ee2045e0e8301f9f7",
+                _ => unreachable!(),
+            };
+            assert_eq!(sa2_asset_tools::manifest::sha256(&pts_rows), reference);
         }
         assert_eq!(sa2_asset_tools::manifest::sha256(&rows), reference);
     }
