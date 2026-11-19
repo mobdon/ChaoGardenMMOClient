@@ -58,6 +58,11 @@ stops={BASE+0x2d318:'child',BASE+0x2d3d4:'contact',BASE+0x2d4dc:'return'}
 for pc in (RANGE,ALLOC,CHECK,IDENT,REGISTER,MAIN1,MAIN2,SOUND,LOCAL):
     put(pc,'I',0x4e800020);u.hook_add(UC_HOOK_CODE,hook,begin=pc,end=pc)
 for pc in stops:u.hook_add(UC_HOOK_CODE,hook,begin=pc,end=pc)
+# Run the local handoff helper itself; only the imported routines return immediately.
+slot_base=DATA+5*0x100000+0x24020c
+map_page(slot_base)
+u.mem_write(LOCAL,d[ss[1][0]+0x390dc:ss[1][0]+0x39104])
+put(LOCAL+0x16,'H',(slot_base+0x8000)>>16);put(LOCAL+0x1a,'H',slot_base&0xffff)
 mode='init'
 for x,ch,byte,timer,out,alloc in itertools.product((-1,0,1,2,4),(0,4,5,6),(0,1,2),(-1,119,120),(0,1),(0,1)):
     observed=[];put(WORK,'BB',0,0);put(WORK+8,'i',x);put(GLOBAL+0x23,'b',byte)
@@ -68,11 +73,12 @@ for x,ch,byte,timer,out,alloc in itertools.product((-1,0,1,2,4),(0,4,5,6),(0,1,2
     print('I',x,ch,byte,timer,out,alloc,observed[0],get(WORK+8,'i'))
 mode='contact'
 for x,byte,latched,hit in itertools.product((-3,-2,-1,0,1,2,3),(-1,0,1,2,3),(0,1),(-2,-1,0,1)):
+    put(slot_base,'II',12345,54321)
     observed=[];put(WORK+1,'B',latched);put(WORK+8,'i',x);put(WORK+0x24,'f',7.0);put(GLOBAL+0x23,'b',byte)
     setreg(26,TASK);setreg(27,WORK)
     u.emu_start(BASE+0x2da4c,BASE+END,count=100)
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+END
-    print('C',x,byte,latched,hit,get(WORK+1,'B'),get(WORK+0x24,'f'),','.join(observed))
+    print('C',x,byte,latched,hit,get(WORK+1,'B'),get(WORK+0x24,'f'),','.join(observed),get(slot_base,'I'),get(slot_base+4,'I'))
 
 # Run the native regular motion block, then the end-of-frame cleanup dispatch.
 cleanup_targets=(0x80065148,0x80071878)

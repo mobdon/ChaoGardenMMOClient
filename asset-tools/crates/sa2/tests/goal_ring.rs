@@ -138,6 +138,9 @@ fn compare_installed_init_and_contact() {
                     _ => {}
                 }
             }
+            let mut words = [12345, 54321];
+            sa2_asset_tools::goal_ring::apply_slot_writes(&mut words, &calls, program.local_effect);
+            assert_eq!(words, [n(8) as u32, n(9) as u32]);
             assert_eq!(names, v[7], "{line}");
             assert_eq!(s.latched, n(5) != 0);
             assert_eq!(v[6], if !old && s.latched { "0.0" } else { "7.0" });
@@ -160,7 +163,7 @@ fn mounted_goal_cli() {
     let game = PathBuf::from(env::var_os("SA2_GAME_PATH").unwrap());
     let config = PathBuf::from(env::var_os("SA2_PC_CONFIG").unwrap());
     let request = dir.join("request.json");
-    fs::write(&request,r#"{"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"},{"kind":"player","slot":1},{"kind":"player","slot":1}]}"#).unwrap();
+    fs::write(&request,r#"{"initial_slot_words":[91,72],"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"},{"kind":"player","slot":1},{"kind":"player","slot":1}]}"#).unwrap();
     let run = |row: &str| {
         let out = dir.join(format!("{row}.json"));
         let result = Command::new(env!("CARGO_BIN_EXE_sa2-assets"))
@@ -196,6 +199,12 @@ fn mounted_goal_cli() {
     let doc = run("198").unwrap();
     let v = &doc["replay"];
     assert_eq!(v["radius"], 25.);
+    for (i, expected) in [[91, 72], [91, 2], [91, 2]].iter().enumerate() {
+        assert_eq!(
+            v["frames"][i]["moduleSlotWords"],
+            serde_json::json!(expected)
+        );
+    }
     assert_eq!(v["frames"][1]["resetScaleY"], true);
     assert_eq!(v["frames"][2]["calls"], serde_json::json!(["Register"]));
     assert_eq!(run("349").unwrap()["replay"]["init"], "ChildTask");

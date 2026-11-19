@@ -17,3 +17,12 @@ The optional test runs the installed City Escape REL contact instructions, with 
 For regular goals (effective X angle divisible by three), add `"lifecycle":{"initial_timer":0,"game_byte_37":0,"task_field_30_present":false}` to the request. The timer and context fields are supplied observations. The replay updates yaw and height before testing contact. With a zero initial timer and game byte 0, first contact leaves the timer at zero; the sixtieth subsequent tick requests cleanup. A nonzero game byte at offset 0x37 skips motion and timer advancement. Replay stops at the first cleanup call; the caller's task scheduler and the called function are outside this replay.
 
 The reader checks the motion and cleanup instruction blocks across all 28 supported modules, reads the spin and rise constants through their relocations and verifies both cleanup call targets. Forty additional comparisons execute the installed City Escape blocks (0x2D674 through the regular motion update and 0x2DCD4 through cleanup), including yaw and timer rollover, gated updates and both cleanup routes. Random effects between those blocks are not executed.
+
+On the contact route with sound 0x1013, the stage-local helper stores 2
+in the contacting player's module word. The other player's word is
+unchanged. The route with sound 0x1014 bypasses the helper. The reader
+checks the helper instructions and both relocations in each supported
+module. Each frame reports `moduleSlotWords`; a fresh replay starts from
+the two original section-5 words, or from `initial_slot_words` supplied by
+a caller replaying an already active stage. This state belongs to the
+stage module. Its write alone does not establish a mission result.

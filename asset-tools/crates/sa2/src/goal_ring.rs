@@ -11,6 +11,8 @@ pub struct Program {
     pub object_init: u32,
     pub contact_offset: u32,
     pub local_effect: u32,
+    pub slot_words_offset: u32,
+    pub initial_slot_words: [u32; 2],
     pub radii: [f32; 2],
     pub spin: [i32; 2],
     pub rise: f32,
@@ -65,6 +67,27 @@ impl Program {
         if manifest::sha256(&code) != HASH {
             return Err(invalid());
         }
+        let helper = rel
+            .data(1)?
+            .get(target as usize..target as usize + 40)
+            .ok_or_else(invalid)?;
+        if manifest::sha256(helper)
+            != "68168108a24436dd9c7506e8fa5dc0d8eb61a1cd6dd1746856363cf9518f64e6"
+        {
+            return Err(invalid());
+        }
+        let hi = rel.reference(1, target + 0x16).ok_or_else(invalid)?;
+        let lo = rel.reference(1, target + 0x1a).ok_or_else(invalid)?;
+        if (
+            hi.module, hi.kind, hi.section, lo.module, lo.kind, lo.section, lo.addend,
+        ) != (info.module, 6, 5, info.module, 4, 5, hi.addend)
+        {
+            return Err(invalid());
+        }
+        let slot_words_offset = hi.addend;
+        let data = rel.data(5)?;
+        let at = slot_words_offset as usize;
+        let initial_slot_words = [word(data, at)?, word(data, at + 4)?];
         // Verify the actual callees even though the code hashes cover unrelocated branches.
         for (off, addr) in [
             (0x14, 0x800066f4),
@@ -147,6 +170,8 @@ impl Program {
             object_init: init,
             contact_offset: start,
             local_effect: target,
+            slot_words_offset,
+            initial_slot_words,
             radii,
             spin,
             rise,
@@ -237,6 +262,21 @@ impl Contact {
         Ok(out)
     }
 }
+/// Apply the module-local handoff made by this goal to its two player words.
+pub fn apply_slot_writes(words: &mut [u32; 2], calls: &[Call], helper: u32) {
+    for call in calls {
+        if let Call::Local {
+            offset,
+            slot,
+            argument,
+        } = *call
+        {
+            if offset == helper && slot < 2 && argument < 4 {
+                words[usize::from(slot)] = u32::from(argument);
+            }
+        }
+    }
+}
 /// First invocation on a fresh SET task. A child route has its own executor.
 #[derive(Debug, PartialEq, Serialize)]
 pub enum InitRoute {
@@ -317,6 +357,7 @@ struct Request {
     slot_zero_timer: Option<u16>,
     range_out: bool,
     allocation_ok: bool,
+    initial_slot_words: Option<[u32; 2]>,
     game_byte_23: i8,
     frames: Vec<Hit>,
     lifecycle: Option<LifecycleInput>,
@@ -387,6 +428,7 @@ pub fn replay(
         y: center[1],
         timer: r.lifecycle.as_ref().map_or(0, |v| v.initial_timer),
     };
+    let mut slot_words = r.initial_slot_words.unwrap_or(p.initial_slot_words);
     let mut frames = vec![];
     for hit in r.frames {
         let was_latched = state.latched;
@@ -395,6 +437,8 @@ pub fn replay(
         }
         let calls = state.step(angle_x, r.game_byte_23, hit, p.local_effect)?;
         let mut frame = json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched});
+        apply_slot_writes(&mut slot_words, &calls, p.local_effect);
+        frame["moduleSlotWords"] = json!(slot_words);
         let cleanup = r
             .lifecycle
             .as_ref()
