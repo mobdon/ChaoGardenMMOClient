@@ -371,4 +371,21 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-recovery-pose.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"vehicle pose conflicts" in rejected.stderr
+            # Native history writes at the cursor but reads starting at the
+            # NEXT cursor. Work across wrap and replace a contradictory sum.
+            initial=[0]*60;initial[0]=100
+            sampled=boost(work_dc=0,slot_flag=0)
+            sampled["boost_tick"]["drive"]=dict(buttons=4,work_28c=0,heading=17,work_a4=2)
+            q.update(primary_charge=0,controller_history=dict(history=initial,cursor=59),
+                     updates=[dict(primary_stick_x=-25),sampled,dict(primary_stick_x=7),sampled])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-steering-history.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text());steps=doc["updates"]
+            assert [steps[0]["steeringSum"],steps[2]["steeringSum"]]==[75,-18]
+            assert doc["controllerHistory"]["cursor"]==1 and doc["controllerHistory"]["history"][59]==-25
+            assert steps[1]["boostTick"]["drive"]["heading"]!=steps[3]["boostTick"]["drive"]["heading"]
+            sampled["boost_tick"]["drive"]["steering_sum"]=0
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-steering.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"drive steering conflicts" in rejected.stderr
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

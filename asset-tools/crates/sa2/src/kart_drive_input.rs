@@ -45,11 +45,7 @@ pub fn replay(bytes: &[u8], mut s: Input) -> Result<Output> {
     let scale = f32::from_be_bytes(rel.data(4)?[0x200..0x204].try_into().unwrap());
     let mut frames = Vec::with_capacity(s.frames.len());
     for f in s.frames {
-        append_sample(&mut s.history, &mut s.cursor, f.stick_x);
-        // Reader starts at the new write cursor, not the last written sample.
-        let sum = (0..10).fold(0i32, |sum, i| {
-            sum.wrapping_add(s.history[(s.cursor + 60 - i) % 60])
-        });
+        let sum = sample_and_sum(&mut s.history, &mut s.cursor, f.stick_x);
         let work_110 = u32::from(f.buttons & 4 != 0);
         let work_114 = u32::from(f.buttons & 0x402 != 0 && f.work_28c <= 10);
         let steering_input = scale * (sum as f32);
@@ -124,8 +120,8 @@ pub(crate) struct StoryDrive {
     work_a4: i32,
     buttons: u32,
     work_28c: i32,
-    stick_x: i16,
-    steering_sum: i32,
+    stick_x: Option<i16>,
+    steering_sum: Option<i32>,
     magnitude_return: Option<f32>,
 }
 #[derive(Deserialize)]
@@ -135,6 +131,16 @@ struct StoryPosition {
     transformed_vector: [f32; 3],
 }
 impl StoryDrive {
+    pub(crate) fn bind_sample(&mut self, (stick, sum): (i16, i32)) -> Result<()> {
+        if self.stick_x.is_some_and(|v| v != stick) || self.steering_sum.is_some_and(|v| v != sum) {
+            return Err(Error::invalid(
+                "drive steering conflicts with sampled controller",
+            ));
+        }
+        self.stick_x = Some(stick);
+        self.steering_sum = Some(sum);
+        Ok(())
+    }
     pub(crate) fn step(
         self,
         velocity: [f32; 3],
@@ -179,8 +185,13 @@ impl StoryDrive {
                     transformed_vector: Some(p.transformed_vector),
                 }),
             },
-            scale * self.steering_sum as f32,
-            self.stick_x,
+            scale
+                * self
+                    .steering_sum
+                    .ok_or_else(|| Error::invalid("missing drive steering sum"))?
+                    as f32,
+            self.stick_x
+                .ok_or_else(|| Error::invalid("missing drive stick sample"))?,
             self.buttons & 4 != 0,
             self.buttons & 0x402 != 0 && self.work_28c <= 10,
             constants,
@@ -602,6 +613,29 @@ pub fn spin(bytes: &[u8], s: SpinInput) -> Result<Spin> {
     })
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SteeringHistory {
+    history: Vec<i32>,
+    cursor: usize,
+}
+impl SteeringHistory {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.history.len() != 60 || self.cursor >= 60 {
+            return Err(Error::invalid("invalid primary controller history"));
+        }
+        Ok(())
+    }
+    pub(crate) fn sample(&mut self, stick: i16) -> i32 {
+        sample_and_sum(&mut self.history, &mut self.cursor, stick)
+    }
+}
+fn sample_and_sum(history: &mut [i32], cursor: &mut usize, stick: i16) -> i32 {
+    append_sample(history, cursor, stick);
+    (0..10).fold(0i32, |sum, i| {
+        sum.wrapping_add(history[(*cursor + 60 - i) % 60])
+    })
+}
 fn append_sample(history: &mut [i32], cursor: &mut usize, stick_x: i16) {
     history[*cursor] = i32::from(stick_x);
     *cursor = (*cursor + 1) % 60;

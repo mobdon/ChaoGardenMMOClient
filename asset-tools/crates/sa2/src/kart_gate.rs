@@ -589,6 +589,7 @@ pub struct GateSequence {
     lap_clock: Option<crate::kart_lap_clock::Clock>,
     vehicle_state: Option<i32>,
     primary_charge: Option<i32>,
+    controller_history: Option<crate::kart_drive_input::SteeringHistory>,
     updates: Vec<SequenceEvent>,
 }
 #[derive(Deserialize)]
@@ -610,6 +611,9 @@ struct ControllerState {
 #[serde(untagged, deny_unknown_fields)]
 enum SequenceEvent {
     Gate(GateObservation),
+    ControllerSample {
+        primary_stick_x: i16,
+    },
     BoostTick {
         boost_tick: crate::kart_vehicle_init::StoryBoostInput,
     },
@@ -715,6 +719,11 @@ pub fn story_sequence(
     let mut timer_words = None;
     let mut charge = s.primary_charge;
     let mut boost_timers = None;
+    let mut history = s.controller_history;
+    if let Some(h) = &history {
+        h.validate()?;
+    }
+    let mut sample = None;
     let mut parent = None;
     let mut crossing_positions = None;
     let mut route = None;
@@ -727,8 +736,20 @@ pub fn story_sequence(
     for event in s.updates {
         let event = match event {
             SequenceEvent::Gate(g) => g,
+            SequenceEvent::ControllerSample { primary_stick_x } => {
+                let sum = history
+                    .as_mut()
+                    .ok_or_else(|| Error::invalid("missing initial controller history"))?
+                    .sample(primary_stick_x);
+                sample = Some((primary_stick_x, sum));
+                updates.push(json!({"primaryStickX":primary_stick_x,"steeringSum":sum}));
+                continue;
+            }
             SequenceEvent::BoostTick { mut boost_tick } => {
                 recovered_pose = None;
+                if let (Some(d), Some(v)) = (boost_tick.drive.as_mut(), sample.take()) {
+                    d.bind_sample(v)?;
+                }
                 if let Some(r) = boost_tick
                     .drive
                     .as_mut()
@@ -1058,6 +1079,6 @@ pub fn story_sequence(
     }
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set),"updates":updates,"latches":latches,
-        "primaryCharge":charge,"primaryRoute":route,"highestCheckpoint":highest,"lapClock":lap,"finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
+        "controllerHistory":history,"primaryCharge":charge,"primaryRoute":route,"highestCheckpoint":highest,"lapClock":lap,"finishFlag":finish,"targetHandle":target_handle,"target":target,"vehicleState":vehicle,"timeoutTimer":timeout,"controllerState":clock,"timerWord":timer,"primaryKartCounter":count,"sequence":seq}),
     )
 }

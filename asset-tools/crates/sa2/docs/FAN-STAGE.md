@@ -700,3 +700,5 @@ A normal story drive contact can request recovery after a full contact response 
 Fall recovery shares the primary lap counter and inherits the current segment when one is known. Its output publishes the recovered segment, installed course length, and task/saved positions to the next course scan. When recovery rewinds segment 3 past the story start, the next scan begins from segment 1. Recovery route vertices are still the projected native course geometry.
 
 When the next vehicle post-move event follows recovery, it inherits task position, saved work position, velocity and angles. An intervening progress scan leaves those fields intact. A new boost tick starts a new movement interval. Frames without a recovery handoff still require all four observations.
+
+A primary_stick_x event runs the native controller history write and ten-entry steering sum with a retained 60-entry ring. The next boost tick with normal driving can consume the sampled stick and sum, including across cursor wrap. A separate sample event represents the admitted input callback; host scheduling remains external.
