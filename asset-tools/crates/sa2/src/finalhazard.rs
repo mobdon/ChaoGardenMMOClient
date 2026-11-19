@@ -888,6 +888,12 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    BossDrawTransform {
+        position: [f32; 3],
+        rotation_bams: [i32; 3],
+        scale: [f32; 3],
+    },
+
     BossConstructor {
         task_allocated: bool,
         work_allocated: bool,
@@ -1463,6 +1469,40 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 serde_json::json!({"created":true,"initial_position":position,
                 "initial_yaw_bams":yaw,"initial_scale":vec![scale;3],"health":health,
                 "collision_flags":collision_flags & !0x40,"call_sites":sites}),
+            );
+        }
+        PlacementClock::BossDrawTransform {
+            position,
+            rotation_bams,
+            scale,
+        } => {
+            // 0x1e30..0x1e6c: translate, Z, X, Y, fixed Y, scale.
+            // Column vectors therefore encounter the scale first.
+            let fixed = word(0x1e60) as i16 as i32;
+            let [x, y, z] = rotation_bams;
+            let trig =
+                |angle: i32| ((angle as i16 as f64) * std::f64::consts::TAU / 65536.).sin_cos();
+            let (sx, cx) = trig(x);
+            let (sy, cy) = trig(y.wrapping_add(fixed));
+            let (sz, cz) = trig(z);
+            let mut matrix = crate::pose::identity_matrix();
+            for axis in 0..3 {
+                let mut v = [0.; 3];
+                v[axis] = f64::from(scale[axis]);
+                let [a, b, c] = v;
+                let (a, c) = (cy * a + sy * c, -sy * a + cy * c);
+                let (b, c) = (cx * b - sx * c, sx * b + cx * c);
+                let (a, b) = (cz * a - sz * b, sz * a + cz * b);
+                for (r, value) in [a, b, c].into_iter().enumerate() {
+                    matrix[r][axis] = value;
+                }
+            }
+            for r in 0..3 {
+                matrix[r][3] = position[r] as f64;
+            }
+            return Ok(
+                serde_json::json!({"model_to_stage":matrix,"fixed_yaw_bams":fixed,
+                "scope":"Boss draw transform before camera projection; native trigonometric rounding is not emulated."}),
             );
         }
         PlacementClock::InitialHealth => {
