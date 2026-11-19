@@ -777,6 +777,9 @@ pub fn story_sequence(
                     scan_flag,
                     vehicle,
                 )?;
+                if let Some(state) = result.drive.as_ref().and_then(|d| d.drift_state()) {
+                    vehicle = Some(state);
+                }
                 if let Some(recovered) = result
                     .drive
                     .as_ref()

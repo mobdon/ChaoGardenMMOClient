@@ -173,6 +173,7 @@ pub(crate) fn story_boost(
             ],
             task_position,
             output.weight,
+            output.speed_threshold,
             drive_flag,
             story_profile as i32,
             vehicle_state,

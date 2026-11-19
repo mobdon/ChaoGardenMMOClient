@@ -704,3 +704,5 @@ When the next vehicle post-move event follows recovery, it inherits task positio
 A primary_stick_x event runs the native controller history write and ten-entry steering sum with a retained 60-entry ring. The next boost tick with normal driving can consume the sampled stick and sum, including across cursor wrap. A separate sample event represents the admitted input callback; host scheduling remains external.
 
 Controller sample events optionally supply the held word (controller row +8) and the separate press word (+0x10). Normal driving uses the held word for acceleration and braking, while boost consumes the press word. Holding boost alone does not activate a ready boost. Press events remain controller observations.
+
+Normal story driving can run drift entry using the selected story profile's threshold, the sampled stick, held accelerator and boost-adjusted horizontal speed. Supply the 30 history reads and observed rotation result. The resulting vehicle state is visible to the same tick's audio and contact callbacks; a later recovery may change it again. This does not model sustained drifting.

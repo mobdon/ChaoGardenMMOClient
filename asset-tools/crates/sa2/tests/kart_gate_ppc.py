@@ -405,4 +405,20 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-press.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"sampled press word" in rejected.stderr
+            for stick,expected in [(20,0),(-21,2)]:
+                entry=boost(work_dc=0,slot_flag=0,normalized_velocity=[1,0,0])
+                entry["boost_tick"]["drive"]=dict(work_28c=0,heading=0,work_a4=2,magnitude_return=20,
+                    drift=dict(motion_history=[[1,0,2]]*30,local_offset=[0,0,0],work_10c=4,work_a8=9),
+                    audio_work_284=0,position_step=dict(work_74=0,transformed_vector=[0,0,0]))
+                q.update(primary_charge=20,updates=[dict(primary_stick_x=stick,buttons_held=4,buttons_pressed=0x200),entry])
+                req.write_text(json.dumps(q));out=req.with_name(path.stem+f"-drift-{stick}.json")
+                subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+                doc=json.loads(out.read_text());drive=doc["updates"][1]["boostTick"]["drive"];drift_result=drive["drift"]
+                assert drift_result["vehicle_state"]==doc["vehicleState"]==expected and drift_result["work_10c"]==5
+                assert (drift_result["work_a4"],drift_result["work_a8"])==((0,-21) if expected==2 else (1,9))
+                assert ("play" in drive["audio"]["calls"][-1])==(expected==2)
+            q["vehicle_state"]=1
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-wrong-drift-routine.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"normal driving state" in rejected.stderr
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

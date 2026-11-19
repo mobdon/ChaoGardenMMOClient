@@ -113,6 +113,7 @@ pub(crate) struct Motion {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StoryDrive {
+    drift: Option<StoryDrift>,
     audio_work_284: Option<i32>,
     pub(crate) contact: Option<crate::kart_contact::StoryContact>,
     position_step: Option<StoryPosition>,
@@ -129,6 +130,19 @@ pub(crate) struct StoryDrive {
 struct StoryPosition {
     work_74: i32,
     transformed_vector: [f32; 3],
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoryDrift {
+    motion_history: [[f32; 3]; 30],
+    local_offset: [f32; 3],
+    work_10c: u32,
+    work_a8: i32,
+}
+impl Motion {
+    pub(crate) fn drift_state(&self) -> Option<i32> {
+        self.drift.as_ref().map(|d| d.vehicle_state)
+    }
 }
 impl StoryDrive {
     pub(crate) fn bind_sample(
@@ -157,6 +171,7 @@ impl StoryDrive {
         tuning: [f32; 4],
         task_position: [f32; 3],
         weight: f32,
+        speed_threshold: f32,
         work_44: Option<i32>,
         story_mode: i32,
         vehicle_state: Option<i32>,
@@ -189,7 +204,24 @@ impl StoryDrive {
                 brake_power,
                 deceleration,
                 speed_cap,
-                drift: None,
+                drift: self
+                    .drift
+                    .map(|d| -> Result<DriftInput> {
+                        let state = vehicle_state.filter(|s| *s == 0).ok_or_else(|| {
+                            Error::invalid("story drift entry requires normal driving state")
+                        })?;
+                        Ok(DriftInput {
+                            motion_history: Some(d.motion_history),
+                            ring: None,
+                            local_offset: Some(d.local_offset),
+                            pitch_roll: None,
+                            speed_threshold,
+                            vehicle_state: state,
+                            work_10c: d.work_10c,
+                            work_a8: d.work_a8,
+                        })
+                    })
+                    .transpose()?,
                 position_step: self.position_step.map(|p| PositionInput {
                     position: task_position,
                     velocity_y: velocity[1],
@@ -209,6 +241,7 @@ impl StoryDrive {
             buttons & 0x402 != 0 && self.work_28c <= 10,
             constants,
         )?;
+        let vehicle_state = motion.drift_state().or(vehicle_state);
         if let Some(work_284) = self.audio_work_284 {
             let position = motion
                 .position_step
