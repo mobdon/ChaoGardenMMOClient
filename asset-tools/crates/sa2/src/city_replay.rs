@@ -547,3 +547,64 @@ fn checkpoint_frames(
         json!({"callback":"ObjectSavePoint","scope":"Initialized checkpoint; SET query result, hit and signed speed are observations. Handoff is reported, not applied.","frames":frames}),
     )
 }
+
+/// Run each mounted board-volume callback against the same observed player positions.
+/// Each placement has its own initialization and per-player latch.
+pub fn board_route(layout: &crate::city_stage::CityLayout, request: &[u8]) -> Result<Value> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RouteFrame {
+        players: [Option<Player>; 2],
+        range_out_slots: Vec<usize>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Route {
+        two_player: bool,
+        frames: Vec<RouteFrame>,
+    }
+    let req: Route = decode(request)?;
+    let mut tasks = Vec::new();
+    for (slot, p) in layout.placements.iter().enumerate() {
+        if callback_name(p, layout.resolve(slot)?.1) == Some("ObjectBoardCol") {
+            tasks.push((
+                slot,
+                BoardTrigger::new(p.position, p.parameters[0], p.rotation[0]),
+            ));
+        }
+    }
+    let slots: Vec<_> = tasks.iter().map(|(slot, _)| *slot).collect();
+    let mut frames = Vec::new();
+    for f in bounded(req.frames)? {
+        if f.range_out_slots.iter().any(|s| !slots.contains(s)) {
+            return Err(Error::invalid(
+                "range observation for unknown board trigger",
+            ));
+        }
+        if f.players
+            .iter()
+            .flatten()
+            .any(|p| p.position.iter().any(|x| !x.is_finite()))
+        {
+            return Err(Error::invalid("nonfinite board player position"));
+        }
+        let players = f.players.map(|p| {
+            p.map(|p| BoardPlayer {
+                position: p.position,
+                mode: p.mode,
+            })
+        });
+        let mut calls = Vec::new();
+        for (slot, task) in &mut tasks {
+            for (player, code) in
+                task.tick(players, req.two_player, f.range_out_slots.contains(slot))
+            {
+                calls.push(json!({"placement":slot,"call":["SetInputP",player,code,0]}));
+            }
+        }
+        frames.push(json!({"calls":calls}));
+    }
+    Ok(
+        json!({"placements":slots,"frames":frames,"scope":"Independent board callbacks in SET order; player motion, range decisions and input consumption are external."}),
+    )
+}
