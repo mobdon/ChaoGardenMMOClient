@@ -27,7 +27,7 @@ pub struct Program {
     #[serde(skip)]
     child_actions: Vec<(u32, u32)>,
     #[serde(skip)]
-    action_services: Vec<Option<ActionServices>>,
+    action_services: Vec<ActionRoutine>,
     #[serde(skip)]
     child_effect: [f32; 4],
     #[serde(skip)]
@@ -52,6 +52,14 @@ fn word(bytes: &[u8], off: usize) -> Result<u32> {
             .try_into()
             .unwrap(),
     ))
+}
+#[derive(Debug)]
+enum ActionRoutine {
+    Scaled(ActionServices),
+    Player(u32),
+    Linked,
+    Position(u32),
+    Empty,
 }
 #[derive(Debug)]
 struct ActionServices {
@@ -325,13 +333,52 @@ impl Program {
                     .reference(1, func + if short { 0x26 } else { 0x32 })
                     .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
                     .ok_or_else(invalid)?;
-                Some(ActionServices {
+                ActionRoutine::Scaled(ActionServices {
                     first: imm(0x14)?,
                     second: if short { None } else { Some(imm(0x20)?) },
                     scalar: word(rel.data(4)?, r.addend as usize)?,
                 })
             } else {
-                None
+                let engine = |off| {
+                    rel.reference(1, func + off)
+                        .filter(|r| r.module == 0 && r.kind == 10)
+                        .map(|r| r.addend)
+                        .ok_or_else(invalid)
+                };
+                if i != 9
+                    && (engine(if i == 2 { 0x20 } else { 0x18 })? != 0x80063524
+                        || word(
+                            instructions,
+                            (func + if i == 2 { 0x1c } else { 0x14 }) as usize,
+                        )? != 0x386000c8)
+                {
+                    return Err(invalid());
+                }
+                match i {
+                    0 | 5 | 8 | 10 => ActionRoutine::Player(engine(0x20)?),
+                    2 => {
+                        if engine(0x2c)? != 0x80063f50
+                            || engine(0x54)? != 0x800651ac
+                            || engine(0x6c)? != 0x800651ac
+                        {
+                            return Err(invalid());
+                        }
+                        ActionRoutine::Linked
+                    }
+                    6 => {
+                        let site = func + 0x24;
+                        let ins = word(instructions, site as usize)?;
+                        if ins & 0xfc000003 != 0x48000001 {
+                            return Err(invalid());
+                        }
+                        ActionRoutine::Position(
+                            site.checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
+                                .ok_or_else(invalid)?,
+                        )
+                    }
+                    9 if word(instructions, func as usize)? == 0x4e800020 => ActionRoutine::Empty,
+                    _ => return Err(invalid()),
+                }
             };
             action_services.push(service);
             child_actions.push((word(rel.data(5)?, at as usize)?, func));
@@ -806,14 +853,42 @@ impl Program {
         }
         Ok(json!(frames))
     }
-    fn action_calls(&self, index: usize, slot: i32) -> Option<Vec<Value>> {
-        let s = self.action_services.get(index)?.as_ref()?;
-        let mut calls = vec![json!(["engine", 0x80063524u32, s.first])];
-        if let Some(v) = s.second {
-            calls.push(json!(["engine", 0x80063584u32, slot, v]));
+    fn action_calls(&self, index: usize, slot: i32, a: &ChildActivation) -> Result<Vec<Value>> {
+        let routine = self.action_services.get(index).ok_or_else(invalid)?;
+        if a.action_links.is_some() && !matches!(routine, ActionRoutine::Linked) {
+            return Err(invalid());
         }
-        calls.push(json!(["engine",0x80035a88u32,slot,{"f1Bits":s.scalar}]));
-        Some(calls)
+        let mut calls = vec![json!(["engine", 0x80063524u32, 200])];
+        match routine {
+            ActionRoutine::Scaled(s) => {
+                calls[0] = json!(["engine", 0x80063524u32, s.first]);
+                if let Some(v) = s.second {
+                    calls.push(json!(["engine", 0x80063584u32, slot, v]));
+                }
+                calls.push(json!(["engine",0x80035a88u32,slot,{"f1Bits":s.scalar}]));
+            }
+            ActionRoutine::Empty => calls.clear(),
+            ActionRoutine::Player(addr) => calls.push(json!(["engine", addr, slot])),
+            ActionRoutine::Position(addr) => calls.push(json!(["local", addr, "work+20"])),
+            ActionRoutine::Linked => {
+                calls.push(json!(["engine", 0x80063f50u32, slot, 1]));
+                let l = a
+                    .action_links
+                    .as_ref()
+                    .ok_or_else(|| Error::invalid("missing row-2 action link observations"))?;
+                if l.parent_link.is_some() != (l.byte1 != 0)
+                    || l.task_link.is_some() != (l.parent_link != Some(true))
+                {
+                    return Err(invalid());
+                }
+                if l.parent_link == Some(true) {
+                    calls.push(json!(["engine", 0x800651acu32, "parent"]));
+                } else if l.task_link == Some(true) {
+                    calls.push(json!(["engine", 0x800651acu32, "task"]));
+                }
+            }
+        }
+        Ok(calls)
     }
     pub fn child_contact(&self, c: ChildContact) -> Result<Value> {
         let bad = || Error::invalid("inconsistent child mode-2 contact observations");
@@ -873,11 +948,9 @@ impl Program {
                     let &(_, callback) = self.child_actions.get(after).ok_or_else(bad)?;
                     events.push(json!(["local", self.child_helpers[0], slot, code]));
                     events.push(json!(["local", callback, "task", slot]));
-                    if let Some(nested) = self.action_calls(after, slot) {
-                        events.extend(nested);
-                    }
+                    events.extend(self.action_calls(after, slot, &a)?);
                     events.push(json!(["engine", 0x800168c8u32, slot]));
-                } else if a.indices.is_some() {
+                } else if a.indices.is_some() || a.action_links.is_some() {
                     return Err(bad());
                 }
                 let [dy, xz, y, strength] = self.child_effect;
@@ -975,7 +1048,15 @@ struct ModeOneInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ActionLinks {
+    pub byte1: i8,
+    pub parent_link: Option<bool>,
+    pub task_link: Option<bool>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChildActivation {
+    pub action_links: Option<ActionLinks>,
     pub player_flags: u16,
     pub indices: Option<[usize; 2]>,
     pub position: [f32; 3],

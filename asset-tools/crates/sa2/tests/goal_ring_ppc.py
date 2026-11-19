@@ -401,10 +401,10 @@ def activated(cpu,pc,*_):
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for off in (0xd4,0xf4,0xfc,0x174,0x18c,0x1a0,0x1b4,0x1dc):
     cpu.hook_add(UC_HOOK_CODE,activated,begin=BASE+off,end=BASE+off)
-# Enter four native action routines; leave only their imported services stubbed.
+# Enter every native action routine. Observe imported calls and the nested position helper.
 action_entries=set();action_imports={}
 cpu.mem_map((BASE+197784)&~4095,4096)
-for index,length in ((1,0x50),(3,0x50),(4,0x50),(7,0x44)):
+for index,length in enumerate((0x38,0x50,0x88,0x50,0x50,0x38,0x3c,0x44,0x38,4,0x38)):
     dest=struct.unpack('>I',cpu.mem_read(table_addr+8*index+4,4))[0]
     start=dest-BASE;code=bytearray(d[ss[1][0]+start:ss[1][0]+start+length])
     for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
@@ -427,10 +427,19 @@ def action_engine(cpu,pc,*_):
     elif dst==0x80035a88:
         f=struct.unpack('>d',cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,'big'))[0]
         args.append(dict(f1Bits=struct.unpack('>I',struct.pack('>f',f))[0]))
-    else:assert dst==0x80063524
+    elif dst==0x80063f50:args.append(cpu.reg_read(R.UC_PPC_REG_4))
+    elif dst==0x800651ac:
+        assert args[0] in (TASK,TASK+0x600)
+        args=["parent" if args[0]!=TASK else "task"]
+    else:assert dst in (0x80063524,0x800374b0,0x80037278,0x80037394,0x80037150)
     events.append(['engine',dst,*args])
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in action_imports:cpu.hook_add(UC_HOOK_CODE,action_engine,begin=pc,end=pc)
+def position_helper(cpu,pc,*_):
+    assert cpu.reg_read(R.UC_PPC_REG_3)==WORK+20
+    events.append(["local",pc-BASE,"work+20"])
+    cpu.reg_write(R.UC_PPC_REG_PC,cpu.reg_read(R.UC_PPC_REG_LR))
+cpu.hook_add(UC_HOOK_CODE,position_helper,begin=BASE+0x30764,end=BASE+0x30764)
 for before,slot in itertools.product(range(11),(0,1)):
     for flags,(linked,byte1,parent) in itertools.product((0,0x4000),((True,0,None),(False,0,None),(False,1,False),(False,-1,True))):
         gate=slot;after=10-before;events=[];calls=[];pos=[1.5,-7.25,30.]
@@ -446,4 +455,6 @@ for before,slot in itertools.product(range(11),(0,1)):
         events.append(['engine',REGISTER,'task'])
         obs=dict(flags=4,cached=slot,activation=dict(player_flags=flags,indices=None if flags else [before,after],position=pos,linked_task=linked,byte1=byte1,parent_linked=parent,tail=dict(work36=1.25,game_byte_55=gate)))
         result=dict(calls=[],playerIndex=slot,events=events,mode=cpu.mem_read(WORK,1)[0],work36Bits=struct.unpack('>I',cpu.mem_read(WORK+36,4))[0])
+        if after==2 and flags==0:
+            obs["activation"]["action_links"]=dict(byte1=byte1,parent_link=parent if byte1 else None,task_link=None if byte1 and parent else linked)
         print('Y',json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))

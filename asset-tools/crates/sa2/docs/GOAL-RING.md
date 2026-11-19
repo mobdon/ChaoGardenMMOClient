@@ -109,3 +109,14 @@ arguments and the exact single-precision float passed in register f1
 (`f1Bits`). No resulting change to player stats, score or inventory is
 inferred from these requests. The comparison follows the original callback
 inside the contact handler for both player slots.
+
+
+All eleven indirect action routines now run to their service boundaries.
+Rows 0, 5, 8 and 10 submit a common request followed by a row-specific
+player service. Row 6 passes the child's work position to a local helper;
+row 9 returns immediately. Row 2 first requests its player service, then
+can submit a parent or task request. For row 2, supply `action_links` on
+`activation`: `byte1`, `parent_link` only if that byte is nonzero, and
+`task_link` only if no parent link was selected. These are observations
+inside the action; the later activation link check is independent. This
+replay does not execute the shared engine services or row 6's nested helper.
