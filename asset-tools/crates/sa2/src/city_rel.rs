@@ -614,3 +614,81 @@ pub fn hot_shot_settle(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value
         "scope":"Submode-three writes before shared tail; position is observed after helpers."}),
     )
 }
+
+/// Control, timer and common arithmetic of executor mode 9 (section 1:4ae0).
+pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        submode: u8,
+        timer: u16,
+        remaining: u8,
+        private28: f32,
+        flags: u16,
+        collision_flags: u32,
+        work10: f32,
+        angles: [u32; 3],
+    }
+    let mut s: State = serde_json::from_slice(request)?;
+    if s.submode > 4 || !s.private28.is_finite() || !s.work10.is_finite() {
+        return Err(Error::invalid(
+            "expected a mode-nine submode 0..4 and finite work fields",
+        ));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let mut mode = 9;
+    let mut next_variant = None;
+    // Entry deliberately falls through into the first countdown on this same update.
+    if s.submode == 0 {
+        s.remaining = if s.private28 > hot_shot_scalar(&rel, 0x4b42)? {
+            1
+        } else {
+            3
+        };
+        s.timer = 300;
+        s.collision_flags &= !0x10;
+        s.submode = 1;
+    }
+    match s.submode {
+        1 => {
+            s.timer = s.timer.wrapping_sub(1);
+            if s.timer == 0 {
+                s.submode = 2;
+            }
+        }
+        2 => s.submode = 3,
+        3 => {
+            s.remaining = s.remaining.wrapping_sub(1);
+            if s.remaining == 0 {
+                s.timer = 60;
+                s.submode = 4;
+            } else {
+                s.timer = 300;
+                s.submode = 1;
+            }
+        }
+        4 => {
+            s.timer = s.timer.wrapping_sub(1);
+            if s.timer == 0 {
+                next_variant = Some(if s.private28 > hot_shot_scalar(&rel, 0x4d26)? {
+                    2
+                } else {
+                    1
+                });
+                mode = 3;
+                s.submode = 0;
+                s.flags &= !0x200;
+                s.collision_flags |= 0x10;
+            }
+        }
+        _ => unreachable!(),
+    }
+    Ok(
+        serde_json::json!({"mode":mode,"submode":s.submode,"timer":s.timer,"remaining":s.remaining,
+        "privateByte2Write":next_variant,"flags":s.flags,"collisionFlags":s.collision_flags,
+        "work10":s.work10+hot_shot_scalar(&rel,0x4dc6)?,
+        "angles":[s.angles[0].wrapping_add(0x210),s.angles[1].wrapping_add(0x250),s.angles[2].wrapping_add(0x300)],
+        "scope":"Mode-nine timing and selected writes. Target tracking, helper lifetimes and attack effects are not simulated."}),
+    )
+}
