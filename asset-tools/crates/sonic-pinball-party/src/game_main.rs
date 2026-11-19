@@ -38,9 +38,10 @@ fn run() -> Result<()> {
                 "runtime":"Rust source-level port in progress; native ROM instructions are not executed",
                 "nativeInitialCallback":format!("0x{:08X}",game::INITIAL_CALLBACK),
                 "startupCallbackWrapperPorted":true,
+                "introInitializationAndAuxiliaryCallbacksPorted":true,
                 "startupDependenciesPorted":false,
                 "nativeBoardRasterSha256":game::board::BOARD_RGBA_SHA256,
-                "missing":["startup/menu callbacks","complete ball/flipper/collision simulation","table events/scoring/progression","sprite assembly/animation","audio execution","main saves/transfer","complete Tiny Garden gameplay"]
+                "missing":["complete boot/screen wiring","complete table rules and progression","complete camera/layer/sprite presentation","complete sequencer/mixer/audio playback","main saves/transfer","complete Tiny Garden gameplay"]
             })
         ),
         "run" if args.len() == 2 => {

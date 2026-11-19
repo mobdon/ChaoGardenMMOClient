@@ -19,6 +19,49 @@ def check(module, function, arguments, fixture):
         raise ValueError("Native oracle differs: "+fixture)
 
 
+def fixture_specs(rom_path, rom, bios_reference_tool):
+    """Only reviewed, registered source-port fixtures belong in publication."""
+    return [
+        ("control_reference", "generate", [rom_path], "control-vectors.json"),
+        ("startup_reference", "generate", [rom_path], "startup-vectors.json"),
+        ("math_reference", "generate", [rom_path, bios_reference_tool], "math-vectors.json"),
+        ("ball_reference", "generate", [rom], "ball-vectors.json"),
+        ("flipper_reference", "generate", [rom, False], "flipper-vectors.json"),
+        ("flipper_reference", "generate", [rom, True], "flipper-native-vectors.json"),
+        ("frame_reference", "generate", [rom, False], "frame-vectors.json"),
+        ("frame_reference", "generate", [rom, True], "frame-native-leaf-vectors.json"),
+        ("collision_reference", "reference", [rom_path], "collision-vectors.json"),
+        ("animation_reference", "generate", [rom_path], "animation-vectors.json"),
+        ("graphics_frame_reference", "generate", [rom_path], "graphics_frame-vectors.json"),
+        ("display_reference", "generate", [rom_path], "display-vectors.json"),
+        ("oam_reference", "generate", [rom_path], "oam-vectors.json"),
+        ("oam_render_reference", "generate", [rom_path], "oam_render-vectors.json"),
+        ("oam_tree_reference", "generate", [rom_path], "oam_tree-vectors.json"),
+        ("palette_reference", "generate", [rom], "palette-vectors.json"),
+        ("sound_reference", "generate", [rom_path], "sound-vectors.json"),
+        ("sound_dma_reference", "generate", [rom_path], "sound_dma-vectors.json"),
+        ("mplay_reference", "generate", [rom_path], "mplay-vectors.json"),
+        ("game_graphics_reference", "generate", [rom_path], "game-graphics-vectors.json"),
+        ("lifecycle_reference", "generate", [rom], "lifecycle-vectors.json"),
+        ("lifecycle_tables_reference", "generate", [rom], "lifecycle_tables-vectors.json"),
+        ("interpolation_reference", "generate", [rom_path], "interpolation-vectors.json"),
+        ("intro_reference", "generate", [rom_path], "intro-vectors.json"),
+        ("intro_callbacks_reference", "generate", [rom_path], "intro-callbacks-vectors.json"),
+        ("table_events_reference", "make", [rom], "table_events-vectors.json"),
+        ("table_actions_reference", "make", [rom], "table_actions-vectors.json"),
+        ("table_presentation_reference", "make", [rom], "table_presentation-vectors.json"),
+        ("table_presentation_frame_reference", "make", [rom], "table_presentation_frame-vectors.json"),
+        ("table_frame_reference", "make", [rom], "table_frame-vectors.json"),
+        ("table_bootstrap_reference", "make", [rom], "table_bootstrap-vectors.json"),
+        ("table_initialize_reference", "make", [rom], "table_initialize-vectors.json"),
+        ("table_collision_setup_reference", "make", [rom], "table_collision_setup-vectors.json"),
+        ("sequence_reference", "generate", [rom_path], "sequence-vectors.json"),
+        ("sequence_extended_reference", "generate", [rom], "sequence-extended-vectors.json"),
+        ("nudge_reference", "generate", [rom, False], "nudge-vectors.json"),
+        ("nudge_reference", "generate", [rom, True], "nudge-native-vectors.json"),
+    ]
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--rom", required=True, type=Path)
@@ -28,31 +71,7 @@ if __name__ == "__main__":
         rom = f.read(0x800001)
     import reference_parity
     reference_parity.validate_rom(rom)
-    fixtures = [
-        ("control_reference", "generate", [a.rom], "control-vectors.json"),
-        ("startup_reference", "generate", [a.rom], "startup-vectors.json"),
-        ("math_reference", "generate", [a.rom, a.bios_reference_tool], "math-vectors.json"),
-        ("ball_reference", "generate", [rom], "ball-vectors.json"),
-        ("flipper_reference", "generate", [rom, False], "flipper-vectors.json"),
-        ("flipper_reference", "generate", [rom, True], "flipper-native-vectors.json"),
-        ("frame_reference", "generate", [rom, False], "frame-vectors.json"),
-        ("frame_reference", "generate", [rom, True], "frame-native-leaf-vectors.json"),
-        ("collision_reference", "reference", [a.rom], "collision-vectors.json"),
-        ("animation_reference", "generate", [a.rom], "animation-vectors.json"),
-        ("graphics_frame_reference", "generate", [a.rom], "graphics_frame-vectors.json"),
-        ("oam_reference", "generate", [a.rom], "oam-vectors.json"),
-        ("oam_render_reference", "generate", [a.rom], "oam_render-vectors.json"),
-        ("oam_tree_reference", "generate", [a.rom], "oam_tree-vectors.json"),
-        ("palette_reference", "generate", [rom], "palette-vectors.json"),
-        ("sound_reference", "generate", [a.rom], "sound-vectors.json"),
-        ("mplay_reference", "generate", [a.rom], "mplay-vectors.json"),
-        ("game_graphics_reference", "generate", [a.rom], "game-graphics-vectors.json"),
-        ("lifecycle_reference", "generate", [rom], "lifecycle-vectors.json"),
-        ("lifecycle_tables_reference", "generate", [rom], "lifecycle_tables-vectors.json"),
-        ("interpolation_reference", "generate", [a.rom], "interpolation-vectors.json"),
-        ("nudge_reference", "generate", [rom, False], "nudge-vectors.json"),
-        ("nudge_reference", "generate", [rom, True], "nudge-native-vectors.json"),
-    ]
+    fixtures = fixture_specs(a.rom, rom, a.bios_reference_tool)
     for module, function, arguments, fixture in fixtures:
         check(module, function, arguments, fixture)
         print("Verified "+fixture, flush=True)

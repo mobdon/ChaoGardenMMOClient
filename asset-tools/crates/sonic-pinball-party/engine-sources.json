@@ -389,6 +389,46 @@
       "sha256": "f210fb1b1738bb97e66b1089c33bcef855f05636c2747a4358b2e8ec3ee86aa7"
     },
     {
+      "fixture": "tests/display-vectors.json",
+      "key": "routines.initialize",
+      "name": "routines.initialize",
+      "offset": 12304,
+      "length": 236,
+      "sha256": "76a336e47db995dc4dc72e31701748f33632134139f9d731f705d27c17602657"
+    },
+    {
+      "fixture": "tests/display-vectors.json",
+      "key": "routines.flush",
+      "name": "routines.flush",
+      "offset": 12540,
+      "length": 308,
+      "sha256": "d0c320c45dd7a2efb5e6240f1b0db112d97d52b2a160991436e049b39b295eb5"
+    },
+    {
+      "fixture": "tests/display-vectors.json",
+      "key": "routines.wait",
+      "name": "routines.wait",
+      "offset": 12848,
+      "length": 32,
+      "sha256": "1b443210286345dddc2da734ce8ad48cbb2d9914c09bef2eb77017aba324a98f"
+    },
+    {
+      "fixture": "tests/display-vectors.json",
+      "key": "routines.clear",
+      "name": "routines.clear",
+      "offset": 12880,
+      "length": 40,
+      "sha256": "99d30467a8eca4ffef121ee3ff574c42ef345d1ea2bf92a70b9c35242fe67371"
+    },
+    {
+      "fixture": "tests/display-vectors.json",
+      "key": "routines.set",
+      "name": "routines.set",
+      "offset": 12920,
+      "length": 84,
+      "sha256": "5951fb2f6ebfd5c3b932b72575a286d9e918e251684de3fa048cfd5c0d1efab0"
+    },
+    {
       "fixture": "tests/flipper-native-vectors.json",
       "key": "routines[0]",
       "name": "routines[0]",
@@ -587,6 +627,142 @@
       "offset": 9748,
       "length": 124,
       "sha256": "2da13e38a8d7500ff026faa9057c867cfb52da8bf9969f48cfb67f216261fbbc"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.fadeIn",
+      "name": "routines.fadeIn",
+      "offset": 26360,
+      "length": 92,
+      "sha256": "f0df2c97ebd89803064dfbb7c21d7c332270c3c12d07d2eb596791a8da49c3ce"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.complete",
+      "name": "routines.complete",
+      "offset": 26452,
+      "length": 16,
+      "sha256": "0a0d209f759fe5f94b0e3749fde74cbc6fd59fe32b65cf14ba1da6e94b59f903"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.paletteFade",
+      "name": "routines.paletteFade",
+      "offset": 26468,
+      "length": 60,
+      "sha256": "81737580272c408cd1f57a20587df624d80d86bf7e6224f9fe88d4b822dd5b5f"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.wait",
+      "name": "routines.wait",
+      "offset": 26528,
+      "length": 60,
+      "sha256": "6b37612df56c63926340c1e8397cf8ab35bd7e0b4b09171ec3c83338cb857054"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.waitAndStopAudio",
+      "name": "routines.waitAndStopAudio",
+      "offset": 26588,
+      "length": 72,
+      "sha256": "b90054dd3e53196d1a134d32dbff6a780b9779059568d5eab3f912951b392e53"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.fadeOut",
+      "name": "routines.fadeOut",
+      "offset": 28144,
+      "length": 80,
+      "sha256": "5acd0730b152dbfa318d2722a99272929a1f5a1b7fe40408c1c0f283e2966ab8"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.transition",
+      "name": "routines.transition",
+      "offset": 28224,
+      "length": 116,
+      "sha256": "276f032a02731c27d32f2b16098d2e6d6983ee6b6b8ea85ba7aff5c9e1b784f8"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.loadBackground",
+      "name": "routines.loadBackground",
+      "offset": 28340,
+      "length": 64,
+      "sha256": "968e62e34d0f173d9023b0596b53bb13ae47eb4b76fa37afcc1135af1f73125c"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.auxiliaryPush",
+      "name": "routines.auxiliaryPush",
+      "offset": 12148,
+      "length": 52,
+      "sha256": "507ff2039ba1af4eb05cef37b966a286e62acb2dcc6016ff8527b25be6d59e24"
+    },
+    {
+      "fixture": "tests/intro-callbacks-vectors.json",
+      "key": "routines.auxiliaryPop",
+      "name": "routines.auxiliaryPop",
+      "offset": 12200,
+      "length": 20,
+      "sha256": "dae4eb333910023603615b122cb0df837441d1f817f7c43062c48e0bc6609f40"
+    },
+    {
+      "fixture": "tests/intro-vectors.json",
+      "key": "routines.initialize",
+      "name": "routines.initialize",
+      "offset": 28404,
+      "length": 2380,
+      "sha256": "a0db739241c1446a1c9338bcb53afab17a23dcd496bc565466f1d8c591461793"
+    },
+    {
+      "fixture": "tests/intro-vectors.json",
+      "key": "routines.resume",
+      "name": "routines.resume",
+      "offset": 30784,
+      "length": 2344,
+      "sha256": "43a942924d6eced438fab983091afc289760a7332724e08987e4ebda35fe5e09"
+    },
+    {
+      "fixture": "tests/intro-vectors.json",
+      "key": "routines.update",
+      "name": "routines.update",
+      "offset": 33128,
+      "length": 128,
+      "sha256": "69a5af14443cc33f536dbcaf5c5dd259484a8679d62ad0ef6fc34fe2cd841296"
+    },
+    {
+      "fixture": "tests/intro-vectors.json",
+      "key": "routines.constructor",
+      "name": "routines.constructor",
+      "offset": 25924,
+      "length": 248,
+      "sha256": "20f0aee31ce1d955ce0f937d5a505594576d7c2a7f77817f0a97241f70566033"
+    },
+    {
+      "fixture": "tests/intro-vectors.json",
+      "key": "routines.addressLookup",
+      "name": "routines.addressLookup",
+      "offset": 13864,
+      "length": 24,
+      "sha256": "8e9f8c0373bc769ca4474b8f147ea9b4ba73b315d931ff495e4160fdc54be019"
+    },
+    {
+      "fixture": "tests/intro-vectors.json",
+      "key": "routines.codecDispatch",
+      "name": "routines.codecDispatch",
+      "offset": 14752,
+      "length": 128,
+      "sha256": "330eede6c63583020d1bf025261f7d03520310bb173059a5edc17b3b808ebc8a"
+    },
+    {
+      "fixture": "tests/intro-vectors.json",
+      "key": "lookup",
+      "name": "lookup",
+      "offset": 420948,
+      "length": 32,
+      "sha256": "2d768fff5f0c816958f52123acf84c5cbb5b782a34a6b9bbd99fa8736c68756d"
     },
     {
       "fixture": "tests/lifecycle-vectors.json",
@@ -869,6 +1045,182 @@
       "sha256": "07967ebdc3979cd4fd4de37fd22b3e6de8965b00dae4ac5585577c9709839652"
     },
     {
+      "fixture": "tests/sequence-extended-vectors.json",
+      "key": "routines[0]",
+      "name": "unlink",
+      "offset": 385352,
+      "length": 32,
+      "sha256": "c3d23903d0b87a7b19fcd84aa0234c674e3014a9a2835853727defeaad3422dc"
+    },
+    {
+      "fixture": "tests/sequence-extended-vectors.json",
+      "key": "routines[1]",
+      "name": "finish",
+      "offset": 385384,
+      "length": 48,
+      "sha256": "767cb12459588832366a031b8088826493705f8746b882354bb470db7bdb62de"
+    },
+    {
+      "fixture": "tests/sequence-extended-vectors.json",
+      "key": "routines[2]",
+      "name": "protected",
+      "offset": 385456,
+      "length": 28,
+      "sha256": "af7ead00c7d4a888a7dfad6d44dde69af96aa53f107179d0c1d9531b54dc1f08"
+    },
+    {
+      "fixture": "tests/sequence-extended-vectors.json",
+      "key": "routines[3]",
+      "name": "next_byte",
+      "offset": 385484,
+      "length": 12,
+      "sha256": "010e01a515d6e7eee6249524429999a1b68537114c487bd9ace668ecf5841cf0"
+    },
+    {
+      "fixture": "tests/sequence-extended-vectors.json",
+      "key": "routines[4]",
+      "name": "conditional18",
+      "offset": 385816,
+      "length": 24,
+      "sha256": "c734d511a1b0ea4d505481fc760e8dbdcc7d0e3c3c3b601d08d15a6e7c8e2012"
+    },
+    {
+      "fixture": "tests/sequence-extended-vectors.json",
+      "key": "routines[5]",
+      "name": "centered0c",
+      "offset": 385840,
+      "length": 20,
+      "sha256": "4e96fbb359b181f6b7735b9f7a21a7a020589d161c418add086baf01f2bba781"
+    },
+    {
+      "fixture": "tests/sequence-extended-vectors.json",
+      "key": "routines[6]",
+      "name": "register_byte",
+      "offset": 385860,
+      "length": 24,
+      "sha256": "3d9067b73920a3d56ed65fd9885a2c9182b5882ede1c618c0c3b279f669e3feb"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[0]",
+      "name": "goto",
+      "offset": 385496,
+      "length": 32,
+      "sha256": "b4c137a9f8b801e7515565fbc485668d66b21ef58290b1d063fc3714543789df"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[1]",
+      "name": "pattern",
+      "offset": 385528,
+      "length": 28,
+      "sha256": "642b84f098f37484f3c7651b06cecd4f95177a5dc7748e53460e45ac3fc7f1f3"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[2]",
+      "name": "return",
+      "offset": 385556,
+      "length": 20,
+      "sha256": "ef262893b794449af48fcfa195da908bfb53beaa56c74bcf0b4da5ca3747a84b"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[3]",
+      "name": "repeat",
+      "offset": 385576,
+      "length": 48,
+      "sha256": "4285acee22de2593316c9b0d88637718eb0e9fb92721d56b428a7396e4dd01cf"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[4]",
+      "name": "field1d",
+      "offset": 385624,
+      "length": 12,
+      "sha256": "20974506f4523f01bf8bcd02adae71361750ffc37dd7570da382ffa705004cfc"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[5]",
+      "name": "tempo",
+      "offset": 385636,
+      "length": 20,
+      "sha256": "2abfa6f07745a554cfcf025d33b9610f0aa334209ef5a71d68a9da327a15a761"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[6]",
+      "name": "field0a",
+      "offset": 385656,
+      "length": 20,
+      "sha256": "1720d63198ddc999ec54613a0ada0c903f9a9144eaa01f66634cd6790e2deaf2"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[7]",
+      "name": "voice",
+      "offset": 385676,
+      "length": 48,
+      "sha256": "399046f5786005806f491a813148bf2b9556b7ee8ffefd6b9053d49e16b0bcb3"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[8]",
+      "name": "field12",
+      "offset": 385724,
+      "length": 20,
+      "sha256": "5f9ff572731ca086992ad38033d9f200bd473d73a54c3885c66372c864adcd51"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[9]",
+      "name": "centered14",
+      "offset": 385744,
+      "length": 20,
+      "sha256": "68a4e0b54f0eb4c2b49158921dd7ddf4d04c225ecf84df794ec351e30680d6db"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[10]",
+      "name": "centered0e",
+      "offset": 385764,
+      "length": 20,
+      "sha256": "a03c6e7fde99f32f9aae42d4efaa7411d29c388c83abe3cca4bc1b9defffb126"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[11]",
+      "name": "field0f",
+      "offset": 385784,
+      "length": 20,
+      "sha256": "dabb4b2db4b3d9fb13cdd0f4517387bdac95e8367a362894063bddb780a7d8a1"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[12]",
+      "name": "field1b",
+      "offset": 385804,
+      "length": 12,
+      "sha256": "390cdab35291e7935886656086ec742d166d4767487f4b50bd630fa2092c6675"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[13]",
+      "name": "protectedRead",
+      "offset": 385456,
+      "length": 28,
+      "sha256": "af7ead00c7d4a888a7dfad6d44dde69af96aa53f107179d0c1d9531b54dc1f08"
+    },
+    {
+      "fixture": "tests/sequence-vectors.json",
+      "key": "routines[14]",
+      "name": "nextByte",
+      "offset": 385484,
+      "length": 12,
+      "sha256": "010e01a515d6e7eee6249524429999a1b68537114c487bd9ace668ecf5841cf0"
+    },
+    {
       "fixture": "tests/sound-vectors.json",
       "key": "routines[0]",
       "name": "request",
@@ -901,12 +1253,492 @@
       "sha256": "d4dee33ab91b83a4bee563dae4bf4909ef32fad2de21bebf09032506b759b973"
     },
     {
+      "fixture": "tests/sound_dma-vectors.json",
+      "key": "routines.gate040",
+      "name": "routines.gate040",
+      "offset": 389184,
+      "length": 124,
+      "sha256": "9e91c5c69c8184e9b0a24bd50d0604cdb5397abcf81a309562ba4deabde5aff1"
+    },
+    {
+      "fixture": "tests/sound_dma-vectors.json",
+      "key": "routines.gate0bc",
+      "name": "routines.gate0bc",
+      "offset": 389308,
+      "length": 60,
+      "sha256": "c244c321133c00d7b2e322a7ac6429d6ed9b795048de82983e79a915c1d6a404"
+    },
+    {
+      "fixture": "tests/sound_dma-vectors.json",
+      "key": "routines.cpu_set",
+      "name": "routines.cpu_set",
+      "offset": 392884,
+      "length": 4,
+      "sha256": "07967ebdc3979cd4fd4de37fd22b3e6de8965b00dae4ac5585577c9709839652"
+    },
+    {
       "fixture": "tests/startup-vectors.json",
       "key": "wrapper",
       "name": "wrapper",
       "offset": 33256,
       "length": 120,
       "sha256": "634a6001b14c77aaa88ff8cc8e1bca4874d14b4ad53b07c673f156541caf6b54"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[0]",
+      "name": "table_action_setup",
+      "offset": 188408,
+      "length": 44,
+      "sha256": "2226f3147485dfe620e7ede1d8770a395d22743d18573733c60594d6c5bb687b"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[1]",
+      "name": "action_setup_table1",
+      "offset": 188452,
+      "length": 180,
+      "sha256": "6bb5e4d62ce5cf2bb0317b320ed667a1f0f412440258f8e99a066fbb6c1ac1e1"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[2]",
+      "name": "action_setup_table2",
+      "offset": 188632,
+      "length": 200,
+      "sha256": "7cc072993e68ce7152fcfdd6b9a5a369abee431817ca50474fcd079426f9b201"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[3]",
+      "name": "action_setup_table3",
+      "offset": 378104,
+      "length": 76,
+      "sha256": "c9f4da163fd68a992dd141630bb3f778a919284b42851f10987f0286e4ff08f6"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[4]",
+      "name": "action_slot",
+      "offset": 288936,
+      "length": 40,
+      "sha256": "3eb2cebbdf7079aad193e536738895a921ed4ce57f759c09b6d1f2f50f740970"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[5]",
+      "name": "action_flag",
+      "offset": 194100,
+      "length": 12,
+      "sha256": "5cafa0562345e251cbf6da6f26f5c958b6cbd1068a15c49647cc2c2fd251af78"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[6]",
+      "name": "action_set_flag",
+      "offset": 194068,
+      "length": 32,
+      "sha256": "5cf319ba5e3aaadd33ac3e5bf6de0a202a9686ce51919b06c9a34af7d3bd68f1"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[7]",
+      "name": "action_enqueue",
+      "offset": 194996,
+      "length": 44,
+      "sha256": "46671dea50d11743a9241f73deaf35065609b8292dc1d2a35aa7adc212775360"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[8]",
+      "name": "action_multiball",
+      "offset": 253512,
+      "length": 288,
+      "sha256": "7ac45ab96e59ed74e2d617078164cb69926a299548b88287cf99e8940a63fc02"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[9]",
+      "name": "action_table_flags",
+      "offset": 250948,
+      "length": 64,
+      "sha256": "111cadd88e60f23611e83391a26ec9b5b7e3c4b55934c11db8e3b744117dbfdb"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[10]",
+      "name": "action_timer_init",
+      "offset": 274476,
+      "length": 28,
+      "sha256": "3e010f0fc9a0a09ef66497807b10fe02a6ec5d1055e756207b379d7079d0aefe"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[11]",
+      "name": "action_timer_start",
+      "offset": 274504,
+      "length": 100,
+      "sha256": "482c6738fd2ca87d05d84955724d6a9cc04c522e82ac12861678eaffe588aacb"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "routines[12]",
+      "name": "action_palette_start",
+      "offset": 172692,
+      "length": 52,
+      "sha256": "07fa61b72f1fd3b468369bacbc58af9afe012e771f23ec19e242c0b27f13f000"
+    },
+    {
+      "fixture": "tests/table_actions-vectors.json",
+      "key": "resources[0]",
+      "name": "multiball_positions",
+      "offset": 727592,
+      "length": 12,
+      "sha256": "279c828959d73392be55aefe612d7bc5d19c9f7e56a5e5da8ea48bea29ec4a4c"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[0]",
+      "name": "boot_full",
+      "offset": 42600,
+      "length": 416,
+      "sha256": "b8e98165061fb6ff8c72d8adb9c9689b515741dbe6012fca456b8236d05e79f7"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[1]",
+      "name": "boot_full_alias",
+      "offset": 43016,
+      "length": 12,
+      "sha256": "d8c549df4d8461ae1426c5f56847f0e20d61da722f32d073a9caeccc8a8a116e"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[2]",
+      "name": "boot_variant4",
+      "offset": 43100,
+      "length": 404,
+      "sha256": "44710e5c2aebc4b5600a4a48bb2c35f8b8df0a3de64bb3e4d288235420b973ae"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[3]",
+      "name": "boot_variant2",
+      "offset": 43504,
+      "length": 48,
+      "sha256": "8c88245e7449f521e6a4167ea8a095052c22fe1a52d8df4a1c0aba160e747a94"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[4]",
+      "name": "boot_variant3",
+      "offset": 43552,
+      "length": 344,
+      "sha256": "c40bd1fffacab367789c7627efbf81619305bec3b288383ce3946bd800f7959f"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[5]",
+      "name": "aux_stack_clear",
+      "offset": 12136,
+      "length": 12,
+      "sha256": "ba578ed432ebde1c341afa3a88fc1a2fbdb1514266b938f12224a344bce0f633"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[6]",
+      "name": "aux_stack_push",
+      "offset": 12148,
+      "length": 52,
+      "sha256": "507ff2039ba1af4eb05cef37b966a286e62acb2dcc6016ff8527b25be6d59e24"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "routines[7]",
+      "name": "boot_message_reset",
+      "offset": 194860,
+      "length": 60,
+      "sha256": "e558604e450e694403dc5f3c79455d388fbd8f739078055a649df502f5d0067e"
+    },
+    {
+      "fixture": "tests/table_bootstrap-vectors.json",
+      "key": "resources[0]",
+      "name": "bootstrap_dimensions",
+      "offset": 435624,
+      "length": 24,
+      "sha256": "2616efd56618b1d427b78d1e5a6875153a495e304c0d1905cbac21306873f0ab"
+    },
+    {
+      "fixture": "tests/table_collision_setup-vectors.json",
+      "key": "routines[0]",
+      "name": "selected_bind",
+      "offset": 178212,
+      "length": 136,
+      "sha256": "7f51b62836787e086d5d9e02518bcd8b7037d72882cc8421ac29832f500f3b93"
+    },
+    {
+      "fixture": "tests/table_collision_setup-vectors.json",
+      "key": "routines[1]",
+      "name": "fixed_bind",
+      "offset": 178348,
+      "length": 116,
+      "sha256": "966a5988ac01b6564c85bf9fe5498e2a3a72b51934020b9aaae67b8ef8c4b5c2"
+    },
+    {
+      "fixture": "tests/table_collision_setup-vectors.json",
+      "key": "routines[2]",
+      "name": "reset",
+      "offset": 178464,
+      "length": 112,
+      "sha256": "9fde9d95c79d8f53245121c9faa2e6bd16b9cc6c1514f15e9c921f68ac8aa96c"
+    },
+    {
+      "fixture": "tests/table_collision_setup-vectors.json",
+      "key": "resources[0]",
+      "name": "resources[0]",
+      "offset": 7246656,
+      "length": 32,
+      "sha256": "29da43bf539c90d235822cf780fc7ce3c5894d0aba54e0a1a31de1c9004feda0"
+    },
+    {
+      "fixture": "tests/table_collision_setup-vectors.json",
+      "key": "resources[1]",
+      "name": "resources[1]",
+      "offset": 7246688,
+      "length": 32,
+      "sha256": "1daa0a71da88e5157e748823b9be924059f5ed5780f1e3fba9ce3bb962401b0b"
+    },
+    {
+      "fixture": "tests/table_collision_setup-vectors.json",
+      "key": "resources[2]",
+      "name": "resources[2]",
+      "offset": 7246720,
+      "length": 32,
+      "sha256": "a38e2cf86ff07f50b6ee6a7dd7229de2e4d5b2d0aa897a6e22a7541ca7f58f18"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "routines[0]",
+      "name": "event_dispatch",
+      "offset": 190980,
+      "length": 60,
+      "sha256": "1a8ab1c4689b022ceebe80aed3daf3a2e06f56c7d0bacd149d5640d213874159"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "routines[1]",
+      "name": "events_table01",
+      "offset": 191040,
+      "length": 1316,
+      "sha256": "4f04157e7c164fc5961bd789f873b1898c8b7494ed91041173bc3abdc39c0700"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "routines[2]",
+      "name": "events_table2",
+      "offset": 192356,
+      "length": 1060,
+      "sha256": "156d0d102c71decb2c71b0e2a05d802e79dc0acafb138a12081325934dfbada4"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "routines[3]",
+      "name": "events_table3",
+      "offset": 193416,
+      "length": 652,
+      "sha256": "8d14452dee1ecff482775382d3b583b262c104e819d779ce7f8da3746a9d55dd"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "resources[0]",
+      "name": "event_rectangles",
+      "offset": 7246760,
+      "length": 272,
+      "sha256": "12e48d02f5ea4fe373e148fe9f11ac60a1e1cbd5f7fdb9c4a77853db5dd1ab12"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "resources[1]",
+      "name": "event_table3_layers",
+      "offset": 7247032,
+      "length": 2146,
+      "sha256": "3af10481fe6dcebfc808ba1d6e6142545604334e335918c0d340f3ed64b24c63"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "resources[2]",
+      "name": "event_table2_left_layers",
+      "offset": 719751,
+      "length": 1353,
+      "sha256": "b4b1583f476e9f53dee15287729e3b49d9bc246603ae956712344eb8b4fa99f3"
+    },
+    {
+      "fixture": "tests/table_events-vectors.json",
+      "key": "resources[3]",
+      "name": "event_table2_right_layers",
+      "offset": 721104,
+      "length": 1353,
+      "sha256": "129ccd032a4f35ed0aecf3a112a5015c0c8a68c8b41f9727ba9e3a8580a744ae"
+    },
+    {
+      "fixture": "tests/table_frame-vectors.json",
+      "key": "routines[0]",
+      "name": "table_frame_update",
+      "offset": 43896,
+      "length": 60,
+      "sha256": "6673d8ebdd954a7346701a9291fd87d22274a5814aa8c572cd8c9dd96808d55d"
+    },
+    {
+      "fixture": "tests/table_frame-vectors.json",
+      "key": "routines[1]",
+      "name": "table_frame_control",
+      "offset": 43956,
+      "length": 400,
+      "sha256": "78eccd6e70ada47cf719482b1c44896f560f07aa1a389b7e18c7f28016f59d84"
+    },
+    {
+      "fixture": "tests/table_frame-vectors.json",
+      "key": "routines[2]",
+      "name": "message_scheduler",
+      "offset": 195944,
+      "length": 472,
+      "sha256": "aca6344493b88d422dfb9655f761fe553ac9ba6ee856c4d6c1eec69bdc774488"
+    },
+    {
+      "fixture": "tests/table_frame-vectors.json",
+      "key": "routines[3]",
+      "name": "message_dequeue",
+      "offset": 195040,
+      "length": 72,
+      "sha256": "32828d2eac21b1997baed926bc0bf50b23dadfe49478d6b5c2b936352e23a18d"
+    },
+    {
+      "fixture": "tests/table_frame-vectors.json",
+      "key": "routines[4]",
+      "name": "score_text",
+      "offset": 199544,
+      "length": 224,
+      "sha256": "64755b7f92c8f0f4a59ed207900831aeebc2c568f3409188226591dd3075db50"
+    },
+    {
+      "fixture": "tests/table_frame-vectors.json",
+      "key": "routines[5]",
+      "name": "score_icon",
+      "offset": 199180,
+      "length": 364,
+      "sha256": "0e4fcda29fe1f55040b90933921080557d14566d4e5a6be6a6a04834c17cf804"
+    },
+    {
+      "fixture": "tests/table_initialize-vectors.json",
+      "key": "routines[0]",
+      "name": "board_display",
+      "offset": 126968,
+      "length": 244,
+      "sha256": "009857f888be3b0ec47a7aebfeab62d2eb35e62fa31d8277a53dc443e4a4f326"
+    },
+    {
+      "fixture": "tests/table_initialize-vectors.json",
+      "key": "routines[1]",
+      "name": "scroll_reset",
+      "offset": 126916,
+      "length": 52,
+      "sha256": "b48d08a62f6e418e93a5b79ffd785aa098647222d9403ce887e36b2b3cb8eb84"
+    },
+    {
+      "fixture": "tests/table_initialize-vectors.json",
+      "key": "routines[2]",
+      "name": "palette_work_init",
+      "offset": 22040,
+      "length": 80,
+      "sha256": "f955cc1567c2cf7345c3abde08a1bc4a23a4cd77b51086f7e42bd70880c1113b"
+    },
+    {
+      "fixture": "tests/table_initialize-vectors.json",
+      "key": "routines[3]",
+      "name": "palette_range",
+      "offset": 22404,
+      "length": 60,
+      "sha256": "9789e08b7d0f1ed9c72f430b288916b202f832913e105c3a8e0f222ff3dbef8a"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[0]",
+      "name": "presentation_start",
+      "offset": 197740,
+      "length": 52,
+      "sha256": "dc68e27d0618426dc3156032e2951e73739acbe650510475f4bdfb36be4be24b"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[1]",
+      "name": "presentation_prepare",
+      "offset": 196416,
+      "length": 1324,
+      "sha256": "4e3d898572db46569ccbdedda254e38590ecc5c7a3bec20818828d9d1300d0e1"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[2]",
+      "name": "presentation_queue_flush",
+      "offset": 194976,
+      "length": 20,
+      "sha256": "90b2baa591664e3944ccc72b85deb7e35c2f71a2c8952d53ab419dd6ab1b461d"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[3]",
+      "name": "presentation_blank",
+      "offset": 195408,
+      "length": 72,
+      "sha256": "fe50793c594defb500dfe2faf2c745b2434eb97096fea539e1bb6e19bd783c3d"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[4]",
+      "name": "presentation_sequence",
+      "offset": 195480,
+      "length": 80,
+      "sha256": "edfc7074d64ff181884e337e80ab168dc42261fe191b843cd0603c2629fee431"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[5]",
+      "name": "presentation_glyph",
+      "offset": 195560,
+      "length": 376,
+      "sha256": "058fd5783ac6207ab1fd14f38e09a29f7af685070761a8f7944a4b91363a3e72"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[6]",
+      "name": "presentation_disable_display",
+      "offset": 194808,
+      "length": 40,
+      "sha256": "72842531d040224bf161644ddd3cf4355e6749e36a515a4bebdd16f7476be583"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[7]",
+      "name": "presentation_enable_display",
+      "offset": 194848,
+      "length": 12,
+      "sha256": "94340b9149f78f39b7826d5b9d1e94e2f3c7c27bbe896bfaafb3a537153efcda"
+    },
+    {
+      "fixture": "tests/table_presentation-vectors.json",
+      "key": "routines[8]",
+      "name": "presentation_copy",
+      "offset": 14112,
+      "length": 44,
+      "sha256": "539deb8984cd6527d632d272eacebcd865198850b2f7100b3819b29ea9d49b37"
+    },
+    {
+      "fixture": "tests/table_presentation_frame-vectors.json",
+      "key": "routines[0]",
+      "name": "message_frame",
+      "offset": 197792,
+      "length": 1388,
+      "sha256": "d9ee1dabb13ad9be708a944a5e9d1edc397fb7f397ab0dfda8c8515f6f2fbd5b"
     }
   ]
 }

@@ -26,7 +26,14 @@ def registry():
             for index, child in enumerate(value):
                 visit(child, fixture, path+"["+str(index)+"]")
 
-    for fixture in sorted((ROOT/"tests").glob("*vectors.json")):
+    # The oracle driver is the reviewed publication manifest. Unregistered
+    # scratch/in-progress fixtures must not silently change a release registry.
+    from check_source_port import fixture_specs
+    names = [spec[3] for spec in fixture_specs(None, None, None)]
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate registered oracle fixture")
+    for name in sorted(names):
+        fixture = ROOT/"tests"/name
         value = json.loads(fixture.read_text(encoding="utf8"))
         digest = value.get("romSha256", value.get("sourceSha256"))
         if digest != ROM_SHA256:

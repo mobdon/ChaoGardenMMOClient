@@ -18,19 +18,19 @@ the complete cartridge identity. No native files leave ignored local storage.
 | Area | Rust source work | Remaining full-game gate |
 | --- | --- | --- |
 | Main input/callbacks | Native input initialization, edges, grouped/per-key repeat; ten-slot callback stack with original truncation and retained inactive storage | Screen dispatchers, complete menus, options, language and mode selection |
-| Startup | Original `0x81E8` callback wrapper, including writes before calls and next-callback replacement | Intro routines `0x6EF4`, `0x7840`, `0x8168` and subsequent screen callbacks; strict `run` stops at the first missing call |
+| Startup | Original `0x81E8` wrapper; `0x6EF4`/`0x7840`/`0x8168` init/resume/update, 39 contexts with exact destination permutation, bounded native type10 resources and installed auxiliary callbacks through `0x6825` | Animation callback `0x6825`, subsequent screens, remaining boot calls and complete memory/hardware binding; the minimal CLI `run` still stops at its unbound `0x6EF4` entry |
 | Ball | Original initialization/trail reset, fixed-point integration, coordinate projection prefix and velocity limit | Launch/plunger, nudge/tilt, draw gates, drains, bonuses, extra balls and all lifecycle transitions |
 | Flippers | Native initialization, geometry lookup, input/angle updates, side/proximity rules and source sound requests | Complete table integration and playthrough evidence; initializer writes outside the bounded prefix remain explicit outputs |
 | Nudge/lifecycle | Original directional nudge/timers/decay and native curve; lifecycle router and source state machines for codes 0/1/2/3, including source launch velocity and nested ball reset | Called table, sound/UI and graphics helpers, complete drain/bonus/game-over paths and retail playthroughs; nudge routine alone establishes no accumulated tilt penalty |
 | Collision | Map probing, alternating-axis sweep, materials, dynamic regions, flipper masks and collision response/kicks with explicit BIOS math boundary | Native table/object initialization, all moving objects and full input-trace/playthrough parity; inspect collision fixture scopes for synthetic versus native resource tests |
-| Frame controller | Original normal/multiball control flow and four substeps with substep byte `0,1,2,3`; shared ball/flipper state prefix | Unported external calls stop execution; wrapper parity does not establish scoring, camera or table callbacks |
+| Frame controller | Original normal/multiball control flow and four substeps with substep byte `0,1,2,3`; shared ball/flipper state; lifecycle, events and message scheduler adapters; table callback/update wrappers and five bootstrap variants | Unported external calls stop execution; wrapper parity does not establish complete scoring, camera or table callbacks |
 | OAM/palettes | Native submission queue, sorted descriptor compositor, alternate tree compositor, frame reset/affine defaults and typed DMA commands; source palette blending/cache/dirty banks | Whole GBA layer/priority/blend composition, all affine transforms, transfer scheduling and original screen/animation paths |
-| Native presentation | Verified original 256×512 board and four 16×16 ball OBJ pixel frames; finite Windows 240×160 presentation/input host | Full original camera, sprite scheduling, other layers, visible menus/gameplay and interactive visual acceptance |
+| Native presentation | Original board/ball rasters; native descriptor/glyph message setup, all ten reveal/scroll/fade modes, queued duration transitions, score HUD formatting, board display setup and original display-register transactions; finite Windows host | Full original camera, layer/hardware behavior, sprite scheduling, visible menus/gameplay and interactive visual acceptance; score display is not score-award logic |
 | Sprite animation | Native initializer, bounded command dispatcher and eight frame/wait/loop/end handlers | Remaining handler IDs, real screen scripts, scheduling and complete animation/presentation parity |
-| Intro interpolation | Native 32-byte context constructor and integer stepping/update with real OAM submission; constructor's opaque uninitialized stack word is an explicit input | Intro resource loading, complete init/resume/update callbacks, all 39 context instances and final screen playback |
-| Sound | Separate main-game 135-entry map, conditional/forced routing, channel-2 wrapper; native MPlayOpen/Start/Stop and track/channel release state | Track sequence execution, instrument banks, PSG backend, mixer, timing and audible playback |
+| Intro interpolation | Native 32-byte context constructor/stepping, 39 initialized contexts, seven installed callback IDs and direct completion helper; authentic compressed-resource hashes; constructor's opaque stack word is an explicit input | Complete animation callback, resource/hardware/PSG execution, final screen playback and boot integration |
+| Sound | Separate main-game 135-entry map, routing and MPlay lifecycle; 16 native command leaves, unlink/finish channel graphs and sound DMA gate transactions | Complete sequencer, instrument/note execution, PSG backend, mixer, DMA timing and audible playback; command-byte MMIO capture is not device execution |
 | Math | Original software division and native quarter-wave sine/cosine | Authentic BIOS is not supplied. Strict backend errors; opt-in integer numerical reference is separately labeled and tested |
-| Table rules | Source call targets and numeric table/layer identifiers preserved | Sonic, NiGHTS, Samba and all special modes: scoring, missions, bosses, progression, unlocks and multiplayer rules |
+| Table rules | Source region/layer event routers, native action/message queues, phase/multiball setup and six map pointer bindings; numeric IDs retained | Sonic, NiGHTS, Samba and all special modes: complete scoring, missions, bosses, progression, unlocks and multiplayer rules |
 | Saves/transfer | Original asset work's bounded opaque Garden record/flash inspection | Main save layout/writes, complete transfer protocol, atomic progression and native save round trips |
 | Tiny Garden/Chao Ball | Exact embedded payload, resource and opaque-save catalog | Original care/AI, items, menus, minigames including Chao Ball, rewards and complete garden playthroughs |
 
@@ -48,12 +48,27 @@ Vectors contain synthetic scalar state, opaque native addresses and output
 hashes, never ROM instructions, native art/audio or real saves.
 
 Reference boundaries are explicit in each fixture and script. Startup tests
-intercept intro dependencies. Frame tests separate intercepted wrapper calls
+intercept intro dependencies; separate intro tests execute the original wrappers,
+constructors and lookups. Their resource-loading seam uses synthetic same-length
+bytes; independent authentic hashes verify the actual decoded resources. The
+auxiliary sequence executes 326 native ticks before its strict `0x6825` boundary.
+Frame tests separate intercepted wrapper calls
 from actual native flipper/integrator execution. Palette tests implement only
 the stated BIOS halfword-copy hook. Sound routing tests intercept player calls;
 the separate player-lifecycle tests execute those routines and intercept only
 the PSG oscillator callback. Controlled BIOS outputs prove surrounding native
-math/collision code and call order, not authentic BIOS execution.
+math/collision code and call order, not authentic BIOS execution. Sound DMA tests
+model only the specified SWI0B zero-word fill. Display tests intercept VBlank and
+compare register transactions; they do not emulate interrupts or a PPU. Native
+VRAM address-window writes may cross the backing boundary; a production backend
+must apply the original mode-dependent hardware behavior.
+
+`table_calls::TableCalls` composes completed lifecycle, table-action, bootstrap,
+collision-binding and message routines on one supplied memory image. Unknown
+dependencies remain synchronous errors through its backend. Board initializer
+and hardware/palette services are separate explicit adapters. Queue consumption
+calls `0x2FF40` directly, preserving later requests and the active duration;
+immediate `0x3046C` requests retain their distinct queue-flush behavior.
 
 `ReferenceBiosMath` has separate integer numerical vectors checked against the
 primary mGBA 0.10.3 mathematical reference, source SHA-256
@@ -66,10 +81,12 @@ inputs. Unknown fields are preserved.
 
 ## Reproduction
 
-This milestone passed 102 Rust tests with the local ROM checks enabled, 26
-Python unit tests, regeneration/comparison of all 23 engine oracle fixtures,
-all 113 registered source-span hashes, formatting and strict Clippy. These
-counts are validation evidence for the scoped ports above, not full-game
+This checkpoint passed 142 Rust tests with local ROM checks enabled, 32 Python
+unit tests, regeneration/comparison of all 37 registered engine oracle fixtures,
+all 217 source-span hashes, formatting and strict Clippy. Metadata follows the
+oracle driver's explicit reviewed fixture list, so in-progress local fixtures
+cannot silently change a published registry. These counts are validation
+evidence for the scoped ports above, not full-game
 completion. Native collision coverage includes 1,000 complete dispatches using
 the cartridge's own maps/masks, with the BIOS seam explicitly recorded.
 
