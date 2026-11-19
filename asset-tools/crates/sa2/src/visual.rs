@@ -119,7 +119,7 @@ impl Material {
     }
 }
 
-fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[f64; 3]> {
+pub(crate) fn normal_covector(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[f64; 3]> {
     // Columns of the cofactor matrix; divide by the signed determinant
     // before normalizing so reflected hierarchies retain the authored direction.
     let column = |i: usize| [matrix[0][i], matrix[1][i], matrix[2][i]];
@@ -142,6 +142,12 @@ fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[
             .sum::<f64>()
             / det
     });
+    Ok(n)
+}
+fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[f64; 3]> {
+    normalize_normal(normal_covector(matrix, normal)?)
+}
+pub(crate) fn normalize_normal(n: [f64; 3]) -> Result<[f64; 3]> {
     let length = n[0].hypot(n[1]).hypot(n[2]);
     if length == 0. || !length.is_finite() {
         return Err(Error::invalid("invalid static normal"));

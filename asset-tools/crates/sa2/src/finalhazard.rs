@@ -269,7 +269,7 @@ fn weight_report(exe: &[u8], pose: Option<&crate::pose::Pose>) -> Result<serde_j
         .collect();
     let [boss, _] = read(exe)?;
     let attachments = geometry(exe)?;
-    let mut pending = BTreeMap::<u32, (Vec<serde_json::Value>, [f64; 3])>::new();
+    let mut pending = BTreeMap::<u32, (Vec<serde_json::Value>, [f64; 3], [f64; 3])>::new();
     let mut finished = Vec::new();
     for joint in boss {
         let Some(a) = joint.attachment_rva else {
@@ -286,7 +286,11 @@ fn weight_report(exe: &[u8], pose: Option<&crate::pose::Pose>) -> Result<serde_j
                     .get(6)
                     .ok_or_else(|| Error::invalid("missing vertex weight"))?;
                 let index = u32::from(chunk.index_offset) + (word & 0xffff);
-                if phase == 0 && pending.insert(index, (Vec::new(), [0.; 3])).is_some() {
+                if phase == 0
+                    && pending
+                        .insert(index, (Vec::new(), [0.; 3], [0.; 3]))
+                        .is_some()
+                {
                     return Err(Error::invalid("unfinished weight at start"));
                 }
                 if phase > 2 {
@@ -302,6 +306,14 @@ fn weight_report(exe: &[u8], pose: Option<&crate::pose::Pose>) -> Result<serde_j
                     let point = crate::pose::transform_point(matrix, v.position.map(f64::from));
                     // SA3D ChunkVertex.Weight: the high halfword divided by 255.
                     let weight = f64::from(word >> 16) / 255.;
+                    let normal = crate::visual::normal_covector(
+                        matrix,
+                        v.normal
+                            .ok_or_else(|| Error::invalid("missing Finalhazard source normal"))?,
+                    )?;
+                    for (sum, x) in chain.2.iter_mut().zip(normal) {
+                        *sum += x * weight;
+                    }
                     for (sum, x) in chain.1.iter_mut().zip(point) {
                         *sum += x * weight;
                     }
@@ -309,9 +321,11 @@ fn weight_report(exe: &[u8], pose: Option<&crate::pose::Pose>) -> Result<serde_j
                 chain.0.push(serde_json::json!({"jointRva":joint.rva,"weightByte":(word>>16)&255,"rawFlags":word,
                     "position":v.position,"normal":v.normal}));
                 if phase == 2 {
-                    let (influences, position) = pending.remove(&index).unwrap();
+                    let (influences, position, normal) = pending.remove(&index).unwrap();
                     let mut vertex = serde_json::json!({"index":index,"influences":influences});
                     if pose.is_some() {
+                        vertex["bossLocalNormal"] =
+                            serde_json::json!(crate::visual::normalize_normal(normal)?);
                         vertex["bossLocalPosition"] = serde_json::json!(position);
                     }
                     finished.push(vertex);
