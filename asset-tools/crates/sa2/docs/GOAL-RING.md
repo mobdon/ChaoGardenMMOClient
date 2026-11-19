@@ -232,3 +232,9 @@ For Hero action 1, layer 0, the installed SET contains two GOALRING placements. 
 | 457 | 0 | Child task | Parent contact, radius 8 |
 
 A child task is a different executor; its parent does not expose a contact sphere on this route. The two placements cannot be substituted based on which is closest to the floor. The matrix tests initialization, not which global value a running story supplies, whether a player touches the sphere, or whether the mission controller accepts a clear.
+
+### Evidence for the mission-byte interpretation
+
+The installed stage module comparator uses a PowerPC global at 0x801CBD88 and the goal initializer reads its signed byte at +0x23 (0x801CBDAB). The local PC SA2 Mod Loader SA2Variables.h places CurrentDemoState at 0x0174AFC0 and MissionNum at 0x0174AFE3: the same relative offset. SAMT game.h also names the latter PC address ucMissionNumber. Two adjacent-field cross-checks are consistent with this layout: TextLanguage is at +0x11 and TimeStopped at +0x37 in the PC symbols, while the goal module reads those offsets on the message and motion paths respectively.
+
+This supports interpreting game_byte_23 as the mission number across the two profiles. It does not establish which value the story dispatcher writes on entry; the Rust replay continues to require the observed byte. The PC symbol addresses alone do not prove the instruction flow of the installed PC goal callback.
