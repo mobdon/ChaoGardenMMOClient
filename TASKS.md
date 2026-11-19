@@ -6,9 +6,11 @@ Status: **DONE** = implemented with recorded evidence; **VERIFY** = implemented 
 
 Movement rule: original Chao action first; original stage-character movement retargeted only for a missing Chao capability; new motion only for a remaining gap. Preserve the Chao rig/proportions, use uniform asset-parent scale, normalize root motion and check joints/eyes/wings/feet before acceptance. Stage origin does not override this rule.
 
+Asset rule: always search installed native content first. Preserve matching original geometry, images or vertex colors and alpha/material behavior; do not invent or repurpose an effect when its native match exists. Record attachment/timing adaptations separately.
+
 ## Continue here
 
-The Vibe deliveries through server `282f6ab` are **UNACCEPTED**. Rust game/shared mechanics are mandatory. Server documentation commit `e09cd62` publishes the gate; dated review reports and repair tasks are in server `docs/coordination/`. The working runtime is unchanged. Root AGENTS.md applies the same requirement to client/platform work.
+The Vibe feature deliveries through server `282f6ab` remain **UNACCEPTED**. Rust game/shared mechanics are mandatory. Useful Rust build/CI and corrected documentation were separately merged through PRs 8/9/11; the final nine-PR review record is published at server `50c1f5a`. Six incompatible/redundant PRs were closed with source branches retained. The working runtime is unchanged. Root AGENTS.md applies the same requirement to client/platform work.
 
 1. Coordinate through the server repository's docs/coordination/BOARD.md and PROTOCOL.md. Accounts/pairing is active in an isolated worktree; agree the v2 contract and migrate all three clients before merging (NET-03, TCG-06).
 2. Connect durable AFK training and its Tiny Garden screen after ownership/lease agreement (TCG-08/16). The tested pure Rust job core is not a running training service.
@@ -32,6 +34,7 @@ The Vibe deliveries through server `282f6ab` are **UNACCEPTED**. Rust game/share
 | NET-03 | ACTIVE | Document/version client/server wire schema and shared constants. | Accounts/pairing isolated branch in progress. Integration constraints and proposed v2 envelope in docs/PROTOCOL-COORDINATION.md; client/AFK/widget agreement and migration tests required before merge. Both repos must detect incompatible protocol versions. |
 | NET-04 | TODO | Support reconnect recovery and duplicate-session behavior deliberately. | Test disconnect/rejoin during race, combat and purchase; no duplicate rewards or lost progression. |
 | REVIEW-01 | DONE | Review the received Vibe batches and record the user's Rust implementation requirement. | First four deliveries reviewed across97paths/25findings at5ec51f9; later59-path PR7 reviewed separately with17findings at282f6ab. Server docs-only commits e09cd62/325db09 publish Rust gates, findings and repair tasks. Feature acceptance remains blocked; no Vibe runtime rollout. Later source needs its own review. |
+| REVIEW-02 | DONE | Fix all reviewed Vibe PR merges, retaining only usable work. | Server PRs 8/9/11 repaired and merged after exact-head green CI; 5/6/10/12/19/20 closed without merging. Final open inventory contains independent Rust PRs 14–18, outside this cleanup. Exact heads, checks and limits: server docs/coordination/VIBE-MERGES-2026-11-18.md at 50c1f5a. No backend rollout/migration. |
 
 ## Visuals, controls and native content
 
@@ -46,7 +49,9 @@ The Vibe deliveries through server `282f6ab` are **UNACCEPTED**. Rust game/share
 | VIS-07 | VERIFY | Clean first-style main hub with original grass and trees. | Native grass and seven native Neutral garden trees load; sensible prop/world scale and clear navigation. |
 | VIS-08 | VERIFY | Separate original Neutral/Hero/Dark gardens and correct exits. | Each portal goes to its labeled area; garden exits/Home return to main hub; alignment gates enforced. |
 | VIS-09 | VERIFY | Red/gold elevated ADMIN tag and Sonic page styling. | Tag clears head/flame, remains readable, and works mounted; HUD does not obstruct the play view. |
-| AUD-01 | VERIFY | Original hub and three garden music tracks. | Sound toggle starts audio after gesture, changes with zone, mutes and restores correctly; no stale route404s. |
+| VIS-11 | DONE | Fix animated footwear, forward toe alignment and inset chest gem. | Actual 006/013 sockets; native alternating Walk/Run preserved. Native heel-to-toe basis removes about 11 degrees inward yaw. Shoes uniformly 15.1% smaller than prior fit; gem inset another quarter-depth into skin. Final 15/15 tests/build and three-form 1,086-sample proof pass; actual UI Walk/Run/Skate recorded. See docs/FOOTWEAR-FIX.md. Broader terrain/contact remains VIS-02/ANIM-07. |
+| VIS-12 | VERIFY | Use original Shadow toe/heel exhaust instead of adapted Chao flame sprites. | Actual teriosmdl 92–99 geometry/vertex colors/unlit SrcAlpha blend; original boot bytes retained, jets excluded from fit/contact. Rust bundler, independent SAIO/PBR parity and renderer guards pass. Installed through existing asset routes and actual browser checked; exact native draw matrices/timing remain unresolved. See docs/NATIVE-SHOE-EFFECTS.md. |
+| AUD-01 | VERIFY | Original hub and three garden music tracks. | Sound toggle starts audio after gesture, changes with zone, mutes and restores correctly; no stale route404s. User-requested mute verified in actual UI (Value 0) and preserved through presentation updates. |
 | AUD-02 | VERIFY | Match Knuckles/Tails/Amy native voice introductions. | Listen to each identity and test the correct NPC interaction with replay cooldown. |
 | ASSET-01 | DONE | Inventory every installed game file, including texture/archive sources. | 4,351 files, 3,253,731,852 bytes, every file SHA-256 hashed; no skipped/errors. This does not mean every archive is decoded. |
 | ASSET-02 | DONE | Original gardens, special Chao, flame, grass, cinematic emeralds and Neutral tree conversions. | Provenance and native source hashes in ignored manifests; conversion scripts and INVENTORY.md document actual outputs. |
