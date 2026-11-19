@@ -156,7 +156,7 @@ if len(sys.argv)>4:
             dispatch=dict(work_c8=12,work_44=0,work_68=98)
             q.update(primary_kart_counter=4)
             q["updates"] += [credit,dict(vehicle_post_move=dict(frame,work_ec=0x1234,dispatch=dispatch)),
-                             dict(vehicle_post_move=dict(frame,global_24d60=1,work_ec=0x1234,dispatch=dispatch))]
+                             dict(vehicle_post_move=dict(frame,engine_byte_23=1,engine_halfword_68=100,work_ec=0x1234,dispatch=dispatch))]
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-vehicle-catch.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             doc=json.loads(out.read_text());caught,finished=[v["vehiclePostMove"] for v in doc["updates"][-2:]]
@@ -177,6 +177,19 @@ if len(sys.argv)>4:
                 assert doc["finishFlag"]==1 and doc["vehicleState"]==10 and r["remaining"]==2 and r["elapsed"]==300
                 if already_caught:assert "race_results" not in r and ["engine_8005eb24",0] in r["calls"]
                 else:assert r["race_results"]["calls"]==[["engine_8001ef18",[8]]] and not r["race_results"]["writes"]
+            # A later frame below threshold inherits the finish instead of
+            # replaying the threshold write or clearing the controller input.
+            later={k:v for k,v in frame.items() if k!="global_24d60"}
+            q.update(updates=[post,dict(vehicle_post_move=later),dict(controller=dict(finish_signals,pursuit_latch=0))])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-retain-finish.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text())
+            assert doc["updates"][1]["vehiclePostMove"]["frame"]["global_24d60"]==doc["finishFlag"]==1
+            assert doc["updates"][2]["controller"]["race_results"]["calls"]==[["engine_8001ef18",[8]]]
+            later["global_24d60"]=0
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-finish.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"vehicle finish flag conflicts" in rejected.stderr
             # Zero remaining time bypasses parent reads and the catch.
             q.update(timer_word=1,updates=[spawn,dict(controller=signals),dict(target_tick={})])
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-inactive.json")

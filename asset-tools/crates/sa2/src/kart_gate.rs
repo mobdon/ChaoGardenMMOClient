@@ -751,6 +751,7 @@ pub fn story_sequence(
                 if let Some(selected) = progressed_route.take() {
                     frame.bind_route(selected)?;
                 }
+                frame.bind_finish(finish)?;
                 frame.bind_story_dispatch(target.map(|t| t.latch), count, highest)?;
                 if target_handle.is_some_and(|handle| handle != frame.work_ec) {
                     return Err(Error::invalid(
@@ -787,7 +788,7 @@ pub fn story_sequence(
                 if let Some(h) = r.frame.as_ref().and_then(|f| f.highest()) {
                     highest = Some(h);
                 }
-                finish = r.frame.as_ref().map(|f| f.global_24d60);
+                finish = r.frame.as_ref().and_then(|f| f.global_24d60);
                 if let Some(n) = r.frame.as_ref().and_then(|f| f.checkpoint_counter()) {
                     count = n;
                 }

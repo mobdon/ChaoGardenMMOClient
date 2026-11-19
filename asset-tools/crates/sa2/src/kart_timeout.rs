@@ -33,7 +33,7 @@ pub struct Frame {
     work_108: i32,
     engine_byte_23: i8,
     engine_halfword_68: i16,
-    pub(crate) global_24d60: i32,
+    pub(crate) global_24d60: Option<i32>,
     segment: Option<i32>,
     segment_count: Option<i32>,
     position: [f32; 3],
@@ -51,6 +51,15 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn bind_finish(&mut self, retained: Option<i32>) -> Result<()> {
+        if self.global_24d60.zip(retained).is_some_and(|(a, b)| a != b) {
+            return Err(crate::Error::invalid(
+                "vehicle finish flag conflicts with preceding update",
+            ));
+        }
+        self.global_24d60 = retained.or(self.global_24d60);
+        Ok(())
+    }
     pub(crate) fn crossing_positions(&self) -> ([f32; 3], [f32; 3]) {
         (self.position, self.previous_position)
     }
@@ -211,6 +220,9 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             let (mut segment, segment_count) = frame
                 .route()
                 .ok_or_else(|| crate::Error::invalid("missing vehicle route"))?;
+            let mut finish = frame
+                .global_24d60
+                .ok_or_else(|| crate::Error::invalid("missing initial vehicle finish flag"))?;
             frame.cooldown = frame.cooldown.wrapping_sub(1).max(0);
             if frame.work_288 != 0 {
                 frame.work_288 = frame.work_288.wrapping_sub(1);
@@ -222,10 +234,10 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                 if frame.engine_byte_23 == 1
                     && frame.engine_halfword_68 >= 100
                     && vehicle_state != 10
-                    && frame.global_24d60 == 0
+                    && finish == 0
                 {
                     vehicle_state = 10;
-                    frame.global_24d60 = 1;
+                    finish = 1;
                 }
                 if remaining <= 0 {
                     if vehicle_state != 10 {
@@ -273,7 +285,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             }
             r.next = "vehicle_2814";
             if let Some(d) = &mut frame.dispatch {
-                if frame.global_24d60 != 0 {
+                if finish != 0 {
                     if d.work_c4
                         .ok_or_else(|| crate::Error::invalid("missing vehicle checkpoint count"))?
                         > 3
@@ -338,6 +350,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                 r.next = "engine_8000f4ec";
             }
             r.vehicle_state = Some(vehicle_state);
+            frame.global_24d60 = Some(finish);
             frame.segment = Some(segment);
             r.frame = Some(frame);
         }

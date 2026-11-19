@@ -676,3 +676,5 @@ After a slot progress event, the next primary vehicle post-move callback consume
 Vehicle dispatch reads the same highest checkpoint (vehicle work +0xc8) retained by slot progress and lap timing. An observed value must agree once that field is known. On finish the native signed counter clamp writes both checkpoint fields to 3 when the current counter exceeds 3.
 
 Slot progress consumes vehicle work +0x44 when the latest post-move dispatch is present. State 7 clears this field, so a stationary scan after guidance tests three forward candidates and no reverse candidates. A post-move frame without dispatch needs an independent observation for the scan flag.
+
+Within a contiguous story replay, the next vehicle update inherits the last finish flag. The threshold write remains visible to later vehicle and controller callbacks even after the input drops below threshold. An explicit conflicting observation is rejected; starting a separate sequence requires an initial observed flag.
