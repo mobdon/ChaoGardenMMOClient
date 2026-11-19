@@ -263,3 +263,63 @@ pub fn particle_tick(bytes: &[u8], s: ParticleInput) -> Result<ParticleUpdate> {
     }
     Ok(ParticleUpdate { particle: p, alive })
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayInput {
+    mode: i8,
+    position: [f32; 3],
+    yaw: i32,
+    scale_z: f32,
+    current_view_metric: f32,
+}
+/// Display is gated by the active view only (0x17e8); the update checks both views.
+pub fn display(bytes: &[u8], pak: &[u8], s: DisplayInput) -> Result<serde_json::Value> {
+    use serde_json::json;
+    kart_progress::verify(bytes)?;
+    let rel = CityRel::read_identified(bytes, 80)?;
+    let threshold = f32::from_be_bytes(rel.data(4)?[0x1c0..0x1c4].try_into().unwrap());
+    if s.current_view_metric >= threshold || s.mode != 2 {
+        return Ok(json!({"draw":null}));
+    }
+    let invalid = || Error::invalid("unsupported kart ring display reference");
+    let target = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.kind == 4 && r.module == 80 && r.section == 5)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let ptr = |site| {
+        rel.local_pointer(5, site)?
+            .filter(|(sec, _)| *sec == 5)
+            .map(|(_, o)| o)
+            .ok_or_else(invalid)
+    };
+    let list = target(0xaa9e)?;
+    let attach = target(0xaae2)?;
+    let d = rel.data(5)?;
+    if d[list as usize + 4..list as usize + 8] != 1u32.to_be_bytes() {
+        return Err(invalid());
+    }
+    let at = ptr(ptr(list)?)? as usize;
+    let name = std::ffi::CStr::from_bytes_until_nul(&d[at..])
+        .map_err(|_| invalid())?
+        .to_str()
+        .map_err(|_| invalid())?;
+    let member = format!("objtex_common\\{name}.dds");
+    let bank = crate::archive::read_pak(pak)?;
+    let mut matches = bank.iter().filter(|e| e.name.eq_ignore_ascii_case(&member));
+    let entry = matches.next().ok_or_else(invalid)?;
+    if matches.next().is_some() {
+        return Err(invalid());
+    }
+    let image = crate::texture::decode_dds(entry.data)?;
+    let geometry =
+        crate::kart_story_target::vertices(&rel, attach, &mut crate::visual::Material::default())?;
+    Ok(
+        json!({"draw":{"textureList":list,"attach":attach,"position":s.position,"yaw":s.yaw,"scale":([s.scale_z;3]),
+        "geometry":geometry,"texture":{"name":name,"entry":entry.name,"offset":entry.offset,"length":entry.length,
+        "ddsSha256":crate::manifest::sha256(entry.data),"width":image.width,"height":image.height,
+        "rgbaSha256":crate::manifest::sha256(&image.rgba),"nonopaquePixels":image.rgba.chunks_exact(4).filter(|p|p[3]!=255).count()}}}),
+    )
+}

@@ -480,7 +480,7 @@ fn bind_motion(
     Ok(serde_json::json!({"offset":offset,"frames":frames,"type":7,"interpolation_word":3}))
 }
 
-fn vertices(
+pub(crate) fn vertices(
     rel: &crate::city_rel::CityRel<'_>,
     attach: u32,
     material: &mut crate::visual::Material,
