@@ -11,6 +11,7 @@ pub mod city_music;
 pub mod city_rel;
 pub mod city_replay;
 pub mod character_animations;
+pub mod character_motions;
 pub mod city_rider;
 pub mod city_stage;
 pub mod collision;
