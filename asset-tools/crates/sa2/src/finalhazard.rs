@@ -414,3 +414,49 @@ pub fn polygon_schedule(exe: &[u8]) -> Result<serde_json::Value> {
     }
     Ok(serde_json::json!({"cacheWrites":saves,"cacheDraws":draws,"operations":ops}))
 }
+/// Local transform records used by the installed weakpoint display callback.
+/// Matrix selection and encounter state remain external to this reader.
+pub fn weakpoint_placements(bytes: &[u8]) -> Result<serde_json::Value> {
+    if crate::manifest::sha256(bytes)
+        != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
+    {
+        return Err(Error::invalid("unsupported Finalhazard stage revision"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 88)?;
+    let pair = |at: u32, section: u8| -> Result<u32> {
+        let hi = rel
+            .reference(1, at)
+            .ok_or_else(|| Error::invalid("missing Finalhazard reference"))?;
+        let lo = rel
+            .reference(1, at + 4)
+            .ok_or_else(|| Error::invalid("missing Finalhazard reference"))?;
+        if (hi.module, hi.kind, hi.section) != (88, 6, section)
+            || lo != (crate::city_rel::Reference { kind: 4, ..hi })
+        {
+            return Err(Error::invalid("unexpected Finalhazard reference pair"));
+        }
+        Ok(hi.addend)
+    };
+    let base = pair(0x844e, 5)?;
+    let matrices = pair(0x847e, 6)?;
+    let model = pair(0x84c2, 5)?;
+    let data = rel.data(5)?;
+    let table = data
+        .get(base as usize..)
+        .and_then(|tail| tail.get(..2 * 0xe0))
+        .ok_or_else(|| Error::invalid("short Finalhazard placement table"))?;
+    let mut rows = Vec::new();
+    for (i, r) in table.chunks_exact(0x1c).enumerate() {
+        let xyz = |at: usize| {
+            [at, at + 4, at + 8].map(|x| u32::from_be_bytes(r[x..x + 4].try_into().unwrap()))
+        };
+        rows.push(
+            serde_json::json!({"bank":i/8,"entry":i%8,"matrixSlot":r[0] as i8,
+            "angles":xyz(4).map(|v|v as i32),"translation":xyz(16).map(f32::from_bits)}),
+        );
+    }
+    Ok(
+        serde_json::json!({"modelSection5":model,"tableSection5":base,"matrixArraySection6":matrices,
+        "matrixStride":48,"placements":rows,"scope":"Display records only; matrix contents, selection timing and hit detection are external."}),
+    )
+}
