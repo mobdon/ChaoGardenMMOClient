@@ -116,3 +116,24 @@ fn garden_background_matches_retail_vram_and_palette() {
         "1a964b65aab3269fb68bb12c528d0858e25bc95bc26d5739641350391e012ebc"
     );
 }
+
+#[test]
+#[ignore = "requires local SONIC_ADVANCE_ASOE_ROM"]
+fn garden_objects_match_live_oam_tiles_and_palettes() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    let program = catalog::garden(&rom).unwrap();
+    let evidence = garden::GardenEvidence::parse(&program.bytes).unwrap();
+    let objects = sonic_advance_assets::garden_screen::entry_objects(&evidence).unwrap();
+    let expected = [
+        "1fb8e2fed1b577809195651cf045959214c51781dd4fa04266e8c2f12e9ddd4b",
+        "c8fa19543c60ec65c9118d8d057d04710943aa66efe0034944ba3d9fbd1e569b",
+        "6bcd8873f41a029963860d662f5928fd9b7c8ff6da9d651d2d5a9af7171b6ae3",
+        "28f2c61c85b28e2c771404b9a823f01f2f045d12564f1305aac766a896120c1c",
+    ];
+    assert_eq!(objects.len(), expected.len());
+    for (obj, digest) in objects.iter().zip(expected) {
+        let bytes: Vec<_> = obj.colors.iter().flat_map(|c| c.to_le_bytes()).collect();
+        assert_eq!(binary::sha256(&bytes), digest);
+    }
+}

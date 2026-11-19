@@ -48,3 +48,47 @@ mod tests {
         assert!(render(&[0; 64], &[0; 878], &[0; 512]).is_err());
     }
 }
+
+/// Four active OBJ entries sampled on the cold-boot route at frame 1700.
+/// Rows contain native BGR555; 0xffff is transparent.
+pub struct GardenObject {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub colors: Vec<u16>,
+}
+
+pub fn entry_objects(program: &GardenEvidence<'_>) -> Result<Vec<GardenObject>> {
+    let raw = program.opaque_program();
+    let bank = binary::decompress(binary::range(raw, 0x1e6d0, 0xd1d)?, 0x1800)?;
+    let palette = binary::range(raw, 0x1c500, 512)?;
+    let mut objects = Vec::new();
+    for (x, y, width, height, tile, pal) in [
+        (87, 52, 16, 16, 0xac, 1),
+        (80, 89, 16, 16, 0xd8, 14),
+        (112, 4, 32, 16, 0x10d, 12),
+        (144, 4, 32, 16, 0x10d, 11),
+    ] {
+        let tiles = binary::range(&bank.bytes, (tile - 0xac) * 32, width * height / 2)?;
+        let mut colors = Vec::with_capacity(width * height);
+        for row in 0..height {
+            for col in 0..width {
+                let at = ((row / 8) * (width / 8) + col / 8) * 32 + (row % 8) * 4 + (col % 8) / 2;
+                let index = (tiles[at] >> (4 * (col % 2))) & 15;
+                let pos = 32 * pal + 2 * usize::from(index);
+                colors.push(if index == 0 {
+                    0xffff
+                } else {
+                    u16::from_le_bytes([palette[pos], palette[pos + 1]])
+                });
+            }
+        }
+        objects.push(GardenObject {
+            x,
+            y,
+            width,
+            colors,
+        });
+    }
+    Ok(objects)
+}

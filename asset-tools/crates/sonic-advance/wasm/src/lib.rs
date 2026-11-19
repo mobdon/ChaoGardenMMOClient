@@ -1,6 +1,7 @@
 //! Narrow integer-only WebAssembly ABI. Export attributes are the only unsafe
 //! annotations; all readers, simulation and memory indexing use safe Rust.
 #![deny(unsafe_code)]
+mod garden;
 use sonic_advance_assets::{
     binary,
     character_select::{screen::Screen, Character, Selection},
@@ -22,6 +23,7 @@ struct Host {
     rgb: Vec<u32>,
     title: Option<Title>,
     menu: Option<MainMenu>,
+    garden: Option<garden::Garden>,
     characters: Option<Screen<'static>>,
     title_pixels: Vec<u8>,
     snapshot: Vec<u8>,
@@ -129,6 +131,7 @@ fn load(length: u32, at_title: bool) -> i32 {
             .map(Title::render)
             .transpose()?
             .unwrap_or_default();
+        host.garden = None;
         host.characters = None;
         host.menu = None;
         host.title = title;
@@ -150,7 +153,12 @@ pub extern "C" fn asoe_step(mask: u32, frames: u32) -> i32 {
                 return Err(Error("invalid title/menu input or frame count".into()));
             }
             for tick in 0..frames {
-                if let Some(screen) = &mut host.characters {
+                if let Some(garden) = &mut host.garden {
+                    if !garden.step(source()?, bits)? {
+                        host.garden = None;
+                        host.menu = Some(MainMenu::from_title(source()?, title, bits)?);
+                    }
+                } else if let Some(screen) = &mut host.characters {
                     screen.step(bits)?;
                     if screen.confirmation_finished()
                         && screen.selection()
@@ -179,10 +187,17 @@ pub extern "C" fn asoe_step(mask: u32, frames: u32) -> i32 {
                     menu.step(bits, 1)?;
                     if menu.snapshot().destination == Some(Destination::CharacterSelect) {
                         host.characters = Some(Screen::load(source()?, bits)?);
+                    } else if menu.snapshot().destination == Some(Destination::TinyGarden) {
+                        host.garden = Some(garden::Garden::load(source()?, bits)?);
                     }
                 } else if title.step(bits, 1)? == TitleEvent::MainMenuRequested {
                     host.menu = Some(MainMenu::from_title(source()?, title, bits)?);
                 }
+            }
+            if let Some(garden) = &host.garden {
+                host.title_pixels.clear();
+                host.title_pixels.extend_from_slice(garden.pixels());
+                return Ok(());
             }
             if let Some(screen) = &host.characters {
                 return screen.render_into(&mut host.title_pixels);
@@ -212,6 +227,7 @@ pub extern "C" fn asoe_select_act(index: u32) -> i32 {
     run(|host| {
         host.runtime = Some(NativeRun::load_stage(source()?, index as usize)?);
         redraw(host)?;
+        host.garden = None;
         host.characters = None;
         host.menu = None;
         host.title = None;
@@ -229,6 +245,7 @@ pub extern "C" fn asoe_open_title() -> i32 {
 fn open_title(host: &mut Host) -> Result<()> {
     let title = Title::load_asoe(source()?)?;
     let pixels = title.render()?;
+    host.garden = None;
     host.characters = None;
     host.menu = None;
     host.title = Some(title);
@@ -287,6 +304,11 @@ pub extern "C" fn asoe_frame_len() -> u32 {
 pub extern "C" fn asoe_snapshot_ptr() -> u32 {
     let status = run(|host| {
         host.snapshot.clear();
+        if let Some(garden) = &host.garden {
+            host.snapshot =
+                serde_json::to_vec(&garden.snapshot()).map_err(|e| Error(e.to_string()))?;
+            return Ok(());
+        }
         if let Some(screen) = &host.characters {
             host.snapshot=serde_json::to_vec(&serde_json::json!({"scene":"characters","frame":screen.frame(),"character":format!("{:?}",screen.character()),"confirmed":screen.confirmation_finished()})).map_err(|e|Error(e.to_string()))?;
             return Ok(());

@@ -82,7 +82,18 @@ function showSnapshot() {
   if (length > 8192) throw new Error('The Rust snapshot exceeds the adapter limit.');
   const snapshot = JSON.parse(decoder.decode(new Uint8Array(api.memory.buffer, pointer, length)));
   const wasFrontEnd = atTitle;
-  atTitle = snapshot.scene === 'title' || snapshot.scene === 'mainMenu' || snapshot.scene === 'characters';
+  atTitle = snapshot.scene === 'tinyGarden' || snapshot.scene === 'title' || snapshot.scene === 'mainMenu' || snapshot.scene === 'characters';
+  const gardenView = document.querySelector('#garden-view');
+  gardenView.hidden = snapshot.scene !== 'tinyGarden';
+  if (!gardenView.hidden) {
+    gardenView.textContent = snapshot.view;
+    document.querySelector('#stage-heading').textContent = 'Tiny Chao Garden · local practice';
+    document.querySelector('#frame-value').textContent = String(snapshot.frame);
+    document.querySelector('#action-value').textContent = snapshot.activity;
+    document.querySelector('#rings-value').textContent = '—';
+    message(snapshot.hint);
+    return;
+  }
   if (snapshot.scene === 'characters') {
     document.querySelector('#stage-heading').textContent = 'Character select';
     document.querySelector('#frame-value').textContent = String(snapshot.frame);
