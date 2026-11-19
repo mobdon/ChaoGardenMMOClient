@@ -412,3 +412,12 @@ The subsequent history writer at 0x2fc4 passes work velocity (+0x7c), not
 world position, to 0x5220. For driving history use `motion_history` in
 newest-first order; `positions` is accepted for compatibility. Feeding
 world-space positions to that calculation would misrepresent this caller.
+
+`kart-scripted-motion CartD.rel OUTPUT.json INPUT.json` advances the movement
+callback for vehicle state 8 (0x422c) or 9 (0x426c). Carry forward position,
+angles, work_68, work_dc, vehicle_state and both module globals (global_21760,
+global_22494). The globals are shared between tasks. State 8 shifts X and fixes
+all three angles. State 9 shifts Z and increments the shared counter; an old
+signed value above 120 clears global_22494 and returns the vehicle to state 0.
+Neither callback selects a route. Both dispatch paths still run 0x5774 and the
+contact pass after movement. The command covers only movement before those calls.
