@@ -137,11 +137,24 @@ if len(sys.argv)>4:
                        previous_position=[6,5,4],velocity=[3,4,12],angles=[0,0,0],work_ec=0)
             q["updates"]=[dict(vehicle_post_move=frame),
                           dict(vehicle_post_move=dict(frame,segment=81,limousine_allocation=allocation)),
-                          dict(vehicle_post_move=dict(frame,segment=81,work_ec=0x1234)),catch,dict(controller=signals)]
+                          dict(vehicle_post_move=dict(frame,segment=81,work_ec=0x1234,velocity=[2500,4,12])),dict(target_tick={}),dict(controller=signals)]
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-route.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             doc=json.loads(out.read_text());before,spawned,existing=[v["vehiclePostMove"] for v in doc["updates"][:3]]
             assert "limousine" not in before and "limousine" not in existing
             assert spawned["frame"]["segment"]==75 and spawned["limousine"]["task_handle"]==doc["targetHandle"]==0x1234
             assert doc["target"]["latch"]==1 and doc["controllerState"]["elapsed"]==300 and doc["timerWord"]==2
+            # The vehicle task pose and the vehicle work position differ here.
+            # A latched tick follows the work position, not the shifted task X.
+            q["updates"].append(dict(target_tick={}))
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-follow.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            follow=json.loads(out.read_text())["target"]
+            assert follow["position"][0]==6+100
+            # Zero remaining time bypasses parent reads and the catch.
+            q.update(timer_word=1,updates=[spawn,dict(controller=signals),dict(target_tick={})])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-inactive.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text())
+            assert doc["target"]==doc["updates"][0]["target"]["state"] and not doc["updates"][-1]["target"]["installs_callbacks"]
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

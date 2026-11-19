@@ -50,6 +50,11 @@ pub struct Frame {
     #[serde(skip_serializing_if = "Option::is_none")]
     dispatch: Option<Dispatch>,
 }
+impl Frame {
+    pub(crate) fn pursuit_parent(&self) -> [f32; 2] {
+        [self.previous_position[0], self.velocity[0]]
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Dispatch {

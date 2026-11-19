@@ -637,9 +637,9 @@ struct TargetSpawn {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TargetTick {
-    active_word: i32,
-    parent_work_x: f32,
-    parent_work_7c: f32,
+    active_word: Option<i32>,
+    parent_work_x: Option<f32>,
+    parent_work_7c: Option<f32>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -680,6 +680,7 @@ pub fn story_sequence(
     let mut vehicle = s.vehicle_state;
     let mut timeout = None;
     let mut target_handle = None;
+    let mut parent = None;
     let mut target: Option<crate::kart_story_target::State> = None;
     let constants = rel.data(4)?;
     for event in s.updates {
@@ -716,6 +717,7 @@ pub fn story_sequence(
                     target = Some(spawned);
                 }
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
+                parent = r.frame.as_ref().map(|f| f.pursuit_parent());
                 updates.push(json!({"vehiclePostMove":r}));
                 continue;
             }
@@ -738,13 +740,37 @@ pub fn story_sequence(
             }
             SequenceEvent::UpdateTarget { target_tick: v } => {
                 let state = target.ok_or_else(|| Error::invalid("missing pursuit target"))?;
+                let active = timer as i32;
+                if v.active_word.is_some_and(|w| w != active) {
+                    return Err(Error::invalid(
+                        "target active word conflicts with race clock",
+                    ));
+                }
+                let resolve = |observation: Option<f32>, index: usize| -> Result<f32> {
+                    let retained = parent.map(|p: [f32; 2]| p[index]);
+                    if observation
+                        .zip(retained)
+                        .is_some_and(|(a, b)| a.to_bits() != b.to_bits())
+                    {
+                        return Err(Error::invalid(
+                            "target parent observation conflicts with vehicle work",
+                        ));
+                    }
+                    // At nonpositive time the native routine never reads parent motion.
+                    if active <= 0 || (state.latch != 0 && index == 1) {
+                        return Ok(0.0);
+                    }
+                    observation.or(retained).ok_or_else(|| {
+                        Error::invalid("missing target parent motion before vehicle update")
+                    })
+                };
                 let out = crate::kart_story_target::step_constants(
                     constants,
                     crate::kart_story_target::Input::Tick {
                         state,
-                        active_word: v.active_word,
-                        parent_work_x: v.parent_work_x,
-                        parent_work_7c: v.parent_work_7c,
+                        active_word: active,
+                        parent_work_x: resolve(v.parent_work_x, 0)?,
+                        parent_work_7c: resolve(v.parent_work_7c, 1)?,
                         mode,
                     },
                 )?;
