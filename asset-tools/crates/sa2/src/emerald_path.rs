@@ -1,6 +1,14 @@
 //! Local-space stepping for Wild Canyon type-zero paths (module 15, 1:0x21808).
 use crate::{Error, Result};
 
+/// Module 15, 1:0x217ac. The engine angle service takes horizontal X then Z.
+pub fn segment_heading(from: [f32; 3], to: [f32; 3], angle: impl FnOnce(f32, f32) -> f64) -> i16 {
+    // fsubs followed by fneg preserves the original signed zero at an axis.
+    let radians = angle(-(from[0] - to[0]), -(from[2] - to[2]));
+    // Native double from REL section 4 offset 0xb58, followed by fctiwz and extsh.
+    (f64::from_bits(4666959776613632187) * radians) as i32 as i16
+}
+
 #[derive(Debug, PartialEq)]
 pub struct PathStep {
     pub segment: usize,
