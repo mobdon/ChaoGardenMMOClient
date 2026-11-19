@@ -113,3 +113,5 @@ pub mod checkpoint;
 pub mod kart_fall_recovery;
 
 pub mod kart_driving_audio;
+
+pub mod kart_pickup;
