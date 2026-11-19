@@ -131,3 +131,48 @@ mod tests {
         );
     }
 }
+/// Task words at 0x38, 0x3c and 0x40. The allocation identity is opaque to Rust.
+#[derive(Debug, Default, PartialEq)]
+pub struct PathTaskWork {
+    pub fraction: f32,
+    pub segment: u32,
+    pub allocation: Option<std::num::NonZeroU32>,
+}
+
+impl PathTaskWork {
+    /// 1:0x220c8..0x22114. On success the caller can begin the first path step.
+    /// With no SET entry the native initializer preserves the segment already in work.
+    pub fn begin(
+        &mut self,
+        registration_word: i32,
+        allocate: impl FnOnce(u32, u32) -> Option<std::num::NonZeroU32>,
+        read_set_word: Option<impl FnOnce() -> u32>,
+    ) -> bool {
+        if registration_word < 0 {
+            return false;
+        }
+        self.allocation = allocate(1, 24);
+        if self.allocation.is_none() {
+            return false;
+        }
+        if let Some(read) = read_set_word {
+            self.segment = read() & 255;
+        }
+        true
+    }
+
+    /// 1:0x22298. Only the low segment byte is sent back to the SET service.
+    pub fn unload(
+        &mut self,
+        write_set_byte: Option<impl FnOnce(u8)>,
+        release: impl FnOnce(std::num::NonZeroU32),
+    ) {
+        if let Some(write) = write_set_byte {
+            write(self.segment as u8);
+        }
+        if let Some(allocation) = self.allocation {
+            release(allocation);
+        }
+        *self = Self::default();
+    }
+}
