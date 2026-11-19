@@ -774,3 +774,50 @@ pub fn hot_shot_target_follow(bytes: &[u8], request: &[u8]) -> Result<serde_json
         "limited":limited,"scope":"Unlocked target movement; imported length and normalization results are supplied."}),
     )
 }
+
+/// Target update through the phase wrap at section 1:4d124.
+pub fn hot_shot_target_clock(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        global37: i8,
+        lock_word: i32,
+        phase: f32,
+        rate: f32,
+        counter: u16,
+    }
+    let mut s: State = serde_json::from_slice(request)?;
+    if !s.phase.is_finite() || !s.rate.is_finite() {
+        return Err(Error::invalid("expected finite target phase and rate"));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let c = |at| hot_shot_scalar(&rel, at);
+    let follows = s.global37 == 0 && s.lock_word == 0;
+    if s.global37 == 0 {
+        if follows {
+            s.phase += s.rate;
+            if s.counter == 60 {
+                s.counter = 0;
+                s.rate += c(0x4d0be)?;
+            } else {
+                s.counter = s.counter.wrapping_add(1);
+            }
+        } else {
+            s.phase += c(0x4d0da)?;
+            s.counter = 0;
+            s.rate = c(0x4d0f6)?;
+        }
+        let wrap = c(0x4d10a)?;
+        if s.phase >= wrap {
+            s.phase -= wrap;
+        }
+    }
+    if !s.phase.is_finite() || !s.rate.is_finite() {
+        return Err(Error::invalid("target clock overflow"));
+    }
+    Ok(
+        serde_json::json!({"phase":s.phase,"rate":s.rate,"counter":s.counter,"callsFollow":follows,
+        "skipsUpdate":s.global37!=0,"scope":"Target update gate and phase counter only."}),
+    )
+}
