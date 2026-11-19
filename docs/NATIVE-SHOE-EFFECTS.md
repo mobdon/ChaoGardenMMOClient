@@ -1,5 +1,12 @@
 # Native Shadow shoe effects
 
+Current pair placement uses the original **right** boot/effects96–99 twice,
+with a rigid reflection for the left side. This is the user's requested
+symmetry adaptation; original left/right source geometry is not identical.
+See [MIRRORED-GEAR-FIT.md](MIRRORED-GEAR-FIT.md) for the current production fit
+and native palm-contact correction. The eight-model conversion evidence below
+still describes the unchanged local source aliases.
+
 The former shoe jets reused the Chao head-flame atlas on newly created planes.
 This replacement uses the original eight Shadow jet models, preserving their
 vertices, oriented triangles, vertex colors and material flags. The head flame

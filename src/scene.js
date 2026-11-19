@@ -6,9 +6,11 @@ import {
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
 import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
+import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
-import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, stepInputPace } from './chao-locomotion.js';
-import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, chestSurfacePoint, collectNativeShoeParts, updateNativeShoeEffects } from './chao-attachments.js';
+import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
+import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
+import { restoreNativeChaosSampling } from './chao-materials.js';
 import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
@@ -318,6 +320,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
               mat.backFaceCulling = false;
               mat.twoSidedLighting = true;
             }
+            restoreNativeChaosSampling(key, mat);
           }
         }
         return container;
@@ -531,15 +534,20 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     const result = { footwear: [], hands: [] };
     for (const [side, armIndex, handIndex, footIndex, footMeshIndex] of CHAO_GEAR_JOINTS) {
       for (const [slot, socket, meshNode] of [
-        ['footwear', find(footIndex), find(footMeshIndex)], ['hands', find(handIndex), find(armIndex)],
+        // The visible palm follows the arm frame, while its distal marker
+        // twists independently in the native skating overlay.
+        ['footwear', find(footIndex), find(footMeshIndex)], ['hands', find(armIndex), find(armIndex)],
       ]) {
         if (!socket || !meshNode) continue;
         socket.computeWorldMatrix(true); meshNode.computeWorldMatrix(true);
         const meshes = meshNode.getChildMeshes().filter(mesh => mesh.getTotalVertices());
         let points = geometryPoints(meshes, toRoot);
         if (slot === 'hands' && points.length) {
+          const distalMarker = find(handIndex);
+          if (!distalMarker) continue;
+          distalMarker.computeWorldMatrix(true);
           const shoulder = Vector3.TransformCoordinates(meshNode.getAbsolutePosition(), toRoot);
-          const hand = Vector3.TransformCoordinates(socket.getAbsolutePosition(), toRoot);
+          const hand = Vector3.TransformCoordinates(distalMarker.getAbsolutePosition(), toRoot);
           const axis = hand.subtract(shoulder).normalize();
           const reach = Math.max(...points.map(point => Vector3.Dot(point.subtract(shoulder), axis)));
           // Match the native distal palm, keeping the original forearm and
@@ -562,15 +570,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   }
 
   function gearMountRotation(itemId, side) {
-    // Restore source heel13/23 up and projected heel-to-toe directions from
-    // upgrade-conversion-report.json. Using the native toe vector removes
-    // the nominal Shadow-forward reference's inward boot yaw. Babylon's
-    // glTF root maps source X to -X; keep the prop scale uniform.
+    if (itemId === 'shadow-air-shoes') return shadowShoeMountRotation();
     const references = {
-      'shadow-air-shoes': {
-        left: { up: [-0.8377403, -0.5430225, 0.0575994], forward: [0.5453401747, -0.8374025312, 0.0368930145] },
-        right: { up: [-0.8025777, -0.5964206, 0.0123086], forward: [0.5965178011, -0.8025729883, 0.0065659268] },
-      },
       // Original Knuckles142 wrist/hand rest matrices041/042 and060/061
       // provide the glove's source orientation. Fitting that rigid shell
       // around a Chao palm is a deliberate attachment adaptation.
@@ -593,7 +594,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     const imported = item.imported;
     const sockets = imported?.gearSockets[slot];
     if (!sockets || sockets.length !== 2) return;
-    const containers = await Promise.all(sockets.map(({ side }) => loadLocalAsset(`${itemId}-${side}`)));
+    const mirroredShoes = slot === 'footwear' && itemId === 'shadow-air-shoes';
+    const containers = await Promise.all(sockets.map(({ side }) => loadLocalAsset(`${itemId}-${mirroredShoes ? CHAO_SHOE_REFERENCE_SIDE : side}`)));
     if (containers.some(container => !container) || disposed || item.root.isDisposed() || item.imported !== imported || version !== item.gearVersion) return;
     const attachments = [];
     for (let i = 0; i < sockets.length; i++) {
@@ -607,22 +609,21 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         : Math.max(fit.bounds.size.x, fit.bounds.size.y, fit.bounds.size.z) * 1.12 / Math.max(source.size.x, source.size.y, source.size.z);
       const position = fit.bounds.center.subtract(source.center.scale(scale));
       if (slot === 'footwear') position.y = fit.bounds.min.y - source.min.y * scale;
-      // The only size adaptation is uniform prop scale. Convert its desired
-      // rest placement into the original socket's local coordinates, then
-      // let the untouched native joint carry it through every animation.
       const desired = Matrix.Compose(new Vector3(scale, scale, scale), root.rotationQuaternion, position);
-      const local = desired.multiply(Matrix.Invert(fit.restToRoot));
-      local.decompose(root.scaling, root.rotationQuaternion, root.position);
-      // Native imported joints contain tiny floating-point scale drift.
-      // Keep the prop's local magnitude uniform, preserving only the signs
-      // required by glTF's handedness conversion; never rescale any joint.
-      const uniformScale = (Math.abs(root.scaling.x) + Math.abs(root.scaling.y) + Math.abs(root.scaling.z)) / 3;
-      root.scaling.set(Math.sign(root.scaling.x) * uniformScale, Math.sign(root.scaling.y) * uniformScale, Math.sign(root.scaling.z) * uniformScale);
-      root.parent = fit.socket;
+      if (!mirroredShoes) attachRigidGearAtRest(root, fit, desired);
       for (const mesh of meshes) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
-      attachments.push({ root, meshes, fit, nativeEffects: effects });
+      attachments.push({ root, meshes, fit, source, nativeEffects: effects });
     }
     if (attachments.length !== 2) { for (const entry of attachments) destroyGroup(entry.root); return; }
+    if (mirroredShoes) {
+      const reference = attachments.find(entry => entry.fit.side === CHAO_SHOE_REFERENCE_SIDE);
+      const rest = mirroredShadowShoeRest(reference.source, reference.fit.bounds);
+      for (const entry of attachments) {
+        attachRigidGearAtRest(entry.root, entry.fit, rest[entry.fit.side]);
+        entry.root.metadata.nativeShoeAttachment = { sourceSide: CHAO_SHOE_REFERENCE_SIDE, mirrored: entry.fit.side !== CHAO_SHOE_REFERENCE_SIDE };
+      }
+      canvas.dataset.footwearSymmetry = 'native-right-mirrored-at-rest';
+    }
     item.ownerGear[slot] = attachments;
     if (slot === 'footwear') {
       for (const { fit } of attachments) for (const mesh of fit.meshes) mesh.setEnabled(false);
@@ -924,8 +925,16 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       return;
     }
     proxyScenery.setEnabled(false);
+    const nativeExit = attachNativeGardenExit(zone, meshes);
+    canvas.dataset.nativeGardenExit = nativeExit.ready ? nativeExit.trigger : 'fallback';
+    canvas.dataset.nativeGardenExitMeshes = nativeExit.meshes.join(',');
+    canvas.dataset.nativeGardenExitReachable = String(nativeExit.ready && nativeExit.reachable);
     const nativePortals = { mission: [0, -8], hero: [-7, 2], dark: [7, 2], race: [6, 9] };
     for (const anchor of groundAnchors) {
+      if (nativeExit.ready && anchor.node.metadata?.portalAction === 'hub') {
+        anchor.node.setEnabled(false);
+        continue;
+      }
       const portalPosition = nativePortals[anchor.node.metadata?.portalAction];
       if (portalPosition) { anchor.node.position.x = portalPosition[0]; anchor.node.position.z = portalPosition[1]; }
       if (anchor.node.name === 'chao-race-guide') anchor.node.position.set(7, 0, 6);
@@ -1172,6 +1181,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     groundAnchors.length = 0;
     animatedDecor.length = 0;
     canvas.dataset.nativeTrees = '0';
+    canvas.dataset.nativeGarden = 'fallback';
+    canvas.dataset.nativeGardenExit = 'fallback';
+    canvas.dataset.nativeGardenExitMeshes = '';
+    canvas.dataset.nativeGardenExitReachable = 'false';
     world = new TransformNode(`world-${zone}`, scene);
     scenery = new TransformNode('procedural-scenery', scene);
     scenery.parent = world;
@@ -1290,7 +1303,16 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       }
       label('GARDEN CIRCUIT', [0, 4, 0], '#fff0bc', 4.5);
     }
-    if (zone === 'garden' || zone === 'hero' || zone === 'dark') loadNativeGarden(zone, worldVersion, world, scenery).catch(() => { canvas.dataset.nativeGarden = 'fallback'; });
+    if (zone === 'garden' || zone === 'hero' || zone === 'dark') {
+      const version = worldVersion;
+      loadNativeGarden(zone, version, world, scenery).catch(() => {
+        if (disposed || version !== worldVersion) return;
+        canvas.dataset.nativeGarden = 'fallback';
+        canvas.dataset.nativeGardenExit = 'fallback';
+        canvas.dataset.nativeGardenExitMeshes = '';
+        canvas.dataset.nativeGardenExitReachable = 'false';
+      });
+    }
   }
 
   function makeRing(data) {
@@ -1396,7 +1418,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   function pointerDown(event) {
     if (paused || event.button !== 0) return;
     const pick = scene.pick(scene.pointerX, scene.pointerY);
-    if (pick?.hit && pick.pickedMesh?.metadata?.action) onAction(pick.pickedMesh.metadata.action);
+    if (!pick?.hit) return;
+    const action = pick.pickedMesh?.metadata?.nativeGardenExit
+      ? nativeGardenExitAction(activeZone, pick) : pick.pickedMesh?.metadata?.action;
+    if (action) onAction(action);
   }
   window.addEventListener('keydown', keyDown);
   window.addEventListener('keyup', keyUp);
@@ -1495,6 +1520,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         const skateBlend = item.imported.skate?.diagnostics.blend || 0;
         for (const entry of item.ownerGear?.footwear || []) updateNativeShoeEffects(entry.nativeEffects, skateBlend, motion?.speed);
         const speed = fresh && motion?.grounded && !item.vehicleKey ? motion.speed : 0;
+        item.nativeVisualSpeed = fresh && motion?.grounded && !item.vehicleKey ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
         item.nativeGait = chooseNativeGait(speed, item.nativeGait);
         const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
         if (animation && item.imported.current !== animation) {
@@ -1502,7 +1528,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           animation.start(true, 1);
           item.imported.current = animation;
         }
-        if (animation) animation.speedRatio = nativeGaitRate(animation === item.imported.run ? 'Run' : animation === item.imported.walk ? 'Walk' : 'Idle', speed);
+        if (animation) animation.speedRatio = nativeGaitRate(animation === item.imported.run ? 'Run' : animation === item.imported.walk ? 'Walk' : 'Idle', item.nativeVisualSpeed);
       }
       if (item.vehicle) animateWalker(item, dt);
       for (const emerald of item.emeralds || []) {
@@ -1598,6 +1624,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   return {
     setSnapshot,
     handleEvent,
+    clearInput: blur,
     setPaused(value) { paused = !!value; gaitControls.setPaused(paused); if (paused) blur(); },
     setTouchInput(dx, dz) { touch.dx = Math.max(-1, Math.min(1, dx)); touch.dz = Math.max(-1, Math.min(1, dz)); },
     dispose() {

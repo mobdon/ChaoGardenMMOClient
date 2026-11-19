@@ -1,7 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine, Matrix, Mesh, MeshBuilder, NullEngine, Quaternion, Scene, StandardMaterial, TransformNode, Vector3, VertexData } from '@babylonjs/core';
-import { CHAO_GEAR_JOINTS, chestSurfacePoint, collectNativeShoeParts, updateNativeShoeEffects } from '../src/chao-attachments.js';
+import { CHAO_GEAR_JOINTS, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from '../src/chao-attachments.js';
+
+test('one original rigid boot mirrors at rest and each copy follows its own native foot', () => {
+  const engine = new NullEngine(), scene = new Scene(engine);
+  try {
+    const actor = new TransformNode('actor', scene);
+    actor.position.set(4, 2, -3); actor.rotationQuaternion = Quaternion.RotationYawPitchRoll(.5, -.1, .2);
+    const feet = ['right', 'left'].map((side, i) => {
+      const socket = new TransformNode(side, scene); socket.parent = actor;
+      socket.position.set(i ? .23 : -.2, i ? .01 : 0, i ? .07 : .1);
+      socket.rotationQuaternion = Quaternion.RotationYawPitchRoll(i ? -.15 : .12, .08, 0);
+      socket.computeWorldMatrix(true); actor.computeWorldMatrix(true);
+      return { side, socket, restToRoot: socket.getWorldMatrix().multiply(Matrix.Invert(actor.getWorldMatrix())) };
+    });
+    const source = { min: new Vector3(-1, -1, -2), size: new Vector3(2, 3, 5), center: new Vector3(0, .5, .5) };
+    const nativeFoot = { min: new Vector3(-.3, 0, -.1), size: new Vector3(.2, .1, .3), center: new Vector3(-.2, .05, .05) };
+    const rest = mirroredShadowShoeRest(source, nativeFoot);
+    const roots = feet.map(fit => {
+      const root = new TransformNode(`shoe-${fit.side}`, scene); root.rotationQuaternion = shadowShoeMountRotation();
+      attachRigidGearAtRest(root, fit, rest[fit.side]); return root;
+    });
+    const toActor = Matrix.Invert(actor.getWorldMatrix());
+    const point = new Vector3(.7, -.2, 1.3);
+    const actual = roots.map(root => { root.computeWorldMatrix(true); return Vector3.TransformCoordinates(point, root.getWorldMatrix().multiply(toActor)); });
+    assert.ok(Vector3.Distance(new Vector3(-actual[0].x, actual[0].y, actual[0].z), actual[1]) < 1e-6);
+    assert.ok(roots[0].getWorldMatrix().determinant() * roots[1].getWorldMatrix().determinant() < 0, 'mirror must retain handedness, not counterrotate the original shape');
+    const local = roots.map(root => root.computeWorldMatrix(true).multiply(Matrix.Invert(root.parent.getWorldMatrix())));
+    feet[0].socket.rotationQuaternion = Quaternion.RotationYawPitchRoll(.12, .68, 0); feet[0].socket.position.z += .2;
+    feet[1].socket.rotationQuaternion = Quaternion.RotationYawPitchRoll(-.15, .08, -.4); feet[1].socket.position.z -= .2;
+    roots.forEach((root, i) => {
+      root.computeWorldMatrix(true); root.parent.computeWorldMatrix(true);
+      const current = root.getWorldMatrix().multiply(Matrix.Invert(root.parent.getWorldMatrix()));
+      current.asArray().forEach((value, n) => assert.ok(Math.abs(value - local[i].asArray()[n]) < 1e-6));
+      assert.equal(root.parent, feet[i].socket);
+      const sizes = root.scaling.asArray().map(Math.abs);
+      assert.ok(Math.max(...sizes) - Math.min(...sizes) < 1e-9);
+    });
+  } finally { engine.dispose(); }
+});
 
 test('footwear follows independently animated feet instead of their static parent pivots', () => {
   const engine = new NullEngine(), scene = new Scene(engine);

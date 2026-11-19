@@ -1,7 +1,9 @@
-import { Engine, Ray, Vector3 } from '@babylonjs/core';
+import { Engine, Matrix, Quaternion, Ray, Vector3 } from '@babylonjs/core';
 
 // 005/012 are static leg pivots. Native Walk/Run articulate their children
 // 006/013; footwear must follow those actual animated feet.
+// 003/010 own the visible arm/palm mesh. 004/011 are distal bind markers;
+// they rotate independently during skating and must not parent the gloves.
 export const CHAO_GEAR_JOINTS = [
   ['right', '003', '004', '006', '006'],
   ['left', '010', '011', '013', '013'],
@@ -9,6 +11,42 @@ export const CHAO_GEAR_JOINTS = [
 
 // Compact rigid shells around the native feet; preserve uniform prop scale.
 export const CHAO_SHOE_LENGTH_RATIO = .90;
+
+// One original native right boot is used twice. Reflecting the complete rigid
+// prop gives exact rest symmetry despite differences between SA2's L/R meshes.
+export const CHAO_SHOE_REFERENCE_SIDE = 'right';
+
+export function shadowShoeMountRotation() {
+  // Original right heel13 up and projected heel-to-toe direction, expressed
+  // in the centered GLB's coordinates. The glTF root mirrors source X.
+  const up = new Vector3(.8025777, -.5964206, .0123086).normalize();
+  const forward = new Vector3(-.5965178011, -.8025729883, .0065659268).normalize();
+  const basis = Matrix.Identity();
+  Matrix.FromXYZAxesToRef(Vector3.Cross(up, forward).normalize(), up, forward, basis);
+  return Quaternion.FromRotationMatrix(basis).conjugate().normalize();
+}
+
+// sourceBounds are measured after shadowShoeMountRotation, excluding native
+// jets. referenceFootBounds are the captured right foot in actor-local rest.
+export function mirroredShadowShoeRest(sourceBounds, referenceFootBounds) {
+  const scale = referenceFootBounds.size.z * CHAO_SHOE_LENGTH_RATIO / sourceBounds.size.z;
+  const position = referenceFootBounds.center.subtract(sourceBounds.center.scale(scale));
+  position.y = referenceFootBounds.min.y - sourceBounds.min.y * scale;
+  const right = Matrix.Compose(new Vector3(scale, scale, scale), shadowShoeMountRotation(), position);
+  return { right, left: right.multiply(Matrix.Scaling(-1, 1, 1)), scale };
+}
+
+export function attachRigidGearAtRest(root, fit, desired) {
+  // Convert the desired actor-local rest placement into the untouched native
+  // socket. There is no per-frame alignment: each original joint carries its
+  // own boot/glove through the native animation, preserving alternating gait.
+  const local = desired.multiply(Matrix.Invert(fit.restToRoot));
+  local.decompose(root.scaling, root.rotationQuaternion, root.position);
+  const uniform = (Math.abs(root.scaling.x) + Math.abs(root.scaling.y) + Math.abs(root.scaling.z)) / 3;
+  root.scaling.set(Math.sign(root.scaling.x) * uniform, Math.sign(root.scaling.y) * uniform, Math.sign(root.scaling.z) * uniform);
+  root.parent = fit.socket;
+  return local;
+}
 
 // Capture the skin surface in the bind pose, before animation/async loading.
 // Centering the emerald here embeds half its depth instead of floating it
