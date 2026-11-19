@@ -1624,6 +1624,27 @@ impl Program {
         }
         Ok(json!(pairs))
     }
+    /// Big-endian words after the two GX reference calls for the goal's fixed IA4 setup.
+    /// This is reference-derived state, not a capture from the installed engine.
+    pub fn gx_goal_object_words(&self, image: u32) -> [u32; 8] {
+        let [min, max] = self.texture_lod_bits.map(f32::from_bits);
+        let lod_byte = |x: f32| (x.clamp(0.0, 10.0) * 16.0) as u32;
+        let bias = if min >= 4.0 { 3.99 } else { min.max(-4.0) };
+        let bias_bits = (bias * 32.0) as i32 as u8;
+        let mode0 = (1 << 4) | (4 << 5) | (1 << 8) | (u32::from(bias_bits) << 9);
+        let mode1 = lod_byte(min) | (lod_byte(max) << 8);
+        let image0 = 63 | (63 << 10) | (2 << 20);
+        [
+            mode0,
+            mode1,
+            image0,
+            (image >> 5) & 0x01ff_ffff,
+            0,
+            2,
+            0,
+            (128 << 16) | (2 << 8) | 2,
+        ]
+    }
     pub fn regular_texture_setup(
         &self,
         work56: u32,
@@ -1914,6 +1935,7 @@ pub fn replay(
                 "GX reference"
             });
             setup["gxReferenceBytes"] = json!(reference_size);
+            setup["gxReferenceObjectWords"] = json!(p.gx_goal_object_words(t.allocation_return));
             Some(setup)
         }
         (_, None) => None,
