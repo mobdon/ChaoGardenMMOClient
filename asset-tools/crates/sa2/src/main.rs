@@ -556,7 +556,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, chao-collision, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-arrow-display stg13D.rel OUTPUT.json MODE FRAME_COUNTER\ncity-scenery-descriptors stg13D.rel OUTPUT.json\ncity-scenery-proximity stg13D.rel OUTPUT.json LOCAL_POSITIONS.json\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, chao-collision, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-arrow-world SET OUTPUT.json EXE stg13D.rel REQUEST.json\ncity-arrow-display stg13D.rel OUTPUT.json MODE FRAME_COUNTER\ncity-scenery-descriptors stg13D.rel OUTPUT.json\ncity-scenery-proximity stg13D.rel OUTPUT.json LOCAL_POSITIONS.json\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -596,6 +596,7 @@ fn run() -> Result<()> {
             | "event-music"
             | "event-voices"
             | "chao-collision"
+            | "city-arrow-world"
             | "city-arrow-display"
             | "city-scenery-descriptors"
             | "city-scenery-proximity"
@@ -632,7 +633,7 @@ fn run() -> Result<()> {
         "event-subtitles" => matches!(args.len(), 3 | 4),
         "movie-video" => args.len() == 4,
         "movie-audio" | "city-arrow-display" => args.len() == 5,
-        "city-replay" => args.len() == 6,
+        "city-replay" | "city-arrow-world" => args.len() == 6,
         _ => args.len() == 3,
     };
     if !valid_arity {
@@ -1267,6 +1268,56 @@ fn run() -> Result<()> {
                 &report,
                 "chao-collision-json",
                 &[],
+            )?;
+        }
+        "city-arrow-world" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Query {
+                player_world: Option<[f32; 3]>,
+                frame_counter: u32,
+            }
+            let exe_path = Path::new(&args[3]);
+            let rel_path = Path::new(&args[4]);
+            let query_path = Path::new(&args[5]);
+            let exe = read_source(exe_path)?;
+            let rel = read_source(rel_path)?;
+            let query = read_source_limited(query_path, 65536)?;
+            let q: Query = serde_json::from_slice(&query)?;
+            let layout = CityLayout::load(&bytes, &exe)?;
+            let report = sa2_asset_tools::city_rel::CityRel::read(&rel)?.placed_arrows(
+                &layout,
+                q.player_world,
+                q.frame_counter,
+            )?;
+            let deps = [
+                RuntimeDependency {
+                    path: exe_path,
+                    logical_path: source_label(exe_path, source_root.as_deref())?,
+                    bytes: &exe,
+                    role: "object-table",
+                },
+                RuntimeDependency {
+                    path: rel_path,
+                    logical_path: source_label(rel_path, source_root.as_deref())?,
+                    bytes: &rel,
+                    role: "scenery-module",
+                },
+                RuntimeDependency {
+                    path: query_path,
+                    logical_path: format!("queries/{}", basename(query_path)?),
+                    bytes: &query,
+                    role: "world-observation",
+                },
+            ];
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "city-arrow-world-json",
+                &deps,
             )?;
         }
         "city-arrow-display" => {

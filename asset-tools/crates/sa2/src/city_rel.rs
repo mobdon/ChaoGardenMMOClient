@@ -307,6 +307,40 @@ impl<'a> CityRel<'a> {
             serde_json::json!({"visibleMode":mode==0,"modelOffset":model,"textureList":texlist,"alternateDescriptor":alternate,"rootGeometry":root_geometry,"drawRootGeometry":mode==0 && root_geometry.is_some(),"children":rows,"scope":"Original SARROW descriptor has no alternate draw resource. Child translations are object-local; no pixel rendering."}),
         )
     }
+    /// World-space evaluation for the cardinal orientations in the installed normal SET.
+    pub fn placed_arrows(
+        &self,
+        layout: &crate::city_stage::CityLayout,
+        player: Option<[f32; 3]>,
+        tick: u32,
+    ) -> Result<serde_json::Value> {
+        let mut rows = Vec::new();
+        for (slot, p) in layout.placements.iter().enumerate() {
+            if layout.resolve(slot)?.1.name != "SARROW" {
+                continue;
+            }
+            let yaw = p.rotation[1];
+            if yaw % 16384 != 0 {
+                return Err(Error::invalid("unverified noncardinal arrow yaw"));
+            }
+            let local = player.map(|pos| {
+                let [x, y, z] = std::array::from_fn(|i| pos[i] - p.position[i]);
+                match yaw / 16384 {
+                    0 => [x, y, z],
+                    1 => [-z, y, x],
+                    2 => [-x, y, -z],
+                    _ => [z, y, -x],
+                }
+            });
+            let proximity = self.scenery_proximity(local)?;
+            let mode = proximity["mode"].as_i64().ok_or_else(invalid)? as i8;
+            let display = self.arrow_display(mode, tick)?;
+            rows.push(serde_json::json!({"slot":slot,"position":p.position,"yaw":yaw,"proximity":proximity,"display":display}));
+        }
+        Ok(
+            serde_json::json!({"sourceLayer":layout.source_layer,"frameCounter":tick,"playerWorld":player,"arrows":rows,"scope":"Evaluated after range acceptance, using original SET poses. No task scheduling or renderer."}),
+        )
+    }
     fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
         let data = self.data(5)?;
         let local = |o| {
