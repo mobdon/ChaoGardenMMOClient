@@ -455,3 +455,13 @@ latch. The constructor uses point 2 and the parent height. The returned
 stores the same handle in work_ec; a nonzero existing handle skips creation.
 Allocation and scheduling remain external; the constructor records the
 original exec, display and delete callbacks as offsets in CartD text.
+
+`kart-target-display CartD.rel OUTPUT.json INPUT.json` resolves the pursuit
+draw submission. Pass operation `display`, the target state's position, mode,
+and the current module-wide shared_frame. The zero mode uses the static
+object; other modes submit a motion at the old frame and advance the shared
+frame after the draw. Keep that clock across tasks and displays. Texture names
+come from native registration and object, texture-list and motion offsets
+refer to CartD section 5. The command describes submissions; it does not
+render the objects. Operation `delete` reports the callback's two null writes
+on the child. The original does not clear the parent's vehicle handle here.

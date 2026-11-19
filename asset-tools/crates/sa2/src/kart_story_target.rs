@@ -247,3 +247,86 @@ fn results(r: &mut ControllerUpdate, s: ResultContext) -> Result<ResultActions> 
     }
     Ok(a)
 }
+
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PresentationInput {
+    Display {
+        position: [f32; 3],
+        mode: i32,
+        shared_frame: f32,
+    },
+    Delete,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+pub enum Presentation {
+    Display {
+        position: [f32; 3],
+        rotation_y: i32,
+        texture_bank: String,
+        texture_list_section5: usize,
+        object_section5: usize,
+        motion_section5: Option<usize>,
+        submitted_frame: Option<f32>,
+        shared_frame: f32,
+    },
+    Delete {
+        task_38: u32,
+        task_40: u32,
+    },
+}
+
+/// CartD 0xdbe0 and 0xdd00. Offsets identify native resources without exporting them.
+pub fn presentation(bytes: &[u8], input: PresentationInput) -> Result<Presentation> {
+    kart_progress::verify(bytes)?;
+    match input {
+        PresentationInput::Delete => Ok(Presentation::Delete {
+            task_38: 0,
+            task_40: 0,
+        }),
+        PresentationInput::Display {
+            position,
+            mode,
+            shared_frame,
+        } => {
+            let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+            let data = rel.data(5)?;
+            let constants = rel.data(4)?;
+            let f = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());
+            let animated = mode != 0;
+            let (name, texture_list_section5, object_section5, rotation_y) = if animated {
+                (0x2ee194, 0x290468, 0x29cc3c, 0x8000)
+            } else {
+                (0x2ee18c, 0x2836cc, 0x290174, -0x4000)
+            };
+            let texture_bank = std::ffi::CStr::from_bytes_until_nul(&data[name..])
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned();
+            let next = if animated {
+                let frames = u32::from_be_bytes(data[0x29e5d0..0x29e5d4].try_into().unwrap());
+                let advanced = shared_frame + f(0x488);
+                if f64::from(advanced) >= f64::from(frames.wrapping_sub(1)) {
+                    f(0x48c)
+                } else {
+                    advanced
+                }
+            } else {
+                shared_frame
+            };
+            Ok(Presentation::Display {
+                position,
+                rotation_y,
+                texture_bank,
+                texture_list_section5,
+                object_section5,
+                motion_section5: animated.then_some(0x29e5cc),
+                submitted_frame: animated.then_some(shared_frame),
+                shared_frame: next,
+            })
+        }
+    }
+}
