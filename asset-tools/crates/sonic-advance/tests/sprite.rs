@@ -310,3 +310,28 @@ fn authentic_walk_run_spin_and_ring_clips_use_verified_native_ids_and_durations(
         assert_eq!(binary::sha256(&bytes), rgba_hash, "animation{id}");
     }
 }
+
+#[test]
+#[ignore = "requires local ASOE; independent tile/OAM Python oracle RGBA digests"]
+fn action_and_effect_clip_pixels_match_native_resource_oracle() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    for (id,variant,count,duration,rgba) in [
+        (3,0,4,1,"f39a08c0e305059d2970eb3578c0c6c1739466734eb09258c3adf44f777e0f00"),
+        (18,0,4,2,"98737ad22516ff83a4fb04e3de117837215c892ccad11be2c2e4505f8b1ef264"),
+        (18,1,4,2,"f17070e4f7dffc7837882056f20ed867bf850a6ead0d0be55c3b1a048d0c989c"),
+        (708,0,4,8,"84f8813a6334976e33e62f230d2f255bf619a9ff049c441f966cf94300a5b34e"),
+        (746,0,8,2,"82e6918a11f4fc61575f296b6e9a9203cd49ef34fde481a91c7da4c4ac36bd1c"),
+        (747,0,4,2,"57f0bd77a1070b95de8809dbf803def788f1d48e97c4555efc5bc03fe79c4146"),
+    ] {
+        let clip=load_asoe_animation(&rom,id,variant,8,32768).unwrap();
+        assert_eq!(clip.frames.len(),count);
+        assert!(clip.frames.iter().all(|f| f.duration==duration));
+        assert_eq!(clip.loop_start.is_none(), (id,variant)==(18,1)||id==708);
+        let bytes:Vec<_>=clip.frames.iter().flat_map(|f| f.sprite.image.pixels.iter().flatten().copied()).collect();
+        assert_eq!(binary::sha256(&bytes),rgba,"animation {id}/{variant}");
+    }
+    for (id,var) in [(18,2),(3,1),(708,1),(usize::MAX,usize::MAX)] {
+        assert!(load_asoe_animation(&rom,id,var,8,32768).is_err());
+    }
+}

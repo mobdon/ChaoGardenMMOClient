@@ -8,11 +8,13 @@ pub mod collision;
 pub mod entities;
 pub mod garden;
 pub mod graphics;
+pub mod hud;
 pub mod movement;
 pub mod runtime;
 pub mod sprite;
 pub mod stage;
 pub mod tables;
+pub mod title;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);

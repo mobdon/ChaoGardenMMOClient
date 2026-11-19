@@ -1,13 +1,15 @@
 //! Narrow integer-only WebAssembly ABI. Export attributes are the only unsafe
 //! annotations; all readers, simulation and memory indexing use safe Rust.
 #![deny(unsafe_code)]
-use sonic_advance_assets::{binary, runtime::Runtime, Error, Result};
+use sonic_advance_assets::{binary, runtime::Runtime, title::Title, Error, Result};
 use std::cell::RefCell;
 
 #[derive(Default)]
 struct Host {
     input: Vec<u8>,
     runtime: Option<Runtime>,
+    title: Option<Title>,
+    title_pixels: Vec<u8>,
     snapshot: Vec<u8>,
     error: Vec<u8>,
 }
@@ -55,12 +57,26 @@ pub extern "C" fn asoe_allocate_rom(length: u32) -> u32 {
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn asoe_load(length: u32) -> i32 {
+    load(length, false)
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn asoe_load_title(length: u32) -> i32 {
+    load(length, true)
+}
+
+fn load(length: u32, at_title: bool) -> i32 {
     run(|host| {
         if length as usize != binary::ROM_LEN || host.input.len() != binary::ROM_LEN {
             return Err(Error("ROM input allocation/length mismatch".into()));
         }
         let rom = std::mem::take(&mut host.input);
         let replacement = Runtime::load(rom)?;
+        let title = at_title.then(|| replacement.title_screen()).transpose()?;
+        let pixels = title.as_ref().map(Title::render).transpose()?.unwrap_or_default();
+        host.title = title;
+        host.title_pixels = pixels;
         host.runtime = Some(replacement);
         host.snapshot.clear();
         Ok(())
@@ -71,6 +87,11 @@ pub extern "C" fn asoe_load(length: u32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn asoe_step(mask: u32, frames: u32) -> i32 {
     run(|host| {
+        if let Some(title) = host.title.as_mut() {
+            let bits = u16::try_from(mask).map_err(|_| Error("unsupported title input bits".into()))?;
+            title.step(bits, frames)?;
+            return title.render_into(&mut host.title_pixels);
+        }
         host.runtime
             .as_mut()
             .ok_or_else(|| Error("load the local source first".into()))?
@@ -80,8 +101,35 @@ pub extern "C" fn asoe_step(mask: u32, frames: u32) -> i32 {
 
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
+pub extern "C" fn asoe_select_act(index: u32) -> i32 {
+    run(|host| {
+        host.runtime.as_mut().ok_or_else(|| Error("no game loaded".into()))?
+            .select_act(index as usize)?;
+        host.title = None;
+        host.title_pixels.clear();
+        Ok(())
+    })
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn asoe_open_title() -> i32 {
+    run(open_title)
+}
+
+fn open_title(host: &mut Host) -> Result<()> {
+    let title = host.runtime.as_ref().ok_or_else(|| Error("no game loaded".into()))?.title_screen()?;
+    let pixels = title.render()?;
+    host.title = Some(title);
+    host.title_pixels = pixels;
+    Ok(())
+}
+
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
 pub extern "C" fn asoe_reset() -> i32 {
     run(|host| {
+        if host.title.is_some() { return open_title(host); }
         host.runtime
             .as_mut()
             .ok_or_else(|| Error("no game loaded".into()))?
@@ -93,10 +141,9 @@ pub extern "C" fn asoe_reset() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn asoe_frame_ptr() -> u32 {
     HOST.with(|cell| {
-        cell.borrow()
-            .runtime
-            .as_ref()
-            .map_or(0, |game| game.pixels().as_ptr() as usize as u32)
+        let host = cell.borrow();
+        if host.title.is_some() { host.title_pixels.as_ptr() as usize as u32 }
+        else { host.runtime.as_ref().map_or(0, |game| game.pixels().as_ptr() as usize as u32) }
     })
 }
 
@@ -104,10 +151,9 @@ pub extern "C" fn asoe_frame_ptr() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn asoe_frame_len() -> u32 {
     HOST.with(|cell| {
-        cell.borrow()
-            .runtime
-            .as_ref()
-            .map_or(0, |game| game.pixels().len() as u32)
+        let host = cell.borrow();
+        if host.title.is_some() { host.title_pixels.len() as u32 }
+        else { host.runtime.as_ref().map_or(0, |game| game.pixels().len() as u32) }
     })
 }
 
@@ -116,6 +162,11 @@ pub extern "C" fn asoe_frame_len() -> u32 {
 pub extern "C" fn asoe_snapshot_ptr() -> u32 {
     let status = run(|host| {
         host.snapshot.clear();
+        if let Some(title) = &host.title {
+            host.snapshot = serde_json::to_vec(&serde_json::json!({"scene":"title","title":title.snapshot()}))
+                .map_err(|e| Error(e.to_string()))?;
+            return Ok(());
+        }
         let state = host
             .runtime
             .as_ref()

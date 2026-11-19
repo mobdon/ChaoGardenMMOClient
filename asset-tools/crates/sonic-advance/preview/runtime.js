@@ -9,6 +9,7 @@ const canvas = document.querySelector('#stage');
 const context = canvas.getContext('2d', { alpha: false });
 const image = new ImageData(WIDTH, HEIGHT);
 const fileInput = document.querySelector('#rom-file');
+const actSelect = document.querySelector('#practice-act');
 const pauseButton = document.querySelector('#pause');
 const resetButton = document.querySelector('#reset');
 const status = document.querySelector('#status');
@@ -16,9 +17,10 @@ const runState = document.querySelector('#run-state');
 const emptyState = document.querySelector('#empty-state');
 const decoder = new TextDecoder();
 const held = new Set();
-const acceptedKeys = new Set(['ArrowLeft', 'ArrowRight', 'KeyZ', 'Space']);
+const acceptedKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'Enter', 'KeyZ', 'Space']);
 let api;
 let loaded = false;
+let atTitle = false;
 let running = false;
 let busy = false;
 let lastTime = null;
@@ -34,6 +36,7 @@ function message(text, error = false) {
 function controls() {
   pauseButton.disabled = !loaded || busy;
   resetButton.disabled = !loaded || busy;
+  actSelect.disabled = !loaded || busy;
   fileInput.disabled = !api || busy;
   pauseButton.textContent = running ? 'Pause' : 'Resume';
   runState.textContent = busy ? 'Loading local source' : loaded ? (running ? 'Running · 60 Hz' : 'Paused') : 'No ROM loaded';
@@ -78,9 +81,33 @@ function showSnapshot() {
   const length = api.asoe_snapshot_len();
   if (length > 8192) throw new Error('The Rust snapshot exceeds the adapter limit.');
   const snapshot = JSON.parse(decoder.decode(new Uint8Array(api.memory.buffer, pointer, length)));
+  atTitle = snapshot.scene === 'title';
+  if (atTitle) {
+    const t = snapshot.title;
+    actSelect.value = 'title';
+    document.querySelector('#stage-heading').textContent = 'Title screen';
+    document.querySelector('#frame-value').textContent = String(t.frame);
+    document.querySelector('#position-value').textContent = '—';
+    document.querySelector('#rings-value').textContent = '—';
+    document.querySelector('#source-value').textContent = t.sourceSha256?.slice(0, 12) + '… verified';
+    const action = document.querySelector('#action-value');
+    action.textContent = t.startEnabled ? 'Press Start' : t.phase;
+    if (['mainMenuRequested', 'demoRequested'].includes(t.phase)) {
+      running = false;
+      held.clear();
+      controls();
+      message(t.phase === 'mainMenuRequested'
+        ? 'The title accepted Start. The retail main menu is still being ported. Choose a practice act to play.'
+        : 'The native title requested its demo. Choose a practice act or reset the title.');
+    }
+    return;
+  }
+  actSelect.value = String(snapshot.stage);
+  document.querySelector('#stage-heading').textContent = 'Neo Green Hill · Act ' + (snapshot.stage + 1);
   document.querySelector('#frame-value').textContent = String(snapshot.frame);
   document.querySelector('#position-value').textContent = `${(snapshot.xFixed / 256).toFixed(1)}, ${(snapshot.yFixed / 256).toFixed(1)}`;
   document.querySelector('#rings-value').textContent = Number.isSafeInteger(snapshot.rings) ? String(snapshot.rings) : '—';
+  document.querySelector('#action-value').textContent = snapshot.spindashing ? 'Charging' : snapshot.rolling ? 'Rolling' : snapshot.animation === 3 ? 'Crouching' : !snapshot.grounded ? 'Airborne' : snapshot.vxFixed ? 'Moving' : 'Standing';
   document.querySelector('#source-value').textContent = typeof snapshot.sourceSha256 === 'string' ? `${snapshot.sourceSha256.slice(0, 12)}… verified` : 'Rust verified ASOE';
 }
 
@@ -97,7 +124,7 @@ async function startEngine() {
     if (bytes.byteLength > 16 * 1024 * 1024) throw new Error('The local WASM module exceeds the adapter limit.');
     const { instance } = await WebAssembly.instantiate(bytes, {});
     api = instance.exports;
-    for (const name of ['asoe_allocate_rom', 'asoe_load', 'asoe_step', 'asoe_reset', 'asoe_frame_ptr', 'asoe_frame_len', 'asoe_snapshot_ptr', 'asoe_snapshot_len', 'asoe_error_ptr', 'asoe_error_len']) {
+    for (const name of ['asoe_allocate_rom', 'asoe_load_title', 'asoe_open_title', 'asoe_step', 'asoe_reset', 'asoe_select_act', 'asoe_frame_ptr', 'asoe_frame_len', 'asoe_snapshot_ptr', 'asoe_snapshot_len', 'asoe_error_ptr', 'asoe_error_len']) {
       if (typeof api[name] !== 'function') throw new Error(`Missing Rust runtime export: ${name}`);
     }
     if (!(api.memory instanceof WebAssembly.Memory)) throw new Error('The Rust runtime did not export its memory.');
@@ -125,7 +152,7 @@ fileInput.addEventListener('change', async () => {
     if (pointer === 0) throw new Error(wasmError());
     new Uint8Array(api.memory.buffer, pointer, bytes.byteLength).set(new Uint8Array(bytes));
     // load takes ownership; the former input view is never reused.
-    check(api.asoe_load(bytes.byteLength));
+    check(api.asoe_load_title(bytes.byteLength));
     loaded = true;
     emptyState.hidden = true;
     draw();
@@ -133,7 +160,7 @@ fileInput.addEventListener('change', async () => {
     running = !document.hidden && document.hasFocus();
     lastTime = null;
     accumulator = 0;
-    message(running ? 'ASOE verified. Use the arrow keys to move and Z or Space to jump.' : 'ASOE verified. Choose Resume when ready.');
+    message(running ? 'ASOE verified. Enter presses Start at the title. You can also choose a practice act.' : 'ASOE verified. Choose Resume when ready.');
     canvas.focus({ preventScroll: true });
   } catch (error) {
     // Rust preserves an existing valid runtime if replacement verification
@@ -160,9 +187,21 @@ pauseButton.addEventListener('click', () => {
     lastTime = null;
     running = true;
     controls();
-    message('Use the arrow keys to move and Z or Space to jump.');
+    message(atTitle ? 'Enter presses Start once the title is ready.' : 'Use the arrows to move; Z or Space jumps.');
     canvas.focus({ preventScroll: true });
   }
+});
+
+actSelect.addEventListener('change', () => {
+  if (!loaded || busy) return;
+  const selected = actSelect.value;
+  pause();
+  try {
+    check(selected === 'title' ? api.asoe_open_title() : api.asoe_select_act(Number(selected)));
+    draw();
+    showSnapshot();
+    message(selected === 'title' ? 'Title screen loaded. Choose Resume.' : 'Practice act loaded. Choose Resume to play.');
+  } catch (error) { fail(error); }
 });
 
 resetButton.addEventListener('click', () => {
@@ -203,7 +242,7 @@ function animate(now) {
     const frames = Math.min(MAX_FRAME_BATCH, Math.floor(accumulator / FRAME_MS));
     if (frames > 0) {
       accumulator -= frames * FRAME_MS;
-      const mask = (held.has('ArrowLeft') ? 0x20 : 0) | (held.has('ArrowRight') ? 0x10 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0);
+      const mask = atTitle ? (held.has('Enter') ? 8 : 0) : (held.has('ArrowLeft') ? 0x20 : 0) | (held.has('ArrowRight') ? 0x10 : 0) | (held.has('ArrowDown') ? 0x80 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0);
       try {
         check(api.asoe_step(mask, frames));
         draw();

@@ -33,34 +33,21 @@ pub struct Ring {
 pub struct RingMap;
 
 impl RingMap {
-    /// Only zone 1 act 1 is currently verified for the executable practice slice.
+    /// All 18 table entries have independent per-stage coordinate receipts.
+    /// The five empty layouts are valid. Decoding them grants no stage access.
     pub fn load_asoe(rom: &[u8], stage: usize) -> Result<Vec<Ring>> {
-        if stage != 0 {
-            return Err(Error("only ASOE stage zero ring layout is verified".into()));
+        if stage >= 18 {
+            return Err(Error("ASOE ring stage index out of range".into()));
         }
         binary::verify_asoe(rom)?;
-        let pointer = binary::u32_at(rom, RING_TABLE_OFFSET)?;
-        if binary::rom_offset(pointer, rom.len(), 4)? != STAGE_ZERO_RINGS_OFFSET {
-            return Err(Error("ASOE ring table root mismatch".into()));
+        let pointer = binary::u32_at(rom, RING_TABLE_OFFSET + stage * 4)?;
+        let offset = binary::rom_offset(pointer, rom.len(), 4)?;
+        let compressed = &rom[offset..];
+        if compressed.first() != Some(&0x30) {
+            return Err(Error("ASOE ring layout requires RLE".into()));
         }
-        let compressed = binary::range(rom, STAGE_ZERO_RINGS_OFFSET, STAGE_ZERO_COMPRESSED_LEN)?;
-        if compressed.first() != Some(&0x30)
-            || binary::sha256(compressed) != STAGE_ZERO_COMPRESSED_SHA256
-        {
-            return Err(Error("ASOE ring RLE stream fingerprint mismatch".into()));
-        }
-        let decoded = binary::decompress(compressed, STAGE_ZERO_DECODED_LEN)?;
-        if decoded.consumed != STAGE_ZERO_COMPRESSED_LEN
-            || decoded.bytes.len() != STAGE_ZERO_DECODED_LEN
-            || binary::sha256(&decoded.bytes) != STAGE_ZERO_DECODED_SHA256
-        {
-            return Err(Error("ASOE ring decoded fingerprint mismatch".into()));
-        }
-        let rings = Self::decode(&decoded.bytes, MAX_RINGS)?;
-        if rings.len() != STAGE_ZERO_RING_COUNT {
-            return Err(Error("ASOE ring count differs from source evidence".into()));
-        }
-        Ok(rings)
+        let decoded = binary::decompress(compressed, MAX_RING_MAP_BYTES)?;
+        Self::decode(&decoded.bytes, MAX_RINGS)
     }
 
     /// Decode the uncompressed layout, with a hard allocation/work budget.
@@ -198,6 +185,19 @@ impl PracticeRings {
         half_width: i32,
         half_height: i32,
     ) -> Result<usize> {
+        self.collect_at_with(center_x, center_y, half_width, half_height, |_| {})
+    }
+
+    /// Notify once for each newly tombstoned native record. Effects may have
+    /// a smaller budget than the ledger; a full effect pool never loses rings.
+    pub fn collect_at_with(
+        &mut self,
+        center_x: i32,
+        center_y: i32,
+        half_width: i32,
+        half_height: i32,
+        mut on_pickup: impl FnMut(Ring),
+    ) -> Result<usize> {
         if !(0..=64).contains(&half_width) || !(0..=64).contains(&half_height) {
             return Err(Error("practice pickup body bounds exceeded".into()));
         }
@@ -217,6 +217,7 @@ impl PracticeRings {
             {
                 self.collected[ring.id] = true;
                 gained += 1;
+                on_pickup(*ring);
             }
         }
         self.count += gained;

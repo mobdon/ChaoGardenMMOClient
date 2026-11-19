@@ -1,5 +1,7 @@
 # Native stage validation receipt
 
+**Historical receipt for commit 8903db9.** See [HANDOFF.md](HANDOFF.md) for the stopped PR head, current browser verification, and two failing retail terrain tests.
+
 Evidence date: November 18, 2026. Scope: the standalone ASOE stage-zero Rust
 practice implementation, stacked on the catalog/tooling foundation in PR #4.
 This receipt is not acceptance of a complete Sonic Advance engine port.

@@ -395,7 +395,7 @@ fn load_asoe_animation_policy(
     identity_affine: bool,
 ) -> Result<AnimationClip> {
     binary::verify_asoe(rom)?;
-    if animation_id >= 906 || variant != 0 {
+    if animation_id >= 906 || !(variant == 0 || (animation_id, variant) == (18, 1)) {
         return Err(Error(
             "unsupported animation index or unverified variant".into(),
         ));
@@ -405,7 +405,7 @@ fn load_asoe_animation_policy(
         rom.len(),
         4,
     )?;
-    let script_root = binary::rom_offset(binary::u32_at(rom, variant_root)?, rom.len(), 4)?;
+    let script_root = binary::rom_offset(binary::u32_at(rom, variant_root + 4 * variant)?, rom.len(), 4)?;
     let dimension_root = binary::rom_offset(
         binary::u32_at(rom, 0x10acb4 + animation_id * 4)?,
         rom.len(),

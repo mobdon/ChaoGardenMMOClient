@@ -137,8 +137,46 @@ fn authentic_ring_positions_match_pinned_native_csv_hash() {
         "3e02b6cfb65a35132218f1ba779eb5974aec4b09b94230894bcd222686e87f5d"
     );
     assert!(rings.iter().enumerate().all(|(i, r)| r.id == i));
-    assert!(RingMap::load_asoe(&rom, 1).is_err());
+    assert!(RingMap::load_asoe(&rom, 18).is_err());
     let mut changed = rom.clone();
     changed[0x100] ^= 1;
     assert!(RingMap::load_asoe(&changed, 0).is_err());
+}
+
+
+#[test]
+#[ignore = "requires local ASOE; expected coordinates from 18 pinned placement CSVs"]
+fn all_stage_ring_layouts_match_independent_coordinates_and_source_spans() {
+    let path = std::env::var_os("SONIC_ADVANCE_ASOE_ROM").unwrap();
+    let rom = binary::read_bounded(std::path::Path::new(&path), binary::ROM_LEN).unwrap();
+    let rows: Vec<_> = include_str!("asoe-ring-layouts.tsv").lines().skip(1).collect();
+    assert_eq!(rows.len(),18);
+    for (stage,row) in rows.into_iter().enumerate() {
+        let cols: Vec<_> = row.split('\t').collect();
+        assert_eq!(stage, cols[0].parse::<usize>().unwrap());
+        let start = usize::from_str_radix(cols[1].trim_start_matches("0x"),16).unwrap();
+        let len = cols[2].parse::<usize>().unwrap();
+        let source = &rom[start..start+len];
+        let pointer = binary::u32_at(&rom,sonic_advance_assets::entities::RING_TABLE_OFFSET + 4*stage).unwrap();
+        assert_eq!(binary::rom_offset(pointer,rom.len(),4).unwrap(),start);
+        assert_eq!(binary::sha256(source),cols[5]);
+        let raw = binary::decompress(source,1024*1024).unwrap();
+        assert_eq!(raw.consumed,len);
+        assert_eq!(raw.bytes.len(),cols[3].parse::<usize>().unwrap());
+        assert_eq!(binary::sha256(&raw.bytes),cols[6]);
+        let rings = RingMap::load_asoe(&rom,stage).unwrap();
+        assert_eq!(rings.len(),cols[4].parse::<usize>().unwrap());
+        let xy: Vec<_> = rings.iter().flat_map(|r| r.x.to_le_bytes().into_iter().chain(r.y.to_le_bytes())).collect();
+        assert_eq!(binary::sha256(&xy),cols[7],"stage {stage}");
+    }
+}
+
+#[test]
+fn pickup_events_use_native_positions_and_skip_shared_tombstones() {
+    let mut ledger=PracticeRings::new(vec![Ring{x:12,y:14,id:0},Ring{x:13,y:14,id:0},Ring{x:8,y:14,id:1}]).unwrap();
+    let mut events=Vec::new();
+    assert_eq!(ledger.collect_at_with(12,14,6,9,|r|events.push((r.x,r.y,r.id))).unwrap(),2);
+    assert_eq!(events,[(12,14,0),(8,14,1)]);
+    assert_eq!(ledger.collect_at_with(12,14,6,9,|_|panic!("duplicate")).unwrap(),0);
+    assert!(ledger.collect_at_with(12,14,65,9,|_|panic!("invalid rectangle")).is_err());
 }
