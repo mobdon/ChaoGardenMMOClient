@@ -48,9 +48,11 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 8];
+    let mut counts = [0; 9];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
+    let variants = [13, 16, 18]
+        .map(|id| Program::read(id, &fs::read(gd.join(format!("stg{id}D.rel"))).unwrap()).unwrap());
     for line in stdout.lines() {
         let v: Vec<_> = line.split_whitespace().collect();
         let n = |i: usize| v[i].parse::<i32>().unwrap();
@@ -73,6 +75,19 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "A" {
+            let p = variants
+                .iter()
+                .find(|p| i32::from(p.level) == n(1))
+                .unwrap();
+            let gates: Vec<i8> = serde_json::from_str(v[4]).unwrap();
+            assert_eq!(
+                p.child_mode_one(v[2].parse().unwrap(), v[3].parse().unwrap(), &gates)
+                    .unwrap(),
+                serde_json::from_str::<serde_json::Value>(v[5]).unwrap(),
+                "{line}"
+            );
+            counts[8] += 1;
         } else if v[0] == "H" {
             let r = program
                 .child_dispatch(n(1) as i8, n(2) as i8, (n(2) == 0).then(|| n(3) != 0))
@@ -258,7 +273,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6]);
+    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6, 18]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]

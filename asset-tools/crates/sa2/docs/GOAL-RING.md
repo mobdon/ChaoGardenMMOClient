@@ -71,3 +71,13 @@ descriptor offset, 2 and 4 in the second request, then writing mode 4.
 For mode 6 it follows the engine call and the clear at task offset 60 before
 the dispatcher resets the mode to zero. Other local handlers and imported
 engine routines are not executed.
+
+For an active mode-1 child, `child_dispatch.mode_one` accepts the initial
+`work36`, `work40` and an array `game_bytes_55` with one observed game
+byte for each scheduled handler invocation. The module supplies the float
+constants through its relocations. With byte zero, the handler increments
+both fields and clamps work40 when it reaches the transition threshold.
+A nonzero byte forces the transition and leaves work36 untouched. The
+report retains both binary32 bit patterns per invocation and stops at mode
+2, without executing that next handler. Eighteen sequences compare the
+installed instructions for stages 13, 16 and 18.

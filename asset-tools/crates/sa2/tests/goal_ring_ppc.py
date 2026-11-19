@@ -263,3 +263,40 @@ for m,(flag,out) in itertools.product((3,6),((0,1),(0,0),(1,0))):
     u.emu_start(BASE+ce,BASE+ce+0x13c,count=150)
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+ce+0x13c
     print('H',m,flag,out,get(WORK,'b'),get(TASK+60,'I'),json.dumps(services,separators=(',',':')))
+
+# Run the original mode-1 handler at each distinct verified layout.
+for level,entry in ((13,0x2fde8),(16,0x25c74),(18,0x2aacc)):
+    image=(Path(os.environ['SA2_SET_DIR'])/f'stg{level:02}D.rel').read_bytes()
+    word=lambda at:struct.unpack_from('>I',image,at)[0]
+    section4=word(word(16)+32)&~1
+    start=(word(word(16)+8)&~1)+entry
+    block=bytearray(image[start:start+0x98])
+    cpu=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+    for addr in (BASE,DATA,TASK,GLOBAL&~4095):cpu.mem_map(addr,4096)
+    for module,at in struct.iter_unpack('>II',image[word(40):word(40)+word(44)]):
+        section=off=0
+        while True:
+            delta,kind,s,val=struct.unpack_from('>HBBI',image,at);at+=8
+            if kind==203:break
+            if kind==202:section=s;off=0;continue
+            off+=delta
+            if section!=1 or not entry<=off<entry+0x98:continue
+            if module:
+                assert s==4 and val+4<=4096
+                cpu.mem_write(DATA+val,image[section4+val:section4+val+4]);val+=DATA
+            assert kind in (4,6)
+            struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
+    cpu.mem_write(BASE,bytes(block));cpu.reg_write(R.UC_PPC_REG_MSR,8192)
+    cpu.mem_write(TASK+52,struct.pack('>I',WORK))
+    for initial36,initial40,gates in [(-6.5,0.,[0]*16),(0.,.89,[0,0]),(1.,.88999,[0,0]),(7.,2.,[0]),(3.,-2.,[0,0,-1,0]),(-2.,.99,[127])]:
+        cpu.mem_write(WORK,b'\x01');cpu.mem_write(WORK+36,struct.pack('>ff',initial36,initial40))
+        frames=[]
+        for gate in gates:
+            cpu.mem_write(GLOBAL+55,struct.pack('>b',gate))
+            cpu.reg_write(R.UC_PPC_REG_3,TASK);cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x98)
+            cpu.emu_start(BASE,BASE+0x98,count=60)
+            assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x98
+            mode=cpu.mem_read(WORK,1)[0];a,b=struct.unpack('>II',cpu.mem_read(WORK+36,8))
+            frames.append(dict(mode=mode,work36Bits=a,work40Bits=b))
+            if mode==2:break
+        print('A',level,initial36,initial40,json.dumps(gates,separators=(',',':')),json.dumps(frames,separators=(',',':')))

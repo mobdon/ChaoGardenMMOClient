@@ -21,6 +21,8 @@ pub struct Program {
     #[serde(skip)]
     child_handlers: [u32; 5],
     #[serde(skip)]
+    child_mode_one: [f32; 4],
+    #[serde(skip)]
     child_collision_descriptor: u32,
     pub child_entry: u32,
     pub child_parent_callback: u32,
@@ -233,6 +235,31 @@ impl Program {
             handler(0x100)?,
             handler(0x118)?,
         ];
+        let one = child_handlers[1];
+        if manifest::sha256(
+            instructions
+                .get(one as usize..one as usize + 0x98)
+                .ok_or_else(invalid)?,
+        ) != "8afd654d6ffeeaf1a180f9411e6677dcce45c9cdf6746541f33d44bb4ae3f102"
+            || !rel
+                .reference(1, one + 0xa)
+                .is_some_and(|r| r.module == 0 && r.kind == 4 && r.addend == 0x801cbd88)
+        {
+            return Err(invalid());
+        }
+        let constant = |off| -> Result<f32> {
+            let r = rel
+                .reference(1, one + off)
+                .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
+                .ok_or_else(invalid)?;
+            Ok(f32::from_bits(word(rel.data(4)?, r.addend as usize)?))
+        };
+        let child_mode_one = [
+            constant(0x22)?,
+            constant(0x42)?,
+            constant(0x5a)?,
+            constant(0x86)?,
+        ];
         let setup = child_handlers[3];
         let release = child_handlers[4];
         for (offset, length, hash) in [
@@ -364,6 +391,7 @@ impl Program {
             initial_slot_words,
             child_callbacks,
             child_handlers,
+            child_mode_one,
             child_collision_descriptor,
             child_entry,
             child_parent_callback,
@@ -618,6 +646,38 @@ pub struct ChildObservation {
     pub linked_after: bool,
 }
 impl Program {
+    /// Consecutive observed invocations of the mode-1 handler, stopping at its transition.
+    pub fn child_mode_one(
+        &self,
+        mut work36: f32,
+        mut work40: f32,
+        game_bytes: &[i8],
+    ) -> Result<Value> {
+        if !(1..=2048).contains(&game_bytes.len()) {
+            return Err(Error::invalid("expected 1..2048 child mode-1 updates"));
+        }
+        let [forced, step, limit, increment] = self.child_mode_one;
+        let mut frames = Vec::new();
+        for &byte in game_bytes {
+            let advance = if byte != 0 {
+                work40 = forced;
+                true
+            } else {
+                work40 += step;
+                let advance = work40 >= limit;
+                if advance {
+                    work40 = limit;
+                }
+                work36 += increment;
+                advance
+            };
+            frames.push(json!({"mode":if advance{2}else{1},"work36Bits":work36.to_bits(),"work40Bits":work40.to_bits()}));
+            if advance {
+                break;
+            }
+        }
+        Ok(json!(frames))
+    }
     pub fn child_dispatch(&self, mode: i8, byte1: i8, range_out: Option<bool>) -> Result<Value> {
         if (byte1 == 0) != range_out.is_some() {
             return Err(Error::invalid(
@@ -674,7 +734,15 @@ impl Program {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ModeOneInput {
+    work36: f32,
+    work40: f32,
+    game_bytes_55: Vec<i8>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ChildDispatch {
+    mode_one: Option<ModeOneInput>,
     mode: i8,
     byte1: i8,
     range_out: Option<bool>,
@@ -742,7 +810,17 @@ pub fn replay(
             if !linked {
                 return Err(Error::invalid("cannot dispatch an absent linked child"));
             }
-            Some(p.child_dispatch(d.mode, d.byte1, d.range_out)?)
+            let mut report = p.child_dispatch(d.mode, d.byte1, d.range_out)?;
+            if let Some(input) = d.mode_one {
+                if d.mode != 1 || d.range_out == Some(true) {
+                    return Err(Error::invalid(
+                        "mode-1 observations require an active mode-1 handler",
+                    ));
+                }
+                report["handlerFrames"] =
+                    p.child_mode_one(input.work36, input.work40, &input.game_bytes_55)?;
+            }
+            Some(report)
         } else {
             None
         };
