@@ -62,3 +62,37 @@ pub fn read(exe: &[u8]) -> Result<[Vec<Joint>; 2]> {
     };
     Ok([tree(0x13048dc)?, tree(0x12d36bc)?])
 }
+
+/// Decode shared geometry once. Nested stream offsets are executable file
+/// offsets; the attachment map keys are RVAs matching the hierarchy report.
+pub fn geometry(
+    exe: &[u8],
+) -> Result<std::collections::BTreeMap<u32, crate::model::ChunkAttachment>> {
+    let rigs = read(exe)?;
+    let image = crate::pe::read_pe(exe)?;
+    let r = Reader { data: exe };
+    let mut result = std::collections::BTreeMap::new();
+    let mut budget = crate::model::DecodeBudget::new();
+    for joint in rigs.into_iter().flatten() {
+        let Some(rva) = joint.attachment_rva else {
+            continue;
+        };
+        if result.contains_key(&rva) {
+            continue;
+        }
+        let at = image.rva_to_offset(rva, 24)?;
+        let stream = |field| -> Result<u32> {
+            let va = r.u32(at + field)?;
+            if va == 0 {
+                Ok(0)
+            } else {
+                Ok(image.va_to_offset(va, 4)? as u32)
+            }
+        };
+        result.insert(
+            rva,
+            crate::model::read_chunk_streams(exe, at as u32, stream(0)?, stream(4)?, &mut budget)?,
+        );
+    }
+    Ok(result)
+}
