@@ -698,3 +698,5 @@ The +0x5774 callback between normal driving and contact is the vehicle audio upd
 A normal story drive contact can request recovery after a full contact response (wall and tail required). The +0x4a58 impact check consumes resolved velocity and the observed saved horizontal velocity. Fall recovery then reads that state and the selected course's height, and passes its resulting vehicle state back to the story replay. The native collision return and recovery work fields remain observations.
 
 Fall recovery shares the primary lap counter and inherits the current segment when one is known. Its output publishes the recovered segment, installed course length, and task/saved positions to the next course scan. When recovery rewinds segment 3 past the story start, the next scan begins from segment 1. Recovery route vertices are still the projected native course geometry.
+
+When the next vehicle post-move event follows recovery, it inherits task position, saved work position, velocity and angles. An intervening progress scan leaves those fields intact. A new boost tick starts a new movement interval. Frames without a recovery handoff still require all four observations.

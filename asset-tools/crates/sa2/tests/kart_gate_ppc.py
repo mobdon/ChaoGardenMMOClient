@@ -358,4 +358,17 @@ if len(sys.argv)>4:
             doc=json.loads(out.read_text());r=doc["updates"][-2]["boostTick"]["drive"]["contact"]["recovery"]
             assert r["engine_call_8001ef18"]==4 and r["vehicle"]["segment"]==doc["primaryRoute"][0]==1
             assert doc["primaryRoute"][1]>100 and doc["updates"][-1]["slotProgress"]["tested_indices"][0]==2
+            after={k:v for k,v in frame.items() if k not in
+                   ("position","previous_position","velocity","angles","segment","segment_count")}
+            q["updates"].append(dict(vehicle_post_move=after))
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-recovered-vehicle.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            carried=json.loads(out.read_text())["updates"][-1]["vehiclePostMove"]["frame"]
+            for name,source in [("position","position"),("previous_position","saved_position"),
+                                ("velocity","velocity"),("angles","angles")]:
+                assert carried[name]==r["vehicle"][source]
+            after["previous_position"]=[7,-100000,5]
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-recovery-pose.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"vehicle pose conflicts" in rejected.stderr
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

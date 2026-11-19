@@ -313,6 +313,8 @@ pub(crate) struct RecoveredProgress {
     pub route: (i32, i32),
     pub counter: u32,
     pub positions: ([f32; 3], [f32; 3]),
+    pub velocity: [f32; 3],
+    pub angles: [i32; 3],
 }
 impl Output {
     pub(crate) fn progress(&self) -> RecoveredProgress {
@@ -322,6 +324,8 @@ impl Output {
             route: (v.segment, self.course_length),
             counter: v.lap as u32,
             positions: (v.position, v.saved_position),
+            velocity: v.velocity,
+            angles: v.angles,
         }
     }
 }

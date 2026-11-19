@@ -719,6 +719,7 @@ pub fn story_sequence(
     let mut crossing_positions = None;
     let mut route = None;
     let mut progressed_route = None;
+    let mut recovered_pose = None;
     let mut scan_flag = None;
     let mut highest = None;
     let mut target: Option<crate::kart_story_target::State> = None;
@@ -727,6 +728,7 @@ pub fn story_sequence(
         let event = match event {
             SequenceEvent::Gate(g) => g,
             SequenceEvent::BoostTick { mut boost_tick } => {
+                recovered_pose = None;
                 if let Some(r) = boost_tick
                     .drive
                     .as_mut()
@@ -756,6 +758,7 @@ pub fn story_sequence(
                     progressed_route = route;
                     count = recovered.counter;
                     crossing_positions = Some(recovered.positions);
+                    recovered_pose = Some(recovered);
                 }
                 charge = Some(next);
                 boost_timers = Some(timers);
@@ -851,6 +854,9 @@ pub fn story_sequence(
             SequenceEvent::PostMove {
                 vehicle_post_move: mut frame,
             } => {
+                if let Some(pose) = recovered_pose.take() {
+                    frame.bind_recovery(pose)?;
+                }
                 if let Some(selected) = progressed_route.take() {
                     frame.bind_route(selected)?;
                 }
@@ -887,8 +893,8 @@ pub fn story_sequence(
                     target = Some(spawned);
                 }
                 target_handle = r.frame.as_ref().map(|f| f.work_ec);
-                parent = r.frame.as_ref().map(|f| f.pursuit_parent());
-                crossing_positions = r.frame.as_ref().map(|f| f.crossing_positions());
+                parent = r.frame.as_ref().and_then(|f| f.pursuit_parent());
+                crossing_positions = r.frame.as_ref().and_then(|f| f.crossing_positions());
                 scan_flag = r.frame.as_ref().and_then(|f| f.course_scan_flag());
                 route = r.frame.as_ref().and_then(|f| f.route());
                 if let Some(h) = r.frame.as_ref().and_then(|f| f.highest()) {

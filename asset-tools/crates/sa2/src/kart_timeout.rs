@@ -36,10 +36,10 @@ pub struct Frame {
     pub(crate) global_24d60: Option<i32>,
     segment: Option<i32>,
     segment_count: Option<i32>,
-    position: [f32; 3],
-    previous_position: [f32; 3],
-    velocity: [f32; 3],
-    angles: [i32; 3],
+    position: Option<[f32; 3]>,
+    previous_position: Option<[f32; 3]>,
+    velocity: Option<[f32; 3]>,
+    angles: Option<[i32; 3]>,
     pub(crate) work_ec: u32,
     #[serde(skip_serializing)]
     magnitude_return: Option<f32>,
@@ -51,6 +51,30 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn bind_recovery(
+        &mut self,
+        r: crate::kart_fall_recovery::RecoveredProgress,
+    ) -> Result<()> {
+        fn vector(word: &mut Option<[f32; 3]>, v: [f32; 3]) -> Result<()> {
+            if word.is_some_and(|seen| seen.map(f32::to_bits) != v.map(f32::to_bits)) {
+                return Err(crate::Error::invalid(
+                    "vehicle pose conflicts with fall recovery",
+                ));
+            }
+            *word = Some(v);
+            Ok(())
+        }
+        vector(&mut self.position, r.positions.0)?;
+        vector(&mut self.previous_position, r.positions.1)?;
+        vector(&mut self.velocity, r.velocity)?;
+        if self.angles.is_some_and(|v| v != r.angles) {
+            return Err(crate::Error::invalid(
+                "vehicle angles conflict with fall recovery",
+            ));
+        }
+        self.angles = Some(r.angles);
+        Ok(())
+    }
     pub(crate) fn timer_words(&self) -> Option<[i32; 3]> {
         Some([self.cooldown?, self.work_288?, self.work_108?])
     }
@@ -68,8 +92,8 @@ impl Frame {
         self.global_24d60 = retained.or(self.global_24d60);
         Ok(())
     }
-    pub(crate) fn crossing_positions(&self) -> ([f32; 3], [f32; 3]) {
-        (self.position, self.previous_position)
+    pub(crate) fn crossing_positions(&self) -> Option<([f32; 3], [f32; 3])> {
+        self.position.zip(self.previous_position)
     }
     pub(crate) fn route(&self) -> Option<(i32, i32)> {
         self.segment.zip(self.segment_count)
@@ -120,8 +144,8 @@ impl Frame {
     pub(crate) fn checkpoint_counter(&self) -> Option<u32> {
         self.dispatch.as_ref()?.work_c4.map(|v| v as u32)
     }
-    pub(crate) fn pursuit_parent(&self) -> [f32; 2] {
-        [self.previous_position[0], self.velocity[0]]
+    pub(crate) fn pursuit_parent(&self) -> Option<[f32; 2]> {
+        Some([self.previous_position?[0], self.velocity?[0]])
     }
 }
 #[derive(Serialize, Deserialize)]
@@ -225,6 +249,11 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
             let constants = rel.data(4)?;
             let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
+            let missing = || crate::Error::invalid("missing vehicle pose before post-move");
+            let mut position = frame.position.ok_or_else(missing)?;
+            let mut previous_position = frame.previous_position.ok_or_else(missing)?;
+            let mut velocity = frame.velocity.ok_or_else(missing)?;
+            let mut angles = frame.angles.ok_or_else(missing)?;
             let (mut segment, segment_count) = frame
                 .route()
                 .ok_or_else(|| crate::Error::invalid("missing vehicle route"))?;
@@ -259,9 +288,9 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                     }
                 } else if segment > segment_count.wrapping_sub(20) {
                     if frame.engine_byte_23 == 1 {
-                        frame.position = [f(0x1e4), f(0x1f4), f(0x1f8)];
-                        frame.previous_position = frame.position;
-                        frame.velocity = [
+                        position = [f(0x1e4), f(0x1f4), f(0x1f8)];
+                        previous_position = position;
+                        velocity = [
                             f(0x1c8),
                             f(0x1c8),
                             frame.magnitude_return.ok_or_else(|| {
@@ -270,16 +299,16 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                                 )
                             })?,
                         ];
-                        frame.angles = [0; 3];
+                        angles = [0; 3];
                         segment = 0;
                     } else {
                         segment = segment_count.wrapping_sub(25);
-                        frame.position[0] -= f(0x1fc);
+                        position[0] -= f(0x1fc);
                         if frame.work_ec == 0 {
                             match (frame.limousine_allocation.take(), frame.d968_return) {
                                 (Some(a), None) if a.task_handle != 0 && a.segment == segment && a.segment >= 0 => {
                                     let target = crate::kart_story_target::step_constants(constants, crate::kart_story_target::Input::Spawn {
-                                        segment_xz: a.segment_xz, parent_task_y: frame.position[1], mode, latch: a.latch,
+                                        segment_xz: a.segment_xz, parent_task_y: position[1], mode, latch: a.latch,
                                     })?;
                                     r.limousine = Some(Limousine {
                                         task_handle: a.task_handle, exec_offset: 0xda80,
@@ -320,7 +349,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                         if t.segment != ahead || ahead < 0 || near < 0 {
                             return Err(crate::Error::invalid("wrong state 7 target quad"));
                         }
-                        let speed = if frame.velocity == [0.; 3] {
+                        let speed = if velocity == [0.; 3] {
                             f(0x200)
                         } else {
                             t.magnitude_return.ok_or_else(|| {
@@ -343,7 +372,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                             work_264: speed,
                             work_274: angle as i32,
                             target_xz: t.quad[1],
-                            from_xz: [frame.position[0], frame.position[2]],
+                            from_xz: [position[0], position[2]],
                         });
                     }
                 } else if r
@@ -365,6 +394,10 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             r.vehicle_state = Some(vehicle_state);
             frame.global_24d60 = Some(finish);
             frame.segment = Some(segment);
+            frame.position = Some(position);
+            frame.previous_position = Some(previous_position);
+            frame.velocity = Some(velocity);
+            frame.angles = Some(angles);
             r.frame = Some(frame);
         }
         Input::VehicleCountdown {
