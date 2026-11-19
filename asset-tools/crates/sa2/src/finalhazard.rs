@@ -417,6 +417,22 @@ pub fn polygon_schedule(exe: &[u8]) -> Result<serde_json::Value> {
 /// Local transform records used by the installed weakpoint display callback.
 /// Matrix selection and encounter state remain external to this reader.
 pub fn weakpoint_placements(bytes: &[u8]) -> Result<serde_json::Value> {
+    placement_report(bytes, None)
+}
+/// Evaluate all candidate origins in boss space. Selection and collision are external.
+pub fn weakpoint_origins(
+    bytes: &[u8],
+    exe: &[u8],
+    clip: usize,
+    frame: f64,
+) -> Result<serde_json::Value> {
+    let pose = pose(exe, clip, frame)?;
+    let mut report = placement_report(bytes, Some(&pose))?;
+    report["clip"] = serde_json::json!(clip);
+    report["frame"] = serde_json::json!(frame);
+    Ok(report)
+}
+fn placement_report(bytes: &[u8], pose: Option<&crate::pose::Pose>) -> Result<serde_json::Value> {
     if crate::manifest::sha256(bytes)
         != "6e694afcb14f1ab41e31983083055721e70f672a20e1d535df3523287413b64f"
     {
@@ -460,6 +476,7 @@ pub fn weakpoint_placements(bytes: &[u8]) -> Result<serde_json::Value> {
         }
     }
     let mut captures = Vec::new();
+    let mut joints = [0usize; 5];
     for (slot, call) in [0x4278, 0x4290, 0x42a8, 0x42bc, 0x42d0]
         .into_iter()
         .enumerate()
@@ -477,6 +494,7 @@ pub fn weakpoint_placements(bytes: &[u8]) -> Result<serde_json::Value> {
             .iter()
             .position(|&n| target == (5, n))
             .ok_or_else(|| Error::invalid("unmapped capture joint"))?;
+        joints[slot] = joint;
         captures.push(serde_json::json!({"slot":slot,"bossJointIndex":joint,"jointSection5":target.1,"captureCallSection1":call}));
     }
     let model = pair(0x84c2, 5)?;
@@ -490,10 +508,24 @@ pub fn weakpoint_placements(bytes: &[u8]) -> Result<serde_json::Value> {
         let xyz = |at: usize| {
             [at, at + 4, at + 8].map(|x| u32::from_be_bytes(r[x..x + 4].try_into().unwrap()))
         };
-        rows.push(
-            serde_json::json!({"bank":i/8,"entry":i%8,"matrixSlot":r[0] as i8,
-            "angles":xyz(4).map(|v|v as i32),"translation":xyz(16).map(f32::from_bits)}),
-        );
+        let slot = r[0] as usize;
+        let joint = *joints
+            .get(slot)
+            .ok_or_else(|| Error::invalid("invalid weakpoint matrix slot"))?;
+        let translation = xyz(16).map(f32::from_bits);
+        let mut row = serde_json::json!({"bank":i/8,"entry":i%8,"matrixSlot":slot,"angles":xyz(4).map(|v|v as i32),"translation":translation});
+        if let Some(pose) = pose {
+            let node = pose
+                .nodes
+                .get(joint)
+                .ok_or_else(|| Error::invalid("missing weakpoint pose joint"))?;
+            row["bossJointIndex"] = serde_json::json!(joint);
+            row["bossLocalOrigin"] = serde_json::json!(crate::pose::transform_point(
+                &node.world_matrix,
+                translation.map(f64::from)
+            ));
+        }
+        rows.push(row);
     }
     Ok(
         serde_json::json!({"modelSection5":model,"tableSection5":base,"matrixArraySection6":matrices,
