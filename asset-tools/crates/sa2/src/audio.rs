@@ -2,7 +2,7 @@
 //!
 //! Format evidence: vgmstream `src/meta/adx.c` and `src/coding/adx_decoder.c`
 //! (upstream inspected 2026-11-18). The mathematical decoder is implemented
-//! here independently. AHX, encrypted ADX and CSB are deliberately unsupported.
+//! here independently. Fixed-profile mono AHX uses Rust Layer II synthesis; encrypted ADX and CSB are unsupported.
 
 use crate::{Error, Result};
 use serde::Serialize;
@@ -474,6 +474,10 @@ mod tests {
 /// deliberately accepts only the fixed mono profile observed in SA2's banks.
 /// Reference: vgmstream src/coding/mpeg_custom_utils_ahx.c.
 pub fn ahx_frame_count(bytes: &[u8]) -> Result<usize> {
+    walk_ahx(bytes, |_| Ok(()))
+}
+
+fn walk_ahx(bytes: &[u8], mut visit: impl FnMut(&[u8]) -> Result<()>) -> Result<usize> {
     let header = read_ahx_header(bytes)?;
     let len = header
         .payload_length
@@ -522,6 +526,7 @@ pub fn ahx_frame_count(bytes: &[u8]) -> Result<usize> {
         for _ in 0..allocated {
             scales += [18, 12, 6, 12][field(2)?];
         }
+        visit(range(payload, 0, (bit + scales + sample_bits).div_ceil(8))?)?;
         payload = payload
             .get((bit + scales + sample_bits).div_ceil(8)..)
             .ok_or_else(|| Error::invalid("short AHX frame"))?;
@@ -533,4 +538,73 @@ pub fn ahx_frame_count(bytes: &[u8]) -> Result<usize> {
         ));
     }
     Ok(count)
+}
+
+/// Decode fixed-profile mono AHX directly to an IEEE float WAVE.
+pub fn decode_ahx_wav(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>> {
+    use symphonia_bundle_mp3::MpaDecoder;
+    use symphonia_core::{
+        audio::{AudioBufferRef, Signal},
+        codecs::{CodecParameters, Decoder, CODEC_TYPE_MP2},
+        formats::Packet,
+    };
+    let h = read_ahx_header(bytes)?;
+    let size = h
+        .sample_count
+        .checked_mul(4)
+        .ok_or_else(|| Error::invalid("AHX output too large"))?;
+    let riff = size
+        .checked_add(48)
+        .ok_or_else(|| Error::invalid("AHX WAV too large"))?;
+    if u64::from(riff) + 8 > max_bytes as u64 {
+        return Err(Error::invalid("AHX output exceeds limit"));
+    }
+    let rate = h
+        .sample_rate
+        .checked_mul(4)
+        .ok_or_else(|| Error::invalid("AHX rate overflow"))?;
+    let mut out = Vec::new();
+    out.extend(b"RIFF");
+    out.extend(riff.to_le_bytes());
+    out.extend(b"WAVEfmt ");
+    out.extend(16u32.to_le_bytes());
+    out.extend(3u16.to_le_bytes());
+    out.extend(1u16.to_le_bytes());
+    out.extend(h.sample_rate.to_le_bytes());
+    out.extend(rate.to_le_bytes());
+    out.extend(4u16.to_le_bytes());
+    out.extend(32u16.to_le_bytes());
+    out.extend(b"fact");
+    out.extend(4u32.to_le_bytes());
+    out.extend(h.sample_count.to_le_bytes());
+    out.extend(b"data");
+    out.extend(size.to_le_bytes());
+    let err = |e: symphonia_core::errors::Error| Error::invalid(e.to_string());
+    let mut decoder = MpaDecoder::try_new(
+        CodecParameters::new().for_codec(CODEC_TYPE_MP2),
+        &Default::default(),
+    )
+    .map_err(err)?;
+    let mut left = h.sample_count as usize;
+    walk_ahx(bytes, |frame| {
+        if frame.len() > 1044 {
+            return Err(Error::invalid("oversize AHX frame"));
+        }
+        let mut packet = vec![0; 1044];
+        packet[..frame.len()].copy_from_slice(frame);
+        let packet = Packet::new_from_boxed_slice(0, 0, 1152, packet.into_boxed_slice());
+        let AudioBufferRef::F32(buf) = decoder.decode(&packet).map_err(err)? else {
+            return Err(Error::invalid("unexpected AHX sample format"));
+        };
+        if buf.frames() != 1152 || buf.spec().channels.count() != 1 {
+            return Err(Error::invalid("unexpected AHX frame shape"));
+        }
+        let n = left.min(1152);
+        for sample in &buf.chan(0)[..n] {
+            out.extend(sample.to_le_bytes());
+        }
+        left -= n;
+        Ok(())
+    })?;
+    Ok(out)
 }

@@ -555,7 +555,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, transporter, validate\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -591,6 +591,7 @@ fn run() -> Result<()> {
             | "texture"
             | "movie-video"
             | "movie-audio"
+            | "ahx"
             | "adx"
             | "transporter"
             | "validate"
@@ -1062,10 +1063,22 @@ fn run() -> Result<()> {
                 )?;
             }
         }
+        "ahx" => {
+            let wav = audio::decode_ahx_wav(&bytes, MAX_DECODED)?;
+            save_conversion(
+                input,
+                &label,
+                &bytes,
+                output,
+                &wav,
+                "wav-float32",
+                vec!["Fixed mono AHX; trimmed to declared sample count. Layer II synthesis clamps peaks to [-1, 1].".into()],
+            )?;
+        }
         "adx" => {
             let pcm = audio::decode_adx(&bytes, MAX_DECODED / 2)?;
             let wav = pcm.to_wav()?;
-            save_conversion(input,&label,&bytes,output,&wav,"wav-pcm16",vec!["One pass at native rate/channels; declared loop points are stored in the WAV sampler chunk. No AHX/CSB/encrypted ADX decoder.".into()])?;
+            save_conversion(input,&label,&bytes,output,&wav,"wav-pcm16",vec!["One pass at native rate/channels; declared loop points are stored in the WAV sampler chunk. CSB and encrypted ADX remain unsupported.".into()])?;
         }
         "transporter" => {
             let text = std::str::from_utf8(&bytes).map_err(|e| Error::invalid(e.to_string()))?;
