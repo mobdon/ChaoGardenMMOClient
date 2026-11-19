@@ -824,6 +824,20 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    PlayerSwitch {
+        mode: i8,
+        submode: i8,
+        cursor: i8,
+        previous_player: i8,
+        active_player: i8,
+        global37: u8,
+        global39: u8,
+        switch_byte: u8,
+        child14: bool,
+        child18: bool,
+        gate_task: Option<PhaseGateTask>,
+    },
+
     /// Dispatch after the player-switch branch, at section 1 + 0x1cc4.
     Dispatch {
         mode: i8,
@@ -1059,6 +1073,57 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             }
             return Ok(
                 serde_json::json!({"handler":handler,"timer":timer,"stageCalls":calls,"continue_at":0x1d74}),
+            );
+        }
+        PlacementClock::PlayerSwitch {
+            mut mode,
+            mut submode,
+            mut cursor,
+            previous_player,
+            active_player,
+            global37,
+            global39,
+            switch_byte,
+            mut child14,
+            mut child18,
+            gate_task,
+        } => {
+            let entry_mode = mode;
+            let changed = previous_player != active_player;
+            let mut sites = Vec::new();
+            let next = if global37 != 0 {
+                0x1dec
+            } else if global39 != 0 {
+                sites.push(0x1c10);
+                0x1dec
+            } else if switch_byte != 0 {
+                if changed {
+                    if child14 {
+                        sites.push(0x1c58);
+                        child14 = false;
+                    }
+                    if child18 {
+                        sites.push(0x1c70);
+                        child18 = false;
+                    }
+                }
+                sites.push(0x1c80);
+                0x1dec
+            } else {
+                if changed {
+                    sites.extend([0x1ca0, 0x1cac, 0x1cc0]);
+                    cursor = -1;
+                    if phase_write_allowed(gate_task) {
+                        mode = 2;
+                        submode = 0;
+                    }
+                }
+                0x1cc4
+            };
+            // Previous-player byte is written only in the later common tail.
+            return Ok(
+                serde_json::json!({"entry_mode_copy":entry_mode,"mode":mode,"submode":submode,
+                "cursor":cursor,"child14":child14,"child18":child18,"call_sites":sites,"continue_at":next}),
             );
         }
         PlacementClock::InitialHealth => {
