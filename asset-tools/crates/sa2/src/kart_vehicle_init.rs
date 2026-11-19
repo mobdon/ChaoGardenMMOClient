@@ -108,7 +108,11 @@ impl StoryBoostInput {
         &mut self,
         position: [f32; 3],
         velocity: [f32; 3],
+        yaw: i32,
     ) -> Result<()> {
+        if let Some(drive) = &mut self.drive {
+            drive.bind_heading(yaw)?;
+        }
         for (word, value) in [
             (&mut self.boost.position, position),
             (&mut self.velocity, velocity),

@@ -117,7 +117,7 @@ pub(crate) struct StoryDrive {
     audio_work_284: Option<i32>,
     pub(crate) contact: Option<crate::kart_contact::StoryContact>,
     position_step: Option<StoryPosition>,
-    heading: i32,
+    heading: Option<i32>,
     work_a4: i32,
     buttons: Option<u32>,
     work_28c: i32,
@@ -149,6 +149,15 @@ impl Motion {
     }
 }
 impl StoryDrive {
+    pub(crate) fn bind_heading(&mut self, yaw: i32) -> Result<()> {
+        if self.heading.is_some_and(|v| v != yaw) {
+            return Err(Error::invalid(
+                "drive heading conflicts with preceding vehicle frame",
+            ));
+        }
+        self.heading = Some(yaw);
+        Ok(())
+    }
     pub(crate) fn begin_update(&mut self) -> Result<()> {
         if let Some(d) = &mut self.drift {
             if d.work_10c.is_some_and(|v| v != 0) {
@@ -209,7 +218,9 @@ impl StoryDrive {
         let scale = f32::from_be_bytes(constants[0x200..0x204].try_into().unwrap());
         let mut motion = drive_step(
             Drive {
-                heading: self.heading,
+                heading: self
+                    .heading
+                    .ok_or_else(|| Error::invalid("missing story drive heading"))?,
                 work_a4: self.work_a4,
                 place: 1,
                 multiplayer: false,

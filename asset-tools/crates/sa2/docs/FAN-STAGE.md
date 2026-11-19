@@ -718,3 +718,5 @@ At CartD +0x2170..0x21d4 the vehicle update copies the 48-byte taskwork prefix i
 The same taskwork prefix copy saves the three signed rotation words (+8/+12/+16) before movement. With primary_update_angles supplied at update start, fall recovery uses those words for the early timer branch that restores the saved pose. They are not the post-contact alignment angles. Contradictory observations are rejected.
 
 For contiguous primary updates, continue_vehicle_update: {} snapshots the preceding post-move task position, world velocity and angles. Normal boost/profile processing inherits that position and velocity. The caller chooses this event only when no unmodeled intervening write changed the pose; independently observed starts remain available.
+
+Normal steering reads the signed yaw word at taskwork +12. After continue_vehicle_update, drive inherits that word from the preceding post-move angles; an explicit heading must match all 32 bits. Independent drive samples still require a heading. This handoff does not compute post-contact alignment or resolve track collisions.

@@ -416,6 +416,20 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-conflicting-continuation.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"preceding vehicle frame" in rejected.stderr
+            # A normal-state frame retains its full task yaw for the next drive.
+            continued_drive=dict(buttons=4,work_28c=0,work_a4=2,stick_x=0,steering_sum=0)
+            start=dict(frame,segment=5,angles=[-123,65537,456],velocity=[0,0,0])
+            follow=dict(boost_tick=dict(boost=dict(work_70=0,work_44=1,work_dc=0,slot_flag=0,buttons_pressed=0,piece_id=0),drive=continued_drive))
+            q.update(vehicle_state=0,primary_charge=0,updates=[dict(vehicle_post_move=start),
+                     dict(continue_vehicle_update={}),follow])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-continued-heading.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            doc=json.loads(out.read_text())
+            assert doc["vehicleState"]==0 and doc["updates"][-1]["boostTick"]["drive"]["heading"]==65537
+            continued_drive["heading"]=1
+            req.write_text(json.dumps(q))
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"drive heading conflicts" in rejected.stderr
             # Native history writes at the cursor but reads starting at the
             # NEXT cursor. Work across wrap and replace a contradictory sum.
             initial=[0]*60;initial[0]=100

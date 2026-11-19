@@ -773,7 +773,7 @@ pub fn story_sequence(
                     primary_update_position: Some(position),
                     primary_update_angles: Some(angles),
                 });
-                inherited_pose = Some((position, velocity));
+                inherited_pose = Some((position, velocity, angles[1]));
                 updates.push(json!({"previousVelocity":velocity,"savedPosition":position,"savedAngles":angles,"work_10c":0}));
                 continue;
             }
@@ -870,8 +870,8 @@ pub fn story_sequence(
             }
             SequenceEvent::BoostTick { mut boost_tick } => {
                 completed_pose = None;
-                if let Some((p, v)) = inherited_pose.take() {
-                    boost_tick.bind_previous_frame(p, v)?;
+                if let Some((p, v, yaw)) = inherited_pose.take() {
+                    boost_tick.bind_previous_frame(p, v, yaw)?;
                 }
                 let start = snapshot.take();
                 if let (Some(v), Some(d)) = (start, boost_tick.drive.as_mut()) {
