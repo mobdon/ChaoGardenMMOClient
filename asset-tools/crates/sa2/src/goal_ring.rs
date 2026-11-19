@@ -22,6 +22,9 @@ pub struct Program {
     vector_constants: [f32; 5],
     #[serde(skip)]
     gate_constants: [f32; 4],
+    #[serde(skip)]
+    spawn_constants: [f32; 6],
+    spawn_helper: u32,
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     #[serde(skip)]
@@ -518,6 +521,43 @@ impl Program {
             constant(g + 0x72)?,
             constant(g + 0x8a)?,
         ];
+        let body = gate + 0xa0;
+        let mut code = instructions
+            .get(body as usize..body as usize + 0x2f0)
+            .ok_or_else(invalid)?
+            .to_vec();
+        let spawn_helper = local_target(body + 0x1c8)?;
+        code[0x1c8..0x1cc].fill(0);
+        if manifest::sha256(&code)
+            != "3e6875c1fe0ccf104460a87910c1223c4d2ba222217faa106c789d0135b9b1f2"
+        {
+            return Err(invalid());
+        }
+        for off in [0x18, 0x80, 0xd4, 0x13c, 0x188, 0x1e0, 0x228, 0x288] {
+            let r = rel.reference(1, body + off).ok_or_else(invalid)?;
+            if (r.module, r.kind, r.addend) != (0, 10, 0x8010d940) {
+                return Err(invalid());
+            }
+        }
+        let k = |off| constant(g + 0xa0 + off);
+        let spawn_constants = [k(0x46)?, k(0x56)?, k(0x66)?, k(0xb6)?, k(0x112)?, k(0x122)?];
+        for off in [0x1e, 0x86, 0xda, 0x142, 0x18e, 0x1e6, 0x22e, 0x28e] {
+            if k(off)?.to_bits() != 0x43300000
+                || rel.reference(1, body + off + 4).ok_or_else(invalid)?.addend != bias
+            {
+                return Err(invalid());
+            }
+        }
+        for off in [0x252, 0x2b2] {
+            if k(off)? != gate_constants[0] {
+                return Err(invalid());
+            }
+        }
+        for off in [0x262, 0x2c2] {
+            if k(off)? != spawn_constants[0] {
+                return Err(invalid());
+            }
+        }
         let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
         for i in 0..93 {
@@ -1289,6 +1329,8 @@ impl Program {
             consumer_blend,
             vector_constants,
             gate_constants,
+            spawn_constants,
+            spawn_helper,
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
@@ -1442,6 +1484,32 @@ impl Program {
         };
         Ok(
             json!({"player":v.player,"queries":queries,"positionBits":position.map(f32::to_bits),"deltaBits":delta.map(f32::to_bits)}),
+        )
+    }
+    pub fn consumer_spawn(&self, s: ConsumerSpawn) -> Result<Value> {
+        if s.created != s.color_random.is_some() {
+            return Err(Error::invalid(
+                "three color draws required only for a created effect",
+            ));
+        }
+        let [mid, spread, height, gain, up, vertical] = self.spawn_constants;
+        let norm = |x: i32| (x as f32) * self.gate_constants[0];
+        let [a, b, c, d, e] = s.random.map(norm);
+        let mut pos = s.position;
+        pos[1] += height + spread * (a - mid);
+        let [x, y, z] = s.motion;
+        let velocity = [
+            gain * x + gain * (b - mid),
+            vertical * y + (up + gain * (c - mid)),
+            gain * z + gain * (d - mid),
+        ];
+        let color = s.color_random.map(|values| {
+            let [g, b, a] = values.map(|r| if norm(r) > mid { 255u8 } else { 224 });
+            u32::from_be_bytes([255, g, b, a])
+        });
+        Ok(
+            json!({"local":self.spawn_helper,"positionBits":pos.map(f32::to_bits),"velocityBits":velocity.map(f32::to_bits),
+            "scaleBits":(gain+gain*e).to_bits(),"colorWrite20":color}),
         )
     }
     pub fn consumer_gate(&self, byte1: u8, g: ConsumerGate) -> Result<Value> {
@@ -1651,7 +1719,17 @@ pub struct ConsumerGate {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ConsumerSpawn {
+    position: [f32; 3],
+    motion: [f32; 3],
+    random: [i32; 5],
+    created: bool,
+    color_random: Option<[i32; 3]>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConsumerUpdate {
+    spawn: Option<ConsumerSpawn>,
     gate: Option<ConsumerGate>,
     vectors: Option<ConsumerVectors>,
     countdown: Option<ConsumerCountdown>,
@@ -2339,6 +2417,9 @@ pub fn replay(
             json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0});
         if let Some(u) = c.update {
             out["update"] = p.consumer_update(u.frame, u.service_return, u.counter)?;
+            if u.spawn.is_some() && u.gate.is_none() {
+                return Err(Error::invalid("effect spawn requires observed gate"));
+            }
             if u.gate.is_some() && u.vectors.is_none() {
                 return Err(Error::invalid("post-vector gate requires vector helper"));
             }
@@ -2353,6 +2434,12 @@ pub fn replay(
             if let Some(fields) = u.countdown {
                 if let Some(g) = u.gate {
                     out["update"]["gate"] = p.consumer_gate(fields.byte1 & !3, g)?;
+                    if let Some(s) = u.spawn {
+                        if out["update"]["gate"]["continueEffect"] != true {
+                            return Err(Error::invalid("effect setup skipped by gate"));
+                        }
+                        out["update"]["spawn"] = p.consumer_spawn(s)?;
+                    }
                 }
                 out["update"]["countdown"] = p.consumer_countdown(120, fields);
             }

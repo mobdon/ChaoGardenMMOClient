@@ -56,7 +56,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 20];
+    let mut counts = [0; 21];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     let variants = [13, 16, 18]
@@ -83,6 +83,15 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "SPAWN" {
+            assert_eq!(
+                program
+                    .consumer_spawn(serde_json::from_str(v[1]).unwrap())
+                    .unwrap(),
+                serde_json::from_str::<serde_json::Value>(v[2]).unwrap(),
+                "{line}"
+            );
+            counts[20] += 1;
         } else if v[0] == "GATE" {
             assert_eq!(
                 program
@@ -365,7 +374,7 @@ fn compare_installed_init_and_contact() {
     }
     assert_eq!(
         counts,
-        [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176, 1280, 12, 6, 2, 2, 100, 32, 10, 36]
+        [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176, 1280, 12, 6, 2, 2, 100, 32, 10, 36, 6]
     );
 }
 #[test]

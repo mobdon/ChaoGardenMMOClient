@@ -1025,3 +1025,50 @@ for rnd,vector,x in itertools.product([0,9830,9831,32767],[0.,struct.unpack('>f'
     obs=dict(flags96=flags,random_return=rnd,vector_return=vector if len(calls)==2 else None,work36=x if reads else None)
     result=dict(flags96=struct.unpack('>I',gc.mem_read(WORK+0x260,4))[0],byte1=gc.mem_read(WORK+1,1)[0],calls=calls,continueEffect=end==0xa0)
     print('GATE',byte,json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
+
+# Capture the native spawn call and the subsequent color store.
+entry=0x3a180
+block=bytearray(d[ss[1][0]+entry:ss[1][0]+entry+0x2f0])
+sc=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+for page,size in [(BASE,4096),(DATA,0x10000),(TASK,4096)]:sc.mem_map(page,size)
+sc.reg_write(R.UC_PPC_REG_MSR,8192)
+draw_sites=[]
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not entry<=off<entry+len(block):continue
+        if kind==10:
+            assert module==0 and val==0x8010d940
+            draw_sites.append(BASE+off-entry);continue
+        assert module==12 and s==4 and kind in (4,6)
+        sc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8]);val+=DATA
+        struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
+sc.mem_write(BASE,bytes(block));sc.mem_write(DATA+0xf34,d[ss[4][0]+0xf34:ss[4][0]+0xf38])
+def spawn_draw(cpu,pc,*_):
+    cpu.reg_write(R.UC_PPC_REG_3,next(draws)&0xffffffff);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+def spawn_call(cpu,pc,*_):
+    disp=struct.unpack_from('>I',block,pc-BASE)[0]&0x3fffffc
+    dest=entry+pc-BASE+(disp if disp<1<<25 else disp-(1<<26))
+    read_vec=lambda reg:struct.unpack('>III',cpu.mem_read(cpu.reg_read(reg),12))
+    f=struct.unpack('>d',cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,'big'))[0]
+    observed.update(local=dest,positionBits=read_vec(R.UC_PPC_REG_3),velocityBits=read_vec(R.UC_PPC_REG_4),scaleBits=struct.unpack('>I',struct.pack('>f',f))[0])
+    cpu.reg_write(R.UC_PPC_REG_3,TASK+0x600 if created else 0);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in draw_sites:sc.hook_add(UC_HOOK_CODE,spawn_draw,begin=pc,end=pc)
+sc.hook_add(UC_HOOK_CODE,spawn_call,begin=BASE+0x1c8,end=BASE+0x1c8)
+for first,color in itertools.product([[0,1,16384,32767,12345],[307,21003,5189,20001,3]], [None,[16384,16385,0],[32767,0,32767]]):
+    created=color is not None;draws=iter(first+(color or []));observed={}
+    pos=[12.25,-6.75,8.5];motion=[-.03125,1.75,-2.125]
+    sc.mem_write(WORK+20,struct.pack('>fff',*pos));sc.mem_write(WORK+0x100,struct.pack('>fff',*motion))
+    sc.mem_write(TASK+0x614,b'\x12'*4)
+    for i,v in [(1,TASK+0x900),(28,0x43300000),(29,DATA+0xf34),(30,WORK),(31,WORK+0x100)]:sc.reg_write(getattr(R,'UC_PPC_REG_'+str(i)),v)
+    sc.emu_start(BASE,BASE+len(block),count=300)
+    assert sc.reg_read(R.UC_PPC_REG_PC)==BASE+len(block) and next(draws,None) is None
+    word=struct.unpack('>I',sc.mem_read(TASK+0x614,4))[0]
+    assert created or word==0x12121212
+    observed['colorWrite20']=word if created else None
+    obs=dict(position=pos,motion=motion,random=first,created=created,color_random=color)
+    print('SPAWN',json.dumps(obs,separators=(',',':')),json.dumps(observed,separators=(',',':')))
