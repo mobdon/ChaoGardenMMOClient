@@ -6,16 +6,16 @@ use sa2_asset_tools::{
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="mission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
+pub(super) const USAGE:&str="duel-platform EXE OUTPUT.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
-        "mission-ranks" | "player-physics" | "city-board-resources" => Some(3),
+        "duel-platform" | "mission-ranks" | "player-physics" | "city-board-resources" => Some(3),
         "campaign-camera" => Some(8),
         "event-camera" | "fan-stage" => Some(6),
         "city-rider-pose" | "city-board-pose" | "stage-bind" | "campaign-frame" => Some(7),
         "stage-raycast" | "story-run" | "city-spawn-ground" => Some(5),
         "stage-positions" | "death-zones" | "stage-paths" | "story" | "event-frame"
-        | "demo-frame" | "fan-levels" => Some(4),
+        | "demo-frame" | "fan-levels" | "fan-tasks" => Some(4),
         _ => None,
     }
 }
@@ -172,8 +172,9 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
     let label = source_label(input, root)?;
     let mut extras = Vec::new();
     let doc = match command {
+        "duel-platform" => serde_json::to_value(sa2_asset_tools::duel_platform::read(&bytes)?)?,
         "mission-ranks" => serde_json::to_value(sa2_asset_tools::mission_ranks::read(&bytes)?)?,
-        "fan-stage" | "fan-levels" => {
+        "fan-stage" | "fan-levels" | "fan-tasks" => {
             let cfg = Path::new(&args[3]);
             for (name, role) in [
                 ("ADVERTISE.ini", "story-mapping"),
@@ -188,13 +189,35 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 extras[1].text()?,
                 extras[2].text()?,
             )?;
-            if command == "fan-levels" {
+            let gd = input
+                .parent()
+                .ok_or_else(|| Error::invalid("missing install root"))?
+                .join("resource/gd_PC");
+            if command == "fan-tasks" {
+                let mut cached = std::collections::BTreeMap::<String, usize>::new();
+                let coverage = sa2_asset_tools::task_coverage::read(&catalog, |name| {
+                    if let Some(&index) = cached.get(name) {
+                        return Ok(Some(extras[index].bytes.clone()));
+                    }
+                    let path = gd.join(name);
+                    if !path.try_exists()? {
+                        return Ok(None);
+                    }
+                    let src = Extra::read(
+                        &path,
+                        format!("resource/gd_PC/{name}"),
+                        2 * 1024 * 1024,
+                        "campaign-set",
+                    )?;
+                    cached.insert(name.into(), extras.len());
+                    let data = src.bytes.clone();
+                    extras.push(src);
+                    Ok(Some(data))
+                })?;
+                serde_json::to_value(coverage)?
+            } else if command == "fan-levels" {
                 serde_json::to_value(catalog.levels())?
             } else {
-                let gd = input
-                    .parent()
-                    .ok_or_else(|| Error::invalid("missing installation root"))?
-                    .join("resource/gd_PC");
                 let stage = catalog.mount(text_arg(&args[4])?, number(&args[5])?, |name| {
                     let path = gd.join(name);
                     if !path.try_exists()? {

@@ -200,3 +200,58 @@ fn mounted_campaign_routes() {
     assert!(empty.layers.is_empty() && empty.terrain.is_none() && empty.entry_pose.is_some());
     eprintln!("mounts={mounts}, placements={placements}, unresolved={unresolved}, starts={starts}, grounds={grounds}, terrain={terrain_ids:?}, gaps={gaps:?}");
 }
+#[test]
+#[ignore = "requires installed game and PC_SA2 mappings"]
+fn task_coverage_partitions_the_verified_campaign_sets() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let cfg = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap());
+    let read = |f: &str| fs::read_to_string(cfg.join(f)).unwrap();
+    let campaign = Campaign::new(
+        &fs::read(game.join("sonic2app.exe")).unwrap(),
+        &read("ADVERTISE.ini"),
+        &read("sa2lvl.ini"),
+        &read("ObjectLists.ini"),
+    )
+    .unwrap();
+    let coverage = sa2_asset_tools::task_coverage::read(&campaign, |f| {
+        Ok(Some(fs::read(game.join("resource/gd_PC").join(f))?))
+    })
+    .unwrap();
+    assert_eq!(
+        (
+            coverage.story_dispatches,
+            coverage.layer_mounts,
+            coverage.distinct_layers
+        ),
+        (49, 94, 84)
+    );
+    assert_eq!(
+        (
+            coverage.placement_visits,
+            coverage.distinct_placements,
+            coverage.unresolved_placements
+        ),
+        (24162, 24003, 0)
+    );
+    assert_eq!(
+        coverage
+            .by_function_va
+            .values()
+            .map(|task| task.distinct_placements)
+            .sum::<usize>(),
+        coverage.distinct_placements
+    );
+    assert!(coverage.missing_files.is_empty());
+    assert_eq!(
+        coverage
+            .without_layers
+            .iter()
+            .map(|d| d.level)
+            .collect::<Vec<_>>(),
+        [66]
+    );
+    let absent = sa2_asset_tools::task_coverage::read(&campaign, |_| Ok(None)).unwrap();
+    assert_eq!(absent.without_layers.len(), 49);
+    assert_eq!(absent.missing_files.len(), 84);
+    assert!(absent.by_function_va.is_empty());
+}
