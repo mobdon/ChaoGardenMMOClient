@@ -251,6 +251,50 @@ impl<'a> CityRel<'a> {
             serde_json::json!({"objects":rows,"pointerBasis":"REL section and offset","selection":"low 8 bits of SET rotation X, capped at last variant"}),
         )
     }
+    /// Normal SARROW display path (no alternate submode draw), after the task mode gate.
+    pub fn arrow_display(&self, mode: i8, tick: u32) -> Result<serde_json::Value> {
+        let local = |at| {
+            self.local_pointer(5, at)?
+                .filter(|(s, _)| *s == 5)
+                .map(|(_, v)| v)
+                .ok_or_else(invalid)
+        };
+        let header = self.resource(0xbec2)?;
+        let descriptor = local(header)?;
+        let model = local(descriptor + 8)?;
+        let texlist = self.local_pointer(5, descriptor + 4)?;
+        let mut rows = Vec::new();
+        if mode == 0 {
+            let mut node = local(model + 0x2c)?;
+            let phase = tick % 90;
+            let active = 2 - phase / 30;
+            let age = phase % 30;
+            let constants = self.data(4)?;
+            let constant = |offset: usize| {
+                f32::from_be_bytes(constants[offset..offset + 4].try_into().unwrap())
+            };
+            for index in 0..3 {
+                let weight = if index == active {
+                    if age < 8 {
+                        age as f32 * constant(0x268)
+                    } else {
+                        constant(0x26c)
+                    }
+                } else if index == (active + 1) % 3 && age < 8 {
+                    (8 - age) as f32 * constant(0x268)
+                } else {
+                    constant(0x270)
+                };
+                rows.push(serde_json::json!({"index":index,"nodeOffset":node,"geometry":self.local_pointer(5,node+4)?,"weight":weight,"draw":weight>constant(0x274)}));
+                if index < 2 {
+                    node = local(node + 0x30)?;
+                }
+            }
+        }
+        Ok(
+            serde_json::json!({"visibleMode":mode==0,"modelOffset":model,"textureList":texlist,"children":rows,"scope":"Normal SARROW path only. Draw decisions and weights, not rendered pixels."}),
+        )
+    }
     fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
         let data = self.data(5)?;
         let local = |o| {
