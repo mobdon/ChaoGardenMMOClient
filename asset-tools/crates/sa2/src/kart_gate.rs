@@ -625,6 +625,9 @@ enum SequenceEvent {
     ContinueVehicle {
         continue_vehicle_update: EmptyUpdate,
     },
+    GuidedDrive {
+        guided_drive: crate::kart_guided_drive::StoryDrive,
+    },
     ScriptedTick {
         scripted_tick: crate::kart_scripted_motion::StoryTick,
     },
@@ -748,6 +751,8 @@ pub fn story_sequence(
     let mut completed_pose = None;
     let mut inherited_pose = None;
     let mut spin_carry = None;
+    let mut guided_work = None;
+    let mut guided_quads = None;
     let mut scripted_globals = None;
     let mut scripted_boost_reset = false;
     let mut windup: Option<crate::kart_drift::DriftCarry> = None;
@@ -794,6 +799,39 @@ pub fn story_sequence(
                 }
                 updates
                     .push(json!({"previousVelocity":start.primary_update_velocity,"work_10c":0}));
+                continue;
+            }
+            SequenceEvent::GuidedDrive { guided_drive } => {
+                if vehicle != Some(7) {
+                    return Err(Error::invalid("guided drive requires vehicle state 7"));
+                }
+                let work = guided_work.ok_or_else(|| Error::invalid("missing finish guidance"))?;
+                if guided_quads.is_none() {
+                    let name = if mode == 0 { "101" } else { "280" };
+                    guided_quads = Some(
+                        crate::kart_progress::read_crossings(bytes, exe)?
+                            .courses
+                            .into_iter()
+                            .find(|r| r.course == name)
+                            .ok_or_else(|| Error::invalid("missing story guidance course"))?
+                            .projected_segment_xz,
+                    );
+                }
+                let next = guided_drive.run(
+                    &rel,
+                    work,
+                    route.ok_or_else(|| Error::invalid("missing guided vehicle route"))?,
+                    count as i32,
+                    guided_quads.as_deref().unwrap(),
+                    inherited_pose.take(),
+                    mode as usize,
+                )?;
+                guided_work = Some(next.guidance);
+                snapshot = None;
+                completed_pose = None;
+                recovered_pose = None;
+                sample = None;
+                updates.push(json!({"guidedDrive":next}));
                 continue;
             }
             SequenceEvent::ScriptedTick { mut scripted_tick } => {
@@ -1239,6 +1277,11 @@ pub fn story_sequence(
                     },
                 )?;
                 vehicle = r.vehicle_state;
+                if let Some(g) = r.frame.as_ref().and_then(|f| f.finish_guidance()) {
+                    guided_work = Some(g);
+                } else if vehicle != Some(7) {
+                    guided_work = None;
+                }
                 if let Some(t) = r.timer {
                     timeout = Some(t);
                 }

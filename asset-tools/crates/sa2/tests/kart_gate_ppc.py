@@ -66,6 +66,9 @@ print("Matched seven GATE2 traces including one-shot credit, first-contact filte
 if len(sys.argv)>4:
     exe=Path(sys.argv[4])
     with tempfile.TemporaryDirectory(dir=private) as td:
+        directory=Path(td)/"guidance-course.json"
+        subprocess.run([cli,"kart-crossing-directory",rel,directory,exe],check=True)
+        courses={item["course"]:item for item in json.loads(directory.read_text())["courses"]}
         for path in sorted([*rel.parent.glob("setCartTails*.bin"),*rel.parent.glob("setCartRouge*.bin")]):
             rows=list(struct.iter_unpack(">4H6f",path.read_bytes()[32:]))
             a,b=[i for i,r in enumerate(rows) if r[0]&4095==4]
@@ -313,6 +316,36 @@ if len(sys.argv)>4:
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             doc=json.loads(out.read_text());step=doc["updates"][1]["slotProgress"]
             assert doc["vehicleState"]==7 and step["tested_indices"]==[6,7,8] and not step["debug_indices"]
+            # Advance finish guidance on the installed course, then consume the
+            # updated target segment/corner on a separately observed moving frame.
+            mode=int("Rouge" in path.name);course=courses["280" if mode else "101"]
+            quads=course["projected_segment_xz"]
+            real=json.loads(json.dumps(guided));real["segment_count"]=len(quads)
+            real["dispatch"]["target"]["quad"]=quads[7]
+            go=dict(work_74=1,place=1,previous_ground_position=[1,2,3],engine=dict(angle_radians=0,
+                    angle_difference=0,stepped_angle=100,direction_xz=[1,0],distance_return=0,random_return=0))
+            turn=dict(go,work_74=0,position=[11,12,13],velocity_y=3,engine=dict(go["engine"],
+                      angle_difference=364,distance_return=999,stepped_angle=90))
+            guide_q=dict(q,updates=[dict(vehicle_post_move=real),dict(continue_vehicle_update={}),
+                         dict(guided_drive=go),dict(guided_drive=turn)])
+            req.write_text(json.dumps(guide_q));out=req.with_name(path.stem+"-finish-guidance.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            seq=json.loads(out.read_text())["updates"];init=seq[0]["vehiclePostMove"]["frame"]["dispatch"]["guidance"]
+            guided_first,guided_turn=[v["guidedDrive"] for v in seq[-2:]]
+            assert guided_first["advanced"] and not guided_turn["advanced"]
+            assert guided_first["guidance"]["work_254"]==8 and guided_first["guidance"]["work_258"]==2
+            assert guided_first["previous_ground_position"]==guided_first["position"]
+            assert guided_turn["previous_ground_position"]==turn["previous_ground_position"]
+            table=w(w(16)+5*8)&~1
+            accel,turn_power,_,_,weight=struct.unpack_from(">5f",d,table+0x36cc+40*mode)
+            for inp,prior,actual,point,vy in [(go,init,guided_first,real["position"],0),(turn,guided_first["guidance"],guided_turn,turn["position"],3)]:
+                reference=dict(guidance={k:v for k,v in prior.items() if k.startswith("work_")},segment=real["segment"],
+                    segment_count=len(quads),quad_segment=prior["work_254"],quad=quads[prior["work_254"]],position=point,
+                    previous_ground_position=inp["previous_ground_position"],velocity_y=vy,work_74=inp["work_74"],place=1,
+                    player_slot=0,lap=guide_q["primary_kart_counter"],acceleration=accel,deceleration=turn_power,weight=weight,engine=inp["engine"])
+                req.write_text(json.dumps(reference));out=req.with_name(path.stem+f"-guided-reference-{prior['work_254']}.json")
+                subprocess.run([cli,"kart-guided-drive",rel,out,req],check=True)
+                assert actual==json.loads(out.read_text())
             scan["work_44"]=1
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-scan.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)

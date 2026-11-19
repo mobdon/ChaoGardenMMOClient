@@ -51,6 +51,9 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn finish_guidance(&self) -> Option<crate::kart_guided_drive::Guidance> {
+        Some(self.dispatch.as_ref()?.guidance.as_ref()?.work)
+    }
     pub(crate) fn bind_recovery(
         &mut self,
         r: crate::kart_fall_recovery::RecoveredProgress,
@@ -174,12 +177,8 @@ struct Target {
 }
 #[derive(Serialize)]
 struct Guidance {
-    work_254: i32,
-    work_258: i32,
-    work_25c: i32,
-    work_260: i32,
-    work_264: f32,
-    work_274: i32,
+    #[serde(flatten)]
+    work: crate::kart_guided_drive::Guidance,
     target_xz: [f32; 2],
     from_xz: [f32; 2],
 }
@@ -368,12 +367,14 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                         d.work_44 = 0;
                         d.work_68 = 0;
                         d.guidance = Some(Guidance {
-                            work_254: ahead,
-                            work_258: 1,
-                            work_25c: near,
-                            work_260: 1,
-                            work_264: speed,
-                            work_274: angle as i32,
+                            work: crate::kart_guided_drive::Guidance {
+                                work_254: ahead,
+                                work_258: 1,
+                                work_25c: near,
+                                work_260: 1,
+                                work_264: speed,
+                                work_274: angle as i32,
+                            },
                             target_xz: t.quad[1],
                             from_xz: [position[0], position[2]],
                         });

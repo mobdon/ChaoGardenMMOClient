@@ -296,9 +296,7 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
     } else {
         0x36cc + s.profile * 40
     };
-    let row: [f32; 10] = std::array::from_fn(|j| {
-        f32::from_be_bytes(data[offset + 4 * j..offset + 4 * j + 4].try_into().unwrap())
-    });
+    let row = physics_row(data, offset);
     let row = if s.profile == 8 {
         s.profile8_write
             .map(|r| r.map(f32::from_bits))
@@ -372,6 +370,14 @@ struct Event {
     engine_args: Option<[i32; 4]>,
 }
 
+fn physics_row(data: &[u8], offset: usize) -> [f32; 10] {
+    std::array::from_fn(|j| {
+        f32::from_be_bytes(data[offset + 4 * j..offset + 4 * j + 4].try_into().unwrap())
+    })
+}
+pub(crate) fn base_row(data: &[u8], profile: usize) -> [f32; 10] {
+    physics_row(data, 0x36cc + 40 * profile)
+}
 pub(crate) fn cue_row(data: &[u8], profile: usize, alternate: bool) -> Result<[i32; 6]> {
     if profile >= 16 || (alternate && !(2..=7).contains(&profile)) {
         return Err(crate::Error::invalid("unsupported kart cue profile"));

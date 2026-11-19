@@ -1,14 +1,14 @@
 use crate::{city_rel::CityRel, kart_progress, Error, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub struct Guidance {
-    work_254: i32,
-    work_258: i32,
-    work_25c: i32,
-    work_260: i32,
-    work_264: f32,
-    work_274: i32,
+    pub(crate) work_254: i32,
+    pub(crate) work_258: i32,
+    pub(crate) work_25c: i32,
+    pub(crate) work_260: i32,
+    pub(crate) work_264: f32,
+    pub(crate) work_274: i32,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,7 +43,7 @@ struct Engine {
 }
 #[derive(Serialize)]
 pub struct Tick {
-    guidance: Guidance,
+    pub(crate) guidance: Guidance,
     position: [f32; 3],
     previous_ground_position: [f32; 3],
     yaw: i32,
@@ -56,6 +56,9 @@ pub struct Tick {
 pub fn tick(bytes: &[u8], s: Input) -> Result<Tick> {
     kart_progress::verify(bytes)?;
     let rel = CityRel::read_identified(bytes, 80)?;
+    tick_verified(&rel, s)
+}
+fn tick_verified(rel: &CityRel, s: Input) -> Result<Tick> {
     let c = rel.data(4)?;
     let data = rel.data(5)?;
     let f = |p: &[u8], i: usize| f32::from_be_bytes(p[i..i + 4].try_into().unwrap());
@@ -132,6 +135,80 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Tick> {
     })
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryDrive {
+    position: Option<[f32; 3]>,
+    velocity_y: Option<f32>,
+    previous_ground_position: [f32; 3],
+    work_74: i32,
+    place: i32,
+    engine: Engine,
+}
+impl StoryDrive {
+    pub(crate) fn run(
+        self,
+        rel: &CityRel,
+        guidance: Guidance,
+        route: (i32, i32),
+        lap: i32,
+        quads: &[[[f32; 2]; 4]],
+        pose: Option<([f32; 3], [f32; 3], [i32; 3])>,
+        mode: usize,
+    ) -> Result<Tick> {
+        if quads.len() != route.1 as usize {
+            return Err(Error::invalid(
+                "guided segment count conflicts with installed course",
+            ));
+        }
+        let quad = *quads
+            .get(guidance.work_254 as usize)
+            .ok_or_else(|| Error::invalid("missing guided target quad"))?;
+        let (mut position, mut vy) = (self.position, self.velocity_y);
+        if let Some((p, v, _)) = pose {
+            if position.is_some_and(|q| q.map(f32::to_bits) != p.map(f32::to_bits)) {
+                return Err(Error::invalid(
+                    "guided position conflicts with preceding frame",
+                ));
+            }
+            position = Some(p);
+            // A nonzero incoming vector can be clamped before dispatch; its vertical
+            // component must then be observed after the profile speed limit.
+            if v == [0.; 3] {
+                if vy.is_some_and(|y| y != 0.) {
+                    return Err(Error::invalid(
+                        "guided vertical velocity conflicts with stationary frame",
+                    ));
+                }
+                vy = Some(v[1]);
+            }
+        }
+        let row = crate::kart_vehicle_init::base_row(rel.data(5)?, mode);
+        tick_verified(
+            rel,
+            Input {
+                tuning: None,
+                guidance,
+                segment: route.0,
+                segment_count: route.1,
+                quad_segment: guidance.work_254,
+                quad,
+                position: position.ok_or_else(|| Error::invalid("missing guided task position"))?,
+                velocity_y: vy.ok_or_else(|| Error::invalid("missing guided dispatch velocity"))?,
+                previous_ground_position: self.previous_ground_position,
+                work_74: self.work_74,
+                place: self.place,
+                player_slot: 0,
+                lap,
+                acceleration: row[0],
+                // The guided turn branch reads section 6 +0x21444 (profile word 1).
+                deceleration: row[1],
+                weight: row[4],
+                engine: self.engine,
+            },
+        )
+    }
+}
 impl Guidance {
     pub(crate) fn at_spawn(slot: i32, yaw: i32, speed: f32) -> Self {
         Self {
