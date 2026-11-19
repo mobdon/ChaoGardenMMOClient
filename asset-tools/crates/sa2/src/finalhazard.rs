@@ -869,6 +869,16 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    /// Continuation at 0x7f0, using the signed collision-query returns.
+    BodyContact {
+        slot: Option<u8>,
+        own_query: i32,
+        other_query: i32,
+        gate_task: Option<PhaseGateTask>,
+        wait_work_present: bool,
+        wait_word: i32,
+        timer: u16,
+    },
     BodyCollision,
     /// Inputs at 0x1d74. Supply the final player byte separately because the
     /// stage reads it again after the damage and collision calls.
@@ -1249,6 +1259,45 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             return Ok(
                 serde_json::json!({"list_id":word(0x570)&0xffff,"slots":slots,
                 "scope":"Initial descriptors and body center-update bindings; collision response and live transform buffers are external."}),
+            );
+        }
+        PlacementClock::BodyContact {
+            slot,
+            own_query,
+            other_query,
+            gate_task,
+            wait_work_present,
+            mut wait_word,
+            mut timer,
+        } => {
+            let mut sites = vec![0x7f4];
+            let mut response = None;
+            if let Some(slot) = slot {
+                if u32::from(slot) >= (word(0x56c) & 0xffff) {
+                    return Err(Error::invalid(
+                        "body contact slot outside boss collision table",
+                    ));
+                }
+                sites.extend([0x868, 0x878, 0x884]);
+                let site = if own_query > other_query {
+                    sites.extend([0x8a0, 0x8a4]);
+                    if phase_write_allowed(gate_task) && wait_work_present {
+                        timer = word(0xce4) as u16;
+                        wait_word = 1;
+                    }
+                    0x896
+                } else {
+                    sites.extend([0x8b4, 0x8c8]);
+                    0x85a
+                };
+                response = Some(f32::from_be_bytes(
+                    phase_constant(&rel, site, 4)?.try_into().unwrap(),
+                ));
+                sites.extend([0x8d4, 0x8ec, 0x8fc]);
+            }
+            return Ok(
+                serde_json::json!({"slot":slot,"response_scalar":response,"timer":timer,
+                "wait_word":wait_word,"call_sites":sites}),
             );
         }
         PlacementClock::InitialHealth => {
