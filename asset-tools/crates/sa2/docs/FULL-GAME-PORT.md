@@ -93,3 +93,5 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 [Shared stage callbacks](SHARED-STAGE-TASKS.md) documents mounted replay and magnetic shield selection.
 
 [Damage and dropped ring behavior](DAMAGE-RINGS.md) covers ring loss, scatter, flight, static contact response and expiry.
+
+[Goal-ring contact](GOAL-RING.md) covers native initialization decisions and activation calls across the 28 mapped story levels. The mission controller and automatic story advancement remain unimplemented.
