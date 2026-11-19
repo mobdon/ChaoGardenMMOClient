@@ -406,6 +406,10 @@ fn mounted_goal_cli() {
             .output()
             .unwrap();
         if !result.status.success() {
+            eprintln!(
+                "fan-goal row {row}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
             assert!(!out.exists());
             return None;
         }

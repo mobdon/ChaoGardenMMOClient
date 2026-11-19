@@ -2453,6 +2453,21 @@ struct TextureSetup {
     size_return: Option<u32>,
     allocation_return: u32,
 }
+/// Old recordings supply just the hit. A sampled frame can also supply
+/// the live global bytes read by the native update and contact branches.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum GoalFrame {
+    Sample(GoalSample),
+    Hit(Hit),
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoalSample {
+    hit: Hit,
+    game_byte_23: i8,
+    game_byte_37: Option<i8>,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -2466,7 +2481,7 @@ struct Request {
     allocation_ok: bool,
     initial_slot_words: Option<[u32; 2]>,
     game_byte_23: i8,
-    frames: Vec<Hit>,
+    frames: Vec<GoalFrame>,
     lifecycle: Option<LifecycleInput>,
     probe: Option<Probe>,
 }
@@ -2636,12 +2651,26 @@ pub fn replay(
     };
     let mut slot_words = r.initial_slot_words.unwrap_or(p.initial_slot_words);
     let mut frames = vec![];
-    for hit in r.frames {
+    for observation in r.frames {
+        let (hit, game_byte, motion_gate) = match observation {
+            GoalFrame::Hit(hit) => (hit, r.game_byte_23, None),
+            GoalFrame::Sample(s) => (s.hit, s.game_byte_23, s.game_byte_37),
+        };
+        if motion_gate.is_some() && r.lifecycle.is_none() {
+            return Err(Error::invalid(
+                "per-frame motion gate requires regular goal lifecycle",
+            ));
+        }
         let was_latched = state.latched;
         if let Some(input) = &r.lifecycle {
-            motion.tick(was_latched, input.game_byte_37, p.spin, p.rise);
+            motion.tick(
+                was_latched,
+                motion_gate.unwrap_or(input.game_byte_37),
+                p.spin,
+                p.rise,
+            );
         }
-        let calls = state.step(angle_x, r.game_byte_23, hit, p.local_effect)?;
+        let calls = state.step(angle_x, game_byte, hit, p.local_effect)?;
         let mut frame = json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched});
         apply_slot_writes(&mut slot_words, &calls, p.local_effect);
         frame["moduleSlotWords"] = json!(slot_words);
