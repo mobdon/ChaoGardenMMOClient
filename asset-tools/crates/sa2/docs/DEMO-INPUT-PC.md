@@ -38,3 +38,9 @@ position, velocity or contact reference for the board descent.
 Run `fan-demos EXE OUTPUT.json PC_SA2_CONFIG_DIR` to list the seven authored level dispatches with their character, level ID, action index and source RVA. Pass the reported sequence name and action index to `fan-stage`. For example, the Sonic Trial sequence opens with an event and mounts City Escape at index 1; the Sonic preview mounts City Escape at index 0 and follows it with event 532. In this context, an action index selects a story-table action, not a frame in a controller recording.
 
 The two intros contain event sections only. The `story-sections` snapshot command can resolve those sections as well as the demo sections, including each native terminator. These lookups do not select an input file or establish a playable interval in a PRS recording.
+
+## Inspecting compressed recordings
+
+`demo-prs-window DEMO.prs OUTPUT.json FIRST_RECORD COUNT` decodes 1–4,096 physical records at a specified zero-based offset. It returns the SHA-256 of the complete decoded buffer, both controller slots, and the trailing byte count. The output manifest identifies the original compressed source. All 14 installed PRS buffers are 917,504 bytes: 20,852 complete 44-byte windows and 16 remaining bytes. A record inside those bounds is not necessarily active controller input.
+
+The four similarly named raw two-player files are not identical prefixes of their decoded PRS counterparts. Their raw lengths therefore do not establish a PRS playback endpoint. The offline check in `tests/demo_prs_reference.py` compares the full decoded hashes with SA Tools PRS.dll and checks both slots at the start, interior, and last complete physical record of every buffer. No original recording or decoded window is needed in Git.
