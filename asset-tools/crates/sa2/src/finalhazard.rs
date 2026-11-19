@@ -245,3 +245,53 @@ pub fn weakpoint_glb(exe: &[u8], prs: &[u8]) -> Result<Vec<u8>> {
     })?;
     crate::visual_glb::export(&scene, &pngs)
 }
+
+/// Replay Ninja weight start/middle/end records in native node traversal order.
+/// Preserve individual bone-local inputs; rigid vertices use a separate path.
+pub fn weights(exe: &[u8]) -> Result<serde_json::Value> {
+    use std::collections::BTreeMap;
+    let [boss, _] = read(exe)?;
+    let attachments = geometry(exe)?;
+    let mut pending = BTreeMap::<u32, Vec<serde_json::Value>>::new();
+    let mut finished = Vec::new();
+    for joint in boss {
+        let Some(a) = joint.attachment_rva else {
+            continue;
+        };
+        for chunk in &attachments[&a].vertex_chunks {
+            if chunk.kind != 44 {
+                continue;
+            }
+            let phase = chunk.flags & 3;
+            for v in &chunk.vertices {
+                let word = *v
+                    .raw_words
+                    .get(6)
+                    .ok_or_else(|| Error::invalid("missing vertex weight"))?;
+                let index = u32::from(chunk.index_offset) + (word & 0xffff);
+                if phase == 0 && pending.insert(index, Vec::new()).is_some() {
+                    return Err(Error::invalid("unfinished weight at start"));
+                }
+                if phase > 2 {
+                    return Err(Error::invalid("unexpected vertex weight phase"));
+                }
+                let chain = pending
+                    .get_mut(&index)
+                    .ok_or_else(|| Error::invalid("weight without start"))?;
+                chain.push(serde_json::json!({"jointRva":joint.rva,"weightByte":(word>>16)&255,"rawFlags":word,
+                    "position":v.position,"normal":v.normal}));
+                if phase == 2 {
+                    finished.push(
+                        serde_json::json!({"index":index,"influences":pending.remove(&index)}),
+                    );
+                }
+            }
+        }
+    }
+    if !pending.is_empty() {
+        return Err(Error::invalid("unterminated weight chains"));
+    }
+    Ok(
+        serde_json::json!({"vertices":finished,"space":"each contribution is in its source joint's local space"}),
+    )
+}
