@@ -56,6 +56,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
+    let mut entry_cases = 0;
     let mut counts = [0; 21];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
@@ -64,7 +65,20 @@ fn compare_installed_init_and_contact() {
     for line in stdout.lines() {
         let v: Vec<_> = line.split_whitespace().collect();
         let n = |i: usize| v[i].parse::<i32>().unwrap();
-        if v[0] == "I" {
+        if v[0] == "ENTRY" {
+            let checked = n(1) == 0 && n(2) == 0;
+            let byte = program
+                .update_entry(
+                    n(1) != 0,
+                    n(2) as u8,
+                    checked.then(|| n(3) != 0),
+                    v[4].parse().unwrap(),
+                    n(5) as i8,
+                )
+                .unwrap();
+            assert_eq!(byte.unwrap_or(99), n(6) as u8, "{line}");
+            entry_cases += 1;
+        } else if v[0] == "I" {
             let r = initialize(
                 n(1),
                 n(2) as i8,
@@ -372,6 +386,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
+    assert_eq!(entry_cases, 200);
     assert_eq!(
         counts,
         [720, 280, 40, 194, 45, 5, 44, 6, 18, 96, 176, 1280, 12, 6, 2, 2, 100, 32, 10, 36, 6]

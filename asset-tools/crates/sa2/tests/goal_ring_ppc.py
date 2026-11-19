@@ -102,6 +102,16 @@ for pc in cleanup_targets:
 const_base=DATA+5*0x100000
 map_page(const_base+2219464)
 u.mem_write(const_base+2219464,d[ss[5][0]+2219464:ss[5][0]+2219496])
+# Execute the entry gate before movement/contact. Preserve byte 3 on range exit.
+u.mem_write(const_base+0x21dddc,d[ss[5][0]+0x21dddc:ss[5][0]+0x21dde4])
+for latch,task_mode,out,tick,byte in itertools.product((0,1),(0,1),(0,1),(24,25,39,40,0xffffffff),(-1,0,1,2,3)):
+    put(WORK,'BBBB',task_mode,latch,0,99);put(GLOBAL+0x7c,'I',tick);put(GLOBAL+0x23,'b',byte)
+    setreg(3,WORK);setreg(26,TASK);setreg(27,WORK)
+    stops_early=not latch and not task_mode and out
+    end=0x2dd10 if stops_early else 0x2d604
+    u.emu_start(BASE+0x2d55c,BASE+end,count=64)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+end
+    print('ENTRY',latch,task_mode,out,tick,byte,get(WORK+3,'B'))
 for pc in (BASE+0x2d868,BASE+0x2da4c,BASE+0x2dd10):
     u.hook_add(UC_HOOK_CODE,lambda uc,pc,size,data:uc.emu_stop(),begin=pc,end=pc)
 for active,gate,timer,ptr in itertools.product((0,1),(0,1),(0,58,59,60,65535),(0,1)):

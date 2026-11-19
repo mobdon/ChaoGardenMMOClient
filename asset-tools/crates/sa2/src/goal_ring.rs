@@ -74,6 +74,8 @@ pub struct Program {
     texture_lod_bits: [u32; 2],
     pub radii: [f32; 2],
     pub spin: [i32; 2],
+    update_period: u32,
+    update_window: u32,
     pub rise: f32,
 }
 fn invalid() -> Error {
@@ -322,6 +324,30 @@ struct ActionServices {
     scalar: u32,
 }
 impl Program {
+    /// None: the range helper ended this invocation before the byte-3 store.
+    pub fn update_entry(
+        &self,
+        latched: bool,
+        mode: u8,
+        range_out: Option<bool>,
+        tick: u32,
+        game_byte: i8,
+    ) -> Result<Option<u8>> {
+        if (!latched && mode == 0) != range_out.is_some() {
+            return Err(Error::invalid(
+                "range return required only for an unlatched mode-zero goal",
+            ));
+        }
+        Ok(if range_out == Some(true) {
+            None
+        } else if tick % self.update_period >= self.update_window {
+            Some(0)
+        } else if matches!(game_byte, 1 | 2) {
+            Some(2)
+        } else {
+            Some(1)
+        })
+    }
     pub fn read(level: u16, bytes: &[u8]) -> Result<Self> {
         let &(_, row) = ROWS
             .iter()
@@ -1411,6 +1437,11 @@ impl Program {
         let instructions = rel.data(1)?;
         for (offset, length, hash) in [
             (
+                0x354,
+                0xa8,
+                "5f53be3b11c6a6c740dc6ad10951e8e332d7d91425cc658989992ff56e2c6755",
+            ),
+            (
                 0x5f8,
                 0x68,
                 "96efb20d8a54e6dbe19cb4d2020ca30e248e21466929d49fba85e4bd0dc11650",
@@ -1437,6 +1468,12 @@ impl Program {
             }
             word(rel.data(5)?, a.addend as usize)
         };
+        let update_period = constant(0x396, 0x39a)?;
+        let update_window = constant(0x3ae, 0x3b2)?;
+        let range = rel.reference(1, init + 0x378).ok_or_else(invalid)?;
+        if update_period == 0 || (range.module, range.kind, range.addend) != (0, 10, 0x8006538c) {
+            return Err(invalid());
+        }
         let spin = [
             constant(0x64e, 0x652)? as i32,
             constant(0x60e, 0x612)? as i32,
@@ -1490,6 +1527,8 @@ impl Program {
             regular_shape_offset,
             radii,
             spin,
+            update_period,
+            update_window,
             rise,
         })
     }
@@ -2482,7 +2521,14 @@ enum GoalFrame {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct UpdateEntry {
+    frame_counter: u32,
+    range_out: Option<bool>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GoalSample {
+    entry: Option<UpdateEntry>,
     hit: Hit,
     game_byte_23: i8,
     game_byte_37: Option<i8>,
@@ -2705,15 +2751,32 @@ pub fn replay(
     let mut slot_words = r.initial_slot_words.unwrap_or(p.initial_slot_words);
     let mut frames = vec![];
     for observation in r.frames {
-        let (hit, game_byte, motion_gate) = match observation {
-            GoalFrame::Hit(hit) => (hit, game_byte, None),
-            GoalFrame::Sample(s) => (s.hit, s.game_byte_23, s.game_byte_37),
+        let (hit, game_byte, motion_gate, entry) = match observation {
+            GoalFrame::Hit(hit) => (hit, game_byte, None, None),
+            GoalFrame::Sample(s) => (s.hit, s.game_byte_23, s.game_byte_37, s.entry),
         };
         if motion_gate.is_some() && r.lifecycle.is_none() {
             return Err(Error::invalid(
                 "per-frame motion gate requires regular goal lifecycle",
             ));
         }
+        let entry = if let Some(input) = entry {
+            let Some(byte3) = p.update_entry(
+                state.latched,
+                work.mode,
+                input.range_out,
+                input.frame_counter,
+                game_byte,
+            )?
+            else {
+                frames.push(json!({"rangeOut":true,"calls":[],"latched":state.latched,"moduleSlotWords":slot_words}));
+                break;
+            };
+            let checked = input.range_out.is_some();
+            Some(json!({"rangeChecked":checked,"workByte3":byte3}))
+        } else {
+            None
+        };
         let was_latched = state.latched;
         if let Some(input) = &r.lifecycle {
             motion.tick(
@@ -2725,6 +2788,9 @@ pub fn replay(
         }
         let calls = state.step(angle_x, game_byte, hit, p.local_effect)?;
         let mut frame = json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched});
+        if let Some(entry) = entry {
+            frame["entry"] = entry;
+        }
         apply_slot_writes(&mut slot_words, &calls, p.local_effect);
         frame["moduleSlotWords"] = json!(slot_words);
         let cleanup = r

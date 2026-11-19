@@ -605,8 +605,8 @@ fn mounted_story_goal_samples_live_game_bytes() {
         let module = fs::read(gd.join(format!("stg{:02}D.rel", dispatch.level))).unwrap();
         let request = serde_json::json!({"game_byte_23":0,"range_out":false,"allocation_ok":true,
             "initial_slot_words":[77,88],"lifecycle":{"initial_timer":58,"game_byte_37":0,"task_field_30_present":true},
-            "frames":[{"kind":"none"},{"hit":{"kind":"player","slot":1},"game_byte_23":1,"game_byte_37":1},
-            {"hit":{"kind":"none"},"game_byte_23":0,"game_byte_37":1},{"kind":"none"},{"kind":"none"},{"kind":"none"}]});
+            "frames":[{"kind":"none"},{"hit":{"kind":"player","slot":1},"game_byte_23":1,"game_byte_37":1,"entry":{"range_out":false,"frame_counter":24}},
+            {"hit":{"kind":"none"},"game_byte_23":0,"game_byte_37":1,"entry":{"frame_counter":25}},{"kind":"none"},{"kind":"none"},{"kind":"none"}]});
         let replay = sa2_asset_tools::goal_ring::replay(
             &stage,
             layer,
@@ -619,6 +619,33 @@ fn mounted_story_goal_samples_live_game_bytes() {
         .unwrap();
         let frames = replay["frames"].as_array().unwrap();
         assert_eq!(frames.len(), 5);
+        assert_eq!(
+            frames[1]["entry"],
+            serde_json::json!({"rangeChecked":true,"workByte3":2})
+        );
+        assert_eq!(
+            frames[2]["entry"],
+            serde_json::json!({"rangeChecked":false,"workByte3":0})
+        );
+        if dispatch.level == 13 {
+            let mut out = request.clone();
+            out["frames"][1]["entry"]["range_out"] = true.into();
+            let result = sa2_asset_tools::goal_ring::replay(
+                &stage,
+                layer,
+                row,
+                &module,
+                &exe,
+                &effects,
+                &serde_json::to_vec(&out).unwrap(),
+            )
+            .unwrap();
+            let seq = result["frames"].as_array().unwrap();
+            assert_eq!(seq.len(), 2);
+            assert_eq!(seq[1]["rangeOut"], true);
+            assert_eq!(seq[1]["latched"], false);
+            assert_eq!(seq[1]["calls"], serde_json::json!([]));
+        }
         assert!(frames[1]["calls"]
             .as_array()
             .unwrap()
