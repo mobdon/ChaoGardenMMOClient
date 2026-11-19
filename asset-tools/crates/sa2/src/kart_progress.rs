@@ -23,11 +23,15 @@ pub struct Update {
     pub tested_indices: Vec<i32>,
     pub debug_indices: Vec<i32>,
 }
-pub fn update(bytes: &[u8], s: Input) -> Result<Update> {
+fn verify(bytes: &[u8]) -> Result<()> {
     if manifest::sha256(bytes) != "71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c"
     {
         return Err(Error::invalid("unsupported CartD.rel revision"));
     }
+    Ok(())
+}
+pub fn update(bytes: &[u8], s: Input) -> Result<Update> {
+    verify(bytes)?;
     if s.course_length <= 0 || s.segment_tests.len() > 11 {
         return Err(Error::invalid(
             "invalid course length or segment observation count",
@@ -88,4 +92,60 @@ pub fn update(bytes: &[u8], s: Input) -> Result<Update> {
     }
     r.highest = r.highest.max(r.counter);
     Ok(r)
+}
+/// Runtime record at section 6 + 0x26D84 + index * 32 is four X/Z pairs.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SegmentInput {
+    pub task_position: [f32; 3],
+    pub work_position: Option<[f32; 3]>,
+    pub segment_xz: [[f32; 2]; 4],
+}
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SegmentGeometry {
+    Miss,
+    RequiresIntersection {
+        origin: [f32; 3],
+        direction: [f32; 3],
+        triangle: [[f32; 3]; 3],
+    },
+}
+/// Reconstruct the operands at the first imported geometry call of 0x9220.
+/// No work pointer or zero planar displacement returns zero before that call.
+pub fn segment_geometry(bytes: &[u8], s: SegmentInput) -> Result<SegmentGeometry> {
+    verify(bytes)?;
+    let Some(work) = s.work_position else {
+        return Ok(SegmentGeometry::Miss);
+    };
+    let [x, _, z] = s.task_position;
+    let direction = [work[0] - x, 0., work[2] - z];
+    if ![x, z, direction[0], direction[2]]
+        .into_iter()
+        .all(f32::is_finite)
+    {
+        return Err(Error::invalid("invalid kart segment movement"));
+    }
+    if direction[0] == 0. && direction[2] == 0. {
+        return Ok(SegmentGeometry::Miss);
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let constants = rel.data(4)?;
+    let number = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());
+    let [a, _, c, b] = s.segment_xz;
+    let dx = number(0x340) * (b[0] - a[0]);
+    let dz = number(0x340) * (b[1] - a[1]);
+    let triangle = [
+        [a[0] - dx, number(0x344), a[1] - dz],
+        [b[0] + dx, number(0x344), b[1] + dz],
+        [c[0], number(0x334), c[1]],
+    ];
+    if !triangle.iter().flatten().all(|n| n.is_finite()) {
+        return Err(Error::invalid("nonfinite kart crossing triangle"));
+    }
+    Ok(SegmentGeometry::RequiresIntersection {
+        origin: [x, 0., z],
+        direction,
+        triangle,
+    })
 }
