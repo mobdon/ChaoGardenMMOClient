@@ -2,6 +2,8 @@
 use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
 #[path = "big_foot_collision.rs"]
 mod collision;
+#[path = "big_foot_damage.rs"]
+mod damage;
 #[path = "big_foot_takeoff.rs"]
 mod takeoff;
 use serde::Deserialize;
@@ -14,6 +16,7 @@ struct Request {
     frames: Vec<Frame>,
     intro: Option<Intro>,
     collision: Option<Vec<collision::Tick>>,
+    damage: Option<Vec<damage::Frame>>,
     takeoff: Option<Vec<takeoff::Tick>>,
 }
 #[derive(Deserialize)]
@@ -186,6 +189,12 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
             ));
         }
         output["collision"] = collision::run(&rel, ticks)?;
+    }
+    if let Some(frames) = req.damage {
+        if !req.work_allocation_ok {
+            return Err(Error::invalid("damage requires an allocated boss"));
+        }
+        output["damage"] = damage::run(scalar(0x294)?, frames)?;
     }
     Ok(output)
 }

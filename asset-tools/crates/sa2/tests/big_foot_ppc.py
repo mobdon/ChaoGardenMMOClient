@@ -20,7 +20,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0,0x35c),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
@@ -96,11 +96,20 @@ def hook(uc,pc,size,_):
     if off==0xa14:
         assert reg(3)==BOSS
         registration.update(position=list(get(WORK+20,"fff")),angles=list(get(WORK+8,"iii")))
+    if off in (0x5598,0x580c):
+        u.reg_write(R.UC_PPC_REG_PC,ret);return
+    if off==0x55ac:
+        assert reg(3)==child;setreg(3,int(hit));queries.append("child")
+    if off==0x5740:
+        assert reg(3)==BOSS;setreg(3,PLAYER if body else 0);queries.append("body")
+    if off in (0x5644,0x57e8):
+        impulses.append(dict(slot=reg(3),velocity=list(get(reg(4),"fff")),
+            angles=list(get(reg(5),"iii")),duration=reg(6)))
     if off==0x6790:
         assert get(reg(3),"fff")==tuple(position)
         put(reg(3),"fff",*vector);calls.append(off)
     u.reg_write(R.UC_PPC_REG_PC,pc+4)
-for off in (0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
+for off in (0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
     u.hook_add(UC_HOOK_CODE,hook,begin=B+off,end=B+off)
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
@@ -214,5 +223,44 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         assert row["originalCenter"]+row["parameters"]==list(struct.unpack_from(">7f",d,raw+8))
         assert row["angles"]==list(struct.unpack_from(">iii",d,raw+36))
     print(len(expected),"collision callbacks and",sum(len(f["centers"]) for f in expected),"center updates matched")
+    child=T+0x4000;page(child);page(T+0x3000);childw=child+0x100;childc=child+0x200
+    bd=child+0x300;cd=child+0x600;put(child+0x34,"I",childw);put(childw+0x2c,"I",childc)
+    put(WORK+0x2c,"I",CCL);put(CCL+12,"I",bd);put(childc+12,"I",cd);put(CCL+6,"H",11);put(childc+6,"H",1)
+    put(PRIVATE+0x54,"I",child);put(player_ptr,"I",PLAYER)
+    for path,y in enumerate((4.999,5.,5.001)):
+        observations=[];expected=[];put(EXTRA+0x28,"f",4.)
+        cases=[(m,flags,h,b,pflag) for m in (3,9,10,13) for flags in (0,4,0x1000,0x1004)
+               for h in (False,True) for b,pflag in [(False,0),(True,0),(True,256)] if not (m==3 and not flags and h)]
+        cases.extend([(3,1,True,False,0),(3,0,True,False,0),(2,1,True,False,0),(3,0,True,False,0)])
+        for i,(mode,flags,hit,body,pflag) in enumerate(cases):
+            yaw=2147483640-i
+            put(WORK,"BBBBHH",mode,2,6,(9,255,5)[i%3],flags,42);put(WORK+12,"i",yaw);put(WORK+24,"f",y)
+            put(PLAYER+4,"H",pflag);put(PLAYER+12,"i",-yaw)
+            bs=[rng.randrange(256) for _ in range(11)];cs=rng.randrange(256)
+            cf=rng.randrange(65536);ccf=rng.randrange(65536)
+            put(childw+4,"H",cf);put(childc+4,"H",ccf);put(cd+3,"B",cs)
+            for j,v in enumerate(bs):put(bd+48*j+3,"B",v)
+            reqframe=dict(mode=mode,flags=flags,height=y,yaw=yaw,submode=2,byte3=(9,255,5)[i%3],timer=42)
+            for rr,v in [(26,BOSS),(27,PRIVATE),(30,EXTRA),(31,WORK)]:setreg(rr,v)
+            queries=[];impulses=[];prior=get(EXTRA+0x28,"f")[0]
+            invoke(0x557c)
+            if "child" in queries:reqframe["child_hit"]=hit
+            if "body" in queries:
+                reqframe["body_hit"]=body
+                if body:reqframe["player"]={"flags":pflag,"yaw":-yaw}
+            hp=get(EXTRA+0x28,"f")[0];changes=None
+            if hp!=prior:
+                reqframe["damage_work"]=dict(boss_shape_bytes=bs,child_shape_byte=cs,child_flags=cf,child_collision_flags=ccf)
+                changes=dict(bossShapeBytes=[get(bd+48*j+3,"B")[0] for j in range(11)],childShapeByte=get(cd+3,"B")[0],
+                    childFlags=get(childw+4,"H")[0],childCollisionFlags=get(childc+4,"H")[0])
+            expected.append(dict(mode=get(WORK,"B")[0],submode=get(WORK+1,"B")[0],byte3=get(WORK+3,"B")[0],timer=get(WORK+6,"H")[0],
+                flags=get(WORK+4,"H")[0],health=hp,impulse=impulses[0] if impulses else None,damageWork=changes))
+            observations.append(reqframe)
+        assert expected[-1]["health"]==0 and expected[-1]["mode"]==(10 if path==0 else 13)
+        req.write_text(json.dumps({"work_allocation_ok":True,"frames":[],"damage":observations}));out=tmp/f"damage{path}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
+        actual=json.loads(out.read_text())["replay"]["damage"]["frames"]
+        for i,(a,e) in enumerate(zip(actual,expected,strict=True)):assert a==e,(path,i,a,e)
+    print(3*len(expected),"post-AI damage callbacks matched, including both lethal routes")
 print("1,353 mode-one callbacks matched the native player placement, state, timer and helper calls")
 print("Both Big Foot setup routes and 202 arena callbacks matched installed PPC")
