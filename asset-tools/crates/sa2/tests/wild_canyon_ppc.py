@@ -117,6 +117,30 @@ def lighting(flag):
         for h in hooks:u.hook_del(h)
     return state,music,rows
 for pg in {v&~4095 for v in (2149479272,2149471344,2149471344+383,2149470768,2149470768+575,2150329376,2149367176,0x80fffe60,0x80fffe60+575)}:u.mem_map(pg,4096)
+def emerald_paths():
+    u.reg_write(R.UC_PPC_REG_1,stage+4000)
+    u.emu_start(base[1]+0x8e54,base[1]+0x8e64,count=30)
+    table=get(base[6]+2832,"I")[0];count=get(base[5]+619596,"I")[0]
+    assert count==12
+    def hook(cpu,pc,size,_):
+        if pc-base[1] in (0x21cdc,0x21d1c):
+            bits=cpu.reg_read(R.UC_PPC_REG_FPR1)
+            cpu.reg_write(R.UC_PPC_REG_3,int(struct.unpack(">d",bits.to_bytes(8,"big"))[0]))
+        cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+    hooks=[u.hook_add(UC_HOOK_CODE,hook,begin=base[1]+s,end=base[1]+s) for s in (0x21ccc,0x21cdc,0x21d1c,0x21e28)]
+    paths=[]
+    try:
+        for i in range(count):
+            ptr=get(table+i*4,"I")[0];points=get(ptr+8,"I")[0]
+            put(child+0x34,"I",work);put(work+32,"f",float(i+count))
+            u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child)
+            u.reg_write(R.UC_PPC_REG_4,stage+768);u.reg_write(R.UC_PPC_REG_LR,stop)
+            u.emu_start(base[1]+0x21ca4,stop,count=6000);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+            paths.append(dict(headerOffset=ptr-base[5],pointsOffset=points-base[5],center=list(get(stage+768,"fff")),
+                points=[list(get(points+12*j,"fff")) for j in range(get(ptr+2,"h")[0])]))
+    finally:
+        for h in hooks:u.hook_del(h)
+    return paths
 def emerald_tasks():
     expected=[]
     def intercept(cpu,pc,size,_):
@@ -172,6 +196,7 @@ def emerald_tasks():
                             setup.update(shapeParameter=get(stage+820,"f")[0],skipIfModeZeroAndQueryNonzero=True)
                             if row["commonSetup"] is None:row["commonSetup"]=setup
                             else:assert row["commonSetup"]==setup
+                row["pathIndex"]=(int(struct.unpack_from(">f",data,32+32*index+20)[0])%12 if row["initialize"]==0x220ac else None)
                 expected.append(row)
     finally:
         for h in hooks:u.hook_del(h)
@@ -256,7 +281,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         doc=json.loads(out.read_text())
         state,music,rows=lighting(0);other,alt,rows2=lighting(255)
         assert state==other and rows==rows2==doc["lighting"]
-        result.update(state,music=music|alt,emeraldTasks=emerald_tasks())
+        result.update(state,music=music|alt,emeraldTasks=emerald_tasks(),emeraldPaths=emerald_paths())
         assert doc["stageTask"]==result and doc["dispatch"]["character"]==4 and doc["dispatch"]["level"]==16
     contact_cases(result["emeraldTasks"],tmp)
 print("Wild Canyon Hero dispatch, module registration and both stage-task allocation routes matched")

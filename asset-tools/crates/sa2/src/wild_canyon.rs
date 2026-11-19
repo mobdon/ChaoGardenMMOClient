@@ -46,6 +46,60 @@ pub fn enter(
             .map(|(_, v)| v)
             .ok_or_else(invalid)
     };
+    let path_table = pair(0x8e54, 5)?;
+    let section_ptr = |off| {
+        rel.local_pointer(5, off)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v)
+            .ok_or_else(invalid)
+    };
+    let f32_at = |bytes: &[u8], at: usize| -> Result<f32> {
+        Ok(f32::from_be_bytes(
+            bytes
+                .get(at..at + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let half = f32_at(rel.data(4)?, pair(0x21dd0, 4)? as usize)?;
+    let count = u32::from(u16::from_be_bytes(
+        rel.data(1)?[0x8e5e..0x8e60].try_into().unwrap(),
+    ));
+    if count != 12 {
+        return Err(invalid());
+    }
+    let mut paths = Vec::new();
+    for index in 0..count {
+        let header = section_ptr(path_table + 4 * index)?;
+        let at = header as usize;
+        let prefix = data.get(at..at + 4).ok_or_else(invalid)?;
+        let n = i16::from_be_bytes(prefix[2..].try_into().unwrap());
+        if prefix[..2] != [0, 0] || n <= 0 {
+            return Err(invalid());
+        }
+        let points = section_ptr(header + 8)?;
+        let mut vertices = Vec::new();
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for i in 0..n as usize {
+            let mut xyz = [0.; 3];
+            for j in 0..3 {
+                let v = f32_at(data, points as usize + 12 * i + 4 * j)?;
+                if !v.is_finite() {
+                    return Err(invalid());
+                }
+                xyz[j] = v;
+                lo[j] = lo[j].min(v);
+                hi[j] = hi[j].max(v);
+            }
+            vertices.push(xyz);
+        }
+        let center: [f32; 3] = std::array::from_fn(|j| (hi[j] + lo[j]) * half);
+        paths.push(
+            json!({"headerOffset":header,"pointsOffset":points,"points":vertices,"center":center}),
+        );
+    }
     let mut emeralds = Vec::new();
     for (layer_index, layer) in stage.layers.iter().enumerate() {
         for bound in &layer.placements {
@@ -88,9 +142,18 @@ pub fn enter(
             } else {
                 None
             };
+            let path_index = if init == 0x220ac {
+                let selector = bound.placement.parameters[0];
+                if !(0.0..4294967296.).contains(&selector) {
+                    return Err(invalid());
+                }
+                Some((selector as u32) % count)
+            } else {
+                None
+            };
             emeralds.push(json!({"layer":layer.filename,"index":bound.placement_index,"object":def.name,"variant":variant,
                 "main":code(row+20)?,"destroy":code(row+28)?,"display":display,"defaultDisplaySlot":32,
-                "nonzeroQueryDisplaySlot":conditional.then_some(20),"initialize":init,"commonSetup":setup}));
+                "nonzeroQueryDisplaySlot":conditional.then_some(20),"initialize":init,"commonSetup":setup,"pathIndex":path_index}));
         }
     }
     let ptr = |at| -> Result<Option<u32>> {
@@ -191,7 +254,7 @@ pub fn enter(
     Ok(
         json!({"descriptor":name(desc)?,"startup":callback(12u32)?,"teardown":callback(16u32)?,"entry":callback(20u32)?,
         "create":{"arguments":[2,2],"name":name(pair(0x9164,5)?)?,"main":pair(0x915c,1)?},
-        "emeraldTasks":emeralds,"lightFile":name(pair(0x8c68,5)?)?,"gcSuffix":name(pair(0xace4,5)?)?,
+        "emeraldPaths":paths,"emeraldTasks":emeralds,"lightFile":name(pair(0x8c68,5)?)?,"gcSuffix":name(pair(0xace4,5)?)?,
         "music":{"volumeArgument":0,"engineByteZero":name(pair(0x8c94,5)?)?,"engineByteNonzero":name(pair(0x8ca4,5)?)?},
         "startupResources":{"calls":calls,"groups":groups},"created":child,"nextMain":pair(0x91c0,1)?}),
     )
