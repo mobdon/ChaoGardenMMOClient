@@ -672,3 +672,5 @@ For slot progress, equal current and previous X/Z positions take the native segm
 The four REL24 calls at CartD section 1 offsets 0x93ac, 0x93bc, 0x93c4 and 0x93d4 resolve to module 0 targets 0x8011b8e8, 0x8011b098, 0x801159dc and 0x800c2178 respectively (section field 2). The segment probe checks all four relocations and executes the native epilogue with injected final return words 0, 1 and 0xffffffff. Rust needs the semantics of those imported routines to predict moving hits; the epilogue preserves the return word.
 
 After a slot progress event, the next primary vehicle post-move callback consumes the selected segment and course length. Repeated observations must agree. Frames without a preceding progress update still require an observed route; scheduling and moving intersection outcomes remain external.
+
+Vehicle dispatch reads the same highest checkpoint (vehicle work +0xc8) retained by slot progress and lap timing. An observed value must agree once that field is known. On finish the native signed counter clamp writes both checkpoint fields to 3 when the current counter exceeds 3.

@@ -743,7 +743,7 @@ pub fn story_sequence(
                 if let Some(selected) = progressed_route.take() {
                     frame.bind_route(selected)?;
                 }
-                frame.bind_story_dispatch(target.map(|t| t.latch), count)?;
+                frame.bind_story_dispatch(target.map(|t| t.latch), count, highest)?;
                 if target_handle.is_some_and(|handle| handle != frame.work_ec) {
                     return Err(Error::invalid(
                         "vehicle target handle changed between post-move callbacks",

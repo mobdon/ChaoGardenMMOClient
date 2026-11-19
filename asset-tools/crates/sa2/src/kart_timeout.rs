@@ -70,10 +70,21 @@ impl Frame {
         Ok(())
     }
     pub(crate) fn highest(&self) -> Option<i32> {
-        self.dispatch.as_ref().map(|v| v.work_c8)
+        self.dispatch.as_ref()?.work_c8
     }
-    pub(crate) fn bind_story_dispatch(&mut self, latch: Option<i32>, counter: u32) -> Result<()> {
+    pub(crate) fn bind_story_dispatch(
+        &mut self,
+        latch: Option<i32>,
+        counter: u32,
+        highest: Option<i32>,
+    ) -> Result<()> {
         if let Some(d) = &mut self.dispatch {
+            if d.work_c8.zip(highest).is_some_and(|(a, b)| a != b) {
+                return Err(crate::Error::invalid(
+                    "vehicle highest checkpoint conflicts with shared state",
+                ));
+            }
+            d.work_c8 = highest.or(d.work_c8);
             if d.work_c4.is_some_and(|v| v as u32 != counter)
                 || d.pursuit_latch.zip(latch).is_some_and(|(a, b)| a != b)
             {
@@ -98,7 +109,7 @@ impl Frame {
 struct Dispatch {
     pursuit_latch: Option<i32>,
     work_c4: Option<i32>,
-    work_c8: i32,
+    work_c8: Option<i32>,
     work_44: i32,
     work_68: i32,
     #[serde(skip_serializing)]
@@ -265,7 +276,7 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                         > 3
                     {
                         d.work_c4 = Some(3);
-                        d.work_c8 = 3;
+                        d.work_c8 = Some(3);
                     }
                     if d.work_44 != 0 {
                         let t = d.target.as_ref().ok_or_else(|| {
@@ -315,6 +326,11 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
                     != 0
                 {
                     vehicle_state = 8;
+                }
+                if d.work_c8.is_none() {
+                    return Err(crate::Error::invalid(
+                        "missing initial vehicle highest checkpoint",
+                    ));
                 }
                 r.next = "engine_8000f4ec";
             }

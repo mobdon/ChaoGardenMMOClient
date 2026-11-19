@@ -211,11 +211,18 @@ if len(sys.argv)>4:
             assert doc["updates"][2]["slotProgress"]["tested_indices"]==[6,7]
             assert doc["lapClock"]["first"]==[[0,0,0],[0,1,0],[0,0,0]]
             continuation={k:v for k,v in frame.items() if k not in ("segment","segment_count")}
+            continuation["dispatch"]=dict(work_44=0,work_68=98,pursuit_latch=0)
             q["updates"].append(dict(vehicle_post_move=continuation))
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-progress-dispatch.json")
             subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
             dispatched=json.loads(out.read_text())["updates"][-1]["vehiclePostMove"]["frame"]
             assert (dispatched["segment"],dispatched["segment_count"])==(8,100)
+            assert dispatched["dispatch"]["work_c8"]==1
+            continuation["dispatch"]["work_c8"]=0
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-highest.json")
+            rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
+            assert rejected.returncode!=0 and b"vehicle highest checkpoint conflicts" in rejected.stderr
+            del continuation["dispatch"]["work_c8"]
             continuation["segment"]=5
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-dispatch.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
