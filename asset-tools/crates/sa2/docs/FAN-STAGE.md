@@ -144,3 +144,21 @@ executes the original scoring, sorting, and place-write instructions for
 empty, solo, tied, over-distance, degenerate and signed wraparound inputs.
 It checks NaN classification rather than payload. This covers rank assignment,
 not the subsequent leader-change effects or race finish.
+
+`kart-field-update CartD.rel OUTPUT.json FIELD.json` continues from standings
+through CartD 0x913c. The input has a contiguous occupied slot list with each
+slot's standings inputs under `standing`, previous `place`, `work_44`,
+`first_ticks`, `sixth_ticks` and `cooldown`. The field also supplies
+`race_clock`, `suppress_place_calls`, `restrict_finish`, `finish_latched`
+and `post_finish_ticks`. The result contains updated work fields and calls
+in native order as [slot, routine, argument or null].
+
+A counter of at least three dispatches the finish calls if the restriction
+byte is zero or the slot's work word at +0x44 is nonzero. Processing continues
+through the remaining slots, so several can dispatch in one tick. On the next
+latched tick this pass only advances the post-finish timer. The preceding
+progress update is separate. The output models dispatch, not the internals of
+the result tasks or a verified stage clear. The local oracle
+`tests/kart_field_ppc.py CLI CartD.rel PRIVATE_TMP_DIR` intercepts the calls
+and compares their order, arguments, places, latch and timers against the
+installed field loop; it supplies sorted indices for known-score fixtures.

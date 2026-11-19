@@ -249,7 +249,7 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
 
 /// Inputs immediately before the two imported vector-length results are combined.
 /// Slots are the contiguous occupied prefix (CartD stops at the first null).
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StandingSlot {
     segment: i32,
@@ -267,6 +267,10 @@ pub struct Standings {
 
 pub fn standings(bytes: &[u8], slots: &[StandingSlot]) -> Result<Standings> {
     verify(bytes)?;
+    rank_slots(slots)
+}
+
+fn rank_slots(slots: &[StandingSlot]) -> Result<Standings> {
     if slots.len() > 6 {
         return Err(Error::invalid(
             "kart standings have at most six occupied slots",
@@ -309,5 +313,92 @@ pub fn standings(bytes: &[u8], slots: &[StandingSlot]) -> Result<Standings> {
     Ok(Standings {
         score_bits: scores.into_iter().map(f32::to_bits).collect(),
         places_by_slot,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RaceField {
+    pub finish_latched: bool,
+    pub post_finish_ticks: i32,
+    pub suppress_place_calls: bool,
+    pub restrict_finish: bool,
+    pub race_clock: u32,
+    pub slots: Vec<RaceSlot>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RaceSlot {
+    #[serde(skip_serializing)]
+    standing: StandingSlot,
+    work_44: u32,
+    place: i32,
+    first_ticks: i32,
+    sixth_ticks: i32,
+    cooldown: i32,
+}
+
+#[derive(Serialize)]
+pub struct RaceFieldUpdate {
+    finish_latched: bool,
+    post_finish_ticks: i32,
+    slots: Vec<RaceSlot>,
+    calls: Vec<(usize, &'static str, Option<u8>)>,
+}
+
+/// CartD 0x8d70–0x913c, after the occupied slots' progress counters are updated.
+pub fn field_update(bytes: &[u8], mut field: RaceField) -> Result<RaceFieldUpdate> {
+    verify(bytes)?;
+    if field.slots.len() > 6 {
+        return Err(Error::invalid("at most six occupied kart slots"));
+    }
+    let mut calls = Vec::new();
+    if field.finish_latched {
+        field.post_finish_ticks = field.post_finish_ticks.wrapping_add(1);
+    } else {
+        let slots = field.slots.iter().map(|s| s.standing).collect::<Vec<_>>();
+        let ranks = rank_slots(&slots)?;
+        field.post_finish_ticks = 0;
+        let mut order: Vec<_> = (0..slots.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(ranks.places_by_slot[i]));
+        for i in order {
+            let s = &mut field.slots[i];
+            let old = s.place;
+            s.place = ranks.places_by_slot[i] as i32;
+            if !field.finish_latched && !field.suppress_place_calls && s.work_44 != 0 {
+                let timer = match s.place {
+                    1 => Some((&mut s.first_ticks, 1)),
+                    6 => Some((&mut s.sixth_ticks, 2)),
+                    _ => None,
+                };
+                if let Some((ticks, kind)) = timer {
+                    if old != s.place {
+                        *ticks = 0;
+                    } else {
+                        *ticks = ticks.wrapping_add(1);
+                        if *ticks == 15 && field.race_clock > 700 && s.cooldown > 300 {
+                            calls.push((i, "cart_5c38", Some(kind)));
+                            s.cooldown = 0;
+                        }
+                    }
+                }
+            }
+            s.cooldown = s.cooldown.wrapping_add(1);
+            if s.standing.counter >= 3 && (!field.restrict_finish || s.work_44 != 0) {
+                field.finish_latched = true;
+                calls.push((i, "cart_7040", None));
+                if field.restrict_finish {
+                    calls.push((i, "cart_d4f8", None));
+                }
+                calls.push((i, "cart_5c38", Some(0)));
+            }
+        }
+    }
+    Ok(RaceFieldUpdate {
+        finish_latched: field.finish_latched,
+        post_finish_ticks: field.post_finish_ticks,
+        slots: field.slots,
+        calls,
     })
 }
