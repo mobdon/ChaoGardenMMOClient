@@ -452,22 +452,7 @@ pub fn hot_shot_mode_two_opening(
         ));
     }
     let rel = CityRel::read_identified(bytes, 82)?;
-    let data = rel.data(4)?;
-    let scalar = |at| -> Result<f32> {
-        let hi = rel.reference(1, at).ok_or_else(invalid)?;
-        if (hi.module, hi.section, hi.kind) != (82, 4, 6)
-            || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
-        {
-            return Err(invalid());
-        }
-        let offset = hi.addend as usize;
-        Ok(f32::from_be_bytes(
-            data.get(offset..offset + 4)
-                .ok_or_else(invalid)?
-                .try_into()
-                .unwrap(),
-        ))
-    };
+    let scalar = |at| hot_shot_scalar(&rel, at);
     let mut amount = scalar(0x1142)?;
     let step = scalar(0x11b2)?;
     let cap = scalar(0x11ca)?;
@@ -482,4 +467,67 @@ pub fn hot_shot_mode_two_opening(
         "readyBranchWork10Write":if ready_on_last {Some(scalar(0x120e)?)} else {None},
         "scope":"Submode-specific writes before the common tail; engine readiness is supplied and helper effects are not simulated."
     }))
+}
+
+fn hot_shot_scalar(rel: &CityRel, at: u32) -> Result<f32> {
+    let data = rel.data(4)?;
+    let hi = rel.reference(1, at).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind) != (82, 4, 6)
+        || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
+    {
+        return Err(invalid());
+    }
+    let offset = hi.addend as usize;
+    Ok(f32::from_be_bytes(
+        data.get(offset..offset + 4)
+            .ok_or_else(invalid)?
+            .try_into()
+            .unwrap(),
+    ))
+}
+
+/// One mode-two, submode-two tick. External readiness is observed only when queried.
+pub fn hot_shot_mode_two_step(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        work04: f32,
+        work10: f32,
+        work_bc: u8,
+        flags: u16,
+        controller_state: i32,
+        ready: Option<bool>,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    if s.ready.is_some() != (s.controller_state == 1)
+        || s.work_bc >= 15
+        || !s.work04.is_finite()
+        || !s.work10.is_finite()
+    {
+        return Err(Error::invalid(
+            "expected finite work fields, counter 0..14 and readiness only for controller state 1",
+        ));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let scalar = |at| hot_shot_scalar(&rel, at);
+    let request_two = s.ready == Some(true);
+    let flags = if request_two { s.flags & !1 } else { s.flags };
+    let mut work10 = s.work10 * scalar(0x12b6)? + scalar(0x12ce)?;
+    let work04 = s.work04 * scalar(0x12e6)?;
+    if flags & 1 == 0 {
+        work10 += scalar(0x15be)?;
+    }
+    let pair = s.work_bc > 0 && s.work_bc % 5 == 0;
+    let next = if s.work_bc == 0 || s.work_bc == 14 {
+        0
+    } else {
+        s.work_bc + 1
+    };
+    Ok(
+        serde_json::json!({"mode":2,"submode":if work04<0. {3} else {2},
+        "work04":work04,"work10":work10,"workBC":next,"flags":flags,
+        "requestedControllerState":request_two.then_some(2),"local51ee0Calls":if pair {2} else {0},
+        "scope":"Scalar and control writes; helper effects and subsequent boss executor work are excluded."}),
+    )
 }
