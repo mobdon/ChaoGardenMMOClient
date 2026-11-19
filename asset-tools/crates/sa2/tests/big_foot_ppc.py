@@ -20,12 +20,13 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0,0x35c),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0,0x35c),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
 page(T);page(T+0x2000);page(ret)
 player_ptr=0
+bind_relocs=[]
 for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
     off=0
     while True:
@@ -33,6 +34,10 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==203:break
         if k==202:target=s;off=0;continue
         off+=inc
+        if target==5 and 528<=off<748 and k==1:
+            dst=D+5*0x400000+off;page(dst);bind_relocs.append((dst,D+s*0x400000+a))
+            if off%20==528%20: # copy each binding's trailing XYZ floats
+                u.mem_write(dst+8,d[sec(5)+off+8:sec(5)+off+20])
         if target!=1 or not any(lo<=off<hi for lo,hi in ranges):continue
         if k==10:continue # observed at the external call site
         val=(B+a if s==1 else D+s*0x400000+a) if module else a;page(val)
@@ -40,6 +45,7 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if off==0x673a:player_ptr=val
         assert k in (4,6)
         put(B+off,"H",(val if k==4 else (val+0x8000)>>16)&65535)
+for dst,val in bind_relocs:put(dst,"I",val)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|8192)
 def hook(uc,pc,size,_):
     off=pc-B
@@ -78,11 +84,23 @@ def hook(uc,pc,size,_):
     if off in (0x11a0,0x15a0,0x15c4):
         take_calls.append({"effectDescriptor":680 if off==0x11a0 else 704})
         if off==0x15c4:take_calls[-1].update(byte0=get(reg(4),"B")[0],float4=get(reg(4)+4,"f")[0])
+    if off in (0x8d0,0x8dc,0x8e8,0x910,0x91c):
+        dst=reg(3);a=get(dst,"fff");b=get(reg(4),"fff")
+        put(dst,"fff",*(x+y for x,y in zip(a,b,strict=True)))
+    if off in (0x8f8,0x92c):
+        assert reg(3)==BOSS and reg(4)==len(centers)
+        centers.append(list(get(reg(5),"fff")))
+    if off in (0x978,0x9b8,0x9f0):
+        j=(0x978,0x9b8,0x9f0).index(off);assert reg(3)==(71,83,97)[j]
+        u.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",sines[j]))[0])
+    if off==0xa14:
+        assert reg(3)==BOSS
+        registration.update(position=list(get(WORK+20,"fff")),angles=list(get(WORK+8,"iii")))
     if off==0x6790:
         assert get(reg(3),"fff")==tuple(position)
         put(reg(3),"fff",*vector);calls.append(off)
     u.reg_write(R.UC_PPC_REG_PC,pc+4)
-for off in (0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
+for off in (0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
     u.hook_add(UC_HOOK_CODE,hook,begin=B+off,end=B+off)
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
@@ -168,5 +186,33 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         for i,(row,expected) in enumerate(zip(json.loads(out.read_text())["replay"]["takeoff"],take_native,strict=True)):
             assert row==expected,(case,i,row,expected)
         print("mode-two callbacks verified:",len(take_native))
+    observations=[];expected=[]
+    motion=T+0xd00;put(BOSS+0x34,"I",WORK);put(BOSS+0x38,"I",motion)
+    for mode in (1,2,3,13):
+        for y in (13.499,13.5,13.501):
+            for flags in (0,1,0x1000,0x1001):
+                for angles in ([2147483647,65535,-2147483648],[-12,0,24]):
+                    loc=[3.,7.,-9.];anchors=[[float(rng.randrange(-50,50))/8 for _ in range(3)] for _ in range(3)]
+                    sines=[1.,-0.875,0.25]
+                    obs=dict(mode=mode,flags=flags,position=loc,angles=angles,reference_y=y,anchors=anchors)
+                    if not flags&1:obs['sine_results']=sines
+                    for i,a in enumerate(anchors):put(D+6*0x400000+180+i*12,"fff",*a)
+                    put(D+6*0x400000+136,"f",y)
+                    put(WORK,"B",mode);put(WORK+4,"H",flags);put(WORK+8,"iii",*angles)
+                    put(WORK+20,"fff",*loc);put(motion+0x84,"iii",71,97,83)
+                    centers=[];registration={};invoke(0x810,BOSS)
+                    observations.append(obs);expected.append(dict(centers=centers,registration=registration,
+                        afterRegistration=dict(position=list(get(WORK+20,"fff")),angles=list(get(WORK+8,"iii")))))
+    req.write_text(json.dumps({"work_allocation_ok":True,"frames":[],"collision":observations}))
+    out=tmp/"collision.json"
+    subprocess.run([sys.argv[1],"--source-root",str(game),"fan-big-foot",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","2",str(req)],check=True)
+    c=json.loads(out.read_text())["replay"]["collision"]
+    assert c["frames"]==expected
+    for i,row in enumerate(c["descriptors"]):
+        raw=sec(5)+i*48
+        assert row["headerBytes"]==list(d[raw:raw+4]) and row["attributes"]==w(raw+4)
+        assert row["originalCenter"]+row["parameters"]==list(struct.unpack_from(">7f",d,raw+8))
+        assert row["angles"]==list(struct.unpack_from(">iii",d,raw+36))
+    print(len(expected),"collision callbacks and",sum(len(f["centers"]) for f in expected),"center updates matched")
 print("1,353 mode-one callbacks matched the native player placement, state, timer and helper calls")
 print("Both Big Foot setup routes and 202 arena callbacks matched installed PPC")

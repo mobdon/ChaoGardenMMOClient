@@ -1,5 +1,7 @@
 //! Big Foot's stage task creates the boss, then runs the slot-zero arena constraint.
 use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+#[path = "big_foot_collision.rs"]
+mod collision;
 #[path = "big_foot_takeoff.rs"]
 mod takeoff;
 use serde::Deserialize;
@@ -11,6 +13,7 @@ struct Request {
     work_allocation_ok: bool,
     frames: Vec<Frame>,
     intro: Option<Intro>,
+    collision: Option<Vec<collision::Tick>>,
     takeoff: Option<Vec<takeoff::Tick>>,
 }
 #[derive(Deserialize)]
@@ -175,6 +178,14 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     }
     if let Some(ticks) = req.takeoff {
         output["takeoff"] = takeoff::run(ticks)?;
+    }
+    if let Some(ticks) = req.collision {
+        if !req.work_allocation_ok {
+            return Err(Error::invalid(
+                "collision update requires an allocated boss",
+            ));
+        }
+        output["collision"] = collision::run(&rel, ticks)?;
     }
     Ok(output)
 }
