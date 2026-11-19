@@ -33,6 +33,12 @@ pub struct CityRel<'a> {
 impl<'a> CityRel<'a> {
     /// Stage-local player motion registrations; preserve source order and REL addresses.
     pub fn player_motion_bindings(&self) -> Result<serde_json::Value> {
+        self.player_motion_report(false)
+    }
+    pub fn player_motion_keys(&self) -> Result<serde_json::Value> {
+        self.player_motion_report(true)
+    }
+    fn player_motion_report(&self, keys: bool) -> Result<serde_json::Value> {
         let data = self.data(5)?;
         let mut rows = Vec::new();
         let start = 0x1fd2b0usize;
@@ -62,13 +68,60 @@ impl<'a> CityRel<'a> {
             if tracks_offset as usize >= self.data(tracks_section)?.len() {
                 return Err(invalid());
             }
-            rows.push(serde_json::json!({
+            let mut binding = serde_json::json!({
                 "index":index,"tag":i16::from_be_bytes([row[2],row[3]]),"section":section,"offset":offset,
                 "frameCount":u32::from_be_bytes(header[4..8].try_into().unwrap()),
                 "motionType":u16::from_be_bytes([header[8],header[9]]),
                 "interpolationAndFactors":u16::from_be_bytes([header[10],header[11]]),
                 "motionData":{"section":tracks_section,"offset":tracks_offset}
-            }));
+            });
+            if keys {
+                let count = u16::from_be_bytes([row[2], row[3]]) as u32;
+                if header[8..12] != [0, 3, 0, 2]
+                    || tracks_section != section
+                    || tracks_offset.checked_add(count * 16) != Some(offset)
+                {
+                    return Err(invalid());
+                }
+                let mut nodes = Vec::new();
+                for node in 0..count {
+                    let addr = tracks_offset + node * 16;
+                    let desc = &self.data(section)?[addr as usize..addr as usize + 16];
+                    let mut channels = [Vec::new(), Vec::new()];
+                    for (i, channel) in channels.iter_mut().enumerate() {
+                        let n = u32::from_be_bytes(desc[8 + i * 4..12 + i * 4].try_into().unwrap());
+                        let ptr = self.local_pointer(section, addr + i as u32 * 4)?;
+                        if n == 0 && ptr.is_none() {
+                            continue;
+                        }
+                        let (s, o) = ptr.ok_or_else(invalid)?;
+                        let bytes = self
+                            .data(s)?
+                            .get(o as usize..)
+                            .and_then(|tail| tail.get(..(n as usize).checked_mul(16)?))
+                            .ok_or_else(invalid)?;
+                        for k in bytes.chunks_exact(16) {
+                            let word =
+                                |j: usize| u32::from_be_bytes(k[j..j + 4].try_into().unwrap());
+                            let xyz = [word(4), word(8), word(12)];
+                            let value = if i == 0 {
+                                let v = xyz.map(f32::from_bits);
+                                if !v.iter().all(|x| x.is_finite()) {
+                                    return Err(invalid());
+                                }
+                                serde_json::json!(v)
+                            } else {
+                                serde_json::json!(xyz.map(|x| x as i32))
+                            };
+                            channel.push(serde_json::json!([word(0), value]));
+                        }
+                    }
+                    let [position, rotation] = channels;
+                    nodes.push(serde_json::json!({"position":position,"rotation":rotation}));
+                }
+                binding["nodes"] = serde_json::json!(nodes);
+            }
+            rows.push(binding);
         }
         Err(invalid())
     }
