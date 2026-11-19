@@ -522,3 +522,13 @@ point 1 on the next two wrapped segments and initializes speed and angle.
 Supply the quad for segment +2 and the observed engine angle return, plus
 the magnitude return for nonzero velocity. This covers entry into state 7,
 not subsequent state 7 steering or the final engine callback.
+
+`kart-guided-drive CartD.rel OUTPUT.json INPUT.json` advances state 7 from
+0x42c8 through return. Carry the state-7 entry guidance (or previous tick
+guidance), the addressed segment quad, vehicle state fields and active
+profile acceleration, deceleration and weight. Engine angle, direction,
+distance and random results are explicit inputs. The distance check uses
+the pre-movement horizontal offset; reaching the target segment skips this
+check. Only an advance consumes a random result. The output includes the
+updated guidance pair, pose, cached ground position and yaw. This is the
+movement callback before contact resolution, not a whole vehicle tick.
