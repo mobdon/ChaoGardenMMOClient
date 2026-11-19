@@ -28,9 +28,9 @@ pub enum Input {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Frame {
-    cooldown: i32,
-    work_288: i32,
-    work_108: i32,
+    cooldown: Option<i32>,
+    work_288: Option<i32>,
+    work_108: Option<i32>,
     engine_byte_23: i8,
     engine_halfword_68: i16,
     pub(crate) global_24d60: Option<i32>,
@@ -51,6 +51,14 @@ pub struct Frame {
     dispatch: Option<Dispatch>,
 }
 impl Frame {
+    pub(crate) fn timer_words(&self) -> Option<[i32; 3]> {
+        Some([self.cooldown?, self.work_288?, self.work_108?])
+    }
+    pub(crate) fn inherit_timers(&mut self, prior: [i32; 3]) {
+        self.cooldown.get_or_insert(prior[0]);
+        self.work_288.get_or_insert(prior[1]);
+        self.work_108.get_or_insert(prior[2]);
+    }
     pub(crate) fn bind_finish(&mut self, retained: Option<i32>) -> Result<()> {
         if self.global_24d60.zip(retained).is_some_and(|(a, b)| a != b) {
             return Err(crate::Error::invalid(
@@ -223,13 +231,18 @@ pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
             let mut finish = frame
                 .global_24d60
                 .ok_or_else(|| crate::Error::invalid("missing initial vehicle finish flag"))?;
-            frame.cooldown = frame.cooldown.wrapping_sub(1).max(0);
-            if frame.work_288 != 0 {
-                frame.work_288 = frame.work_288.wrapping_sub(1);
-                if frame.work_288 == 0 {
-                    frame.work_108 = 0;
+            let [cooldown, mut remaining_effect, mut active_effect] = frame
+                .timer_words()
+                .ok_or_else(|| crate::Error::invalid("missing initial vehicle timer words"))?;
+            frame.cooldown = Some(cooldown.wrapping_sub(1).max(0));
+            if remaining_effect != 0 {
+                remaining_effect = remaining_effect.wrapping_sub(1);
+                if remaining_effect == 0 {
+                    active_effect = 0;
                 }
             }
+            frame.work_288 = Some(remaining_effect);
+            frame.work_108 = Some(active_effect);
             if mode <= 1 {
                 if frame.engine_byte_23 == 1
                     && frame.engine_halfword_68 >= 100

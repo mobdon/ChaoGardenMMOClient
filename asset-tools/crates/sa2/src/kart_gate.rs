@@ -696,6 +696,7 @@ pub fn story_sequence(
     let mut timeout = None;
     let mut target_handle = None;
     let mut finish = None;
+    let mut timer_words = None;
     let mut parent = None;
     let mut crossing_positions = None;
     let mut route = None;
@@ -751,6 +752,9 @@ pub fn story_sequence(
                 if let Some(selected) = progressed_route.take() {
                     frame.bind_route(selected)?;
                 }
+                if let Some(prior) = timer_words {
+                    frame.inherit_timers(prior);
+                }
                 frame.bind_finish(finish)?;
                 frame.bind_story_dispatch(target.map(|t| t.latch), count, highest)?;
                 if target_handle.is_some_and(|handle| handle != frame.work_ec) {
@@ -788,6 +792,7 @@ pub fn story_sequence(
                 if let Some(h) = r.frame.as_ref().and_then(|f| f.highest()) {
                     highest = Some(h);
                 }
+                timer_words = r.frame.as_ref().and_then(|f| f.timer_words());
                 finish = r.frame.as_ref().and_then(|f| f.global_24d60);
                 if let Some(n) = r.frame.as_ref().and_then(|f| f.checkpoint_counter()) {
                     count = n;

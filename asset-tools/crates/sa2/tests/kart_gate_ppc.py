@@ -269,4 +269,15 @@ if len(sys.argv)>4:
             req.write_text(json.dumps(q));out=req.with_name(path.stem+"-stale-scan.json")
             rejected=subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],capture_output=True)
             assert rejected.returncode!=0 and b"course scan flag conflicts" in rejected.stderr
+            # A new observed effect can replace the two effect words while
+            # the independent cooldown still inherits its previous value.
+            initial=dict(frame,cooldown=3,work_288=2,work_108=17)
+            tick={k:v for k,v in frame.items() if k not in ("cooldown","work_288","work_108")}
+            q.update(updates=[dict(vehicle_post_move=f) for f in
+                     (initial,tick,dict(tick,work_288=3,work_108=9),tick)])
+            req.write_text(json.dumps(q));out=req.with_name(path.stem+"-timer-continuity.json")
+            subprocess.run([cli,"kart-story-gate-sequence",rel,out,exe,path,req],check=True)
+            frames=[v["vehiclePostMove"]["frame"] for v in json.loads(out.read_text())["updates"]]
+            assert [[f[k] for k in ("cooldown","work_288","work_108")] for f in frames]==[
+                [2,1,17],[1,0,0],[0,2,9],[0,1,9]]
     print("Matched 24 gate and 24 interleaved countdown updates across four installed story layouts.")

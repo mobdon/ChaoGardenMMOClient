@@ -678,3 +678,5 @@ Vehicle dispatch reads the same highest checkpoint (vehicle work +0xc8) retained
 Slot progress consumes vehicle work +0x44 when the latest post-move dispatch is present. State 7 clears this field, so a stationary scan after guidance tests three forward candidates and no reverse candidates. A post-move frame without dispatch needs an independent observation for the scan flag.
 
 Within a contiguous story replay, the next vehicle update inherits the last finish flag. The threshold write remains visible to later vehicle and controller callbacks even after the input drops below threshold. An explicit conflicting observation is rejected; starting a separate sequence requires an initial observed flag.
+
+Vehicle post-move retains the cooldown (+0x290), effect timer (+0x288) and effect word (+0x108) across callbacks. The first frame supplies all three; later frames can omit unchanged inputs. Explicit observations can represent intervening writes by other tasks. Expiry clears the effect on the same tick as the timer reaches zero. This does not schedule pickup callbacks.
