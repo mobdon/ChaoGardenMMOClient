@@ -869,6 +869,14 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    BodyContactGeometry {
+        player: i8,
+        center: [f32; 3],
+        player_position: [f32; 3],
+        own_query: i32,
+        other_query: i32,
+    },
+
     /// Input to 0x71e0 from the body contact branch.
     BodyImpulse {
         player: i8,
@@ -991,6 +999,50 @@ fn phase_constant<'a>(
 }
 fn phase_write_allowed(task: Option<PhaseGateTask>) -> bool {
     task.is_some_and(|task| task.mode != 13 && task.flags & 4 == 0)
+}
+fn body_impulse(
+    rel: &crate::city_rel::CityRel<'_>,
+    player: i8,
+    player_y: f32,
+    contact_vector: Option<[f32; 3]>,
+) -> Result<serde_json::Value> {
+    let constant = |site| -> Result<f32> {
+        Ok(f32::from_be_bytes(
+            phase_constant(rel, site, 4)?.try_into().unwrap(),
+        ))
+    };
+    let (site, velocity) = if let Some(v) = contact_vector {
+        // The normalize helper sees all three axes. The caller then
+        // restores the incoming Y when it passes the vector onward.
+        let scale = constant(0x85a)?;
+        let len = (v[0] as f64).hypot(v[1] as f64).hypot(v[2] as f64);
+        let axis = |x: f32| {
+            if len == 0.0 || scale == 0.0 {
+                x
+            } else {
+                ((x as f64 / len) as f32) * scale
+            }
+        };
+        (0x72c8, [axis(v[0]), v[1], axis(v[2])])
+    } else {
+        let z = constant(0x896)?;
+        let y = constant(if player_y > constant(0x723e)? {
+            0x7252
+        } else {
+            0x7262
+        })?;
+        (
+            0x7278,
+            [constant(0x726e)?, y, if player == 0 { z } else { -z }],
+        )
+    };
+    let target = rel
+        .reference(1, site)
+        .ok_or_else(|| Error::invalid("missing body impulse import"))?;
+    return Ok(
+        serde_json::json!({"player":player,"velocity_argument":velocity,"import":target.addend,
+                "scope":"Arguments to the player motion import; vector normalization uses Rust arithmetic, not emulated engine rounding."}),
+    );
 }
 pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json::Value> {
     if crate::manifest::sha256(bytes)
@@ -1312,42 +1364,40 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             player_y,
             contact_vector,
         } => {
-            let constant = |site| -> Result<f32> {
-                Ok(f32::from_be_bytes(
-                    phase_constant(&rel, site, 4)?.try_into().unwrap(),
-                ))
-            };
-            let (site, velocity) = if let Some(v) = contact_vector {
-                // The normalize helper sees all three axes. The caller then
-                // restores the incoming Y when it passes the vector onward.
-                let scale = constant(0x85a)?;
-                let len = (v[0] as f64).hypot(v[1] as f64).hypot(v[2] as f64);
-                let axis = |x: f32| {
-                    if len == 0.0 || scale == 0.0 {
-                        x
-                    } else {
-                        ((x as f64 / len) as f32) * scale
-                    }
-                };
-                (0x72c8, [axis(v[0]), v[1], axis(v[2])])
-            } else {
-                let z = constant(0x896)?;
-                let y = constant(if player_y > constant(0x723e)? {
-                    0x7252
-                } else {
-                    0x7262
-                })?;
-                (
-                    0x7278,
-                    [constant(0x726e)?, y, if player == 0 { z } else { -z }],
-                )
-            };
-            let target = rel
-                .reference(1, site)
-                .ok_or_else(|| Error::invalid("missing body impulse import"))?;
+            return body_impulse(&rel, player, player_y, contact_vector);
+        }
+        PlacementClock::BodyContactGeometry {
+            player,
+            center,
+            player_position,
+            own_query,
+            other_query,
+        } => {
+            let delta: [f32; 3] = std::array::from_fn(|i| player_position[i] - center[i]);
+            let len = (delta[0] as f64)
+                .hypot(delta[1] as f64)
+                .hypot(delta[2] as f64);
+            if len == 0.0 || !(len as f32).is_finite() {
+                return Err(Error::invalid(
+                    "unsupported coincident or nonfinite contact direction",
+                ));
+            }
+            let margin = f32::from_be_bytes(phase_constant(&rel, 0x85a, 4)?.try_into().unwrap());
+            let magnitude = len as f32 + margin;
+            let point: [f32; 3] =
+                std::array::from_fn(|i| center[i] + ((delta[i] as f64 / len) as f32) * magnitude);
+            let vector: [f32; 3] = std::array::from_fn(|i| point[i] - center[i]);
+            if !point.iter().chain(&vector).all(|x| x.is_finite()) {
+                return Err(Error::invalid("unrepresentable body contact point"));
+            }
+            let impulse = body_impulse(
+                &rel,
+                player,
+                player_position[1],
+                (own_query <= other_query).then_some(vector),
+            )?;
             return Ok(
-                serde_json::json!({"player":player,"velocity_argument":velocity,"import":target.addend,
-                "scope":"Arguments to the player motion import; vector normalization uses Rust arithmetic, not emulated engine rounding."}),
+                serde_json::json!({"contact_point":point,"contact_vector":vector,"impulse":impulse}),
             );
         }
         PlacementClock::InitialHealth => {
