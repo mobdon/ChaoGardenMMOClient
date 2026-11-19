@@ -277,9 +277,14 @@ pub trait BalloonHost {
 
 impl Balloon {
     /// Dispatch table: CartD section 5 +0x2ed3cc. The caller owns display slots.
-    pub fn tick(&mut self, outside_range: bool, has_entry: bool, host: &mut impl BalloonHost) {
-        if outside_range && self.mode != 4 {
-            return;
+    pub fn tick(
+        &mut self,
+        range: crate::kart_object_range::ObjectRange,
+        has_entry: bool,
+        host: &mut impl BalloonHost,
+    ) -> crate::Result<()> {
+        if range.outside()? && self.mode != 4 {
+            return Ok(());
         }
         match self.mode {
             0..=2 => {
@@ -335,6 +340,7 @@ impl Balloon {
             6 => host.cleanup(has_entry),
             _ => (),
         }
+        Ok(())
     }
 }
 
@@ -377,28 +383,37 @@ mod lifecycle_tests {
     }
     #[test]
     fn collect_out_of_range_pop_and_in_range_respawn() {
+        let near = crate::kart_object_range::ObjectRange {
+            first: 0.0,
+            views: 1,
+            second: None,
+        };
+        let far = crate::kart_object_range::ObjectRange {
+            first: 4_000_000.0,
+            ..near
+        };
         let mut b = Balloon::default();
         let mut h = Host::default();
         for _ in 0..30 {
-            b.tick(false, true, &mut h);
+            b.tick(near, true, &mut h).unwrap();
         }
         assert_eq!(b.mode, 3);
-        b.tick(false, true, &mut h);
+        b.tick(near, true, &mut h).unwrap();
         assert_eq!(
             (b.mode, b.timer, b.scale, h.hits),
             (4, 0, [1.0, 1.0, 1.02], 2)
         );
         for _ in 0..61 {
-            b.tick(true, true, &mut h);
+            b.tick(far, true, &mut h).unwrap();
         }
         assert_eq!((b.mode, b.timer), (5, 3600));
-        b.tick(true, true, &mut h);
+        b.tick(far, true, &mut h).unwrap();
         assert_eq!(b.timer, 3600);
         for _ in 0..3600 {
-            b.tick(false, true, &mut h);
+            b.tick(near, true, &mut h).unwrap();
         }
         assert_eq!((b.mode, b.timer, h.registrations), (1, 0, 31));
-        b.tick(false, true, &mut h);
+        b.tick(near, true, &mut h).unwrap();
         assert_eq!((b.mode, h.installs, h.registrations), (2, 1, 32));
     }
 }

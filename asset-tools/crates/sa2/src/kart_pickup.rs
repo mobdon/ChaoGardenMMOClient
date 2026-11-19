@@ -58,18 +58,19 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
     let rel = CityRel::read_identified(bytes, 80)?;
     let c = rel.data(4)?;
     let f = |at: usize| f32::from_be_bytes(c[at..at + 4].try_into().unwrap());
-    let near = s.first_range_metric < f(0x1c0)
-        || (s.view_count == 2
-            && s.second_range_metric
-                .ok_or_else(|| Error::invalid("missing second view range metric"))?
-                < f(0x1c0));
+    let outside = crate::kart_object_range::ObjectRange {
+        first: s.first_range_metric,
+        views: s.view_count,
+        second: s.second_range_metric,
+    }
+    .outside()?;
     let mut o = Output {
         state: s.state,
         registry: s.registry,
         calls: vec![],
         collection: None,
     };
-    if !near && o.state.mode != 4 {
+    if outside && o.state.mode != 4 {
         return Ok(o);
     }
     match o.state.mode {
