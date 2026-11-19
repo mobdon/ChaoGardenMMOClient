@@ -824,6 +824,15 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    /// Inputs at 0x1d74. Supply the final player byte separately because the
+    /// stage reads it again after the damage and collision calls.
+    CommonTail {
+        weakpoint_position: Option<[f32; 3]>,
+        previous_target: [f32; 3],
+        flags: u16,
+        player: i8,
+        player_after_updates: i8,
+    },
     PlayerSwitch {
         mode: i8,
         submode: i8,
@@ -1124,6 +1133,42 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             return Ok(
                 serde_json::json!({"entry_mode_copy":entry_mode,"mode":mode,"submode":submode,
                 "cursor":cursor,"child14":child14,"child18":child18,"call_sites":sites,"continue_at":next}),
+            );
+        }
+        PlacementClock::CommonTail {
+            weakpoint_position,
+            previous_target,
+            mut flags,
+            player,
+            player_after_updates,
+        } => {
+            let mut target = previous_target;
+            let mut sites = vec![0x1d78];
+            if let Some([x, y, z]) = weakpoint_position {
+                let threshold =
+                    f32::from_be_bytes(phase_constant(&rel, 0x2012, 4)?.try_into().unwrap());
+                let opposite =
+                    f32::from_be_bytes(phase_constant(&rel, 0x2032, 4)?.try_into().unwrap());
+                let depth = if z.abs() < threshold {
+                    if player == 0 {
+                        opposite
+                    } else {
+                        threshold
+                    }
+                } else {
+                    -z
+                };
+                target = [x, y, depth];
+                sites.push(0x1da4);
+                if flags & 0x100 != 0 {
+                    sites.push(0x1db8);
+                    flags &= !0x100;
+                }
+            }
+            sites.extend([0x1dcc, 0x1dd4]);
+            return Ok(
+                serde_json::json!({"target":target,"flags_before_damage":flags,
+                "previous_player_after_tail":player_after_updates,"call_sites":sites}),
             );
         }
         PlacementClock::InitialHealth => {
