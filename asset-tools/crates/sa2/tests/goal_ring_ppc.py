@@ -820,3 +820,45 @@ for nested in [0,TASK+0x300]:
     release_cpu.emu_start(BASE+0x2d4f4,BASE+0x2d538,count=80)
     assert release_cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d538
     print('FREE',WORK,nested,json.dumps(dict(callback=0x2d4f4,events=events),separators=(',',':')))
+
+# Run the caller's argument setup and its local texture initializer.
+tex=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+for page in [TASK,DATA,BASE+0x18000,BASE+0x2d000]:tex.mem_map(page,4096)
+tex.reg_write(R.UC_PPC_REG_MSR,8192)
+tex.mem_write(BASE+0x2d3d4,d[ss[1][0]+0x2d3d4:ss[1][0]+0x2d3e0])
+entry=0x189ec
+block=bytearray(d[ss[1][0]+entry:ss[1][0]+entry+0xbc]);sites={}
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not entry<=off<entry+len(block):continue
+        if module==0:
+            assert kind==10
+            sites[BASE+off]=val
+        else:
+            assert module==12 and s==4 and kind in (4,6)
+            tex.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4])
+            struct.pack_into('>H',block,off-entry,((DATA+val) if kind==4 else (DATA+val+0x8000)>>16)&65535)
+tex.mem_write(BASE+entry,bytes(block))
+def tex_service(cpu,pc,*_):
+    target=sites[pc]
+    argc={0x80102de0:5,0x801194b4:2,0x80103004:8,0x801032c0:6}[target]
+    calls.append([target,*[cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i))) for i in range(3,3+argc)]])
+    if target==0x801032c0:
+        for i in range(1,4):
+            bits=cpu.reg_read(getattr(R,'UC_PPC_REG_FPR'+str(i)))
+            lod.append(struct.unpack('>I',struct.pack('>f',struct.unpack('>d',bits.to_bytes(8,'big'))[0]))[0])
+    cpu.reg_write(R.UC_PPC_REG_3,size if target==0x80102de0 else alloc)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in sites:tex.hook_add(UC_HOOK_CODE,tex_service,begin=pc,end=pc)
+for work,size,alloc in [(WORK,2048,TASK+0x600),(WORK+0x200,4096,0)]:
+    calls=[];lod=[]
+    tex.reg_write(R.UC_PPC_REG_1,TASK+0xf00);tex.reg_write(R.UC_PPC_REG_3,work)
+    tex.emu_start(BASE+0x2d3d4,BASE+0x2d3e0,count=100)
+    assert tex.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d3e0
+    width,ptr=struct.unpack('>II',tex.mem_read(work+140,8))
+    print('TEX',work,size,alloc,json.dumps(dict(calls=calls,lodFloatBits=lod,work140=width,work144=ptr),separators=(',',':')))

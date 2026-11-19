@@ -51,6 +51,8 @@ pub struct Program {
     regular_callbacks: [u32; 5],
     #[serde(skip)]
     regular_work40: u32,
+    #[serde(skip)]
+    texture_lod_bits: [u32; 2],
     pub radii: [f32; 2],
     pub spin: [i32; 2],
     pub rise: f32,
@@ -1031,6 +1033,49 @@ impl Program {
                 return Err(invalid());
             }
         }
+        let site = init + 0x1d4;
+        if word(instructions, site as usize - 8)? != 0x3863003c
+            || word(instructions, site as usize - 4)? != 0x38800040
+        {
+            return Err(invalid());
+        }
+        let b = word(instructions, site as usize)?;
+        if b & 0xfc000003 != 0x48000001 {
+            return Err(invalid());
+        }
+        let texture = site
+            .checked_add_signed(((b & 0x03fffffc) << 6) as i32 >> 6)
+            .ok_or_else(invalid)?;
+        if manifest::sha256(
+            instructions
+                .get(texture as usize..texture as usize + 0xbc)
+                .ok_or_else(invalid)?,
+        ) != "423e318810239b2fd44a0e67076fdf63e73e2e97e54cb83981f638bf8999314b"
+        {
+            return Err(invalid());
+        }
+        for (off, target) in [
+            (0x30, 0x80102de0),
+            (0x3c, 0x801194b4),
+            (0x68, 0x80103004),
+            (0xa0, 0x801032c0),
+        ] {
+            let call = rel.reference(1, texture + off).ok_or_else(invalid)?;
+            if (call.module, call.kind, call.addend) != (0, 10, target) {
+                return Err(invalid());
+            }
+        }
+        let lod = |off| -> Result<u32> {
+            let hi = rel.reference(1, texture + off).ok_or_else(invalid)?;
+            let lo = rel.reference(1, texture + off + 4).ok_or_else(invalid)?;
+            if (hi.module, hi.section, hi.kind) != (info.module, 4, 6)
+                || (lo.module, lo.section, lo.kind, lo.addend) != (info.module, 4, 4, hi.addend)
+            {
+                return Err(invalid());
+            }
+            word(rel.data(4)?, lo.addend as usize)
+        };
+        let texture_lod_bits = [lod(0x7a)?, lod(0x86)?];
         let regular_work40 = word(rel.data(4)?, paired(0x2c6, 4)? as usize)?;
         for off in [0x230, 0x23c] {
             let call = rel.reference(1, init + off).ok_or_else(invalid)?;
@@ -1124,6 +1169,7 @@ impl Program {
             child_scale_bits,
             regular_callbacks,
             regular_work40,
+            texture_lod_bits,
             regular_shapes,
             regular_shape_offset,
             radii,
@@ -1578,6 +1624,23 @@ impl Program {
         }
         Ok(json!(pairs))
     }
+    pub fn regular_texture_setup(
+        &self,
+        work56: u32,
+        size_return: u32,
+        allocation_return: u32,
+    ) -> Result<Value> {
+        if work56 == 0 {
+            return Err(Error::invalid("missing allocated goal work"));
+        }
+        let obj = work56.wrapping_add(0x6c);
+        let [min, max] = self.texture_lod_bits;
+        Ok(
+            json!({"calls":[[0x80102de0u32,64,64,2,0,0],[0x801194b4u32,1,size_return],
+            [0x80103004u32,obj,allocation_return,64,64,2,0,0,0],[0x801032c0u32,obj,1,1,0,0,0]],
+            "lodFloatBits":[min,max,min],"work140":64,"work144":allocation_return}),
+        )
+    }
     pub fn regular_release(&self, work56: u32, nested: u32) -> Result<Value> {
         if work56 == 0 {
             return Err(Error::invalid("goal release dereferences missing work"));
@@ -1783,7 +1846,15 @@ struct ChildDispatch {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct TextureSetup {
+    work56: u32,
+    size_return: u32,
+    allocation_return: u32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Request {
+    texture_setup: Option<TextureSetup>,
     bind_query_returns: Option<Vec<i32>>,
     child_dispatch: Option<ChildDispatch>,
     child: Option<ChildObservation>,
@@ -1829,6 +1900,17 @@ pub fn replay(
         r.range_out,
         r.allocation_ok,
     );
+    let texture_setup = match (&init, &r.texture_setup) {
+        (InitRoute::Contact { .. }, Some(t)) => {
+            Some(p.regular_texture_setup(t.work56, t.size_return, t.allocation_return)?)
+        }
+        (_, None) => None,
+        _ => {
+            return Err(Error::invalid(
+                "texture setup requires allocated contact task",
+            ))
+        }
+    };
     let task_bind = match (&init, &r.bind_query_returns) {
         (InitRoute::Contact { angle_x }, Some(q)) => Some(p.regular_task_bind(*angle_x, q)?),
         (_, None) => None,
@@ -1985,6 +2067,6 @@ pub fn replay(
         None
     };
     Ok(
-        json!({"observedRelease":released,"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
+        json!({"textureSetup":texture_setup,"observedRelease":released,"taskBind":task_bind,"collisionSetup":p.regular_collision_setup(angle_x),"postContactConsumer":consumer,"program":p,"setAngleX":row.placement.rotation[0] as i16,"effectiveAngleX":angle_x,"placement":row.placement_index,"center":center,"radius":radius,"placementSphereProbe":probe,"frames":frames,"scope":"Contact branch after native initialization. Placement-space geometry is diagnostic. Contacts are supplied; effective angle follows fresh SET initialization; no mission clear or save is committed."}),
     )
 }
