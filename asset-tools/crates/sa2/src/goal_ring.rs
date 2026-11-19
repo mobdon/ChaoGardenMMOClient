@@ -25,6 +25,8 @@ pub struct Program {
     #[serde(skip)]
     child_start_data: [u32; 3],
     #[serde(skip)]
+    child_shapes: [[crate::collision_record::CollisionRecord; 2]; 2],
+    #[serde(skip)]
     child_idle_step: f32,
     #[serde(skip)]
     child_actions: Vec<(u32, u32)>,
@@ -822,6 +824,17 @@ impl Program {
             reference(0x18a, 5)?,
             reference(0x1ae, 5)?,
         ];
+        let shape_pair = |offset: u32| -> Result<_> {
+            let second = offset.checked_add(48).ok_or_else(invalid)?;
+            Ok([
+                crate::collision_record::collision_record(data, offset)?,
+                crate::collision_record::collision_record(data, second)?,
+            ])
+        };
+        let child_shapes = [
+            shape_pair(child_start_data[1])?,
+            shape_pair(child_start_data[2])?,
+        ];
         for (off, addr) in [
             (0x88, 0x800651e4),
             (0x98, 0x8006519c),
@@ -998,6 +1011,7 @@ impl Program {
             child_handlers,
             child_mode_one,
             child_start_data,
+            child_shapes,
             child_idle_step,
             child_actions,
             action_services,
@@ -1479,7 +1493,7 @@ impl Program {
         Ok((
             mode,
             json!({"mode":mode,"task60":index,"work36Bits":initial,"work40Bits":initial,"calls":calls,
-            "callbacks20_24_32":[self.child_callbacks[0],self.child_handlers[4],self.child_callbacks[1]]}),
+            "collisionShapes":self.child_shapes[usize::from(!alt)],"callbacks20_24_32":[self.child_callbacks[0],self.child_handlers[4],self.child_callbacks[1]]}),
         ))
     }
     pub fn child_dispatch(&self, mode: i8, byte1: i8, range_out: Option<bool>) -> Result<Value> {

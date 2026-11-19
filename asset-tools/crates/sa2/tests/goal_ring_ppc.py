@@ -726,7 +726,13 @@ def start_service(cpu,pc,*_):
     if addr in (0x800651e4,0x8006519c):
         answer=(mask>>len(answers))&1
         answers.append(answer);cpu.reg_write(R.UC_PPC_REG_3,answer)
-    elif addr==0x8000f7d8:event.extend([args[1]-bases[5],*args[2:]])
+    elif addr==0x8000f7d8:
+        offset=args[1]-bases[5]
+        event.extend([offset,*args[2:]])
+        for i in range(args[2]):
+            fields=struct.unpack_from('>bBbbI7f3i',d,ss[5][0]+offset+48*i)
+            shapes.append(dict(kind=fields[0],form=fields[1],push=fields[2],damage=fields[3],attr=fields[4],
+                               center=fields[5:8],parameters=fields[8:12],angles=fields[12:15]))
     else:assert addr==0x80018d28
     calls.append(event);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in imports:cpu.hook_add(UC_HOOK_CODE,start_service,begin=pc,end=pc)
@@ -736,12 +742,12 @@ for selector,(byte1,linked,parent),mask in itertools.product(
     for off,val in [(52,WORK),(8,TASK+0x600),(48,linked),(0x630,parent)]:
         cpu.mem_write(TASK+off,struct.pack('>I',val))
     cpu.mem_write(WORK+1,struct.pack('>b',byte1));cpu.mem_write(WORK+32,struct.pack('>f',selector))
-    calls=[];answers=[]
+    calls=[];answers=[];shapes=[]
     cpu.reg_write(R.UC_PPC_REG_1,TASK+0xf00);cpu.reg_write(R.UC_PPC_REG_3,TASK);cpu.reg_write(R.UC_PPC_REG_LR,BASE+0x300)
     cpu.emu_start(BASE,BASE+0x300,count=400)
     assert cpu.reg_read(R.UC_PPC_REG_PC)==BASE+0x300
     word_at=lambda ptr:struct.unpack('>I',cpu.mem_read(ptr,4))[0]
-    result=dict(mode=cpu.mem_read(WORK,1)[0],task60=word_at(TASK+60),work36Bits=word_at(WORK+36),
+    result=dict(collisionShapes=shapes,mode=cpu.mem_read(WORK,1)[0],task60=word_at(TASK+60),work36Bits=word_at(WORK+36),
                 work40Bits=word_at(WORK+40),calls=calls,callbacks20_24_32=[word_at(TASK+i)-BASE for i in (20,24,32)])
     obs=dict(work32=selector,task_link=bool(linked),parent_link=bool(parent),query_returns=answers)
     print('Z',byte1,json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))
