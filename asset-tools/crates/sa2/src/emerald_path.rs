@@ -176,3 +176,79 @@ impl PathTaskWork {
         *self = Self::default();
     }
 }
+/// Stage-owned decisions in module 15, 1:0x22300. Services operate on the same
+/// task and may update its cursor, transformed position, or engine collision data.
+pub trait MovingEmeraldServices {
+    fn mode_zero_gate(&mut self) -> i32;
+    fn advance_and_transform(&mut self);
+    fn selection(&mut self) -> i32;
+    fn collision_flags(&mut self) -> u16;
+    fn hit_count(&mut self) -> i16;
+    fn game_mode(&mut self) -> i32;
+    fn engine_byte(&mut self) -> i8;
+    fn owner_id(&mut self) -> u16;
+    fn collector(&mut self) -> i32;
+    fn eligible(&mut self, collector: i32) -> bool;
+    fn pickup(&mut self, collector: i32);
+    fn remove(&mut self, has_set_entry: bool);
+    fn refresh_shape(&mut self);
+    fn report_position(&mut self);
+    fn enter_collision(&mut self);
+}
+
+pub struct MovingEmeraldFrame {
+    pub mode: i8,
+    pub submode: i8,
+    pub has_allocation: bool,
+    pub has_set_entry: bool,
+    pub type_word: u32,
+    pub spin: u32,
+}
+
+impl MovingEmeraldFrame {
+    /// Returns true if the native callback dispatched removal.
+    pub fn update(
+        &mut self,
+        services: &mut impl MovingEmeraldServices,
+        spin_increment: u32,
+    ) -> bool {
+        if (self.mode == 0 && services.mode_zero_gate() != 0) || !self.has_allocation {
+            return false;
+        }
+        if self.submode != 3 {
+            services.advance_and_transform();
+        }
+        match self.submode {
+            1 => match services.selection() {
+                0 => self.submode = 3,
+                1..=3 => self.submode = 2,
+                _ => {}
+            },
+            s if s < 1 => self.submode = 1,
+            _ => {}
+        }
+        if self.submode != 2 || self.mode == 5 {
+            return false;
+        }
+        if services.collision_flags() & 1 != 0
+            && !(services.hit_count() != 0
+                && services.game_mode() == 0x1a
+                && services.engine_byte() == 0
+                && self.type_word == 9)
+            && services.owner_id() <= 1
+        {
+            let candidate = services.collector();
+            if services.eligible(candidate) {
+                let collector = services.collector();
+                services.pickup(collector);
+                services.remove(self.has_set_entry);
+                return true;
+            }
+        }
+        services.refresh_shape();
+        services.report_position();
+        services.enter_collision();
+        self.spin = self.spin.wrapping_add(spin_increment);
+        false
+    }
+}
