@@ -36,7 +36,7 @@ struct WallInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TailInput {
-    observed_local_velocity: [f32; 3],
+    observed_local_velocity: Option<[f32; 3]>,
     observed_raw_magnitude: f32,
     post_alignment_angles: [i32; 3],
     work_d4: i32,
@@ -70,7 +70,10 @@ impl Ring {
 }
 #[derive(Serialize)]
 struct TailUpdate {
-    observed_local_velocity: [f32; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observed_local_velocity: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    projected_local_velocity: Option<[f32; 3]>,
     work_d4: i32,
     ring: Option<Ring>,
     motion_history: Option<[[f32; 3]; 30]>,
@@ -98,6 +101,11 @@ impl TailInput {
             )),
         };
         Ok(TailUpdate {
+            projected_local_velocity: if self.observed_local_velocity.is_none() {
+                Some(inverse_vehicle_rotation(raw, self.post_alignment_angles)?)
+            } else {
+                None
+            },
             observed_local_velocity: self.observed_local_velocity,
             work_d4: self.work_d4.wrapping_add(delta as i32),
             ring,
@@ -307,4 +315,23 @@ pub(crate) fn step_for_fall(bytes: &[u8], s: Input) -> Result<(Update, FallCarry
         saved_position,
     };
     Ok((update, carry))
+}
+
+/// Mathematical projection of CartD 0x5498. Z, X, Y are appended to
+/// the current matrix before inversion. Its inverse acts on a world vector
+/// by undoing Z first, then X, then Y. Engine trig and matrix rounding differ.
+pub(crate) fn inverse_vehicle_rotation(world: [f32; 3], angles: [i32; 3]) -> Result<[f32; 3]> {
+    let trig = |a: i32| (f64::from(a as u16) * (std::f64::consts::TAU / 65536.)).sin_cos();
+    let [x, y, z] = world.map(f64::from);
+    let (sz, cz) = trig(angles[2]);
+    let (x, y) = (cz * x + sz * y, -sz * x + cz * y);
+    let (sx, cx) = trig(angles[0]);
+    let (y, z) = (cx * y + sx * z, -sx * y + cx * z);
+    let (sy, cy) = trig(angles[1]);
+    let result = [(cy * x - sy * z) as f32, y as f32, (sy * x + cy * z) as f32];
+    if result.iter().all(|v| v.is_finite()) {
+        Ok(result)
+    } else {
+        Err(crate::Error::invalid("nonfinite local kart vector"))
+    }
 }

@@ -36,6 +36,8 @@ def run(start,end):
     assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+end
 tw=ram+0x1000;put(task+0x34,"I",tw)
 reg(1,ram+0xf000);u.reg_write(R.UC_PPC_REG_MSR,8192)
+from kart_matrix_imports import install_inverse_rotation
+install_inverse_rotation(u,base[1])
 def vec(a):return list(struct.unpack(">3f",u.mem_read(a,12)))
 def hook(m,addr,*_):
     pc=addr-base[1];args=[m.reg_read(getattr(R,f"UC_PPC_REG_{i}")) for i in range(3,7)]
@@ -58,6 +60,7 @@ def hook(m,addr,*_):
     elif pc==0x2fac:
         assert (a,b,c)==(tw+8,work+0x7c,work+0x88)
         assert list(struct.unpack(">3i",u.mem_read(a,12)))==tail["post_alignment_angles"]
+        if combined:return
         u.mem_write(c,struct.pack(">3f",*tail["observed_local_velocity"]))
     elif pc==0x2fcc:
         assert a==work+0x7c
@@ -123,6 +126,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
         put(work+0x28c,"i",count);put(work+0x44,"i",enabled);put(work+0x78,"i",1)
         if combined:
             # Same task and work addresses from first contact query to the final branch.
+            del tail["observed_local_velocity"]
             saved=dict(task_mode=7,saved_angles=[12,13,14],grounded_position=[-6,7,8],
                        work_68=11,work_fc_104=[12,13,14],segment=3,lap=2,work_cc=1,
                        work_254=6,work_25c=8,timer=[1,180,181,182,181,5][j],work_260=2,
@@ -144,6 +148,7 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             subprocess.run([cli,"kart-contact-recovery",rel,out,exe,route["course"],req],check=True)
             result=json.loads(out.read_text());doc=result["contact"];signals=[];calls=[]
             reg(29,task);run(0x2258,0x287c)
+            assert struct.pack(">3f",*doc["response"]["tail"]["projected_local_velocity"])==bytes(u.mem_read(work+0x88,12))
             assert calls==doc["response"]["calls"]
             fields.update(position=(tw+20,"3f"),saved_position=(work+20,"3f"),velocity=(work+0x7c,"3f"),
                           angles=(tw+8,"3i"),state=(work+0x30,"i"))

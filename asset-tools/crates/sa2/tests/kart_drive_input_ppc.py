@@ -35,12 +35,15 @@ def run(start,end):
     assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+end
 hist=base[6]+0x222ac;cur=base[6]+0x2248c
 reg(1,ram+0xf000);u.reg_write(R.UC_PPC_REG_MSR,8192)
+from kart_matrix_imports import install_inverse_rotation
+install_inverse_rotation(u,base[1])
 def vec_hook(m,addr,*args):
     pc=addr-base[1]
     a,b,dest=[m.reg_read(getattr(R,f"UC_PPC_REG_{n}")) for n in (3,4,5)]
     read=lambda p:struct.unpack(">3f",u.mem_read(p,12))
     if pc==0x352c:
         assert bytes(u.mem_read(b,12))==struct.pack(">3f",*dr["history_offset"])
+        if "pitch_roll" in di:return
         vals=di["local_offset"]
     else:
         left,right=read(a),read(b)
@@ -64,6 +67,8 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             f["drive"]["drift"]=dict(positions=[[n+i*.25,3-i*2,n-3*i] for i in range(30)],
                 local_offset=[[-3,-2.5,1,2.5,3][n%5],0,-1.5],speed_threshold=(4,5,6)[n%3 if n%4 else 0],
                 vehicle_state=1,work_10c=4,work_a8=99)
+            if n%3==1:
+                di=f["drive"]["drift"];del di["local_offset"];di["pitch_roll"]=[n*987,-n*888]
             if n in (4,11,25):
                 f["stick_x"]=(20,-20,21)[(4,11,25).index(n)]
                 f["drive"]["drift"]["speed_threshold"]=4
@@ -131,6 +136,8 @@ with tempfile.TemporaryDirectory(dir=tmp) as td:
             put(work+0x70,"i",slot);put(work+0x30,"i",di["vehicle_state"])
             put(work+0x10c,"I",di["work_10c"]);put(work+0xa8,"i",di["work_a8"])
             put(base[6]+0x2145c,"f",di["speed_threshold"])
+            if "pitch_roll" in di:
+                put(tw+8,"i",di["pitch_roll"][0]);put(tw+16,"i",di["pitch_roll"][1])
             run(0x346c,0x368c)
             for key,off in [("work_f0",0xf0),("work_f8",0xf8),("vehicle_state",0x30),
                             ("work_10c",0x10c),("work_a8",0xa8),("work_a4",0xa4)]:

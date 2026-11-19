@@ -154,7 +154,7 @@ fn drive_step(
         .transpose()?;
     let drift = d
         .drift
-        .map(|i| drift_update(i, speed, work_a4, accelerate, stick_x, constants))
+        .map(|i| drift_update(i, heading, speed, work_a4, accelerate, stick_x, constants))
         .transpose()?;
     Ok(Motion {
         drift,
@@ -232,6 +232,7 @@ struct DriftInput {
     ring: Option<crate::kart_contact::Ring>,
     /// Return of the rotation helper 0x5498, if observed.
     local_offset: Option<[f32; 3]>,
+    pitch_roll: Option<[i32; 2]>,
     speed_threshold: f32,
     vehicle_state: i32,
     work_10c: u32,
@@ -240,6 +241,8 @@ struct DriftInput {
 #[derive(Serialize)]
 struct DriftUpdate {
     history_offset: [f32; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    projected_local_offset: Option<[f32; 3]>,
     work_f0: Option<i32>,
     work_f8: Option<i32>,
     vehicle_state: i32,
@@ -249,6 +252,7 @@ struct DriftUpdate {
 }
 fn drift_update(
     s: DriftInput,
+    heading: i32,
     speed: f32,
     mut a4: i32,
     accelerate: bool,
@@ -272,7 +276,19 @@ fn drift_update(
         }
     }
     let history_offset = std::array::from_fn(|i| history[0][i] - sum[i] * f(0x238));
-    let work_f0 = s.local_offset.map(|[x, _, z]| {
+    if s.pitch_roll.is_some() && s.local_offset.is_some() {
+        return Err(Error::invalid(
+            "supply task angles or observed drift offset, not both",
+        ));
+    }
+    let projected_local_offset = s
+        .pitch_roll
+        .map(|[pitch, roll]| {
+            crate::kart_contact::inverse_vehicle_rotation(history_offset, [pitch, heading, roll])
+        })
+        .transpose()?;
+    let local_offset = s.local_offset.or(projected_local_offset);
+    let work_f0 = local_offset.map(|[x, _, z]| {
         if x < f(0x23c) {
             640
         } else if x > f(0x240) {
@@ -281,7 +297,7 @@ fn drift_update(
             (z * f(0x244)) as i32
         }
     });
-    let work_f8 = s.local_offset.map(|v| (v[0] * f(0x248)) as i32);
+    let work_f8 = local_offset.map(|v| (v[0] * f(0x248)) as i32);
     let (mut vehicle_state, mut work_10c, mut work_a8) = (s.vehicle_state, s.work_10c, s.work_a8);
     if speed > s.speed_threshold && a4 > 0 {
         work_10c |= 1;
@@ -292,6 +308,7 @@ fn drift_update(
         }
     }
     Ok(DriftUpdate {
+        projected_local_offset,
         history_offset,
         work_f0,
         work_f8,
