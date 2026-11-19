@@ -1,6 +1,19 @@
 //! Local-space stepping for Wild Canyon type-zero paths (module 15, 1:0x21808).
 use crate::{Error, Result};
 
+/// The eight mounted alternate placements use two zero rotation words. Compose
+/// their translations first, as the stage does before submitting a local point.
+pub fn unrotated_path_translation(
+    origin: [f32; 3],
+    rotations: [u16; 2],
+    center: [f32; 3],
+) -> Option<[f32; 3]> {
+    (rotations == [0, 0]).then(|| std::array::from_fn(|i| origin[i] - center[i]))
+}
+pub fn translate_path_point(translation: [f32; 3], point: [f32; 3]) -> [f32; 3] {
+    std::array::from_fn(|i| point[i] + translation[i])
+}
+
 /// Module 15, 1:0x217ac. The engine angle service takes horizontal X then Z.
 pub fn segment_heading(from: [f32; 3], to: [f32; 3], angle: impl FnOnce(f32, f32) -> f64) -> i16 {
     // fsubs followed by fneg preserves the original signed zero at an axis.

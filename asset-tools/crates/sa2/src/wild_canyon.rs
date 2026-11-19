@@ -70,7 +70,7 @@ pub fn enter(
         return Err(invalid());
     }
     let mut paths = Vec::new();
-    let mut centers = Vec::new();
+    let mut path_geometry = Vec::new();
     for index in 0..count {
         let header = section_ptr(path_table + 4 * index)?;
         let at = header as usize;
@@ -97,10 +97,10 @@ pub fn enter(
             vertices.push(xyz);
         }
         let center: [f32; 3] = std::array::from_fn(|j| (hi[j] + lo[j]) * half);
-        centers.push(center);
         paths.push(
             json!({"headerOffset":header,"pointsOffset":points,"points":vertices,"center":center}),
         );
+        path_geometry.push((center, vertices));
     }
     let mut emeralds = Vec::new();
     for (layer_index, layer) in stage.layers.iter().enumerate() {
@@ -156,11 +156,22 @@ pub fn enter(
             let alternate_setup = if let Some(i) = path_index {
                 let parameter = |pc| f32_at(rel.data(4)?, pair(pc, 4)? as usize);
                 let p = &bound.placement;
-                let center = centers[i as usize];
+                let (center, vertices) = &path_geometry[i as usize];
+                let translation = crate::emerald_path::unrotated_path_translation(
+                    p.position,
+                    [p.rotation[1], p.rotation[2]],
+                    *center,
+                );
+                let world_vertices = translation.map(|t| {
+                    vertices
+                        .iter()
+                        .map(|&v| crate::emerald_path::translate_path_point(t, v))
+                        .collect::<Vec<_>>()
+                });
                 Some(json!({
                     "allocation":[1,24], "initialDistance": parameter(0x22120)? + p.parameters[2],
                     "translate":p.position, "rotationWords":[p.rotation[1],p.rotation[2]],
-                    "translateAfterRotation":center.map(|v| -v),
+                    "translateAfterRotation":center.map(|v| -v),"derivedWorldVertices":world_vertices,
                     "typeWord":u32::from_be_bytes(data[row as usize..row as usize+4].try_into().unwrap()),
                     "lowByte":p.rotation[0]&255, "shapeOffset":pair(0x22220,5)?,
                     "count":1,"id":6,"shapeParameter":parameter(0x22234)? + p.parameters[1]

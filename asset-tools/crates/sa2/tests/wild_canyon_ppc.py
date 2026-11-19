@@ -141,7 +141,8 @@ def emerald_paths():
     finally:
         for h in hooks:u.hook_del(h)
     return paths
-def alternate_setup(data, at, center):
+def alternate_setup(data, at, path):
+    center=path["center"]
     rx,ry,rz=struct.unpack_from(">3H",data,at+2)
     xyz=struct.unpack_from(">6f",data,at+8)
     extra=stage+1200; shape=stage+1400; ccl=stage+1500
@@ -184,6 +185,15 @@ def alternate_setup(data, at, center):
         assert u.reg_read(R.UC_PPC_REG_PC)==stop and steps==list(sites),steps
     finally:
         for hook in hooks:u.hook_del(hook)
+    assert setup["rotationWords"]==[0,0]
+    # Independent homogeneous matrix composition with f32 storage between calls.
+    f32=lambda v:struct.unpack(">f",struct.pack(">f",v))[0]
+    m=[[float(i==j) for j in range(4)] for i in range(4)]
+    for vector in (setup["translate"],setup["translateAfterRotation"]):
+        t=[[float(i==j) for j in range(4)] for i in range(4)]
+        for i,v in enumerate(vector):t[i][3]=v
+        m=[[f32(sum(row[k]*t[k][j] for k in range(4))) for j in range(4)] for row in m]
+    setup["derivedWorldVertices"]=[[f32(sum(a*b for a,b in zip(row,[*v,1.]))) for row in m[:3]] for v in path["points"]]
     return setup
 def emerald_tasks():
     paths=emerald_paths()
@@ -242,7 +252,7 @@ def emerald_tasks():
                             if row["commonSetup"] is None:row["commonSetup"]=setup
                             else:assert row["commonSetup"]==setup
                 row["pathIndex"]=(int(struct.unpack_from(">f",data,32+32*index+20)[0])%12 if row["initialize"]==0x220ac else None)
-                row["alternateSetup"]=None if row["pathIndex"] is None else alternate_setup(data,32+32*index,paths[row["pathIndex"]]["center"])
+                row["alternateSetup"]=None if row["pathIndex"] is None else alternate_setup(data,32+32*index,paths[row["pathIndex"]])
                 expected.append(row)
     finally:
         for h in hooks:u.hook_del(h)
