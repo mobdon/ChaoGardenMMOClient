@@ -1,4 +1,6 @@
 //! Mode 8 on the uninterrupted opening. Child slots were filled during descent.
+#[path = "big_foot_shot.rs"]
+mod projectile;
 use crate::{Error, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -11,6 +13,7 @@ pub(super) struct Entry {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Launch {
+    flight: Option<projectile::Replay>,
     random_result: i32,
     slot_zero_heading: i32,
     heading_difference: i32,
@@ -44,11 +47,15 @@ pub(super) fn run(s: Entry, launches: [Launch; 8]) -> Result<(Value, u16)> {
                     let spread =
                         (2048.0f32 - 4096.0 * (obs.random_result as f32 * (1.0 / 32768.0))) as i32;
                     remaining -= 1;
-                    shot = Some(
-                        json!({"slot":remaining,"anchorOffset":s.anchors[remaining],"angles":s.angles,
+                    let offset = spread.wrapping_add(obs.heading_difference);
+                    let mut child = json!({"slot":remaining,"anchorOffset":s.anchors[remaining],"angles":s.angles,
                         "target":obs.player_position,"differenceArgs":[obs.slot_zero_heading,s.angles[1]],
-                        "headingOffset":spread.wrapping_add(obs.heading_difference),"speed":1.8f32,"mode":1,"submode":0}),
-                    );
+                        "headingOffset":offset,"speed":1.8f32,"mode":1,"submode":0});
+                    if let Some(flight) = obs.flight {
+                        child["flight"] =
+                            projectile::run(flight, obs.player_position, s.angles, offset)?;
+                    }
+                    shot = Some(child);
                     if remaining.is_multiple_of(4) {
                         timer = 45;
                         sub = 3;

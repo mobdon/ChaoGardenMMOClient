@@ -20,7 +20,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0x2ae4,0x2d8c),(0x2820,0x2ae4),(0x57d10,0x57da0),(0x1e50,0x2820),(0x2800,0x2820),(0x55948,0x55968),(0x55c10,0x55c5c),(0x55d20,0x55d78),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0x57524,0x57d10),(0x57dcc,0x57e5c),(0x2ae4,0x2d8c),(0x2820,0x2ae4),(0x57d10,0x57da0),(0x1e50,0x2820),(0x2800,0x2820),(0x55948,0x55968),(0x55c10,0x55c5c),(0x55d20,0x55d78),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
@@ -56,6 +56,7 @@ for dst,val in bind_relocs:put(dst,"I",val)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|8192)
 adjust_sites=(0x21c0,0x2200,0x22a0,0x22b4,0x22c8,0x239c,0x23b0,0x23c4,0x23d8,0x23ec,0x2400)
 recovery_sites=(0x2b60,0x2b80,0x2be4,0x2c2c,0x2c3c,0x2cb8,0x2d00,0x2d08,0x2d24,0x2d6c)
+shot_sites=(0x57574,0x57598,0x57618,0x577ac,0x577bc,0x577cc,0x577d4,0x57830,0x57840,0x578dc,0x578e8,0x578f8,0x57904,0x5790c,0x57b80,0x57b90,0x57bd4,0x57c00,0x57c40,0x57c7c,0x57cd8,0x57cf0,0x576d0,0x576dc,0x576e4,0x57cc8,0x57ce0,0x57cf8)
 volley_sites=(0x2830,0x28e8,0x2954,0x295c,0x57d78,0x2a54,0x2a60,0x2ac8,0x2ad4)
 landing_sites=(0x2478,0x248c,0x24a0,0x24d0,0x2520,0x2558,0x2564,0x2648,0x2684,0x26e4,0x273c,0x275c,0x276c,0x27b0,0x27c4,0x27dc)
 aim_sites=(0x21d0,0x2210,0x2224,0x2268,0x22f0,0x2428)
@@ -125,7 +126,35 @@ def hook(uc,pc,size,_):
         f1=struct.unpack(">d",struct.pack(">Q",u.reg_read(R.UC_PPC_REG_FPR1)))[0]
         anchor=reg(4)-(D+6*0x400000);land_calls.append(dict(helper57524=[anchor,f1]))
         h=T+0x20000+len(children)*0x400;page(h);put(h+0x34,"I",h+0x80);put(h+0x38,"I",h+0x100)
-        put(h+0x138,"I",reg(5));children.append((h,anchor));setreg(3,h)
+        u.mem_write(h+0x80,bytes(0x180));children.append((h,anchor))
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x57524);return
+    if off==0x57574:setreg(3,children[-1][0])
+    if off==0x57598:setreg(3,children[-1][0]+0x100)
+    if off==0x57618:
+        h=children[-1][0];assert reg(3)==h and reg(5)==1 and reg(6)==3;put(h+0xac,"I",h+0x200)
+    if off in (0x577bc,0x578e8):rotation_angle[:]=[signed(reg(4))]
+    if off in (0x577cc,0x578f8):
+        vec=get(reg(4),"fff");rotations.append([rotation_angle[0],list(vec)])
+        # Deterministic Y rotation: the engine matrix routine itself is outside this comparison.
+        a=rotation_angle[0]*math.tau/65536
+        put(reg(5),"fff",vec[0]*math.cos(a)+vec[2]*math.sin(a),vec[1],vec[2]*math.cos(a)-vec[0]*math.sin(a))
+        transformed[:]=get(reg(5),"fff")
+    if off in (0x57904,0x57b80):
+        lhs=get(reg(3),"fff");rhs=get(reg(4),"fff");put(reg(3),"fff",*(x+y for x,y in zip(lhs,rhs)))
+    if off in (0x57bd4,0x57c00):
+        args=[struct.unpack(">d",struct.pack(">Q",u.reg_read(r)))[0] for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2)]
+        radians=math.atan2(*args);atan_args.append(args);atan_results.append(radians)
+        u.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",radians))[0])
+    if off in (0x57c40,0x57c7c,0x57cd8,0x57cf0):
+        events.append({0x57c40:"ground",0x57c7c:"radius",0x57cd8:"player",0x57cf0:"other"}[off])
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x576a0);return
+    if off==0x576d0:impacts.append(dict(position=list(get(reg(7),"fff")),engineArgs=[reg(i) for i in (3,4,5,6)]))
+    if off==0x576dc:
+        assert get(reg(4),"fff")==tuple(impacts[-1]["position"]);impacts[-1]["effectKind"]=reg(3)
+    if off==0x576e4:removals.append(reg(3));impacts[-1]["freeChild"]=True
+    if off==0x57cc8:setreg(3,int(hit_player))
+    if off==0x57ce0:setreg(3,int(hit_other))
+    if off==0x57cf8:events.append("register")
     if off==0x2684:
         assert reg(3)==BOSS;land_calls.append(dict(disableCollision=reg(4)))
     if off==0x273c:
@@ -221,7 +250,7 @@ def hook(uc,pc,size,_):
         assert get(reg(3),"fff")==tuple(position)
         put(reg(3),"fff",*vector);calls.append(off)
     u.reg_write(R.UC_PPC_REG_PC,pc+4)
-for off in (*recovery_sites,*volley_sites,*landing_sites,*adjust_sites,*aim_sites,0x1e60,0x2810,0x1ed8,0x1efc,0x1fc8,0x1fec,0x1f70,0x207c,0x20cc,0x2804,0x16f8,0x1728,0x1734,0x1890,0x1948,0x18c8,0x1980,0x19cc,0x19fc,0x1a04,0x1a28,0x1e20,0x1e2c,0x1d8c,0x1db0,0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
+for off in (*shot_sites,*recovery_sites,*volley_sites,*landing_sites,*adjust_sites,*aim_sites,0x1e60,0x2810,0x1ed8,0x1efc,0x1fc8,0x1fec,0x1f70,0x207c,0x20cc,0x2804,0x16f8,0x1728,0x1734,0x1890,0x1948,0x18c8,0x1980,0x19cc,0x19fc,0x1a04,0x1a28,0x1e20,0x1e2c,0x1d8c,0x1db0,0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
     u.hook_add(UC_HOOK_CODE,hook,begin=B+off,end=B+off)
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
@@ -463,6 +492,10 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
             j=len(shots)%8;rv=[0,1,8,12345,16384,24576,32766,32767][j]
             hd=-777+j;dv=2147483600 if j==0 else -319+j
             position=[float(frame),j*0.25,-j*1.5];put(PLAYER+20,"fff",*position)
+            for idx,(h,anchor) in enumerate(children[:get(EXTRA+1,"B")[0]]):
+                loc=(180 if idx==7 and case==2 else 10+anchor/4+frame/16,12+case,idx-5)
+                put(D+6*0x400000+anchor,"fff",*loc);invoke(0x57dcc,h)
+                assert get(h+0x94,"fff")==loc
             released=[];dv_args=[];volley_motion=[]
             invoke(0x2820,BOSS)
             shot=None;remaining=get(EXTRA+1,"B")[0]
@@ -472,6 +505,20 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
                 shot=dict(slot=remaining,anchorOffset=anchor,angles=list(get(h+0x88,"iii")),target=list(get(h+0x148,"fff")),
                     differenceArgs=dv_args[0],headingOffset=get(h+0x130,"i")[0],speed=get(h+0x13c,"f")[0],
                     mode=get(h+0x80,"B")[0],submode=get(h+0x81,"B")[0])
+                shot_ticks=[];shot_rows=[];rotation_angle=[];anchor_position=list(get(h+0x94,"fff"))
+                for k in range(300):
+                    paused=k==1
+                    put(2149367176+0x37,"B",int(paused));hit_player=j==2 and k==4;hit_other=j in (2,3) and k==4
+                    rotations=[];transformed=[];events=[];removals=[];impacts=[];atan_args=[];atan_results=[]
+                    invoke(0x57dcc,h)
+                    assert len(removals)==sum(e!="register" for e in events)
+                    shot_ticks.append("paused" if paused else dict(active=dict(atan_results=atan_results,rotated_vector=transformed or None,hit_player=hit_player,hit_other=hit_other)))
+                    shot_rows.append(dict(position=list(get(h+0x94,"fff")),velocity=list(get(h+0x100,"fff")),timer=get(h+0x86,"H")[0],
+                        submode=get(h+0x81,"B")[0],curveTime=get(h+0x140,"f")[0],curveStep=get(h+0x144,"f")[0],
+                        rotation=rotations[0] if rotations else None,events=events,impacts=impacts,atanArgs=atan_args or None,angles=list(get(h+0x88,"iii"))))
+                    if removals:break
+                assert removals
+                shots[-1]["flight"]=dict(anchor_position=anchor_position,ticks=shot_ticks);shot["flight"]=shot_rows
             expected_volley.append(dict(mode=get(WORK,"B")[0],submode=get(WORK+1,"B")[0],timer=get(WORK+6,"H")[0],
                 flags=get(WORK+4,"H")[0],remaining=remaining,burst=get(motion+0xbc,"f")[0],launch=shot,
                 motion=volley_motion[0] if volley_motion else None))
@@ -516,6 +563,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
             for a,e in zip(replay[k],expected,strict=True):assert a==e,(k,case,a,e)
         print("recovery and second takeoff matched:",len(recovery),len(expected_restart))
         for a,e in zip(replay["groundVolley"],expected_volley,strict=True):assert a==e,(case,a,e)
+        print("child flight updates:",sum(len(o["flight"]["ticks"]) for o in shots))
         print("volley to mode 6:",len(expected_volley),"updates;",len(shots),"launches")
         for a,e in zip(replay["landing"],expected_landing,strict=True):assert a==e,(case,a,e)
         print("landing through mode 8:",len(landing))
