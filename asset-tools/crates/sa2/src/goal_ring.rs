@@ -25,6 +25,8 @@ pub struct Program {
     #[serde(skip)]
     child_start_data: [u32; 3],
     #[serde(skip)]
+    shape_hashes: [(String, String); 2],
+    #[serde(skip)]
     child_shapes: [[crate::collision_record::CollisionRecord; 2]; 2],
     #[serde(skip)]
     child_idle_step: f32,
@@ -824,6 +826,23 @@ impl Program {
             reference(0x18a, 5)?,
             reference(0x1ae, 5)?,
         ];
+        let shape_hash = |off: u32| -> Result<_> {
+            let src = data
+                .get(off as usize..)
+                .and_then(|tail| tail.get(..96))
+                .ok_or_else(invalid)?;
+            let mut little = src.to_vec();
+            for record in little.as_chunks_mut::<48>().0 {
+                for word in record[4..].as_chunks_mut::<4>().0 {
+                    word.reverse();
+                }
+            }
+            Ok((manifest::sha256(src), manifest::sha256(&little)))
+        };
+        let shape_hashes = [
+            shape_hash(child_start_data[1])?,
+            shape_hash(child_start_data[2])?,
+        ];
         let shape_pair = |offset: u32| -> Result<_> {
             let second = offset.checked_add(48).ok_or_else(invalid)?;
             Ok([
@@ -1011,6 +1030,7 @@ impl Program {
             child_handlers,
             child_mode_one,
             child_start_data,
+            shape_hashes,
             child_shapes,
             child_idle_step,
             child_actions,
@@ -1446,6 +1466,26 @@ impl Program {
             Ok(json!({"calls":calls,"playerIndex":slot,"continueAt":self.child_handlers[2]+0x94}))
         }
     }
+    /// Compare raw templates only. A content match does not establish PC callback use.
+    pub fn pc_shape_templates(&self, exe: &[u8]) -> Result<Value> {
+        let pe = crate::pe::read_pe(exe)?;
+        let mut pairs = Vec::new();
+        for (i, (route, rva)) in [("alternate", 0x74d0c0), ("regular", 0x74d060)]
+            .into_iter()
+            .enumerate()
+        {
+            let at = pe.rva_to_offset(rva, 96)?;
+            let bytes = exe.get(at..at + 96).ok_or_else(invalid)?;
+            let pc_hash = manifest::sha256(bytes);
+            let (source, normalized) = &self.shape_hashes[i];
+            pairs.push(
+                json!({"route":route,"pcRva":rva,"pcFileOffset":at,"pcSha256":pc_hash,
+                "relSection":5,"relOffset":self.child_start_data[i+1],"relSha256":source,
+                "matchesAfterEndianConversion":&pc_hash == normalized}),
+            );
+        }
+        Ok(json!(pairs))
+    }
     pub fn child_start(&self, byte1: i8, input: ChildStart) -> Result<Value> {
         self.child_start_with_mode(byte1, input)
             .map(|(_, report)| report)
@@ -1645,6 +1685,7 @@ pub fn replay(
     layer: usize,
     index: usize,
     module: &[u8],
+    exe: &[u8],
     request: &[u8],
 ) -> Result<Value> {
     let (row, def) = stage.resolve(layer, index).ok_or_else(invalid)?;
@@ -1726,7 +1767,7 @@ pub fn replay(
             None
         };
         return Ok(
-            json!({"program":p,"init":init,"child":writes,"childDispatch":dispatch,"dispatchedFrames":0,"scope":"Child placement and optional dispatch including mode 3 and 6 handler writes; engine calls are observations."}),
+            json!({"pcCollisionTemplates":p.pc_shape_templates(exe)?,"program":p,"init":init,"child":writes,"childDispatch":dispatch,"dispatchedFrames":0,"scope":"Child placement and optional dispatch including mode 3 and 6 handler writes; engine calls are observations."}),
         );
     }
     let InitRoute::Contact { angle_x } = init else {

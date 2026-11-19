@@ -29,12 +29,20 @@ fn goal_contact_cannot_repeat() {
 #[ignore = "requires installed Steam stage modules"]
 fn installed_goal_programs() {
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
+    let exe = fs::read(gd.join("../../sonic2app.exe")).unwrap();
     for id in [
         3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 21, 22, 23, 24, 25, 26, 27, 28, 30,
         32, 40, 43, 44,
     ] {
         let bytes = fs::read(gd.join(format!("stg{id:02}D.rel"))).unwrap();
         let program = Program::read(id, &bytes).unwrap();
+        let pairs = program.pc_shape_templates(&exe).unwrap();
+        for pair in pairs.as_array().unwrap() {
+            assert_eq!(
+                pair["matchesAfterEndianConversion"], true,
+                "stage {id}: {pair}"
+            );
+        }
         assert_eq!(program.radii, [25., 8.]);
         assert!(Program::read(if id == 3 { 4 } else { 3 }, &bytes).is_err());
     }

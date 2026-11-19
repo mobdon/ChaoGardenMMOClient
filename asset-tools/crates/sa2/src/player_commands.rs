@@ -365,6 +365,7 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                             layer,
                             row,
                             &module.bytes,
+                            &bytes,
                             &request.bytes,
                         )?
                     } else {
