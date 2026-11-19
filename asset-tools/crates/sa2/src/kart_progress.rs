@@ -150,9 +150,30 @@ pub fn segment_geometry(bytes: &[u8], s: SegmentInput) -> Result<SegmentGeometry
     })
 }
 
+type Quad = [[f32; 2]; 4];
+#[derive(Serialize)]
+pub(crate) struct CrossingRoute<'a> {
+    #[serde(skip)]
+    pub(crate) fall_height: f32,
+    pub(crate) course: &'static str,
+    piece_ids: &'a [u8],
+    projected_occurrence_poses: Vec<serde_json::Value>,
+    pub(crate) projected_segment_xz: Vec<Quad>,
+    segment_event_modes: Vec<crate::kart_vehicle_init::CourseMode>,
+    segment_count: usize,
+    segment_occurrence_and_local_index: Vec<[usize; 2]>,
+}
+#[derive(Serialize)]
+pub(crate) struct CrossingDirectory<'a> {
+    piece_local_xz_quads: Vec<Vec<Quad>>,
+    pub(crate) courses: Vec<CrossingRoute<'a>>,
+}
 /// Expand the source-local crossing quads in the order CartD's 0x7388 loop
 /// calls its transform helper. Array positions are native segment indices.
 pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value> {
+    Ok(serde_json::to_value(read_crossings(bytes, exe)?)?)
+}
+pub(crate) fn read_crossings<'a>(bytes: &[u8], exe: &'a [u8]) -> Result<CrossingDirectory<'a>> {
     verify(bytes)?;
     let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
     let invalid = || Error::invalid("invalid CartD crossing directory");
@@ -206,6 +227,7 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
         let mut segment_event_modes = Vec::new();
         let mut translation = [0f32; 3];
         let mut yaw = 0i32;
+        let mut fall_height = f32::from_be_bytes(rel.data(4)?[0x2d0..0x2d4].try_into().unwrap());
         let mut poses = Vec::new();
         let mut projected = Vec::new();
         for (occurrence, &id) in course.piece_ids.iter().enumerate() {
@@ -221,6 +243,10 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
                     (-sin * f64::from(x) + cos * f64::from(z)) as f32,
                 ]
             };
+            // First piece jumps from 0x72cc past the minimum update at 0x736c.
+            if occurrence != 0 && translation[1] < fall_height {
+                fall_height = translation[1];
+            }
             poses.push(serde_json::json!({"translation":translation,"yaw_bams":yaw}));
             for (local, quad) in pieces
                 .get(id as usize)
@@ -241,12 +267,21 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
             translation[2] += dz;
             yaw = yaw.wrapping_add(word(12) as i32);
         }
-        routes.push(
-            serde_json::json!({"course":course.name, "piece_ids":course.piece_ids,
-            "projected_occurrence_poses":poses,"projected_segment_xz":projected,"segment_event_modes":segment_event_modes,"segment_count":segments.len(), "segment_occurrence_and_local_index":segments}),
-        );
+        routes.push(CrossingRoute {
+            fall_height,
+            course: course.name,
+            piece_ids: course.piece_ids,
+            projected_occurrence_poses: poses,
+            projected_segment_xz: projected,
+            segment_event_modes,
+            segment_count: segments.len(),
+            segment_occurrence_and_local_index: segments,
+        });
     }
-    Ok(serde_json::json!({"piece_local_xz_quads":pieces,"courses":routes}))
+    Ok(CrossingDirectory {
+        piece_local_xz_quads: pieces,
+        courses: routes,
+    })
 }
 
 /// Inputs immediately before the two imported vector-length results are combined.

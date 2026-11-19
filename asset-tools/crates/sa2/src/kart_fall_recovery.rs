@@ -38,8 +38,8 @@ pub struct Input {
     work_260: i32,
     mode: i32,
     engine_halfword_64: Option<i16>,
-    fall_height: f32,
-    segment_count: i32,
+    fall_height: Option<f32>,
+    segment_count: Option<i32>,
     vertex: Option<Vertex>,
     angle_radians: Option<f64>,
 }
@@ -50,7 +50,35 @@ pub struct Output {
 }
 
 pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
+    run(bytes, s, None)
+}
+pub fn course_tick(bytes: &[u8], exe: &[u8], name: &str, s: Input) -> Result<Output> {
+    if s.fall_height.is_some() || s.segment_count.is_some() || s.vertex.is_some() {
+        return Err(Error::invalid(
+            "course supplies fall height, segment count and vertex",
+        ));
+    }
+    let directory = kart_progress::read_crossings(bytes, exe)?;
+    let route = directory
+        .courses
+        .iter()
+        .find(|r| r.course == name)
+        .ok_or_else(|| Error::invalid("unknown recovery course"))?;
+    run(
+        bytes,
+        Input {
+            fall_height: Some(route.fall_height),
+            ..s
+        },
+        Some(&route.projected_segment_xz),
+    )
+}
+fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output> {
     kart_progress::verify(bytes)?;
+    let count = route
+        .map(|r| r.len() as i32)
+        .or(s.segment_count)
+        .ok_or_else(|| Error::invalid("missing recovery segment count"))?;
     let rel = CityRel::read_identified(bytes, 80)?;
     let data = rel.data(4)?;
     let f = |n: usize| f32::from_be_bytes(data[n..n + 4].try_into().unwrap());
@@ -59,7 +87,10 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
     if s.work_74 != 0 {
         v.grounded_position = v.position;
     }
-    if v.position[1] < s.fall_height {
+    if v.position[1]
+        < s.fall_height
+            .ok_or_else(|| Error::invalid("missing fall height"))?
+    {
         let story = matches!(s.mode, 0 | 1);
         if story {
             if s.engine_halfword_64
@@ -99,7 +130,7 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
                 if story {
                     v.segment = 1;
                 } else {
-                    v.segment = v.segment.wrapping_add(s.segment_count);
+                    v.segment = v.segment.wrapping_add(count);
                     v.lap = v.lap.wrapping_sub(1);
                     v.work_cc = 2;
                 }
@@ -110,13 +141,21 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
         } else {
             (v.segment, 1, 0x294)
         };
-        let pt = s
-            .vertex
-            .ok_or_else(|| Error::invalid("missing selected route vertex"))?;
-        if (pt.segment, pt.corner) != (seg, corner) {
-            return Err(Error::invalid("wrong recovery route vertex"));
-        }
-        v.position = [pt.xz[0], f(height) + v.grounded_position[1], pt.xz[1]];
+        let xz = if let Some(route) = route {
+            *route
+                .get(seg as usize)
+                .and_then(|quad| quad.get(corner as usize))
+                .ok_or_else(|| Error::invalid("recovery address outside projected course"))?
+        } else {
+            let pt = s
+                .vertex
+                .ok_or_else(|| Error::invalid("missing selected route vertex"))?;
+            if (pt.segment, pt.corner) != (seg, corner) {
+                return Err(Error::invalid("wrong recovery route vertex"));
+            }
+            pt.xz
+        };
+        v.position = [xz[0], f(height) + v.grounded_position[1], xz[1]];
         v.saved_position = v.position;
         v.saved_position[1] += f(0x27c);
         v.velocity = [v.velocity[0] / f(0x290), f(0x1c8), v.velocity[2] / f(0x290)];
