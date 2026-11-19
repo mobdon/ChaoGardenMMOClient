@@ -1,10 +1,12 @@
 //! Local, bounded readers. Source decoding and gameplay implementation are separate.
 pub mod archive;
 pub mod audio;
+pub mod collision;
 pub mod manifest;
 pub mod model;
 pub mod motion;
 pub mod pe;
+pub mod pose;
 pub mod stage;
 pub mod texture;
 
