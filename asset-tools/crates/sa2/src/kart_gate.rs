@@ -132,3 +132,66 @@ pub fn racing_tick(bytes: &[u8], s: RacingGateTick) -> Result<RacingGateResult> 
     }
     Ok(r)
 }
+
+/// Initialize the native per-instance model for each story GATE2. The
+/// registration receives the initial byte 3 before the shared flag override.
+pub fn story_layout(bytes: &[u8], exe: &[u8], set: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let rel = verified_module(bytes)?;
+    let objects = crate::kart_objects::read(exe, set)?;
+    let invalid = || Error::invalid("unexpected story gate registration");
+    if rel.local_pointer(5, 0x1620)? != Some((1, 0xb5cc))
+        || objects.definitions.get(4).map(|v| v.name.as_str()) != Some("GATE2")
+    {
+        return Err(invalid());
+    }
+    let target = |site, sec| {
+        rel.reference(1, site)
+            .filter(|r| (r.module, r.section, r.kind) == (80, sec, 4))
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let template = target(0xb68e, 5)?;
+    let data = rel.data(5)?;
+    let slice = data
+        .get(template as usize..)
+        .and_then(|s| s.get(..56))
+        .ok_or_else(invalid)?;
+    let mut original = [0u32; 14];
+    for (word, b) in original.iter_mut().zip(slice.chunks_exact(4)) {
+        *word = u32::from_be_bytes(b.try_into().unwrap());
+    }
+    // Represent relocated pointers as section-relative offsets rather than host addresses.
+    for index in [1usize, 11, 12] {
+        if let Some((section, off)) = rel.local_pointer(5, template + 4 * index as u32)? {
+            if section != 5 {
+                return Err(invalid());
+            }
+            original[index] = off;
+        }
+    }
+    let threshold = target(0xb626, 4)? as usize;
+    let threshold = f32::from_be_bytes(rel.data(4)?[threshold..threshold + 4].try_into().unwrap());
+    let mut gates = Vec::new();
+    for (i, p) in objects
+        .placements
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.object_id == 4)
+    {
+        let mut node = original;
+        node[0] &= !3;
+        node[2..5].copy_from_slice(&p.position.map(f32::to_bits));
+        node[5..8].copy_from_slice(&[0, i32::from(p.rotation[1] as i16) as u32, 0]);
+        let time = (p.parameters[1] as i32).wrapping_mul(60);
+        gates.push(
+            json!({"placement":i,"source":p,"initialByte3":u8::from(p.parameters[0]>=threshold),
+            "mode":1,"latch":0,"nodeWords":node,"timerTicksOnFirstPass":time}),
+        );
+    }
+    Ok(
+        json!({"setFile":objects.set_file,"setSha256":crate::manifest::sha256(set),"callback":0xb5cc,
+        "display":target(0xb64a,1)?,"cleanup":target(0xb656,1)?,"collisionDescriptor":target(0xb666,5)?,
+        "collisionCount":1,"collisionList":5,"template":template,"registrationFlags":0x20000001,"gates":gates}),
+    )
+}
