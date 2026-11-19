@@ -413,6 +413,8 @@ pub fn replay_bgm(request: &[u8]) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckpointReplay {
+    set_query_result: Option<i32>,
+    init_byte_23: Option<i8>,
     initial_bonus_counters: Option<crate::checkpoint::BonusCounters>,
     engine_result: u32,
     stage_byte: i8,
@@ -441,25 +443,22 @@ fn checkpoint_frames(
     req: CheckpointReplay,
     items: Option<&crate::checkpoint::StageItemTable>,
 ) -> Result<Value> {
-    use crate::checkpoint::{CheckpointPlacement, CheckpointSpin, CheckpointTicks, ContactState};
+    use crate::checkpoint::{CheckpointPlacement, CheckpointTicks};
     let placement = CheckpointPlacement {
         rotation: p.rotation.map(i32::from),
     };
+    let input_frames = bounded(req.frames)?;
+    // Mode 0 checks the signed byte before allocating work or querying SET.
+    if req.init_byte_23 == Some(3) {
+        return Ok(json!({"callback":"ObjectSavePoint","frames":[],
+            "initExitCall":0x80065148u32,
+            "scope":"Mode 0 called the external exit helper before checkpoint setup."}));
+    }
     let byte = placement.work_byte(req.engine_result, req.stage_byte);
-    let mut state = CheckpointTicks {
-        contact: ContactState {
-            mode: 1,
-            slot_timers: [0; 2],
-        },
-        spin: CheckpointSpin {
-            angles: [0x4000, -0x4000],
-            steps: [0; 2],
-            counters: [0; 2],
-        },
-    };
+    let mut state = CheckpointTicks::initialized(req.set_query_result);
     let mut counters = req.initial_bonus_counters;
     let mut frames = Vec::new();
-    for f in bounded(req.frames)? {
+    for f in input_frames {
         let call = state.tick(f.hit, &f.players, byte, f.contact_speed)?;
         if counters.is_some() && call.is_some() && f.bonus_inputs.is_none() {
             return Err(Error::invalid(
@@ -498,6 +497,6 @@ fn checkpoint_frames(
         );
     }
     Ok(
-        json!({"callback":"ObjectSavePoint","scope":"Initialized idle checkpoint; hit and signed speed are observations. Handoff is reported, not applied.","frames":frames}),
+        json!({"callback":"ObjectSavePoint","scope":"Initialized checkpoint; SET query result, hit and signed speed are observations. Handoff is reported, not applied.","frames":frames}),
     )
 }

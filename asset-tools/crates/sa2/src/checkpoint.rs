@@ -408,6 +408,23 @@ pub struct CheckpointTicks {
 }
 
 impl CheckpointTicks {
+    /// Tail of mode 0 (City text +0x43d6c..0x43dfc). None means task+0x30
+    /// is null; otherwise the value is the observed second helper return.
+    pub fn initialized(set_query: Option<i32>) -> Self {
+        let active = set_query.is_some_and(|result| result != 0);
+        Self {
+            contact: ContactState {
+                mode: if active { 3 } else { 1 },
+                slot_timers: [0; 2],
+            },
+            spin: CheckpointSpin {
+                angles: [if active { 0 } else { 0x4000 }, -0x4000],
+                steps: [0; 2],
+                counters: [0; 2],
+            },
+        }
+    }
+
     pub fn tick(
         &mut self,
         hit: Option<(i32, u32)>,
