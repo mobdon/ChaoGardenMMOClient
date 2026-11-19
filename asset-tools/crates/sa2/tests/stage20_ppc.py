@@ -988,3 +988,36 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["fogApply"]==calls
 print(len(headers),"single-buffer fog submissions matched")
+
+# Controlled returns distinguish engine color/distance services from stage interpolation.
+def fog_blend_call(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    def bits(i):return int.from_bytes(struct.pack(">f",reg_float(cpu,getattr(R,"UC_PPC_REG_FPR"+str(i)))),"big")
+    if site==0x118b4:
+        args=[reg(3),reg(4),bits(1)];cpu.reg_write(R.UC_PPC_REG_3,color)
+    elif site==0x118d0:
+        args=[bits(1)];cpu.reg_write(R.UC_PPC_REG_3,distance)
+    elif site in (0x11858,0x11938,0x11990):args=[bits(1),bits(2)]
+    elif site in (0x11844,0x1186c,0x11900,0x1194c,0x11960,0x119a4):args=[reg(3)]
+    else:args=[]
+    calls.append(dict(engine=engines[site],args=args));cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x11844,0x11858,0x1186c,0x11870,0x118b4,0x118d0,0x11900,0x11938,0x1194c,0x11950,0x11954,0x11960,0x11990,0x119a4,0x119a8,0x119ac):
+    u.hook_add(UC_HOOK_CODE,fog_blend_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    idx=0
+    for first_max,second_max in ((2300.,50.),(100000.,100001.),(100000.,99999.),(100.,100000.)):
+        for kind in (0,0x50002):
+            for factor in (-1.,0.,0.375,1.,2.):
+                calls=[];color=0x1753f1c9;distance=0xf1234567
+                a=struct.pack(">IIff",kind,0x12345678,first_max,-13.);b=struct.pack(">IIff",2,0xfedcba98,second_max,78.5)
+                u.mem_write(fog_dst,a+b);u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_3,fog_dst)
+                u.reg_write(R.UC_PPC_REG_4,fog_dst+16);u.reg_write(R.UC_PPC_REG_LR,stop)
+                u.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",factor),"big"))
+                u.emu_start(base[1]+0x117e8,stop,count=150);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+                obs=dict(first=struct.unpack(">4I",a),second=struct.unpack(">4I",b),factor=factor)
+                if len(calls)>4:obs["service_returns"]=[color,distance]
+                req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],fog_blend=obs)))
+                out=Path(tmp)/f"{idx}.json";idx+=1
+                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                assert json.loads(out.read_text())["fogBlend"]==calls
+print(idx,"two-buffer fog submissions matched")

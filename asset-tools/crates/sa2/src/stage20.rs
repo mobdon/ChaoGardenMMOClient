@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    fog_blend: Option<FogBlend>,
     fog_header: Option<[u32; 4]>,
     background_draw: Option<BackgroundDraw>,
     background: Option<Background>,
@@ -14,6 +15,14 @@ struct Request {
     mode: i8,
     position: [f32; 3],
     targets: Vec<Option<[f32; 3]>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FogBlend {
+    first: [u32; 4],
+    second: [u32; 4],
+    factor: f32,
+    service_returns: Option<[u32; 2]>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -474,6 +483,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        fog_blend,
         fog_header,
         background_draw,
         background,
@@ -504,6 +514,71 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(v) = fog_blend {
+        let mut calls = Vec::new();
+        let mut emit = |site, args: Value| -> Result<()> {
+            let r = rel
+                .reference(1, site)
+                .filter(|r| r.module == 0 && r.kind == 10)
+                .ok_or_else(invalid)?;
+            calls.push(json!({"engine":r.addend,"args":args}));
+            Ok(())
+        };
+        let far = constant(0x1181e)?;
+        if [v.first[2], v.second[2]]
+            .iter()
+            .all(|&w| f32::from_bits(w) >= far)
+        {
+            if v.service_returns.is_some() {
+                return Err(invalid());
+            }
+            emit(0x11844, json!([0]))?;
+            emit(0x11858, json!([constant(0x1184e)?.to_bits(), v.first[2]]))?;
+            emit(0x1186c, json!([v.first[1].rotate_left(8)]))?;
+            emit(0x11870, json!([]))?;
+        } else {
+            let t = v.factor.clamp(constant(0x11896)?, constant(0x1187e)?);
+            let mix = |i: usize| {
+                let a = f32::from_bits(v.first[i]);
+                let b = f32::from_bits(v.second[i]);
+                (a + t * (b - a)).to_bits()
+            };
+            let [color, distance] = v.service_returns.ok_or_else(invalid)?;
+            emit(0x118b4, json!([v.first[1], v.second[1], t.to_bits()]))?;
+            emit(0x118d0, json!([mix(2)]))?;
+            let (sites, kind, near) = if v.first[0] & 2 != 0 {
+                let idx = (v.first[0] >> 16) & 15;
+                if idx >= 6 {
+                    return Err(Error::invalid("unmapped stage 20 fog mode"));
+                }
+                let r = rel
+                    .reference(1, 0x118f6)
+                    .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+                    .ok_or_else(invalid)?;
+                let at = (r.addend + idx * 4) as usize;
+                let kind = u32::from_be_bytes(
+                    rel.data(5)?
+                        .get(at..at + 4)
+                        .ok_or_else(invalid)?
+                        .try_into()
+                        .unwrap(),
+                );
+                ([0x11900, 0x11938, 0x1194c, 0x11950, 0x11954], kind, mix(3))
+            } else {
+                (
+                    [0x11960, 0x11990, 0x119a4, 0x119a8, 0x119ac],
+                    5,
+                    constant(0x1196a)?.to_bits(),
+                )
+            };
+            emit(sites[0], json!([kind]))?;
+            emit(sites[1], json!([near, (distance as f32).to_bits()]))?;
+            emit(sites[2], json!([color.rotate_left(8)]))?;
+            emit(sites[3], json!([]))?;
+            emit(sites[4], json!([]))?;
+        }
+        report["fogBlend"] = json!(calls);
+    }
     if let Some([flags, argb, max, min]) = fog_header {
         let mut calls = Vec::new();
         let mut emit = |site, args: Value| -> Result<()> {
