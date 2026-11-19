@@ -59,3 +59,73 @@ mod tests {
         assert!(read_records(&bytes[..87]).is_err());
     }
 }
+
+/// City Escape savepoint work fields advanced by module 12, text 0x4496c.
+/// Angles and steps are sign-extended from their low 16 bits each tick.
+#[derive(Debug, PartialEq)]
+pub struct CheckpointSpin {
+    pub angles: [i16; 2],
+    pub steps: [i16; 2],
+    pub counters: [i16; 2],
+}
+
+impl CheckpointSpin {
+    /// Mode 2's spin update; true requests native mode 3. Does not activate a checkpoint.
+    pub fn advance(&mut self) -> bool {
+        for (angle, step) in self.angles.iter_mut().zip(self.steps) {
+            *angle = angle.wrapping_add(step);
+        }
+        self.steps[1] = (f32::from(self.steps[1]) * 0.995) as i16;
+        let speed = i32::from(self.steps[1]).abs();
+        if speed < 0xe38 {
+            let angle = i32::from(self.angles[0]);
+            let bend = if angle > 0x2000 {
+                0x47d2 - angle
+            } else {
+                angle
+            };
+            self.steps[0] = -((0.1 * bend as f32 * (0xe38 - speed) as f32 / 8192.0) as i16);
+        }
+        if self.steps == [0, 0] {
+            return true;
+        }
+        for n in &mut self.counters {
+            if *n < 3 {
+                *n += 1;
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod spin_reference {
+    use super::*;
+    #[test]
+    fn installed_ppc_vectors() {
+        for (input, expected, settled) in [
+            ([0, 0, 0, 0], [0, 0, 0, 0], true),
+            (
+                [32760, -32760, 120, -180],
+                [-32656, 32596, 1379, -179],
+                false,
+            ),
+            (
+                [-16000, 18000, -3000, 8000],
+                [-19000, 26000, -3000, 7960],
+                false,
+            ),
+            ([8200, 600, -1, -1], [8199, 599, -452, 0], false),
+        ] {
+            let [a, b, c, d] = input;
+            let mut s = CheckpointSpin {
+                angles: [a, b],
+                steps: [c, d],
+                counters: [-1, 3],
+            };
+            assert_eq!(s.advance(), settled);
+            assert_eq!([s.angles[0], s.angles[1], s.steps[0], s.steps[1]], expected);
+            assert_eq!(s.counters, [if settled { -1 } else { 0 }, 3]);
+        }
+    }
+}
