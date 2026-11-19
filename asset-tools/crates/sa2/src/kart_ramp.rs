@@ -491,3 +491,90 @@ fn panel_uv(rel: &CityRel<'_>, phase: u16) -> Result<Vec<UvWrite>> {
     }
     Ok(writes)
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DashDisplay {
+    position: [f32; 3],
+    angles: [i32; 3],
+    current_view_metric: f32,
+    last_uv_phase: u16,
+}
+/// The two model draws share UV memory. Use the phase of the last update to that
+/// shared model, which is not necessarily the phase of the panel being drawn.
+pub fn display(bytes: &[u8], pak: &[u8], s: DashDisplay) -> Result<serde_json::Value> {
+    use serde_json::json;
+    crate::kart_progress::verify(bytes)?;
+    let rel = CityRel::read_identified(bytes, 80)?;
+    if s.current_view_metric >= f32::from_be_bytes(rel.data(4)?[0x1c0..0x1c4].try_into().unwrap()) {
+        return Ok(json!({"draw":null}));
+    }
+    if s.last_uv_phase > 0x3fff {
+        return Err(Error::invalid("expected masked shared UV phase"));
+    }
+    let invalid = || Error::invalid("invalid dash display resource");
+    let target = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.kind == 4 && r.module == 80 && r.section == 5)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let ptr = |at| {
+        rel.local_pointer(5, at)?
+            .filter(|(sec, _)| *sec == 5)
+            .map(|(_, o)| o)
+            .ok_or_else(invalid)
+    };
+    let list = target(0xae9e)?;
+    let tex_names = ptr(list)?;
+    let mut data = rel.data(5)?.to_vec();
+    for w in panel_uv(&rel, s.last_uv_phase)? {
+        for (dst, v) in data[w.section5_offset as usize..][..4]
+            .chunks_exact_mut(2)
+            .zip(w.uv)
+        {
+            dst.copy_from_slice(&v.to_be_bytes());
+        }
+    }
+    let word = |at: u32| u32::from_be_bytes(data[at as usize..at as usize + 4].try_into().unwrap());
+    let mut models = Vec::new();
+    let mut textures = std::collections::BTreeMap::new();
+    let bank = crate::archive::read_pak(pak)?;
+    let mut material = crate::visual::Material::default();
+    for site in [0xaeaa, 0xaeb6] {
+        let root = target(site)?;
+        let attach = ptr(root + 4)?;
+        let geom =
+            crate::kart_story_target::vertices_from_data(&rel, &data, attach, &mut material)?;
+        for strip in geom["polygons"].as_array().ok_or_else(invalid)? {
+            if let Some(id) = strip["material"]["textureId"].as_u64() {
+                if id >= u64::from(word(list + 4)) {
+                    return Err(invalid());
+                }
+                if textures.contains_key(&id) {
+                    continue;
+                }
+                let at = ptr(tex_names + 12 * id as u32)?;
+                let name = std::ffi::CStr::from_bytes_until_nul(&data[at as usize..])
+                    .map_err(|_| invalid())?
+                    .to_str()
+                    .map_err(|_| invalid())?
+                    .trim_end();
+                let member = format!("course\\{name}.dds");
+                let entry = bank
+                    .iter()
+                    .find(|e| e.name.eq_ignore_ascii_case(&member))
+                    .ok_or_else(invalid)?;
+                let img = crate::texture::decode_dds(entry.data)?;
+                textures.insert(id,json!({"entry":entry.name,"offset":entry.offset,"length":entry.length,"ddsSha256":crate::manifest::sha256(entry.data),"width":img.width,"height":img.height,"rgbaSha256":crate::manifest::sha256(&img.rgba)}));
+            }
+        }
+        let vec3 = |at: u32| [word(at), word(at + 4), word(at + 8)];
+        models.push(json!({"root":root,"attach":attach,"flags":word(root),"position":vec3(root+8).map(f32::from_bits),
+            "angles":vec3(root+20).map(|v|v as i32),"scale":vec3(root+32).map(f32::from_bits),"geometry":geom}));
+    }
+    Ok(
+        json!({"draw":{"position":s.position,"rotations":[["z",s.angles[2]],["x",s.angles[0]],["y",s.angles[1]]],
+        "textureList":list,"textures":textures,"models":models}}),
+    )
+}

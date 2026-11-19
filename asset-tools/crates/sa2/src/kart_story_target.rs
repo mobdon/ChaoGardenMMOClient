@@ -485,7 +485,15 @@ pub(crate) fn vertices(
     attach: u32,
     material: &mut crate::visual::Material,
 ) -> Result<serde_json::Value> {
-    let data = rel.data(5)?;
+    vertices_from_data(rel, rel.data(5)?, attach, material)
+}
+
+pub(crate) fn vertices_from_data(
+    rel: &crate::city_rel::CityRel<'_>,
+    data: &[u8],
+    attach: u32,
+    material: &mut crate::visual::Material,
+) -> Result<serde_json::Value> {
     let invalid = || crate::Error::invalid("unexpected pursuit vertex stream");
     let word = |at: usize| -> Result<u32> {
         Ok(u32::from_be_bytes(
@@ -510,12 +518,14 @@ pub(crate) fn vertices(
             if header as u8 == 255 {
                 break;
             }
-            if header as u8 != 41 {
-                return Err(invalid());
-            }
+            let stride = match header as u8 {
+                35 => 4,
+                41 => 6,
+                _ => return Err(invalid()),
+            };
             let index_word = word(cursor + 4)?;
             let count = (index_word >> 16) as usize;
-            if header >> 16 != (1 + count * 6) as u32 {
+            if header >> 16 != (1 + count * stride) as u32 {
                 return Err(invalid());
             }
             let mut entries = Vec::with_capacity(count);
@@ -524,20 +534,26 @@ pub(crate) fn vertices(
                     .checked_add(i as u16)
                     .ok_or_else(invalid)?;
                 indices.insert(index, usize::from(index));
-                let at = cursor + 8 + i * 24;
-                entries.push(serde_json::json!({"position":xyz(at)?,"normal":xyz(at+12)?}));
+                let at = cursor + 8 + i * stride * 4;
+                entries.push(if stride == 6 {
+                    serde_json::json!({"position":xyz(at)?,"normal":xyz(at+12)?})
+                } else {
+                    let [a, r, g, b] = word(at + 12)?.to_be_bytes();
+                    serde_json::json!({"position":xyz(at)?,"diffuseRgba":[r,g,b,a]})
+                });
             }
             chunks.push(serde_json::json!({"flags":(header>>8) as u8,"index_offset":index_word as u16,"vertices":entries}));
-            cursor += 8 + count * 24;
+            cursor += 8 + count * stride * 4;
         }
     }
     Ok(
-        serde_json::json!({"center":xyz(attach as usize+8)?,"radius":f32::from_bits(word(attach as usize+20)?),"chunks":chunks,"polygons":polygons(rel,attach,&indices,material)?}),
+        serde_json::json!({"center":xyz(attach as usize+8)?,"radius":f32::from_bits(word(attach as usize+20)?),"chunks":chunks,"polygons":polygons(rel,data,attach,&indices,material)?}),
     )
 }
 
 fn polygons(
     rel: &crate::city_rel::CityRel<'_>,
+    data: &[u8],
     attach: u32,
     indices: &std::collections::BTreeMap<u16, usize>,
     material: &mut crate::visual::Material,
@@ -547,7 +563,7 @@ fn polygons(
     let Some((5, start)) = rel.local_pointer(5, attach + 4)? else {
         return Err(invalid());
     };
-    let data = rel.data(5)?;
+
     let word = |at: usize| -> Result<u16> {
         Ok(u16::from_be_bytes(
             data.get(at..at + 2)
