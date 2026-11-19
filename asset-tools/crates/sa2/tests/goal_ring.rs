@@ -48,7 +48,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 6];
+    let mut counts = [0; 7];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     for line in stdout.lines() {
@@ -73,6 +73,34 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "U" {
+            let r = program
+                .child_dispatch(n(1) as i8, n(2) as i8, (n(2) == 0).then(|| n(3) != 0))
+                .unwrap();
+            assert_eq!(r["rangeChecked"], n(4) != 0);
+            let call = &r["taskCall"];
+            let addr = call["engine"]
+                .as_u64()
+                .or(call["local"].as_u64())
+                .unwrap_or(0);
+            assert_eq!(addr, v[5].parse::<u64>().unwrap());
+            let writes = &r["callbackWrites20And32"];
+            for (i, default) in [7, 11].into_iter().enumerate() {
+                let expected =
+                    writes[i]
+                        .as_u64()
+                        .map_or(default, |v| if v == 0 { 0 } else { 0x81000000 + v });
+                assert_eq!(expected, v[6 + i].parse::<u64>().unwrap());
+            }
+            let final_mode = if r["resetModeAfterCall"] == true {
+                0
+            } else if addr != 0 {
+                93
+            } else {
+                n(1)
+            };
+            assert_eq!(final_mode, n(8));
+            counts[6] += 1;
         } else if v[0] == "K" {
             let observed = sa2_asset_tools::goal_ring::ChildObservation {
                 existing: n(1) != 0,
@@ -209,7 +237,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194, 45, 5]);
+    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]
@@ -275,6 +303,10 @@ fn mounted_goal_cli() {
     assert_eq!(v["frames"][2]["calls"], serde_json::json!(["Register"]));
     assert_eq!(run("349").unwrap()["replay"]["init"], "ChildTask");
     assert!(run("7").is_none());
+    fs::write(&request,r#"{"game_byte_23":0,"range_out":false,"allocation_ok":true,"frames":[{"kind":"none"}],"child":{"existing":false,"allocation":true,"linked_after":true},"child_dispatch":{"mode":0,"byte1":1}}"#).unwrap();
+    let child = run("349").unwrap();
+    assert_eq!(child["replay"]["childDispatch"]["rangeChecked"], false);
+    assert!(child["replay"]["childDispatch"]["taskCall"]["local"].is_u64());
     let mut inputs = vec![serde_json::json!({"kind":"none"}); 64];
     inputs[0] = serde_json::json!({"kind":"player","slot":0});
     fs::write(

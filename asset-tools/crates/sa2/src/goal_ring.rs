@@ -16,6 +16,10 @@ pub struct Program {
     dispatch_codes: Vec<Option<u16>>,
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
+    #[serde(skip)]
+    child_callbacks: [u32; 3],
+    #[serde(skip)]
+    child_handlers: [u32; 5],
     pub child_entry: u32,
     pub child_parent_callback: u32,
     pub child_scale_bits: u32,
@@ -185,6 +189,48 @@ impl Program {
                 .ok_or_else(invalid)
         };
         let child_entry = child_ref(0x16, 1)?;
+        let entry = child_entry as usize;
+        let dispatcher = instructions.get(entry..entry + 0x13c).ok_or_else(invalid)?;
+        if manifest::sha256(dispatcher)
+            != if matches!(level, 16 | 18) {
+                "6a67b40ddea1924d939cae361130487a98bd6c1f185df5053ea5077e74e49fa6"
+            } else {
+                "d875337a8d45e3c2ccc46a5ae9a46c08668761af044c4ef014549f48b027c02e"
+            }
+        {
+            return Err(invalid());
+        }
+        for (off, engine) in [(0x30, 0x8006538c), (0x10c, 0x8000f4ec)] {
+            if !rel
+                .reference(1, child_entry + off)
+                .is_some_and(|r| r.kind == 10 && r.module == 0 && r.addend == engine)
+            {
+                return Err(invalid());
+            }
+        }
+        let callback = |off| {
+            rel.reference(1, child_entry + off)
+                .filter(|r| r.kind == 4 && r.section == 1 && r.module == info.module)
+                .map(|r| r.addend)
+                .ok_or_else(invalid)
+        };
+        let child_callbacks = [callback(0x62)?, callback(0x6e)?, callback(0x8e)?];
+        let handler = |off| -> Result<u32> {
+            let ins = word(dispatcher, off)?;
+            if ins & 0xfc000003 != 0x48000001 {
+                return Err(invalid());
+            }
+            (child_entry + off as u32)
+                .checked_add_signed(((ins & 0x03fffffc) << 6) as i32 >> 6)
+                .ok_or_else(invalid)
+        };
+        let child_handlers = [
+            handler(0xdc)?,
+            handler(0xe8)?,
+            handler(0xf4)?,
+            handler(0x100)?,
+            handler(0x118)?,
+        ];
         let child_parent_callback = child_ref(0x2e, 1)?;
         let child_scale_bits = word(rel.data(4)?, child_ref(0x3a, 4)? as usize)?;
         // Verify the actual callees even though the code hashes cover unrelocated branches.
@@ -273,6 +319,8 @@ impl Program {
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
+            child_callbacks,
+            child_handlers,
             child_entry,
             child_parent_callback,
             child_scale_bits,
@@ -526,6 +574,33 @@ pub struct ChildObservation {
     pub linked_after: bool,
 }
 impl Program {
+    pub fn child_dispatch(&self, mode: i8, byte1: i8, range_out: Option<bool>) -> Result<Value> {
+        if (byte1 == 0) != range_out.is_some() {
+            return Err(Error::invalid(
+                "range observation required only for child byte 1 equal to zero",
+            ));
+        }
+        let mut writes = None;
+        let mut call = None;
+        let mut reset = false;
+        if range_out != Some(true) {
+            writes = match mode {
+                0..=2 => Some([self.child_callbacks[0], self.child_callbacks[1]]),
+                3..=4 => Some([self.child_callbacks[2], 0]),
+                _ => None,
+            };
+            call = match mode {
+                0..=3 => Some(json!({"local":self.child_handlers[mode as usize]})),
+                4 | 5 => Some(json!({"engine":0x8000f4ecu32})),
+                6 => Some(json!({"local":self.child_handlers[4]})),
+                _ => None,
+            };
+            reset = !(0..=5).contains(&mode);
+        }
+        Ok(
+            json!({"callbackWrites20And32":writes,"taskCall":call,"resetModeAfterCall":reset,"rangeChecked":byte1==0}),
+        )
+    }
     pub fn child_placement(&self, v: ChildObservation, position: [f32; 3]) -> Result<Value> {
         if v.existing == v.allocation.is_some() || (v.existing && !v.linked_after) {
             return Err(Error::invalid(
@@ -547,7 +622,15 @@ impl Program {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ChildDispatch {
+    mode: i8,
+    byte1: i8,
+    range_out: Option<bool>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Request {
+    child_dispatch: Option<ChildDispatch>,
     child: Option<ChildObservation>,
     post_contact_consumer: Option<ConsumerInput>,
     slot_zero_timer: Option<u16>,
@@ -590,15 +673,29 @@ pub fn replay(
         r.range_out,
         r.allocation_ok,
     );
+    if r.child_dispatch.is_some() && (!matches!(init, InitRoute::ChildTask) || r.child.is_none()) {
+        return Err(Error::invalid(
+            "child dispatch requires child placement context",
+        ));
+    }
     if let Some(child) = r.child {
         if !matches!(init, InitRoute::ChildTask) {
             return Err(Error::invalid(
                 "child observations require child goal route",
             ));
         }
+        let linked = child.linked_after;
         let writes = p.child_placement(child, row.placement.position)?;
+        let dispatch = if let Some(d) = r.child_dispatch {
+            if !linked {
+                return Err(Error::invalid("cannot dispatch an absent linked child"));
+            }
+            Some(p.child_dispatch(d.mode, d.byte1, d.range_out)?)
+        } else {
+            None
+        };
         return Ok(
-            json!({"program":p,"init":init,"child":writes,"dispatchedFrames":0,"scope":"Child placement only; child executor not run."}),
+            json!({"program":p,"init":init,"child":writes,"childDispatch":dispatch,"dispatchedFrames":0,"scope":"Child placement and optional observed dispatch; nested handlers not run."}),
         );
     }
     let InitRoute::Contact { angle_x } = init else {

@@ -194,3 +194,37 @@ for existing,allocated,linked in [(1,-1,1),*[(0,a,l) for a,l in itertools.produc
     if allocated!=1:
         assert get(TASK+32,'I')==0 and bytes(u.mem_read(returned_work,64))==bytes([0xcd])*64
     print('K',existing,allocated,linked,next(iter(created),-1),get(TASK+32,'I')-BASE if allocated==1 else -1,get(returned_work+32,'I'),get(returned_work+1,'B'))
+
+# Observe nested calls without inventing the individual mode handlers.
+ce=0x2faac;map_page(BASE+ce)
+u.mem_write(BASE+ce,d[ss[1][0]+ce:ss[1][0]+ce+0x13c])
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not ce<=off<ce+0x13c:continue
+        if kind in (4,6):
+            assert module==12 and s==1
+            val+=BASE;put(BASE+off,'H',(val if kind==4 else (val+0x8000)>>16)&65535)
+def child_call(cpu,pc,*_):
+    assert reg(3)==TASK
+    if pc==BASE+ce+0x30:
+        range_checks.append(1);setreg(3,out)
+    else:
+        dest=REGISTER if pc==BASE+ce+0x10c else pc-BASE+(get(pc,'I')&0x03fffffc)
+        handlers.append(dest)
+        # A nested handler may change the mode; detect any later reset.
+        put(WORK,'B',93)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for off in (0x30,0xdc,0xe8,0xf4,0x100,0x10c,0x118):
+    u.hook_add(UC_HOOK_CODE,child_call,begin=BASE+ce+off,end=BASE+ce+off)
+for m,(flag,out) in itertools.product((-128,-1,0,1,2,3,4,5,6,7,127),((0,1),(0,0),(1,0),(-1,0))):
+    handlers=[];range_checks=[]
+    put(TASK+52,'I',WORK);put(TASK+20,'I',7);put(TASK+32,'I',11);put(WORK,'bb',m,flag)
+    setreg(1,TASK+0xf00);setreg(3,TASK);u.reg_write(R.UC_PPC_REG_LR,BASE+ce+0x13c)
+    u.emu_start(BASE+ce,BASE+ce+0x13c,count=95)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+ce+0x13c
+    print('U',m,flag,out,len(range_checks),next(iter(handlers),0),get(TASK+20,'I'),get(TASK+32,'I'),get(WORK,'b'))

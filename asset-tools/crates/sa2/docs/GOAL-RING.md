@@ -57,3 +57,13 @@ It then reads the parent link again and copies the placement position to the
 linked child if present. An allocator return and the re-read link are distinct
 observations. The mounted replay reports these writes without running the
 child's callback or simulating a level clear.
+
+When the linked child is observed running, add `child_dispatch` with its
+signed `mode` and `byte1`. Supply a boolean `range_out` only when byte 1 is
+zero. An out-of-range child returns before callback selection. Otherwise the
+report gives writes to task offsets 20 and 32, the selected nested task call,
+and whether the dispatcher resets the mode after that call. A null callback
+write pair means both fields are preserved. The native dispatcher in stages
+16 and 18 has different local call displacements; handlers are resolved
+from the installed module. The nested calls and the child's scheduling are
+not executed by this observation.
