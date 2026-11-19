@@ -532,3 +532,12 @@ the pre-movement horizontal offset; reaching the target segment skips this
 check. Only an advance consumes a random result. The output includes the
 updated guidance pair, pose, cached ground position and yaw. This is the
 movement callback before contact resolution, not a whole vehicle tick.
+
+`kart-recovery-drive CartD.rel OUTPUT.json INPUT.json` implements vehicle
+state 1's callback (0x36b4..0x3998). Moving horizontally, it derives heading
+from velocity and tests the angle difference against 546; below that it
+returns to state 0 immediately, otherwise it halves the signed offset toward
+zero. A stationary kart skips that state test. Both paths still apply the
+current raw stick, pedal flags, profile displacement and gravity that tick.
+Observed angle/magnitude/ground service results are explicit inputs. The
+position step accepts an observed transformed vector or labels its projection.

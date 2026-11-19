@@ -302,3 +302,91 @@ fn drift_update(
         work_a4: a4,
     })
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryInput {
+    heading: i32,
+    work_68: i32,
+    work_fc: i32,
+    stick_x: i16,
+    velocity_xz: [f32; 2],
+    angle_radians: Option<f64>,
+    angle_difference: Option<i32>,
+    magnitude_return: Option<f32>,
+    ground_angle_return: Option<i32>,
+    accelerate: bool,
+    brake: bool,
+    speed_cap: f32,
+    acceleration: f32,
+    brake_power: f32,
+    deceleration: f32,
+    position_step: PositionInput,
+}
+#[derive(Serialize)]
+pub struct Recovery {
+    vehicle_state: i32,
+    heading: i32,
+    work_68: i32,
+    work_fc: i32,
+    local_displacement: [f32; 3],
+    position_step: PositionStep,
+}
+/// CartD state 1, 0x36b4..0x3998. Horizontal motion controls the state exit.
+pub fn recovery(bytes: &[u8], s: RecoveryInput) -> Result<Recovery> {
+    kart_progress::verify(bytes)?;
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let data = rel.data(4)?;
+    let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
+    let (mut heading, mut work_68, mut vehicle_state) = (s.heading, s.work_68, 1);
+    let speed = if s.velocity_xz == [0., 0.] {
+        0.
+    } else {
+        let radians = s
+            .angle_radians
+            .ok_or_else(|| Error::invalid("missing velocity angle return"))?;
+        let units = radians * f64::from_be_bytes(data[0x208..0x210].try_into().unwrap());
+        if !(-2147483648.0..2147483648.0).contains(&units) {
+            return Err(Error::invalid("unsupported recovery angle"));
+        }
+        heading = (units as i32).wrapping_add(0x4000).wrapping_neg();
+        if s.angle_difference
+            .ok_or_else(|| Error::invalid("missing recovery angle difference"))?
+            < 546
+        {
+            vehicle_state = 0;
+            work_68 = 0;
+        } else {
+            work_68 /= 2;
+            heading = heading.wrapping_add(work_68);
+        }
+        s.magnitude_return
+            .ok_or_else(|| Error::invalid("missing horizontal magnitude return"))?
+    };
+    heading = heading.wrapping_sub((f(0x218) * (f(0x258) * f32::from(s.stick_x))) as i32);
+    let delta = if s.accelerate {
+        s.acceleration * ((s.speed_cap - speed) / s.speed_cap)
+    } else if s.brake {
+        s.brake_power
+    } else {
+        s.deceleration
+    };
+    let z = (delta + speed) * f(0x1e8);
+    if !z.is_finite() {
+        return Err(Error::invalid("nonfinite state 1 displacement"));
+    }
+    let work_fc = if s.position_step.work_74 != 0 {
+        s.ground_angle_return
+            .ok_or_else(|| Error::invalid("missing grounded angle return"))?
+    } else {
+        s.work_fc.wrapping_add(91)
+    };
+    Ok(Recovery {
+        vehicle_state,
+        heading,
+        work_68,
+        work_fc,
+        local_displacement: [0., 0., z],
+        position_step: position(s.position_step, heading, z, f(0x234))?,
+    })
+}
