@@ -898,3 +898,37 @@ for frame,value,counter in itertools.product([-2147483647,-2,0,37,2147483647],[-
     u.emu_start(BASE+tail,BASE+0x3bedc,count=64)
     assert len(calls)==1 and u.reg_read(R.UC_PPC_REG_PC)==BASE+0x3bedc
     print('TAIL',frame,value,counter,json.dumps(dict(call=calls[0],work44=get(WORK+44,'i'),work112=get(WORK+112,'i')),separators=(',',':')))
+
+# The common block runs in the same invocation as the word-2 reset.
+common=0x3bedc
+block=bytearray(d[ss[1][0]+common:ss[1][0]+common+0xa0])
+cc=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
+cc.mem_map(BASE,4096);cc.mem_map(TASK,4096);cc.mem_map(DATA,0x10000)
+cc.reg_write(R.UC_PPC_REG_MSR,8192)
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not common<=off<common+len(block):continue
+        assert module==12 and s==4 and kind in (4,6)
+        cc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4])
+        struct.pack_into('>H',block,off-common,((DATA+val) if kind==4 else (DATA+val+0x8000)>>16)&65535)
+cc.mem_write(BASE,bytes(block))
+def cput(addr,fmt,*vals):cc.mem_write(addr,struct.pack('>'+fmt,*vals))
+def cget(addr,fmt):return struct.unpack('>'+fmt,cc.mem_read(addr,struct.calcsize('>'+fmt)))[0]
+for timer,linked,(flags,byte1),(left,right) in itertools.product(
+        [0,1,120,-2147483648],[False,True],[(0x8044,255),(0x2301,4)],[(-2.75,6.5),(1000.,-.125)]):
+    entity=TASK+0x200;other=TASK+0x300;otherwork=TASK+0x400
+    cput(TASK+64,'I',WORK);cput(TASK+12,'I',other if linked else 0);cput(other+52,'I',otherwork)
+    cput(entity+4,'H',flags);cput(otherwork+4,'H',0xaa17);cput(entity+1,'B',byte1)
+    cput(WORK+52,'i',timer);cput(WORK+88,'ff',left,right)
+    cc.reg_write(R.UC_PPC_REG_27,TASK);cc.reg_write(R.UC_PPC_REG_28,entity)
+    cc.emu_start(BASE,BASE+len(block),count=60)
+    assert cc.reg_read(R.UC_PPC_REG_PC)==BASE+len(block)
+    obs=dict(flags=flags,linked_flags=0xaa17 if linked else None,byte1=byte1,work88=left,work92=right)
+    result=dict(work52=cget(WORK+52,'i'),flags=cget(entity+4,'H'),linkedFlags=cget(otherwork+4,'H') if linked else None,
+                byte1=cget(entity+1,'B'),work88Bits=cget(WORK+88,'I'),work92Bits=cget(WORK+92,'I'))
+    print('COUNT',timer,json.dumps(obs,separators=(',',':')),json.dumps(result,separators=(',',':')))

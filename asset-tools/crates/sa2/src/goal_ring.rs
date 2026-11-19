@@ -16,6 +16,8 @@ pub struct Program {
     dispatch_codes: Vec<Option<u16>>,
     #[serde(skip)]
     consumer_scale: [f32; 2],
+    #[serde(skip)]
+    consumer_blend: [f32; 2],
     pub fallback_message_offset: u32,
     pub initial_slot_words: [u32; 2],
     #[serde(skip)]
@@ -414,6 +416,24 @@ impl Program {
             Ok(f32::from_bits(word(rel.data(4)?, lo.addend as usize)?))
         };
         let consumer_scale = [scalar(0x16)?, scalar(0x26)?];
+        let site = tail + 0x64;
+        let b = word(instructions, site as usize)?;
+        if b & 0xfc000003 != 0x48000000 {
+            return Err(invalid());
+        }
+        let common = site
+            .checked_add_signed(((b & 0x03fffffc) << 6) as i32 >> 6)
+            .ok_or_else(invalid)?;
+        if manifest::sha256(
+            instructions
+                .get(common as usize..common as usize + 0xa0)
+                .ok_or_else(invalid)?,
+        ) != "a93edd56db744762b599737dba77ef42ec85ac64b2487c1ca7d8605d04e9959d"
+        {
+            return Err(invalid());
+        }
+        let delta = common.checked_sub(tail).ok_or_else(invalid)?;
+        let consumer_blend = [scalar(delta + 0x62)?, scalar(delta + 0x8a)?];
         let mut message_helper = None;
         let mut dispatch_codes = Vec::with_capacity(93);
         for i in 0..93 {
@@ -1182,6 +1202,7 @@ impl Program {
             local_effect: target,
             dispatch_codes,
             consumer_scale,
+            consumer_blend,
             fallback_message_offset,
             slot_words_offset,
             initial_slot_words,
@@ -1311,6 +1332,16 @@ pub fn apply_slot_writes(words: &mut [u32; 2], calls: &[Call], helper: u32) {
     }
 }
 impl Program {
+    pub fn consumer_countdown(&self, timer: i32, c: ConsumerCountdown) -> Value {
+        let active = timer != 0;
+        let [blend, decay] = self.consumer_blend;
+        let next = c.work88 + blend * (c.work92 - c.work88);
+        json!({"work52":if active {timer.wrapping_sub(1)} else {timer},
+               "flags":if active {c.flags & !4} else {c.flags},
+               "linkedFlags":c.linked_flags.map(|f| if active {f & !4} else {f}),
+               "byte1":if active {c.byte1 & !3} else {c.byte1},
+               "work88Bits":next.to_bits(),"work92Bits":(c.work92*decay).to_bits()})
+    }
     pub fn consumer_update(&self, frame: i32, value: f32, counter: i32) -> Result<Value> {
         let scaled = (self.consumer_scale[0] * value) * self.consumer_scale[1];
         if !scaled.is_finite() || !(-2147483648.0..2147483648.0).contains(&scaled) {
@@ -1460,7 +1491,17 @@ impl Program {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ConsumerCountdown {
+    flags: u16,
+    linked_flags: Option<u16>,
+    byte1: u8,
+    work88: f32,
+    work92: f32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConsumerUpdate {
+    countdown: Option<ConsumerCountdown>,
     frame: i32,
     service_return: f32,
     counter: i32,
@@ -2145,6 +2186,9 @@ pub fn replay(
             json!({"localCallArgument":code,"moduleSlotWords":slot_words,"work52":120,"mode":0});
         if let Some(u) = c.update {
             out["update"] = p.consumer_update(u.frame, u.service_return, u.counter)?;
+            if let Some(fields) = u.countdown {
+                out["update"]["countdown"] = p.consumer_countdown(120, fields);
+            }
         }
         if let Some(m) = c.message {
             out["messageCall"] = p.message_call(
