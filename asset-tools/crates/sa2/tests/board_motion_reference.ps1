@@ -1,4 +1,6 @@
-param([Parameter(Mandatory)][string]$Tools, [string]$RelFile, [string]$PcDll)
+param([Parameter(Mandatory)][string]$Tools, [string]$RelFile, [string]$PcDll,[switch]$Rider)
+$first=if($Rider){121}else{145}
+$parts=if($Rider){62}else{2}
 $ErrorActionPreference='Stop'
 $assembly=[Reflection.Assembly]::LoadFrom((Join-Path (Resolve-Path $Tools) 'tools/lib/SAModel.dll'))
 if (!!$RelFile -eq !!$PcDll){throw "Supply exactly one of -RelFile or -PcDll"}
@@ -44,7 +46,7 @@ if($PcDll){
     $slots=@{}
     for($at=0x19c7258;$at -lt 0x19c7258+456;$at+=8){
         $id=[BitConverter]::ToInt16($data,$at)
-        if($id -ge 145 -and $id -le 168){$slots[[int]$id]=[BitConverter]::ToUInt32($data,$at+4)-$base}
+        if($id -ge $first -and $id -lt ($first+24)){$slots[[int]$id]=[BitConverter]::ToUInt32($data,$at+4)-$base}
     }
 }else{
 $data=[BoardDataImage]::Section($src)
@@ -52,7 +54,7 @@ $data=[BoardDataImage]::Section($src)
 $slots=@{}
 for ($at=0x1fd2b0;$at -lt 0x1fd478;$at+=8){
     $id=[int]$data[$at]*256+$data[$at+1]
-    if ($id -ge 145 -and $id -le 168) {$slots[$id]=[BoardDataImage]::W($data,$at+4)}
+    if ($id -ge $first -and $id -lt ($first+24)) {$slots[$id]=[BoardDataImage]::W($data,$at+4)}
 }
 }
 $stream=[IO.MemoryStream]::new()
@@ -60,9 +62,9 @@ $writer=[IO.BinaryWriter]::new($stream)
 $keyTotal=0
 foreach($id in ($slots.Keys|Sort-Object)){
     $off=$slots[$id]
-    $motion=[SAModel.NJS_MOTION]::new($data,$off,$base,2,$null,$false,$null,'','',$false)
+    $motion=[SAModel.NJS_MOTION]::new($data,$off,$base,$parts,$null,$false,$null,'','',$false)
     $writer.Write([uint16]$id);$writer.Write([uint32]$off);$writer.Write([uint32]$motion.Frames)
-    for($part=0;$part -lt 2;$part++){
+    for($part=0;$part -lt $parts;$part++){
         $tracks=$motion.Models[$part]
         foreach($channel in 'Position','Rotation'){
             $track=$tracks.$channel

@@ -1,17 +1,19 @@
 use super::*;
+#[path = "story_run.rs"]
+mod story_run;
 use sa2_asset_tools::{
     death_zones, demo, event, event_camera, stage_catalog, stage_paths, stage_positions, story,
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="city-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
+pub(super) const USAGE:&str="story-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
         "player-physics" | "city-board-resources" => Some(3),
         "campaign-camera" => Some(8),
         "event-camera" => Some(6),
-        "city-board-pose" | "stage-bind" | "campaign-frame" => Some(7),
-        "city-spawn-ground" => Some(5),
+        "city-rider-pose" | "city-board-pose" | "stage-bind" | "campaign-frame" => Some(7),
+        "story-run" | "city-spawn-ground" => Some(5),
         "stage-positions" | "death-zones" | "stage-paths" | "story" | "event-frame"
         | "demo-frame" => Some(4),
         _ => None,
@@ -170,6 +172,35 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
     let label = source_label(input, root)?;
     let mut extras = Vec::new();
     let doc = match command {
+        "story-run" => {
+            extras.push(Extra::mapping(&args[3], "native-table-mapping")?);
+            story_run::run(
+                &bytes,
+                input
+                    .parent()
+                    .ok_or_else(|| Error::invalid("missing install directory"))?,
+                &mut extras,
+                text_arg(&args[4])?,
+            )?
+        }
+        "city-rider-pose" => {
+            for (arg, role) in [(3, "pc-executable"), (4, "sonic-rider-model")] {
+                let path = Path::new(&args[arg]);
+                extras.push(Extra::read(
+                    path,
+                    source_label(path, root)?,
+                    128 * 1024 * 1024,
+                    role,
+                )?);
+            }
+            sa2_asset_tools::city_rider::sample(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                number(&args[5])?,
+                finite_argument(&args[6])?,
+            )?
+        }
         "city-board-pose" | "city-spawn-ground" => {
             let exe = Path::new(&args[3]);
             extras.push(Extra::read(

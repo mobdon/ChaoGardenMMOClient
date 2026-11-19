@@ -9,6 +9,7 @@ mod board_replay;
 pub mod city_music;
 pub mod city_rel;
 pub mod city_replay;
+pub mod city_rider;
 pub mod city_stage;
 pub mod collision;
 pub mod death_zones;
@@ -67,3 +68,5 @@ impl From<serde_json::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod city_land;
+
+pub mod stage_land;
