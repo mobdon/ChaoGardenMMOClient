@@ -48,7 +48,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
-    let mut counts = [0; 7];
+    let mut counts = [0; 8];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
     let program = Program::read(13, &fs::read(gd.join("stg13D.rel")).unwrap()).unwrap();
     for line in stdout.lines() {
@@ -73,6 +73,27 @@ fn compare_installed_init_and_contact() {
             };
             assert_eq!(name, v[7], "{line}");
             counts[0] += 1;
+        } else if v[0] == "H" {
+            let r = program
+                .child_dispatch(n(1) as i8, n(2) as i8, (n(2) == 0).then(|| n(3) != 0))
+                .unwrap();
+            let h = &r["handler"];
+            let calls = h
+                .get("calls")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([]));
+            assert_eq!(
+                calls,
+                serde_json::from_str::<serde_json::Value>(v[6]).unwrap()
+            );
+            let mode = if r["resetModeAfterCall"] == true {
+                0
+            } else {
+                h["modeWrite"].as_i64().unwrap_or(i64::from(n(1)))
+            };
+            assert_eq!(mode, i64::from(n(4)));
+            assert_eq!(h["task60Write"].as_i64().unwrap_or(123), i64::from(n(5)));
+            counts[7] += 1;
         } else if v[0] == "U" {
             let r = program
                 .child_dispatch(n(1) as i8, n(2) as i8, (n(2) == 0).then(|| n(3) != 0))
@@ -237,7 +258,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
-    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44]);
+    assert_eq!(counts, [720, 280, 40, 194, 45, 5, 44, 6]);
 }
 #[test]
 #[ignore = "requires installed Green Forest and official mapping files"]

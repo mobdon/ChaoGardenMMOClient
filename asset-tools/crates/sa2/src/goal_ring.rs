@@ -20,6 +20,8 @@ pub struct Program {
     child_callbacks: [u32; 3],
     #[serde(skip)]
     child_handlers: [u32; 5],
+    #[serde(skip)]
+    child_collision_descriptor: u32,
     pub child_entry: u32,
     pub child_parent_callback: u32,
     pub child_scale_bits: u32,
@@ -231,6 +233,47 @@ impl Program {
             handler(0x100)?,
             handler(0x118)?,
         ];
+        let setup = child_handlers[3];
+        let release = child_handlers[4];
+        for (offset, length, hash) in [
+            (
+                setup,
+                0x5c,
+                "a418a5f1e98378b0227a93db9c1a55de77ffa9318852f3679ba3ffdc70ca5e56",
+            ),
+            (
+                release,
+                0x38,
+                "5c80053ca87f0e47b8ea6fd54a6b6e4d1a254de78c7a33cd144865e8c4cd9c2f",
+            ),
+        ] {
+            let start = offset as usize;
+            if manifest::sha256(
+                instructions
+                    .get(start..start + length)
+                    .ok_or_else(invalid)?,
+            ) != hash
+            {
+                return Err(invalid());
+            }
+        }
+        for (site, address) in [
+            (setup + 0x20, 0x800067f8),
+            (setup + 0x38, 0x8000f7d8),
+            (release + 0x18, 0x80018b88),
+        ] {
+            if !rel
+                .reference(1, site)
+                .is_some_and(|r| r.kind == 10 && r.module == 0 && r.addend == address)
+            {
+                return Err(invalid());
+            }
+        }
+        let child_collision_descriptor = rel
+            .reference(1, setup + 0x2e)
+            .filter(|r| r.kind == 4 && r.module == info.module && r.section == 5)
+            .ok_or_else(invalid)?
+            .addend;
         let child_parent_callback = child_ref(0x2e, 1)?;
         let child_scale_bits = word(rel.data(4)?, child_ref(0x3a, 4)? as usize)?;
         // Verify the actual callees even though the code hashes cover unrelocated branches.
@@ -321,6 +364,7 @@ impl Program {
             initial_slot_words,
             child_callbacks,
             child_handlers,
+            child_collision_descriptor,
             child_entry,
             child_parent_callback,
             child_scale_bits,
@@ -597,9 +641,17 @@ impl Program {
             };
             reset = !(0..=5).contains(&mode);
         }
-        Ok(
-            json!({"callbackWrites20And32":writes,"taskCall":call,"resetModeAfterCall":reset,"rangeChecked":byte1==0}),
-        )
+        let mut report = json!({"callbackWrites20And32":writes,"taskCall":call,"resetModeAfterCall":reset,"rangeChecked":byte1==0});
+        if range_out != Some(true) {
+            match mode {
+                3 => {
+                    report["handler"] = json!({"calls":[[0x800067f8u32,"task"],[0x8000f7d8u32,"task",self.child_collision_descriptor,2,4]],"modeWrite":4})
+                }
+                6 => report["handler"] = json!({"calls":[[0x80018b88u32,"task"]],"task60Write":0}),
+                _ => {}
+            }
+        }
+        Ok(report)
     }
     pub fn child_placement(&self, v: ChildObservation, position: [f32; 3]) -> Result<Value> {
         if v.existing == v.allocation.is_some() || (v.existing && !v.linked_after) {
@@ -695,7 +747,7 @@ pub fn replay(
             None
         };
         return Ok(
-            json!({"program":p,"init":init,"child":writes,"childDispatch":dispatch,"dispatchedFrames":0,"scope":"Child placement and optional observed dispatch; nested handlers not run."}),
+            json!({"program":p,"init":init,"child":writes,"childDispatch":dispatch,"dispatchedFrames":0,"scope":"Child placement and optional dispatch including mode 3 and 6 handler writes; engine calls are observations."}),
         );
     }
     let InitRoute::Contact { angle_x } = init else {

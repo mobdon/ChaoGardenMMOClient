@@ -209,6 +209,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind in (4,6):
             assert module==12 and s==1
             val+=BASE;put(BASE+off,'H',(val if kind==4 else (val+0x8000)>>16)&65535)
+run_nested=False
 def child_call(cpu,pc,*_):
     assert reg(3)==TASK
     if pc==BASE+ce+0x30:
@@ -216,6 +217,7 @@ def child_call(cpu,pc,*_):
     else:
         dest=REGISTER if pc==BASE+ce+0x10c else pc-BASE+(get(pc,'I')&0x03fffffc)
         handlers.append(dest)
+        if run_nested and pc-BASE-ce in (0x100,0x118):return
         # A nested handler may change the mode; detect any later reset.
         put(WORK,'B',93)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
@@ -228,3 +230,36 @@ for m,(flag,out) in itertools.product((-128,-1,0,1,2,3,4,5,6,7,127),((0,1),(0,0)
     u.emu_start(BASE+ce,BASE+ce+0x13c,count=95)
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+ce+0x13c
     print('U',m,flag,out,len(range_checks),next(iter(handlers),0),get(TASK+20,'I'),get(TASK+32,'I'),get(WORK,'b'))
+
+# Execute the mode 3 and 6 handlers in the dispatcher, observing the engine ABI.
+run_nested=True
+map_page(BASE+0x300b8)
+for start,end in [(0x300b8,0x30114),(0x30388,0x303c0)]:
+    u.mem_write(BASE+start,d[ss[1][0]+start:ss[1][0]+end])
+imports={}
+for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
+    section=off=0
+    while True:
+        delta,kind,s,val=struct.unpack_from('>HBBI',d,at);at+=8
+        if kind==203:break
+        if kind==202:section=s;off=0;continue
+        off+=delta
+        if section!=1 or not (0x300b8<=off<0x30114 or 0x30388<=off<0x303c0):continue
+        if kind==10 and module==0:imports[BASE+off]=val
+        elif kind in (4,6):
+            assert module==12 and s==5
+            val+=const_base;put(BASE+off,'H',(val if kind==4 else (val+0x8000)>>16)&65535)
+def child_engine(cpu,pc,*_):
+    assert reg(3)==TASK
+    args=[imports[pc],"task"]
+    if pc==BASE+0x300f0:args.extend([reg(4)-const_base,reg(5),reg(6)])
+    services.append(args)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for pc in imports:u.hook_add(UC_HOOK_CODE,child_engine,begin=pc,end=pc)
+for m,(flag,out) in itertools.product((3,6),((0,1),(0,0),(1,0))):
+    services=[];handlers=[];range_checks=[]
+    put(TASK+52,'I',WORK);put(TASK+60,'I',123);put(WORK,'bb',m,flag)
+    setreg(1,TASK+0xf00);setreg(3,TASK);u.reg_write(R.UC_PPC_REG_LR,BASE+ce+0x13c)
+    u.emu_start(BASE+ce,BASE+ce+0x13c,count=150)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+ce+0x13c
+    print('H',m,flag,out,get(WORK,'b'),get(TASK+60,'I'),json.dumps(services,separators=(',',':')))

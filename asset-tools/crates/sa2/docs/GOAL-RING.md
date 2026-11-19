@@ -65,5 +65,9 @@ report gives writes to task offsets 20 and 32, the selected nested task call,
 and whether the dispatcher resets the mode after that call. A null callback
 write pair means both fields are preserved. The native dispatcher in stages
 16 and 18 has different local call displacements; handlers are resolved
-from the installed module. The nested calls and the child's scheduling are
-not executed by this observation.
+from the installed module. The child is not scheduled automatically. For mode 3 the replay follows the
+local handler through both engine requests, passing the module's section-5
+descriptor offset, 2 and 4 in the second request, then writing mode 4.
+For mode 6 it follows the engine call and the clear at task offset 60 before
+the dispatcher resets the mode to zero. Other local handlers and imported
+engine routines are not executed.
