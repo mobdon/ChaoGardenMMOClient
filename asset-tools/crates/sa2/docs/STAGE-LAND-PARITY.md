@@ -79,3 +79,10 @@ Each offset correction is tied to its source hash. The Rust test independently
 decodes both sources, then uses the same Rust static geometry baker for each.
 This verifies conversion, not the baker against the retail engine, visual
 rendering, dynamic collision, stage progression or complete playable levels.
+
+For Finalhazard, `finalhazard-geometry EXE OUTPUT.json` reads the 28 native
+Chunk attachments by RVA; stream offsets within each attachment are raw file
+offsets. Against the two local SA Tools splits, all 28 bounding spheres and
+all 48 vertex chunk kinds matched. Comparing polygon words in stream order
+gave 134 exact matches across 145 chunks. The other 11 are unresolved;
+the export retains the executable words. These model bounds are not hitboxes.
