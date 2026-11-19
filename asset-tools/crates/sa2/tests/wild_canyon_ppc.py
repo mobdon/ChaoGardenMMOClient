@@ -353,6 +353,13 @@ if __name__ == "__main__":
             out=Path(tmp)/f"out-{allocated}.json"
             subprocess.run([sys.argv[1],"--source-root",str(game),"fan-wild-canyon",str(game/"sonic2app.exe"),str(out),os.environ["SA2_PC_CONFIG"],"Hero Story Sequence","5",str(allocated).lower()],check=True)
             doc=json.loads(out.read_text())
+            exe=(game/"sonic2app.exe").read_bytes()
+            for record in doc["pcCollisionTemplates"]:
+                src=bytes(u.mem_read(base[5]+record["relOffset"],48))
+                needle=struct.pack("<bBbbI7f3i",*struct.unpack(">bBbbI7f3i",src))
+                assert exe.count(needle)==1 and exe.index(needle)==record["pcFileOffset"]
+                assert record["pcSha256"]==hashlib.sha256(needle).hexdigest() and record["relSha256"]==hashlib.sha256(src).hexdigest()
+            assert len(doc["pcCollisionTemplates"])==2
             state,music,rows=lighting(0);other,alt,rows2=lighting(255)
             assert state==other and rows==rows2==doc["lighting"]
             result.update(state,music=music|alt,emeraldTasks=emerald_tasks(),emeraldPaths=emerald_paths())

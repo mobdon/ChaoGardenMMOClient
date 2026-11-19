@@ -34,6 +34,41 @@ fn collision_record(data: &[u8], offset: u32) -> Result<CollisionRecord> {
     })
 }
 
+/// Match file-backed Steam executable records to the two REL templates,
+/// normalizing only the byte order of the eleven 32-bit fields.
+pub fn pc_collision_templates(exe: &[u8], module: &[u8]) -> Result<Value> {
+    let pe = crate::pe::read_pe(exe)?;
+    let rel = CityRel::read_identified(module, 15)?;
+    let data = rel.data(5)?;
+    let mut matches = Vec::new();
+    for (source, rva) in [(0x976ccusize, 0x7435ccu32), (0x97730, 0x7435fc)] {
+        let template = data
+            .get(source..source + 48)
+            .ok_or_else(|| Error::invalid("missing emerald shape template"))?;
+        let at = pe.rva_to_offset(rva, 48)?;
+        let pc = exe
+            .get(at..at + 48)
+            .ok_or_else(|| Error::invalid("missing PC emerald shape record"))?;
+        if pc[..4] != template[..4]
+            || pc[4..]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(template[4..].as_chunks::<4>().0.iter())
+                .any(|(a, b)| !a.iter().eq(b.iter().rev()))
+        {
+            return Err(Error::invalid(
+                "PC and REL emerald collision records disagree",
+            ));
+        }
+        matches.push(
+            json!({"pcRva":rva,"pcFileOffset":at,"relSection":5,"relOffset":source,
+            "pcSha256":manifest::sha256(pc),"relSha256":manifest::sha256(template)}),
+        );
+    }
+    Ok(json!(matches))
+}
+
 pub fn enter(
     module: &[u8],
     allocated: bool,

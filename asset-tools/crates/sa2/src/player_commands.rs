@@ -298,8 +298,13 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                         let gc = read(&gc_name)?;
                         let lights =
                             sa2_asset_tools::wild_canyon::light_tables(&src.bytes, &gc.bytes)?;
+
+                        let templates = sa2_asset_tools::wild_canyon::pc_collision_templates(
+                            &bytes,
+                            &module.bytes,
+                        )?;
                         extras.extend([src, gc]);
-                        json!({"dispatch":stage.dispatch,"stageTask":task,"lighting":lights})
+                        json!({"dispatch":stage.dispatch,"stageTask":task,"lighting":lights,"pcCollisionTemplates":templates})
                     }
                 } else if command == "fan-big-foot" {
                     if stage.dispatch.level != 60 {
