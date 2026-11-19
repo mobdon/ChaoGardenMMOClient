@@ -8,6 +8,8 @@ export function createSteadyHead(imported) {
   // 014/015 are animated neck pivots. 016 owns the skull and face subtree;
   // anchoring only the neck still leaves native head rotation underneath it.
   const head = imported.visual.getDescendants().find(node => /(?:^|-)016_object_/.test(node.name));
+  const drawnHead = head?.getChildMeshes().find(mesh => mesh.getTotalVertices() > 0);
+  const drawnCenter = drawnHead?.getBoundingInfo().boundingBox.center.clone();
   const available = !!actor && !!head?.rotationQuaternion && !!head.parent;
   let anchor = null, base = null, blend = available ? 1 : 0, disposed = false;
   if (available) {
@@ -46,6 +48,12 @@ export function createSteadyHead(imported) {
   }
 
   return { update, apply, restoreBase,
+    // Inspect the matrix actually selected by the last render. Recomputing a
+    // descendant here could hide a rendering-order bug from screen-space QA.
+    renderedCenter() {
+      return drawnHead && !drawnHead.isDisposed()
+        ? Vector3.TransformCoordinates(drawnCenter, drawnHead.worldMatrixFromCache) : null;
+    },
     get diagnostics() {
       let position = null;
       if (available && !head.isDisposed() && !actor.isDisposed()) {

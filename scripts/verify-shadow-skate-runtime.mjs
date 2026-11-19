@@ -70,7 +70,27 @@ try {
     }
     assert.ok(poseSignatures.size > 10, 'source-derived skating is static');
     assert.equal(controller.diagnostics.active, false, 'low-speed exit failed');
-    for (const block of [{ mounted: true }, { grounded: false }, { footwear: false }, { fresh: false }]) {
+    const skateState = { speed: 1.994, grounded: true, footwear: true, mounted: false, swimming: false, fresh: true };
+    for (let frame = 0; frame < 40; frame++) {
+      controller.restoreBase(); controller.update(1 / 60, skateState); controller.apply();
+    }
+    const coastPhases = new Set();
+    for (let frame = 0; frame < 90; frame++) {
+      controller.restoreBase();
+      controller.update(1 / 60, { ...skateState, grounded: false, airGap: .007444,
+        descending: true, descendingGround: true, serverTime: 1000 + Math.floor(frame / 6) * 100 });
+      controller.apply();
+      assert.equal(controller.diagnostics.state, 'coasting'); assert.equal(controller.diagnostics.blend, 1);
+      coastPhases.add(controller.diagnostics.phase.toFixed(6));
+    }
+    assert.ok(coastPhases.size > 80, 'the native coast must continue its strokes, not freeze a pose');
+    for (let frame = 0; frame < 30; frame++) {
+      controller.restoreBase();
+      controller.update(1 / 60, { ...skateState, grounded: false, airGap: .2, descending: false, descendingGround: false });
+      controller.apply();
+    }
+    assert.equal(controller.diagnostics.active, false, 'larger air gap must leave the native skate overlay');
+    for (const block of [{ mounted: true }, { footwear: false }, { fresh: false }]) {
       controller.restoreBase();
       controller.update(.1, { speed: 1.994, grounded: true, footwear: true, mounted: false, fresh: true });
       controller.apply(); controller.restoreBase();
@@ -80,6 +100,7 @@ try {
     controller.dispose();
     forms.push({ name, sourceSha256: createHash('sha256').update(source).digest('hex'),
       originalRigNodes: nodes.length, sampledFrames: sampled, skatingFrames, distinctFootPoseSignatures: poseSignatures.size,
+      sustainedTerrainCoastFrames: 90, distinctCoastPhases: coastPhases.size, largerAirGapExitFrames: 30,
       maximumFullSkateRotationDegrees: Object.fromEntries(upperBody.map(target => [target.semantic, target.peak])),
       originalClips: entries.animationGroups.map(group => group.name), positionsScalesAndHierarchyPreserved: true });
     entries.dispose(); visual.dispose(); asset.dispose();

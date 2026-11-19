@@ -123,4 +123,6 @@ baseline saved-Memory evidence remain historical checks of their recorded
 versions; no backend rollout, canonical-save migration or complete native-game
 port is implied by this ledger update.
 
-Head bob follow-up (November 18): user requested stopping it completely. The final visible head016 stays fixed relative to the moving actor through idle/walk/run/skate and stops. Only mounted pilot presentation bypasses the standing lock. See HEAD-STABILITY.md and VIS-14; 26 tests/build and 11,880 native frames pass.
+Head bob follow-up (November 18): actor-local head016 locking alone was insufficient. The repeat report exposed camera focus lag over terrain. Direct tracking now removes that second interpolation; actual cached draw-mesh screen measurements are steady below0.001px after turns. Native rig proof still passes. See HEAD-STABILITY.md and VIS-14.
+
+New requests: skating must not stop at floor-height changes, and native Chao shadows should be used if present. VIS-15 preserves the existing skate phase across fresh qualifying descending near-floor observations while keeping server air state truthful and jets off; final positive-gap browser acceptance remains open. VIS-16 uses the original PC al_mm_kage shadow texture on terrain-conforming geometry. The matching Rust asset route is source-tested; the frozen live backend is unchanged and the local preview has one exact private-import asset bridge. Native projection parity is untraced. See SLOPE-PRESENTATION.md and NATIVE-CHAO-SHADOW.md.
