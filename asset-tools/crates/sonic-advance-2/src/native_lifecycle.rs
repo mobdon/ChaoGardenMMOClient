@@ -27,17 +27,14 @@ fn q(pixel: i32) -> Result<i32, Error> {
 
 /// Normal-stage sub_80232D0, before position advancement. Bounds are the live
 /// camera limits, including native narrowing, rather than terrain dimensions.
-/// Goal/boss region shifts are outside this explicitly normal pre-goal path.
+/// Course runner with fewer than seven special rings: a reached ordinary goal
+/// still uses these bounds (sub_80232D0). The special-region wrap and boss
+/// camera adjustments require their own paths.
 pub fn normal_bounds(
     p: &mut PlayerState,
     camera: &NativeCamera,
     inverted: bool,
 ) -> Result<bool, Error> {
-    if p.move_state & 0x0800_0000 != 0 {
-        return Err(Error(
-            "Native goal-region shift is outside normal bounds".into(),
-        ));
-    }
     let min_x = q(camera.min_x)?;
     let min_y = q(camera.min_y)?;
     let max_x = q(camera.max_x)?

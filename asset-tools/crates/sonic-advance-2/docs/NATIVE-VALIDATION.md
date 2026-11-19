@@ -16,9 +16,13 @@ No production service, live preview or real save was changed.
 | Objects and stage lifecycle | Native ring layouts and overlaps; real layer triggers; 19,208 spring contacts/4,096 launches; visible/silent checkpoint behavior and 12,288 original-C lifecycle cases | [Rings](NATIVE-RINGS.md), [entities](NATIVE-ENTITIES.md), [springs](NATIVE-SPRINGS.md), [checkpoints](NATIVE-CHECKPOINTS.md), [lifecycle](NATIVE-LIFECYCLE.md) |
 | HUD | Seven independent direct-OAM full-frame pixel hashes using original cartridge graphics and palette banks: clock, zero/overflow rings, lives, score, speed and time warning | `catalog/native-hud-parity.json`, `tests/native_hud_oracle.py` |
 | Campaign save | 256 native profile cases, 1,024 header selections and 64 full in-memory session comparisons; CLI leaves input unchanged | [Campaign save](NATIVE-CAMPAIGN-SAVE.md) |
+| Combat | 392 authored enemy records; original-C Mon/Buzzer callbacks, 4,096 damage cases, 201,243 targeting cases, 6,144 initializers and 266,240 unobstructed callback frames | [Enemies](NATIVE-ENEMIES.md), [combat](NATIVE-COMBAT.md) |
+| Scattered rings | 880 original task ticks and 28,160 slot snapshots; actual stage checks for collision, timers, pool bounds and sprite frames | [Scatter](NATIVE-SCATTER.md) |
+| Goals and results | 4,096 goal/score cases, 512 bonus cases, 16,384 player controller cases and 83,200 results frames compared to pinned C; 8,253 UI submissions and 258 fade samples. Controlled-state integration from actual finish coordinates in all 14 acts checks victory animation, course clock freeze, tally, native flash readback, and next act/boss selection | [Goal](NATIVE-GOAL.md), [results presentation](NATIVE-RESULTS-UI.md) |
+| Audio | 34 cues, including all 14 act themes, compared over 34,507 note events; one-shot and loop boundaries from original sequences; waveform fidelity remains unproven | [Audio](NATIVE-AUDIO.md) |
 | Integrated movement | 14 normal acts run for 1,800 right-input frames each, including real spring and pit/retry routes. The 227-frame replay collects three rings and exercises walking, jump variants 0/1/2, landing, braking, turning and idle; fixed state/pixel regression plus tapped/held impulse-frame checks | `catalog/native-harness-replay.json` |
-| Host | Ephemeral loopback session rejects unsupported inputs without ticking; reset restores exact original state and pixels | `tests/source_native_host.rs` |
-| Browser | Fresh isolated headless Chrome: nonblank canvas, enabled controls, native right-input movement and reset while running returning to paused frame zero | Local browser observation; no published asset/screenshot |
+| Host | Ephemeral loopback session rejects unsupported inputs without ticking; WAV read returns stereo samples without ticking; reset restores exact state and pixels | `tests/source_native_host.rs` |
+| Browser | Fresh isolated headless Chrome: Music Plant act 2 auditions cue 18 through Web Audio while paused; right-input movement and reset to frame zero on the same act; no runtime exceptions | Local browser observation; no published asset/screenshot |
 | Existing assets/saves/transfer | Original independent source hashes, typed re-encoding, three map renders, garden templates/CRC and bounded synthetic save/transfer inspection still pass | Existing asset parity metadata and `docs/VALIDATION.md` |
 
 The integrated replay is an observed Rust regression, not an independent oracle
@@ -37,6 +41,8 @@ $env:A2NE_RUNTIME_ORACLE = '<local runtime-oracle.json>'
 $env:A2NE_COLLISION_ORACLE = '<local collision results.bin>'
 $env:A2NE_AFFINE_ORACLE = '<local transforms.bin>'
 $env:A2NE_CAMPAIGN_SAVE_ORACLE = '<local native-campaign-save-oracle directory>'
+$env:A2NE_GOAL_ORACLE = '<local native-goal-oracle directory>'
+$env:A2NE_GOAL_PLAYER_ORACLE = '<local native-goal-player-oracle/results.bin>'
 cargo test --locked --manifest-path asset-tools/crates/sonic-advance-2/Cargo.toml --all-targets -- --include-ignored
 cargo clippy --locked --manifest-path asset-tools/crates/sonic-advance-2/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path asset-tools/crates/sonic-advance-2/Cargo.toml --check

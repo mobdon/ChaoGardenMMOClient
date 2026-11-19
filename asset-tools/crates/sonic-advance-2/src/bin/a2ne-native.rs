@@ -1,7 +1,7 @@
 //! Standalone loopback execution lab; no MMO endpoints or save writes.
 use serde::Deserialize;
 use sonic_advance_2_assets::{
-    ROM_LEN, VerifiedRom, gba,
+    ROM_LEN, VerifiedRom, gba, native_audio,
     native_game::{MAX_REPLAY_FRAMES, NativeHarness, SUPPORTED_INPUT, VIEW_HEIGHT, VIEW_WIDTH},
     native_stage::{NativeStage, TERRAIN_LEVELS, is_course_act},
 };
@@ -215,8 +215,11 @@ fn response(stream: &mut TcpStream, status: &str, content_type: &str, bytes: &[u
 }
 
 fn packet(game: &NativeHarness<'_>) -> Result<Vec<u8>> {
+    let snapshot = game.snapshot();
+    // Course act music IDs run 13..26; level indices reserve two intervening slots per zone.
+    let stage_music = 13 + u16::from(snapshot.level_id / 4) * 2 + u16::from(snapshot.level_id % 4);
     let state = serde_json::to_vec(
-        &serde_json::json!({ "state": game.snapshot(), "width": VIEW_WIDTH, "height": VIEW_HEIGHT }),
+        &serde_json::json!({ "state": snapshot, "sound_cues": native_audio::SUPPORTED_CUES, "stage_music":stage_music, "width": VIEW_WIDTH, "height": VIEW_HEIGHT }),
     )?;
     let mut bytes = b"A2NF".to_vec();
     bytes.extend_from_slice(&(state.len() as u32).to_le_bytes());
@@ -229,6 +232,7 @@ fn serve(rom: &VerifiedRom<'_>, port: u16, level: u8) -> Result<()> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))?;
     let host = listener.local_addr()?.to_string();
     let mut game = NativeHarness::for_level(rom, level)?;
+    let mut cues = std::collections::HashMap::<u16, Vec<u8>>::new();
     println!("A2NE native Rust execution slice: http://{host}/");
     println!("One local session. Left/right and A (Z/space). Ctrl+C stops the lab.");
     for stream in listener.incoming() {
@@ -254,6 +258,22 @@ fn serve(rom: &VerifiedRom<'_>, port: u16, level: u8) -> Result<()> {
                     "text/css; charset=utf-8",
                     STYLE.as_bytes(),
                 ),
+                ("GET", path) if path.starts_with("/audio/") => {
+                    let id = path
+                        .strip_prefix("/audio/")
+                        .and_then(|p| p.strip_suffix(".wav"))
+                        .and_then(|v| v.parse::<u16>().ok())
+                        .filter(|x| native_audio::SUPPORTED_CUES.contains(x));
+                    if let Some(cue) = id {
+                        if let std::collections::hash_map::Entry::Vacant(entry) = cues.entry(cue) {
+                            let complete = native_audio::render_cue(rom, cue)?;
+                            entry.insert(native_audio::wav(&complete.audio)?);
+                        }
+                        response(&mut stream, "200 OK", "audio/wav", &cues[&cue])
+                    } else {
+                        response(&mut stream, "404 Not Found", "text/plain", b"Unknown cue")
+                    }
+                }
                 ("GET", "/frame") => response(
                     &mut stream,
                     "200 OK",

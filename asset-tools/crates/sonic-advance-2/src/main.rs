@@ -119,6 +119,15 @@ fn run(args: &[String]) -> Result<()> {
             write_new(Path::new(&args[7]), &pam)?;
             println!("Rendered {}x{} RGBA map locally", output.width, output.height);
         }
+        Some("audio-preview") if args.len()==5 => {
+            let bytes = read_limited(Path::new(&args[1]), sonic_advance_2_assets::ROM_LEN)?;
+            let rom=VerifiedRom::parse(&bytes)?;
+            let rendered=sonic_advance_2_assets::native_audio::render(&rom,args[2].parse()?,args[3].parse()?)?;
+            let path=Path::new(&args[4]);
+            local_output(path)?;
+            write_new(path,&sonic_advance_2_assets::native_audio::wav(&rendered)?)?;
+            println!("Rendered {} stereo sample pairs locally",rendered.stereo.len());
+        }
         Some("campaign-save") if args.len() == 2 => {
             let bytes = read_limited(Path::new(&args[1]), 16 * native_campaign_save::SECTOR_BYTES)?;
             let inspection = native_campaign_save::inspect_flash(&bytes)?;
@@ -146,7 +155,7 @@ fn run(args: &[String]) -> Result<()> {
             let report = transfer::TransferPayload::parse(command, &bytes)?.report();
             println!("{}", String::from_utf8(json(&report)?)?);
         }
-        _ => return Err("Usage: a2ne-assets catalog ROM [METADATA.json] | extract ROM ID .local/OUTPUT_DIR | render-map ROM MAP_ID TILES_ID PALETTE_ID WIDTH_TILES HEIGHT_TILES .local/OUTPUT.pam | save FLASH.sav | campaign-save FLASH.sav | transfer HEX_COMMAND PAYLOAD_FILE".into()),
+        _ => return Err("Usage: a2ne-assets catalog ROM [METADATA.json] | extract ROM ID .local/OUTPUT_DIR | render-map ROM MAP_ID TILES_ID PALETTE_ID WIDTH_TILES HEIGHT_TILES .local/OUTPUT.pam | save FLASH.sav | campaign-save FLASH.sav | audio-preview ROM CUE FRAMES .local/OUTPUT.wav | transfer HEX_COMMAND PAYLOAD_FILE".into()),
     }
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 Read-only Rust catalog and converters for **one verified USA revision 0 cartridge** and its embedded Tiny Chao Garden. All code, tests, metadata and documentation stay inside this workstream's crate. The crate has its own workspace/lockfile so it does not change the shared asset workspace before the other tracks agree a contract.
 
-The crate includes a [local Rust course runner](docs/NATIVE-HARNESS.md) for Sonic in the fourteen normal acts. It reads actual course maps, collisions, placements, sprite scripts and palettes. The native camera, rings, layer switches, ordinary springs, checkpoints, death/retry and HUD run locally. **The full retail game is not ported.** See the [coverage matrix](docs/NATIVE-PORT.md#full-native-game-coverage-boundary) for remaining gameplay, presentation, audio and campaign work.
+The crate includes a [local Rust course runner](docs/NATIVE-HARNESS.md) for Sonic in the fourteen normal acts. It reads actual course maps, collisions, placements, sprite scripts and palettes. The runner executes two enemy species, damage, homing, ring loss and recollection, checkpoints, ordinary course goals, results, and the in-memory campaign journal. The local audio preview interprets original sequences and samples. Each act 1 can advance to act 2; act 2 reports its boss destination. **The full retail game is not ported.** See the [coverage matrix](docs/NATIVE-PORT.md#full-native-game-coverage-boundary) for remaining gameplay, presentation, audio and campaign work.
 
 ## Exact source gate
 
@@ -31,6 +31,7 @@ cargo run --locked --manifest-path $crate -- catalog $env:A2NE_ROM
 cargo run --locked --manifest-path $crate -- extract $env:A2NE_ROM rom.tiny-garden.lz77 .local/a2ne-extracted
 cargo run --locked --manifest-path $crate -- save .local/native-flash.sav
 cargo run --locked --manifest-path $crate -- campaign-save .local/native-flash.sav
+cargo run --locked --manifest-path $crate -- audio-preview $env:A2NE_ROM 117 60 .local/ring-copy.wav
 cargo run --locked --manifest-path $crate -- transfer 00040022 .local/native-transfer.bin
 cargo run --locked --manifest-path $crate -- render-map $env:A2NE_ROM rom.bg.title.map rom.bg.title.tiles rom.bg.title.palette 32 64 .local/title.pam
 ```

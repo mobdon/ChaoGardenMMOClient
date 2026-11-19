@@ -108,7 +108,7 @@ Three source tests pass:
   data, no flash, programming failure and erase failure.
 
 Three focused Rust tests also cover truncation, flag/control normalization,
-rotation quirks, cached failed-write behavior and garden-sector preservation.
+rollover quirks, cached failed-write behavior and garden-sector preservation.
 These are synthetic-data/C parity checks, not hardware or durable-service
 integration. Metadata-only fingerprints are in
 `catalog/native-campaign-save-parity.json`.

@@ -75,6 +75,18 @@ fn fresh_loopback_session_advances_and_resets_to_exact_initial_pixels() {
     assert_eq!(initial["frame"], 0);
     assert_eq!(initial["level_id"], 9);
     assert_eq!(exchange(addr, "GET", "/cartridge.gba", "").0, 404);
+    assert_eq!(exchange(addr, "GET", "/audio/999.wav", "").0, 404);
+    let (status, wav) = exchange(addr, "GET", "/audio/117.wav", "");
+    assert_eq!(status, 200);
+    assert_eq!(&wav[..4], b"RIFF");
+    assert_eq!(&wav[8..16], b"WAVEfmt ");
+    assert_eq!(u16::from_le_bytes(wav[22..24].try_into().unwrap()), 2);
+    assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 10512);
+    assert_eq!(
+        u32::from_le_bytes(wav[40..44].try_into().unwrap()) as usize,
+        wav.len() - 44
+    );
+    assert!(wav[44..].iter().any(|&v| v != 0));
     assert_eq!(exchange(addr, "POST", "/tick", "2").0, 400);
     assert_eq!(frame(addr, "GET", "/frame", "").0, initial);
     let (tick, _) = frame(addr, "POST", "/tick", "16");

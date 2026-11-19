@@ -202,16 +202,16 @@ collision state.
 | Subsystem | Current first-slice implementation | Work still required for a full game |
 | --- | --- | --- |
 | Main loop/input/tasks/RNG/math | Executable Rust input, logical task dispatch, both RNGs and selected Q24.8 helpers with C parity | Boot, interrupt/frame ordering, recorder lifecycle, complete math library, native allocator and global-state integration |
-| Player | Sonic movement, jump, skid, four-direction terrain attachment, no-target Insta Shield/Forward Thrust and ordinary spring responses | Other playable characters, combat, full action graph and route parity |
+| Player | Sonic movement, jump, skid, four-direction terrain attachment, Insta Shield/Forward Thrust, homing, hurt/recoil and ordinary spring responses | Other playable characters, remaining combat/actions and input-only route parity |
 | Terrain/stages | 31 terrain slots with animated foregrounds; 14 normal course acts boot from ROM spawn positions | Boss, special, final and multiplayer stage execution, stage-specific events, water and inverted-gravity orchestration |
 | Sprite animation/presentation | Executable bounded animation commands, ordinary OBJ composition and native affine matrices/anchors/OBJ sampling from verified original resources; see `NATIVE-AFFINE.md` | Complete renderer integration, shared/global matrix services, mosaic/blend/window behavior, hardware-equivalent ordering, effects and broad gameplay-state selection |
 | Camera/presentation loop | Normal camera, Leaf Forest BG0/BG3 parallax, priority-aware foregrounds, native HUD and affine walking | Other zone backgrounds and camera modes, native countdown, menus, hardware-wide OAM/DMA timing |
-| Enemies/objects/bosses | Ordinary rings, layer switches, springs and visible/silent checkpoints use actual placements. Life loss, timeout and stage retry run in memory. | Remaining interactables, enemies, bosses, goal/results and full campaign playthrough |
-| Audio | Song/voicegroup/track-start catalog inspection; animation sound commands can be events | Sequence interpreter, instruments/samples, mixing, sound-task timing and audible parity |
+| Enemies/objects/bosses | Ordinary rings, layer switches, springs and visible/silent checkpoints use actual placements. Mon and Buzzer fight Sonic; scattered rings bounce and can be recollected. Ordinary goal, victory, results, in-memory unlock and next-act dispatch execute. | Remaining interactables, enemy species, all boss encounters, special-stage entry and full campaign playthrough |
+| Audio | Bounded sequence/voice interpreter and PCM/PSG preview for all 14 normal act themes and selected effects; [cue validation](NATIVE-AUDIO.md) | Remaining songs, persistent sound task and voice sharing, hardware mixing and audible parity |
 | Saves/transfer | Bounded garden save/transfer inspection plus campaign profile/sector codec, ten-sector selection/recovery and in-memory native write/reset lifecycle with exact C parity; see `NATIVE-CAMPAIGN-SAVE.md` | Real campaign-save fixture compatibility, flash hardware/error/timing parity, durable storage integration and complete transfer lifecycle |
 | Tiny Garden/minigames | Embedded payload identified; selected assets/tables/save structures inspected | Complete original care/behavior/physics/scoring/reward execution and native transfer lifecycle; MMO adaptations remain separate |
 | Multiplayer/link | No completed native link runtime | Native link/session synchronization, remote player behavior and deterministic multiplayer execution |
-| Frontend/platform | Rust modules can execute locally without a GBA CPU emulator | Reviewed Rust/WASM/platform adapter, actual input/render/audio presentation and full user playthroughs |
+| Frontend/platform | Rust modules can execute locally without a GBA CPU emulator | Reviewed Rust/WASM/platform adapter, portable game frontend, durable local campaign and full user playthroughs |
 
 Running a local Rust subsystem or drawing an original stage/sprite establishes
 that specific executable slice. It does not establish a completed native game,

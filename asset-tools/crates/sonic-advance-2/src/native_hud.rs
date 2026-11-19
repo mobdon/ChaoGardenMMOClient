@@ -10,6 +10,10 @@ pub(crate) struct StageHud {
     icon: SpriteFrame,
     ring: Vec<SpriteFrame>,
     ring_phase: u16,
+    special_frames: Vec<SpriteFrame>,
+    special_cycle: Vec<usize>,
+    special_tick: usize,
+    special_count: u8,
     milliseconds: [u8; 120],
     seconds: [u8; 120],
     previous_digit_palette: [bool; 10],
@@ -37,7 +41,35 @@ impl StageHud {
         let ring = (0..8)
             .map(|v| load(1127, v)?.render())
             .collect::<Result<_, Error>>()?;
+        // Cache the native script until its first display state repeats.
+        let mut anim = AnimationPlayer::new(rom, 1128, 0)?;
+        let mut frames = Vec::new();
+        let mut cycle = Vec::new();
+        let mut first = None;
+        loop {
+            let step = anim.advance()?;
+            let key = (step.cursor_words, step.delay_q8, step.frame_index);
+            if first == Some(key) {
+                break;
+            }
+            first.get_or_insert(key);
+            let index = usize::from(
+                step.frame_index
+                    .ok_or_else(|| Error("Empty special ring HUD frame".into()))?,
+            );
+            if index == frames.len() {
+                frames.push(anim.render()?);
+            }
+            if index >= frames.len() || cycle.len() >= 1024 {
+                return Err(Error("Unexpected special ring HUD animation".into()));
+            }
+            cycle.push(index);
+        }
         Ok(Self {
+            special_tick: cycle.len() - 1,
+            special_frames: frames,
+            special_cycle: cycle,
+            special_count: 0,
             digits,
             container: load(1126, 0)?.render()?,
             icon: load(1125, 0)?.render()?,
@@ -50,7 +82,11 @@ impl StageHud {
         })
     }
 
+    pub fn set_special_count(&mut self, count: u8) {
+        self.special_count = count;
+    }
     pub fn tick(&mut self, speed_air_x: i16, time: u32, stage_frame: u64) {
+        self.special_tick = (self.special_tick + 1) % self.special_cycle.len();
         self.ring_phase = self
             .ring_phase
             .wrapping_add(((speed_air_x >> 3) + 64) as u16)
@@ -96,6 +132,10 @@ impl StageHud {
             )
         };
         direct(&self.container, -3, 0);
+        let special = &self.special_frames[self.special_cycle[self.special_tick]];
+        for i in 0..self.special_count {
+            direct(special, 4 + 8 * i32::from(i), 31);
+        }
         direct(&self.ring[usize::from(self.ring_phase >> 8)], 7, 8);
         direct(&self.icon, 6, 142);
         direct(

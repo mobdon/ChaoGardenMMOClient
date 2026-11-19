@@ -21,6 +21,8 @@ pub struct StageEntities {
     active: Vec<usize>,
     new_springs: Vec<usize>,
     new_checkpoints: Vec<usize>,
+    new_goals: Vec<usize>,
+    new_special_rings: Vec<usize>,
     palette_loaders: usize,
     pub(crate) dispatch_new_priority_2000: bool,
     spawned: Vec<bool>,
@@ -46,6 +48,8 @@ impl StageEntities {
             active: Vec::new(),
             new_springs: Vec::new(),
             new_checkpoints: Vec::new(),
+            new_goals: Vec::new(),
+            new_special_rings: Vec::new(),
             palette_loaders: 0,
             dispatch_new_priority_2000: false,
             spawned,
@@ -69,6 +73,18 @@ impl StageEntities {
         if self.layout.records[index].kind == 43 {
             self.palette_loaders -= 1;
         }
+        self.spawned[index] = false;
+    }
+    pub(crate) fn take_new_special_rings(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.new_special_rings)
+    }
+    pub(crate) fn restore_special_ring(&mut self, index: usize) {
+        self.spawned[index] = false;
+    }
+    pub(crate) fn take_new_goals(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.new_goals)
+    }
+    pub(crate) fn restore_goal(&mut self, index: usize) {
         self.spawned[index] = false;
     }
 
@@ -159,7 +175,9 @@ impl StageEntities {
                 let region = row as usize * self.layout.columns + col as usize;
                 for i in self.layout.regions[region].clone() {
                     let e = self.layout.records[i];
-                    if (e.kind <= 1 || (3..=12).contains(&e.kind) || matches!(e.kind, 43 | 45))
+                    if (e.kind <= 1
+                        || (3..=12).contains(&e.kind)
+                        || matches!(e.kind, 42 | 43 | 45 | 46 | 103))
                         && !self.spawned[i]
                         && (left..=right).contains(&e.x)
                         && (top..=bottom).contains(&e.y)
@@ -173,6 +191,8 @@ impl StageEntities {
                                 }
                                 self.new_checkpoints.push(i);
                             }
+                            42 | 46 => self.new_goals.push(i),
+                            103 => self.new_special_rings.push(i),
                             _ => self.new_springs.push(i),
                         }
                     }
