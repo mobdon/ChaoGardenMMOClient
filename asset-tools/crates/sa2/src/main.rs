@@ -555,7 +555,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, transporter, validate\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, transporter, validate\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -591,6 +591,7 @@ fn run() -> Result<()> {
             | "texture"
             | "movie-video"
             | "movie-audio"
+            | "event-voices"
             | "event-cues"
             | "ahx"
             | "adx"
@@ -618,6 +619,7 @@ fn run() -> Result<()> {
         "collision" | "city-collision" => matches!(args.len(), 3 | 4),
         "city-board-model" | "city-raycast" | "raycast" | "glb" | "object-tables"
         | "city-layout" => args.len() == 4,
+        "event-voices" => args.len() == 4,
         "movie-video" => args.len() == 4,
         "movie-audio" => args.len() == 5,
         "city-replay" => args.len() == 6,
@@ -1063,6 +1065,49 @@ fn run() -> Result<()> {
                 ],
                 )?;
             }
+        }
+        "event-voices" => {
+            let exe_path = Path::new(&args[3]);
+            let exe = read_source(exe_path)?;
+            let table = pe::cutscene_voice_table(&exe)?;
+            let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let id = stem
+                .strip_prefix("e")
+                .and_then(|s| s.split_once("_"))
+                .filter(|(id, _)| id.len() == 4 && id.bytes().all(|c| c.is_ascii_digit()))
+                .and_then(|(id, _)| id.parse::<u32>().ok())
+                .ok_or_else(|| Error::invalid("expected event filename eNNNN_SUFFIX.prs"))?;
+            let mut report =
+                audio::read_event_cues(&archive::decompress_prs(&bytes, MAX_DECODED)?)?;
+            for cue in report["audio"]
+                .as_array_mut()
+                .ok_or_else(|| Error::invalid("missing cue array"))?
+            {
+                let local = cue["afsVoiceIndex"]
+                    .as_u64()
+                    .ok_or_else(|| Error::invalid("missing voice index"))?
+                    as u32;
+                if local != 65535 {
+                    let key = id * 1000 + local;
+                    cue["internalVoiceId"] = json!(key);
+                    cue["voiceFileId"] = json!(table.get(&key));
+                }
+            }
+            report["eventId"] = json!(id);
+            save_runtime_bytes(
+                input,
+                &label,
+                &bytes,
+                output,
+                &serde_json::to_vec_pretty(&report)?,
+                "event-voice-lookup-json",
+                &[RuntimeDependency {
+                    path: exe_path,
+                    logical_path: source_label(exe_path, source_root.as_deref())?,
+                    bytes: &exe,
+                    role: "cutscene-voice-table",
+                }],
+            )?;
         }
         "event-cues" => {
             let data = archive::decompress_prs(&bytes, MAX_DECODED)?;
