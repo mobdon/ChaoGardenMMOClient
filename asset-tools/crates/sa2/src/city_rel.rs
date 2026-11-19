@@ -344,12 +344,7 @@ pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
 
 /// Run Hot Shot's slot-zero stage constraint (section 1:7050 -> 6fcc).
 pub fn hot_shot_arena(bytes: &[u8], mut position: [f32; 3]) -> Result<[f32; 3]> {
-    if bytes.len() != 1_180_821
-        || manifest::sha256(bytes)
-            != "9e0caebeefbdeb2e2829f17510b44d9238956342b3eed10a2ae7e1ff56358960"
-    {
-        return Err(invalid());
-    }
+    identify_hot_shot(bytes)?;
     if !position.iter().all(|v| v.is_finite()) {
         return Err(Error::invalid("expected finite player coordinates"));
     }
@@ -374,4 +369,37 @@ pub fn hot_shot_arena(bytes: &[u8], mut position: [f32; 3]) -> Result<[f32; 3]> 
         position[axis] = position[axis].clamp(bound(lo)?, bound(hi)?);
     }
     Ok(position)
+}
+
+fn identify_hot_shot(bytes: &[u8]) -> Result<()> {
+    if bytes.len() != 1_180_821
+        || manifest::sha256(bytes)
+            != "9e0caebeefbdeb2e2829f17510b44d9238956342b3eed10a2ae7e1ff56358960"
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// State after N consecutive intro callbacks beginning in submode zero.
+/// Engine calls are reported at their call sites; their effects are not simulated.
+pub fn hot_shot_intro_clock(bytes: &[u8], updates: u16) -> Result<serde_json::Value> {
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let code = rel.data(1)?;
+    let immediate = |at: usize| u16::from_be_bytes([code[at + 2], code[at + 3]]);
+    let initial = immediate(0xdb8);
+    if updates == 0 || updates > initial + 1 {
+        return Err(Error::invalid(
+            "expected 1 through 451 consecutive intro updates",
+        ));
+    }
+    let timer = initial - (updates - 1);
+    let exited = timer == 0;
+    Ok(serde_json::json!({
+        "updates":updates, "mode":if exited {2} else {1},
+        "submode":if exited {0} else {1}, "timer":timer,
+        "callsEngine8006ab94":timer < immediate(0xeb8) && timer > immediate(0xec0),
+        "entersNextMode":exited
+    }))
 }
