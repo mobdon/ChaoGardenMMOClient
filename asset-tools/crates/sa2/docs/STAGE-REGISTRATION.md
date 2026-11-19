@@ -77,3 +77,10 @@ Optional startup.splash_query expands helper 1:0xca28 within final startup. The 
 stage20-splash stg20D.rel OUTPUT.json QUERY mounts the PRS selected by the native splash helper, checks the GVM entry count against the REL texture list, and decodes its images. The local report includes archive hash, ordered indices and names, source dimensions, RGBA hashes and nonopaque pixel counts. The provenance sidecar covers both inputs. tests/splash_texture_local.py compared all three archives with ArchiveTool 786: 30 exact RGBA matches including 116,642 nonopaque pixels. This verifies the textures, not their attachment, timing or on-screen blending.
 
 Optional splash_spawn traces the first task allocation in the stage callback at 1:0xcaec. The first float must exceed the native threshold before allocation. On success the stage copies the supplied position exactly and copies the three raw rotation words only when the pointer exists; a missing rotation is not a zero rotation write. Task scalars and callbacks are initialized from the two float arguments, REL constants and an observed initial phase word interpreted as a float. The second float independently selects the subsequent branch even when no first task was created. continueAt marks that branch or the common epilogue. The comparator covers both signs, equality, allocation failure, and optional rotation; later particle emission, animation and drawing are outside this block.
+
+The optional `splash_update` observation runs the first splash task's update
+callback (section 1, 0xcffc) for up to 255 consecutive frames. The installed
+stage references an 11-entry list here. The report retains the exact float
+bits at work offsets 36 and 40 and the halfword at offset 6. It stops at the
+first removal request and identifies its call site. Display, scheduler removal
+and cleanup run outside this callback; this observation does not render a frame.

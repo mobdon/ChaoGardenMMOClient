@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
+    splash_update: Option<SplashUpdate>,
     splash_spawn: Option<SplashSpawn>,
     exit: Option<StageExit>,
     fog_blend: Option<FogBlend>,
@@ -71,6 +72,65 @@ fn splash_spawn(rel: &CityRel<'_>, s: SplashSpawn) -> Result<Value> {
     Ok(
         json!({"create":create,"writes":writes,"continueAt":if s.second>scalar(0xcbe6,4)?{0xcbf4}else{0xcfd8}}),
     )
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SplashUpdate {
+    phase: f32,
+    work36: f32,
+    counter: u16,
+    frames: u8,
+}
+
+fn splash_update(rel: &CityRel<'_>, mut s: SplashUpdate) -> Result<Value> {
+    let word = |site, delta| -> Result<u32> {
+        let err = || Error::invalid("missing splash update data");
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.kind == 4 && r.module == 19)
+            .ok_or_else(err)?;
+        let at = r.addend as usize + delta;
+        Ok(u32::from_be_bytes(
+            rel.data(r.section)?
+                .get(at..at + 4)
+                .ok_or_else(err)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    let f = |site| word(site, 0).map(f32::from_bits);
+    let step = f(0xd016)?;
+    let one = f(0xd05a)?;
+    let limit = word(0xd02e, 4)? as f32 - one;
+    let (late, factor, early, delta, minimum) =
+        (f(0xd0b2)?, f(0xd0ca)?, f(0xd0e6)?, f(0xd0fe)?, f(0xd116)?);
+    let mut frames = Vec::new();
+    for _ in 0..s.frames {
+        s.phase += step;
+        let removal = if s.phase >= limit {
+            s.phase = limit;
+            Some(0xd074)
+        } else {
+            if s.phase >= one {
+                s.counter = s.counter.wrapping_add(1);
+                if s.counter >= 8 {
+                    s.counter = 4;
+                }
+            }
+            if s.phase > late {
+                let scaled = s.work36 * factor;
+                s.work36 *= scaled;
+            } else if s.phase > early {
+                s.work36 += delta;
+            }
+            (s.work36 <= minimum).then_some(0xd128)
+        };
+        frames.push(json!({"phaseBits":s.phase.to_bits(),"work36Bits":s.work36.to_bits(),"counter":s.counter,"removalSite":removal}));
+        if removal.is_some() {
+            break;
+        }
+    }
+    Ok(json!(frames))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -711,6 +771,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         ))
     };
     let Request {
+        splash_update: update,
         splash_spawn: spawn,
         exit,
         fog_blend,
@@ -744,6 +805,9 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
     let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    if let Some(s) = update {
+        report["splashUpdate"] = splash_update(&rel, s)?;
+    }
     if let Some(s) = spawn {
         report["splashSpawn"] = splash_spawn(&rel, s)?;
     }

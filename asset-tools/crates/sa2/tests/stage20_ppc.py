@@ -1159,3 +1159,28 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["splashSpawn"]==dict(create=create or None,writes=writes,continueAt=dest)
 print(idx,"splash creation and placement paths matched")
+
+# Compare every work-field write across calls to the installed update callback.
+def request_removal(cpu, pc, *_):
+    assert cpu.reg_read(R.UC_PPC_REG_3) == msg and engines[pc-base[1]] == 0x80071888
+    removals.append(pc-base[1])
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0xd074,0xd128):
+    u.hook_add(UC_HOOK_CODE,request_removal,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,(phase,value,counter) in enumerate([(0,1,0),(.86,1,65535),(.86,1,7),(3.86,.5,0),(5.86,.5,4),(9.86,.01,2),(0,.01,0)]):
+        put(msg+52,"I",mwork);put(mwork+36,"ff",value,phase);put(mwork+6,"H",counter)
+        expected=[]
+        for _ in range(100):
+            removals=[]
+            u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_3,msg);u.reg_write(R.UC_PPC_REG_LR,stop)
+            u.emu_start(base[1]+0xcffc,stop,count=120)
+            assert u.reg_read(R.UC_PPC_REG_PC)==stop
+            expected.append(dict(phaseBits=get(mwork+40,"I")[0],work36Bits=get(mwork+36,"I")[0],counter=get(mwork+6,"H")[0],removalSite=next(iter(removals),None)))
+            if removals:break
+        req=Path(tmp)/"request.json";out=Path(tmp)/f"{idx}.json"
+        req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_update=dict(phase=phase,work36=value,counter=counter,frames=100))))
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        actual=json.loads(out.read_text())["splashUpdate"]
+        assert actual==expected,(idx,next(((a,b) for a,b in zip(actual,expected) if a!=b),None))
+print(idx+1,"splash update sequences matched through removal")
