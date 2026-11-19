@@ -101,5 +101,10 @@ radial emission loop. A zero value in slot 0x1c of the engine hook table
 skips all three submissions. Otherwise, supply three observed signed RNG
 returns in order. The report records each call to the stage task factory
 (0x164bc), with the supplied world position and exact binary32 vector and
-strength arguments. It does not predict the engine RNG, run the preceding
-radial loop, or simulate allocation and subsequent particle updates.
+strength arguments. Optionally supply three allocation results in
+`allocations` to replay the stage factory: it requests a task for each
+submission and writes fields only when the allocator returns a task.
+For these calls the vector pointer is present; the factory copies X and Z
+to the task, and places position and strength in its work area. The report
+also records the assigned callback and initial constants. The engine allocator,
+RNG, preceding radial loop and later updates are outside this observation.

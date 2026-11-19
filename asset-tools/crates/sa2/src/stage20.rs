@@ -84,6 +84,7 @@ struct SplashSecondary {
     second: f32,
     hook_slot: u32,
     random: Option<[i32; 3]>,
+    allocations: Option<[bool; 3]>,
 }
 fn splash_secondary(rel: &CityRel<'_>, s: SplashSecondary) -> Result<Value> {
     let mut calls = Vec::new();
@@ -117,12 +118,39 @@ fn splash_secondary(rel: &CityRel<'_>, s: SplashSecondary) -> Result<Value> {
         ];
         let y = scalar(0xcec6)?;
         let z = scalar(0xced6)?;
-        for (x, k) in x.into_iter().zip([0xceee, 0xcf5a, 0xcfca]) {
-            calls.push(json!({"local":0x164bc,"position":s.position,"vectorBits":[x.to_bits(),y.to_bits(),z.to_bits()],"strengthBits":(scalar(k)?*s.first).to_bits()}));
+        for (i, (x, k)) in x.into_iter().zip([0xceee, 0xcf5a, 0xcfca]).enumerate() {
+            let strength = (scalar(k)? * s.first).to_bits();
+            let mut call = json!({"local":0x164bc,"position":s.position,"vectorBits":[x.to_bits(),y.to_bits(),z.to_bits()],"strengthBits":strength});
+            if let Some(allocated) = s.allocations {
+                let ptr = |site, section| {
+                    rel.reference(1, site)
+                        .filter(|r| r.module == 19 && r.kind == 4 && r.section == section)
+                        .map(|r| r.addend)
+                        .ok_or_else(|| Error::invalid("missing ripple factory reference"))
+                };
+                let label = rel
+                    .data(5)?
+                    .get(ptr(0x164f6, 5)? as usize..)
+                    .and_then(|bytes| bytes.split(|&b| b == 0).next())
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .ok_or_else(|| Error::invalid("invalid ripple task label"))?;
+                let engine = rel
+                    .reference(1, 0x164f8)
+                    .filter(|r| r.module == 0 && r.kind == 10)
+                    .ok_or_else(|| Error::invalid("missing ripple allocator"))?;
+                call["create"] = json!([engine.addend, 2, 3, ptr(0x164ee, 1)?, label]);
+                call["writes"] = if allocated[i] {
+                    json!({"position":s.position,"task56Bits":x.to_bits(),"task60Bits":z.to_bits(),
+                    "work32Bits":strength,"work36Bits":scalar(0x16566)?.to_bits(),"task64Bits":scalar(0x16576)?.to_bits(),"callback24":ptr(0x16586,1)?})
+                } else {
+                    Value::Null
+                };
+            }
+            calls.push(call);
         }
-    } else if s.random.is_some() {
+    } else if s.random.is_some() || s.allocations.is_some() {
         return Err(Error::invalid(
-            "inactive splash hook consumes no RNG observations",
+            "inactive splash hook consumes no RNG or allocation observations",
         ));
     }
     Ok(json!(calls))

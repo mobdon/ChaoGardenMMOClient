@@ -1228,22 +1228,40 @@ def secondary_submit(cpu,pc,*_):
     strength=struct.unpack(">d",cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,"big"))[0]
     submissions.append(dict(local=pc-base[1],position=list(get(pos,"fff")),vectorBits=list(get(vec,"III")),
                             strengthBits=struct.unpack(">I",struct.pack(">f",strength))[0]))
-    cpu.reg_write(R.UC_PPC_REG_PC,cpu.reg_read(R.UC_PPC_REG_LR))
+    if allocations is None:cpu.reg_write(R.UC_PPC_REG_PC,cpu.reg_read(R.UC_PPC_REG_LR))
+def ripple_allocate(cpu,pc,*_):
+    g=lambda n:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(n)))
+    submissions[-1]["create"]=[engines[pc-base[1]],g(3),g(4),g(5)-base[1],bytes(cpu.mem_read(g(6),32)).split(b"\0")[0].decode()]
+    u.mem_write(msg,bytes([0xdc])*80);u.mem_write(mwork,bytes([0xcd])*64);put(msg+52,"I",mwork)
+    cpu.reg_write(R.UC_PPC_REG_3,msg if allocations[len(submissions)-1] else 0)
+    cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+def ripple_return(cpu,pc,*_):
+    if allocations[len(submissions)-1]:
+        writes=dict(position=list(get(mwork+20,"fff")),task56Bits=get(msg+56,"I")[0],task60Bits=get(msg+60,"I")[0],
+                    work32Bits=get(mwork+32,"I")[0],work36Bits=get(mwork+36,"I")[0],task64Bits=get(msg+64,"I")[0],
+                    callback24=get(msg+24,"I")[0]-base[1])
+    else:
+        assert bytes(u.mem_read(mwork,64))==bytes([0xcd])*64
+        writes=None
+    submissions[-1]["writes"]=writes
+u.hook_add(UC_HOOK_CODE,ripple_allocate,begin=base[1]+0x164f8,end=base[1]+0x164f8)
+u.hook_add(UC_HOOK_CODE,ripple_return,begin=base[1]+0x165a4,end=base[1]+0x165a4)
 for site in (0xce68,0xcefc,0xcf68):
     u.hook_add(UC_HOOK_CODE,secondary_rng,begin=base[1]+site,end=base[1]+site)
 u.hook_add(UC_HOOK_CODE,secondary_submit,begin=base[1]+0x164bc,end=base[1]+0x164bc)
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for idx,(slot,first,second,random) in enumerate([(0,1.,1.,None),(1,2.5,.75,[0,32767,16384]),
             (0x12345678,-1.25,3.5,[1234,15555,30001]),(1,0.,1.,[-2147483648,2147483647,-32768])]):
+        allocations=[None,None,[True,False,True],[False,True,False]][idx]
         pos=[-4.5,3.,10.];samples=iter(random or []);submissions=[]
         put(hook_table+28,"I",slot);put(pose0,"fff",*pos)
         u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_31,pose0)
         for reg,val in [(R.UC_PPC_REG_FPR30,first),(R.UC_PPC_REG_FPR31,second)]:
             u.reg_write(reg,int.from_bytes(struct.pack(">d",val),"big"))
-        u.emu_start(base[1]+0xce44,base[1]+0xcfd8,count=160)
+        u.emu_start(base[1]+0xce44,base[1]+0xcfd8,count=400)
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xcfd8 and next(samples,None) is None
         req=Path(tmp)/"request.json";out=Path(tmp)/f"{idx}.json"
-        req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_secondary=dict(position=pos,first=first,second=second,hook_slot=slot,random=random))))
+        req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_secondary=dict(position=pos,first=first,second=second,hook_slot=slot,random=random,allocations=allocations))))
         subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["splashSecondary"]==submissions
 print(idx+1,"secondary splash submission paths matched")
