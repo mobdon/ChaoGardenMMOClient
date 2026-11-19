@@ -80,3 +80,38 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
             assert json.loads(out.read_text())["startup"]==dict(entry=startup-base[1],continueAt=0x176c,operations=ops)
 print("12 stage 20 opponent startup paths matched")
+
+def walker_call(cpu,pc,*_):
+    site=pc-base[1];reg=lambda i:cpu.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
+    label=lambda addr:bytes(cpu.mem_read(addr,32)).split(b"\0")[0].decode()
+    if site==0x15b4:
+        args=[reg(3),reg(4),reg(5)-base[1],label(reg(6))];val=task if alloc else 0
+    elif site==0x15cc:args=[reg(3),reg(4)];val=work if mem else 0
+    elif site==0x15e0:assert reg(3)==task;args=["task"];val=0
+    elif site==0x161c:
+        assert reg(3)==task and reg(4)==work+8 and get(task+64,"I")[0]==work
+        ops.append(dict(taskWorkOffset=64,value="work"))
+        ops.append(dict(local=0x3361c,args=["task",get(reg(4),"f")[0]]))
+        cpu.reg_write(R.UC_PPC_REG_PC,pc+4);return
+    elif site==0x1628:
+        ops.append(dict(workByte=0,value=get(work,"B")[0]));return
+    else:args=[label(reg(3)),reg(4)-base[5]];val=0
+    ops.append(dict(engine=engines[site],args=args))
+    cpu.reg_write(R.UC_PPC_REG_3,val);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
+for site in (0x15b4,0x15cc,0x15e0,0x161c,0x1628,0x164c,0x1678):
+    u.hook_add(UC_HOOK_CODE,walker_call,begin=base[1]+site,end=base[1]+site)
+with tempfile.TemporaryDirectory(dir=".local") as tmp:
+    for idx,(alloc,mem,ch,v) in enumerate(((False,None,None,None),(True,False,None,None),
+            (True,True,6,17.5),(True,True,7,-3.75),(True,True,-1,0.))):
+        ops=[];put(0x801e732c,"I",target);put(task+24,"I",0);put(task+64,"I",0);put(work,"B",99)
+        if mem:put(target+3,"b",ch);put(target+72,"f",v)
+        u.reg_write(R.UC_PPC_REG_1,0x100f00);u.reg_write(R.UC_PPC_REG_LR,stop)
+        u.emu_start(base[1]+0x1584,stop,count=180);assert u.reg_read(R.UC_PPC_REG_PC)==stop
+        callback=get(task+24,"I")[0]
+        if callback:ops.append(dict(taskCallbackOffset=24,local=callback-base[1]))
+        req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
+            startup=dict(character_queries=[7],slot_one_present=True,walker=dict(task_allocated=alloc,work_allocated=mem,character=ch,slot_value=v)))))
+        out=Path(tmp)/f"{idx}.json"
+        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())["startup"]["walker"]==ops
+print("5 walker controller initialization paths matched")

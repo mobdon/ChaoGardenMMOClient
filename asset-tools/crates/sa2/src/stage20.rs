@@ -15,6 +15,68 @@ struct Request {
 struct Startup {
     character_queries: Vec<i32>,
     slot_one_present: bool,
+    walker: Option<Walker>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Walker {
+    task_allocated: bool,
+    work_allocated: Option<bool>,
+    character: Option<i8>,
+    slot_value: Option<f32>,
+}
+fn walker_setup(rel: &CityRel<'_>, w: Walker) -> Result<Value> {
+    let invalid = || Error::invalid("inconsistent walker initialization observation");
+    let ptr = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let data = rel.data(5)?;
+    let label = |site| -> Result<&str> {
+        let at = ptr(site, 5)? as usize;
+        let tail = data.get(at..).ok_or_else(invalid)?;
+        std::str::from_utf8(&tail[..tail.iter().position(|&v| v == 0).ok_or_else(invalid)?])
+            .map_err(|_| invalid())
+    };
+    let engine = |site| {
+        rel.reference(1, site)
+            .filter(|r| r.module == 0 && r.kind == 10)
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let mut ops =
+        vec![json!({"engine":engine(0x15b4)?,"args":[0,0,ptr(0x15aa,1)?,label(0x15b2)?]})];
+    if w.task_allocated != w.work_allocated.is_some() {
+        return Err(invalid());
+    }
+    if let Some(ok) = w.work_allocated {
+        ops.push(json!({"engine":engine(0x15cc)?,"args":[1,24]}));
+        if !ok {
+            ops.push(json!({"engine":engine(0x15e0)?,"args":["task"]}));
+        }
+    }
+    if w.work_allocated == Some(true) {
+        let at = ptr(0x15f2, 4)? as usize;
+        let factor = f32::from_be_bytes(rel.data(4)?[at..at + 4].try_into().unwrap());
+        let v = w.slot_value.ok_or_else(invalid)? * factor;
+        ops.push(json!({"taskWorkOffset":64,"value":"work"}));
+        ops.push(json!({"local":0x3361c,"args":["task",v]}));
+        ops.push(json!({"workByte":0,"value":0}));
+        let resource = match w.character.ok_or_else(invalid)? {
+            6 => Some((0x1642, 0x164a, 0x164c, 0x1656)),
+            7 => Some((0x166e, 0x1676, 0x1678, 0x1682)),
+            _ => None,
+        };
+        if let Some((name, list, site, dest)) = resource {
+            ops.push(json!({"engine":engine(site)?,"args":[label(name)?,ptr(list,5)?]}));
+            ops.push(json!({"taskCallbackOffset":24,"local":ptr(dest,1)?}));
+        }
+    } else if w.character.is_some() || w.slot_value.is_some() {
+        return Err(invalid());
+    }
+    Ok(json!(ops))
 }
 /// Registered startup up to the first unconditional resource call (1:0x176c).
 fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
@@ -57,7 +119,14 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
             calls.push(json!({"site":site,"local":0x139e4,"args":[slot,0]}));
         }
     }
-    Ok(json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls}))
+    let mut report = json!({"entry":0x16d0,"continueAt":0x176c,"operations":calls});
+    if let Some(w) = s.walker {
+        if !s.slot_one_present {
+            return Err(Error::invalid("walker requires slot one"));
+        }
+        report["walker"] = walker_setup(rel, w)?;
+    }
+    Ok(report)
 }
 pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let invalid = || Error::invalid("unexpected stage 20 entry module");
