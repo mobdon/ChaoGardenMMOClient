@@ -17,7 +17,7 @@ const runState = document.querySelector('#run-state');
 const emptyState = document.querySelector('#empty-state');
 const decoder = new TextDecoder();
 const held = new Set();
-const acceptedKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'Enter', 'KeyZ', 'Space']);
+const acceptedKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'Enter', 'KeyZ', 'Space']);
 let api;
 let loaded = false;
 let atTitle = false;
@@ -81,7 +81,24 @@ function showSnapshot() {
   const length = api.asoe_snapshot_len();
   if (length > 8192) throw new Error('The Rust snapshot exceeds the adapter limit.');
   const snapshot = JSON.parse(decoder.decode(new Uint8Array(api.memory.buffer, pointer, length)));
-  atTitle = snapshot.scene === 'title';
+  atTitle = snapshot.scene === 'title' || snapshot.scene === 'mainMenu';
+  if (snapshot.scene === 'mainMenu') {
+    const m = snapshot.menu;
+    const names = ['Single Player', 'Multiplayer', 'Time Attack', 'Options', 'Tiny Chao Garden'];
+    actSelect.value = 'title';
+    document.querySelector('#stage-heading').textContent = 'Main menu';
+    document.querySelector('#frame-value').textContent = String(m.frame);
+    document.querySelector('#action-value').textContent = names[m.selected];
+    if (m.destination) {
+      running = false;
+      held.clear();
+      controls();
+      message(names[m.selected] + ' selected. This destination is not connected yet. Choose a practice act or reset to the title.');
+    } else if (!m.fading) {
+      message('Up and Down select. Z or Space confirms.');
+    }
+    return;
+  }
   if (atTitle) {
     const t = snapshot.title;
     actSelect.value = 'title';
@@ -92,13 +109,11 @@ function showSnapshot() {
     document.querySelector('#source-value').textContent = t.sourceSha256?.slice(0, 12) + '… verified';
     const action = document.querySelector('#action-value');
     action.textContent = t.startEnabled ? 'Press Start' : t.phase;
-    if (['mainMenuRequested', 'demoRequested'].includes(t.phase)) {
+    if (t.phase === 'demoRequested') {
       running = false;
       held.clear();
       controls();
-      message(t.phase === 'mainMenuRequested'
-        ? 'The title accepted Start. The retail main menu is still being ported. Choose a practice act to play.'
-        : 'The native title requested its demo. Choose a practice act or reset the title.');
+      message('The native title requested its demo. Choose a practice act or reset the title.');
     }
     return;
   }
@@ -242,7 +257,7 @@ function animate(now) {
     const frames = Math.min(MAX_FRAME_BATCH, Math.floor(accumulator / FRAME_MS));
     if (frames > 0) {
       accumulator -= frames * FRAME_MS;
-      const mask = atTitle ? (held.has('Enter') ? 8 : 0) : (held.has('ArrowLeft') ? 0x20 : 0) | (held.has('ArrowRight') ? 0x10 : 0) | (held.has('ArrowDown') ? 0x80 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0);
+      const mask = atTitle ? ((held.has('Enter') ? 8 : 0) | (held.has('ArrowUp') ? 64 : 0) | (held.has('ArrowDown') ? 128 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0)) : (held.has('ArrowLeft') ? 0x20 : 0) | (held.has('ArrowRight') ? 0x10 : 0) | (held.has('ArrowDown') ? 0x80 : 0) | (held.has('KeyZ') || held.has('Space') ? 1 : 0);
       try {
         check(api.asoe_step(mask, frames));
         draw();

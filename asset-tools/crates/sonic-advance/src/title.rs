@@ -1,6 +1,7 @@
 //! ROM-backed ASOE English title slice, entered directly at CreateTitleScreen.
 //! Native fade/zoom/blink/input gates stop at menu/demo request boundaries.
 //! Sega/intro tasks, menus, music playback and native execution are not emulated.
+pub mod menu;
 mod objects;
 use crate::{binary, graphics, tables, Error, Result};
 use objects as sprite;

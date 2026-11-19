@@ -46,8 +46,14 @@ try {
   await page.waitForFunction(() => document.querySelector('#action-value').textContent === 'Press Start');
   await page.locator('#stage').focus();
   await page.keyboard.down('Enter');
-  await page.waitForFunction(() => document.querySelector('#action-value').textContent === 'mainMenuRequested');
+  await page.waitForFunction(() => document.querySelector('#stage-heading').textContent === 'Main menu');
   await page.keyboard.up('Enter');
+  await page.keyboard.down('ArrowUp');
+  await page.waitForFunction(() => document.querySelector('#action-value').textContent === 'Tiny Chao Garden');
+  await page.keyboard.up('ArrowUp');
+  await page.keyboard.down('KeyZ');
+  await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Tiny Chao Garden selected.'));
+  await page.keyboard.up('KeyZ');
   await page.locator('#practice-act').selectOption('0');
   await button.click();
   await page.waitForFunction(() => Number(document.querySelector('#frame-value').textContent) >= 16);

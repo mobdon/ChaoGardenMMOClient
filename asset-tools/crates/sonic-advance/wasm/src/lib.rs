@@ -2,7 +2,11 @@
 //! annotations; all readers, simulation and memory indexing use safe Rust.
 #![deny(unsafe_code)]
 use sonic_advance_assets::{
-    binary, player::Input, runtime::NativeRun, title::Title, Error, Result,
+    binary,
+    player::Input,
+    runtime::NativeRun,
+    title::{menu::MainMenu, Title, TitleEvent},
+    Error, Result,
 };
 use std::cell::RefCell;
 
@@ -13,6 +17,7 @@ struct Host {
     pixels: Vec<u8>,
     rgb: Vec<u32>,
     title: Option<Title>,
+    menu: Option<MainMenu>,
     title_pixels: Vec<u8>,
     snapshot: Vec<u8>,
     error: Vec<u8>,
@@ -108,6 +113,7 @@ fn load(length: u32, at_title: bool) -> i32 {
             .map(Title::render)
             .transpose()?
             .unwrap_or_default();
+        host.menu = None;
         host.title = title;
         host.title_pixels = pixels;
         host.runtime = Some(replacement);
@@ -123,7 +129,19 @@ pub extern "C" fn asoe_step(mask: u32, frames: u32) -> i32 {
         if let Some(title) = host.title.as_mut() {
             let bits =
                 u16::try_from(mask).map_err(|_| Error("unsupported title input bits".into()))?;
-            title.step(bits, frames)?;
+            if bits & !0x03ff != 0 || !(1..=4).contains(&frames) {
+                return Err(Error("invalid title/menu input or frame count".into()));
+            }
+            for _ in 0..frames {
+                if let Some(menu) = &mut host.menu {
+                    menu.step(bits, 1)?;
+                } else if title.step(bits, 1)? == TitleEvent::MainMenuRequested {
+                    host.menu = Some(MainMenu::from_title(source()?, title, bits)?);
+                }
+            }
+            if let Some(menu) = &host.menu {
+                return menu.render_into(&mut host.title_pixels);
+            }
             return title.render_into(&mut host.title_pixels);
         }
         if mask & !0xb1 != 0 || !(1..=4).contains(&frames) {
@@ -153,6 +171,7 @@ pub extern "C" fn asoe_select_act(index: u32) -> i32 {
     run(|host| {
         host.runtime = Some(NativeRun::load_stage(source()?, index as usize)?);
         redraw(host)?;
+        host.menu = None;
         host.title = None;
         host.title_pixels.clear();
         Ok(())
@@ -168,6 +187,7 @@ pub extern "C" fn asoe_open_title() -> i32 {
 fn open_title(host: &mut Host) -> Result<()> {
     let title = Title::load_asoe(source()?)?;
     let pixels = title.render()?;
+    host.menu = None;
     host.title = Some(title);
     host.title_pixels = pixels;
     Ok(())
@@ -224,6 +244,12 @@ pub extern "C" fn asoe_frame_len() -> u32 {
 pub extern "C" fn asoe_snapshot_ptr() -> u32 {
     let status = run(|host| {
         host.snapshot.clear();
+        if let Some(menu) = &host.menu {
+            host.snapshot =
+                serde_json::to_vec(&serde_json::json!({"scene":"mainMenu","menu":menu.snapshot()}))
+                    .map_err(|e| Error(e.to_string()))?;
+            return Ok(());
+        }
         if let Some(title) = &host.title {
             host.snapshot =
                 serde_json::to_vec(&serde_json::json!({"scene":"title","title":title.snapshot()}))

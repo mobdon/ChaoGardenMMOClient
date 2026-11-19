@@ -1,6 +1,6 @@
 """Sample the original title or a Sonic spindash from a cold boot. No save files or frame dumps.
 
-Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title]
+Usage: python tools/retail-replay.py LOCAL_ASOE_ROM LOCAL_MGBA_LIBRETRO_DLL [--title|--menu|--menu-tiny]
 The DLL and ROM are identified before any external code runs. Outputs only
 selected numbers and pixel hashes. No graphical or memory buffers are written.
 """
@@ -38,7 +38,7 @@ def verified(path, limit, digest):
     return data
 
 
-def replay(rom, dll, title=False):
+def replay(rom, dll, title=False, menu=None):
     data = verified(rom, 8388608, ROM_HASH)
     verified(dll, 32 * 1024 * 1024, CORE_HASH)
     core = ct.CDLL(str(dll.resolve()))
@@ -50,6 +50,10 @@ def replay(rom, dll, title=False):
     title_ticks = (0, 25, 49, 50, 62, 90, 122, 123, 154, 155, 187)
     # The first affine update (Rust tick 50) was observed at retail frame 1102.
     title_origin = 1052
+    if menu:
+        title = True
+        title_origin = 1250
+        title_ticks = (0, 1, 2, 3, 4, 9, 10, 11, 19, 20, 21, 39, 40, 41, 48, 49, 50, 57, 58, 59, 69, 70, 71, 75, 95, 117, 118, 119)
     frame = -1
 
     def bind(kind, signature, func):
@@ -104,14 +108,18 @@ def replay(rom, dll, title=False):
             raise ValueError("emulator rejected local source")
         for frame in range(title_origin + max(title_ticks) + 1 if title else 1823):
             buttons.clear()
-            if frame in (60, 61) or any(start <= frame < start + 3 for start in ((1050,) if title else (1050, 1150, 1250))):
-                buttons.add(3)
-            if any(start <= frame < start + 3 for start in (1350, 1490)):
-                buttons.add(8)
-            if 1800 <= frame <= 1808:
-                buttons.add(5)  # libretro DOWN
-            if frame in (1801, 1803, 1805):
-                buttons.add(8)  # libretro A
+            if frame in (60, 61) or 1050 <= frame < 1053:
+                buttons.add(3)  # Start: boot and title
+            if menu:
+                if frame == 1250: buttons.add(3)
+                if frame == 1260: buttons.add(4)  # Up wraps to Tiny Garden
+                if menu == "regular" and 1270 <= frame < 1315: buttons.add(5)
+                if frame == 1320: buttons.add(8)
+            elif not title:
+                if 1150 <= frame < 1153 or 1250 <= frame < 1253: buttons.add(3)
+                if 1350 <= frame < 1353 or 1490 <= frame < 1493: buttons.add(8)
+                if 1800 <= frame <= 1808: buttons.add(5)
+                if frame in (1801, 1803, 1805): buttons.add(8)
             core.retro_run()
             if not title and frame >= 1799:
                 p = ct.string_at(mem["iwram"] + 0x5a20, 72)
@@ -134,6 +142,6 @@ def replay(rom, dll, title=False):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] != "--title"):
+    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] not in ("--title","--menu","--menu-tiny")):
         sys.exit(__doc__)
-    print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]), len(sys.argv) == 4), indent=2))
+    print(json.dumps(replay(Path(sys.argv[1]), Path(sys.argv[2]), len(sys.argv) == 4, {"--menu":"regular","--menu-tiny":"tiny"}.get(sys.argv[-1])), indent=2))
