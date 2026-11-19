@@ -192,8 +192,23 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         let entry = flight_entry.ok_or_else(|| {
             Error::invalid("first flight requires the mode-three takeoff handoff")
         })?;
-        let trace = flight::run(ticks, entry)?;
+        let config = local(0x2228, 4)? as usize;
+        let duration = u32::from_be_bytes(
+            rel.data(4)?
+                .get(config + 0x7c..config + 0x80)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        );
+        let trace = flight::run(
+            ticks,
+            entry,
+            u16::try_from(duration).map_err(|_| invalid())?,
+        )?;
         output["firstFlight"] = trace.first;
+        if let Some(aim) = trace.aim {
+            output["aim"] = aim;
+        }
         if let Some(center) = trace.center {
             output["centerApproach"] = center;
         }

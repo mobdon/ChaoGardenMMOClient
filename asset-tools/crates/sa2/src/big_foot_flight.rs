@@ -1,4 +1,6 @@
 //! Big Foot flight passes and turnarounds from the native takeoff up to entry into mode 5.
+#[path = "big_foot_aim.rs"]
+mod aim;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,6 +10,7 @@ use serde_json::{json, Value};
 pub(super) struct Flight {
     #[serde(default)]
     repeat_passes: Vec<Pass>,
+    aim: Option<Vec<aim::Tick>>,
     center_approach: Option<Vec<CenterTick>>,
     extra_byte2: Option<u8>,
     steering: Option<Steering>,
@@ -27,6 +30,7 @@ pub(super) struct Trace {
     pub turnaround: Option<Value>,
     pub repeats: Vec<Value>,
     pub center: Option<Value>,
+    pub aim: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +48,7 @@ pub(super) fn run(
         extra_byte2,
         repeat_passes,
         center_approach,
+        aim,
         ticks,
         mut steering,
         turnaround,
@@ -53,6 +58,7 @@ pub(super) fn run(
         mut flags,
         pass_count,
     }: super::takeoff::Handoff,
+    motion4_duration: u16,
 ) -> Result<Trace> {
     if repeat_passes.len() > 2 {
         return Err(Error::invalid("at most two repeat passes follow takeoff"));
@@ -68,6 +74,7 @@ pub(super) fn run(
         turnaround: None,
         repeats: Vec::new(),
         center: None,
+        aim: None,
     };
     for (index, Pass { ticks, turnaround }) in std::iter::once(Pass { ticks, turnaround })
         .chain(repeat_passes)
@@ -240,7 +247,14 @@ pub(super) fn run(
         let state = steering
             .as_mut()
             .ok_or_else(|| Error::invalid("center approach requires continuous steering"))?;
-        trace.center = Some(center(ticks, state, phase, flags)?);
+        let (rows, handoff) = center(ticks, state, phase, flags)?;
+        trace.center = Some(rows);
+        if let Some(ticks) = aim {
+            let entry = handoff.ok_or_else(|| Error::invalid("aim requires both center gates"))?;
+            trace.aim = Some(aim::run(entry, ticks, motion4_duration)?);
+        }
+    } else if aim.is_some() {
+        return Err(Error::invalid("aim requires center approach"));
     }
     Ok(trace)
 }
@@ -379,7 +393,8 @@ fn center(
     state: &mut Steering,
     mut phase: [i32; 3],
     mut flags: u16,
-) -> Result<Value> {
+) -> Result<(Value, Option<aim::Entry>)> {
+    let mut handoff = None;
     let mut sub = 0;
     let mut rows = Vec::new();
     for t in ticks {
@@ -418,7 +433,14 @@ fn center(
             })?;
             movement.acceleration[0] = 0.;
             movement.acceleration[2] = 0.;
-            aim = Some([state.angles[0].wrapping_sub(0x400), heading]);
+            let target = [state.angles[0].wrapping_sub(0x400), heading];
+            aim = Some(target);
+            handoff = Some(aim::Entry {
+                angles: state.angles,
+                phase,
+                target,
+                flags,
+            });
         } else if t.slot_zero_heading.is_some() {
             return Err(Error::invalid("unexpected slot-zero heading"));
         }
@@ -427,5 +449,5 @@ fn center(
         }
         rows.push(json!({"submode":sub,"flags":flags,"targetXZ":[0.,0.],"clearShape7Attribute16":clear_shape,"aimPitchYaw":aim,"steering":movement}));
     }
-    Ok(json!(rows))
+    Ok((json!(rows), handoff))
 }
