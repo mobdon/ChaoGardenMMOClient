@@ -16,7 +16,7 @@ pub(super) struct Launch {
     heading_difference: i32,
     player_position: [f32; 3],
 }
-pub(super) fn run(s: Entry, launches: [Launch; 8]) -> Result<Value> {
+pub(super) fn run(s: Entry, launches: [Launch; 8]) -> Result<(Value, u16)> {
     let mut samples = launches.into_iter();
     let mut flags = s.flags;
     let (mut mode, mut sub, mut timer) = (8, 0, 0u16);
@@ -81,5 +81,5 @@ pub(super) fn run(s: Entry, launches: [Launch; 8]) -> Result<Value> {
         }
         rows.push(json!({"mode":mode,"submode":sub,"timer":timer,"flags":flags,"remaining":remaining,"burst":burst,"launch":shot,"motion":motion}));
     }
-    Ok(json!(rows))
+    Ok((json!(rows), flags))
 }

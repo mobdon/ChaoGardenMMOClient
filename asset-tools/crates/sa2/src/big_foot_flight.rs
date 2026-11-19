@@ -3,6 +3,8 @@
 mod aim;
 #[path = "big_foot_landing.rs"]
 mod landing;
+#[path = "big_foot_recovery.rs"]
+mod recovery;
 #[path = "big_foot_volley.rs"]
 mod volley;
 use crate::{Error, Result};
@@ -16,6 +18,8 @@ pub(super) struct Flight {
     repeat_passes: Vec<Pass>,
     aim: Option<Vec<aim::Tick>>,
     landing: Option<Vec<landing::Tick>>,
+    recovery: Option<Vec<recovery::Tick>>,
+    next_takeoff: Option<super::takeoff::Restart>,
     ground_volley: Option<[volley::Launch; 8]>,
     center_approach: Option<Vec<CenterTick>>,
     extra_byte2: Option<u8>,
@@ -39,6 +43,8 @@ pub(super) struct Trace {
     pub aim: Option<Value>,
     pub landing: Option<Value>,
     pub volley: Option<Value>,
+    pub recovery: Option<Value>,
+    pub next_takeoff: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +64,8 @@ pub(super) fn run(
         center_approach,
         landing,
         ground_volley,
+        recovery,
+        next_takeoff,
         aim,
         ticks,
         mut steering,
@@ -88,6 +96,8 @@ pub(super) fn run(
         aim: None,
         landing: None,
         volley: None,
+        recovery: None,
+        next_takeoff: None,
     };
     for (index, Pass { ticks, turnaround }) in std::iter::once(Pass { ticks, turnaround })
         .chain(repeat_passes)
@@ -272,6 +282,7 @@ pub(super) fn run(
     } else if aim.is_some() {
         return Err(Error::invalid("aim requires center approach"));
     }
+    let mut recovery_flags = None;
     if let Some(ticks) = landing {
         let (rows, next) = landing::run(
             landing_entry
@@ -281,15 +292,33 @@ pub(super) fn run(
         )?;
         trace.landing = Some(rows);
         if let Some(observations) = ground_volley {
-            trace.volley = Some(volley::run(
+            let (rows, flags) = volley::run(
                 next.ok_or_else(|| {
                     Error::invalid("ground volley requires finished landing animation")
                 })?,
                 observations,
-            )?);
+            )?;
+            trace.volley = Some(rows);
+            recovery_flags = Some(flags);
         }
     } else if ground_volley.is_some() {
         return Err(Error::invalid("ground volley requires landing"));
+    }
+    if let Some(ticks) = recovery {
+        let (rows, restart) = recovery::run(
+            recovery_flags
+                .ok_or_else(|| Error::invalid("recovery requires the completed ground volley"))?,
+            ticks,
+        )?;
+        trace.recovery = Some(rows);
+        if let Some(input) = next_takeoff {
+            trace.next_takeoff =
+                Some(input.run(restart.ok_or_else(|| {
+                    Error::invalid("next takeoff requires completed recovery")
+                })?)?);
+        }
+    } else if next_takeoff.is_some() {
+        return Err(Error::invalid("next takeoff requires recovery"));
     }
     Ok(trace)
 }

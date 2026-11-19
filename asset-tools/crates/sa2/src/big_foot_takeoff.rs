@@ -17,11 +17,36 @@ pub(super) struct Handoff {
 }
 
 pub(super) fn run(ticks: Vec<Tick>) -> Result<(Value, Option<Handoff>)> {
+    from_ground(ticks, 0x1001, 0., 0.)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Restart {
+    velocity_x: f32,
+    acceleration_y: f32,
+    ticks: Vec<Tick>,
+}
+impl Restart {
+    pub(super) fn run(self, flags: u16) -> Result<Value> {
+        let (rows, _) = from_ground(self.ticks, flags, self.velocity_x, self.acceleration_y)?;
+        Ok(rows)
+    }
+}
+fn from_ground(
+    ticks: Vec<Tick>,
+    entry_flags: u16,
+    mut ax: f32,
+    mut ay: f32,
+) -> Result<(Value, Option<Handoff>)> {
+    if !ax.is_finite() || !ay.is_finite() {
+        return Err(Error::invalid("invalid motion work at takeoff"));
+    }
     if ticks.len() > 2048 {
         return Err(Error::invalid("too many takeoff callbacks"));
     }
-    let (mut mode, mut sub, mut flags, mut timer) = (2, 0, 0x1001u16, 0);
-    let (mut thrust, mut burst, mut ay, mut ax) = (0f32, 0f32, 0f32, 0f32);
+    let (mut mode, mut sub, mut flags, mut timer) = (2, 0, entry_flags, 0);
+    let (mut thrust, mut burst) = (0f32, 0f32);
     let mut phase = [0i32; 3];
     let mut rows = Vec::new();
     for t in ticks {
