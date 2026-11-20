@@ -50,7 +50,18 @@ When the resolver supplies `DLL/Win32/Data_DLL.dll` (pinned Steam revision), the
 | Route 101 | 642 (321 + 321) | 49 | 13,643 | 3,981 / 0 |
 | Route 280 | 738 (369 + 369) | 52 | 18,439 | 4,853 / 0 |
 
-Entry surface flags and bounds are derived, not native: display entries are visible and collision entries are solid. Bounds are the root attachment sphere moved by the evaluated root transform. `kart_course::terrain_reference` (ignored, needs the install) checks two things. First, the baked world equals the direct per-piece triangle walk for all five courses, with the same piece, strip, source indices and winding, and positions within 0.001 units (the binary32 pose rounding). Second, with `SA2_KART_MODEL_REFERENCE` pointing at SA Tools 786 GC models split from the same DLL, every story display entry matches on the native root flags, transform words, hierarchy size, mesh counts and attachment sphere. Scenery objects, textures, draw order and driving are not part of the terrain. Driving physics, timing and completion remain unverified.
+Entry surface flags and bounds are derived, not native: display entries are visible and collision entries are solid. Bounds are the root attachment sphere moved by the evaluated root transform. `kart_course::terrain_reference` (ignored, needs the install) checks two things. First, the baked world equals the direct per-piece triangle walk for all five courses, with the same piece, strip, source indices and winding, and positions within 0.001 units (the binary32 pose rounding). Second, with `SA2_KART_MODEL_REFERENCE` pointing at SA Tools 786 GC models split from the same DLL, every story display entry matches on the native root flags, transform words, hierarchy size, mesh counts and attachment sphere. Scenery objects, draw order and driving are not part of the terrain.
+
+### Course textures
+
+`kart-course-materials EXE OUTPUT.json DATA_DLL CartD.rel course.pak COURSE` reports how a course's display pieces bind textures, using only native data. CartD's course display callback (+0x684c) passes the 74-entry course list at section 5 +0xF9C34 to engine routine 0x80116AD0 before drawing pieces. The command checks that those names equal the Data_DLL `texlist_course` export (RVA 0x58AEE8), in order. For every distinct piece, it lists each GC mesh in native order: opaque or translucent list, the low half of its own texture parameter (the course slot), the high half unchanged, and its raw blend-alpha word. Each slot used resolves to `course\NAME.dds` in course.pak, with the DDS and decoded RGBA digests and a count of texels with alpha below 255. Meshes that declare no texture parameter are counted; no texture is inherited for them.
+
+| Route | Display meshes | Meshes without a texture parameter | Course slots used | Slots with alpha below 255 |
+|---|---:|---:|---:|---:|
+| Route 101 | 3,981 | 45 | 42 | 0 |
+| Route 280 | 4,853 | 128 | 45 | 0 |
+
+`kart_course::materials_reference` (ignored) compares every piece's mesh list, texture words and blend words against SA Tools 786 GC models split from the same DLL. Draw culling by segment (the loop after +0x6868), lighting and the background are separate. Driving physics, timing and completion remain unverified.
 
 ## Rust interface and checks
 

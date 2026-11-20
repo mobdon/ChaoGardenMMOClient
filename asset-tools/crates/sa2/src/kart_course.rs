@@ -734,3 +734,350 @@ mod terrain_reference {
         }
     }
 }
+
+/// One course texture slot used by the placed display pieces.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseTexture {
+    pub slot: u16,
+    pub name: String,
+    pub entry: String,
+    pub offset: usize,
+    pub length: usize,
+    pub width: u32,
+    pub height: u32,
+    pub dds_sha256: String,
+    pub rgba_sha256: String,
+    /// Decoded texels whose alpha is below 255; the pixels are not altered.
+    pub translucent_texels: usize,
+}
+
+/// Native GC parameters of one display mesh, in model mesh order.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseMesh {
+    /// Mesh from the attachment's translucent list (both lists are kept).
+    pub translucent_list: bool,
+    /// Low half of the mesh's own texture parameter: a course texture slot.
+    pub texture_slot: Option<u16>,
+    /// High half of that parameter, retained unchanged.
+    pub texture_flags: Option<u16>,
+    /// Raw blend-alpha parameter word, when the mesh declares one.
+    pub blend_alpha: Option<u32>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoursePieceMaterials {
+    pub piece_id: u8,
+    pub occurrences: usize,
+    pub meshes: Vec<CourseMesh>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseMaterials {
+    pub course: &'static str,
+    /// Data_DLL `texlist_course` export and its slot names, in order.
+    pub texture_list_rva: u32,
+    pub texture_names: Vec<String>,
+    /// CartD section-5 list bound by the course display callback (+0x684c).
+    pub cart_display_list: u32,
+    pub textures: Vec<CourseTexture>,
+    pub pieces: Vec<CoursePieceMaterials>,
+    pub meshes: usize,
+    pub meshes_without_texture: usize,
+}
+
+const CART_D_SHA256: &str = "71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c";
+/// CartD +0x684c loads section 5 +0xf9c34 at +0x6860 and passes it to the
+/// imported routine 0x80116ad0 at +0x6868 before drawing course pieces.
+const CART_COURSE_LIST: u32 = 0xf9c34;
+
+fn cart_display_names(cart: &[u8]) -> Result<Vec<String>> {
+    if sha256(cart) != CART_D_SHA256 {
+        return Err(Error::invalid("unsupported CartD.rel revision"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(cart, 80)?;
+    let invalid = || Error::invalid("unexpected CartD course display binding");
+    let list = rel
+        .reference(1, 0x6866)
+        .filter(|r| (r.module, r.section, r.kind) == (80, 5, 4))
+        .map(|r| r.addend)
+        .ok_or_else(invalid)?;
+    let call = rel.reference(1, 0x6868).ok_or_else(invalid)?;
+    if list != CART_COURSE_LIST || (call.module, call.kind, call.addend) != (0, 10, 0x8011_6ad0) {
+        return Err(invalid());
+    }
+    let data = rel.data(5)?;
+    let ptr = |at: u32| -> Result<usize> {
+        rel.local_pointer(5, at)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v as usize)
+            .ok_or_else(invalid)
+    };
+    let names = ptr(list)?;
+    let count = data
+        .get(list as usize + 4..list as usize + 8)
+        .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        .ok_or_else(invalid)?;
+    if count > 4096 {
+        return Err(invalid());
+    }
+    (0..count as usize)
+        .map(|k| {
+            let at = ptr((names + 12 * k) as u32)?;
+            let name = std::ffi::CStr::from_bytes_until_nul(data.get(at..).ok_or_else(invalid)?)
+                .map_err(|_| invalid())?;
+            Ok(name.to_str().map_err(|_| invalid())?.trim_end().to_owned())
+        })
+        .collect()
+}
+
+fn dll_course_names(dll: &[u8], pe: &crate::pe::PeImage) -> Result<(u32, Vec<String>)> {
+    let export = pe
+        .exports
+        .iter()
+        .find(|e| e.name == "texlist_course" && e.forwarded_to.is_none())
+        .ok_or_else(|| Error::invalid("missing texlist_course data export"))?;
+    let r = crate::model::Reader { data: dll };
+    let at = pe.rva_to_offset(export.rva, 8)?;
+    let count = r.u32(at + 4)? as usize;
+    if count > 4096 {
+        return Err(Error::invalid("course texture list exceeds limit"));
+    }
+    let names = pe.va_to_offset(r.u32(at)?, count * 12)?;
+    let list = (0..count)
+        .map(|k| {
+            let s = pe.va_to_offset(r.u32(names + 12 * k)?, 1)?;
+            let name = std::ffi::CStr::from_bytes_until_nul(&dll[s..])
+                .map_err(|_| Error::invalid("unterminated course texture name"))?;
+            Ok(name
+                .to_str()
+                .map_err(|_| Error::invalid("non-ASCII course texture name"))?
+                .trim_end()
+                .to_owned())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((export.rva, list))
+}
+
+/// Mesh parameters of one PC GC display object and its hierarchy: the
+/// attachment keeps opaque/translucent mesh list pointers at +8/+12 and their
+/// counts at +16/+18; each 16-byte mesh starts with its parameter list pointer
+/// and count; each 8-byte parameter is a type word (4 blend alpha, 8 texture)
+/// followed by its data word.
+fn display_meshes(dll: &[u8], pe: &crate::pe::PeImage, root: usize) -> Result<Vec<CourseMesh>> {
+    let r = crate::model::Reader { data: dll };
+    let mut meshes = Vec::new();
+    let mut stack = vec![root];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(node) = stack.pop() {
+        if !seen.insert(node) || seen.len() > 4096 {
+            return Err(Error::invalid("invalid kart display hierarchy"));
+        }
+        r.span(node, 52)?;
+        for link in [48, 44] {
+            let va = r.u32(node + link)?;
+            if va != 0 {
+                stack.push(pe.va_to_offset(va, 52)?);
+            }
+        }
+        let attach = r.u32(node + 4)?;
+        if attach == 0 {
+            continue;
+        }
+        let a = pe.va_to_offset(attach, 36)?;
+        for (list, count, translucent_list) in [(8, 16, false), (12, 18, true)] {
+            let n = r.u16(a + count)? as i16;
+            if n < 0 {
+                return Err(Error::invalid("negative kart GC mesh count"));
+            }
+            if n == 0 {
+                continue;
+            }
+            let base = pe.va_to_offset(r.u32(a + list)?, 16 * n as usize)?;
+            for m in 0..n as usize {
+                let params = r.u32(base + 16 * m + 4)? as usize;
+                if params > 64 {
+                    return Err(Error::invalid("kart GC parameter count exceeds limit"));
+                }
+                let mut mesh = CourseMesh {
+                    translucent_list,
+                    texture_slot: None,
+                    texture_flags: None,
+                    blend_alpha: None,
+                };
+                if params != 0 {
+                    let p = pe.va_to_offset(r.u32(base + 16 * m)?, 8 * params)?;
+                    for k in 0..params {
+                        let value = r.u32(p + 8 * k + 4)?;
+                        let repeated = match r.u32(p + 8 * k)? {
+                            4 => mesh.blend_alpha.replace(value).is_some(),
+                            8 => {
+                                mesh.texture_flags = Some((value >> 16) as u16);
+                                mesh.texture_slot.replace(value as u16).is_some()
+                            }
+                            _ => false,
+                        };
+                        if repeated {
+                            return Err(Error::invalid("repeated kart GC mesh parameter"));
+                        }
+                    }
+                }
+                meshes.push(mesh);
+            }
+        }
+    }
+    Ok(meshes)
+}
+
+/// Native texture binding for a course's display pieces: the slot names the
+/// CartD course display binds (checked equal to Data_DLL `texlist_course`),
+/// each used slot resolved to its course.pak DDS, and every display mesh's
+/// own texture and blend parameters. No renderer state is inferred.
+pub fn course_materials(
+    exe: &[u8],
+    dll: &[u8],
+    cart: &[u8],
+    pak: &[u8],
+    name: &str,
+) -> Result<CourseMaterials> {
+    if sha256(dll) != crate::board_motion::PC_DLL_SHA256 {
+        return Err(Error::invalid("unsupported kart DLL revision"));
+    }
+    let course = courses(exe)?
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| Error::invalid("unknown kart course"))?;
+    let pe = read_pe(dll)?;
+    let (texture_list_rva, texture_names) = dll_course_names(dll, &pe)?;
+    if cart_display_names(cart)? != texture_names {
+        return Err(Error::invalid(
+            "CartD course display list differs from texlist_course",
+        ));
+    }
+    let table = read_course_table(dll)?;
+    let mut counts = std::collections::BTreeMap::new();
+    for &id in course.piece_ids {
+        *counts.entry(id).or_insert(0usize) += 1;
+    }
+    let mut pieces = Vec::new();
+    let mut used = std::collections::BTreeSet::new();
+    let (mut meshes, mut meshes_without_texture) = (0, 0);
+    for (&piece_id, &occurrences) in &counts {
+        let Some(root) = table.pieces[usize::from(piece_id)].display else {
+            continue;
+        };
+        let list = display_meshes(dll, &pe, root)?;
+        for mesh in &list {
+            meshes += occurrences;
+            match mesh.texture_slot {
+                Some(slot) if usize::from(slot) < texture_names.len() => {
+                    used.insert(slot);
+                }
+                Some(_) => return Err(Error::invalid("kart texture slot outside course list")),
+                None => meshes_without_texture += occurrences,
+            }
+        }
+        pieces.push(CoursePieceMaterials {
+            piece_id,
+            occurrences,
+            meshes: list,
+        });
+    }
+    let bank = crate::archive::read_pak(pak)?;
+    let textures = used
+        .into_iter()
+        .map(|slot| {
+            let name = &texture_names[usize::from(slot)];
+            let member = format!("course\\{name}.dds");
+            let entry = bank
+                .iter()
+                .find(|e| e.name.eq_ignore_ascii_case(&member))
+                .ok_or_else(|| Error::invalid(format!("course.pak lacks {member}")))?;
+            let image = crate::texture::decode_dds(entry.data)?;
+            Ok(CourseTexture {
+                slot,
+                name: name.clone(),
+                entry: entry.name.clone(),
+                offset: entry.offset,
+                length: entry.length,
+                width: image.width,
+                height: image.height,
+                dds_sha256: sha256(entry.data),
+                rgba_sha256: sha256(&image.rgba),
+                translucent_texels: image.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] < 255).count(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(CourseMaterials {
+        course: course.name,
+        texture_list_rva,
+        texture_names,
+        cart_display_list: CART_COURSE_LIST,
+        textures,
+        pieces,
+        meshes,
+        meshes_without_texture,
+    })
+}
+
+#[cfg(test)]
+mod materials_reference {
+    use super::*;
+
+    /// Mesh texture and blend parameters decoded from the Steam DLL equal the
+    /// ones in SA Tools 786 GC models split from the same DLL, piece by piece.
+    #[test]
+    #[ignore = "requires Steam SA2 and independent SA Tools kart models"]
+    fn story_materials_match_sa_tools() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let models =
+            std::path::PathBuf::from(std::env::var_os("SA2_KART_MODEL_REFERENCE").unwrap());
+        let gd = root.join("resource/gd_PC");
+        let exe = std::fs::read(root.join("sonic2app.exe")).unwrap();
+        let dll = std::fs::read(gd.join("DLL/Win32/Data_DLL.dll")).unwrap();
+        let cart = std::fs::read(gd.join("CartD.rel")).unwrap();
+        let pak = std::fs::read(gd.join("PRS/course.pak")).unwrap();
+        for (name, meshes, textures) in [("101", 3981, 42), ("280", 4853, 45)] {
+            let m = course_materials(&exe, &dll, &cart, &pak, name).unwrap();
+            assert_eq!(m.texture_names.len(), 74);
+            assert_eq!((m.meshes, m.textures.len()), (meshes, textures));
+            for piece in &m.pieces {
+                let bytes =
+                    std::fs::read(models.join(format!("{:03}.sa2bmdl", piece.piece_id))).unwrap();
+                let r = crate::model::Reader { data: &bytes };
+                let a = r.u32(r.u32(8).unwrap() as usize + 4).unwrap() as usize;
+                let mut expected = vec![];
+                for (list, count) in [(8, 16), (12, 18)] {
+                    let base = r.u32(a + list).unwrap() as usize;
+                    for k in 0..r.u16(a + count).unwrap() as usize {
+                        let p = r.u32(base + 16 * k).unwrap() as usize;
+                        let mut texture = None;
+                        let mut blend = None;
+                        for j in 0..r.u32(base + 16 * k + 4).unwrap() as usize {
+                            match r.u32(p + 8 * j).unwrap() {
+                                4 => blend = Some(r.u32(p + 8 * j + 4).unwrap()),
+                                8 => texture = Some(r.u32(p + 8 * j + 4).unwrap()),
+                                _ => {}
+                            }
+                        }
+                        expected.push((count == 18, texture, blend));
+                    }
+                }
+                let ours: Vec<_> = piece
+                    .meshes
+                    .iter()
+                    .map(|mesh| {
+                        let word = mesh
+                            .texture_slot
+                            .map(|s| u32::from(s) | u32::from(mesh.texture_flags.unwrap()) << 16);
+                        (mesh.translucent_list, word, mesh.blend_alpha)
+                    })
+                    .collect();
+                assert_eq!(ours, expected, "route {name} piece {}", piece.piece_id);
+            }
+        }
+    }
+}
