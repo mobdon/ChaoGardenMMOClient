@@ -935,6 +935,8 @@ pub enum PlacementClock {
     BossAttack(Box<BossAttackFrame>),
     /// Section 1 + 0x1440: boss actions 8, 9 and 10 (beam 0x3e58).
     BossBeam(Box<BossBeamFrame>),
+    /// Section 1 + 0x1640: boss actions 11 and 12 (beam with attack).
+    BossCombo(Box<BossComboFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2715,6 +2717,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossActionThree(frame) => return boss_action_three(&rel, &frame),
         PlacementClock::BossAttack(frame) => return boss_attack(&rel, &frame),
         PlacementClock::BossBeam(frame) => return boss_beam(&rel, &frame),
+        PlacementClock::BossCombo(frame) => return boss_combo(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6005,6 +6008,145 @@ fn boss_beam(rel: &crate::city_rel::CityRel<'_>, f: &BossBeamFrame) -> Result<se
                     0xdc4,
                     serde_json::json!([f.task, f.pattern as i32 as u32]),
                 ));
+            }
+        }
+        _ => {}
+    }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What boss actions 11 and 12 read, each where the code reads it: the
+/// step (entity byte 1) at entry and before each increment, state word
+/// 0x10 (the child), the results of locals 0x3e58 and 0x62a0, entity
+/// half-word 6 and state half-word 8 (the timers), state word 0x14 (the
+/// attack) before 0x63e8 / 0x6410 and again after them, the entity action
+/// after 0x63e8, state word 0x18 (the beam) before 0x3fc0 / 0x403c and
+/// after 0x403c, the results of 0x6410, 0x403c and 0xd40, and stage byte 0
+/// (through module word 6:0x4a8).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossComboFrame {
+    pub task: u32,
+    pub step: i8,
+    pub child: u32,
+    pub spawned_beam: u32,
+    pub spawned_attack: u32,
+    pub step_after: [u8; 3],
+    pub timer: u16,
+    pub attack: u32,
+    pub action_after: i8,
+    pub attack_after: u32,
+    pub attack_state: i32,
+    pub beam: u32,
+    pub beam_state: i8,
+    pub beam_after: u32,
+    pub pattern: i8,
+    pub state_timer: u16,
+    pub stage_id: u8,
+}
+/// Section 1 + 0x1640: boss actions 11 and 12. Every frame runs the voice
+/// roll 0xaf0. Step 0 spawns the beam (block 1/2, as action 10) and attack
+/// kind 2 and waits 60 frames; then the attack launches (0x63e8). Action 11
+/// moves on to step 2: when the attack reports 1 it is freed and the beam
+/// fires (0x3fc0); step 3 waits for the beam (0x403c), frees it and takes
+/// the next pattern entry. Action 12 instead hands the attack to 0x6460 and
+/// enters step 4, which runs 0x86b8 on the child every 600 frames.
+fn boss_combo(rel: &crate::city_rel::CityRel<'_>, f: &BossComboFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let work = |offset: u32| -> Result<String> {
+        let r = rel
+            .reference(1, 0x16b6)
+            .filter(|r| r.module == 88)
+            .ok_or_else(|| Error::invalid("missing beam work reference"))?;
+        Ok(format!("88:{}+{:#x}", r.section, r.addend + offset))
+    };
+    let mut ev = vec![local(0x166c, 0xaf0, serde_json::json!([f.task]))];
+    match f.step {
+        0 | 1 => {
+            if f.step == 0 {
+                ev.extend([
+                    serde_json::json!({"site":0x16dc,"local":0x3e58,"args":[f.task],
+                        "block":[1, 2, work(0x3c)?, work(0x48)?, f.child]}),
+                    st(0x16e0, "state", 0x18, 4, f.spawned_beam),
+                    local(0x16f4, 0x62a0, serde_json::json!([f.task, 0, 0, 2])),
+                    st(0x16f8, "state", 0x14, 4, f.spawned_attack),
+                    st(0x1700, "entity", 6, 2, 0x3c),
+                    st(
+                        0x170c,
+                        "entity",
+                        1,
+                        1,
+                        f.step_after[0].wrapping_add(1).into(),
+                    ),
+                ]);
+            }
+            let left = f.timer.wrapping_sub(1);
+            ev.push(st(0x1718, "entity", 6, 2, left.into()));
+            if left == 0 {
+                ev.push(local(0x172c, 0x63e8, serde_json::json!([f.attack])));
+                if f.action_after == 11 {
+                    ev.push(st(
+                        0x1748,
+                        "entity",
+                        1,
+                        1,
+                        f.step_after[1].wrapping_add(1).into(),
+                    ));
+                } else {
+                    ev.extend([
+                        local(0x1754, 0x6460, serde_json::json!([f.attack_after])),
+                        st(0x175c, "state", 8, 2, 0x258),
+                        st(0x1764, "entity", 1, 1, 4),
+                    ]);
+                }
+            }
+        }
+        2 => {
+            ev.push(local(0x1770, 0x6410, serde_json::json!([f.attack])));
+            if f.attack_state == 1 {
+                if f.attack_after != 0 {
+                    ev.push(call(0x1788, serde_json::json!([f.attack_after]))?);
+                    ev.push(st(0x1790, "state", 0x14, 4, 0));
+                }
+                ev.push(local(0x1798, 0x3fc0, serde_json::json!([f.beam])));
+                ev.push(st(
+                    0x17a4,
+                    "entity",
+                    1,
+                    1,
+                    f.step_after[2].wrapping_add(1).into(),
+                ));
+            }
+        }
+        3 => {
+            ev.push(local(0x17b0, 0x403c, serde_json::json!([f.beam])));
+            if f.beam_state == 1 {
+                if f.beam_after != 0 {
+                    ev.push(call(0x17cc, serde_json::json!([f.beam_after]))?);
+                    ev.push(st(0x17d4, "state", 0x18, 4, 0));
+                }
+                ev.push(local(0x17dc, 0xd40, serde_json::json!([f.task])));
+                ev.push(local(
+                    0x17e8,
+                    0xdc4,
+                    serde_json::json!([f.task, f.pattern as i32 as u32]),
+                ));
+            }
+        }
+        4 => {
+            let left = f.state_timer.wrapping_sub(1);
+            ev.push(st(0x17f8, "state", 8, 2, left.into()));
+            if left == 0 {
+                ev.push(local(
+                    0x181c,
+                    0x86b8,
+                    serde_json::json!([f.child, f.stage_id]),
+                ));
+                ev.push(st(0x1824, "state", 8, 2, 0x258));
             }
         }
         _ => {}

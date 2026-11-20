@@ -37,6 +37,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `boss_action_three` | 0x10ac | Boss action 3: frees the stage handles and starts motion 2; resets lights, child (0x866c), camera and both players; in the window 4:0xc4..4:0xf4 plays sound and voice; at the motion end clears entity flag 4, child 0x8818, motion 1, action 1, stage byte 4 and the handoff start 0xec04 |
 | `boss_attack` | 0x12e8 | Boss actions 5, 6, 7: voice roll 0xaf0 each frame; spawn attack kind 0/1/2 (0x62a0) into state word 0x14, 60-frame wind-up, launch (0x63e8), wait for the attack to report 1 (0x6410), free it and take the next pattern entry |
 | `boss_beam` | 0x1440 | Boss actions 8, 9, 10: voice roll 0xaf0; beam parameter block (bytes 0/1, 1/1 or 1/2 by action, work vectors 6:0x164 and 6:0x170, the child) passed to 0x3e58, beam in state word 0x18, waits of 60 and 600 frames, fire 0x3fc0, wait for 0x403c to report 1, free, next pattern entry |
+| `boss_combo` | 0x1640 | Boss actions 11, 12: beam (block 1/2) plus attack kind 2, 60-frame wind-up, attack launch; action 11 then fires the beam once the attack reports 1 and waits for the beam before the next pattern entry; any other action hands the attack to 0x6460 and runs 0x86b8 on the child every 600 frames (step 4) |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -260,6 +261,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_boss_actions_ppc.py` | 120 action 2 frames and 2160 action 3 frames: steps, timers, patterns, stage handles, motion flags and window edges, motion end, entity flags |
 | `tests/finalhazard_boss_attack_ppc.py` | 960 frames: steps, actions 5..7, timers, attack states, attack freed or already gone, patterns |
 | `tests/finalhazard_boss_beam_ppc.py` | 1152 frames, with the beam parameter block read off the stack: steps, actions 8..10, timers, beam states, beam freed or gone, patterns |
+| `tests/finalhazard_boss_combo_ppc.py` | 1008 frames: steps 0..5, timers, action after launch (11, 12, other), attack and beam states, objects freed or gone, step-4 timer |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
