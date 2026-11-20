@@ -105,7 +105,7 @@ fn reduce(x: f32) -> (f32, usize) {
 pub fn sinf(x: f32) -> f32 {
     let (y, q) = reduce(x);
     let i = q << 1;
-    if !(y.abs() >= EPSILON) {
+    if y.abs() < EPSILON || y.is_nan() {
         return fmadds(POLY[9], y * ON_QUADRANT[i + 1], ON_QUADRANT[i]);
     }
     let s = y * y;
@@ -126,7 +126,7 @@ pub fn sinf(x: f32) -> f32 {
 pub fn cosf(x: f32) -> f32 {
     let (y, q) = reduce(x);
     let i = q << 1;
-    if !(y.abs() >= EPSILON) {
+    if y.abs() < EPSILON || y.is_nan() {
         return fnmsubs(y, ON_QUADRANT[i], ON_QUADRANT[i + 1]);
     }
     let s = y * y;
