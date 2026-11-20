@@ -28,6 +28,7 @@ pub mod duel_platform;
 pub mod duel_platform_motion;
 pub mod duel_stage;
 pub mod duel_stage_setup;
+pub mod duel_title;
 pub mod event;
 pub mod event_camera;
 pub mod glb_cli;

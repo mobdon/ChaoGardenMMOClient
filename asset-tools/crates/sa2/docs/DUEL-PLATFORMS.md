@@ -216,6 +216,18 @@ update toward 32 x the current gauge; once empty it refills to the start and
 then shrinks by 1.6 per update, freeing its task below 10. It holds still
 while game byte +0x37 or +0x39 is set.
 
+## Title card
+
+`duel_title` ports BossTitleExec: the creator (+0x22070), the task update
+(+0x21DE4) and delete (+0x2200C), the per-glyph update (+0x211FC) and the
+optional window update (+0x218AC), with the module's own helpers (square root
++0x74CC, glyph scale +0x20E54, line width +0x20FB4, line copy +0x21D48). A
+title is created from a descriptor read out of the REL (`descriptor`, a
+section 5 offset) or given inline (`inline`). Allocation and task results,
+the mode query, fade values and the halfword the native code reads past the
+last glyph entry (`beyond`) are request inputs. Its displays (+0x2140C,
++0x21A00) are renderers.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -261,6 +273,7 @@ python asset-tools/crates/sa2/tests/duel_stage_setup_ppc.py asset-tools/crates/s
 python asset-tools/crates/sa2/tests/duel_fog_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_director_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_gauge_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_title_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
