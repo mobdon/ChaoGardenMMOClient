@@ -676,7 +676,7 @@ impl EKumi {
                     speed: self.work.f_98,
                 });
                 self.work.motion.request = 5;
-                host.event(Event::PlayerHurt {
+                host.event(Event::Vibrate {
                     player: p,
                     a: 4,
                     b: 15,
