@@ -14,6 +14,7 @@ WALKER-PORT-MAP.md on #424.
 | fn_8005071C: floor normal to tilt angles | `msl_math::normal_angles` | same |
 | fn_8003E668: world velocity into the player frame, `spd` and `dotp` | `walker_frame::player_speed_from_world` | tests/walker_frame.rs, 1,500 cases |
 | fn_80046950: speed clamp to `lim_h_spd` / `lim_v_spd` | `walker_frame::clamp_speed` | same, 600 cases |
+| 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within ±0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
 Set `SA2_MAIN_DOL` and `SA2_GSNE8P_DOL` to the extracted main.dol, and set
 `SA2_PPC_PYTHON` to a Python with Unicorn. Then run
@@ -39,3 +40,23 @@ fn_800D1020 (0x380). The search works on global collision lists addressed
 from r13 (for example -0x7738, -0x7754, -0x7758 and -0x77A8). Checking it
 needs the stage's land collision loaded into the emulated memory, as the
 game lays it out. The port goes bottom-up from fn_800D1020 and fn_800CEE08.
+
+## Land collision pipeline (found)
+
+1. The current LandTable is at r13-0x7A00. fn_8002334C (0x4BC) picks the
+   entries near the player tasks (`playertwp`, 0x801E7768). It writes 12-byte
+   records {flags, NJS_OBJECT*, ...} to r13-0x79F4, with the count at
+   r13-0x79A4 (at most 0xC0).
+2. fn_800D0904 (0x638) turns that list into collision nodes. The nodes are
+   0x40 bytes each, from a pool set up by fn_800D2560 (free list at
+   r13-0x773C, active list at r13-0x7738). Each node keeps its object's
+   transform and bounding sphere. A removed entry goes back through
+   fn_800D24B4.
+3. fn_800D1020 is the broadphase. It walks the sorted lists for a query
+   sphere and fills a candidate list of up to 0xC0 entries (count at
+   r13-0x7758).
+4. fn_800CEE08 (0x1064) tests the candidates' triangles.
+
+The emulator check needs the GameCube stg11D.rel loaded and relocated, with
+r13-0x7A00 pointing at its `objLandTable0011`. The installed module and the
+disc's copy are byte-identical (SHA-1 8fbe506b…).
