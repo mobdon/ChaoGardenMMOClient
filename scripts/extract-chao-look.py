@@ -14,6 +14,13 @@ Traced (ChaoMain .text offsets):
   first material diffuse word of each node in the s16 list at .data 0x6E18
   (terminated by -1); nodes without an attach are skipped. It replaces the word.
 * The word is a big-endian Ninja colour, 0xAARRGGBB.
+* fn_60_52480(Jewel, Color, Multi, NonTex, obj), called from al_draw_B for every body
+  node, sets the draw override. When JewelNum == 0 and ColorNum > 0, the lit material
+  colour becomes gxColorTable[ColorNum - 1] (.data 0x38E7D0, GX RGBA order) instead of
+  the chunk diffuse (GXSetChanMatColor at 0x5110C; fn_60_50DDC is skipped), so for a
+  coloured Chao this table, not colorTable, is the visible colour.
+* JewelNum > 0 binds al_body texture JewelNum + 17 to TEXMAP1 with a white material
+  colour (.rodata 0x993C); MultiNum != 0 binds al_body texture 34 (chao_rare00) to TEXMAP2.
 """
 import hashlib
 import json
@@ -27,6 +34,9 @@ RODATA, DATA = 4, 5
 COLOR_TABLE = 0x1D60
 COLOR_COUNT = 28  # .rodata object size 0x70
 COLOR_NODES = 0x6E18
+GX_COLOR_TABLE = 0x38E7D0
+GX_COLOR_COUNT = 13  # ColorNum 1..13; the .data object (0x38) ends with a zero word
+JEWEL_WHITE = 0x993C
 MAX_NODES = 40
 
 
@@ -66,12 +76,15 @@ def main(argv):
     table = sections(rel)
     rodata, rodata_offset = section_bytes(rel, table, RODATA)
     data, data_offset = section_bytes(rel, table, DATA)
-    if COLOR_TABLE + COLOR_COUNT * 4 > len(rodata) or COLOR_NODES + MAX_NODES * 2 > len(data):
+    if (COLOR_TABLE + COLOR_COUNT * 4 > len(rodata) or COLOR_NODES + MAX_NODES * 2 > len(data)
+            or GX_COLOR_TABLE + GX_COLOR_COUNT * 4 > len(data) or JEWEL_WHITE + 4 > len(rodata)):
         raise SystemExit('colour tables are outside the REL sections')
     colors = []
     for index in range(COLOR_COUNT):
         word = struct.unpack_from('>I', rodata, COLOR_TABLE + index * 4)[0]
         colors.append([(word >> 16) & 0xFF, (word >> 8) & 0xFF, word & 0xFF, word >> 24])
+    gx_colors = [list(data[GX_COLOR_TABLE + i * 4:GX_COLOR_TABLE + i * 4 + 4]) for i in range(GX_COLOR_COUNT)]
+    jewel_color = list(rodata[JEWEL_WHITE:JEWEL_WHITE + 4])
     nodes = []
     for index in range(MAX_NODES):
         node = struct.unpack_from('>h', data, COLOR_NODES + index * 2)[0]
@@ -86,6 +99,10 @@ def main(argv):
         'colorTableOrder': 'index = ColorNum; [r, g, b, a] from the big-endian 0xAARRGGBB diffuse word',
         'colorNodes': nodes,
         'colorApplication': 'only when ColorNum != 0; replaces the first material diffuse word of each node',
+        'gxColorTable': gx_colors,
+        'gxColorTableOrder': 'index = ColorNum - 1; [r, g, b, a] GX colour; the material colour used when JewelNum == 0',
+        'jewel': {'materialColor': jewel_color, 'alBodyTextureIndex': 'JewelNum + 17', 'texmap': 1},
+        'shiny': {'alBodyTextureIndex': 34, 'texmap': 2},
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(look, indent=2) + '\n')
