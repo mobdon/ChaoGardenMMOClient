@@ -959,6 +959,9 @@ pub enum PlacementClock {
     /// Section 1 + 0x7154, 0x71e0 and 0x72e0: core hit compare, knockback and
     /// proximity voice.
     CoreContact(Box<CoreContactFrame>),
+    /// Section 1 + 0x743c, 0x7548 and 0x7684: core slot roll, attachment
+    /// placement and hit reaction.
+    CoreHit(Box<CoreHitFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2750,6 +2753,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossScroll(frame) => return boss_scroll(&rel, &frame),
         PlacementClock::BossCore(frame) => return boss_core(&rel, &frame),
         PlacementClock::CoreContact(frame) => return core_contact(&rel, &frame),
+        PlacementClock::CoreHit(frame) => return core_hit(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6341,7 +6345,11 @@ fn module_ref(rel: &crate::city_rel::CityRel<'_>, site: u32, offset: u32) -> Res
         .reference(1, site)
         .filter(|r| r.module == 88)
         .ok_or_else(|| Error::invalid("missing boss module reference"))?;
-    Ok(format!("88:{}+{:#x}", r.section, r.addend + offset))
+    Ok(format!(
+        "88:{}+{:#x}",
+        r.section,
+        r.addend.wrapping_add(offset)
+    ))
 }
 fn boss_constant(rel: &crate::city_rel::CityRel<'_>, site: u32) -> Result<f32> {
     let r = rel
@@ -7229,6 +7237,212 @@ fn core_contact(
                 )?);
             }
             ev.push(serde_json::json!({"site":0x741c,"store":"entity","offset":4,"size":2,"value":next}));
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
+}
+
+/// One call of the core slot, attachment or hit routines; values are as
+/// the code reads them.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum CoreHitFrame {
+    /// 0x743c: roll a slot other than `previous` (8 slots when it is
+    /// negative, else 7); `random` is the 0x8010d940 result and `rounded`
+    /// the f1 result of 0x80111fd8.
+    Slot {
+        previous: i8,
+        random: i32,
+        rounded: f64,
+    },
+    /// 0x7548: place attachment (`row`, `column`) of table 5:0x36b6c on the
+    /// core entity and block.
+    Attach {
+        entity: u32,
+        block: u32,
+        row: i8,
+        column: i8,
+    },
+    /// 0x7684: hit reaction. `flags` is entity half-word 4 at entry and
+    /// `flags_after` before the final set, `hit` the 0x800065a8 record,
+    /// `hit_word` / `hit_byte` its word 4 and byte 1, `defense` / `attack`
+    /// the 0x800058bc / 0x80005874 results, `player` the player entity word
+    /// for the stage byte, `direction` what 0x801159dc leaves, `block_bytes`
+    /// block bytes 0 and 1.
+    Hit {
+        task: u32,
+        entity: u32,
+        block: u32,
+        flags: i16,
+        hit: u32,
+        hit_word: u32,
+        hit_byte: i8,
+        defense: i32,
+        attack: i32,
+        player: u32,
+        direction: [f32; 3],
+        block_bytes: [i8; 2],
+        flags_after: i16,
+    },
+}
+/// Section 1 + 0x743c / 0x7548 / 0x7684.
+fn core_hit(rel: &crate::city_rel::CityRel<'_>, f: &CoreHitFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let k = |site: u32| boss_constant(rel, site);
+    let kv = |site: u32| -> Result<Vec<f64>> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 4)
+            .ok_or_else(|| Error::invalid("missing core vector constant"))?;
+        let d = rel.data(4)?;
+        (0..3)
+            .map(|i| {
+                let at = r.addend as usize + 4 * i;
+                d.get(at..at + 4)
+                    .map(|b| f64::from(f32::from_be_bytes(b.try_into().unwrap())))
+                    .ok_or_else(|| Error::invalid("core vector constant out of range"))
+            })
+            .collect()
+    };
+    let table = |site: u32| -> Result<u32> {
+        Ok(rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 5)
+            .ok_or_else(|| Error::invalid("missing core attachment table"))?
+            .addend)
+    };
+    let mut ev = Vec::new();
+    let mut returned = None;
+    match f {
+        CoreHitFrame::Slot {
+            previous,
+            random,
+            rounded,
+        } => {
+            let count: i32 = if *previous < 0 { 8 } else { 7 };
+            ev.push(call(0x746c, serde_json::json!([]))?);
+            let unit = k(0x7496)? * biased_float(rel, 0x7472, *random)?;
+            let scaled = biased_float(rel, 0x74aa, count)? * unit;
+            let mut e = call(0x74cc, serde_json::json!([]))?;
+            e["floats"] = serde_json::json!([f64::from(scaled)]);
+            ev.push(e);
+            let pick = fctiwz(*rounded) as i8 as i32;
+            let mut skip = 0i32;
+            let mut found = None;
+            for slot in 0..count {
+                if slot == i32::from(*previous) {
+                    skip += 1;
+                }
+                if pick == slot {
+                    found = Some(skip);
+                    break;
+                }
+                skip += 1;
+            }
+            returned =
+                Some(found.ok_or_else(|| {
+                    Error::invalid("slot roll out of range leaves r3 to the engine")
+                })? as u32);
+        }
+        CoreHitFrame::Attach {
+            entity,
+            block,
+            row,
+            column,
+        } => {
+            if *row >= 0 && *column >= 0 {
+                let entry = table(0x758e)? + 224 * *row as u32 + 28 * *column as u32;
+                let kind = *rel
+                    .data(5)?
+                    .get(entry as usize)
+                    .ok_or_else(|| Error::invalid("core attachment table out of range"))?
+                    as i8;
+                let e = |o: u32| format!("88:5+{:#x}", entry + o);
+                let mut first = call(0x7608, serde_json::json!([0, "stack", "stack"]))?;
+                first["vectors"] = serde_json::json!({"1": kv(0x75a2)?});
+                let mut third = call(0x764c, serde_json::json!([0, "stack", "stack"]))?;
+                third["vectors"] = serde_json::json!({"1": kv(0x7622)?});
+                ev.extend([
+                    call(0x75c0, serde_json::json!([]))?,
+                    call(
+                        0x75e4,
+                        serde_json::json!([0, module_ref(rel, 0x75da, (48 * kind as i32) as u32)?]),
+                    )?,
+                    call(0x75ec, serde_json::json!([e(0x10)]))?,
+                    call(0x75f8, serde_json::json!([e(4), 0]))?,
+                    first,
+                    call(
+                        0x761c,
+                        serde_json::json!([module_ref(rel, 0x760e, 0)?, "stack", entity + 0x14]),
+                    )?,
+                    third,
+                    call(
+                        0x765c,
+                        serde_json::json!([entity + 0x14, "stack", block + 0x18]),
+                    )?,
+                    call(0x7660, serde_json::json!([]))?,
+                ]);
+            }
+        }
+        CoreHitFrame::Hit {
+            task,
+            entity,
+            block,
+            flags,
+            hit,
+            hit_word,
+            hit_byte,
+            defense,
+            attack,
+            player,
+            direction,
+            block_bytes,
+            flags_after,
+        } => {
+            if flags & 4 == 0 {
+                ev.push(call(0x76c0, serde_json::json!([task]))?);
+                if *hit != 0 {
+                    ev.push(call(
+                        0x76dc,
+                        serde_json::json!([hit_word, *hit_byte as i32 as u32]),
+                    )?);
+                    ev.push(call(0x76ec, serde_json::json!([task, 0]))?);
+                    if attack < defense {
+                        let push = k(0x773e)?;
+                        let lift = k(0x7752)?;
+                        let v = [
+                            f64::from(direction[0] * push),
+                            f64::from(lift),
+                            f64::from(direction[2] * push),
+                        ];
+                        let entry = table(0x77b2)?
+                            .wrapping_add((224 * i32::from(block_bytes[0])) as u32)
+                            .wrapping_add((28 * i32::from(block_bytes[1])) as u32);
+                        ev.extend([
+                            call(0x772c, serde_json::json!([player + 0x14, entity + 0x14, "stack"]))?,
+                            call(0x7734, serde_json::json!(["stack"]))?,
+                            serde_json::json!({"site":0x7780,"local":0x71e0,"args":["stack"],
+                                "floats":[f64::from(k(0x7776)?)],"vectors":{"0": v}}),
+                            call(0x7790, serde_json::json!([task, 0, 0]))?,
+                            call(0x77a0, serde_json::json!([task, 0, 3]))?,
+                            serde_json::json!({"site":0x77d8,"local":0x9228,
+                                "args":[task, block + 0x18, format!("88:5+{:#x}", entry + 4)]}),
+                            serde_json::json!({"site":0x77e4,"store":"entity","offset":4,"size":2,
+                                "value":(*flags_after as u16 | 4)}),
+                            serde_json::json!({"site":0x77ec,"store":"entity","offset":6,"size":2,"value":0x5a}),
+                            call(0x7800, serde_json::json!([0, 0, 0, 0]))?,
+                            call(0x7810, serde_json::json!([0, 0, 0x7f]))?,
+                            serde_json::json!({"site":0x7818,"store":"entity","offset":0,"size":1,"value":5}),
+                        ]);
+                    }
+                }
+            }
         }
     }
     let mut out = serde_json::json!({"events":ev});
