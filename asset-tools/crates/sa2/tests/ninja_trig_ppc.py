@@ -2,7 +2,7 @@
 
 Boots the parts of the game the table depends on (see dol_ppc.Machine.boot),
 then prints JSON: the SHA-256 of njSinCosTbl as the game built it, and the
-results of MSL sinf/cosf for a spread of inputs. tests/ninja.rs compares.
+results of MSL sinf/cosf for a spread of inputs. tests/ninja_trig_dol.rs compares.
 Usage: python ninja_ppc.py [MAIN_DOL]
 """
 import hashlib, json, os, random, struct, sys

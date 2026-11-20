@@ -1,24 +1,29 @@
-//! A playable single-player stage session for Iron Gate (Dark story, level 11).
+//! Native stage-object rules for the walker stages Iron Gate (Dark story,
+//! level 11) and Prison Lane (Hero story, level 9).
 //!
-//! Native inputs: the mounted landtable, SET placements, object-list names,
-//! the PhysicsArray row of the dispatched character, object collision models
-//! and death zones from the Steam executable, Iron Gate's lift/elevator rules
-//! from stg11D.rel, the shared ring pickup contract, and the goal-ring
-//! initialization and contact branch.
+//! Everything here is read from the installed game files: the mounted
+//! landtable and SET placements, object-list names, the PhysicsArray row of
+//! the dispatched character, object collision models and death zones from
+//! the Steam executable, each stage's lift/elevator/bridge rules and object
+//! collision rows from its stage module (`StageRules`), the o_ring pickup
+//! contract and the goal-ring initialization and contact branch.
 //!
-//! Adaptations (no build-matched reference exists for them; see
-//! docs/PLAYABLE-IRON-GATE.md): the walker controller's integration order and
-//! collision response, checkpoint contact radius, the camera, and treating
-//! goal contact plus the stage-module slot word as the mission clear.
+//! The session does not move a player. The walker's own movement, collision
+//! response, lock-on and laser are main-program code, which is encrypted on
+//! disk in the Steam executable, so a host supplies the player's collision
+//! centre and the mover it stands on each frame (`PlayerSample`), and the
+//! session runs the native object rules against it.
 use crate::{
     death_zones,
     fan_stage::MountedStage,
     goal_ring,
-    iron_gate_movers::{Bridge, Elevator, Lift, MoverProgram},
-    play_objects::{death_zone_triangles, inside_volume, place_y, read_object_solid},
-    play_world::{add, len, make_tri, scale, sub, Ground, PlayWorld, V3},
+    iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
+    ninja_trig::{nj_rotate_sin_cos, nj_sin},
+    play_objects::{collision_rows, death_zone_triangles, place_y, read_object_solid},
+    play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
-    spring::{SpringCall, SpringKind, SpringPlayer, StageSpring},
+    prison_doors::{enemy_counts, DoorSound, Enemy, PrisonDoor},
+    spring::{SpringKind, StageSpring},
     Error, Result,
 };
 use serde::Serialize;
@@ -29,48 +34,120 @@ pub const BRIDGE_COLLISION_RVA: u32 = 0x7f58a8;
 pub const ELEVATOR_COLLISION_RVA: u32 = 0x7fed08;
 /// PC_SA2/STG11.ini [Iron Gate Death Zones].
 pub const DEATH_ZONE_CONFIG: &str = "[Iron Gate Death Zones]\ntype=deathzone\naddress=8040D0\n";
+
+/// Per-stage native inputs a walker session is built from.
+pub struct StageRules {
+    pub name: &'static str,
+    pub movers: &'static MoverLayout,
+    /// Basic collision model addresses (SA Tools PC_SA2/STGnn.ini).
+    pub lift_collision: u32,
+    pub bridge_collision: u32,
+    pub elevator_collision: u32,
+    /// Other solid stage objects: (object-list name, Basic model address).
+    pub static_solids: &'static [(&'static str, u32)],
+    /// Objects whose solidity is CollisionData rows in the stage module's
+    /// section 5: (object-list name, row offset, row count).
+    pub collision_boxes: &'static [(&'static str, u32, usize)],
+    /// Build CCUBE placements as solid boxes (rule read from this stage's module).
+    pub invisible_cubes: bool,
+    /// Expand RING_LINEAR placements into collectable rings.
+    pub ring_lines: bool,
+    /// Run enemy group counts and CAGED doors (rules read from stg09D.rel).
+    pub prison_doors: bool,
+    pub death_zone_config: &'static str,
+}
+
+pub const IRON_GATE: StageRules = StageRules {
+    name: "Iron Gate",
+    movers: &movers::IRON_GATE,
+    lift_collision: LIFT_COLLISION_RVA,
+    bridge_collision: BRIDGE_COLLISION_RVA,
+    elevator_collision: ELEVATOR_COLLISION_RVA,
+    static_solids: &[],
+    // stg11D.rel 0x20714 (CONTIRON) registers this row through 0x8000F7D8.
+    // CONTCHAO (0x1FDA4) registers the same cube row at sec5+0x649E0
+    // through 0x8000F8B8; its breaking is player-attack driven and not run.
+    // CONTWOOD (0x2132C) the same cube at sec5+0x666C8 (breaking not run);
+    // MECHA (0x53E4) a box at sec5+0x51198 whose exec only runs collision.
+    collision_boxes: &[
+        ("CONTIRON", 0x656d8, 1),
+        ("CONTCHAO", 0x649e0, 1),
+        ("CONTWOOD", 0x666c8, 1),
+        ("MECHA", 0x51198, 1),
+    ],
+    invisible_cubes: false,
+    ring_lines: false,
+    prison_doors: false,
+    death_zone_config: DEATH_ZONE_CONFIG,
+};
+
+/// PC_SA2/STG09.ini (Prison Lane, Hero story, Tails' walker).
+pub const PRISON_LANE: StageRules = StageRules {
+    name: "Prison Lane",
+    movers: &movers::PRISON_LANE,
+    lift_collision: 0xc3c538,
+    bridge_collision: 0xc42ea0,
+    elevator_collision: 0xc39660,
+    // stg09D.rel 0x2A4C: PANEL hands its Basic model to the shared
+    // static-collision helper at 0x9A4C with flags 6 (bit 0 clear: the
+    // placement's X and Z rotations are dropped, Y is kept).
+    static_solids: &[("PANEL", 0xc40390)],
+    // stg09D.rel 0x2A94 (FENCES) and 0x2AF8 (FENCEL) register these rows
+    // through the helper at 0x2B5C (InitCollision 0x8000F8B8, flags 4).
+    // stg09D.rel 0x1978C (CONTIRON) registers its row through 0x8000F7D8.
+    collision_boxes: &[
+        ("FENCES", 0x3c54c, 1),
+        ("FENCEL", 0x3c57c, 3),
+        ("CONTIRON", 0x52a18, 1),
+        // CONTCHAO (0x18E1C): the same cube row; breaking is not run.
+        ("CONTCHAO", 0x51d20, 1),
+        // CONTWOOD (0x1A3A4): the same cube row; breaking is not run.
+        ("CONTWOOD", 0x53a08, 1),
+        // MECHA (0x527C): exec only runs its collision (0x8000F4EC).
+        ("MECHA", 0x41db4, 1),
+    ],
+    invisible_cubes: true,
+    ring_lines: true,
+    prison_doors: true,
+    death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
+};
 /// o_ring_M1: pickup when a player collision center is strictly within 14.
 pub const RING_PICKUP_DISTANCE: f32 = 14.0;
-/// GOALRING regular shape radius (two centered spheres, 25 and 8).
-pub const GOAL_RADIUS: f32 = 25.0;
-/// Adaptation: horizontal checkpoint contact radius.
-pub const CHECKPOINT_RADIUS: f32 = 30.0;
-/// Adaptation: spring contact distance added to the player radius. The
-/// springs register native collision shape ID 4, whose size is not read here.
-pub const SPRING_CONTACT: f32 = 10.0;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
-const CONTIRON_VA: u32 = 0x6d63f0;
-const CONTCHAO_VA: u32 = 0x6de3b0;
-/// Adaptation: containers as solid cubes with this edge, standing on their
-/// placement and centred on it. Iron Gate stacks them at exactly this pitch
-/// (for example x=2490, y -663/-643, z -1047/-1027/-1007). Wooden containers
-/// break under the walker's attacks, which are not implemented, so they are
-/// left out rather than left blocking.
-pub const CONTAINER_EDGE: f32 = 20.0;
+const CCUBE_VA: u32 = 0x6e54e0;
+/// stg09D.rel 0x11B30 (shared by SPHERE, CCYL, CCUBE, CWALL): each of the
+/// shape's a, b, c sizes is 10 (sec4+0x6B0) plus the matching Scale
+/// component. CCUBE's CollisionData (sec5+0x4C080) is form 3, centre 0.
+pub const CCUBE_BASE: f32 = 10.0;
 const GOALRING_VA: u32 = 0x6c63c0;
+const RING_LINEAR_VA: u32 = 0x6c5ed0;
+/// RING_LINEAR spacing base (stg09D.rel sec4+0xA44), added to Scale.x.
+pub const RING_LINE_BASE: f32 = 10.0;
 const RING_VA: u32 = 0x6c0f80;
 const SAVEPOINT_VA: u32 = 0x6d99a0;
-const STEP_UP: f32 = 12.0;
 const FRAME_RATE: f32 = 60.0;
 
+/// What the host reports about the player this frame. The session reads it
+/// and never moves the player.
 #[derive(Debug, Clone, Copy, Default, Serialize)]
-pub struct Controls {
-    /// Stick, x right and y forward, each in -1..=1, relative to `camera_yaw`.
-    pub stick: [f32; 2],
-    /// Camera heading in radians about +Y (0 looks toward -Z).
-    pub camera_yaw: f32,
-    pub jump: bool,
+#[serde(rename_all = "camelCase")]
+pub struct PlayerSample {
+    /// Collision centre (feet plus the PhysicsArray center_height).
+    pub center: V3,
+    /// The engine's "player standing on this object" answer, as an index
+    /// into `Session::movers`.
+    pub standing_on: Option<usize>,
+    /// The engine's collision contact between the player and a goal ring
+    /// (an index into `Session::goals`); the player's own collision shape
+    /// and the CCL test are main-program code.
+    pub touching_goal: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Event {
     Ring {
-        layer: usize,
-        index: usize,
-    },
-    Checkpoint {
         layer: usize,
         index: usize,
     },
@@ -83,48 +160,19 @@ pub enum Event {
     BridgeStarted {
         mover: usize,
     },
-    Spring {
-        spring: usize,
+    /// A CAGED door started sliding open (its group count reached zero).
+    DoorOpening {
+        door: usize,
     },
-    Death {
-        frame: u32,
-        at: V3,
-        zone: bool,
-    },
-    Respawn {
-        frame: u32,
+    /// A CAGED door reached its open stop (sound 0x1021).
+    DoorOpened {
+        door: usize,
     },
     GoalContact {
         layer: usize,
         index: usize,
         sound: u16,
     },
-    Cleared {
-        frame: u32,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Outcome {
-    Playing,
-    Cleared,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Player {
-    /// Feet position.
-    pub position: V3,
-    pub velocity: V3,
-    /// Facing heading in radians (0 faces -Z).
-    pub yaw: f32,
-    pub grounded: bool,
-    pub ground_normal: V3,
-    pub on_mover: Option<usize>,
-    jump_hold: i32,
-    /// Frames of ignored input after a spring (native no-control timer).
-    pub nocon: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,10 +248,9 @@ impl Spring {
     }
 }
 
-/// Twelve triangles of a cube standing on the origin (outward winding).
-fn cube_tris(edge: f32) -> Vec<[V3; 3]> {
-    let h = edge * 0.5;
-    let p = |x: f32, y: f32, z: f32| [x * h, (y + 1.0) * h, z * h];
+/// Twelve triangles of a box with half-extents `h` centred on `c`.
+fn box_tris(h: V3, c: V3) -> Vec<[V3; 3]> {
+    let p = |x: f32, y: f32, z: f32| [c[0] + x * h[0], c[1] + y * h[1], c[2] + z * h[2]];
     let quads = [
         [
             p(-1., 1., -1.),
@@ -248,19 +295,78 @@ fn cube_tris(edge: f32) -> Vec<[V3; 3]> {
         .collect()
 }
 
-pub fn bams_sin_cos(a: i32) -> (f32, f32) {
-    (a as f32 * std::f32::consts::TAU / 65536.0).sin_cos()
-}
-
 /// Ninja order used by the spring tasks: unit, rotate Z, rotate X, rotate Y,
 /// calculate point. The point is rotated by Y first, then X, then Z.
 pub fn rotate_zxy(v: V3, angles: [i32; 3]) -> V3 {
-    let (sy, cy) = bams_sin_cos(angles[1]);
+    let (sy, cy) = nj_rotate_sin_cos(angles[1]);
     let v = [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy];
-    let (sx, cx) = bams_sin_cos(angles[0]);
+    let (sx, cx) = nj_rotate_sin_cos(angles[0]);
     let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
-    let (sz, cz) = bams_sin_cos(angles[2]);
+    let (sz, cz) = nj_rotate_sin_cos(angles[2]);
     [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
+}
+
+/// Matrix order unit, translate, rotate Z, rotate Y, rotate X (the
+/// RING_LINEAR helper 0x1B21C; its calls map to GSNE8P njRotateZ 0x801158A8,
+/// njRotateY 0x80115828 and njRotateX 0x80115C60): the point is rotated by
+/// X first, then Y, then Z.
+pub fn rotate_xyz(v: V3, angles: [i32; 3]) -> V3 {
+    let (sx, cx) = nj_rotate_sin_cos(angles[0]);
+    let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
+    let (sy, cy) = nj_rotate_sin_cos(angles[1]);
+    let v = [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy];
+    let (sz, cz) = nj_rotate_sin_cos(angles[2]);
+    [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
+}
+
+/// Whether a CCUBE's box is the same however its rotation is applied:
+/// whether CollisionData form 3 uses the task rotation at all is not read,
+/// so only boxes with no X/Z rotation and a yaw of 0 or 0x8000 (a half turn
+/// maps a centred box onto itself) are built.
+pub fn cube_rotation_is_exact(rotation: [u16; 3]) -> bool {
+    rotation[0] == 0 && rotation[2] == 0 && rotation[1] & 0x7fff == 0
+}
+
+/// RING_LINEAR (stg09D.rel 0x1B448 with helpers 0x1B1E8 and 0x1B21C): the
+/// ring count n is Scale.z truncated and clamped to 1..=8, and ring i sits
+/// at local (0, Scale.y * njSin(i * (0x4000 / n)), -i * (10 + Scale.x))
+/// under the placement's translation and rotate Z, Y, X. The arch call
+/// (PC import 0x80112050) is njSin, the start-up table lookup (GSNE8P
+/// 0x80112398).
+pub fn ring_line(position: V3, angles: [i32; 3], scale: V3) -> Vec<V3> {
+    let n = (scale[2] as i32).clamp(1, 8);
+    let step = 0x4000 / n;
+    (0..n)
+        .map(|i| {
+            let local = [
+                0.0,
+                scale[1] * nj_sin(i * step),
+                -(i as f32) * (RING_LINE_BASE + scale[0]),
+            ];
+            add(position, rotate_xyz(local, angles))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod ring_line_tests {
+    use super::*;
+
+    #[test]
+    fn ring_line_spacing_count_and_yaw() {
+        let r = ring_line([0.0, 0.0, 0.0], [0, 0x4000, 0], [15.0, 0.0, 3.0]);
+        assert_eq!(r.len(), 3);
+        // Local -Z turned a quarter about Y points along -X; spacing 25.
+        assert!((r[1][0] + 25.0).abs() < 1e-3 && r[1][2].abs() < 1e-3);
+        assert!((r[2][0] + 50.0).abs() < 1e-3 && r[2][1] == 0.0);
+        assert_eq!(ring_line([0.0; 3], [0; 3], [20.0, 0.0, 0.2]).len(), 1);
+        assert_eq!(ring_line([0.0; 3], [0; 3], [20.0, 0.0, 12.0]).len(), 8);
+        // The arch follows njSin of i * (0x4000 / n).
+        let a = ring_line([0.0; 3], [0; 3], [15.5, 4.0, 3.0]);
+        assert_eq!(a[1][1], 4.0 * nj_sin(0x1555));
+        assert!(cube_rotation_is_exact([0, 0x8000, 0]));
+        assert!(!cube_rotation_is_exact([0, 0x4000, 0]));
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -332,18 +438,21 @@ pub struct Session {
     pub frame: u32,
     pub rings: u32,
     pub score: u32,
-    pub deaths: u32,
-    pub outcome: Outcome,
-    pub player: Player,
+    /// Single-player start row (feet position and BAMS yaw).
     pub start: V3,
-    pub start_yaw: f32,
-    pub respawn: V3,
+    pub start_yaw: u16,
     pub slot_words: [u32; 2],
     pub movers: Vec<Mover>,
     pub rings_placed: Vec<Pickup>,
     pub checkpoints: Vec<Pickup>,
     pub goals: Vec<Goal>,
     pub springs: Vec<Spring>,
+    /// Enemies that take part in group counts.
+    pub enemies: Vec<Enemy>,
+    /// Live-enemy count per group (the byte table at 0x801E4AB8).
+    #[serde(skip)]
+    pub group_counts: [u8; 256],
+    pub doors: Vec<PrisonDoor>,
     /// Placements whose native behavior this session does not run.
     pub unimplemented: std::collections::BTreeMap<String, usize>,
     #[serde(skip)]
@@ -355,21 +464,43 @@ pub struct Session {
 impl Session {
     /// Build Iron Gate from a mounted Dark story dispatch.
     pub fn iron_gate(stage: &MountedStage<'_>, src: Sources<'_>) -> Result<Self> {
-        if stage.dispatch.level != crate::iron_gate_movers::LEVEL {
-            return Err(Error::invalid(
-                "the playable session currently supports Iron Gate only",
-            ));
+        Self::walker_stage(stage, src, &IRON_GATE)
+    }
+
+    /// Build Prison Lane from a mounted Hero story dispatch.
+    pub fn prison_lane(stage: &MountedStage<'_>, src: Sources<'_>) -> Result<Self> {
+        Self::walker_stage(stage, src, &PRISON_LANE)
+    }
+
+    /// The rules for a mounted level, if it is a supported walker stage.
+    pub fn rules_for(level: u16) -> Option<&'static StageRules> {
+        [&IRON_GATE, &PRISON_LANE]
+            .into_iter()
+            .find(|r| r.movers.level == level)
+    }
+
+    /// Build a supported walker stage from its mounted dispatch.
+    pub fn walker_stage(
+        stage: &MountedStage<'_>,
+        src: Sources<'_>,
+        rules: &StageRules,
+    ) -> Result<Self> {
+        if stage.dispatch.level != rules.movers.level {
+            return Err(Error::invalid(format!(
+                "level {} is not {}",
+                stage.dispatch.level, rules.name
+            )));
         }
         let entry = stage
             .entry_pose
             .as_ref()
-            .ok_or_else(|| Error::invalid("Iron Gate has no start row"))?;
+            .ok_or_else(|| Error::invalid("stage has no start row"))?;
         let collision = stage
             .collision_world()?
-            .ok_or_else(|| Error::invalid("Iron Gate terrain is unavailable"))?;
+            .ok_or_else(|| Error::invalid("stage terrain is unavailable"))?;
         let objects = stage
             .object_table
-            .ok_or_else(|| Error::invalid("Iron Gate object list is unavailable"))?;
+            .ok_or_else(|| Error::invalid("stage object list is unavailable"))?;
         let slot = match stage.dispatch.character {
             7 => 7usize,
             6 => 6,
@@ -377,11 +508,26 @@ impl Session {
         };
         let rows = crate::player_physics::read(src.exe)?;
         let physics = Physics::from_row(slot, &rows[slot].parameters);
-        let movers_program = MoverProgram::verify(src.stage_module)?;
+        let movers_program = MoverProgram::verify_layout(rules.movers, src.stage_module)?;
         let goal_program = goal_ring::Program::read(stage.dispatch.level, src.stage_module)?;
-        let lift_solid = read_object_solid(src.exe, LIFT_COLLISION_RVA)?;
-        let bridge_solid = read_object_solid(src.exe, BRIDGE_COLLISION_RVA)?;
-        let elevator_solid = read_object_solid(src.exe, ELEVATOR_COLLISION_RVA)?;
+        let lift_solid = read_object_solid(src.exe, rules.lift_collision)?;
+        let bridge_solid = read_object_solid(src.exe, rules.bridge_collision)?;
+        let elevator_solid = read_object_solid(src.exe, rules.elevator_collision)?;
+        let static_solids = rules
+            .static_solids
+            .iter()
+            .map(|&(n, rva)| Ok((n, read_object_solid(src.exe, rva)?)))
+            .collect::<Result<Vec<_>>>()?;
+        let collision_boxes = rules
+            .collision_boxes
+            .iter()
+            .map(|&(n, offset, count)| {
+                Ok((
+                    n,
+                    collision_rows(src.stage_module, rules.movers.module_file, offset, count)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let mut world = PlayWorld::from_collision(&collision);
         let mut movers = vec![];
@@ -389,6 +535,8 @@ impl Session {
         let mut checkpoints = vec![];
         let mut goals = vec![];
         let mut springs = vec![];
+        let mut enemies: Vec<Enemy> = vec![];
+        let mut doors = vec![];
         let mut unimplemented = std::collections::BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -397,10 +545,21 @@ impl Session {
                 };
                 let pl = &p.placement;
                 let name = def.name.trim_end();
-                let place = |tris: &[[V3; 3]]| -> Vec<[V3; 3]> {
+                // Collision objects keep the placement's Y rotation only
+                // (stg09D.rel 0x4930, 0x30CC, 0x510 and helper 0x9A4C zero
+                // X and Z), applied through njRotateY.
+                let place_at = |tris: &[[V3; 3]], at: V3| -> Vec<[V3; 3]> {
                     tris.iter()
-                        .map(|t| t.map(|v| place_y(v, pl.rotation[1], pl.position)))
+                        .map(|t| t.map(|v| place_y(v, pl.rotation[1], at)))
                         .collect()
+                };
+                let place = |tris: &[[V3; 3]]| place_at(tris, pl.position);
+                let solid = |tris: Vec<[V3; 3]>| {
+                    PlayWorld::from_tris(
+                        tris.into_iter()
+                            .filter_map(|v| make_tri(v, 1, u32::MAX))
+                            .collect(),
+                    )
                 };
                 match (def.function_va, name) {
                     (RING_VA, "RING") => rings_placed.push(Pickup {
@@ -409,6 +568,17 @@ impl Session {
                         position: pl.position,
                         taken: false,
                     }),
+                    (RING_LINEAR_VA, "RING_LINEAR") if rules.ring_lines => {
+                        let angles = pl.rotation.map(i32::from);
+                        for position in ring_line(pl.position, angles, pl.parameters) {
+                            rings_placed.push(Pickup {
+                                layer: li,
+                                index: p.placement_index,
+                                position,
+                                taken: false,
+                            });
+                        }
+                    }
                     (SAVEPOINT_VA, "SAVEPOINT") => checkpoints.push(Pickup {
                         layer: li,
                         index: p.placement_index,
@@ -451,13 +621,34 @@ impl Session {
                             out,
                         });
                     }
+                    (_, "CAGED") if rules.prison_doors => doors.push(PrisonDoor {
+                        layer: li,
+                        index: p.placement_index,
+                        position: pl.position,
+                        yaw: pl.rotation[1],
+                        group: (pl.rotation[0] & 0xff) as u8,
+                        speed: pl.parameters[0],
+                        positive: pl.rotation[2] & 1 != 0,
+                        state: 0,
+                        slide: 0.0,
+                        velocity: 0.0,
+                    }),
+                    (_, n) if rules.prison_doors && enemy_counts(n, pl.parameters).is_some() => {
+                        enemies.push(Enemy {
+                            layer: li,
+                            index: p.placement_index,
+                            name: n.to_string(),
+                            position: pl.position,
+                            group: (pl.rotation[1] & 0xff) as u8,
+                            counted: enemy_counts(n, pl.parameters) == Some(true),
+                            alive: true,
+                        });
+                        *unimplemented
+                            .entry(format!("{name} (group count only)"))
+                            .or_insert(0) += 1;
+                    }
                     (_, "MLIFT") => {
-                        let solid = PlayWorld::from_tris(
-                            place(&lift_solid)
-                                .into_iter()
-                                .filter_map(|v| make_tri(v, 1, u32::MAX))
-                                .collect(),
-                        );
+                        let solid = solid(place(&lift_solid));
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
@@ -471,12 +662,14 @@ impl Session {
                         });
                     }
                     (_, "ELV") => {
-                        let solid = PlayWorld::from_tris(
-                            place(&elevator_solid)
-                                .into_iter()
-                                .filter_map(|v| make_tri(v, 1, u32::MAX))
-                                .collect(),
-                        );
+                        // The dynamic collision object sits
+                        // `elevator_collision_drop` below the placement.
+                        let at = [
+                            pl.position[0],
+                            pl.position[1] - movers_program.elevator_collision_drop,
+                            pl.position[2],
+                        ];
+                        let solid = solid(place_at(&elevator_solid, at));
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
@@ -490,13 +683,17 @@ impl Session {
                             solid,
                         });
                     }
-                    (CONTIRON_VA, "CONTIRON") | (CONTCHAO_VA, "CONTCHAO") => {
-                        for t in cube_tris(CONTAINER_EDGE) {
-                            if let Some(t) = make_tri(
-                                t.map(|v| place_y(v, pl.rotation[1], pl.position)),
-                                1,
-                                u32::MAX,
-                            ) {
+                    (CCUBE_VA, "CCUBE")
+                        if rules.invisible_cubes && cube_rotation_is_exact(pl.rotation) =>
+                    {
+                        // Invisible cube collision: CollisionData form 3
+                        // centred on the placement; the shared helper sets
+                        // its half-extents to CCUBE_BASE + Scale. Only boxes
+                        // whose shape does not depend on the unread rotation
+                        // rule are built (see `cube_rotation_is_exact`).
+                        let h = pl.parameters.map(|s| s + CCUBE_BASE);
+                        for t in box_tris(h, [0.0; 3]) {
+                            if let Some(t) = make_tri(t.map(|v| add(v, pl.position)), 1, u32::MAX) {
                                 world.push(t);
                             }
                         }
@@ -505,23 +702,69 @@ impl Session {
                             .or_insert(0) += 1;
                     }
                     (_, "BRIDGE") => {
-                        let solid = PlayWorld::from_tris(
-                            place(&bridge_solid)
-                                .into_iter()
-                                .filter_map(|v| make_tri(v, 1, u32::MAX))
-                                .collect(),
-                        );
+                        let bridge = Bridge::new(&movers_program, pl.position, pl.rotation[1]);
+                        let solid = solid(place(&bridge_solid));
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
-                            state: MoverState::Bridge(Bridge::new(
-                                &movers_program,
-                                pl.position,
-                                pl.rotation[1],
-                            )),
+                            state: MoverState::Bridge(bridge),
                             origin: pl.position,
                             solid,
                         });
+                    }
+                    (_, n) if static_solids.iter().any(|(s, _)| *s == n) => {
+                        let (_, tris) = static_solids.iter().find(|(s, _)| *s == n).unwrap();
+                        for t in place(tris) {
+                            if let Some(t) = make_tri(t, 1, u32::MAX) {
+                                world.push(t);
+                            }
+                        }
+                        *unimplemented
+                            .entry(format!("{name} (solid only)"))
+                            .or_insert(0) += 1;
+                    }
+                    (_, n) if collision_boxes.iter().any(|(s, _)| *s == n) => {
+                        let (_, rows) = collision_boxes.iter().find(|(s, _)| *s == n).unwrap();
+                        for row in rows {
+                            // Form 3 boxes with no row angles, whose shape is
+                            // the same however the placement rotation is
+                            // applied (see `cube_rotation_is_exact`).
+                            let on_axis = row.center[0] == 0.0 && row.center[2] == 0.0;
+                            // A box square in XZ about the Y axis is also
+                            // unchanged by quarter turns.
+                            let quarter = on_axis
+                                && row.size[0] == row.size[2]
+                                && pl.rotation[0] == 0
+                                && pl.rotation[2] == 0
+                                && pl.rotation[1] & 0x3fff == 0;
+                            let exact = row.form == 3
+                                && row.angles == [0; 3]
+                                && (quarter
+                                    || (cube_rotation_is_exact(pl.rotation)
+                                        && (pl.rotation[1] == 0 || on_axis)));
+                            if !exact {
+                                *unimplemented
+                                    .entry(format!("{name} row (form {}): rule not read", row.form))
+                                    .or_insert(0) += 1;
+                                continue;
+                            }
+                            let h = [row.size[0], row.size[1], row.size[2]];
+                            for t in box_tris(h, row.center) {
+                                if let Some(t) =
+                                    make_tri(t.map(|v| add(v, pl.position)), 1, u32::MAX)
+                                {
+                                    world.push(t);
+                                }
+                            }
+                            *unimplemented
+                                .entry(format!("{name} row (solid only)"))
+                                .or_insert(0) += 1;
+                        }
+                    }
+                    (CCUBE_VA, "CCUBE") if rules.invisible_cubes => {
+                        *unimplemented
+                            .entry(format!("{name} (rotated: rotation rule not read)"))
+                            .or_insert(0) += 1;
                     }
                     _ => *unimplemented.entry(name.to_string()).or_insert(0) += 1,
                 }
@@ -534,15 +777,14 @@ impl Session {
                 "no regular goal ring reaches its contact route",
             ));
         }
-        let tables = death_zones::read(src.exe, DEATH_ZONE_CONFIG)?;
+        let tables = death_zones::read(src.exe, rules.death_zone_config)?;
         let mut zones = vec![];
         for table in tables.values() {
             for z in &table.zones {
                 zones.push(death_zone_triangles(z)?);
             }
         }
-        let start_yaw = entry.yaw as f32 * std::f32::consts::TAU / 65536.0;
-        let mut s = Self {
+        Ok(Self {
             level: stage.dispatch.level,
             character: stage.dispatch.character,
             physics,
@@ -551,21 +793,8 @@ impl Session {
             frame: 0,
             rings: 0,
             score: 0,
-            deaths: 0,
-            outcome: Outcome::Playing,
-            player: Player {
-                position: entry.position,
-                velocity: [0.0; 3],
-                yaw: start_yaw,
-                grounded: false,
-                ground_normal: [0.0, 1.0, 0.0],
-                on_mover: None,
-                jump_hold: 0,
-                nocon: 0,
-            },
             start: entry.position,
-            start_yaw,
-            respawn: entry.position,
+            start_yaw: entry.yaw,
             slot_words: goal_program.initial_slot_words,
             movers,
             rings_placed,
@@ -575,9 +804,36 @@ impl Session {
             unimplemented,
             world,
             death_zones: zones,
+            group_counts: {
+                let mut c = [0u8; 256];
+                for e in enemies.iter().filter(|e| e.counted) {
+                    c[e.group as usize] = c[e.group as usize].wrapping_add(1);
+                }
+                c
+            },
+            enemies,
+            doors,
+        })
+    }
+
+    /// The switch query 0x80018E30: true when the group has no live
+    /// counted enemy.
+    pub fn group_clear(&self, group: u8) -> bool {
+        self.group_counts[group as usize] == 0
+    }
+
+    /// Report an enemy destroyed (by the walker's attacks, which are
+    /// main-program code). Decrements its group count as 0x80018B88 does.
+    pub fn destroy_enemy(&mut self, i: usize) -> bool {
+        let Some(e) = self.enemies.get_mut(i).filter(|e| e.alive) else {
+            return false;
         };
-        s.settle();
-        Ok(s)
+        e.alive = false;
+        if e.counted {
+            let c = &mut self.group_counts[e.group as usize];
+            *c = c.wrapping_sub(1);
+        }
+        true
     }
 
     /// Static terrain plus every mover's solid at its current position.
@@ -594,111 +850,20 @@ impl Session {
         w
     }
 
-    /// Peak height of a held jump under this controller (frames integrate as in `control`).
-    pub fn jump_height(&self) -> f32 {
-        let ph = &self.physics;
-        let (mut vy, mut h, mut hold) = (ph.jmp_y_spd, 0.0, ph.jump2_timer);
-        while vy > 0.0 {
-            h += vy;
-            if hold > 0 {
-                vy += ph.jmp_addit;
-                hold -= 1;
-            }
-            vy -= ph.gravity;
-        }
-        h
-    }
-
     pub fn death_zone_count(&self) -> usize {
         self.death_zones.len()
     }
 
+    /// Native death-zone volumes (what entering one does is not run here).
     pub fn death_zone_triangles(&self) -> impl Iterator<Item = &[V3; 3]> {
         self.death_zones.iter().flatten()
     }
 
-    /// Restart as the game does after a miss once checkpoint `index` (in
-    /// `checkpoints` order) has been passed: the player stands at it.
-    pub fn restart_from_checkpoint(&mut self, index: usize) -> Result<()> {
-        let c = self
-            .checkpoints
-            .get_mut(index)
-            .ok_or_else(|| Error::invalid("no such checkpoint"))?;
-        c.taken = true;
-        self.respawn = c.position;
-        self.player.position = c.position;
-        self.player.velocity = [0.0; 3];
-        self.player.on_mover = None;
-        self.settle();
-        Ok(())
-    }
-
-    /// Snap the player onto the ground below the start/respawn point.
-    fn settle(&mut self) {
-        let p = self.player.position;
-        if let Some((g, m)) = self.ground([p[0], p[1] + 20.0, p[2]], 400.0) {
-            self.player.position[1] = g.y;
-            self.player.grounded = true;
-            self.player.ground_normal = g.normal;
-            self.player.on_mover = m;
-        }
-    }
-
-    fn ground(&self, p: V3, depth: f32) -> Option<(Ground, Option<usize>)> {
-        let mut best = self.world.ground_below(p, depth).map(|g| (g, None));
-        for (i, m) in self.movers.iter().enumerate() {
-            let o = m.offset();
-            if let Some(mut g) = m.solid.ground_below(sub(p, o), depth) {
-                g.y += o[1];
-                // A mover flush with the floor carries the player.
-                if best.is_none_or(|(b, _)| g.y >= b.y - 0.05) {
-                    best = Some((g, Some(i)));
-                }
-            }
-        }
-        best
-    }
-
-    fn ceiling(&self, p: V3, reach: f32) -> Option<f32> {
-        let mut best = self.world.ceiling_above(p, reach);
-        for m in &self.movers {
-            let o = m.offset();
-            if let Some(y) = m.solid.ceiling_above(sub(p, o), reach) {
-                let y = y + o[1];
-                if best.is_none_or(|b| y < b) {
-                    best = Some(y);
-                }
-            }
-        }
-        best
-    }
-
-    fn push_out(&self, c: V3, r: f32) -> (V3, Option<V3>) {
-        let (mut total, mut normal) = self.world.push_out(c, r, 4);
-        for m in &self.movers {
-            let o = m.offset();
-            let (d, n) = m.solid.push_out(sub(add(c, total), o), r, 2);
-            if d != [0.0; 3] {
-                total = add(total, d);
-                normal = n;
-            }
-        }
-        (total, normal)
-    }
-
-    pub fn player_center(&self) -> V3 {
-        add(self.player.position, [0.0, self.physics.center_height, 0.0])
-    }
-
-    /// Advance one 60 Hz frame.
-    pub fn step(&mut self, c: Controls) -> Vec<Event> {
+    /// Advance one 60 Hz frame of the native object rules.
+    pub fn step(&mut self, player: Option<PlayerSample>) -> Vec<Event> {
         let mut events = vec![];
-        if self.outcome == Outcome::Cleared {
-            return events;
-        }
         self.frame += 1;
-        // 1. Movers update from last frame's standing state and carry the rider.
-        let riding = self.player.on_mover.filter(|_| self.player.grounded);
+        let standing = player.and_then(|p| p.standing_on);
         let elevators: Vec<(V3, bool)> = self
             .movers
             .iter()
@@ -708,8 +873,7 @@ impl Session {
             })
             .collect();
         for i in 0..self.movers.len() {
-            let before = self.movers[i].position();
-            let stood = riding == Some(i);
+            let stood = standing == Some(i);
             let started = match &mut self.movers[i].state {
                 MoverState::Lift(l) => l
                     .step(&self.movers_program, stood)
@@ -722,245 +886,25 @@ impl Session {
                     .then_some(Event::BridgeStarted { mover: i }),
             };
             events.extend(started);
-            if stood {
-                let d = sub(self.movers[i].position(), before);
-                self.player.position = add(self.player.position, d);
+        }
+        for (i, d) in self.doors.iter_mut().enumerate() {
+            let was = d.state;
+            let clear = self.group_counts[d.group as usize] == 0;
+            if d.step(clear) == Some(DoorSound::Opened) {
+                events.push(Event::DoorOpened { door: i });
+            }
+            if was == 0 && d.state == 1 {
+                events.push(Event::DoorOpening { door: i });
             }
         }
-        // 2. Controller (adaptation, parameters from PhysicsArray).
-        let mut pl = self.player.clone();
-        self.control(&mut pl, c);
-        // 3. Integrate with collision.
-        self.integrate(&mut pl);
-        self.player = pl;
-        // 4. Objects.
-        self.springs(&mut events);
-        self.objects(&mut events);
+        if let Some(p) = player {
+            self.objects(p, &mut events);
+        }
         events
     }
 
-    /// Free flight (no input) from a launch state until landing; used by the
-    /// offline planner to find where a spring delivers the player.
-    pub fn predict_landing(
-        &self,
-        position: V3,
-        velocity: V3,
-        nocon: i32,
-        max_frames: u32,
-    ) -> Option<V3> {
-        let mut pl = self.player.clone();
-        pl.position = position;
-        pl.velocity = velocity;
-        pl.grounded = false;
-        pl.on_mover = None;
-        pl.nocon = nocon;
-        pl.jump_hold = 0;
-        for f in 0..max_frames {
-            self.control(&mut pl, Controls::default());
-            self.integrate(&mut pl);
-            if pl.grounded && f > 2 {
-                return Some(pl.position);
-            }
-            if pl.position[1] < self.world.min[1] - 300.0 {
-                return None;
-            }
-        }
-        None
-    }
-
-    fn control(&self, pl: &mut Player, c: Controls) {
-        let ph = &self.physics;
-        let c = if pl.nocon > 0 {
-            pl.nocon -= 1;
-            Controls {
-                stick: [0.0; 2],
-                jump: false,
-                ..c
-            }
-        } else {
-            c
-        };
-        let mag = (c.stick[0] * c.stick[0] + c.stick[1] * c.stick[1])
-            .sqrt()
-            .min(1.0);
-        // Camera-relative world direction. Forward is -Z at camera yaw 0.
-        let (s, co) = c.camera_yaw.sin_cos();
-        let fwd = [-s, 0.0, -co];
-        let right = [co, 0.0, -s];
-        let mut dir = add(scale(right, c.stick[0]), scale(fwd, c.stick[1]));
-        let dl = len(dir);
-        if dl > 1e-4 {
-            dir = scale(dir, 1.0 / dl);
-        }
-        let mut h = [pl.velocity[0], 0.0, pl.velocity[2]];
-        let speed = len(h);
-        if mag > 0.05 && dl > 1e-4 {
-            let target_yaw = (-dir[0]).atan2(-dir[2]);
-            let mut dy = target_yaw - pl.yaw;
-            while dy > std::f32::consts::PI {
-                dy -= std::f32::consts::TAU;
-            }
-            while dy < -std::f32::consts::PI {
-                dy += std::f32::consts::TAU;
-            }
-            let turn = if pl.grounded { 0.25 } else { 0.08 };
-            pl.yaw += dy.clamp(-turn, turn);
-            let accel = if pl.grounded {
-                ph.run_accel
-            } else {
-                ph.air_accel
-            };
-            let target = ph.rush_speed * mag;
-            let facing = [-pl.yaw.sin(), 0.0, -pl.yaw.cos()];
-            let new_speed = if speed < target {
-                (speed + accel).min(target)
-            } else if pl.grounded {
-                (speed - ph.slow_down).max(target)
-            } else {
-                speed
-            };
-            // Ground velocity follows the facing; air keeps momentum and steers.
-            h = if pl.grounded {
-                scale(facing, new_speed)
-            } else {
-                let blend = add(scale(h, 0.95), scale(facing, new_speed * 0.05));
-                let bl = len(blend);
-                if bl > 1e-4 {
-                    scale(blend, new_speed / bl)
-                } else {
-                    blend
-                }
-            };
-        } else if pl.grounded {
-            let ns = (speed - ph.slow_down).max(0.0);
-            h = if speed > 1e-4 {
-                scale(h, ns / speed)
-            } else {
-                [0.0; 3]
-            };
-        }
-
-        pl.velocity[0] = h[0];
-        pl.velocity[2] = h[2];
-        if c.jump && pl.grounded {
-            pl.velocity[1] = ph.jmp_y_spd;
-            pl.grounded = false;
-            pl.on_mover = None;
-            pl.jump_hold = ph.jump2_timer;
-        } else if !pl.grounded {
-            if c.jump && pl.jump_hold > 0 && pl.velocity[1] > 0.0 {
-                pl.velocity[1] += ph.jmp_addit;
-                pl.jump_hold -= 1;
-            } else {
-                pl.jump_hold = 0;
-            }
-            pl.velocity[1] = (pl.velocity[1] - ph.gravity).max(-ph.lim_v_spd);
-        }
-    }
-
-    fn integrate(&self, pl: &mut Player) {
-        let ph = &self.physics;
-        let mut pos = pl.position;
-        let vel = pl.velocity;
-        // Sub-step so fast moves cannot skip thin floors or walls.
-        let steps = ((len(vel) / (ph.rad * 0.5)).ceil() as usize).clamp(1, 16);
-        let mut grounded = false;
-        let mut ground_normal = [0.0, 1.0, 0.0];
-        let mut on_mover = None;
-        let mut vy = vel[1];
-        for _ in 0..steps {
-            let f = 1.0 / steps as f32;
-            pos[0] += vel[0] * f;
-            pos[2] += vel[2] * f;
-            // Walls: sphere above the step height.
-            let center = [pos[0], pos[1] + STEP_UP * 0.5 + ph.rad, pos[2]];
-            let (d, _) = self.push_out(center, ph.rad);
-            pos[0] += d[0];
-            pos[2] += d[2];
-            // Vertical.
-            if vy > 0.0 {
-                let top = pos[1] + ph.height;
-                if let Some(ceil) = self.ceiling([pos[0], top - 1.0, pos[2]], vy * f + 1.0) {
-                    pos[1] = ceil - ph.height - 0.01;
-                    vy = 0.0;
-                } else {
-                    pos[1] += vy * f;
-                }
-            } else {
-                let probe_top = pos[1] + STEP_UP;
-                let snap = if pl.grounded && vy <= 0.0 {
-                    STEP_UP
-                } else {
-                    0.0
-                };
-                let depth = STEP_UP + snap + (-vy * f);
-                match self.ground([pos[0], probe_top, pos[2]], depth) {
-                    Some((g, m)) if g.y >= pos[1] + vy * f - snap - 0.01 => {
-                        pos[1] = g.y;
-                        grounded = true;
-                        ground_normal = g.normal;
-                        on_mover = m;
-                        vy = 0.0;
-                    }
-                    _ => pos[1] += vy * f,
-                }
-            }
-        }
-        if grounded {
-            vy = 0.0;
-        }
-        pl.position = pos;
-        pl.velocity[1] = vy;
-        pl.grounded = grounded;
-        pl.ground_normal = ground_normal;
-        pl.on_mover = if grounded { on_mover } else { None };
-    }
-
-    fn springs(&mut self, events: &mut Vec<Event>) {
-        let center = self.player_center();
-        let rad = self.physics.rad;
-        let pl = &mut self.player;
-        let running = (pl.velocity[0] * pl.velocity[0] + pl.velocity[2] * pl.velocity[2]).sqrt();
-        for (i, sp) in self.springs.iter_mut().enumerate() {
-            let near = len(sub(sp.task.position, center)) < SPRING_CONTACT + rad;
-            let player = SpringPlayer {
-                position: pl.position,
-                running_speed: running,
-                item: 0,
-            };
-            let calls = sp
-                .task
-                .step(near.then_some(0u8), Some(player), sp.out, bams_sin_cos);
-            for call in calls {
-                match call {
-                    SpringCall::SetPosition(0, p) => pl.position = p,
-                    SpringCall::SpringVelocity(0, v) => {
-                        pl.velocity = v;
-                        pl.grounded = false;
-                        pl.on_mover = None;
-                        events.push(Event::Spring { spring: i });
-                    }
-                    SpringCall::VelocityYRotationNoControl {
-                        slot: 0,
-                        velocity_y,
-                        angles,
-                        frames,
-                    } => {
-                        pl.velocity = rotate_zxy([0.0, velocity_y, 0.0], angles);
-                        pl.nocon = frames;
-                        pl.grounded = false;
-                        pl.on_mover = None;
-                        events.push(Event::Spring { spring: i });
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    fn objects(&mut self, events: &mut Vec<Event>) {
-        let center = self.player_center();
-        let feet = self.player.position;
+    fn objects(&mut self, player: PlayerSample, events: &mut Vec<Event>) {
+        let center = player.center;
         for r in self.rings_placed.iter_mut().filter(|r| !r.taken) {
             if len(sub(r.position, center)) < RING_PICKUP_DISTANCE {
                 r.taken = true;
@@ -973,23 +917,9 @@ impl Session {
                 });
             }
         }
-        for c in self.checkpoints.iter_mut().filter(|c| !c.taken) {
-            let d = [c.position[0] - feet[0], c.position[2] - feet[2]];
-            if (d[0] * d[0] + d[1] * d[1]).sqrt() < CHECKPOINT_RADIUS
-                && (c.position[1] - feet[1]).abs() < 40.0
-            {
-                c.taken = true;
-                self.respawn = c.position;
-                events.push(Event::Checkpoint {
-                    layer: c.layer,
-                    index: c.index,
-                });
-            }
-        }
-        let rad = self.physics.rad;
         let local = self.goal_program_local_effect;
-        for g in &mut self.goals {
-            if len(sub(g.position, center)) >= GOAL_RADIUS + rad {
+        for (i, g) in self.goals.iter_mut().enumerate() {
+            if player.touching_goal != Some(i) {
                 continue;
             }
             let Ok(calls) = g
@@ -1010,27 +940,6 @@ impl Session {
                     sound,
                 });
             }
-        }
-        // The stage task consumes slot word 2 as the goal handoff.
-        if self.slot_words[0] == 2 {
-            self.outcome = Outcome::Cleared;
-            events.push(Event::Cleared { frame: self.frame });
-            return;
-        }
-        let zone = self.death_zones.iter().any(|z| inside_volume(z, center));
-        if zone || self.player.position[1] < self.world.min[1] - 300.0 {
-            self.deaths += 1;
-            events.push(Event::Death {
-                frame: self.frame,
-                at: self.player.position,
-                zone,
-            });
-            self.player.position = self.respawn;
-            self.player.velocity = [0.0; 3];
-            self.player.on_mover = None;
-            self.rings = 0;
-            self.settle();
-            events.push(Event::Respawn { frame: self.frame });
         }
     }
 

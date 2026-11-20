@@ -96,41 +96,16 @@ pub fn death_zone_triangles(zone: &DeathZone) -> Result<Vec<[V3; 3]>> {
     Ok(out)
 }
 
-/// Rotate a local point by a SET placement's Y angle (BAMS) and translate it.
-/// SET X/Z words are object parameters for most stage objects, so they are
-/// deliberately not applied here.
+/// Rotate a local point by a SET placement's Y angle (BAMS) and translate it,
+/// as the collision objects these stages register do (Y kept, X and Z
+/// zeroed) through njRotateY (`ninja_trig::nj_rotate_sin_cos`).
 pub fn place_y(p: V3, yaw_bams: u16, at: V3) -> V3 {
-    let a = yaw_bams as f32 * std::f32::consts::TAU / 65536.0;
-    let (s, c) = a.sin_cos();
+    let (s, c) = crate::iron_gate_movers::rotate_sin_cos(yaw_bams);
     [
         at[0] + p[0] * c + p[2] * s,
         at[1] + p[1],
         at[2] - p[0] * s + p[2] * c,
     ]
-}
-
-/// True when `p` lies inside the closed volume (odd crossings of an upward ray).
-pub fn inside_volume(tris: &[[V3; 3]], p: V3) -> bool {
-    // A tiny fixed offset keeps the ray off shared diagonals and edges.
-    let p = [p[0] + 1.37e-3, p[1], p[2] + 2.11e-3];
-    let mut crossings = 0;
-    for t in tris {
-        let [a, b, c] = *t;
-        let d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
-        if d.abs() < 1e-9 {
-            continue;
-        }
-        let l1 = ((b[2] - c[2]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[2] - c[2])) / d;
-        let l2 = ((c[2] - a[2]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[2] - c[2])) / d;
-        let l3 = 1.0 - l1 - l2;
-        if l1 < 0.0 || l2 < 0.0 || l3 < 0.0 {
-            continue;
-        }
-        if l1 * a[1] + l2 * b[1] + l3 * c[1] > p[1] {
-            crossings += 1;
-        }
-    }
-    crossings % 2 == 1
 }
 
 #[cfg(test)]
@@ -140,32 +115,68 @@ mod tests {
     #[test]
     fn yaw_placement_matches_ninja_bams() {
         let p = place_y([10.0, 1.0, 0.0], 0x4000, [100.0, 0.0, 0.0]);
-        assert!(
-            (p[0] - 100.0).abs() < 1e-4 && (p[2] + 10.0).abs() < 1e-4,
-            "{p:?}"
-        );
+        // njRotateY's cosine for 0x4000 is a few 1e-7, not zero.
+        assert!((p[0] - 100.0).abs() < 1e-4 && p[2] == -10.0, "{p:?}");
     }
+}
 
-    #[test]
-    fn closed_box_contains_center() {
-        // Unit cube from 12 triangles.
-        let v = |x: f32, y: f32, z: f32| [x, y, z];
-        let q = |a: V3, b: V3, c: V3, d: V3| [[a, b, c], [a, c, d]];
-        let mut t = vec![];
-        t.extend(q(
-            v(0., 0., 0.),
-            v(1., 0., 0.),
-            v(1., 0., 1.),
-            v(0., 0., 1.),
-        ));
-        t.extend(q(
-            v(0., 1., 0.),
-            v(1., 1., 0.),
-            v(1., 1., 1.),
-            v(0., 1., 1.),
-        ));
-        assert!(inside_volume(&t, [0.5, 0.5, 0.5]));
-        assert!(!inside_volume(&t, [0.5, 1.5, 0.5]));
-        assert!(!inside_volume(&t, [1.5, 0.5, 0.5]));
+/// One SA2 CollisionData row (0x30 bytes) from a stage module's data.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CollisionRow {
+    pub kind: u8,
+    /// Shape: 0 sphere, 1 cylinder, 2 second cylinder kind, 3 box, ...
+    pub form: u8,
+    pub push: u8,
+    pub damage: u8,
+    pub attr: u32,
+    pub center: V3,
+    /// a, b, c, d sizes (for form 3, the box half-extents are a, b, c).
+    pub size: [f32; 4],
+    pub angles: [u32; 3],
+}
+
+/// Read `count` CollisionData rows at `offset` in section 5 of the
+/// catalogued stage module `module_file` (digest-checked).
+pub fn collision_rows(
+    rel_bytes: &[u8],
+    module_file: &str,
+    offset: u32,
+    count: usize,
+) -> Result<Vec<CollisionRow>> {
+    let info = crate::stage_land::catalog()
+        .iter()
+        .find(|i| i.filename == module_file)
+        .ok_or_else(|| Error::invalid("stage module is not catalogued"))?;
+    if rel_bytes.len() != info.size || crate::manifest::sha256(rel_bytes) != info.sha256 {
+        return Err(Error::invalid("unsupported stage module revision"));
     }
+    let rel = crate::city_rel::CityRel::read_identified(rel_bytes, info.module)?;
+    let d = rel.data(5)?;
+    let word = |at: usize| -> Result<u32> {
+        d.get(at..at + 4)
+            .map(|w| u32::from_be_bytes(w.try_into().unwrap()))
+            .ok_or_else(|| Error::invalid("collision row outside section"))
+    };
+    let float = |at: usize| word(at).map(f32::from_bits);
+    (0..count)
+        .map(|k| {
+            let b = offset as usize + 0x30 * k;
+            let head = word(b)?.to_be_bytes();
+            Ok(CollisionRow {
+                kind: head[0],
+                form: head[1],
+                push: head[2],
+                damage: head[3],
+                attr: word(b + 4)?,
+                center: [float(b + 8)?, float(b + 12)?, float(b + 16)?],
+                size: [
+                    float(b + 20)?,
+                    float(b + 24)?,
+                    float(b + 28)?,
+                    float(b + 32)?,
+                ],
+                angles: [word(b + 36)?, word(b + 40)?, word(b + 44)?],
+            })
+        })
+        .collect()
 }
