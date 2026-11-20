@@ -57,7 +57,7 @@ rules, so the check is "the same instructions, on this machine model".
 | Facing downhill | njScalor 0x801151F4 and njUnitVector 0x80115D24 (Gekko frsqrte/fres estimates); fn_80047CBC and fn_80048150 aim the motion yaw down slopes from gravity in the player's frame | **Ported** (`ninja_vector::scalor`, `unit_vector`, `player_slope`) |
 | Path following (loops, rails) | fn_80038F40 with MSL floorf 0x80111240, fn_8002B770 (wrap), fn_80027D50, fn_8011B51C (point-line), fn_800CE5E8 (point-segment), fn_8005C460 (nearest point), fn_8005CDCC (segment record), fn_8005C910 (sample); reuses Iron Gate's plane_distance (fn_8011B6C8) and njDistanceP2P/sqrtf | **Ported** (`player_path`) |
 | Ground acceleration | fn_8004B568 (stick-relative) and fn_8004BA74 (camera-relative steering, with njRotate 0x80115218 = PSMTXRotAxisRad + PSVECNormalize) | **Ported** (`player_accel`) |
-| Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
+| Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; hands over to fn_8004BA74 (surface 0x100000) or fn_8004B568 (surface 0x100) | **Ported** (`player_accel::ground_move`) |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
 ## Ported so far
@@ -151,3 +151,20 @@ rules, so the check is "the same instructions, on this machine model".
   bit for bit. To run PSMTXRotAxisRad, the harness now lets a paired-single
   function call plain code (MSL sinf/cosf): Unicorn runs the callee and
   hands back to the interpreter.
+
+- **Shared ground movement** (`player_accel::ground_move`, fn_8004C734).
+  Surface flag 0x100000 hands over to fn_8004BA74 and 0x100 to fn_8004B568.
+  Otherwise it adds gravity times weight in the player's frame, with more
+  on steep ground: all of it on a banked wall at speed, 5x, 0.8x or 0.4x
+  extra weight below up -0.4, -0.3, -0.1, and 4.225x, 2x or 1.4x more
+  sideways pull on walls and slants. After air resistance it turns toward
+  the stick: on the spot when standing, then fn_80047714 or fn_800473B4
+  by speed and turn size, the strong downhill turn (fn_80047CBC) on surface
+  0x80000, and the path (fn_80038F40) on status 0x2000. Pushing into a wall
+  (player work +0x70) bends the stick along it: the plane intersection of
+  the wall and the player's gravity plane (Iron Gate's fn_8011B7B8). The
+  walkers (characters 6 and 7) turn with fn_800473B4 throughout, or always
+  when their object's +0x35C byte is 1. The same friction steps as
+  fn_8004BA74 finish the frame, damped 10x when the player is tipped and
+  slow. `tests/player_accel_dol.rs` matches 6,000 frames against main.dol,
+  bit for bit.

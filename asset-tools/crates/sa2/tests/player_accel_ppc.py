@@ -120,8 +120,10 @@ def write_path(pt):
             for k in range(3): m.put(a + 16 + 4 * k, 'I', r[2][k])
 
 
-steered = []
-for _ in range(3000):
+TP, OBJ = 0x81000E00, 0x81001000
+
+
+def ground_case(fn):
     phys = list(rng.choice(rows))
     if rng.random() < 0.3:
         phys = [fb(f32(rng.uniform(-1, 1) * abs(bf(w)) * 2)) if rng.random() < 0.3 else w for w in phys]
@@ -145,7 +147,12 @@ for _ in range(3000):
     stick = rng.choice([angles[1] & 0xFFFF, rng.randrange(0x10000), (angles[1] + 0x1800) & 0xFFFF])
     raw = [rng.randrange(-128, 128), rng.randrange(-128, 128)]
     cam = [f32(rng.uniform(-300, 300)) for _ in range(3)]
-    surface = rng.choice([0, 4, rng.randrange(1 << 32)])
+    surface = rng.choice([0, 4, 0x80000, 0x80004, rng.randrange(1 << 32)])
+    if fn == 0x8004C734 and rng.random() < 0.9:
+        surface &= ~0x100100
+    character = rng.choice([0, 1, 5, 6, 7])
+    wall = rng.choice([[0.0, 0.0, 0.0], unit(), unit()])
+    sharp = rng.choice([0, 1])
     frame = rng.randrange(1 << 32)
     pt, pos = make_path(); write_path(pt)
     tpos = [f32(rng.choice(pos)[k] + rng.uniform(-20, 20)) for k in range(3)]
@@ -172,8 +179,12 @@ for _ in range(3000):
     m.put(RAW + 0x34 * p + 0x1C, 'h', raw[0]); m.put(RAW + 0x34 * p + 0x1E, 'h', raw[1])
     m.put(CAMS + 4 * p, 'I', CAM)
     for i, x in enumerate(cam): m.put(CAM + 0x18 + 4 * i, 'f', x)
-    m.call(0x8004BA74, r3=T, r4=M, r5=P)
-    steered.append({'status': status, 'angles': angles, 'pos': [fb(x) for x in tpos], 'nocon': nocon,
+    m.put(P + 1, 'b', character)
+    for i, x in enumerate(wall): m.put(P + 0x70 + 4 * i, 'f', x)
+    m.put(0x801E7788 + 4 * p, 'I', TP); m.put(TP + 0x40, 'I', OBJ); m.put(OBJ + 0x35C, 'B', sharp)
+    m.call(fn, r3=T, r4=M, r5=P)
+    return {'character': character, 'wall': [fb(x) for x in wall], 'sharp': sharp,
+            'status': status, 'angles': angles, 'pos': [fb(x) for x in tpos], 'nocon': nocon,
                     'confuse': confuse, 'speed': [fb(x) for x in speed], 'base': [fb(x) for x in base],
                     'motion': [fb(x) for x in motion], 'aim': aim, 'phys': phys,
                     'gravity': [fb(x) for x in gravity], 'down': [fb(x) for x in down], 'stage': stage,
@@ -185,5 +196,9 @@ for _ in range(3000):
                     'outSpeed': [m.get(P + 0x64 + 4 * i, 'I') for i in range(3)],
                     'outAccel': [m.get(P + 0x58 + 4 * i, 'I') for i in range(3)],
                     'outExcess': m.get(P + 0x38, 'I'), 'outPush': m.get(P + 0x3C, 'I'),
-                    'outPathDist': m.get(P + 0x30, 'I'), 'outAim': m.get(M + 0x1C, 'i')})
-print(json.dumps({'plain': cases, 'rotate': rot, 'steered': steered}))
+                    'outPathDist': m.get(P + 0x30, 'I'), 'outAim': m.get(M + 0x1C, 'i')}
+
+
+steered = [ground_case(0x8004BA74) for _ in range(3000)]
+moves = [ground_case(0x8004C734) for _ in range(6000)]
+print(json.dumps({'plain': cases, 'rotate': rot, 'steered': steered, 'move': moves}))

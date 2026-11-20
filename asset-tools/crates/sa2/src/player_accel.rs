@@ -1,6 +1,7 @@
 //! The player's ground acceleration for one frame, as SA2B's main.dol
-//! (GameCube, GSNE8P) computes it: fn_8004B568 (stick-relative) and
-//! fn_8004BA74 (camera-relative steering). Both add gravity and air
+//! (GameCube, GSNE8P) computes it: fn_8004B568 (stick-relative),
+//! fn_8004BA74 (camera-relative steering) and fn_8004C734, the ground step
+//! seven character mains share. Both add gravity and air
 //! resistance, turn toward the input (fn_80047714 / fn_800473B4) and add
 //! the stick's push or the slow-down, with the friction limits that stop a
 //! standing player sliding. `tests/player_accel_dol.rs` checks them against
@@ -13,9 +14,9 @@ use crate::{
     player_analog::{get_analog, AnalogContext, AnalogPlayer},
     player_path::{follow, Path, PathPlayer},
     player_physics::PlayerParameters,
-    player_slope::{slope_turn, SlopePlayer},
+    player_slope::{slope_turn, slope_turn_strong, SlopePlayer},
     player_turn::{adjust_angle, diff_angle, turn_smoothly, turn_toward, TurnPlayer},
-    walker_collide::{plane_distance, Plane},
+    walker_collide::{plane_distance, plane_intersection, Line, Plane},
 };
 
 /// sdata2 constants (r2 = 0x803B6520).
@@ -54,6 +55,10 @@ pub struct GroundPlayer {
     pub surface: u32,
     /// Floor normal (+0x1C of the collision info at player work +0x90).
     pub normal: [f32; 3],
+    /// Player work +1 (character number) and +0x70 (the normal of a wall
+    /// the player is pushing against, zero when none).
+    pub character: i8,
+    pub wall: [f32; 3],
 }
 
 impl GroundPlayer {
@@ -74,6 +79,49 @@ impl GroundPlayer {
             up: self.up,
             scale: self.scale,
         }
+    }
+
+    fn slope(&self, phys: &PlayerParameters) -> SlopePlayer {
+        SlopePlayer {
+            status: self.status,
+            angles: self.angles,
+            nocon: self.nocon,
+            surface: self.surface,
+            speed: self.speed,
+            jog_speed: phys.jog_speed,
+            motion: self.motion,
+            aim: self.aim,
+        }
+    }
+
+    /// fn_80038F40 on the player's path, which the original reads whenever
+    /// status bit 0x2000 is set.
+    fn follow(
+        &mut self,
+        stack: &mut MatrixStack,
+        phys: &PlayerParameters,
+        path: Option<&Path>,
+        stick: f32,
+    ) {
+        let path = path.expect("status 0x2000 needs the player's path");
+        let mut pp = PathPlayer {
+            status: self.status,
+            angles: self.angles,
+            pos: self.pos,
+            speed_x: self.speed[0],
+            dash_speed: phys.dash_speed,
+            path_dist: self.path_dist,
+            normal: self.normal,
+            aim: self.aim,
+        };
+        follow(stack, path, &mut pp, stick);
+        (
+            self.status,
+            self.angles,
+            self.speed[0],
+            self.path_dist,
+            self.aim,
+        ) = (pp.status, pp.angles, pp.speed_x, pp.path_dist, pp.aim);
     }
 
     /// Turn on the spot: yaw toward `target` by up to 0x2000, velocity
@@ -267,16 +315,7 @@ pub fn accelerate_steered(
     let push = if !active {
         let mut push = ZERO;
         if p.up < TILTED {
-            let mut s = SlopePlayer {
-                status: p.status,
-                angles: p.angles,
-                nocon: p.nocon,
-                surface: p.surface,
-                speed: p.speed,
-                jog_speed: phys.jog_speed,
-                motion: p.motion,
-                aim: p.aim,
-            };
+            let mut s = p.slope(phys);
             slope_turn(
                 stack,
                 &mut s,
@@ -297,24 +336,11 @@ pub fn accelerate_steered(
         let mut ang = analog.angle.unwrap_or_default();
         let mag = analog.magnitude.unwrap_or_default();
         if p.status & 0x2000 != 0 {
-            let path = path.expect("status 0x2000 needs the player's path");
-            let mut pp = PathPlayer {
-                status: p.status,
-                angles: p.angles,
-                pos: p.pos,
-                speed_x: p.speed[0],
-                dash_speed: phys.dash_speed,
-                path_dist: p.path_dist,
-                normal: p.normal,
-                aim: p.aim,
-            };
-            follow(stack, path, &mut pp, input.analog.magnitude);
-            (p.status, p.angles, p.speed[0], p.path_dist, p.aim) =
-                (pp.status, pp.angles, pp.speed_x, pp.path_dist, pp.aim);
+            p.follow(stack, phys, path, input.analog.magnitude);
             lift = ZERO - PATH_LIFT;
             ang = p.aim;
         }
-        let mut mag = push_for_speed(p.speed[0], mag, phys);
+        let mut mag = push_below_max(p.speed[0], mag, phys).unwrap_or(mag * phys.run_accel);
         let d = diff_angle(p.angles[1], ang);
         if p.speed[0] == ZERO && d > 0x1000 {
             p.aim = ang;
@@ -328,12 +354,27 @@ pub fn accelerate_steered(
         mag
     };
 
+    settle_x(p, phys, &mut acc, push, active);
+    settle_z(p, phys, &mut acc);
+    acc[1] += lift;
+    p.accel = acc;
+}
+
+/// The forward acceleration's friction and push step fn_8004BA74 and
+/// fn_8004C734 share (sticking still, ground grip, the lim_frict limit).
+fn settle_x(
+    p: &mut GroundPlayer,
+    phys: &PlayerParameters,
+    acc: &mut [f32; 3],
+    push: f32,
+    active: bool,
+) {
     let sx = p.speed[0];
     let scale = p.scale;
     let limit = |acc: &[f32; 3]| scale * (acc[1] * phys.lim_frict);
     let slow_creep = |x: f32| !active && sx <= phys.jog_speed && creeping(x);
     if sx == ZERO {
-        let lim = limit(&acc);
+        let lim = limit(acc);
         acc[0] += push;
         if !active {
             if acc[0] < lim && acc[0] > -lim {
@@ -371,11 +412,11 @@ pub fn accelerate_steered(
         } else if slow_creep(acc[0]) {
             acc[0] = ZERO;
         } else {
-            let a = limit(&acc) + push;
+            let a = limit(acc) + push;
             acc[0] = if a >= ZERO { ZERO } else { a };
         }
     } else {
-        let lim = limit(&acc);
+        let lim = limit(acc);
         if sx < ZERO && creeping(acc[0]) {
             acc[0] += push;
             if acc[0] * push < ZERO {
@@ -395,9 +436,14 @@ pub fn accelerate_steered(
             acc[0] += push;
         }
     }
+}
 
+/// The sideways acceleration's friction step they share.
+fn settle_z(p: &GroundPlayer, phys: &PlayerParameters, acc: &mut [f32; 3]) {
+    let scale = p.scale;
+    let limit = |acc: &[f32; 3]| scale * (acc[1] * phys.lim_frict);
     if p.speed[2] == ZERO {
-        let lim = limit(&acc);
+        let lim = limit(acc);
         if acc[2] < lim && acc[2] > -lim {
             acc[2] = ZERO;
         }
@@ -435,17 +481,16 @@ pub fn accelerate_steered(
             acc[2] = z;
         }
     }
-    acc[1] += lift;
-    p.accel = acc;
 }
 
-/// The stick's push scaled by run_accel, by speed band.
-fn push_for_speed(sx: f32, mag: f32, phys: &PlayerParameters) -> f32 {
+/// The stick's push scaled by run_accel, by speed band below max_x_spd
+/// (None at or above it).
+fn push_below_max(sx: f32, mag: f32, phys: &PlayerParameters) -> Option<f32> {
     let accel = phys.run_accel;
     if sx >= phys.max_x_spd || sx.is_nan() || phys.max_x_spd.is_nan() {
-        return mag * accel;
+        return None;
     }
-    if sx < phys.jog_speed {
+    Some(if sx < phys.jog_speed {
         if mag > PUSH_JOG {
             mag * accel
         } else if sx < RUN_ACCEL_FAST * phys.jog_speed {
@@ -467,7 +512,7 @@ fn push_for_speed(sx: f32, mag: f32, phys: &PlayerParameters) -> f32 {
         }
     } else {
         mag * accel
-    }
+    })
 }
 
 /// The aim from the raw stick, turned about the player's gravity axis from
@@ -535,4 +580,232 @@ fn steer_by_camera(
         }
     }
     acc_z
+}
+
+/// More sdata2 constants fn_8004C734 uses.
+const FLAT: f32 = f32::from_bits(0x3dcc_cccd); // r2-0x75A8, 0.1
+const BANKED: f32 = f32::from_bits(0x3f19_999a); // r2-0x7514, 0.6
+const CLIMB_SPEED: f32 = f32::from_bits(0x3f94_7ae1); // r2-0x74BC, 1.16
+const STEEP: [f32; 3] = [
+    f32::from_bits(0xbecc_cccd), // r2-0x74D0, -0.4
+    f32::from_bits(0xbe99_999a), // r2-0x7418, -0.3
+    f32::from_bits(0xbdcc_cccd), // r2-0x75A0, -0.1
+];
+const STEEP_WEIGHT: [f32; 3] = [
+    5.0,                         // r2-0x75F0
+    f32::from_bits(0x3f4c_cccd), // r2-0x7560, 0.8
+    f32::from_bits(0x3ecc_cccd), // r2-0x7518, 0.4
+];
+const WALL: f32 = 0.5; // r2-0x75CC
+const WALL_GRAVITY: f32 = f32::from_bits(0x4087_3333); // r2-0x7414, 4.225
+const SIDE: f32 = f32::from_bits(0x3f33_3333); // r2-0x7534, 0.7
+const SIDE_GRAVITY: f32 = 2.0; // r2-0x75FC
+const SLANT: f32 = f32::from_bits(0x3f5e_b852); // r2-0x749C, 0.87
+const SLANT_GRAVITY: f32 = f32::from_bits(0x3fb3_3333); // r2-0x74E4, 1.4
+const STRONG_SLOPE: f32 = f32::from_bits(0x3f70_a3d7); // r2-0x7410, 0.94
+const TIPPED_DAMP: f32 = 10.0; // r2-0x7600
+
+/// What fn_8004C734 reads from outside the player besides `SteerInput`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MoveInput {
+    pub steer: SteerInput,
+    /// For characters 6 and 7 (the walkers): byte +0x35C of the object at
+    /// +0x40 of the player's task (0x801E7788[player]); 1 turns sharply.
+    pub walker_sharp: u8,
+}
+
+/// fn_8004C734(task work, motion work, player work): the ground movement
+/// step seven character mains share. Surface flag 0x100000 hands over to
+/// fn_8004BA74 and 0x100 to fn_8004B568.
+pub fn ground_move(
+    stack: &mut MatrixStack,
+    p: &mut GroundPlayer,
+    phys: &PlayerParameters,
+    input: &MoveInput,
+    path: Option<&Path>,
+) {
+    let steer = &input.steer;
+    if p.surface & 0x10_0000 != 0 {
+        return accelerate_steered(stack, p, phys, steer, path);
+    }
+    if p.surface & 0x100 != 0 {
+        return accelerate(stack, p, phys, steer.gravity, steer.analog);
+    }
+    let mut lift = ZERO;
+    let acc = [0, 1, 2].map(|k| fmadds(steer.gravity[k], phys.weight, p.base[k]));
+    let mut acc = unrotate_by_angles(stack, p.angles, acc);
+    let analog = get_analog(stack, p.analog(), steer.analog, true, true);
+    let active = analog.active;
+    let side = outer_product(p.normal, p.motion);
+
+    // Extra gravity on steep ground, extra grip on walls.
+    let (sx, up, w) = (p.speed[0], p.up, phys.weight);
+    if up < FLAT && side[1].abs() > BANKED && sx > CLIMB_SPEED {
+        acc = [ZERO; 3];
+        acc[1] -= w;
+    } else if let Some(k) = (0..3).find(|&k| up < STEEP[k] && sx > CLIMB_SPEED) {
+        acc[1] = fnmsubs(STEEP_WEIGHT[k], w, acc[1]);
+    } else if up < WALL && sx < phys.run_speed && sx > -phys.run_speed {
+        acc[0] *= WALL_GRAVITY;
+        acc[2] *= WALL_GRAVITY;
+    } else if up < SIDE && sx < phys.run_speed && sx > -phys.run_speed {
+        acc[2] *= SIDE_GRAVITY;
+    } else if up < SLANT && sx < phys.jog_speed && sx > -phys.run_speed {
+        acc[2] *= SLANT_GRAVITY;
+    }
+
+    let sx = p.speed[0];
+    if !active && sx > phys.run_speed {
+        acc[0] = fmadds(phys.air_resist, sx, acc[0]);
+    } else if active && sx > phys.max_x_spd && p.up > UPRIGHT {
+        acc[0] = fmadds(UPRIGHT_DRAG * phys.air_resist, sx - phys.max_x_spd, acc[0]);
+    } else if sx > phys.max_x_spd {
+        acc[0] = fmadds(phys.air_resist, sx - phys.max_x_spd, acc[0]);
+    } else if sx < ZERO {
+        acc[0] = fmadds(phys.air_resist, sx, acc[0]);
+    }
+    acc[1] = fmadds(phys.air_resist_y, p.speed[1], acc[1]);
+    acc[2] = fmadds(phys.air_resist_z, p.speed[2], acc[2]);
+
+    let push = if !active {
+        let mut push = ZERO;
+        if p.up < TILTED {
+            let mut s = p.slope(phys);
+            slope_turn(
+                stack,
+                &mut s,
+                steer.gravity,
+                steer.stage,
+                p.turn(),
+                steer.analog,
+            );
+            (p.angles, p.speed, p.aim) = (s.angles, s.speed, s.aim);
+        } else if p.speed[0] > ZERO {
+            push = phys.slow_down;
+        } else if p.speed[0] < ZERO {
+            push = -phys.slow_down;
+        }
+        p.push = ZERO;
+        push
+    } else {
+        let mut ang = analog.angle.unwrap_or_default();
+        let mag = analog.magnitude.unwrap_or_default();
+        if p.status & 0x2000 != 0 {
+            p.follow(stack, phys, path, steer.analog.magnitude);
+            ang = p.aim;
+            lift = if p.status & 0x2000 != 0 {
+                ZERO - PATH_LIFT
+            } else {
+                ZERO
+            };
+        } else if p.up < STRONG_SLOPE && p.surface & 0x8_0000 != 0 {
+            let mut s = p.slope(phys);
+            slope_turn_strong(stack, &mut s, steer.gravity);
+            (p.angles, p.speed, p.aim) = (s.angles, s.speed, s.aim);
+        }
+        let sx = p.speed[0];
+        let mut mag = push_below_max(sx, mag, phys).unwrap_or({
+            if sx >= phys.max_x_spd && p.up < ZERO {
+                mag * phys.run_accel
+            } else {
+                mag * (RUN_ACCEL_FAST * phys.run_accel)
+            }
+        });
+        ang = ang.wrapping_sub(along_wall(stack, p, ang));
+
+        let d = diff_angle(p.angles[1], ang);
+        let sx = p.speed[0];
+        let jog = phys.jog_speed;
+        let walker = p.character == 6 || p.character == 7;
+        p.aim = ang;
+        let toward = |stack: &mut MatrixStack, p: &mut GroundPlayer| {
+            turn_toward(
+                stack,
+                &mut p.angles,
+                &mut p.speed,
+                phys.dash_speed,
+                p.up,
+                ang,
+            )
+        };
+        let smooth = |stack: &mut MatrixStack, p: &mut GroundPlayer| {
+            let turn = p.turn();
+            turn_smoothly(stack, &mut p.angles, &mut p.speed, turn, steer.analog, ang)
+        };
+        let sharp = walker && input.walker_sharp == 1;
+        if sx == ZERO && d > 0x1000 {
+            if walker {
+                toward(stack, p);
+            } else {
+                mag = ZERO;
+                p.pivot(stack, ang);
+            }
+        } else if sx >= HALF * (jog + phys.run_speed) && d > 0x1000 {
+            mag = phys.slow_down;
+            if walker {
+                toward(stack, p);
+            } else {
+                smooth(stack, p);
+            }
+        } else if (sx >= jog && d < 0x1000) || (sx >= phys.dash_speed && p.surface & 0x8_0000 != 0)
+        {
+            toward(stack, p);
+        } else {
+            if sx >= jog && sx <= phys.rush_speed && d > 0x2000 {
+                mag *= SHARP_TURN_ACCEL;
+            }
+            if sharp {
+                toward(stack, p);
+            } else {
+                smooth(stack, p);
+            }
+        }
+        p.push = mag;
+        mag
+    };
+
+    let sx = p.speed[0];
+    if p.up < TILTED && sx < phys.jog_speed && sx > -phys.jog_speed && !active {
+        acc[0] *= TIPPED_DAMP;
+        acc[2] *= TIPPED_DAMP;
+    } else {
+        settle_x(p, phys, &mut acc, push, active);
+    }
+    settle_z(p, phys, &mut acc);
+    acc[1] += lift;
+    p.accel = acc;
+}
+
+/// How far to turn the input yaw `ang` so the player runs along a wall it is
+/// pushing into: the angle between the stick's direction and the line where
+/// the planes normal to player work +0x70 and +0x7C meet.
+fn along_wall(stack: &mut MatrixStack, p: &GroundPlayer, ang: i32) -> i32 {
+    let len = scalor(p.wall);
+    if len <= ZERO || len.is_nan() {
+        return 0;
+    }
+    let dir = rotate_by_angles(stack, [p.angles[0], ang, p.angles[2]], [1.0, ZERO, ZERO]);
+    let dot = inner_product(dir, p.wall);
+    if dot >= ZERO || dot.is_nan() {
+        return 0;
+    }
+    let mut line = Line {
+        point: [ZERO; 3],
+        dir: [ZERO; 3],
+    };
+    plane_intersection(
+        &Plane {
+            point: [ZERO; 3],
+            normal: p.wall,
+        },
+        &Plane {
+            point: [ZERO; 3],
+            normal: p.down,
+        },
+        Some(&mut line),
+    );
+    if inner_product(line.dir, dir) < ZERO {
+        line.dir = line.dir.map(|v| -v);
+    }
+    vector_angle(dir, line.dir, Some(p.down))
 }

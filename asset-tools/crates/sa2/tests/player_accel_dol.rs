@@ -1,7 +1,7 @@
 //! `player_accel` against main.dol (tests/dol_ppc.py).
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    player_accel::{self, GroundPlayer, SteerInput},
+    player_accel::{self, GroundPlayer, MoveInput, SteerInput},
     player_analog::AnalogContext,
     player_path::{Path, Points},
     player_physics::PlayerParameters,
@@ -152,78 +152,87 @@ fn matches_main_dol() {
         let want: Vec<u32> = (0..12).map(|k| u(&c["out"][k])).collect();
         assert_eq!(out, want, "njRotate {c}");
     }
-    let mut steered = 0;
-    for (n, c) in doc["steered"].as_array().unwrap().iter().enumerate() {
-        let mut p = GroundPlayer {
-            status: i(&c["status"]) as i16,
-            angles: [0, 1, 2].map(|k| i(&c["angles"][k])),
-            pos: v3(&c["pos"]),
-            motion: v3(&c["motion"]),
-            base: v3(&c["base"]),
-            aim: i(&c["aim"]),
-            nocon: i(&c["nocon"]) as i16,
-            confuse: i(&c["confuse"]) as i16,
-            path_dist: f(&c["pathDist"]),
-            up: f(&c["up"]),
-            scale: f(&c["scale"]),
-            speed: v3(&c["speed"]),
-            down: v3(&c["down"]),
-            surface: u(&c["surface"]),
-            normal: v3(&c["normal"]),
-            ..Default::default()
-        };
-        let gravity = v3(&c["gravity"]);
-        let raw = [0, 1].map(|k| i(&c["raw"][k]) as i16);
-        let input = SteerInput {
-            analog: AnalogContext {
-                angle: i(&c["stick"]),
-                magnitude: f(&c["magnitude"]),
-                frame: u(&c["frame"]),
-                stage: i(&c["stage"]) as i16,
-                stick_y: raw[1],
-                gravity_y: gravity[1],
+    let mut turned_by = [0, 0];
+    for (set, key) in ["steered", "move"].into_iter().enumerate() {
+        for (n, c) in doc[key].as_array().unwrap().iter().enumerate() {
+            let mut p = GroundPlayer {
+                status: i(&c["status"]) as i16,
+                angles: [0, 1, 2].map(|k| i(&c["angles"][k])),
+                pos: v3(&c["pos"]),
+                motion: v3(&c["motion"]),
+                base: v3(&c["base"]),
+                aim: i(&c["aim"]),
+                nocon: i(&c["nocon"]) as i16,
+                confuse: i(&c["confuse"]) as i16,
+                path_dist: f(&c["pathDist"]),
+                up: f(&c["up"]),
+                scale: f(&c["scale"]),
+                speed: v3(&c["speed"]),
+                down: v3(&c["down"]),
+                surface: u(&c["surface"]),
+                normal: v3(&c["normal"]),
+                character: i(&c["character"]) as i8,
+                wall: v3(&c["wall"]),
                 ..Default::default()
-            },
-            gravity,
-            stage: i(&c["stage"]) as i16,
-            raw_stick: raw,
-            camera: v3(&c["camera"]),
-        };
-        let path = path(&c["path"]);
-        let before = (p.angles, p.aim);
-        player_accel::accelerate_steered(
-            &mut stack,
-            &mut p,
-            &physics(&c["phys"]),
-            &input,
-            Some(&path),
-        );
-        let bits = |v: [f32; 3]| v.map(f32::to_bits);
-        let want = |key: &str| [0, 1, 2].map(|k| u(&c[key][k]));
-        assert_eq!(
-            p.status as i64,
-            c["outStatus"].as_i64().unwrap(),
-            "steered {n}: {c}"
-        );
-        assert_eq!(
-            p.angles,
-            [0, 1, 2].map(|k| i(&c["outAngles"][k])),
-            "steered {n}: {c}"
-        );
-        assert_eq!(bits(p.speed), want("outSpeed"), "steered {n}: {c}");
-        assert_eq!(bits(p.accel), want("outAccel"), "steered {n}: {c}");
-        assert_eq!(p.excess.to_bits(), u(&c["outExcess"]), "steered {n}: {c}");
-        assert_eq!(p.push.to_bits(), u(&c["outPush"]), "steered {n}: {c}");
-        assert_eq!(
-            p.path_dist.to_bits(),
-            u(&c["outPathDist"]),
-            "steered {n}: {c}"
-        );
-        assert_eq!(p.aim, i(&c["outAim"]), "steered {n}: {c}");
-        assert_eq!(stack.depth(), 0);
-        steered += (before != (p.angles, p.aim)) as usize;
+            };
+            let gravity = v3(&c["gravity"]);
+            let raw = [0, 1].map(|k| i(&c["raw"][k]) as i16);
+            let input = SteerInput {
+                analog: AnalogContext {
+                    angle: i(&c["stick"]),
+                    magnitude: f(&c["magnitude"]),
+                    frame: u(&c["frame"]),
+                    stage: i(&c["stage"]) as i16,
+                    stick_y: raw[1],
+                    gravity_y: gravity[1],
+                    ..Default::default()
+                },
+                gravity,
+                stage: i(&c["stage"]) as i16,
+                raw_stick: raw,
+                camera: v3(&c["camera"]),
+            };
+            let path = path(&c["path"]);
+            let before = (p.angles, p.aim);
+            let phys = physics(&c["phys"]);
+            if set == 0 {
+                player_accel::accelerate_steered(&mut stack, &mut p, &phys, &input, Some(&path));
+            } else {
+                let input = MoveInput {
+                    steer: input,
+                    walker_sharp: u(&c["sharp"]) as u8,
+                };
+                player_accel::ground_move(&mut stack, &mut p, &phys, &input, Some(&path));
+            }
+            let bits = |v: [f32; 3]| v.map(f32::to_bits);
+            let want = |key: &str| [0, 1, 2].map(|k| u(&c[key][k]));
+            assert_eq!(
+                p.status as i64,
+                c["outStatus"].as_i64().unwrap(),
+                "{key} {n}: {c}"
+            );
+            assert_eq!(
+                p.angles,
+                [0, 1, 2].map(|k| i(&c["outAngles"][k])),
+                "{key} {n}: {c}"
+            );
+            assert_eq!(bits(p.speed), want("outSpeed"), "{key} {n}: {c}");
+            assert_eq!(bits(p.accel), want("outAccel"), "{key} {n}: {c}");
+            assert_eq!(p.excess.to_bits(), u(&c["outExcess"]), "{key} {n}: {c}");
+            assert_eq!(p.push.to_bits(), u(&c["outPush"]), "{key} {n}: {c}");
+            assert_eq!(
+                p.path_dist.to_bits(),
+                u(&c["outPathDist"]),
+                "{key} {n}: {c}"
+            );
+            assert_eq!(p.aim, i(&c["outAim"]), "{key} {n}: {c}");
+            assert_eq!(stack.depth(), 0);
+            turned_by[set] += (before != (p.angles, p.aim)) as usize;
+        }
     }
     eprintln!(
-        "3,000 fn_8004B568 frames ({turned} turned), 800 njRotate cases and 3,000 fn_8004BA74 frames ({steered} turned) matched main.dol"
+        "3,000 fn_8004B568 frames ({turned} turned), 800 njRotate cases and 3,000 fn_8004BA74 frames ({} turned) and 6,000 \
+         fn_8004C734 frames ({} turned) matched main.dol",
+        turned_by[0], turned_by[1]
     );
 }
