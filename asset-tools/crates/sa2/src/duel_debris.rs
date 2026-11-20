@@ -151,7 +151,7 @@ pub struct WindResult {
     pub flags: u32,
     pub vector: [f32; 3],
     pub direction: [f32; 3],
-    /// njScalor (0x80114EAC) of the vector, used when flag 1 is set.
+    /// njScalor (0x801151f4) of the vector, used when flag 1 is set.
     pub length: f32,
 }
 
@@ -225,7 +225,7 @@ impl<'a> System<'a> {
         let r = rand
             .next()
             .ok_or_else(|| Error::invalid("debris rand values exhausted"))?;
-        calls.push(engine(0x8010d940, json!({ "returned": r })));
+        calls.push(engine(0x8010dc88, json!({ "returned": r })));
         Ok(r as f64 as f32)
     }
     fn unit(&self, rand: &mut dyn Iterator<Item = i32>, calls: &mut Vec<Value>) -> Result<f32> {
@@ -247,7 +247,7 @@ impl<'a> System<'a> {
         };
         if !d.manager {
             let made = ok();
-            calls.push(engine(0x80071ba4, json!({ "list": 2, "size": 3, "update": "0x888c", "name": "EfCrash3DExec", "returnedNonzero": made })));
+            calls.push(engine(0x80071e0c, json!({ "list": 2, "size": 3, "update": "0x888c", "name": "EfCrash3DExec", "returnedNonzero": made })));
             if made {
                 calls.push(json!({ "callbacks": { "display": "0x91a8", "delete": "0x8820" } }));
                 d.manager = true;
@@ -262,25 +262,25 @@ impl<'a> System<'a> {
         }
         let got = ok();
         calls.push(engine(
-            0x801194b4,
+            0x801197fc,
             json!({ "list": 1, "size": 0x50, "returnedNonzero": got }),
         ));
         if !got {
             return Ok(calls);
         }
-        calls.push(engine(0x80115d50, json!([])));
-        calls.push(engine(0x8011509c, json!([0])));
-        calls.push(engine(0x80115044, json!({ "translate": a.position })));
-        calls.push(engine(0x80115560, json!([0, a.angles[2]])));
-        calls.push(engine(0x801154e0, json!([0, a.angles[1]])));
-        calls.push(engine(0x80115918, json!([0, a.angles[0]])));
+        calls.push(engine(0x80116098, json!([])));
+        calls.push(engine(0x801153e4, json!([0])));
+        calls.push(engine(0x8011538c, json!({ "translate": a.position })));
+        calls.push(engine(0x801158a8, json!([0, a.angles[2]])));
+        calls.push(engine(0x80115828, json!([0, a.angles[1]])));
+        calls.push(engine(0x80115c60, json!([0, a.angles[0]])));
         let large = flags & 0x8000 != 0;
         let centre = floats(&self.rel, a.model + if large { 0x14 } else { 8 }, 3)?;
         calls.push(engine(
-            0x80114bc4,
+            0x80114f0c,
             json!({ "point": centre, "returned": a.point }),
         ));
-        calls.push(engine(0x80115a80, json!([1])));
+        calls.push(engine(0x80115dc8, json!([1])));
         let timer = (c.timer_base as i32)
             .wrapping_add((c.timer_range * self.unit(rand, &mut calls)?) as i32);
         let spin = match a.spin {
@@ -322,7 +322,7 @@ impl<'a> System<'a> {
         d.manager = false;
         d.pieces
             .drain(..)
-            .map(|_| engine(0x801194e0, json!([])))
+            .map(|_| engine(0x80119828, json!([])))
             .collect()
     }
     fn radius(&self, p: &Piece) -> Result<f32> {
@@ -370,7 +370,7 @@ impl<'a> System<'a> {
                     calls.push(json!({ "windQuery": { "flags": w.flags, "vector": w.vector, "direction": w.direction } }));
                     if w.flags & 1 != 0 {
                         calls.push(engine(
-                            0x80114eac,
+                            0x801151f4,
                             json!({ "vector": w.vector, "returned": w.length }),
                         ));
                     }
@@ -421,7 +421,7 @@ impl<'a> System<'a> {
                         p.flags &= !0x20;
                         let radius = self.radius(&p)?;
                         calls.push(engine(
-                            0x800e254c,
+                            0x800e2828,
                             json!({ "position": p.position, "vector": [c.zero, c.zero, c.zero],
                                     "scale": radius * radius_factor(p.flags), "size": c.one + radius }),
                         ));
@@ -440,7 +440,7 @@ impl<'a> System<'a> {
                             let k = usize::from(permuted);
                             let made = !a.failed_allocations.contains(&alloc);
                             alloc += 1;
-                            calls.push(engine(0x80032910, json!({ "descriptor": format!("s5+0x{:x}", c.trail_descriptors[k]), "returnedNonzero": made })));
+                            calls.push(engine(0x80032b78, json!({ "descriptor": format!("s5+0x{:x}", c.trail_descriptors[k]), "returnedNonzero": made })));
                             if made {
                                 let mut unit = |calls: &mut Vec<Value>| -> Result<f32> {
                                     Ok(c.trail_rand_scale * self.draw(rand, calls)?)
@@ -480,7 +480,7 @@ impl<'a> System<'a> {
             }
             // fcmpo with cror lt|eq: remove when life <= 0.
             if p.life <= c.zero {
-                calls.push(engine(0x801194e0, json!([])));
+                calls.push(engine(0x80119828, json!([])));
                 d.pieces.remove(i);
                 continue;
             }
@@ -497,7 +497,7 @@ impl<'a> System<'a> {
         d.visited = visited as u16;
         if d.pieces.is_empty() {
             // The engine later runs the delete callback; see delete.
-            calls.push(engine(0x80071888, json!([])));
+            calls.push(engine(0x80071af0, json!([])));
         }
         Ok(calls)
     }

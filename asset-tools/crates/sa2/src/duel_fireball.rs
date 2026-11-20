@@ -114,9 +114,9 @@ pub struct FireballWork {
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Transform {
-    /// Result of the engine point transform (0x80114BC4) for one piece.
+    /// Result of the engine point transform (0x80114f0c) for one piece.
     pub point: [f32; 3],
-    /// Result of the engine vector transform (0x801151A4) for one piece.
+    /// Result of the engine vector transform (0x801154ec) for one piece.
     pub vector: [f32; 3],
 }
 
@@ -126,16 +126,16 @@ pub struct FireballFrame {
     /// Which callback the engine runs: "init", "update" (default) or "delete".
     #[serde(default)]
     pub call: Option<String>,
-    /// Return of the engine task check (0x8006538C).
+    /// Return of the engine task check (0x800655f4).
     #[serde(default)]
     pub task_check: bool,
-    /// Return of the player hit query (0x800066F4) is nonzero.
+    /// Return of the player hit query (0x800066f4) is nonzero.
     #[serde(default)]
     pub hit: bool,
-    /// Return of the visibility query (0x80039670).
+    /// Return of the visibility query (0x800398d8).
     #[serde(default)]
     pub visible: bool,
-    /// Return of the smoke particle allocator (0x800E23B8) is nonzero.
+    /// Return of the smoke particle allocator (0x800e2694) is nonzero.
     #[serde(default)]
     pub smoke_allocated: bool,
     /// Twenty engine transform results, consumed only by an explosion.
@@ -147,7 +147,7 @@ pub struct Fireball<'a> {
     pub constants: &'a FireballConstants,
     /// Collision description radius the engine exposes at work +0x2C -> +0xC -> +0x14.
     pub collision_radius: f32,
-    /// Handle the engine light allocator (0x800C5868) returns.
+    /// Handle the engine light allocator (0x800c5ad0) returns.
     pub light_handle: u32,
 }
 fn engine(address: u32, args: Value) -> Value {
@@ -163,7 +163,7 @@ impl Fireball<'_> {
     /// Constructor: three callbacks, collision and the light source.
     pub fn init(&self, w: &FireballWork, f: &FireballFrame) -> Vec<Value> {
         let c = self.constants;
-        let mut calls = vec![engine(0x8006538c, json!([]))];
+        let mut calls = vec![engine(0x800655f4, json!([]))];
         if f.task_check {
             return calls;
         }
@@ -172,7 +172,7 @@ impl Fireball<'_> {
         );
         calls.push(engine(0x8000f8b8, json!({ "collisionData": format!("s5+0x{:x}", c.collision_data), "count": 1, "list": 4 })));
         calls.push(engine(
-            0x800c5868,
+            0x800c5ad0,
             json!({ "kind": 1, "position": w.position, "vector": [0.0, 0.0, 0.0],
                     "radius": c.light_radius, "radiusSquared": c.light_radius_squared,
                     "returned": self.light_handle }),
@@ -183,7 +183,7 @@ impl Fireball<'_> {
         if self.light_handle == 0 {
             return vec![];
         }
-        vec![engine(0x800c5854, json!([self.light_handle]))]
+        vec![engine(0x800c5abc, json!([self.light_handle]))]
     }
     /// One update. Returns the calls and whether the task destroyed itself.
     #[allow(clippy::neg_cmp_op_on_partial_ord)] // matches fcmpo/bge on NaN
@@ -194,7 +194,7 @@ impl Fireball<'_> {
         rand: &mut dyn Iterator<Item = i32>,
     ) -> Result<(Vec<Value>, bool)> {
         let c = self.constants;
-        let mut calls = vec![engine(0x8006538c, json!([]))];
+        let mut calls = vec![engine(0x800655f4, json!([]))];
         if f.task_check {
             return Ok((calls, false));
         }
@@ -202,7 +202,7 @@ impl Fireball<'_> {
             let r = rand
                 .next()
                 .ok_or_else(|| Error::invalid("meteor rand values exhausted"))?;
-            calls.push(engine(0x8010d940, json!({ "returned": r })));
+            calls.push(engine(0x8010dc88, json!({ "returned": r })));
             Ok(unit(c, r))
         };
         calls.push(engine(0x800066f4, json!({ "returnedNonzero": f.hit })));
@@ -211,24 +211,24 @@ impl Fireball<'_> {
             if f.transforms.len() != PIECES {
                 return Err(Error::invalid("meteor explosion needs 20 transforms"));
             }
-            calls.push(engine(0x80115d50, json!([])));
-            calls.push(engine(0x8011509c, json!([0])));
-            calls.push(engine(0x80115e24, json!({ "translate": w.position })));
-            calls.push(engine(0x80115d50, json!([])));
+            calls.push(engine(0x80116098, json!([])));
+            calls.push(engine(0x801153e4, json!([0])));
+            calls.push(engine(0x8011616c, json!({ "translate": w.position })));
+            calls.push(engine(0x80116098, json!([])));
             for (i, t) in f.transforms.iter().enumerate() {
                 let u = draw(&mut calls)?;
                 let up = c.one + c.two * u;
                 let height = c.half * (self.collision_radius * (c.one + u));
                 let yaw = bams(c, c.piece_turn_degrees * draw(&mut calls)?);
-                calls.push(engine(0x80115560, json!([0, yaw])));
+                calls.push(engine(0x801158a8, json!([0, yaw])));
                 let roll = bams(c, c.piece_turn_degrees * draw(&mut calls)?);
-                calls.push(engine(0x80115918, json!([0, roll])));
+                calls.push(engine(0x80115c60, json!([0, roll])));
                 calls.push(engine(
-                    0x80114bc4,
+                    0x80114f0c,
                     json!({ "point": [c.zero, height, c.zero], "returned": t.point }),
                 ));
                 calls.push(engine(
-                    0x801151a4,
+                    0x801154ec,
                     json!({ "vector": [c.zero, up, c.zero], "returned": t.vector }),
                 ));
                 let k = usize::from(i >= 5);
@@ -241,11 +241,11 @@ impl Fireball<'_> {
                     "model": format!("s5+0x{:x}", c.debris_models[k]), "flags": 0,
                     "texlist": format!("s5+0x{:x}", c.debris_texlists[k]), "mode": 0x2000,
                 }));
-                calls.push(engine(0x80115d9c, json!([])));
-                calls.push(engine(0x80115d50, json!([])));
+                calls.push(engine(0x801160e4, json!([])));
+                calls.push(engine(0x80116098, json!([])));
             }
-            calls.push(engine(0x80115a80, json!([2])));
-            calls.push(engine(0x80065148, json!([])));
+            calls.push(engine(0x80115dc8, json!([2])));
+            calls.push(engine(0x800653b0, json!([])));
             return Ok((calls, true));
         }
         calls.push(engine(0x8000f4ec, json!([])));
@@ -253,7 +253,7 @@ impl Fireball<'_> {
             w.timer = w.timer.wrapping_add(1);
         } else {
             calls.push(engine(
-                0x80039670,
+                0x800398d8,
                 json!({ "position": w.position, "radius": c.visibility_pad + w.scale_x, "returned": f.visible }),
             ));
             if f.visible {
@@ -272,7 +272,7 @@ impl Fireball<'_> {
         let vz = c.two * (draw(&mut calls)? - c.half);
         let scale = c.smoke_scale_base + c.smoke_scale_range * draw(&mut calls)?;
         calls.push(engine(
-            0x800e23b8,
+            0x800e2694,
             json!({ "position": w.position, "velocity": [vx, vy, vz], "scale": scale,
                     "rotation": c.zero, "returnedNonzero": f.smoke_allocated }),
         ));

@@ -7,6 +7,13 @@ export const PLACE_RANGE = 2;
 const FRUIT_RE = /^sa2-fruit:(?:[0-9]|1[0-9]|2[0-3])$/;
 const NATIVE_RE = /^sa2:(?:[0-9]|1[0-9]|2[0-4])$/;
 const SEED_RE = /^seed:(strong|tasty|hero|dark|round|triangle|square)$/;
+const EGG_RE = /^egg:(?:[1-9]|1[0-3]|2[89]|3[0-9]|40)$/;
+const HAT_RE = /^hat:(?:[3-9]|1[0-5])$/;
+const THEME_RE = /^theme:(omochao|amy|maria)$/;
+// Native egg colours (egg ids 1-13; shiny = id + 27) and hat names 3-15.
+const EGG_COLOURS = ['Yellow', 'White', 'Brown', 'Sky blue', 'Pink', 'Blue', 'Grey', 'Green', 'Red', 'Lime green', 'Purple', 'Orange', 'Black'];
+const HAT_NAMES = { 3: 'Apple', 4: 'Bucket', 5: 'Empty can', 6: 'Cardboard box', 7: 'Flower pot', 8: 'Paper bag', 9: 'Pan', 10: 'Stump',
+  11: 'Watermelon', 12: 'Red wool hat', 13: 'Blue wool hat', 14: 'Black wool hat', 15: 'Pacifier' };
 export const PART_SOCKETS = {
   arms: ['leftArm', 'rightArm'], ears: ['leftEar', 'rightEar'], forehead: ['forehead'], horns: ['leftHorn', 'rightHorn'],
   legs: ['leftLeg', 'rightLeg'], tail: ['tail'], wings: ['leftWing', 'rightWing'], tongue: ['tongue'],
@@ -16,6 +23,9 @@ export function careItemKind(id) {
   if (id === 'garden-fruit') return 'food';
   if (FRUIT_RE.test(id)) return 'fruit';
   if (SEED_RE.test(id)) return 'seed';
+  if (EGG_RE.test(id)) return 'egg';
+  if (HAT_RE.test(id)) return 'hat';
+  if (THEME_RE.test(id)) return 'theme';
   if (NATIVE_RE.test(id)) return Number(id.slice(4)) < 21 ? 'animal' : 'drive';
   return null;
 }
@@ -26,6 +36,9 @@ export function careItemLabel(id, catalog) {
   const kind = careItemKind(id);
   if (kind === 'food') return 'Garden Fruit';
   if (kind === 'seed') return `${title(id.slice(5))} Seed`;
+  if (kind === 'egg') { const n = Number(id.slice(4)); return n > 27 ? `Shiny ${EGG_COLOURS[n - 28].toLowerCase()} egg` : `${EGG_COLOURS[n - 1]} egg`; }
+  if (kind === 'hat') return HAT_NAMES[Number(id.slice(4))];
+  if (kind === 'theme') return `${title(id.slice(6))} menu theme`;
   const rows = kind === 'fruit' ? catalog?.fruits : catalog?.items;
   const number = Number(id.slice(id.indexOf(':') + 1));
   const row = Array.isArray(rows) ? rows.find(entry => entry?.id === number) : null;
@@ -62,11 +75,15 @@ export function gardenCareView(care, player, { connected = false, serverTime } =
   const cooldownReady = readyAt == null || (Number.isFinite(readyAt) && Number.isFinite(serverTime) && serverTime >= readyAt);
   const mayCare = !!(valid && connected && care.eligibility?.canCare === true);
   const items = Object.entries(inventory)
-    .filter(([id, quantity]) => careItemKind(id) && Number.isInteger(quantity) && quantity > 0 && quantity <= 99)
+    .filter(([id, quantity]) => careItemKind(id) && careItemKind(id) !== 'theme' && Number.isInteger(quantity) && quantity > 0 && quantity <= 99)
     .map(([id, quantity]) => {
       const kind = careItemKind(id);
-      const enabled = kind === 'food' || (kind === 'fruit' ? care.catalog?.fruitsEnabled === true : kind === 'seed' ? care.catalog?.fruitsEnabled === true : care.catalog?.enabled === true);
-      return { id, kind, quantity, label: careItemLabel(id, care.catalog), mayUse: mayCare && cooldownReady && enabled && kind !== 'seed' };
+      const native = ['fruit', 'seed', 'egg', 'hat'].includes(kind);
+      const enabled = kind === 'food' || (native ? care.catalog?.fruitsEnabled === true : care.catalog?.enabled === true);
+      // Eggs go down in a garden; hats are put down by the Chao. Seeds are planted.
+      const inGarden = ['garden', 'hero', 'dark'].includes(player?.zone);
+      const usable = kind === 'seed' ? false : kind === 'egg' ? inGarden : true;
+      return { id, kind, quantity, label: careItemLabel(id, care.catalog), mayUse: mayCare && (kind === 'egg' || cooldownReady) && enabled && usable };
     })
     .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id, 'en', { numeric: true }));
   const seeds = items.filter(item => item.kind === 'seed');
@@ -88,12 +105,21 @@ export function gardenCareView(care, player, { connected = false, serverTime } =
     });
   // The server's hub shop point (CARE.md purchase rule); the server rechecks it.
   const atShop = player?.zone === 'hub' && finite(player.x, player.z) && Math.hypot(player.x + 4, player.z - 8) <= PLACE_RANGE;
-  const offers = (valid && Array.isArray(care.shop) ? care.shop : [])
-    .filter(offer => SEED_RE.test(offer?.itemId) && Number.isInteger(offer.price) && offer.price > 0)
-    .map(offer => ({ itemId: offer.itemId, price: offer.price, label: careItemLabel(offer.itemId),
-      mayBuy: mayCare && atShop && offer.enabled === true && Number.isFinite(player?.rings) && player.rings >= offer.price }));
+  // Native Black Market stock (seeds and fruit) at the shop point, with the
+  // server's native buy and sell prices. The server restocks on entry.
+  const stock = valid && Array.isArray(care.market?.stock) ? care.market.stock : [];
+  const offers = stock
+    .filter(offer => ['seed', 'fruit', 'egg', 'hat', 'theme'].includes(careItemKind(offer?.itemId)) && Number.isInteger(offer.price) && offer.price > 0)
+    .map(offer => ({ itemId: offer.itemId, price: offer.price, label: careItemLabel(offer.itemId, care.catalog),
+      mayBuy: mayCare && atShop && care.catalog?.fruitsEnabled === true && Number.isFinite(player?.rings) && player.rings >= offer.price }));
+  const sellPrices = valid && care.market?.sellPrices && typeof care.market.sellPrices === 'object' ? care.market.sellPrices : {};
+  const sales = items.filter(item => Number.isInteger(sellPrices[item.id]) && sellPrices[item.id] > 0)
+    .map(item => ({ itemId: item.id, label: item.label, price: sellPrices[item.id],
+      maySell: mayCare && atShop && care.catalog?.fruitsEnabled === true }));
+  const emblems = valid && Number.isInteger(care.emblems?.count) ? care.emblems.count : null;
+  const hat = valid && Number.isInteger(care.hat) ? careItemLabel(`hat:${care.hat}`) : null;
   const parts = valid && care.animalParts?.shown && typeof care.animalParts.shown === 'object' ? care.animalParts.shown : {};
-  return { valid, mayCare, cooldownReady, revision: valid ? care.revision : null, items, places, atShop, offers,
+  return { valid, mayCare, cooldownReady, revision: valid ? care.revision : null, items, places, atShop, offers, sales, emblems, hat,
     parts: Object.entries(parts).filter(([category, id]) => PART_SOCKETS[category] && Number.isInteger(id) && id >= 0 && id <= 20)
       .map(([category, id]) => ({ category, species: id, label: careItemLabel(`sa2:${id}`, care.catalog) })) };
 }
@@ -113,13 +139,14 @@ const reasons = {
   'out-of-range': 'Walk closer first.', 'no-fruit': 'No fruit is ripe yet.', 'plot-occupied': 'Something already grows there.',
   'not-growing': 'This tree cannot be watered right now.', cooldown: 'Give your Chao a moment.', 'item-not-owned': 'You no longer have that item.',
   'inventory-full': 'You are carrying the most you can of that.', 'native-data-unavailable': 'Native item data is not loaded on this server.',
-  'activity-conflict': 'Finish the current activity first.', 'insufficient-rings': 'You need more rings.', 'stale-revision': 'Your garden changed. Try again.',
+  'activity-conflict': 'Finish the current activity first.', 'insufficient-rings': 'You need more rings.', 'stale-revision': 'Your garden changed. Try again.', 'not-in-stock': 'That is not in stock right now.', 'not-sellable': 'The Black Market will not buy that.',
+  'nest-full': 'Your nest is full.', 'chao-wont-wear': 'Your Chao is not interested in hats.', 'already-wearing': 'Your Chao is already wearing a hat.',
 };
 
 export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID() }) {
   if (!root) throw new TypeError('Garden care needs a panel root.');
   const document = root.ownerDocument;
-  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '';
+  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false;
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -154,8 +181,9 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       }
       root.append(row);
     }
-    if (view.atShop && view.offers.length) {
-      root.append(el('h3', 'Seeds for sale'));
+    if (view.atShop) {
+      root.append(el('h3', view.emblems == null ? 'Black Market' : `Black Market · ${view.emblems} emblems`));
+      if (!view.offers.length) root.append(el('p', 'Checking the stock…', 'garden-care-note'));
       const shop = el('ul', undefined, 'garden-care-items');
       for (const offer of view.offers) {
         const row = el('li');
@@ -164,6 +192,14 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
         buy.disabled = !offer.mayBuy || !!pending;
         buy.addEventListener('click', () => submit({ kind: 'purchase', itemId: offer.itemId }));
         row.append(buy); shop.append(row);
+      }
+      for (const sale of view.sales) {
+        const row = el('li');
+        row.append(el('span', `Sell ${sale.label} · ${sale.price} rings`));
+        const sell = el('button', 'Sell', 'small-button');
+        sell.disabled = !sale.maySell || !!pending;
+        sell.addEventListener('click', () => submit({ kind: 'sell', itemId: sale.itemId }));
+        row.append(sell); shop.append(row);
       }
       root.append(shop);
     }
@@ -174,19 +210,22 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       const row = el('li');
       row.append(el('span', `${item.label} ×${item.quantity}`));
       if (item.kind !== 'seed') {
-        const use = el('button', item.kind === 'animal' || item.kind === 'drive' ? 'Give' : 'Feed', 'small-button');
+        const verb = item.kind === 'egg' ? 'Put down' : item.kind === 'hat' || item.kind === 'animal' || item.kind === 'drive' ? 'Give' : 'Feed';
+        const use = el('button', verb, 'small-button');
         use.disabled = !item.mayUse || !!pending;
-        use.addEventListener('click', () => submit({ kind: 'consume', itemId: item.id }));
+        const intent = item.kind === 'egg' ? 'place-egg' : item.kind === 'hat' ? 'give-hat' : 'consume';
+        use.addEventListener('click', () => submit({ kind: intent, itemId: item.id }));
         row.append(use);
       }
       list.append(row);
     }
     root.append(list);
+    if (view.hat) root.append(el('p', `Wearing: ${view.hat}`, 'garden-care-note'));
     if (view.parts.length) {
       root.append(el('h3', 'Animal parts'));
       root.append(el('p', view.parts.map(part => `${title(part.category)}: ${part.label}`).join(' · '), 'garden-care-note'));
     }
-    root.append(el('p', 'Trees, fruit and animal parts follow the original game\'s rules. Seeds are not sold until their original prices are traced.', 'garden-care-note'));
+    root.append(el('p', 'Trees, fruit and animal parts follow the original game\'s rules. The Black Market sells seeds and fruit at the original prices.', 'garden-care-note'));
     if (pending || feedback) {
       const note = el('p', pending ? 'Saving…' : feedback, 'garden-care-note');
       note.setAttribute('role', 'status'); root.append(note);
@@ -198,6 +237,10 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       care = nextCare; player = nextPlayer; connected = !!options.connected; serverTime = options.serverTime;
       // A lost acknowledgement is retried with the identical request, never a new one.
       if (reconnected && pending) send(pending);
+      // Entering the Black Market asks the server to restock if its timer ran out.
+      const view = gardenCareView(care, player, { connected, serverTime });
+      if (!view.atShop) marketVisited = false;
+      else if (!marketVisited && !pending && view.mayCare) { marketVisited = true; submit({ kind: 'market' }); return; }
       render();
     },
     retryPending() { if (pending) send(pending); },
@@ -207,7 +250,8 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       pending = null;
       const dropped = event.effects?.shaken === true ? event.effects.dropped : null;
       feedback = !result.accepted ? reasons[result.code] || `Not applied (${result.code}).`
-        : dropped === 0 ? 'You shook the tree. Keep shaking.' : Number.isInteger(dropped) ? `${dropped} fruit fell.` : 'Saved.';
+        : dropped === 0 ? 'You shook the tree. Keep shaking.' : Number.isInteger(dropped) ? `${dropped} fruit fell.`
+          : event.effects?.market ? '' : 'Saved.';
       render(); return true;
     },
   };

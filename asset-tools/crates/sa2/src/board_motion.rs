@@ -194,6 +194,15 @@ fn motion(image: &Image<'_, '_>, header: u32, part_count: u32) -> Result<Motion>
     })
 }
 
+/// Read a pinned executable's native position/rotation motion using PE RVAs.
+pub(crate) fn pc_transform_motion(bytes: &[u8], header: u32, parts: u16) -> Result<Motion> {
+    motion(
+        &Image::Pc(bytes, pe::read_pe(bytes)?),
+        header,
+        u32::from(parts),
+    )
+}
+
 /// The character MTN directory stores file-relative, big-endian Ninja pointers.
 pub(crate) fn bank_motion(bytes: &[u8], header: u32, parts: u16) -> Result<Motion> {
     let image = Image::Bank(bytes);

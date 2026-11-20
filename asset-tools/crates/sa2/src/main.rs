@@ -15,6 +15,7 @@ use std::{
 
 const MAX_INPUT: u64 = 512 * 1024 * 1024;
 mod player_commands;
+mod story_effects;
 fn city_collision(bytes: &[u8]) -> Result<stage::Stage> {
     if bytes.starts_with(b"MZ") {
         sa2_asset_tools::city_land::read_win32_collision_stage(bytes)
@@ -388,7 +389,18 @@ fn inspect(bytes: &[u8], name: &str) -> Result<Value> {
     } else if bytes.starts_with(b"GVPL") {
         Ok(serde_json::to_value(texture::read_gvp(bytes)?)?)
     } else if bytes.starts_with(b"AFS\0") {
-        Ok(serde_json::to_value(audio::read_afs(bytes)?)?)
+        let mut rows = Vec::new();
+        for entry in audio::read_afs(bytes)? {
+            let header = audio::read_ahx_header(entry.bytes(bytes)?).ok();
+            let mut row = serde_json::to_value(&entry)?;
+            if let Some(header) = header {
+                row["ahx"] = serde_json::to_value(header)?;
+                row["ahx"]["frameCount"] =
+                    serde_json::to_value(audio::ahx_frame_count(entry.bytes(bytes)?).ok())?;
+            }
+            rows.push(row);
+        }
+        Ok(Value::Array(rows))
     } else if bytes.starts_with(b"MZ") {
         let image = pe::read_pe(bytes)?;
         let chao = if image.exports.iter().any(|e| e.name == "AL_RootObject") {
@@ -397,6 +409,10 @@ fn inspect(bytes: &[u8], name: &str) -> Result<Value> {
             None
         };
         Ok(json!({"image":image,"chaoCandidates":chao}))
+    } else if name.ends_with(".ahx") {
+        let mut value = serde_json::to_value(audio::read_ahx_header(bytes)?)?;
+        value["frameCount"] = serde_json::to_value(audio::ahx_frame_count(bytes).ok())?;
+        Ok(value)
     } else if name.ends_with(".adx") {
         Ok(serde_json::to_value(audio::read_adx_header(bytes)?)?)
     } else if name.ends_with(".pak") {
@@ -540,7 +556,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, transporter, validate\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, chao-collision, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\nfinalhazard-boss-glb EXE OUTPUT.glb modeltex_bosslast2.prs CLIP_INDEX FRAME\nfinalhazard-weakpoint-glb EXE OUTPUT.glb modeltex_bosslast2.prs\ncity-player-keys stg13D.rel OUTPUT.json\ncity-player-motions stg13D.rel OUTPUT.json\ncity-board-inputs stg13D.rel OUTPUT.json\ncity-arrow-world SET OUTPUT.json EXE stg13D.rel REQUEST.json\ncity-arrow-display stg13D.rel OUTPUT.json MODE FRAME_COUNTER\ncity-scenery-descriptors stg13D.rel OUTPUT.json\ncity-scenery-proximity stg13D.rel OUTPUT.json LOCAL_POSITIONS.json\ncity-board-start SET OUTPUT.json EXE\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm|board-route REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -576,6 +592,21 @@ fn run() -> Result<()> {
             | "texture"
             | "movie-video"
             | "movie-audio"
+            | "event-subtitles"
+            | "event-music"
+            | "event-voices"
+            | "chao-collision"
+            | "city-player-keys"
+            | "city-player-motions"
+            | "city-board-inputs"
+            | "city-arrow-world"
+            | "city-arrow-display"
+            | "city-scenery-descriptors"
+            | "city-scenery-proximity"
+            | "event-effects"
+            | "event-lighting"
+            | "event-cues"
+            | "ahx"
             | "adx"
             | "transporter"
             | "validate"
@@ -586,7 +617,10 @@ fn run() -> Result<()> {
             | "visual"
             | "glb"
             | "object-tables"
+            | "city-board-start"
             | "city-layout"
+            | "finalhazard-boss-glb"
+            | "finalhazard-weakpoint-glb"
             | "city-board-glb"
             | "city-board-model"
             | "city-collision"
@@ -597,13 +631,17 @@ fn run() -> Result<()> {
     }
     let valid_arity = match command {
         "texture" | "pose" => matches!(args.len(), 3 | 5),
+        "finalhazard-boss-glb" => args.len() == 6,
+        "finalhazard-weakpoint-glb" => args.len() == 4,
         "city-board-glb" => args.len() == 5,
         "collision" | "city-collision" => matches!(args.len(), 3 | 4),
         "city-board-model" | "city-raycast" | "raycast" | "glb" | "object-tables"
-        | "city-layout" => args.len() == 4,
+        | "city-board-start" | "city-layout" => args.len() == 4,
+        "city-scenery-proximity" | "event-voices" | "event-music" => args.len() == 4,
+        "event-subtitles" => matches!(args.len(), 3 | 4),
         "movie-video" => args.len() == 4,
-        "movie-audio" => args.len() == 5,
-        "city-replay" => args.len() == 6,
+        "movie-audio" | "city-arrow-display" => args.len() == 5,
+        "city-replay" | "city-arrow-world" => args.len() == 6,
         _ => args.len() == 3,
     };
     if !valid_arity {
@@ -673,7 +711,7 @@ fn run() -> Result<()> {
                 }],
             )?;
         }
-        "city-layout" | "city-replay" => {
+        "city-board-start" | "city-layout" | "city-replay" => {
             let path = Path::new(&args[3]);
             let image = read_source_limited(path, 128 * 1024 * 1024)?;
             let city = CityLayout::load(&bytes, &image)?;
@@ -683,7 +721,18 @@ fn run() -> Result<()> {
                 bytes: &image,
                 role: "stage-object-executable",
             }];
-            if command == "city-layout" {
+            if command == "city-board-start" {
+                let report = city_replay::board_start(&city, &image)?;
+                save_runtime_document(
+                    input,
+                    &label,
+                    &bytes,
+                    output,
+                    &report,
+                    "city-board-start-json",
+                    &deps,
+                )?;
+            } else if command == "city-layout" {
                 save_runtime_document(
                     input,
                     &label,
@@ -705,12 +754,14 @@ fn run() -> Result<()> {
                 let selector = args[4]
                     .to_str()
                     .ok_or_else(|| Error::invalid("invalid callback selector"))?;
-                let doc = if selector == "bgm" {
+                let doc = if selector == "board-route" {
+                    json!({"sourceLayer":city.source_layer,"trace":city_replay::board_route(&city,&request)?})
+                } else if selector == "bgm" {
                     json!({"sourceLayer":city.source_layer,"stageTask":"bgm","trace":city_replay::replay_bgm(&request)?})
                 } else {
-                    let index = selector
-                        .parse::<usize>()
-                        .map_err(|_| Error::invalid("expected placement index or bgm"))?;
+                    let index = selector.parse::<usize>().map_err(|_| {
+                        Error::invalid("expected placement index, bgm or board-route")
+                    })?;
                     let (p, d) = city.resolve(index)?;
                     json!({"sourceLayer":city.source_layer,"placementIndex":index,"placement":p,"definition":d,"trace":city_replay::replay(p,d,&request)?})
                 };
@@ -794,6 +845,38 @@ fn run() -> Result<()> {
                 &evaluated,
                 "native-pose-json",
                 &dependencies,
+            )?;
+        }
+        "finalhazard-boss-glb" | "finalhazard-weakpoint-glb" => {
+            let archive = Path::new(&args[3]);
+            let textures = read_source_limited(archive, 32 * 1024 * 1024)?;
+            let glb = if command == "finalhazard-boss-glb" {
+                let clip = args[4]
+                    .to_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| Error::invalid("expected boss clip index"))?;
+                sa2_asset_tools::finalhazard::boss_glb(
+                    &bytes,
+                    &textures,
+                    clip,
+                    finite_argument(&args[5])?,
+                )?
+            } else {
+                sa2_asset_tools::finalhazard::weakpoint_glb(&bytes, &textures)?
+            };
+            save_runtime_bytes(
+                input,
+                &label,
+                &bytes,
+                output,
+                &glb,
+                command,
+                &[RuntimeDependency {
+                    path: archive,
+                    logical_path: source_label(archive, source_root.as_deref())?,
+                    bytes: &textures,
+                    role: "model-textures",
+                }],
             )?;
         }
         "city-board-glb" => {
@@ -901,7 +984,21 @@ fn run() -> Result<()> {
         }
         "extract" => extract(input, &label, &bytes, output)?,
         "texture" => {
-            let palette_bytes = if args.len() == 5 {
+            let selecting_mip = args.len() == 5 && args[3] == "--mip";
+            let level = if selecting_mip {
+                if !bytes.starts_with(b"DDS ") {
+                    return Err(Error::invalid("--mip requires DDS input"));
+                }
+                args[4]
+                    .to_str()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .ok_or_else(|| Error::invalid("invalid mip level"))?
+            } else {
+                0
+            };
+            let palette_bytes = if selecting_mip {
+                None
+            } else if args.len() == 5 {
                 Some(read_source(Path::new(&args[3]))?)
             } else if args.len() == 3 {
                 None
@@ -941,7 +1038,7 @@ fn run() -> Result<()> {
                 if palette.is_some() {
                     return Err(Error::invalid("DDS does not consume a GVP palette"));
                 }
-                texture::decode_dds(&bytes)?
+                texture::decode_dds_mip(&bytes, level)?
             } else {
                 texture::decode_gvr(
                     &bytes,
@@ -957,7 +1054,12 @@ fn run() -> Result<()> {
             let source = Source::from_bytes(&label, &bytes)?;
             let mut m = Manifest::new(vec![source]);
             let source = &m.sources[0];
-            m.assets.push(asset(source,"rgba".into(),"texture",whole_span(source),Some(output_record(output,"png-rgba8",&png)?),Representation::Decoded,vec![format!("Base mip only; pixels are unscaled straight RGBA. External palette bank: {}. No material opacity or eye adaptation.",if palette.is_some(){bank.to_string()}else{"none".into()})]));
+            let image_id = if level == 0 {
+                "rgba".to_owned()
+            } else {
+                format!("rgba.mip.{level}")
+            };
+            m.assets.push(asset(source,image_id,"texture",whole_span(source),Some(output_record(output,"png-rgba8",&png)?),Representation::Decoded,vec![format!("Mip level {level}; pixels are unscaled straight RGBA. External palette bank: {}. No material opacity or eye adaptation.",if palette.is_some(){bank.to_string()}else{"none".into()})]));
             if let Some(p) = palette_bytes {
                 let palette_path = Path::new(&args[3]);
                 ensure_unchanged(palette_path, &p)?;
@@ -972,6 +1074,9 @@ fn run() -> Result<()> {
                 let colors = p
                     .get(offset..offset + length)
                     .ok_or_else(|| Error::invalid("palette dependency range"))?;
+                // A palette file and bank together select one rendered variant.
+                m.assets[0].id =
+                    format!("{}.palette.{}.bank.{bank}", m.assets[0].id, s.logical_path);
                 m.assets[0].dependencies.push(Dependency {
                     source_id: s.id.clone(),
                     role: "external-palette".into(),
@@ -1025,10 +1130,389 @@ fn run() -> Result<()> {
                 )?;
             }
         }
+        "event-subtitles" => {
+            let name = input
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let encoding = match name.as_bytes() {
+                [b'e', b'v', b'm', b'e', b's', b'h' | b'd' | b'l', lang @ b'0'..=b'5'] => {
+                    if *lang == b'0' {
+                        encoding_rs::SHIFT_JIS
+                    } else {
+                        encoding_rs::WINDOWS_1252
+                    }
+                }
+                _ => return Err(Error::invalid("expected evmes bank filename")),
+            };
+            let report =
+                audio::event_subtitles(&archive::decompress_prs(&bytes, MAX_DECODED)?, encoding)?;
+            if let Some(arg) = args.get(3) {
+                let timing = Path::new(arg);
+                let stem = timing.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                let (digits, lang) = stem
+                    .strip_prefix("e")
+                    .and_then(|s| s.split_once("_"))
+                    .ok_or_else(|| Error::invalid("expected eNNNN_LANG timing file"))?;
+                if digits.len() != 4
+                    || !digits.bytes().all(|c| c.is_ascii_digit())
+                    || lang != &name[6..]
+                {
+                    return Err(Error::invalid("expected matching numbered event language"));
+                }
+                let id = digits
+                    .parse::<u32>()
+                    .map_err(|_| Error::invalid("invalid event ID"))?;
+                let lines = report["events"][id.to_string()]
+                    .as_array()
+                    .ok_or_else(|| Error::invalid("event absent from subtitle bank"))?;
+                let timing_bytes = read_source(timing)?;
+                let mut cues =
+                    audio::read_event_cues(&archive::decompress_prs(&timing_bytes, MAX_DECODED)?)?;
+                let rows = cues["subtitles"]
+                    .as_array_mut()
+                    .ok_or_else(|| Error::invalid("missing subtitle timing rows"))?;
+                for row in rows.iter_mut() {
+                    let slot = row["slot"]
+                        .as_u64()
+                        .ok_or_else(|| Error::invalid("missing subtitle slot"))?
+                        as usize;
+                    row["subtitle"] = json!(lines.get(slot));
+                }
+                let result = json!({"eventId":id,"encoding":encoding.name(),"textSlotCount":lines.len(),"subtitles":rows,"matching":"same numbered language and physical slot; runtime visibility unverified"});
+                return save_runtime_document(
+                    input,
+                    &label,
+                    &bytes,
+                    output,
+                    &result,
+                    "event-subtitle-slots-json",
+                    &[RuntimeDependency {
+                        path: timing,
+                        logical_path: source_label(timing, source_root.as_deref())?,
+                        bytes: &timing_bytes,
+                        role: "subtitle-timing",
+                    }],
+                );
+            }
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "event-subtitle-bank-json",
+                &[],
+            )?;
+        }
+        "event-music" => {
+            let mut report =
+                audio::read_event_cues(&archive::decompress_prs(&bytes, MAX_DECODED)?)?;
+            let mut paths = std::collections::BTreeMap::new();
+            for entry in fs::read_dir(Path::new(&args[3]))? {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if name.ends_with(".adx")
+                    && entry.file_type()?.is_file()
+                    && paths.insert(name, entry.path()).is_some()
+                {
+                    return Err(Error::invalid("ambiguous case-insensitive ADX track name"));
+                }
+            }
+            let mut tracks = std::collections::BTreeMap::new();
+            let mut remaining = MAX_INPUT;
+            for cue in report["audio"]
+                .as_array_mut()
+                .ok_or_else(|| Error::invalid("missing cue array"))?
+            {
+                let name = cue["musicName"].as_str().unwrap_or("").to_ascii_lowercase();
+                if name.is_empty() {
+                    continue;
+                }
+                let Some(path) = paths.get(&name) else {
+                    cue["musicResolution"] = json!(if name.ends_with(".adx") {
+                        "missing-track"
+                    } else {
+                        "uninterpreted-token"
+                    });
+                    continue;
+                };
+                if !tracks.contains_key(&name) {
+                    let data = read_source_limited(path, remaining)?;
+                    remaining -= data.len() as u64;
+                    let header = audio::read_adx_header(&data)?;
+                    let logical = source_label(path, source_root.as_deref())?;
+                    let source = Source::from_bytes(&logical, &data)?;
+                    tracks.insert(name.clone(),(path,logical,data,json!({"sourceId":source.id,"sha256":source.sha256,"sampleCount":header.sample_count,"sampleRate":header.sample_rate})));
+                }
+                cue["musicResolution"] = json!("matched-track");
+                cue["musicTrack"] = tracks[&name].3.clone();
+            }
+            let deps = tracks
+                .values()
+                .map(|(path, logical, data, _)| RuntimeDependency {
+                    path,
+                    logical_path: logical.clone(),
+                    bytes: data,
+                    role: "event-music-track",
+                })
+                .collect::<Vec<_>>();
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "event-music-json",
+                &deps,
+            )?;
+        }
+        "event-voices" => {
+            let exe_path = Path::new(&args[3]);
+            let exe = read_source(exe_path)?;
+            let table = pe::cutscene_voice_table(&exe)?;
+            let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let id = stem
+                .strip_prefix("e")
+                .and_then(|s| s.split_once("_"))
+                .filter(|(id, _)| id.len() == 4 && id.bytes().all(|c| c.is_ascii_digit()))
+                .and_then(|(id, _)| id.parse::<u32>().ok())
+                .ok_or_else(|| Error::invalid("expected event filename eNNNN_SUFFIX.prs"))?;
+            let mut report =
+                audio::read_event_cues(&archive::decompress_prs(&bytes, MAX_DECODED)?)?;
+            for cue in report["audio"]
+                .as_array_mut()
+                .ok_or_else(|| Error::invalid("missing cue array"))?
+            {
+                let local = cue["afsVoiceIndex"]
+                    .as_u64()
+                    .ok_or_else(|| Error::invalid("missing voice index"))?
+                    as u32;
+                if local != 65535 {
+                    let key = id * 1000 + local;
+                    cue["internalVoiceId"] = json!(key);
+                    cue["voiceFileId"] = json!(table.get(&key));
+                }
+            }
+            report["eventId"] = json!(id);
+            save_runtime_bytes(
+                input,
+                &label,
+                &bytes,
+                output,
+                &serde_json::to_vec_pretty(&report)?,
+                "event-voice-lookup-json",
+                &[RuntimeDependency {
+                    path: exe_path,
+                    logical_path: source_label(exe_path, source_root.as_deref())?,
+                    bytes: &exe,
+                    role: "cutscene-voice-table",
+                }],
+            )?;
+        }
+        "chao-collision" => {
+            let report = sa2_asset_tools::chao_collision(&bytes)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "chao-collision-json",
+                &[],
+            )?;
+        }
+        "city-player-keys" | "city-player-motions" => {
+            let rel = sa2_asset_tools::city_rel::CityRel::read(&bytes)?;
+            let keys = command == "city-player-keys";
+            let bindings = if keys {
+                rel.player_motion_keys()?
+            } else {
+                rel.player_motion_bindings()?
+            };
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &bindings,
+                if keys {
+                    "city-player-motion-keys-json"
+                } else {
+                    "city-player-motion-bindings-json"
+                },
+                &[],
+            )?;
+        }
+        "city-board-inputs" => {
+            let report =
+                sa2_asset_tools::city_rel::CityRel::read(&bytes)?.board_input_handoffs()?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "city-board-input-handoffs-json",
+                &[],
+            )?;
+        }
+        "city-arrow-world" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Query {
+                player_world: Option<[f32; 3]>,
+                frame_counter: u32,
+            }
+            let exe_path = Path::new(&args[3]);
+            let rel_path = Path::new(&args[4]);
+            let query_path = Path::new(&args[5]);
+            let exe = read_source(exe_path)?;
+            let rel = read_source(rel_path)?;
+            let query = read_source_limited(query_path, 65536)?;
+            let q: Query = serde_json::from_slice(&query)?;
+            let layout = CityLayout::load(&bytes, &exe)?;
+            let report = sa2_asset_tools::city_rel::CityRel::read(&rel)?.placed_arrows(
+                &layout,
+                q.player_world,
+                q.frame_counter,
+            )?;
+            let deps = [
+                RuntimeDependency {
+                    path: exe_path,
+                    logical_path: source_label(exe_path, source_root.as_deref())?,
+                    bytes: &exe,
+                    role: "object-table",
+                },
+                RuntimeDependency {
+                    path: rel_path,
+                    logical_path: source_label(rel_path, source_root.as_deref())?,
+                    bytes: &rel,
+                    role: "scenery-module",
+                },
+                RuntimeDependency {
+                    path: query_path,
+                    logical_path: format!("queries/{}", basename(query_path)?),
+                    bytes: &query,
+                    role: "world-observation",
+                },
+            ];
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "city-arrow-world-json",
+                &deps,
+            )?;
+        }
+        "city-arrow-display" => {
+            let mode = args[3]
+                .to_str()
+                .and_then(|s| s.parse::<i8>().ok())
+                .ok_or_else(|| Error::invalid("expected signed task mode"))?;
+            let tick = args[4]
+                .to_str()
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or_else(|| Error::invalid("expected unsigned frame counter"))?;
+            let report =
+                sa2_asset_tools::city_rel::CityRel::read(&bytes)?.arrow_display(mode, tick)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "city-arrow-display-json",
+                &[],
+            )?;
+        }
+        "city-scenery-descriptors" => {
+            let report = sa2_asset_tools::city_rel::CityRel::read(&bytes)?.scenery_descriptors()?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "city-scenery-descriptors-json",
+                &[],
+            )?;
+        }
+        "city-scenery-proximity" => {
+            let path = Path::new(&args[3]);
+            let input_bytes = read_source_limited(path, 65536)?;
+            let positions: Vec<Option<[f32; 3]>> = serde_json::from_slice(&input_bytes)?;
+            if positions.is_empty() || positions.len() > 2048 {
+                return Err(Error::invalid("expected 1..2048 local observations"));
+            }
+            let module = sa2_asset_tools::city_rel::CityRel::read(&bytes)?;
+            let result = positions
+                .into_iter()
+                .map(|p| module.scenery_proximity(p))
+                .collect::<Result<Vec<_>>>()?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &result,
+                "city-scenery-proximity-json",
+                &[RuntimeDependency {
+                    path,
+                    logical_path: format!("queries/{}", basename(path)?),
+                    bytes: &input_bytes,
+                    role: "local-player-observations",
+                }],
+            )?;
+        }
+        "event-effects" => {
+            let report = story_effects::read(&archive::decompress_prs(&bytes, MAX_DECODED)?)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "event-effects-json",
+                &[],
+            )?;
+        }
+        "event-lighting" => {
+            let report = audio::event_lighting(&archive::decompress_prs(&bytes, MAX_DECODED)?)?;
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "event-lighting-json",
+                &[],
+            )?;
+        }
+        "event-cues" => {
+            let data = archive::decompress_prs(&bytes, MAX_DECODED)?;
+            let report = audio::read_event_cues(&data)?;
+            save_conversion(input, &label, &bytes, output, &serde_json::to_vec_pretty(&report)?, "event-cues-json", vec!["Big-endian event language timing prefix; additional effect data is not interpreted. Voice indices are raw source values.".into()])?;
+        }
+        "ahx" => {
+            let wav = audio::decode_ahx_wav(&bytes, MAX_DECODED)?;
+            save_conversion(
+                input,
+                &label,
+                &bytes,
+                output,
+                &wav,
+                "wav-float32",
+                vec!["Fixed mono AHX; trimmed to declared sample count. Float output preserves peaks outside [-1, 1].".into()],
+            )?;
+        }
         "adx" => {
             let pcm = audio::decode_adx(&bytes, MAX_DECODED / 2)?;
             let wav = pcm.to_wav()?;
-            save_conversion(input,&label,&bytes,output,&wav,"wav-pcm16",vec!["One pass at native rate/channels; loop points are inspection metadata. No AHX/CSB/encrypted ADX decoder.".into()])?;
+            save_conversion(input,&label,&bytes,output,&wav,"wav-pcm16",vec!["One pass at native rate/channels; declared loop points are stored in the WAV sampler chunk. CSB and encrypted ADX remain unsupported.".into()])?;
         }
         "transporter" => {
             let text = std::str::from_utf8(&bytes).map_err(|e| Error::invalid(e.to_string()))?;

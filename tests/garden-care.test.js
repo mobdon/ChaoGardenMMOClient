@@ -9,7 +9,8 @@ const care = () => ({
   catalog: { enabled: true, fruitsEnabled: true, items: [{ id: 0, name: 'Penguin', kind: 'animal' }], fruits: [{ id: 5, name: 'Hero Fruit' }, { id: 0, name: 'Chao Garden Fruit' }] },
   eligibility: { canCare: true, effectReadyAt: null },
   animalParts: { shown: { ears: 0, tail: 0, antlers: 3, wings: 99 } },
-  shop: [{ itemId: 'seed:hero', price: 15, enabled: true }, { itemId: 'garden-fruit', price: 3, enabled: true }],
+  shop: [{ itemId: 'garden-fruit', price: 3, enabled: true }],
+  market: { rules: 'native-gc-black-market-v2', stock: [{ itemId: 'seed:strong', price: 500, sell: 150 }, { itemId: 'sa2-fruit:5', price: 120, sell: 40 }, { itemId: 'sa2:3', price: 9, sell: 1 }], sellPrices: { 'sa2-fruit:5': 40 } },
   garden: {
     plots: [
       { id: 'garden-1', zone: 'garden', x: 10, z: 2, tree: null },
@@ -46,13 +47,15 @@ test('nearby places offer only the actions the server could accept', () => {
   assert.deepEqual(gardenCareView(care(), { zone: 'garden', x: 13, z: 2 }, { connected: false }).places[0].actions, []);
 });
 
-test('inventory, parts and seed offers are validated and seeds are never eaten', () => {
+test('inventory, parts and Black Market offers are validated and seeds are never eaten', () => {
   const view = gardenCareView(care(), { zone: 'hub', x: -4, z: 8, rings: 20 }, { connected: true });
   assert.equal(view.items.find(i => i.id === 'seed:hero').mayUse, false);
   assert.equal(view.items.find(i => i.id === 'sa2-fruit:5').mayUse, true);
   assert.deepEqual(view.parts.map(p => [p.category, p.label]), [['ears', 'Penguin'], ['tail', 'Penguin']]);
-  assert.deepEqual(view.offers.map(o => [o.itemId, o.mayBuy]), [['seed:hero', true]]);
-  assert.equal(gardenCareView(care(), { zone: 'hub', x: -4, z: 8, rings: 5 }, { connected: true }).offers[0].mayBuy, false);
+  const rich = gardenCareView(care(), { zone: 'hub', x: -4, z: 8, rings: 500 }, { connected: true });
+  assert.deepEqual(rich.offers.map(o => [o.itemId, o.price, o.mayBuy]), [['seed:strong', 500, true], ['sa2-fruit:5', 120, true]], 'only native seed and fruit rows');
+  assert.deepEqual(view.offers.map(o => o.mayBuy), [false, false], '20 rings buys nothing');
+  assert.deepEqual(rich.sales.map(o => [o.itemId, o.price]), [['sa2-fruit:5', 40]], 'only carried items the market prices');
   assert.equal(gardenCareView(care(), { zone: 'hub', x: 6, z: 8, rings: 50 }, { connected: true }).atShop, false);
   const off = { ...care(), catalog: { ...care().catalog, fruitsEnabled: false } };
   assert.equal(gardenCareView(off, { zone: 'garden' }, { connected: true }).items.find(i => i.id === 'sa2-fruit:5').mayUse, false);
@@ -111,4 +114,48 @@ test('animal parts map to the traced native Chao nodes and exact model names', a
       { socket: 'tail', node: '008', key: 'animal-part-penguin-child-tail' }]);
   assert.equal(CHAO_PART_NODES.leftWing, '037');
   assert.deepEqual(animalPartAssets({ ears: 3 }, 'teen'), []);
+});
+
+test('entering the Black Market asks the server to restock once per visit', () => {
+  const document = { createElement: tag => new Node(tag, document) };
+  const root = new Node('aside', document);
+  const sent = [];
+  let n = 0;
+  const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => `req-${++n}` });
+  panel.update(care(), { zone: 'hub', x: 0, z: 0, rings: 600 }, { connected: true });
+  assert.equal(sent.length, 0);
+  panel.update(care(), { zone: 'hub', x: -4, z: 8, rings: 600 }, { connected: true });
+  assert.deepEqual(sent.map(m => m.intent), [{ kind: 'market' }]);
+  panel.handleEvent({ type: 'event', kind: 'care-result', rulesVersion: 'adapted-care-v1', requestId: 'req-1', accepted: true, revision: 8, effects: { restocked: true, market: {} } });
+  panel.update(care(), { zone: 'hub', x: -4, z: 8, rings: 600 }, { connected: true });
+  assert.equal(sent.length, 1, 'no second visit while still inside');
+  const buy = root.all().find(node => node.tagName === 'button' && node.textContent === 'Buy');
+  buy.listeners.click();
+  assert.deepEqual(sent[1].intent, { kind: 'purchase', itemId: 'seed:strong' });
+});
+
+test('Black Market eggs, hats and themes use native names and the right intents', () => {
+  assert.equal(careItemKind('egg:2'), 'egg');
+  assert.equal(careItemKind('egg:27'), null);
+  assert.equal(careItemLabel('egg:2'), 'White egg');
+  assert.equal(careItemLabel('egg:36'), 'Shiny red egg');
+  assert.equal(careItemLabel('hat:12'), 'Red wool hat');
+  assert.equal(careItemLabel('theme:amy'), 'Amy menu theme');
+  const withItems = { ...care(), inventory: { 'egg:2': 1, 'hat:3': 1 }, hat: 9, emblems: { count: 12 },
+    market: { stock: [{ itemId: 'theme:omochao', price: 10000, sell: 0 }, { itemId: 'egg:5', price: 600, sell: 0 }], sellPrices: { 'hat:3': 500 } } };
+  const garden = gardenCareView(withItems, { zone: 'garden', x: 0, z: 0, rings: 0 }, { connected: true });
+  assert.equal(garden.items.find(i => i.id === 'egg:2').mayUse, true, 'eggs go down in a garden');
+  assert.equal(gardenCareView(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true }).items.find(i => i.id === 'egg:2').mayUse, false);
+  assert.equal(garden.hat, 'Pan');
+  assert.equal(garden.emblems, 12);
+  const shop = gardenCareView(withItems, { zone: 'hub', x: -4, z: 8, rings: 20000 }, { connected: true });
+  assert.deepEqual(shop.offers.map(o => o.itemId), ['theme:omochao', 'egg:5']);
+  assert.deepEqual(shop.sales.map(o => [o.itemId, o.price]), [['hat:3', 500]]);
+  const document = { createElement: tag => new Node(tag, document) };
+  const root = new Node('aside', document);
+  const sent = [];
+  const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg' });
+  panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true });
+  root.all().find(n => n.tagName === 'button' && n.textContent === 'Put down').listeners.click();
+  assert.deepEqual(sent[0].intent, { kind: 'place-egg', itemId: 'egg:2' });
 });

@@ -161,6 +161,56 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Field reads shared by the node and Chunk decoders, so the same decoding
+/// serves little-endian PC images and big-endian GameCube-format banks.
+pub(crate) trait Words {
+    fn span(&self, at: usize, size: usize) -> Result<&[u8]>;
+    fn u16(&self, at: usize) -> Result<u16>;
+    fn u32(&self, at: usize) -> Result<u32>;
+    fn f32(&self, at: usize) -> Result<f32> {
+        let f = f32::from_bits(self.u32(at)?);
+        if !f.is_finite() {
+            return Err(Error::invalid(format!(
+                "non-finite native float at {at:#x}"
+            )));
+        }
+        Ok(f)
+    }
+    fn vec3(&self, at: usize) -> Result<[f32; 3]> {
+        Ok([self.f32(at)?, self.f32(at + 4)?, self.f32(at + 8)?])
+    }
+}
+impl Words for Reader<'_> {
+    fn span(&self, at: usize, size: usize) -> Result<&[u8]> {
+        Reader::span(self, at, size)
+    }
+    fn u16(&self, at: usize) -> Result<u16> {
+        Reader::u16(self, at)
+    }
+    fn u32(&self, at: usize) -> Result<u32> {
+        Reader::u32(self, at)
+    }
+}
+
+/// Big-endian fields: each 16- and 32-bit field is stored most significant
+/// byte first, as in the GameCube-format character model banks.
+pub(crate) struct BeReader<'a> {
+    pub data: &'a [u8],
+}
+impl Words for BeReader<'_> {
+    fn span(&self, at: usize, size: usize) -> Result<&[u8]> {
+        Reader { data: self.data }.span(at, size)
+    }
+    fn u16(&self, at: usize) -> Result<u16> {
+        let b = self.span(at, 2)?;
+        Ok(u16::from_be_bytes([b[0], b[1]]))
+    }
+    fn u32(&self, at: usize) -> Result<u32> {
+        let b = self.span(at, 4)?;
+        Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    }
+}
+
 pub(crate) fn metadata(
     data: &[u8],
     version: u8,
@@ -257,14 +307,23 @@ pub(crate) fn read_nodes(
     gc: bool,
     budget: &mut DecodeBudget,
 ) -> Result<Vec<Node>> {
-    if root == 0 {
-        return Err(Error::invalid("null native root node"));
-    }
     let r = Reader {
         data: data
             .get(..limit)
             .ok_or_else(|| Error::invalid("node region limit"))?,
     };
+    read_nodes_in(&r, root, gc, budget)
+}
+
+pub(crate) fn read_nodes_in<R: Words>(
+    r: &R,
+    root: u32,
+    gc: bool,
+    budget: &mut DecodeBudget,
+) -> Result<Vec<Node>> {
+    if root == 0 {
+        return Err(Error::invalid("null native root node"));
+    }
     let mut pending = vec![(root, None)];
     let mut visited = BTreeSet::new();
     let mut nodes = Vec::new();
@@ -311,12 +370,45 @@ pub(crate) fn read_chunk_attachment(
     offset: u32,
     budget: &mut DecodeBudget,
 ) -> Result<ChunkAttachment> {
-    let r = Reader { data };
+    read_chunk_attachment_in(&Reader { data }, offset, budget)
+}
+
+pub(crate) fn read_chunk_attachment_in<R: Words>(
+    r: &R,
+    offset: u32,
+    budget: &mut DecodeBudget,
+) -> Result<ChunkAttachment> {
     let at = offset as usize;
     r.span(at, 24)?;
+    read_chunk_streams_in(r, offset, r.u32(at)?, r.u32(at + 4)?, budget)
+}
+
+/// Stream addresses already resolved into offsets in the supplied byte image.
+pub(crate) fn read_chunk_streams(
+    data: &[u8],
+    offset: u32,
+    vertex_offset: u32,
+    polygon_offset: u32,
+    budget: &mut DecodeBudget,
+) -> Result<ChunkAttachment> {
+    read_chunk_streams_in(
+        &Reader { data },
+        offset,
+        vertex_offset,
+        polygon_offset,
+        budget,
+    )
+}
+
+pub(crate) fn read_chunk_streams_in<R: Words>(
+    r: &R,
+    offset: u32,
+    vertex_offset: u32,
+    polygon_offset: u32,
+    budget: &mut DecodeBudget,
+) -> Result<ChunkAttachment> {
+    let at = offset as usize;
     budget.charge(1, std::mem::size_of::<ChunkAttachment>() * 2)?;
-    let vertex_offset = r.u32(at)?;
-    let polygon_offset = r.u32(at + 4)?;
     let mut vertex_chunks = Vec::new();
     if vertex_offset != 0 {
         let mut p = vertex_offset as usize;
@@ -335,8 +427,10 @@ pub(crate) fn read_chunk_attachment(
                 return Err(Error::invalid("short vertex chunk"));
             }
             r.span(p, length)?;
-            let index_offset = r.u16(p + 4)?;
-            let count = r.u16(p + 6)? as usize;
+            // One 32-bit word: index offset in the low half, count in the high half.
+            let w = r.u32(p + 4)?;
+            let index_offset = w as u16;
+            let count = (w >> 16) as usize;
             let stride = match kind {
                 32 => 16,
                 33 => 32,
@@ -409,7 +503,8 @@ pub(crate) fn read_chunk_attachment(
                 if length < 8 {
                     return Err(Error::invalid("short diffuse material chunk"));
                 }
-                let argb = r.u32(p + 4)?;
+                // Two 16-bit fields, low half first: the same value in both byte orders.
+                let argb = u32::from(r.u16(p + 4)?) | u32::from(r.u16(p + 6)?) << 16;
                 Some([
                     (argb >> 16) as u8,
                     (argb >> 8) as u8,

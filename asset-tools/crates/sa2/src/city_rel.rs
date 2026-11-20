@@ -31,12 +31,110 @@ pub struct CityRel<'a> {
 }
 
 impl<'a> CityRel<'a> {
+    /// Stage-local player motion registrations; preserve source order and REL addresses.
+    pub fn player_motion_bindings(&self) -> Result<serde_json::Value> {
+        self.player_motion_report(false)
+    }
+    pub fn player_motion_keys(&self) -> Result<serde_json::Value> {
+        self.player_motion_report(true)
+    }
+    fn player_motion_report(&self, keys: bool) -> Result<serde_json::Value> {
+        let data = self.data(5)?;
+        let mut rows = Vec::new();
+        let start = 0x1fd2b0usize;
+        for (n, row) in data
+            .get(start..)
+            .ok_or_else(invalid)?
+            .chunks_exact(8)
+            .enumerate()
+        {
+            let index = i16::from_be_bytes([row[0], row[1]]);
+            if index == -1 {
+                return Ok(serde_json::json!({"section":5,"tableOffset":start,"bindings":rows}));
+            }
+            if !(0..300).contains(&index) {
+                return Err(invalid());
+            }
+            let (section, offset) = self
+                .local_pointer(5, (start + n * 8 + 4) as u32)?
+                .ok_or_else(invalid)?;
+            let header = self
+                .data(section)?
+                .get(offset as usize..)
+                .and_then(|tail| tail.get(..12))
+                .ok_or_else(invalid)?;
+            let (tracks_section, tracks_offset) =
+                self.local_pointer(section, offset)?.ok_or_else(invalid)?;
+            if tracks_offset as usize >= self.data(tracks_section)?.len() {
+                return Err(invalid());
+            }
+            let mut binding = serde_json::json!({
+                "index":index,"tag":i16::from_be_bytes([row[2],row[3]]),"section":section,"offset":offset,
+                "frameCount":u32::from_be_bytes(header[4..8].try_into().unwrap()),
+                "motionType":u16::from_be_bytes([header[8],header[9]]),
+                "interpolationAndFactors":u16::from_be_bytes([header[10],header[11]]),
+                "motionData":{"section":tracks_section,"offset":tracks_offset}
+            });
+            if keys {
+                let count = u16::from_be_bytes([row[2], row[3]]) as u32;
+                if header[8..12] != [0, 3, 0, 2]
+                    || tracks_section != section
+                    || tracks_offset.checked_add(count * 16) != Some(offset)
+                {
+                    return Err(invalid());
+                }
+                let mut nodes = Vec::new();
+                for node in 0..count {
+                    let addr = tracks_offset + node * 16;
+                    let desc = &self.data(section)?[addr as usize..addr as usize + 16];
+                    let mut channels = [Vec::new(), Vec::new()];
+                    for (i, channel) in channels.iter_mut().enumerate() {
+                        let n = u32::from_be_bytes(desc[8 + i * 4..12 + i * 4].try_into().unwrap());
+                        let ptr = self.local_pointer(section, addr + i as u32 * 4)?;
+                        if n == 0 && ptr.is_none() {
+                            continue;
+                        }
+                        let (s, o) = ptr.ok_or_else(invalid)?;
+                        let bytes = self
+                            .data(s)?
+                            .get(o as usize..)
+                            .and_then(|tail| tail.get(..(n as usize).checked_mul(16)?))
+                            .ok_or_else(invalid)?;
+                        for k in bytes.chunks_exact(16) {
+                            let word =
+                                |j: usize| u32::from_be_bytes(k[j..j + 4].try_into().unwrap());
+                            let xyz = [word(4), word(8), word(12)];
+                            let value = if i == 0 {
+                                let v = xyz.map(f32::from_bits);
+                                if !v.iter().all(|x| x.is_finite()) {
+                                    return Err(invalid());
+                                }
+                                serde_json::json!(v)
+                            } else {
+                                serde_json::json!(xyz.map(|x| x as i32))
+                            };
+                            channel.push(serde_json::json!([word(0), value]));
+                        }
+                    }
+                    let [position, rotation] = channels;
+                    nodes.push(serde_json::json!({"position":position,"rotation":rotation}));
+                }
+                binding["nodes"] = serde_json::json!(nodes);
+            }
+            rows.push(binding);
+        }
+        Err(invalid())
+    }
     /// Distinct from the GSNE8P decompilation's expected disc build.
     pub fn read(bytes: &'a [u8]) -> Result<Self> {
         if bytes.len() != 3_304_912 || manifest::sha256(bytes) != SHA256 {
             return Err(Error::invalid("unsupported City Escape REL revision"));
         }
         Self::read_identified(bytes, 12)
+    }
+    /// The module id this REL was read as.
+    pub(crate) fn module_id(&self) -> u32 {
+        self.module
     }
     /// Caller must first identify the released module by pinned digest.
     pub(crate) fn read_identified(bytes: &'a [u8], module: u32) -> Result<Self> {
@@ -186,7 +284,196 @@ impl<'a> CityRel<'a> {
             _ => Err(invalid()),
         }
     }
-    pub fn board_resources(&self) -> Result<Vec<BoardResources>> {
+    /// ObjectCesobjExec, after range acceptance and optional executor/CCL dispatch.
+    /// The coordinate is player zero after the engine's object-local transform.
+    pub fn scenery_proximity(&self, player_local: Option<[f32; 3]>) -> Result<serde_json::Value> {
+        let offset = self.resource(0xc1c6)? as usize;
+        let data = self.data(5)?.get(offset..offset + 12).ok_or_else(invalid)?;
+        let limits: [f32; 3] =
+            std::array::from_fn(|i| f32::from_be_bytes(data[i * 4..i * 4 + 4].try_into().unwrap()));
+        if player_local.is_some_and(|p| p.iter().any(|v| !v.is_finite())) {
+            return Err(Error::invalid("nonfinite local player position"));
+        }
+        let inside =
+            player_local.is_some_and(|p| [0, 2, 1].iter().all(|&i| p[i].abs() < limits[i]));
+        Ok(
+            serde_json::json!({"playerLocal":player_local,"halfExtents":limits,"mode":if inside {0}else{1},"dataSectionOffset":offset,
+        "scope":"After range acceptance. No player gives mode one. No collision hit or range result inferred."}),
+        )
+    }
+    /// Installed object-list wrappers referencing the shared ObjectCesobj initializer.
+    pub fn scenery_descriptors(&self) -> Result<serde_json::Value> {
+        let data = self.data(5)?;
+        let word = |p: u32| -> Result<u32> {
+            Ok(u32::from_be_bytes(
+                data.get(p as usize..p as usize + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        let mut rows = Vec::new();
+        for (entry, wrapper, load, delta) in
+            [(0x1ffcfc, 0xbe9c, 0xbec2, 0), (0x1ffd0c, 0xbee8, 0xbf0e, 8)]
+        {
+            if self.local_pointer(5, entry)? != Some((1, wrapper)) {
+                return Err(invalid());
+            }
+            let (section, name_at) = self.local_pointer(5, entry + 4)?.ok_or_else(invalid)?;
+            let name = self
+                .data(section)?
+                .get(name_at as usize..)
+                .ok_or_else(invalid)?
+                .split(|b| *b == 0)
+                .next()
+                .ok_or_else(invalid)?;
+            let name = std::str::from_utf8(name).map_err(|_| invalid())?;
+            let header = self.resource(load)? + delta;
+            let (5, start) = self.local_pointer(5, header)?.ok_or_else(invalid)? else {
+                return Err(invalid());
+            };
+            let count = word(header + 4)?;
+            if !(1..=256).contains(&count) {
+                return Err(invalid());
+            }
+            let mut variants = Vec::new();
+            for i in 0..count {
+                let d = start + 40 * i;
+                variants.push(serde_json::json!({"variant":i,"flags":word(d)?,"collision":self.local_pointer(5,d+12)?,"collisionCount":word(d+16)?,"displayCallback":self.local_pointer(5,d+20)?,"updateCallback":self.local_pointer(5,d+24)?}));
+            }
+            rows.push(
+                serde_json::json!({"objectName":name,"wrapperOffset":wrapper,"variants":variants}),
+            );
+        }
+        Ok(
+            serde_json::json!({"objects":rows,"pointerBasis":"REL section and offset","selection":"low 8 bits of SET rotation X, capped at last variant"}),
+        )
+    }
+    /// Normal SARROW display path (no alternate submode draw), after the task mode gate.
+    pub fn arrow_display(&self, mode: i8, tick: u32) -> Result<serde_json::Value> {
+        let local = |at| {
+            self.local_pointer(5, at)?
+                .filter(|(s, _)| *s == 5)
+                .map(|(_, v)| v)
+                .ok_or_else(invalid)
+        };
+        let header = self.resource(0xbec2)?;
+        let descriptor = local(header)?;
+        let model = local(descriptor + 8)?;
+        let texlist = self.local_pointer(5, descriptor + 4)?;
+        let alternate = self.local_pointer(5, descriptor + 0x1c)?;
+        if alternate.is_some() {
+            return Err(Error::invalid("unsupported alternate SARROW descriptor"));
+        }
+        let section = self.data(5)?;
+        let root_geometry = self.local_pointer(5, model + 4)?;
+        let mut rows = Vec::new();
+        if mode == 0 {
+            let mut node = local(model + 0x2c)?;
+            let phase = tick % 90;
+            let active = 2 - phase / 30;
+            let age = phase % 30;
+            let constants = self.data(4)?;
+            let constant = |offset: usize| {
+                f32::from_be_bytes(constants[offset..offset + 4].try_into().unwrap())
+            };
+            for index in 0..3 {
+                let weight = if index == active {
+                    if age < 8 {
+                        age as f32 * constant(0x268)
+                    } else {
+                        constant(0x26c)
+                    }
+                } else if index == (active + 1) % 3 && age < 8 {
+                    (8 - age) as f32 * constant(0x268)
+                } else {
+                    constant(0x270)
+                };
+                let translation = section
+                    .get(node as usize + 8..node as usize + 20)
+                    .ok_or_else(invalid)?;
+                let translation: [f32; 3] = std::array::from_fn(|i| {
+                    f32::from_be_bytes(translation[4 * i..4 * i + 4].try_into().unwrap())
+                });
+                rows.push(serde_json::json!({"index":index,"nodeOffset":node,"localTranslation":translation,"geometry":self.local_pointer(5,node+4)?,"weight":weight,"draw":weight>constant(0x274)}));
+                if index < 2 {
+                    node = local(node + 0x30)?;
+                }
+            }
+        }
+        Ok(
+            serde_json::json!({"visibleMode":mode==0,"modelOffset":model,"textureList":texlist,"alternateDescriptor":alternate,"rootGeometry":root_geometry,"drawRootGeometry":mode==0 && root_geometry.is_some(),"children":rows,"scope":"Original SARROW descriptor has no alternate draw resource. Child translations are object-local; no pixel rendering."}),
+        )
+    }
+    /// World-space evaluation for the cardinal orientations in the installed normal SET.
+    pub fn placed_arrows(
+        &self,
+        layout: &crate::city_stage::CityLayout,
+        player: Option<[f32; 3]>,
+        tick: u32,
+    ) -> Result<serde_json::Value> {
+        let mut rows = Vec::new();
+        for (slot, p) in layout.placements.iter().enumerate() {
+            if layout.resolve(slot)?.1.name != "SARROW" {
+                continue;
+            }
+            let yaw = p.rotation[1];
+            if yaw % 16384 != 0 {
+                return Err(Error::invalid("unverified noncardinal arrow yaw"));
+            }
+            let local = player.map(|pos| {
+                let [x, y, z] = std::array::from_fn(|i| pos[i] - p.position[i]);
+                match yaw / 16384 {
+                    0 => [x, y, z],
+                    1 => [-z, y, x],
+                    2 => [-x, y, -z],
+                    _ => [z, y, -x],
+                }
+            });
+            let proximity = self.scenery_proximity(local)?;
+            let mode = proximity["mode"].as_i64().ok_or_else(invalid)? as i8;
+            let display = self.arrow_display(mode, tick)?;
+            rows.push(serde_json::json!({"slot":slot,"position":p.position,"yaw":yaw,"proximity":proximity,"display":display}));
+        }
+        Ok(
+            serde_json::json!({"sourceLayer":layout.source_layer,"frameCounter":tick,"playerWorld":player,"arrows":rows,"scope":"Evaluated after range acceptance, using original SET poses. No task scheduling or renderer."}),
+        )
+    }
+    /// Verify the three immediate arguments and external target at each board input call.
+    pub fn board_input_handoffs(&self) -> Result<serde_json::Value> {
+        let code = self.data(1)?;
+        let mut sites = Vec::new();
+        for at in [0xa04u32, 0xa20, 0xa98, 0xab4] {
+            let reference = self
+                .reference(1, at)
+                .filter(|r| r.module == 0 && r.kind == 10 && r.addend == 0x8003a2a0)
+                .ok_or_else(invalid)?;
+            let fetch = |p: u32| -> Result<u32> {
+                Ok(u32::from_be_bytes(
+                    code.get(p as usize..p as usize + 4)
+                        .ok_or_else(invalid)?
+                        .try_into()
+                        .unwrap(),
+                ))
+            };
+            if fetch(at)? != 0x48000001 {
+                return Err(invalid());
+            }
+            let mut args = [0i32; 3];
+            for (i, arg) in args.iter_mut().enumerate() {
+                let op = fetch(at - 12 + 4 * i as u32)?;
+                if op >> 16 != 0x3800 + 32 * (3 + i as u32) {
+                    return Err(invalid());
+                }
+                *arg = i32::from(op as i16);
+            }
+            sites.push(serde_json::json!({"codeSectionOffset":at,"target":reference.addend,"arguments":args}));
+        }
+        Ok(
+            serde_json::json!({"callee":"SetInputP","callSites":sites,"scope":"Imported calls only; does not identify the resulting player mode."}),
+        )
+    }
+    fn texture_names(&self, texture: u32) -> Result<Vec<String>> {
         let data = self.data(5)?;
         let local = |o| {
             self.local_pointer(5, o)?
@@ -194,6 +481,72 @@ impl<'a> CityRel<'a> {
                 .map(|(_, v)| v)
                 .ok_or_else(invalid)
         };
+        let names = local(texture)?;
+        let i = texture as usize + 4;
+        let count = u32::from_be_bytes(data.get(i..i + 4).ok_or_else(invalid)?.try_into().unwrap());
+        if count > 256 {
+            return Err(invalid());
+        }
+        let mut textures = Vec::new();
+        for j in 0..count {
+            let at = local(names + 12 * j)? as usize;
+            let tail = data.get(at..).ok_or_else(invalid)?;
+            let end = tail
+                .iter()
+                .take(256)
+                .position(|b| *b == 0)
+                .ok_or_else(invalid)?;
+            textures.push(
+                std::str::from_utf8(&tail[..end])
+                    .map_err(|_| invalid())?
+                    .to_owned(),
+            );
+        }
+        Ok(textures)
+    }
+    fn board_nodes(&self, root: u32) -> Result<Vec<BoardNode>> {
+        // Ninja motion channels follow child-before-sibling traversal.
+        let mut pending = vec![(root, None)];
+        let mut seen = std::collections::BTreeSet::new();
+        let mut nodes = Vec::new();
+        while let Some((offset, parent)) = pending.pop() {
+            if !seen.insert(offset) {
+                return Err(invalid());
+            }
+            let bytes = self
+                .data(5)?
+                .get(offset as usize..)
+                .and_then(|tail| tail.get(..52))
+                .ok_or_else(invalid)?;
+            let word = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+            let vector = |at: usize| [word(at), word(at + 4), word(at + 8)];
+            let position = vector(8).map(f32::from_bits);
+            let scale = vector(32).map(f32::from_bits);
+            if !position.iter().chain(&scale).all(|v| v.is_finite()) {
+                return Err(invalid());
+            }
+            let idx = nodes.len();
+            for (field, up) in [(48, parent), (44, Some(idx))] {
+                if let Some((section, next)) = self.local_pointer(5, offset + field)? {
+                    if section != 5 {
+                        return Err(invalid());
+                    }
+                    pending.push((next, up));
+                }
+            }
+            nodes.push(BoardNode {
+                offset,
+                parent,
+                flags: word(0),
+                position,
+                rotation: vector(20).map(|v| v as i32),
+                scale,
+                geometry: self.local_pointer(5, offset + 4)?,
+            });
+        }
+        Ok(nodes)
+    }
+    pub fn board_resources(&self) -> Result<Vec<BoardResources>> {
         let mut result = Vec::new();
         for (variant, texture, model, other) in [
             ("single_player", 0x222, 0x23a, 0x22e),
@@ -203,33 +556,16 @@ impl<'a> CityRel<'a> {
             ("two_player_default", 0x302, 0x30e, 0x31a),
         ] {
             let texture = self.resource(texture)?;
-            let names = local(texture)?;
-            let i = texture as usize + 4;
-            let count =
-                u32::from_be_bytes(data.get(i..i + 4).ok_or_else(invalid)?.try_into().unwrap());
-            if count > 256 {
-                return Err(invalid());
-            }
-            let mut textures = Vec::new();
-            for j in 0..count {
-                let at = local(names + 12 * j)? as usize;
-                let tail = data.get(at..).ok_or_else(invalid)?;
-                let end = tail
-                    .iter()
-                    .take(256)
-                    .position(|b| *b == 0)
-                    .ok_or_else(invalid)?;
-                textures.push(
-                    std::str::from_utf8(&tail[..end])
-                        .map_err(|_| invalid())?
-                        .to_owned(),
-                );
-            }
+            let textures = self.texture_names(texture)?;
+            let model = self.resource(model)?;
+            let other_object = self.resource(other)?;
             result.push(BoardResources {
                 variant,
                 texture_list: texture,
-                model: self.resource(model)?,
-                other_object: self.resource(other)?,
+                model,
+                other_object,
+                model_nodes: self.board_nodes(model)?,
+                other_nodes: self.board_nodes(other_object)?,
                 textures,
             });
         }
@@ -238,7 +574,20 @@ impl<'a> CityRel<'a> {
 }
 
 #[derive(Serialize)]
+pub struct BoardNode {
+    pub offset: u32,
+    pub parent: Option<usize>,
+    pub flags: u32,
+    pub position: [f32; 3],
+    pub rotation: [i32; 3],
+    pub scale: [f32; 3],
+    pub geometry: Option<(u8, u32)>,
+}
+
+#[derive(Serialize)]
 pub struct BoardResources {
+    pub model_nodes: Vec<BoardNode>,
+    pub other_nodes: Vec<BoardNode>,
     pub variant: &'static str,
     /// All three offsets are relative to data section 5.
     pub texture_list: u32,
@@ -304,8 +653,608 @@ pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
             _ => Err(invalid()),
         }
     };
+    let mut registration = serde_json::json!({"module":module,"prolog":entry,"descriptor":descriptor,"name":name,
+        "registerTarget":call.addend,"startup":callback(12)?,"teardown":callback(16)?,"entry":callback(20)?});
+    if module == 82 {
+        // Section 1:6f64 assembles a stack vector for the direct call at 6fa8.
+        // The SHA-256 gate above pins the instructions and register assignments.
+        let pair = |at, section| -> Result<u32> {
+            let hi = rel.reference(1, at).ok_or_else(invalid)?;
+            let lo = rel.reference(1, at + 4).ok_or_else(invalid)?;
+            if (hi.module, hi.section, hi.kind) != (module, section, 6)
+                || lo != (Reference { kind: 4, ..hi })
+            {
+                return Err(invalid());
+            }
+            Ok(hi.addend)
+        };
+        let scalar = |at| -> Result<f32> {
+            let off = pair(at, 4)? as usize;
+            Ok(f32::from_be_bytes(
+                rel.data(4)?
+                    .get(off..off + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            ))
+        };
+        let x = scalar(0x6f7a)?;
+        let yz = scalar(0x6f8a)?;
+        registration["bossTaskSetup"] = serde_json::json!({
+            "constructorSection1Offset":0, "position":[x,yz,yz], "yaw":-16384,
+            "nextTaskSection1Offset":pair(0x6fae, 1)?
+        });
+        // The executor indexes a relocated jump table with the signed mode byte.
+        // Four entries jump directly to the common continuation.
+        let table = pair(0x5bd2, 5)?;
+        let mut handlers = Vec::new();
+        for index in 0..16 {
+            let (1, arm) = rel
+                .local_pointer(5, table + index * 4)?
+                .ok_or_else(invalid)?
+            else {
+                return Err(invalid());
+            };
+            if arm == 0x5c74 {
+                handlers.push(None);
+                continue;
+            }
+            let pc = arm as usize + 4;
+            let branch = u32::from_be_bytes(
+                code.get(pc..pc + 4)
+                    .ok_or_else(invalid)?
+                    .try_into()
+                    .unwrap(),
+            );
+            if branch & 0xfc00_0003 != 0x4800_0001 {
+                return Err(invalid());
+            }
+            let displacement = ((branch << 6) as i32 >> 6) & !3;
+            let target = (pc as u32)
+                .checked_add_signed(displacement)
+                .ok_or_else(invalid)?;
+            if target as usize >= code.len() {
+                return Err(invalid());
+            }
+            handlers.push(Some(target));
+        }
+        registration["modeHandlerSection1Offsets"] = serde_json::json!(handlers);
+        // Intro routine 1:c80, submode zero: three scalar stores to slot zero.
+        let v = scalar(0xd42)?;
+        registration["introPlayerWrite"] = serde_json::json!({"slot":0,"position":[v,v,v]});
+    }
+    Ok(registration)
+}
+
+/// Run Hot Shot's slot-zero stage constraint (section 1:7050 -> 6fcc).
+pub fn hot_shot_arena(bytes: &[u8], mut position: [f32; 3]) -> Result<[f32; 3]> {
+    identify_hot_shot(bytes)?;
+    if !position.iter().all(|v| v.is_finite()) {
+        return Err(Error::invalid("expected finite player coordinates"));
+    }
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let bound = |offset| -> Result<f32> {
+        let hi = rel.reference(1, offset).ok_or_else(invalid)?;
+        if (hi.module, hi.section, hi.kind) != (82, 4, 6)
+            || rel.reference(1, offset + 4) != Some(Reference { kind: 4, ..hi })
+        {
+            return Err(invalid());
+        }
+        let start = hi.addend as usize;
+        Ok(f32::from_be_bytes(
+            rel.data(4)?
+                .get(start..start + 4)
+                .ok_or_else(invalid)?
+                .try_into()
+                .unwrap(),
+        ))
+    };
+    for (axis, lo, hi) in [(0, 0x6ffe, 0x6fe2), (2, 0x7036, 0x701a)] {
+        position[axis] = position[axis].clamp(bound(lo)?, bound(hi)?);
+    }
+    Ok(position)
+}
+
+fn identify_hot_shot(bytes: &[u8]) -> Result<()> {
+    if bytes.len() != 1_180_821
+        || manifest::sha256(bytes)
+            != "9e0caebeefbdeb2e2829f17510b44d9238956342b3eed10a2ae7e1ff56358960"
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// State after N consecutive intro callbacks beginning in submode zero.
+/// Engine calls are reported at their call sites; their effects are not simulated.
+pub fn hot_shot_intro_clock(bytes: &[u8], updates: u16) -> Result<serde_json::Value> {
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let code = rel.data(1)?;
+    let immediate = |at: usize| u16::from_be_bytes([code[at + 2], code[at + 3]]);
+    let initial = immediate(0xdb8);
+    if updates == 0 || updates > initial + 1 {
+        return Err(Error::invalid(
+            "expected 1 through 451 consecutive intro updates",
+        ));
+    }
+    let timer = initial - (updates - 1);
+    let exited = timer == 0;
+    Ok(serde_json::json!({
+        "updates":updates, "mode":if exited {2} else {1},
+        "submode":if exited {0} else {1}, "timer":timer,
+        "callsEngine8006ab94":timer < immediate(0xeb8) && timer > immediate(0xec0),
+        "entersNextMode":exited
+    }))
+}
+
+/// Replay the submode-specific opening of mode two, stopping before the shared tail.
+pub fn hot_shot_mode_two_opening(
+    bytes: &[u8],
+    polls: u16,
+    ready_on_last: bool,
+) -> Result<serde_json::Value> {
+    identify_hot_shot(bytes)?;
+    if ready_on_last && polls == 0 {
+        return Err(Error::invalid(
+            "readiness requires at least one submode-one poll",
+        ));
+    }
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let scalar = |at| hot_shot_scalar(&rel, at);
+    let mut amount = scalar(0x1142)?;
+    let step = scalar(0x11b2)?;
+    let cap = scalar(0x11ca)?;
+    for _ in 0..polls {
+        amount = (amount + step).min(cap);
+    }
+    Ok(serde_json::json!({
+        "mode":2,"submode":if ready_on_last {2} else {1},
+        "timer":0u16.wrapping_sub(polls), "workB8":amount,
+        "entryWork58":scalar(0x1132)?, "entryRequest":8,
+        "lastLocal790Vector":(polls != 0).then_some([amount;3]),
+        "readyBranchWork10Write":if ready_on_last {Some(scalar(0x120e)?)} else {None},
+        "scope":"Submode-specific writes before the common tail; engine readiness is supplied and helper effects are not simulated."
+    }))
+}
+
+fn hot_shot_scalar(rel: &CityRel, at: u32) -> Result<f32> {
+    let data = rel.data(4)?;
+    let hi = rel.reference(1, at).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind) != (82, 4, 6)
+        || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
+    {
+        return Err(invalid());
+    }
+    let offset = hi.addend as usize;
+    Ok(f32::from_be_bytes(
+        data.get(offset..offset + 4)
+            .ok_or_else(invalid)?
+            .try_into()
+            .unwrap(),
+    ))
+}
+
+/// One mode-two, submode-two tick. External readiness is observed only when queried.
+pub fn hot_shot_mode_two_step(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        work04: f32,
+        work10: f32,
+        work_bc: u8,
+        flags: u16,
+        controller_state: i32,
+        ready: Option<bool>,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    if s.ready.is_some() != (s.controller_state == 1)
+        || s.work_bc >= 15
+        || !s.work04.is_finite()
+        || !s.work10.is_finite()
+    {
+        return Err(Error::invalid(
+            "expected finite work fields, counter 0..14 and readiness only for controller state 1",
+        ));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let scalar = |at| hot_shot_scalar(&rel, at);
+    let request_two = s.ready == Some(true);
+    let flags = if request_two { s.flags & !1 } else { s.flags };
+    let mut work10 = s.work10 * scalar(0x12b6)? + scalar(0x12ce)?;
+    let work04 = s.work04 * scalar(0x12e6)?;
+    if flags & 1 == 0 {
+        work10 += scalar(0x15be)?;
+    }
+    let pair = s.work_bc > 0 && s.work_bc % 5 == 0;
+    let next = if s.work_bc == 0 || s.work_bc == 14 {
+        0
+    } else {
+        s.work_bc + 1
+    };
     Ok(
-        serde_json::json!({"module":module,"prolog":entry,"descriptor":descriptor,"name":name,
-        "registerTarget":call.addend,"startup":callback(12)?,"teardown":callback(16)?,"entry":callback(20)?}),
+        serde_json::json!({"mode":2,"submode":if work04<0. {3} else {2},
+        "work04":work04,"work10":work10,"workBC":next,"flags":flags,
+        "requestedControllerState":request_two.then_some(2),"local51ee0Calls":if pair {2} else {0},
+        "scope":"Scalar and control writes; helper effects and subsequent boss executor work are excluded."}),
+    )
+}
+
+/// Mode 2 submode 4 writes through the jump to the shared tail at 1:15a8.
+pub fn hot_shot_mode_two_exit(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        x: f32,
+        private28: f32,
+        work_angles: [u32; 3],
+        flags: u16,
+        timer: u16,
+        ready: bool,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    if !s.x.is_finite() || !s.private28.is_finite() {
+        return Err(Error::invalid("expected finite boss state"));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let scalar = |at| hot_shot_scalar(&rel, at);
+    let mode = if !s.ready {
+        2
+    } else if s.private28 < scalar(0x1542)? {
+        9
+    } else {
+        3
+    };
+    let angles = [0x210, 0x250, 0x300]
+        .into_iter()
+        .zip(s.work_angles)
+        .map(|(inc, v)| v.wrapping_add(inc))
+        .collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({"mode":mode,"submode":if s.ready {0} else {4},
+        "workAngles":angles,"work00":if s.x>scalar(0x14ea)? {scalar(0x14fe)?} else {scalar(0x1512)?},
+        "flags":if s.ready {s.flags & !0x200} else {s.flags},
+        "timer":if s.ready {0} else {s.timer}, "workByte3Write":s.ready.then_some(0),
+        "privateByte2Write":(mode==3).then_some(2),"requestedControllerState":s.ready.then_some(3),
+        "scope":"Submode four writes before shared tail; readiness is supplied, helper effects are not simulated."}),
+    )
+}
+
+/// Mode 2 submode 3, up to the shared tail, using the position observed after helper calls.
+pub fn hot_shot_settle(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        y: f32,
+        work04: f32,
+        work10: f32,
+        angles: [u32; 2],
+        flags: u16,
+        timer: u16,
+        controller_state: i32,
+        ready: Option<bool>,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    if ![s.y, s.work04, s.work10].iter().all(|v| v.is_finite())
+        || (s.controller_state == 1) != s.ready.is_some()
+    {
+        return Err(Error::invalid(
+            "expected finite state and readiness only for controller state one",
+        ));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let c = |at| hot_shot_scalar(&rel, at);
+    let target = c(0x13ce)?;
+    let delta = (s.y - target).clamp(c(0x1412)?, c(0x13f6)?);
+    let damped = s.work04 * c(0x13e2)?;
+    let corrected = s.work10 - c(0x142e)? * delta;
+    let (lo, hi) = (c(0x1446)?, c(0x145a)?);
+    let settled = delta > lo && delta < hi && damped > lo && damped < hi;
+    let ready = s.ready == Some(true);
+    Ok(
+        serde_json::json!({"mode":2,"submode":if settled {4} else {3},
+        "timer":if settled {30} else {s.timer},"y":if settled {target} else {s.y},
+        "work04":if settled {0.} else {damped},"work10":if settled {0.} else {corrected},
+        "angles":[s.angles[0].wrapping_add(0x210),s.angles[1].wrapping_add(0x250)],
+        "flags":if ready {s.flags & !1} else {s.flags},"requestedControllerState":ready.then_some(2),
+        "scope":"Submode-three writes before shared tail; position is observed after helpers."}),
+    )
+}
+
+/// Control, timer and common arithmetic of executor mode 9 (section 1:4ae0).
+pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        submode: u8,
+        timer: u16,
+        remaining: u8,
+        private28: f32,
+        flags: u16,
+        collision_flags: u32,
+        work10: f32,
+        angles: [u32; 3],
+        entry_player_position: Option<[f32; 3]>,
+    }
+    let mut s: State = serde_json::from_slice(request)?;
+    if s.submode > 4 || !s.private28.is_finite() || !s.work10.is_finite() {
+        return Err(Error::invalid(
+            "expected a mode-nine submode 0..4 and finite work fields",
+        ));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let target = if let Some(pos) = s.entry_player_position {
+        if s.submode != 0 || !pos.iter().all(|v| v.is_finite()) {
+            return Err(Error::invalid(
+                "target construction requires a finite player position on mode-nine entry",
+            ));
+        }
+        let address = |at, section| -> Result<u32> {
+            let hi = rel.reference(1, at).ok_or_else(invalid)?;
+            if (hi.module, hi.section, hi.kind) != (82, section, 6)
+                || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
+            {
+                return Err(invalid());
+            }
+            Ok(hi.addend)
+        };
+        let unit = hot_shot_scalar(&rel, 0x4ce3e)?;
+        Some(serde_json::json!({
+            "sourcePlayerSlot":0,"position":pos,"savedPosition":pos,"scale":vec![unit;3],
+            "work3c":hot_shot_scalar(&rel,0x4b86)?,"work44":hot_shot_scalar(&rel,0x4ce56)?,
+            "updateSection1":address(0x4cdb6,1)?,"displaySection1":address(0x4ce92,1)?,
+            "destroySection1":address(0x4ce9e,1)?,"collisionSection5":address(0x4ce6a,5)?,
+            "workSize":84,"bossWork54":pos
+        }))
+    } else {
+        None
+    };
+    let mut mode = 9;
+    let mut next_variant = None;
+    // Entry deliberately falls through into the first countdown on this same update.
+    if s.submode == 0 {
+        s.remaining = if s.private28 > hot_shot_scalar(&rel, 0x4b42)? {
+            1
+        } else {
+            3
+        };
+        s.timer = 300;
+        s.collision_flags &= !0x10;
+        s.submode = 1;
+    }
+    match s.submode {
+        1 => {
+            s.timer = s.timer.wrapping_sub(1);
+            if s.timer == 0 {
+                s.submode = 2;
+            }
+        }
+        2 => s.submode = 3,
+        3 => {
+            s.remaining = s.remaining.wrapping_sub(1);
+            if s.remaining == 0 {
+                s.timer = 60;
+                s.submode = 4;
+            } else {
+                s.timer = 300;
+                s.submode = 1;
+            }
+        }
+        4 => {
+            s.timer = s.timer.wrapping_sub(1);
+            if s.timer == 0 {
+                next_variant = Some(if s.private28 > hot_shot_scalar(&rel, 0x4d26)? {
+                    2
+                } else {
+                    1
+                });
+                mode = 3;
+                s.submode = 0;
+                s.flags &= !0x200;
+                s.collision_flags |= 0x10;
+            }
+        }
+        _ => unreachable!(),
+    }
+    Ok(
+        serde_json::json!({"mode":mode,"submode":s.submode,"timer":s.timer,"remaining":s.remaining,
+        "targetOnSuccessfulAllocation":target,"privateByte2Write":next_variant,"flags":s.flags,"collisionFlags":s.collision_flags,
+        "work10":s.work10+hot_shot_scalar(&rel,0x4dc6)?,
+        "angles":[s.angles[0].wrapping_add(0x210),s.angles[1].wrapping_add(0x250),s.angles[2].wrapping_add(0x300)],
+        "scope":"Mode-nine timing and selected writes. Target tracking, helper lifetimes and attack effects are not simulated."}),
+    )
+}
+
+/// Tracking helper at 1:4cef4, called on the enabled, unlocked target update path.
+pub fn hot_shot_target_follow(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        position: [f32; 3],
+        saved_position: [f32; 3],
+        player_position: [f32; 3],
+        engine_length: f32,
+        normalized: Option<[f32; 3]>,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let speed = hot_shot_scalar(&rel, 0x4b86)?;
+    let limited = s.engine_length > speed;
+    if !s.engine_length.is_finite()
+        || s.engine_length < 0.
+        || limited != s.normalized.is_some()
+        || !s
+            .position
+            .iter()
+            .chain(&s.saved_position)
+            .chain(&s.player_position)
+            .chain(s.normalized.iter().flatten())
+            .all(|v| v.is_finite())
+    {
+        return Err(Error::invalid(
+            "expected finite tracking state and a normalization result only on the limited branch",
+        ));
+    }
+    let mut delta: [f32; 3] = std::array::from_fn(|i| s.saved_position[i] - s.position[i]);
+    if let Some(direction) = s.normalized {
+        let [x, y, z] = delta;
+        let squared = z * z + (x * x + y * y);
+        if !squared.is_finite() {
+            return Err(Error::invalid("target distance overflow"));
+        }
+        let step = if squared.sqrt() > hot_shot_scalar(&rel, 0x4cf7e)? {
+            speed * hot_shot_scalar(&rel, 0x4cf92)?
+        } else {
+            speed
+        };
+        delta = direction.map(|v| v * step);
+    }
+    let position: [f32; 3] = std::array::from_fn(|i| s.position[i] + delta[i]);
+    if !position.iter().all(|v| v.is_finite()) {
+        return Err(Error::invalid("target position overflow"));
+    }
+    Ok(
+        serde_json::json!({"position":position,"savedPosition":s.player_position,
+        "limited":limited,"scope":"Unlocked target movement; imported length and normalization results are supplied."}),
+    )
+}
+
+/// Target update through the phase wrap at section 1:4d124.
+pub fn hot_shot_target_clock(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        global37: i8,
+        lock_word: i32,
+        phase: f32,
+        rate: f32,
+        counter: u16,
+    }
+    let mut s: State = serde_json::from_slice(request)?;
+    if !s.phase.is_finite() || !s.rate.is_finite() {
+        return Err(Error::invalid("expected finite target phase and rate"));
+    }
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let c = |at| hot_shot_scalar(&rel, at);
+    let follows = s.global37 == 0 && s.lock_word == 0;
+    if s.global37 == 0 {
+        if follows {
+            s.phase += s.rate;
+            if s.counter == 60 {
+                s.counter = 0;
+                s.rate += c(0x4d0be)?;
+            } else {
+                s.counter = s.counter.wrapping_add(1);
+            }
+        } else {
+            s.phase += c(0x4d0da)?;
+            s.counter = 0;
+            s.rate = c(0x4d0f6)?;
+        }
+        let wrap = c(0x4d10a)?;
+        if s.phase >= wrap {
+            s.phase -= wrap;
+        }
+    }
+    if !s.phase.is_finite() || !s.rate.is_finite() {
+        return Err(Error::invalid("target clock overflow"));
+    }
+    Ok(
+        serde_json::json!({"phase":s.phase,"rate":s.rate,"counter":s.counter,"callsFollow":follows,
+        "skipsUpdate":s.global37!=0,"scope":"Target update gate and phase counter only."}),
+    )
+}
+
+/// Orientation arithmetic of an enabled target update (1:4d128..4d340).
+pub fn hot_shot_target_rotation(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        fixed: [i32; 3],
+        varied: [i32; 3],
+        engine_samples: [i32; 3],
+    }
+    let mut s: State = serde_json::from_slice(request)?;
+    identify_hot_shot(bytes)?;
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let hi = rel.reference(1, 0x4d12e).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind) != (82, 5, 6)
+        || rel.reference(1, 0x4d132) != Some(Reference { kind: 4, ..hi })
+    {
+        return Err(invalid());
+    }
+    let start = hi.addend as usize;
+    let table = rel.data(5)?.get(start..start + 24).ok_or_else(invalid)?;
+    let step = |i: usize| i32::from_be_bytes(table[i * 4..i * 4 + 4].try_into().unwrap());
+    let scale = hot_shot_scalar(&rel, 0x4d18e)?;
+    let base = hot_shot_scalar(&rel, 0x4d19e)?;
+    for i in 0..3 {
+        s.fixed[i] = s.fixed[i].wrapping_add(step(i));
+        let weight = base + base * (scale * s.engine_samples[i] as f32);
+        let next = s.varied[i] as f32 + step(i + 3) as f32 * weight;
+        // Keep out-of-range fctiwz behavior unresolved for the installed hardware.
+        if !(-2147483648.0..2147483648.0).contains(&next) {
+            return Err(Error::invalid(
+                "target rotation exceeds verified fctiwz range",
+            ));
+        }
+        s.varied[i] = next as i32;
+    }
+    Ok(serde_json::json!({"fixed":s.fixed,"varied":s.varied}))
+}
+
+/// Resolve the two animated draws made by the target's display callback (1:4d42c).
+pub fn hot_shot_target_display(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct State {
+        flags: u16,
+        position: [f32; 3],
+        varied: [i32; 3],
+        scale: [f32; 3],
+        phase: f32,
+    }
+    let s: State = serde_json::from_slice(request)?;
+    identify_hot_shot(bytes)?;
+    if s.flags & 0x200 != 0 {
+        return Ok(serde_json::json!({"hidden":true,"draws":[]}));
+    }
+    if !s.position.iter().chain(&s.scale).all(|v| v.is_finite()) || !s.phase.is_finite() {
+        return Err(Error::invalid("expected finite target display state"));
+    }
+    let rel = CityRel::read_identified(bytes, 82)?;
+    let ptr = |at| -> Result<u32> {
+        let hi = rel.reference(1, at).ok_or_else(invalid)?;
+        if (hi.module, hi.section, hi.kind) != (82, 5, 6)
+            || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
+        {
+            return Err(invalid());
+        }
+        Ok(hi.addend)
+    };
+    let base = ptr(0x4d4da)? as usize;
+    let data = rel.data(5)?;
+    let fixed: Vec<i32> = data
+        .get(base..base + 12)
+        .ok_or_else(invalid)?
+        .chunks_exact(4)
+        .map(|w| i32::from_be_bytes(w.try_into().unwrap()))
+        .collect();
+    let [x, y, z] = s.position;
+    let floor = hot_shot_scalar(&rel, 0x4d4aa)?;
+    let offset = hot_shot_scalar(&rel, 0x4d512)?;
+    let ground = hot_shot_scalar(&rel, 0x4d54e)?;
+    Ok(
+        serde_json::json!({"hidden":false,"textureNames":rel.texture_names(ptr(0x4d492)?)?,"textureListSection5":ptr(0x4d492)?,"phase":s.phase,
+        "draws":[{"objectSection5":ptr(0x4d526)?,"motionSection5":ptr(0x4d52e)?,
+        "translation":[x,y.max(floor),z],"rotations":[fixed,s.varied],"rotationArgument":1,
+        "scale":s.scale,"localTranslation":[0.,offset,0.]},
+        {"objectSection5":ptr(0x4d562)?,"motionSection5":ptr(0x4d56a)?,"translation":[x,ground,z]}]}),
     )
 }

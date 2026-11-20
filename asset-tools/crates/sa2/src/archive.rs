@@ -164,7 +164,12 @@ pub fn read_gvm(data: &[u8]) -> Result<Vec<GvmEntry<'_>>> {
         let name = if flags & 1 != 0 {
             let b = span(data, row + 2, 28)?;
             let n = b.iter().position(|b| *b == 0).unwrap_or(b.len());
-            String::from_utf8(b[..n].to_vec()).map_err(|_| Error::invalid("non-UTF8 GVM name"))?
+            // Names are Shift-JIS on both GameCube and Steam (one Chao race bank uses full-width letters).
+            let (name, _, malformed) = encoding_rs::SHIFT_JIS.decode(&b[..n]);
+            if malformed {
+                return Err(Error::invalid("malformed Shift-JIS GVM name"));
+            }
+            name.into_owned()
         } else {
             format!("{i:03}")
         };
@@ -241,6 +246,80 @@ pub fn read_pak(data: &[u8]) -> Result<Vec<PakEntry<'_>>> {
     Ok(entries)
 }
 
+/// One 60-byte record of a Steam PAK's `.inf`: the GVM slot this texture
+/// replaces. Records are in GVM slot order; in the installed packs their names
+/// and global indices match the GVM entries (122 packs checked 2026-11-20).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PakSlot {
+    pub name: String,
+    pub global_index: u32,
+    /// Size of the original GameCube texture, not of the DDS.
+    pub width: u32,
+    pub height: u32,
+    /// All eight little-endian words after the name, unchanged.
+    pub raw: [u32; 8],
+}
+
+pub fn read_pak_inf(data: &[u8]) -> Result<Vec<PakSlot>> {
+    if !data.len().is_multiple_of(60) || data.len() / 60 > 65_536 {
+        return Err(Error::invalid("PAK .inf is not whole 60-byte records"));
+    }
+    data.as_chunks::<60>()
+        .0
+        .iter()
+        .map(|r| {
+            let n = r[..28].iter().position(|b| *b == 0).unwrap_or(28);
+            let (name, _, bad) = encoding_rs::SHIFT_JIS.decode(&r[..n]);
+            if bad {
+                return Err(Error::invalid("malformed PAK .inf name"));
+            }
+            let raw: [u32; 8] = std::array::from_fn(|i| {
+                let w = &r[28 + i * 4..32 + i * 4];
+                u32::from_le_bytes([w[0], w[1], w[2], w[3]])
+            });
+            Ok(PakSlot {
+                name: name.into_owned(),
+                global_index: raw[0],
+                width: raw[4],
+                height: raw[5],
+                raw,
+            })
+        })
+        .collect()
+}
+
+/// A PAK's DDS textures in GVM slot order, paired by the `.inf` names
+/// (DDS entry names are the slot name plus `.dds`, compared without case).
+pub fn pak_textures_in_slot_order<'a>(
+    entries: &'a [PakEntry<'a>],
+) -> Result<Vec<(PakSlot, &'a [u8])>> {
+    let mut infs = entries
+        .iter()
+        .filter(|e| e.name.to_ascii_lowercase().ends_with(".inf"));
+    let inf = infs
+        .next()
+        .ok_or_else(|| Error::invalid("PAK has no .inf slot list"))?;
+    if infs.next().is_some() {
+        return Err(Error::invalid("PAK has more than one .inf"));
+    }
+    read_pak_inf(inf.data)?
+        .into_iter()
+        .map(|slot| {
+            // Entry names carry the pack's folder (`al_tex_common\ad_common.dds`).
+            let want = format!("{}.dds", slot.name).to_ascii_lowercase();
+            let dds = entries
+                .iter()
+                .find(|e| {
+                    let file = e.name.rsplit(['\\', '/']).next().unwrap_or(&e.name);
+                    file.to_ascii_lowercase() == want
+                })
+                .ok_or_else(|| Error::invalid(format!("PAK has no DDS for slot {}", slot.name)))?;
+            Ok((slot, dds.data))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +347,74 @@ mod tests {
             assert!(read_gvm(&vec![0; n]).is_err());
             assert!(read_pak(&vec![0; n]).is_err());
         }
+    }
+    fn one_texture_gvm(name: &[u8]) -> Vec<u8> {
+        let mut b = b"GVMH".to_vec();
+        b.extend(34u32.to_le_bytes());
+        b.extend(1u16.to_be_bytes()); // names only
+        b.extend(1u16.to_be_bytes());
+        b.extend(0u16.to_be_bytes());
+        let mut field = [0u8; 28];
+        field[..name.len()].copy_from_slice(name);
+        b.extend(field);
+        b.extend(b"GVRT");
+        b.extend(8u32.to_le_bytes());
+        b.extend([0; 8]);
+        b
+    }
+    fn inf_record(name: &str, gbix: u32, w: u32, h: u32) -> Vec<u8> {
+        let mut r = vec![0u8; 28];
+        r[..name.len()].copy_from_slice(name.as_bytes());
+        for v in [gbix, 5, 0, 5, w, h, w * h * 2, 0x8000_0000] {
+            r.extend(v.to_le_bytes());
+        }
+        r
+    }
+    fn entry<'a>(name: &str, data: &'a [u8]) -> PakEntry<'a> {
+        PakEntry {
+            name: name.into(),
+            long_path: String::new(),
+            offset: 0,
+            length: data.len(),
+            second_length: 0,
+            data,
+        }
+    }
+    #[test]
+    fn pak_slots_follow_the_inf_order() {
+        let inf = [
+            inf_record("Zeta", 7, 64, 32),
+            inf_record("alpha", 9, 16, 16),
+        ]
+        .concat();
+        let entries = [
+            entry("pack\\alpha.dds", b"A"),
+            entry("pack.inf", &inf),
+            entry("zeta.DDS", b"Z"),
+        ];
+        let slots = pak_textures_in_slot_order(&entries).unwrap();
+        assert_eq!(slots[0].0.name, "Zeta");
+        assert_eq!(
+            (slots[0].0.global_index, slots[0].0.width, slots[0].0.height),
+            (7, 64, 32)
+        );
+        assert_eq!(slots[0].1, b"Z");
+        assert_eq!(slots[1].1, b"A");
+        assert!(read_pak_inf(&inf[..59]).is_err());
+        assert!(pak_textures_in_slot_order(&entries[..2]).is_err()); // no DDS for Zeta
+        assert!(pak_textures_in_slot_order(&entries[2..]).is_err()); // no .inf
+    }
+    #[test]
+    fn gvm_names_are_shift_jis() {
+        // Synthetic name with full-width letters, as in a retail Chao race texture bank.
+        let entries_data = one_texture_gvm(b"tex_\x82\x83\x82\x92");
+        let entries = read_gvm(&entries_data).unwrap();
+        assert_eq!(entries[0].name, "tex_\u{ff43}\u{ff52}");
+        assert_eq!(
+            read_gvm(&one_texture_gvm(b"plain")).unwrap()[0].name,
+            "plain"
+        );
+        assert!(read_gvm(&one_texture_gvm(b"bad\x82")).is_err());
     }
     #[test]
     fn pak_preserves_hostile_names_as_metadata_only() {

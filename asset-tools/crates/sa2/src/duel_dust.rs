@@ -42,11 +42,11 @@ pub fn constants(rel_bytes: &[u8]) -> Result<DustConstants> {
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct EdgeTransform {
-    /// njCalcPoint result (0x80114BC4).
+    /// njCalcPoint result (0x80114f0c).
     pub point: [f32; 3],
-    /// njCalcVector result (0x801151A4).
+    /// njCalcVector result (0x801154ec).
     pub vector: [f32; 3],
-    /// njScalor of that vector (0x80114EAC).
+    /// njScalor of that vector (0x801151f4).
     pub length: f32,
 }
 
@@ -75,11 +75,11 @@ pub fn run(c: &DustConstants, a: &DustCall) -> Result<Vec<Value>> {
     let nx = (c.count_scale * width / spacing) as i32;
     let nz = (c.count_scale * depth / spacing) as i32;
     let mut calls = vec![
-        engine(0x80115d50, json!([])),
-        engine(0x8011509c, json!([0])),
-        engine(0x80115e24, json!({ "translate": a.position })),
-        engine(0x801154e0, json!([0, a.angles[1]])),
-        engine(0x80115560, json!([0, a.angles[2]])),
+        engine(0x80116098, json!([])),
+        engine(0x801153e4, json!([0])),
+        engine(0x8011616c, json!({ "translate": a.position })),
+        engine(0x80115828, json!([0, a.angles[1]])),
+        engine(0x801158a8, json!([0, a.angles[2]])),
     ];
     let mut points = a.transforms.iter();
     let mut rand = a.rand.iter().copied();
@@ -89,15 +89,15 @@ pub fn run(c: &DustConstants, a: &DustCall) -> Result<Vec<Value>> {
             .next()
             .ok_or_else(|| Error::invalid("dust transforms exhausted"))?;
         calls.push(engine(
-            0x80114bc4,
+            0x80114f0c,
             json!({ "point": local, "returned": t.point }),
         ));
         calls.push(engine(
-            0x801151a4,
+            0x801154ec,
             json!({ "vector": local, "returned": t.vector }),
         ));
         calls.push(engine(
-            0x80114eac,
+            0x801151f4,
             json!({ "vector": t.vector, "returned": t.length }),
         ));
         let k = speed / t.length;
@@ -105,7 +105,7 @@ pub fn run(c: &DustConstants, a: &DustCall) -> Result<Vec<Value>> {
         let made = !a.failed_allocations.contains(&alloc);
         alloc += 1;
         calls.push(engine(
-            0x80032910,
+            0x80032b78,
             json!({ "descriptor": format!("s5+0x{:x}", c.descriptor), "returnedNonzero": made }),
         ));
         if made {
@@ -113,7 +113,7 @@ pub fn run(c: &DustConstants, a: &DustCall) -> Result<Vec<Value>> {
                 let r = rand
                     .next()
                     .ok_or_else(|| Error::invalid("dust rand values exhausted"))?;
-                calls.push(engine(0x8010d940, json!({ "returned": r })));
+                calls.push(engine(0x8010dc88, json!({ "returned": r })));
                 Ok(c.rand_scale * r as f64 as f32)
             };
             let yaw = (c.bams * (c.yaw_range * draw(calls)? - c.yaw_offset)) as i32;
@@ -137,7 +137,7 @@ pub fn run(c: &DustConstants, a: &DustCall) -> Result<Vec<Value>> {
         emit([width, c.zero, z], &mut calls)?;
         emit([-width, c.zero, z], &mut calls)?;
     }
-    calls.push(engine(0x80115d9c, json!([])));
+    calls.push(engine(0x801160e4, json!([])));
     Ok(calls)
 }
 

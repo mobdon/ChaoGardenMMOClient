@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run the installed stage 42 dust helper and compare duel-dust.
 
-Usage: python duel_dust_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_dust_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes stg42D.rel +0x1E8DC and its particle spawner +0x1DDFC under Unicorn.
 Engine imports are recording stubs whose results come from the scenario. The
 game is never started.
@@ -9,10 +9,10 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP=0x81000000,0x82000000,0x90000000,0x80f00000
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -59,24 +59,24 @@ vec=lambda p:tuple(get(p+4*i,'I') for i in range(3))
 fb=lambda x:struct.unpack('>I',struct.pack('>f',x))[0]
 calls=[];case={};st={}
 def hook(uc,pc,size,_):
-    if pc==0x80115d50:calls.append(('push',))
-    elif pc==0x8011509c:calls.append(('unit',reg(3)))
-    elif pc==0x80115e24:calls.append(('translate',vec(reg(3))))
-    elif pc in (0x801154e0,0x80115560):calls.append(('rot',pc,struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
-    elif pc==0x80114bc4:
+    if pc==0x80116098:calls.append(('push',))
+    elif pc==0x801153e4:calls.append(('unit',reg(3)))
+    elif pc==0x8011616c:calls.append(('translate',vec(reg(3))))
+    elif pc in (0x80115828,0x801158a8):calls.append(('rot',pc,struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
+    elif pc==0x80114f0c:
         calls.append(('calcPoint',vec(reg(4))));t=case['transforms'][st['i']]
         for i,v in enumerate(t['point']):put(reg(5)+4*i,'f',v)
-    elif pc==0x801151a4:
+    elif pc==0x801154ec:
         calls.append(('calcVector',vec(reg(4))));t=case['transforms'][st['i']]
         for i,v in enumerate(t['vector']):put(reg(5)+4*i,'f',v)
-    elif pc==0x80114eac:
+    elif pc==0x801151f4:
         t=case['transforms'][st['i']];st['i']+=1;calls.append(('scalor',vec(reg(3))));setf(1,t['length'])
-    elif pc==0x80032910:
+    elif pc==0x80032b78:
         n=st['a'];st['a']+=1;made=n not in case['failedAllocations'];calls.append(('effect',reg(3)-S5,made))
         if made:e=alloc(0x40);st['e']=e;uc.reg_write(R.UC_PPC_REG_3,e)
         else:uc.reg_write(R.UC_PPC_REG_3,0)
-    elif pc==0x8010d940:v=st['r'].pop(0);calls.append(('rand',v));uc.reg_write(R.UC_PPC_REG_3,v)
-    elif pc==0x80115d9c:calls.append(('pop',))
+    elif pc==0x8010dc88:v=st['r'].pop(0);calls.append(('rand',v));uc.reg_write(R.UC_PPC_REG_3,v)
+    elif pc==0x801160e4:calls.append(('pop',))
 for a in imports:u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 def spawned(uc,pc,size,_):
     e=st.pop('e',None)
@@ -98,16 +98,16 @@ def rust(cs):
         if 'particle' in c:
             p=c['particle'];o.append(('particle',F(p['position']),F(p['velocity']),fb(p['size']),p['angle0'],p['angle2C'],fb(p['field38']),fb(p['add18'])));continue
         e=int(c['engine'],16);a=c['args']
-        if e==0x80115d50:o.append(('push',))
-        elif e==0x8011509c:o.append(('unit',a[0]))
-        elif e==0x80115e24:o.append(('translate',F(a['translate'])))
-        elif e in (0x801154e0,0x80115560):o.append(('rot',e,a[1]))
-        elif e==0x80114bc4:o.append(('calcPoint',F(a['point'])))
-        elif e==0x801151a4:o.append(('calcVector',F(a['vector'])))
-        elif e==0x80114eac:o.append(('scalor',F(a['vector'])))
-        elif e==0x80032910:o.append(('effect',int(a['descriptor'][5:],16),a['returnedNonzero']))
-        elif e==0x8010d940:o.append(('rand',a['returned']))
-        elif e==0x80115d9c:o.append(('pop',))
+        if e==0x80116098:o.append(('push',))
+        elif e==0x801153e4:o.append(('unit',a[0]))
+        elif e==0x8011616c:o.append(('translate',F(a['translate'])))
+        elif e in (0x80115828,0x801158a8):o.append(('rot',e,a[1]))
+        elif e==0x80114f0c:o.append(('calcPoint',F(a['point'])))
+        elif e==0x801154ec:o.append(('calcVector',F(a['vector'])))
+        elif e==0x801151f4:o.append(('scalor',F(a['vector'])))
+        elif e==0x80032b78:o.append(('effect',int(a['descriptor'][5:],16),a['returnedNonzero']))
+        elif e==0x8010dc88:o.append(('rand',a['returned']))
+        elif e==0x801160e4:o.append(('pop',))
         else:raise AssertionError(c)
     return o
 rng=random.Random(11)

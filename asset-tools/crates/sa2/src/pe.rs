@@ -467,3 +467,24 @@ mod tests {
         .is_err());
     }
 }
+
+/// PC cutscene lookup profile: SA2 Mod Loader SA2Variables.h / SA2Structs.h.
+pub fn cutscene_voice_table(input: &[u8]) -> Result<std::collections::BTreeMap<u32, u32>> {
+    if crate::manifest::sha256(input)
+        != "4b1e09d782a2d919cbed2324ba2c0c78ef5fbe1677d400edab39608191f12c16"
+    {
+        return Err(Error::invalid("unsupported cutscene voice executable"));
+    }
+    let offset = read_pe(input)?.va_to_offset(0x1716720, 720 * 8)?;
+    let mut table = std::collections::BTreeMap::new();
+    for i in 0..720 {
+        let row = offset + i * 8;
+        if table
+            .insert(u32le(input, row)?, u32le(input, row + 4)?)
+            .is_some()
+        {
+            return Err(Error::invalid("duplicate cutscene voice ID"));
+        }
+    }
+    Ok(table)
+}

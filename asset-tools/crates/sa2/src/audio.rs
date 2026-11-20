@@ -2,7 +2,7 @@
 //!
 //! Format evidence: vgmstream `src/meta/adx.c` and `src/coding/adx_decoder.c`
 //! (upstream inspected 2026-11-18). The mathematical decoder is implemented
-//! here independently. AHX, encrypted ADX and CSB are deliberately unsupported.
+//! here independently. Fixed-profile mono AHX uses Rust Layer II synthesis; encrypted ADX is unsupported; Steam CSB banks are read by `csb`.
 
 use crate::{Error, Result};
 use serde::Serialize;
@@ -31,6 +31,47 @@ fn be32(input: &[u8], offset: usize) -> Result<u32> {
 fn le32(input: &[u8], offset: usize) -> Result<u32> {
     let b = range(input, offset, 4)?;
     Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// Header fields of the unencrypted mono AHX variant found in the voice banks.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AhxHeader {
+    pub channels: u8,
+    pub sample_rate: u32,
+    pub sample_count: u32,
+    pub data_offset: usize,
+    /// Encoded byte length when the installed-bank footer is recognized.
+    pub payload_length: Option<usize>,
+}
+
+pub fn read_ahx_header(bytes: &[u8]) -> Result<AhxHeader> {
+    if be16(bytes, 0)? != 0x8000
+        || range(bytes, 4, 4)? != [0x10, 0, 0, 1]
+        || be16(bytes, 18)? != 0x0600
+    {
+        return Err(Error::invalid("unsupported AHX header"));
+    }
+    let data_offset = usize::from(be16(bytes, 2)?) + 4;
+    if data_offset < 26
+        || range(bytes, data_offset - 6, 6)? != b"(c)CRI"
+        || data_offset >= bytes.len()
+    {
+        return Err(Error::invalid("invalid AHX payload offset or marker"));
+    }
+    let sample_rate = be32(bytes, 8)?;
+    if sample_rate == 0 {
+        return Err(Error::invalid("zero AHX sample rate"));
+    }
+    Ok(AhxHeader {
+        channels: bytes[7],
+        sample_rate,
+        sample_count: be32(bytes, 12)?,
+        data_offset,
+        payload_length: bytes[data_offset..]
+            .strip_suffix(b"\x80\x01\x00\x0cAHXE(c)CRI\x00\x00")
+            .map(|payload| payload.len()),
+    })
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -262,8 +303,7 @@ pub fn decode_adx(input: &[u8], max_samples: usize) -> Result<PcmAudio> {
 }
 
 impl PcmAudio {
-    /// Canonical little-endian PCM WAV. Loop metadata stays in the manifest;
-    /// playback policy does not alter or repeat the source PCM samples.
+    /// Write PCM once and preserve a declared forward loop in a WAV sampler chunk.
     pub fn to_wav(&self) -> Result<Vec<u8>> {
         let expected_samples = (self.header.sample_count as usize)
             .checked_mul(usize::from(self.header.channels))
@@ -285,10 +325,20 @@ impl PcmAudio {
             .checked_mul(2)
             .and_then(|n| u32::try_from(n).ok())
             .ok_or_else(|| Error::invalid("WAV exceeds RIFF size limit"))?;
+        let sampler_size = if let Some(points) = &self.header.loop_points {
+            if points.start_sample >= points.end_sample
+                || points.end_sample > self.header.sample_count
+            {
+                return Err(Error::invalid("invalid WAV loop range"));
+            }
+            68
+        } else {
+            0
+        };
         let riff_size = data_size
-            .checked_add(36)
+            .checked_add(36 + sampler_size)
             .ok_or_else(|| Error::invalid("WAV RIFF size overflow"))?;
-        let mut output = Vec::with_capacity(data_size as usize + 44);
+        let mut output = Vec::with_capacity(riff_size as usize + 8);
         output.extend_from_slice(b"RIFF");
         output.extend_from_slice(&riff_size.to_le_bytes());
         output.extend_from_slice(b"WAVEfmt ");
@@ -299,6 +349,17 @@ impl PcmAudio {
         output.extend_from_slice(&byte_rate.to_le_bytes());
         output.extend_from_slice(&(u16::from(self.header.channels) * 2).to_le_bytes());
         output.extend_from_slice(&16u16.to_le_bytes());
+        if let Some(points) = &self.header.loop_points {
+            output.extend_from_slice(b"smpl");
+            output.extend_from_slice(&60u32.to_le_bytes());
+            let period_ns = 1_000_000_000 / self.header.sample_rate;
+            let sampler_header = [0, 0, period_ns, 60, 0, 0, 0, 1, 0];
+            // Forward loop, inclusive WAV endpoint, repeat indefinitely.
+            let sampler_loop = [0, 0, points.start_sample, points.end_sample - 1, 0, 0];
+            for word in sampler_header.into_iter().chain(sampler_loop) {
+                output.extend_from_slice(&word.to_le_bytes());
+            }
+        }
         output.extend_from_slice(b"data");
         output.extend_from_slice(&data_size.to_le_bytes());
         for sample in &self.samples {
@@ -408,4 +469,290 @@ mod tests {
         }
         assert_eq!(source, fs::read(path).unwrap(), "source unchanged");
     }
+}
+/// Count frames by walking Layer II allocation and scalefactor fields. This
+/// deliberately accepts only the fixed mono profile observed in SA2's banks.
+/// Reference: vgmstream src/coding/mpeg_custom_utils_ahx.c.
+pub fn ahx_frame_count(bytes: &[u8]) -> Result<usize> {
+    walk_ahx(bytes, |_| Ok(()))
+}
+
+fn walk_ahx(bytes: &[u8], mut visit: impl FnMut(&[u8]) -> Result<()>) -> Result<usize> {
+    let header = read_ahx_header(bytes)?;
+    let len = header
+        .payload_length
+        .ok_or_else(|| Error::invalid("unknown AHX footer"))?;
+    let mut payload = range(bytes, header.data_offset, len)?;
+    let mut count = 0;
+    while !payload.is_empty() && payload != [0] {
+        if !payload.starts_with(&[0xff, 0xf5, 0xe0, 0xc0]) {
+            return Err(Error::invalid("invalid AHX frame boundary"));
+        }
+        let mut bit = 32usize;
+        let mut field = |width: usize| -> Result<usize> {
+            let mut value = 0;
+            for _ in 0..width {
+                let byte = payload
+                    .get(bit / 8)
+                    .ok_or_else(|| Error::invalid("short AHX side information"))?;
+                value = value * 2 + usize::from((byte >> (7 - bit % 8)) & 1);
+                bit += 1;
+            }
+            Ok(value)
+        };
+        let mut allocated = 0;
+        let mut sample_bits = 0;
+        for band in 0..30 {
+            let width = match band {
+                0..=3 => 4,
+                4..=10 => 3,
+                _ => 2,
+            };
+            let index = field(width)?;
+            if index > 0 {
+                allocated += 1;
+                let triplet = match (width, index) {
+                    (_, 1) => 5,
+                    (_, 2) => 7,
+                    (4, 3) => 9,
+                    (4, 4) | (_, 3) => 10,
+                    (4, n) => 3 * (n - 1),
+                    (_, n) => 3 * n,
+                };
+                sample_bits += 12 * triplet;
+            }
+        }
+        let mut scales = 0;
+        for _ in 0..allocated {
+            scales += [18, 12, 6, 12][field(2)?];
+        }
+        visit(range(payload, 0, (bit + scales + sample_bits).div_ceil(8))?)?;
+        payload = payload
+            .get((bit + scales + sample_bits).div_ceil(8)..)
+            .ok_or_else(|| Error::invalid("short AHX frame"))?;
+        count += 1;
+    }
+    if count != header.sample_count.div_ceil(1152) as usize {
+        return Err(Error::invalid(
+            "AHX frame count disagrees with sample count",
+        ));
+    }
+    Ok(count)
+}
+
+/// Decode fixed-profile mono AHX directly to an IEEE float WAVE.
+pub fn decode_ahx_wav(bytes: &[u8], max_bytes: usize) -> Result<Vec<u8>> {
+    use symphonia_bundle_mp3::MpaDecoder;
+    use symphonia_core::{
+        audio::{Audio, GenericAudioBufferRef},
+        codecs::audio::{well_known::CODEC_ID_MP2, AudioCodecParameters, AudioDecoder},
+        packet::PacketRef,
+    };
+    let h = read_ahx_header(bytes)?;
+    let size = h
+        .sample_count
+        .checked_mul(4)
+        .ok_or_else(|| Error::invalid("AHX output too large"))?;
+    let riff = size
+        .checked_add(48)
+        .ok_or_else(|| Error::invalid("AHX WAV too large"))?;
+    if u64::from(riff) + 8 > max_bytes as u64 {
+        return Err(Error::invalid("AHX output exceeds limit"));
+    }
+    let rate = h
+        .sample_rate
+        .checked_mul(4)
+        .ok_or_else(|| Error::invalid("AHX rate overflow"))?;
+    let mut out = Vec::new();
+    out.extend(b"RIFF");
+    out.extend(riff.to_le_bytes());
+    out.extend(b"WAVEfmt ");
+    out.extend(16u32.to_le_bytes());
+    out.extend(3u16.to_le_bytes());
+    out.extend(1u16.to_le_bytes());
+    out.extend(h.sample_rate.to_le_bytes());
+    out.extend(rate.to_le_bytes());
+    out.extend(4u16.to_le_bytes());
+    out.extend(32u16.to_le_bytes());
+    out.extend(b"fact");
+    out.extend(4u32.to_le_bytes());
+    out.extend(h.sample_count.to_le_bytes());
+    out.extend(b"data");
+    out.extend(size.to_le_bytes());
+    let err = |e: symphonia_core::errors::Error| Error::invalid(e.to_string());
+    let mut decoder = MpaDecoder::try_new(
+        AudioCodecParameters::new().for_codec(CODEC_ID_MP2),
+        &Default::default(),
+    )
+    .map_err(err)?;
+    let mut left = h.sample_count as usize;
+    walk_ahx(bytes, |frame| {
+        if frame.len() > 1044 {
+            return Err(Error::invalid("oversize AHX frame"));
+        }
+        let mut packet = [0; 1044];
+        packet[..frame.len()].copy_from_slice(frame);
+        let packet = PacketRef::new(
+            0,
+            (h.sample_count - left as u32).into(),
+            1152u32.into(),
+            &packet,
+        );
+        let GenericAudioBufferRef::F32(buf) = decoder.decode_ref(&packet).map_err(err)? else {
+            return Err(Error::invalid("unexpected AHX sample format"));
+        };
+        if buf.frames() != 1152 || buf.num_planes() != 1 {
+            return Err(Error::invalid("unexpected AHX frame shape"));
+        }
+        let n = left.min(1152);
+        for sample in &buf
+            .plane(0)
+            .ok_or_else(|| Error::invalid("missing AHX channel"))?[..n]
+        {
+            out.extend(sample.to_le_bytes());
+        }
+        left -= n;
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// Read the fixed timing prefix shared by Battle event language and effect files.
+/// Layout reference: SA3D.SA2Event.Language.EventLanguageTimestamps.
+pub fn read_event_cues(data: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let prefix = range(data, 0, 256 * 8 + 512 * 72)?;
+    let mut subtitles = Vec::new();
+    let mut audio = Vec::new();
+    for (slot, row) in prefix[..2048].chunks_exact(8).enumerate() {
+        let frame = be32(row, 0)?;
+        let duration = be32(row, 4)?;
+        if frame != 0 || duration != 0 {
+            subtitles.push(json!({"slot":slot,"frame":frame,"durationFrames":duration}));
+        }
+    }
+    for (slot, row) in prefix[2048..].chunks_exact(72).enumerate() {
+        let frame = be32(row, 0)?;
+        let master = be16(row, 4)?;
+        let afs = be16(row, 6)?;
+        let name = &row[8..];
+        let name = &name[..name.iter().position(|&c| c == 0).unwrap_or(name.len())];
+        if frame == 0
+            && name.is_empty()
+            && ((master == 65535 && afs == 65535) || row.iter().all(|&c| c == 0))
+        {
+            continue;
+        }
+        let music =
+            std::str::from_utf8(name).map_err(|_| Error::invalid("non-UTF8 event music name"))?;
+        audio.push(json!({"slot":slot,"frame":frame,"masterListVoiceIndex":master,"afsVoiceIndex":afs,"musicName":music}));
+    }
+    Ok(json!({"audio":audio,"subtitles":subtitles,"trailingBytes":data.len()-prefix.len()}))
+}
+
+// Battle event subtitle pointers refer to this image base (SA3D.SA2Event EventType).
+pub fn event_subtitles(
+    data: &[u8],
+    encoding: &'static encoding_rs::Encoding,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let offset = |p: u32| {
+        p.checked_sub(0x817afe60)
+            .map(|v| v as usize)
+            .ok_or_else(|| Error::invalid("invalid subtitle pointer"))
+    };
+    let mut events = std::collections::BTreeMap::new();
+    let mut cursor = 0;
+    let mut budget = 0usize;
+    loop {
+        let id = be32(data, cursor)?;
+        if id == u32::MAX {
+            break;
+        }
+        let ptr = offset(be32(data, cursor + 4)?)?;
+        let n = be32(data, cursor + 8)? as usize;
+        if n > 256 || events.len() >= 4096 {
+            return Err(Error::invalid("subtitle table limit"));
+        }
+        let rows = range(data, ptr, n * 8)?;
+        let mut slots = Vec::with_capacity(n);
+        for row in rows.chunks_exact(8) {
+            let character = be32(row, 0)? as i32;
+            let pointer = be32(row, 4)?;
+            let raw = if pointer == 0 {
+                None
+            } else {
+                let start = offset(pointer)?;
+                let tail = data
+                    .get(start..)
+                    .ok_or_else(|| Error::invalid("subtitle offset exceeds bank"))?;
+                let len = tail
+                    .iter()
+                    .take(65536)
+                    .position(|&c| c == 0)
+                    .ok_or_else(|| Error::invalid("unterminated subtitle"))?;
+                Some((start, &tail[..len]))
+            };
+            budget += raw.map_or(0, |(_, s)| s.len()) + 64;
+            if budget > 16 * 1024 * 1024 {
+                return Err(Error::invalid("subtitle output limit"));
+            }
+            let (start, s) = raw.map_or((None, &[][..]), |(o, s)| (Some(o), s));
+            let centered = s.first() == Some(&7);
+            let text = encoding
+                .decode_without_bom_handling_and_without_replacement(&s[usize::from(centered)..])
+                .ok_or_else(|| Error::invalid("invalid subtitle encoding"))?;
+            slots.push(json!({"slot":slots.len(),"character":character,"textOffset":start,"byteLength":s.len(),"centered":centered,"text":text}));
+        }
+        if events.insert(id, slots).is_some() {
+            return Err(Error::invalid("duplicate subtitle event"));
+        }
+        cursor += 12;
+    }
+    Ok(json!({"encoding":encoding.name(),"events":events}))
+}
+
+/// Battle event effects layout: SA3D.SA2Event.Effects.EventEffects,
+/// ScreenEffect and ObjectLighting. Preserve original floats without color conversion.
+pub fn event_lighting(data: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    if data.len() != 239616 {
+        return Err(Error::invalid("unexpected Battle effects size"));
+    }
+    let mut screens = Vec::new();
+    let mut lights = Vec::new();
+    let scalar = |row: &[u8], p| -> Result<f32> {
+        let n = f32::from_bits(be32(row, p)?);
+        if n.is_finite() {
+            Ok(n)
+        } else {
+            Err(Error::invalid("non-finite event lighting value"))
+        }
+    };
+    let vector = |row: &[u8], p| -> Result<[f32; 3]> {
+        Ok([scalar(row, p)?, scalar(row, p + 4)?, scalar(row, p + 8)?])
+    };
+    let screen_start = 38912;
+    for (slot, row) in range(data, screen_start, 64 * 64)?
+        .chunks_exact(64)
+        .enumerate()
+    {
+        if row.iter().all(|b| *b == 0) {
+            continue;
+        }
+        screens.push(json!({"slot":slot,"byteOffset":screen_start+slot*64,"frame":be32(row,0)?,"type":row[4],"argb":be32(row,8)?,"fadeOutRaw":row[12],"textureId":be16(row,14)?,"frameTime":be32(row,16)?,"position":[be16(row,20)? as i16,be16(row,22)? as i16],"size":[scalar(row,24)?,scalar(row,28)?]}));
+    }
+    let start = screen_start + 64 * 64 + 2048 * 56;
+    for (i, row) in range(data, start, 4 * 256 * 68)?
+        .chunks_exact(68)
+        .enumerate()
+    {
+        if row.iter().all(|b| *b == 0) {
+            continue;
+        }
+        lights.push(json!({"channel":i/256,"slot":i%256,"byteOffset":start+i*68,"frame":be32(row,0)?,"fadeMode":be32(row,4)?,"direction":vector(row,8)?,"diffuse":vector(row,20)?,"intensity":scalar(row,32)?,"ambient":vector(row,36)?}));
+    }
+    Ok(
+        json!({"screenEffects":screens,"objectLights":lights,"offsetBasis":"decompressed file","selection":"nonzero records, not verified runtime activation"}),
+    )
 }
