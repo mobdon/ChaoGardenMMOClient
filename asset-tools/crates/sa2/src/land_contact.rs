@@ -90,7 +90,7 @@ pub struct Contact {
 }
 
 /// njUnitVector (0x80115D24): scale by Gekko's `frsqrte` estimate alone.
-fn unit_vector(v: Vec3) -> Vec3 {
+pub(crate) fn unit_vector(v: Vec3) -> Vec3 {
     let d = fmadds(v[2], v[2], fmadds(v[1], v[1], v[0] * v[0]));
     let e = gekko_frsqrte(d as f64);
     v.map(|c| (e * c as f64) as f32)
