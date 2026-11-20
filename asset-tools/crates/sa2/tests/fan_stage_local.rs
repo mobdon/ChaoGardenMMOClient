@@ -349,8 +349,13 @@ fn mounted_campaign_routes() {
                     assert_eq!(world.meshes.len(), pieces);
                     let triangles: usize = world.meshes.iter().map(|m| m.triangles.len()).sum();
                     assert_eq!(triangles, if pieces == 321 { 13643 } else { 18439 });
+                    // Course rows have no surface flags, so query every triangle.
+                    let every = sa2_asset_tools::collision::RayFilter {
+                        required_flags: 0,
+                        rejected_flags: 0,
+                    };
                     let ground = world
-                        .raycast([0., 200., -200.], [0., -1., 0.], 1000.)
+                        .raycast_with_filter([0., 200., -200.], [0., -1., 0.], 1000., every)
                         .unwrap()
                         .expect("course start has ground below");
                     assert_eq!(world.meshes[ground.mesh_index].entry_index, pieces);

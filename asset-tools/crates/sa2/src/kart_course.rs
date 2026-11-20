@@ -724,7 +724,7 @@ mod terrain_reference {
                 }
                 opaque += usize::from(r.u16(a + 16).unwrap());
                 translucent += usize::from(r.u16(a + 18).unwrap());
-                assert_eq!(entry.bounds_radius.to_bits(), r.u32(a + 32).unwrap());
+                assert_eq!((entry.bounds_radius, entry.surface_flags), (0., 0));
             }
             eprintln!(
                 "{}: display entries={} opaque meshes={opaque} translucent meshes={translucent}",
