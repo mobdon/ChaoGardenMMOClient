@@ -923,6 +923,8 @@ pub enum PlacementClock {
     BossConstruct(Box<BossConstructFrame>),
     /// Section 1 + 0x1bb8: boss task update (dispatch on the entity action).
     BossUpdate(Box<BossUpdateFrame>),
+    /// Section 1 + 0x9d4..0xe2c: the boss state helpers.
+    BossHelper(Box<BossHelperFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2697,6 +2699,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::StageObject(frame) => return stage_object(&rel, &frame),
         PlacementClock::BossConstruct(frame) => return boss_construct(&rel, &frame),
         PlacementClock::BossUpdate(frame) => return boss_update(&rel, &frame),
+        PlacementClock::BossHelper(frame) => return boss_helper(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -5409,4 +5412,131 @@ fn boss_update(
         st(0x1de8, "state", 5, 1, a.final_stage_id as u32),
     ]);
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// The boss as the helpers see it. `boss` is module word 6:0x0 (the boss
+/// task the constructor stores); `data` is its word 0x40, `state` data word
+/// 0x10, `child` state word 0x10. `action` and `flags` are the boss entity's
+/// byte 0 and half-word 4. `state_0c` and `state_04` are state word 0xc and
+/// byte 4. `task`, `data_28` and `argument` are what the routine is called
+/// with: 0xd40 reads its task's data float 0x28 and state byte 4 (given as
+/// `state_04`), 0xdc4 takes the action to set in `argument`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossHelperFrame {
+    pub routine: u32,
+    pub boss: u32,
+    pub data: u32,
+    pub state: u32,
+    pub child: u32,
+    pub action: i8,
+    pub flags: i16,
+    pub state_0c: u32,
+    pub state_04: u8,
+    pub data_28: f32,
+    pub argument: i8,
+}
+/// PowerPC fctiwz: round toward zero to a signed word, saturating; NaN
+/// gives 0x80000000.
+fn fctiwz(x: f64) -> i32 {
+    if x.is_nan() {
+        i32::MIN
+    } else {
+        x.trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32
+    }
+}
+/// Section 1 + 0x9d4 (boss task), 0x9f4 (child), 0xa40 (state), 0xa88
+/// (stunned: -1 without a boss, 1 for action 13 or entity flag 4), 0xc60
+/// (state word 0xc as a signed byte), 0xc98 (start the 180-frame state 1),
+/// 0xd04 (clear the state timer), 0xd40 (next entry of the pattern table at
+/// 5:0x514) and 0xdc4 (set the entity action unless stunned).
+fn boss_helper(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossHelperFrame,
+) -> Result<serde_json::Value> {
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let state = || {
+        if f.boss == 0 || f.data == 0 {
+            0
+        } else {
+            f.state
+        }
+    };
+    let stunned = || -> i32 {
+        if f.boss == 0 {
+            -1
+        } else if f.action == 13 || f.flags & 4 != 0 {
+            1
+        } else {
+            0
+        }
+    };
+    let mut ev = Vec::new();
+    let returned: i64 = match f.routine {
+        0x9d4 => f.boss.into(),
+        0x9f4 => {
+            if f.boss == 0 {
+                0
+            } else {
+                f.child.into()
+            }
+        }
+        0xa40 => state().into(),
+        0xa88 => stunned().into(),
+        0xc60 => {
+            if state() == 0 {
+                -1
+            } else {
+                (f.state_0c as u8 as i8).into()
+            }
+        }
+        0xc98 => {
+            if f.boss == 0 || stunned() as i8 == 1 || state() == 0 {
+                -1
+            } else {
+                ev.push(st(0xce8, "state", 6, 2, 0xb4));
+                ev.push(st(0xcf0, "state", 0xc, 4, 1));
+                f.state.into()
+            }
+        }
+        0xd04 => {
+            if state() == 0 {
+                -1
+            } else {
+                ev.push(st(0xd28, "state", 6, 2, 0));
+                ev.push(st(0xd2c, "state", 0xc, 4, 0));
+                f.state.into()
+            }
+        }
+        0xd40 => {
+            let table = rel
+                .reference(1, 0xd76)
+                .filter(|r| r.module == 88 && r.section == 5)
+                .ok_or_else(|| Error::invalid("missing boss pattern table"))?
+                .addend as i64;
+            let row = (fctiwz(f64::from(f.data_28)) as i8).wrapping_sub(1) as i64;
+            let byte = |column: i8| -> Result<u8> {
+                let at = table + 4 * row + column as i64;
+                usize::try_from(at)
+                    .ok()
+                    .and_then(|at| rel.data(5).ok()?.get(at).copied())
+                    .ok_or_else(|| Error::invalid("boss pattern index out of range"))
+            };
+            let mut next = f.state_04.wrapping_add(1) as i8;
+            if (byte(next)? as i8) < 0 {
+                next = 0;
+            }
+            ev.push(st(0xd9c, "state", 4, 1, next as u8 as u32));
+            byte(next)?.into()
+        }
+        0xdc4 => {
+            if stunned() as i8 == 0 {
+                ev.push(st(0xe08, "task_entity", 0, 1, f.argument as u8 as u32));
+                ev.push(st(0xe10, "task_entity", 1, 1, 0));
+            }
+            return Ok(serde_json::json!({"events":ev}));
+        }
+        _ => return Err(Error::invalid("not a boss helper routine")),
+    };
+    Ok(serde_json::json!({"events":ev,"returned":returned as u32}))
 }
