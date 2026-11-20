@@ -3,17 +3,19 @@ harness and print JSON (floats as bit patterns). tests/so_skull.rs replays
 each case with `stage_objects::skull` / `stage_objects::udreel_stoplsd`.
 Usage: python so_skull_ppc.py <skull|pskull|skull_display|stoplsd|udreel_load|udreel|udreel_display>
 Engine routines (collision, SET state, player calls, sound, allocation,
-drawing) and the stage module's movable-object helpers 0x4B44 / 0x4BA8 /
-0x4BE0 are stubbed and recorded as events; rand, the player range test,
-fabsf and the Ninja matrix routines run as compiled.
+the land probes, drawing) are stubbed and recorded as events; the stage
+module's movable-object helpers 0x4B44 / 0x4BA8 / 0x4BE0 (with their land
+probe stubs from so_dynland_ppc.py), rand, the player range test, fabsf
+and the Ninja matrix routines run as compiled.
 """
 import json, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from so_harness import *  # noqa: E402,F401,F403
+from so_dynland_ppc import dyn_stubs, get_words, rnd_body  # noqa: E402
 
 T = SCRATCH
-TWP, CWP, INFO, MWP, LAND = T + 0x100, T + 0x200, T + 0x400, T + 0x500, T + 0x600
+TWP, CWP, INFO, MWP, LAND = T + 0x100, T + 0x200, T + 0x400, T + 0x500, T + 0x1500
 HIT, HTASK = T + 0x700, T + 0x800
 PT = [T + 0x900, T + 0xA00]     # player twp
 PC = [T + 0xB00, T + 0xC00]     # player cwp
@@ -119,9 +121,7 @@ def skull_players(present):
 
 def skull_stubs():
     common_stubs()
-    m.stub(S1(0x4B44), lambda mm: (ev('movable_create'), mm.put(T + 0x3C, 'I', frame['land'])))
-    m.stub(S1(0x4BA8), lambda mm: (ev('movable_release'), mm.put(T + 0x3C, 'I', 0)))
-    m.stub(S1(0x4BE0), lambda mm: ev('movable_update'))
+    dyn_stubs(T, LAND, frame, entry=False)
     m.stub(0x80065388, ret(lambda mm: (ev('cond_get'), frame['cond'])[1]))
     m.stub(0x8006539C, lambda mm: ev('cond_set', mm.gpr(4)))
     m.stub(0x800260FC, lambda mm: ev('drop', mm.gpr(3), fv(1, 2, 3)))
@@ -134,7 +134,7 @@ def skull_state():
     return {'twp': get_twp(), 'cb': callbacks(), 'alpha': m.get(T + 0x40, 'I'),
             'attr': [m.get(INFO + 0x30 * k + 4, 'I') for k in range(3)], 'speed': vec(MWP),
             'mwp30': m.get(MWP + 0x30, 'I'),
-            'land': [m.get(LAND + 0x60, 'I'), m.get(LAND + 0x84, 'I')] if land else None}
+            'land': get_words(LAND) if land else None}
 
 
 def skull_case(kind):
@@ -156,12 +156,15 @@ def skull_case(kind):
     speed = [fb(rnd_f(-5, 5)) for _ in range(3)]
     for k in range(3):
         m.put(MWP + 4 * k, 'I', speed[k])
-    land0 = [rng.randrange(1 << 32), fb(rnd_f())]
-    m.put(LAND + 0x60, 'I', land0[0]); m.put(LAND + 0x84, 'I', land0[1])
-    has_land = rng.random() < 0.7
-    frame['land'] = LAND if has_land else 0
-    if kind == 'pskull_exec':
-        m.put(T + 0x3C, 'I', frame['land'])
+    land0 = rnd_body(t['pos'])
+    for k, w in enumerate(land0):
+        m.put(LAND + 4 * k, 'I', w)
+    # The exec's movable update reads the body unconditionally (a null read
+    # on GC), so exec cases always have one.
+    has_land = kind == 'pskull_exec' or rng.random() < 0.7
+    frame['calloc'] = has_land
+    if kind in ('pskull_exec', 'destructor'):
+        m.put(T + 0x3C, 'I', LAND if has_land else 0)
     seed = rng.randrange(1 << 32)
     m.put(NEXT, 'I', seed)
     present = [rng.random() < 0.8, rng.random() < 0.8]
@@ -176,11 +179,13 @@ def skull_case(kind):
         frame['cond'] = rng.choice([0, 0, 1, -1])
         cwp_flag = rng.choice([0, 1, rng.randrange(0x10000)])
         m.put(CWP + 4, 'H', cwp_flag)
+        g = rng.choice([0, 0, 0, 1])
+        m.put(GLOBAL + 0x37, 'b', g)
         events.clear()
         fn = {'skull_load': 0x1DB78, 'skull_exec': 0x1DB14, 'pskull_load': 0x1D500, 'pskull_exec': 0x1D62C,
               'destructor': 0x1D598}[kind]
         m.call(S1(fn), r3=T)
-        case['frames'].append({'out': frame['out'], 'cond': frame['cond'], 'cwp_flag': cwp_flag,
+        case['frames'].append({'out': frame['out'], 'cond': frame['cond'], 'cwp_flag': cwp_flag, 'g': g,
                                'events': list(events), 'state': skull_state()})
     out['cases'].append(case)
 

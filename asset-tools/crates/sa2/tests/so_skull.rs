@@ -4,16 +4,18 @@
 //! by case and frame by frame: the events the REL code calls out to and the
 //! state it leaves.
 use sa2_asset_tools::enemy_lib::Rand;
+use sa2_asset_tools::land_probe::{Hit, Shadow};
 use sa2_asset_tools::stage_objects::{
+    dyn_land::{self, Movable, MovableHost, ShadowBlock, WORDS},
     host::{Event, ObjectHost},
-    skull::{self, Draw, Land, SkullEvent, SkullHost, SkullPlayer, SkullTask, Twp},
+    skull::{self, Draw, SkullEvent, SkullHost, SkullPlayer, SkullTask, Twp},
     udreel_stoplsd::{
         self as reel, ReelData, ReelDisplayHost, ReelEvent, ReelHost, ReelModels, ReelPlayer,
         ReelTask, ReelWork, StopLsdEvent, StopLsdHost, StopLsdTask,
     },
 };
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::{path::PathBuf, process::Command};
 
 fn oracle(group: &str) -> Option<Value> {
@@ -103,7 +105,11 @@ fn collision(e: Event) -> Value {
 struct SkullRec {
     out: bool,
     cond: i8,
-    land: Option<Land>,
+    /// syCalloc succeeds; the byte at 0x801CC19F; the oracle's land
+    /// probe results, in order.
+    calloc: bool,
+    g: i8,
+    script: VecDeque<Value>,
     players: [Option<SkullPlayer>; 2],
     rand: Rand,
     f20: HashMap<u32, u32>,
@@ -123,11 +129,56 @@ impl ObjectHost for SkullRec {
     }
 }
 
-impl SkullHost for SkullRec {
-    fn movable_create_4b44(&mut self) -> Option<Land> {
-        self.events.push(json!(["movable_create"]));
-        self.land
+impl SkullRec {
+    /// Replays one scripted GetShadowPosXYZ / fn_80066E1C result.
+    fn shadow(&mut self, block: &mut ShadowBlock, water: bool) -> bool {
+        let e = self.script.pop_front().expect("a scripted probe");
+        let mut s = Shadow::default();
+        for (r, ray) in e[3].as_array().unwrap().iter().enumerate() {
+            s.coords[r] = f(&ray[1]);
+            if u(&ray[0]) != 0 {
+                s.hits[r] = Some(Hit {
+                    flags: u(&ray[2]),
+                    angle_x: i(&ray[3]) as i32,
+                    angle_z: i(&ray[4]) as i32,
+                    y: f(&ray[1]),
+                    normal: [f(&ray[5]), f(&ray[6]), f(&ray[7])],
+                });
+            }
+        }
+        dyn_land::write_shadow(block, &s);
+        let ret = water && u(&e[4]) != 0;
+        self.events.push(json!([
+            "shadow",
+            u32::from(water),
+            bits(block.point),
+            e[3],
+            u32::from(ret)
+        ]));
+        ret
     }
+}
+
+impl MovableHost for SkullRec {
+    fn sy_calloc_801197fc(&mut self, count: u32, size: u32) -> bool {
+        self.events.push(json!(["calloc", count, size]));
+        self.calloc
+    }
+    fn sy_free_80119828(&mut self) {
+        self.events.push(json!(["free"]));
+    }
+    fn get_shadow_pos_xyz_80067210(&mut self, block: &mut ShadowBlock) {
+        self.shadow(block, false);
+    }
+    fn shadow_water_80066e1c(&mut self, block: &mut ShadowBlock) -> bool {
+        self.shadow(block, true)
+    }
+    fn byte_801cc19f(&self) -> i8 {
+        self.g
+    }
+}
+
+impl SkullHost for SkullRec {
     fn condition(&mut self) -> i8 {
         self.events.push(json!(["cond_get"]));
         self.cond
@@ -140,8 +191,6 @@ impl SkullHost for SkullRec {
     }
     fn skull(&mut self, e: SkullEvent) {
         let v = match e {
-            SkullEvent::MovableUpdate4be0 => json!(["movable_update"]),
-            SkullEvent::MovableRelease4ba8 => json!(["movable_release"]),
             SkullEvent::SetCondition => json!(["cond_set", 1]),
             SkullEvent::Drop { kind, at } => json!(["drop", kind, bits(at)]),
             SkullEvent::DeadOut => json!(["dead_out"]),
@@ -158,7 +207,7 @@ impl SkullHost for SkullRec {
 fn skull_state(t: &SkullTask) -> Value {
     json!({"twp": twp_json(&t.twp), "cb": [t.exec, t.disp, t.dest, 0], "alpha": t.alpha.to_bits(),
            "attr": t.attr, "speed": bits(t.speed), "mwp30": t.mwp_30,
-           "land": t.land.map(|l| json!([l.flags, l.f84.to_bits()]))})
+           "land": t.land.map(|l| json!(l.to_words().to_vec()))})
 }
 
 fn skull_players(v: &Value) -> [Option<SkullPlayer>; 2] {
@@ -179,10 +228,8 @@ fn skull_group(group: &str) -> usize {
     let cases = c["cases"].as_array().unwrap();
     for case in cases {
         let kind = case["kind"].as_str().unwrap();
-        let land0 = Land {
-            flags: u(&case["land0"][0]),
-            f84: f(&case["land0"][1]),
-        };
+        let words: [u32; WORDS] = std::array::from_fn(|k| u(&case["land0"][k]));
+        let land0 = Movable::from_words(&words);
         let has_land = case["has_land"].as_bool().unwrap();
         let mut t = SkullTask {
             twp: twp(&case["twp"]),
@@ -190,7 +237,7 @@ fn skull_group(group: &str) -> usize {
             alpha: f(&case["alpha"]),
             attr: [0, 1, 2].map(|k| u(&case["attr"][k])),
             speed: v3(&case["speed"]),
-            land: (kind == "pskull_exec" && has_land).then_some(land0),
+            land: (matches!(kind, "pskull_exec" | "destructor") && has_land).then_some(land0),
             ..Default::default()
         };
         let mut rand = Rand(u(&case["seed"]));
@@ -199,7 +246,15 @@ fn skull_group(group: &str) -> usize {
             let mut h = SkullRec {
                 out: fr["out"].as_bool().unwrap(),
                 cond: i(&fr["cond"]) as i8,
-                land: has_land.then_some(land0),
+                calloc: has_land,
+                g: i(&fr["g"]) as i8,
+                script: fr["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|e| e[0] == "shadow")
+                    .cloned()
+                    .collect(),
                 players: skull_players(&case["players"]),
                 rand,
                 f20: HashMap::new(),
@@ -255,7 +310,9 @@ fn skull_display_matches_stg42d() {
         let mut h = SkullRec {
             out: false,
             cond: 0,
-            land: None,
+            calloc: false,
+            g: 0,
+            script: VecDeque::new(),
             players: [None; 2],
             rand: Rand(0),
             f20: HashMap::from([(model, u(&c["f20"]))]),
