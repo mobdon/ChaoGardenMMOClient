@@ -29,6 +29,9 @@ pub mod glb_cli;
 pub mod input;
 pub mod iron_gate_movers;
 mod key_pickup;
+pub mod land_contact;
+pub mod land_nodes;
+pub mod land_select;
 pub mod manifest;
 pub mod model;
 pub mod msl_math;
@@ -67,6 +70,7 @@ pub mod texture;
 pub mod three_spring;
 pub mod visual;
 pub mod visual_glb;
+pub mod walker_collide;
 pub mod walker_frame;
 pub mod wild_canyon;
 
