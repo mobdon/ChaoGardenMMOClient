@@ -1,5 +1,6 @@
 //! Single Player Act 1 title-card clock. Kept separate from the gameplay clock.
 pub mod act_label;
+pub mod headline;
 pub mod zone_name;
 use crate::{Error, Result};
 

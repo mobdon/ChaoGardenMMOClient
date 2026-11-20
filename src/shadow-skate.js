@@ -87,7 +87,7 @@ export function observeSkateMotion(previous, player, serverTime, observedAt) {
   const distance = Math.hypot(x - previous?.x, z - previous?.z);
   const valid = Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(serverTime)
     && elapsed > 0 && elapsed <= 1 && player.zone === previous?.zone
-    && distance <= elapsed * 3 + 0.025;
+    && distance <= elapsed * (player.devActor ? 60 : 3) + 0.025;
   return { x, y: player.y, groundY: player.groundY, z, zone: player.zone, serverTime, observedAt,
     speed: valid ? distance / elapsed : 0, valid,
     airGap: Number.isFinite(player.jumpOffset) && player.jumpOffset >= 0 ? player.jumpOffset : Infinity,
@@ -219,6 +219,20 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
   }).filter(Boolean).sort((a, b) => nodeDepth(a.node) - nodeDepth(b.node)) : [];
   let data = supportedMotion(motion) ? motion : null;
   let sourceRates = data ? nativeSourceRates(data) : SKATE_SOURCE_RATES;
+  // The lower toe of the original skate pair defines clearance. Normalize
+  // against standing Shadow, not absolute SA2 bone positions on the Chao.
+  let clearanceRatio=0;
+  const meanLifts=new WeakMap();
+  function sourceLift(clip,stand){
+    if(!meanLifts.has(clip)){
+      const toeY=f=>Math.min(f.positions?.leftToe?.[1],f.positions?.rightToe?.[1]);
+      const base=toeY(stand),span=stand.positions?.head?.[1]-base;
+      const sum=clip.frames.reduce((total,f)=>total+Math.max(0,toeY(f)-base),0);
+      meanLifts.set(clip,span>0 && Number.isFinite(sum) ? sum/(span*clip.frames.length) : 0);
+    }
+    return meanLifts.get(clip);
+  }
+  let strokeRotation = null;
   let disposed = false, clipName = '', deltaTime = 0;
   if (!data && targets.length) void fetchMotion().then(value => {
     if (!disposed && supportedMotion(value)) { data = value; sourceRates = nativeSourceRates(data); }
@@ -235,7 +249,7 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
     deltaTime = frameDelta(dt);
     cadence.update(deltaTime, { ...state, available: !!data && targets.length === TARGETS.length,
       sourceRates });
-    if (!cadence.blend) clipName = '';
+    if (!cadence.blend) {clipName = '';clearanceRatio=0;}
   }
 
   function apply() {
@@ -244,6 +258,17 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
     const clips = ids.map(id => data.clips.find(clip => clip.nativeId === id));
     const duration = clips[0].durationSeconds + (clips[1].durationSeconds - clips[0].durationSeconds) * mix;
     cadence.phase = (cadence.phase + deltaTime * cadence.rate / duration) % 1;
+    // Run119 supplies the Chao leg pivots underneath the retargeted shoes.
+    // Keep those pivots on the same stride as the shoe rotations.
+    const run=imported.run;
+    if(run?.isStarted && run.to>run.from){
+      const frame=run.getCurrentFrame(), phase=(frame-run.from)/(run.to-run.from);
+      const error=((cadence.phase-phase+1.5)%1)-.5;
+      const locked=(phase+error*cadence.blend+1)%1;
+      run.goToFrame(run.from+locked*(run.to-run.from));
+    }
+    const stand=data.clips.find(c=>c.nativeId===169)?.frames[0];
+    if(stand)clearanceRatio=cadence.blend*((1-mix)*sourceLift(clips[0],stand)+mix*sourceLift(clips[1],stand));
     clipName = `${clips[mix < 0.5 ? 0 : 1].nativeId}`;
     const alignment = quaternion(data.alignmentQuaternion), inverseAlignment = alignment.conjugate();
     for (const target of targets) {
@@ -259,6 +284,7 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
       const angle = 2 * Math.acos(Math.min(1, Math.abs(delta.w)));
       const limit = (SKATE_ROTATION_LIMITS[target.semantic] || 50) * Math.PI / 180;
       if (angle > limit) delta = Quaternion.Slerp(Quaternion.Identity(), delta, limit / angle).normalize();
+      if(target.semantic==='head')strokeRotation=delta;
       const desiredWorld = delta.multiply(target.restWorld).normalize();
       const parent = relativeRotation(target.node.parent, root);
       const desiredLocal = parent.conjugate().multiply(desiredWorld).normalize();
@@ -268,7 +294,7 @@ export function createShadowSkate(imported, { motion = null, fetchMotion = loadM
     }
   }
 
-  return { update, apply, restoreBase,
+  return { update, apply, restoreBase, get clearanceRatio(){return clearanceRatio;}, get headStroke(){return cadence.blend ? strokeRotation : null;},
     get diagnostics() { return { active: cadence.blend > 0, state: cadence.state,
       coasting: cadence.coasting,
       speed: cadence.speed, visualSpeed: cadence.visualSpeed, phase: cadence.phase,

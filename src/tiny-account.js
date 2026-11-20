@@ -85,7 +85,7 @@ export function createTinyAccount({ fetch: requestFetch = globalThis.fetch, tran
     let timeout;
     try {
       return await Promise.race([(async () => {
-        const response = await requestFetch(path, { method, cache: 'no-store', credentials: 'omit', signal: controller.signal,
+        const response = await requestFetch(path, { method, cache: 'no-store', credentials: 'omit', redirect: 'error', signal: controller.signal,
           headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
           ...(body ? { body: JSON.stringify(body) } : {}) });
         let data;

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="garden_navy">#101D35</color>
+    <color name="garden_deep">#091426</color>
+    <color name="garden_panel">#1C3050</color>
+    <color name="garden_outline">#35506D</color>
+    <color name="garden_text">#F1F7FF</color>
+    <color name="garden_muted">#B8CCE3</color>
+    <color name="garden_cyan">#91EEE6</color>
+    <color name="garden_gold">#F4D28B</color>
+</resources>

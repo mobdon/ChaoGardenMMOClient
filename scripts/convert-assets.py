@@ -218,7 +218,7 @@ def texture_materials(texture_pack, preserve_eye_whites=False):
     return materials
 
 
-def export_scene(name, source, texture_pack):
+def prepare_geometry(name, texture_pack):
     for obj in list(bpy.context.scene.objects):
         if obj.name.startswith('SAIO Bone Shape'):
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -248,6 +248,11 @@ def export_scene(name, source, texture_pack):
                     bmesh.ops.delete(mesh, geom=[mesh.faces[i] for i in remove_faces], context='FACES')
                     mesh.to_mesh(obj.data)
                     mesh.free()
+    return open_eye_overlays, materials
+
+
+def export_scene(name, source, texture_pack):
+    open_eye_overlays, materials = prepare_geometry(name, texture_pack)
     bpy.context.view_layer.update()
     mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
     if not mesh_objects:

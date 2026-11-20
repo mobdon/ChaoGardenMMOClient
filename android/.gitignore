@@ -1,0 +1,9 @@
+.gradle/
+.android/
+local.properties
+**/build/
+*.apk
+*.aab
+*.jks
+verification/local/
+app/src/localArt/

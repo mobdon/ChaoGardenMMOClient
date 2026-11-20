@@ -8,7 +8,7 @@ const detail = document.getElementById('state');
 const toggle = document.getElementById('toggle');
 const reset = document.getElementById('reset');
 const pressed = new Set();
-const keyBits = new Map([['ArrowRight', 16], ['ArrowLeft', 32], ['KeyZ', 1], ['Space', 1]]);
+const keyBits = new Map([['ArrowRight', 16], ['ArrowLeft', 32], ['ArrowDown', 128], ['KeyZ', 1], ['Space', 1]]);
 const soundToggle = document.getElementById('sound');
 const audition = document.getElementById('audition');
 let audio, stageMusic = null, soundEpoch = 0;

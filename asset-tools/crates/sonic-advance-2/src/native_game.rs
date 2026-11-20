@@ -4,9 +4,12 @@
 //! verified source. Launch/countdown bypass and frame transport are host
 //! bindings. Some objects, enemies, stage events, audio mixing and the complete
 //! retail callback graph are unfinished. This has no MMO service connection.
+use crate::native_runtime::DPAD_DOWN;
+use crate::native_spin::{self as spin, DownAction, SpinDash};
 use crate::{
     Error, VerifiedRom, gba,
     native_animation::{AffineTransform, AnimationPlayer, SpriteFrame},
+    native_bouncy_bar::{self as bar, BarEvent, StageBouncyBars},
     native_camera::NativeCamera,
     native_campaign_save::{CampaignSaveSession, MemoryFlashFaults, SECTOR_BYTES},
     native_checkpoints::StageCheckpoints,
@@ -35,7 +38,7 @@ use serde::Serialize;
 pub const VIEW_WIDTH: usize = 240;
 pub const VIEW_HEIGHT: usize = 160;
 pub const MAX_REPLAY_FRAMES: usize = 36_000;
-pub const SUPPORTED_INPUT: u16 = A_BUTTON | player::LEFT | player::RIGHT;
+pub const SUPPORTED_INPUT: u16 = A_BUTTON | player::LEFT | player::RIGHT | DPAD_DOWN;
 const SINE_SHA256: &str = "78caf4fc1cb643a1f24d8e9d9efb1822cda68335adc1799d517582939d9c5c99";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -44,9 +47,15 @@ pub enum HarnessCallback {
     InitJump,
     Jumping,
     Uncurl,
+    InitUncurl,
     Spring,
     Hurt,
     Homing,
+    InitCrouch,
+    Crouch,
+    Spindash,
+    InitRoll,
+    Rolling,
     InitSkid,
     Turning,
     TouchGround,
@@ -98,6 +107,7 @@ pub struct NativeHarness<'a> {
     stage_ticks: u64,
     rings: StageRings,
     entities: StageEntities,
+    bars: StageBouncyBars<'a>,
     springs: StageSprings<'a>,
     enemies: StageEnemies<'a>,
     special: StageSpecialRings<'a>,
@@ -128,6 +138,7 @@ pub struct NativeHarness<'a> {
     player: PlayerState,
     input: InputState,
     sonic_inputs: SonicInputBuffer,
+    spin: SpinDash,
     animation: AnimationPlayer<'a>,
     sine: &'a [u8],
     callback: HarnessCallback,
@@ -192,6 +203,7 @@ impl<'a> NativeHarness<'a> {
             homing_frames: 0,
             show_player: true,
             displayed_counts: (0, 3, 0),
+            bars: StageBouncyBars::new(rom),
             springs: StageSprings::new(rom, level_id),
             entities: StageEntities::load(rom, level_id)?,
             layer_contacts: 0,
@@ -204,6 +216,7 @@ impl<'a> NativeHarness<'a> {
             player: p,
             input: InputState::default(),
             sonic_inputs: SonicInputBuffer::from_rom(rom)?,
+            spin: SpinDash::new(rom)?,
             animation,
             sine,
             callback: HarnessCallback::Ground,
@@ -236,7 +249,7 @@ impl<'a> NativeHarness<'a> {
     pub fn tick(&mut self, held: u16) -> Result<HarnessSnapshot, Error> {
         if held & !SUPPORTED_INPUT != 0 {
             return Err(Error(
-                "This slice accepts only left, right and A/jump".into(),
+                "Supported buttons are left, right, down and A/jump".into(),
             ));
         }
         if self.halted.is_some() || self.game_over.is_some() {
@@ -282,6 +295,23 @@ impl<'a> NativeHarness<'a> {
             .springs
             .tick(&mut self.entities, &mut self.player, cx, cy)?;
         self.sound_ids.extend(launches.iter().map(|s| s.sound_id));
+        for index in self.entities.take_new_bars() {
+            self.bars.admit(index, self.entities.placements()[index])?;
+        }
+        let mut bar_uncurl = false;
+        for event in self
+            .bars
+            .tick(&mut self.player, self.animation.hitboxes()[0], [cx, cy])?
+        {
+            match event {
+                BarEvent::Transition(bar::UNCURL_TRANSITION) => bar_uncurl = true,
+                BarEvent::Transition(id) => {
+                    return Err(Error(format!("Unsupported bar transition {id}")));
+                }
+                BarEvent::Sound(id) => self.sound_ids.push(id),
+                BarEvent::Restore(index) => self.entities.restore_bar(index),
+            }
+        }
         let mut score = self.score_state();
         let triggers = self.goals.tick(
             &mut self.entities,
@@ -359,6 +389,9 @@ impl<'a> NativeHarness<'a> {
                 &mut self.player,
                 trigger.x,
             ));
+        } else if bar_uncurl {
+            self.player.move_state |= 0x100;
+            self.callback = HarnessCallback::InitUncurl;
         } else if let Some(launch) = launches.last() {
             launch.apply(self.stage.level, &mut self.player);
             self.previous_char_state = -1;
@@ -555,6 +588,9 @@ impl<'a> NativeHarness<'a> {
     }
 
     fn execute_player(&mut self) -> Result<(), Error> {
+        if self.player.move_state & bar::IA_OVERRIDE != 0 {
+            return Ok(());
+        }
         let Some(goal) = self.goal.as_mut() else {
             return self.execute_callback();
         };
@@ -566,9 +602,6 @@ impl<'a> NativeHarness<'a> {
             self.animation.variant,
             &mut self.camera.shift_y,
         )?;
-        if step.special_transition {
-            return Err(Error("Reached the native seven-special-ring transition; the special stage is not yet playable".into()));
-        }
         if step.continue_existing_callback {
             return self.execute_callback();
         }
@@ -595,9 +628,26 @@ impl<'a> NativeHarness<'a> {
             self.sound_ids.push(401);
         }
         if step.advance_ground {
+            if step.special_transition {
+                crate::native_goal::special_course_wrap(
+                    self.rom,
+                    self.stage.level,
+                    &mut self.player,
+                    &mut self.camera,
+                )?;
+            }
             let (sin, cos) = self.trig(self.player.rotation);
             native_lifecycle::normal_bounds(&mut self.player, &self.camera, false)?;
             self.advance_ground(sin, cos)?;
+            if step.special_transition
+                && self
+                    .goal
+                    .as_mut()
+                    .is_some_and(|g| g.finish_special_motion(&mut self.player, &mut self.camera))
+            {
+                self.sound_ids.push(273);
+                self.effect_requests.push("goal boost effect");
+            }
         }
         Ok(())
     }
@@ -702,6 +752,21 @@ impl<'a> NativeHarness<'a> {
                 self.callback = HarnessCallback::Ground;
                 self.ground(true)?;
             }
+            HarnessCallback::InitCrouch => {
+                self.player.move_state &= !0x20;
+                self.player.char_state = spin::CROUCH;
+                self.player.q_speed_ground = 0;
+                self.callback = HarnessCallback::Crouch;
+                self.crouch()?;
+            }
+            HarnessCallback::Crouch => self.crouch()?,
+            HarnessCallback::Spindash => self.spindash()?,
+            HarnessCallback::InitRoll => {
+                spin::init_roll(&mut self.player);
+                self.callback = HarnessCallback::Rolling;
+                self.rolling()?;
+            }
+            HarnessCallback::Rolling => self.rolling()?,
             HarnessCallback::Ground => self.ground(true)?,
             HarnessCallback::Turning => self.ground(false)?,
             HarnessCallback::InitSkid => {
@@ -727,6 +792,11 @@ impl<'a> NativeHarness<'a> {
             }
             HarnessCallback::Jumping => self.airborne()?,
             HarnessCallback::Uncurl => self.uncurl()?,
+            HarnessCallback::InitUncurl => {
+                bar::init_uncurl(&mut self.player, self.animation.animation, false);
+                self.callback = HarnessCallback::Uncurl;
+                self.uncurl()?;
+            }
             HarnessCallback::Hurt => {
                 native_lifecycle::normal_bounds(&mut self.player, &self.camera, false)?;
                 self.player.apply_gravity(false);
@@ -743,13 +813,115 @@ impl<'a> NativeHarness<'a> {
         Ok(())
     }
 
-    fn ground(&mut self, controls: bool) -> Result<(), Error> {
-        if self.player.frame_input & A_BUTTON != 0 {
-            let clearance = native_collision::jump_clearance(&self.stage, &mut self.player)?;
-            if self.player.request_jump(A_BUTTON, clearance) {
-                self.callback = HarnessCallback::InitJump;
-                return Ok(());
+    fn requested_jump(&mut self) -> Result<bool, Error> {
+        if self.player.frame_input & A_BUTTON == 0 {
+            return Ok(false);
+        }
+        let clearance = native_collision::jump_clearance(&self.stage, &mut self.player)?;
+        if self.player.request_jump(A_BUTTON, clearance) {
+            self.callback = HarnessCallback::InitJump;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn crouch(&mut self) -> Result<(), Error> {
+        if self.player.char_state == spin::CROUCH && self.player.frame_input & A_BUTTON != 0 {
+            self.spin.start(&mut self.player);
+            self.sound_ids.push(109);
+            self.effect_requests.push("spindash dust");
+            self.callback = HarnessCallback::Spindash;
+            return self.spindash();
+        }
+        if self.requested_jump()? {
+            return Ok(());
+        }
+        match self.player.held_input & 0xf0 {
+            0 if self.animation.animation == 2 && self.variant == 0 => {
+                self.variant = 1;
+                self.player.sprite_frame_flags &= !player::ANIMATION_OVER;
             }
+            x if x != 0 && x != DPAD_DOWN => self.callback = HarnessCallback::TouchGround,
+            _ => {}
+        }
+        if self.animation.animation == 2
+            && self.variant == 1
+            && self.player.sprite_frame_flags & player::ANIMATION_OVER != 0
+        {
+            self.callback = HarnessCallback::TouchGround;
+        }
+        self.walk_slope()
+    }
+
+    fn spindash(&mut self) -> Result<(), Error> {
+        if self.player.held_input & DPAD_DOWN == 0 {
+            self.spin.release(&mut self.player);
+            self.callback = HarnessCallback::InitRoll;
+            self.sound_ids.push(110);
+        } else {
+            if self
+                .spin
+                .tap_or_decay(self.player.frame_input & A_BUTTON != 0)
+                .is_some()
+            {
+                self.sound_ids.push(109);
+                self.variant = 1;
+                self.player.unk6c = true;
+            }
+            if self.animation.animation == 3
+                && self.variant == 1
+                && self.player.sprite_frame_flags & player::ANIMATION_OVER != 0
+            {
+                self.variant = 0;
+            }
+        }
+        if self.player.move_state & player::IN_AIR != 0 {
+            return self.air_step();
+        }
+        let (sin, cos) = self.trig(self.player.rotation);
+        spin::rolling_slope(&mut self.player, sin);
+        self.spin_ground_motion(sin, cos, false)
+    }
+
+    fn rolling(&mut self) -> Result<(), Error> {
+        if self.requested_jump()? {
+            return Ok(());
+        }
+        let (sin, cos) = self.trig(self.player.rotation);
+        if !spin::roll_speed(&mut self.player, sin) {
+            self.callback = HarnessCallback::TouchGround;
+            return self.execute_callback();
+        }
+        self.spin_ground_motion(sin, cos, true)?;
+        if self.player.move_state & player::IN_AIR != 0 {
+            self.callback = HarnessCallback::Jumping;
+        }
+        Ok(())
+    }
+
+    fn spin_ground_motion(&mut self, sin: i32, cos: i32, rolling: bool) -> Result<(), Error> {
+        native_lifecycle::normal_bounds(&mut self.player, &self.camera, false)?;
+        self.player.ground_speed_to_air(sin, cos);
+        native_collision::ground_wall(&self.stage, &mut self.player)?;
+        if rolling && self.player.move_state & player::IN_AIR != 0 {
+            self.player.apply_gravity(false);
+        }
+        self.move_and_follow_ground()
+    }
+
+    fn ground(&mut self, controls: bool) -> Result<(), Error> {
+        if let Some(action) = spin::down_action(&self.player) {
+            self.callback = match action {
+                DownAction::Crouch => HarnessCallback::InitCrouch,
+                DownAction::Roll => {
+                    self.sound_ids.push(109);
+                    HarnessCallback::InitRoll
+                }
+            };
+            return Ok(());
+        }
+        if self.requested_jump()? {
+            return Ok(());
         }
         if controls {
             if self.player.ground_input(false) {
@@ -764,6 +936,10 @@ impl<'a> NativeHarness<'a> {
         } else if self.player.sprite_frame_flags & player::ANIMATION_OVER != 0 {
             self.callback = HarnessCallback::TouchGround;
         }
+        self.walk_slope()
+    }
+
+    fn walk_slope(&mut self) -> Result<(), Error> {
         let (sin, cos) = self.trig(self.player.rotation);
         self.player.ground_slope_acceleration(sin);
         native_lifecycle::normal_bounds(&mut self.player, &self.camera, false)?;
@@ -777,6 +953,10 @@ impl<'a> NativeHarness<'a> {
 
     fn advance_ground(&mut self, sin: i32, cos: i32) -> Result<(), Error> {
         self.player.ground_speed_to_air(sin, cos);
+        self.move_and_follow_ground()
+    }
+
+    fn move_and_follow_ground(&mut self) -> Result<(), Error> {
         self.player.advance_position(false, false);
         native_collision::ground_follow(&self.stage, &mut self.player)?;
         if self.player.control_lock != 0 {
@@ -933,11 +1113,6 @@ impl<'a> NativeHarness<'a> {
     }
 
     fn update_animation(&mut self) -> Result<(), Error> {
-        if self.player.move_state & 0x20 != 0 {
-            self.player.unk62 = 0;
-            self.player.unk63 = 0;
-            self.player.char_state = 14;
-        }
         let state = self.player.char_state;
         if state != self.previous_char_state {
             self.variant = 0;
@@ -951,14 +1126,16 @@ impl<'a> NativeHarness<'a> {
                     ((speed >> 5) + (speed >> 6)).abs().clamp(8, 128) as u8,
                 )
             }
-            0 | 5 | 6 | 7 | 8 | 10 | 11 | 13 => (state as u16, self.variant, 16),
+            0 | 2..=8 | 10 | 11 | 13 => (state as u16, self.variant, 16),
             14 => (13, 0, 16),
             19 => (18, 0, 16),
             25..=27 => (31, (state - 25) as u8, 16),
             28 | 29 => ((state + 4) as u16, 0, 16),
+            32 => (35, 0, 16),
             20 | 21 => (28, (state - 20) as u8, 16),
             native_lifecycle::DEAD_STATE => (29, self.variant, 16),
             37 => (65, self.variant, 16),
+            50 => (70, self.variant, 16),
             38 => (52, self.variant, 16),
             39 => (if self.variant == 2 { 52 } else { 53 }, self.variant, 16),
             native_sonic::INSTA_SHIELD_STATE => (17, self.variant, 16),
@@ -1100,6 +1277,7 @@ impl<'a> NativeHarness<'a> {
             .springs
             .sprites()
             .chain(self.checkpoints.sprites())
+            .chain(self.bars.sprites())
             .chain(self.enemies.sprites())
             .chain(self.special.sprites())
             .collect();
@@ -1146,6 +1324,55 @@ pub(crate) fn blit(rgba: &mut [u8], sprite: &SpriteFrame, x: i32, y: i32) {
 #[cfg(test)]
 mod course_completion {
     use super::*;
+
+    #[test]
+    #[ignore = "requires verified A2NE_ROM"]
+    fn seven_special_rings_run_native_qualifying_finish_and_select_special_stage() {
+        let raw = std::fs::read(std::env::var_os("A2NE_ROM").unwrap()).unwrap();
+        let rom = VerifiedRom::parse(&raw).unwrap();
+        let mut g = NativeHarness::new(&rom).unwrap();
+        let e = *g
+            .entities
+            .placements()
+            .iter()
+            .find(|e| e.kind == 46)
+            .unwrap();
+        g.player.q_world_x = e.x * 256;
+        g.player.q_world_y = e.y * 256;
+        g.player.move_state = 0;
+        g.camera =
+            NativeCamera::normal_stage(&g.player, g.stage.dimensions().0, g.stage.dimensions().1)
+                .unwrap();
+        g.special.count = 7;
+        g.lifecycle.course_time = 3600;
+        let mut tally = false;
+        let mut pose = false;
+        let mut boost = false;
+        for i in 0..1900 {
+            let s = g.tick(if i == 400 { A_BUTTON } else { 0 }).unwrap();
+            pose |= s.animation == 35;
+            tally |= s
+                .results
+                .as_ref()
+                .is_some_and(|r| r.special_bonus == 10_000);
+            boost |= s.animation_sound_ids.contains(&273);
+            if s.halted.is_some() {
+                assert_eq!(
+                    s.last_destination,
+                    Some(ResultsDestination::SpecialStage),
+                    "{i}: {:?}",
+                    s.halted
+                );
+                break;
+            }
+        }
+        assert!(pose && tally && boost);
+        assert_eq!(g.last_destination, Some(ResultsDestination::SpecialStage));
+        assert_eq!(g.score, 15_000);
+        let mut reloaded = CampaignSaveSession::new(g.campaign.flash_bytes(), true).unwrap();
+        assert!(reloaded.load_latest(&MemoryFlashFaults::default()).success);
+        assert_eq!(reloaded.loaded.unlocked_levels[0], 1);
+    }
 
     // Controlled starting state at the actual finish placements. This tests
     // engine integration, separately from any input-only run from stage start.

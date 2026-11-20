@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { createTinyAccount, normalizeAccountIdentity, supportsTinyAccounts, tinyIntentActivity } from '../src/tiny-account.js';
 
 const status = { accounts: { version: 2, activityLeases: true, intentSequence: true, authentication: ['bearer-header', 'websocket-first-frame'] } };
@@ -7,6 +8,29 @@ const baseIdentity = () => ({ schemaVersion: 2, accountId: 'account-a', chaoId: 
 const lease = (activity = 'tiny', extra = {}) => ({ id: 'lease-a', deviceId: 'device-a', activity, expiresAt: 30000, lastSequence: 4, ...extra });
 const response = (value, ok = true) => ({ ok, json: async () => value });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+
+test('real HTTP redirects cannot forward Tiny account credentials or enable controls', async () => {
+  let received = 0;
+  const target = createServer((request, response) => { received++; request.resume(); response.writeHead(200).end('{}'); });
+  const redirect = createServer((request, response) => {
+    request.resume();
+    response.writeHead(307, { Location: `http://127.0.0.1:${target.address().port}/receive` }).end();
+  });
+  try {
+    await new Promise(resolve => target.listen(0, '127.0.0.1', resolve));
+    await new Promise(resolve => redirect.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${redirect.address().port}`;
+    const account = createTinyAccount({ fetch: (path, options) => fetch(new URL(path, origin), options), transmit: () => false });
+    await assert.rejects(account.connect({ token: 'synthetic-test-credential', status }));
+    assert.equal(account.ready, false);
+    assert.equal(received, 0);
+  } finally {
+    for (const server of [redirect, target]) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  }
+});
 
 function fixture({ identity: initial = baseIdentity(), now = () => 0 } = {}) {
   let identity = structuredClone(initial);
