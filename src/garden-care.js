@@ -88,12 +88,19 @@ export function gardenCareView(care, player, { connected = false, serverTime } =
     });
   // The server's hub shop point (CARE.md purchase rule); the server rechecks it.
   const atShop = player?.zone === 'hub' && finite(player.x, player.z) && Math.hypot(player.x + 4, player.z - 8) <= PLACE_RANGE;
-  const offers = (valid && Array.isArray(care.shop) ? care.shop : [])
-    .filter(offer => SEED_RE.test(offer?.itemId) && Number.isInteger(offer.price) && offer.price > 0)
-    .map(offer => ({ itemId: offer.itemId, price: offer.price, label: careItemLabel(offer.itemId),
-      mayBuy: mayCare && atShop && offer.enabled === true && Number.isFinite(player?.rings) && player.rings >= offer.price }));
+  // Native Black Market stock (seeds and fruit) at the shop point, with the
+  // server's native buy and sell prices. The server restocks on entry.
+  const stock = valid && Array.isArray(care.market?.stock) ? care.market.stock : [];
+  const offers = stock
+    .filter(offer => (SEED_RE.test(offer?.itemId) || FRUIT_RE.test(offer?.itemId)) && Number.isInteger(offer.price) && offer.price > 0)
+    .map(offer => ({ itemId: offer.itemId, price: offer.price, label: careItemLabel(offer.itemId, care.catalog),
+      mayBuy: mayCare && atShop && care.catalog?.fruitsEnabled === true && Number.isFinite(player?.rings) && player.rings >= offer.price }));
+  const sellPrices = new Map(stock.filter(o => Number.isInteger(o?.sell) && o.sell > 0).map(o => [o.itemId, o.sell]));
+  const sales = items.filter(item => (item.kind === 'seed' || item.kind === 'fruit') && sellPrices.has(item.id))
+    .map(item => ({ itemId: item.id, label: item.label, price: sellPrices.get(item.id),
+      maySell: mayCare && atShop && care.catalog?.fruitsEnabled === true }));
   const parts = valid && care.animalParts?.shown && typeof care.animalParts.shown === 'object' ? care.animalParts.shown : {};
-  return { valid, mayCare, cooldownReady, revision: valid ? care.revision : null, items, places, atShop, offers,
+  return { valid, mayCare, cooldownReady, revision: valid ? care.revision : null, items, places, atShop, offers, sales,
     parts: Object.entries(parts).filter(([category, id]) => PART_SOCKETS[category] && Number.isInteger(id) && id >= 0 && id <= 20)
       .map(([category, id]) => ({ category, species: id, label: careItemLabel(`sa2:${id}`, care.catalog) })) };
 }
@@ -113,13 +120,13 @@ const reasons = {
   'out-of-range': 'Walk closer first.', 'no-fruit': 'No fruit is ripe yet.', 'plot-occupied': 'Something already grows there.',
   'not-growing': 'This tree cannot be watered right now.', cooldown: 'Give your Chao a moment.', 'item-not-owned': 'You no longer have that item.',
   'inventory-full': 'You are carrying the most you can of that.', 'native-data-unavailable': 'Native item data is not loaded on this server.',
-  'activity-conflict': 'Finish the current activity first.', 'insufficient-rings': 'You need more rings.', 'stale-revision': 'Your garden changed. Try again.',
+  'activity-conflict': 'Finish the current activity first.', 'insufficient-rings': 'You need more rings.', 'stale-revision': 'Your garden changed. Try again.', 'not-in-stock': 'That is not in stock right now.',
 };
 
 export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID() }) {
   if (!root) throw new TypeError('Garden care needs a panel root.');
   const document = root.ownerDocument;
-  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '';
+  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false;
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -154,8 +161,9 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       }
       root.append(row);
     }
-    if (view.atShop && view.offers.length) {
-      root.append(el('h3', 'Seeds for sale'));
+    if (view.atShop) {
+      root.append(el('h3', 'Black Market'));
+      if (!view.offers.length) root.append(el('p', 'Checking the stock…', 'garden-care-note'));
       const shop = el('ul', undefined, 'garden-care-items');
       for (const offer of view.offers) {
         const row = el('li');
@@ -164,6 +172,14 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
         buy.disabled = !offer.mayBuy || !!pending;
         buy.addEventListener('click', () => submit({ kind: 'purchase', itemId: offer.itemId }));
         row.append(buy); shop.append(row);
+      }
+      for (const sale of view.sales) {
+        const row = el('li');
+        row.append(el('span', `Sell ${sale.label} · ${sale.price} rings`));
+        const sell = el('button', 'Sell', 'small-button');
+        sell.disabled = !sale.maySell || !!pending;
+        sell.addEventListener('click', () => submit({ kind: 'sell', itemId: sale.itemId }));
+        row.append(sell); shop.append(row);
       }
       root.append(shop);
     }
@@ -186,7 +202,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       root.append(el('h3', 'Animal parts'));
       root.append(el('p', view.parts.map(part => `${title(part.category)}: ${part.label}`).join(' · '), 'garden-care-note'));
     }
-    root.append(el('p', 'Trees, fruit and animal parts follow the original game\'s rules. Seeds are not sold until their original prices are traced.', 'garden-care-note'));
+    root.append(el('p', 'Trees, fruit and animal parts follow the original game\'s rules. The Black Market sells seeds and fruit at the original prices.', 'garden-care-note'));
     if (pending || feedback) {
       const note = el('p', pending ? 'Saving…' : feedback, 'garden-care-note');
       note.setAttribute('role', 'status'); root.append(note);
@@ -198,6 +214,10 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       care = nextCare; player = nextPlayer; connected = !!options.connected; serverTime = options.serverTime;
       // A lost acknowledgement is retried with the identical request, never a new one.
       if (reconnected && pending) send(pending);
+      // Entering the Black Market asks the server to restock if its timer ran out.
+      const view = gardenCareView(care, player, { connected, serverTime });
+      if (!view.atShop) marketVisited = false;
+      else if (!marketVisited && !pending && view.mayCare) { marketVisited = true; submit({ kind: 'market' }); return; }
       render();
     },
     retryPending() { if (pending) send(pending); },
@@ -207,7 +227,8 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       pending = null;
       const dropped = event.effects?.shaken === true ? event.effects.dropped : null;
       feedback = !result.accepted ? reasons[result.code] || `Not applied (${result.code}).`
-        : dropped === 0 ? 'You shook the tree. Keep shaking.' : Number.isInteger(dropped) ? `${dropped} fruit fell.` : 'Saved.';
+        : dropped === 0 ? 'You shook the tree. Keep shaking.' : Number.isInteger(dropped) ? `${dropped} fruit fell.`
+          : event.effects?.market ? '' : 'Saved.';
       render(); return true;
     },
   };
