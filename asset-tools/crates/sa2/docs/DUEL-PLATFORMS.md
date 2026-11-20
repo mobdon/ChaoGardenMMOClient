@@ -8,6 +8,7 @@ installed GC module `resource/gd_PC/stg42D.rel` (SHA-256
 | --- | --- | --- |
 | 24 `DODAI` | +0x1D68 | One platform: copies the Basic object at section 5 +0x13C8 and registers it as dynamic collision. |
 | 25 `DODAIGEN` | +0x2278 | Generator placed once by `SET0042_S.BIN` (record 0, at the origin). |
+| 26 `FIREBALL` | +0x24BC | Meteor; eight are placed by `SET0042_S.BIN`. See [Meteors](#meteors). |
 
 The REL object list at file offset 0x2682C (SA Tools `GC_SA2B/stg42D.ini`) has
 the same 27 names as the PC list at RVA 0x12546E8. The PC executable's code
@@ -81,6 +82,34 @@ second update spawns seven platforms, X 0 to 1800. The generator writes only
 X, the timer and the activation byte; Y, Z and angles come from the engine
 allocator, which is not executed, so this port does not assemble a world mesh.
 
+## Meteors
+
+`duel_fireball` ports the meteor's constructor (+0x24BC), update (+0x2670) and
+destructor (+0x2590); the display callback (+0x25BC) is not executed.
+
+- Constructor: unless the engine task check is true, it installs the three
+  callbacks, initialises collision from section 5 +0x1E48 (count 1, list 4)
+  and requests a light (kind 1, at the work position, radius 55, squared
+  3025), keeping the returned handle at task +0x4C. The destructor frees a
+  nonzero handle.
+- Update: after the task check, a player hit or a timer above 60 explodes
+  the meteor. Otherwise it adds itself to collision; a zero timer runs a
+  visibility query with radius `30 + SET scale X` and becomes 1 when seen,
+  and a nonzero timer counts up. Angles X and Y advance by
+  `trunc(182.04445 × 0.36)` and `trunc(182.04445 × 0.45)` BAMS. One
+  `rand()` below 0.2 (of 32768) spawns smoke with velocity
+  `(2(u−0.5), u−0.2, 2(u−0.5))`, scale `20 + 30u` and colour `0xFF3020FF`.
+- Explosion: sets work +1, then for 20 pieces draws three `rand()` values:
+  height `0.5 × radius × (1+u)` and up speed `1 + 2u`, then two turns of
+  `trunc(182.04445 × 720u)` BAMS passed to Ninja rotations. The transformed
+  point and vector come from the engine; the vector's Y gains 0.5 before the
+  shared debris task (+0x8308) receives it with floor −100000, mode 0x2000
+  and, for the first five pieces, the section 5 +0x1DD8 model and +0x1C7C
+  texlist (otherwise +0x1C14 and +0x1A28). The task then pops two matrices
+  and destroys itself.
+
+The engine results (task check, hit, visibility, allocations, rand, matrix
+transforms and the collision radius at work +0x2C) are request inputs.
 ## Rust interface
 
 - `duel_platform::read_rel(rel)` reads the template from the fingerprinted REL.
@@ -89,12 +118,14 @@ allocator, which is not executed, so this port does not assemble a world mesh.
 - `Generator::step(state, frame)` replays one DODAIGEN update. It refuses an
   update that would spawn more than 4096 platforms; at very large X the native
   loop would never end.
+- `duel_fireball::Fireball::{init, update, delete}` replay the meteor callbacks.
 - `duel_platform_motion::Platform::step(work, frame, rand)` replays one DODAI
   update from a spawn.
 
 ```powershell
 sa2-assets duel-generator <game>\resource\gd_PC\stg42D.rel .local\out\gen.json REQUEST.json
 sa2-assets duel-platform-update <game>\resource\gd_PC\stg42D.rel .local\out\platform.json PLATFORM.json
+sa2-assets duel-meteor <game>\resource\gd_PC\stg42D.rel .local\out\meteor.json METEOR.json
 ```
 
 `REQUEST.json` is `{"frames":[{"players":[x|null,x|null],"resultMode":false,"paused":false}, ...]}`.
@@ -107,6 +138,7 @@ $env:SA2_GAME_PATH = '<Steam>\Sonic Adventure 2'
 cargo test --manifest-path asset-tools/crates/sa2/Cargo.toml --test duel_terrain -- --include-ignored
 python asset-tools/crates/sa2/tests/duel_generator_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_platform_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_meteor_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
@@ -127,4 +159,12 @@ byte 0x42, rumble, fall and removal; spawned behind the players with task
 +0x30 set; spawned after the deadline), all 2,456 updates match
 `duel-platform-update` in every work field, the collision object's Y and
 angles, all 14 motion words, and the ordered engine calls with their
-arguments. Mode 3 is not reached by these inputs. Nothing launches the game.
+arguments. Mode 3 is not reached by these inputs.
+
+`duel_meteor_ppc.py` runs the meteor constructor, update and destructor the
+same way, with the Ninja matrix calls and the debris task as recording stubs
+that return scenario values. Four meteors (a visibility timeout with smoke
+on alternate updates, a touch after a failed construction, deletion with its
+light, and a zero light handle) produce 86 callbacks whose work fields and
+ordered engine calls, including all 40 debris pieces, match `duel-meteor`.
+Nothing launches the game.

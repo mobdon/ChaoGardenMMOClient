@@ -74,7 +74,7 @@ pub(crate) fn invalid() -> Error {
     Error::invalid("unexpected stage 42 platform code")
 }
 /// The data-section target of the LO half of a `lis/addi` pair at `pc`.
-fn target(rel: &CityRel<'_>, pc: u32, section: u8) -> Result<u32> {
+pub(crate) fn target(rel: &CityRel<'_>, pc: u32, section: u8) -> Result<u32> {
     match rel.reference(1, pc) {
         Some(Reference {
             module: MODULE,
