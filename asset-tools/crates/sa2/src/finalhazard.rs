@@ -986,6 +986,8 @@ pub enum PlacementClock {
     AttackHold(Box<AttackHoldFrame>),
     /// Section 1 + 0x5c4c: attack volley release.
     AttackVolley(Box<AttackVolleyFrame>),
+    /// Section 1 + 0x5264..0x5804: the attack piece object.
+    Piece(Box<PieceFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2789,6 +2791,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::AttackFormation(frame) => return attack_formation(&rel, &frame),
         PlacementClock::AttackHold(frame) => return attack_hold(&rel, &frame),
         PlacementClock::AttackVolley(frame) => return attack_volley(&rel, &frame),
+        PlacementClock::Piece(frame) => return piece(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -8917,4 +8920,237 @@ fn attack_volley(
     }
     ev.push(st(0x5f0c, "entity", n(6), 2, 0x1e));
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of the attack piece object; values are as read.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum PieceFrame {
+    /// 0x55d8: spawn a piece for `parent` at `vector` (words), with block
+    /// bytes `kind` and `slot`. `task`, `block` and `ready` are the engine
+    /// results of the allocations and 0x8000f8b8, `target` the 0x6488
+    /// result, `random` the 0x8010d940 result.
+    Spawn {
+        parent: u32,
+        vector: [u32; 3],
+        kind: u8,
+        slot: u8,
+        task: u32,
+        block: u32,
+        target: u32,
+        random: i32,
+        ready: i32,
+    },
+    /// 0x5328: update; `pause` is global byte 0x801cbd88 + 0x37.
+    Update { task: u32, pause: i8, action: i8 },
+    /// 0x55b4: deleter; `slot` is block byte 1.
+    Delete { slot: u8 },
+    /// 0x57f0: release (action 2).
+    Release,
+    /// 0x5304: copy the entity position (words) to block words 0x98..0xa0.
+    Position { position: [u32; 3] },
+    /// 0x5264: distance to the player position the word at 0x80174f98 +
+    /// 4 * stage byte 0 points at (`player`, read as three floats from
+    /// offset 0). `root` is the f1 result of local 0x40cc.
+    Distance {
+        player: u32,
+        player_position: [f32; 3],
+        position: [f32; 3],
+        root: f32,
+    },
+}
+/// Sections 1 + 0x55d8 (spawn: update 0x5328, draw 0x5404, deleter 0x55b4,
+/// the start delay from 5:0x3f9c), 0x5328 (dispatch on actions 0..5 to
+/// 0x4524, 0x46e0, 0x4888, 0x4c20, 0x50a4, 0x4fa8, then 0x5264, 0x5304,
+/// 0x5130), 0x55b4, 0x57f0, 0x5304 and 0x5264.
+fn piece(rel: &crate::city_rel::CityRel<'_>, f: &PieceFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32,
+              region: &str,
+              offset: serde_json::Value,
+              size: u32,
+              value: serde_json::Value| {
+        serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value})
+    };
+    let n = |v: u32| serde_json::json!(v);
+    let k = |site: u32| boss_constant(rel, site);
+    let mut ev = Vec::new();
+    let mut returned = None;
+    match f {
+        PieceFrame::Spawn {
+            parent,
+            vector,
+            kind,
+            slot,
+            task,
+            block,
+            target,
+            random,
+            ready,
+        } => {
+            returned = Some(0);
+            if *parent != 0 {
+                ev.push(call(
+                    0x561c,
+                    serde_json::json!([2, module_ref(rel, 0x5612, 0)?, parent]),
+                )?);
+                if *task != 0 {
+                    ev.extend([
+                        st(
+                            0x563c,
+                            "task",
+                            n(0x14),
+                            4,
+                            serde_json::json!(module_ref(rel, 0x5636, 0)?),
+                        ),
+                        st(
+                            0x5648,
+                            "task",
+                            n(0x18),
+                            4,
+                            serde_json::json!(module_ref(rel, 0x5642, 0)?),
+                        ),
+                        call(0x5658, serde_json::json!([1, 0xa4]))?,
+                    ]);
+                    if *block == 0 {
+                        ev.push(call(0x566c, serde_json::json!([task]))?);
+                    } else {
+                        ev.push(st(0x5678, "task", n(0x40), 4, n(*block)));
+                        for (i, site) in [0x5684u32, 0x5688, 0x5690].into_iter().enumerate() {
+                            ev.push(st(site, "block", n(0x68 + 4 * i as u32), 4, n(vector[i])));
+                        }
+                        let start = {
+                            let r = rel
+                                .reference(1, 0x5696)
+                                .filter(|r| r.module == 88 && r.section == 4)
+                                .ok_or_else(|| Error::invalid("missing piece start"))?;
+                            let d = rel.data(4)?;
+                            (0..3)
+                                .map(|i| {
+                                    let at = r.addend as usize + 4 * i;
+                                    d.get(at..at + 4)
+                                        .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+                                        .ok_or_else(|| Error::invalid("piece start out of range"))
+                                })
+                                .collect::<Result<Vec<_>>>()?
+                        };
+                        for (i, site) in [0x56a4u32, 0x56a8, 0x56b0].into_iter().enumerate() {
+                            ev.push(st(site, "entity", n(0x14 + 4 * i as u32), 4, n(start[i])));
+                        }
+                        let one = n(k(0x56b6)?.to_bits());
+                        for (site, offset) in [
+                            (0x56c0u32, 0x40u32),
+                            (0x56c4, 0x3c),
+                            (0x56c8, 0x38),
+                            (0x56d0, 0x4c),
+                            (0x56d4, 0x48),
+                            (0x56d8, 0x44),
+                        ] {
+                            ev.push(st(site, "block", n(offset), 4, one.clone()));
+                        }
+                        ev.extend([
+                            st(0x56dc, "block", n(0), 1, n((*kind).into())),
+                            st(0x56e0, "block", n(1), 1, n((*slot).into())),
+                            local(0x56e8, 0x6488, serde_json::json!([parent])),
+                            st(0x56ec, "block", n(0x10), 4, n(*target)),
+                            st(0x56f4, "entity", n(0), 1, n(0)),
+                            call(0x5704, serde_json::json!([]))?,
+                        ]);
+                        let base = {
+                            let r = rel
+                                .reference(1, 0x56fa)
+                                .filter(|r| r.module == 88 && r.section == 5)
+                                .ok_or_else(|| Error::invalid("missing piece delay base"))?;
+                            let at = r.addend as usize;
+                            let b = rel
+                                .data(5)?
+                                .get(at..at + 4)
+                                .ok_or_else(|| Error::invalid("piece delay base out of range"))?;
+                            i32::from_be_bytes(b.try_into().unwrap())
+                        };
+                        let unit = k(0x572e)? * biased_float(rel, 0x570a, *random)?;
+                        let spread = biased_float(rel, 0x573e, base)? * unit;
+                        let scale = k(0x5762)?;
+                        let delay = fctiwz(f64::from(
+                            scale * biased_float(rel, 0x5772, base)? + scale * spread,
+                        ));
+                        ev.push(st(0x57a0, "block", n(0xc), 4, n(delay as u32)));
+                        ev.push(call(
+                            0x57b8,
+                            serde_json::json!([task, module_ref(rel, 0x57aa, 0)?, 1, 3]),
+                        )?);
+                        if *ready == 0 {
+                            ev.push(call(0x57c8, serde_json::json!([task]))?);
+                        } else {
+                            returned = Some(*task);
+                        }
+                    }
+                }
+            }
+        }
+        PieceFrame::Update {
+            task,
+            pause,
+            action,
+        } => {
+            if *pause == 0 {
+                let target = match action {
+                    0 => Some((0x5398, 0x4524)),
+                    1 => Some((0x53a4, 0x46e0)),
+                    2 => Some((0x53b0, 0x4888)),
+                    3 => Some((0x53bc, 0x4c20)),
+                    4 => Some((0x53c8, 0x50a4)),
+                    5 => Some((0x53d4, 0x4fa8)),
+                    _ => None,
+                };
+                if let Some((site, routine)) = target {
+                    ev.push(local(site, routine, serde_json::json!([task])));
+                }
+                ev.extend([
+                    local(0x53dc, 0x5264, serde_json::json!([task])),
+                    local(0x53e4, 0x5304, serde_json::json!([task])),
+                    local(0x53ec, 0x5130, serde_json::json!([task])),
+                ]);
+            }
+        }
+        PieceFrame::Delete { slot } => {
+            ev.push(st(
+                0x55d0,
+                "module",
+                serde_json::json!(module_ref(rel, 0x55c6, 4 * u32::from(*slot))?),
+                4,
+                n(0),
+            ));
+        }
+        PieceFrame::Release => {
+            ev.push(st(0x57f8, "entity", n(0), 1, n(2)));
+            ev.push(st(0x5800, "entity", n(1), 1, n(0)));
+        }
+        PieceFrame::Position { position } => {
+            for (i, site) in [0x5314u32, 0x5318, 0x5320].into_iter().enumerate() {
+                ev.push(st(site, "block", n(0x98 + 4 * i as u32), 4, n(position[i])));
+            }
+        }
+        PieceFrame::Distance {
+            player,
+            player_position,
+            position,
+            root,
+        } => {
+            if *player != 0 {
+                let d = |i: usize| player_position[i] - position[i];
+                let sum = d(2) * d(2) + (d(0) * d(0) + d(1) * d(1));
+                ev.push(serde_json::json!({"site":0x52e8,"local":0x40cc,"args":[],"floats":[f64::from(sum)]}));
+                ev.push(st(0x52ec, "block", n(0x18), 4, n(root.to_bits())));
+            }
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
 }
