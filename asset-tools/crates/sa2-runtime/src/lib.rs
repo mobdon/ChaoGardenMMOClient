@@ -17,6 +17,7 @@ pub mod session;
 pub mod set;
 pub mod stage;
 pub mod task;
+pub mod walker_slot;
 
 pub use frame::{FrameHost, GameState};
 pub use input::{PadContext, PadRef, PadSystem};
