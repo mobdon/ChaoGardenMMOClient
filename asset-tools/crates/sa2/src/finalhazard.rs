@@ -975,6 +975,9 @@ pub enum PlacementClock {
     CoreDraw(Box<CoreDrawFrame>),
     /// Section 1 + 0x62a0..0x6504: the boss attack object interface.
     AttackObject(Box<AttackFrame>),
+    /// Section 1 + 0x5f34..0x629c: the attack object update, its actions
+    /// and its deleter.
+    AttackUpdate(Box<AttackUpdateFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2773,6 +2776,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::CoreStun(frame) => return core_stun(&rel, &frame),
         PlacementClock::CoreDraw(frame) => return core_draw(&rel, &frame),
         PlacementClock::AttackObject(frame) => return attack_object(&rel, &frame),
+        PlacementClock::AttackUpdate(frame) => return attack_update(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -8306,4 +8310,186 @@ fn attack_object(rel: &crate::city_rel::CityRel<'_>, f: &AttackFrame) -> Result<
         out["returned"] = serde_json::json!(r);
     }
     Ok(out)
+}
+
+/// One call of the attack object update routines; values are as read.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum AttackUpdateFrame {
+    /// 0x6158: update. `pause` / `freeze` are global bytes 0x801cbd88 +
+    /// 0x37 / + 9, `boss_state` the 0xc60 result, `stage_lock` stage byte 1
+    /// (through module word 6:0x4a8), `action` the entity action.
+    Update {
+        task: u32,
+        pause: i8,
+        freeze: i8,
+        boss_state: i8,
+        stage_lock: i8,
+        action: i8,
+    },
+    /// 0x5f34: every 5 frames (global frame word + 0x7c) try two spawns;
+    /// `spawned` are the 0x58a8 results in order.
+    Spawn {
+        task: u32,
+        frame_count: u32,
+        spawned: Vec<u32>,
+    },
+    /// 0x60a8: try two spawns now (released with 0x5808).
+    Burst { task: u32, spawned: Vec<u32> },
+    /// 0x5fe4: on step 0 release every live slot of the table 6:0x274 up
+    /// to block half-word 0 (`count`); then park once task word 0xc
+    /// (`child`) is gone.
+    Sweep {
+        step: i8,
+        count: i16,
+        slots: Vec<u32>,
+        step_after: u8,
+        child: u32,
+    },
+    /// 0x612c: rest timer (entity half-word 6).
+    Rest { timer: u16 },
+    /// 0x6264: deleter. `owner` is task word 8, `owner_block` its word
+    /// 0x40, `owner_state` that block's word 0x10 and `link` its word 0x14.
+    Delete {
+        task: u32,
+        owner: u32,
+        owner_block: u32,
+        owner_state: u32,
+        link: u32,
+    },
+}
+/// Sections 1 + 0x6158 (dispatch through the table at 5:0x3ffc), 0x5f34,
+/// 0x60a8, 0x5fe4, 0x612c and 0x6264.
+fn attack_update(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &AttackUpdateFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let code = rel.data(1)?;
+    let mut ev = Vec::new();
+    let spawn_loop = |ev: &mut Vec<serde_json::Value>,
+                      task: u32,
+                      spawned: &[u32],
+                      base: u32,
+                      release: u32|
+     -> Result<()> {
+        for i in 0..2 {
+            ev.push(local(base, 0x58a8, serde_json::json!([task])));
+            let got = *spawned
+                .get(i)
+                .ok_or_else(|| Error::invalid("missing spawn result"))?;
+            if got == 0 {
+                ev.push(st(base + 0x10, "entity", 0, 1, 4));
+                ev.push(st(base + 0x18, "entity", 1, 1, 0));
+                return Ok(());
+            }
+            ev.push(local(base + 0x20, release, serde_json::json!([got])));
+        }
+        Ok(())
+    };
+    match f {
+        AttackUpdateFrame::Update {
+            task,
+            pause,
+            freeze,
+            boss_state,
+            stage_lock,
+            action,
+        } => {
+            if *pause == 0 && *freeze == 0 {
+                ev.push(local(0x619c, 0xc60, serde_json::json!([])));
+                if *boss_state != 1 {
+                    if *stage_lock != 0 {
+                        ev.push(call(0x61cc, serde_json::json!([task]))?);
+                    } else if (*action as i32 as u32) <= 8 {
+                        let entry = rel
+                            .reference(5, 0x3ffc + 4 * *action as u32)
+                            .filter(|r| r.module == 88 && r.section == 1)
+                            .ok_or_else(|| Error::invalid("missing attack action table entry"))?
+                            .addend;
+                        if entry != 0x624c {
+                            let at = entry as usize + 4;
+                            let bl = u32::from_be_bytes(code[at..at + 4].try_into().unwrap());
+                            let mut li = (bl & 0x03ff_fffc) as i32;
+                            if li & 0x0200_0000 != 0 {
+                                li -= 0x0400_0000;
+                            }
+                            ev.push(local(
+                                entry + 4,
+                                (entry as i32 + 4 + li) as u32,
+                                serde_json::json!([task]),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        AttackUpdateFrame::Spawn {
+            task,
+            frame_count,
+            spawned,
+        } => {
+            if frame_count - magic_divide(*frame_count, 0xcccc_cccd, false, 2) * 5 == 0 {
+                spawn_loop(&mut ev, *task, spawned, 0x5f94, 0x5820)?;
+            }
+        }
+        AttackUpdateFrame::Burst { task, spawned } => {
+            spawn_loop(&mut ev, *task, spawned, 0x60dc, 0x5808)?;
+        }
+        AttackUpdateFrame::Sweep {
+            step,
+            count,
+            slots,
+            step_after,
+            child,
+        } => {
+            if (0..=1).contains(step) {
+                if *step == 0 {
+                    for i in 0..i32::from(*count).max(0) as usize {
+                        let w = *slots
+                            .get(i)
+                            .ok_or_else(|| Error::invalid("missing attack slot word"))?;
+                        if w != 0 {
+                            ev.push(local(0x604c, 0x5854, serde_json::json!([w])));
+                        }
+                    }
+                    ev.push(st(
+                        0x6070,
+                        "entity",
+                        1,
+                        1,
+                        step_after.wrapping_add(1).into(),
+                    ));
+                }
+                if *child == 0 {
+                    ev.push(st(0x6084, "entity", 0, 1, 4));
+                    ev.push(st(0x608c, "entity", 1, 1, 0));
+                }
+            }
+        }
+        AttackUpdateFrame::Rest { timer } => {
+            let left = timer.wrapping_sub(1);
+            ev.push(st(0x6138, "entity", 6, 2, left.into()));
+            if left == 0 {
+                ev.push(st(0x614c, "entity", 0, 1, 0));
+                ev.push(st(0x6150, "entity", 1, 1, 0));
+            }
+        }
+        AttackUpdateFrame::Delete {
+            task,
+            owner,
+            owner_block,
+            owner_state,
+            link,
+        } => {
+            if *owner != 0 && *owner_block != 0 && *owner_state != 0 && link == task {
+                ev.push(st(0x6298, "owner_state", 0x14, 4, 0));
+            }
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
 }

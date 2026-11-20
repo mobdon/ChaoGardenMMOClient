@@ -55,6 +55,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `core_stun` | 0x7f58 | Core action 5 (stunned): fast pulse from the spin with its hum, attachment placed, three random wobble steps, a squash easing out over the 90-frame timer (entity half-word 6), then shrink by 5:0x36d44 and action 3 below 4:0x374 |
 | `core_draw` | 0x83dc, 0x88c0, 0x89e8 | Core draw (GX state, attachment matrix from 5:0x36b6c, entity scales, colours 4:0x314 / 4:0x30c); drifting spark update (velocity times 5:0x36d68, growth below 5:0x36d60, fade by 5:0x36d6c after the timer, freed below 4:0x374); spark draw (sprite block 5:0x36d8c from the entity position, size times the double 4:0x380, frame byte + 6) |
 | `attack_object` | 0x62a0, 0x63e8, 0x6410, 0x6460, 0x6488, 0x6494, 0x64b0 | Attack object interface: create (update 0x6158, delete 0x6264, timer half-word from 5:0x3f90 + 2 * kind, target and count), launch (30 frames, action 2), finished (action 4 frees it), release (entity flag 0x100), target word, timer tick, clear of the 512-byte table 6:0x274. Request field `routine` picks one |
+| `attack_update` | 0x6158, 0x5f34, 0x60a8, 0x5fe4, 0x612c, 0x6264 | Attack update (pause gates, boss state 1 holds it, stage lock frees it, actions 0..8 through the table at 5:0x3ffc), spawn of two every 5 frames, burst of two, sweep of the 6:0x274 slots, rest timer, deleter that unlinks it from its owner |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -293,6 +294,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_core_stun_ppc.py` | 1500 frames: timers at 0, 1, 90, 91 and the half-word top, wobble angles on the wrap edge, random words and engine sines |
 | `tests/finalhazard_core_draw_ppc.py` | 1100 calls with f1..f4 compared: draws over attachment rows and columns, spark updates around every threshold with pause and freeze, spark draws |
 | `tests/finalhazard_attack_object_ppc.py` | 187 calls: every create failure, kinds in and out of range, counts with and without a low half, finished, release, tick and clear |
+| `tests/finalhazard_attack_update_ppc.py` | 1184 calls: every gate and action, frame counters on and off the period, spawn failures, sweeps with negative counts, deleter link checks |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
