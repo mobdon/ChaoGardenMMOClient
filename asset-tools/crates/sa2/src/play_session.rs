@@ -19,6 +19,7 @@ use crate::{
     effect_emitter::{EffectEmitter, Emission},
     fan_stage::MountedStage,
     goal_ring,
+    minimal::{Minimal, MinimalEvent, MinimalInputs, MinimalPlayer},
     iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
     ninja_trig::{nj_rotate_sin_cos, nj_sin},
     ori::{Ori, OriEvent},
@@ -238,6 +239,11 @@ pub enum Event {
     Pipe {
         pipe: usize,
         event: PipeEvent,
+    },
+    /// A MINIMAL animal capsule was collected, asked for action 0x2A or went.
+    Minimal {
+        minimal: usize,
+        event: MinimalEvent,
     },
     /// A ROCKETMISSSILE armed, puffed, flew, linked or exploded.
     Rocket {
@@ -738,6 +744,13 @@ pub struct Session {
     pub solid_boxes: Vec<SolidBox>,
     pub oris: Vec<Ori>,
     pub rockets: Vec<Rocket>,
+    pub minimals: Vec<Minimal>,
+    /// fn_80023808 then fn_800D05D0 per listed land entry at a point (radius
+    /// 10), for MINIMAL; the host supplies it from its land collision.
+    #[serde(skip)]
+    pub land_probes: Option<Box<dyn FnMut(V3) -> Vec<crate::land_probe::Probe>>>,
+    /// 0x80005500 (r13-0x7B10), the gravity mode MINIMAL reads.
+    pub gravity_mode: u32,
     /// The switch bytes (PC 0x802B95E0 + id): bit 0 on, bit 1 changed.
     #[serde(skip)]
     pub switches: [u8; 256],
@@ -946,6 +959,7 @@ impl Session {
         let mut solid_boxes = vec![];
         let mut oris = vec![];
         let mut rockets = vec![];
+        let mut minimals = vec![];
         // stg09D.rel sec5+0x8E484: SOLIDBOX's cube row.
         let solid_box_row = if rules.prison_doors {
             Some(collision_rows(src.stage_module, rules.movers.module_file, 0x8e484, 1)?.remove(0))
@@ -1061,6 +1075,20 @@ impl Session {
                             center: pl.position,
                             radius: CAM_RADIUS,
                         });
+                    }
+                    (_, "MINIMAL") if rules.prison_doors => {
+                        // The level's animal table (0x80195B54) is filled at
+                        // run time; the host can set `Minimal::animal`.
+                        minimals.push(Minimal::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation,
+                            pl.parameters,
+                            &mut rand,
+                            |_| 0,
+                            0,
+                        ))
                     }
                     (_, "ROCKETMISSSILE") if rules.prison_doors => rockets.push(Rocket::new(
                         li,
@@ -1368,6 +1396,9 @@ impl Session {
             solid_boxes,
             oris,
             rockets,
+            minimals,
+            land_probes: None,
+            gravity_mode: 0,
             switches: [0; 256],
             rocket_child_hits: vec![],
             ori_breaks: 0,
@@ -1583,6 +1614,35 @@ impl Session {
                     solid_box: i,
                     event,
                 });
+            }
+        }
+        {
+            let mut players = [None; 8];
+            players[0] = player.map(|p| MinimalPlayer {
+                position: p.position,
+                character: self.character,
+                action: p.action,
+            });
+            let mut no_land = |_p: V3| vec![];
+            let land: &mut dyn FnMut(V3) -> Vec<crate::land_probe::Probe> = match self.land_probes.as_mut() {
+                Some(f) => f.as_mut(),
+                None => &mut no_land,
+            };
+            let nearest = |_p: V3| 0usize;
+            let mut input = MinimalInputs {
+                players,
+                nearest: &nearest,
+                use_nearest: false,
+                suppressed: self.effects_suppressed,
+                gravity_mode: self.gravity_mode,
+                rotation_x_byte: 0,
+                land,
+                motion: None,
+            };
+            for (i, m) in self.minimals.iter_mut().enumerate() {
+                for event in m.step(&mut input) {
+                    events.push(Event::Minimal { minimal: i, event });
+                }
             }
         }
         let child_hits = std::mem::take(&mut self.rocket_child_hits);

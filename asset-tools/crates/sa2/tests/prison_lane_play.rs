@@ -133,6 +133,8 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.solid_boxes.len(), 6);
         assert_eq!(s.oris.len(), 1);
         assert_eq!(s.rockets.len(), 1);
+        assert_eq!(s.minimals.len(), 11);
+        assert!(!s.unimplemented.contains_key("MINIMAL"));
         assert!(!s.unimplemented.contains_key("ROCKETMISSSILE"));
         assert!(!s.unimplemented.contains_key("ORI"));
         assert!(!s.unimplemented.contains_key("SOLIDBOX"));
