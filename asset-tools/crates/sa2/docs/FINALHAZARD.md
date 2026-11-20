@@ -20,6 +20,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `super_collision` | 0xc598 | Per-frame collision sphere placement for a super form |
 | `super_hover` | 0xe9f0 | Super-form hover: the released-stick part of flight |
 | `super_free_move` | 0xdc90 | Action 58: stick-driven free movement |
+| `super_control` | 0xbad0 | Super-form hit reaction and action selection |
 
 ## Handoff camera
 
@@ -118,8 +119,8 @@ runs the engine follow and tail calls only. Otherwise it counts the 6-frame cycl
 Every dispatch case ends with three engine calls: 0x80046b7c, 0x80045618 and 0x8003e400. The
 effect block then follows the travel since the last frame. For character 9 the scale is 0.25,
 with thresholds 0.8 and 0.4; for character 10 it is 0.2, with 0.64 and 0.4. When 0x8004fda0
-reports a defeat, the action becomes 58. The local handlers 0xbad0 and 0xc67c are reported
-with their arguments, but not yet ported. Action 58 (0xdc90) reads the player's 52-byte controller
+reports a defeat, the action becomes 58. 0xc67c (action 67, an engine draw effect) is reported
+with its arguments but not yet ported. Action 58 (0xdc90) reads the player's 52-byte controller
 entry at 0x801e5038. When the stick is outside a ±14 dead zone it moves the entity 5 units: up or
 down by the stick's Y sign while button bit 0x400 is held, and otherwise across X and Z along the
 stick direction relative to the camera yaw. The angle is scaled by 65536/2π. 0xe370 (flight), 0xe9f0 (hover) and 0xc598
@@ -147,6 +148,21 @@ The stick query, vector and matrix services and the turn routines are engine cod
 are request inputs: `held`, `stick_angle`, `stick_magnitude`, `v70_length`, `rotated`, `dots`,
 `cross`, `turn` and `angle_delta`.
 
+## Action selection
+
+`super_control` reproduces 0xbad0. The super-form update calls it while the player's pause bit is
+clear. First it handles hits. Player halfword 0x10 bit 0x8000 sets entity flag 0x8000 and clears
+the hit timer (entity halfword 6). A running timer counts down. Otherwise the engine hit check runs,
+and a fresh hit plays the character's hit sound (0x300b or 0x301d), enters stun action 15 with pose
+21, and sets the speed to minus player float 0xe8.
+
+The action table at section 5 + 0x3fd60 then moves between flight (59), steering (60), the four
+boosts (61–64, pose 90/92/94/96, with player float 0x68 pushed past ±2.7), the charge action (67,
+120 frames), landing (12 → 1), stun recovery (15 → 59), and the returns from actions 53, 54, 58 and
+66. Inputs are the player's bytes in the four engine button tables 0x803ad498, 0x803ad494,
+0x803ad488 and 0x803ad484. The results of the stick queries and the local checks 0xdf44, 0xe120
+and 0xe200 are request inputs.
+
 ## Verification
 
 With a Python environment that has Unicorn 2, run each test as
@@ -161,6 +177,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_super_collision_ppc.py` | 500 collision placements |
 | `tests/finalhazard_super_hover_ppc.py` | 800 hover updates; 0xe1ac stores nothing for poses 99, 109, 116 and others |
 | `tests/finalhazard_super_free_move_ppc.py` | 1,500 action-58 updates around the dead zone, both button states |
+| `tests/finalhazard_super_control_ppc.py` | 4,000 action-selection updates across every dispatched action, hit states and button tables |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
