@@ -1,7 +1,7 @@
 """Local PowerPC oracle for the shared player movement steps (GSNE8P main.dol).
 
 Runs fn_80047A1C, fn_80048ACC, fn_80048EC4, fn_8004B330, fn_80048724 and
-fn_80048834, fn_80048490, fn_80036CE4, fn_8004E490, fn_80048400, fn_80048370, fn_8004B168 on random player states and prints JSON for
+fn_80048834, fn_80048490, fn_80036CE4, fn_8004E490, fn_80048400, fn_80048370, fn_8004B168, fn_80047F14 on random player states and prints JSON for
 tests/walker_move.rs. Needs SA2_MAIN_DOL and the local Gekko tables.
 """
 import json
@@ -307,5 +307,27 @@ for k in range(8000):
                   "f": {hex(o): fb(x) for o, x in f.items()}, "stick": [stick[0], stick[1], fb(stick[2])], "touch": touch[0] != 0,
                   "aim": aim, "ret": m.gpr(3), "ang_after": [m.get(TASK + 8 + 4 * j, "i") for j in range(3)],
                   "spd_after": get3(PW + 0x64), "acc_after": get3(PW + 0x58), "aim_after": m.get(MW + 0x1C, "i"), "log": list(log)})
+# fn_80047F14 (fn_80047714 stubbed and logged).
+slope = []
+for _ in range(4000):
+    flag = rng.choice([0, 0x100, 1])
+    ang = [rng.choice([0, rng.randrange(-0x3000, 0x3000)]), rng.randrange(0, 0x10000), rng.choice([0, rng.randrange(-0x3000, 0x3000)])]
+    glob = [0.0, -1.0, 0.0] if rng.random() < 0.5 else [f32(rng.uniform(-1, 1)), f32(rng.uniform(-1, 0.2)), f32(rng.uniform(-1, 1))]
+    spd = [rf(5) for _ in range(3)]
+    t14, attr, fe4 = rng.choice([0, 0, 3]), rng.choice([0, 0, 0x100]), f32(rng.uniform(0, 4))
+    aim = rng.randrange(0, 0x10000)
+    m.put(TASK + 4, "H", flag)
+    m.u.mem_write(TASK + 8, struct.pack(">3i", *ang))
+    put3(GLOBAL, glob)
+    put3(MW, spd)
+    m.put(MW + 0x1C, "i", aim)
+    m.put(PW + 0x14, "h", t14)
+    m.put(PW + 0x88, "I", attr)
+    m.put(PW + 0xE4, "f", fe4)
+    log.clear()
+    m.call(0x80047F14, r3=TASK, r4=MW, r5=PW)
+    slope.append({"flag": flag, "ang": ang, "global": [fb(x) for x in glob], "spd": [fb(x) for x in spd], "t14": t14,
+                  "attr": attr, "fe4": fb(fe4), "aim": aim, "ret": fb(f32(m.fpr(1))), "aim_after": m.get(MW + 0x1C, "i"),
+                  "log": list(log)})
 print(json.dumps({"level": level, "acc": acc, "run": run, "air": air, "grav": grav, "m43": m43, "steer": steer, "jump": jump,
-                  "small": small}))
+                  "small": small, "slope": slope}))
