@@ -258,8 +258,8 @@ impl Generator {
                 for px in input.players.iter().flatten() {
                     while s.cursor_x - px < self.lookahead {
                         let mut t = self.timer_scale * (px - s.cursor_x);
-                        // fcmpo/bge: keep t only when t >= floor (NaN selects the floor).
-                        if t.partial_cmp(&self.timer_floor).is_none_or(|o| o.is_lt()) {
+                        // fcmpo/bge: keep t unless t < floor (an unordered t is kept).
+                        if t < self.timer_floor {
                             t = self.timer_floor;
                         }
                         let late = s.flags & 0x1000 != 0;

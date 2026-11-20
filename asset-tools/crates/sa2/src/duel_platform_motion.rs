@@ -8,9 +8,9 @@ use crate::duel_platform::{self, Generator};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-/// fcmpo/bge skips only when y >= floor; an unordered compare falls through.
+/// fcmpo/bge skips unless y < floor (an unordered compare also skips).
 fn below(y: f32, floor: f32) -> bool {
-    y.partial_cmp(&floor).is_none_or(|o| o.is_lt())
+    y < floor
 }
 
 /// Floats read through the instruction that loads each one.
@@ -272,11 +272,8 @@ impl Platform<'_> {
                         w.flags &= !0x100;
                         return Ok(calls);
                     }
-                    // fcmpo/ble: accelerate unless velocity <= terminal (NaN included).
-                    if w.velocity()
-                        .partial_cmp(&c.terminal_velocity)
-                        .is_none_or(|o| o.is_gt())
-                    {
+                    // fcmpo/ble: accelerate only when velocity > terminal.
+                    if w.velocity() > c.terminal_velocity {
                         w.motion[5] = (w.velocity() - c.acceleration).to_bits();
                     }
                     if w.motion[1] == 0 {

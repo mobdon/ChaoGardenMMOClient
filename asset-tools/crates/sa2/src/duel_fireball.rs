@@ -186,6 +186,7 @@ impl Fireball<'_> {
         vec![engine(0x800c5854, json!([self.light_handle]))]
     }
     /// One update. Returns the calls and whether the task destroyed itself.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)] // matches fcmpo/bge on NaN
     pub fn update(
         &self,
         w: &mut FireballWork,
@@ -262,11 +263,8 @@ impl Fireball<'_> {
         for i in 0..2 {
             w.angles[i] = w.angles[i].wrapping_add(bams(c, c.spin_degrees[i]));
         }
-        // fcmpo/bge: no smoke when u >= 0.2 (an unordered compare continues).
-        if draw(&mut calls)?
-            .partial_cmp(&c.smoke_chance)
-            .is_some_and(|o| o.is_ge())
-        {
+        // fcmpo/bge: smoke only when u < 0.2.
+        if !(draw(&mut calls)? < c.smoke_chance) {
             return Ok((calls, false));
         }
         let vx = c.two * (draw(&mut calls)? - c.half);

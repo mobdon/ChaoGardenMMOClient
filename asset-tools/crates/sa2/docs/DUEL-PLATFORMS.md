@@ -113,6 +113,32 @@ destructor (+0x2590); the display callback (+0x25BC) is not executed.
 The engine results (task check, hit, visibility, allocations, rand, matrix
 transforms and the collision radius at work +0x2C) are request inputs.
 
+## Debris pieces
+
+`duel_debris` ports the module's shared debris manager (task "EfCrash3DExec"):
+spawn (+0x8308 wrapper, +0x8348), update (+0x888C), delete (+0x8820), the
+wind query (+0x7558) and the two trail-effect spawners (+0x1DFE0, +0x1E194).
+A spawn creates the manager task on first use, allocates a 0x50-byte piece,
+places it at the engine-transformed model centre, draws a 160 + 55u timer and
+a random spin unless flags 0x80/0x100/0x200 zero an axis, and pushes it on
+the list head. Each update moves every piece by its velocity (optionally
+through a signed axis permutation, flag 0x4000, or pulled by a wind result,
+flag 0x20000), applies 0.989 damping and 0.089 gravity in the air (none with
+0x40000), and on reaching its floor either keeps sliding (0x40800), bounces
+at -0.6, or rests and fades by 0.05. Flag 0x20 makes one splash on landing,
+0x10 leaves trails while airborne, and 0x40 kills it on landing. Below a
+timer of 10 the piece fades by 0.1; a piece with no life left is freed, and
+an empty list frees the task. The display callback (+0x91A8) is not executed.
+
+## Platform dust
+
+`duel_dust` ports the helper DODAI calls as it starts to fall (+0x1E8DC) and
+its particle spawner (+0x1DDFC). With half width 150, half depth 50 and
+density 0.5 it visits 15 points along each long edge and 5 along each short
+edge; each engine-transformed point gets a particle whose outward velocity is
+normalised to the given speed, with two random angles, a random size field
+and a random addition to field +0x18.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -151,6 +177,8 @@ cargo test --manifest-path asset-tools/crates/sa2/Cargo.toml --test duel_terrain
 python asset-tools/crates/sa2/tests/duel_generator_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_platform_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_meteor_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_debris_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_dust_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
@@ -180,4 +208,14 @@ that return scenario values. Four meteors (a visibility timeout with smoke
 on alternate updates, a touch after a failed construction, deletion with its
 light, and a zero light handle) produce 86 callbacks whose work fields and
 ordered engine calls, including all 40 debris pieces, match `duel-meteor`.
+
+`duel_debris_ppc.py` drives the debris manager's spawn, update and delete
+through the original code: twenty meteor pieces until they fade, and a mixed
+set covering a failed task and piece allocation, splash, trails with failed
+effect allocations, wind, axis permutation, a given spin, no-gravity,
+sliding, kill-on-landing, resting and a piece spawned while paused. All 533
+callbacks match `duel-debris` in every piece field and ordered engine call.
+`duel_dust_ppc.py` runs the dust helper with DODAI's arguments (40 points)
+and with odd arguments and failed allocations; all 398 calls match
+`duel-dust`.
 Nothing launches the game.
