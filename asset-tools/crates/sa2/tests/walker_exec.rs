@@ -1,7 +1,7 @@
 //! Compare `walker_exec` with main.dol (tests/walker_exec_ppc.py).
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_exec::{end_frame, EndFrame, EngineCall, PlayerHistory},
+    walker_exec::{ccl_update, end_frame, CclUpdate, EndFrame, EngineCall, PlayerHistory},
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -112,5 +112,27 @@ fn matches_main_dol() {
             assert_eq!(got, [0, 1, 2, 3].map(|j| u(&wv[j])), "{c}");
             assert_eq!(pwp_byte0.map(u64::from), Some(u(&c["newpw"])), "{c}");
         }
+    }
+    for c in v["ccl"].as_array().unwrap() {
+        let hex = |s: &Value| -> Vec<u8> {
+            let s = s.as_str().unwrap();
+            (0..s.len() / 2)
+                .map(|k| u8::from_str_radix(&s[2 * k..2 * k + 2], 16).unwrap())
+                .collect()
+        };
+        let mut info = hex(&c["info"]);
+        let mut range = 1.25f32;
+        let up = CclUpdate {
+            mode: u(&c["mode"]) as u8,
+            task_b2: u(&c["b2"]) as u8,
+            pos: v3(&c["pos"]),
+            p_h10: u(&c["h10"]) as u16 as i16,
+            p_f21c: f(&c["f21c"]),
+            p_1e8: [0, 1, 2].map(|j| u(&c["v1e8"][j]) as u32),
+        };
+        let has = c["has"].as_bool().unwrap();
+        ccl_update(has.then_some((&mut info[..], &mut range)), &up);
+        assert_eq!(info, hex(&c["info_after"]), "{c}");
+        assert_eq!(range.to_bits() as u64, u(&c["range"]), "{c}");
     }
 }

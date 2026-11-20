@@ -1,6 +1,6 @@
 """Local PowerPC oracle for the walker exec's per-frame steps (GSNE8P main.dol).
 
-Runs fn_8004F4D0 on random player states and prints JSON for
+Runs fn_8004F4D0 and fn_800AC698 on random player states and prints JSON for
 tests/walker_exec.rs. Needs SA2_MAIN_DOL and the local Gekko tables.
 """
 import json
@@ -102,4 +102,29 @@ for _ in range(4000):
                 "r13_7900": W(R13 - 0x7900), "hidx_after": m.get(R13 - 0x7910 + pnum, "B"),
                 "hpos": get3(HPOS + 0xC * slot), "hang": [m.get(HANG + 0xC * slot + 4 * j, "i") for j in range(3)],
                 "created": created[:], "newpw": m.get(NEWPW, "B")})
-print(json.dumps({"end": end}))
+# fn_800AC698 (with fn_800068BC) on random collision info bytes.
+TOBJ = 0x81140000
+m.put(TOBJ + 0x34, "I", TASK)
+ccl = []
+for _ in range(3000):
+    info = bytes(rng.randrange(0, 256) for _ in range(0xF0))
+    mode = rng.choice([0x41, 0x3D, 0x3E, 1, 0x41])
+    b2 = rng.choice([3, 0, 3])
+    pos = [f32(rng.uniform(-100, 100)) for _ in range(3)]
+    h10 = rng.choice([0, 0x8000, 0x10])
+    f21c = f32(rng.uniform(0, 30))
+    v1e8 = [rng.randrange(0, 1 << 32) for _ in range(3)]
+    has = rng.random() < 0.9
+    m.put(TASK, "B", mode)
+    m.put(TASK + 2, "B", b2)
+    put3(TASK + 0x14, pos)
+    m.put(TASK + 0x2C, "I", CWP if has else 0)
+    m.put(CWP + 8, "f", 1.25)
+    m.u.mem_write(INFO, info)
+    m.put(PW + 0x10, "h", h10 - 0x10000 if h10 & 0x8000 else h10)
+    m.put(PW + 0x21C, "f", f21c)
+    m.u.mem_write(PW + 0x1E8, struct.pack(">3I", *v1e8))
+    m.call(0x800AC698, r3=TOBJ, r4=TASK, r5=PW)
+    ccl.append({"info": info.hex(), "mode": mode, "b2": b2, "pos": [fb(x) for x in pos], "h10": h10, "f21c": fb(f21c),
+                "v1e8": v1e8, "has": has, "info_after": bytes(m.u.mem_read(INFO, 0xF0)).hex(), "range": W(CWP + 8)})
+print(json.dumps({"end": end, "ccl": ccl}))

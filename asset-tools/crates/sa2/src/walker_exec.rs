@@ -149,3 +149,63 @@ pub fn end_frame(
     w.ccl_b2 &= !0x70;
     out
 }
+
+fn word(b: &[u8], o: usize) -> u32 {
+    u32::from_be_bytes(b[o..o + 4].try_into().unwrap())
+}
+
+fn set_word(b: &mut [u8], o: usize, v: u32) {
+    b[o..o + 4].copy_from_slice(&v.to_be_bytes());
+}
+
+const CCL_HALF: f32 = 0.5; // r2-0x696C
+const CCL_RANGE: f32 = 50.0; // r2-0x6980
+
+/// What fn_800AC698 reads besides the collision info.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CclUpdate {
+    /// Task mode (+0), byte +2, flag (+4) and position (+0x14).
+    pub mode: u8,
+    pub task_b2: u8,
+    pub pos: Vec3,
+    /// Player halfword +0x10, float +0x21C and the three words at +0x1E8.
+    pub p_h10: i16,
+    pub p_f21c: f32,
+    pub p_1e8: [u32; 3],
+}
+
+/// fn_800AC698: refresh the walker's collision info (the task's CCL,
+/// +0x2C, whose info array at +0xC is `info`, in native big-endian bytes):
+/// entries 2-4 get flag 0x10 (entry 2 then loses it again), entries 0 and 1
+/// take the push mode 3 or 0 from player bit 0x8000, entry 1 sits at the
+/// task's position half way up to +0x21C, entry 0's kind is 0xD in mode
+/// 0x41 sub 3, and in modes 0x3D and 0x3E entry 3 is unflagged and takes
+/// the player's +0x1E8 vector. Finally fn_800068BC sets the CCL's range
+/// (+8) to 50. `ccl_range` is that field; nothing happens without a CCL.
+pub fn ccl_update(info: Option<(&mut [u8], &mut f32)>, u: &CclUpdate) {
+    let Some((b, ccl_range)) = info else { return };
+    for o in [0x64, 0x94, 0xC4] {
+        set_word(b, o, word(b, o) | 0x10);
+    }
+    let push = if u.p_h10 as u16 & 0x8000 != 0 { 3 } else { 0 };
+    for o in [3, 0x33] {
+        b[o] = (b[o] & !3) | push;
+        b[o] = (b[o] & !0xC) | (push << 2);
+    }
+    b[0x38..0x3C].copy_from_slice(&u.pos[0].to_be_bytes());
+    b[0x3C..0x40].copy_from_slice(&(CCL_HALF * (u.pos[1] + u.p_f21c)).to_be_bytes());
+    b[0x40..0x44].copy_from_slice(&u.pos[2].to_be_bytes());
+    set_word(b, 0x64, word(b, 0x64) & !0x10);
+    b[0] = if u.mode == 0x41 && u.task_b2 == 3 {
+        0xD
+    } else {
+        0
+    };
+    if u.mode == 0x3D || u.mode == 0x3E {
+        set_word(b, 0x94, word(b, 0x94) & !0x10);
+        for (j, v) in u.p_1e8.iter().enumerate() {
+            set_word(b, 0x98 + 4 * j, *v);
+        }
+    }
+    *ccl_range = CCL_RANGE;
+}
