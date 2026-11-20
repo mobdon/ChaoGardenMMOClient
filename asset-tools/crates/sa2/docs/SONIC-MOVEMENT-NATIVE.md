@@ -56,6 +56,7 @@ rules, so the check is "the same instructions, on this machine model".
 | Turning | SubAngle 0x8002B904, DiffAngle 0x8002B8E0, AdjustAngle 0x8002B918; fn_800473B4 (turn toward a yaw, faster turns slow down above dash_speed, velocity carried round); fn_80047714 (smoothed turn with stick-dependent velocity blend) | **Ported** (`player_turn`) |
 | Facing downhill | njScalor 0x801151F4 and njUnitVector 0x80115D24 (Gekko frsqrte/fres estimates); fn_80047CBC and fn_80048150 aim the motion yaw down slopes from gravity in the player's frame | **Ported** (`ninja_vector::scalor`, `unit_vector`, `player_slope`) |
 | Path following (loops, rails) | fn_80038F40 with MSL floorf 0x80111240, fn_8002B770 (wrap), fn_80027D50, fn_8011B51C (point-line), fn_800CE5E8 (point-segment), fn_8005C460 (nearest point), fn_8005CDCC (segment record), fn_8005C910 (sample); reuses Iron Gate's plane_distance (fn_8011B6C8) and njDistanceP2P/sqrtf | **Ported** (`player_path`) |
+| Ground acceleration | fn_8004B568 (stick-relative) and fn_8004BA74 (camera-relative steering, with njRotate 0x80115218 = PSMTXRotAxisRad + PSVECNormalize) | **Ported** (`player_accel`) |
 | Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
@@ -133,3 +134,20 @@ rules, so the check is "the same instructions, on this machine model".
   paths (nearest point, every segment record, 2,000 samples) and 1,500
   path-follow frames against main.dol, bit for bit. Where degenerate
   geometry yields NaN, it is PowerPC's positive default NaN.
+
+- **Ground acceleration** (`player_accel`): fn_8004B568 adds gravity times
+  weight and air resistance, turns toward the stick (on the spot when
+  standing, fn_800473B4 or fn_80047714 when moving), and adds the stick's
+  push (run_accel, 0.4x at run speed, 0.8x on a sharp turn) or the
+  slow-down. A friction limit (lim_frict) holds a standing player still.
+  fn_8004BA74 is the camera-relative version. It turns the raw stick about
+  the player's own gravity axis (player work +0x7C) from the camera's
+  side, eases the aim downhill by 512|z|, and scales the push by speed band
+  (max_x_spd, jog, run, rush). It follows the path when status bit 0x2000
+  is set, and applies the surface grip (grd_frict, grd_frict_z) when the
+  surface flag 4 is set. The camera position (camera work +0x18 via
+  0x80175378) and the raw stick are inputs. `tests/player_accel_dol.rs`
+  matches 3,000 frames of each and 800 njRotate cases against main.dol,
+  bit for bit. To run PSMTXRotAxisRad, the harness now lets a paired-single
+  function call plain code (MSL sinf/cosf): Unicorn runs the callee and
+  hands back to the interpreter.
