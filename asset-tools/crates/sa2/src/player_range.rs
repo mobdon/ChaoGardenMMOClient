@@ -13,6 +13,7 @@
 //! `frsqrte` and `fres`, both Gekko hardware estimates. It is the shared
 //! `land_nodes::nj_scalor` (owned by the Iron Gate thread).
 use crate::land_nodes::nj_scalor;
+use crate::msl_math::gekko_frsqrte;
 use crate::play_world::V3;
 
 /// 0x801151F4 (njScalor): the shared `land_nodes::nj_scalor`.
@@ -34,6 +35,38 @@ pub fn player_in_range(players: &[Option<V3>; 2], query: V3, radius: f32) -> u32
     0
 }
 
+/// 0x8002F15C: `sqrtf` as `x * rsqrt(x)`, with Gekko's `frsqrte` and three
+/// double-precision Newton steps (0.5 and 3.0 at r2-0x76E0 / r2-0x76D8),
+/// rounded to single once. `x <= 0` is returned unchanged.
+pub fn engine_sqrtf(x: f32) -> f32 {
+    if x <= 0.0 {
+        return x;
+    }
+    let x64 = f64::from(x);
+    let mut g = gekko_frsqrte(x64);
+    for _ in 0..3 {
+        let sq = g * g;
+        let half = 0.5 * g;
+        // fnmsub: -(x * sq - 3), fused.
+        let t = -x64.mul_add(sq, -3.0);
+        g = half * t;
+    }
+    (x64 * g) as f32
+}
+
+/// 0x8011B65C: the distance between two points, `dz^2 + (dx^2 + dy^2)` in
+/// single precision; below 0.025 (r2-0x5598) it is 0.
+pub fn distance(a: V3, b: V3) -> f32 {
+    let dz = a[2] - b[2];
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    let s = dz * dz + (dx * dx + dy * dy);
+    if s < f32::from_bits(0x3ccc_cccd) {
+        0.0
+    } else {
+        engine_sqrtf(s)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

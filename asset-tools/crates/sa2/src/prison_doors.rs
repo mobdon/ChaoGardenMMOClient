@@ -347,13 +347,8 @@ impl ElevatorWall {
         match self.state {
             0 => {
                 let near = elevators.iter().take(5).any(|&(e, moving)| {
-                    let d = [
-                        self.position[0] - e[0],
-                        self.position[1] - e[1],
-                        self.position[2] - e[2],
-                    ];
-                    let dist = (d[2] * d[2] + (d[0] * d[0] + d[1] * d[1])).sqrt();
-                    !moving && dist < WALL_ELEVATOR_RANGE
+                    // 0x8011B65C: the engine's distance and sqrt.
+                    !moving && crate::player_range::distance(self.position, e) < WALL_ELEVATOR_RANGE
                 });
                 if !near {
                     self.state = 1;
