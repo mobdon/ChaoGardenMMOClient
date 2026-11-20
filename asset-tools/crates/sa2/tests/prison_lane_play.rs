@@ -127,6 +127,8 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.shapes.len(), 83);
         assert_eq!(s.cams.len(), 24);
         assert_eq!(s.emitters.len(), 10);
+        assert_eq!(s.pipes.len(), 3);
+        assert_eq!(s.unimplemented.get("CHAOPIPE collision (form 6)"), Some(&3));
         assert!(!s.unimplemented.contains_key("EFFOBJ0"));
         assert!(!s.unimplemented.contains_key("CAM"));
         assert_eq!(s.fluos.len(), 34);
@@ -155,6 +157,7 @@ fn standing_on_the_one_way_elevator_carries_it_to_its_target() {
         let stand = PlayerSample {
             center: s.movers[i].position(),
             position: s.movers[i].position(),
+            action: 0,
             standing_on: Some(i),
             touching_goal: None,
             hit_cam_lens: None,
@@ -196,6 +199,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let events = s.step(Some(PlayerSample {
             center: ring,
             position: ring,
+            action: 0,
             standing_on: None,
             touching_goal: None,
             hit_cam_lens: None,
@@ -211,6 +215,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let events = s.step(Some(PlayerSample {
             center: goal,
             position: goal,
+            action: 0,
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),
@@ -377,6 +382,7 @@ fn security_camera_tracks_the_player_and_breaks_when_its_lens_is_hit() {
         let sample = |hit| PlayerSample {
             center: at,
             position: at,
+            action: 0,
             standing_on: None,
             touching_goal: None,
             hit_cam_lens: hit,

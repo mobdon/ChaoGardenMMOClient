@@ -13,6 +13,7 @@ pub mod city_replay;
 pub mod city_rider;
 pub mod city_stage;
 pub mod effect_emitter;
+pub mod chao_pipe;
 pub mod collision;
 pub mod color_blend;
 mod collision_record;

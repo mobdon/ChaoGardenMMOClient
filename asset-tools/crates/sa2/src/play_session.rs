@@ -28,6 +28,7 @@ use crate::{
         enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
         WALL_ROW_COUNT,
     },
+    chao_pipe::{ChaoPipe, PipeEvent},
     effect_emitter::{EffectEmitter, Emission},
     prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
     prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
@@ -157,6 +158,8 @@ pub struct PlayerSample {
     pub center: V3,
     /// The player task's position (twp +0x14), which CAM aims at.
     pub position: V3,
+    /// The player task's Action byte (twp +0), which CHAOPIPE reads.
+    pub action: u8,
     /// The engine's "player standing on this object" answer, as an index
     /// into `Session::movers`.
     pub standing_on: Option<usize>,
@@ -206,6 +209,11 @@ pub enum Event {
     Effect {
         emitter: usize,
         emission: Emission,
+    },
+    /// A CHAOPIPE requested the pipe action or released a chao.
+    Pipe {
+        pipe: usize,
+        event: PipeEvent,
     },
     GoalContact {
         layer: usize,
@@ -676,6 +684,7 @@ pub struct Session {
     pub sirens: Vec<Siren>,
     pub cams: Vec<SecurityCamera>,
     pub emitters: Vec<EffectEmitter>,
+    pub pipes: Vec<ChaoPipe>,
     /// The byte at GSNE8P 0x801CC168 + 0x37 that stops EFFOBJ0 emitting;
     /// the host sets it.
     pub effects_suppressed: bool,
@@ -810,6 +819,7 @@ impl Session {
         let mut sirens = vec![];
         let mut cams = vec![];
         let mut emitters = vec![];
+        let mut pipes = vec![];
         let mut fluos = vec![];
         let mut searchlights = vec![];
         let mut sound_emitters = vec![];
@@ -919,6 +929,20 @@ impl Session {
                             center: pl.position,
                             radius: CAM_RADIUS,
                         });
+                    }
+                    (_, "CHAOPIPE") if rules.prison_doors => {
+                        pipes.push(ChaoPipe::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation,
+                            pl.parameters,
+                        ));
+                        // Its CollisionData (sec5+0x51574) is form 6, which
+                        // this crate does not build.
+                        *unimplemented
+                            .entry("CHAOPIPE collision (form 6)".to_string())
+                            .or_insert(0) += 1;
                     }
                     (_, "EFFOBJ0") if rules.prison_doors => emitters.push(EffectEmitter::new(
                         li,
@@ -1158,6 +1182,7 @@ impl Session {
             sirens,
             cams,
             emitters,
+            pipes,
             effects_suppressed: false,
             fluos,
             searchlights,
@@ -1297,6 +1322,12 @@ impl Session {
                     emitter: i,
                     emission,
                 });
+            }
+        }
+        let actions = [player.map(|p| p.action), None];
+        for (i, pipe) in self.pipes.iter_mut().enumerate() {
+            if let Some(event) = pipe.step(self.character, &centres, &actions) {
+                events.push(Event::Pipe { pipe: i, event });
             }
         }
         for (i, c) in self.cams.iter_mut().enumerate() {
