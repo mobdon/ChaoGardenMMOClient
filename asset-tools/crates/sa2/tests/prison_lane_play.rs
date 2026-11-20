@@ -112,6 +112,7 @@ fn installed_mover_rules_and_session_inventory() {
             ("ROLL row (solid only)", 4),
             ("SPHERE (solid only)", 4),
             ("CCYL (solid only)", 1),
+            ("TANK row (solid only)", 1),
             ("CONTIRON row (solid only)", 18),
             ("CONTCHAO row (solid only)", 3),
             ("CONTWOOD row (solid only)", 17),
@@ -120,8 +121,8 @@ fn installed_mover_rules_and_session_inventory() {
         ] {
             assert_eq!(s.unimplemented.get(name), Some(&n), "{name}");
         }
-        // 8 fence posts, 4 gears, 4 spheres and 1 cylinder.
-        assert_eq!(s.shapes.len(), 17);
+        // 8 fence rails, 4 gears, 4 spheres, 1 cylinder and the tank.
+        assert_eq!(s.shapes.len(), 18);
         assert!(s.death_zone_count() > 0);
         assert_eq!((s.level, s.character, s.physics.slot), (9, 6, 6));
     });

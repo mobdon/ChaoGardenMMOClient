@@ -117,6 +117,9 @@ pub const PRISON_LANE: StageRules = StageRules {
         ("CONTWOOD", 0x53a08, 1),
         // MECHA (0x527C): exec only runs its collision (0x8000F4EC).
         ("MECHA", 0x41db4, 1),
+        // TANK (0x5D7C): its row at sec5+0x47848 is an upright cylinder
+        // (form 1); breaking it and its two child tasks need player attacks.
+        ("TANK", 0x47848, 1),
     ],
     // SPHERE 0x11B94 (sec5+0x4C020, form 0), CCYL 0x11C38 (+0x4C050,
     // form 1), CCUBE 0x11CDC (+0x4C080, form 3).
