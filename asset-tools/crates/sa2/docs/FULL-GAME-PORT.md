@@ -96,4 +96,6 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 
 [Goal-ring contact](GOAL-RING.md) covers native initialization decisions and activation calls across the 28 mapped story levels. The mission controller and automatic story advancement remain unimplemented.
 
+[Playable Iron Gate](PLAYABLE-IRON-GATE.md) runs the first Dark stage live: walker movement, collision, lifts, elevators, bridges, springs, rings, checkpoints, death zones and the goal ring. Two of its three segments clear offline; the controller is an adaptation.
+
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.
