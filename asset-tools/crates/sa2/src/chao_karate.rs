@@ -990,3 +990,33 @@ pub fn approach(
         _ => {}
     }
 }
+
+/// fn_72_B720 (ready and idle motions): start the link, and when it ends mark
+/// motions 0x15/0x16 with the impact bit; the clip then loops with no end flag.
+pub fn idle(
+    aux: &mut MotionAux,
+    rec: &mut StateRecord,
+    rows: &[MotionRow],
+    input: MotionInput,
+    calls: &mut Vec<MotionCall>,
+) {
+    match aux.step {
+        0 => {
+            aux.row = i32::from(aux.motion);
+            let r = &rows[aux.row as usize];
+            calls.push(MotionCall::Link {
+                motion: r.motion,
+                link_step: r.link_step,
+            });
+            rec.flags &= !state_flag::MOTION_END;
+            aux.step = 1;
+        }
+        1 if !input.linking => {
+            if matches!(aux.motion, 0x15 | 0x16) {
+                aux.bits |= motion_bit::IMPACT;
+            }
+            aux.step = 2;
+        }
+        _ => {}
+    }
+}
