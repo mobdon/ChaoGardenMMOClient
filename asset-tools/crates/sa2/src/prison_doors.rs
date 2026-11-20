@@ -48,10 +48,86 @@ pub fn enemy_counts(name: &str, scale: V3) -> Option<bool> {
     }
 }
 
-/// CAGED door state (stg09D.rel 0x1EB0 set-up, 0x2000 exec).
+/// How a cell door kind moves its collision (stg09D.rel execs).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DoorKind {
+    pub name: &'static str,
+    /// Section-5 CollisionData rows and their count.
+    pub rows: u32,
+    pub row_count: usize,
+    /// Slide distance at the open stop.
+    pub stop: f32,
+    /// The row whose centre the exec rewrites each frame.
+    pub moving_row: usize,
+    /// How the slide is written: Z by Rotation.z bit 0 (CAGED), Y up
+    /// (CAGE) or Y down (CAGEB, CAGEC).
+    pub motion: DoorMotion,
+    /// The exec skips its collision entirely once fully open (CAGEB, CAGEC).
+    pub no_collision_when_open: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DoorMotion {
+    SignedZ,
+    Up,
+    Down,
+}
+
+/// stg09D.rel cell doors. All share the exec shape of CAGED (0x2000):
+/// closed until the group is clear, slide by Scale.x per frame to `stop`,
+/// settle with kick 0.5, pull 0.4 and keep 0.96, snap shut if the group
+/// fills again.
+pub const DOOR_KINDS: [DoorKind; 4] = [
+    // 0x1EB0 / 0x2000: sec5+0x38F68, stop 50 (sec4+0xE0), centre Z = +/-slide.
+    DoorKind {
+        name: "CAGED",
+        rows: 0x38f68,
+        row_count: 1,
+        stop: 50.0,
+        moving_row: 0,
+        motion: DoorMotion::SignedZ,
+        no_collision_when_open: false,
+    },
+    // 0xF64 / 0x10B4: sec5+0x36258, stop 48 (sec4+0x6C), centre Y = 26 + slide.
+    DoorKind {
+        name: "CAGE",
+        rows: 0x36258,
+        row_count: 1,
+        stop: 48.0,
+        moving_row: 0,
+        motion: DoorMotion::Up,
+        no_collision_when_open: false,
+    },
+    // 0x1480: sec5+0x36E98 (4 rows), stop 39 (sec4+0x94), row 1 centre Y
+    // minus slide (0x18A4), no collision in state 2 (0x1894).
+    DoorKind {
+        name: "CAGEB",
+        rows: 0x36e98,
+        row_count: 4,
+        stop: 39.0,
+        moving_row: 1,
+        motion: DoorMotion::Down,
+        no_collision_when_open: true,
+    },
+    // 0x1994: sec5+0x380B8 (4 rows), stop 39 (sec4+0xB4), as CAGEB (0x1DC0).
+    DoorKind {
+        name: "CAGEC",
+        rows: 0x380b8,
+        row_count: 4,
+        stop: 39.0,
+        moving_row: 1,
+        motion: DoorMotion::Down,
+        no_collision_when_open: true,
+    },
+];
+
+/// Cell door state (CAGED, CAGE, CAGEB, CAGEC).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrisonDoor {
+    pub kind: DoorKind,
     pub layer: usize,
     pub index: usize,
     pub position: V3,
@@ -70,8 +146,8 @@ pub struct PrisonDoor {
     pub velocity: f32,
 }
 
-/// stg09D.rel section 4 constants used by the exec.
-pub const OPEN: f32 = 50.0; // sec4+0xE0
+/// stg09D.rel section 4 constants used by every door exec (CAGED's at
+/// sec4+0xF8..0x100; the others repeat them).
 pub const SETTLE_KICK: f32 = 0.5; // sec4+0xF8
 pub const SETTLE_PULL: f32 = 0.4; // sec4+0xFC
 pub const SETTLE_KEEP: f32 = 0.96; // sec4+0x100
@@ -97,7 +173,7 @@ impl PrisonDoor {
             }
             1 => {
                 self.slide += self.speed;
-                if self.slide >= OPEN {
+                if self.slide >= self.kind.stop {
                     sound = Some(DoorSound::Opened);
                     self.state = 2;
                     self.velocity += SETTLE_KICK;
@@ -107,10 +183,10 @@ impl PrisonDoor {
             }
             2 => {
                 self.slide += self.velocity;
-                let pull = SETTLE_PULL * -(self.slide - OPEN);
+                let pull = SETTLE_PULL * -(self.slide - self.kind.stop);
                 self.velocity = pull + SETTLE_KEEP * self.velocity;
-                if self.slide >= OPEN {
-                    self.slide = OPEN;
+                if self.slide >= self.kind.stop {
+                    self.slide = self.kind.stop;
                     self.velocity = -self.velocity.abs();
                 }
             }
@@ -125,14 +201,34 @@ impl PrisonDoor {
         sound
     }
 
-    /// Local Z of the door's collision box centre (its CollisionData centre
-    /// Z, 0, plus the Rotation.z bit, decides the sign).
+    /// Local Z of a CAGED box centre (its CollisionData centre Z, 0, plus
+    /// the Rotation.z bit, decides the sign).
     pub fn collision_offset_z(&self) -> f32 {
         if self.positive {
             self.slide
         } else {
             -self.slide
         }
+    }
+
+    /// The door's CollisionData rows as the exec leaves them this frame;
+    /// empty when the exec skips its collision.
+    pub fn live_rows(
+        &self,
+        rows: &[crate::play_objects::CollisionRow],
+    ) -> Vec<crate::play_objects::CollisionRow> {
+        if self.kind.no_collision_when_open && self.state == 2 {
+            return vec![];
+        }
+        let mut rows = rows.to_vec();
+        if let Some(r) = rows.get_mut(self.kind.moving_row) {
+            match self.kind.motion {
+                DoorMotion::SignedZ => r.center[2] = self.collision_offset_z(),
+                DoorMotion::Up => r.center[1] += self.slide,
+                DoorMotion::Down => r.center[1] -= self.slide,
+            }
+        }
+        rows
     }
 }
 
@@ -142,6 +238,7 @@ mod tests {
 
     fn door(speed: f32) -> PrisonDoor {
         PrisonDoor {
+            kind: DOOR_KINDS[0],
             layer: 0,
             index: 0,
             position: [0.0; 3],
@@ -171,7 +268,7 @@ mod tests {
         for _ in 0..600 {
             d.step(true);
         }
-        assert!(d.slide <= OPEN && OPEN - d.slide < 1.0, "{}", d.slide);
+        assert!(d.slide <= 50.0 && 50.0 - d.slide < 1.0, "{}", d.slide);
         assert_eq!(d.collision_offset_z(), -d.slide);
         // An enemy joining the group shuts it at once.
         d.step(false);

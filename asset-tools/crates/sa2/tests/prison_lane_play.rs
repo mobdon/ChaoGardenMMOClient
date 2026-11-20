@@ -205,12 +205,16 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
 #[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
 fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
     with_session(|mut s| {
-        assert_eq!(s.doors.len(), 11);
+        // 11 CAGED, 14 CAGE, 2 CAGEB, 3 CAGEC.
+        assert_eq!(s.doors.len(), 30);
+        for (k, n) in [("CAGED", 11), ("CAGE", 14), ("CAGEB", 2), ("CAGEC", 3)] {
+            assert_eq!(s.doors.iter().filter(|d| d.kind.name == k).count(), n, "{k}");
+        }
         // The cell door on the route near (-3329, 730, 130): group 10.
         let d = s
             .doors
             .iter()
-            .position(|d| d.index == 36)
+            .position(|d| d.index == 36 && d.kind.name == "CAGED")
             .expect("CAGED 36");
         let group = s.doors[d].group;
         assert_eq!(group, 10);
@@ -255,5 +259,43 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
             (open_z - closed_z - 50.0).abs() < 1.0,
             "{open_z} {closed_z}"
         );
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn a_wide_cage_drops_its_bars_and_its_collision_when_open() {
+    with_session(|mut s| {
+        let d = s
+            .doors
+            .iter()
+            .position(|d| d.kind.name == "CAGEB")
+            .expect("CAGEB");
+        let group = s.doors[d].group;
+        // Four boxes: floor, bars and two posts.
+        assert_eq!(s.door_solid(d).len(), 4 * 12);
+        let members: Vec<usize> = (0..s.enemies.len())
+            .filter(|&i| s.enemies[i].group == group && s.enemies[i].counted)
+            .collect();
+        for &i in &members {
+            s.destroy_enemy(i);
+        }
+        let mut opened = None;
+        for _ in 0..600 {
+            if s.step(None)
+                .iter()
+                .any(|e| matches!(e, Event::DoorOpened { door } if *door == d))
+            {
+                opened.get_or_insert(s.frame);
+            }
+        }
+        assert!(
+            opened.is_some(),
+            "group {group} with {} members",
+            members.len()
+        );
+        // Stop 39; once open the exec stops registering the collision.
+        assert_eq!(s.doors[d].state, 2);
+        assert!(s.door_solid(d).is_empty());
     });
 }

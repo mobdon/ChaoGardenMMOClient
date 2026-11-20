@@ -24,7 +24,7 @@ use crate::{
     },
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
-    prison_doors::{enemy_counts, DoorSound, Enemy, PrisonDoor},
+    prison_doors::{enemy_counts, DoorSound, Enemy, PrisonDoor, DOOR_KINDS},
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -54,9 +54,9 @@ pub struct StageRules {
     pub invisible_cubes: Option<u32>,
     /// Expand RING_LINEAR placements into collectable rings.
     pub ring_lines: bool,
-    /// CAGED's CollisionData row in section 5, if enemy group counts and
-    /// CAGED doors are run (rules read from stg09D.rel).
-    pub prison_doors: Option<u32>,
+    /// Run enemy group counts and the cell doors (`DOOR_KINDS`, rules read
+    /// from stg09D.rel).
+    pub prison_doors: bool,
     pub death_zone_config: &'static str,
 }
 
@@ -82,7 +82,7 @@ pub const IRON_GATE: StageRules = StageRules {
     // its size helper 0x16F94 adds Scale to 10 (sec4+0x7D0).
     invisible_cubes: Some(0x5e5b0),
     ring_lines: false,
-    prison_doors: None,
+    prison_doors: false,
     death_zone_config: DEATH_ZONE_CONFIG,
 };
 
@@ -113,8 +113,7 @@ pub const PRISON_LANE: StageRules = StageRules {
     ],
     invisible_cubes: Some(0x4c080),
     ring_lines: true,
-    // stg09D.rel 0x1F34: CAGED registers sec5+0x38F68 (form 3).
-    prison_doors: Some(0x38f68),
+    prison_doors: true,
     death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
 };
 /// o_ring_M1: pickup when a player collision center is strictly within 14.
@@ -524,7 +523,7 @@ pub struct Session {
     pub group_counts: [u8; 256],
     pub doors: Vec<PrisonDoor>,
     #[serde(skip)]
-    door_row: Option<CollisionRow>,
+    door_rows: std::collections::BTreeMap<&'static str, Vec<CollisionRow>>,
     /// Placements whose native behavior this session does not run.
     pub unimplemented: std::collections::BTreeMap<String, usize>,
     #[serde(skip)]
@@ -595,11 +594,18 @@ impl Session {
             .map(|offset| collision_rows(src.stage_module, rules.movers.module_file, offset, 1))
             .transpose()?
             .map(|mut rows| rows.remove(0));
-        let door_row = rules
-            .prison_doors
-            .map(|offset| collision_rows(src.stage_module, rules.movers.module_file, offset, 1))
-            .transpose()?
-            .map(|mut rows| rows.remove(0));
+        let mut door_rows = std::collections::BTreeMap::new();
+        if rules.prison_doors {
+            for k in DOOR_KINDS {
+                let rows = collision_rows(
+                    src.stage_module,
+                    rules.movers.module_file,
+                    k.rows,
+                    k.row_count,
+                )?;
+                door_rows.insert(k.name, rows);
+            }
+        }
         let collision_boxes = rules
             .collision_boxes
             .iter()
@@ -703,22 +709,21 @@ impl Session {
                             out,
                         });
                     }
-                    (_, "CAGED") if rules.prison_doors.is_some() => doors.push(PrisonDoor {
-                        layer: li,
-                        index: p.placement_index,
-                        position: pl.position,
-                        rotation: pl.rotation,
-                        group: (pl.rotation[0] & 0xff) as u8,
-                        speed: pl.parameters[0],
-                        positive: pl.rotation[2] & 1 != 0,
-                        state: 0,
-                        slide: 0.0,
-                        velocity: 0.0,
-                    }),
-                    (_, n)
-                        if rules.prison_doors.is_some()
-                            && enemy_counts(n, pl.parameters).is_some() =>
-                    {
+                    (_, n) if rules.prison_doors && DOOR_KINDS.iter().any(|k| k.name == n) => doors
+                        .push(PrisonDoor {
+                            kind: *DOOR_KINDS.iter().find(|k| k.name == n).unwrap(),
+                            layer: li,
+                            index: p.placement_index,
+                            position: pl.position,
+                            rotation: pl.rotation,
+                            group: (pl.rotation[0] & 0xff) as u8,
+                            speed: pl.parameters[0],
+                            positive: pl.rotation[2] & 1 != 0,
+                            state: 0,
+                            slide: 0.0,
+                            velocity: 0.0,
+                        }),
+                    (_, n) if rules.prison_doors && enemy_counts(n, pl.parameters).is_some() => {
                         enemies.push(Enemy {
                             layer: li,
                             index: p.placement_index,
@@ -873,7 +878,7 @@ impl Session {
             },
             enemies,
             doors,
-            door_row,
+            door_rows,
         })
     }
 
@@ -898,17 +903,24 @@ impl Session {
     }
 
     /// Static terrain plus every mover's solid at its current position.
-    /// A CAGED door's collision box: its CollisionData row with the centre
-    /// Z the exec writes each frame (stg09D.rel 0x22EC), placed by the CCL
-    /// box rule.
+    /// A cell door's collision boxes: its CollisionData rows with the centre
+    /// its exec writes this frame, placed by the CCL box rule.
     pub fn door_solid(&self, i: usize) -> Vec<[V3; 3]> {
-        let (Some(row), Some(d)) = (self.door_row.as_ref(), self.doors.get(i)) else {
+        let Some(d) = self.doors.get(i) else {
             return vec![];
         };
-        let mut row = *row;
-        row.center[2] = d.collision_offset_z();
-        let half = [row.size[0], row.size[1], row.size[2]];
-        ccl_box_tris(d.position, d.rotation, &row, half)
+        let rows = self
+            .door_rows
+            .get(d.kind.name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        d.live_rows(rows)
+            .iter()
+            .filter(|r| r.form == 3)
+            .flat_map(|r| {
+                ccl_box_tris(d.position, d.rotation, r, [r.size[0], r.size[1], r.size[2]])
+            })
+            .collect()
     }
 
     pub fn snapshot_world(&self) -> PlayWorld {
