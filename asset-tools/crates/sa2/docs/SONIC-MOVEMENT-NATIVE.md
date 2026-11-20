@@ -29,16 +29,19 @@ paired-single unit, so functions that use paired singles (the PSMTX matrix
 library and the Ninja wrappers around it) are interpreted in Python
 instruction by instruction.
 
-The arithmetic is IEEE single precision, as on the PC build and in QEMU:
+The arithmetic is IEEE single precision, as on the PC build and in QEMU,
+with one Gekko feature added:
 
 - Each result rounds once to single precision.
 - Fused multiply-adds round to double, then to single.
-- Reciprocal estimates are exact.
+- `frsqrte` and `ps_rsqrte` return Gekko's table estimate
+  (`tests/gekko_float.py`, transcribed from Dolphin by the Finalhazard work).
+  Every `frsqrte` that Unicorn runs natively is patched to it too.
+- `fres` is still exact.
 - `fctiwz` gives 0x80000000 for NaN and out-of-range values.
 
-That is not bit-identical to the Gekko CPU, whose multiplier truncates one
-operand to 25 bits and whose estimates come from tables. Rust ports follow
-the IEEE rules, so the check is "the same instructions, on an IEEE machine".
+Gekko's 25-bit multiplier operand is not modeled. Rust ports follow these
+rules, so the check is "the same instructions, on this machine model".
 
 ## Map
 

@@ -10,13 +10,15 @@ instruction, with these arithmetic semantics:
   like round each lane's result once to single. The multiply-adds
   (ps_madd, ps_madds0, ...) are fused: the exact a*c+b is rounded to double
   and then to single, as QEMU does for fmadds.
-* Reciprocal estimates (fres, frsqrte, ps_res, ps_rsqrte) are exact:
-  1/x and 1/sqrt(x) rounded as QEMU rounds them.
+* `frsqrte` and `ps_rsqrte` return Gekko's table estimate (gekko_float.py,
+  transcribed from Dolphin). Every `frsqrte` the DOL runs natively under
+  Unicorn is patched to it too. `ps_rsqrte` rounds each lane to single.
+* `fres` and `ps_res` are still exact: 1/x rounded as QEMU rounds it.
 
-These are the semantics of an IEEE machine (the PC build and QEMU's scalar
-FPU), not Gekko's hardware quirks (its 25-bit multiplier operand and table
-estimates), which only Dolphin models. Rust ports are checked against this
-harness, so they reproduce the same rounding.
+Apart from those estimates these are the semantics of an IEEE machine (the
+PC build and QEMU's scalar FPU), not Gekko's 25-bit multiplier operand,
+which only Dolphin models. Rust ports are checked against this harness, so
+they reproduce the same rounding.
 
 Usage from another oracle script:
 
@@ -31,6 +33,9 @@ from fractions import Fraction
 from pathlib import Path
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
+
+sys.path.insert(0, str(Path(__file__).parent))
+from gekko_float import frsqrte_bits, install_frsqrte  # noqa: E402
 
 # SHA-1 of the GSNE8P main.dol the roeming/SA2B decompilation targets.
 MAIN_DOL_SHA1 = "e4c50f32242a3cd36cdc8ae776661601a52130a2"
@@ -64,11 +69,9 @@ def div(a, b):
 
 
 def rsqrt(b):
-    if b == 0:
-        return div(1.0, b)
-    if b < 0 or b != b:
-        return float('nan')
-    return 1.0 / b ** 0.5
+    """Gekko's frsqrte estimate of a double."""
+    bits = frsqrte_bits(struct.unpack('>Q', struct.pack('>d', b))[0])
+    return struct.unpack('>d', struct.pack('>Q', bits))[0]
 
 
 def bits32(x):
@@ -147,6 +150,16 @@ class Machine:
         self.stubs = {}
         for addr in self.paired:
             u.hook_add(UC_HOOK_CODE, self._enter_paired, begin=addr, end=addr)
+        # Gekko's frsqrte estimate wherever Unicorn itself runs one.
+        self.frsqrte_sites = []
+        for a, o, z in dol.sections:
+            if a >= 0x80173140:  # text sections only
+                continue
+            for k in range(0, z, 4):
+                ins = struct.unpack_from('>I', dol.data, o + k)[0]
+                if ins >> 26 == 63 and (ins >> 1) & 0x1F == 26:
+                    install_frsqrte(u, a + k)
+                    self.frsqrte_sites.append(a + k)
 
     def boot(self):
         """The parts of the game's start-up the player code depends on: the
@@ -468,7 +481,7 @@ class Interp:
         elif a5 == 11: out(C0, f32(A0 + B1))
         elif a5 == 23: out(C0 if A0 >= 0 else B0, C1 if A1 >= 0 else B1)
         elif a5 == 24: out(f32(div(1.0, B0)), f32(div(1.0, B1)))
-        elif a5 == 26: out(rsqrt(B0), rsqrt(B1))
+        elif a5 == 26: out(f32(rsqrt(B0)), f32(rsqrt(B1)))
         elif x == 72: out(B0, B1)
         elif x == 40: out(-B0, -B1)
         elif x == 264: out(abs(B0), abs(B1))
