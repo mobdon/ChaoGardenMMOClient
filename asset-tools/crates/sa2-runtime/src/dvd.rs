@@ -93,6 +93,53 @@ impl GameFiles for DirFiles {
     }
 }
 
+/// A flat folder of disc files (an extracted GameCube `files/`), served as
+/// `resource/gd_PC/<name>` so it can stand behind the Steam folder.
+pub struct FlatDir {
+    pub dir: PathBuf,
+}
+
+impl GameFiles for FlatDir {
+    fn paths(&self) -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        rd.flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .map(|e| format!("resource/gd_PC/{}", e.file_name().to_string_lossy()))
+            .collect()
+    }
+    fn size(&self, path: &str) -> Option<u64> {
+        let name = path.rsplit('/').next()?;
+        DirFiles { root: self.dir.clone() }.size(name)
+    }
+    fn read_at(&self, path: &str, offset: u64, buf: &mut [u8]) -> Option<usize> {
+        let name = path.rsplit('/').next()?;
+        DirFiles { root: self.dir.clone() }.read_at(name, offset, buf)
+    }
+}
+
+/// Several sources in order; the first that has a path serves it (Steam
+/// first, then the disc for files the Steam release dropped).
+pub struct Layered(pub Vec<Box<dyn GameFiles>>);
+
+impl GameFiles for Layered {
+    fn paths(&self) -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
+        self.0
+            .iter()
+            .flat_map(|f| f.paths())
+            .filter(|p| seen.insert(p.to_lowercase()))
+            .collect()
+    }
+    fn size(&self, path: &str) -> Option<u64> {
+        self.0.iter().find_map(|f| f.size(path))
+    }
+    fn read_at(&self, path: &str, offset: u64, buf: &mut [u8]) -> Option<usize> {
+        self.0.iter().find_map(|f| f.read_at(path, offset, buf))
+    }
+}
+
 const GD: &str = "resource/gd_pc/";
 
 /// Open files by entry number, as `DVDConvertPathToEntrynum` hands them out.

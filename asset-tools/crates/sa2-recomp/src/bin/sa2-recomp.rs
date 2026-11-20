@@ -40,7 +40,8 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
     let toml = format!(
         "[package]\nname = \"sa2-host\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[workspace]\n\n\
          [features]\nrels = [\"dep:sa2-recomp-rels\"]\n\n\
-         [dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\nsa2-recomp-gen = {{ path = \"{}\" }}\nsa2-recomp-rels = {{ path = \"{}\", optional = true }}\n",
+         [dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\nsa2-boot = {{ path = \"{me}/../sa2-boot\" }}\nsa2-runtime = {{ path = \"{me}/../sa2-runtime\" }}\n\
+         sa2-recomp-gen = {{ path = \"{}\" }}\nsa2-recomp-rels = {{ path = \"{}\", optional = true }}\n",
         p(main_crate)?,
         p(rels_crate)?
     );
@@ -60,7 +61,25 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20   #[cfg(not(feature = \"rels\"))]\n\
         \x20   let register: fn(&mut sa2_recomp::rt::Runtime) = |_| {};\n\
         \x20   std::panic::set_hook(Box::new(|_| {}));\n\
-        \x20   sa2_recomp::host::run(&dol, &syms, sa2_recomp_gen::dispatch, register, budget, secs).expect(\"host\");\n\
+        \x20   sa2_recomp::host::run(&dol, &syms, sa2_recomp_gen::dispatch, register, setup, budget, secs).expect(\"host\");\n\
+        }\n\
+        \n\
+        /// The engine's boot hooks (DVD from the Steam folder in SA2_STEAM_DIR,\n\
+        /// GX, VI, PAD, audio, clock), and a frame count from the GX sink.\n\
+        fn setup(c: &mut sa2_recomp::rt::Cpu, m: &mut sa2_recomp::rt::Mem) {\n\
+        \x20   let root = std::env::var(\"SA2_STEAM_DIR\")\n\
+        \x20       .unwrap_or_else(|_| \"C:/Program Files (x86)/Steam/steamapps/common/Sonic Adventure 2\".into());\n\
+        \x20   use sa2_runtime::dvd::{DirFiles, FlatDir, GameFiles, Layered};\n\
+        \x20   let mut files: Vec<Box<dyn GameFiles>> = vec![Box::new(DirFiles { root: root.into() })];\n\
+        \x20   // Files the Steam release dropped come from an extracted disc folder.\n\
+        \x20   if let Some(dir) = std::env::var_os(\"SA2_DISC_DIR\") {\n\
+        \x20       files.push(Box::new(FlatDir { dir: dir.into() }));\n\
+        \x20   }\n\
+        \x20   sa2_boot::install_all(c, m, Box::new(Layered(files)));\n\
+        \x20   sa2_recomp::os::add_frame_hook(|_, _| {\n\
+        \x20       let n = sa2_boot::gx::take_frames().len() as u64;\n\
+        \x20       sa2_recomp::host::FRAMES.fetch_add(n, std::sync::atomic::Ordering::Relaxed);\n\
+        \x20   });\n\
         }\n";
     std::fs::create_dir_all(out.join("src")).map_err(|e| e.to_string())?;
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;

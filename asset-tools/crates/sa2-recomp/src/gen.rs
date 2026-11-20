@@ -90,10 +90,12 @@ fn bc_cond(bo: u32, bi: u32) -> (String, String) {
 }
 
 /// Branch to `t` without link: local jump, or tail call out of the function.
-fn goto(ctx: &Ctx, t: u32, targets: &mut Vec<u32>) -> String {
+fn goto(ctx: &Ctx, pc: u32, t: u32, targets: &mut Vec<u32>) -> String {
     if ctx.local(t) {
         targets.push(t);
-        format!("pc = {t:#010x}; continue;")
+        // Loops tick the runtime, which can interrupt a spin-wait.
+        let tick = if t <= pc { "rt::backedge(c, m); " } else { "" };
+        format!("{tick}pc = {t:#010x}; continue;")
     } else {
         format!("{} return;", call(&ctx.abs(&format!("{t:#010x}"))))
     }
@@ -226,7 +228,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                 if cond == "true" {
                     ends = true;
                 }
-                format!("{pre}if {cond} {{ {} }}", goto(ctx, t, &mut targets))
+                format!("{pre}if {cond} {{ {} }}", goto(ctx, pc, t, &mut targets))
             }
         }
         // sc: the OS system-call handler only syncs (DCFlushRange uses it as a
@@ -245,7 +247,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                 format!("c.lr = {}; {}", ctx.abs(&format!("{next:#010x}")), call(&ctx.abs(&format!("{t:#010x}"))))
             } else {
                 ends = true;
-                goto(ctx, t, &mut targets)
+                goto(ctx, pc, t, &mut targets)
             }
         }
         19 => {

@@ -21,12 +21,19 @@ thread_local! {
     static RETRACES: Cell<u32> = const { Cell::new(0) };
     static NEXT_FB: Cell<u32> = const { Cell::new(0) };
     static POST_CB: Cell<u32> = const { Cell::new(0) };
+    static LAST_POLL: Cell<u64> = const { Cell::new(0) };
 }
 
 fn nothing(_c: &mut Cpu, _m: &mut Mem) {}
 
 fn wait_for_retrace(c: &mut Cpu, m: &mut Mem) {
+    // A game thread waiting for a retrace yields; only the main thread makes frames.
+    if sa2_recomp::os::thread_wait() {
+        return;
+    }
     clock::advance_frame(c);
+    // A retrace is a frame for the OS layer too: due alarms fire, frame hooks run.
+    sa2_recomp::os::pump(c, m);
     let n = RETRACES.get().wrapping_add(1);
     RETRACES.set(n);
     let cb = POST_CB.get();
@@ -43,7 +50,15 @@ fn set_next_frame_buffer(c: &mut Cpu, _m: &mut Mem) {
     NEXT_FB.set(c.r[3]);
 }
 
-fn get_retrace_count(c: &mut Cpu, _m: &mut Mem) {
+fn get_retrace_count(c: &mut Cpu, m: &mut Mem) {
+    // Polled back to back (no other call in between) by the main thread: the
+    // game is waiting for the next retrace, so make one.
+    let calls = sa2_recomp::rt::CALLS.load(std::sync::atomic::Ordering::Relaxed);
+    if calls.wrapping_sub(LAST_POLL.replace(calls)) <= 2 && !sa2_recomp::os::in_thread() {
+        let saved = (c.r, c.lr, c.ctr, c.cr);
+        wait_for_retrace(c, m);
+        (c.r, c.lr, c.ctr, c.cr) = saved;
+    }
     c.r[3] = RETRACES.get();
 }
 

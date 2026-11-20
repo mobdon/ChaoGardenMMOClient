@@ -204,7 +204,9 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
                 }
             }
             if r.section as u32 == ti {
-                relocs.insert(r.offset, (r.kind, target));
+                // ADDR16 relocations name the halfword (instruction + 2); key
+                // every code relocation by its instruction.
+                relocs.insert(r.offset & !3, (r.kind, target));
             }
         }
         // Function boundaries: the decomp's symbols when the code is the disc's,
@@ -244,7 +246,9 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         std::fs::write(out.join(&modname).join("Cargo.toml"), crate_toml(&modname, "")).map_err(|e| e.to_string())?;
         members.push(modname.clone());
         // Keyed by code size too: some modules share an id (titleD/stg00D).
-        let _ = writeln!(register, "    rt.rels.insert(({id}, {:#x}), {modname}::dispatch);", text.size);
+        // One feature per module (named like its crate): a build links only the
+        // modules it needs (`--features sa2-recomp-rels/m_mcwarnd`), or `all`.
+        let _ = writeln!(register, "    #[cfg(feature = \"{modname}\")]\n    rt.rels.insert(({id}, {:#x}), {modname}::dispatch);", text.size);
         let _ = writeln!(
             report,
             "{name}: id {id} {} functions {} unknown {unknown} calls not at a main.dol function {bad_calls} unmapped main.dol imports {unmapped}",
@@ -258,9 +262,11 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     register.push_str("}\n");
     lib.push_str(&register);
     std::fs::write(out.join("src/lib.rs"), lib).map_err(|e| e.to_string())?;
-    let deps: String = members.iter().map(|m| format!("{m} = {{ path = \"{m}\" }}\n")).collect();
+    let deps: String = members.iter().map(|m| format!("{m} = {{ path = \"{m}\", optional = true }}\n")).collect();
+    let feats: String = members.iter().map(|m| format!("{m} = [\"dep:{m}\"]\n")).collect();
     let list: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
     let toml = crate_toml("sa2-recomp-rels", &deps)
+        + &format!("\n[features]\nall = [{}]\n{feats}", list.join(", "))
         + &format!("\n[workspace]\nmembers = [{}]\n\n[profile.dev]\nopt-level = 1\n", list.join(", "));
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;
     // 24 of these crates compiling at once made rustc abort (0xc0000409) on a

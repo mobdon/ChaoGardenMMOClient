@@ -62,6 +62,10 @@ pub struct Runtime {
     pub rels: HashMap<(u32, u32), fn(u32, u32) -> Option<Func>>,
     /// Stop with a panic after this many calls (0 = no limit).
     pub budget: u64,
+    /// Loop back-edges taken, and what runs every `PREEMPT_EVERY` of them
+    /// (the host: an interrupt for a spin-wait, a yield for a thread).
+    pub ticks: u64,
+    pub preempt: Option<Func>,
 }
 
 /// Calls made so far and the most recent targets (ring, newest at
@@ -79,7 +83,7 @@ pub fn trace() -> Vec<u32> {
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new(), budget: 0 }
+        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new(), budget: 0, ticks: 0, preempt: None }
     }
 }
 
@@ -111,6 +115,19 @@ impl Runtime {
             info = m.r32(info + 4);
         }
         None
+    }
+}
+
+pub const PREEMPT_EVERY: u64 = 1 << 20;
+
+/// A loop back-edge in recompiled code.
+#[inline]
+pub fn backedge(c: &mut Cpu, m: &mut Mem) {
+    c.rt.ticks = c.rt.ticks.wrapping_add(1);
+    if c.rt.ticks % PREEMPT_EVERY == 0 {
+        if let Some(f) = c.rt.preempt {
+            f(c, m);
+        }
     }
 }
 

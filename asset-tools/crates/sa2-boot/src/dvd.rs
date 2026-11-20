@@ -37,7 +37,11 @@ pub fn set_files(files: Box<dyn GameFiles>) {
 
 fn entry(m: &Mem, path: u32) -> Option<i32> {
     let p = cstr(m, path);
-    DVD.with_borrow_mut(|d| d.as_mut()?.entry(&p))
+    let r = DVD.with_borrow_mut(|d| d.as_mut()?.entry(&p));
+    if std::env::var_os("SA2_TRACE_DVD").is_some() {
+        eprintln!("dvd: {p:?} -> {r:?}");
+    }
+    r
 }
 
 fn convert_path(c: &mut Cpu, m: &mut Mem) {
@@ -67,6 +71,9 @@ fn read_into(m: &mut Mem, fi: u32, addr: u32, len: u32, off: u32) -> Option<u32>
     let mut buf = vec![0u8; len as usize];
     let n = DVD.with_borrow(|d| d.as_ref()?.read(e, u64::from(off), &mut buf))?;
     m.load(addr, &buf[..n]);
+    if std::env::var_os("SA2_TRACE_DVD").is_some() {
+        eprintln!("dvd: read entry {e} off {off:#x} len {len:#x} -> {n:#x} bytes at {addr:#010x}");
+    }
     Some(n as u32)
 }
 
