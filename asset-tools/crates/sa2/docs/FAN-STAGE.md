@@ -28,7 +28,7 @@ All 49 dispatches mounted or reported their precise resource gaps. The result co
 
 **43 of 49** dispatches have a start row for the exact authored character. Big Foot (60), Hot Shot (61), Flying Dog (62), Biolizard (65) and both kart dispatches (70) have no matching general single-player start row. No character substitution or invented start position is used. Final Hazard (66) has an authored pose and a level section, but its configured BossLast2 object-list path lacks a matching mapping in ObjectLists.ini. No normal SET or static landtable is declared/available there.
 
-**44 of 49** dispatches mount verified static terrain from **40 distinct levels**. All 40 built a Rust collision world. Sonic vs Shadow 2 (42) has no static landtable in either story; Final Hazard and both kart courses also have none. Some boss tables contain only visual entries; the existence of a landtable does not imply a solid floor or a port of a boss routine. The original five Cannon's Core sections are not five independent Last Story dispatches: the story selects 36. In-level character handoffs are outside this loader.
+**46 of 49** dispatches mount verified static terrain from **41 distinct levels**. All 41 built a Rust collision world. Sonic vs Shadow 2 (42) has no static landtable in either story, and Final Hazard has none. The kart course installs an empty landtable; its terrain is the native piece collision described under Kart routes. Some boss tables contain only visual entries; the existence of a landtable does not imply a solid floor or a port of a boss routine. The original five Cannon's Core sections are not five independent Last Story dispatches: the story selects 36. In-level character handoffs are outside this loader.
 
 ## Kart routes
 
@@ -40,6 +40,14 @@ Both kart actions dispatch stage 70, but Hero selects MechTails and Dark selects
 | Route 280 | 369 | 08154159fc8b6a97bf113308b85e7f93959d818a938d07e55ee025e79a2e1aea | 29 |
 
 For an independent reference, split the two kartcourse sections of CART.ini with SA Tools 786 split.exe binary and the installed executable; hash the decimal lines of each exported course as bytes in order. The local test compares both complete byte sequences to these reference digests. The offline kart geometry query below assembles both tracks.
+
+### Course collision
+
+CartD's stage init passes an empty landtable (section 5 +0x1400, zero entries) to LandChangeLandTable. Course ground comes from tasks instead. Setup (+0x63bc) creates one task for every occurrence except model-less pieces 25 to 27 (+0x6494). Each task (+0x65f0) allocates 0x38 bytes and copies the piece's Basic collision object into them. It clears flag bits 0 and 1, writes the occurrence's native origin as the position and (0, yaw, 0) as the rotation, and keeps the attachment, scale and links. Every frame (+0x64b8) the task keeps the copy registered in the engine's dynamic land list (PC import 0x8002305c, GSNE8P 0x800232A4) with flags 0x20000001 while any of the six kart slots is near. Near means the occurrence is within 10 pieces behind to 4 ahead of the piece owning the kart's segment, among the first five, after count - 5, or in the last 30 in race modes 0 and 1. An empty slot ends the check and unregisters the copy. The register adds 0x10000000 when the attachment centre's squared length is at least 225.0 and a rotation word has bits in 0xFFF0.
+
+`kart-piece-collision EXE OUTPUT.json DATA_DLL COURSE CASES.json` lists every task's object copy and surface flags, and evaluates activation cases. The story mount uses those copies, in order, as a collision-only view (`kart_course::course_collision_stage`). Each entry's root is the native copy with its native flags; bounds stay zero because the dynamic list has none. The view holds every copy at once, while the engine registers each only near a kart. Route 101 has 321 entries and 13,643 triangles; Route 280 has 369 entries and 18,439 triangles.
+
+`tests/kart_piece_collision_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs +0x65f0 under Unicorn on the GameCube rows for all 1,006 tasked occurrences of the five courses, and +0x64b8 on 400 generated cases. It compares flags, position, rotation, scale and the register decision. `tests/kart_piece_flags_dol.py PRIVATE_DIR DATA_DLL` then calls main.dol's register for every copy and compares the stored flags.
 
 ### Course textures
 

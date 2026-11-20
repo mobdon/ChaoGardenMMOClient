@@ -1145,3 +1145,179 @@ mod native_layout {
         assert!(native_course_layout(&table, &[2]).is_err());
     }
 }
+
+/// Model-less pieces CartD gives no collision task (+0x6494 returns 1).
+pub const UNTASKED_PIECES: std::ops::Range<u8> = 25..28;
+
+/// The collision object a course piece's task builds (+0x65f0): a 0x38-byte
+/// copy of the piece's Basic collision object whose flags lose bits 0-1 and
+/// whose position and rotation become the occurrence's origin and (0, yaw, 0).
+/// Attachment, scale, child and sibling stay as copied.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PieceCollision {
+    pub occurrence: usize,
+    pub piece_id: u8,
+    /// File offset of the native Basic attachment in Data_DLL.
+    pub attachment: Option<usize>,
+    pub flags: u32,
+    pub position: [f32; 3],
+    pub rotation: [i32; 3],
+    pub scale: [f32; 3],
+    pub child: u32,
+    pub sibling: u32,
+    /// Flags passed with the object to the dynamic land list (PC import
+    /// 0x8002305c, GSNE8P 0x800232A4): 0x20000001, plus 0x10000000 when the
+    /// attachment centre lies at least 15 units from the object origin
+    /// (squared length >= 225.0, main.dol r2-0x7ac8) and a rotation word
+    /// has bits in 0xFFF0.
+    pub surface_flags: u32,
+}
+
+fn dynamic_land_flags(base: u32, center: [f32; 3], rotation: [i32; 3]) -> u32 {
+    // lfs y; fmuls y*y; fmadds x*x + that; fmadds z*z + that; fcmpo with 225.
+    let r = center[1] * center[1];
+    let r = (center[0] as f64 * center[0] as f64 + r as f64) as f32;
+    let r = (center[2] as f64 * center[2] as f64 + r as f64) as f32;
+    if r >= 225.0 && (rotation[0] | rotation[1] | rotation[2]) & 0xfff0 != 0 {
+        base | 0x1000_0000
+    } else {
+        base
+    }
+}
+
+/// Every tasked occurrence of a course (setup +0x63bc: all pieces except
+/// 25..=27) with the native collision object its task registers.
+pub fn piece_collision_tasks(exe: &[u8], dll: &[u8], name: &str) -> Result<Vec<PieceCollision>> {
+    let course = courses(exe)?
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| Error::invalid("unknown kart course"))?;
+    piece_collision_for_ids(dll, course.piece_ids)
+}
+
+/// `piece_collision_tasks` for an ordered piece list from the Steam Data_DLL.
+pub fn piece_collision_for_ids(dll: &[u8], ids: &[u8]) -> Result<Vec<PieceCollision>> {
+    if sha256(dll) != crate::board_motion::PC_DLL_SHA256 {
+        return Err(Error::invalid("unsupported kart DLL revision"));
+    }
+    let pe = read_pe(dll)?;
+    let table = read_course_table(dll)?;
+    let placements = native_course_layout(&table, ids)?;
+    let r = crate::model::Reader { data: dll };
+    let mut out = Vec::new();
+    for (occurrence, p) in placements.iter().enumerate() {
+        if UNTASKED_PIECES.contains(&p.piece_id) {
+            continue;
+        }
+        let root = table.pieces[usize::from(p.piece_id)]
+            .collision
+            .ok_or_else(|| Error::invalid("tasked kart piece without collision object"))?;
+        r.span(root, 0x38)?;
+        let attach_va = r.u32(root + 4)?;
+        let attachment = if attach_va == 0 {
+            None
+        } else {
+            Some(pe.va_to_offset(attach_va, 0x28)?)
+        };
+        let center = match attachment {
+            Some(a) => r.vec3(a + 0x18)?,
+            None => [0.0; 3],
+        };
+        let rotation = [0, p.yaw, 0];
+        out.push(PieceCollision {
+            occurrence,
+            piece_id: p.piece_id,
+            attachment,
+            flags: r.u32(root)? & !3,
+            position: p.position,
+            rotation,
+            scale: r.vec3(root + 0x20)?,
+            child: r.u32(root + 0x2c)?,
+            sibling: r.u32(root + 0x30)?,
+            surface_flags: dynamic_land_flags(0x2000_0001, center, rotation),
+        });
+    }
+    Ok(out)
+}
+
+/// One piece task's per-frame decision (+0x64b8..+0x65dc), given the
+/// race mode word (section 6 +0x1a0), the live course count and, for the six
+/// kart slots in order, the occurrence that owns each kart's current segment
+/// (None for an empty slot). True keeps the collision registered.
+pub fn piece_collision_active(
+    occurrence: u16,
+    count: i32,
+    race_mode: i32,
+    kart_owners: &[Option<i32>; 6],
+) -> bool {
+    let occ = i32::from(occurrence);
+    for owner in kart_owners {
+        let Some(owner) = *owner else {
+            return false;
+        };
+        if (0..2).contains(&race_mode) && occ >= count - 30 {
+            return true;
+        }
+        if occurrence < 5 || occ > count - 5 {
+            return true;
+        }
+        if owner - 10 <= occ && occ <= owner + 4 {
+            return true;
+        }
+    }
+    false
+}
+
+/// The posed collision objects of every tasked occurrence as one static
+/// collision view: each entry's root is the task's native object copy (its
+/// flags, attachment, position, rotation, scale and links as built at
+/// +0x65f0) and its surface flags are the dynamic land flags it registers
+/// with. Entries keep zero bounds; all are Basic collision.
+pub fn course_collision_stage(dll: &[u8], ids: &[u8]) -> Result<crate::stage::Stage> {
+    let pieces = piece_collision_for_ids(dll, ids)?;
+    let table = read_course_table(dll)?;
+    let pe = read_pe(dll)?;
+    let objects: Vec<_> = pieces
+        .iter()
+        .map(|p| crate::city_land::PosedObject {
+            root: table.pieces[usize::from(p.piece_id)].collision.unwrap(),
+            flags: p.flags,
+            position: p.position,
+            rotation: p.rotation,
+            surface_flags: p.surface_flags,
+        })
+        .collect();
+    crate::city_land::win32_posed_collision(dll, &pe, &objects)
+}
+
+#[cfg(test)]
+mod collision_stage {
+    use super::*;
+
+    /// Each landtable root is exactly the task's object copy, in order.
+    #[test]
+    #[ignore = "requires installed Steam SA2"]
+    fn roots_are_the_task_copies() {
+        let root = std::path::PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+        let exe = std::fs::read(root.join("sonic2app.exe")).unwrap();
+        let dll = std::fs::read(root.join("resource/gd_PC/DLL/Win32/Data_DLL.dll")).unwrap();
+        for course in courses(&exe).unwrap() {
+            let pieces = piece_collision_for_ids(&dll, course.piece_ids).unwrap();
+            let stage = course_collision_stage(&dll, course.piece_ids).unwrap();
+            assert_eq!(stage.entries.len(), pieces.len());
+            for (entry, piece) in stage.entries.iter().zip(&pieces) {
+                let node = &entry.nodes[0];
+                assert_eq!(entry.surface_flags, piece.surface_flags);
+                assert_eq!(node.flags, piece.flags);
+                assert_eq!(
+                    node.position.map(f32::to_bits),
+                    piece.position.map(f32::to_bits)
+                );
+                assert_eq!(node.rotation_bams, piece.rotation);
+                assert_eq!(node.scale.map(f32::to_bits), piece.scale.map(f32::to_bits));
+                assert_eq!(node.attach_offset as usize, piece.attachment.unwrap() + 16);
+            }
+        }
+    }
+}
