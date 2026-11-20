@@ -54,6 +54,7 @@ pub mod pose;
 pub mod ring_magnet;
 pub mod set;
 pub mod spring;
+pub mod solid_box;
 pub mod stage;
 pub mod stage_catalog;
 mod stage_container;

@@ -128,6 +128,8 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.cams.len(), 24);
         assert_eq!(s.emitters.len(), 10);
         assert_eq!(s.pipes.len(), 3);
+        assert_eq!(s.solid_boxes.len(), 6);
+        assert!(!s.unimplemented.contains_key("SOLIDBOX"));
         assert_eq!(s.unimplemented.get("CHAOPIPE collision (form 6)"), Some(&3));
         assert!(!s.unimplemented.contains_key("EFFOBJ0"));
         assert!(!s.unimplemented.contains_key("CAM"));
@@ -406,5 +408,34 @@ fn security_camera_tracks_the_player_and_breaks_when_its_lens_is_hit() {
         let head = s.cams[0].head;
         s.step(Some(sample(None)));
         assert_eq!(s.cams[0].head, head);
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn stacked_solid_box_drops_one_box_when_the_one_below_goes() {
+    with_session(|mut s| {
+        // Placements 427 and 428 are stacked 20 apart at (-310, y, -60).
+        let top = s
+            .solid_boxes
+            .iter()
+            .position(|b| b.index == 427)
+            .unwrap();
+        let below = s.solid_boxes.iter().find(|b| b.index == 428).unwrap().position;
+        assert_eq!(s.solid_box_solid(top).len(), 12);
+        let y0 = s.solid_boxes[top].position[1];
+        assert_eq!(s.collapse_stack(below), 1);
+        let mut landed = false;
+        for _ in 0..120 {
+            let events = s.step(None);
+            landed |= events
+                .iter()
+                .any(|e| matches!(e, Event::SolidBox { solid_box, .. } if *solid_box == top));
+        }
+        // No ground probe from the host: no dust, but the full 20 drop.
+        assert!(!landed);
+        // y and the fall step separately in single precision (a few ulps).
+        assert!((s.solid_boxes[top].position[1] - (y0 - 20.0)).abs() < 1e-4);
+        assert_eq!(s.solid_boxes[top].fall, 0.0);
     });
 }
