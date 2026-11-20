@@ -151,6 +151,28 @@ within (X - 1200, X + 1200] of player 1, then marked for respawn (status
 0x8000, bytes 0). The platform objects carry list flag 2 and never wrap; the
 rings and meteors do, so they keep reappearing ahead of the runners.
 
+## Setup and teardown
+
+`duel_stage_setup` ports the registered setup (+0x2CF0) and teardown
+(+0x2F88) with their module helpers. Setup asks the engine two mode queries,
+and when a rival occupies player slot 2 it hands that slot over (player byte
++2 = 3), creates the rival title task (+0x18AC) with a child gauge task
+(+0x20470, gauge 5.0, 0.8, 0.4) and loads the Sonic or Shadow title texture.
+It then loads both texture sets, the SET pair `set0042_s.bin`/`set0042_u.bin`
+with the stage object list, creates the background task (`BgExec`), builds
+the light tables from `stg42_light.bin` (the `stage_lighting` derive, then an
+optional `stg42_light_gc.bin` override), loads `stg42_fog.bin` or falls back
+to cleared fog with a 100000 far plane and creates `FogtaskManExec`, loads
+the `mh0042` and `mhsys` message banks for the current language letter
+(`jefsg`, then `j`, then none) and rebases their pointers, and finally sets
+the ambient colour, stage name, two engine callback slots, the 14-word
+callback table at 0x801E73D8, the `se_vs_shadow.mlt` sound bank, music
+`boss_05.ADX` and the draw range (-3, -20000). Teardown frees the message
+banks, clears the callback slots it owns, removes the fog manager and fog
+state, releases the texture sets and SET data, and sets the draw range
+(-3, -3000). The tasks created are recorded with their callbacks; their own
+update and display code is not part of this port.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -192,6 +214,7 @@ python asset-tools/crates/sa2/tests/duel_meteor_ppc.py asset-tools/crates/sa2/ta
 python asset-tools/crates/sa2/tests/duel_debris_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_dust_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_stage_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_stage_setup_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
@@ -233,4 +256,12 @@ and with odd arguments and failed allocations; all 398 calls match
 `duel-dust`. `duel_stage_ppc.py` runs the per-frame routine on 400 random
 frames; every fall-out call and all SET entry bytes, statuses and X bits
 match `duel-stage-frame`.
+
+`duel_stage_setup_ppc.py` runs setup and teardown with every engine import
+stubbed (string functions as C strings, loads and queries from the
+scenario) and a write hook on every location the module can change. Five
+scenarios (solo; rival Sonic with a light override and a language fallback;
+rival Shadow with failed allocations and existing state; full and empty
+teardown) match `duel-stage-setup` in every ordered engine call and every
+written location.
 Nothing launches the game.
