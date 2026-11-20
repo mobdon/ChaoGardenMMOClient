@@ -359,7 +359,7 @@ pub enum Event {
 
 /// What Omochao's code asks of the engine, the player code and the module
 /// code this port leaves out.
-pub trait OmochaoHost: MovableHost + TrailHost + EffectHost {
+pub trait OmochaoHost: MovableHost + TrailHost + EffectHost + PlaceHost {
     /// lbl_801CC168 +0x11 (a signed byte): the text language.
     fn language(&mut self) -> i8;
     /// lbl_801CC168 +0x42 (a signed byte).
@@ -391,11 +391,6 @@ pub trait OmochaoHost: MovableHost + TrailHost + EffectHost {
     /// The word at +0x94 of the 0x801E7728 entry n, None when the entry is
     /// NULL (n is 0 or 1).
     fn player_holds(&mut self, n: i32) -> Option<u32>;
-    /// _rename_GetPlayerCharacter(n) (0x80038108).
-    fn player_character(&mut self, n: i32) -> i32;
-    /// fn_80038008(n, node, &out, 0): a player bone's position, None when
-    /// it returns 0.
-    fn fn_80038008(&mut self, n: i32, node: i32) -> Option<V3>;
     /// CCL_IsHitPlayer(task) (0x800066F4): the player task touching, or 0.
     fn ccl_is_hit_player(&mut self, task: u32) -> u32;
     /// fn_800063F4(task).
@@ -551,7 +546,7 @@ pub fn limit_turn(twp: &mut Twp, saved: [i32; 3]) {
 /// offset (its y times 0.9; s4 +0x798, +0x79C) and `a` is bone 3 plus 21
 /// times `b` (+0x7A0). Otherwise `b` is zero and `a` the player's position
 /// (or zero without a player).
-pub fn place_init(n: i32, host: &mut impl OmochaoHost) -> (V3, V3) {
+pub fn place_init(n: i32, host: &mut impl PlaceHost) -> (V3, V3) {
     let bones = host
         .fn_80038008(n, 0x12)
         .and_then(|p| host.fn_80038008(n, 3).map(|q| (p, q)));
@@ -563,10 +558,54 @@ pub fn place_init(n: i32, host: &mut impl OmochaoHost) -> (V3, V3) {
         let a = add([b[0] * 21.0, b[1] * 21.0, b[2] * 21.0], p3);
         return (a, b);
     }
-    match host.player(n) {
-        Some(p) => (p.pos, [0.0; 3]),
+    match host.player_position(n) {
+        Some(p) => (p, [0.0; 3]),
         None => ([0.0; 3], [0.0; 3]),
     }
+}
+
+/// What Omochao's placement (0x14608, 0x148A4) asks of the player code;
+/// MSGER's set-up uses it too.
+pub trait PlaceHost {
+    /// fn_80038008(n, node, &out, 0): a player bone's position, None when
+    /// it returns 0.
+    fn fn_80038008(&mut self, n: i32, node: i32) -> Option<V3>;
+    /// `playertwp[n]` (0x801E7768) +0x14, None when NULL.
+    fn player_position(&mut self, n: i32) -> Option<V3>;
+    /// _rename_GetPlayerCharacter(n) (0x80038108).
+    fn player_character(&mut self, n: i32) -> i32;
+}
+
+/// The fields 0x148A4 writes: work +0 (`goal`), work +0x10 (`anchor`) and
+/// twp +6 (`wtimer`); it reads the player index at work +0x50.
+pub struct Placement<'a> {
+    pub goal: &'a mut V3,
+    pub anchor: &'a mut V3,
+    pub wtimer: &'a mut u16,
+    pub follow: i32,
+}
+
+/// 0x148A4 on the fields it touches (see [`place`]).
+pub fn place_at(
+    p: Placement,
+    a: V3,
+    stack: &mut MatrixStack,
+    rand: &mut MslRand,
+    host: &mut impl PlaceHost,
+) {
+    let c = host.player_character(p.follow);
+    let big = c == 7 || host.player_character(p.follow) == 6;
+    let (x0, y0) = if big { (25.0, 30.0) } else { (12.0, 13.0) };
+    let x = x0 + 5.0 * unit(rand);
+    let y = y0 + unit(rand);
+    stack.push();
+    *stack.current_mut() = IDENTITY;
+    translate(stack.current_mut(), a);
+    stack.rotate(Axis::Y, *p.wtimer as i32);
+    *p.goal = stack.calc_point([x, y, 0.0]);
+    stack.pop();
+    *p.wtimer = p.wtimer.wrapping_add(0x8800);
+    *p.anchor = a;
 }
 
 /// 0x148A4(task, a, b): the goal (work +0) becomes `a` plus an offset
@@ -580,19 +619,13 @@ pub fn place(
     rand: &mut MslRand,
     host: &mut impl OmochaoHost,
 ) {
-    let c = host.player_character(o.work.follow);
-    let big = c == 7 || host.player_character(o.work.follow) == 6;
-    let (x0, y0) = if big { (25.0, 30.0) } else { (12.0, 13.0) };
-    let x = x0 + 5.0 * unit(rand);
-    let y = y0 + unit(rand);
-    stack.push();
-    *stack.current_mut() = IDENTITY;
-    translate(stack.current_mut(), a);
-    stack.rotate(Axis::Y, o.twp.wtimer as i32);
-    o.work.goal = stack.calc_point([x, y, 0.0]);
-    stack.pop();
-    o.twp.wtimer = o.twp.wtimer.wrapping_add(0x8800);
-    o.work.anchor = a;
+    let p = Placement {
+        goal: &mut o.work.goal,
+        anchor: &mut o.work.anchor,
+        wtimer: &mut o.twp.wtimer,
+        follow: o.work.follow,
+    };
+    place_at(p, a, stack, rand, host);
 }
 
 /// 0x14AC8: steer the velocity toward the goal. While moving (x² + z² of
