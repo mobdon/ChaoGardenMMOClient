@@ -25,6 +25,7 @@ pub mod glb_cli;
 pub mod input;
 pub mod iron_gate_movers;
 mod key_pickup;
+pub mod land_select;
 pub mod manifest;
 pub mod model;
 pub mod msl_math;

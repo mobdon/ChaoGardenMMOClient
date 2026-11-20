@@ -14,11 +14,14 @@ WALKER-PORT-MAP.md on #424.
 | fn_8005071C: floor normal to tilt angles | `msl_math::normal_angles` | same |
 | fn_8003E668: world velocity into the player frame, `spd` and `dotp` | `walker_frame::player_speed_from_world` | tests/walker_frame.rs, 1,500 cases |
 | fn_80046950: speed clamp to `lim_h_spd` / `lim_v_spd` | `walker_frame::clamp_speed` | same, 600 cases |
+| fn_8002334C static pass: land-table entries near the players | `land_select::select_static` | tests/land_select.rs, 300 cases on the relocated GC stg11D.rel |
 | 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within +/-0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
 Set `SA2_MAIN_DOL` and `SA2_GSNE8P_DOL` to the extracted main.dol, and set
 `SA2_PPC_PYTHON` to a Python with Unicorn. Then run
-`cargo test --test msl_math --test walker_frame -- --ignored`.
+`cargo test --test msl_math --test walker_frame -- --ignored`. The land test
+also needs `SA2_STG11_REL` (the GameCube stg11D.rel); `tests/rel_load.py`
+loads and relocates it into the harness.
 
 ## Ownership
 
@@ -43,7 +46,7 @@ game lays it out. The port goes bottom-up from fn_800D1020 and fn_800CEE08.
 
 ## Land collision pipeline (found)
 
-1. The current LandTable is at r13-0x7A00. fn_8002334C (0x4BC) picks the
+1. The current LandTable is at r13-0x79F0. fn_8002334C (0x4BC) picks the
    entries near the player tasks (`playertwp`, 0x801E7768). It writes 12-byte
    records {flags, NJS_OBJECT*, ...} to r13-0x79F4, with the count at
    r13-0x79A4 (at most 0xC0).
