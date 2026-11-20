@@ -87,7 +87,6 @@ $('#watch-toggle').addEventListener('click', () => {
 function action(name) {
   if (!player) { toast('Enter the garden to start your adventure.'); return; }
   if (name.startsWith('train-') && nearNPC(INTERACTION_ANCHORS.trainer)) audio.speak('knuckles');
-  if (name === 'race' && nearNPC({ zone: 'hub', x: 12, z: 6, radius: 2 })) audio.speak('tails');
   if (name === 'shop') { openShop(); return; }
   send({ type: 'action', action: name });
 }
@@ -190,7 +189,6 @@ const zones = {
   hero: { title: 'HERO <em>GARDEN</em>', label: 'Hero Garden', description: 'A HIGHER CALLING.' },
   dark: { title: 'DARK <em>GARDEN</em>', label: 'Dark Garden', description: 'UNLEASH YOUR DARK SIDE.' },
   mission: { title: 'MISSION <em>01</em>', label: 'The Outpost · Mission 01', description: 'CLEAR THE ROBOTS. CLAIM YOUR RINGS.' },
-  race: { title: 'GARDEN <em>CIRCUIT</em>', label: 'Garden Circuit', description: 'FOUR CHECKPOINTS. ONE LITTLE LEGEND.' },
 };
 
 function goal(text, done) {
@@ -297,12 +295,8 @@ function render(next) {
   const goalKey = JSON.stringify(goalData);
   if (goals.dataset.key !== goalKey) { goals.replaceChildren(...goalData.map(([text, done]) => goal(text, done))); goals.dataset.key = goalKey; }
   const banner = $('#activity-banner');
-  banner.hidden = !['mission', 'race'].includes(player.zone);
+  banner.hidden = player.zone !== 'mission';
   if (player.zone === 'mission') banner.textContent = next.mission?.completed ? 'Outpost cleared · Rings awarded! Return home when ready.' : `THE OUTPOST · ${next.mission?.remaining ?? 5} robots remaining · F to fight`;
-  if (player.zone === 'race' && next.race) {
-    const elapsed = Math.max(0, (next.serverTime - next.race.startedAt) / 1000);
-    banner.textContent = `GARDEN CIRCUIT · ${elapsed.toFixed(1)}s · Checkpoint ${Math.min(4, next.race.nextCheckpoint)}/4`;
-  }
   if (shopDialog.open) renderShop();
 }
 

@@ -1,6 +1,6 @@
 // Account v2 transport adapter. Credentials stay in memory and request headers;
 // gameplay state, lease ownership, revisions and counters remain server-owned.
-const activities = new Set(['direct', 'tiny', 'watch', 'training', 'competition']);
+const activities = new Set(['direct', 'tiny', 'watch', 'training']);
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const id = value => typeof value === 'string' && value.length > 0 && value.length <= 128;
 const errors = {
@@ -51,7 +51,6 @@ export function tinyIntentActivity(message) {
   if (message?.type === 'tiny-input' || action.startsWith('tiny-')) return 'tiny';
   if (action.startsWith('watch-')) return 'watch';
   if (action.startsWith('training-')) return 'training';
-  if (action.includes('race') || action.includes('karate')) return 'competition';
   return 'direct';
 }
 
