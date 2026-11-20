@@ -9,7 +9,7 @@ use crate::{
     land_nodes::nj_scalor,
     land_select::inline_sqrt,
     msl_math::{atan2f, gekko_fres, gekko_frsqrte},
-    ninja_matrix::{Axis, MatrixStack, Vec3},
+    ninja_matrix::{rotate_by_angles, unrotate_by_angles, Axis, MatrixStack, Vec3},
     ninja_trig::{fmadds, fnmsubs, nj_cos},
     ninja_vector::{inner_product, outer_product, vector_angle},
 };
@@ -1111,4 +1111,292 @@ pub fn wall_slide_turn(
     }
     *aim = *task_ang_y;
     r
+}
+
+const SIDE_MIN: f32 = f32::from_bits(0x3e19_999a); // r2-0x750C, 0.15
+
+/// The query fields fn_800407A0 also reads: the averaged foot (+0x54).
+/// fn_800407A0: the grounded counterpart of `turn_to_slide` (characters 6
+/// and 7, the walkers, skip it). The slide direction is where the contact
+/// plane (through the averaged foot) meets the vertical plane through the
+/// query center across `dir`, pointed against `dir`; the along-plane motion
+/// takes that direction at the length of the slide (airborne) or of the
+/// motion (grounded), and so does the motion work's vector under
+/// `last_attr` 0x80000. The task then turns by the angle between the
+/// motion and the slide when the motion is longer than 0.2.
+pub fn turn_to_ground_slide(
+    task_ang_y: &mut i32,
+    w: &TurnWork,
+    last_attr: u32,
+    q: &mut SlideQuery,
+    foot: Vec3,
+    mw: &mut MotionWork,
+    dir: Vec3,
+) {
+    if matches!(w.character, 6 | 7) {
+        return;
+    }
+    if w.status & 3 == 0 && nj_scalor(w.spd) <= w.jog {
+        return;
+    }
+    let c = outer_product(dir, q.facing);
+    if outer_is_zero(c) {
+        return;
+    }
+    let c = if nj_scalor(c) <= SIDE_MIN {
+        q.up
+    } else {
+        unit_vector(c)
+    };
+    let mut line = Line {
+        point: [ZERO; 3],
+        dir: [ZERO; 3],
+    };
+    plane_intersection(
+        &Plane {
+            point: foot,
+            normal: q.facing,
+        },
+        &Plane {
+            point: q.center,
+            normal: c,
+        },
+        Some(&mut line),
+    );
+    let u = if nj_scalor(dir) == ZERO {
+        dir
+    } else {
+        unit_vector(dir)
+    };
+    if inner_product(line.dir, u) > ZERO {
+        line.dir = line.dir.map(|x| -x);
+    }
+    let len = if w.status & 3 == 0 {
+        nj_scalor(q.along)
+    } else {
+        nj_scalor(q.motion)
+    };
+    q.along = line.dir.map(|x| len * x);
+    if last_attr & 0x8_0000 != 0 {
+        let s = nj_scalor(mw.spd);
+        mw.spd = line.dir.map(|x| s * x);
+    }
+    if nj_scalor(q.motion) > LIFT_RISING {
+        let a = unit_vector(q.motion);
+        let b = unit_vector(q.along);
+        *task_ang_y = task_ang_y.wrapping_sub(vector_angle(a, b, Some(q.up)));
+    }
+    if diff_angle(mw.ang_aim, *task_ang_y) > 0x6000 {
+        *task_ang_y = task_ang_y.wrapping_add(0x8000);
+    }
+    mw.ang_aim = *task_ang_y;
+}
+
+const NEG_ONE: f32 = -1.0; // r2-0x75B0
+const FAST_PUSH: f32 = 15.0; // r2-0x74E0
+const NEVER_DOT: f32 = 4.0; // r2-0x74DC
+const ALONG_CAP: f32 = 3.0; // r2-0x75F4
+/// Task mode that settles to the second offset and stops on contact.
+pub const MODE_STOP: u8 = 0x38;
+
+/// The task fields fn_80042E0C reads and writes.
+#[derive(Debug, Clone, Copy)]
+pub struct SettleTask {
+    /// Byte +0.
+    pub mode: u8,
+    /// Halfword +4.
+    pub flag: i16,
+    /// +8, +0xC, +0x10.
+    pub angles: [i32; 3],
+    /// +0x14.
+    pub pos: Vec3,
+}
+
+/// The player-work fields fn_80042E0C reads and writes besides `TurnWork`.
+#[derive(Debug, Clone, Copy)]
+pub struct SettleWork {
+    /// `spd` (+0x64): also cleared on fast contacts.
+    pub spd: Vec3,
+    /// +0xF0.
+    pub f_f0: f32,
+    /// `weight` (+0x138).
+    pub weight: f32,
+    /// `last_attr` (+0x8C).
+    pub last_attr: u32,
+    /// Word +0xC0 and halfword +0x12.
+    pub w_c0: i32,
+    pub h_12: i16,
+    /// The wall normal (+0x70).
+    pub wall: Vec3,
+}
+
+/// The rest of what fn_80042E0C reads.
+#[derive(Debug, Clone, Copy)]
+pub struct SettleInput {
+    /// The contact point the grounded branch aims from.
+    pub point: Vec3,
+    /// Offsets from the head point to the task position (the second for
+    /// `MODE_STOP`).
+    pub offset: Vec3,
+    pub offset_stop: Vec3,
+    pub flags: u32,
+    /// r13-0x78F4 and r13-0x7900.
+    pub stuck: bool,
+    pub backward_probe: bool,
+    pub stage: i32,
+    /// Averaged foot point (query +0x54).
+    pub foot: Vec3,
+}
+
+/// fn_80042E0C: the grounded-mode counterpart of `settle_contact` with the
+/// walker rules (fast pushes, stop mode 0x38, the up-facing flattening, the
+/// character 4/5 shallow case). Returns the result code.
+#[allow(clippy::too_many_arguments)]
+pub fn settle_ground_contact(
+    stack: &mut MatrixStack,
+    t: &mut SettleTask,
+    vel: &mut Vec3,
+    w: &TurnWork,
+    sw: &mut SettleWork,
+    q: &mut SlideQuery,
+    mw: &mut MotionWork,
+    i: &SettleInput,
+    mut ret: i32,
+) -> i32 {
+    sw.wall = q.facing;
+    // fn_800407A0 reads the player's `spd` from the same work.
+    let tw = TurnWork { spd: sw.spd, ..*w };
+    let (last_attr, foot) = (sw.last_attr, i.foot);
+    let turn =
+        |t: &mut SettleTask, q: &mut SlideQuery, mw: &mut MotionWork, tw: &TurnWork, d: Vec3| {
+            turn_to_ground_slide(&mut t.angles[1], tw, last_attr, q, foot, mw, d);
+        };
+    let fast_stop = |q: &mut SlideQuery, sw: &mut SettleWork| {
+        q.along = [ZERO; 3];
+        sw.spd = [ZERO; 3];
+    };
+    'end: {
+        if t.flag & 1 != 0 {
+            let d = sub3(i.point, t.pos);
+            if nj_scalor(d) == ZERO {
+                break 'end;
+            }
+            let d = unit_vector(d);
+            let ang = vector_angle(d, q.facing, None);
+            if i.flags & 0x1000 != 0 {
+                if ang > 0x4000 {
+                    return ret;
+                }
+                ret = 1;
+                turn(t, q, mw, &tw, d);
+                break 'end;
+            }
+            if sw.spd[0] >= FAST_PUSH {
+                if i.flags & 0x0040_0000 != 0 {
+                    ret = 2;
+                }
+                fast_stop(q, sw);
+                break 'end;
+            }
+            if ang <= 0x1000 {
+                if sw.spd[0] >= sw.f_f0 && i.flags & 0x0040_0000 != 0 {
+                    ret = 2;
+                    break 'end;
+                }
+                ret = 1;
+                turn(t, q, mw, &tw, d);
+                break 'end;
+            }
+            if ang > 0x4000 {
+                break 'end;
+            }
+            ret = 1;
+            turn(t, q, mw, &tw, d);
+            break 'end;
+        }
+        if t.mode == MODE_STOP {
+            ret = 1;
+            fast_stop(q, sw);
+            break 'end;
+        }
+        let d = if i.backward_probe {
+            rotate_by_angles(stack, t.angles, [NEG_ONE, ZERO, ZERO])
+        } else {
+            vel.map(|c| -c)
+        };
+        if nj_scalor(d) == ZERO {
+            break 'end;
+        }
+        let d = unit_vector(d);
+        let ang = vector_angle(d, q.facing, None);
+        let dot = inner_product(d, q.facing);
+        if i.flags & 0x1000 != 0 {
+            if ang > 0x4000 {
+                return ret;
+            }
+            if i.stage == 0x2b {
+                q.along[0] = ZERO;
+                q.along[2] = ZERO;
+                q.motion = q.along;
+                q.center = q.head;
+                t.pos = sub3(q.head, i.offset_stop);
+                return 1;
+            }
+            ret = 1;
+            turn(t, q, mw, &tw, d);
+            break 'end;
+        }
+        if sw.spd[0] >= FAST_PUSH && dot >= NEVER_DOT {
+            ret = 2;
+            fast_stop(q, sw);
+            break 'end;
+        }
+        if sw.spd[1] > ZERO && inner_product(q.up, q.facing) < nj_cos(0x7000) {
+            ret = 1;
+            let flatten = |stack: &mut MatrixStack, v: Vec3| {
+                let mut l = unrotate_by_angles(stack, t.angles, v);
+                l[1] = ZERO;
+                rotate_by_angles(stack, t.angles, l)
+            };
+            q.along = flatten(stack, q.along);
+            *vel = flatten(stack, *vel);
+            sw.h_12 = sw.w_c0 as i16;
+            break 'end;
+        }
+        if dot >= NEVER_DOT {
+            ret = if sw.spd[0] >= sw.f_f0 { 2 } else { 1 };
+            break 'end;
+        }
+        if matches!(w.character, 4 | 5) && ang <= 0x3400 && i.flags & 0x1080 == 0 {
+            ret = 1;
+            break 'end;
+        }
+        if ang >= 0x4000 {
+            if sw.spd[1] < -sw.weight {
+                break 'end;
+            }
+            return ret;
+        }
+        if w.status & 3 == 0 {
+            break 'end;
+        }
+        if i.stuck {
+            q.along = [ZERO; 3];
+        }
+        turn(t, q, mw, &tw, d);
+    }
+    q.center = q.head;
+    t.pos = sub3(
+        q.head,
+        if t.mode == MODE_STOP {
+            i.offset_stop
+        } else {
+            i.offset
+        },
+    );
+    if matches!(t.mode as i8, 0xd | 0xa) && nj_scalor(q.along) > ALONG_CAP {
+        q.along = unit_vector(q.along).map(|c| c * ALONG_CAP);
+    }
+    q.motion = q.along;
+    ret
 }

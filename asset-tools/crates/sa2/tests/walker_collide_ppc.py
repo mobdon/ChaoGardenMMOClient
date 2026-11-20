@@ -387,7 +387,74 @@ for _ in range(4000):
                   "ret": m.gpr(3), "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)],
                   "vel_after": [W(MW + 4 * j) for j in range(3)], "wall_after": [W(PW + 0x70 + 4 * j) for j in range(3)],
                   "aim_after": m.get(MW + 0x1C, "i"), "ang_y_after": m.get(TASK + 0xC, "i")})
-print(json.dumps({"lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
+# fn_80042E0C (with fn_800407A0): grounded-mode contact settle.
+OFF2 = 0x81109300
+gsettle = []
+for _ in range(5000):
+    pnum = rng.choice([0, 1])
+    m.put(PW, "b", pnum)
+    m.put(0x801E7748 + 4 * pnum, "I", MW)
+    mode = rng.choice([0, 0x38, 0xd, 0xa, 0x10, 1])
+    tflag = rng.choice([0, 1, 2, 3])
+    ang = [rng.randrange(-0x8000, 0x8000) if rng.random() < 0.5 else 0 for _ in range(3)]
+    pos = [rf(50) for _ in range(3)]
+    facing = unit()
+    vel = [rf(6) for _ in range(3)]
+    if rng.random() < 0.3:
+        vel = [f32(-x * rng.uniform(0.5, 3)) for x in facing]
+    q = {"center": [rf(50) for _ in range(3)], "motion": [rf(6) for _ in range(3)],
+         "up": unit() if rng.random() < 0.4 else [0.0, 1.0, 0.0], "head": [rf(50) for _ in range(3)],
+         "along": [rf(6) for _ in range(3)] if rng.random() < 0.9 else [0.0, 0.0, 0.0], "foot": [rf(50) for _ in range(3)]}
+    point = [f32(pos[j] - facing[j] * rng.uniform(-5, 5)) for j in range(3)] if rng.random() < 0.9 else pos
+    off, off2 = [rf(10) for _ in range(3)], [rf(10) for _ in range(3)]
+    status = rng.choice([0, 1, 2, 3])
+    spd = [f32(rng.choice([rng.uniform(-2, 20), 16.0])), rf(3), rf(3)]
+    ch = rng.choice([0, 1, 2, 4, 5, 6, 7])
+    sw = {"f0": f32(rng.uniform(3, 12)), "weight": f32(rng.uniform(0, 1)), "jog": f32(rng.uniform(0, 3)),
+          "f134": f32(rng.uniform(0, 20))}
+    last = rng.choice([0, 0x80000, 0x100])
+    wc0 = rng.randrange(1 << 32)
+    mws = [rf(6) for _ in range(3)]
+    aim = rng.randrange(-0x20000, 0x20000)
+    ret_in = rng.choice([0, 5])
+    flags = rng.choice([0, 0x1000, 0x00400000, 0x1080, 0x80])
+    stuck, probe = rng.choice([0, 1]), rng.choice([0, 0, 1])
+    stage[0] = rng.choice([0x2b, 11, 0x2b])
+    m.put(TASK, "B", mode)
+    m.put(TASK + 4, "H", tflag)
+    m.u.mem_write(TASK + 8, struct.pack(">3i", *ang))
+    put3(TASK + 0x14, pos)
+    put3(VEL, vel)
+    put3(Q + 4, q["center"]); put3(Q + 0x10, q["motion"]); put3(Q + 0x1C, q["up"]); put3(Q + 0x48, facing)
+    put3(Q + 0x54, q["foot"]); put3(Q + 0x60, q["head"]); put3(Q + 0x6C, q["along"])
+    put3(POINT, point); put3(OFFSET, off); put3(OFF2, off2)
+    m.put(PW + 1, "b", ch); m.put(PW + 0x1C, "H", status); put3(PW + 0x64, spd)
+    m.put(PW + 0xF0, "f", sw["f0"]); m.put(PW + 0x138, "f", sw["weight"]); m.put(PW + 0xE4, "f", sw["jog"])
+    m.put(PW + 0x134, "f", sw["f134"]); m.put(PW + 0x8C, "I", last); m.put(PW + 0xC0, "I", wc0)
+    m.put(PW + 0x12, "H", 0x1234)
+    put3(PW + 0x70, [1.5, 2.5, 3.5])
+    put3(MW, mws)
+    m.put(MW + 0x1C, "i", aim)
+    m.put(R13 - 0x78F4, "I", stuck)
+    m.put(R13 - 0x7900, "I", probe)
+    m.put(dol_ppc.STACK_TOP - 0x100 + 8, "I", flags)
+    m.call(0x80042E0C, r3=TASK, r4=VEL, r5=PW, r6=Q, r7=POINT, r8=OFFSET, r9=OFF2, r10=ret_in)
+    rec = {"mode": mode, "tflag": tflag, "ang": ang, "pos": [fb(x) for x in pos], "facing": [fb(x) for x in facing],
+           "vel": [fb(x) for x in vel], "point": [fb(x) for x in point], "off": [fb(x) for x in off],
+           "off2": [fb(x) for x in off2], "status": status, "spd": [fb(x) for x in spd], "ch": ch,
+           "last": last, "wc0": wc0, "mw": [fb(x) for x in mws], "aim": aim, "ret_in": ret_in, "flags": flags,
+           "stuck": stuck, "probe": probe, "stage": stage[0]}
+    rec.update({k: [fb(x) for x in v] for k, v in q.items()})
+    rec.update({k: fb(v) for k, v in sw.items()})
+    rec.update({"ret": m.gpr(3), "pos_after": [W(TASK + 0x14 + 4 * j) for j in range(3)],
+                "ang_after": [m.get(TASK + 8 + 4 * j, "i") for j in range(3)],
+                "vel_after": [W(VEL + 4 * j) for j in range(3)], "spd_after": [W(PW + 0x64 + 4 * j) for j in range(3)],
+                "wall_after": [W(PW + 0x70 + 4 * j) for j in range(3)], "h12_after": m.get(PW + 0x12, "h"),
+                "center_after": [W(Q + 4 + 4 * j) for j in range(3)], "motion_after": [W(Q + 0x10 + 4 * j) for j in range(3)],
+                "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)], "mw_after": [W(MW + 4 * j) for j in range(3)],
+                "aim_after": m.get(MW + 0x1C, "i")})
+    gsettle.append(rec)
+print(json.dumps({"gsettle": gsettle, "lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
                   "wturn": wturn,
                   "push": push,
                   "settle": settle,
