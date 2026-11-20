@@ -82,8 +82,8 @@ use crate::enemy_lib::{
     e_ai::translate,
     engine::{distance, scalor, sqrtf_rel},
 };
-use crate::ninja_matrix::{mult_vec, rotate, Axis, Mtx, IDENTITY};
-use crate::ninja_trig::fmadds;
+use crate::land_contact::invert;
+use crate::ninja_matrix::{mult_vec, rotate, Axis, IDENTITY};
 
 /// The routines this file ports (stg42D.rel section 1).
 pub const ROUTINES: &[super::Routine] = &[
@@ -337,42 +337,6 @@ pub fn light_sw_exec(task: &mut LightSwTask, lights: &mut PlayerLights, host: &m
         }
         _ => {}
     }
-}
-
-fn fmsubs(a: f32, c: f32, b: f32) -> f32 {
-    fmadds(a, c, -b)
-}
-
-fn fnmadds(a: f32, c: f32, b: f32) -> f32 {
-    -fmadds(a, c, b)
-}
-
-/// PSMTXInverse (0x800ED484) in place, as njInvertMatrix(0) (0x80114FF8)
-/// calls it. The same paired-single port as `land_contact`'s (private
-/// there): a zero determinant leaves the matrix alone; the reciprocal is
-/// Gekko's `fres` estimate and one Newton step.
-fn invert(m: &mut Mtx) {
-    let [[m00, m01, m02, m03], [m10, m11, m12, m13], [m20, m21, m22, m23]] = *m;
-    let a0 = fmsubs(m11, m22, m21 * m12);
-    let a1 = fmsubs(m12, m20, m22 * m10);
-    let b0 = fmsubs(m21, m02, m01 * m22);
-    let b1 = fmsubs(m22, m00, m02 * m20);
-    let c0 = fmsubs(m01, m12, m11 * m02);
-    let c1 = fmsubs(m02, m10, m12 * m00);
-    let d0 = fmsubs(m10, m21, m11 * m20);
-    let e0 = fmsubs(m01, m20, m00 * m21);
-    let f0 = fmsubs(m00, m11, m01 * m10);
-    let det = fmadds(m20, c0, fmadds(m10, b0, m00 * a0));
-    if det == 0.0 {
-        return;
-    }
-    let r = crate::msl_math::gekko_fres(det as f64) as f32;
-    let inv = -fmsubs(det, r * r, r + r);
-    let row = |a: f32, b: f32, c: f32| {
-        let (a, b, c) = (a * inv, b * inv, c * inv);
-        [a, b, c, fnmadds(c, m23, fmadds(b, m13, a * m03))]
-    };
-    *m = [row(a0, b0, c0), row(a1, b1, c1), row(d0, e0, f0)];
 }
 
 /// The centre in the switch's frame: njUnitMatrix, njTranslateEx(Position),

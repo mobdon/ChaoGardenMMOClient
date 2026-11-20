@@ -44,9 +44,10 @@ use super::hintbox::{
     SE_HINT, SPIN,
 };
 use super::host::V3;
-use crate::msl_math::gekko_fres;
-use crate::ninja_matrix::{mult_vec, rotate, Axis, Mtx, IDENTITY};
-use crate::ninja_trig::{fmadds, fnmadds, nj_sin};
+use crate::land_contact::invert;
+use crate::land_nodes::translate;
+use crate::ninja_matrix::{mult_vec, rotate, Axis, IDENTITY};
+use crate::ninja_trig::nj_sin;
 use crate::player_range::{distance, vector_length};
 
 /// The routines this file ports (stg42D.rel section 1).
@@ -234,45 +235,6 @@ pub trait SearchHost: BoxHost {
     fn pad(&mut self, port: usize) -> Pad;
     /// fn_800399BC(player, x, y, z): move a player.
     fn set_player_pos(&mut self, i: u32, p: V3);
-}
-
-fn fmsubs(a: f32, c: f32, b: f32) -> f32 {
-    fmadds(a, c, -b)
-}
-
-/// njTranslateEx (0x8011616C): m = m * T(v).
-fn translate(m: &mut Mtx, v: V3) {
-    for row in m.iter_mut() {
-        let a = fmadds(row[2], v[2], row[0] * v[0]);
-        let b = fmadds(row[3], 1.0, row[1] * v[1]);
-        row[3] = a + b;
-    }
-}
-
-/// PSMTXInverse (0x800ED484) in place, as njInvertMatrix(NULL) calls it;
-/// a zero determinant leaves the matrix alone.
-fn invert(m: &mut Mtx) {
-    let [[m00, m01, m02, m03], [m10, m11, m12, m13], [m20, m21, m22, m23]] = *m;
-    let a0 = fmsubs(m11, m22, m21 * m12);
-    let a1 = fmsubs(m12, m20, m22 * m10);
-    let b0 = fmsubs(m21, m02, m01 * m22);
-    let b1 = fmsubs(m22, m00, m02 * m20);
-    let c0 = fmsubs(m01, m12, m11 * m02);
-    let c1 = fmsubs(m02, m10, m12 * m00);
-    let d0 = fmsubs(m10, m21, m11 * m20);
-    let e0 = fmsubs(m01, m20, m00 * m21);
-    let f0 = fmsubs(m00, m11, m01 * m10);
-    let det = fmadds(m20, c0, fmadds(m10, b0, m00 * a0));
-    if det == 0.0 {
-        return;
-    }
-    let r = gekko_fres(f64::from(det)) as f32;
-    let inv = -fmsubs(det, r * r, r + r);
-    let row = |a: f32, b: f32, c: f32| {
-        let (a, b, c) = (a * inv, b * inv, c * inv);
-        [a, b, c, fnmadds(c, m23, fmadds(b, m13, a * m03))]
-    };
-    *m = [row(a0, b0, c0), row(a1, b1, c1), row(d0, e0, f0)];
 }
 
 /// The box's X in the player's frame (mode 1's facing test).
