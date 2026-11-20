@@ -13,10 +13,11 @@ const care = () => ({
   garden: {
     plots: [
       { id: 'garden-1', zone: 'garden', x: 10, z: 2, tree: null },
-      { id: 'garden-2', zone: 'garden', x: 13, z: 2, tree: { family: 'hero', stage: 'mature', fruitId: 'sa2-fruit:5', fruitReady: 2 } },
-      { id: 'garden-3', zone: 'garden', x: 10, z: -2, tree: { family: 'round', stage: 'young', fruitReady: 0, waterReadyAt: 5000 } },
+      { id: 'garden-2', zone: 'garden', x: 13, z: 2, tree: { family: 'hero', stage: 'mature', phase: 'adult', fruitId: 'sa2-fruit:5', fruitReady: 2 } },
+      { id: 'garden-3', zone: 'garden', x: 10, z: -2, tree: { family: 'round', stage: 'young', phase: 'young', fruitReady: 0 } },
+      { id: 'garden-4', zone: 'garden', x: 10, z: -6, tree: { family: 'round', stage: 'seed', phase: 'sprouting', fruitReady: 0 } },
     ],
-    groves: [{ id: 'garden-grove', zone: 'garden', x: -7, z: -5, fruitId: 'sa2-fruit:0', fruitReady: 3 }],
+    groves: [{ id: 'garden-grove-1', zone: 'garden', x: -7, z: -5, fruitId: 'sa2-fruit:0', tree: { kind: 8, stage: 'mature', phase: 'adult', fruitId: 'sa2-fruit:0', fruitReady: 3 } }],
   },
 });
 
@@ -35,10 +36,11 @@ test('item kinds and labels come from exact IDs and the server catalog', () => {
 test('nearby places offer only the actions the server could accept', () => {
   const at = (x, z) => gardenCareView(care(), { zone: 'garden', x, z, rings: 20 }, { connected: true, serverTime: 1000 });
   assert.deepEqual(at(10, 2).places[0].actions, [{ kind: 'plant', itemId: 'seed:hero', label: 'Plant Hero Seed' }]);
-  assert.deepEqual(at(13, 2).places[0].actions.map(a => a.kind), ['harvest']);
-  assert.deepEqual(at(10, -2).places[0].actions, [], 'water is on cooldown until 5000');
-  assert.deepEqual(gardenCareView(care(), { zone: 'garden', x: 10, z: -2 }, { connected: true, serverTime: 6000 }).places[0].actions.map(a => a.kind), ['water']);
-  assert.equal(at(-7, -5).places[0].actions[0].label, 'Pick Chao Garden Fruit (3)');
+  assert.deepEqual(at(13, 2).places[0].actions.map(a => a.kind), ['harvest', 'water'], 'adults can be shaken and watered');
+  assert.deepEqual(at(10, -2).places[0].actions.map(a => a.kind), ['water']);
+  assert.deepEqual(at(10, -6).places[0].actions, [], 'a sprouting seed cannot be watered');
+  assert.deepEqual(at(-7, -5).places[0].actions.map(a => a.kind), ['harvest', 'water'], 'permanent garden trees');
+  assert.equal(at(-7, -5).places[0].actions[0].label, 'Shake for Chao Garden Fruit (3 ripe)');
   assert.equal(at(0, 0).places.length, 0);
   assert.equal(gardenCareView(care(), { zone: 'hero', x: 10, z: 2 }, { connected: true }).places.length, 0);
   assert.deepEqual(gardenCareView(care(), { zone: 'garden', x: 13, z: 2 }, { connected: false }).places[0].actions, []);
@@ -59,7 +61,7 @@ test('inventory, parts and seed offers are validated and seeds are never eaten',
 
 test('intents carry only IDs and results must match the pending request', () => {
   assert.deepEqual(careIntent({ id: 'garden-1' }, { kind: 'plant', itemId: 'seed:hero' }), { kind: 'plant', itemId: 'seed:hero', plotId: 'garden-1' });
-  assert.deepEqual(careIntent({ id: 'garden-grove' }, { kind: 'harvest' }), { kind: 'harvest', plotId: 'garden-grove' });
+  assert.deepEqual(careIntent({ id: 'garden-grove-1' }, { kind: 'harvest' }), { kind: 'harvest', plotId: 'garden-grove-1' });
   const request = { requestId: 'r1' };
   assert.equal(matchingResult(request, { type: 'event', kind: 'care-result', rulesVersion: 'adapted-care-v1', requestId: 'r2', accepted: true, revision: 1 }), null);
   assert.deepEqual(matchingResult(request, { type: 'event', kind: 'care-result', rulesVersion: 'adapted-care-v1', requestId: 'r1', accepted: false, revision: 1, code: 'no-fruit' }),
@@ -90,7 +92,7 @@ test('panel submits one request, retries it unchanged after reconnect and report
   const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-1' });
   const player = { zone: 'garden', x: 13, z: 2 };
   panel.update(care(), player, { connected: true, serverTime: 1 });
-  const pick = root.all().find(n => n.tagName === 'button' && n.textContent.startsWith('Pick'));
+  const pick = root.all().find(n => n.tagName === 'button' && n.textContent.startsWith('Shake'));
   pick.listeners.click();
   assert.deepEqual(sent, [{ type: 'care', requestId: 'req-1', expectedRevision: 7, intent: { kind: 'harvest', plotId: 'garden-2' } }]);
   pick.listeners.click();
@@ -99,7 +101,7 @@ test('panel submits one request, retries it unchanged after reconnect and report
   panel.update(care(), player, { connected: true });
   assert.deepEqual(sent[1], sent[0]);
   assert.equal(panel.handleEvent({ type: 'event', kind: 'care-result', rulesVersion: 'adapted-care-v1', requestId: 'req-1', accepted: false, revision: 7, code: 'no-fruit' }), true);
-  assert.ok(root.all().some(n => n.textContent === 'No fruit is ready yet.'));
+  assert.ok(root.all().some(n => n.textContent === 'No fruit is ripe yet.'));
 });
 
 test('animal parts map to the traced native Chao nodes and exact model names', async () => {

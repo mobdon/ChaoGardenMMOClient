@@ -46,7 +46,9 @@ export function gardenPlaces(care, player) {
   }
   for (const grove of garden.groves) {
     if (typeof grove?.id !== 'string' || !finite(grove.x, grove.z)) continue;
-    places.push({ kind: 'grove', id: grove.id, zone: grove.zone, x: grove.x, z: grove.z, tree: { stage: 'mature', fruitId: grove.fruitId, fruitReady: grove.fruitReady } });
+    // Permanent native garden trees; the server seeds them on first connect.
+    const tree = grove.tree && typeof grove.tree === 'object' ? grove.tree : { stage: 'mature', fruitReady: 0 };
+    places.push({ kind: 'grove', id: grove.id, zone: grove.zone, x: grove.x, z: grove.z, tree: { ...tree, fruitId: tree.fruitId || grove.fruitId } });
   }
   return places.map(place => ({ ...place,
     distance: player && player.zone === place.zone && finite(player.x, player.z) ? Math.hypot(player.x - place.x, player.z - place.z) : Infinity }));
@@ -73,11 +75,13 @@ export function gardenCareView(care, player, { connected = false, serverTime } =
     .map(place => {
       const stage = place.tree?.stage || 'empty';
       const fruit = Number.isInteger(place.tree?.fruitReady) ? place.tree.fruitReady : 0;
-      const waterReady = place.tree?.waterReadyAt == null || (Number.isFinite(serverTime) && serverTime >= place.tree.waterReadyAt);
+      // Native rules (server CARE.md): a ripe fruit drops after several shakes;
+      // watering fills a seed, a young tree or an adult (which also ripens fruit).
+      const phase = typeof place.tree?.phase === 'string' ? place.tree.phase : stage === 'mature' ? 'adult' : stage;
       const actions = [];
-      if (fruit > 0) actions.push({ kind: 'harvest', label: `Pick ${careItemLabel(place.tree.fruitId, care.catalog)} (${fruit})` });
-      if (place.kind === 'plot' && ['seed', 'young'].includes(stage) && waterReady) actions.push({ kind: 'water', label: 'Water' });
-      if (place.kind === 'plot' && ['empty', 'dead'].includes(stage)) {
+      if (fruit > 0) actions.push({ kind: 'harvest', label: `Shake for ${careItemLabel(place.tree.fruitId, care.catalog)} (${fruit} ripe)` });
+      if (place.tree && ['seed', 'young', 'adult'].includes(phase)) actions.push({ kind: 'water', label: 'Water' });
+      if (place.kind === 'plot' && !place.tree) {
         for (const seed of seeds) actions.push({ kind: 'plant', itemId: seed.id, label: `Plant ${seed.label}` });
       }
       return { ...place, stage, fruit, actions: mayCare ? actions : [] };
@@ -106,8 +110,8 @@ export function matchingResult(request, event) {
 }
 
 const reasons = {
-  'out-of-range': 'Walk closer first.', 'no-fruit': 'No fruit is ready yet.', 'plot-occupied': 'Something already grows there.',
-  'not-growing': 'Only seeds and young trees need water.', cooldown: 'Give your Chao a moment.', 'item-not-owned': 'You no longer have that item.',
+  'out-of-range': 'Walk closer first.', 'no-fruit': 'No fruit is ripe yet.', 'plot-occupied': 'Something already grows there.',
+  'not-growing': 'This tree cannot be watered right now.', cooldown: 'Give your Chao a moment.', 'item-not-owned': 'You no longer have that item.',
   'inventory-full': 'You are carrying the most you can of that.', 'native-data-unavailable': 'Native item data is not loaded on this server.',
   'activity-conflict': 'Finish the current activity first.', 'insufficient-rings': 'You need more rings.', 'stale-revision': 'Your garden changed. Try again.',
 };
@@ -164,7 +168,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       root.append(shop);
     }
     root.append(el('h3', 'Carried'));
-    if (!view.items.length) root.append(el('p', 'Nothing carried. Pick fruit, buy seeds at the shop, or find animals in missions.', 'garden-care-note'));
+    if (!view.items.length) root.append(el('p', 'Nothing carried. Shake trees for fruit or find animals in missions.', 'garden-care-note'));
     const list = el('ul', undefined, 'garden-care-items');
     for (const item of view.items) {
       const row = el('li');
@@ -182,7 +186,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       root.append(el('h3', 'Animal parts'));
       root.append(el('p', view.parts.map(part => `${title(part.category)}: ${part.label}`).join(' · '), 'garden-care-note'));
     }
-    root.append(el('p', 'Tree timers, prices and part rules are this game\'s own tuning; fruit and animal effects use the original item tables.', 'garden-care-note'));
+    root.append(el('p', 'Trees, fruit and animal parts follow the original game\'s rules. Seeds are not sold until their original prices are traced.', 'garden-care-note'));
     if (pending || feedback) {
       const note = el('p', pending ? 'Saving…' : feedback, 'garden-care-note');
       note.setAttribute('role', 'status'); root.append(note);
@@ -201,7 +205,9 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       const result = matchingResult(pending, event);
       if (!result) return false;
       pending = null;
-      feedback = result.accepted ? 'Saved.' : reasons[result.code] || `Not applied (${result.code}).`;
+      const dropped = event.effects?.shaken === true ? event.effects.dropped : null;
+      feedback = !result.accepted ? reasons[result.code] || `Not applied (${result.code}).`
+        : dropped === 0 ? 'You shook the tree. Keep shaking.' : Number.isInteger(dropped) ? `${dropped} fruit fell.` : 'Saved.';
       render(); return true;
     },
   };
