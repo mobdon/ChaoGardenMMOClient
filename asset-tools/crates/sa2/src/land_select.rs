@@ -44,7 +44,7 @@ pub struct LandTableHead {
     pub start: i16,
 }
 
-fn inline_sqrt(v: f32) -> f32 {
+pub(crate) fn inline_sqrt(v: f32) -> f32 {
     let v = v as f64;
     let mut e = gekko_frsqrte(v);
     for _ in 0..2 {
