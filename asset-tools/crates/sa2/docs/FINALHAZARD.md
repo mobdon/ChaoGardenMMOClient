@@ -50,6 +50,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `core_contact` | 0x7154, 0x71e0, 0x72e0 | Hit compare (attack 0x800058bc beats defense 0x80005874), knockback 0x8003a174 (player side by stage byte and height above 4:0x298, or a normalised vector), proximity voice when the player comes within 4:0x2d8 (entity flag 0x100 edge) |
 | `core_hit` | 0x743c, 0x7548, 0x7684 | Core slot roll (skips the previous slot; 8 or 7 slots), attachment placement from table 5:0x36b6c (224-byte rows, 28-byte columns), hit reaction (knockback along the player direction, 0x9228, stun timer 90, action 5) |
 | `core_grow` | 0x783c | Core action 1: both scales grow by 5:0x36d3c (entity clamped at 4:0x314), attachment placed, hum with pitch 4:0x318 + 4:0x31c * scale clamped to -128..70 (half-word compares), settle and action 2 once the block scale reaches 4:0x30c |
+| `core_pulse` | 0x79dc | Core action 2: block scale from a sine of the spin (+0x400 a frame), attachment placed, random pulse phase and three random wobble angles (wrapped above 0x10000) drive the entity scales; hum and proximity voice |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -283,6 +284,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_core_contact_ppc.py` | 1200 calls with f1..f3 compared: compare extremes, knockback with and without a vector, voice distance edges and flag states |
 | `tests/finalhazard_core_hit_ppc.py` | 916 calls: slot rolls over every previous value, attachments including negative indices, hit reactions with flag, hit and strength cases |
 | `tests/finalhazard_core_grow_ppc.py` | 1500 frames: scales at, just around and far from each threshold (an exact limit hit included), wide values for the pitch clamp |
+| `tests/finalhazard_core_pulse_ppc.py` | 1500 frames: random words and engine sines, angles around and exactly on the 0x10000 wrap |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 

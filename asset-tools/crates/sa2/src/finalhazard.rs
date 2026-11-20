@@ -964,6 +964,8 @@ pub enum PlacementClock {
     CoreHit(Box<CoreHitFrame>),
     /// Section 1 + 0x783c: core action 1 (grow in).
     CoreGrow(Box<CoreGrowFrame>),
+    /// Section 1 + 0x79dc: core action 2 (pulse).
+    CorePulse(Box<CorePulseFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2757,6 +2759,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::CoreContact(frame) => return core_contact(&rel, &frame),
         PlacementClock::CoreHit(frame) => return core_hit(&rel, &frame),
         PlacementClock::CoreGrow(frame) => return core_grow(&rel, &frame),
+        PlacementClock::CorePulse(frame) => return core_pulse(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -7533,5 +7536,106 @@ fn core_grow(rel: &crate::city_rel::CityRel<'_>, f: &CoreGrowFrame) -> Result<se
             st(0x79b8, "entity", 1, 1, 0),
         ]);
     }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What core action 2 reads: entity word 8 (the spin angle), block bytes 0
+/// and 1, block words 8, 4 and 0xc (the wobble angles), the four random
+/// words and the engine sine results (single precision) for the spin, the
+/// pulse phase, block words 4 and 8, and the cosine of block word 0xc.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CorePulseFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub spin: u32,
+    pub block_bytes: [u8; 2],
+    pub angles: [i32; 3],
+    pub randoms: [i32; 4],
+    pub sines: [f32; 4],
+    pub cosine: f32,
+}
+/// Section 1 + 0x79dc: core action 2. The block scale follows a sine of the
+/// spin, which advances by 0x400; the attachment is placed; a random pulse
+/// phase and three random wobble steps (angles wrapped above 0x10000) drive
+/// the entity's three scales; the hum plays and the proximity voice runs.
+fn core_pulse(rel: &crate::city_rel::CityRel<'_>, f: &CorePulseFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32, region: &str, offset: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":4,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let wrap = |v: i32| {
+        if v > 0x10000 {
+            v.wrapping_sub(0x10000)
+        } else {
+            v
+        }
+    };
+    let mut ev = vec![
+        call(0x7a00, serde_json::json!([f.spin]))?,
+        st(0x7a14, "block", 0x24, (k(0x7a06)? * f.sines[0]).to_bits()),
+        st(0x7a20, "entity", 8, f.spin.wrapping_add(0x400)),
+        serde_json::json!({"site":0x7a30,"local":0x7548,"args":[f.task, f.block_bytes[0], f.block_bytes[1]]}),
+        call(0x7a34, serde_json::json!([]))?,
+    ];
+    let unit = k(0x7a5e)?;
+    let k324 = k(0x7a6e)?;
+    let phase_raw = fctiwz(f64::from(
+        k324 + k324 * (unit * biased_float(rel, 0x7a3a, f.randoms[0])?),
+    ));
+    ev.push(st(0x7a8c, "block", 0x10, phase_raw as u32));
+    let phase = wrap(phase_raw);
+    if phase != phase_raw {
+        ev.push(st(0x7aa4, "block", 0x10, phase as u32));
+    }
+    ev.push(call(0x7aac, serde_json::json!([phase as u32]))?);
+    let pulse = k(0x7ac2)? + k(0x7ab2)? * f.sines[1];
+    ev.push(st(0x7ad0, "block", 0x14, pulse.to_bits()));
+    // (call site, random, unit site, scale site, base site, magic site, store, wrap store, offset)
+    let steps = [
+        (
+            0x7ad4u32, 1usize, 0x7afeu32, 0x7b0eu32, 0x7b1eu32, 0x7b32u32, 0x7b60u32, 0x7b78u32,
+            8u32, 0usize,
+        ),
+        (
+            0x7b7c, 2, 0x7ba6, 0x7bb6, 0x7bc6, 0x7bda, 0x7c08, 0x7c20, 4, 1,
+        ),
+        (
+            0x7c24, 3, 0x7c4e, 0x7c5e, 0x7c6e, 0x7c82, 0x7cb0, 0x7cc8, 0xc, 2,
+        ),
+    ];
+    let mut angles = [0i32; 3];
+    for (site, r, us, ss, bs, ms, store, wrap_store, offset, angle) in steps {
+        ev.push(call(site, serde_json::json!([]))?);
+        let delta = k(bs)? + k(ss)? * (k(us)? * biased_float(rel, site + 6, f.randoms[r])?);
+        let raw = fctiwz(f64::from(biased_float(rel, ms, f.angles[angle])? + delta));
+        ev.push(st(store, "block", offset, raw as u32));
+        let v = wrap(raw);
+        if v != raw {
+            ev.push(st(wrap_store, "block", offset, v as u32));
+        }
+        angles[angle] = v;
+    }
+    let size = k(0x7cd6)?;
+    let base = k(0x7ce6)?;
+    ev.extend([
+        call(0x7cd0, serde_json::json!([angles[1] as u32]))?,
+        st(0x7cf4, "entity", 0x20, (base + size * f.sines[2]).to_bits()),
+        call(0x7cfc, serde_json::json!([angles[0] as u32]))?,
+        st(
+            0x7d10,
+            "entity",
+            0x24,
+            (base + pulse * f.sines[3]).to_bits(),
+        ),
+        call(0x7d18, serde_json::json!([angles[2] as u32]))?,
+        st(0x7d2c, "entity", 0x28, (base + size * f.cosine).to_bits()),
+        call(
+            0x7d48,
+            serde_json::json!([5, f.task, 1, 0x46, 5, f.entity + 0x14]),
+        )?,
+        serde_json::json!({"site":0x7d50,"local":0x72e0,"args":[f.task]}),
+    ]);
     Ok(serde_json::json!({"events":ev}))
 }
