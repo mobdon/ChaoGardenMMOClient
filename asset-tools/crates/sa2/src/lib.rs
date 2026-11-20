@@ -99,6 +99,7 @@ pub mod walker_frame;
 pub mod walker_ground;
 pub mod walker_move;
 pub mod wild_canyon;
+pub mod aquatic_mine;
 
 use std::fmt;
 
