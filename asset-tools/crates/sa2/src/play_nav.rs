@@ -231,12 +231,7 @@ impl NavGrid {
                     let top = a[1].max(b[1]);
                     let clear = (1..4).all(|k| {
                         let t = k as f32 / 4.0;
-                        // The body is airborne over the gap, so test it half a step up.
-                        let p = [
-                            a[0] + (b[0] - a[0]) * t,
-                            top + body.step * 0.5,
-                            a[2] + (b[2] - a[2]) * t,
-                        ];
+                        let p = [a[0] + (b[0] - a[0]) * t, top, a[2] + (b[2] - a[2]) * t];
                         self.world_clear(p)
                     });
                     if clear {
