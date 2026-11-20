@@ -256,9 +256,12 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
 ### E6. Default player camera (Phase 2, #441)
 
 - Port the camera task (fn_800C4458; exec fn_800C3DA0, display fn_800C3FCC,
-  fn_800C4278 → `njSetCamera`). Which mode routine Iron Gate uses by default is
-  still to be traced. 0x801E4FF8 was not a camera block (it is the Steam-REL
-  address of the stick table).
+  fn_800C4278 → `njSetCamera`). **Traced:** the default is mode 0xD "CARMEL"
+  (fn_800C86A4) in slot 0, entered after mode 0x13 "INIT" (fn_800C96BC) in
+  slot 0xE runs for 5 frames (ENGINE-MAP.md 6, mode slots). Port order: the
+  slot routines (fn_800C3A94, fn_800C3780, fn_800C382C), fn_800C5730, INIT,
+  then CARMEL with its helpers. 0x801E4FF8 was not a camera block (it is
+  the Steam-REL address of the stick table).
 - **Verification:** under Unicorn against recorded player states.
 
 ### E7. Ninja renderer path (Phase 2 minimum, #441; breadth in #442)

@@ -436,8 +436,29 @@ fn_8001E45C reads word +0x10 (pressed) of `*0x801E55D8[i]`.
   0x8011242C, fn_80024CB8.
 - Display fn_800C3FCC: per viewport, 0x803ADAD0 = index, `fn_800C4278`
   (re-applies that viewport's Ninja camera before the display pass draws it).
-- Which mode routine is the "default player camera" for Iron Gate is
-  **unresolved**; 0x801E4FF8 is not a camera block in GSNE8P (section 0).
+- 0x801E4FF8 is not a camera block in GSNE8P (section 0).
+- **Mode slots** (traced for E6): each viewport block (0x801FF424 + 0x24D8 *
+  vp) holds 16 mode slots of 0x114 bytes at +0x258; +0x254 is the top
+  (active) slot. `fn_800C3A94(vp, slot, mode)` fills a slot: +0x258 mode,
+  +0x25C = 0, +0x260 frame counter = 0, +0x264 routine from the **mode table
+  0x80175410** (12-byte rows: name pointer, routine, flag), 0x80 bytes at
+  +0x26C cleared; a slot above the top becomes the top. `fn_800C3BDC(vp)`
+  reads the top, `fn_800C3BBC(vp, slot)` a slot's mode. `fn_800C5730(vp)`
+  calls the top slot's routine with the slot as r4, then counts +0x260 up.
+- **Default player camera:** `fn_800C4458` puts mode 0xD **"CARMEL"**
+  (fn_800C86A4, 0x6D8 bytes) in slot 0 of every viewport, and for stages
+  below 0x3C mode 0x13 **"INIT"** (fn_800C96BC, 0x164 bytes) in slot 0xE on
+  top of it. INIT reads the player twp from 0x80217768[vp] and the player
+  work from 0x80217728[vp]: camera target = player position with the work's
+  +0x13C added to y; camera position = position − k·dir (fn_800C5524 from
+  the twp's angle, k at r2−0x6290) plus r2−0x628C in y, written to
+  0x801FF3E4 +0xC..+0x14 / +0x30..+0x38. After 5 frames it calls fn_800C6CDC
+  and drops slot 0xE (fn_800C3780), so CARMEL runs from then on. CARMEL's
+  callees: fn_800C382C, fn_800C3BDC, fn_800C55BC, fn_800C56F4, fn_800C5B78,
+  fn_800C5D54, fn_800C5E4C, fn_800C6A90, fn_800C6AF4, fn_800C6AFC,
+  fn_800C9CA8 (mode 3's routine), `GetPlayerCharacter`, floorf,
+  `njScalor`, `njUnitVector`; 3 paired-single words. Iron Gate's SET may
+  push other modes over slot 0 (camera areas); not traced.
 
 ## 7. Draw path
 
