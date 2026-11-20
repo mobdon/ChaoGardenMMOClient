@@ -2583,13 +2583,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 // Shared tail: two local updates, then the handoff timer.
                 match &f.stage {
                     Some(s) => {
-                        let inner = arena_clamp(
-                            &rel,
-                            switch_state as i8,
-                            s.present,
-                            s.positions,
-                            s.distances,
-                        )?;
+                        let inner =
+                            arena_clamp(&rel, switch_state, s.present, s.positions, s.distances)?;
                         ev.push(serde_json::json!({"site":0xff1c,"local":0xee8c,"events":inner}));
                         let v = timed_voice(
                             &rel,
@@ -3447,9 +3442,8 @@ fn super_flight(
                     mag = k(0xe5b2)?;
                 }
             } else if spd < f.fe8 {
-                if mag > k(0xe5d6)? {
-                    mag *= fc;
-                } else if spd < k(0xe5fa)? * (f.fe8 + f.fe8) {
+                // Above 0.7, or slower than 0.5 x (2 x 0xe8): keep the magnitude.
+                if mag > k(0xe5d6)? || spd < k(0xe5fa)? * (f.fe8 + f.fe8) {
                     mag *= fc;
                 } else {
                     mag = k(0xe626)?;
@@ -3537,16 +3531,15 @@ fn super_flight(
         ));
         let d = f.angle_delta;
         let half = k(0xe8a2)?;
-        let turn =
-            |ev: &mut Vec<serde_json::Value>, store_site: u32, site: u32| -> Result<()> {
-                ev.push(store(store_site, "data2", 0x1c, angle as u32));
-                ev.push(with(
-                    call(site)?,
-                    "args",
-                    serde_json::json!([f.entity, f.data2, f.player, angle as u32]),
-                ));
-                Ok(())
-            };
+        let turn = |ev: &mut Vec<serde_json::Value>, store_site: u32, site: u32| -> Result<()> {
+            ev.push(store(store_site, "data2", 0x1c, angle as u32));
+            ev.push(with(
+                call(site)?,
+                "args",
+                serde_json::json!([f.entity, f.data2, f.player, angle as u32]),
+            ));
+            Ok(())
+        };
         if k(0xe85a)? == spd && d > 4096 {
             mag = k(0xe85a)?;
             turn(&mut ev, 0xe87c, 0xe898)?;
