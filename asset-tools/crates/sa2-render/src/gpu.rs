@@ -138,6 +138,15 @@ impl Renderer {
             .collect();
     }
 
+    /// Keep the first mesh (the land) and replace the rest (moving things).
+    pub fn set_extra(&mut self, meshes: &[&Mesh]) {
+        self.meshes.truncate(1);
+        let land = std::mem::take(&mut self.meshes);
+        self.set_meshes(meshes);
+        let extra = std::mem::replace(&mut self.meshes, land);
+        self.meshes.extend(extra);
+    }
+
     fn depth_view(&mut self, size: [u32; 2]) -> wgpu::TextureView {
         if let Some((v, s)) = &self.depth {
             if *s == size {

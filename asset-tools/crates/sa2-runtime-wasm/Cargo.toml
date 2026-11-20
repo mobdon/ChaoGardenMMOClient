@@ -1,0 +1,27 @@
+[package]
+name = "sa2-runtime-wasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "Iron Gate in the browser: sa2-runtime plus sa2-render on WebGPU/WebGL2"
+
+# Own workspace, like sa2-runtime and sa2-render.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sa2-asset-tools = { path = "../sa2" }
+sa2-runtime = { path = "../sa2-runtime" }
+sa2-render = { path = "../sa2-render" }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "webgpu", "webgl"] }
+wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+js-sys = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
