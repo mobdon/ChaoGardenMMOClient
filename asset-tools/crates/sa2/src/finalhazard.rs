@@ -909,6 +909,8 @@ pub enum PlacementClock {
     /// Section 1 + 0x19470: the stage's ring drop when a player is hit.
     RingDrop(Box<RingDropFrame>),
     /// Section 1 + 0x40cc on each value: the stage square root.
+    /// Section 1 + 0xa078: Finalhazard stage setup.
+    StageSetup(Box<StageSetupFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2677,6 +2679,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperDraw(frame) => return super_draw(&rel, &frame),
         PlacementClock::SuperEffects(frame) => return super_effects(&rel, &frame),
         PlacementClock::RingDrop(frame) => return ring_drop(&rel, &frame),
+        PlacementClock::StageSetup(frame) => return stage_setup(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -4711,4 +4714,98 @@ fn ring_drop(rel: &crate::city_rel::CityRel<'_>, f: &RingDropFrame) -> Result<se
         ev.push(call(0x19628, serde_json::json!([0x8014, 0, 0, 0]))?);
     }
     Ok(serde_json::json!({"events":ev,"start_angle":start,"ring_angles":angles}))
+}
+
+/// Engine state section 1 + 0xa078 reads: the hit handler pointer at
+/// 0x801a2638, the two player task pointers at 0x801e7388, and module
+/// word section 6 + 0x484.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageSetupFrame {
+    pub hit_handler: u32,
+    pub player_tasks: [u32; 2],
+    pub module_484: u32,
+}
+/// Section 1 + 0xa078: Finalhazard stage setup. It sets up the engine
+/// lights and shadows from module data, installs the hit ring drop
+/// (0x19470) unless a handler is already installed, fills the engine
+/// object hook table at 0x801e73d8, replaces both players with the two super
+/// forms (0xa87c for slot 0, 0xab04 for slot 1), creates the boss and
+/// stage objects, and starts the 600-frame timer object unless module word
+/// 0x484 is set. Module and code addresses are reported as
+/// "88:SECTION+OFFSET".
+fn stage_setup(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &StageSetupFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, address: u32, value: serde_json::Value| serde_json::json!({"site":site,"store":"engine","address":address,"size":4,"value":value});
+    let lights = |o: u32| format!("88:5+{:#x}", 0x38220 + o);
+    let mut ev = vec![
+        call(
+            0xa098,
+            serde_json::json!([0xff00_0000u32, 0xff00_0000u32, 0xff00_0000u32]),
+        )?,
+        call(0xa09c, serde_json::json!([]))?,
+        call(0xa0a0, serde_json::json!([]))?,
+    ];
+    for (site, light, offset) in [
+        (0xa0b4u32, 0u32, 0u32),
+        (0xa0c4, 1, 0x20),
+        (0xa0d0, 2, 0x20),
+        (0xa0e0, 8, 0x40),
+        (0xa0ec, 9, 0x40),
+        (0xa0f8, 6, 0x60),
+    ] {
+        ev.push(call(site, serde_json::json!([light, lights(offset)]))?);
+    }
+    ev.extend([
+        call(0xa104, serde_json::json!([0, 0]))?,
+        call(0xa110, serde_json::json!([0, 1]))?,
+        call(0xa118, serde_json::json!([2]))?,
+        call(0xa120, serde_json::json!([2]))?,
+        local(0xa12c, 0x10a20, serde_json::json!(["88:5+0x3c7ac"])),
+    ]);
+    if f.hit_handler == 0 {
+        ev.push(st(0xa14c, 0x801a2638, serde_json::json!("88:1+0x19470")));
+    }
+    ev.extend([
+        call(0xa160, serde_json::json!(["88:5+0x38200", "88:5+0x381b4"]))?,
+        call(0xa174, serde_json::json!(["88:5+0x3c79c", "88:5+0x3c784"]))?,
+        call(0xa17c, serde_json::json!([0]))?,
+        call(0xa188, serde_json::json!(["88:5+0x3c7bc"]))?,
+        st(0xa19c, 0x801e73d8, serde_json::json!(0x800dfe70u32)),
+        st(0xa1a8, 0x801e73dc, serde_json::json!("88:1+0x12d14")),
+        st(0xa1b4, 0x801e73e0, serde_json::json!("88:1+0x13808")),
+        st(0xa1c0, 0x801e73e4, serde_json::json!("88:1+0x1385c")),
+    ]);
+    for (i, site) in (0xa1c8u32..=0xa1ecu32).step_by(4).enumerate() {
+        ev.push(st(site, 0x801e73e8 + 4 * i as u32, serde_json::json!(0)));
+    }
+    for (slot, (free, make, ctor, after)) in [
+        (0xa204u32, 0xa20cu32, 0xa87cu32, 0xa214u32),
+        (0xa22c, 0xa234, 0xab04, 0xa23c),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if f.player_tasks[slot] != 0 {
+            ev.push(call(free, serde_json::json!([f.player_tasks[slot]]))?);
+        }
+        ev.push(local(make, ctor, serde_json::json!([slot])));
+        ev.push(call(after, serde_json::json!([slot]))?);
+    }
+    ev.extend([
+        local(0xa240, 0x6e58, serde_json::json!([])),
+        local(0xa24c, 0x14b28, serde_json::json!(["88:5+0x3c7c8"])),
+        call(0xa264, serde_json::json!(["88:5+0x3c7d0", "88:4+0x490", 2]))?,
+    ]);
+    if f.module_484 == 0 {
+        ev.push(local(0xa284, 0x9b3c, serde_json::json!([0, 600])));
+    }
+    Ok(serde_json::json!({"events":ev,
+        "scope":"Call and store sequence of 0xa078; the engine setup routines and the local constructors it calls run elsewhere."}))
 }
