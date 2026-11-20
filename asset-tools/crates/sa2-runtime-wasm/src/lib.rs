@@ -197,9 +197,31 @@ impl App {
     /// One frame: pad 0's stick (-128..127, up positive) and buttons (GC
     /// PAD bits: 0x100 A, 0x200 B, 0x1000 Start), then draw.
     pub fn frame(&mut self, stick_x: i8, stick_y: i8, buttons: u16) -> String {
+        self.frame_pad(stick_x, stick_y, 0, 0, 0, 0, buttons)
+    }
+
+    /// One frame with pad 0's whole raw status (what `PADRead` returns,
+    /// before `PADClamp`): main stick and C-stick (-128..127, up positive),
+    /// analog L/R (0..255) and the PAD button bits, then draw.
+    #[allow(clippy::too_many_arguments)]
+    pub fn frame_pad(
+        &mut self,
+        stick_x: i8,
+        stick_y: i8,
+        sub_x: i8,
+        sub_y: i8,
+        trigger_l: u8,
+        trigger_r: u8,
+        buttons: u16,
+    ) -> String {
         let mut pads = [PadStatus::default(); 4];
-        pads[0].stick = [stick_x, stick_y];
-        pads[0].button = buttons;
+        pads[0] = PadStatus {
+            button: buttons,
+            stick: [stick_x, stick_y],
+            substick: [sub_x, sub_y],
+            triggers: [trigger_l, trigger_r],
+            ..PadStatus::default()
+        };
         self.game.step(pads);
         let (pos, ang, height) = self
             .player
@@ -255,4 +277,41 @@ impl App {
         self.config.height = height.max(1);
         self.surface.configure(&self.renderer.device, &self.config);
     }
+}
+
+/// Pad 0 from the browser: a "standard" Gamepad (`axes`, button values;
+/// both may be empty) merged with the keyboard's raw status. Returns
+/// `[stick_x, stick_y, sub_x, sub_y, trigger_l, trigger_r, buttons]` for
+/// [`App::frame_pad`]. The mapping is `sa2_runtime::host_pad`.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn browser_pad(
+    axes: &[f32],
+    buttons: &[f32],
+    key_x: i8,
+    key_y: i8,
+    key_sub_x: i8,
+    key_sub_y: i8,
+    key_l: u8,
+    key_r: u8,
+    key_buttons: u16,
+) -> Vec<i32> {
+    use sa2_runtime::host_pad::{from_standard_gamepad, merge};
+    let keys = PadStatus {
+        button: key_buttons,
+        stick: [key_x, key_y],
+        substick: [key_sub_x, key_sub_y],
+        triggers: [key_l, key_r],
+        ..PadStatus::default()
+    };
+    let p = merge(keys, from_standard_gamepad(axes, buttons));
+    vec![
+        p.stick[0].into(),
+        p.stick[1].into(),
+        p.substick[0].into(),
+        p.substick[1].into(),
+        p.triggers[0].into(),
+        p.triggers[1].into(),
+        p.button.into(),
+    ]
 }
