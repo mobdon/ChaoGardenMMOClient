@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run stage 42's fog tasks and compare duel-fog.
 
-Usage: python duel_fog_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_fog_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes the fog manager (+0xAE04, +0xAE94) and worker (+0xAD48, +0xADE4)
 callbacks and their apply/blend helpers under Unicorn against scenario state.
 The game is never started.
@@ -9,10 +9,10 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP,P=0x81000000,0x82000000,0x90000000,0x80f00000,0x80e00000
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -56,12 +56,12 @@ u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
 calls=[];inp={}
 def hook(uc,pc,sz,_):
     a=[reg(i) for i in range(3,8)]
-    if pc==0x80071ba4:calls.append(('0x80071ba4',[a[0],a[1],f"s1+0x{a[2]-B:x}",'FogTaskExec',inp['spawned']]));uc.reg_write(R.UC_PPC_REG_3,inp['spawned']);return
-    if pc==0x80033248:calls.append(('0x80033248',[a[0],a[1],fbits(1),inp['lerpColor']]));uc.reg_write(R.UC_PPC_REG_3,inp['lerpColor']);return
-    if pc==0x8010abf4:calls.append(('0x8010abf4',[fbits(1),inp['farInt']]));uc.reg_write(R.UC_PPC_REG_3,inp['farInt']);return
-    if pc==0x8011bfb4:calls.append(('0x8011bfb4',[fbits(1),fbits(2)]));return
-    if pc==0x8011bf80:calls.append(('0x8011bf80',[struct.unpack('>i',struct.pack('>I',a[0]))[0] if a[0]==0xffffffff else a[0]]));return
-    if pc in (0x8011bfc0,0x80071888):calls.append((hex(pc),[a[0]]));return
+    if pc==0x80071e0c:calls.append(('0x80071e0c',[a[0],a[1],f"s1+0x{a[2]-B:x}",'FogTaskExec',inp['spawned']]));uc.reg_write(R.UC_PPC_REG_3,inp['spawned']);return
+    if pc==0x800334b0:calls.append(('0x800334b0',[a[0],a[1],fbits(1),inp['lerpColor']]));uc.reg_write(R.UC_PPC_REG_3,inp['lerpColor']);return
+    if pc==0x8010af3c:calls.append(('0x8010af3c',[fbits(1),inp['farInt']]));uc.reg_write(R.UC_PPC_REG_3,inp['farInt']);return
+    if pc==0x8011c2fc:calls.append(('0x8011c2fc',[fbits(1),fbits(2)]));return
+    if pc==0x8011c2c8:calls.append(('0x8011c2c8',[struct.unpack('>i',struct.pack('>I',a[0]))[0] if a[0]==0xffffffff else a[0]]));return
+    if pc in (0x8011c308,0x80071af0):calls.append((hex(pc),[a[0]]));return
     calls.append((hex(pc),[]))
 for a in imports:u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 ENTRY={'managerUpdate':0xae04,'managerDelete':0xae94,'workerUpdate':0xad48,'workerDelete':0xade4}
@@ -70,16 +70,16 @@ def run(c):
     calls.clear();inp.clear();inp.update(c['inputs'])
     st=c['state']
     for k,o,f in LAYOUT:put(S6+o,f,st[k])
-    put(0x803ad7c8,'I',st['engineFog'])
+    put(0x803adbc8,'I',st['engineFog'])
     for addr,p in c['inputs'].get('params',{}).items():
         a=int(addr,16);put(a,'I',p['flags']);put(a+4,'I',p['color']);put(a+8,'f',p['far']);put(a+12,'f',p['near'])
     worker=st['worker'] if c['call']!='managerUpdate' else 0
     if c['inputs'].get('spawned'):page(c['inputs']['spawned'],0x60);u.mem_write(c['inputs']['spawned'],bytes(0x60))
     u.reg_write(R.UC_PPC_REG_3,c['task']);u.reg_write(R.UC_PPC_REG_1,T+0xf0000);u.reg_write(R.UC_PPC_REG_LR,STOP)
     u.emu_start(B+ENTRY[c['call']],STOP,count=1<<20);assert reg('PC')==STOP
-    out={k:(fb(get(S6+o,'f')) if f=='f' else get(S6+o,'I')) for k,o,f in LAYOUT};out['engineFog']=get(0x803ad7c8,'I')
+    out={k:(fb(get(S6+o,'f')) if f=='f' else get(S6+o,'I')) for k,o,f in LAYOUT};out['engineFog']=get(0x803adbc8,'I')
     extra=[]
-    if any(n=='0x80071ba4' for n,_ in calls) and inp.get('spawned'):extra=[get(inp['spawned']+0x18,'I')-B]
+    if any(n=='0x80071e0c' for n,_ in calls) and inp.get('spawned'):extra=[get(inp['spawned']+0x18,'I')-B]
     return list(calls),out,extra
 fb=lambda x:struct.unpack('>I',struct.pack('>f',x))[0]
 rng=random.Random(9)

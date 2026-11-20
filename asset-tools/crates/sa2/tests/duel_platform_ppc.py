@@ -1,7 +1,7 @@
 """Local PowerPC oracle: run the installed stage 42 DODAI task and compare duel-platform-update.
 
-Usage: python duel_platform_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
-Executes DODAI's own constructor, update and collision-transform helper (module 41,
+Usage: python duel_platform_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
+Executes DODAI's own constructor, update and collision-transform helper (stg42D,
 section 1 +0x1AD0..+0x2278) under Unicorn. Every engine import is a recording stub
 whose return value comes from the scenario. The game is never started.
 """
@@ -9,12 +9,12 @@ import hashlib,json,os,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP=0x81000000,0x82000000,0x90000000,0x80f00000
-G,OBJ1,OBJ2=0x801cbd88,0x801e7368,0x801e7328
+G,OBJ1,OBJ2=0x801cc168,0x801e7768,0x801e7728
 FIRST,END,ENTRY,DEBRIS=0x1ad0,0x2278,0x1d68,0x1e8dc
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -60,22 +60,22 @@ def alloc(n):
 bits=lambda x:struct.unpack('>I',struct.pack('>f',x))[0]
 calls=[];frame={};rands=[];task=[0];ctx={}
 def call(uc,pc,size,_):
-    if pc==0x8006538c:calls.append(('taskCheck',));uc.reg_write(R.UC_PPC_REG_3,int(frame.get('taskCheck',False)))
-    elif pc==0x80039670:calls.append(('visibility',bits(fpr(1))));uc.reg_write(R.UC_PPC_REG_3,int(frame.get('visible',False)))
+    if pc==0x800655f4:calls.append(('taskCheck',));uc.reg_write(R.UC_PPC_REG_3,int(frame.get('taskCheck',False)))
+    elif pc==0x800398d8:calls.append(('visibility',bits(fpr(1))));uc.reg_write(R.UC_PPC_REG_3,int(frame.get('visible',False)))
     elif pc==B+DEBRIS:
         calls.append(('debris',tuple(get(reg(4)+4*i,'i') for i in range(3)),tuple(bits(fpr(i)) for i in range(1,6))))
         assert reg(3)==work+0x14
-    elif pc==0x800c3468:calls.append(('rumble',reg(3),bits(fpr(1)),reg(4)))
-    elif pc==0x8006b584:calls.append(('sound',reg(3),reg(4),reg(5),reg(6)));assert reg(7)==work+0x14
-    elif pc==0x8010d940:
+    elif pc==0x800c36d0:calls.append(('rumble',reg(3),bits(fpr(1)),reg(4)))
+    elif pc==0x8006b7ec:calls.append(('sound',reg(3),reg(4),reg(5),reg(6)));assert reg(7)==work+0x14
+    elif pc==0x8010dc88:
         v=rands.pop(0);calls.append(('rand',v));uc.reg_write(R.UC_PPC_REG_3,v&0xffffffff)
-    elif pc==0x80069af8:calls.append(('fallEffect',reg(3),reg(5),reg(6),reg(7)));assert (reg(4),reg(8))==(work,work+0x14)
-    elif pc==0x80071878:calls.append(('free',))
-    elif pc==0x80119488:
+    elif pc==0x80069d60:calls.append(('fallEffect',reg(3),reg(5),reg(6),reg(7)));assert (reg(4),reg(8))==(work,work+0x14)
+    elif pc==0x80071ae0:calls.append(('free',))
+    elif pc==0x801197d0:
         n=ctx['allocs'];ctx['allocs']+=1;ok=n not in frame.get('failedAllocations',[])
         calls.append(('alloc',reg(3),ok));uc.reg_write(R.UC_PPC_REG_3,alloc(reg(3)) if ok else 0)
-    elif pc==0x801194e0:calls.append(('freeObject',))
-    elif pc==0x8002305c:
+    elif pc==0x80119828:calls.append(('freeObject',))
+    elif pc==0x800232a4:
         assert reg(4)==task[0];calls.append(('init',reg(3),get(get(reg(5)+4,'I')+0x24,'I')))
 for a in imports|{B+DEBRIS}:u.hook_add(UC_HOOK_CODE,call,begin=a,end=a)
 def run(case):

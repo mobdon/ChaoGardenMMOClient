@@ -18,11 +18,15 @@ pub const PLATFORM_RVA: u32 = 0x1251fa0;
 /// Installed Steam `resource/gd_PC/stg42D.rel`.
 pub const REL_SHA256: &str = "51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d";
 pub const REL_LEN: usize = 345_422;
-const MODULE: u32 = 41;
+/// The GameCube disc copy (module 42) has the same sections; its imports are
+/// GSNE8P main.dol addresses, the ones this port reports.
+pub const GC_REL_SHA256: &str = "4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538";
 /// DODAI's template NJS_OBJECT in data section 5.
 const TEMPLATE: u32 = 0x13c8;
 /// Engine object allocator imported by both DODAIGEN spawn sites.
-const SPAWN_IMPORT: u32 = 0x8007_1ba4;
+const SPAWN_IMPORT: u32 = 0x80071e0c;
+/// The same import in the Steam copy, linked 0x268 lower.
+const SPAWN_IMPORT_STEAM: u32 = 0x80071ba4;
 
 #[derive(Debug, Serialize)]
 pub struct Platform {
@@ -62,10 +66,15 @@ pub fn read_split(bytes: &[u8]) -> Result<Platform> {
 }
 
 pub(crate) fn module(bytes: &[u8]) -> Result<CityRel<'_>> {
-    if bytes.len() != REL_LEN || manifest::sha256(bytes) != REL_SHA256 {
+    if bytes.len() != REL_LEN {
         return Err(Error::invalid("unsupported stage 42 REL revision"));
     }
-    CityRel::read_identified(bytes, MODULE)
+    let module = match manifest::sha256(bytes).as_str() {
+        REL_SHA256 => 41,
+        GC_REL_SHA256 => 42,
+        _ => return Err(Error::invalid("unsupported stage 42 REL revision")),
+    };
+    CityRel::read_identified(bytes, module)
 }
 pub(crate) fn invalid() -> Error {
     Error::invalid("unexpected stage 42 platform code")
@@ -74,11 +83,11 @@ pub(crate) fn invalid() -> Error {
 pub(crate) fn target(rel: &CityRel<'_>, pc: u32, section: u8) -> Result<u32> {
     match rel.reference(1, pc) {
         Some(Reference {
-            module: MODULE,
+            module,
             kind: 4,
             section: s,
             addend,
-        }) if s == section => Ok(addend),
+        }) if s == section && module == rel.module_id() => Ok(addend),
         _ => Err(invalid()),
     }
 }
@@ -143,7 +152,7 @@ pub fn generator(rel_bytes: &[u8]) -> Result<Generator> {
             Some(Reference {
                 module: 0,
                 kind: 10,
-                addend: SPAWN_IMPORT,
+                addend: SPAWN_IMPORT | SPAWN_IMPORT_STEAM,
                 ..
             }) => {}
             _ => return Err(invalid()),

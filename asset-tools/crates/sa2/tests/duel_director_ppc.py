@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run stage 42's duel director (ControlShadow) and compare duel-director.
 
-Usage: python duel_director_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_director_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes stg42D.rel +0x3CC with its local helpers (+0x0, +0x8C, +0x168, +0x280,
 +0x334) under Unicorn on random worlds. Engine imports return scenario values;
 the task-spawning helpers +0x22070, +0x18620 and +0x20470 are recording stubs.
@@ -10,12 +10,12 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP=0x81000000,0x82000000,0x90000000,0x80f00000
-G,CAM,BODIES,DATA,SLOTS,READY=0x801cbd88,0x801e4ff8,0x801e7368,0x801e7328,0x801e7388,0x803ad5d0
-FLAGS=[0x803ad484,0x803ad488,0x803ad494,0x803ad498]
+G,CAM,BODIES,DATA,SLOTS,READY=0x801cc168,0x801e53f8,0x801e7768,0x801e7728,0x801e7788,0x803ad9d0
+FLAGS=[0x803ad884,0x803ad888,0x803ad894,0x803ad898]
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -57,7 +57,7 @@ for (t,off),(m,s,a,k) in refs.items():
 LOCALS=(0x22070,0x18620,0x20470)
 for a in LOCALS:struct.pack_into('>I',code,a,0x4e800020)
 page(B,len(code));u.mem_write(B,bytes(code))
-SAVE=[0x8010ac50+4*k for k in range(19)];REST=[0x8010ac9c+4*k for k in range(19)]
+SAVE=[0x8010af98+4*k for k in range(19)];REST=[0x8010afe4+4*k for k in range(19)]
 for a in imports|{STOP}|set(SAVE)|set(REST):page(a,4);put(a,'I',0x4e800020)
 page(T,0x100000)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
@@ -87,25 +87,25 @@ def hook(uc,pc,sz,_):
     if pc==B+0x22070:calls.append({'local':'0x22070','args':[reg(3),f's5+0x{reg(4)-S5:x}']});return
     if pc==B+0x18620:calls.append({'local':'0x18620','args':[vec(reg(3)),reg(4),reg(5),sreg(6),reg(7),reg(8)]});return
     if pc==B+0x20470:calls.append({'local':'0x20470','args':[name(reg(3)),name(reg(4))]});return
-    if pc in (0x8001ccbc,0x8001dd1c,0x8010d940):v=ret(pc);E([],v);uc.reg_write(R.UC_PPC_REG_3,int(v)&0xffffffff);return
+    if pc in (0x8001cd40,0x8001dda0,0x8010dc88):v=ret(pc);E([],v);uc.reg_write(R.UC_PPC_REG_3,int(v)&0xffffffff);return
     if pc==0x800118e0:v=ret(pc);E([reg(3),reg(4)],v);uc.reg_write(R.UC_PPC_REG_3,int(v)&0xffffffff);return
-    if pc==0x800c3974:v=ret(pc);E([reg(3)],v);uc.reg_write(R.UC_PPC_REG_3,int(v)&0xffffffff);return
-    if pc==0x80110e20:v=ret(pc);E([fbits(1),fbits(2)],v);setf(1,v);return
-    if pc==0x8002b678:v=ret(pc);E([sreg(3),sreg(4)],v);uc.reg_write(R.UC_PPC_REG_3,int(v)&0xffffffff);return
-    if pc==0x8011b314:v=ret(pc);E([vec(reg(3)),vec(reg(4))],v);setf(1,v);return
-    if pc==0x80111e34:v=ret(pc);E([fbits(1)],v);setf(1,v);return
-    if pc==0x8002abf4:v=ret(pc);E([fbits(1),fbits(2),fbits(3)],v);setf(1,v);return
-    if pc in (0x8001162c,0x80022bdc,0x80022c1c,0x800c7540,0x80071888):E([reg(3)]);return
-    if pc in (0x8001dccc,0x8001dce0):E([]);return
+    if pc==0x800c3bdc:v=ret(pc);E([reg(3)],v);uc.reg_write(R.UC_PPC_REG_3,int(v)&0xffffffff);return
+    if pc==0x80111168:v=ret(pc);E([fbits(1),fbits(2)],v);setf(1,v);return
+    if pc==0x8002b8e0:v=ret(pc);E([sreg(3),sreg(4)],v);uc.reg_write(R.UC_PPC_REG_3,int(v)&0xffffffff);return
+    if pc==0x8011b65c:v=ret(pc);E([vec(reg(3)),vec(reg(4))],v);setf(1,v);return
+    if pc==0x8011217c:v=ret(pc);E([fbits(1)],v);setf(1,v);return
+    if pc==0x8002ae5c:v=ret(pc);E([fbits(1),fbits(2),fbits(3)],v);setf(1,v);return
+    if pc in (0x8001162c,0x80022e24,0x80022e64,0x800c77a8,0x80071af0):E([reg(3)]);return
+    if pc in (0x8001dd50,0x8001dd64):E([]);return
     if pc==0x800117ec:E([reg(3),reg(4)]);return
-    if pc==0x80087ebc:E([reg(3),name(reg(4)) or vec(reg(4))]);return
-    if pc==0x800466b4:E([reg(3),name(reg(4))]);return
-    if pc in (0x8003a0b0,0x80039754):E([reg(3),fbits(1),fbits(2),fbits(3)]);return
-    if pc==0x800c7844:
+    if pc==0x80088124:E([reg(3),name(reg(4)) or vec(reg(4))]);return
+    if pc==0x8004691c:E([reg(3),name(reg(4))]);return
+    if pc in (0x8003a318,0x800399bc):E([reg(3),fbits(1),fbits(2),fbits(3)]);return
+    if pc==0x800c7aac:
         p=reg(4);E([reg(3),{'f0':get(p,'I'),'w1':get(p+4,'I'),'point':vec(get(p+8,'I')),'f3':get(p+0xc,'I'),'f4':get(p+0x10,'I'),'w5':get(p+0x14,'I')}]);return
-    if pc==0x8003a2e4:E([reg(3),reg(4),vec(reg(5)) if reg(5) else 0,reg(6)]);return
-    if pc==0x800cd434:p=reg(4);E([reg(3),{'w0':get(p,'I'),'from':name(get(p+4,'I')),'to':name(get(p+8,'I')),'f3':get(p+0xc,'I')}]);return
-    if pc==0x8006b710:E([reg(3),reg(4),reg(5),reg(6)]);return
+    if pc==0x8003a54c:E([reg(3),reg(4),vec(reg(5)) if reg(5) else 0,reg(6)]);return
+    if pc==0x800cd69c:p=reg(4);E([reg(3),{'w0':get(p,'I'),'from':name(get(p+4,'I')),'to':name(get(p+8,'I')),'f3':get(p+0xc,'I')}]);return
+    if pc==0x8006b978:E([reg(3),reg(4),reg(5),reg(6)]);return
     raise AssertionError(hex(pc))
 for a in imports|set(SAVE)|set(REST)|{B+x for x in LOCALS}:u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 fb=lambda x:struct.unpack('>I',struct.pack('>f',x))[0]
@@ -153,10 +153,10 @@ def world():
         'bodies':[body(p1x),body(p2x)],'data':[data(),data()],'child':rng.choice([0,0x91000000]),'slots':[0x91000100,0x91000200]}
     wk={'mode':rng.choice(list(range(14))+[-1]),'flag':rng.choice([0,1]),'timer':rng.choice([0,1,2,0x3c,0x3d,0x77,0x78,0x12b,0x12c,0x14a,0x150,rng.randrange(-5,400)]),
         'limit':rng.choice([0,0x14,0x3c,0x78,0x168,rng.randrange(0,400)]),'point':[f32(rng.uniform(-10,10)) for _ in range(3)],'target':[f32(rng.uniform(-10,10)) for _ in range(3)]}
-    rets={'0x8001ccbc':[rng.choice([7,0x10,0x10,3,0]) for _ in range(4)],'0x800118e0':[rng.choice([0,1]) for _ in range(8)],'0x8001dd1c':[rng.choice([0,1,2,3,-1])],
-          '0x800c3974':[rng.choice([0xd,0])],'0x80110e20':[rng.uniform(-3.2,3.2) for _ in range(8)],'0x8002b678':[rng.choice([0,0x4fff,0x5000,0x7000]) for _ in range(8)],
-          '0x8011b314':[rng.choice([10.0,18.9,19.0,79.0,81.0,rng.uniform(0,200)]) for _ in range(8)],'0x80111e34':[rng.choice([0.6,0.65,0.7,rng.random()])],
-          '0x8002abf4':[rng.uniform(-100,100) for _ in range(3)],'0x8010d940':[rng.randrange(32768)]}
+    rets={'0x8001cd40':[rng.choice([7,0x10,0x10,3,0]) for _ in range(4)],'0x800118e0':[rng.choice([0,1]) for _ in range(8)],'0x8001dda0':[rng.choice([0,1,2,3,-1])],
+          '0x800c3bdc':[rng.choice([0xd,0])],'0x80111168':[rng.uniform(-3.2,3.2) for _ in range(8)],'0x8002b8e0':[rng.choice([0,0x4fff,0x5000,0x7000]) for _ in range(8)],
+          '0x8011b65c':[rng.choice([10.0,18.9,19.0,79.0,81.0,rng.uniform(0,200)]) for _ in range(8)],'0x8011217c':[rng.choice([0.6,0.65,0.7,rng.random()])],
+          '0x8002ae5c':[rng.uniform(-100,100) for _ in range(3)],'0x8010dc88':[rng.randrange(32768)]}
     return wd,wk,rets
 with tempfile.TemporaryDirectory(dir=Path.cwd()/'.local') as tmp:
     seen_modes=set();n=0;nc_total=0
@@ -176,7 +176,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/'.local') as tmp:
         mc=norm(doc['calls']);ncs=norm(calls)
         assert mc==ncs,(i,wk['mode'],next(((j,a,b) for j,(a,b) in enumerate(zip(mc,ncs)) if a!=b),(len(mc),len(ncs))))
         dk=doc['work'];dk['point']=[fb(x) for x in dk['point']];dk['target']=[fb(x) for x in dk['target']]
-        assert norm(dk)==norm(nk),(i,dk,nk,[(v.hex(),struct.unpack('>I',struct.pack('>f',v))[0]) for v in rets['0x8002abf4']])
+        assert norm(dk)==norm(nk),(i,dk,nk,[(v.hex(),struct.unpack('>I',struct.pack('>f',v))[0]) for v in rets['0x8002ae5c']])
         dw=doc['world'];dw['data'][1]['gauge']=fb(dw['data'][1]['gauge'])
         assert norm({k:dw[k] for k in ('g30','g31','g32','g34','camera','flags')})==norm({k:nw[k] for k in ('g30','g31','g32','g34','camera','flags')}),(i,dw,nw)
         assert dw['data'][1]['gauge']==nw['data'][1]['gauge'],(i,)

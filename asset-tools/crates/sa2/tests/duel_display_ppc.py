@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run stage 42's display callbacks and compare duel-display.
 
-Usage: python duel_display_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_display_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes the platform display/delete (+0x19C8, +0x1A58), meteor (+0x25BC),
 debris (+0x91A8), BgExec (+0x312C), gauge (+0x20700) and title glyph/window
 (+0x2140C, +0x21A00) displays under Unicorn with recording engine stubs and
@@ -12,10 +12,10 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE,UC_HOOK_MEM_WRITE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,H,T,STOP,SCR=0x81100000,0x86000000,0x90000000,0x91000000,0x80f00000,0x80fffe60
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -62,11 +62,11 @@ for (t,off),(m,s,a,k) in refs.items():
         if m==0:imports.add(val)
         struct.pack_into('>I',code,off,0x48000001|((val-(B+off))&0x3fffffc))
 page(B,len(code));u.mem_write(B,bytes(code))
-SAVE=[0x8010ac50+4*k for k in range(19)];REST=[0x8010ac9c+4*k for k in range(19)]
+SAVE=[0x8010af98+4*k for k in range(19)];REST=[0x8010afe4+4*k for k in range(19)]
 for a in imports|{STOP}|set(SAVE)|set(REST):page(a,4);u.mem_write(a,struct.pack('>I',0x4e800020))
 page(H,0x100000);page(T,0x100000);page(0x80ff0000,0x20000)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
-GAME=0x801cbd88
+GAME=0x801cc168
 TASK,WORK,OBJ,MODEL,PARENT,PWORK,OTHER,ENTRY,LINE,CAM=(H+0x100*i for i in range(1,11))
 PIECES=H+0x10000
 NAMES={TASK:'task',OBJ:'object',MODEL:'model'}
@@ -76,11 +76,11 @@ def sym(v):
     return NAMES.get(v,v)
 events=[];inp={}
 def vec(p,f):return [get(p+4*i,f) for i in range(3)]
-SPEC={0x8002b080:'i',0x8002b070:'i',0x80116ad0:'p',0x80115e24:'V',0x80115c20:'Ai',0x800665b8:'iVf',0x8006633c:'VA',
-      0x8012181c:'p',0x8011de10:'M',0x8011de34:'p',0x8011dbd8:'p',0x80121894:'p',0x800317c0:'p',0x80115044:'iV',
-      0x80121580:'ii',0x800156fc:'ffff',0x80115890:'iF',0x80114e30:'iF',0x80024a70:'i',0x801176b0:'ii',0x80115918:'ii',
-      0x801154e0:'ii',0x80115a80:'i',0x8011e59c:'Sifi',0x8011c1c0:'Qiii',0x80117938:'i',0x80022f84:'pp',0x801194e0:'p',
-      0x80112050:'i',0x80033248:'iif',0x80110ef8:'f'}
+SPEC={0x8002b2e8:'i',0x8002b2d8:'i',0x80116e18:'p',0x8011616c:'V',0x80115f68:'Ai',0x80066820:'iVf',0x800665a4:'VA',
+      0x80121b64:'p',0x8011e158:'M',0x8011e17c:'p',0x8011df20:'p',0x80121bdc:'p',0x80031a28:'p',0x8011538c:'iV',
+      0x801218c8:'ii',0x800156fc:'ffff',0x80115bd8:'iF',0x80115178:'iF',0x80024cb8:'i',0x801179f8:'ii',0x80115c60:'ii',
+      0x80115828:'ii',0x80115dc8:'i',0x8011e8e4:'Sifi',0x8011c508:'Qiii',0x80117c80:'i',0x800231cc:'pp',0x80119828:'p',
+      0x80112398:'i',0x800334b0:'iif',0x80111240:'f'}
 def hook(uc,pc,sz,_):
     if pc in SAVE or pc in REST:
         save=pc in SAVE;first=14+(pc-(SAVE[0] if save else REST[0]))//4;r11=reg(11)
@@ -103,9 +103,9 @@ def hook(uc,pc,sz,_):
         elif c=='S':
             s=[get(v+4*i,'I') for i in range(8)];s[6]=sym(s[6]);an=s[7];s[7]='tanim'
             args+=[s,[get(an+4*i,'I') for i in range(5)]]
-    if pc==0x80112050:args.append(fb(inp['sin']));setf(1,inp['sin'])
-    if pc==0x80110ef8:args.append(fb(inp['floor']));setf(1,inp['floor'])
-    if pc==0x80033248:args.append(inp['color']);uc.reg_write(R.UC_PPC_REG_3,inp['color'])
+    if pc==0x80112398:args.append(fb(inp['sin']));setf(1,inp['sin'])
+    if pc==0x80111240:args.append(fb(inp['floor']));setf(1,inp['floor'])
+    if pc==0x800334b0:args.append(inp['color']);uc.reg_write(R.UC_PPC_REG_3,inp['color'])
     events.append({'engine':f'0x{pc:08x}','args':args})
 for a in imports|set(SAVE)|set(REST):u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 def wr(uc,acc,a,sz,v,_):
@@ -142,7 +142,7 @@ def setup(c):
         for i in range(3):put(WORK+8+4*i,'i',c['angles'][i]);put(WORK+0x14+4*i,'f',fl(c['position'][i]))
         inp['sin']=fl(c['sin']);inp['color']=c['color']
     elif k=='debris':
-        put(0x803ad526,'b',c['gameByte'])
+        put(0x803ad926,'b',c['gameByte'])
         nxt=0
         for i,p in reversed(list(enumerate(c['pieces']))):
             a=PIECES+0x60*i
@@ -152,8 +152,8 @@ def setup(c):
             put(a+0x44,'I',p['flags']);put(a+0x48,'f',fl(p['life']));put(a+0x4c,'I',nxt);nxt=a
         put(S6+0x63c,'I',nxt)
     elif k=='background':
-        put(GAME+0x3d,'b',c['gameByte']);put(0x803ad6d0,'i',c['screen'])
-        put(0x80174f98+4*(c['screen']&3),'I',CAM)
+        put(GAME+0x3d,'b',c['gameByte']);put(0x803adad0,'i',c['screen'])
+        put(0x80175378+4*(c['screen']&3),'I',CAM)
         for i in range(3):put(CAM+4*i,'f',fl(c['camera'][i]))
         put(S6+4,'f',fl(c['bss4']));put(S6+8,'f',fl(c['bss8']));put(GAME+0x7c,'I',c['frame'])
         inp['floor']=fl(c['floor'])
@@ -179,7 +179,7 @@ def run(c):
     return json.loads(json.dumps(events))
 rng=random.Random(42)
 F=lambda lo,hi:hx(sng(rng.uniform(lo,hi)))
-ptr5={off:v for (s,off),(m,ts,v,k) in refs.items() if s==5 and m==41 and ts==5 and k==1}
+ptr5={off:v for (s,off),(m,ts,v,k) in refs.items() if s==5 and m==w(0) and ts==5 and k==1}
 d8=[m for m,vl in ptr5.items() if vl+8<=size(5) and struct.unpack_from('>I',data5,vl)[0]&0xffff==0x23 and m+0x18<=size(5)]
 clean=lambda m:all((5,m+o) not in refs for o in (8,12,16)) and m+0x18<=size(5)
 d8=[m for m in d8 if clean(m)]
