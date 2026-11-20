@@ -6,9 +6,12 @@ renderer path. It expands Phase 1 of [PORT-PLAN.md](PORT-PLAN.md) (issue
 [#440](https://github.com/mobdon/ChaoGardenMMOClient/issues/440)) and the
 renderer, camera and web-build parts of Phases 2 and 3 (#441, #442).
 
-**First target (mob's choice): Iron Gate played as the Chao Walker, in a
-browser.** The walker exec 0x800B3A8C is ported in PR #435. This plan makes the
-engine able to run that stage's tasks around it.
+**First target (mob's choice): Iron Gate played with its native character,
+Mech Eggman, in a browser.** The stage loads exactly as the one-player story does:
+loader 0x800B5D2C (PhysicsArray row 7), G+0x1E = 0. The walker exec 0x800B3A8C
+is ported in PR #435. This plan makes the engine able to run that stage's tasks
+around it. Playing as a Chao (the Chao Walker rows) is deferred until after the
+full port (mob, November 20, 2026); ENGINE-MAP.md 8a/8b keep the trace for then.
 
 ## Rules (from PORT-PLAN.md, restated for this work)
 
@@ -149,8 +152,15 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   copy, exec, fn_80006B00, fn_800D0904, frame counter fn_80062B38 per tick;
   then display), stage modes 0x803AD81A (7 start, 0x10 play, 0x11 pause =
   display only), frame counter G+0x7C (0x801CC1E4) stopped by G+0x37, the
-  stage clock, and the vsync tick count 0x803AD8AC (its float formula is still
-  unresolved). G is 0x801CC168 (0x801CBD88 in the Steam-REL build).
+  stage clock, and the vsync tick count 0x803AD8AC. G is 0x801CC168
+  (0x801CBD88 in the Steam-REL build).
+- **Done** (`sa2-runtime/src/frame.rs`): `fn_8001E45C`, `fn_8001E89C`,
+  `fn_8001E12C`, `fn_80062B38`, `fn_80070C20`, `fn_80070BA8`. The tick count's
+  float formula turned out to be dead code: its result is overwritten with 1 at
+  0x8001E518, so ticks are 1, plus 1 every fifth frame when G+0xF == 2.
+  Engine callees not ported yet are logged and not run. Not ported here: the
+  GX pre-pass `fn_80070F5C` (so the +0x2C walk it runs is not run yet), the
+  stage-mode switch `fn_8001F368` and the master loop around it.
 - Headless and deterministic: no wall clock inside the tick. The browser drives
   ticks from requestAnimationFrame with a fixed 1/60 s accumulator (a web
   choice, written down in E7's doc).
@@ -175,9 +185,8 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   through the SET loader and exec gate, objects, lights, fog, death zones,
   paths, start position, in the order of stg11D's init fn_11_A434
   (ENGINE-MAP.md 4.2), with players loaded first by fn_8001DEA8 as the session
-  init does. Player loaders: Mech Eggman is **0x800B5D2C** (row 7); the walker
-  rows are 0x800B58D4 (row 0xD) and 0x800B56E8 (row 0xE), reached when G+0x1E
-  and the per-player byte G+0x55+i are set.
+  init does, exactly as the one-player story: character 7, loader
+  **0x800B5D2C** (Mech Eggman, row 7), G+0x1E = 0 (no player 2, one viewport).
 - SET rows whose task is not ported are listed by name and not spawned.
 - Unload frees every task and returns the runtime to its empty state.
 - `play_session::Session` stops taking a host `PlayerSample`: the walker task
@@ -273,5 +282,6 @@ objects or enemies; it calls them. Shared helpers stay in their owner's file.
    PORT-PLAN.md).
 2. ~~Whether the Chao Walker loader installs the walker exec~~ — answered by
    E0: yes, all four walker loaders install 0x800B3A8C.
-3. How the game sets G+0x1E and G+0x55+i (the walker-row gate): being traced
-   ("Chao Walker selection path" in ENGINE-MAP.md).
+3. ~~How the game sets G+0x1E and G+0x55+i~~ — traced (ENGINE-MAP.md 8a/8b):
+   only the two-player select and the title demos do. Not needed for the first
+   target, which uses the native character.

@@ -148,18 +148,18 @@ The single biggest gap. Today each routine runs alone from a JSON request.
   and its stage objects running inside the task loop; same inputs give the same
   trace every run.
 
-### Phase 2: First playable level on the website, as a Chao
+### Phase 2: First playable level on the website
 
-**Target (decided by mob): Iron Gate, played as the Chao Walker.** SA2 Battle ships
-a native Chao character: the Chao Walker and Dark Chao Walker (PhysicsArray rows
-and animation lists, at Steam `sonic2app.exe` 0xA0F680 / 0xA102E0, are already
-read). They are mech-family characters, so they should run on the same walker
-code that #435 ports. That keeps "play as a Chao" fully native. To verify first:
-that the Chao Walker loader (one of the 0x8004F838 callers) installs the walker
-exec 0x800B3A8C or a close sibling.
+**Target (decided by mob): Iron Gate, played with its native character (Mech
+Eggman), loaded exactly as the one-player story does** (loader 0x800B5D2C, row 7,
+G+0x1E = 0). Playing as a Chao comes after the rest of the game is ported. The
+Chao Walker trace is kept for then: all four walker loaders install the walker
+exec 0x800B3A8C, and the Chao rows are reached natively only from the
+two-player select (ENGINE-MAP.md 8, 8a, 8b).
 
-- **Player:** walker exec #435 (owner: Make first story level playable), then
-  the Chao Walker loader, lock-on and laser (trace from the exec's mode switch).
+- **Player:** walker exec #435 (owner: Make first story level playable), the
+  Mech Eggman loader 0x800B5D2C, lock-on and laser (trace from the exec's mode
+  switch).
 - **Stage:** Iron Gate objects (owner: Port shared stage objects); the enemies
   Iron Gate places (owner: Port native enemy behaviour). `sa2-assets fan-tasks`
   gives the exact task list for stg11D.
@@ -179,7 +179,7 @@ exec 0x800B3A8C or a close sibling.
   WASM build and plays Iron Gate. No game data is hosted.
 - **Depends on:** Phase 1, #435.
 - **Acceptance:** on mob's website, a person plays Iron Gate Mission 1 from the
-  start to the goal ring as the Chao Walker, with input-driven native ticks and
+  start to the goal ring as Mech Eggman, with input-driven native ticks and
   a stored replay that reproduces the run.
 
 ### Phase 3: Engine breadth: renderer, camera, HUD, pause, sound, saves
@@ -274,16 +274,19 @@ across the story SETs; about 5–10% done).
 
 ## Order of work in one line
 
-Steam base → engine core → **Iron Gate as the Chao Walker on the website** →
+Steam base → engine core → **Iron Gate (native Mech Eggman) on the website** →
 engine breadth → mech stages and bosses → speed moveset and stages → hunters →
 kart → Cannon's Core and Finalhazard → menus, events, 2P. Chao Race and Karate
 run in parallel on the server.
 
 ## Decided
 
-- **First playable: Iron Gate as the Chao Walker** (mob, November 20, 2026).
-  Speed and treasure-hunt stages have no native Chao character; how a Chao
-  plays those is still open.
+- **First playable: Iron Gate with its native character, Mech Eggman**
+  (mob, November 20, 2026). Use only the native characters for now.
+- **Playing as a Chao is deferred** until after the rest of the game is ported
+  (mob, November 20, 2026). The earlier choice of the Chao Walker for Iron Gate
+  is withdrawn; ENGINE-MAP.md 8a/8b keep the trace of how the game reaches the
+  Chao Walker rows.
 
 ## Open questions for mob
 
