@@ -112,6 +112,8 @@ fn installed_mover_rules_and_session_inventory() {
             (15, 2, 2)
         );
         assert_eq!(s.checkpoints.len(), 3);
+        // 17 RING_LINEAR lines, 3 to 6 rings each.
+        assert_eq!(s.rings_placed.len(), 64);
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [-4439.9966, 967.0, -1133.4259]);
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
@@ -143,5 +145,12 @@ fn spawn_to_goal_clears_the_mission() {
         );
         assert_eq!(s.slot_words[0], 2);
         assert_eq!(s.deaths, 0);
+        // Ring lines on the route are collected on the way (10 points each).
+        assert!(
+            s.rings > 0 && s.score == s.rings * 10,
+            "{} {}",
+            s.rings,
+            s.score
+        );
     });
 }

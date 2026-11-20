@@ -50,6 +50,7 @@ Iron Gate, whose doors share one constant set, the timing is unchanged.
 | Object models | PC_SA2/STG09.ini: lift 0xC3C538, bridge 0xC42EA0, elevator 0xC39660, panel 0xC40390 | Native Basic models |
 | PANEL (17) | stg09D.rel 0x2A4C passes its model to the static-collision helper 0x9A4C with flags 6 (Y rotation kept, X and Z dropped) | Ported as static solids. They floor the gap past the first lift room. |
 | CCUBE (17) | stg09D.rel 0x11CDC: CollisionData form 3 (sec5+0x4C080), sizes set by 0x11B30 to 10 + Scale per axis | Ported as solid boxes with half-extents 10 + Scale, centred on the placement. Adaptation: only Y rotation is applied. The box beside lift 16 tops out at exactly the lift's raised height (838). Not enabled for Iron Gate, whose module was not checked. |
+| RING_LINEAR (17 lines, 64 rings) | stg09D.rel 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | Ported: Scale.z truncated and clamped to 1..=8 rings; ring i at local (0, Scale.y · sin(i · (0x4000 / n)), -i · (10 + Scale.x)) under translate, rotate Z, Y, X. The trig call 0x80112050 is taken as sine; only one line has a non-zero Scale.y (4), so this moves no ring more than 4 units. Each ring uses the o_ring pickup. Not enabled for Iron Gate. |
 | Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Native volumes |
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact; slot word 2 is the clear |
 | Checkpoints, springs, containers | as Iron Gate | as Iron Gate |
@@ -63,8 +64,7 @@ switches in Prison Lane (enemies, lock-on volumes, the TANK or CAM objects)
 was not traced. The cell door on the route near (-3329, 730, 130) is one of
 them, so in the game the route there probably depends on clearing the area
 first. WALL, CAGE, CAGEB and CAGEC, FENCES and FENCEL, MECHA fuse boxes,
-TANK, ROLL, SPHERE and CCYL solids, RING_LINEAR rings (the stage has no
-single RING placements, so the ring count stays 0), enemies, lock-on and
+TANK, ROLL, SPHERE and CCYL solids, item boxes, enemies, lock-on and
 the walker's laser are not run either. The headless report lists every
 unhandled placement by name.
 
@@ -76,7 +76,7 @@ unhandled placement by name.
 | Check | Result on the pinned Steam build |
 | --- | --- |
 | Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL and 17 CCUBE solids; stg11D.rel is rejected for this layout |
-| Spawn to goal | Checkpoint (-1235, 237, 40) at frame 3,107; the one-way diagonal elevator at 4,442; checkpoints (-2476, 630, -615) at 5,514 and (-3910, 870, -240) at 8,009; goal contact with sound 0x1013 and slot word 2 at 9,071 (151.2 s). No deaths. |
+| Spawn to goal | Checkpoint (-1235, 237, 40) at frame 3,107; the one-way diagonal elevator at 4,442; checkpoints (-2476, 630, -615) at 5,514 and (-3910, 870, -240) at 8,009; goal contact with sound 0x1013 and slot word 2 at 9,071 (151.2 s). No deaths; 14 of the 64 rings collected on the way (score 140). |
 
 `examples/walker_probe.rs` (static reachability from the start and each
 checkpoint to every checkpoint, mover and the goal) and

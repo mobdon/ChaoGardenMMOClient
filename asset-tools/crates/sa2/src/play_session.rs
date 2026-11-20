@@ -44,6 +44,8 @@ pub struct StageRules {
     pub static_solids: &'static [(&'static str, u32)],
     /// Build CCUBE placements as solid boxes (rule read from this stage's module).
     pub invisible_cubes: bool,
+    /// Expand RING_LINEAR placements into collectable rings.
+    pub ring_lines: bool,
     pub death_zone_config: &'static str,
 }
 
@@ -55,6 +57,7 @@ pub const IRON_GATE: StageRules = StageRules {
     elevator_collision: ELEVATOR_COLLISION_RVA,
     static_solids: &[],
     invisible_cubes: false,
+    ring_lines: false,
     death_zone_config: DEATH_ZONE_CONFIG,
 };
 
@@ -70,6 +73,7 @@ pub const PRISON_LANE: StageRules = StageRules {
     // placement's X and Z rotations are dropped, Y is kept).
     static_solids: &[("PANEL", 0xc40390)],
     invisible_cubes: true,
+    ring_lines: true,
     death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
 };
 /// o_ring_M1: pickup when a player collision center is strictly within 14.
@@ -98,6 +102,9 @@ const CCUBE_VA: u32 = 0x6e54e0;
 /// Adaptation: only the placement's Y rotation is applied to the box.
 pub const CCUBE_BASE: f32 = 10.0;
 const GOALRING_VA: u32 = 0x6c63c0;
+const RING_LINEAR_VA: u32 = 0x6c5ed0;
+/// RING_LINEAR spacing base (stg09D.rel sec4+0xA44), added to Scale.x.
+pub const RING_LINE_BASE: f32 = 10.0;
 const RING_VA: u32 = 0x6c0f80;
 const SAVEPOINT_VA: u32 = 0x6d99a0;
 const STEP_UP: f32 = 12.0;
@@ -317,6 +324,56 @@ pub fn rotate_zxy(v: V3, angles: [i32; 3]) -> V3 {
     [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
 }
 
+/// Matrix order unit, translate, rotate Z, rotate Y, rotate X (the
+/// RING_LINEAR helper): the point is rotated by X first, then Y, then Z.
+pub fn rotate_xyz(v: V3, angles: [i32; 3]) -> V3 {
+    let (sx, cx) = bams_sin_cos(angles[0]);
+    let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
+    let (sy, cy) = bams_sin_cos(angles[1]);
+    let v = [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy];
+    let (sz, cz) = bams_sin_cos(angles[2]);
+    [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
+}
+
+/// RING_LINEAR (stg09D.rel 0x1B448 with helpers 0x1B1E8 and 0x1B21C): the
+/// ring count is Scale.z truncated and clamped to 1..=8; ring i sits at local
+/// (0, Scale.y * sin(i * (0x4000 / n)), -i * (10 + Scale.x)) under the
+/// placement's translation and Z, Y, X rotations. The engine trig call
+/// (0x80112050) is taken to be sine; every Prison Lane line but one has
+/// Scale.y 0, and that one is 4, so the choice moves no ring by more than 4.
+pub fn ring_line(position: V3, angles: [i32; 3], scale: V3) -> Vec<V3> {
+    let n = (scale[2] as i32).clamp(1, 8);
+    let step = 0x4000 / n;
+    (0..n)
+        .map(|i| {
+            let (s, _) = bams_sin_cos(i * step);
+            let local = [0.0, scale[1] * s, -(i as f32) * (RING_LINE_BASE + scale[0])];
+            add(position, rotate_xyz(local, angles))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod ring_line_tests {
+    use super::*;
+
+    #[test]
+    fn ring_line_spacing_count_and_yaw() {
+        // Prison Lane's first line: yaw 0x4000, Scale (15.5, 4, 3).
+        let r = ring_line([0.0, 0.0, 0.0], [0, 0x4000, 0], [15.5, 4.0, 3.0]);
+        assert_eq!(r.len(), 3);
+        // Local -Z turned a quarter about Y points along -X; spacing 25.5.
+        assert!((r[1][0] + 25.5).abs() < 1e-3 && r[1][2].abs() < 1e-3);
+        assert!((r[2][0] + 51.0).abs() < 1e-3);
+        // Height: 4 * sin(i * 0x1555).
+        assert!(
+            (r[1][1] - 4.0 * (0x1555 as f32 * std::f32::consts::TAU / 65536.0).sin()).abs() < 1e-4
+        );
+        assert_eq!(ring_line([0.0; 3], [0; 3], [20.0, 0.0, 0.2]).len(), 1);
+        assert_eq!(ring_line([0.0; 3], [0; 3], [20.0, 0.0, 12.0]).len(), 8);
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Goal {
@@ -490,6 +547,17 @@ impl Session {
                         position: pl.position,
                         taken: false,
                     }),
+                    (RING_LINEAR_VA, "RING_LINEAR") if rules.ring_lines => {
+                        let angles = pl.rotation.map(i32::from);
+                        for position in ring_line(pl.position, angles, pl.parameters) {
+                            rings_placed.push(Pickup {
+                                layer: li,
+                                index: p.placement_index,
+                                position,
+                                taken: false,
+                            });
+                        }
+                    }
                     (SAVEPOINT_VA, "SAVEPOINT") => checkpoints.push(Pickup {
                         layer: li,
                         index: p.placement_index,
