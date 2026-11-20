@@ -947,6 +947,8 @@ pub enum PlacementClock {
     BossHit(Box<BossHitFrame>),
     /// Section 1 + 0x920: boss attachment points.
     BossPoints(Box<BossPointsFrame>),
+    /// Section 1 + 0xaf0: boss voice roll.
+    BossVoice(Box<BossVoiceFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2733,6 +2735,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossAim(frame) => return boss_aim(&rel, &frame),
         PlacementClock::BossHit(frame) => return boss_hit(&rel, &frame),
         PlacementClock::BossPoints(frame) => return boss_points(&rel, &frame),
+        PlacementClock::BossVoice(frame) => return boss_voice(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6524,5 +6527,69 @@ fn boss_points(
         }
     }
     ev.push(call(0x9b0, serde_json::json!([f.task]))?);
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What the voice roll reads: the player entity word at 0x801e7368 + 4 *
+/// stage byte 0, the distance 0x800279c4 returns, the two random words
+/// from 0x8010d940 and the f1 result of 0x80112050 (single precision).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossVoiceFrame {
+    pub task: u32,
+    pub player: u32,
+    pub distance: f32,
+    pub randoms: [i32; 2],
+    pub curve: f32,
+}
+/// The native signed int to single conversion: the 0x43300000 bias trick
+/// with the magic double, then fsubs rounding.
+fn biased_float(rel: &crate::city_rel::CityRel<'_>, site: u32, value: i32) -> Result<f32> {
+    let r = rel
+        .reference(1, site)
+        .filter(|r| r.module == 88 && r.section == 4)
+        .ok_or_else(|| Error::invalid("missing conversion constant"))?;
+    let at = r.addend as usize;
+    let b = rel
+        .data(4)?
+        .get(at..at + 8)
+        .ok_or_else(|| Error::invalid("conversion constant out of range"))?;
+    let magic = f64::from_bits(u64::from_be_bytes(b.try_into().unwrap()));
+    let biased = f64::from_bits(0x4330_0000_0000_0000 | u64::from(value as u32 ^ 0x8000_0000));
+    Ok((biased - magic) as f32)
+}
+/// Section 1 + 0xaf0: while the player is within 4:0xcc of the work point
+/// 6:0x200, a random roll below 4:0xd4 plays voice 0x11 on the boss with a
+/// random length scaled through 0x80112050. The negated comparisons keep
+/// the native branch-if-not-less behaviour for NaN.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn boss_voice(rel: &crate::city_rel::CityRel<'_>, f: &BossVoiceFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let point = module_ref(rel, 0xb3e, 0xd8)?;
+    let mut ev = vec![call(0xb4c, serde_json::json!([f.player + 0x14, point]))?];
+    if !(f.distance < boss_constant(rel, 0xb52)?) {
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    ev.push(call(0xb64, serde_json::json!([]))?);
+    let unit = boss_constant(rel, 0xb8e)?;
+    let roll = unit * biased_float(rel, 0xb6a, f.randoms[0])?;
+    if !(roll < boss_constant(rel, 0xb9e)?) {
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    ev.push(call(
+        0xbc8,
+        serde_json::json!([0x11, f.task, 1, 0x5a, 0xf0, point]),
+    )?);
+    ev.push(call(0xbcc, serde_json::json!([]))?);
+    let second = biased_float(rel, 0xbd2, f.randoms[1])? * unit;
+    let length = fctiwz(f64::from(boss_constant(rel, 0xbfa)? * second));
+    ev.push(call(0xc14, serde_json::json!([length as u32]))?);
+    let volume = fctiwz(f64::from(boss_constant(rel, 0xc1a)? * f.curve));
+    ev.push(call(
+        0xc3c,
+        serde_json::json!([f.task, 0x11, volume as u32]),
+    )?);
     Ok(serde_json::json!({"events":ev}))
 }

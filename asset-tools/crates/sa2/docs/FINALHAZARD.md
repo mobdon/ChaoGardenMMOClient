@@ -43,6 +43,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `boss_aim` | 0x690 | out = from + normalise(to - from) * (f1 + distance) through the engine vector calls, single precision |
 | `boss_hit` | 0x744 | Hit check: a child hit (0x87e4 == 1) outside action 3 costs 4:0xac health and sets action 3, or 13 at or below 4:0xc0, plus entity flag 4; otherwise a player hit (0x800065a8) on a collider (48-byte entries) pushes a point out towards the player (0x690), then stuns (0x7154 == 1: 0x71e0 with 4:0xc8, 0xc98) or knocks back (0x71e0 with 4:0xc4, camera shake), sparks 0x108f4, hit sound and voice |
 | `boss_points` | 0x920 | Places the 34 attachment entries at 5:0xb8c (0x80027ab4 with work vector 6:0x128 + 12 * byte 0) and attaches them (0x80005540), then 0x8000f4ec |
+| `boss_voice` | 0xaf0 | Voice roll: player within 4:0xcc of work point 6:0x200, random roll (native int-to-float bias trick) below 4:0xd4 plays voice 0x11 with a random length through 0x80112050 |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -269,6 +270,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_boss_combo_ppc.py` | 1008 frames: steps 0..5, timers, action after launch (11, 12, other), attack and beam states, objects freed or gone, step-4 timer |
 | `tests/finalhazard_boss_defeat_ppc.py` | 1500 seeded frames: motion frames around every window edge, frame counters at and around the 45/30/10 periods and near 2^32, motion end |
 | `tests/finalhazard_boss_frame_ppc.py` | 1175 calls of 0x638, 0x690, 0x744 and 0x920 with stack vectors compared as floats: health around the action-13 edge, child and player hits, collider indices including the null array, stun or knockback |
+| `tests/finalhazard_boss_voice_ppc.py` | 2000 seeded rolls: distance around the radius, random words including sign and width extremes for the first roll (the second stays within rand range, since Unicorn does not saturate fctiwz overflow as PowerPC does) |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
