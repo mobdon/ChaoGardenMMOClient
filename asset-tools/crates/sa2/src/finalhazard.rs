@@ -911,6 +911,9 @@ pub enum PlacementClock {
     /// Section 1 + 0x40cc on each value: the stage square root.
     /// Section 1 + 0xa078: Finalhazard stage setup.
     StageSetup(Box<StageSetupFrame>),
+    /// Section 1 + 0xa87c (character 9) / 0xab04 (character 10): super-form
+    /// player construction.
+    SuperConstruct(Box<SuperConstructFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2680,6 +2683,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperEffects(frame) => return super_effects(&rel, &frame),
         PlacementClock::RingDrop(frame) => return ring_drop(&rel, &frame),
         PlacementClock::StageSetup(frame) => return stage_setup(&rel, &frame),
+        PlacementClock::SuperConstruct(frame) => return super_construct(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -4808,4 +4812,194 @@ fn stage_setup(
     }
     Ok(serde_json::json!({"events":ev,
         "scope":"Call and store sequence of 0xa078; the engine setup routines and the local constructors it calls run elsewhere."}))
+}
+
+/// Engine results and state the super-form constructors read: the task
+/// and player-block allocations, the task's entity (word 0x34) and its
+/// collision inner object (entity word 0x2c, then word 0xc), player float
+/// 0x130 after the engine set-up, the results of 0x800722e0, 0x8004ffa8,
+/// 0x8004fe2c and 0x8002a958, the vector at 0x801e6288 + 0xa5c / 0xb34 (3
+/// words, 8 apart), the 0x8002a958 argument (word 0x2c of the 0x801e6288
+/// entry at 0xaec / 0xbc4), the entity position, global byte 0x801cbd88,
+/// module word section 6 + 0x4ac and the timer task allocation.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperConstructFrame {
+    pub slot: i8,
+    pub character: i8,
+    pub task: u32,
+    pub player: u32,
+    pub entity: u32,
+    pub inner: u32,
+    pub f130: f32,
+    pub results: [u32; 3],
+    pub table_vector: [u32; 3],
+    pub fx_source: u32,
+    pub fx: u32,
+    pub position: [f32; 3],
+    pub global_byte: i8,
+    pub module_4ac: u32,
+    pub timer_task: u32,
+}
+/// Sections 1 + 0xa87c and 0xab04: build a super-form player (character 9
+/// or 10) in `slot`. The two constructors are the same code with their own
+/// module data, engine table offsets and effect kind; sites are reported
+/// for the constructor that runs.
+fn super_construct(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperConstructFrame,
+) -> Result<serde_json::Value> {
+    let delta = match f.character {
+        9 => 0,
+        10 => 0x288,
+        _ => {
+            return Err(Error::invalid(
+                "super-form constructors exist for characters 9 and 10",
+            ))
+        }
+    };
+    let code = rel.data(1)?;
+    let at = |site: u32| site + delta;
+    let word = |site: u32| {
+        u32::from_be_bytes(
+            code[at(site) as usize..at(site) as usize + 4]
+                .try_into()
+                .unwrap(),
+        )
+    };
+    let sym = |site: u32| -> Result<serde_json::Value> {
+        let r = rel
+            .reference(1, at(site))
+            .ok_or_else(|| Error::invalid("missing constructor reference"))?;
+        Ok(if r.module == 88 {
+            serde_json::json!(format!("88:{}+{:#x}", r.section, r.addend))
+        } else {
+            serde_json::json!(r.addend)
+        })
+    };
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":at(site),"call":engine_import(rel, at(site))?,"args":args}))
+    };
+    let st = |site: u32,
+              region: &str,
+              offset: serde_json::Value,
+              size: u32,
+              value: serde_json::Value| {
+        serde_json::json!({"site":at(site),"store":region,"offset":offset,"size":size,"value":value})
+    };
+    let slot = f.slot as i32 as u32;
+    let ch = f.character as u32;
+    let mut ev = vec![call(
+        0xa8ac,
+        serde_json::json!([7, 1, sym(0xa89e)?, sym(0xa8a6)?]),
+    )?];
+    if f.task == 0 {
+        return Ok(serde_json::json!({"events":ev,"built":false}));
+    }
+    ev.push(call(0xa8c4, serde_json::json!([1, 0x37c]))?);
+    if f.player == 0 {
+        ev.push(call(0xa8d8, serde_json::json!([f.task]))?);
+        return Ok(serde_json::json!({"events":ev,"built":false}));
+    }
+    let n = |v: u32| serde_json::json!(v);
+    ev.extend([
+        st(0xa8e0, "task", n(0x40), 4, n(f.player)),
+        st(0xa8ec, "player", n(0), 1, n(slot & 0xff)),
+        st(0xa8f4, "player", n(1), 1, n(ch)),
+        st(0xa8f8, "player", n(3), 1, n(ch)),
+        st(0xa900, "entity", n(1), 1, n(0)),
+        st(0xa908, "entity", n(0), 1, n(0x3b)),
+        st(0xa90c, "player", n(0x18), 2, n(0)),
+        call(0xa918, serde_json::json!([slot, f.task]))?,
+        st(0xa924, "player", n(0x198), 4, sym(0xa91e)?),
+        st(0xa928, "player", n(0x176), 2, n(0)),
+        call(0xa940, serde_json::json!([f.task, sym(0xa932)?, 2, 0]))?,
+        st(0xa950, "inner", n(0x14), 4, n(f.f130.to_bits())),
+        call(0xa95c, serde_json::json!([sym(0xa956)?]))?,
+        st(0xa960, "player", n(0x370), 4, n(f.results[0])),
+        call(0xa96c, serde_json::json!([ch]))?,
+        call(0xa978, serde_json::json!([sym(0xa972)?]))?,
+        st(0xa97c, "player", n(0x374), 4, n(f.results[1])),
+        call(0xa988, serde_json::json!([sym(0xa982)?]))?,
+        st(0xa98c, "player", n(0x378), 4, n(f.results[2])),
+        call(0xa994, serde_json::json!([f.player + 0x174]))?,
+    ]);
+    let vector = sym(0xa9a6)?;
+    let base = vector.as_str().unwrap_or_default().to_string();
+    let (head, off) = base.rsplit_once('+').unwrap_or(("", "0x0"));
+    let off = u32::from_str_radix(off.trim_start_matches("0x"), 16).unwrap_or(0);
+    for (i, site) in [0xa9acu32, 0xa9b4, 0xa9bc].into_iter().enumerate() {
+        ev.push(st(
+            site,
+            "module",
+            serde_json::json!(format!("{head}+{:#x}", off + 4 * i as u32)),
+            4,
+            n(f.table_vector[i]),
+        ));
+    }
+    ev.extend([
+        call(0xa9c4, serde_json::json!([slot]))?,
+        call(0xa9d0, serde_json::json!([f.fx_source]))?,
+        st(0xa9d4, "player", n(0x36c), 4, n(f.fx)),
+        st(0xa9e0, "fx", n(0), 1, n(word(0xa9d8) & 0xffff)),
+        st(
+            0xa9f4,
+            "fx",
+            n(4),
+            4,
+            n(stage_f32(rel, at(0xa9e6) as usize, 4, 0)?.to_bits()),
+        ),
+        st(0xa9fc, "fx", n(8), 4, n(0)),
+        st(0xaa08, "fx", n(0x10), 4, n(0x400)),
+        st(0xaa10, "fx", n(0x1c), 4, n(0)),
+    ]);
+    for (i, site) in [0xaa1cu32, 0xaa20, 0xaa28].into_iter().enumerate() {
+        ev.push(st(
+            site,
+            "player",
+            n(0x360 + 4 * i as u32),
+            4,
+            n(f.position[i].to_bits()),
+        ));
+    }
+    ev.extend([
+        call(0xaa34, serde_json::json!([slot]))?,
+        st(0xaa40, "task", n(0x18), 4, sym(0xaa3a)?),
+        st(0xaa4c, "task", n(0x14), 4, sym(0xaa46)?),
+        st(0xaa58, "task", n(0x24), 4, sym(0xaa52)?),
+        st(
+            if f.global_byte != 0 { 0xaa7c } else { 0xaa8c },
+            "player",
+            n(0x24),
+            4,
+            n(0x8000),
+        ),
+        serde_json::json!({"site":at(0xaa90),"local":0xff7c,"args":[]}),
+    ]);
+    if f.module_4ac == 0 {
+        ev.extend([
+            call(0xaab8, serde_json::json!([sym(0xaaaa)?, sym(0xaab2)?]))?,
+            call(
+                0xaad4,
+                serde_json::json!([0, 0, sym(0xaac6)?, sym(0xaace)?]),
+            )?,
+            st(
+                0xaad8,
+                "module",
+                serde_json::json!("88:6+0x4ac"),
+                4,
+                n(f.timer_task),
+            ),
+            st(0xaae8, "timer_task", n(0x18), 4, sym(0xaade)?),
+        ]);
+    }
+    let table = rel
+        .reference(1, at(0xa99a))
+        .ok_or_else(|| Error::invalid("missing constructor table"))?
+        .addend;
+    let reads: Vec<u32> = [0xa9a0u32, 0xa9b0, 0xa9b8, 0xa9c8]
+        .into_iter()
+        .map(|s| table + (word(s) & 0xffff))
+        .collect();
+    Ok(serde_json::json!({"events":ev,"built":true,"table_reads":reads}))
 }
