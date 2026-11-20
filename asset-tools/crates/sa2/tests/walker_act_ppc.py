@@ -39,6 +39,10 @@ m.stub(0x80054D04, lambda mm: log.append(["stand"]))
 m.stub(0x800BCF50, lambda mm: log.append(["deferred", 0x800BCF50, mm.gpr(3) - (1 << 32) if mm.gpr(3) & 0x80000000 else mm.gpr(3)]))
 m.stub(0x80011714, lambda mm: log.append(["voice", s16(mm.gpr(3))]))
 m.stub(0x8001DD78, lambda mm: mm.gpr(3, g["stage"]))
+m.stub(0x8006B978, lambda mm: log.append(["se", 0x8006B978, mm.gpr(3), [mm.gpr(4), mm.gpr(5), mm.gpr(6)], None]))
+m.stub(0x8006B7EC, lambda mm: log.append(["se", 0x8006B7EC, mm.gpr(3), [mm.gpr(4), mm.gpr(5), mm.gpr(6)],
+                                          [m.get(mm.gpr(7) + 4 * j, "I") for j in range(3)]]))
+RIDE = 0x81180000
 
 
 def floats(n):
@@ -55,6 +59,8 @@ FUNCS = {
     "events": 0x800AD584,
     "buttons": 0x80053C74,
     "ground": 0x80053DBC,
+    "jump": 0x800ADD34,
+    "jump41": 0x800ADED0,
 }
 cases = []
 for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
@@ -88,11 +94,24 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
     m.u.mem_write(R13 - 0x7A38, bytes(x & 0xFF for x in g["pressed"]))
     m.u.mem_write(R13 - 0x7A28, bytes(x & 0xFF for x in g["held"]))
     m.put(0x801E5D28 + 0x2B4, "I", 0x81300000 if g["m56"] else 0)
+    ride = None
+    if rng.random() < 0.5:
+        ride = [fb(f32(rng.uniform(-3, 3))) for _ in range(3)]
+        m.put(PW + 0xA0, "I", RIDE)
+        m.put(RIDE + 0x3C, "I", RIDE + 0x40)
+        m.u.mem_write(RIDE + 0x50, struct.pack(">3I", *ride))
+    else:
+        m.put(PW + 0xA0, "I", 0)
+    p[0xA0:0xA4] = bytes(m.u.mem_read(PW + 0xA0, 4))
+    g["ride"] = ride
+    m.put(0x801E7748 + 4 * p[0], "I", MW)
+    p[3] = rng.choice([0xD, 0xE, 6, 7, 0])
+    m.u.mem_write(PW, bytes(p))
     log.clear()
     a = FUNCS[name]
     if name == "f48":
         m.call(a, r3=PW)
-    elif name in ("pressed", "held", "queue", "events", "buttons", "ground"):
+    elif name in ("pressed", "held", "queue", "events", "buttons", "ground", "jump", "jump41"):
         m.call(a, r3=TW, r4=PW)
     elif name == "go_stand":
         m.call(a, r3=TW, r4=MW, r5=PW)

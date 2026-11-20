@@ -10,7 +10,7 @@
 use crate::ninja_matrix::{rotate_by_angles, MatrixStack, Vec3};
 
 /// A call into engine code the runtime owns, by GSNE8P address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EngineCall {
     /// CreateElementalTask (0x80071E0C)(list, flags, exec, name). When the
     /// task is created, byte 0 of its player work (+0x40) is set to
@@ -28,6 +28,14 @@ pub enum EngineCall {
     /// the walker's debris burst), with its argument. It only feeds what
     /// is drawn.
     Deferred { addr: u32, arg: i32 },
+    /// A sound engine call: SE_Call (0x8006B978)(id, a, b, c) or
+    /// fn_8006B7EC(id, a, b, volume, position).
+    Sound {
+        addr: u32,
+        id: i32,
+        args: [i32; 3],
+        pos: Option<crate::ninja_matrix::Vec3>,
+    },
 }
 
 /// The per-player history the engine keeps at r13-0x7910 (ring indices),

@@ -367,3 +367,61 @@ pub fn lock_in_range(
     }
     false
 }
+
+/// SE_Call(id, 0, 0, 0).
+pub fn se_call(id: i32) -> EngineCall {
+    EngineCall::Sound {
+        addr: 0x8006_B978,
+        id,
+        args: [0; 3],
+        pos: None,
+    }
+}
+
+/// fn_8006B7EC(id, 0, 0, 0x7F, position).
+pub fn se_at(id: i32, pos: Vec3) -> EngineCall {
+    EngineCall::Sound {
+        addr: 0x8006_B7EC,
+        id,
+        args: [0, 0, 0x7F],
+        pos: Some(pos),
+    }
+}
+
+/// The walkers' jump sounds by voice character (player byte +3).
+fn jump_sounds(t: &Work, p: &Work, calls: &mut Vec<EngineCall>) {
+    let (a, b) = match p.b(3) {
+        0xD => (0x2019, 0x3012),
+        0xE => (0x201C, 0x3018),
+        6 => (0x2000, 0x3000),
+        7 => (0x2001, 0x300A),
+        _ => return,
+    };
+    calls.push(se_call(a));
+    calls.push(se_at(b, t.v3(tw::POS)));
+}
+
+/// fn_800ADD34 (`action` None: 0x79 for character 7, else 0xAD) and
+/// fn_800ADED0 (`action` 0x41): start the walker's jump. A ride (player
+/// +0xA0) passes its acceleration (its task's +0x3C block, +0x10) to the
+/// player's motion work (fn_80039A28); `ride_acc` is that vector.
+pub fn walker_jump(
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    ride_acc: Option<Vec3>,
+    action: Option<i16>,
+    calls: &mut Vec<EngineCall>,
+) {
+    if let Some(a) = ride_acc {
+        m.set_v3(0xC, a);
+    }
+    p.set_f(0x68, p.f(0xD8));
+    t.set_b(tw::MODE, 6);
+    let act = action.unwrap_or(if p.b(pw::CHAR) == 7 { 0x79 } else { 0xAD });
+    p.set_h(pw::ACTION, act);
+    t.clear_h(tw::FLAG, 0x2500);
+    t.clear_h(tw::FLAG, 2);
+    p.set_h(0x12, 0);
+    jump_sounds(t, p, calls);
+}

@@ -1,5 +1,6 @@
 //! Compare `walker_act` with main.dol (tests/walker_act_ppc.py) on whole
 //! native work areas.
+use sa2_asset_tools::walker_act::walker_jump;
 use sa2_asset_tools::{
     native_work::Work,
     ninja_matrix::MatrixStack,
@@ -53,6 +54,12 @@ fn calls_log(calls: Vec<EngineCall>, log: &mut Vec<Value>) {
         log.push(match c {
             EngineCall::PlayVoice { id } => json!(["voice", id]),
             EngineCall::Deferred { addr, arg } => json!(["deferred", addr, arg]),
+            EngineCall::Sound {
+                addr,
+                id,
+                args,
+                pos,
+            } => json!(["se", addr, id, args, pos.map(|v| v.map(f32::to_bits))]),
             other => json!([format!("{other:?}")]),
         });
     }
@@ -91,6 +98,12 @@ fn walker_act_matches_main_dol() {
             "events" => Some(queue_event_requests(&t, &mut p, &g)),
             "buttons" => Some(queue_button_requests(&t, &mut p)),
             "ground" => Some(queue_ground_request(&t, &mut p)),
+            "jump" | "jump41" => {
+                let ride = case["g"]["ride"].as_array().map(|_| v3(&case["g"]["ride"]));
+                let act = (case["fn"] == "jump41").then_some(0x41);
+                walker_jump(&mut t, &mut m, &mut p, ride, act, &mut calls);
+                None
+            }
             "f48" => {
                 reset_f48(&mut p, &g);
                 None
