@@ -1,11 +1,10 @@
-﻿//! Prison Lane (Hero story, Tails' walker) played by the headless autopilot
-//! on the installed Steam data. The autopilot only produces stick/jump
-//! input; the session moves the body.
+﻿//! Prison Lane's native stage rules on the installed Steam data. The
+//! session runs only rules read from the game files; these tests supply the
+//! player sample the engine would report and check the native responses.
 use sa2_asset_tools::{
     fan_stage::Campaign,
     iron_gate_movers::{MoverProgram, PRISON_LANE as LAYOUT},
-    play_autopilot::Autopilot,
-    play_session::{Event, MoverState, Outcome, Session, Sources},
+    play_session::{Event, MoverState, Outcome, PlayerSample, Session, Sources},
 };
 use std::{fs, path::PathBuf};
 
@@ -51,18 +50,6 @@ fn with_session(f: impl FnOnce(Session)) {
     )
     .unwrap();
     f(s)
-}
-
-fn run(s: &mut Session, frames: u32) -> Vec<(u32, Event)> {
-    let mut pilot = Autopilot::new(s);
-    let mut out = vec![];
-    while s.frame < frames && s.outcome == Outcome::Playing && !pilot.gave_up {
-        let c = pilot.controls(s);
-        for e in s.step(c) {
-            out.push((s.frame, e));
-        }
-    }
-    out
 }
 
 #[test]
@@ -117,11 +104,8 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [-4439.9966, 967.0, -1133.4259]);
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
-        // Fence CollisionData boxes, by the same exactness rule.
         assert_eq!(s.unimplemented.get("FENCES row (solid only)"), Some(&20));
         assert_eq!(s.unimplemented.get("FENCEL row (solid only)"), Some(&1));
-        // Only unrotated or half-turned CCUBEs are built; the rest wait on
-        // the unread form-3 rotation rule.
         assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&9));
         assert_eq!(
             s.unimplemented
@@ -140,32 +124,75 @@ fn installed_mover_rules_and_session_inventory() {
 
 #[test]
 #[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
-fn spawn_to_goal_clears_the_mission() {
+fn standing_on_the_one_way_elevator_carries_it_to_its_target() {
     with_session(|mut s| {
-        let events = run(&mut s, 15_000);
-        assert_eq!(s.outcome, Outcome::Cleared, "{events:?}");
-        let first =
-            |want: &dyn Fn(&Event) -> bool| events.iter().find(|(_, e)| want(e)).map(|(f, _)| *f);
-        let cp = |index: usize| {
-            first(&|e| matches!(e, Event::Checkpoint { index: i, .. } if *i == index))
-                .unwrap_or_else(|| panic!("checkpoint {index}: {events:?}"))
+        let i = s
+            .movers
+            .iter()
+            .position(|m| m.index == 432)
+            .expect("ELV 432");
+        let MoverState::Elevator(e) = &s.movers[i].state else {
+            panic!("not an elevator");
         };
-        let (first_cp, second_cp, last_cp) = (cp(197), cp(360), cp(0));
-        let elevator =
-            first(&|e| matches!(e, Event::ElevatorStarted { mover: 17 })).expect("elevator");
-        let goal = first(&|e| matches!(e, Event::GoalContact { sound: 0x1013, .. })).expect("goal");
-        assert!(
-            first_cp < elevator && elevator < second_cp && second_cp < last_cp && last_cp < goal,
-            "{events:?}"
-        );
+        let target = e.target;
+        let stand = PlayerSample {
+            center: s.movers[i].position(),
+            standing_on: Some(i),
+        };
+        let mut started = None;
+        let mut bridge = None;
+        for _ in 0..2_000 {
+            for e in s.step(Some(stand)) {
+                match e {
+                    Event::ElevatorStarted { mover } if mover == i => started = Some(s.frame),
+                    Event::BridgeStarted { .. } if started.is_some() => bridge = Some(s.frame),
+                    _ => {}
+                }
+            }
+        }
+        // The outer door starts shut and opens at 0.2 per frame: 182 frames
+        // before the occupancy test can start the car.
+        assert_eq!(started, Some(183));
+        let MoverState::Elevator(e) = &s.movers[i].state else {
+            unreachable!()
+        };
+        assert_eq!((e.position, e.mode, e.at_target), (target, 2, true));
+        // The bridge beside the departure point extended toward the resting
+        // car on the first frame; with its 120-frame cooldown not yet met
+        // when the car left, it stays out.
+        assert!(bridge.is_none());
+        let MoverState::Bridge(b) = &s.movers[2].state else {
+            panic!("mover 2 is not a bridge");
+        };
+        assert!(b.is_extended && !b.moving);
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn goal_contact_and_ring_pickup_follow_the_native_rules() {
+    with_session(|mut s| {
+        let ring = s.rings_placed[0].position;
+        let events = s.step(Some(PlayerSample {
+            center: ring,
+            standing_on: None,
+        }));
+        // Strictly within 14 of the centre; two lines overlap here, 10 apart.
+        let taken = events
+            .iter()
+            .filter(|e| matches!(e, Event::Ring { .. }))
+            .count() as u32;
+        assert!(taken >= 1, "{events:?}");
+        assert_eq!((s.rings, s.score), (taken, taken * 10));
+        let goal = s.goals[0].position;
+        let events = s.step(Some(PlayerSample {
+            center: goal,
+            standing_on: None,
+        }));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Event::GoalContact { sound: 0x1013, .. })));
         assert_eq!(s.slot_words[0], 2);
-        assert_eq!(s.deaths, 0);
-        // Ring lines on the route are collected on the way (10 points each).
-        assert!(
-            s.rings > 0 && s.score == s.rings * 10,
-            "{} {}",
-            s.rings,
-            s.score
-        );
+        assert_eq!(s.outcome, Outcome::Cleared);
     });
 }

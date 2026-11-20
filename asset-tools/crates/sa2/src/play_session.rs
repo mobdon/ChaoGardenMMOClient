@@ -1,28 +1,27 @@
-//! A playable single-player walker stage session: Iron Gate (Dark story,
+//! Native stage-object rules for the walker stages Iron Gate (Dark story,
 //! level 11) and Prison Lane (Hero story, level 9).
 //!
-//! Native inputs: the mounted landtable, SET placements, object-list names,
-//! the PhysicsArray row of the dispatched character, object collision models
-//! and death zones from the Steam executable, each stage's lift/elevator/
-//! bridge rules from its stage module (`StageRules`), the shared ring pickup
-//! contract, and the goal-ring initialization and contact branch.
+//! Everything here is read from the installed game files: the mounted
+//! landtable and SET placements, object-list names, the PhysicsArray row of
+//! the dispatched character, object collision models and death zones from
+//! the Steam executable, each stage's lift/elevator/bridge rules and object
+//! collision rows from its stage module (`StageRules`), the o_ring pickup
+//! contract and the goal-ring initialization and contact branch.
 //!
-//! Adaptations (no build-matched reference exists for them; see
-//! docs/PLAYABLE-IRON-GATE.md and docs/PLAYABLE-PRISON-LANE.md): the walker
-//! controller's integration order and
-//! collision response, checkpoint contact radius, the camera, and treating
-//! goal contact plus the stage-module slot word as the mission clear.
+//! The session does not move a player. The walker's own movement, collision
+//! response, lock-on and laser are main-program code, which is encrypted on
+//! disk in the Steam executable, so a host supplies the player's collision
+//! centre and the mover it stands on each frame (`PlayerSample`), and the
+//! session runs the native object rules against it.
 use crate::{
     death_zones,
     fan_stage::MountedStage,
     goal_ring,
     iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
-    play_objects::{
-        collision_rows, death_zone_triangles, inside_volume, place_y, read_object_solid,
-    },
-    play_world::{add, len, make_tri, scale, sub, Ground, PlayWorld, V3},
+    play_objects::{collision_rows, death_zone_triangles, place_y, read_object_solid},
+    play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
-    spring::{SpringCall, SpringKind, SpringPlayer, StageSpring},
+    spring::{SpringKind, StageSpring},
     Error, Result,
 };
 use serde::Serialize;
@@ -89,26 +88,12 @@ pub const PRISON_LANE: StageRules = StageRules {
 pub const RING_PICKUP_DISTANCE: f32 = 14.0;
 /// GOALRING regular shape radius (two centered spheres, 25 and 8).
 pub const GOAL_RADIUS: f32 = 25.0;
-/// Adaptation: horizontal checkpoint contact radius.
-pub const CHECKPOINT_RADIUS: f32 = 30.0;
-/// Adaptation: spring contact distance added to the player radius. The
-/// springs register native collision shape ID 4, whose size is not read here.
-pub const SPRING_CONTACT: f32 = 10.0;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
-const CONTIRON_VA: u32 = 0x6d63f0;
-const CONTCHAO_VA: u32 = 0x6de3b0;
-/// Adaptation: containers as solid cubes with this edge, standing on their
-/// placement and centred on it. Iron Gate stacks them at exactly this pitch
-/// (for example x=2490, y -663/-643, z -1047/-1027/-1007). Wooden containers
-/// break under the walker's attacks, which are not implemented, so they are
-/// left out rather than left blocking.
-pub const CONTAINER_EDGE: f32 = 20.0;
 const CCUBE_VA: u32 = 0x6e54e0;
 /// stg09D.rel 0x11B30 (shared by SPHERE, CCYL, CCUBE, CWALL): each of the
 /// shape's a, b, c sizes is 10 (sec4+0x6B0) plus the matching Scale
 /// component. CCUBE's CollisionData (sec5+0x4C080) is form 3, centre 0.
-/// Adaptation: only the placement's Y rotation is applied to the box.
 pub const CCUBE_BASE: f32 = 10.0;
 const GOALRING_VA: u32 = 0x6c63c0;
 const RING_LINEAR_VA: u32 = 0x6c5ed0;
@@ -116,26 +101,24 @@ const RING_LINEAR_VA: u32 = 0x6c5ed0;
 pub const RING_LINE_BASE: f32 = 10.0;
 const RING_VA: u32 = 0x6c0f80;
 const SAVEPOINT_VA: u32 = 0x6d99a0;
-const STEP_UP: f32 = 12.0;
 const FRAME_RATE: f32 = 60.0;
 
+/// What the host reports about the player this frame. The session reads it
+/// and never moves the player.
 #[derive(Debug, Clone, Copy, Default, Serialize)]
-pub struct Controls {
-    /// Stick, x right and y forward, each in -1..=1, relative to `camera_yaw`.
-    pub stick: [f32; 2],
-    /// Camera heading in radians about +Y (0 looks toward -Z).
-    pub camera_yaw: f32,
-    pub jump: bool,
+#[serde(rename_all = "camelCase")]
+pub struct PlayerSample {
+    /// Collision centre (feet plus the PhysicsArray center_height).
+    pub center: V3,
+    /// The engine's "player standing on this object" answer, as an index
+    /// into `Session::movers`.
+    pub standing_on: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Event {
     Ring {
-        layer: usize,
-        index: usize,
-    },
-    Checkpoint {
         layer: usize,
         index: usize,
     },
@@ -147,17 +130,6 @@ pub enum Event {
     },
     BridgeStarted {
         mover: usize,
-    },
-    Spring {
-        spring: usize,
-    },
-    Death {
-        frame: u32,
-        at: V3,
-        zone: bool,
-    },
-    Respawn {
-        frame: u32,
     },
     GoalContact {
         layer: usize,
@@ -174,22 +146,6 @@ pub enum Event {
 pub enum Outcome {
     Playing,
     Cleared,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Player {
-    /// Feet position.
-    pub position: V3,
-    pub velocity: V3,
-    /// Facing heading in radians (0 faces -Z).
-    pub yaw: f32,
-    pub grounded: bool,
-    pub ground_normal: V3,
-    pub on_mover: Option<usize>,
-    jump_hold: i32,
-    /// Frames of ignored input after a spring (native no-control timer).
-    pub nocon: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -263,12 +219,6 @@ impl Spring {
             ),
         }
     }
-}
-
-/// Twelve triangles of a cube standing on the origin (outward winding).
-fn cube_tris(edge: f32) -> Vec<[V3; 3]> {
-    let h = edge * 0.5;
-    box_tris([h, h, h], [0.0, h, 0.0])
 }
 
 /// Twelve triangles of a box with half-extents `h` centred on `c`.
@@ -453,12 +403,10 @@ pub struct Session {
     pub frame: u32,
     pub rings: u32,
     pub score: u32,
-    pub deaths: u32,
     pub outcome: Outcome,
-    pub player: Player,
+    /// Single-player start row (feet position and BAMS yaw).
     pub start: V3,
-    pub start_yaw: f32,
-    pub respawn: V3,
+    pub start_yaw: u16,
     pub slot_words: [u32; 2],
     pub movers: Vec<Mover>,
     pub rings_placed: Vec<Pickup>,
@@ -678,20 +626,6 @@ impl Session {
                             .entry(format!("{name} (solid only)"))
                             .or_insert(0) += 1;
                     }
-                    (CONTIRON_VA, "CONTIRON") | (CONTCHAO_VA, "CONTCHAO") => {
-                        for t in cube_tris(CONTAINER_EDGE) {
-                            if let Some(t) = make_tri(
-                                t.map(|v| place_y(v, pl.rotation[1], pl.position)),
-                                1,
-                                u32::MAX,
-                            ) {
-                                world.push(t);
-                            }
-                        }
-                        *unimplemented
-                            .entry(format!("{name} (solid only)"))
-                            .or_insert(0) += 1;
-                    }
                     (_, "BRIDGE") => {
                         let solid = PlayWorld::from_tris(
                             place(&bridge_solid)
@@ -782,8 +716,7 @@ impl Session {
                 zones.push(death_zone_triangles(z)?);
             }
         }
-        let start_yaw = entry.yaw as f32 * std::f32::consts::TAU / 65536.0;
-        let mut s = Self {
+        Ok(Self {
             level: stage.dispatch.level,
             character: stage.dispatch.character,
             physics,
@@ -792,21 +725,9 @@ impl Session {
             frame: 0,
             rings: 0,
             score: 0,
-            deaths: 0,
             outcome: Outcome::Playing,
-            player: Player {
-                position: entry.position,
-                velocity: [0.0; 3],
-                yaw: start_yaw,
-                grounded: false,
-                ground_normal: [0.0, 1.0, 0.0],
-                on_mover: None,
-                jump_hold: 0,
-                nocon: 0,
-            },
             start: entry.position,
-            start_yaw,
-            respawn: entry.position,
+            start_yaw: entry.yaw,
             slot_words: goal_program.initial_slot_words,
             movers,
             rings_placed,
@@ -816,9 +737,7 @@ impl Session {
             unimplemented,
             world,
             death_zones: zones,
-        };
-        s.settle();
-        Ok(s)
+        })
     }
 
     /// Static terrain plus every mover's solid at its current position.
@@ -835,116 +754,23 @@ impl Session {
         w
     }
 
-    /// Peak height of a held jump under this controller (frames integrate as in `control`).
-    pub fn jump_height(&self) -> f32 {
-        let ph = &self.physics;
-        let (mut vy, mut h, mut hold) = (ph.jmp_y_spd, 0.0, ph.jump2_timer);
-        while vy > 0.0 {
-            h += vy;
-            if hold > 0 {
-                vy += ph.jmp_addit;
-                hold -= 1;
-            }
-            vy -= ph.gravity;
-        }
-        h
-    }
-
     pub fn death_zone_count(&self) -> usize {
         self.death_zones.len()
     }
 
+    /// Native death-zone volumes (what entering one does is not run here).
     pub fn death_zone_triangles(&self) -> impl Iterator<Item = &[V3; 3]> {
         self.death_zones.iter().flatten()
     }
 
-    /// Restart as the game does after a miss once checkpoint `index` (in
-    /// `checkpoints` order) has been passed: the player stands at it.
-    pub fn restart_from_checkpoint(&mut self, index: usize) -> Result<()> {
-        let c = self
-            .checkpoints
-            .get_mut(index)
-            .ok_or_else(|| Error::invalid("no such checkpoint"))?;
-        c.taken = true;
-        self.respawn = c.position;
-        self.player.position = c.position;
-        self.player.velocity = [0.0; 3];
-        self.player.on_mover = None;
-        self.settle();
-        Ok(())
-    }
-
-    /// Snap the player onto the ground below the start/respawn point.
-    fn settle(&mut self) {
-        let p = self.player.position;
-        if let Some((g, m)) = self.ground([p[0], p[1] + 20.0, p[2]], 400.0) {
-            self.player.position[1] = g.y;
-            self.player.grounded = true;
-            self.player.ground_normal = g.normal;
-            self.player.on_mover = m;
-        }
-    }
-
-    /// Height of the terrain or mover surface within `depth` below `p`.
-    pub fn floor_below(&self, p: V3, depth: f32) -> Option<f32> {
-        self.ground(p, depth).map(|(g, _)| g.y)
-    }
-
-    fn ground(&self, p: V3, depth: f32) -> Option<(Ground, Option<usize>)> {
-        let mut best = self.world.ground_below(p, depth).map(|g| (g, None));
-        for (i, m) in self.movers.iter().enumerate() {
-            let o = m.offset();
-            if let Some(mut g) = m.solid.ground_below(sub(p, o), depth) {
-                g.y += o[1];
-                // A mover flush with the floor carries the player.
-                if best.is_none_or(|(b, _)| g.y >= b.y - 0.05) {
-                    best = Some((g, Some(i)));
-                }
-            }
-        }
-        best
-    }
-
-    fn ceiling(&self, p: V3, reach: f32) -> Option<f32> {
-        let mut best = self.world.ceiling_above(p, reach);
-        for m in &self.movers {
-            let o = m.offset();
-            if let Some(y) = m.solid.ceiling_above(sub(p, o), reach) {
-                let y = y + o[1];
-                if best.is_none_or(|b| y < b) {
-                    best = Some(y);
-                }
-            }
-        }
-        best
-    }
-
-    fn push_out(&self, c: V3, r: f32) -> (V3, Option<V3>) {
-        let (mut total, mut normal) = self.world.push_out(c, r, 4);
-        for m in &self.movers {
-            let o = m.offset();
-            let (d, n) = m.solid.push_out(sub(add(c, total), o), r, 2);
-            if d != [0.0; 3] {
-                total = add(total, d);
-                normal = n;
-            }
-        }
-        (total, normal)
-    }
-
-    pub fn player_center(&self) -> V3 {
-        add(self.player.position, [0.0, self.physics.center_height, 0.0])
-    }
-
-    /// Advance one 60 Hz frame.
-    pub fn step(&mut self, c: Controls) -> Vec<Event> {
+    /// Advance one 60 Hz frame of the native object rules.
+    pub fn step(&mut self, player: Option<PlayerSample>) -> Vec<Event> {
         let mut events = vec![];
         if self.outcome == Outcome::Cleared {
             return events;
         }
         self.frame += 1;
-        // 1. Movers update from last frame's standing state and carry the rider.
-        let riding = self.player.on_mover.filter(|_| self.player.grounded);
+        let standing = player.and_then(|p| p.standing_on);
         let elevators: Vec<(V3, bool)> = self
             .movers
             .iter()
@@ -954,8 +780,7 @@ impl Session {
             })
             .collect();
         for i in 0..self.movers.len() {
-            let before = self.movers[i].position();
-            let stood = riding == Some(i);
+            let stood = standing == Some(i);
             let started = match &mut self.movers[i].state {
                 MoverState::Lift(l) => l
                     .step(&self.movers_program, stood)
@@ -968,245 +793,14 @@ impl Session {
                     .then_some(Event::BridgeStarted { mover: i }),
             };
             events.extend(started);
-            if stood {
-                let d = sub(self.movers[i].position(), before);
-                self.player.position = add(self.player.position, d);
-            }
         }
-        // 2. Controller (adaptation, parameters from PhysicsArray).
-        let mut pl = self.player.clone();
-        self.control(&mut pl, c);
-        // 3. Integrate with collision.
-        self.integrate(&mut pl);
-        self.player = pl;
-        // 4. Objects.
-        self.springs(&mut events);
-        self.objects(&mut events);
+        if let Some(p) = player {
+            self.objects(p.center, &mut events);
+        }
         events
     }
 
-    /// Free flight (no input) from a launch state until landing; used by the
-    /// offline planner to find where a spring delivers the player.
-    pub fn predict_landing(
-        &self,
-        position: V3,
-        velocity: V3,
-        nocon: i32,
-        max_frames: u32,
-    ) -> Option<V3> {
-        let mut pl = self.player.clone();
-        pl.position = position;
-        pl.velocity = velocity;
-        pl.grounded = false;
-        pl.on_mover = None;
-        pl.nocon = nocon;
-        pl.jump_hold = 0;
-        for f in 0..max_frames {
-            self.control(&mut pl, Controls::default());
-            self.integrate(&mut pl);
-            if pl.grounded && f > 2 {
-                return Some(pl.position);
-            }
-            if pl.position[1] < self.world.min[1] - 300.0 {
-                return None;
-            }
-        }
-        None
-    }
-
-    fn control(&self, pl: &mut Player, c: Controls) {
-        let ph = &self.physics;
-        let c = if pl.nocon > 0 {
-            pl.nocon -= 1;
-            Controls {
-                stick: [0.0; 2],
-                jump: false,
-                ..c
-            }
-        } else {
-            c
-        };
-        let mag = (c.stick[0] * c.stick[0] + c.stick[1] * c.stick[1])
-            .sqrt()
-            .min(1.0);
-        // Camera-relative world direction. Forward is -Z at camera yaw 0.
-        let (s, co) = c.camera_yaw.sin_cos();
-        let fwd = [-s, 0.0, -co];
-        let right = [co, 0.0, -s];
-        let mut dir = add(scale(right, c.stick[0]), scale(fwd, c.stick[1]));
-        let dl = len(dir);
-        if dl > 1e-4 {
-            dir = scale(dir, 1.0 / dl);
-        }
-        let mut h = [pl.velocity[0], 0.0, pl.velocity[2]];
-        let speed = len(h);
-        if mag > 0.05 && dl > 1e-4 {
-            let target_yaw = (-dir[0]).atan2(-dir[2]);
-            let mut dy = target_yaw - pl.yaw;
-            while dy > std::f32::consts::PI {
-                dy -= std::f32::consts::TAU;
-            }
-            while dy < -std::f32::consts::PI {
-                dy += std::f32::consts::TAU;
-            }
-            let turn = if pl.grounded { 0.25 } else { 0.08 };
-            pl.yaw += dy.clamp(-turn, turn);
-            let accel = if pl.grounded {
-                ph.run_accel
-            } else {
-                ph.air_accel
-            };
-            let target = ph.rush_speed * mag;
-            let facing = [-pl.yaw.sin(), 0.0, -pl.yaw.cos()];
-            let new_speed = if speed < target {
-                (speed + accel).min(target)
-            } else if pl.grounded {
-                (speed - ph.slow_down).max(target)
-            } else {
-                speed
-            };
-            // Ground velocity follows the facing; air keeps momentum and steers.
-            h = if pl.grounded {
-                scale(facing, new_speed)
-            } else {
-                let blend = add(scale(h, 0.95), scale(facing, new_speed * 0.05));
-                let bl = len(blend);
-                if bl > 1e-4 {
-                    scale(blend, new_speed / bl)
-                } else {
-                    blend
-                }
-            };
-        } else if pl.grounded {
-            let ns = (speed - ph.slow_down).max(0.0);
-            h = if speed > 1e-4 {
-                scale(h, ns / speed)
-            } else {
-                [0.0; 3]
-            };
-        }
-
-        pl.velocity[0] = h[0];
-        pl.velocity[2] = h[2];
-        if c.jump && pl.grounded {
-            pl.velocity[1] = ph.jmp_y_spd;
-            pl.grounded = false;
-            pl.on_mover = None;
-            pl.jump_hold = ph.jump2_timer;
-        } else if !pl.grounded {
-            if c.jump && pl.jump_hold > 0 && pl.velocity[1] > 0.0 {
-                pl.velocity[1] += ph.jmp_addit;
-                pl.jump_hold -= 1;
-            } else {
-                pl.jump_hold = 0;
-            }
-            pl.velocity[1] = (pl.velocity[1] - ph.gravity).max(-ph.lim_v_spd);
-        }
-    }
-
-    fn integrate(&self, pl: &mut Player) {
-        let ph = &self.physics;
-        let mut pos = pl.position;
-        let vel = pl.velocity;
-        // Sub-step so fast moves cannot skip thin floors or walls.
-        let steps = ((len(vel) / (ph.rad * 0.5)).ceil() as usize).clamp(1, 16);
-        let mut grounded = false;
-        let mut ground_normal = [0.0, 1.0, 0.0];
-        let mut on_mover = None;
-        let mut vy = vel[1];
-        for _ in 0..steps {
-            let f = 1.0 / steps as f32;
-            pos[0] += vel[0] * f;
-            pos[2] += vel[2] * f;
-            // Walls: sphere above the step height.
-            let center = [pos[0], pos[1] + STEP_UP * 0.5 + ph.rad, pos[2]];
-            let (d, _) = self.push_out(center, ph.rad);
-            pos[0] += d[0];
-            pos[2] += d[2];
-            // Vertical.
-            if vy > 0.0 {
-                let top = pos[1] + ph.height;
-                if let Some(ceil) = self.ceiling([pos[0], top - 1.0, pos[2]], vy * f + 1.0) {
-                    pos[1] = ceil - ph.height - 0.01;
-                    vy = 0.0;
-                } else {
-                    pos[1] += vy * f;
-                }
-            } else {
-                let probe_top = pos[1] + STEP_UP;
-                let snap = if pl.grounded && vy <= 0.0 {
-                    STEP_UP
-                } else {
-                    0.0
-                };
-                let depth = STEP_UP + snap + (-vy * f);
-                match self.ground([pos[0], probe_top, pos[2]], depth) {
-                    Some((g, m)) if g.y >= pos[1] + vy * f - snap - 0.01 => {
-                        pos[1] = g.y;
-                        grounded = true;
-                        ground_normal = g.normal;
-                        on_mover = m;
-                        vy = 0.0;
-                    }
-                    _ => pos[1] += vy * f,
-                }
-            }
-        }
-        if grounded {
-            vy = 0.0;
-        }
-        pl.position = pos;
-        pl.velocity[1] = vy;
-        pl.grounded = grounded;
-        pl.ground_normal = ground_normal;
-        pl.on_mover = if grounded { on_mover } else { None };
-    }
-
-    fn springs(&mut self, events: &mut Vec<Event>) {
-        let center = self.player_center();
-        let rad = self.physics.rad;
-        let pl = &mut self.player;
-        let running = (pl.velocity[0] * pl.velocity[0] + pl.velocity[2] * pl.velocity[2]).sqrt();
-        for (i, sp) in self.springs.iter_mut().enumerate() {
-            let near = len(sub(sp.task.position, center)) < SPRING_CONTACT + rad;
-            let player = SpringPlayer {
-                position: pl.position,
-                running_speed: running,
-                item: 0,
-            };
-            let calls = sp
-                .task
-                .step(near.then_some(0u8), Some(player), sp.out, bams_sin_cos);
-            for call in calls {
-                match call {
-                    SpringCall::SetPosition(0, p) => pl.position = p,
-                    SpringCall::SpringVelocity(0, v) => {
-                        pl.velocity = v;
-                        pl.grounded = false;
-                        pl.on_mover = None;
-                        events.push(Event::Spring { spring: i });
-                    }
-                    SpringCall::VelocityYRotationNoControl {
-                        slot: 0,
-                        velocity_y,
-                        angles,
-                        frames,
-                    } => {
-                        pl.velocity = rotate_zxy([0.0, velocity_y, 0.0], angles);
-                        pl.nocon = frames;
-                        pl.grounded = false;
-                        pl.on_mover = None;
-                        events.push(Event::Spring { spring: i });
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    fn objects(&mut self, events: &mut Vec<Event>) {
-        let center = self.player_center();
-        let feet = self.player.position;
+    fn objects(&mut self, center: V3, events: &mut Vec<Event>) {
         for r in self.rings_placed.iter_mut().filter(|r| !r.taken) {
             if len(sub(r.position, center)) < RING_PICKUP_DISTANCE {
                 r.taken = true;
@@ -1216,19 +810,6 @@ impl Session {
                 events.push(Event::Ring {
                     layer: r.layer,
                     index: r.index,
-                });
-            }
-        }
-        for c in self.checkpoints.iter_mut().filter(|c| !c.taken) {
-            let d = [c.position[0] - feet[0], c.position[2] - feet[2]];
-            if (d[0] * d[0] + d[1] * d[1]).sqrt() < CHECKPOINT_RADIUS
-                && (c.position[1] - feet[1]).abs() < 40.0
-            {
-                c.taken = true;
-                self.respawn = c.position;
-                events.push(Event::Checkpoint {
-                    layer: c.layer,
-                    index: c.index,
                 });
             }
         }
@@ -1261,22 +842,6 @@ impl Session {
         if self.slot_words[0] == 2 {
             self.outcome = Outcome::Cleared;
             events.push(Event::Cleared { frame: self.frame });
-            return;
-        }
-        let zone = self.death_zones.iter().any(|z| inside_volume(z, center));
-        if zone || self.player.position[1] < self.world.min[1] - 300.0 {
-            self.deaths += 1;
-            events.push(Event::Death {
-                frame: self.frame,
-                at: self.player.position,
-                zone,
-            });
-            self.player.position = self.respawn;
-            self.player.velocity = [0.0; 3];
-            self.player.on_mover = None;
-            self.rings = 0;
-            self.settle();
-            events.push(Event::Respawn { frame: self.frame });
         }
     }
 

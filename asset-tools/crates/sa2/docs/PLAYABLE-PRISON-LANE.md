@@ -1,33 +1,31 @@
-# Playable Prison Lane (Hero story, Tails' walker)
+# Prison Lane native stage rules (Hero story, Tails' walker)
 
-Prison Lane is the second stage built out to play in the Rust runtime. It
-runs on the same session, controller, collision queries and autopilot as
-[Iron Gate](PLAYABLE-IRON-GATE.md). `play_session::Session::prison_lane`
-builds it from the mounted Hero story dispatch 9 (level 9, MechTails,
-PhysicsArray slot 6); `play_session::PRISON_LANE` holds the per-stage native
-inputs.
+`play_session::Session::prison_lane` builds Prison Lane (Hero story dispatch
+9, level 9, MechTails, PhysicsArray slot 6) from the installed game files
+and runs only rules read from them; `play_session::PRISON_LANE` holds the
+per-stage native inputs.
 
-## Play it
-
-From `asset-tools/crates/sa2-play`:
+It is not playable. The walker's movement, collision response, lock-on and
+laser are main-program code. The Steam executable's code is
+SteamStub-encrypted on disk and no GameCube main program is available, so
+none of it can be read here. The adapted controller, collision queries,
+headless autopilot, planner, window and the contact radii that were not
+read (checkpoints, springs) have been removed. A host supplies a
+`PlayerSample` each frame (the player's collision centre and the mover the
+engine says it stands on) and `Session::step` runs the native object rules.
 
 ```powershell
-cargo run --release -- $game $pcSa2Config --stage prison-lane
-cargo run --release -- $game $pcSa2Config --stage prison-lane --headless out.json
+# From asset-tools/crates/sa2-play: write the stage's native rule state.
+cargo run --release -- $game $pcSa2Config --stage prison-lane out.json
 ```
 
-Controls and the headless report are the same as Iron Gate's.
-`SA2_PLAY_TRACK_EVERY=N` samples the report's track every N frames instead
-of once a second.
-
-## What differs from Iron Gate
+## Mover rules
 
 Both stage modules build the MLIFT/ELV/BRIDGE family from the same source.
 `iron_gate_movers::MoverLayout` names each module's object rows, callbacks,
 checked instruction words and the `lis` sites of every constant, and
 `MoverProgram::verify_layout` refuses a module whose digest, rows, words or
-constants differ. Offsets for stg09D.rel were found by matching
-normalized instruction windows from stg11D.rel and then read directly.
+constants differ.
 
 | Rule | stg11D.rel (Iron Gate) | stg09D.rel (Prison Lane) |
 | --- | --- | --- |
@@ -38,65 +36,39 @@ normalized instruction windows from stg11D.rel and then read directly.
 | Bridge | -140 local X, 8 per frame, elevator within 450 | -140, 1.5 per frame, 450 |
 
 The elevator's idle code opens both doors while the car rests at its
-placement and only the outer door at the far end; it tests occupancy only
-when the doors it opens were already open. In Prison Lane that means a
-newly placed elevator needs 182 frames before it can start, and closing the
-outer door (114 frames) gates travel. `Elevator` now models both doors; for
-Iron Gate, whose doors share one constant set, the timing is unchanged.
+placement and only the outer door at the far end, and it tests occupancy
+only when the doors it opens were already open. A newly placed Prison Lane
+elevator therefore needs 182 frames before it can start, and closing the
+outer door (114 frames) gates travel.
 
-| System | Source | Status |
+## Stage objects
+
+| System | Source | Built |
 | --- | --- | --- |
-| Terrain | `objLandTable0009`, `collision::bake_stage` | Native geometry, same queries as Iron Gate |
+| Terrain | `objLandTable0009`, `collision::bake_stage` | Geometry only |
 | Object models | PC_SA2/STG09.ini: lift 0xC3C538, bridge 0xC42EA0, elevator 0xC39660, panel 0xC40390 | Native Basic models |
-| PANEL (17) | stg09D.rel 0x2A4C passes its model to the static-collision helper 0x9A4C with flags 6 (Y rotation kept, X and Z dropped) | Ported as static solids. They floor the gap past the first lift room. |
-| CCUBE (17) | stg09D.rel 0x11CDC: CollisionData form 3 (sec5+0x4C080), sizes set by 0x11B30 to 10 + Scale per axis | Ported as solid boxes with half-extents 10 + Scale, centred on the placement. Whether form 3 applies the task rotation is not read, so only the 9 boxes whose shape does not depend on it (no X/Z rotation, yaw 0 or a half turn) are built; the 8 others are listed as unimplemented. Not enabled for Iron Gate, whose module was not checked. |
-| FENCES (39), FENCEL (4) | stg09D.rel 0x2A94 / 0x2AF8 register CollisionData rows sec5+0x3C54C (1 row) and +0x3C57C (3 rows) via helper 0x2B5C; rows read at load by `play_objects::collision_rows` | FENCES is one form 3 box, centre (0, 7.5, 0), half-extents (0.5, 7.5, 30); FENCEL is a form 3 box, centre (0, 20, 0), half-extents (0.5, 20, 60), plus two angled form 2 rows. Built by the same exactness rule as CCUBE: 20 FENCES and 1 FENCEL box. The rotated placements and the form 2 rows are listed as unimplemented. |
-| RING_LINEAR (15 of 17 lines, 56 rings) | stg09D.rel 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | Ported for lines placed by read rules alone: Scale.z truncated and clamped to 1..=8 rings, spaced 10 + Scale.x along local -Z, turned by the Y rotation (0x801154E0, the goal ring spin call). The arch term multiplies Scale.y by an unidentified trig call (0x80112050), and X/Z use two unidentified rotate calls, so the one arched line and the one tilted line are not built. Each ring uses the o_ring pickup. Not enabled for Iron Gate. |
-| Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Native volumes |
+| PANEL (17) | stg09D.rel 0x2A4C passes its model to the static-collision helper 0x9A4C with flags 6 (Y rotation kept, X and Z dropped) | All 17 |
+| CCUBE (17) | stg09D.rel 0x11CDC: CollisionData form 3 (sec5+0x4C080), sizes 10 + Scale per axis (helper 0x11B30) | The 9 whose shape cannot depend on the unread rotation rule (no X/Z rotation, yaw 0 or a half turn) |
+| FENCES (39), FENCEL (4) | 0x2A94 / 0x2AF8 register CollisionData rows sec5+0x3C54C (1) and +0x3C57C (3) via helper 0x2B5C, read at load by `play_objects::collision_rows` | Form 3 boxes by the same rule: 20 FENCES, 1 FENCEL |
+| RING_LINEAR (17 lines) | 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | The 15 flat lines turned only about Y (0x801154E0, the goal ring spin call): 56 rings, Scale.z clamped to 1..=8, spaced 10 + Scale.x along local -Z |
+| Rings | o_ring_M1 | Pickup strictly within 14 of the collision centre |
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact; slot word 2 is the clear |
-| Checkpoints, springs, containers | as Iron Gate | as Iron Gate |
+| Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Volumes only |
+| Checkpoints, springs | placements; `spring::StageSpring` launch vectors | Data only; contact is not run |
 
-### Not run
-
-Doors and switches are not run, so every door is effectively open. In the
-module, CAGED (sliding prison door, exec 0x2000) opens or closes from an
-engine query (0x80018E30) on its Rotation.x switch number; what sets those
-switches in Prison Lane (enemies, lock-on volumes, the TANK or CAM objects)
-was not traced. The cell door on the route near (-3329, 730, 130) is one of
-them, so in the game the route there probably depends on clearing the area
-first. WALL, CAGE, CAGEB and CAGEC (all gated on switches or player-distance logic), MECHA fuse boxes,
-TANK, ROLL, SPHERE and CCYL solids, item boxes, enemies, lock-on and
-the walker's laser are not run either. The headless report lists every
-unhandled placement by name.
+Everything else is listed by name in `Session::unimplemented`, including
+the rotated CCUBE and fence placements, the angled fence rows (form 2), the
+arched and tilted ring lines, CAGED and CAGE/CAGEB/CAGEC (gated on the
+engine switch query 0x80018E30), WALL (player-distance logic), MECHA, ROLL,
+TANK, SPHERE, CCYL, containers, item boxes and enemies.
 
 ## Offline verification
 
 `cargo test --release --test prison_lane_play -- --ignored` with
-`SA2_GAME_PATH` and `SA2_PC_CONFIG` set.
+`SA2_GAME_PATH` and `SA2_PC_CONFIG` set:
 
 | Check | Result on the pinned Steam build |
 | --- | --- |
-| Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL and 9 CCUBE solids, 56 rings; stg11D.rel is rejected for this layout |
-| Spawn to goal | Checkpoint (-1235, 237, 40) at frame 2,890; the one-way diagonal elevator at 4,068; checkpoints (-2476, 630, -615) at 5,141 and (-3910, 870, -240) at 7,643; goal contact with sound 0x1013 and slot word 2 at 8,727 (145.5 s). No deaths; 15 of the 56 rings collected on the way (score 150). |
-
-`examples/walker_probe.rs` (static reachability from the start and each
-checkpoint to every checkpoint, mover and the goal) and
-`examples/walker_slice.rs` (a top-down text map or per-cell surface list)
-are the tools used to find where the route broke.
-
-### Autopilot changes
-
-The autopilot only supplies stick and jump input, but several of its
-choices were too loose for this stage. These also apply to Iron Gate, whose
-offline tests still pass:
-
-- It no longer skips a ride when it passes over the boarding point in the
-  air; it lands on it first.
-- A level gap is a jump only where the floor actually breaks, the jump is a
-  tap rather than a hold, and it is taken only from the near side once the
-  walker faces the target.
-- It jumps rises above 6 units, because the session's wall sphere starts
-  half a step above the feet and stops a walking body at about that height.
-- It looks one waypoint ahead only when that shortcut stays over floor.
-- The planner adds a cost to climbs within 20% of the jump limit, so a lift
-  that reaches the same place is preferred.
+| Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL, 9 CCUBE, 21 fence boxes, 56 rings; stg11D.rel is rejected for this layout |
+| Standing on the one-way diagonal elevator | Starts on frame 183, arrives at its Scale target and stops for good; the bridge that extended toward it on frame 1 stays out (its 120-frame cooldown was not met) |
+| Ring and goal contact | Rings within 14 of the centre are taken for 10 points each; goal contact plays sound 0x1013, writes slot word 2 and clears |

@@ -109,30 +109,6 @@ pub fn place_y(p: V3, yaw_bams: u16, at: V3) -> V3 {
     ]
 }
 
-/// True when `p` lies inside the closed volume (odd crossings of an upward ray).
-pub fn inside_volume(tris: &[[V3; 3]], p: V3) -> bool {
-    // A tiny fixed offset keeps the ray off shared diagonals and edges.
-    let p = [p[0] + 1.37e-3, p[1], p[2] + 2.11e-3];
-    let mut crossings = 0;
-    for t in tris {
-        let [a, b, c] = *t;
-        let d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
-        if d.abs() < 1e-9 {
-            continue;
-        }
-        let l1 = ((b[2] - c[2]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[2] - c[2])) / d;
-        let l2 = ((c[2] - a[2]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[2] - c[2])) / d;
-        let l3 = 1.0 - l1 - l2;
-        if l1 < 0.0 || l2 < 0.0 || l3 < 0.0 {
-            continue;
-        }
-        if l1 * a[1] + l2 * b[1] + l3 * c[1] > p[1] {
-            crossings += 1;
-        }
-    }
-    crossings % 2 == 1
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,29 +120,6 @@ mod tests {
             (p[0] - 100.0).abs() < 1e-4 && (p[2] + 10.0).abs() < 1e-4,
             "{p:?}"
         );
-    }
-
-    #[test]
-    fn closed_box_contains_center() {
-        // Unit cube from 12 triangles.
-        let v = |x: f32, y: f32, z: f32| [x, y, z];
-        let q = |a: V3, b: V3, c: V3, d: V3| [[a, b, c], [a, c, d]];
-        let mut t = vec![];
-        t.extend(q(
-            v(0., 0., 0.),
-            v(1., 0., 0.),
-            v(1., 0., 1.),
-            v(0., 0., 1.),
-        ));
-        t.extend(q(
-            v(0., 1., 0.),
-            v(1., 1., 0.),
-            v(1., 1., 1.),
-            v(0., 1., 1.),
-        ));
-        assert!(inside_volume(&t, [0.5, 0.5, 0.5]));
-        assert!(!inside_volume(&t, [0.5, 1.5, 0.5]));
-        assert!(!inside_volume(&t, [1.5, 0.5, 0.5]));
     }
 }
 
