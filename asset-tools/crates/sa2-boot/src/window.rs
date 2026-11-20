@@ -273,6 +273,7 @@ impl ApplicationHandler for App {
                     for u in f.uploads.drain(..) {
                         g.renderer.replace_texture(u.id, &u.levels);
                     }
+                    sa2_gx::widescreen::clamp_hud_textures(&mut f);
                     // A window wider than 4:3 sees more of the 3D view, with
                     // the HUD at its edges (SA2_ASPECT=4:3 keeps the original).
                     if std::env::var("SA2_ASPECT").map_or(true, |a| a.trim() != "4:3") {

@@ -97,3 +97,38 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
         }
     }
 }
+
+/// Whether every vertex's first texture coordinate lies within the texture
+/// (a sprite showing its texture once, not a tiled backdrop).
+fn within_texture(d: &DrawCmd) -> bool {
+    let Some(t) = d.layout.input(VertexInput::Tex01) else {
+        return false;
+    };
+    let stride = d.layout.stride.max(1);
+    let f = |b: &[u8], o: usize| {
+        b.get(o..o + 4)
+            .map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]]))
+    };
+    d.vertices.chunks(stride).all(|v| {
+        [f(v, t.offset), f(v, t.offset + 4)]
+            .into_iter()
+            .all(|c| c.is_some_and(|c| (-0.01..=1.01).contains(&c)))
+    })
+}
+
+/// HUD sprites that show their texture once sample it clamped. They're drawn
+/// with repeat, and at more pixels than 640x480 the filter at a sprite's
+/// edge blended in the texture's opposite edge: thin lines around the lives
+/// icon and menu items. Tiled HUD backdrops keep repeat.
+pub fn clamp_hud_textures(frame: &mut Frame) {
+    for d in frame
+        .draws
+        .iter_mut()
+        .filter(|d| is_hud(d) && within_texture(d))
+    {
+        for m in &mut d.material_params.texture_mappings {
+            m.sampler.wrap_s = crate::enums::wrap_mode::CLAMP;
+            m.sampler.wrap_t = crate::enums::wrap_mode::CLAMP;
+        }
+    }
+}

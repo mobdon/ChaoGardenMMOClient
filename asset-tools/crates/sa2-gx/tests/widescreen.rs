@@ -95,3 +95,56 @@ fn wider_view_and_hud_at_the_edges() {
     widen(&mut g, 4.0 / 3.0);
     assert_eq!(g.draws[0].projection, before[0]);
 }
+
+/// Two HUD sprites with a repeating texture: one shows it once, one tiles it 4x.
+fn sprites() -> Frame {
+    use sa2_gx::api::{tev_mode, TexObj};
+    let ram = vec![0u8; 0x2000];
+    let mem = Ram(&ram);
+    let mut gx = Gx::new();
+    gx.clear_vtx_desc();
+    gx.set_vtx_desc(attr::POS, attr_type::DIRECT);
+    gx.set_vtx_desc(attr::TEX0, attr_type::DIRECT);
+    gx.set_vtx_attr_fmt(0, attr::POS, comp_cnt::POS_XYZ, comp_type::F32, 0);
+    gx.set_vtx_attr_fmt(0, attr::TEX0, comp_cnt::TEX_ST, comp_type::F32, 0);
+    gx.set_tev_op(0, tev_mode::REPLACE);
+    gx.load_tex_obj(
+        &TexObj::new(
+            0x8000_1000,
+            4,
+            4,
+            tex_format::RGB565,
+            wrap_mode::REPEAT,
+            wrap_mode::REPEAT,
+            false,
+        ),
+        0,
+    );
+    gx.load_pos_mtx_imm(&HUD, 0);
+    for tiles in [1.0f32, 4.0] {
+        gx.begin(command::DRAW_QUADS, 0, 4);
+        for (x, y) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+            gx.position3f32(-30.0 - 60.0 * x, 420.0 + 40.0 * y, -1.0);
+            gx.tex_coord2f32(x * tiles, y * tiles);
+        }
+        gx.end(&mem);
+    }
+    gx.take_frame()
+}
+
+#[test]
+fn hud_sprites_shown_once_sample_clamped() {
+    let mut f = sprites();
+    sa2_gx::widescreen::clamp_hud_textures(&mut f);
+    let wrap = |i: usize| {
+        f.draws[i].material_params.texture_mappings[0]
+            .sampler
+            .wrap_s
+    };
+    assert_eq!(
+        wrap(0),
+        wrap_mode::CLAMP,
+        "a sprite showing its texture once"
+    );
+    assert_eq!(wrap(1), wrap_mode::REPEAT, "a tiled backdrop keeps repeat");
+}
