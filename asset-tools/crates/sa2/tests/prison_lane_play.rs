@@ -201,3 +201,47 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         assert_eq!(s.slot_words[0], 2);
     });
 }
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
+    with_session(|mut s| {
+        assert_eq!(s.doors.len(), 11);
+        // The cell door on the route near (-3329, 730, 130): group 10.
+        let d = s
+            .doors
+            .iter()
+            .position(|d| d.index == 36)
+            .expect("CAGED 36");
+        let group = s.doors[d].group;
+        assert_eq!(group, 10);
+        let members: Vec<usize> = (0..s.enemies.len())
+            .filter(|&i| s.enemies[i].group == group && s.enemies[i].counted)
+            .collect();
+        assert!(!members.is_empty() && !s.group_clear(group));
+        // Closed while the group lives.
+        for _ in 0..60 {
+            s.step(None);
+        }
+        assert_eq!(s.doors[d].state, 0);
+        for &i in &members {
+            assert!(s.destroy_enemy(i));
+        }
+        assert!(s.group_clear(group));
+        let mut opening = None;
+        let mut opened = None;
+        for _ in 0..400 {
+            for e in s.step(None) {
+                match e {
+                    Event::DoorOpening { door } if door == d => opening = Some(s.frame),
+                    Event::DoorOpened { door } if door == d => opened = Some(s.frame),
+                    _ => {}
+                }
+            }
+        }
+        let (a, b) = (opening.expect("opening"), opened.expect("opened"));
+        // Scale.x 0.5 per frame to the 50-unit stop.
+        assert_eq!(b - a, 100);
+        assert!((s.doors[d].slide - 50.0).abs() < 1.0);
+    });
+}

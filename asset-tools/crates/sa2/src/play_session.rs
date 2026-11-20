@@ -22,6 +22,7 @@ use crate::{
     play_objects::{collision_rows, death_zone_triangles, place_y, read_object_solid},
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
+    prison_doors::{enemy_counts, DoorSound, Enemy, PrisonDoor},
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -51,6 +52,8 @@ pub struct StageRules {
     pub invisible_cubes: bool,
     /// Expand RING_LINEAR placements into collectable rings.
     pub ring_lines: bool,
+    /// Run enemy group counts and CAGED doors (rules read from stg09D.rel).
+    pub prison_doors: bool,
     pub death_zone_config: &'static str,
 }
 
@@ -74,6 +77,7 @@ pub const IRON_GATE: StageRules = StageRules {
     ],
     invisible_cubes: false,
     ring_lines: false,
+    prison_doors: false,
     death_zone_config: DEATH_ZONE_CONFIG,
 };
 
@@ -104,6 +108,7 @@ pub const PRISON_LANE: StageRules = StageRules {
     ],
     invisible_cubes: true,
     ring_lines: true,
+    prison_doors: true,
     death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
 };
 /// o_ring_M1: pickup when a player collision center is strictly within 14.
@@ -154,6 +159,14 @@ pub enum Event {
     },
     BridgeStarted {
         mover: usize,
+    },
+    /// A CAGED door started sliding open (its group count reached zero).
+    DoorOpening {
+        door: usize,
+    },
+    /// A CAGED door reached its open stop (sound 0x1021).
+    DoorOpened {
+        door: usize,
     },
     GoalContact {
         layer: usize,
@@ -434,6 +447,12 @@ pub struct Session {
     pub checkpoints: Vec<Pickup>,
     pub goals: Vec<Goal>,
     pub springs: Vec<Spring>,
+    /// Enemies that take part in group counts.
+    pub enemies: Vec<Enemy>,
+    /// Live-enemy count per group (the byte table at 0x801E4AB8).
+    #[serde(skip)]
+    pub group_counts: [u8; 256],
+    pub doors: Vec<PrisonDoor>,
     /// Placements whose native behavior this session does not run.
     pub unimplemented: std::collections::BTreeMap<String, usize>,
     #[serde(skip)]
@@ -516,6 +535,8 @@ impl Session {
         let mut checkpoints = vec![];
         let mut goals = vec![];
         let mut springs = vec![];
+        let mut enemies: Vec<Enemy> = vec![];
+        let mut doors = vec![];
         let mut unimplemented = std::collections::BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -599,6 +620,32 @@ impl Session {
                             task,
                             out,
                         });
+                    }
+                    (_, "CAGED") if rules.prison_doors => doors.push(PrisonDoor {
+                        layer: li,
+                        index: p.placement_index,
+                        position: pl.position,
+                        yaw: pl.rotation[1],
+                        group: (pl.rotation[0] & 0xff) as u8,
+                        speed: pl.parameters[0],
+                        positive: pl.rotation[2] & 1 != 0,
+                        state: 0,
+                        slide: 0.0,
+                        velocity: 0.0,
+                    }),
+                    (_, n) if rules.prison_doors && enemy_counts(n, pl.parameters).is_some() => {
+                        enemies.push(Enemy {
+                            layer: li,
+                            index: p.placement_index,
+                            name: n.to_string(),
+                            position: pl.position,
+                            group: (pl.rotation[1] & 0xff) as u8,
+                            counted: enemy_counts(n, pl.parameters) == Some(true),
+                            alive: true,
+                        });
+                        *unimplemented
+                            .entry(format!("{name} (group count only)"))
+                            .or_insert(0) += 1;
                     }
                     (_, "MLIFT") => {
                         let solid = solid(place(&lift_solid));
@@ -757,7 +804,36 @@ impl Session {
             unimplemented,
             world,
             death_zones: zones,
+            group_counts: {
+                let mut c = [0u8; 256];
+                for e in enemies.iter().filter(|e| e.counted) {
+                    c[e.group as usize] = c[e.group as usize].wrapping_add(1);
+                }
+                c
+            },
+            enemies,
+            doors,
         })
+    }
+
+    /// The switch query 0x80018E30: true when the group has no live
+    /// counted enemy.
+    pub fn group_clear(&self, group: u8) -> bool {
+        self.group_counts[group as usize] == 0
+    }
+
+    /// Report an enemy destroyed (by the walker's attacks, which are
+    /// main-program code). Decrements its group count as 0x80018B88 does.
+    pub fn destroy_enemy(&mut self, i: usize) -> bool {
+        let Some(e) = self.enemies.get_mut(i).filter(|e| e.alive) else {
+            return false;
+        };
+        e.alive = false;
+        if e.counted {
+            let c = &mut self.group_counts[e.group as usize];
+            *c = c.wrapping_sub(1);
+        }
+        true
     }
 
     /// Static terrain plus every mover's solid at its current position.
@@ -810,6 +886,16 @@ impl Session {
                     .then_some(Event::BridgeStarted { mover: i }),
             };
             events.extend(started);
+        }
+        for (i, d) in self.doors.iter_mut().enumerate() {
+            let was = d.state;
+            let clear = self.group_counts[d.group as usize] == 0;
+            if d.step(clear) == Some(DoorSound::Opened) {
+                events.push(Event::DoorOpened { door: i });
+            }
+            if was == 0 && d.state == 1 {
+                events.push(Event::DoorOpening { door: i });
+            }
         }
         if let Some(p) = player {
             self.objects(p, &mut events);

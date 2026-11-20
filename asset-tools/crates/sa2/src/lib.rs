@@ -34,10 +34,12 @@ pub mod pe;
 pub mod physical_board;
 pub mod player_physics;
 pub mod ninja_trig;
+pub mod prison_doors;
 pub mod play_objects;
 pub mod play_session;
 pub mod play_world;
 pub mod pose;
+pub mod ring_group;
 pub mod ring_magnet;
 pub mod set;
 pub mod spring;
@@ -52,6 +54,7 @@ pub mod stage_positions;
 pub mod stage_spring_host;
 pub mod story;
 pub mod texture;
+pub mod three_spring;
 pub mod visual;
 pub mod visual_glb;
 pub mod wild_canyon;
@@ -84,7 +87,9 @@ impl From<serde_json::Error> for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub mod city_escape_native;
 pub mod city_land;
+pub mod dash_panel;
 
 pub mod checkpoint;
 pub mod emerald_path;

@@ -60,6 +60,8 @@ outer door (114 frames) gates travel.
 | CONTIRON (18) | 0x1978C registers CollisionData sec5+0x52A18 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10 (a 20-unit cube; Iron Gate's row is identical) | The 11 placed at a whole quarter turn, since a cube square in XZ is unchanged by those |
 | CONTCHAO (3), CONTWOOD (17) | 0x18E1C and 0x1A3A4 register the same cube rows (sec5+0x51D20, +0x53A08); breaking (player attacks) is not run | All 3 CONTCHAO; the 14 CONTWOOD at quarter turns |
 | MECHA (12) | 0x527C registers sec5+0x41DB4: form 3, centre (0, 0, 2), half-extents (10, 10, 5); its exec only runs that collision | The 2 at yaw 0 (the centre is off the Y axis) |
+| Enemy groups | GSNE8P 0x80018C88/0x80018C10 (count up), 0x80018B88/0x80016598 (count down), 0x80018E30 (query: count is zero); stg09D.rel E KUMI 0x4C848 (not counted when its kind, Scale.x truncated, is 4), E EMI 0x4E900, E AI 0x513D4, E NAMIE 0x54080, E GOLD 0x4A3D4 | Group = low byte of Rotation.y. Counts are built from the SET; `Session::destroy_enemy` reports a kill (the walker's attacks are not ported). Enemy behaviour itself is not run |
+| CAGED sliding cell doors (11) | 0x1EB0 set-up, 0x2000 exec | Ported: closed until the group named by Rotation.x's low byte is clear, then slide open by Scale.x per frame to 50 (sound 0x1020 while sliding, 0x1021 at the stop), settle with velocity 0.5, pull 0.4 and keep 0.96, and snap shut if the group fills again. The collision box (form 3, centre (0, 30, +/-slide) by Rotation.z bit 0) is not built until the box rotation rule is read |
 | RING_LINEAR (17 lines) | 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | All 17 (64 rings): Scale.z clamped to 1..=8, ring i at (0, Scale.y * njSin(i * (0x4000 / n)), -i * (10 + Scale.x)) under rotate Z, Y, X (GSNE8P njRotateZ 0x801158A8, njRotateY 0x80115828, njRotateX 0x80115C60; the arch call is njSin 0x80112398) |
 | Rings | o_ring_M1 | Pickup strictly within 14 of the collision centre |
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact branch on a host-reported touch; writes slot word 2 |
@@ -67,9 +69,8 @@ outer door (114 frames) gates travel.
 | Checkpoints, springs | placements; `spring::StageSpring` | Checkpoint positions; spring launch vectors (njRotate); contact is not run |
 
 Everything else is listed by name in `Session::unimplemented`, including
-the rotated CCUBE and fence placements, the angled fence rows (form 2), the
-arched and tilted ring lines, CAGED and CAGE/CAGEB/CAGEC (gated on the
-engine switch query 0x80018E30), WALL (player-distance logic), ROLL (an angled form 2 row and a
+the rotated CCUBE and fence placements, the angled fence rows (form 2),
+CAGE/CAGEB/CAGEC (gated on the same group query as CAGED, not yet ported), WALL (player-distance logic), ROLL (an angled form 2 row and a
 spinning model), TANK, SPHERE, CCYL, item boxes and enemies.
 
 ## Offline verification
