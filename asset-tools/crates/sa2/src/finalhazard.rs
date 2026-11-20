@@ -956,6 +956,9 @@ pub enum PlacementClock {
     BossScroll(Box<BossScrollFrame>),
     /// Section 1 + 0x8328..0x8b0c: the boss core (child) object.
     BossCore(Box<BossCoreFrame>),
+    /// Section 1 + 0x7154, 0x71e0 and 0x72e0: core hit compare, knockback and
+    /// proximity voice.
+    CoreContact(Box<CoreContactFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2746,6 +2749,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossSupport(frame) => return boss_support(&rel, &frame),
         PlacementClock::BossScroll(frame) => return boss_scroll(&rel, &frame),
         PlacementClock::BossCore(frame) => return boss_core(&rel, &frame),
+        PlacementClock::CoreContact(frame) => return core_contact(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -7066,6 +7070,165 @@ fn boss_core(rel: &crate::city_rel::CityRel<'_>, f: &BossCoreFrame) -> Result<se
                 ev.push(call(0x8aec, serde_json::json!([block]))?);
                 ev.push(st(0x8af4, "task", 0x38, 4, n(0)));
             }
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
+}
+
+/// One call of the core contact routines. Values are as the code reads
+/// them; engine float results are single precision.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum CoreContactFrame {
+    /// 0x7154: does `attacker` beat the hit record? `hit_word` is hit word 4,
+    /// `hit_bytes` hit bytes 0 and 1, `defense` / `attack` the 0x80005874 and
+    /// 0x800058bc results.
+    Compare {
+        attacker: u32,
+        hit: u32,
+        hit_word: u32,
+        hit_bytes: [i8; 2],
+        defense: i32,
+        attack: i32,
+    },
+    /// 0x71e0: knockback with strength f1. Without a vector the stage byte
+    /// picks the player (`player_y` is its float 0x18); with one, `vector`
+    /// is its value and `normal` what local 0x6f10 leaves in the copy.
+    Knockback {
+        strength: f32,
+        vector: Option<[f32; 3]>,
+        normal: [f32; 3],
+        stage_id: i8,
+        player_y: f32,
+    },
+    /// 0x72e0: proximity voice for `task`; `player` is the player entity
+    /// word for the stage byte, `distance` the 0x800279c4 result, `flags`
+    /// entity half-word 4, `random` and `curve` the 0x8010d940 and
+    /// 0x80112050 results.
+    Voice {
+        task: u32,
+        entity: u32,
+        player: u32,
+        distance: f32,
+        flags: i16,
+        random: i32,
+        curve: f32,
+    },
+}
+/// Section 1 + 0x7154 / 0x71e0 / 0x72e0.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn core_contact(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &CoreContactFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let k = |site: u32| boss_constant(rel, site);
+    let mut ev = Vec::new();
+    let mut returned = None;
+    match f {
+        CoreContactFrame::Compare {
+            attacker,
+            hit,
+            hit_word,
+            hit_bytes,
+            defense,
+            attack,
+        } => {
+            returned = Some(0u32);
+            if *hit != 0 && *attacker != 0 {
+                ev.push(call(
+                    0x7198,
+                    serde_json::json!([hit_word, hit_bytes[1] as i32 as u32]),
+                )?);
+                ev.push(call(
+                    0x71ac,
+                    serde_json::json!([attacker, hit_bytes[0] as i32 as u32]),
+                )?);
+                returned = Some(u32::from(attack > defense));
+            }
+        }
+        CoreContactFrame::Knockback {
+            strength,
+            vector,
+            normal,
+            stage_id,
+            player_y,
+        } => {
+            let sid = *stage_id as i32 as u32;
+            match vector {
+                None => {
+                    let side = if *stage_id == 0 {
+                        *strength
+                    } else {
+                        -*strength
+                    };
+                    let lift = if f64::from(*player_y) > f64::from(k(0x723e)?) {
+                        k(0x7252)?
+                    } else {
+                        k(0x7262)?
+                    };
+                    let mut e = call(0x7278, serde_json::json!([sid]))?;
+                    e["floats"] = serde_json::json!([
+                        f64::from(k(0x726e)?),
+                        f64::from(lift),
+                        f64::from(side)
+                    ]);
+                    ev.push(e);
+                }
+                Some(v) => {
+                    ev.push(
+                        serde_json::json!({"site":0x72a4,"local":0x6f10,"args":["stack", "stack"],
+                        "vectors":{"0": v.iter().map(|c| f64::from(*c)).collect::<Vec<_>>()}}),
+                    );
+                    let mut e = call(0x72c8, serde_json::json!([sid]))?;
+                    e["floats"] = serde_json::json!([
+                        f64::from(normal[0]),
+                        f64::from(v[1]),
+                        f64::from(normal[2])
+                    ]);
+                    ev.push(e);
+                }
+            }
+        }
+        CoreContactFrame::Voice {
+            task,
+            entity,
+            player,
+            distance,
+            flags,
+            random,
+            curve,
+        } => {
+            ev.push(call(
+                0x7330,
+                serde_json::json!([player + 0x14, entity + 0x14]),
+            )?);
+            let mut next = *flags as u16 & !0x100;
+            if f64::from(*distance) < f64::from(k(0x733e)?) {
+                next |= 0x100;
+            }
+            if *flags as u16 & 0x100 == 0 && next & 0x100 != 0 {
+                ev.push(call(
+                    0x7398,
+                    serde_json::json!([0x11, task, 1, 0x46, 0x78, module_ref(rel, 0x738e, 0xd8)?]),
+                )?);
+                ev.push(call(0x739c, serde_json::json!([]))?);
+                let roll = k(0x73c6)? * biased_float(rel, 0x73a2, *random)?;
+                let length = fctiwz(f64::from(k(0x73d6)? * roll));
+                ev.push(call(0x73f0, serde_json::json!([length as u32]))?);
+                let volume = fctiwz(f64::from(k(0x73f6)? * *curve));
+                ev.push(call(
+                    0x7418,
+                    serde_json::json!([task, 0x11, volume as u32]),
+                )?);
+            }
+            ev.push(serde_json::json!({"site":0x741c,"store":"entity","offset":4,"size":2,"value":next}));
         }
     }
     let mut out = serde_json::json!({"events":ev});
