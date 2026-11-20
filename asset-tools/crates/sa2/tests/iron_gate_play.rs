@@ -1,10 +1,9 @@
-//! Iron Gate played by the headless autopilot on the installed Steam data.
-//! The autopilot only produces stick/jump input; the session moves the body.
+//! Iron Gate's native object rules on the installed Steam data, driven by
+//! scripted player samples in place of the engine's player code.
 use sa2_asset_tools::{
     fan_stage::Campaign,
     iron_gate_movers::MoverProgram,
-    play_autopilot::Autopilot,
-    play_session::{Event, MoverState, Outcome, Session, Sources},
+    play_session::{Event, MoverState, Outcome, PlayerSample, Session, Sources},
 };
 use std::{fs, path::PathBuf};
 
@@ -52,21 +51,20 @@ fn with_session(f: impl FnOnce(Session)) {
     f(s)
 }
 
-fn run(s: &mut Session, frames: u32) -> Vec<(u32, Event)> {
-    let mut pilot = Autopilot::new(s);
-    let mut out = vec![];
-    while s.frame < frames && s.outcome == Outcome::Playing && !pilot.gave_up {
-        let c = pilot.controls(s);
-        for e in s.step(c) {
-            out.push((s.frame, e));
-        }
-    }
-    out
+fn first<F: Fn(&MoverState) -> bool>(s: &Session, f: F) -> usize {
+    s.movers.iter().position(|m| f(&m.state)).unwrap()
+}
+
+fn standing(m: usize) -> Option<PlayerSample> {
+    Some(PlayerSample {
+        standing_on: Some(m),
+        ..Default::default()
+    })
 }
 
 #[test]
 #[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
-fn installed_mover_rules_and_session_inventory() {
+fn installed_rules_and_inventory() {
     let i = installed();
     let p = MoverProgram::verify(&i.module).unwrap();
     assert_eq!(
@@ -107,53 +105,91 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.springs.len(), 6);
         assert_eq!(s.checkpoints.len(), 3);
         assert_eq!(s.rings_placed.len(), 10);
-        // Only the regular goal reaches its contact route for Mission 1.
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [6231.24, -1488.0, -1229.35]);
         assert!(s.death_zone_count() > 0);
-        assert_eq!(s.physics.slot, 7);
-        assert!((s.jump_height() - 56.52).abs() < 0.01);
+        assert_eq!(s.physics_slot, 7);
     });
 }
 
 #[test]
 #[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
-fn spawn_through_first_lift_elevator_and_bridge() {
+fn standing_samples_drive_lift_elevator_and_bridge() {
     with_session(|mut s| {
-        let events = run(&mut s, 4_500);
-        let first =
-            |want: &dyn Fn(&Event) -> bool| events.iter().find(|(_, e)| want(e)).map(|(f, _)| *f);
-        let lift = first(&|e| matches!(e, Event::LiftStarted { mover: 9 })).expect("lift");
-        let elevator =
-            first(&|e| matches!(e, Event::ElevatorStarted { mover: 6 })).expect("elevator");
-        let bridge = first(&|e| matches!(e, Event::BridgeStarted { mover: 2 })).expect("bridge");
-        let checkpoint = first(&|e| matches!(e, Event::Checkpoint { index: 305, .. }))
-            .expect("checkpoint after bridge");
-        assert!(
-            lift < elevator && elevator < bridge && bridge < checkpoint,
-            "{events:?}"
+        // The lift at the raised corridor's entrance.
+        let lift = first(
+            &s,
+            |m| matches!(m, MoverState::Lift(l) if l.base == [800.0, -270.0, -638.0]),
         );
-        assert!(!events
-            .iter()
-            .any(|(f, e)| matches!(e, Event::Death { .. }) && *f < checkpoint));
+        let start = (1..=40)
+            .find(|_| {
+                s.step(standing(lift))
+                    .contains(&Event::LiftStarted { mover: lift })
+            })
+            .unwrap();
+        assert_eq!(start, 31);
+        while matches!(&s.movers[lift].state, MoverState::Lift(l) if l.moving) {
+            s.step(standing(lift));
+        }
+        assert!(
+            matches!(&s.movers[lift].state, MoverState::Lift(l) if l.raised && l.position[1] == -200.0)
+        );
+
+        // The diagonal elevator, then the bridge that meets it at the bottom.
+        let elv = first(
+            &s,
+            |m| matches!(m, MoverState::Elevator(e) if e.origin == [1576.0, -270.0, -1027.5]),
+        );
+        let bridge = first(
+            &s,
+            |m| matches!(m, MoverState::Bridge(b) if b.retracted == [2127.0, -669.5, -1027.0]),
+        );
+        assert!(s
+            .step(standing(elv))
+            .contains(&Event::ElevatorStarted { mover: elv }));
+        let started = (0..3000).any(|_| {
+            s.step(standing(elv))
+                .contains(&Event::BridgeStarted { mover: bridge })
+        });
+        assert!(started);
+        assert!(
+            matches!(&s.movers[elv].state, MoverState::Elevator(e) if e.at_target && e.mode == 2)
+        );
+        for _ in 0..20 {
+            s.step(None);
+        }
+        assert!(matches!(&s.movers[bridge].state, MoverState::Bridge(b) if b.is_extended));
     });
 }
 
 #[test]
 #[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
-fn last_checkpoint_to_goal_clears_the_mission() {
+fn ring_pickup_and_goal_contact() {
     with_session(|mut s| {
-        s.restart_from_checkpoint(1).unwrap();
-        assert_eq!(s.checkpoints[1].position, [3690.9966, -903.0, -684.9978]);
-        let events = run(&mut s, 6_000);
-        assert_eq!(s.outcome, Outcome::Cleared, "{events:?}");
-        assert!(events
-            .iter()
-            .any(|(_, e)| matches!(e, Event::ElevatorStarted { mover: 4 })));
-        assert!(events
-            .iter()
-            .any(|(_, e)| matches!(e, Event::GoalContact { sound: 0x1013, .. })));
+        let ring = s.rings_placed[0].position;
+        let events = s.step(Some(PlayerSample {
+            center: [ring[0] + 13.9, ring[1], ring[2]],
+            ..Default::default()
+        }));
+        assert!(matches!(events[..], [Event::Ring { .. }]));
+        assert_eq!((s.rings, s.score), (1, 10));
+        assert!(s
+            .step(Some(PlayerSample {
+                center: ring,
+                ..Default::default()
+            }))
+            .is_empty());
+
+        let events = s.step(Some(PlayerSample {
+            goal_hit: Some(0),
+            ..Default::default()
+        }));
+        assert!(events.contains(&Event::GoalContact {
+            layer: s.goals[0].layer,
+            index: s.goals[0].index,
+            sound: 0x1013
+        }));
         assert_eq!(s.slot_words[0], 2);
-        assert_eq!(s.deaths, 0);
+        assert_eq!(s.outcome, Outcome::Cleared);
     });
 }
