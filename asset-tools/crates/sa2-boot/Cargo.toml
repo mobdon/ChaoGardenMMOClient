@@ -1,0 +1,16 @@
+[package]
+name = "sa2-boot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "Host hooks the recompiled GSNE8P boot plugs in: DVD from Steam files, the GX FIFO, VI retrace, PAD, audio stubs and the clock"
+
+# Standalone, like the other sa2 crates.
+[workspace]
+
+[dependencies]
+sa2-recomp = { path = "../sa2-recomp" }
+sa2-gx = { path = "../sa2-gx" }
+sa2-runtime = { path = "../sa2-runtime" }
+sa2-asset-tools = { path = "../sa2" }
