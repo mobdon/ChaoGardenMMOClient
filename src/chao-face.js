@@ -34,6 +34,14 @@ const LID_SPEED = 1024;    // per frame
 const SLOPE_SPEED = 512;
 const BLINK_SPEED = 4096;
 
+// fn_60_17964: mouth -> (al_mouth03 slot, al_mouth02 slot) indices into the
+// 19-entry mouth texlist (data 0x97C34 = PC al_mouth.prs, al_mouth01..19).
+// Mouth 0 is (al_mouth01, al_mouth01), a fully transparent 8x8 image.
+export const MOUTH_TEXTURES = Object.freeze([
+  [0, 0], [2, 1], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [4, 0], [11, 10], [13, 12], [5, 0], [16, 15], [5, 0],
+]);
+const MOUTH_SLOT = Object.freeze({ al_mouth03: 0, al_mouth02: 1 });
+
 export const DEFAULT_FACE = Object.freeze({ eye: CHAO_EYES.Normal, mouth: CHAO_MOUTH.None });
 
 let manifest = null;
@@ -114,7 +122,10 @@ function faceParts(root) {
     const meshes = node.getChildMeshes ? [node, ...node.getChildMeshes(false)].filter(mesh => mesh.material) : [];
     if (kind === 'eye') parts.eyes.push(...meshes);
     else if (kind === 'eyelid') parts.eyelids.push({ node });
-    else if (kind === 'mouth') parts.mouths.push(node);
+    else if (kind === 'mouth') {
+      const slot = MOUTH_SLOT[node.metadata?.gltf?.extras?.mouthTexture];
+      if (slot !== undefined) parts.mouths.push({ slot, meshes });
+    }
   }
   root.metadata = { ...(root.metadata || {}), chaoFaceParts: parts };
   return parts;
@@ -122,7 +133,19 @@ function faceParts(root) {
 
 function eyeTexture(scene, index) {
   const file = manifest?.eyeFiles?.[index];
-  if (!file) return null;
+  return file ? localTexture(scene, file) : null;
+}
+
+function ownFaceMaterial(root, mesh) {
+  if (!mesh.metadata?.chaoFaceOwnMaterial) {
+    mesh.material = mesh.material.clone(`${mesh.material.name}-face`);
+    mesh.metadata = { ...(mesh.metadata || {}), chaoFaceOwnMaterial: true };
+    (root.metadata.ownedMaterials ||= []).push(mesh.material);
+  }
+  return mesh.material;
+}
+
+function localTexture(scene, file) {
   if (!textureCache.has(file)) {
     const texture = new Texture(`/api/assets/${file}`, scene, true, false, Texture.NEAREST_SAMPLINGMODE);
     texture.hasAlpha = true;
@@ -170,16 +193,16 @@ export function setChaoFace(root, face) {
   const eyeColour = state?.eyeColour ?? 'normal';
   const parts = faceParts(root);
   const texture = eyeTexture(root.getScene(), eyeTextureIndex(next.eye === 0 ? defaultEye : next.eye, eyeColour));
-  if (texture) for (const mesh of parts.eyes) if ('albedoTexture' in mesh.material) {
-    if (!mesh.metadata?.chaoFaceOwnMaterial) {
-      mesh.material = mesh.material.clone(`${mesh.material.name}-face`);
-      mesh.metadata = { ...(mesh.metadata || {}), chaoFaceOwnMaterial: true };
-      (root.metadata.ownedMaterials ||= []).push(mesh.material);
-    }
-    mesh.material.albedoTexture = texture;
+  if (texture) for (const mesh of parts.eyes) if ('albedoTexture' in mesh.material) ownFaceMaterial(root, mesh).albedoTexture = texture;
+  // Without the local mouth images the parts stay hidden (the converted
+  // default mouth is the transparent al_mouth01).
+  const mouthFiles = manifest?.mouthFiles;
+  for (const { slot, meshes } of parts.mouths) for (const mesh of meshes) {
+    const file = mouthFiles?.[MOUTH_TEXTURES[next.mouth][slot]];
+    const image = file && localTexture(root.getScene(), file);
+    mesh.setEnabled(!!image);
+    if (image) ownFaceMaterial(root, mesh).albedoTexture = image;
   }
-  // Mouth texture list is unresolved: keep the original mouth parts hidden.
-  for (const node of parts.mouths) node.setEnabled(false);
   const lids = state?.lids || { lid: 0, slope: 0, blink: 0, blinkPhase: 'wait', blinkTimer: 100 };
   root.metadata.chaoFace = { ...next, defaultEye, eyeColour, lids: { ...lids, eye: next.eye, defaultEye } };
   applyLids(parts, root.metadata.chaoFace.lids);

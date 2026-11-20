@@ -71,3 +71,12 @@ test('native colour applies only for ColorNum != 0 from the local table', () => 
   assert.equal(nodeIndexOf({ name: 'p-016_object_0001BA34', parent: null }), 16);
   assert.equal(nodeIndexOf({ name: 'mesh', parent: { name: 'x-023_object_1', parent: null } }), 23);
 });
+
+import { MOUTH_TEXTURES } from '../src/chao-face.js';
+
+test('native mouth texture pairs cover ChaoMouth 0..12', () => {
+  assert.equal(MOUTH_TEXTURES.length, 13);
+  assert.deepEqual(MOUTH_TEXTURES[0], [0, 0]);
+  assert.deepEqual(MOUTH_TEXTURES[11], [16, 15]);
+  assert.ok(MOUTH_TEXTURES.flat().every(index => index >= 0 && index < 19));
+});
