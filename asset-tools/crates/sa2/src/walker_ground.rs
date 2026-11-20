@@ -10,16 +10,16 @@ use crate::{
     land_contact::{unit_vector, Contact, ContactHit, ContactStats},
     land_nodes::{nj_scalor, Entry, LandNodes, NjModel, NjObject, Query},
     land_select::{LandCol, Selection},
-    msl_math::normal_angles,
-    ninja_matrix::{rotate_by_angles, Axis, MatrixStack, Vec3},
+    msl_math::{atan2f, normal_angles},
+    ninja_matrix::{rotate_by_angles, unrotate_by_angles, Axis, MatrixStack, Vec3},
     ninja_trig::{fmadds, fnmsubs},
     ninja_vector::{acosf, inner_product, vector_angle},
     walker_collide::{
-        any_wall_ahead, apply_surface, diff_angle, plane_distance, point_distance, settle_contact,
-        settle_ground_contact, slide_airborne, slide_grounded, sphere_lift, sub_angle,
-        tilt_to_contact, wall_push, wall_slide, wall_slide_turn, LiftInput, MotionWork, PhysicsRow,
-        Plane, PushSpeeds, SettleInput, SettleTask, SettleWork, SlideInput, SlideQuery,
-        SurfaceWork, TiltSpeeds, TurnWork, WallSlideInput,
+        any_wall_ahead, apply_surface, diff_angle, plane_distance, plane_intersection,
+        point_distance, settle_contact, settle_ground_contact, slide_airborne, slide_grounded,
+        sphere_lift, sqrtf, sub_angle, tilt_to_contact, wall_push, wall_slide, wall_slide_turn,
+        LiftInput, Line, MotionWork, PhysicsRow, Plane, PushSpeeds, SettleInput, SettleTask,
+        SettleWork, SlideInput, SlideQuery, SurfaceWork, TiltSpeeds, TurnWork, WallSlideInput,
     },
 };
 
@@ -1138,8 +1138,7 @@ pub fn floor_pass(
         } else {
             let along = q.along;
             let dvec = sub(q.foot, t.pos);
-            if nj_scalor(along) <= ZERO
-                || (w.status & 3 != 0 && inner_product(dvec, along) > ZERO)
+            if nj_scalor(along) <= ZERO || (w.status & 3 != 0 && inner_product(dvec, along) > ZERO)
             {
                 bits |= 2;
             }
@@ -1399,5 +1398,283 @@ pub fn floor_pass(
         t.pos = add(t.pos, q.motion);
     }
     surface(t, w, 0, env);
+    ret
+}
+
+/// The other object a CCL (object collision) contact found (fn_8004E924):
+/// its hit info entry and its collision work's halfword +0.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CclHit {
+    /// Info entry bytes +0, +1, +3 and float +0x14.
+    pub b0: u8,
+    pub b1: i8,
+    pub b3: u8,
+    pub radius: f32,
+    /// The other collision work's halfword +0 (4 for a round shape).
+    pub shape: u16,
+}
+
+/// The player's collision work (twp +0x2C) as 0x80045880 reads it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CclView {
+    /// Halfwords +2 and +4.
+    pub h2: i16,
+    pub flags: u16,
+    /// +0x90: the push vector the CCL pass left.
+    pub push: Vec3,
+    /// The first own info entry's byte +3 and float +0x14.
+    pub self_b3: u8,
+    pub self_radius: f32,
+    /// The hit fn_8004E924 returns (the last entry whose other object's info
+    /// has bit 0 in byte +2 and whose collision work has flag 4).
+    pub hit: Option<CclHit>,
+    /// Word +4 of the info entry +0xA2 selects in +0xA4's info array.
+    pub pushed_info_w4: u32,
+    /// fn_8004F11C(task, player): interaction flags with the touched object.
+    pub interaction: u32,
+    /// The carrier (object type 0x12) behind +0xA4, +0x9C, +0x34 when flag 1
+    /// is set: its Y angle.
+    pub carrier_ang_y: Option<i32>,
+}
+
+const FAST_HIT: f32 = 15.0; // r2-0x74E0
+const HEAD_ON_PUSH: f32 = f32::from_bits(0xbf7a_e148); // r2-0x74B4, -0.98
+const AIR_DROP: f32 = -0.5; // r2-0x74B0
+
+/// fn_8004614C: slide along an object's push plane: the move vector turns to
+/// where that plane meets the floor plane, keeping its length, and the task
+/// and the move vector's aim turn by the same angle.
+pub fn slide_on_push(
+    t: &mut PlayerTask,
+    vel: &mut MoveVector,
+    w: &mut PlayerWork,
+    ccl: &CclView,
+    stage: i32,
+) {
+    if t.flag & 3 == 0
+        || nj_scalor(vel.v) < ONE
+        || w.spd[1] > ZERO
+        || ccl.flags & 0x10 == 0
+        || t.flag & 4 != 0
+        || ccl.flags & 4 == 0
+    {
+        return;
+    }
+    let mut p = ccl.push;
+    if stage == 0x5a {
+        p[1] = ZERO;
+    }
+    if nj_scalor(p) == ZERO {
+        return;
+    }
+    w.wall = unit_vector(p);
+    let mut line = Line {
+        point: [ZERO; 3],
+        dir: [ZERO; 3],
+    };
+    plane_intersection(
+        &Plane {
+            point: [ZERO; 3],
+            normal: w.wall,
+        },
+        &Plane {
+            point: [ZERO; 3],
+            normal: w.floor_normal,
+        },
+        Some(&mut line),
+    );
+    let u = if nj_scalor(vel.v) == ZERO {
+        vel.v
+    } else {
+        unit_vector(vel.v)
+    };
+    if inner_product(line.dir, u) < ZERO {
+        line.dir = line.dir.map(|c| -c);
+    }
+    let s = nj_scalor(vel.v);
+    let old = vel.v;
+    vel.v = line.dir.map(|c| s * c);
+    let a = unit_vector(old);
+    let b = unit_vector(vel.v);
+    t.angles[1] = t.angles[1].wrapping_sub(vector_angle(a, b, Some(w.floor_normal)));
+    if diff_angle(vel.angles[1], t.angles[1]) > 0x6000 {
+        t.angles[1] = t.angles[1].wrapping_add(0x8000);
+    }
+    vel.angles[1] = t.angles[1];
+}
+
+/// 0x80045880: the walker's collision core. It clears the wall normal,
+/// moves `attr` to `last_attr`, reacts to an object contact (CCL: stopping
+/// on fast or head-on hits, sliding round a round object, along a push
+/// plane, or around a carrier), runs the ground pass (task flag 0x100 or
+/// mode 0x34) or the floor pass, and when the task is airborne afterwards
+/// (with flag 2) resets the floor normal, drops the task by half a unit
+/// along its up axis and, unless rising, flattens the move vector in the
+/// task frame. Returns the first nonzero code.
+#[allow(clippy::too_many_arguments)]
+pub fn collision_core(
+    stack: &mut MatrixStack,
+    land: &mut LandContext,
+    t: &mut PlayerTask,
+    vel: &mut MoveVector,
+    w: &mut PlayerWork,
+    q: &mut CollisionQuery,
+    env: &mut GroundEnv,
+    ccl: &CclView,
+    x: &mut FloorExtras,
+    ride_callback: &mut dyn FnMut(&mut Vec3),
+    f26_in: f32,
+) -> i32 {
+    let mut ret = 0;
+    w.wall = [ZERO; 3];
+    w.last_attr = w.attr;
+    w.attr = 0;
+    let hit = if ccl.flags & 0x14 != 0x14 || t.flag & 4 != 0 {
+        None
+    } else {
+        ccl.hit
+    };
+    if let Some(h) = hit {
+        let mut p = ccl.push;
+        if env.stage == 0x5a {
+            p[1] = ZERO;
+        }
+        p = if nj_scalor(p) == ZERO {
+            [ZERO; 3]
+        } else {
+            unit_vector(p)
+        };
+        w.wall = p;
+        let v = if nj_scalor(vel.v) == ZERO {
+            [ZERO; 3]
+        } else {
+            unit_vector(vel.v)
+        };
+        let d = inner_product(v, p);
+        let sx = w.spd[0];
+        let gated = ccl.flags & 0x14 == 0x14
+            && ccl.h2 > 0
+            && t.flag & 4 == 0
+            && (ccl.pushed_info_w4 & 0x2000 == 0 || t.flag & 0x800 != 0);
+        if sx >= FAST_HIT && h.b0 != 0x10 {
+            ret = 2;
+            w.spd = [ZERO; 3];
+            vel.v = [ZERO; 3];
+        } else if sx >= w.f_f0 && d < HEAD_ON_PUSH && h.b0 != 0x10 {
+            ret = 2;
+            vel.v[0] = ZERO;
+            vel.v[2] = ZERO;
+        } else if sx >= w.run && d < ZERO {
+            ret = 1;
+            if matches!(h.b1, 0 | 1)
+                && h.radius > ccl.self_radius
+                && h.shape == 4
+                && (h.b3 & 3) <= ((ccl.self_b3 >> 2) & 3)
+            {
+                let sum = ccl.self_radius + h.radius;
+                let r = sqrtf(v[0] * v[0] + v[2] * v[2]) / sum;
+                let mut turn = (BAMS_PER_RAD * acosf(r) as f64) as i32;
+                let pa = ((BAMS_PER_RAD * atan2f(p[2], p[0]) as f64) as i32).wrapping_add(0x8000);
+                let va = (BAMS_PER_RAD * atan2f(v[2], v[0]) as f64) as i32;
+                if sub_angle(pa, va) < 0 {
+                    turn = 0x10000 - turn;
+                }
+                stack.push_unit();
+                stack.rotate(Axis::Y, turn.wrapping_neg());
+                let r = stack.calc_vector(vel.v);
+                stack.pop();
+                t.angles[1] = t.angles[1].wrapping_add(turn);
+                vel.v[0] = r[0];
+                vel.v[2] = r[2];
+            } else if (h.b1 as u8).wrapping_sub(3) <= 2 {
+                if gated {
+                    vel.v[0] = ZERO;
+                    vel.v[2] = ZERO;
+                } else {
+                    slide_on_push(t, vel, w, ccl, env.stage);
+                }
+            }
+        } else {
+            ret = 1;
+            if d > ZERO {
+                if ccl.interaction & 0x400 != 0 {
+                    vel.v[0] = -w.spd[0] * p[0];
+                    vel.v[2] = -w.spd[0] * p[2];
+                } else if gated {
+                    let mut a = v;
+                    a[1] = ZERO;
+                    let mut b = p;
+                    b[1] = ZERO;
+                    if nj_scalor(a) == ZERO || nj_scalor(b) == ZERO {
+                        vel.v[0] = ZERO;
+                        vel.v[2] = ZERO;
+                    } else {
+                        let s = add(unit_vector(a), unit_vector(b));
+                        if nj_scalor(s) == ZERO {
+                            vel.v[0] = ZERO;
+                            vel.v[2] = ZERO;
+                        } else {
+                            let s = unit_vector(s);
+                            vel.v[0] = w.spd[0] * s[0];
+                            vel.v[2] = w.spd[0] * s[2];
+                        }
+                    }
+                } else {
+                    slide_on_push(t, vel, w, ccl, env.stage);
+                }
+            }
+        }
+    } else if ccl.flags & 1 != 0 {
+        if let Some(carrier) = ccl.carrier_ang_y {
+            if t.flag & 1 != 0
+                && !(w.spd[1] > ZERO)
+                && (w.spd[0] >= w.run || t.flag & 0x100 != 0)
+                && diff_angle(0x4000 - t.angles[1], carrier) < 0x3000
+            {
+                ret = 3;
+                w.spd = [ZERO; 3];
+                vel.v = [ZERO; 3];
+            }
+        }
+    }
+    let post = t.flag & 2 != 0;
+    let r = if t.flag & 0x100 != 0 || t.mode == 0x34 {
+        ground_pass(
+            stack,
+            land,
+            t,
+            vel,
+            w,
+            q,
+            env,
+            x.analog,
+            ride_callback,
+            f26_in,
+        )
+    } else {
+        floor_pass(stack, land, t, vel, w, q, env, x, ride_callback, f26_in)
+    };
+    if ret == 0 {
+        ret = r;
+    }
+    if !post || t.flag & 1 != 0 {
+        return ret;
+    }
+    stack.push_unit();
+    stack.rotate(Axis::Z, t.angles[2]);
+    stack.rotate(Axis::X, t.angles[0]);
+    stack.rotate(Axis::Y, t.angles[1].wrapping_neg());
+    w.floor_normal = stack.calc_vector([ZERO, ONE, ZERO]);
+    let drop = stack.calc_vector([ZERO, AIR_DROP, ZERO]);
+    stack.pop();
+    t.pos[1] += drop[1];
+    if w.spd[1] <= ZERO {
+        let mut l = unrotate_by_angles(stack, t.angles, vel.v);
+        l[1] = ZERO;
+        w.spd = l;
+        vel.v = rotate_by_angles(stack, t.angles, l);
+    } else {
+        t.flag &= !2;
+    }
     ret
 }

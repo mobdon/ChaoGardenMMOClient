@@ -288,7 +288,9 @@ stage = [11]
 m.stub(0x8001DD78, lambda mm: mm.gpr(3, stage[0]))
 
 # WALKER_PASS picks fn_8003EAFC (ground) or fn_80043ED4 (floor).
-PASS = {"ground": 0x8003EAFC, "floor": 0x80043ED4}[os.environ.get("WALKER_PASS", "ground")]
+PASS = {"ground": 0x8003EAFC, "floor": 0x80043ED4, "core": 0x80045880}[os.environ.get("WALKER_PASS", "ground")]
+interaction = [0]
+m.stub(0x8004F11C, lambda mm: mm.gpr(3, interaction[0]))
 TASK, VEL, PW, Q, MW = TASK1, 0x81180000, 0x81181000, 0x81182000, 0x81183000
 PHYS = 0x80196578
 GLOBAL = 0x801E5624
@@ -357,7 +359,7 @@ for case in range(int(os.environ.get("WALKER_GROUND_CASES", "400"))):
     # The player.
     pnum = rng.choice([0, 0, 1])
     stage[0] = rng.choice([11, 11, 30])
-    task = {"mode": rng.choice([0, 1, 0x4C]), "flag": rng.choice([0, 0, 1, 1, 3, 2, 0x2001]),
+    task = {"mode": rng.choice([0, 1, 0x4C, 0x34]), "flag": rng.choice([0, 0, 1, 1, 3, 2, 0x2001, 0x103, 0x102, 0x101]),
             "angles": [rng.choice([0, 0, rng.randrange(-0x1000, 0x1000)]), rng.randrange(0, 0x10000),
                        rng.choice([0, 0, rng.randrange(-0x1000, 0x1000)])], "pos": pos}
     vel = {"v": [f32(rng.uniform(-4, 4)), f32(rng.choice([rng.uniform(-6, 1), -2.0])), f32(rng.uniform(-4, 4))],
@@ -411,6 +413,56 @@ for case in range(int(os.environ.get("WALKER_GROUND_CASES", "400"))):
     m.put(R13 - 0x78F4, "I", stuck)
     probe = rng.choice([0, 0, 0, 1])
     m.put(R13 - 0x7900, "I", probe)
+    # The object collision (CCL) state 0x80045880 reads, randomized.
+    ccl = None
+    if PASS == 0x80045880:
+        CWP, OT, OTWP, OCWP, OINFO, SINFO = 0x81184000, 0x81185000, 0x81185100, 0x81185200, 0x81185300, 0x81184200
+        X, XINFO, Y, Z = 0x81186000, 0x81186100, 0x81186200, 0x81186300
+        m.u.mem_write(CWP, bytes(0xB0))
+        m.put(TASK + 0x2C, "I", CWP)
+        flags = rng.choice([0, 0x14, 0x1C, 0x15, 0x14, 0x1, 0x4, 0x10])
+        h2 = rng.choice([0, 1, 2])
+        push = [f32(rng.uniform(-1, 1)) for _ in range(3)] if rng.random() < 0.9 else [0.0, 0.0, 0.0]
+        m.put(CWP + 2, "h", h2)
+        m.put(CWP + 4, "H", flags)
+        m.put(CWP + 0xC, "I", SINFO)
+        put_f(CWP + 0x90, *push)
+        sb3, srad = rng.randrange(256), f32(rng.uniform(2, 10))
+        m.put(SINFO + 3, "B", sb3)
+        m.put(SINFO + 0x14, "f", srad)
+        nent = rng.choice([0, 1, 2])
+        for k in range(16):
+            m.put(CWP + 0x10 + 8 * k + 1, "b", 0 if k < nent else -1)
+            m.put(CWP + 0x10 + 8 * k + 4, "I", OT)
+        m.put(OT + 0x34, "I", OTWP)
+        m.put(OTWP + 0x2C, "I", OCWP)
+        oflags = rng.choice([4, 4, 0])
+        shape = rng.choice([4, 4, 3])
+        m.put(OCWP, "H", shape)
+        m.put(OCWP + 4, "H", oflags)
+        m.put(OCWP + 0xC, "I", OINFO)
+        m.put(OCWP + 0xA2, "h", 0)
+        ob = [rng.choice([0, 0x10, 3]), rng.choice([0, 1, 3, 4, 5, 2]), rng.choice([1, 1, 0]), rng.randrange(256)]
+        orad = f32(rng.uniform(1, 14))
+        for j, b in enumerate(ob):
+            m.put(OINFO + j, "B", b)
+        m.put(OINFO + 0x14, "f", orad)
+        m.put(CWP + 0xA2, "h", 0)
+        m.put(CWP + 0xA4, "I", X)
+        m.put(X + 0xC, "I", XINFO)
+        w4 = rng.choice([0, 0x2000])
+        m.put(XINFO + 4, "I", w4)
+        has_carrier = rng.random() < 0.5
+        m.put(X + 0x9C, "I", Y if has_carrier else 0)
+        m.put(Y + 0x34, "I", Z)
+        m.put(Z + 2, "B", 0x12)
+        cang = rng.randrange(0, 0x10000)
+        m.put(Z + 0xC, "i", cang)
+        interaction[0] = rng.choice([0, 0x400, 0x200])
+        valid = nent > 0 and ob[2] & 1 and oflags & 4
+        ccl = {"h2": h2, "flags": flags, "push": [fb(x) for x in push], "self_b3": sb3, "self_radius": fb(srad),
+               "hit": [ob[0], ob[1], ob[3], fb(orad), shape] if valid else None, "w4": w4,
+               "interaction": interaction[0], "carrier": cang if has_carrier else None}
     trace.clear()
     m.call(PASS, r3=TASK, r4=VEL, r5=PW, f26=f26, count=400_000_000)
     ret = m.gpr(3)
@@ -440,6 +492,6 @@ for case in range(int(os.environ.get("WALKER_GROUND_CASES", "400"))):
                   "task": {**task, "pos": fl(task["pos"])}, "vel": {"v": fl(vel["v"]), "angles": vel["angles"]},
                   "pw": {k: (fl(v) if isinstance(v, list) else (fb(v) if isinstance(v, float) else v)) for k, v in pw.items()},
                   "mw": {"spd": fl(mw["spd"]), "aim": mw["aim"]}, "stuck": stuck, "analog": [analog[0], fb(analog[1])],
-                  "f26": fb(f26), "probe": probe, "after": after, "trace": [hex(x) for x in trace]})
+                  "f26": fb(f26), "probe": probe, "ccl": ccl, "after": after, "trace": [hex(x) for x in trace]})
 print(json.dumps({"head": [count, start], "cols": cols, "objects": objects, "models": models, "rows": rows,
                   "tasks": [[t, rec_out(records[k])] for k, (t, _, _) in enumerate(tasks)], "cases": cases}))

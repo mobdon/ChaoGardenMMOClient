@@ -7,8 +7,8 @@ use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
     walker_collide::{MotionWork, PhysicsRow},
     walker_ground::{
-        floor_pass, ground_pass, CollisionQuery, FloorExtras, GroundEnv, LandContext, MoveVector,
-        PlayerTask, PlayerWork, RideRecord,
+        collision_core, floor_pass, ground_pass, CclHit, CclView, CollisionQuery, FloorExtras,
+        GroundEnv, LandContext, MoveVector, PlayerTask, PlayerWork, RideRecord,
     },
 };
 use serde_json::Value;
@@ -48,6 +48,12 @@ fn ground_pass_matches_main_dol_on_iron_gate() {
 #[ignore = "requires SA2_MAIN_DOL, SA2_STG11_REL and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
 fn floor_pass_matches_main_dol_on_iron_gate() {
     run("floor");
+}
+
+#[test]
+#[ignore = "requires SA2_MAIN_DOL, SA2_STG11_REL and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+fn collision_core_matches_main_dol_on_iron_gate() {
+    run("core");
 }
 
 fn run(pass: &str) {
@@ -303,6 +309,42 @@ fn run(pass: &str) {
                 &mut q,
                 &mut env,
                 &mut analog,
+                &mut ride_cb,
+                f(&c["f26"]),
+            )
+        } else if pass == "core" {
+            let k = &c["ccl"];
+            let ccl = CclView {
+                h2: i(&k["h2"]) as i16,
+                flags: u(&k["flags"]) as u16,
+                push: v3(&k["push"]),
+                self_b3: u(&k["self_b3"]) as u8,
+                self_radius: f(&k["self_radius"]),
+                hit: k["hit"].as_array().map(|h| CclHit {
+                    b0: u(&h[0]) as u8,
+                    b1: u(&h[1]) as u8 as i8,
+                    b3: u(&h[2]) as u8,
+                    radius: f(&h[3]),
+                    shape: u(&h[4]) as u16,
+                }),
+                pushed_info_w4: u(&k["w4"]) as u32,
+                interaction: u(&k["interaction"]) as u32,
+                carrier_ang_y: k["carrier"].as_i64().map(|a| a as i32),
+            };
+            let mut x = FloorExtras {
+                probe: u(&c["probe"]) != 0,
+                analog: &mut analog,
+            };
+            collision_core(
+                &mut stack,
+                &mut land,
+                &mut task,
+                &mut vel,
+                &mut w,
+                &mut q,
+                &mut env,
+                &ccl,
+                &mut x,
                 &mut ride_cb,
                 f(&c["f26"]),
             )
