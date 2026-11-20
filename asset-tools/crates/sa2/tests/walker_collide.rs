@@ -2,8 +2,8 @@
 use sa2_asset_tools::land_contact::ContactHit;
 use sa2_asset_tools::land_nodes::Candidate;
 use sa2_asset_tools::walker_collide::{
-    apply_surface, slide_airborne, slide_grounded, sphere_lift, LiftInput, PhysicsRow, SlideInput,
-    SurfaceWork,
+    apply_surface, plane_intersection, slide_airborne, slide_grounded, sphere_lift, wall_slide,
+    LiftInput, Line, PhysicsRow, Plane, SlideInput, SurfaceWork, WallSlideInput,
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -142,5 +142,76 @@ fn matches_main_dol() {
             v3(&c["vel_after"]).map(f32::to_bits),
             "{c}"
         );
+    }
+    let bits3 = |x: [f32; 3]| x.map(f32::to_bits);
+    for c in v["planes"].as_array().unwrap() {
+        let pl = |p: &Value| Plane {
+            point: v3(&p[0]),
+            normal: v3(&p[1]),
+        };
+        let mut line = Line {
+            point: [f32::from_bits(0xeeee_eeee); 3],
+            dir: [f32::from_bits(0xeeee_eeee); 3],
+        };
+        let with = c["with_line"].as_bool().unwrap();
+        let r = plane_intersection(
+            &pl(&c["a"]),
+            &pl(&c["b"]),
+            if with { Some(&mut line) } else { None },
+        );
+        assert_eq!(r.to_bits() as u64, c["ret"].as_u64().unwrap(), "{c}");
+        if with {
+            let got: Vec<u32> = bits3(line.point)
+                .into_iter()
+                .chain(bits3(line.dir))
+                .collect();
+            let want: Vec<u32> = c["line"].as_array().unwrap().iter().map(u).collect();
+            assert_eq!(got, want, "{c}");
+        }
+    }
+    for c in v["wall"].as_array().unwrap() {
+        let i = WallSlideInput {
+            slide: SlideInput {
+                task_mode: 0,
+                character: c["ch"].as_i64().unwrap() as i8,
+                f134: f(&c["f134"]),
+                row0_74: f(&r74[0]),
+                row1_74: f(&r74[1]),
+                entry_has_task: false,
+                center: v3(&c["center"]),
+                up: v3(&c["up"]),
+                global: [0.0; 3],
+            },
+            entry_flags: u(&c["eflags"]),
+            last_attr: u(&c["last"]),
+            motion: v3(&c["motion"]),
+            head: v3(&c["head"]),
+            across: v3(&c["across"]),
+        };
+        let hits: Vec<ContactHit> = c["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| ContactHit {
+                candidate: Candidate { node: 0, tri: 0 },
+                angles: (0, 0),
+                normal: [0.0; 3],
+                facing: v3(&h[0]),
+                foot: v3(&h[1]),
+                head: v3(&h[2]),
+                along: [0.0; 3],
+                across: [0.0; 3],
+                start_height: 0.0,
+                end_height: 0.0,
+            })
+            .collect();
+        let mut along = v3(&c["along"]);
+        let mut vel = v3(&c["vel"]);
+        let mut wall = [1.5, 2.5, 3.5];
+        let r = wall_slide(&i, &hits, &mut along, &mut vel, &mut wall);
+        assert_eq!(r, c["ret"].as_u64().unwrap() != 0, "{c}");
+        assert_eq!(bits3(along), bits3(v3(&c["along_after"])), "{c}");
+        assert_eq!(bits3(vel), bits3(v3(&c["vel_after"])), "{c}");
+        assert_eq!(bits3(wall), bits3(v3(&c["wall_after"])), "{c}");
     }
 }

@@ -150,5 +150,62 @@ for _ in range(4000):
                   "ret": m.gpr(3), "stuck": W(R13 - 0x78F4),
                   "motion_after": [W(Q + 0x10 + 4 * j) for j in range(3)],
                   "vel_after": [W(VEL + 4 * j) for j in range(3)]})
-print(json.dumps({"lift": lift, "rows": rows, "surface": surface, "slide": slide,
+# fn_8011B7B8: two planes' intersection line.
+PA, PB, LINE = 0x81108000, 0x81108100, 0x81108200
+planes = []
+for _ in range(3000):
+    # Zero normals make NaNs, whose sign x86 and PowerPC create differently.
+    na = [f32(rng.uniform(-3, 3)) for _ in range(3)]
+    nb = rng.choice([[f32(rng.uniform(-3, 3)) for _ in range(3)], [f32(x * rng.uniform(-2, 2) + rng.uniform(-0.05, 0.05)) for x in na]])
+    pa, pb = [rf(100) for _ in range(3)], [rf(100) for _ in range(3)]
+    put3(PA, pa); put3(PA + 12, na); put3(PB, pb); put3(PB + 12, nb)
+    m.u.mem_write(LINE, bytes([0xEE]) * 24)
+    with_line = rng.random() < 0.9
+    m.call(0x8011B7B8, r3=PA, r4=PB, r5=LINE if with_line else 0)
+    planes.append({"a": [[fb(x) for x in pa], [fb(x) for x in na]], "b": [[fb(x) for x in pb], [fb(x) for x in nb]],
+                   "with_line": with_line, "ret": fb(f32(m.fpr(1))), "line": [W(LINE + 4 * j) for j in range(6)]})
+
+# fn_80040ACC: slide along the nearest wall.
+wall = []
+for _ in range(4000):
+    n = rng.choice([0, 1, 1, 2, 3, 5])
+    up = [0.0, 1.0, 0.0] if rng.random() < 0.6 else unit()
+    center = [rf(50) for _ in range(3)]
+    motion = [rf(12) for _ in range(3)]
+    vel = [rf(8) for _ in range(3)]
+    along, across, head = [rf(8) for _ in range(3)], [rf(3) for _ in range(3)], [rf(50) for _ in range(3)]
+    if rng.random() < 0.1:
+        along = [0.0, 0.0, 0.0]
+    hits = []
+    for _ in range(n):
+        mm = sum(x * x for x in motion) ** 0.5 or 1.0
+        facing = rng.choice([unit(), [f32(-x / mm + rng.uniform(-0.3, 0.3)) for x in motion], up])
+        nn = sum(x * x for x in facing) ** 0.5 or 1.0
+        facing = [f32(x / nn) for x in facing]
+        foot = [f32(center[j] + rng.uniform(-20, 20)) for j in range(3)]
+        hd = [f32(center[j] + rng.uniform(-8, 8)) for j in range(3)]
+        hits.append((facing, foot, hd))
+    for k, (facing, foot, hd) in enumerate(hits):
+        put3(TAILS + 0x58 * k + 0x14, facing)
+        put3(TAILS + 0x58 * k + 0x20, foot)
+        put3(TAILS + 0x58 * k + 0x2C, hd)
+    m.put(Q + 0x28, "H", n)
+    put3(Q + 4, center); put3(Q + 0x10, motion); put3(Q + 0x1C, up)
+    put3(Q + 0x60, head); put3(Q + 0x6C, along); put3(Q + 0x78, across)
+    put3(VEL, vel)
+    ch = rng.choice([0, 1, 2, 6])
+    f134 = f32(rng.uniform(0, 20))
+    last = rng.choice([0, 0, 0x100])
+    eflags = rng.choice([0, 0x08000000, 1])
+    m.put(PW + 1, "b", ch); m.put(PW + 0x134, "f", f134); m.put(PW + 0x8C, "I", last)
+    put3(PW + 0x70, [1.5, 2.5, 3.5])
+    m.call(0x80040ACC, r3=TASK, r4=VEL, r5=PW, r6=Q, r7=eflags)
+    wall.append({"ch": ch, "f134": fb(f134), "last": last, "eflags": eflags,
+                 "center": [fb(x) for x in center], "up": [fb(x) for x in up], "motion": [fb(x) for x in motion],
+                 "vel": [fb(x) for x in vel], "along": [fb(x) for x in along], "across": [fb(x) for x in across],
+                 "head": [fb(x) for x in head],
+                 "hits": [[[fb(x) for x in v] for v in h] for h in hits],
+                 "ret": m.gpr(3), "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)],
+                 "vel_after": [W(VEL + 4 * j) for j in range(3)], "wall_after": [W(PW + 0x70 + 4 * j) for j in range(3)]})
+print(json.dumps({"lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
                   "row74": [m.get(PHYS + 0x74, "I"), m.get(PHYS + 0xF8, "I")]}))
