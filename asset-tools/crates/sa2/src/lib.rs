@@ -28,6 +28,7 @@ mod key_pickup;
 pub mod manifest;
 pub mod model;
 pub mod motion;
+pub mod ninja;
 pub mod object_table;
 pub mod pe;
 pub mod physical_board;
