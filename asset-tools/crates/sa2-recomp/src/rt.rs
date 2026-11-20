@@ -55,8 +55,9 @@ impl Default for Cpu {
 pub struct Runtime {
     pub overrides: HashMap<u32, Func>,
     pub generated: fn(u32) -> Option<Func>,
-    /// Recompiled REL modules: module id -> dispatch(section, offset).
-    pub rels: HashMap<u32, fn(u32, u32) -> Option<Func>>,
+    /// Recompiled REL modules: (module id, code section size) -> dispatch(section,
+    /// offset). The size tells apart modules that share an id.
+    pub rels: HashMap<(u32, u32), fn(u32, u32) -> Option<Func>>,
 }
 
 impl Default for Runtime {
@@ -87,7 +88,7 @@ impl Runtime {
                 let size = m.r32(tab + sec * 8 + 4);
                 let base = off & !1;
                 if off & 1 != 0 && (base..base + size).contains(&addr) {
-                    return self.rels.get(&id).and_then(|d| d(sec, addr - base));
+                    return self.rels.get(&(id, size)).and_then(|d| d(sec, addr - base));
                 }
             }
             info = m.r32(info + 4);

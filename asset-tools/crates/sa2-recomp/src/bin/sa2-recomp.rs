@@ -43,15 +43,14 @@ fn run(dol_path: &Path, sym_path: &Path, out: &Path) -> Result<(), String> {
             starts.entry(s.addr).or_insert((s.name, s.size));
         }
     }
-    let addrs: Vec<u32> = starts.keys().copied().collect();
-    let mut funcs = Vec::new();
-    for (i, (&a, (name, size))) in starts.iter().enumerate() {
-        let sec = text.iter().find(|s| (s.addr..s.addr + s.data.len() as u32).contains(&a)).unwrap();
-        let sec_end = sec.addr + sec.data.len() as u32;
-        let next = addrs.get(i + 1).copied().unwrap_or(sec_end).min(sec_end);
-        let end = if *size > 0 { (a + size).min(sec_end) } else { next };
-        funcs.push((a, end, name.clone()));
-    }
+    let ranges: Vec<(u32, u32)> = text.iter().map(|s| (s.addr, s.addr + s.data.len() as u32)).collect();
+    let sizes = starts.iter().map(|(a, (_, n))| (*a, *n)).collect();
+    let funcs: Vec<(u32, u32, String)> = gen::layout(sizes, &ranges, |a| dol.word(a), |_| false)
+        .into_iter()
+        .map(|(a, end)| (a, end, starts.get(&a).map_or_else(|| format!("fn_{a:08X}"), |s| s.0.clone())))
+        .collect();
+    let added = funcs.len() - starts.len();
+    let starts: BTreeSet<u32> = funcs.iter().map(|f| f.0).collect();
 
     // Jump-table entries (and other code pointers) stored in data sections.
     let mut extra: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
@@ -59,7 +58,7 @@ fn run(dol_path: &Path, sym_path: &Path, out: &Path) -> Result<(), String> {
         for w in s.data.chunks_exact(4) {
             let v = u32::from_be_bytes(w.try_into().unwrap());
             if v % 4 == 0 && in_text(v) {
-                if let Some((&f, _)) = starts.range(..=v).next_back() {
+                if let Some(&f) = starts.range(..=v).next_back() {
                     extra.entry(f).or_default().insert(v);
                 }
             }
@@ -89,7 +88,7 @@ fn run(dol_path: &Path, sym_path: &Path, out: &Path) -> Result<(), String> {
                 if w >> 26 == 18 && w & 3 == 1 {
                     let li = ((w & 0x03FF_FFFC) << 6) as i32 >> 6;
                     let t = pc.wrapping_add(li as u32);
-                    if !starts.contains_key(&t) {
+                    if !starts.contains(&t) {
                         calls_missing.insert(t);
                     }
                 }
@@ -114,7 +113,7 @@ fn run(dol_path: &Path, sym_path: &Path, out: &Path) -> Result<(), String> {
     );
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;
     println!(
-        "functions {} | unknown instructions {unknown_total} {:?} | bl targets without a symbol {}",
+        "functions {} ({added} added from branch targets) | unknown instructions {unknown_total} {:?} | bl targets without a function {}",
         funcs.len(),
         unknown_ops,
         calls_missing.len()

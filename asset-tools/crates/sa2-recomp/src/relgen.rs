@@ -80,11 +80,12 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
                 continue;
             }
         };
-        if let Some(prev) = seen_ids.insert(rel.id, name.clone()) {
-            let _ = writeln!(report, "{name}: module id {} also used by {prev}", rel.id);
-        }
         let Some((ti, text)) = rel.text() else { continue };
+        if let Some(prev) = seen_ids.insert((rel.id, text.size), name.clone()) {
+            let _ = writeln!(report, "{name}: module id {} and code size also used by {prev}: only one is reachable", rel.id);
+        }
         let id = rel.id;
+        let word = |o: u32| (o.checked_add(4)? <= text.size).then(|| rel.word(text, o));
 
         // Relocations in the text section, as Rust target expressions.
         let mut relocs = HashMap::new();
@@ -109,7 +110,7 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
                 format!("rt::sec(m, {}, {}).wrapping_add({:#x})", r.module, r.target_section, r.addend)
             };
             if r.module == id && r.target_section as u32 == ti {
-                if r.kind == R_REL24 {
+                if r.kind == R_REL24 || gen::looks_like_entry(word, r.addend) {
                     starts.insert(r.addend);
                 } else {
                     extra.insert(r.addend);
@@ -125,11 +126,8 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
             let syms = std::fs::read_to_string(config.join(name).join("symbols.txt")).unwrap_or_default();
             starts.extend(crate::dol::parse_symbols(&syms).into_iter().filter(|s| s.function && s.section == ".text").map(|s| s.addr));
         }
-        let starts: Vec<u32> = starts.into_iter().filter(|&a| a < text.size).collect();
-        let mut funcs = Vec::new();
-        for (i, &a) in starts.iter().enumerate() {
-            funcs.push((a, starts.get(i + 1).copied().unwrap_or(text.size)));
-        }
+        let funcs =
+            gen::layout(starts.into_iter().map(|a| (a, 0)).collect(), &[(0, text.size)], word, |o| relocs.contains_key(&o));
         let modname = format!("m_{}", name.to_lowercase());
         let mut dispatch = format!("pub fn dispatch(sec: u32, off: u32) -> Option<Func> {{\n    if sec != {ti} {{ return None; }}\n    match off {{\n");
         let mut module_src = String::from("use sa2_recomp::rt::Func;\n");
@@ -154,7 +152,8 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         module_src.push_str(&dispatch);
         std::fs::write(out.join(format!("src/{modname}.rs")), module_src).map_err(|e| e.to_string())?;
         let _ = writeln!(lib, "pub mod {modname};");
-        let _ = writeln!(register, "    rt.rels.insert({id}, {modname}::dispatch);");
+        // Keyed by code size too: some modules share an id (titleD/stg00D).
+        let _ = writeln!(register, "    rt.rels.insert(({id}, {:#x}), {modname}::dispatch);", text.size);
         let _ = writeln!(
             report,
             "{name}: id {id} {} functions {} unknown {unknown} unmapped main.dol imports {unmapped}",

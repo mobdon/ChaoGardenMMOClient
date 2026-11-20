@@ -4,7 +4,7 @@
 //! over its basic blocks. Branches inside the function set `pc`; calls and
 //! branches out of it go through `rt::call`, so overrides apply everywhere.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 /// What the translator needs to know about the function being emitted.
@@ -95,7 +95,7 @@ fn goto(ctx: &Ctx, t: u32, targets: &mut Vec<u32>) -> String {
         targets.push(t);
         format!("pc = {t:#010x}; continue;")
     } else {
-        format!("rt::call(c, m, {}); return;", ctx.abs(&format!("{t:#010x}")))
+        format!("{} return;", call(&ctx.abs(&format!("{t:#010x}"))))
     }
 }
 
@@ -221,7 +221,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
             let t = if w & 2 != 0 { bd as u32 } else { pc.wrapping_add(bd as u32) };
             let (pre, cond) = bc_cond(d, a);
             if w & 1 != 0 {
-                format!("{pre}if {cond} {{ c.lr = {next:#010x}; rt::call(c, m, {}); }}", ctx.abs(&format!("{t:#010x}")))
+                format!("{pre}if {cond} {{ c.lr = {}; {} }}", ctx.abs(&format!("{next:#010x}")), call(&ctx.abs(&format!("{t:#010x}"))))
             } else {
                 if cond == "true" {
                     ends = true;
@@ -238,9 +238,9 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                     ends = true;
                 }
                 let tail = if w & 1 == 0 { " return;" } else { "" };
-                format!("c.lr = {next:#010x}; rt::call(c, m, {r});{tail}")
+                format!("c.lr = {}; {}{tail}", ctx.abs(&format!("{next:#010x}")), call(r))
             } else if w & 1 != 0 {
-                format!("c.lr = {next:#010x}; rt::call(c, m, {});", ctx.abs(&format!("{t:#010x}")))
+                format!("c.lr = {}; {}", ctx.abs(&format!("{next:#010x}")), call(&ctx.abs(&format!("{t:#010x}"))))
             } else {
                 ends = true;
                 goto(ctx, t, &mut targets)
@@ -253,7 +253,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                 16 => {
                     let (pre, cond) = bc_cond(d, a);
                     if w & 1 != 0 {
-                        format!("{pre}if {cond} {{ let t = c.lr; c.lr = {next:#010x}; rt::call(c, m, t); }}")
+                        format!("{pre}if {cond} {{ let t = c.lr; c.lr = {}; rt::call(c, m, t); }}", ctx.abs(&format!("{next:#010x}")))
                     } else {
                         if cond == "true" {
                             ends = true;
@@ -278,7 +278,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                     let (pre, cond) = bc_cond(d | 4, a);
                     let _ = pre;
                     if w & 1 != 0 {
-                        format!("if {cond} {{ let t = c.ctr; c.lr = {next:#010x}; rt::call(c, m, t); }}")
+                        format!("if {cond} {{ let t = c.ctr; c.lr = {}; rt::call(c, m, t); }}", ctx.abs(&format!("{next:#010x}")))
                     } else {
                         if cond == "true" {
                             ends = true;
@@ -583,9 +583,64 @@ pub fn function(name: &str, ctx: &Ctx, words: &[u32], extra: &BTreeSet<u32>) -> 
     if open {
         let _ = writeln!(s, "                pc = {:#010x};\n            }}", ctx.end);
     }
-    let _ = writeln!(s, "            _ => {{ rt::call(c, m, {}); return; }}", ctx.abs("pc"));
+    let _ = writeln!(s, "            _ => {{ {} return; }}", call(&ctx.abs("pc")));
     let _ = writeln!(s, "        }}\n    }}\n}}");
     (s, unknown)
+}
+
+/// Function ranges from `starts` (address -> size, 0 = up to the next start),
+/// clipped to the `text` ranges. Every direct branch target that is a call
+/// (`bl`) or leaves its function becomes a start too, until nothing changes:
+/// routines with several entry points (register save/restore ladders) have
+/// a symbol only for the first, Steam RELs have no symbols at all, and every
+/// cross-function branch must land on a function `rt::call` can find.
+/// `skip` marks relocated instructions (their branch field is not the target).
+pub fn layout(
+    mut starts: BTreeMap<u32, u32>,
+    text: &[(u32, u32)],
+    word: impl Fn(u32) -> Option<u32>,
+    skip: impl Fn(u32) -> bool,
+) -> Vec<(u32, u32)> {
+    let sec = |a: u32| text.iter().find(|(lo, hi)| (*lo..*hi).contains(&a)).copied();
+    starts.retain(|&a, _| sec(a).is_some());
+    loop {
+        let addrs: Vec<u32> = starts.keys().copied().collect();
+        let mut funcs = Vec::new();
+        for (i, (&a, &size)) in starts.iter().enumerate() {
+            let hi = sec(a).map_or(a, |s| s.1);
+            let next = addrs.get(i + 1).copied().unwrap_or(hi).min(hi);
+            funcs.push((a, if size > 0 { a.saturating_add(size).min(hi) } else { next }));
+        }
+        let mut new = BTreeSet::new();
+        for &(a, end) in &funcs {
+            for pc in (a..end).step_by(4) {
+                let Some(w) = word(pc) else { continue };
+                let disp = match w >> 26 {
+                    18 => ((w & 0x03FF_FFFC) << 6) as i32 >> 6,
+                    16 => (w & 0xFFFC) as u16 as i16 as i32,
+                    _ => continue,
+                };
+                if w & 2 != 0 || skip(pc) {
+                    continue;
+                }
+                let t = pc.wrapping_add(disp as u32);
+                if (w & 1 == 1 || !(a..end).contains(&t)) && sec(t).is_some() && !starts.contains_key(&t) {
+                    new.insert(t);
+                }
+            }
+        }
+        if new.is_empty() {
+            return funcs;
+        }
+        starts.extend(new.into_iter().map(|t| (t, 0)));
+    }
+}
+
+/// Whether a code pointer found in data looks like a function entry rather
+/// than a jump-table case: a prologue at the target, or a `blr` right before.
+pub fn looks_like_entry(word: impl Fn(u32) -> Option<u32>, t: u32) -> bool {
+    let w = word(t).unwrap_or(0);
+    w >> 16 == 0x9421 || w == 0x7C08_02A6 || (t >= 4 && word(t - 4) == Some(0x4E80_0020))
 }
 
 pub fn fn_name(ctx: &Ctx) -> String {
@@ -593,4 +648,10 @@ pub fn fn_name(ctx: &Ctx) -> String {
         Some((id, sec)) => format!("r{id}_{sec}_{:X}", ctx.start),
         None => format!("f_{:08X}", ctx.start),
     }
+}
+
+/// A call statement. The target is bound first: REL targets read `m`
+/// (`rt::sec`), which `rt::call` borrows mutably.
+fn call(target: &str) -> String {
+    format!("{{ let t = {target}; rt::call(c, m, t); }}")
 }
