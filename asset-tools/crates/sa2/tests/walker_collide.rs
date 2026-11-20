@@ -3,9 +3,10 @@ use sa2_asset_tools::land_contact::ContactHit;
 use sa2_asset_tools::land_nodes::Candidate;
 use sa2_asset_tools::ninja_matrix::MatrixStack;
 use sa2_asset_tools::walker_collide::{
-    adjust_angle, apply_surface, diff_angle, plane_intersection, slide_airborne, slide_grounded,
-    sphere_lift, sub_angle, tilt_to_contact, wall_slide, LiftInput, Line, PhysicsRow, Plane,
-    SlideInput, SurfaceWork, TiltSpeeds, WallSlideInput,
+    adjust_angle, apply_surface, diff_angle, plane_intersection, settle_contact, slide_airborne,
+    slide_grounded, sphere_lift, sub_angle, tilt_to_contact, wall_slide, LiftInput, Line,
+    MotionWork, PhysicsRow, Plane, SlideInput, SlideQuery, SurfaceWork, TiltSpeeds, TurnWork,
+    WallSlideInput,
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -248,5 +249,58 @@ fn matches_main_dol() {
         );
         let want = [g(&c["after"][0]), g(&c["after"][1]), g(&c["after"][2])];
         assert_eq!(ang, want, "{c}");
+    }
+    for c in v["settle"].as_array().unwrap() {
+        let g = |x: &Value| x.as_i64().unwrap() as i32;
+        let w = TurnWork {
+            status: c["status"].as_u64().unwrap() as u16 as i16,
+            spd: v3(&c["spd"]),
+            jog: f(&c["jog"]),
+            character: c["ch"].as_i64().unwrap() as i8,
+            f134: f(&c["f134"]),
+            row0_74: f(&r74[0]),
+            row1_74: f(&r74[1]),
+        };
+        let mut q = SlideQuery {
+            center: v3(&c["center"]),
+            motion: v3(&c["motion"]),
+            up: v3(&c["up"]),
+            facing: v3(&c["facing"]),
+            head: v3(&c["head"]),
+            along: v3(&c["along"]),
+        };
+        let mut mw = MotionWork {
+            spd: v3(&c["mw"]),
+            ang_aim: g(&c["aim"]),
+        };
+        let mut pos = v3(&c["pos"]);
+        let mut ang_y = g(&c["ang_y"]);
+        let mut vel = v3(&c["vel"]);
+        let mut wall = [1.5, 2.5, 3.5];
+        let r = settle_contact(
+            c["tflag"].as_u64().unwrap() as u16 as i16,
+            &mut pos,
+            &mut ang_y,
+            &mut vel,
+            &w,
+            &mut wall,
+            &mut q,
+            &mut mw,
+            v3(&c["point"]),
+            v3(&c["offset"]),
+            g(&c["ret_in"]),
+            u(&c["flags"]),
+            u(&c["stuck"]) != 0,
+        );
+        assert_eq!(r as u32, u(&c["ret"]), "{c}");
+        assert_eq!(bits3(pos), bits3(v3(&c["pos_after"])), "pos {c}");
+        assert_eq!(ang_y, g(&c["ang_y_after"]), "ang {c}");
+        assert_eq!(bits3(vel), bits3(v3(&c["vel_after"])), "vel {c}");
+        assert_eq!(bits3(wall), bits3(v3(&c["wall_after"])), "wall {c}");
+        assert_eq!(bits3(q.center), bits3(v3(&c["center_after"])), "center {c}");
+        assert_eq!(bits3(q.motion), bits3(v3(&c["motion_after"])), "motion {c}");
+        assert_eq!(bits3(q.along), bits3(v3(&c["along_after"])), "along {c}");
+        assert_eq!(bits3(mw.spd), bits3(v3(&c["mw_after"])), "mw {c}");
+        assert_eq!(mw.ang_aim, g(&c["aim_after"]), "aim {c}");
     }
 }

@@ -238,6 +238,60 @@ for _ in range(3000):
         m.call(addr, r3=a & 0xFFFFFFFF, r4=b & 0xFFFFFFFF, **extra)
         out.append(m.gpr(3))
     angles.append([a, b, st] + out)
+# fn_80042B4C (with fn_80040540): settle after a contact.
+MW, POINT, OFFSET = 0x81109000, 0x81109100, 0x81109200
+settle = []
+for _ in range(4000):
+    pnum = rng.choice([0, 1])
+    m.put(PW, "b", pnum)
+    m.put(0x801E7748 + 4 * pnum, "I", MW)
+    tflag = rng.choice([0, 1, 2, 3, rng.randrange(1 << 16)])
+    pos = [rf(50) for _ in range(3)]
+    ang_y = rng.randrange(-0x20000, 0x20000)
+    vel = [rf(6) for _ in range(3)]
+    facing = unit()
+    vals = {"center": [rf(50) for _ in range(3)], "motion": [rf(6) for _ in range(3)], "up": unit() if rng.random() < 0.4 else [0.0, 1.0, 0.0],
+            "head": [rf(50) for _ in range(3)], "along": [rf(6) for _ in range(3)] if rng.random() < 0.9 else [0.0, 0.0, 0.0]}
+    if rng.random() < 0.3:
+        vel = [f32(-x * 2) for x in facing]
+    point = [f32(pos[j] - facing[j] * rng.uniform(-5, 5)) for j in range(3)] if rng.random() < 0.8 else pos
+    offset = [rf(10) for _ in range(3)]
+    status = rng.choice([0, 1, 2, 3, rng.randrange(1 << 16)])
+    spd = [rf(6) for _ in range(3)]
+    jog = f32(rng.uniform(0, 4))
+    ch = rng.choice([0, 1, 2, 6])
+    f134 = f32(rng.uniform(0, 20))
+    mws = [rf(6) for _ in range(3)]
+    aim = rng.randrange(-0x20000, 0x20000)
+    ret_in, flags, stuck = rng.choice([0, 1, 7]), rng.choice([0, 0x1000]), rng.choice([0, 1])
+    m.put(TASK + 4, "H", tflag & 0xFFFF)
+    put3(TASK + 0x14, pos)
+    m.put(TASK + 0xC, "i", ang_y)
+    put3(VEL, vel)
+    put3(Q + 4, vals["center"]); put3(Q + 0x10, vals["motion"]); put3(Q + 0x1C, vals["up"])
+    put3(Q + 0x48, facing); put3(Q + 0x60, vals["head"]); put3(Q + 0x6C, vals["along"])
+    put3(POINT, point); put3(OFFSET, offset)
+    m.put(PW + 0x1C, "H", status & 0xFFFF)
+    put3(PW + 0x64, spd)
+    m.put(PW + 0xE4, "f", jog)
+    m.put(PW + 1, "b", ch); m.put(PW + 0x134, "f", f134)
+    put3(PW + 0x70, [1.5, 2.5, 3.5])
+    put3(MW, mws)
+    m.put(MW + 0x1C, "i", aim)
+    m.put(R13 - 0x78F4, "I", stuck)
+    m.call(0x80042B4C, r3=TASK, r4=VEL, r5=PW, r6=Q, r7=POINT, r8=OFFSET, r9=ret_in, r10=flags)
+    settle.append({"pnum": pnum, "tflag": tflag, "pos": [fb(x) for x in pos], "ang_y": ang_y, "vel": [fb(x) for x in vel],
+                   "facing": [fb(x) for x in facing], **{k: [fb(x) for x in v] for k, v in vals.items()},
+                   "point": [fb(x) for x in point], "offset": [fb(x) for x in offset], "status": status,
+                   "spd": [fb(x) for x in spd], "jog": fb(jog), "ch": ch, "f134": fb(f134),
+                   "mw": [fb(x) for x in mws], "aim": aim, "ret_in": ret_in, "flags": flags, "stuck": stuck,
+                   "ret": m.gpr(3),
+                   "pos_after": [W(TASK + 0x14 + 4 * j) for j in range(3)], "ang_y_after": m.get(TASK + 0xC, "i"),
+                   "vel_after": [W(VEL + 4 * j) for j in range(3)], "wall_after": [W(PW + 0x70 + 4 * j) for j in range(3)],
+                   "center_after": [W(Q + 4 + 4 * j) for j in range(3)], "motion_after": [W(Q + 0x10 + 4 * j) for j in range(3)],
+                   "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)], "mw_after": [W(MW + 4 * j) for j in range(3)],
+                   "aim_after": m.get(MW + 0x1C, "i")})
 print(json.dumps({"lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
+                  "settle": settle,
                   "tilt": tilt, "angles": angles,
                   "row74": [m.get(PHYS + 0x74, "I"), m.get(PHYS + 0xF8, "I")]}))

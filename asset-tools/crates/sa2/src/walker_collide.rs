@@ -8,7 +8,7 @@ use crate::{
     land_contact::{unit_vector, ContactHit},
     land_nodes::nj_scalor,
     land_select::inline_sqrt,
-    msl_math::atan2f,
+    msl_math::{atan2f, gekko_fres, gekko_frsqrte},
     ninja_matrix::{Axis, MatrixStack, Vec3},
     ninja_trig::{fmadds, fnmsubs, nj_cos},
     ninja_vector::{inner_product, outer_product, vector_angle},
@@ -708,4 +708,173 @@ pub fn tilt_to_contact(
     };
     task_angles[0] = adjust_angle(task_angles[0], contact_angles.0, step);
     task_angles[2] = adjust_angle(task_angles[2], contact_angles.1, step);
+}
+
+const SLIDE_MIN: f32 = f32::from_bits(0x3ecc_cccd); // r2-0x7518, 0.4
+const SLIDE_DAMP: f32 = f32::from_bits(0x3f75_c28f); // r2-0x7510, 0.96
+
+/// The motion work (`playermwp[pnum]`, 0x801E7748) fields these read.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MotionWork {
+    /// +0: the motion vector.
+    pub spd: Vec3,
+    /// +0x1C: the aim angle.
+    pub ang_aim: i32,
+}
+
+/// The query fields the slide helpers read and write.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlideQuery {
+    /// +4 and +0x10.
+    pub center: Vec3,
+    pub motion: Vec3,
+    /// +0x1C.
+    pub up: Vec3,
+    /// +0x48: the best hit's facing.
+    pub facing: Vec3,
+    /// +0x60: the averaged head point.
+    pub head: Vec3,
+    /// +0x6C: the motion along the contact plane.
+    pub along: Vec3,
+}
+
+/// Whether `njOuterProduct`'s returned length is zero: `fres(frsqrte(s))`
+/// where s is x*x (single) then double fused adds of y*y and z*z.
+fn outer_is_zero(c: Vec3) -> bool {
+    let s = (c[1] as f64).mul_add(c[1] as f64, (c[0] * c[0]) as f64);
+    let s = (c[2] as f64).mul_add(c[2] as f64, s);
+    gekko_fres(gekko_frsqrte(s)) == 0.0
+}
+
+/// The player-work fields fn_80040540 reads.
+#[derive(Debug, Clone, Copy)]
+pub struct TurnWork {
+    pub status: i16,
+    /// `spd` (+0x64) and PhysicsArray `jog_speed` (+0xE4).
+    pub spd: Vec3,
+    pub jog: f32,
+    pub character: i8,
+    pub f134: f32,
+    pub row0_74: f32,
+    pub row1_74: f32,
+}
+
+fn small_body(character: i8, f134: f32, row0_74: f32, row1_74: f32) -> bool {
+    (character == 0 && f134 < row0_74) || (character == 1 && !(f134 >= row1_74))
+}
+
+/// fn_80040540: turn the task's Y angle by the angle between the motion and
+/// the slide direction (query +0x6C), store it as the motion work's aim
+/// (flipping it by 0x8000 when that is more than 0x6000 away from the old
+/// aim), and when the slide is long enough point the motion work's vector
+/// along it, keeping its speed (times 0.96 above 0.6 when grounded).
+pub fn turn_to_slide(
+    task_ang_y: &mut i32,
+    w: &TurnWork,
+    q: &mut SlideQuery,
+    mw: &mut MotionWork,
+    dir: Vec3,
+) {
+    if w.status & 3 == 0 && nj_scalor(w.spd) <= w.jog {
+        return;
+    }
+    if outer_is_zero(outer_product(dir, q.facing)) {
+        return;
+    }
+    if small_body(w.character, w.f134, w.row0_74, w.row1_74) {
+        q.along = [ZERO; 3];
+        mw.spd = [ZERO; 3];
+        return;
+    }
+    if nj_scalor(q.along) == ZERO {
+        return;
+    }
+    let a = unit_vector(q.motion);
+    let b = unit_vector(q.along);
+    *task_ang_y = task_ang_y.wrapping_sub(vector_angle(a, b, Some(q.up)));
+    if diff_angle(mw.ang_aim, *task_ang_y) > 0x6000 {
+        *task_ang_y = task_ang_y.wrapping_add(0x8000);
+    }
+    mw.ang_aim = *task_ang_y;
+    if nj_scalor(q.along) >= SLIDE_MIN {
+        let mut s = nj_scalor(mw.spd);
+        if s > LIFT_FALLING && w.status & 3 != 0 {
+            s *= SLIDE_DAMP;
+        }
+        mw.spd = unit_vector(q.along).map(|c| c * s);
+    }
+}
+
+/// fn_80042B4C(task, vel, player, query, point, offset, ret, flags): after a
+/// contact, store the best facing as the wall normal (player +0x70), turn
+/// toward the slide when the approach (from the task position to `point`
+/// when grounded, else against `vel`) is within 0x4000 of the facing, then
+/// move the query and task to the averaged head point (less `offset`) and
+/// the query motion to the slide. Returns `ret`, or 1 where the routine sets
+/// it; some early exits skip the move.
+#[allow(clippy::too_many_arguments)]
+pub fn settle_contact(
+    task_flag: i16,
+    task_pos: &mut Vec3,
+    task_ang_y: &mut i32,
+    vel: &mut Vec3,
+    w: &TurnWork,
+    wall: &mut Vec3,
+    q: &mut SlideQuery,
+    mw: &mut MotionWork,
+    point: Vec3,
+    offset: Vec3,
+    mut ret: i32,
+    flags: u32,
+    stuck: bool,
+) -> i32 {
+    *wall = q.facing;
+    let neg = |v: Vec3| v.map(|c| -c);
+    let turn = |d: Vec3, q: &mut SlideQuery, mw: &mut MotionWork, ang_y: &mut i32| {
+        turn_to_slide(ang_y, w, q, mw, d);
+    };
+    if task_flag & 1 != 0 {
+        let mut d = sub3(point, *task_pos);
+        if nj_scalor(d) == ZERO {
+            d = neg(*vel);
+            if nj_scalor(d) == ZERO {
+                return ret;
+            }
+        }
+        let d = unit_vector(d);
+        if vector_angle(d, q.facing, None) >= 0x4000 {
+            return ret;
+        }
+        ret = 1;
+        turn(d, q, mw, task_ang_y);
+    } else {
+        let d = neg(*vel);
+        if nj_scalor(d) != ZERO {
+            let d = unit_vector(d);
+            let ang = vector_angle(d, q.facing, None);
+            if flags & 0x1000 != 0 {
+                if ang >= 0x4000 {
+                    return ret;
+                }
+                ret = 1;
+            } else {
+                if ang >= 0x4000 {
+                    return ret;
+                }
+                if stuck && task_flag & 2 != 0 {
+                    q.along = [ZERO; 3];
+                    *vel = [ZERO; 3];
+                }
+            }
+            turn(d, q, mw, task_ang_y);
+        }
+    }
+    q.center = q.head;
+    *task_pos = sub3(q.head, offset);
+    q.motion = q.along;
+    ret
+}
+
+fn sub3(a: Vec3, b: Vec3) -> Vec3 {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
