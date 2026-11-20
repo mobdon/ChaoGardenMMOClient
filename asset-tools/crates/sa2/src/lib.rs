@@ -30,6 +30,7 @@ pub mod iron_gate_movers;
 mod key_pickup;
 pub mod land_contact;
 pub mod land_nodes;
+pub mod land_probe;
 pub mod land_select;
 pub mod manifest;
 pub mod model;
