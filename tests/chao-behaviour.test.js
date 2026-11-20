@@ -37,7 +37,8 @@ test('native table timing samples enter once and loops the loop phase', () => {
   assert.equal(late.frame, 10, 'enter holds its end frame');
   const loop = selectBehaviourMotion(catalog, behaviour('sit'), { serverNow: 1000 + 1000 / 60 * 25 });
   assert.equal(loop.loop, true); assert.ok(Math.abs(loop.frame - 5) < 1e-9);
-  assert.deepEqual(loop.face, BEHAVIOUR_FACES.sit);
+  assert.equal(loop.face, null, 'no face without a traced native value');
+  assert.ok(Object.values(BEHAVIOUR_FACES).every(face => face === null));
 });
 
 test('behaviour never overrides movement, mounts, swimming or stale snapshots', () => {

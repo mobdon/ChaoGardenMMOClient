@@ -14,16 +14,12 @@ export const BEHAVIOUR_KINDS = ['idle', 'sit', 'sleep', 'play', 'happy', 'startl
 const MOVING_SPEED = 0.08;
 const REFERENCE_FPS = 60;
 
-// Provisional faces, from the appearance work's reading of SA2Enums ChaoEyes /
-// ChaoMouth. They are unverified against a native behaviour call: a ported
-// native controller's own face values replace these. Eyelid is 0..1 closed.
+// Faces come only from traced native behaviour code (AL_FaceChangeEye /
+// AL_FaceChangeMouth calls in ChaoMain.rel). None are traced yet, so every
+// behaviour keeps the default face (resetChaoFace). Fill an entry only with
+// native values and their address.
 export const BEHAVIOUR_FACES = Object.freeze({
-  idle: null,
-  sit: { eye: 0, mouth: 3, eyelid: 0.35 },
-  sleep: { eye: 2, mouth: 3, eyelid: 1 },
-  play: { eye: 3, mouth: 5, eyelid: 0 },
-  happy: { eye: 3, mouth: 1, eyelid: 0 },
-  startled: { eye: 6, mouth: 11, eyelid: 0 },
+  idle: null, sit: null, sleep: null, play: null, happy: null, startled: null,
 });
 
 let faceApi = null;
