@@ -896,6 +896,8 @@ pub enum PlacementClock {
     SuperCollision(Box<SuperCollisionFrame>),
     /// Section 1 + 0xe9f0: super-form hover (no stick steering).
     SuperHover(Box<SuperHoverFrame>),
+    /// Section 1 + 0xdc90: action 58, stick-driven free movement.
+    SuperFreeMove(Box<SuperFreeMoveFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2666,6 +2668,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperFlight(frame) => return super_flight(&rel, &frame),
         PlacementClock::SuperCollision(frame) => return super_collision(&rel, &frame),
         PlacementClock::SuperHover(frame) => return super_hover(&rel, &frame),
+        PlacementClock::SuperFreeMove(frame) => return super_free_move(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -3687,4 +3690,88 @@ fn super_hover(
         ev.push(store(site, 0x58 + 4 * i as u32, acc[i].to_bits()));
     }
     Ok(serde_json::json!({"events":ev,"acceleration":acc,"thrust":out}))
+}
+
+/// Inputs to section 1 + 0xdc90. The controller block is the player's
+/// 52-byte entry at 0x801e5038 (words 8 and 0x10, stick halfwords 0x1c and
+/// 0x1e); `atan2` is the double the engine's 0x80110e20 returns, `camera_yaw`
+/// is word 0x10 of the object at 0x80174f98, and `trig` holds the two
+/// 0x80112068/0x80112050 results.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperFreeMoveFrame {
+    pub buttons_08: u32,
+    pub buttons_10: u32,
+    pub stick: [i16; 2],
+    pub position: [f32; 3],
+    #[serde(default)]
+    pub atan2: f64,
+    #[serde(default)]
+    pub camera_yaw: i32,
+    #[serde(default)]
+    pub trig: [f32; 2],
+}
+/// Section 1 + 0xdc90: outside the ±14 stick dead zone, move 5 units per
+/// frame. With button bit 0x400 held the stick's Y sign moves the player
+/// down or up; otherwise the stick direction, relative to the camera yaw,
+/// moves it across X and Z.
+fn super_free_move(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperFreeMoveFrame,
+) -> Result<serde_json::Value> {
+    let k = |site: usize| stage_f32(rel, site, 4, 0);
+    let store = |site: u32, offset: u32, value: f32| serde_json::json!({"site":site,"store":"entity","offset":offset,"size":4,"value":value.to_bits()});
+    let call = |site: u32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?}))
+    };
+    let mut ev = Vec::new();
+    if f.buttons_10 & 2 != 0 {
+        ev.push(call(0xdcdc)?);
+    }
+    let float = |v: i16| v as i32 as f64 as f32;
+    let (x, y) = (float(f.stick[0]), float(f.stick[1]));
+    let mut pos = f.position;
+    let vertical = f.buttons_08 & 0x400 != 0;
+    let (hi, lo) = if vertical {
+        (k(0xdd72)?, k(0xdd8a)?)
+    } else {
+        (k(0xde6a)?, k(0xde82)?)
+    };
+    let idle = x <= hi && x >= lo && y <= hi && y >= lo;
+    if !idle && vertical {
+        let zero = k(0xddba)?;
+        let sign = if zero == y {
+            zero
+        } else {
+            y / stage_sqrt(y * y)
+        };
+        pos[1] -= k(0xdde6)? * sign;
+        ev.push(store(0xddf8, 0x18, pos[1]));
+    } else if !idle {
+        ev.push({
+            let mut v = call(0xdeb0)?;
+            v["floats"] = serde_json::json!([y, x]);
+            v
+        });
+        let scale = {
+            let p = rel
+                .reference(1, 0xdeb6)
+                .ok_or_else(|| Error::invalid("missing angle scale"))?;
+            let at = p.addend as usize;
+            f64::from_be_bytes(rel.data(4)?[at..at + 8].try_into().unwrap())
+        };
+        let angle = ((scale * f.atan2) as i32).wrapping_sub(f.camera_yaw);
+        let step = k(0xdeee)?;
+        let mut v = call(0xdee8)?;
+        v["args"] = serde_json::json!([angle as u32]);
+        ev.push(v);
+        pos[0] += step * f.trig[0];
+        ev.push(store(0xdf04, 0x14, pos[0]));
+        let mut v = call(0xdf0c)?;
+        v["args"] = serde_json::json!([angle as u32]);
+        ev.push(v);
+        pos[2] += step * f.trig[1];
+        ev.push(store(0xdf20, 0x1c, pos[2]));
+    }
+    Ok(serde_json::json!({"events":ev,"position":pos}))
 }
