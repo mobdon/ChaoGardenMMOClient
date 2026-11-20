@@ -17,6 +17,9 @@ from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE
 from unicorn import ppc_const as R
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gekko_float import install_frsqrte  # noqa: E402
+
 exe, module = sys.argv[1:]
 data = Path(module).read_bytes()
 word = lambda i: struct.unpack_from(">I", data, i)[0]
@@ -121,6 +124,7 @@ def write_hook(u, access, addr, size, value, _):
     raise AssertionError(f"unexpected store at {addr:#x}")
 
 
+install_frsqrte(cpu, CODE + 0x40E4)  # Gekko estimate in the stage square root
 cpu.hook_add(UC_HOOK_CODE, code_hook)
 cpu.hook_add(UC_HOOK_MEM_WRITE, write_hook)
 

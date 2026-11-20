@@ -908,6 +908,10 @@ pub enum PlacementClock {
     SuperEffects(Box<SuperEffectsFrame>),
     /// Section 1 + 0x19470: the stage's ring drop when a player is hit.
     RingDrop(Box<RingDropFrame>),
+    /// Section 1 + 0x40cc on each value: the stage square root.
+    StageSqrt {
+        values: Vec<f32>,
+    },
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -1157,16 +1161,90 @@ pub struct VoiceChannel {
     /// Byte 0x25.
     pub category: i8,
 }
+/// Gekko `frsqrte`: the hardware reciprocal square-root estimate, as
+/// Dolphin's hardware-verified table and bit construction compute it
+/// (Source/Core/Common/FloatUtils.cpp, ApproximateReciprocalSquareRoot).
+fn gekko_frsqrte(val: f64) -> f64 {
+    const TABLE: [(i64, i64); 32] = [
+        (0x1a7e800, -0x568),
+        (0x17cb800, -0x4f3),
+        (0x1552800, -0x48d),
+        (0x130c000, -0x435),
+        (0x10f2000, -0x3e7),
+        (0x0eff000, -0x3a2),
+        (0x0d2e000, -0x365),
+        (0x0b7c000, -0x32e),
+        (0x09e5000, -0x2fc),
+        (0x0867000, -0x2d0),
+        (0x06ff000, -0x2a8),
+        (0x05ab800, -0x283),
+        (0x046a000, -0x261),
+        (0x0339800, -0x243),
+        (0x0218800, -0x226),
+        (0x0105800, -0x20b),
+        (0x3ffa000, -0x7a4),
+        (0x3c29000, -0x700),
+        (0x38aa000, -0x670),
+        (0x3572000, -0x5f2),
+        (0x3279000, -0x584),
+        (0x2fb7000, -0x524),
+        (0x2d26000, -0x4cc),
+        (0x2ac0000, -0x47e),
+        (0x2881000, -0x43a),
+        (0x2665000, -0x3fa),
+        (0x2468000, -0x3c2),
+        (0x2287000, -0x38e),
+        (0x20c1000, -0x35e),
+        (0x1f12000, -0x332),
+        (0x1d79000, -0x30a),
+        (0x1bf4000, -0x2e6),
+    ];
+    let bits = val.to_bits() as i64;
+    let mut mantissa = bits & ((1 << 52) - 1);
+    let sign = bits & i64::MIN;
+    let mut exponent = bits & (0x7ff << 52);
+    if mantissa == 0 && exponent == 0 {
+        return if sign != 0 {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    if exponent == 0x7ff << 52 {
+        if mantissa == 0 {
+            return if sign != 0 { f64::NAN } else { 0.0 };
+        }
+        return f64::from_bits(val.to_bits() | 0x0008_0000_0000_0000);
+    }
+    if sign != 0 {
+        return f64::NAN;
+    }
+    if exponent == 0 {
+        loop {
+            exponent -= 1 << 52;
+            mantissa <<= 1;
+            if mantissa & (1 << 52) != 0 {
+                break;
+            }
+        }
+        mantissa &= (1 << 52) - 1;
+        exponent += 1 << 52;
+    }
+    let exponent_lsb = exponent & (1 << 52);
+    exponent = ((0x3ff << 52) - ((exponent - (0x3fe << 52)) / 2)) & (0x7ff << 52);
+    let i = ((exponent_lsb | mantissa) >> 37) as usize;
+    let (base, dec) = TABLE[i / 2048];
+    let integral = sign | exponent | ((base + dec * (i % 2048) as i64) << 26);
+    f64::from_bits(integral as u64)
+}
 /// Section 1 + 0x40cc: frsqrte, three double-precision Newton steps, x*y,
-/// frsp. Nonpositive and NaN inputs return unchanged. The estimate here is
-/// the exact reciprocal root (as Unicorn/QEMU computes frsqrte); hardware
-/// estimates converge to the same double except in rare final roundings.
+/// frsp. Nonpositive and NaN inputs return unchanged.
 fn stage_sqrt(x: f32) -> f32 {
     if x.is_nan() || x <= 0.0 {
         return x;
     }
     let x = x as f64;
-    let mut y = 1.0 / x.sqrt();
+    let mut y = gekko_frsqrte(x);
     for _ in 0..3 {
         y = 0.5 * y * (3.0 - x * (y * y));
     }
@@ -2674,6 +2752,10 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperDraw(frame) => return super_draw(&rel, &frame),
         PlacementClock::SuperEffects(frame) => return super_effects(&rel, &frame),
         PlacementClock::RingDrop(frame) => return ring_drop(&rel, &frame),
+        PlacementClock::StageSqrt { values } => {
+            let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
+            return Ok(serde_json::json!({"bits":out}));
+        }
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
