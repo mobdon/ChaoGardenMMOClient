@@ -166,7 +166,6 @@ which = sys.argv[1] if len(sys.argv) > 1 else 'all'
 
 # --- setup (+0xA66C) ---------------------------------------------------------
 if which in ('all', 'setup'):
-    ours = [S(1, 0x37EF8), S(1, 0x14880), S(1, 0x10D5C)]
     for i in range(48):
         handle = rng.choice([0, 0x80123450, rnd_word()])
         task = i % 4 != 1
