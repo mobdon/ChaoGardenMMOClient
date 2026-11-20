@@ -610,23 +610,7 @@ impl Campaign {
                 &mut layers,
                 &mut gaps,
             )?;
-            // The course replaces a landtable: native pieces placed in route order.
-            const KART_DLL: &str = "DLL/Win32/Data_DLL.dll";
-            match load(KART_DLL)? {
-                Some(bytes) => {
-                    let stage = crate::kart_course::course_terrain(&bytes, &route.course_parts)?;
-                    terrain = Some(Terrain {
-                        geometry_path: format!("CartCourseModels/{}", route.name),
-                        filename: KART_DLL,
-                        symbol: "CartCourseModels",
-                        entries: stage.entries.len(),
-                        basic_attachments: stage.basic_attachments.len(),
-                        stage,
-                    });
-                }
-                None => gaps.push(format!("No mounted source for {KART_DLL}.")),
-            }
-            gaps.push("Kart driving, scenery objects and race conditions are not ported.".into());
+            gaps.push("Kart course part IDs are available; track assembly, driving and race conditions are not ported.".into());
         } else {
             gaps.push(format!(
                 "No matching sa2lvl.ini section for campaign stage {}.",

@@ -28,7 +28,7 @@ All 49 dispatches mounted or reported their precise resource gaps. The result co
 
 **43 of 49** dispatches have a start row for the exact authored character. Big Foot (60), Hot Shot (61), Flying Dog (62), Biolizard (65) and both kart dispatches (70) have no matching general single-player start row. No character substitution or invented start position is used. Final Hazard (66) has an authored pose and a level section, but its configured BossLast2 object-list path lacks a matching mapping in ObjectLists.ini. No normal SET or static landtable is declared/available there.
 
-**46 of 49** dispatches mount verified static terrain from **41 distinct levels**. All 41 built a Rust collision world. Sonic vs Shadow 2 (42) has no static landtable in either story, and Final Hazard has none. The two kart dispatches have no landtable either; their terrain is assembled from the course pieces (see Kart routes). Some boss tables contain only visual entries; the existence of a landtable does not imply a solid floor or a port of a boss routine. The original five Cannon's Core sections are not five independent Last Story dispatches: the story selects 36. In-level character handoffs are outside this loader.
+**44 of 49** dispatches mount verified static terrain from **40 distinct levels**. All 40 built a Rust collision world. Sonic vs Shadow 2 (42) has no static landtable in either story; Final Hazard and both kart courses also have none. Some boss tables contain only visual entries; the existence of a landtable does not imply a solid floor or a port of a boss routine. The original five Cannon's Core sections are not five independent Last Story dispatches: the story selects 36. In-level character handoffs are outside this loader.
 
 ## Kart routes
 
@@ -41,17 +41,6 @@ Both kart actions dispatch stage 70, but Hero selects MechTails and Dark selects
 
 For an independent reference, split the two kartcourse sections of CART.ini with SA Tools 786 split.exe binary and the installed executable; hash the decimal lines of each exported course as bytes in order. The local test compares both complete byte sequences to these reference digests. The offline kart geometry query below assembles both tracks.
 
-### Static course terrain
-
-When the resolver supplies `DLL/Win32/Data_DLL.dll` (pinned Steam revision), the mount assembles each route into an ordinary Battle-layout `Stage`. Every ordered piece is placed by `course_layout` from the origin. Its native display object and native Basic collision object are copied word for word from the `CartCourseModels` export, with pointers rebased as for installed land. Each piece gets one synthetic parent node that holds the course position (rounded to binary32) and the Y heading. The native root and its hierarchy stay underneath it unchanged. All display entries come first (GC attachments stay opaque), then all collision entries, both in route order. The terrain reports `CartCourseModels/Route 101` or `CartCourseModels/Route 280` as its geometry path, and `collision_world()` bakes it like any other stage.
-
-| Route | Entries (display + collision) | Basic attachments | Collision triangles | Opaque / translucent GC meshes |
-|---|---:|---:|---:|---:|
-| Route 101 | 642 (321 + 321) | 49 | 13,643 | 3,981 / 0 |
-| Route 280 | 738 (369 + 369) | 52 | 18,439 | 4,853 / 0 |
-
-Nothing is derived for the entries. The course rows carry no landtable surface flags or entry bounds, so both stay zero; display and collision entries are told apart only by the visual count. A ray query must therefore pass a filter that does not require the solid flag. `kart_course::terrain_reference` (ignored, needs the install) checks two things. First, the baked world equals the direct per-piece triangle walk for all five courses, with the same piece, strip, source indices and winding, and positions within 0.001 units (the binary32 pose rounding). Second, with `SA2_KART_MODEL_REFERENCE` pointing at SA Tools 786 GC models split from the same DLL, every story display entry matches on the native root flags, transform words, hierarchy size, mesh counts and GC attachment sphere words. Scenery objects, draw order and driving are not part of the terrain.
-
 ### Course textures
 
 `kart-course-materials EXE OUTPUT.json DATA_DLL CartD.rel course.pak COURSE` reports how a course's display pieces bind textures, using only native data. CartD's course display callback (+0x684c) passes the 74-entry course list at section 5 +0xF9C34 to engine routine 0x80116AD0 before drawing pieces. The command checks that those names equal the Data_DLL `texlist_course` export (RVA 0x58AEE8), in order. For every distinct piece, it lists each GC mesh in native order: opaque or translucent list, the low half of its own texture parameter (the course slot), the high half unchanged, and its raw blend-alpha word. Each slot used resolves to `course\NAME.dds` in course.pak, with the DDS and decoded RGBA digests and a count of texels with alpha below 255. Meshes that declare no texture parameter are counted; no texture is inherited for them.
@@ -61,7 +50,7 @@ Nothing is derived for the entries. The course rows carry no landtable surface f
 | Route 101 | 3,981 | 45 | 42 | 0 |
 | Route 280 | 4,853 | 128 | 45 | 0 |
 
-`kart_course::materials_reference` (ignored) compares every piece's mesh list, texture words and blend words against SA Tools 786 GC models split from the same DLL. Lighting and the background are separate.
+Lighting and the background are separate.
 
 ### Course billboards and draw distance
 
