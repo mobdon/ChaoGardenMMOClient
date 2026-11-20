@@ -2,9 +2,10 @@
 //! player took onto the screen, holds them and shrinks them away.
 //!
 //! stg42D.rel section 1: the item callback 0x9FB8 ([`item_callback`]; the
-//! boxes call it directly, and the stage setup installs it at the GSNE8P
-//! address 0x801A2640, an install this module leaves to the stage setup's
-//! port), the spawn 0x9EA0, the exec 0xA0CC with its
+//! boxes call it directly; the stage setup only stores its address in
+//! main.dol's hook slot 0x801A2A20 when that slot is empty, stg42D
+//! +0x2EA4..+0x2EC4, base 0x801A2A18 by relocation, +8), the spawn 0x9EA0,
+//! the exec 0xA0CC with its
 //! modes 0xA138 (slide in), 0xA2B8 (hold) and 0xA35C (shrink), the dest
 //! 0x9F48 and the display 0xA40C. One task per player (s5 +0xD9CC holds
 //! the two task pointers); its 0xFC-byte work (syCalloc) holds a count

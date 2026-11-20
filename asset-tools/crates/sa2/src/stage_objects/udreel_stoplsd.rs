@@ -401,8 +401,9 @@ pub enum ReelEvent {
         a: u32,
         b: u32,
     },
-    /// fn_8002FB2C(slot, a, b, 0): a player action change.
-    Action {
+    /// fn_8002FB2C(slot, a, b, 0): the controller vibration request
+    /// ("VibTask"; native as `player_contact::fn_8002fb2c`).
+    Vibrate {
         slot: i32,
         a: u32,
         b: u32,
@@ -536,7 +537,7 @@ fn check_let_go(t: &mut ReelTask, host: &mut impl ReelHost) {
     let mode = player(host, slot).map(|p| p.mode);
     if mode != Some(0x33) {
         t.twp.mode |= 2;
-        host.reel(ReelEvent::Action { slot, a: 4, b: 0xf });
+        host.reel(ReelEvent::Vibrate { slot, a: 4, b: 0xf });
     }
 }
 
@@ -704,7 +705,7 @@ pub fn udreel_exec(t: &mut ReelTask, data: &ReelData, host: &mut impl ReelHost) 
                     a: 0x14,
                     b: 0x4b,
                 });
-                host.reel(ReelEvent::Action { slot, a: 5, b: 0xb });
+                host.reel(ReelEvent::Vibrate { slot, a: 5, b: 0xb });
                 return;
             }
         }
