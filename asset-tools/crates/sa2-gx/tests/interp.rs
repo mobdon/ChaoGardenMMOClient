@@ -1,0 +1,61 @@
+//! Frames between game frames blend matched draws' position matrices.
+use sa2_gx::api::{Frame, Gx, Ram};
+use sa2_gx::enums::*;
+use sa2_gx::interp::Tween;
+
+/// One frame: a triangle drawn with matrix 0 translated by `x` per draw in
+/// `xs` (a second, larger triangle when `extra` is set).
+fn frame(xs: &[f32], extra: bool) -> Frame {
+    let mut gx = Gx::new();
+    gx.clear_vtx_desc();
+    gx.set_vtx_desc(attr::POS, attr_type::DIRECT);
+    gx.set_vtx_attr_fmt(0, attr::POS, comp_cnt::POS_XYZ, comp_type::F32, 0);
+    let mem = Ram(&[]);
+    let tri = |gx: &mut Gx, n: u16| {
+        gx.begin(command::DRAW_TRIANGLES, 0, n);
+        for i in 0..n {
+            gx.position3f32(i as f32, 0.0, 0.0);
+        }
+        gx.end(&mem);
+    };
+    if extra {
+        tri(&mut gx, 6);
+    }
+    for &x in xs {
+        gx.load_pos_mtx_imm(
+            &[
+                [1.0, 0.0, 0.0, x],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            0,
+        );
+        tri(&mut gx, 3);
+    }
+    gx.take_frame()
+}
+
+fn tx(f: &Frame, i: usize) -> f32 {
+    f.draws[i].draw_params.pos_mtx[0][0][3]
+}
+
+#[test]
+fn blends_matched_draws_and_snaps_jumps() {
+    let prev = frame(&[0.0, 10.0, 0.0], false);
+    // A new draw first (no match), then the same three, the last one jumped.
+    let mut cur = frame(&[4.0, 20.0, 5000.0], true);
+    let tw = Tween::new(&prev, &cur);
+    assert_eq!(tw.matched(), 2);
+    tw.apply(&mut cur, 0.25);
+    assert_eq!(tx(&cur, 1), 1.0, "a quarter of the way from 0 to 4");
+    assert_eq!(tx(&cur, 2), 12.5);
+    assert_eq!(tx(&cur, 3), 5000.0, "a jump shows where it landed");
+    tw.apply(&mut cur, 1.0);
+    assert_eq!(
+        (tx(&cur, 1), tx(&cur, 2)),
+        (4.0, 20.0),
+        "t = 1 is the game frame"
+    );
+    tw.apply(&mut cur, 0.0);
+    assert_eq!(tx(&cur, 1), 0.0);
+}

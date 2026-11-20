@@ -11,6 +11,7 @@ pub mod api;
 pub mod enums;
 pub mod fifo;
 pub mod gpu;
+pub mod interp;
 pub mod material;
 pub mod params;
 pub mod shader;

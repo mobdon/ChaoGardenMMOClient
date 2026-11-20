@@ -10,6 +10,7 @@
 use sa2_asset_tools::input::PadStatus;
 use sa2_gx::api::Frame;
 use sa2_gx::gpu::GxRenderer;
+use sa2_gx::interp::Tween;
 use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -150,8 +151,15 @@ struct App {
     rx: Receiver<Frame>,
     gpu: Option<Gpu>,
     last: Option<Frame>,
+    /// How to draw between the frame before `last` and `last`, and when
+    /// `last` arrived: the window refreshes faster than the game's 60.
+    tween: Option<Tween>,
+    arrived: std::time::Instant,
     error: Option<String>,
 }
+
+/// A game frame (NTSC).
+const GAME_FRAME: f32 = 1001.0 / 60_000.0;
 
 fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
     let attrs = Window::default_attributes()
@@ -232,16 +240,24 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => HELD.store(0, Relaxed),
             WindowEvent::RedrawRequested => {
                 let t = std::time::Instant::now();
-                // Every frame's texture uploads must reach the renderer;
-                // only the newest is drawn.
-                for f in self.rx.try_iter() {
-                    if let Some(old) = self.last.replace(f) {
-                        for u in &old.uploads {
-                            g.renderer.replace_texture(u.id, &u.levels);
-                        }
+                // Every frame's texture uploads reach the renderer once; the
+                // newest frame is drawn, blended from the one before it
+                // (SA2_NO_TWEEN=1 shows game frames as they are).
+                for mut f in self.rx.try_iter() {
+                    for u in f.uploads.drain(..) {
+                        g.renderer.replace_texture(u.id, &u.levels);
                     }
+                    let prev = self.last.take();
+                    self.tween = prev
+                        .filter(|_| std::env::var_os("SA2_NO_TWEEN").is_none())
+                        .map(|p| Tween::new(&p, &f));
+                    self.last = Some(f);
+                    self.arrived = std::time::Instant::now();
                 }
-                if let Some(f) = &self.last {
+                if let Some(f) = &mut self.last {
+                    if let Some(tw) = &self.tween {
+                        tw.apply(f, self.arrived.elapsed().as_secs_f32() / GAME_FRAME);
+                    }
                     match g.surface.get_current_texture() {
                         wgpu::CurrentSurfaceTexture::Success(tex)
                         | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => {
@@ -249,6 +265,7 @@ impl ApplicationHandler for App {
                             g.renderer
                                 .render_frame(f, &view, [g.config.width, g.config.height]);
                             g.queue.present(tex);
+                            crate::prof::PRESENTS.fetch_add(1, Relaxed);
                         }
                         wgpu::CurrentSurfaceTexture::Outdated => {
                             g.surface.configure(&g.device, &g.config)
@@ -279,6 +296,8 @@ fn run(rx: Receiver<Frame>) -> Result<(), String> {
         rx,
         gpu: None,
         last: None,
+        tween: None,
+        arrived: std::time::Instant::now(),
         error: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;

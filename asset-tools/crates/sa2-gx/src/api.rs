@@ -239,6 +239,9 @@ pub struct Frame {
     /// picture copied to the screen.
     pub tex_copies: Vec<TexCopy>,
     pub uploads: Vec<TextureUpload>,
+    /// Which recorded frame this is (from 1; 0 for frames built by hand),
+    /// so a renderer drawing it again can reuse what it prepared.
+    pub serial: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -424,8 +427,10 @@ impl Gx {
     /// Hand over the frame recorded so far and start a new one.
     pub fn take_frame(&mut self) -> Frame {
         let clear = self.frame.clear_color;
-        let f = std::mem::take(&mut self.frame);
+        let mut f = std::mem::take(&mut self.frame);
         self.frame.clear_color = clear;
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        f.serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         f
     }
 

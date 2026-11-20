@@ -117,38 +117,42 @@ fn efb_copy_becomes_the_texture_at_its_address() {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    r.render_frame(&frame, &target.create_view(&Default::default()), [64, 64]);
-    let buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: 256 * 64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut enc = device.create_command_encoder(&Default::default());
-    enc.copy_texture_to_buffer(
-        target.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buf,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(256),
-                rows_per_image: None,
+    // The second time comes from what the first prepared (as pictures
+    // between game frames do), the copy into the texture made before.
+    for n in 1..=2 {
+        r.render_frame(&frame, &target.create_view(&Default::default()), [64, 64]);
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256 * 64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: None,
+                },
             },
-        },
-        wgpu::Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit([enc.finish()]);
-    buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let px = buf.slice(..).get_mapped_range().unwrap().to_vec();
-    let at = |x: usize, y: usize| px[y * 256 + x * 4..y * 256 + x * 4 + 3].to_vec();
-    assert_eq!(
-        at(32, 32),
-        vec![255, 0, 0],
-        "the screen quad shows the EFB copy"
-    );
+            wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([enc.finish()]);
+        buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let px = buf.slice(..).get_mapped_range().unwrap().to_vec();
+        let at = |x: usize, y: usize| px[y * 256 + x * 4..y * 256 + x * 4 + 3].to_vec();
+        assert_eq!(
+            at(32, 32),
+            vec![255, 0, 0],
+            "the screen quad shows the EFB copy (drawn {n} times)"
+        );
+    }
 }
