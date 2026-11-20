@@ -26,6 +26,8 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `super_effects` | 0xd60c | Super-form effects: spin, aura, fade and boost trail |
 | `stage_setup` | 0xa078 | Stage setup: lights, hit handler, object hooks, both super forms, boss and timer objects |
 | `super_construct` | 0xa87c, 0xab04 | Super-form constructors (characters 9 and 10): task and player block, engine set-up calls, effect block, task handlers, timer object; reports the engine table words read |
+| `stage_teardown` | 0xa2a0 | Stage teardown: timer and stage objects, ring drop hit handler, light lists, both player tasks |
+| `stage_object` | 0xa390 | Stage object set-up: boss set-up 0x414 when module word 5:0x382b8 is set, handlers 0xa3f4, 0xa560, 0xa758 |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -241,6 +243,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_stage_sqrt_ppc.py` | 40,009 stage square roots on the Gekko estimate, bit for bit (skips without the local table file) |
 | `tests/finalhazard_stage_setup_ppc.py` | 24 stage setups: hit handler present or not, either player task present, module word 0x484 |
 | `tests/finalhazard_super_construct_ppc.py` | 72 constructions: both constructors, both slots, task or player allocation failing, global byte 0x801cbd88, module word 0x4ac |
+| `tests/finalhazard_stage_teardown_ppc.py` | 64 teardowns (module words 0x484 and 0x480, hit handler absent, foreign, ring drop or another module address, either player task) and 4 object set-ups |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
@@ -255,7 +258,7 @@ reached from, not what each object does.
 | Section 1 offset | Reached from | Notes |
 | --- | --- | --- |
 | 0xa04c, 0xa074 | REL prolog and epilog | Module entry points |
-| 0xa078 (ported), 0xa2a0 | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
+| 0xa078, 0xa2a0, 0xa390 (ported) | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
 | 0xa87c, 0xab04 (ported) | 0xa078 | Super-form player constructors (characters 9 and 10). Each installs the update 0xad8c and its handlers (ported), the draw routine 0xd2dc (ported), 0xd60c, and the stage player task (0xff7c → 0xf3f8, replayed) |
 | 0x18b5c | Mode 2 of the helper 0x18ed0 | Allocates 0xdc bytes and installs 0x15f7c (about 7.5 KB), 0x17d18, 0x188f0, 0x18dbc and 0x191ac. Not reached in this module (see below) |
 | 0x1844, 0x7f58 | 0x1bb8, 0x8328 | Encounter phase code covered by earlier request paths |

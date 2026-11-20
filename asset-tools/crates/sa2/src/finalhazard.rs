@@ -914,6 +914,11 @@ pub enum PlacementClock {
     /// Section 1 + 0xa87c (character 9) / 0xab04 (character 10): super-form
     /// player construction.
     SuperConstruct(Box<SuperConstructFrame>),
+    /// Section 1 + 0xa2a0: stage teardown.
+    StageTeardown(Box<StageTeardownFrame>),
+    /// Section 1 + 0xa390: stage object set-up (handlers 0xa3f4, 0xa560,
+    /// 0xa758).
+    StageObject(Box<StageObjectFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2684,6 +2689,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::RingDrop(frame) => return ring_drop(&rel, &frame),
         PlacementClock::StageSetup(frame) => return stage_setup(&rel, &frame),
         PlacementClock::SuperConstruct(frame) => return super_construct(&rel, &frame),
+        PlacementClock::StageTeardown(frame) => return stage_teardown(&rel, &frame),
+        PlacementClock::StageObject(frame) => return stage_object(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -5002,4 +5009,112 @@ fn super_construct(
         .map(|s| table + (word(s) & 0xffff))
         .collect();
     Ok(serde_json::json!({"events":ev,"built":true,"table_reads":reads}))
+}
+
+/// State the stage teardown reads: module words 6:0x484 and 6:0x480, the
+/// hit handler word 0x801a2638 and the player tasks at 0x801e7388.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageTeardownFrame {
+    pub module_484: u32,
+    /// An engine address as a number, or a module address as
+    /// "88:SECTION+0xOFFSET".
+    pub hit_handler: serde_json::Value,
+    pub module_480: u32,
+    pub player_tasks: [u32; 2],
+}
+/// Section 1 + 0xa2a0: free the timer and stage objects, remove the ring
+/// drop hit handler if it is still installed, and free both player tasks.
+fn stage_teardown(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &StageTeardownFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32| serde_json::json!({"site":site,"local":target,"args":[]});
+    let st = |site: u32, address: serde_json::Value| serde_json::json!({"site":site,"store":"engine","address":address,"size":4,"value":0});
+    let module = |site: u32| -> Result<String> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88)
+            .ok_or_else(|| Error::invalid("missing teardown module reference"))?;
+        Ok(format!("88:{}+{:#x}", r.section, r.addend))
+    };
+    let mut ev = Vec::new();
+    if f.module_484 != 0 {
+        ev.push(call(0xa2c4, serde_json::json!([f.module_484]))?);
+        ev.push(st(0xa2cc, serde_json::json!(module(0xa2b2)?)));
+    }
+    let handler = rel
+        .reference(1, 0xa2d2)
+        .ok_or_else(|| Error::invalid("missing hit handler reference"))?
+        .addend;
+    let ring_drop = rel
+        .reference(1, 0xa2de)
+        .filter(|r| r.module == 88 && r.section == 1)
+        .ok_or_else(|| Error::invalid("missing ring drop reference"))?
+        .addend;
+    if f.hit_handler == serde_json::json!(format!("88:1+{ring_drop:#x}")) {
+        ev.push(st(0xa2f0, serde_json::json!(handler)));
+    }
+    ev.extend([
+        call(0xa2f4, serde_json::json!([]))?,
+        call(
+            0xa308,
+            serde_json::json!([module(0xa2fa)?, module(0xa302)?]),
+        )?,
+        call(
+            0xa31c,
+            serde_json::json!([module(0xa30e)?, module(0xa316)?]),
+        )?,
+    ]);
+    if f.module_480 != 0 {
+        ev.push(call(0xa334, serde_json::json!([f.module_480]))?);
+        ev.push(st(0xa33c, serde_json::json!(module(0xa322)?)));
+    }
+    ev.extend([
+        local(0xa340, 0x14aa4),
+        call(0xa344, serde_json::json!([]))?,
+        local(0xa348, 0x6ec4),
+    ]);
+    for (site, task) in [(0xa360u32, f.player_tasks[1]), (0xa378, f.player_tasks[0])] {
+        if task != 0 {
+            ev.push(call(site, serde_json::json!([task]))?);
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// Module word section 5 + 0x382b8 read by the stage object set-up.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StageObjectFrame {
+    pub module_382b8: i32,
+}
+/// Section 1 + 0xa390: run the boss set-up 0x414 when module word
+/// 5 + 0x382b8 is set, then install the object's handlers.
+fn stage_object(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &StageObjectFrame,
+) -> Result<serde_json::Value> {
+    let code = |site: u32| -> Result<serde_json::Value> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 1)
+            .ok_or_else(|| Error::invalid("missing stage object handler"))?;
+        Ok(serde_json::json!(format!("88:1+{:#x}", r.addend)))
+    };
+    let mut ev = Vec::new();
+    if f.module_382b8 != 0 {
+        ev.push(serde_json::json!({"site":0xa3b8,"local":0x414,"args":[]}));
+    }
+    for (site, reloc, offset) in [
+        (0xa3c4u32, 0xa3beu32, 0x10u32),
+        (0xa3d0, 0xa3ca, 0x14),
+        (0xa3dc, 0xa3d6, 0x1c),
+    ] {
+        ev.push(serde_json::json!({"site":site,"store":"object","offset":offset,"size":4,"value":code(reloc)?}));
+    }
+    Ok(serde_json::json!({"events":ev}))
 }
