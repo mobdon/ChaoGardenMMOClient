@@ -902,6 +902,8 @@ pub enum PlacementClock {
     SuperControl(Box<SuperControlFrame>),
     /// Section 1 + 0xc67c: the action-67 charge effect draw.
     SuperChargeDraw(Box<SuperChargeDrawFrame>),
+    /// Section 1 + 0xd2dc: the super-form player draw routine.
+    SuperDraw(Box<SuperDrawFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2675,6 +2677,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperFreeMove(frame) => return super_free_move(&rel, &frame),
         PlacementClock::SuperControl(frame) => return super_control(&rel, &frame),
         PlacementClock::SuperChargeDraw(frame) => return super_charge_draw(&rel, &frame),
+        PlacementClock::SuperDraw(frame) => return super_draw(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -4337,4 +4340,134 @@ fn super_charge_draw(
         ev.push(call(0xc760, serde_json::json!([]))?);
     }
     Ok(serde_json::json!({"events":ev,"motion_slot":f.pose[1],"model_slot":f.base_pose}))
+}
+
+/// Engine object word the draw routine swaps while drawing a player with
+/// an effect block: `target` is word 0x2c of the 0x801e6288 entry at
+/// 0xaec (character 9) or 0xbc4 (character 10); `texture` is word 4 of the
+/// effect block's word 0x18 object; `saved` is the target's word 4 before.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperDrawSwap {
+    pub target: u32,
+    pub texture: u32,
+    pub saved: u32,
+}
+/// Inputs to section 1 + 0xd2dc. Engine table words are given as the values
+/// the routine selects: `idle_motion` and `pose_motion` (0x801e6288, by
+/// the player's first and current pose entries), `pose_model` (0x801e5928,
+/// by the current pose's base entry), `bc_model` (word 0 of the player's
+/// word 0xbc object), `ring_scale` (float at 0x803ad544) and
+/// `effect_mode` / `restore_mode` (bytes at 0x803ad524 + slot and
+/// 0x803ad526).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperDrawFrame {
+    pub entity: u32,
+    pub active_player: i8,
+    pub global_42: i8,
+    pub slot: i8,
+    pub character: i8,
+    pub action: i8,
+    pub effect_mode: i8,
+    pub restore_mode: i8,
+    pub rotation: [i32; 3],
+    pub word_370: u32,
+    pub word_bc: u32,
+    pub mode_174: i16,
+    pub word_19c: u32,
+    pub f184: f32,
+    pub swap: Option<SuperDrawSwap>,
+    pub idle_motion: u32,
+    pub pose_motion: u32,
+    pub pose_model: u32,
+    pub bc_model: u32,
+    pub ring_scale: f32,
+}
+/// Section 1 + 0xd2dc: draws only the active super form (or both while
+/// global byte 0x42 is 1). It sets the draw state, places the model at the
+/// entity's position, rotation and scale, temporarily swaps in the effect
+/// texture, and draws the current pose. Action 54 uses the 0xbc model
+/// instead. Module and code addresses in arguments are written as
+/// "88:SECTION+OFFSET".
+fn super_draw(rel: &crate::city_rel::CityRel<'_>, f: &SuperDrawFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let mut ev = Vec::new();
+    if f.active_player != f.slot && f.global_42 != 1 {
+        return Ok(serde_json::json!({"events":ev,"drawn":false}));
+    }
+    let slot = f.slot as i32 as u32;
+    ev.push(call(0xd33c, serde_json::json!([]))?);
+    ev.push(call(0xd348, serde_json::json!([0, 0x200]))?);
+    if f.effect_mode != 1 && f.effect_mode != 5 {
+        ev.push(call(0xd37c, serde_json::json!([0x2400]))?);
+    }
+    ev.push(call(0xd388, serde_json::json!([slot]))?);
+    ev.push(serde_json::json!({"site":0xd394,"store":"module","offset":"88:6+0x4b0","size":4,"value":"player"}));
+    ev.push(call(0xd3a4, serde_json::json!(["88:6+0x4b4"]))?);
+    ev.push(call(0xd3ac, serde_json::json!(["88:6+0x4b4"]))?);
+    let callback = if f.character == 9 {
+        (0xd3c8, "88:1+0xc77c")
+    } else {
+        (0xd3d8, "88:1+0xccf8")
+    };
+    ev.push(call(callback.0, serde_json::json!([callback.1]))?);
+    ev.push(call(0xd3e4, serde_json::json!([f.word_370]))?);
+    ev.push(call(0xd3e8, serde_json::json!([]))?);
+    ev.push(call(0xd3f0, serde_json::json!([f.entity + 0x14]))?);
+    ev.push(call(0xd3fc, serde_json::json!([0, f.rotation[2] as u32]))?);
+    ev.push(call(0xd408, serde_json::json!([0, f.rotation[0] as u32]))?);
+    ev.push(call(
+        0xd420,
+        serde_json::json!([0, 0x8000i32.wrapping_sub(f.rotation[1]) as u32]),
+    )?);
+    ev.push(call(0xd428, serde_json::json!([f.entity + 0x20]))?);
+    let swap_sites = match f.character {
+        9 => Some((0xd468, 0xd59c)),
+        10 => Some((0xd498, 0xd5bc)),
+        _ => None,
+    };
+    let swapped = match (&f.swap, swap_sites) {
+        (Some(s), Some((store, restore))) => {
+            ev.push(
+                serde_json::json!({"site":store,"store":"engine","offset":s.target.wrapping_add(4),
+                "size":4,"value":s.texture}),
+            );
+            Some((restore, s))
+        }
+        _ => None,
+    };
+    if f.action == 54 && f.word_bc != 0 {
+        ev.push(call(0xd4c0, serde_json::json!([slot]))?);
+        let mut draw = call(0xd4f4, serde_json::json!([f.idle_motion, f.bc_model]))?;
+        draw["floats"] = serde_json::json!([f.ring_scale]);
+        ev.push(draw);
+        ev.push(call(0xd500, serde_json::json!([slot]))?);
+    } else {
+        let (site, model) = if f.mode_174 == 2 {
+            (0xd56c, f.word_19c)
+        } else {
+            (0xd55c, f.pose_model)
+        };
+        let mut draw = call(site, serde_json::json!([f.pose_motion, model]))?;
+        draw["floats"] = serde_json::json!([f.f184]);
+        ev.push(draw);
+    }
+    if let Some((site, s)) = swapped {
+        ev.push(
+            serde_json::json!({"site":site,"store":"engine","offset":s.target.wrapping_add(4),
+            "size":4,"value":s.saved}),
+        );
+    }
+    ev.push(call(0xd5c0, serde_json::json!([]))?);
+    ev.push(call(0xd5c8, serde_json::json!([0]))?);
+    ev.push(call(0xd5d0, serde_json::json!([0x2400]))?);
+    ev.push(call(0xd5d4, serde_json::json!([]))?);
+    ev.push(call(
+        0xd5e8,
+        serde_json::json!([f.restore_mode as i32 as u32]),
+    )?);
+    Ok(serde_json::json!({"events":ev,"drawn":true}))
 }

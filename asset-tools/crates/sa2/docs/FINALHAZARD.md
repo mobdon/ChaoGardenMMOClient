@@ -22,6 +22,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `super_free_move` | 0xdc90 | Action 58: stick-driven free movement |
 | `super_control` | 0xbad0 | Super-form hit reaction and action selection |
 | `super_charge_draw` | 0xc67c | Action-67 charge effect draw call |
+| `super_draw` | 0xd2dc | Super-form player draw routine |
 
 ## Handoff camera
 
@@ -174,6 +175,20 @@ The three local checks are ported with it:
 The engine vector services that 0xe200 uses write results in place; those results are request
 inputs (`charge`).
 
+## Super-form draw
+
+`super_draw` reproduces 0xd2dc. It draws a player only when it is the stage task's active player,
+or while global byte 0x42 is 1. It sets the engine draw state, plus extra state unless the
+player's byte at 0x803ad524 is 1 or 5. It stores the player block in module word section 6 +
+0x4b0 and installs callback 0xc77c (character 9) or 0xccf8 (character 10). It places the model at
+the entity's position, rotation (yaw as 0x8000 minus the entity's) and scale.
+
+With an effect block, the effect's texture word is swapped into the character's engine object for
+the duration of the draw. The current pose is then drawn with its motion and model; mode 2 uses
+player word 0x19c as the model. Action 54 uses the player's 0xbc model with the engine scale at
+0x803ad544. The draw state is restored at the end. Module and code addresses in arguments are
+written as "88:SECTION+OFFSET". The callbacks 0xc77c and 0xccf8 are not ported.
+
 ## Verification
 
 With a Python environment that has Unicorn 2, run each test as
@@ -190,6 +205,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_super_free_move_ppc.py` | 1,500 action-58 updates around the dead zone, both button states |
 | `tests/finalhazard_super_control_ppc.py` | 4,000 action-selection updates across every dispatched action, hit states and button tables |
 | `tests/finalhazard_super_charge_draw_ppc.py` | 500 charge-effect draws with filled engine tables |
+| `tests/finalhazard_super_draw_ppc.py` | 800 draws: active and inactive players, both characters, effect swap, action 54, pose modes |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
@@ -205,7 +221,7 @@ reached from, not what each object does.
 | --- | --- | --- |
 | 0xa04c, 0xa074 | REL prolog and epilog | Module entry points |
 | 0xa078, 0xa2a0 | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
-| 0xa87c, 0xab04 | 0xa078 | Super-form player constructors (characters 9 and 10). Each installs the update 0xad8c (control flow ported), the draw routine 0xd2dc, 0xd60c, and the stage player task (0xff7c → 0xf3f8, replayed) |
+| 0xa87c, 0xab04 | 0xa078 | Super-form player constructors (characters 9 and 10). Each installs the update 0xad8c and its handlers (ported), the draw routine 0xd2dc (ported), 0xd60c, and the stage player task (0xff7c → 0xf3f8, replayed) |
 | 0x18b5c | The voice-task helper 0x18ed0 | Allocates 0xdc bytes and installs 0x15f7c (about 7.5 KB), 0x17d18, 0x188f0, 0x18dbc and 0x191ac. It is created alongside each stage voice line |
 | 0x1844, 0x7f58 | 0x1bb8, 0x8328 | Encounter phase code covered by earlier request paths |
 
