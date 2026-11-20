@@ -7,8 +7,9 @@ so_omochao_ppc.py <exec|display>
 The REL code (with the movable-object update 0x4BE0) runs as compiled, with main.dol's rand, atan2f, njSin,
 njScalor, njDistanceP2P, fn_80037C84 and the Ninja matrix routines.
 Engine and player routines are stubbed and recorded as events, with the
-values they return; so is the module's trail effect 0x1DFE0, which the port leaves to the
-host. Tasks are numbered in the order they appear.
+values they return; the module's trail effect 0x1DFE0 runs as compiled (its
+particle allocator is the stub below). Tasks are numbered in the order they
+appear.
 """
 import json, struct, sys
 from pathlib import Path
@@ -200,7 +201,6 @@ m.stub(0x80032B78, palloc)
 # The movable helpers (0x4BE0 here) run as compiled; their land probes, syCalloc /
 # syFree and CCL_Entry are so_dynland_ppc.py's stubs.
 dyn_stubs(TASK, LAND, {'calloc': True})
-m.stub(S1(0x1DFE0), lambda mm: ev('trail_fx', vec(mm.gpr(3)), vec(mm.gpr(4)), fb(f32(mm.fpr(1))), fb(f32(mm.fpr(2)))))
 m.stub(CALLBACK, force_cb)
 # Rendering.
 for a in (0x8011F518, 0x8011E154, 0x8011DF1C):

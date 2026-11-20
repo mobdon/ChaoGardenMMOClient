@@ -20,7 +20,8 @@ which = sys.argv[1]
 out = {'object': which, 'cases': []}
 
 CREATORS = [('A67C', 0xA67C), ('C238', 0xC238), ('MakeParticle', 0xC56C), ('C8A0', 0xC8A0), ('CCFC', 0xCCFC),
-            ('D0C4', 0xD0C4), ('D540', 0xD540), ('D714', 0xD714), ('E178', 0xE178), ('E334', 0xE334)]
+            ('D0C4', 0xD0C4), ('D540', 0xD540), ('D714', 0xD714), ('E178', 0xE178), ('E334', 0xE334),
+            ('1DFE0', 0x1DFE0), ('1E194', 0x1E194)]
 EXECS = [('A7F0', 0xA7F0), ('1E6BC', 0x1E6BC), ('C3D4', 0xC3D4), ('C708', 0xC708), ('CA94', 0xCA94), ('CF04', 0xCF04),
          ('D2B8', 0xD2B8), ('D448', 0xD448), ('D8A0', 0xD8A0), ('E4F8', 0xE4F8)]
 

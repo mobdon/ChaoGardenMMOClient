@@ -141,7 +141,7 @@ m.stub(0x80062E0C, lambda mm: ev('score', mm.gpr(3)))
 m.stub(0x80016D10, lambda mm: ev('debris'))
 m.stub(0x80015730, lambda mm: ev('carried', mm.gpr(3), mm.gpr(4) - rel.bases[5]))
 m.stub(0x80039EB0, lambda mm: ev('knock', mm.gpr(3), vec(mm, 4), [mm.get(mm.gpr(5) + 4 * k, 'i') for k in range(3)]))
-m.stub(0x8002FB2C, lambda mm: ev('hurt', mm.gpr(3), mm.gpr(4), mm.gpr(5)))
+m.stub(0x8002FB2C, lambda mm: ev('vibrate', mm.gpr(3), mm.gpr(4), mm.gpr(5)))  # controller vibration request
 # E KUMI's main.dol calls.
 m.stub(0x80067AF0, lambda mm: (ev('shadow', fbits(mm, 1), fbits(mm, 2), fbits(mm, 3)), mm.fpr(1, f32(struct.unpack('>f', struct.pack('>I', frame_in['shadow_pos']))[0]))))
 m.stub(0x800068BC, lambda mm: ev('range', fbits(mm, 1)))

@@ -331,15 +331,6 @@ impl OmochaoHost for Rec {
                 json!(["vanish", bits(pos), bits(vel), a.to_bits(), b.to_bits()])
             }
             Event::FreeTask(t) => json!(["freetask", t]),
-            Event::TrailEffect { pos, vel, size, b } => {
-                json!([
-                    "trail_fx",
-                    bits(pos),
-                    bits(vel),
-                    size.to_bits(),
-                    b.to_bits()
-                ])
-            }
             Event::Fog(on) => json!(["fog", u32::from(on)]),
             Event::SetFog => json!(["setfog"]),
             Event::Light { func, args } => {

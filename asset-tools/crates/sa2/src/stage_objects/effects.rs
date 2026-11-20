@@ -17,10 +17,16 @@
 //! | 0xD714  | +0xE128 | 0xD8A0 |
 //! | 0xE178  | +0xE1F4 | main.dol 0x80032A8C (engine, not ported) |
 //! | 0xE334  | +0xE254 | 0xE4F8 |
+//! | 0x1DFE0 | +0x1EEE8 | 0x1E6BC |
+//! | 0x1E194 | +0x1EF20 | 0x1E6BC |
 //!
-//! 0x1E6BC is the exec of the trail effects 0x1DFE0/0x1E194 (descriptor at
-//! s5 +0x1EEE8; the creators are ported in `duel_debris`); its code is
-//! 0xCA94's.
+//! 0x1DFE0 and 0x1E194 are the trail effects (Omochao's exec calls
+//! 0x1DFE0); they are the same code with different descriptors, and
+//! 0x1E6BC's code is 0xCA94's. `crate::duel_debris` has the same logic
+//! (two draws for the angles, one added to the frame) inlined in its
+//! debris update, written against the Steam gd_PC build; the ports here
+//! are against the GameCube disc REL and GSNE8P main.dol (rand 0x8010DC88)
+//! and do not share its addresses.
 //!
 //! Callers in stg42D: EFFOBJ0's exec 0x10C88 (stage-specific spawner
 //! table; EFFOBJ0 itself belongs to `effect_emitter` and is not ported
@@ -200,6 +206,18 @@ pub const ROUTINES: &[super::Routine] = &[
         0xe334,
         0x1c4,
         "401331ad87b30327daedef1d79a37b3ece70d4436e6d2d37bf87910456413432",
+    ),
+    r(
+        "trail effect 0x1DFE0",
+        0x1dfe0,
+        0x1b4,
+        "ac7e00fd2f44d9b07d5fd57b1d5a2245589ac0559d29a1dd4c6511940a9dd368",
+    ),
+    r(
+        "trail effect 0x1E194",
+        0x1e194,
+        0x1b4,
+        "ac7e00fd2f44d9b07d5fd57b1d5a2245589ac0559d29a1dd4c6511940a9dd368",
     ),
     r(
         "particle exec 0x1E6BC",
@@ -386,6 +404,10 @@ pub enum Creator {
     D714,
     E178,
     E334,
+    /// 0x1DFE0, the trail effect.
+    X1dfe0,
+    /// 0x1E194, its twin.
+    X1e194,
 }
 
 const F80: u32 = 0x42a0_0000;
@@ -500,11 +522,22 @@ pub fn draws(kind: Creator) -> (&'static [Draw], &'static [(usize, Fixed)]) {
             const F: &[(usize, Fixed)] = &[];
             (D, F)
         }
+        // 0x1DFE0 / 0x1E194: 20 (+0x9DC), 10 (+0x9E4), 0.5 (+0x9E8); BAMS
+        // (+0x9D8) and 2^-15 (+0x9E0) are the shared values.
+        Creator::X1dfe0 | Creator::X1e194 => {
+            const D: &[Draw] = &[
+                d(c(0x41a0_0000), c(0x4120_0000), Angle),
+                d(None, c(HALF), Spin),
+                d(None, None, FrameAdd),
+            ];
+            const F: &[(usize, Fixed)] = &[(2, Fixed::WorkArg)];
+            (D, F)
+        }
     }
 }
 
 impl Creator {
-    pub const ALL: [Creator; 10] = [
+    pub const ALL: [Creator; 12] = [
         Creator::A67c,
         Creator::C238,
         Creator::MakeParticle,
@@ -515,6 +548,8 @@ impl Creator {
         Creator::D714,
         Creator::E178,
         Creator::E334,
+        Creator::X1dfe0,
+        Creator::X1e194,
     ];
 
     /// The creator's offset in stg42D.rel section 1.
@@ -530,6 +565,8 @@ impl Creator {
             Self::D714 => 0xd714,
             Self::E178 => 0xe178,
             Self::E334 => 0xe334,
+            Self::X1dfe0 => 0x1dfe0,
+            Self::X1e194 => 0x1e194,
         }
     }
 
@@ -547,6 +584,8 @@ impl Creator {
             Self::D714 => 0xe128,
             Self::E178 => 0xe1f4,
             Self::E334 => 0xe254,
+            Self::X1dfe0 => 0x1eee8,
+            Self::X1e194 => 0x1ef20,
         }
     }
 }

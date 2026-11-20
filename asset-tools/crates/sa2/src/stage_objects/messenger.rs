@@ -19,8 +19,9 @@
 //!
 //! Omochao's exec (0x156CC) and main display (0x17468), with their helpers,
 //! are in [`omochao`]; [`create`] installs them. The module's
-//! shadow-texture helpers (0x7344, 0x7400, 0x6F94, 0x72D0, 0x7440) are not
-//! ported: they are [`Event`]s named after their offsets. The movable
+//! shadow-texture helpers (0x7344, 0x7400, 0x6F94 with 0x6FC4, 0x72D0,
+//! 0x7440) are [`shadow`]; the block is work +0x84 ([`Work::shadow`]),
+//! named in its [`shadow::Gx`] calls by the work's id. The movable
 //! body's set-up and
 //! release (0x4B44, 0x4BA8) are `dyn_land::setup` / `dyn_land::release`,
 //! and Omochao's placement next to the player (0x14608, 0x148A4) is
@@ -30,6 +31,7 @@
 //! The data the routines read from the stage REL is [`StageData`]
 //! ([`STG42D`] for the reference copy; each stage has its own copy).
 pub mod omochao;
+pub mod shadow;
 pub mod trail;
 
 use super::dyn_land::{self, Movable, MovableHost};
@@ -38,6 +40,7 @@ use crate::ninja_matrix::{concat, Axis, MatrixStack, Mtx, IDENTITY};
 use crate::ninja_trig::nj_sin;
 use crate::prison_visuals::MslRand;
 use omochao::{PlaceHost, Placement};
+use shadow::{Shadow, ShadowHost};
 use trail::{Trail, TrailDesc, TrailHost};
 
 pub type V3 = [f32; 3];
@@ -91,6 +94,42 @@ pub const ROUTINES: &[super::Routine] = &[
         stg42d: 0x6ee4,
         len: 0x44,
         masked_sha256: "d5c739b112921f0f2b718d93429eeea62cc8cb6c9ca26ea87dbc4970072dc866",
+    },
+    super::Routine {
+        name: "shadow capture (0x6F94)",
+        stg42d: 0x6f94,
+        len: 0x30,
+        masked_sha256: "6a078c8ab9da7be6f025a709ea16162395a834623bf1ea4d8582d20e0d02e10b",
+    },
+    super::Routine {
+        name: "shadow capture (0x6FC4)",
+        stg42d: 0x6fc4,
+        len: 0x30c,
+        masked_sha256: "0e3e304536930365b39291f4de4a5e057fb88f4b1b806cc52ff27c90b2711bfe",
+    },
+    super::Routine {
+        name: "shadow end (0x72D0)",
+        stg42d: 0x72d0,
+        len: 0x74,
+        masked_sha256: "f72279159c08b4631c292211500aa263e20f0bfa1781a0c1d93f899fda4f4b5f",
+    },
+    super::Routine {
+        name: "shadow init (0x7344)",
+        stg42d: 0x7344,
+        len: 0xbc,
+        masked_sha256: "423e318810239b2fd44a0e67076fdf63e73e2e97e54cb83981f638bf8999314b",
+    },
+    super::Routine {
+        name: "shadow free (0x7400)",
+        stg42d: 0x7400,
+        len: 0x40,
+        masked_sha256: "6c08d3fc09ccc70c20bb904c229f74c6ebdcec7dcceb184b998632aa2df8b8a6",
+    },
+    super::Routine {
+        name: "shadow draw (0x7440)",
+        stg42d: 0x7440,
+        len: 0x2c,
+        masked_sha256: "4f8a39907a215d70c055bf8540222341d344d3af3460f50e1b9c28ca8de1e816",
     },
     super::Routine {
         name: "depth clip (0x6F28)",
@@ -335,6 +374,8 @@ pub struct Work {
     /// +0x74, +0x78, +0x7C, +0x80: the propeller trails (left tip for
     /// screens 0 and 1, then the right tip for screens 0 and 1).
     pub trails: [Option<Trail>; 4],
+    /// +0x84: the shadow texture block.
+    pub shadow: Shadow,
 }
 
 impl Work {
@@ -351,6 +392,7 @@ impl Work {
             w50: 0,
             player: 0,
             trails: [None, None, None, None],
+            shadow: Shadow::default(),
         }
     }
 }
@@ -384,10 +426,6 @@ pub struct NewTask {
 /// A call the messenger code makes whose result it does not read.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    /// 0x7344(work +0x84, 0x20): the shadow texture is set up.
-    ShadowInit { work: u32, size: u32 },
-    /// 0x7400(work +0x84): the shadow texture is released.
-    ShadowFree { work: u32 },
     /// The collision child's twp position is set (and its twp +2 becomes 6
     /// after its CCL_Init).
     ChildInit { task: u32, pos: V3 },
@@ -403,26 +441,15 @@ pub enum Event {
     SetFog,
     /// __njColorBlendingMode(target, mode) (0x801179F8).
     Blend(u32, u32),
-    /// 0x6F94(work +0x84, 1.0, pos, 0, 0, sin): the shadow texture capture.
-    ShadowCapture { work: u32, pos: V3, sin: f32 },
     /// njSetTexture(texlist) (0x80116E18), a section-5 offset.
     SetTexture(u32),
     /// gjDrawModel(model) (0x80121BDC) with this current matrix.
     DrawModel { model: u32, matrix: Mtx },
-    /// 0x72D0(work +0x84).
-    ShadowEnd { work: u32 },
-    /// 0x7440(kind, pos, size, work +0x84).
-    ShadowDraw {
-        kind: u32,
-        pos: V3,
-        size: f32,
-        work: u32,
-    },
 }
 
 /// What the messenger code asks of the engine and of the module code this
 /// port leaves out.
-pub trait MessengerHost: MovableHost + TrailHost + PlaceHost {
+pub trait MessengerHost: MovableHost + TrailHost + PlaceHost + ShadowHost {
     /// CCL_Init(task, rows, count, list) (0x8000F8B8).
     fn ccl_init(&mut self, task: u32, rows: u32, count: u8, list: u8);
     /// CreateChildTask(flags, exec, parent) (0x800709F8); `exec` is a
@@ -514,10 +541,7 @@ pub fn create(
         return;
     };
     let mut w = Work::new(id);
-    host.msg_event(Event::ShadowInit {
-        work: id,
-        size: 0x20,
-    });
+    shadow::init(&mut w.shadow, id, 0x20, host);
     for t in w.trails.iter_mut() {
         *t = trail::alloc(8, host);
     }
@@ -560,7 +584,7 @@ pub fn destroy(task: &mut MessengerTask, host: &mut impl MessengerHost) {
     if w.sub_task != 0 {
         host.msg_event(Event::DestroyTask(w.sub_task));
     }
-    host.msg_event(Event::ShadowFree { work: w.id });
+    shadow::free(&mut w.shadow, host);
     dyn_land::release(&mut task.body, host);
     for t in w.trails.iter_mut() {
         trail::free(t.take(), host);
@@ -735,12 +759,13 @@ pub fn display_trails(
 }
 
 /// 0x188FC: the shadow display (task +0x2C). Within the clip depth the
-/// shadow texture is captured and the shadow model drawn at the position
+/// shadow texture is captured ([`shadow::capture`] with half width 1.0, no
+/// angles) and the shadow model drawn at the position
 /// (riding the player's Z and X angles when twp +4 bit 0x8000 is set),
 /// scaled by (1.1, 1.0, 1.1) (section 4 +0x864, +0x7FC); then the shadow
 /// is drawn with size 82.0 (+0x868).
 pub fn display_shadow(
-    task: &MessengerTask,
+    task: &mut MessengerTask,
     data: &StageData,
     stack: &mut MatrixStack,
     host: &mut impl MessengerHost,
@@ -749,14 +774,11 @@ pub fn display_shadow(
     if !clip(stack, twp.pos, 100.0) {
         return;
     }
-    let Some(w) = task.work.as_ref() else {
+    let Some(w) = task.work.as_mut() else {
         return;
     };
-    host.msg_event(Event::ShadowCapture {
-        work: w.id,
-        pos: twp.pos,
-        sin: nj_sin(w.bob),
-    });
+    let sin = nj_sin(w.bob);
+    shadow::capture(&mut w.shadow, 1.0, twp.pos, None, None, sin, stack, host);
     host.msg_event(Event::SetTexture(data.shadow_texlist));
     stack.push();
     if twp.flags as u16 & 0x8000 != 0 {
@@ -773,11 +795,6 @@ pub fn display_shadow(
         matrix: *stack.current(),
     });
     stack.pop();
-    host.msg_event(Event::ShadowEnd { work: w.id });
-    host.msg_event(Event::ShadowDraw {
-        kind: 2,
-        pos: twp.pos,
-        size: 82.0,
-        work: w.id,
-    });
+    shadow::end(&w.shadow, stack, host);
+    shadow::draw(2, twp.pos, 82.0, w.id, &w.shadow, host);
 }
