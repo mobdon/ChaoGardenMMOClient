@@ -35,6 +35,7 @@ speed stages.
 | Bush blocks | GREEN_B Basic collision at RVA 0xCAA350, placed by SET position and Y angle (18 placements) |
 | Goal | The stg13D.rel goal-ring program and each GOALRING's native initialization route. Of the two placements, only the Rotation.x 0 one reaches contact. |
 | Dash panels | One `dash_panel::DashPanel` task per KASOKU placement (82), running the callback ported below |
+| Ring groups | One `ring_group::RingGroup` task per RING_LINEAR (46) and RING_CIRCLE (4) placement, running the code ported below |
 | Everything else | Raw SET rows (position, rotation words, Scale) by object name, including the 3 SAVEPOINTs. Their behaviour is not interpreted. |
 
 `tests/city_escape_native.rs` checks these values on the pinned Steam build
@@ -73,3 +74,35 @@ not available.
 for 64 randomized panels over 48 updates each, with stubbed engine imports.
 All 3,072 updates (785 firings) match Rust: every engine call and its
 arguments bit for bit, plus the mode, last slot, timer and Scale words.
+
+## Ring lines and circles (RING_LINEAR, RING_CIRCLE)
+
+`ring_group` ports the shared code at stg13D.rel section 1 0x27CA8 to
+0x285F8 (o_degring_linear in the GSNE8P split): both init callbacks, the
+position helpers, the update and the destructor. `Program::read` finds both
+object-list rows, checks the range (relocated words masked) and all 19 engine
+imports, and reads the constants.
+
+- **Init:** allocates a 0xA0-byte work block (eight ring entries, then eight
+  positions). The ring count is Scale.z truncated and clamped to 1..=8. With
+  a SET entry, the saved state byte marks rings already collected (bit 0 is
+  entry 7, bit 7 is entry 0). Positions go through the Ninja matrix stack:
+  push, unit, translate to the placement, three rotations (the Z, Y, then X
+  angle words), then one calc-point per ring, then pop.
+  - Line: ring i sits at local (0, Scale.y * sin(i * 0x4000 / n),
+    -i * (10 + Scale.x)), so the rings rise along a quarter sine wave.
+  - Circle: the span is int(182.04444 * (360 * (1 + Scale.y))) BAMS, and ring
+    i sits at local (0, r * sin(a), r * cos(a)) with r = 10 + Scale.x and
+    a = i * (span / n).
+- **Update:** with no live child, the clip gate can skip the run. Each
+  uncollected ring without a child gets a RING child at its position, with
+  zero angles, linked to its entry. Once no ring is left, the group marks its
+  SET entry done, or frees itself when it has none.
+- **Destructor:** unlinks and frees each child, saves the collected mask
+  (entry 0 in bit 7) to the SET state and frees the work block.
+
+`tests/ring_group.rs` runs `tests/ring_group_ppc.py`, which executes the
+installed instructions for 96 randomized groups. That includes the RING
+link and unlink helpers they call; the engine is stubbed, with deterministic
+sine, cosine and calc-point. All 814 runs and every destructor match Rust:
+calls and arguments bit for bit, entry flags, children, count and positions.

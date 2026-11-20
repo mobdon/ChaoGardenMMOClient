@@ -3,8 +3,8 @@
 //!
 //! This is everything a Sonic speed-stage session needs that the install
 //! provides as data: Sonic's PhysicsArray row, the start row, terrain, the
-//! grind-rail paths, death zones, spring tasks, dash-panel tasks (ported from
-//! stg13D.rel), bush-block collision and the goal-ring program, plus the raw
+//! grind-rail paths, death zones, spring tasks, dash-panel and ring-group
+//! tasks (ported from stg13D.rel), bush-block collision and the goal-ring program, plus the raw
 //! SET rows of every other placement.
 //!
 //! The player controller is deliberately absent. Its code is not readable
@@ -19,6 +19,7 @@ use crate::{
     play_objects::{death_zone_triangles, place_y, read_object_solid},
     play_world::V3,
     player_physics::PlayerParameters,
+    ring_group::{self, RingGroup},
     spring::{SpringKind, StageSpring},
     stage_paths, Error, Result,
 };
@@ -40,6 +41,8 @@ const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
 const GOALRING_VA: u32 = 0x6c63c0;
 const KASOKU_VA: u32 = 0x6cfbf0;
+const RING_LINEAR_VA: u32 = 0x6c5ed0;
+const RING_CIRCLE_VA: u32 = 0x6c6180;
 
 /// One SET row bound to its object-list entry, unchanged.
 #[derive(Debug, Clone, Serialize)]
@@ -88,6 +91,12 @@ pub struct Panel {
 }
 
 #[derive(Debug, Serialize)]
+pub struct Rings {
+    pub row: Row,
+    pub task: RingGroup,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CityEscape {
     pub character: i8,
@@ -103,6 +112,9 @@ pub struct CityEscape {
     /// The verified KASOKU callback of stg13D.rel and one task per panel.
     pub dash_panel_program: dash_panel::Program,
     pub dash_panels: Vec<Panel>,
+    /// The verified RING_LINEAR / RING_CIRCLE code and one task per group.
+    pub ring_group_program: ring_group::Program,
+    pub ring_groups: Vec<Rings>,
     pub rails: Vec<RailPath>,
     pub death_zones: Vec<Vec<[V3; 3]>>,
     /// GREEN_B Basic collision placed by SET position and Y angle.
@@ -140,10 +152,12 @@ impl CityEscape {
         let goal_program = goal_ring::Program::read(LEVEL, stage_module)?;
         let bush = read_object_solid(exe, GREEN_B_COLLISION_RVA)?;
         let dash_panel_program = dash_panel::Program::read(MODULE_FILE, stage_module)?;
+        let ring_group_program = ring_group::Program::read(MODULE_FILE, stage_module)?;
 
         let mut goals = vec![];
         let mut springs = vec![];
         let mut dash_panels = vec![];
+        let mut ring_groups = vec![];
         let mut bush_solids = vec![];
         let mut rows: BTreeMap<String, Vec<Row>> = BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
@@ -196,6 +210,22 @@ impl CityEscape {
                         task: DashPanel::new(pl.rotation.map(i32::from), pl.parameters),
                         row,
                     }),
+                    (RING_LINEAR_VA, "RING_LINEAR") | (RING_CIRCLE_VA, "RING_CIRCLE") => {
+                        let kind = if row.name == "RING_LINEAR" {
+                            ring_group::Kind::Linear
+                        } else {
+                            ring_group::Kind::Circle
+                        };
+                        ring_groups.push(Rings {
+                            task: RingGroup::new(
+                                kind,
+                                pl.position,
+                                pl.rotation.map(u32::from),
+                                pl.parameters,
+                            ),
+                            row,
+                        });
+                    }
                     (GREEN_B_VA, "GREEN_B") => {
                         bush_solids.extend(
                             bush.iter()
@@ -239,6 +269,8 @@ impl CityEscape {
             springs,
             dash_panel_program,
             dash_panels,
+            ring_group_program,
+            ring_groups,
             rails,
             death_zones,
             bush_solids,

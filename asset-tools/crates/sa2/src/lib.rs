@@ -38,6 +38,7 @@ pub mod play_objects;
 pub mod play_session;
 pub mod play_world;
 pub mod pose;
+pub mod ring_group;
 pub mod ring_magnet;
 pub mod set;
 pub mod spring;
