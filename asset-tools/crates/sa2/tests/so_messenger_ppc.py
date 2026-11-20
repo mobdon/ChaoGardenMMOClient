@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from so_harness import *  # noqa: E402,F401,F403
 import gekko_tables  # noqa: E402
+from so_dynland_ppc import get_words  # noqa: E402
 
 if gekko_tables.load() is None:
     sys.stderr.write('needs the local Gekko estimate tables (njScalor)\n')
@@ -27,12 +28,13 @@ SCREEN = 0x803ADAD0
 PLAYERTWP = 0x801E7768
 HEAP = 0x81210000
 VERTS = 0x80FFFE60
+SEED = 0x803B52C0 - 0x7C20         # rand's state (r13 -0x7C20)
 
 ctx = {}
 
 
 def reset_case():
-    ctx.update(heap=HEAP, ids={}, next=1, out=False, made=[], calloc_ok=[], tasks_ok=[], cwp=[], windows=[], place=[])
+    ctx.update(heap=HEAP, ids={}, next=1, out=False, made=[], calloc_ok=[], tasks_ok=[], windows=[], bones=[], chara=[])
     events.clear()
 
 
@@ -127,11 +129,6 @@ def new_task(mm, kind, *args):
 def ccl_init(mm):
     t = mm.gpr(3)
     ev('ccl', idof(t), mm.gpr(4) - S5(0), mm.gpr(5), mm.gpr(6))
-    flags = take('cwp', None)
-    if flags is not None and m.get(t + 0x3C, 'I') == 0:
-        c = bump(0x80)
-        m.put(c + 0x60, 'I', flags)
-        m.put(t + 0x3C, 'I', c)
     mm.gpr(3, 1)
 
 
@@ -142,11 +139,19 @@ def msg_open(mm):
        idof(mm.gpr(7) - 0x4C), mm.gpr(8))
 
 
-def place_init(mm):
-    a, b = take('place', ([0, 0, 0], [0, 0, 0]))
-    put_vec(mm.gpr(4), a)
-    put_vec(mm.gpr(5), b)
-    ev('place_init', mm.gpr(3))
+def bone(mm):
+    n, node, o = mm.gpr(3), mm.gpr(4), mm.gpr(5)
+    r = take('bones', None)
+    ev('bone', n, node, 0 if r is None else 1)
+    if r is not None:
+        put_vec(o, r)
+    mm.gpr(3, 0 if r is None else 1)
+
+
+def chara(mm):
+    v = take('chara', 0)
+    ev('chara', mm.gpr(3), v)
+    mm.gpr(3, v)
 
 
 def draw_plain(mm):
@@ -178,13 +183,14 @@ m.stub(0x8011C310, lambda mm: ev('setfog'))
 m.stub(0x801179F8, lambda mm: ev('blend', mm.gpr(3), mm.gpr(4)))
 m.stub(0x80116E18, lambda mm: ev('settexture', mm.gpr(3) - S5(0)))
 m.stub(0x80121BDC, lambda mm: ev('model', mm.gpr(3) - S5(0), get_matrix()))
-# Module helpers the port leaves out (shadow texture, land, placement).
+# Module helpers the port leaves out (the shadow texture).
 m.stub(S1(0x7344), lambda mm: ev('shadow_init', idof(mm.gpr(3) - 0x84), mm.gpr(4)))
 m.stub(S1(0x7400), lambda mm: ev('shadow_free', idof(mm.gpr(3) - 0x84)))
-m.stub(S1(0x4B44), lambda mm: ev('land_init', idof(mm.gpr(3))))
-m.stub(S1(0x4BA8), lambda mm: ev('land_free', idof(mm.gpr(3))))
-m.stub(S1(0x14608), place_init)
-m.stub(S1(0x148A4), lambda mm: ev('place', idof(mm.gpr(3)), vec(mm.gpr(4)), vec(mm.gpr(5))))
+# The movable set-up / release 0x4B44 / 0x4BA8 (ObjectMovableInitialize
+# included) and the placement 0x14608 / 0x148A4 run as compiled; the body
+# comes from the syCalloc stub above. The player queries they make:
+m.stub(0x80038008, bone)
+m.stub(0x80038108, chara)
 m.stub(S1(0x6F94), lambda mm: ev('shadow_capture', idof(mm.gpr(3) - 0x84), fb(f32(mm.fpr(1))), vec(mm.gpr(4)),
                                    mm.gpr(5), mm.gpr(6), fb(f32(mm.fpr(2)))))
 m.stub(S1(0x72D0), lambda mm: ev('shadow_end', idof(mm.gpr(3) - 0x84)))
@@ -318,7 +324,9 @@ def make_task(mode, has_mwp=True):
     if has_mwp:
         m.put(t + 0x38, 'I', bump(0x40))
     m.put(t + 0x4C, 'i', mode)
+    m.put(twp + 2, 'B', rng.randrange(256))
     m.put(twp + 4, 'h', rng.choice([0, 0x8000 - 0x10000, 0x10, rng.randrange(-0x8000, 0x8000)]))
+    m.put(twp + 6, 'H', rng.randrange(0x10000))
     for k in range(3):
         m.put(twp + 8 + 4 * k, 'i', rng.choice([0, 0x4000, rng.randrange(-(1 << 31), 1 << 31)]))
     put_vec(twp + 0x14, [rnd_bits() for _ in range(3)])
@@ -331,12 +339,13 @@ def task_state(t):
     cb = [m.get(t + o, 'I') for o in (0x10, 0x14, 0x18, 0x20, 0x2C)]
     s = {'callbacks': [x - S1(0) if x else 0 for x in cb], 'mode': m.get(t + 0x4C, 'i'),
          'mwp_30': m.get(mwp + 0x30, 'I') if mwp else None,
-         'cwp_60': m.get(cwp + 0x60, 'I') if cwp else None,
-         'twp': {'mode': m.get(twp, 'B'), 'flag1': m.get(twp + 1, 'B'), 'flags': m.get(twp + 4, 'h'),
+         'land': get_words(cwp) if cwp else None,
+         'twp': {'mode': m.get(twp, 'B'), 'flag1': m.get(twp + 1, 'B'), 'id': m.get(twp + 2, 'B'),
+                 'flags': m.get(twp + 4, 'h'), 'wtimer': m.get(twp + 6, 'H'),
                  'ang': [m.get(twp + 8 + 4 * k, 'i') for k in range(3)], 'pos': vec(twp + 0x14),
                  'scale': vec(twp + 0x20)}}
     if awp:
-        s['work'] = {'id': idof(awp), 'pos': vec(awp), 'bob': m.get(awp + 0x24, 'i'), 'f30': m.get(awp + 0x30, 'I'),
+        s['work'] = {'id': idof(awp), 'pos': vec(awp), 'anchor': vec(awp + 0x10), 'bob': m.get(awp + 0x24, 'i'), 'f30': m.get(awp + 0x30, 'I'),
                      'sub_task': idof(m.get(awp + 0x3C, 'I')), 'home': vec(awp + 0x40), 'w4c': m.get(awp + 0x4C, 'i'),
                      'w50': m.get(awp + 0x50, 'I'), 'player': m.get(awp + 0x54, 'i'),
                      'trails': [trail_state(m.get(awp + 0x74 + 4 * k, 'I')) for k in range(4)]}
@@ -348,10 +357,21 @@ def task_state(t):
 def plans(n_calloc=8):
     ctx['calloc_ok'] = [rng.random() > 0.08 for _ in range(n_calloc)]
     ctx['tasks_ok'] = [rng.random() > 0.15 for _ in range(2)]
-    ctx['cwp'] = [rng.choice([None, 0, 0x10, rng.randrange(1 << 32)]) for _ in range(2)]
     ctx['windows'] = [rng.choice([0, rng.randrange(0x1000, 1 << 32)])]
-    ctx['place'] = [([rnd_bits() for _ in range(3)], [rnd_bits() for _ in range(3)])]
-    return {k: list(ctx[k]) for k in ('calloc_ok', 'tasks_ok', 'cwp', 'windows', 'place')}
+    ctx['bones'] = [rng.choice([None, [rnd_bits() for _ in range(3)]]) for _ in range(2)]
+    ctx['chara'] = [rng.choice([0, 1, 6, 7]) for _ in range(2)]
+    p = {k: list(ctx[k]) for k in ('calloc_ok', 'tasks_ok', 'windows', 'bones', 'chara')}
+    # Player 0 for 0x14608's fallback, and the rand state for 0x148A4.
+    p['player0'] = None
+    m.put(PLAYERTWP, 'I', 0)
+    if rng.random() < 0.8:
+        pt = bump(0x40)
+        p['player0'] = [rnd_bits() for _ in range(3)]
+        put_vec(pt + 0x14, p['player0'])
+        m.put(PLAYERTWP, 'I', pt)
+    p['seed'] = rng.randrange(1 << 32)
+    m.put(SEED, 'I', p['seed'])
+    return p
 
 
 def bank():
@@ -396,7 +416,7 @@ def messenger():
         out['cases'].append({'kind': 'create', 'id': tid, 'out': ctx['out'], 'has_mwp': has_mwp, 'plans': p,
                              'before': before, 'events': ev_create, 'created': created, 'children': children,
                              'sub_task': idof(sub) if sub else 0, 'destroy_events': ev_destroy, 'after': after,
-                             'next_id': ctx['next']})
+                             'next_id': ctx['next'], 'seed_after': m.get(SEED, 'I')})
     # The spawner (0x18620).
     for _ in range(200):
         reset_case()
@@ -423,7 +443,8 @@ def messenger():
                r7=mode & 0xffffffff, r8=parent)
         r = m.gpr(3)
         case = {'kind': 'spawn', 'args': args, 'plans': p, 'count': count, 'entries': entries, 'language': lang,
-                'first_id': first, 'events': list(events), 'ret': idof(r) if r else 0}
+                'first_id': first, 'events': list(events), 'ret': idof(r) if r else 0,
+                'seed_after': m.get(SEED, 'I')}
         if r and mode == 2:
             case['task'] = task_state(r)
             case['children'] = [[idof(c), vec(m.get(c + 0x34, 'I') + 0x14), m.get(m.get(c + 0x34, 'I') + 2, 'B')]

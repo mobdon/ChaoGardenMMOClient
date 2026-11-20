@@ -13,7 +13,7 @@ use sa2_asset_tools::stage_objects::{
     effects::{EffectHost, Particle},
     host::{Event as HostEvent, ObjectHost},
     messenger::omochao::{
-        self, Child, Event, Force, Omochao, OmochaoHost, PlayerTwp, Twp, Work, STG42D,
+        self, Child, Event, Force, Omochao, OmochaoHost, PlaceHost, PlayerTwp, Twp, Work, STG42D,
     },
     messenger::trail::{Trail, TrailDraw, TrailHost},
 };
@@ -188,6 +188,23 @@ impl EffectHost for Rec {
     }
 }
 
+impl PlaceHost for Rec {
+    fn player_character(&mut self, n: i32) -> i32 {
+        let v = self.take_u("chara") as i32;
+        self.events.push(json!(["chara", n, v]));
+        v
+    }
+    fn fn_80038008(&mut self, n: i32, node: i32) -> Option<[f32; 3]> {
+        let r = self.take("bone").filter(|v| !v.is_null());
+        self.events
+            .push(json!(["bone", n, node, u32::from(r.is_some())]));
+        r.map(|v| v3(&v))
+    }
+    fn player_position(&mut self, n: i32) -> Option<[f32; 3]> {
+        self.player(n).map(|p| p.pos)
+    }
+}
+
 impl OmochaoHost for Rec {
     fn language(&mut self) -> i8 {
         self.gi("language") as i8
@@ -248,17 +265,6 @@ impl OmochaoHost for Rec {
     fn player_holds(&mut self, n: i32) -> Option<u32> {
         let h = &self.g["holds"][n as usize];
         (!h.is_null()).then(|| u(h))
-    }
-    fn player_character(&mut self, n: i32) -> i32 {
-        let v = self.take_u("chara") as i32;
-        self.events.push(json!(["chara", n, v]));
-        v
-    }
-    fn fn_80038008(&mut self, n: i32, node: i32) -> Option<[f32; 3]> {
-        let r = self.take("bone").filter(|v| !v.is_null());
-        self.events
-            .push(json!(["bone", n, node, u32::from(r.is_some())]));
-        r.map(|v| v3(&v))
     }
     fn ccl_is_hit_player(&mut self, task: u32) -> u32 {
         let v = self.take_u("isHit");

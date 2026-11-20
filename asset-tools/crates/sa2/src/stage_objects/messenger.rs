@@ -18,12 +18,13 @@
 //! * and the ribbon-trail library in [`trail`].
 //!
 //! Omochao's exec (0x156CC) and main display (0x17468), with their helpers,
-//! are in [`omochao`]; [`create`] installs them. Here the module's
-//! shadow-texture helpers (0x7344, 0x7400, 0x6F94, 0x72D0, 0x7440), the
-//! movable set-up and release (0x4B44, 0x4BA8; native in `dyn_land`) and
-//! Omochao's placement next to the player (0x14608, 0x148A4; native in
-//! [`omochao::place_init`] and [`omochao::place`]) are still the [`Event`]s
-//! and [`MessengerHost`] methods named after their offsets.
+//! are in [`omochao`]; [`create`] installs them. The module's
+//! shadow-texture helpers (0x7344, 0x7400, 0x6F94, 0x72D0, 0x7440) are not
+//! ported: they are [`Event`]s named after their offsets. The movable
+//! body's set-up and
+//! release (0x4B44, 0x4BA8) are `dyn_land::setup` / `dyn_land::release`,
+//! and Omochao's placement next to the player (0x14608, 0x148A4) is
+//! [`omochao::place_init`] / [`omochao::place_at`].
 //! The message window itself is main.dol's (fn_800E00E8).
 //!
 //! The data the routines read from the stage REL is [`StageData`]
@@ -31,10 +32,12 @@
 pub mod omochao;
 pub mod trail;
 
-use super::host::ObjectHost;
+use super::dyn_land::{self, Movable, MovableHost};
 use crate::enemy_lib::e_ai::translate;
 use crate::ninja_matrix::{concat, Axis, MatrixStack, Mtx, IDENTITY};
 use crate::ninja_trig::nj_sin;
+use crate::prison_visuals::MslRand;
+use omochao::{PlaceHost, Placement};
 use trail::{Trail, TrailDesc, TrailHost};
 
 pub type V3 = [f32; 3];
@@ -291,8 +294,12 @@ pub struct Twp {
     pub mode: u8,
     /// +1 (bit 2 set by the trail display when within the clip depth).
     pub flag1: u8,
+    /// +2 (ObjectMovableInitialize stores its kind, 10).
+    pub id: u8,
     /// +4 (bit 0x8000: riding on the player).
     pub flags: i16,
+    /// +6 (the angle 0x148A4 turns its offset by).
+    pub wtimer: u16,
     /// +8, +0xC, +0x10.
     pub ang: [i32; 3],
     /// +0x14.
@@ -309,6 +316,8 @@ pub struct Work {
     pub id: u32,
     /// +0.
     pub pos: V3,
+    /// +0x10 (the player point 0x148A4 aimed at).
+    pub anchor: V3,
     /// +0x24 (the bob angle the displays take njSin of).
     pub bob: i32,
     /// +0x30.
@@ -333,6 +342,7 @@ impl Work {
         Self {
             id,
             pos: [0.0; 3],
+            anchor: [0.0; 3],
             bob: 0,
             f30: 0.0,
             sub_task: 0,
@@ -355,8 +365,8 @@ pub struct MessengerTask {
     pub has_mwp: bool,
     /// mwp +0x30.
     pub mwp_30: u32,
-    /// cwp +0x60, when the task has a collision work.
-    pub cwp_flags: Option<u32>,
+    /// task +0x3C: the movable body (`dyn_land`).
+    pub body: Option<Movable>,
     pub callbacks: Option<Callbacks>,
     pub twp: Twp,
     /// task +0x40.
@@ -378,12 +388,6 @@ pub enum Event {
     ShadowInit { work: u32, size: u32 },
     /// 0x7400(work +0x84): the shadow texture is released.
     ShadowFree { work: u32 },
-    /// 0x4B44(task): the land collision is set up.
-    LandInit { task: u32 },
-    /// 0x4BA8(task): the land collision is released.
-    LandFree { task: u32 },
-    /// 0x148A4(task, a, b): Omochao is placed (a, b from 0x14608).
-    Place { task: u32, a: V3, b: V3 },
     /// The collision child's twp position is set (and its twp +2 becomes 6
     /// after its CCL_Init).
     ChildInit { task: u32, pos: V3 },
@@ -418,12 +422,9 @@ pub enum Event {
 
 /// What the messenger code asks of the engine and of the module code this
 /// port leaves out.
-pub trait MessengerHost: ObjectHost + TrailHost {
-    /// CCL_Init(task, rows, count, list) (0x8000F8B8): returns the task's
-    /// cwp +0x60 when it has a collision work afterwards.
-    fn ccl_init(&mut self, task: u32, rows: u32, count: u8, list: u8) -> Option<u32>;
-    /// 0x14608(0, a, b): the two vectors it writes.
-    fn place_init(&mut self) -> (V3, V3);
+pub trait MessengerHost: MovableHost + TrailHost + PlaceHost {
+    /// CCL_Init(task, rows, count, list) (0x8000F8B8).
+    fn ccl_init(&mut self, task: u32, rows: u32, count: u8, list: u8);
     /// CreateChildTask(flags, exec, parent) (0x800709F8); `exec` is a
     /// section-1 offset.
     fn create_child_task(&mut self, flags: u8, exec: u32, parent: u32) -> Option<NewTask>;
@@ -495,8 +496,14 @@ pub fn message_destroy(window: u32, host: &mut impl MessengerHost) {
 /// 0x182AC: Omochao's set-up (the object-list function, also called by the
 /// spawner). Nothing happens without an mwp, or (from the object list)
 /// out of range (CheckRangeOut), or when the 0xDC-byte work cannot be
-/// allocated.
-pub fn create(task: &mut MessengerTask, data: &StageData, host: &mut impl MessengerHost) {
+/// allocated. The placement next to player 0 (0x14608, 0x148A4) draws two
+/// `rand` values.
+pub fn create(
+    task: &mut MessengerTask,
+    data: &StageData,
+    rand: &mut MslRand,
+    host: &mut impl MessengerHost,
+) {
     if !task.has_mwp {
         return;
     }
@@ -517,18 +524,24 @@ pub fn create(task: &mut MessengerTask, data: &StageData, host: &mut impl Messen
     task.callbacks = Some(CALLBACKS);
     w.home = task.twp.pos;
     w.w4c = -1;
-    task.work = Some(w);
-    let (a, b) = host.place_init();
+    let (a, _) = omochao::place_init(0, host);
     let spawned = task.mode != 0;
-    let cwp = host.ccl_init(task.id, data.rows[usize::from(spawned)], 2, 9);
-    host.msg_event(Event::LandInit { task: task.id });
+    host.ccl_init(task.id, data.rows[usize::from(spawned)], 2, 9);
+    let t = &mut task.twp;
+    task.body = dyn_land::setup(&mut t.flags, &mut t.id, task.has_mwp, t.pos, host);
     task.mwp_30 = data.mwp_30;
-    task.cwp_flags = cwp.map(|f| f | 0x10);
-    host.msg_event(Event::Place {
-        task: task.id,
-        a,
-        b,
-    });
+    if let Some(b) = task.body.as_mut() {
+        b.flags |= 0x10;
+    }
+    let p = Placement {
+        goal: &mut w.pos,
+        anchor: &mut w.anchor,
+        wtimer: &mut task.twp.wtimer,
+        follow: w.w50 as i32,
+    };
+    // (0x148A4 only uses the matrix stack between a push and a pop.)
+    omochao::place_at(p, a, &mut MatrixStack::new(), rand, host);
+    task.work = Some(w);
     if let Some(child) = host.create_child_task(2, 0x1826c, task.id) {
         host.msg_event(Event::ChildInit {
             task: child.id,
@@ -548,7 +561,7 @@ pub fn destroy(task: &mut MessengerTask, host: &mut impl MessengerHost) {
         host.msg_event(Event::DestroyTask(w.sub_task));
     }
     host.msg_event(Event::ShadowFree { work: w.id });
-    host.msg_event(Event::LandFree { task: task.id });
+    dyn_land::release(&mut task.body, host);
     for t in w.trails.iter_mut() {
         trail::free(t.take(), host);
     }
@@ -588,7 +601,12 @@ pub struct SpawnArgs {
 /// float) at twp +0x20 and `w50` in its work, and plays sound 0x800B. With
 /// a parent the task is its child, else an elemental task. Other modes
 /// return NULL, as does a failed task creation.
-pub fn spawn(a: &SpawnArgs, data: &StageData, host: &mut impl MessengerHost) -> Option<Spawned> {
+pub fn spawn(
+    a: &SpawnArgs,
+    data: &StageData,
+    rand: &mut MslRand,
+    host: &mut impl MessengerHost,
+) -> Option<Spawned> {
     match a.mode {
         0 | 1 => {
             let t = match a.parent {
@@ -614,7 +632,7 @@ pub fn spawn(a: &SpawnArgs, data: &StageData, host: &mut impl MessengerHost) -> 
                 mode: 2,
                 has_mwp: t.has_mwp,
                 mwp_30: 0,
-                cwp_flags: None,
+                body: None,
                 callbacks: None,
                 twp: Twp {
                     pos: a.pos,
@@ -624,7 +642,7 @@ pub fn spawn(a: &SpawnArgs, data: &StageData, host: &mut impl MessengerHost) -> 
                 },
                 work: None,
             };
-            create(&mut task, data, host);
+            create(&mut task, data, rand, host);
             // The original writes these through task +0x40 even when the
             // set-up allocated no work; here they are skipped.
             if let Some(w) = task.work.as_mut() {

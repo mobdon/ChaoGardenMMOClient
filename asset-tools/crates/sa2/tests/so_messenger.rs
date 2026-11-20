@@ -3,10 +3,13 @@
 //! (tests/so_messenger_ppc.py), case by case and frame by frame: the calls
 //! the REL code makes and the state it leaves.
 use sa2_asset_tools::ninja_matrix::{MatrixStack, Mtx};
+use sa2_asset_tools::prison_visuals::MslRand;
 use sa2_asset_tools::stage_objects::{
+    dyn_land::{Movable, MovableHost, ShadowBlock, WORDS},
     host::{Event as HostEvent, ObjectHost},
     messenger::{
         self,
+        omochao::PlaceHost,
         trail::{self, Trail, TrailDesc, TrailDraw, TrailHost},
         Event, MessengerHost, MessengerTask, NewTask, SpawnArgs, Spawned, Twp, Work, STG42D,
     },
@@ -57,9 +60,11 @@ struct Recorder {
     out: bool,
     calloc_ok: VecDeque<bool>,
     tasks_ok: VecDeque<bool>,
-    cwp: VecDeque<Option<u32>>,
     windows: VecDeque<u32>,
-    place: VecDeque<([f32; 3], [f32; 3])>,
+    bones: VecDeque<Option<[f32; 3]>>,
+    chara: VecDeque<i32>,
+    player0: Option<[f32; 3]>,
+    body: u32,
     state: i32,
     frame: i32,
     reset: i8,
@@ -75,9 +80,10 @@ impl Recorder {
     fn plans(&mut self, p: &Value) {
         self.calloc_ok = deque(&p["calloc_ok"], |b| b.as_bool().unwrap());
         self.tasks_ok = deque(&p["tasks_ok"], |b| b.as_bool().unwrap());
-        self.cwp = deque(&p["cwp"], |c| c.as_i64().map(|c| c as u32));
         self.windows = deque(&p["windows"], u);
-        self.place = deque(&p["place"], |p| (v3(&p[0]), v3(&p[1])));
+        self.bones = deque(&p["bones"], |b| (!b.is_null()).then(|| v3(b)));
+        self.chara = deque(&p["chara"], i);
+        self.player0 = (!p["player0"].is_null()).then(|| v3(&p["player0"]));
     }
     fn new_id(&mut self) -> u32 {
         let id = self.next;
@@ -163,14 +169,55 @@ impl TrailHost for Recorder {
     }
 }
 
-impl MessengerHost for Recorder {
-    fn ccl_init(&mut self, task: u32, rows: u32, count: u8, list: u8) -> Option<u32> {
-        self.events.push(json!(["ccl", task, rows, count, list]));
-        self.cwp.pop_front().flatten()
+impl MovableHost for Recorder {
+    fn sy_calloc_801197fc(&mut self, count: u32, size: u32) -> bool {
+        match self.sy_calloc(count, size) {
+            Some(id) => {
+                self.body = id;
+                true
+            }
+            None => false,
+        }
     }
-    fn place_init(&mut self) -> ([f32; 3], [f32; 3]) {
-        self.events.push(json!(["place_init", 0]));
-        self.place.pop_front().unwrap_or(([0.0; 3], [0.0; 3]))
+    fn sy_free_80119828(&mut self) {
+        let id = self.body;
+        self.sy_free(id);
+    }
+    fn get_shadow_pos_xyz_80067210(&mut self, _: &mut ShadowBlock) {
+        unreachable!()
+    }
+    fn shadow_water_80066e1c(&mut self, _: &mut ShadowBlock) -> bool {
+        unreachable!()
+    }
+    fn byte_801cc19f(&self) -> i8 {
+        unreachable!()
+    }
+}
+
+impl PlaceHost for Recorder {
+    fn fn_80038008(&mut self, n: i32, node: i32) -> Option<[f32; 3]> {
+        let r = self.bones.pop_front().flatten();
+        self.events
+            .push(json!(["bone", n, node, u32::from(r.is_some())]));
+        r
+    }
+    fn player_position(&mut self, n: i32) -> Option<[f32; 3]> {
+        if n == 0 {
+            self.player0
+        } else {
+            None
+        }
+    }
+    fn player_character(&mut self, n: i32) -> i32 {
+        let v = self.chara.pop_front().unwrap_or(0);
+        self.events.push(json!(["chara", n, v]));
+        v
+    }
+}
+
+impl MessengerHost for Recorder {
+    fn ccl_init(&mut self, task: u32, rows: u32, count: u8, list: u8) {
+        self.events.push(json!(["ccl", task, rows, count, list]));
     }
     fn create_child_task(&mut self, flags: u8, exec: u32, parent: u32) -> Option<NewTask> {
         self.task(json!(["child", flags, exec, parent]))
@@ -221,9 +268,6 @@ impl MessengerHost for Recorder {
         let v = match e {
             Event::ShadowInit { work, size } => json!(["shadow_init", work, size]),
             Event::ShadowFree { work } => json!(["shadow_free", work]),
-            Event::LandInit { task } => json!(["land_init", task]),
-            Event::LandFree { task } => json!(["land_free", task]),
-            Event::Place { task, a, b } => json!(["place", task, bits(a), bits(b)]),
             Event::ChildInit { task, pos } => {
                 self.children.push(json!([task, bits(pos), 6]));
                 return;
@@ -380,7 +424,9 @@ fn twp_from(v: &Value) -> Twp {
     Twp {
         mode: u(&v["mode"]) as u8,
         flag1: u(&v["flag1"]) as u8,
+        id: u(&v["id"]) as u8,
         flags: i(&v["flags"]) as i16,
+        wtimer: u(&v["wtimer"]) as u16,
         ang: [i(&v["ang"][0]), i(&v["ang"][1]), i(&v["ang"][2])],
         pos: v3(&v["pos"]),
         scale: v3(&v["scale"]),
@@ -393,6 +439,7 @@ fn work_from(v: &Value) -> Option<Work> {
     }
     let mut w = Work::new(u(&v["id"]));
     w.pos = v3(&v["pos"]);
+    w.anchor = v3(&v["anchor"]);
     w.bob = i(&v["bob"]);
     w.f30 = f(&v["f30"]);
     w.sub_task = u(&v["sub_task"]);
@@ -412,7 +459,11 @@ fn task_from(id: u32, has_mwp: bool, s: &Value) -> MessengerTask {
         mode: i(&s["mode"]),
         has_mwp,
         mwp_30: s["mwp_30"].as_i64().unwrap_or(0) as u32,
-        cwp_flags: s["cwp_60"].as_i64().map(|c| c as u32),
+        body: s["land"].as_array().map(|a| {
+            let w: Vec<u32> = a.iter().map(u).collect();
+            let w: [u32; WORDS] = w.try_into().unwrap();
+            Movable::from_words(&w)
+        }),
         callbacks: None,
         twp: twp_from(&s["twp"]),
         work: work_from(&s["work"]),
@@ -426,7 +477,7 @@ fn task_json(t: &MessengerTask) -> Value {
     let tw = &t.twp;
     let work = t.work.as_ref().map_or(Value::Null, |w| {
         json!({
-            "id": w.id, "pos": bits(w.pos), "bob": w.bob, "f30": w.f30.to_bits(),
+            "id": w.id, "pos": bits(w.pos), "anchor": bits(w.anchor), "bob": w.bob, "f30": w.f30.to_bits(),
             "sub_task": w.sub_task, "home": bits(w.home), "w4c": w.w4c, "w50": w.w50,
             "player": w.player,
             "trails": w.trails.iter().map(|t| trail_json(t.as_ref())).collect::<Vec<_>>(),
@@ -435,8 +486,9 @@ fn task_json(t: &MessengerTask) -> Value {
     json!({
         "callbacks": cb, "mode": t.mode,
         "mwp_30": if t.has_mwp { json!(t.mwp_30) } else { Value::Null },
-        "cwp_60": t.cwp_flags,
-        "twp": {"mode": tw.mode, "flag1": tw.flag1, "flags": tw.flags, "ang": tw.ang,
+        "land": t.body.as_ref().map(|b| b.to_words().to_vec()),
+        "twp": {"mode": tw.mode, "flag1": tw.flag1, "id": tw.id, "flags": tw.flags,
+                "wtimer": tw.wtimer, "ang": tw.ang,
                 "pos": bits(tw.pos), "scale": bits(tw.scale)},
         "work": work,
     })
@@ -463,7 +515,11 @@ fn messenger_matches_stg42d() {
                     ..Default::default()
                 };
                 h.plans(&case["plans"]);
-                messenger::create(&mut task, &STG42D, &mut h);
+                let mut rand = MslRand {
+                    seed: u(&case["plans"]["seed"]),
+                };
+                messenger::create(&mut task, &STG42D, &mut rand, &mut h);
+                assert_eq!(rand.seed, u(&case["seed_after"]), "{case}");
                 assert_eq!(json!(h.events), case["events"], "{case}");
                 assert_eq!(task_json(&task), case["created"], "{case}");
                 assert_eq!(json!(h.children), case["children"], "{case}");
@@ -497,7 +553,11 @@ fn messenger_matches_stg42d() {
                     ..Default::default()
                 };
                 h.plans(&case["plans"]);
-                let r = messenger::spawn(&args, &STG42D, &mut h);
+                let mut rand = MslRand {
+                    seed: u(&case["plans"]["seed"]),
+                };
+                let r = messenger::spawn(&args, &STG42D, &mut rand, &mut h);
+                assert_eq!(rand.seed, u(&case["seed_after"]), "{case}");
                 assert_eq!(json!(h.events), case["events"], "{case}");
                 match r {
                     None => assert_eq!(u(&case["ret"]), 0, "{case}"),
