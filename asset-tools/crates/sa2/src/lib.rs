@@ -131,6 +131,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub mod city_escape_native;
 pub mod city_land;
 pub mod dash_panel;
+pub mod dry_lagoon;
 
 pub mod checkpoint;
 pub mod emerald_path;
