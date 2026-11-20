@@ -85,7 +85,6 @@ VOICE = windows[(0, 9, 0x803AD3D0)]
 PRESENT = windows[(0, 7, 0x801E7388)]
 CHANNELS, BOSS = 0x8A000, 0x8B000
 HOLD = windows[(88, 6, 0x664)]
-rings = [0, 0]
 counters = {}
 GLOBAL = windows[(0, 6, 0x801CBD88)]
 TABLE1, TABLE2, TABLE3 = (windows[(0, 7, a)] for a in (0x801E7368, 0x801E7328, 0x801E7348))
@@ -177,10 +176,9 @@ def code_hook(u, pc, size, _):
                 ret = frame["camera_mode"] if off in (0xF680, 0xF7D4) else frame["second_lookup"]
             elif off == 0xFDC8:  # camera mode read after a ring-out
                 ret = frame["camera_mode"]
-            elif target == 0x80062A24:  # ring count (modeled counter)
-                ret = rings[r3]
-            elif target == 0x80063584:  # add rings (modeled as exact addition)
-                rings[r3] = (rings[r3] + struct.unpack(">i", struct.pack(">I", r4))[0])
+            elif target == 0x80062A24:  # ring count: the request's reads, in order
+                ret = stage["ring_reads"][counters["reads"]]
+                counters["reads"] += 1
             elif target == 0x80022BC4:
                 ret = stage["sound_queries"][r3]
             elif target == 0x8001CCBC:  # engine game state; 7 resets the work block
@@ -255,12 +253,11 @@ def run(start):
     cpu.mem_write(WORK + 0xE, struct.pack(">h", countdown))
     cpu.mem_write(WORK + 4, struct.pack(">bb", extra["reason"], extra["switch_count"]))
     cpu.mem_write(WORK + 0xA, struct.pack(">hh", extra["ring_clock"], extra["pool"]))
-    rings[:] = extra["rings"]
     native = []
     global frame, events
     for frame in frames_in:
         events = []
-        counters.update(rand=0, trig=0)
+        counters.update(rand=0, trig=0, reads=0)
         if "debris" in frame:
             cpu.mem_write(player2[player_now()] + 0x230, struct.pack(">3f", *frame["debris"]["origin"]))
         cpu.mem_write(GLOBAL + 0x7C, struct.pack(">I", frame["global_7c"] & 0xFFFFFFFF))
@@ -297,7 +294,7 @@ def run(start):
             r4, r5 = struct.unpack(">bb", cpu.mem_read(WORK + 4, 2))
             rc, pl = struct.unpack(">hh", cpu.mem_read(WORK + 0xA, 4))
             after.update(line=ln, reason=r4, switch_count=r5, ring_clock=rc, pool=pl,
-                         rings=list(rings), visits=list(struct.unpack(">bb", cpu.mem_read(WORK + 2, 2))))
+                         visits=list(struct.unpack(">bb", cpu.mem_read(WORK + 2, 2))))
         native.append((events, after))
         if st == 0 and stage is None:
             break
@@ -334,6 +331,7 @@ def stage_frame(rng):
         distances=[f32(rng.choice((math.hypot(p[0], p[2]), 1500.0, 0.0))) for p in positions],
         global_42=rng.choice((0, 0, 0, 0, 1)), global_43=rng.choice((0, 0, 0, 0, 1)),
         task_0c=rng.choice((0, 0, 0, 0x9100)),
+        ring_reads=[rng.choice((0, 1, 4, 15, 16, 40, -1)) for _ in range(6)],
         global_664=rng.choice((0, 0, 0, 0, 0, 1)),
         boss_flags=rng.choice((None, 0, 0, 4, -1)),
         actions=[[rng.choice((0, 0, 0, 0x6D, 0x74)) for _ in range(2)] for _ in range(2)],
@@ -357,12 +355,11 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
         visits = [rng.choice((-1, 0, 1, 2, 3)) for _ in range(2)]
         line = rng.choice((0, 0, 3, 9, 10, -1))
         with_stage = case >= 160
-        extra = dict(reason=0, switch_count=0, ring_clock=0, pool=0, rings=[0, 0])
+        extra = dict(reason=0, switch_count=0, ring_clock=0, pool=0)
         if normal:
             extra = dict(reason=rng.choice((0, 0, 1)), switch_count=rng.choice((-1, 0, 2, 3, 5)),
                          ring_clock=rng.choice((0, 55, 60, 61)),
-                         pool=rng.choice((30, 40, 50)),
-                         rings=[rng.choice((1, 2, 5, 16, 17, 40)) for _ in range(2)])
+                         pool=rng.choice((30, 40, 50)))
         poll_rate = rng.choice((0.0, 0.1, 0.5, 1.0))
         clock = rng.choice((0, 1796, 9000, 17396, 17950) if normal else (0, 1796, 9000, 17396))
         frames_in = []
@@ -374,7 +371,7 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
                 yaws=[rng.choice((0, 0x4000, 0x8000, 0x9000, -1, 0x7FFFFFFF, -0x80000000))
                       for _ in range(2)],
                 camera_mode=mode, second_lookup=0x2A + mode,
-                cue_result=rng.choice((-1, 0, 5)),
+                cue_result=rng.choice((-1, 0, 5)), game_state=0,
                 global_7c=(clock + k) if with_stage else rng.choice((0, 14399, 14400, 14401)))
             if with_stage:
                 fr["game_state"] = rng.choice((0,) * 60 + (7, 3))

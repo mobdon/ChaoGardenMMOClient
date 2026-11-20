@@ -963,22 +963,13 @@ pub enum PlacementClock {
         player_tasks: [u32; 2],
         table_words: [u32; 4],
         /// Work byte 6, the next timed voice line (used by frames with `stage`).
-        #[serde(default)]
         line: i8,
         /// Work byte 4 (switch reason), byte 5 (switch count), short 0xa
         /// (ring clock) and short 0xc (ring pool).
-        #[serde(default)]
         reason: i8,
-        #[serde(default)]
         switch_count: i8,
-        #[serde(default)]
         ring_clock: i16,
-        #[serde(default)]
         pool: i16,
-        /// Ring counts behind the engine's 0x80062a24 (get) and 0x80063584
-        /// (add). The replay assumes the add call adds its delta exactly.
-        #[serde(default)]
-        rings: [i32; 2],
         frames: Vec<HandoffFrame>,
     },
     SwitchTick {
@@ -1422,24 +1413,22 @@ pub struct StageFrame {
     pub present: [bool; 2],
     pub positions: [[f32; 3]; 2],
     pub distances: [f32; 2],
-    #[serde(default)]
     pub global_42: i8,
-    #[serde(default)]
     pub global_43: i8,
-    #[serde(default)]
     pub task_0c: u32,
     /// State 0 only: module word section 6 + 0x664, the result chain of the
     /// local 0x9f4 call (None when it or its word 0x34 is null; else the
     /// halfword at +4 of that object), words 0x176/0x178 of both
     /// 0x801e7328 entries, and the two 0x80022bc4 query results.
-    #[serde(default)]
     pub global_664: u32,
     #[serde(default)]
     pub boss_flags: Option<i16>,
-    #[serde(default)]
     pub actions: [[i16; 2]; 2],
-    #[serde(default)]
     pub sound_queries: [i32; 2],
+    /// State 0: results of the engine ring-count reads (0x80062a24) in call
+    /// order. The ring-add calls are reported; their effect is engine-side.
+    #[serde(default)]
+    pub ring_reads: Vec<i32>,
 }
 /// Engine results a state 4 frame observes when it spawns debris (every
 /// fourth frame): the seven 0x8010d940 results, the five trigonometric
@@ -1463,7 +1452,6 @@ pub struct HandoffFrame {
     pub debris: Option<DebrisFrame>,
     /// Result of the engine call 0x8001ccbc at the top of the task; 7 resets
     /// the work block.
-    #[serde(default)]
     pub game_state: i32,
     pub poll: i32,
     /// Byte 1 of each 0x801e7328 entry and word 0xc of each 0x801e7368 entry.
@@ -1473,10 +1461,8 @@ pub struct HandoffFrame {
     #[serde(default)]
     pub second_lookup: Option<i32>,
     /// Result of the local section 1 + 0xeb38 call after the state 3 camera.
-    #[serde(default)]
     pub cue_result: i32,
     /// Word 0x7c of the engine global at 0x801cbd88.
-    #[serde(default)]
     pub global_7c: u32,
 }
 fn engine_import(rel: &crate::city_rel::CityRel<'_>, site: u32) -> Result<u32> {
@@ -2209,7 +2195,6 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             mut switch_count,
             mut ring_clock,
             mut pool,
-            mut rings,
             frames,
         } => {
             if player > 1 {
@@ -2405,23 +2390,26 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                         let s = f.stage.as_ref().unwrap();
                         let me = r31 as usize;
                         let other = 1 - me;
-                        // Engine ring services, modeled as a plain counter.
+                        // Engine ring services: each count read (0x80062a24) is
+                        // taken from the request in call order; the add call
+                        // (0x80063584) is reported, its effect stays engine-side.
+                        let mut reads = s.ring_reads.iter().copied();
                         let get = |ev: &mut Vec<serde_json::Value>,
-                                   rings: &[i32; 2],
+                                   reads: &mut dyn Iterator<Item = i32>,
                                    site: u32,
                                    p: usize|
                          -> Result<i32> {
                             ev.push(call(site, &[p as u32])?);
-                            Ok(rings[p])
+                            reads.next().ok_or_else(|| {
+                                Error::invalid(format!("frame {n} needs more ring_reads"))
+                            })
                         };
                         let add = |ev: &mut Vec<serde_json::Value>,
-                                   rings: &mut [i32; 2],
                                    site: u32,
                                    p: usize,
                                    d: i32|
                          -> Result<()> {
                             ev.push(call(site, &[p as u32, d as u32])?);
-                            rings[p] = rings[p].wrapping_add(d);
                             Ok(())
                         };
                         // Ring drain: once every 61 frames unless a hold is active.
@@ -2435,17 +2423,17 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                                     for (p, (g, a)) in
                                         [(0xfc68, 0xfc74), (0xfc7c, 0xfc88)].into_iter().enumerate()
                                     {
-                                        let r = get(&mut ev, &rings, g, p)?;
-                                        add(&mut ev, &mut rings, a, p, r.wrapping_neg())?;
+                                        let r = get(&mut ev, &mut reads, g, p)?;
+                                        add(&mut ev, a, p, r.wrapping_neg())?;
                                     }
                                     pool = 0;
                                     ev.push(store(0xfc8c, "task", None, 0xc, 2, 0));
                                 } else {
-                                    add(&mut ev, &mut rings, 0xfc9c, me, -1)?;
+                                    add(&mut ev, 0xfc9c, me, -1)?;
                                     let held = i32::from(pool)
-                                        .wrapping_sub(get(&mut ev, &rings, 0xfca4, me)?);
-                                    let r = get(&mut ev, &rings, 0xfcb4, other)?;
-                                    add(&mut ev, &mut rings, 0xfcc0, other, held.wrapping_sub(r))?;
+                                        .wrapping_sub(get(&mut ev, &mut reads, 0xfca4, me)?);
+                                    let r = get(&mut ev, &mut reads, 0xfcb4, other)?;
+                                    add(&mut ev, 0xfcc0, other, held.wrapping_sub(r))?;
                                 }
                                 // Warnings at 15 and 4 rings; at 0 the active
                                 // player is defeated and the task enters state 4.
@@ -2464,13 +2452,13 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                                     }
                                     Ok(())
                                 };
-                                if get(&mut ev, &rings, 0xfcc8, me)? as i16 == 15 {
+                                if get(&mut ev, &mut reads, 0xfcc8, me)? as i16 == 15 {
                                     let cue = if player == 0 { 0x869 } else { 0x867 };
                                     warn(&mut ev, &mut countdown, (0xfd04, 0xfd18, 0xfd20), cue)?;
-                                } else if get(&mut ev, &rings, 0xfd2c, me)? as i16 == 4 {
+                                } else if get(&mut ev, &mut reads, 0xfd2c, me)? as i16 == 4 {
                                     let cue = if player == 0 { 0x86a } else { 0x868 };
                                     warn(&mut ev, &mut countdown, (0xfd68, 0xfd7c, 0xfd84), cue)?;
-                                } else if get(&mut ev, &rings, 0xfd90, me)? as i16 == 0 {
+                                } else if get(&mut ev, &mut reads, 0xfd90, me)? as i16 == 0 {
                                     switch_state = 4;
                                     ev.extend([
                                         call(0xfda4, &[me as u32])?,
@@ -2502,7 +2490,9 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                                     reason,
                                     switch_count,
                                     pool,
-                                    rings,
+                                    // Ring counts are only read for switch reason 1,
+                                    // which blocks this trigger.
+                                    [0, 0],
                                     f.characters[me],
                                 );
                                 let mut inner = vec![call(0xec38, &[])?, call(0xec40, &[3])?];
@@ -2518,8 +2508,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                                     .iter()
                                     .zip([(0xedb8, 0xedd4), (0xeddc, 0xede8)])
                                 {
-                                    get(&mut inner, &rings, g, p)?;
-                                    add(&mut inner, &mut rings, a, p, d)?;
+                                    get(&mut inner, &mut reads, g, p)?;
+                                    add(&mut inner, a, p, d)?;
                                 }
                                 switch_state = 1;
                                 timer = 0;
@@ -2624,7 +2614,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 out.push(serde_json::json!({"frame":n,"events":ev,"player":player,
                     "switch_state":switch_state,"timer":timer,"countdown":countdown,"line":line,
                     "reason":reason,"switch_count":switch_count,"ring_clock":ring_clock,
-                    "pool":pool,"rings":rings,"visits":visits}));
+                    "pool":pool,"visits":visits}));
             }
             return Ok(
                 serde_json::json!({"frames":out,"player":player,"switch_state":switch_state,
@@ -2940,13 +2930,11 @@ pub struct SuperPlayerFrame {
     pub fx: Option<SuperFx>,
     #[serde(default)]
     pub lengths: Vec<f32>,
-    #[serde(default)]
     pub approach: f32,
     #[serde(default)]
     pub randoms: Vec<i32>,
     #[serde(default)]
     pub trig: Vec<f32>,
-    #[serde(default)]
     pub defeat_query: i32,
 }
 /// Section 1 + 0xad8c: control flow of one super-form player update. Local
@@ -3387,17 +3375,11 @@ pub struct SuperFlightFrame {
     pub held: i32,
     pub stick_angle: i32,
     pub stick_magnitude: f32,
-    #[serde(default)]
     pub v70_length: f32,
-    #[serde(default)]
     pub rotated: [f32; 3],
-    #[serde(default)]
     pub dots: [f32; 2],
-    #[serde(default)]
     pub cross: [f32; 6],
-    #[serde(default)]
     pub turn: i32,
-    #[serde(default)]
     pub angle_delta: i32,
 }
 /// Section 1 + 0xe370: flight thrust, speed limits and turning, with the
@@ -3719,11 +3701,8 @@ pub struct SuperFreeMoveFrame {
     pub buttons_10: u32,
     pub stick: [i16; 2],
     pub position: [f32; 3],
-    #[serde(default)]
     pub atan2: f64,
-    #[serde(default)]
     pub camera_yaw: i32,
-    #[serde(default)]
     pub trig: [f32; 2],
 }
 /// Section 1 + 0xdc90: outside the ±14 stick dead zone, move 5 units per
@@ -3834,13 +3813,9 @@ pub struct SuperControlFrame {
     /// Data2 word 0x1c and controller word 0x10.
     pub data2_1c: u32,
     pub pad_10: u32,
-    #[serde(default)]
     pub hit_timer_after: u16,
-    #[serde(default)]
     pub held: i32,
-    #[serde(default)]
     pub landed: i32,
-    #[serde(default)]
     pub buttons: [i8; 4],
     #[serde(default)]
     pub boss: Option<SuperBoss>,
@@ -4499,7 +4474,6 @@ pub struct SuperEffectsFrame {
     pub entity_flags: i16,
     pub rotation: [i32; 3],
     pub aura_halfword: u16,
-    #[serde(default)]
     pub spin_models: [u32; 4],
 }
 /// Section 1 + 0xd60c: effects drawn around the active super form. A spin
@@ -4671,7 +4645,6 @@ pub struct RingDropFrame {
     pub character: i8,
     pub position: [f32; 3],
     pub random: i32,
-    #[serde(default)]
     pub allocated: Vec<bool>,
 }
 /// Section 1 + 0x19470: a hit with no rings defeats the player (except
@@ -4706,7 +4679,11 @@ fn ring_drop(rel: &crate::city_rel::CityRel<'_>, f: &RingDropFrame) -> Result<se
                 0x19598,
                 serde_json::json!([10, 2, "88:1+0x196f0", "88:5+0x4780c"]),
             )?);
-            if !f.allocated.get(i as usize).copied().unwrap_or(false) {
+            let ok =
+                f.allocated.get(i as usize).copied().ok_or_else(|| {
+                    Error::invalid("ring drop needs an allocation result per ring")
+                })?;
+            if !ok {
                 continue;
             }
             for (j, site) in [0x195b4u32, 0x195b8, 0x195c0].into_iter().enumerate() {

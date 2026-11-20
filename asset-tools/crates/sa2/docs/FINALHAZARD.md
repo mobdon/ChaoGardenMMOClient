@@ -59,8 +59,12 @@ the pool (work + 0xc); from 18000 on, both are emptied. Fifteen and four rings p
 the engine is told through 0x8003b914, and the task enters state 4. The handoff starts (0xec04)
 once the active player passes Z −50 (player 0) or +50 (player 1). That needs no boss hold flag 4,
 switch reason other than 1, and neither slot posing (0x6d on slot 0, 0x74 on slot 1). A pair of
-engine sound calls ordered by the active player ends the frame. The engine's ring services are
-modeled as a plain counter (`rings`), assuming the add call adds exactly.
+engine sound calls ordered by the active player ends the frame. Each engine ring-count read
+(0x80062a24) comes from the stage block's `ring_reads`, in call order. The ring-add calls are
+reported, and their effect stays in the engine. No ring arithmetic is modeled.
+
+Engine results and engine state are always request inputs. A path that needs one that is missing
+fails; no default value is supplied.
 
 State 4 (0xf8cc) follows a ring-out. On every fourth frame it builds a debris burst from seven
 engine random values (scaled by 1/32768) and five trigonometric results. Those values give an
