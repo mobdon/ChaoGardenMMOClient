@@ -42,3 +42,40 @@ mode handlers, which makes it the first port target.
 2. Port the landtable collision those routines call, against the native
    geometry `play_world` already holds.
 3. Feed the native player state into `Session::step` as its `PlayerSample`.
+
+## Shared facts for the port
+
+- Small-data bases set in `__start` (0x8000325C): r2 = 0x803B6520 (`.sdata2`
+  constants), r13 = 0x803B52C0.
+- The player work layout matches SAMT's `playerwk` (include/samt/sonic/player.h
+  in the reconstruction). For example: `dotp` +0x34, `spd` +0x64,
+  `floor_normal` +0x7C, `attr` +0x88, `last_attr` +0x8C, and the copied
+  PhysicsArray row `p` at +0xC0, so `run_accel` is +0xFC and `weight` +0x138.
+  The walker work (`walkerwk`, figure/ewalker.h) extends it to 0x454 bytes.
+- Ownership across threads: the Sonic controller port (#426) owns the shared
+  ground-movement routine 0x8004C734 and its callee tree, plus the
+  paired-single Unicorn DOL harness. The Prison Lane port owns the trig table
+  and njSin (0x80112050), the Ninja rotate calls and the CCL form-3 box rule.
+  This port owns the walker exec, its mode handlers, 0x80046DE4, 0x80045880
+  and 0x8003E668, collision response, lock-on and the laser.
+
+## 0x8003E668: world velocity into the player frame
+
+Arguments are r3 = task work (rotation at +8, +0xC, +0x10), r4 = a world
+vector followed by three angles at +0x18..+0x20, and r5 = player work. The
+routine rotates the vector into the player's frame by Y, then -X, then -Z,
+using the floor normal's angles (via 0x8005071C) instead of the task rotation
+when the task is grounded (`flag & 3`) and `attr` bit 0x100 is set. It then
+does the following:
+
+- zeroes the vertical component when grounded;
+- zeroes horizontal components below 0.01 (or 0.9 * `run_accel` when
+  grounded), or below 0.001 when airborne;
+- stores the result in `spd`, and masks all six angles to 16 bits;
+- sets `dotp` to -dot(global vector at 0x801D5624, `floor_normal`) when
+  grounded, otherwise 1.0.
+
+On stage 0x5A it also clears `spd.x` below a slope-dependent threshold built
+from `weight` (0.1, 1.2 and 0.77 from `.sdata2`). Constants read from
+`.sdata2`: 0.0, 0.01, 0.9, 0.001, 1.0, 0.1, 1.2, 0.77, plus 0.5 and 3.0 for
+the inline reciprocal square root.
