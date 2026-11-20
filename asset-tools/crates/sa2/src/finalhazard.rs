@@ -1008,6 +1008,8 @@ pub enum PlacementClock {
     Trail(Box<TrailFrame>),
     /// Section 1 + 0x3ae8..0x40c8: the beam controller and its segments.
     Beam(Box<BeamFrame>),
+    /// Section 1 + 0x36ac and 0x38b0: beam segment update and draw.
+    BeamSegment(Box<BeamSegmentFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2820,6 +2822,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::Glow(frame) => return glow(&rel, &frame),
         PlacementClock::Trail(frame) => return trail(&rel, &frame),
         PlacementClock::Beam(frame) => return beam(&rel, &frame),
+        PlacementClock::BeamSegment(frame) => return beam_segment(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -10919,4 +10922,224 @@ fn beam(rel: &crate::city_rel::CityRel<'_>, f: &BeamFrame) -> Result<serde_json:
         out["returned"] = serde_json::json!(r);
     }
     Ok(out)
+}
+
+/// One call of the beam segment update or draw; values are as read.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum BeamSegmentFrame {
+    /// 0x36ac: update. `pause` is global byte 0x801cbd88 + 0x37, `action`
+    /// the entity action, `boss_states` the 0xc60 results in call order,
+    /// `width` block float 0xc, `stage_lock` stage byte 1, `player_position`
+    /// the player entity words 0x14..0x1c, `phase` block word 0x1c,
+    /// `scroll` block word 0x14.
+    Update {
+        task: u32,
+        pause: i8,
+        action: i8,
+        boss_states: Vec<i8>,
+        width: f32,
+        stage_lock: i8,
+        player_position: [u32; 3],
+        phase: i32,
+        scroll: u32,
+    },
+    /// 0x38b0: draw. `rotation` is entity words 8 and 0xc, `scale` entity
+    /// float 0x20, `count` block byte 2, `scroll` block word 0x14. The links
+    /// start from block words 0x48..0x50 (copied to the stack).
+    Draw {
+        rotation: [u32; 2],
+        scale: f32,
+        count: i8,
+        scroll: u32,
+    },
+}
+/// Sections 1 + 0x36ac (actions 0..4 to 0x26c4, 0x2ac4, 0x3124, 0x2c30,
+/// 0x2fe0; width easing to 5:0x31e4 by 5:0x31e8; aim refreshed from the
+/// player; shrink by 4:0x1a4 in boss state 1; scroll by 5:0x31f4; then
+/// 0x34bc) and 0x38b0 (draw `count` links along the beam, the first, last
+/// and middle ones with their texture scrolls 0x2138 / 0x2218 / 0x2300).
+fn beam_segment(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BeamSegmentFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let fcall =
+        |site: u32, args: serde_json::Value, floats: Vec<f64>| -> Result<serde_json::Value> {
+            let mut e = call(site, args)?;
+            e["floats"] = serde_json::json!(floats);
+            Ok(e)
+        };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":4,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let k5 = |site: u32| -> Result<f32> { Ok(f32::from_bits(rel_word(rel, site, 5)?)) };
+    let mut ev = Vec::new();
+    match f {
+        BeamSegmentFrame::Update {
+            task,
+            pause,
+            action,
+            boss_states,
+            width,
+            stage_lock,
+            player_position,
+            phase,
+            scroll,
+        } => {
+            if *pause != 0 {
+                return Ok(serde_json::json!({"events":ev}));
+            }
+            let target = match action {
+                0 => Some((0x3720, 0x26c4)),
+                1 => Some((0x372c, 0x2ac4)),
+                2 => Some((0x3738, 0x3124)),
+                3 => Some((0x3744, 0x2c30)),
+                4 => Some((0x3750, 0x2fe0)),
+                _ => None,
+            };
+            if let Some((site, routine)) = target {
+                ev.push(local(site, routine, serde_json::json!([task])));
+            }
+            let mut states = boss_states.iter().copied();
+            let mut state = || {
+                states
+                    .next()
+                    .ok_or_else(|| Error::invalid("missing boss state"))
+            };
+            ev.push(local(0x3754, 0xc60, serde_json::json!([])));
+            let mut width = *width;
+            if state()? == 0 {
+                let full = k5(0x376a)?;
+                if f64::from(width) < f64::from(full) {
+                    width += k5(0x377e)?;
+                    ev.push(st(0x378c, "block", 0xc, width.to_bits()));
+                    if f64::from(width) > f64::from(full) {
+                        width = full;
+                        ev.push(st(0x37a0, "block", 0xc, width.to_bits()));
+                    }
+                }
+            }
+            let mut refreshed = false;
+            if *stage_lock == 0 {
+                ev.push(local(0x37c0, 0xc60, serde_json::json!([])));
+                if state()? == 0 {
+                    for (i, site) in [0x37f8u32, 0x37fc, 0x3804].into_iter().enumerate() {
+                        ev.push(st(site, "block", 0x3c + 4 * i as u32, player_position[i]));
+                    }
+                    refreshed = true;
+                }
+            }
+            if !refreshed {
+                ev.push(local(0x380c, 0xc60, serde_json::json!([])));
+                if state()? == 1 {
+                    let shrink = k(0x3846)?;
+                    ev.push(st(
+                        0x3860,
+                        "block",
+                        0x1c,
+                        fctiwz(f64::from(biased_float(rel, 0x3822, *phase)? * shrink)) as u32,
+                    ));
+                    ev.push(st(0x3870, "block", 0xc, (width * shrink).to_bits()));
+                }
+            }
+            ev.push(st(
+                0x3888,
+                "block",
+                0x14,
+                scroll.wrapping_add(rel_word(rel, 0x387a, 5)?),
+            ));
+            ev.push(local(0x3890, 0x34bc, serde_json::json!([task])));
+        }
+        BeamSegmentFrame::Draw {
+            rotation,
+            scale,
+            count,
+            scroll,
+        } => {
+            let k148 = k(0x390a)?;
+            let k1b4 = k(0x3912)?;
+            let k120 = k(0x391a)?;
+            let link = {
+                let r = rel
+                    .reference(1, 0x3926)
+                    .filter(|r| r.module == 88 && r.section == 4)
+                    .ok_or_else(|| Error::invalid("missing link vector"))?;
+                let d = rel.data(4)?;
+                (0..3)
+                    .map(|i| {
+                        let at = r.addend as usize + 4 * i;
+                        d.get(at..at + 4)
+                            .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
+                            .ok_or_else(|| Error::invalid("link vector out of range"))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            ev.extend([
+                call(0x38d4, serde_json::json!([9]))?,
+                call(0x38e0, serde_json::json!([module_ref(rel, 0x38da, 0)?]))?,
+                call(0x38e4, serde_json::json!([]))?,
+            ]);
+            let n = i32::from(*count);
+            for i in 0..n {
+                let size = if n > 2 && i != n - 2 { k148 } else { *scale };
+                let d = |v: f32| f64::from(v);
+                if d(size) > d(k120) {
+                    ev.extend([
+                        call(0x3970, serde_json::json!([]))?,
+                        call(0x3978, serde_json::json!(["stack"]))?,
+                        call(0x3984, serde_json::json!([0, rotation[1]]))?,
+                        call(0x3990, serde_json::json!([0, rotation[0]]))?,
+                        call(0x399c, serde_json::json!([0, 0x4000]))?,
+                    ]);
+                    if i == 0 {
+                        ev.push(fcall(
+                            0x39bc,
+                            serde_json::json!([0]),
+                            vec![d(size), d(k148), d(k148)],
+                        )?);
+                        ev.push(local(0x39c4, 0x2138, serde_json::json!([scroll])));
+                    } else if i == n - 1 {
+                        ev.extend([
+                            fcall(
+                                0x39f4,
+                                serde_json::json!([0]),
+                                vec![d(k1b4 * size), d(k120), d(k120)],
+                            )?,
+                            call(0x3a00, serde_json::json!([0, 0x8000]))?,
+                            fcall(
+                                0x3a14,
+                                serde_json::json!([0]),
+                                vec![d(size), d(k148), d(k148)],
+                            )?,
+                            local(0x3a1c, 0x2218, serde_json::json!([scroll])),
+                        ]);
+                    } else {
+                        ev.push(fcall(
+                            0x3a34,
+                            serde_json::json!([0]),
+                            vec![d(size), d(k148), d(k148)],
+                        )?);
+                        ev.push(local(0x3a38, 0x2300, serde_json::json!([])));
+                    }
+                    ev.push(call(0x3a3c, serde_json::json!([]))?);
+                }
+                let mut v = call(0x3a98, serde_json::json!([0, "stack", "stack"]))?;
+                v["vectors"] = serde_json::json!({"1": [d(k1b4 * size), d(link[1]), d(link[2])]});
+                ev.extend([
+                    call(0x3a40, serde_json::json!([]))?,
+                    call(0x3a70, serde_json::json!([0, rotation[1]]))?,
+                    call(0x3a7c, serde_json::json!([0, rotation[0]]))?,
+                    call(0x3a88, serde_json::json!([0, 0x4000]))?,
+                    v,
+                    call(0x3aa4, serde_json::json!(["stack", "stack"]))?,
+                    call(0x3aa8, serde_json::json!([]))?,
+                ]);
+            }
+            ev.push(call(0x3ac4, serde_json::json!([]))?);
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
 }
