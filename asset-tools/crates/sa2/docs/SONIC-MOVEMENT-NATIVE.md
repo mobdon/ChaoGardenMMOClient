@@ -54,6 +54,7 @@ rules, so the check is "the same instructions, on this machine model".
 | Player-frame vectors | fn_8003E9E0 (rotate by Z, X, -Y), fn_8003EA6C (rotate by Y, -X, -Z) | **Ported** (`ninja_matrix::rotate_by_angles`, `unrotate_by_angles`) |
 | Analog input | fn_8004E560 (`GetAnalog` on PC): stick angle and strength, confusion remap, steering on kind-0x11 collision objects; with njInnerProduct, njOuterProduct, MSL acosf and VectorAngle (0x8002B7C4) | **Ported** (`player_analog`, `ninja_vector`) |
 | Turning | SubAngle 0x8002B904, DiffAngle 0x8002B8E0, AdjustAngle 0x8002B918; fn_800473B4 (turn toward a yaw, faster turns slow down above dash_speed, velocity carried round); fn_80047714 (smoothed turn with stick-dependent velocity blend) | **Ported** (`player_turn`) |
+| Facing downhill | njScalor 0x801151F4 and njUnitVector 0x80115D24 (Gekko frsqrte/fres estimates); fn_80047CBC and fn_80048150 aim the motion yaw down slopes from gravity in the player's frame | **Ported** (`ninja_vector::scalor`, `unit_vector`, `player_slope`) |
 | Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
@@ -106,3 +107,14 @@ rules, so the check is "the same instructions, on this machine model".
   or an eighth of the gap. It keeps 10% of the old velocity off the ground,
   and on the ground 5% without stick input or 99%/50% with it, scaled by
   the player work's +0x40 below 1. It is checked on 1,500 more turns.
+
+- **Facing downhill** (`player_slope`): fn_80047CBC and fn_80048150 rotate
+  gravity into the player's frame and, on slopes, aim the motion work's yaw
+  down them. The aim steps by 4096|z|*speed/jog_speed or 2048|z| in the
+  strong version, and 3072|z| or 1536|z| in the soft one. The strong one
+  then turns the yaw by up to 0x2000; the soft one hands over to
+  fn_80047714. Both skip when the motion velocity (njScalor, Gekko's
+  estimate) is slower than jog_speed or points steeply along gravity.
+  `tests/player_slope_dol.rs` matches 1,500 njScalor/njUnitVector cases and
+  2,400 slope turns. This includes PowerPC's positive default NaN for a zero
+  vector.
