@@ -81,6 +81,7 @@ pub mod solid_box;
 pub mod spring;
 pub mod stage;
 pub mod stage_catalog;
+pub mod stage_code;
 mod stage_container;
 pub mod stage_gameplay;
 mod stage_key;
