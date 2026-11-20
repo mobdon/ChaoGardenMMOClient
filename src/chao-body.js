@@ -10,27 +10,34 @@ import { Quaternion, Vector3 } from '@babylonjs/core';
 // extras.chaoMorph record of per-target node rest offsets in glTF node space.
 
 const ALIGN = ['n', 'h', 'd'];
-const FAMILY = ['c', 'n', 's', 'f', 'r', 'p'];
-const TARGETS = ['n', 's', 'f', 'r', 'p'];
+const FAMILY = ['n', 's', 'f', 'r', 'p'];
 
-// AL_RootObject base index (multiple of 6, 0..102) -> converted family asset key.
+// AL_RootObject base index -> converted family asset key. Children are one
+// file (al_ncz with the neutral, hero and dark child sets as 17 targets);
+// adults are 15 files of 6 models; Chaos (108+) keep their own single models.
 export function familyAssetKey(baseIndex) {
-  if (!Number.isInteger(baseIndex) || baseIndex < 0 || baseIndex > 102 || baseIndex % 6) return null;
-  const group = baseIndex / 6;
+  if (baseIndex === 0) return 'chao-body-al_ncz';
+  if (!Number.isInteger(baseIndex) || baseIndex < 18 || baseIndex > 102 || baseIndex % 6) return null;
+  const group = baseIndex / 6 - 3;
   return `chao-body-al_${ALIGN[group % 3]}${FAMILY[Math.floor(group / 3)]}z`;
 }
 
-// Chaos and special Chao keep their dedicated single-model assets.
 export function bodyAssetFor(data) {
   const body = data?.body;
   if (!body || typeof body.typeName !== 'string' || body.typeName.endsWith('-chaos')) return null;
   return familyAssetKey(body.modelBaseIndex);
 }
 
+// Server-computed AL_Deform weights keyed by morph target name.
 export function morphWeights(body) {
-  const weights = body?.morph?.weights;
-  if (!Array.isArray(weights) || weights.length !== 5) return [0, 0, 0, 0, 0];
-  return weights.map(value => (Number.isFinite(value) ? Math.max(-2, Math.min(2, value)) : 0));
+  const { targets, weights } = body?.morph || {};
+  const result = new Map();
+  if (!Array.isArray(targets) || !Array.isArray(weights) || targets.length !== weights.length) return result;
+  targets.forEach((name, i) => {
+    const value = weights[i];
+    if (typeof name === 'string') result.set(name, Number.isFinite(value) ? Math.max(-2, Math.min(2, value)) : 0);
+  });
+  return result;
 }
 
 function morphRecord(root) {
@@ -71,9 +78,9 @@ function applyNodeOffsets(root, weights, animatedOnly) {
   for (const [node, rest] of root.metadata.chaoBodyRest) {
     const t = new Vector3(0, 0, 0), s = new Vector3(1, 1, 1);
     let q = Quaternion.Identity();
-    TARGETS.forEach((target, i) => {
+    Object.keys(record.nodeOffsets).forEach(target => {
       const offset = record.nodeOffsets[target]?.[rest.name];
-      const w = weights[i];
+      const w = weights.get(target) || 0;
       if (!offset || !w) return;
       t.addInPlace(Vector3.FromArray(offset.t).scale(w));
       s.multiplyInPlace(new Vector3(1 + (offset.s[0] - 1) * w, 1 + (offset.s[1] - 1) * w, 1 + (offset.s[2] - 1) * w));
@@ -119,8 +126,7 @@ export function attachChaoBody(root, animationGroups, getBody) {
       const manager = mesh.morphTargetManager;
       for (let i = 0; i < manager.numTargets; i += 1) {
         const target = manager.getTarget(i);
-        const index = TARGETS.indexOf(target.name);
-        target.influence = index >= 0 ? weights[index] : 0;
+        target.influence = weights.get(target.name) || 0;
       }
     }
     applyNodeOffsets(root, weights, channels);

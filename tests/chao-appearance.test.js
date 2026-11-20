@@ -3,14 +3,13 @@ import assert from 'node:assert/strict';
 import { familyAssetKey, bodyAssetFor, morphWeights } from '../src/chao-body.js';
 import { normalizeFace, DEFAULT_FACE, CHAO_EYES, CHAO_MOUTH } from '../src/chao-face.js';
 
-test('AL_RootObject base indices map to the 18 native families', () => {
+test('AL_RootObject base indices map to the native family files', () => {
   assert.equal(familyAssetKey(0), 'chao-body-al_ncz');
-  assert.equal(familyAssetKey(6), 'chao-body-al_hcz');
-  assert.equal(familyAssetKey(12), 'chao-body-al_dcz');
   assert.equal(familyAssetKey(18), 'chao-body-al_nnz');
   assert.equal(familyAssetKey(42), 'chao-body-al_hsz');
+  assert.equal(familyAssetKey(96), 'chao-body-al_hpz');
   assert.equal(familyAssetKey(102), 'chao-body-al_dpz');
-  for (const bad of [-6, 3, 108, 1.5, '18', null]) assert.equal(familyAssetKey(bad), null);
+  for (const bad of [6, 12, -6, 3, 108, 1.5, '18', null]) assert.equal(familyAssetKey(bad), null);
 });
 
 test('chaos bodies keep their dedicated assets and missing bodies fall back', () => {
@@ -19,14 +18,44 @@ test('chaos bodies keep their dedicated assets and missing bodies fall back', ()
   assert.equal(bodyAssetFor({ body: { typeName: 'hero-run', modelBaseIndex: 78 } }), 'chao-body-al_hrz');
 });
 
-test('morph weights come from the server and are bounded', () => {
-  assert.deepEqual(morphWeights({ morph: { weights: [0.5, 0, 1, 0, 0] } }), [0.5, 0, 1, 0, 0]);
-  assert.deepEqual(morphWeights({ morph: { weights: [NaN, 9, -9, 0, 0] } }), [0, 2, -2, 0, 0]);
-  assert.deepEqual(morphWeights({}), [0, 0, 0, 0, 0]);
+test('morph weights are keyed by target name and bounded', () => {
+  const weights = morphWeights({ morph: { targets: ['n', 'dz', 'p'], weights: [0.5, NaN, 9] } });
+  assert.deepEqual([...weights], [['n', 0.5], ['dz', 0], ['p', 2]]);
+  assert.equal(morphWeights({ morph: { targets: ['n'], weights: [] } }).size, 0);
+  assert.equal(morphWeights({}).size, 0);
 });
 
 test('face values follow the native ChaoEyes/ChaoMouth ranges', () => {
-  assert.deepEqual(normalizeFace({ eye: CHAO_EYES.ClosedHappy, mouth: CHAO_MOUTH.OpenSmile, eyelid: 0.4 }), { eye: 3, mouth: 5, eyelid: 0.4 });
-  assert.deepEqual(normalizeFace({ eye: 14, mouth: 16, eyelid: 3 }), { eye: 0, mouth: 0, eyelid: 1 });
+  assert.deepEqual(normalizeFace({ eye: CHAO_EYES.ClosedHappy, mouth: CHAO_MOUTH.OpenSmile }), { eye: 3, mouth: 5 });
+  assert.deepEqual(normalizeFace({ eye: 14, mouth: 13 }), { eye: 0, mouth: 0 });
   assert.deepEqual(normalizeFace(), { ...DEFAULT_FACE });
+});
+
+import { eyeLidTargets, eyeTextureIndex, stepLids, lidAngles } from '../src/chao-face.js';
+
+test('native eyelid targets and eye textures (AL_FaceSetEye 0xAAC0)', () => {
+  assert.deepEqual(eyeLidTargets(9), { lid: 0x4000, slope: 0 });
+  assert.deepEqual(eyeLidTargets(10), { lid: 13653, slope: 3640 });
+  assert.deepEqual(eyeLidTargets(0, 10), { lid: 13653, slope: 3640 });
+  assert.deepEqual(eyeLidTargets(4), { lid: 0, slope: 0 });
+  assert.equal(eyeTextureIndex(8), 5);
+  assert.equal(eyeTextureIndex(13), 12);
+  assert.equal(eyeTextureIndex(0, 'hero'), 9);
+  assert.equal(eyeTextureIndex(10, 'dark'), 8);
+});
+
+test('native lid motion and blink timing', () => {
+  let lids = { eye: 9, defaultEye: 0, lid: 0, slope: 0, blink: 0, blinkPhase: 'wait', blinkTimer: 2 };
+  lids = stepLids(lids, () => 0.5);
+  assert.equal(lids.lid, 1024);
+  lids = stepLids(lids, () => 0.5);
+  assert.equal(lids.blinkPhase, 'close');
+  for (let i = 0; i < 4; i += 1) lids = stepLids(lids, () => 0.5);
+  assert.equal(lids.blink, 0x4000);
+  for (let i = 0; i < 4; i += 1) lids = stepLids(lids, () => 0.5);
+  assert.equal(lids.blinkPhase, 'wait');
+  assert.equal(lids.blinkTimer, 300);
+  assert.deepEqual(lidAngles({ blink: 0, lid: 0x4000, slope: 0 }), { close: 0, slope: 0 });
+  const frozen = stepLids({ eye: 4, defaultEye: 0, lid: 0, slope: 0, blink: 0, blinkPhase: 'wait', blinkTimer: 1 });
+  assert.equal(frozen.blinkTimer, 1);
 });

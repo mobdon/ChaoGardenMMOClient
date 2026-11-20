@@ -13,7 +13,7 @@ import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, att
 import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
-import { loadChaoFaceManifest, resetChaoFace } from './chao-face.js';
+import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
 import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
 import './chao-locomotion.css';
 
@@ -458,8 +458,19 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       // Morph weights and node offsets follow the server body each frame.
       item.root.metadata.chaoBodyDispose = attachChaoBody(visual, entries.animationGroups, () => item.bodyState);
       await loadChaoFaceManifest();
-      if (!item.root.isDisposed()) resetChaoFace(visual);
-      item.faceRoot = visual;
+      if (!item.root.isDisposed()) {
+        configureChaoFace(visual, item.bodyState?.typeName, item.bodyState?.heroDark);
+        resetChaoFace(visual);
+        item.faceRoot = visual;
+        // Native lid/blink logic runs per 60 Hz frame.
+        let frames = 0;
+        const faceObserver = scene.onBeforeRenderObservable.add(() => {
+          frames += Math.min(scene.getEngine().getDeltaTime(), 100) * 0.06;
+          for (; frames >= 1; frames -= 1) stepChaoFace(visual);
+        });
+        const disposeBody = item.root.metadata.chaoBodyDispose;
+        item.root.metadata.chaoBodyDispose = () => { disposeBody?.(); scene.onBeforeRenderObservable.remove(faceObserver); };
+      }
     }
     if (key === 'dark-chaos') attachNativeFlame(item);
     if (item.admin) { attachNativeEmeralds(item); attachNativeChestEmerald(item); }

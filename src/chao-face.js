@@ -1,16 +1,14 @@
 import { Texture } from '@babylonjs/core';
 
-// Native Chao face presentation (AL_FACE_CTRL in X-Hax SA2Structs.h).
-// Eyes are texture swaps (ChaoEyes 0..13 -> original al_eye images), the mouth is
-// one of the original mouth parts (ChaoMouth 1..15, 0 = none), and the eyelids
-// are the original lid overlays on nodes 019/022 shown and rotated by a close
-// amount. The face is presentation only: the server publishes behaviour and
-// body state, the client picks the face.
+// Native Chao face presentation, ported from SA2B GC ChaoMain.rel (GSNE8P):
+// AL_FaceSetEye (0xAAC0) and the AL_FACE_CTRL eyelid/blink state machine.
+// The face is presentation only: the server publishes behaviour and body
+// state, the client picks the face from native call sites.
 //
-// The converter (scripts/convert-chao-evolution.py) records the face parts in
-// each Chao GLB as glTF extras { chaoFace: 'eye' | 'eyelid' | 'mouth', mouth?: n }
-// and writes .local/imports/chao-face.json with the eye texture files. Assets
-// stay local; this module only reads what the local asset endpoint serves.
+// Local assets (scripts/convert-chao-evolution.py, never in Git): the face
+// parts are glTF extras { chaoFace: 'eye' | 'eyelid' | 'mouth' } on each Chao
+// body GLB, and .local/imports/chao-face.json lists the al_eye files in archive
+// order plus the traced lid rotation mapping.
 
 export const CHAO_EYES = Object.freeze({
   Normal: 0, Painful: 1, ClosedStraight: 2, ClosedHappy: 3, ClosedUp: 4, Tiny: 5, Circles: 6,
@@ -20,11 +18,23 @@ export const CHAO_EYES = Object.freeze({
 export const CHAO_MOUTH = Object.freeze({
   None: 0, ToothySmile: 1, Open: 2, ClosedSmile: 3, ClosedFrown: 4, OpenSmile: 5, OpenFrown: 6,
   ClosedSmile2: 7, Squiggly: 8, ToothyFrown: 9, ClosedFrown2: 10, WideOpen: 11, ClosedFrown3: 12,
-  StraightMoustache: 13, SquigglyMoustache1: 14, SquigglyMoustache2: 15,
 });
 
-// The open-eyed default the existing pipeline already presents.
-export const DEFAULT_FACE = Object.freeze({ eye: CHAO_EYES.Normal, mouth: CHAO_MOUTH.None, eyelid: 0 });
+// Native eye -> al_eye archive index (al_eye01..08, al_eye10, al_eye11, ncha, hcha, dcha).
+export const EYE_TEXTURE = Object.freeze([0, 1, 2, 3, 4, 5, 6, 7, 5, 0, 0, 10, 11, 12]);
+// Eyes 0/9/10 draw the body type's eye-colour texture instead: normal al_eye01,
+// hero al_eye11, dark al_eye10.
+const EYE_COLOUR = Object.freeze({ normal: 0, hero: 9, dark: 8 });
+const BAMS = 0x10000;
+const LID_OPEN = 0;
+const LID_HALF = 0x4000;   // eye 9
+const LID_MEAN = 13653;    // eye 10 (or eye 0 when the default eye is 10)
+const SLOPE_MEAN = 3640;
+const LID_SPEED = 1024;    // per frame
+const SLOPE_SPEED = 512;
+const BLINK_SPEED = 4096;
+
+export const DEFAULT_FACE = Object.freeze({ eye: CHAO_EYES.Normal, mouth: CHAO_MOUTH.None });
 
 let manifest = null;
 let manifestTask = null;
@@ -44,39 +54,74 @@ export function loadChaoFaceManifest(fetcher = fetch) {
   return manifestTask;
 }
 
-function clampEnum(value, max, fallback) {
-  return Number.isInteger(value) && value >= 0 && value <= max ? value : fallback;
-}
-
 export function normalizeFace(face = {}) {
-  const eyelid = Number(face.eyelid);
+  const valid = (value, max) => Number.isInteger(value) && value >= 0 && value <= max;
   return {
-    eye: clampEnum(face.eye, 13, DEFAULT_FACE.eye),
-    mouth: clampEnum(face.mouth, 15, DEFAULT_FACE.mouth),
-    eyelid: Number.isFinite(eyelid) ? Math.min(1, Math.max(0, eyelid)) : 0,
+    eye: valid(face.eye, 13) ? face.eye : DEFAULT_FACE.eye,
+    mouth: valid(face.mouth, 12) ? face.mouth : DEFAULT_FACE.mouth,
   };
 }
 
-// Collect the face parts of an instantiated Chao once and cache them on the root.
-export function faceParts(root) {
-  if (root.metadata?.chaoFaceParts) return root.metadata.chaoFaceParts;
-  const parts = { eyes: [], eyelids: [], mouths: new Map() };
-  for (const node of [root, ...root.getDescendants(false)]) {
-    const extras = node.metadata?.gltf?.extras;
-    if (!extras?.chaoFace) continue;
-    if (extras.chaoFace === 'eye') parts.eyes.push(node);
-    else if (extras.chaoFace === 'eyelid') parts.eyelids.push({ node, rest: node.rotation?.clone?.() || null });
-    else if (extras.chaoFace === 'mouth' && Number.isInteger(extras.mouth)) {
-      if (!parts.mouths.has(extras.mouth)) parts.mouths.set(extras.mouth, []);
-      parts.mouths.get(extras.mouth).push(node);
+// AL_FaceSetEye: lid and slope targets in BAMS. Dark Chao use default eye 10.
+export function eyeLidTargets(eye, defaultEye = 0) {
+  if (eye === 9) return { lid: LID_HALF, slope: 0 };
+  if (eye === 10 || (eye === 0 && defaultEye === 10)) return { lid: LID_MEAN, slope: SLOPE_MEAN };
+  return { lid: LID_OPEN, slope: 0 };
+}
+
+export function eyeTextureIndex(eye, eyeColour = 'normal') {
+  return eye === 0 || eye === 9 || eye === 10 ? EYE_COLOUR[eyeColour] ?? 0 : EYE_TEXTURE[eye];
+}
+
+function approach(current, target, speed) {
+  return Math.abs(target - current) <= speed ? target : current + Math.sign(target - current) * speed;
+}
+
+// Native blink: gap 100+400*rand (85%) or 5*rand frames; close and open at 4096/frame.
+// Eyes other than 0/9/10 freeze the lids.
+export function stepLids(state, random = Math.random) {
+  const lids = { ...state };
+  const target = eyeLidTargets(lids.eye, lids.defaultEye);
+  lids.lid = approach(lids.lid, target.lid, LID_SPEED);
+  lids.slope = approach(lids.slope, target.slope, SLOPE_SPEED);
+  if (![0, 9, 10].includes(lids.eye)) return lids;
+  if (lids.blinkPhase === 'wait') {
+    lids.blinkTimer -= 1;
+    if (lids.blinkTimer <= 0) lids.blinkPhase = 'close';
+  } else if (lids.blinkPhase === 'close') {
+    lids.blink = Math.min(LID_HALF, lids.blink + BLINK_SPEED);
+    if (lids.blink >= LID_HALF) lids.blinkPhase = 'open';
+  } else {
+    lids.blink = Math.max(0, lids.blink - BLINK_SPEED);
+    if (lids.blink <= 0) {
+      lids.blinkPhase = 'wait';
+      lids.blinkTimer = random() < 0.85 ? 100 + Math.floor(400 * random()) : Math.floor(5 * random());
     }
+  }
+  return lids;
+}
+
+// CloseAng = blink + lid - 0x4000; SlopeAng = slope (BAMS).
+export function lidAngles(lids) {
+  return { close: lids.blink + lids.lid - LID_HALF, slope: lids.slope };
+}
+
+function faceParts(root) {
+  if (root.metadata?.chaoFaceParts) return root.metadata.chaoFaceParts;
+  const parts = { eyes: [], eyelids: [], mouths: [] };
+  for (const node of [root, ...root.getDescendants(false)]) {
+    const kind = node.metadata?.gltf?.extras?.chaoFace;
+    const meshes = node.getChildMeshes ? [node, ...node.getChildMeshes(false)].filter(mesh => mesh.material) : [];
+    if (kind === 'eye') parts.eyes.push(...meshes);
+    else if (kind === 'eyelid') parts.eyelids.push({ node, rest: node.rotationQuaternion?.clone() || null });
+    else if (kind === 'mouth') parts.mouths.push(node);
   }
   root.metadata = { ...(root.metadata || {}), chaoFaceParts: parts };
   return parts;
 }
 
-function eyeTexture(scene, eye) {
-  const file = manifest?.eyes?.[eye];
+function eyeTexture(scene, index) {
+  const file = manifest?.eyeFiles?.[index];
   if (!file) return null;
   if (!textureCache.has(file)) {
     const texture = new Texture(`/api/assets/${file}`, scene, true, false, Texture.NEAREST_SAMPLINGMODE);
@@ -86,38 +131,62 @@ function eyeTexture(scene, eye) {
   return textureCache.get(file);
 }
 
-// Lids are the original overlay meshes; closing rotates them about their own node
-// by up to the native fully closed angle recorded by the converter (radians).
-function applyEyelids(parts, amount) {
-  const closed = manifest?.eyelidClosedAngle ?? 0;
+// The lid rotation mapping (axis/sign per side) comes from the trace via the
+// manifest. Without it the lids stay hidden, as in the existing presentation.
+function applyLids(parts, lids) {
+  const mapping = manifest?.eyelid;
   for (const { node, rest } of parts.eyelids) {
-    node.setEnabled(amount > 0);
-    if (rest && node.rotation) node.rotation.x = rest.x + closed * (1 - amount);
+    if (!mapping || !rest) { node.setEnabled(false); continue; }
+    const side = mapping.sides?.[node.metadata?.gltf?.extras?.side] ?? 1;
+    const { close, slope } = lidAngles(lids);
+    const euler = [0, 0, 0];
+    euler[mapping.closeAxis] += side * (close / BAMS) * 2 * Math.PI;
+    euler[mapping.slopeAxis] += side * (slope / BAMS) * 2 * Math.PI;
+    node.setEnabled(true);
+    node.rotationQuaternion = rest.multiply(
+      rest.constructor.RotationYawPitchRoll(euler[1], euler[0], euler[2]));
   }
 }
 
 export function setChaoFace(root, face) {
   if (!root) return false;
   const next = normalizeFace(face);
+  const state = root.metadata?.chaoFace;
+  const defaultEye = state?.defaultEye ?? 0;
+  const eyeColour = state?.eyeColour ?? 'normal';
   const parts = faceParts(root);
-  const scene = root.getScene();
-  const texture = eyeTexture(scene, next.eye);
-  if (texture) {
-    for (const mesh of parts.eyes) if (mesh.material && 'albedoTexture' in mesh.material) {
-      if (!mesh.metadata?.chaoFaceOwnMaterial) {
-        mesh.material = mesh.material.clone(`${mesh.material.name}-face`);
-        mesh.metadata = { ...(mesh.metadata || {}), chaoFaceOwnMaterial: true };
-        (root.metadata.ownedMaterials ||= []).push(mesh.material);
-      }
-      mesh.material.albedoTexture = texture;
+  const texture = eyeTexture(root.getScene(), eyeTextureIndex(next.eye === 0 ? defaultEye : next.eye, eyeColour));
+  if (texture) for (const mesh of parts.eyes) if ('albedoTexture' in mesh.material) {
+    if (!mesh.metadata?.chaoFaceOwnMaterial) {
+      mesh.material = mesh.material.clone(`${mesh.material.name}-face`);
+      mesh.metadata = { ...(mesh.metadata || {}), chaoFaceOwnMaterial: true };
+      (root.metadata.ownedMaterials ||= []).push(mesh.material);
     }
+    mesh.material.albedoTexture = texture;
   }
-  for (const [mouth, meshes] of parts.mouths) for (const mesh of meshes) mesh.setEnabled(mouth === next.mouth);
-  applyEyelids(parts, next.eyelid);
-  root.metadata.chaoFace = next;
+  // Mouth texture list is unresolved: keep the original mouth parts hidden.
+  for (const node of parts.mouths) node.setEnabled(false);
+  const lids = state?.lids || { lid: 0, slope: 0, blink: 0, blinkPhase: 'wait', blinkTimer: 100 };
+  root.metadata.chaoFace = { ...next, defaultEye, eyeColour, lids: { ...lids, eye: next.eye, defaultEye } };
+  applyLids(parts, root.metadata.chaoFace.lids);
   return true;
 }
 
 export function resetChaoFace(root) {
   return setChaoFace(root, DEFAULT_FACE);
+}
+
+// Call once per 60 Hz frame for a visible Chao to run the native lid motion.
+export function stepChaoFace(root, random = Math.random) {
+  const state = root?.metadata?.chaoFace;
+  if (!state) return;
+  state.lids = stepLids(state.lids, random);
+  applyLids(faceParts(root), state.lids);
+}
+
+// Body type decides the eye-colour texture; dark Chao force default eye 10.
+export function configureChaoFace(root, typeName = 'child', heroDark = 0) {
+  const align = typeName.startsWith('hero') ? 'hero' : typeName.startsWith('dark') ? 'dark' : null;
+  const eyeColour = align || (typeName === 'child' && Math.abs(heroDark) >= 0.5 ? (heroDark > 0 ? 'hero' : 'dark') : 'normal');
+  root.metadata = { ...(root.metadata || {}), chaoFace: { ...(root.metadata?.chaoFace || {}), eyeColour, defaultEye: eyeColour === 'dark' && align ? 10 : 0 } };
 }
