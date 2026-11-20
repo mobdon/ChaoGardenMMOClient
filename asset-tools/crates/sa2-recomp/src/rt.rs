@@ -198,7 +198,11 @@ impl Cpu {
             1 => (self.so as u32) << 31 | (self.ca as u32) << 29,
             8 => self.lr,
             9 => self.ctr,
-            268 | 284 => self.tb as u32,
+            268 | 284 => {
+                // Time advances as it is read, so busy-waits on the time base end.
+                self.tb = self.tb.wrapping_add(16);
+                self.tb as u32
+            }
             269 | 285 => (self.tb >> 32) as u32,
             912..=919 => self.gqr[(n - 912) as usize],
             _ => self.spr[n as usize & 1023],

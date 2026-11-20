@@ -15,6 +15,37 @@ static IO: Mutex<BTreeMap<u32, (u64, u64)>> = Mutex::new(BTreeMap::new());
 /// Most recent hardware access, for a stuck report.
 static LAST_IO: Mutex<Option<(u32, bool)>> = Mutex::new(None);
 
+/// Last value written to each hardware register.
+static REGS: Mutex<BTreeMap<u32, u32>> = Mutex::new(BTreeMap::new());
+
+fn io_read(a: u32, _size: u32) -> u32 {
+    io_touch(a, false);
+    let v = REGS.lock().unwrap_or_else(|e| e.into_inner()).get(&a).copied().unwrap_or(0);
+    match a {
+        // DSP control: reset, ARAM/DSP DMA and DSP-init busy bits always
+        // clear, DSP interrupt (0x20) always raised.
+        0xCC00_500A => (v & !0x0E01) | 0x0020,
+        // DSP->CPU mailbox: init both drains it (waits for empty) and waits for
+        // the DSP's reply (full). With no DSP, alternate so either poll ends.
+        0xCC00_5004 => {
+            static FLIP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if FLIP.fetch_xor(true, Relaxed) { v | 0x8000 } else { v & !0x8000 }
+        }
+        // CPU->DSP mailbox: the DSP has always taken the last mail.
+        0xCC00_5000 => v & !0x8000,
+        // Transfers finish at once: EXI channel control (TSTART), SI
+        // communication control, DI control.
+        0xCC00_6800..=0xCC00_6837 if (a - 0xCC00_6800) % 0x14 == 0xC => v & !1,
+        0xCC00_6434 | 0xCC00_6018 => v & !1,
+        _ => v,
+    }
+}
+
+fn io_write(a: u32, _size: u32, v: u32) {
+    io_touch(a, true);
+    REGS.lock().unwrap_or_else(|e| e.into_inner()).insert(a, v);
+}
+
 fn io_touch(a: u32, write: bool) {
     let mut io = IO.lock().unwrap_or_else(|e| e.into_inner());
     let first = !io.contains_key(&a);
@@ -53,7 +84,7 @@ pub fn run(dol_bytes: &[u8], symbols: &str, dispatch: fn(u32) -> Option<Func>, r
     std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(move || {
-            let mut m = Mem { io_read: |a, _| { io_touch(a, false); 0 }, io_write: |a, _, _| io_touch(a, true), ..Mem::default() };
+            let mut m = Mem { io_read, io_write, ..Mem::default() };
             dol.load(&mut m);
             boot_globals(&mut m);
             let mut c = Cpu::default();
