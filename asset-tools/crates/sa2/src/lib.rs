@@ -50,6 +50,7 @@ pub mod land_nodes;
 pub mod land_probe;
 pub mod land_select;
 pub mod manifest;
+pub mod metal_harbor;
 pub mod minimal;
 pub mod model;
 pub mod model_bank;
