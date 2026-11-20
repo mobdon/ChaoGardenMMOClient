@@ -904,6 +904,8 @@ pub enum PlacementClock {
     SuperChargeDraw(Box<SuperChargeDrawFrame>),
     /// Section 1 + 0xd2dc: the super-form player draw routine.
     SuperDraw(Box<SuperDrawFrame>),
+    /// Section 1 + 0xd60c: super-form effects draw (spin, aura, fade, trail).
+    SuperEffects(Box<SuperEffectsFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2678,6 +2680,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperControl(frame) => return super_control(&rel, &frame),
         PlacementClock::SuperChargeDraw(frame) => return super_charge_draw(&rel, &frame),
         PlacementClock::SuperDraw(frame) => return super_draw(&rel, &frame),
+        PlacementClock::SuperEffects(frame) => return super_effects(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -4470,4 +4473,183 @@ fn super_draw(rel: &crate::city_rel::CityRel<'_>, f: &SuperDrawFrame) -> Result<
         serde_json::json!([f.restore_mode as i32 as u32]),
     )?);
     Ok(serde_json::json!({"events":ev,"drawn":true}))
+}
+
+/// Inputs to section 1 + 0xd60c. `spin_models` are word 4 of the engine
+/// 0x801e6288 entries at 0xbf4/0xc14/0xc04/0xc24 (odd frames) or
+/// 0xbfc/0xc1c/0xc0c/0xc2c (even frames), in draw order. `aura_halfword`
+/// is module halfword section 5 + 0x3c9b6 before the update.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperEffectsFrame {
+    pub entity: u32,
+    pub player: u32,
+    pub active_player: i8,
+    pub global_42: i8,
+    pub global_43: i8,
+    pub frame: u32,
+    pub slot: i8,
+    pub character: i8,
+    pub pose: i16,
+    pub counter_35c: i8,
+    pub word_370: u32,
+    pub entity_flags: i16,
+    pub rotation: [i32; 3],
+    pub aura_halfword: u16,
+    #[serde(default)]
+    pub spin_models: [u32; 4],
+}
+/// Section 1 + 0xd60c: effects drawn around the active super form. A spin
+/// of four models for character 10 in poses 8-10; an aura (pose 100) whose
+/// texture frame follows player byte 0x35c; after frame 14400 a fade that
+/// brightens 40 module material colors; and the boost trail (entity flag
+/// 0x400), turned by the boost pose. Module addresses are reported as
+/// "88:SECTION+OFFSET"; material colors are read from the module data.
+fn super_effects(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperEffectsFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let k = |site: usize| stage_f32(rel, site, 4, 0);
+    let sym = |section: u8, offset: u32| format!("88:{section}+{offset:#x}");
+    let mut ev = Vec::new();
+    if f.active_player != f.slot && f.global_42 != 1 {
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    let (e, frame) = (f.entity, f.frame);
+    let rot_y = 0x8000i32.wrapping_sub(f.rotation[1]) as u32;
+    ev.push(call(0xd66c, serde_json::json!([f.word_370]))?);
+    ev.push(call(0xd670, serde_json::json!([]))?);
+    if f.character == 10 && (f.pose as u16).wrapping_sub(8) <= 2 {
+        let angle = (frame & 31) << 11;
+        ev.push(call(0xd6a8, serde_json::json!([angle]))?);
+        ev.push(call(0xd6b8, serde_json::json!([angle]))?);
+        ev.push(call(0xd6bc, serde_json::json!([]))?);
+        for (i, (matrix, place, draw)) in [
+            (0x5d4u32, 0xd6f8u32, 0xd700u32),
+            (0x5a4, 0xd73c, 0xd744),
+            (0x634, 0xd780, 0xd788),
+            (0x604, 0xd7c4, 0xd7cc),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            ev.push(call(place, serde_json::json!([0, sym(6, matrix)]))?);
+            ev.push(call(draw, serde_json::json!([f.spin_models[i]]))?);
+        }
+        ev.push(call(0xd7d0, serde_json::json!([]))?);
+    }
+    ev.push(call(0xd7d8, serde_json::json!([e + 0x14]))?);
+    ev.push(call(0xd7e4, serde_json::json!([0, f.rotation[2] as u32]))?);
+    ev.push(call(0xd7f0, serde_json::json!([0, f.rotation[0] as u32]))?);
+    ev.push(call(0xd808, serde_json::json!([0, rot_y]))?);
+    ev.push(call(0xd810, serde_json::json!([e + 0x20]))?);
+    let flags = |fl: &[f32]| serde_json::json!(fl);
+    let mut aura = f.aura_halfword;
+    let mut colored = Vec::new();
+    if f.pose == 100 {
+        ev.push(call(0xd828, serde_json::json!([sym(5, 0x3c9a0)]))?);
+        let extra = if f.character == 10 { 6 } else { 0 };
+        let low = (f.counter_35c as i32 + extra + 3) as u16;
+        aura = (aura & 0xc000) | low;
+        ev.push(
+            serde_json::json!({"site":0xd870,"store":"module","offset":sym(5, 0x3c9b6),
+            "size":2,"value":aura}),
+        );
+        ev.push(call(0xd874, serde_json::json!([]))?);
+        let mut c = call(0xd898, serde_json::json!([0]))?;
+        c["floats"] = flags(&[k(0xd87e)?, k(0xd88a)?, k(0xd87e)?]);
+        ev.push(c);
+        ev.push(call(0xd8a4, serde_json::json!([sym(5, 0x3d144)]))?);
+        ev.push(call(0xd8a8, serde_json::json!([]))?);
+    } else if f.entity_flags & 0x400 == 0 && f.global_43 != 1 {
+        // Fade-in after frame 14400: (frame - 14400) * 255 / 18000 + 128.
+        let x = (frame as i32).wrapping_sub(14400).wrapping_mul(255);
+        let hi = ((0x7482296bi64 * x as i64) >> 32) as i32;
+        let q = (hi >> 13) + ((hi >> 13) as u32 >> 31) as i32;
+        let color = if q <= 0 {
+            0u32
+        } else if q + 0x80 > 255 {
+            u32::MAX
+        } else {
+            let v = (q + 0x80) as u32;
+            v | v << 8 | v << 16 | v << 24
+        };
+        if color != 0 {
+            let source = rel.data(5)?;
+            for i in 0..49u32 {
+                let at = 0x3eb2c + 0x14 + 16 * i as usize;
+                let w = u32::from_be_bytes(source[at..at + 4].try_into().unwrap());
+                if w >> 24 == 0xff {
+                    colored.push(i);
+                    ev.push(serde_json::json!({"site":fade_site(i),"store":"module",
+                        "offset":sym(5, 0x3d450 + 0x14 + 16 * i),"size":4,"value":color}));
+                }
+            }
+            ev.push(call(0xda78, serde_json::json!([sym(5, 0x3c9a0)]))?);
+            ev.push(call(
+                0xda90,
+                serde_json::json!([sym(5, 0x3d76c), sym(5, 0x3d9b0), frame]),
+            )?);
+            ev.push(call(0xda94, serde_json::json!([]))?);
+            ev.push(call(0xda98, serde_json::json!([]))?);
+            ev.push(call(0xdaa0, serde_json::json!([f.player + 0x218]))?);
+            ev.push(call(0xdab0, serde_json::json!([0, 0xd800]))?);
+            for (site, a, b) in [
+                (0xdad4u32, 0xdabausize, 0xdac6usize),
+                (0xdaf8, 0xdade, 0xdaea),
+                (0xdb14, 0xdaba, 0xdb06),
+            ] {
+                let mut c = call(site, serde_json::json!([0]))?;
+                c["floats"] = flags(&[k(a)?, k(b)?, k(a)?]);
+                ev.push(c);
+            }
+            ev.push(call(0xdb20, serde_json::json!([sym(5, 0x3d784)]))?);
+        }
+    }
+    ev.push(call(0xdb24, serde_json::json!([]))?);
+    if f.entity_flags & 0x400 != 0 {
+        ev.push(call(0xdb38, serde_json::json!([]))?);
+        ev.push(call(0xdb44, serde_json::json!([sym(5, 0x3c9a0)]))?);
+        ev.push(call(0xdb4c, serde_json::json!([f.player + 0x230]))?);
+        ev.push(call(0xdb58, serde_json::json!([0, f.rotation[2] as u32]))?);
+        ev.push(call(0xdb64, serde_json::json!([0, f.rotation[0] as u32]))?);
+        ev.push(call(0xdb7c, serde_json::json!([0, rot_y]))?);
+        ev.push(call(0xdb84, serde_json::json!([e + 0x20]))?);
+        let trail = match f.character {
+            9 => Some((0xdbbcu32, 0x3e07cu32, 0x3e25cu32)),
+            10 => Some((0xdbf0, 0x3e928, 0x3eb08)),
+            _ => None,
+        };
+        let (site, model, list) =
+            trail.ok_or_else(|| Error::invalid("boost trail needs character 9 or 10"))?;
+        let texture = rel
+            .local_pointer(5, model + 4)?
+            .ok_or_else(|| Error::invalid("missing trail texture pointer"))?;
+        ev.push(call(
+            site,
+            serde_json::json!([sym(texture.0, texture.1), sym(5, list), frame]),
+        )?);
+        let turn = match f.pose {
+            p if p >= 98 => None,
+            p if p >= 96 => Some((0xdc68, 0x105b)),
+            p if p >= 94 => Some((0xdc58, 0xf4a0)),
+            p if p >= 92 => Some((0xdc44, 0x4000)),
+            p if p >= 90 => Some((0xdc34, 0xc000)),
+            _ => None,
+        };
+        if let Some((site, z)) = turn {
+            ev.push(call(site, serde_json::json!([0, z]))?);
+        }
+        ev.push(call(0xdc70, serde_json::json!([sym(5, model)]))?);
+        ev.push(call(0xdc74, serde_json::json!([]))?);
+    }
+    Ok(serde_json::json!({"events":ev,"aura_halfword":aura,"faded_materials":colored}))
+}
+/// Store site for material `i`: the fade loop at 0xd974 is unrolled seven
+/// times and runs seven times, so sites repeat every seven materials.
+fn fade_site(i: u32) -> u32 {
+    [0xd988, 0xd9a8, 0xd9cc, 0xd9f0, 0xda14, 0xda38, 0xda5c][(i % 7) as usize]
 }

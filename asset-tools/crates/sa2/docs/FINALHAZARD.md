@@ -23,6 +23,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `super_control` | 0xbad0 | Super-form hit reaction and action selection |
 | `super_charge_draw` | 0xc67c | Action-67 charge effect draw call |
 | `super_draw` | 0xd2dc | Super-form player draw routine |
+| `super_effects` | 0xd60c | Super-form effects: spin, aura, fade and boost trail |
 
 ## Handoff camera
 
@@ -189,6 +190,13 @@ player word 0x19c as the model. Action 54 uses the player's 0xbc model with the 
 0x803ad544. The draw state is restored at the end. Module and code addresses in arguments are
 written as "88:SECTION+OFFSET". The callbacks 0xc77c and 0xccf8 are not ported.
 
+`super_effects` reproduces 0xd60c, the second draw routine. Character 10 in poses 8–10 draws four
+spinning models, alternating engine models by frame parity. Pose 100 draws an aura whose texture
+frame (module halfword section 5 + 0x3c9b6) follows player byte 0x35c. Otherwise, after frame
+14400, a fade sets 40 module material colours to grey (frame − 14400) × 255 / 18000 + 128. The 40
+materials are the entries whose source colour in the module data has alpha 0xff. While boosting
+(entity flag 0x400), a trail is drawn and turned by the boost pose (90/92/94/96).
+
 ## Verification
 
 With a Python environment that has Unicorn 2, run each test as
@@ -206,6 +214,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_super_control_ppc.py` | 4,000 action-selection updates across every dispatched action, hit states and button tables |
 | `tests/finalhazard_super_charge_draw_ppc.py` | 500 charge-effect draws with filled engine tables |
 | `tests/finalhazard_super_draw_ppc.py` | 800 draws: active and inactive players, both characters, effect swap, action 54, pose modes |
+| `tests/finalhazard_super_effects_ppc.py` | 1,500 effect draws across spin, aura, fade (frame boundaries) and trail poses |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
