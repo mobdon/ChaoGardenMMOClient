@@ -214,6 +214,7 @@ mod tests {
         cases: Vec<Case>,
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_static_probes() {
         check_reference(None);
@@ -228,7 +229,7 @@ mod tests {
 
     fn check_reference(tables: Option<&ResponseTables>) {
         let reference: Reference =
-            serde_json::from_str(include_str!("../../tests/collision-vectors.json")).unwrap();
+            serde_json::from_str(vectors!("collision-vectors.json")).unwrap();
         let tiles = [0; 512];
         let angles: [u8; 64] = std::array::from_fn(|i| (i as u8).wrapping_mul(73).wrapping_add(11));
         for (
@@ -787,8 +788,7 @@ fn original_flipper_masks() {
     let count = |group: usize| usize::from(*lut.frames[group].iter().max().unwrap()) + 1;
     let main = mk_mask(0, count(0));
     let extra = mk_mask(1, count(1).max(count(2)));
-    let reference: Reference =
-        serde_json::from_str(include_str!("../../tests/collision-vectors.json")).unwrap();
+    let reference: Reference = serde_json::from_str(vectors!("collision-vectors.json")).unwrap();
     let check = |index: usize,
                  table: u16,
                  origins: [[i16; 2]; 4],
@@ -1056,8 +1056,7 @@ fn original_dynamic_maps() {
     }
     let rom = std::fs::read(std::env::var_os("A3VE_ROM").expect("set A3VE_ROM")).unwrap();
     let regions = MapRegions::from_rom(&rom).unwrap();
-    let reference: Reference =
-        serde_json::from_str(include_str!("../../tests/collision-vectors.json")).unwrap();
+    let reference: Reference = serde_json::from_str(vectors!("collision-vectors.json")).unwrap();
     for (index, Case(table, layer, gate, flags, point, pointers, after, stride)) in
         reference.dynamic.into_iter().enumerate()
     {

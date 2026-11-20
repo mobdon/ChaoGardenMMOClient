@@ -100,10 +100,11 @@ impl SoundRouting {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_request_and_status_cases() {
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/sound-vectors.json")).unwrap();
+            serde_json::from_str(vectors!("sound-vectors.json")).unwrap();
         let bank = SoundBank {
             players: std::array::from_fn(|i| fixture["players"][i].as_u64().unwrap() as u32),
             headers: std::array::from_fn(|i| fixture["headers"][i].as_u64().unwrap() as u32),

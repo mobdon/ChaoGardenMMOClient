@@ -19,10 +19,22 @@ use crate::{
     goal_ring,
     iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
     ninja_trig::{nj_rotate_sin_cos, nj_sin},
-    play_objects::{collision_rows, death_zone_triangles, place_y, read_object_solid},
+    play_objects::{
+        collision_rows, death_zone_triangles, place_y, read_object_solid, CollisionRow,
+    },
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
-    prison_doors::{enemy_counts, DoorSound, Enemy, PrisonDoor},
+    prison_doors::{
+        enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
+        WALL_ROW_COUNT,
+    },
+    chao_pipe::{ChaoPipe, PipeEvent},
+    effect_emitter::{EffectEmitter, Emission},
+    ori::{Ori, OriEvent},
+    rocket::{Rocket, RocketEvent, RocketInputs},
+    solid_box::{collapse_above, SolidBox, SolidBoxEvent, NO_GROUND},
+    prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
+    prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -48,11 +60,13 @@ pub struct StageRules {
     /// Objects whose solidity is CollisionData rows in the stage module's
     /// section 5: (object-list name, row offset, row count).
     pub collision_boxes: &'static [(&'static str, u32, usize)],
-    /// Build CCUBE placements as solid boxes (rule read from this stage's module).
-    pub invisible_cubes: bool,
+    /// Invisible shapes whose sizes are 10 + Scale (helper 0x11B30 /
+    /// 0x16F94): (object-list name, CollisionData row in section 5).
+    pub invisible_cubes: &'static [(&'static str, u32)],
     /// Expand RING_LINEAR placements into collectable rings.
     pub ring_lines: bool,
-    /// Run enemy group counts and CAGED doors (rules read from stg09D.rel).
+    /// Run enemy group counts and the cell doors (`DOOR_KINDS`, rules read
+    /// from stg09D.rel).
     pub prison_doors: bool,
     pub death_zone_config: &'static str,
 }
@@ -75,7 +89,9 @@ pub const IRON_GATE: StageRules = StageRules {
         ("CONTWOOD", 0x666c8, 1),
         ("MECHA", 0x51198, 1),
     ],
-    invisible_cubes: false,
+    // stg11D.rel 0x17140: CCUBE registers sec5+0x5E5B0 (form 3, attr 0x2000);
+    // its size helper 0x16F94 adds Scale to 10 (sec4+0x7D0).
+    invisible_cubes: &[("CCUBE", 0x5e5b0)],
     ring_lines: false,
     prison_doors: false,
     death_zone_config: DEATH_ZONE_CONFIG,
@@ -99,14 +115,22 @@ pub const PRISON_LANE: StageRules = StageRules {
         ("FENCES", 0x3c54c, 1),
         ("FENCEL", 0x3c57c, 3),
         ("CONTIRON", 0x52a18, 1),
+        // ROLL (0x53FC): one form 2 row at sec5+0x43A84; its exec only
+        // spins the model.
+        ("ROLL", 0x43a84, 1),
         // CONTCHAO (0x18E1C): the same cube row; breaking is not run.
         ("CONTCHAO", 0x51d20, 1),
         // CONTWOOD (0x1A3A4): the same cube row; breaking is not run.
         ("CONTWOOD", 0x53a08, 1),
         // MECHA (0x527C): exec only runs its collision (0x8000F4EC).
         ("MECHA", 0x41db4, 1),
+        // TANK (0x5D7C): its row at sec5+0x47848 is an upright cylinder
+        // (form 1); breaking it and its two child tasks need player attacks.
+        ("TANK", 0x47848, 1),
     ],
-    invisible_cubes: true,
+    // SPHERE 0x11B94 (sec5+0x4C020, form 0), CCYL 0x11C38 (+0x4C050,
+    // form 1), CCUBE 0x11CDC (+0x4C080, form 3).
+    invisible_cubes: &[("CCUBE", 0x4c080), ("SPHERE", 0x4c020), ("CCYL", 0x4c050)],
     ring_lines: true,
     prison_doors: true,
     death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
@@ -115,7 +139,6 @@ pub const PRISON_LANE: StageRules = StageRules {
 pub const RING_PICKUP_DISTANCE: f32 = 14.0;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
-const CCUBE_VA: u32 = 0x6e54e0;
 /// stg09D.rel 0x11B30 (shared by SPHERE, CCYL, CCUBE, CWALL): each of the
 /// shape's a, b, c sizes is 10 (sec4+0x6B0) plus the matching Scale
 /// component. CCUBE's CollisionData (sec5+0x4C080) is form 3, centre 0.
@@ -133,8 +156,16 @@ const FRAME_RATE: f32 = 60.0;
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSample {
-    /// Collision centre (feet plus the PhysicsArray center_height).
+    /// Collision centre (feet plus the PhysicsArray center_height); the
+    /// range test 0x800398D8 reads it.
     pub center: V3,
+    /// The player task's position (twp +0x14), which CAM aims at.
+    pub position: V3,
+    /// The player task's Action byte (twp +0), which CHAOPIPE reads.
+    pub action: u8,
+    /// The player task's Status has bit 0 or 1 (on the ground), which the
+    /// rocket's stand test reads.
+    pub grounded: bool,
     /// The engine's "player standing on this object" answer, as an index
     /// into `Session::movers`.
     pub standing_on: Option<usize>,
@@ -142,6 +173,9 @@ pub struct PlayerSample {
     /// (an index into `Session::goals`); the player's own collision shape
     /// and the CCL test are main-program code.
     pub touching_goal: Option<usize>,
+    /// A security camera lens (an index into `Session::cams`) whose
+    /// collision the engine reports hit by the player's attack this frame.
+    pub hit_cam_lens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -167,6 +201,40 @@ pub enum Event {
     /// A CAGED door reached its open stop (sound 0x1021).
     DoorOpened {
         door: usize,
+    },
+    /// A WALL gate started to drop (no resting elevator near).
+    WallDropping {
+        wall: usize,
+    },
+    /// A security camera was destroyed (sound 0x14).
+    CamDestroyed {
+        cam: usize,
+        explosion: CamExplosion,
+    },
+    /// An EFFOBJ0 emitter spawned an effect.
+    Effect {
+        emitter: usize,
+        emission: Emission,
+    },
+    /// A CHAOPIPE requested the pipe action or released a chao.
+    Pipe {
+        pipe: usize,
+        event: PipeEvent,
+    },
+    /// A ROCKETMISSSILE armed, puffed, flew, linked or exploded.
+    Rocket {
+        rocket: usize,
+        event: RocketEvent,
+    },
+    /// An ORI cage block was hit, collapsed its stack, threw debris or went.
+    Ori {
+        ori: usize,
+        event: OriEvent,
+    },
+    /// A SOLIDBOX landed near its ground and raised dust.
+    SolidBox {
+        solid_box: usize,
+        event: SolidBoxEvent,
     },
     GoalContact {
         layer: usize,
@@ -319,12 +387,127 @@ pub fn rotate_xyz(v: V3, angles: [i32; 3]) -> V3 {
     [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
 }
 
-/// Whether a CCUBE's box is the same however its rotation is applied:
-/// whether CollisionData form 3 uses the task rotation at all is not read,
-/// so only boxes with no X/Z rotation and a yaw of 0 or 0x8000 (a half turn
-/// maps a centred box onto itself) are built.
-pub fn cube_rotation_is_exact(rotation: [u16; 3]) -> bool {
-    rotation[0] == 0 && rotation[2] == 0 && rotation[1] & 0x7fff == 0
+/// Matrix rotate Y, Z, X (attribute 0x200 order): the point turns about X,
+/// then Z, then Y.
+fn rotate_yzx(v: V3, angles: [i32; 3]) -> V3 {
+    let (sx, cx) = nj_rotate_sin_cos(angles[0]);
+    let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
+    let (sz, cz) = nj_rotate_sin_cos(angles[2]);
+    let v = [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]];
+    let (sy, cy) = nj_rotate_sin_cos(angles[1]);
+    [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy]
+}
+
+/// World centre of a CollisionData row (GSNE8P 0x8000EAA0 / 0x8000EB90):
+/// with attribute 0x20 the row centre is a world point; otherwise it is
+/// moved by translate(position) and, unless attribute 0x8000 is set, the
+/// task rotation (rotate Y, Z, X with attribute 0x200, else Z, X, Y).
+pub fn ccl_center(position: V3, rotation: [u16; 3], row: &CollisionRow) -> V3 {
+    let angles = rotation.map(|r| i32::from(r as i16));
+    if row.attr & 0x20 != 0 {
+        row.center
+    } else if row.attr & 0x8000 != 0 {
+        add(position, row.center)
+    } else if row.attr & 0x200 != 0 {
+        add(position, rotate_yzx(row.center, angles))
+    } else {
+        add(position, rotate_zxy(row.center, angles))
+    }
+}
+
+/// Unit axis of an oriented shape (GSNE8P 0x8000E960): (0, 1, 0) through the
+/// row's own angles and then, unless attribute 0x20 or 0x8000 is set, the
+/// task rotation, both in the attribute's order (Y, Z, X with 0x200, else
+/// Z, X, Y), as a vector (0x801154EC ignores translation).
+pub fn ccl_axis(rotation: [u16; 3], row: &CollisionRow) -> V3 {
+    let task = rotation.map(|r| i32::from(r as i16));
+    let own = row.angles.map(|a| a as i32);
+    let turn = |v: V3, a: [i32; 3]| {
+        if row.attr & 0x200 != 0 {
+            rotate_yzx(v, a)
+        } else {
+            rotate_zxy(v, a)
+        }
+    };
+    let v = turn([0.0, 1.0, 0.0], own);
+    if row.attr & 0x20 != 0 || row.attr & 0x8000 != 0 {
+        v
+    } else {
+        turn(v, task)
+    }
+}
+
+/// A round collision shape, kept analytic (GSNE8P CCL pair tests).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(tag = "form", rename_all = "camelCase")]
+pub enum RoundShape {
+    /// Form 0: radius a.
+    Sphere { center: V3, radius: f32 },
+    /// Form 1 (0x8000A054): upright; radius a, half height b about the centre.
+    Cylinder {
+        center: V3,
+        radius: f32,
+        half_height: f32,
+    },
+    /// Form 2 (0x8000987C): the segment centre +/- b * axis, radius a.
+    Capsule { a: V3, b: V3, radius: f32 },
+}
+
+/// The round shape for a form 0, 1 or 2 row with sizes `size`.
+pub fn ccl_round_shape(
+    position: V3,
+    rotation: [u16; 3],
+    row: &CollisionRow,
+    size: [f32; 2],
+) -> Option<RoundShape> {
+    let center = ccl_center(position, rotation, row);
+    match row.form {
+        0 => Some(RoundShape::Sphere {
+            center,
+            radius: size[0],
+        }),
+        1 => Some(RoundShape::Cylinder {
+            center,
+            radius: size[0],
+            half_height: size[1],
+        }),
+        2 => {
+            let axis = ccl_axis(rotation, row);
+            let d = [axis[0] * size[1], axis[1] * size[1], axis[2] * size[1]];
+            Some(RoundShape::Capsule {
+                a: sub(center, d),
+                b: add(center, d),
+                radius: size[0],
+            })
+        }
+        _ => None,
+    }
+}
+
+/// World triangles of a CollisionData form 3 box, as the GameCube CCL
+/// places it (GSNE8P main.dol).
+///
+/// * Centre (0x8000EAA0): with attribute 0x20 the row centre is used as a
+///   world point; otherwise it is transformed by translate(position) and,
+///   unless attribute 0x8000 is set, the task rotation: rotate Y, Z, X with
+///   attribute 0x200, else rotate Z, X, Y.
+/// * Orientation (box tests such as 0x800090E8): the relative vector is
+///   turned by njRotateY(-(Rotation.y + row angle Y)), so the box is aligned
+///   to that yaw only; X and Z rotations do not tilt it.
+pub fn ccl_box_tris(
+    position: V3,
+    rotation: [u16; 3],
+    row: &CollisionRow,
+    half: V3,
+) -> Vec<[V3; 3]> {
+    let angles = rotation.map(|r| i32::from(r as i16));
+    let center = ccl_center(position, rotation, row);
+    let yaw = angles[1].wrapping_add(row.angles[1] as i32);
+    let (s, c) = nj_rotate_sin_cos(yaw);
+    box_tris(half, [0.0; 3])
+        .into_iter()
+        .map(|t| t.map(|v| add(center, [v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c])))
+        .collect()
 }
 
 /// RING_LINEAR (stg09D.rel 0x1B448 with helpers 0x1B1E8 and 0x1B21C): the
@@ -364,8 +547,71 @@ mod ring_line_tests {
         // The arch follows njSin of i * (0x4000 / n).
         let a = ring_line([0.0; 3], [0; 3], [15.5, 4.0, 3.0]);
         assert_eq!(a[1][1], 4.0 * nj_sin(0x1555));
-        assert!(cube_rotation_is_exact([0, 0x8000, 0]));
-        assert!(!cube_rotation_is_exact([0, 0x4000, 0]));
+    }
+
+    #[test]
+    fn round_shapes_follow_the_ccl_rules() {
+        let mut row = CollisionRow {
+            kind: 0,
+            form: 2,
+            push: 0x77,
+            damage: 0,
+            attr: 0,
+            center: [0.0, 42.0, 0.0],
+            size: [3.0, 60.0, 1.0, 0.0],
+            angles: [0x4000, 0, 0x4000],
+        };
+        // FENCEL's post: (0, 1, 0) turned by its own X then Z quarter turns.
+        let Some(RoundShape::Capsule { a, b, radius }) =
+            ccl_round_shape([0.0; 3], [0; 3], &row, [3.0, 60.0])
+        else {
+            panic!("capsule");
+        };
+        assert_eq!(radius, 3.0);
+        let axis = sub(b, a);
+        assert!((len(axis) - 120.0).abs() < 1e-3);
+        // Own X then Z quarter turns lay the rail along Z, the long side of
+        // FENCEL's box row.
+        assert!(axis[2] > 119.9, "{axis:?}");
+        row.form = 1;
+        assert_eq!(
+            ccl_round_shape([1.0, 2.0, 3.0], [0; 3], &row, [3.0, 60.0]),
+            Some(RoundShape::Cylinder {
+                center: [1.0, 44.0, 3.0],
+                radius: 3.0,
+                half_height: 60.0
+            })
+        );
+    }
+
+    #[test]
+    fn ccl_boxes_turn_with_yaw_and_ignore_tilt() {
+        let row = CollisionRow {
+            kind: 0,
+            form: 3,
+            push: 0x77,
+            damage: 0,
+            attr: 0,
+            center: [0.0, 10.0, 0.0],
+            size: [1.0, 10.0, 30.0, 0.0],
+            angles: [0; 3],
+        };
+        let span = |tris: &[[V3; 3]], k: usize| {
+            let vs = tris.iter().flatten();
+            let lo = vs.clone().map(|v| v[k]).fold(f32::MAX, f32::min);
+            let hi = vs.map(|v| v[k]).fold(f32::MIN, f32::max);
+            hi - lo
+        };
+        let flat = ccl_box_tris([0.0; 3], [0, 0, 0], &row, [1.0, 10.0, 30.0]);
+        assert!((span(&flat, 2) - 60.0).abs() < 1e-3);
+        // A quarter yaw swaps the long side to X.
+        let turned = ccl_box_tris([0.0; 3], [0, 0x4000, 0], &row, [1.0, 10.0, 30.0]);
+        assert!((span(&turned, 0) - 60.0).abs() < 1e-3);
+        // A Z tilt moves the centre but does not tilt the box.
+        let tilted = ccl_box_tris([0.0; 3], [0, 0, 0x4000], &row, [1.0, 10.0, 30.0]);
+        assert!((span(&tilted, 1) - 20.0).abs() < 1e-3);
+        let cx = tilted.iter().flatten().map(|v| v[0]).sum::<f32>() / 36.0;
+        assert!((cx + 10.0).abs() < 1e-3, "{cx}");
     }
 }
 
@@ -453,6 +699,49 @@ pub struct Session {
     #[serde(skip)]
     pub group_counts: [u8; 256],
     pub doors: Vec<PrisonDoor>,
+    pub walls: Vec<ElevatorWall>,
+    #[serde(skip)]
+    wall_rows: Vec<CollisionRow>,
+    pub sirens: Vec<Siren>,
+    pub cams: Vec<SecurityCamera>,
+    pub emitters: Vec<EffectEmitter>,
+    pub pipes: Vec<ChaoPipe>,
+    pub solid_boxes: Vec<SolidBox>,
+    pub oris: Vec<Ori>,
+    pub rockets: Vec<Rocket>,
+    /// The switch bytes (PC 0x802B95E0 + id): bit 0 on, bit 1 changed.
+    #[serde(skip)]
+    pub switches: [u8; 256],
+    /// Host-reported: the rocket child's collision hit this frame.
+    #[serde(skip)]
+    pub rocket_child_hits: Vec<usize>,
+    /// sec6+0xD34: ORI breaks so far (picks the 0x1011 sound variant).
+    pub ori_breaks: u32,
+    /// Host-reported hits for next frame: the attack query 0x800060EC(task,
+    /// 0x13) per ORI, and a rocket's position when it links to an ORI.
+    #[serde(skip)]
+    pub ori_attacks: Vec<usize>,
+    #[serde(skip)]
+    pub ori_rockets: Vec<(usize, V3)>,
+    #[serde(skip)]
+    solid_box_row: Option<CollisionRow>,
+    /// fn_80067AF0 (`land_probe::ground_height`) at a point, for SOLIDBOX.
+    /// The host supplies it from its land collision; without it the boxes
+    /// see no ground.
+    #[serde(skip)]
+    pub ground_probe: Option<Box<dyn Fn(V3) -> f32>>,
+    /// The byte at GSNE8P 0x801CC168 + 0x37 that stops EFFOBJ0 emitting;
+    /// the host sets it.
+    pub effects_suppressed: bool,
+    pub fluos: Vec<Fluo>,
+    pub searchlights: Vec<Searchlight>,
+    pub sound_emitters: Vec<SoundEmitter>,
+    /// MSL rand state the visual objects draw from (seed 1).
+    pub rand: MslRand,
+    /// Round collision shapes (forms 0-2), kept analytic.
+    pub shapes: Vec<RoundShape>,
+    #[serde(skip)]
+    door_rows: std::collections::BTreeMap<&'static str, Vec<CollisionRow>>,
     /// Placements whose native behavior this session does not run.
     pub unimplemented: std::collections::BTreeMap<String, usize>,
     #[serde(skip)]
@@ -518,6 +807,40 @@ impl Session {
             .iter()
             .map(|&(n, rva)| Ok((n, read_object_solid(src.exe, rva)?)))
             .collect::<Result<Vec<_>>>()?;
+        let sized_rows = rules
+            .invisible_cubes
+            .iter()
+            .map(|&(n, offset)| {
+                Ok((
+                    n,
+                    collision_rows(src.stage_module, rules.movers.module_file, offset, 1)?
+                        .remove(0),
+                ))
+            })
+            .collect::<Result<Vec<(&str, CollisionRow)>>>()?;
+        let mut shapes = vec![];
+        let mut door_rows = std::collections::BTreeMap::new();
+        let wall_rows = if rules.prison_doors {
+            collision_rows(
+                src.stage_module,
+                rules.movers.module_file,
+                WALL_ROWS,
+                WALL_ROW_COUNT,
+            )?
+        } else {
+            vec![]
+        };
+        if rules.prison_doors {
+            for k in DOOR_KINDS {
+                let rows = collision_rows(
+                    src.stage_module,
+                    rules.movers.module_file,
+                    k.rows,
+                    k.row_count,
+                )?;
+                door_rows.insert(k.name, rows);
+            }
+        }
         let collision_boxes = rules
             .collision_boxes
             .iter()
@@ -537,6 +860,24 @@ impl Session {
         let mut springs = vec![];
         let mut enemies: Vec<Enemy> = vec![];
         let mut doors = vec![];
+        let mut walls = vec![];
+        let mut sirens = vec![];
+        let mut cams = vec![];
+        let mut emitters = vec![];
+        let mut pipes = vec![];
+        let mut solid_boxes = vec![];
+        let mut oris = vec![];
+        let mut rockets = vec![];
+        // stg09D.rel sec5+0x8E484: SOLIDBOX's cube row.
+        let solid_box_row = if rules.prison_doors {
+            Some(collision_rows(src.stage_module, rules.movers.module_file, 0x8e484, 1)?.remove(0))
+        } else {
+            None
+        };
+        let mut fluos = vec![];
+        let mut searchlights = vec![];
+        let mut sound_emitters = vec![];
+        let mut rand = MslRand::default();
         let mut unimplemented = std::collections::BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -569,7 +910,7 @@ impl Session {
                         taken: false,
                     }),
                     (RING_LINEAR_VA, "RING_LINEAR") if rules.ring_lines => {
-                        let angles = pl.rotation.map(i32::from);
+                        let angles = pl.rotation.map(|r| i32::from(r as i16));
                         for position in ring_line(pl.position, angles, pl.parameters) {
                             rings_placed.push(Pickup {
                                 layer: li,
@@ -610,7 +951,7 @@ impl Session {
                         } else {
                             SpringKind::B
                         };
-                        let angles = pl.rotation.map(i32::from);
+                        let angles = pl.rotation.map(|r| i32::from(r as i16));
                         let task = StageSpring::new(kind, pl.position, angles, pl.parameters);
                         let out = rotate_zxy([0.0, 5.0 + pl.parameters[1], 0.0], angles);
                         springs.push(Spring {
@@ -621,18 +962,111 @@ impl Session {
                             out,
                         });
                     }
-                    (_, "CAGED") if rules.prison_doors => doors.push(PrisonDoor {
+                    (_, "SIREN") if rules.prison_doors => {
+                        // stg09D.rel 0x5A30: radius-5 sphere at sec5+0x45858.
+                        sirens.push(Siren::new(li, p.placement_index, pl.position, &mut rand));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: SIREN_RADIUS,
+                        });
+                    }
+                    (_, "CAM") if rules.prison_doors => {
+                        // stg09D.rel 0x2450: the body's radius-8.5 sphere
+                        // (sec5+0x3A7C4); the lens sphere stays on the camera.
+                        cams.push(SecurityCamera::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation[1],
+                        ));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: CAM_RADIUS,
+                        });
+                    }
+                    (_, "ROCKETMISSSILE") if rules.prison_doors => rockets.push(Rocket::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters,
+                    )),
+                    (_, "ORI") if rules.prison_doors => {
+                        oris.push(Ori::new(li, p.placement_index, pl.position, pl.rotation))
+                    }
+                    (_, "SOLIDBOX") if rules.prison_doors => solid_boxes.push(SolidBox::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation[1],
+                    )),
+                    (_, "CHAOPIPE") if rules.prison_doors => {
+                        pipes.push(ChaoPipe::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation,
+                            pl.parameters,
+                        ));
+                        // Its CollisionData (sec5+0x51574) is form 6, which
+                        // this crate does not build.
+                        *unimplemented
+                            .entry("CHAOPIPE collision (form 6)".to_string())
+                            .or_insert(0) += 1;
+                    }
+                    (_, "EFFOBJ0") if rules.prison_doors => emitters.push(EffectEmitter::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters,
+                    )),
+                    (_, "SEARCHLIGHT") if rules.prison_doors => searchlights.push(Searchlight {
                         layer: li,
                         index: p.placement_index,
                         position: pl.position,
                         yaw: pl.rotation[1],
-                        group: (pl.rotation[0] & 0xff) as u8,
-                        speed: pl.parameters[0],
-                        positive: pl.rotation[2] & 1 != 0,
-                        state: 0,
-                        slide: 0.0,
-                        velocity: 0.0,
+                        speed: u32::from(pl.rotation[0]),
+                        phase: 0,
                     }),
+                    (_, "SE") if rules.prison_doors => sound_emitters.push(SoundEmitter::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation[0],
+                    )),
+                    (_, "FLUO") if rules.prison_doors => {
+                        // stg09D.rel 0x418C: radius-5 sphere at sec5+0x40504.
+                        fluos.push(Fluo::new(li, p.placement_index, pl.position));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: FLUO_RADIUS,
+                        });
+                    }
+                    (_, "SIGNA") if rules.prison_doors => {
+                        // stg09D.rel 0x58D8: draw only, no state.
+                    }
+                    (_, "WALL") if rules.prison_doors => walls.push(ElevatorWall::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters[0],
+                    )),
+                    (_, n) if rules.prison_doors && DOOR_KINDS.iter().any(|k| k.name == n) => doors
+                        .push(PrisonDoor {
+                            kind: *DOOR_KINDS.iter().find(|k| k.name == n).unwrap(),
+                            layer: li,
+                            index: p.placement_index,
+                            position: pl.position,
+                            rotation: pl.rotation,
+                            group: (pl.rotation[0] & 0xff) as u8,
+                            speed: pl.parameters[0],
+                            positive: pl.rotation[2] & 1 != 0,
+                            state: 0,
+                            slide: 0.0,
+                            velocity: 0.0,
+                        }),
                     (_, n) if rules.prison_doors && enemy_counts(n, pl.parameters).is_some() => {
                         enemies.push(Enemy {
                             layer: li,
@@ -683,19 +1117,21 @@ impl Session {
                             solid,
                         });
                     }
-                    (CCUBE_VA, "CCUBE")
-                        if rules.invisible_cubes && cube_rotation_is_exact(pl.rotation) =>
-                    {
-                        // Invisible cube collision: CollisionData form 3
-                        // centred on the placement; the shared helper sets
-                        // its half-extents to CCUBE_BASE + Scale. Only boxes
-                        // whose shape does not depend on the unread rotation
-                        // rule are built (see `cube_rotation_is_exact`).
+                    (_, n) if sized_rows.iter().any(|(s, _)| *s == n) => {
+                        // Invisible collision: the CollisionData row with
+                        // sizes CCUBE_BASE + Scale (0x11B30).
+                        let (_, row) = sized_rows.iter().find(|(s, _)| *s == n).unwrap();
                         let h = pl.parameters.map(|s| s + CCUBE_BASE);
-                        for t in box_tris(h, [0.0; 3]) {
-                            if let Some(t) = make_tri(t.map(|v| add(v, pl.position)), 1, u32::MAX) {
-                                world.push(t);
+                        if row.form == 3 {
+                            for t in ccl_box_tris(pl.position, pl.rotation, row, h) {
+                                if let Some(t) = make_tri(t, 1, u32::MAX) {
+                                    world.push(t);
+                                }
                             }
+                        } else if let Some(s) =
+                            ccl_round_shape(pl.position, pl.rotation, row, [h[0], h[1]])
+                        {
+                            shapes.push(s);
                         }
                         *unimplemented
                             .entry(format!("{name} (solid only)"))
@@ -726,33 +1162,35 @@ impl Session {
                     (_, n) if collision_boxes.iter().any(|(s, _)| *s == n) => {
                         let (_, rows) = collision_boxes.iter().find(|(s, _)| *s == n).unwrap();
                         for row in rows {
-                            // Form 3 boxes with no row angles, whose shape is
-                            // the same however the placement rotation is
-                            // applied (see `cube_rotation_is_exact`).
-                            let on_axis = row.center[0] == 0.0 && row.center[2] == 0.0;
-                            // A box square in XZ about the Y axis is also
-                            // unchanged by quarter turns.
-                            let quarter = on_axis
-                                && row.size[0] == row.size[2]
-                                && pl.rotation[0] == 0
-                                && pl.rotation[2] == 0
-                                && pl.rotation[1] & 0x3fff == 0;
-                            let exact = row.form == 3
-                                && row.angles == [0; 3]
-                                && (quarter
-                                    || (cube_rotation_is_exact(pl.rotation)
-                                        && (pl.rotation[1] == 0 || on_axis)));
-                            if !exact {
-                                *unimplemented
-                                    .entry(format!("{name} row (form {}): rule not read", row.form))
-                                    .or_insert(0) += 1;
+                            // Form 3 boxes follow `ccl_box_tris`; forms 0-2
+                            // are kept as round shapes.
+                            if row.form != 3 {
+                                match ccl_round_shape(
+                                    pl.position,
+                                    pl.rotation,
+                                    row,
+                                    [row.size[0], row.size[1]],
+                                ) {
+                                    Some(s) => {
+                                        shapes.push(s);
+                                        *unimplemented
+                                            .entry(format!("{name} row (solid only)"))
+                                            .or_insert(0) += 1;
+                                    }
+                                    None => {
+                                        *unimplemented
+                                            .entry(format!(
+                                                "{name} row (form {}): rule not read",
+                                                row.form
+                                            ))
+                                            .or_insert(0) += 1;
+                                    }
+                                }
                                 continue;
                             }
                             let h = [row.size[0], row.size[1], row.size[2]];
-                            for t in box_tris(h, row.center) {
-                                if let Some(t) =
-                                    make_tri(t.map(|v| add(v, pl.position)), 1, u32::MAX)
-                                {
+                            for t in ccl_box_tris(pl.position, pl.rotation, row, h) {
+                                if let Some(t) = make_tri(t, 1, u32::MAX) {
                                     world.push(t);
                                 }
                             }
@@ -760,11 +1198,6 @@ impl Session {
                                 .entry(format!("{name} row (solid only)"))
                                 .or_insert(0) += 1;
                         }
-                    }
-                    (CCUBE_VA, "CCUBE") if rules.invisible_cubes => {
-                        *unimplemented
-                            .entry(format!("{name} (rotated: rotation rule not read)"))
-                            .or_insert(0) += 1;
                     }
                     _ => *unimplemented.entry(name.to_string()).or_insert(0) += 1,
                 }
@@ -813,6 +1246,29 @@ impl Session {
             },
             enemies,
             doors,
+            door_rows,
+            walls,
+            wall_rows,
+            sirens,
+            cams,
+            emitters,
+            pipes,
+            solid_boxes,
+            oris,
+            rockets,
+            switches: [0; 256],
+            rocket_child_hits: vec![],
+            ori_breaks: 0,
+            ori_attacks: vec![],
+            ori_rockets: vec![],
+            solid_box_row,
+            ground_probe: None,
+            effects_suppressed: false,
+            fluos,
+            searchlights,
+            sound_emitters,
+            rand,
+            shapes,
         })
     }
 
@@ -837,8 +1293,95 @@ impl Session {
     }
 
     /// Static terrain plus every mover's solid at its current position.
+    /// A cell door's collision boxes: its CollisionData rows with the centre
+    /// its exec writes this frame, placed by the CCL box rule.
+    pub fn door_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let Some(d) = self.doors.get(i) else {
+            return vec![];
+        };
+        let rows = self
+            .door_rows
+            .get(d.kind.name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        d.live_rows(rows)
+            .iter()
+            .filter(|r| r.form == 3)
+            .flat_map(|r| {
+                ccl_box_tris(d.position, d.rotation, r, [r.size[0], r.size[1], r.size[2]])
+            })
+            .collect()
+    }
+
+    /// A SOLIDBOX's cube at its current position (CCL box rule, yaw only).
+    pub fn solid_box_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let (Some(b), Some(r)) = (self.solid_boxes.get(i), self.solid_box_row.as_ref()) else {
+            return vec![];
+        };
+        ccl_box_tris(b.position, [0, b.yaw, 0], r, [r.size[0], r.size[1], r.size[2]])
+    }
+
+    /// An ORI's cube (sec5+0x7FDF0, the same 20-unit cube) while it stands.
+    pub fn ori_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let (Some(o), Some(r)) = (self.oris.get(i), self.solid_box_row.as_ref()) else {
+            return vec![];
+        };
+        if o.state >= 2 {
+            return vec![];
+        }
+        ccl_box_tris(o.position, [0, o.rotation[1] as u16, 0], r, [r.size[0], r.size[1], r.size[2]])
+    }
+
+    /// 0x92C4, the stack collapse a breaking container or ORI runs at its
+    /// position: every SOLIDBOX and ORI above it within reach gets 20 more to
+    /// fall.
+    /// (Breaking is driven by the walker's attacks, main-program code; the
+    /// containers' own fall is not ported.)
+    pub fn collapse_stack(&mut self, at: V3) -> usize {
+        let mut stack: Vec<_> = self
+            .solid_boxes
+            .iter_mut()
+            .map(|b| (&mut b.position, &mut b.fall, &mut b.drops))
+            .chain(
+                self.oris
+                    .iter_mut()
+                    .filter(|o| o.state < 3)
+                    .map(|o| (&mut o.position, &mut o.fall, &mut o.drops)),
+            )
+            .collect();
+        collapse_above(&mut stack, at)
+    }
+
+    /// A WALL gate's collision boxes with its slide applied to row 1.
+    pub fn wall_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let Some(w) = self.walls.get(i) else {
+            return vec![];
+        };
+        w.live_rows(&self.wall_rows)
+            .iter()
+            .filter(|r| r.form == 3)
+            .flat_map(|r| {
+                ccl_box_tris(w.position, w.rotation, r, [r.size[0], r.size[1], r.size[2]])
+            })
+            .collect()
+    }
+
     pub fn snapshot_world(&self) -> PlayWorld {
         let mut w = self.world.clone();
+        for i in 0..self.walls.len() {
+            for t in self.wall_solid(i) {
+                if let Some(t) = make_tri(t, 1, u32::MAX) {
+                    w.push(t);
+                }
+            }
+        }
+        for i in 0..self.doors.len() {
+            for t in self.door_solid(i) {
+                if let Some(t) = make_tri(t, 1, u32::MAX) {
+                    w.push(t);
+                }
+            }
+        }
         for m in &self.movers {
             let o = m.offset();
             for t in &m.solid.tris {
@@ -886,6 +1429,112 @@ impl Session {
                     .then_some(Event::BridgeStarted { mover: i }),
             };
             events.extend(started);
+        }
+        for s in &mut self.sirens {
+            s.step();
+        }
+        let centres = [player.map(|p| p.center), None];
+        let positions = [player.map(|p| p.position), None];
+        for (i, e) in self.emitters.iter().enumerate() {
+            if let Some(emission) = e.step(self.effects_suppressed, &mut self.rand) {
+                events.push(Event::Effect {
+                    emitter: i,
+                    emission,
+                });
+            }
+        }
+        let probe = self.ground_probe.as_deref();
+        let mut ground = |p: V3| probe.map_or(NO_GROUND, |g| g(p));
+        for (i, b) in self.solid_boxes.iter_mut().enumerate() {
+            if let Some(event) = b.step(&mut ground) {
+                events.push(Event::SolidBox { solid_box: i, event });
+            }
+        }
+        let child_hits = std::mem::take(&mut self.rocket_child_hits);
+        for i in 0..self.rockets.len() {
+            let switches = self.switches;
+            let counts = self.group_counts;
+            let listed: Vec<u32> = self
+                .oris
+                .iter()
+                .filter(|o| o.listed)
+                .map(|o| o.rocket_id())
+                .collect();
+            let switch_on = |id: u32| switches[id as usize] & 1 != 0;
+            let group_clear = |id: u32| counts[id as usize] == 0;
+            let ori_listed = |id: u32| listed.contains(&id);
+            let input = RocketInputs {
+                players: [player.map(|p| (p.position, p.grounded)), None],
+                centres,
+                suppressed: self.effects_suppressed,
+                switch_on: &switch_on,
+                group_clear: &group_clear,
+                ori_listed: &ori_listed,
+                child_hit: child_hits.contains(&i),
+            };
+            for event in self.rockets[i].step(&input, &mut self.rand) {
+                match event {
+                    RocketEvent::Linked { id } => {
+                        let at = self.rockets[i].position;
+                        for (o, ori) in self.oris.iter().enumerate() {
+                            if ori.listed && ori.rocket_id() == id {
+                                self.ori_rockets.push((o, at));
+                            }
+                        }
+                    }
+                    RocketEvent::SwitchOff { id } => {
+                        let s = &mut self.switches[id as usize];
+                        *s = (*s & !1) | 2;
+                    }
+                    _ => {}
+                }
+                events.push(Event::Rocket { rocket: i, event });
+            }
+        }
+        let attacks = std::mem::take(&mut self.ori_attacks);
+        let rockets = std::mem::take(&mut self.ori_rockets);
+        let mut collapses = vec![];
+        for i in 0..self.oris.len() {
+            let rocket = rockets.iter().find(|(o, _)| *o == i).map(|&(_, p)| p);
+            let o = &mut self.oris[i];
+            for event in o.step(
+                rocket,
+                attacks.contains(&i),
+                &mut self.ori_breaks,
+                &mut self.rand,
+                &mut ground,
+            ) {
+                if let OriEvent::Collapse { at } = event {
+                    collapses.push(at);
+                }
+                events.push(Event::Ori { ori: i, event });
+            }
+        }
+        for at in collapses {
+            self.collapse_stack(at);
+        }
+        let actions = [player.map(|p| p.action), None];
+        for (i, pipe) in self.pipes.iter_mut().enumerate() {
+            if let Some(event) = pipe.step(self.character, &centres, &actions) {
+                events.push(Event::Pipe { pipe: i, event });
+            }
+        }
+        for (i, c) in self.cams.iter_mut().enumerate() {
+            let hit = player.and_then(|p| p.hit_cam_lens) == Some(i);
+            if let Some(explosion) = c.step(&centres, &positions, hit) {
+                events.push(Event::CamDestroyed { cam: i, explosion });
+            }
+        }
+        for f in &mut self.fluos {
+            f.step(&mut self.rand);
+        }
+        for s in &mut self.searchlights {
+            s.step();
+        }
+        for (i, w) in self.walls.iter_mut().enumerate() {
+            if w.step(&elevators) {
+                events.push(Event::WallDropping { wall: i });
+            }
         }
         for (i, d) in self.doors.iter_mut().enumerate() {
             let was = d.state;

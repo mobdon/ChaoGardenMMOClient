@@ -318,11 +318,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn all_native_modes_match_bytes_and_graphics_calls() {
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/table_presentation-vectors.json"))
-                .unwrap();
+        let v: Value = serde_json::from_str(vectors!("table_presentation-vectors.json")).unwrap();
         let mut bank = Mem::default();
         bank.patches(&v["common"]);
         for (a, n) in [(0x08100000, 65536 + 2048), (0x0855a5d8, 2080)] {
@@ -336,9 +335,7 @@ mod tests {
     #[ignore = "requires a local verified A3VE_ROM"]
     fn retail_table_messages_match_native() {
         use sha2::{Digest, Sha256};
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/table_presentation-vectors.json"))
-                .unwrap();
+        let v: Value = serde_json::from_str(vectors!("table_presentation-vectors.json")).unwrap();
         let rom = std::fs::read(std::env::var_os("A3VE_ROM").unwrap()).unwrap();
         assert_eq!(format!("{:x}", Sha256::digest(&rom)), v["romSha256"]);
         run(&Mem(BTreeMap::new(), Some(rom.into())), &v, "retail");

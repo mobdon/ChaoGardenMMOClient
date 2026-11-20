@@ -198,10 +198,10 @@ mod tests {
             assert_eq!(crate::sha256(&m.oam), c["sha256"].as_str().unwrap());
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_affine_writer_and_allocator_match_synthetic_tables() {
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/affine-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("affine-vectors.json")).unwrap();
         check(&v["synthetic"], None);
     }
     #[test]
@@ -216,8 +216,7 @@ mod tests {
             .read_to_end(&mut rom)
             .unwrap();
         crate::catalog::validate_rom(&rom).unwrap();
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/affine-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("affine-vectors.json")).unwrap();
         check(&v["native"], Some(&rom));
     }
 }

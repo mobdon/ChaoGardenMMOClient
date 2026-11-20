@@ -14,7 +14,10 @@ from unicorn import ppc_const as R
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
-from gekko_float import install_frsqrte  # noqa: E402
+import gekko_tables  # noqa: E402
+from gekko_tables import install_frsqrte  # noqa: E402
+
+gekko_tables.require()
 
 dol = Path(os.environ["SA2_GSNE8P_DOL"]).read_bytes()
 assert hashlib.sha1(dol).hexdigest() == "e4c50f32242a3cd36cdc8ae776661601a52130a2"

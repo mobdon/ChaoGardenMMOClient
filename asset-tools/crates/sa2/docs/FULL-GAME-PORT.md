@@ -88,7 +88,7 @@ For an inventory of the original object behaviors that still need implementation
 
 Across the normal story SETs, 24,162 placement visits reduce to 24,003 distinct placed rows after repeated visits to the same layout and object table are counted once. All map to 634 distinct native task addresses. The report groups names and level IDs by address and counts rows with partial callback adapters (1,390 including shared ring, spring, whistle pipe and Chao container tasks). A resolved address identifies a task; it does not execute it. This inventory excludes objects created dynamically and systems outside those normal SETs. For example, 877 placements reference the emerald task: they do not by themselves implement treasure hunting.
 
-For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-space platform collision model. Its motion, placement and live contact handler remain open.
+For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-space platform collision model, and [duel-generator](DUEL-PLATFORMS.md) replays the stage module's platform generator, PPC-verified, to place it. duel-platform-update replays each platform's activation, fall and spin from the same module. duel-meteor replays the meteors. Player collision response remains open.
 
 [Shared stage callbacks](SHARED-STAGE-TASKS.md) documents mounted replay and magnetic shield selection.
 
@@ -97,9 +97,8 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 [Goal-ring contact](GOAL-RING.md) covers native initialization decisions and activation calls across the 28 mapped story levels. The mission controller and automatic story advancement remain unimplemented.
 
 [Iron Gate native stage rules](PLAYABLE-IRON-GATE.md) and [Prison Lane native stage rules](PLAYABLE-PRISON-LANE.md) build both walker stages from their game files and run only rules read there: lifts, two-door elevators, bridges, object solids, ring pickup and goal contact, driven by a host-supplied player sample. Neither is playable: the walker's movement, lock-on and laser are encrypted main-program code.
-
 [City Escape native inputs](CITY-ESCAPE-NATIVE.md) reads Sonic's physics row, the start, terrain, rails, death zones, springs and goal program with no adapted rules. The dash-panel callback is ported from stg13D.rel and matches the installed PowerPC. The doc also records why no Sonic controller can be ported from the Steam install.
 
-[Sonic movement from main.dol](SONIC-MOVEMENT-NATIVE.md) ports the player controller from the GameCube main.dol of the user's own disc, under a Unicorn harness that interprets paired-single code. Ninja trigonometry (MSL sinf/cosf and the 65,536-entry njSinCosTbl) matches bit for bit; the matrix stack and the shared ground-movement routine are next.
+[Sonic movement from main.dol](SONIC-MOVEMENT-NATIVE.md) ports the player controller from the GameCube main.dol of the user's own disc, under a Unicorn harness that interprets paired-single code. Ninja trigonometry, the matrix stack, the player-frame helpers and the analog input (fn_8004E560) match main.dol bit for bit; the shared ground-movement routine is next.
 
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.

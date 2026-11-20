@@ -280,7 +280,8 @@ fn step_toward(pos: &mut [f32; 3], target: [f32; 3], speed: f32) -> bool {
 
 /// Sine and cosine njRotateY uses for a BAMS yaw (`ninja_trig`).
 pub fn rotate_sin_cos(bams: u16) -> (f32, f32) {
-    crate::ninja_trig::nj_rotate_sin_cos(i32::from(bams))
+    // The SET loader (GSNE8P 0x80065E54) sign-extends rotations into the task.
+    crate::ninja_trig::nj_rotate_sin_cos(i32::from(bams as i16))
 }
 
 /// MLIFT: rises by `20 + Scale.x` after the player stands on it for 30

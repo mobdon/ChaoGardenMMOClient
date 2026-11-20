@@ -277,6 +277,31 @@ fn decode(
     Ok(result)
 }
 
+/// Rebase a single local REL Basic object (no child or sibling) through the
+/// same validated relocation view used for REL land tables.
+pub(crate) fn rel_basic_object(
+    rel: &CityRel<'_>,
+    sec: u8,
+    root: usize,
+) -> Result<crate::duel_platform::Platform> {
+    let src = rel.data(sec)?;
+    let mut v = View {
+        source: Source::Rel(rel, sec),
+        src,
+        out: vec![0; src.len() + BASE],
+    };
+    v.word(root)?;
+    let base = v
+        .ptr(root + 4)?
+        .ok_or_else(|| Error::invalid("missing Basic model"))?;
+    v.words(root + 8, 9)?;
+    if v.ptr(root + 44)?.is_some() || v.ptr(root + 48)?.is_some() {
+        return Err(Error::invalid("expected a single Basic platform object"));
+    }
+    v.attach(base)?;
+    crate::duel_platform::decode(&v.out, (root + BASE) as u32)
+}
+
 /// Rebase a single unlinked Win32 Basic object using the same pointer and
 /// polygon layouts as installed land. The private offsets are file offsets + 16.
 pub(crate) fn win32_basic_object(
@@ -300,4 +325,106 @@ pub(crate) fn win32_basic_object(
     }
     v.attach(base)?;
     crate::duel_platform::decode(&v.out, (root + BASE) as u32)
+}
+
+/// One native object copy for `win32_posed_collision`: the source object's
+/// file offset and the words the copy replaces.
+pub(crate) struct PosedObject {
+    pub root: usize,
+    pub flags: u32,
+    pub position: [f32; 3],
+    pub rotation: [i32; 3],
+    pub surface_flags: u32,
+}
+/// Bytes CartD copies per object (+0x660c allocates and copies 0x38).
+const POSED_COPY: usize = 0x38;
+/// A collision-only land view whose entries are copies of Win32 Basic
+/// objects. Each copy keeps the source words except flags, position and
+/// rotation; attachment, child and sibling pointers are rebased like
+/// installed land, and every attachment is copied unchanged.
+pub(crate) fn win32_posed_collision(
+    bytes: &[u8],
+    image: &crate::pe::PeImage,
+    objects: &[PosedObject],
+) -> Result<stage::Stage> {
+    let count = objects.len();
+    if count > i16::MAX as usize {
+        return Err(Error::invalid("posed collision count exceeds land limit"));
+    }
+    let h = (BASE + bytes.len()).next_multiple_of(4);
+    let table = h + 32;
+    let copies = table + count * 32;
+    let mut v = View {
+        source: Source::Win32(image),
+        src: bytes,
+        out: vec![0; copies + count * POSED_COPY],
+    };
+    v.out[..8].copy_from_slice(b"SA2LVL\0\x03");
+    v.out[8..12].copy_from_slice(&(h as u32).to_le_bytes());
+    v.out[h..h + 2].copy_from_slice(&(count as u16).to_le_bytes());
+    v.out[h + 16..h + 20].copy_from_slice(&(table as u32).to_le_bytes());
+    let mut seen_nodes = BTreeSet::new();
+    let mut seen_basic = BTreeSet::new();
+    for (i, o) in objects.iter().enumerate() {
+        // The source hierarchy below the copied root is shared, as in CartD.
+        let mut stack = vec![];
+        let mut words = [0u32; POSED_COPY / 4];
+        for (k, word) in words.iter_mut().enumerate() {
+            *word = v.word(o.root + 4 * k)?;
+        }
+        let mut link = |v: &mut View<'_, '_>, at: usize| -> Result<u32> {
+            Ok(match v.ptr(at)? {
+                Some(n) => {
+                    stack.push(n);
+                    (BASE + n) as u32
+                }
+                None => 0,
+            })
+        };
+        let attach = v.ptr(o.root + 4)?;
+        words[11] = link(&mut v, o.root + 44)?;
+        words[12] = link(&mut v, o.root + 48)?;
+        words[0] = o.flags;
+        words[1] = attach.map_or(0, |a| (BASE + a) as u32);
+        for k in 0..3 {
+            words[2 + k] = o.position[k].to_bits();
+            words[5 + k] = o.rotation[k] as u32;
+        }
+        if let Some(a) = attach {
+            if seen_basic.insert(a) {
+                v.attach(a)?;
+            }
+        }
+        while let Some(n) = stack.pop() {
+            if !seen_nodes.insert(n) {
+                continue;
+            }
+            v.word(n)?;
+            let a = v.ptr(n + 4)?;
+            v.words(n + 8, 9)?;
+            for j in [44, 48] {
+                if let Some(x) = v.ptr(n + j)? {
+                    stack.push(x)
+                }
+            }
+            if let Some(a) = a {
+                if seen_basic.insert(a) {
+                    v.attach(a)?
+                }
+            }
+        }
+        let c = copies + i * POSED_COPY;
+        for (k, word) in words.into_iter().enumerate() {
+            v.out[c + 4 * k..c + 4 * k + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        let e = table + i * 32;
+        v.out[e + 16..e + 20].copy_from_slice(&(c as u32).to_le_bytes());
+        v.out[e + 28..e + 32].copy_from_slice(&o.surface_flags.to_le_bytes());
+    }
+    let mut result = stage::read_stage(&v.out)?;
+    result.unknowns = vec![
+        "Entries are the kart piece tasks' native object copies with their dynamic land flags; the engine registers each only while a kart is near, and this view holds all of them".into(),
+        "Entry bounds are zero: the dynamic land list carries none".into(),
+    ];
+    Ok(result)
 }

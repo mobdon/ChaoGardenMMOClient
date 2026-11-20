@@ -1550,6 +1550,7 @@ mod tests {
     use std::io::Read;
     const RAM: u32 = 0x03000000;
     const TASK: u32 = RAM + 0x5400;
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn dialog_rejects_invalid_records_without_publishing_partial_tiles() {
         let base = 0x02000000;
@@ -1605,7 +1606,7 @@ mod tests {
         assert_eq!(m.read_u16(TEXT_BUFFER + 0x7fe).unwrap(), 0x16a);
     }
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/garden-care-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("garden-care-vectors.json")).unwrap()
     }
     #[derive(Default)]
     struct SongLog(Vec<Value>);
@@ -1699,6 +1700,7 @@ mod tests {
             }
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn movement_and_masked_frames_match_original_without_assets() {
         run(None);

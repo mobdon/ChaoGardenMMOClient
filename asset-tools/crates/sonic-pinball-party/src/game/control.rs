@@ -348,9 +348,10 @@ mod tests {
             .collect()
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_unicorn_callback_vectors() {
-        let fixture: Value = serde_json::from_str(include_str!("../../tests/control-vectors.json"))
+        let fixture: Value = serde_json::from_str(vectors!("control-vectors.json"))
             .expect("scalar native oracle fixtures");
         for case in fixture["stackCases"].as_array().unwrap() {
             let mut stack = CallbackStack::from_halfwords(&words(&case["initial"])).unwrap();
@@ -386,9 +387,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_unicorn_input_vectors() {
-        let fixture: Value = serde_json::from_str(include_str!("../../tests/control-vectors.json"))
+        let fixture: Value = serde_json::from_str(vectors!("control-vectors.json"))
             .expect("scalar native oracle fixtures");
         for case in fixture["inputCases"].as_array().unwrap() {
             let mut state = InputState::from_halfwords(&words(&case["initial"])).unwrap();

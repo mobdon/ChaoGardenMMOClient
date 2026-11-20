@@ -1,0 +1,476 @@
+//! Countdown consumer and CartTimeOverExec (CartD 0x26fc, 0x9884 and 0x9814).
+use crate::{kart_progress, Result};
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Input {
+    VehiclePostMove {
+        remaining: i32,
+        vehicle_state: i32,
+        mode: i32,
+        frame: Frame,
+    },
+    VehicleCountdown {
+        remaining: i32,
+        vehicle_state: i32,
+        mode: i32,
+    },
+    Spawn {
+        remaining: i32,
+        mode: i32,
+    },
+    Tick {
+        timer: u16,
+        engine_halfword_64: i16,
+    },
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Frame {
+    cooldown: Option<i32>,
+    work_288: Option<i32>,
+    work_108: Option<i32>,
+    engine_byte_23: i8,
+    engine_halfword_68: i16,
+    pub(crate) global_24d60: Option<i32>,
+    segment: Option<i32>,
+    segment_count: Option<i32>,
+    position: Option<[f32; 3]>,
+    previous_position: Option<[f32; 3]>,
+    velocity: Option<[f32; 3]>,
+    angles: Option<[i32; 3]>,
+    pub(crate) work_ec: u32,
+    #[serde(skip_serializing)]
+    magnitude_return: Option<f32>,
+    #[serde(skip_serializing)]
+    d968_return: Option<u32>,
+    #[serde(skip_serializing)]
+    limousine_allocation: Option<Allocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dispatch: Option<Dispatch>,
+}
+impl Frame {
+    pub(crate) fn needs_course_quads(&self) -> bool {
+        self.dispatch
+            .as_ref()
+            .and_then(|d| d.target.as_ref())
+            .is_some_and(|t| t.quad.is_none())
+            || self
+                .limousine_allocation
+                .as_ref()
+                .is_some_and(|a| a.segment_xz.is_none())
+    }
+    pub(crate) fn finish_guidance(&self) -> Option<crate::kart_guided_drive::Guidance> {
+        Some(self.dispatch.as_ref()?.guidance.as_ref()?.work)
+    }
+    pub(crate) fn bind_recovery(
+        &mut self,
+        r: crate::kart_fall_recovery::RecoveredProgress,
+    ) -> Result<()> {
+        fn vector(word: &mut Option<[f32; 3]>, v: [f32; 3]) -> Result<()> {
+            if word.is_some_and(|seen| seen.map(f32::to_bits) != v.map(f32::to_bits)) {
+                return Err(crate::Error::invalid(
+                    "vehicle pose conflicts with fall recovery",
+                ));
+            }
+            *word = Some(v);
+            Ok(())
+        }
+        vector(&mut self.position, r.positions.0)?;
+        vector(&mut self.previous_position, r.positions.1)?;
+        vector(&mut self.velocity, r.velocity)?;
+        if self.angles.is_some_and(|v| v != r.angles) {
+            return Err(crate::Error::invalid(
+                "vehicle angles conflict with fall recovery",
+            ));
+        }
+        self.angles = Some(r.angles);
+        Ok(())
+    }
+    pub(crate) fn timer_words(&self) -> Option<[i32; 3]> {
+        Some([self.cooldown?, self.work_288?, self.work_108?])
+    }
+    pub(crate) fn inherit_timers(&mut self, prior: [i32; 3]) {
+        self.cooldown.get_or_insert(prior[0]);
+        self.work_288.get_or_insert(prior[1]);
+        self.work_108.get_or_insert(prior[2]);
+    }
+    pub(crate) fn bind_finish(&mut self, retained: Option<i32>) -> Result<()> {
+        if self.global_24d60.zip(retained).is_some_and(|(a, b)| a != b) {
+            return Err(crate::Error::invalid(
+                "vehicle finish flag conflicts with preceding update",
+            ));
+        }
+        self.global_24d60 = retained.or(self.global_24d60);
+        Ok(())
+    }
+    pub(crate) fn next_update_pose(&self) -> Option<([f32; 3], [f32; 3], [i32; 3])> {
+        Some((self.position?, self.velocity?, self.angles?))
+    }
+    pub(crate) fn crossing_positions(&self) -> Option<([f32; 3], [f32; 3])> {
+        self.position.zip(self.previous_position)
+    }
+    pub(crate) fn route(&self) -> Option<(i32, i32)> {
+        self.segment.zip(self.segment_count)
+    }
+    pub(crate) fn bind_route(&mut self, retained: (i32, i32)) -> Result<()> {
+        if self.segment.is_some_and(|v| v != retained.0)
+            || self.segment_count.is_some_and(|v| v != retained.1)
+        {
+            return Err(crate::Error::invalid(
+                "vehicle route conflicts with slot progress",
+            ));
+        }
+        self.segment = Some(retained.0);
+        self.segment_count = Some(retained.1);
+        Ok(())
+    }
+    pub(crate) fn course_scan_flag(&self) -> Option<u32> {
+        self.dispatch.as_ref().map(|d| d.work_44 as u32)
+    }
+    pub(crate) fn highest(&self) -> Option<i32> {
+        self.dispatch.as_ref()?.work_c8
+    }
+    pub(crate) fn bind_story_dispatch(
+        &mut self,
+        latch: Option<i32>,
+        counter: u32,
+        highest: Option<i32>,
+    ) -> Result<()> {
+        if let Some(d) = &mut self.dispatch {
+            if d.work_c8.zip(highest).is_some_and(|(a, b)| a != b) {
+                return Err(crate::Error::invalid(
+                    "vehicle highest checkpoint conflicts with shared state",
+                ));
+            }
+            d.work_c8 = highest.or(d.work_c8);
+            if d.work_c4.is_some_and(|v| v as u32 != counter)
+                || d.pursuit_latch.zip(latch).is_some_and(|(a, b)| a != b)
+            {
+                return Err(crate::Error::invalid(
+                    "vehicle dispatch conflicts with shared story state",
+                ));
+            }
+            d.work_c4 = Some(counter as i32);
+            d.pursuit_latch = latch.or(d.pursuit_latch);
+        }
+        Ok(())
+    }
+    pub(crate) fn checkpoint_counter(&self) -> Option<u32> {
+        self.dispatch.as_ref()?.work_c4.map(|v| v as u32)
+    }
+    pub(crate) fn pursuit_parent(&self) -> Option<[f32; 2]> {
+        Some([self.previous_position?[0], self.velocity?[0]])
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Dispatch {
+    pursuit_latch: Option<i32>,
+    work_c4: Option<i32>,
+    work_c8: Option<i32>,
+    work_44: i32,
+    work_68: i32,
+    #[serde(skip_serializing)]
+    target: Option<Target>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    guidance: Option<Guidance>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Target {
+    segment: Option<i32>,
+    quad: Option<[[f32; 2]; 4]>,
+    magnitude_return: Option<f32>,
+    angle_return: f64,
+}
+#[derive(Serialize)]
+struct Guidance {
+    #[serde(flatten)]
+    work: crate::kart_guided_drive::Guidance,
+    target_xz: [f32; 2],
+    from_xz: [f32; 2],
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Allocation {
+    task_handle: u32,
+    segment: Option<i32>,
+    segment_xz: Option<[[f32; 2]; 4]>,
+    latch: i32,
+}
+#[derive(Serialize)]
+struct Limousine {
+    task_handle: u32,
+    exec_offset: u32,
+    display_offset: u32,
+    delete_offset: u32,
+    target: crate::kart_story_target::Output,
+    task_38: &'static str,
+    task_40: &'static str,
+}
+#[derive(Serialize)]
+pub struct Update {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limousine: Option<Limousine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) frame: Option<Frame>,
+    pub(crate) vehicle_state: Option<i32>,
+    pub(crate) timer: Option<u16>,
+    cue_id: Option<i32>,
+    action: Option<i32>,
+    next: &'static str,
+}
+impl Update {
+    pub(crate) fn spawned_target(&self) -> Option<crate::kart_story_target::State> {
+        self.limousine.as_ref().map(|v| v.target.state)
+    }
+}
+fn spawn(r: &mut Update, remaining: i32, mode: i32) {
+    r.timer = Some(if remaining > 0 { 120 } else { 0 });
+    if remaining <= 0 {
+        r.cue_id = match mode {
+            0 => Some(0x706),
+            1 => Some(0x70d),
+            _ => None,
+        };
+    }
+}
+pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
+    kart_progress::verify(bytes)?;
+    step_verified(bytes, s)
+}
+pub(crate) fn step_verified(bytes: &[u8], s: Input) -> Result<Update> {
+    step_with_course(bytes, s, None)
+}
+pub(crate) fn step_with_course(
+    bytes: &[u8],
+    s: Input,
+    course: Option<&[[[f32; 2]; 4]]>,
+) -> Result<Update> {
+    let quad_at = |segment: i32,
+                   supplied_segment: Option<i32>,
+                   observed: Option<[[f32; 2]; 4]>|
+     -> Result<[[f32; 2]; 4]> {
+        if segment < 0
+            || supplied_segment.is_some_and(|v| v != segment)
+            || (observed.is_some() && supplied_segment.is_none())
+        {
+            return Err(crate::Error::invalid("wrong vehicle waypoint segment"));
+        }
+        observed
+            .or_else(|| course.and_then(|c| c.get(segment as usize).copied()))
+            .ok_or_else(|| crate::Error::invalid("missing vehicle waypoint quad"))
+    };
+    let mut r = Update {
+        limousine: None,
+        frame: None,
+        vehicle_state: None,
+        timer: None,
+        cue_id: None,
+        action: None,
+        next: "return",
+    };
+    match s {
+        Input::VehiclePostMove {
+            remaining,
+            mut vehicle_state,
+            mode,
+            mut frame,
+        } => {
+            let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+            let constants = rel.data(4)?;
+            let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
+            let missing = || crate::Error::invalid("missing vehicle pose before post-move");
+            let mut position = frame.position.ok_or_else(missing)?;
+            let mut previous_position = frame.previous_position.ok_or_else(missing)?;
+            let mut velocity = frame.velocity.ok_or_else(missing)?;
+            let mut angles = frame.angles.ok_or_else(missing)?;
+            if let Some(c) = course {
+                let count = c.len() as i32;
+                if frame.segment_count.is_some_and(|n| n != count) {
+                    return Err(crate::Error::invalid(
+                        "vehicle waypoint count conflicts with installed course",
+                    ));
+                }
+                frame.segment_count = Some(count);
+            }
+            let (mut segment, segment_count) = frame
+                .route()
+                .ok_or_else(|| crate::Error::invalid("missing vehicle route"))?;
+            let mut finish = frame
+                .global_24d60
+                .ok_or_else(|| crate::Error::invalid("missing initial vehicle finish flag"))?;
+            let [cooldown, mut remaining_effect, mut active_effect] = frame
+                .timer_words()
+                .ok_or_else(|| crate::Error::invalid("missing initial vehicle timer words"))?;
+            frame.cooldown = Some(cooldown.wrapping_sub(1).max(0));
+            if remaining_effect != 0 {
+                remaining_effect = remaining_effect.wrapping_sub(1);
+                if remaining_effect == 0 {
+                    active_effect = 0;
+                }
+            }
+            frame.work_288 = Some(remaining_effect);
+            frame.work_108 = Some(active_effect);
+            if mode <= 1 {
+                if frame.engine_byte_23 == 1
+                    && frame.engine_halfword_68 >= 100
+                    && vehicle_state != 10
+                    && finish == 0
+                {
+                    vehicle_state = 10;
+                    finish = 1;
+                }
+                if remaining <= 0 {
+                    if vehicle_state != 10 {
+                        vehicle_state = 10;
+                        spawn(&mut r, remaining, mode);
+                    }
+                } else if segment > segment_count.wrapping_sub(20) {
+                    if frame.engine_byte_23 == 1 {
+                        position = [f(0x1e4), f(0x1f4), f(0x1f8)];
+                        previous_position = position;
+                        velocity = [
+                            f(0x1c8),
+                            f(0x1c8),
+                            frame.magnitude_return.ok_or_else(|| {
+                                crate::Error::invalid(
+                                    "route reset needs observed raw velocity magnitude",
+                                )
+                            })?,
+                        ];
+                        angles = [0; 3];
+                        segment = 0;
+                    } else {
+                        segment = segment_count.wrapping_sub(25);
+                        position[0] -= f(0x1fc);
+                        if frame.work_ec == 0 {
+                            match (frame.limousine_allocation.take(), frame.d968_return) {
+                                (Some(a), None) if a.task_handle != 0 && segment >= 0 => {
+                                    let target = crate::kart_story_target::step_constants(constants, crate::kart_story_target::Input::Spawn {
+                                        segment_xz: quad_at(segment,a.segment,a.segment_xz)?, parent_task_y: position[1], mode, latch: a.latch,
+                                    })?;
+                                    r.limousine = Some(Limousine {
+                                        task_handle: a.task_handle, exec_offset: 0xda80,
+                                        display_offset: 0xdbe0, delete_offset: 0xdd00,
+                                        target,
+                                        task_38: "vehicle_taskwork", task_40: "vehicle_work",
+                                    });
+                                    frame.work_ec = a.task_handle;
+                                }
+                                (None, Some(handle)) => frame.work_ec = handle,
+                                _ => return Err(crate::Error::invalid("supply a nonnull limousine allocation and matching repositioned segment, or an observed d968_return")),
+                            }
+                        }
+                    }
+                }
+            }
+            r.next = "vehicle_2814";
+            if let Some(d) = &mut frame.dispatch {
+                if finish != 0 {
+                    if d.work_c4
+                        .ok_or_else(|| crate::Error::invalid("missing vehicle checkpoint count"))?
+                        > 3
+                    {
+                        d.work_c4 = Some(3);
+                        d.work_c8 = Some(3);
+                    }
+                    if d.work_44 != 0 {
+                        let t = d.target.as_ref().ok_or_else(|| {
+                            crate::Error::invalid(
+                                "state 7 requires its target segment and observed angle",
+                            )
+                        })?;
+                        if segment_count <= 0 || !(0..segment_count).contains(&segment) {
+                            return Err(crate::Error::invalid("invalid state 7 course segment"));
+                        }
+                        let ahead = segment.wrapping_add(2) % segment_count;
+                        let near = segment.wrapping_add(1) % segment_count;
+                        if ahead < 0 || near < 0 {
+                            return Err(crate::Error::invalid("wrong state 7 target quad"));
+                        }
+                        let speed = if velocity == [0.; 3] {
+                            f(0x200)
+                        } else {
+                            t.magnitude_return.ok_or_else(|| {
+                                crate::Error::invalid("missing observed state 7 magnitude")
+                            })?
+                        };
+                        let angle = f64::from_be_bytes(constants[0x208..0x210].try_into().unwrap())
+                            * t.angle_return;
+                        if !(-2147483648.0..2147483648.0).contains(&angle) {
+                            return Err(crate::Error::invalid("unsupported state 7 angle"));
+                        }
+                        vehicle_state = 7;
+                        d.work_44 = 0;
+                        d.work_68 = 0;
+                        d.guidance = Some(Guidance {
+                            work: crate::kart_guided_drive::Guidance {
+                                work_254: ahead,
+                                work_258: 1,
+                                work_25c: near,
+                                work_260: 1,
+                                work_264: speed,
+                                work_274: angle as i32,
+                            },
+                            target_xz: quad_at(ahead, t.segment, t.quad)?[1],
+                            from_xz: [position[0], position[2]],
+                        });
+                    }
+                } else if r
+                    .spawned_target()
+                    .map(|s| s.latch)
+                    .or(d.pursuit_latch)
+                    .ok_or_else(|| crate::Error::invalid("missing vehicle pursuit latch"))?
+                    != 0
+                {
+                    vehicle_state = 8;
+                }
+                if d.work_c8.is_none() {
+                    return Err(crate::Error::invalid(
+                        "missing initial vehicle highest checkpoint",
+                    ));
+                }
+                r.next = "engine_8000f4ec";
+            }
+            r.vehicle_state = Some(vehicle_state);
+            frame.global_24d60 = Some(finish);
+            frame.segment = Some(segment);
+            frame.position = Some(position);
+            frame.previous_position = Some(previous_position);
+            frame.velocity = Some(velocity);
+            frame.angles = Some(angles);
+            r.frame = Some(frame);
+        }
+        Input::VehicleCountdown {
+            remaining,
+            vehicle_state,
+            mode,
+        } => {
+            r.vehicle_state = Some(vehicle_state);
+            if remaining > 0 {
+                r.next = "vehicle_272c";
+            } else {
+                r.next = "vehicle_2814";
+                if vehicle_state != 10 {
+                    r.vehicle_state = Some(10);
+                    spawn(&mut r, remaining, mode);
+                }
+            }
+        }
+        Input::Spawn { remaining, mode } => spawn(&mut r, remaining, mode),
+        Input::Tick {
+            timer,
+            engine_halfword_64,
+        } => {
+            let timer = timer.wrapping_add(1);
+            r.timer = Some(timer);
+            if timer > 180 {
+                r.action = Some(if engine_halfword_64 < 1 { 8 } else { 4 });
+            }
+        }
+    }
+    Ok(r)
+}

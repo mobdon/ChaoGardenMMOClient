@@ -306,3 +306,26 @@ printf("%d %d %u %d %d %u\n",active,target,bits.u,entry,(int)fw._4,(unsigned)w.w
     fs::remove_file(src).unwrap();
     fs::remove_file(exe).unwrap();
 }
+
+#[test]
+fn pickup_effect_submits_four_heights_and_quarter_turns_in_order() {
+    use sa2_asset_tools::stage_gameplay::pickup_particles;
+    let mut angles = Vec::new();
+    let parts = pickup_particles([10., 20., 30.], |angle| {
+        angles.push(angle);
+        [(0., 1.), (1., 0.), (0., -1.), (-1., 0.)][usize::from(angle >> 14)]
+    });
+    assert_eq!(angles, [0, 16384, 32768, 49152]);
+    for (p, expected) in parts.iter().zip([
+        [10., 25.7, 34.],
+        [14., 23.9, 30.],
+        [10., 22.1, 26.],
+        [6., 20.3, 30.],
+    ]) {
+        for (v, w) in p.position.into_iter().zip(expected) {
+            assert!((v - w).abs() < 0.00001);
+        }
+        assert_eq!(p.velocity, [0., 0.02, 0.]);
+        assert_eq!(p.scale, 2.5);
+    }
+}

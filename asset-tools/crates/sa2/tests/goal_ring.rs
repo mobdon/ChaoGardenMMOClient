@@ -56,6 +56,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
+    let mut alt_end_cases = 0;
     let mut alt_cases = 0;
     let mut entry_cases = 0;
     let mut counts = [0; 21];
@@ -66,7 +67,15 @@ fn compare_installed_init_and_contact() {
     for line in stdout.lines() {
         let v: Vec<_> = line.split_whitespace().collect();
         let n = |i: usize| v[i].parse::<i32>().unwrap();
-        if v[0] == "ALT" {
+        if v[0] == "ALTEND" {
+            assert_eq!(
+                sa2_asset_tools::goal_ring::goal_cleanup_call(n(2) as u16, n(1) != 0, n(3) != 0)
+                    .unwrap_or_default(),
+                v[4].parse::<u32>().unwrap(),
+                "{line}"
+            );
+            alt_end_cases += 1;
+        } else if v[0] == "ALT" {
             let mut phase = v[5].parse::<f32>().unwrap();
             let sound = program
                 .alternate_motion(n(1), n(2) != 0, n(3) as i8, n(4) as u16, &mut phase)
@@ -399,6 +408,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
+    assert_eq!(alt_end_cases, 64);
     assert_eq!(alt_cases, 192);
     assert_eq!(entry_cases, 200);
     assert_eq!(

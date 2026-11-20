@@ -475,9 +475,10 @@ mod tests {
     }
 
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/garden-save-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("garden-save-vectors.json")).unwrap()
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_synthetic_flash_vectors_match_full_ram_flash_and_calls() {
         let data = fixture();
@@ -532,6 +533,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn unbound_hardware_rejects_and_preserves_native_prefix_mutations() {
         let data = fixture();
@@ -556,6 +558,7 @@ mod tests {
         assert_ne!(ram.snapshot(), before);
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn truncated_record_stops_before_hardware_write() {
         let data = fixture();

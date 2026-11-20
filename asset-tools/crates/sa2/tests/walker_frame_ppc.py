@@ -13,6 +13,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from dol_ppc import Dol  # noqa: E402
+import gekko_tables  # noqa: E402
+
+gekko_tables.require()  # bit-exact frsqrte
 
 dol = Dol(sys.argv[1] if len(sys.argv) > 1 else os.environ["SA2_MAIN_DOL"])
 m = dol.machine()

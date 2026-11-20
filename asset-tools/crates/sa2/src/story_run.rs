@@ -23,14 +23,35 @@ pub(super) fn run(
         };
         let stop = |reason| json!({"kind":reason,"action":d.action,"actionIndex":events.len(),"entryRva":d.source_rva});
         let story::Action::Event { event: id } = d.action else {
-            break stop(match d.action {
-                story::Action::Level { .. } => "awaitingLevelRuntime",
-                _ => "awaitingCredits",
-            });
+            if let story::Action::Level { character, level } = d.action {
+                let rows = sa2_asset_tools::stage_positions::for_stage(exe, level as u16)?;
+                let (pose, defaults) = level_player(exe, character, level, &rows)?;
+                let mut result = stop("awaitingLevelRuntime");
+                result["entryPose"] = json!(pose);
+                result["playerDefaults"] = json!(defaults);
+                break result;
+            }
+            break stop("awaitingCredits");
         };
         let logical = format!("resource/gd_PC/event/e{id:04}.prs");
         let path = install.join(&logical);
         if !path.try_exists()? {
+            if sa2_asset_tools::story_movie::supported(id) {
+                let movie = format!("resource/gd_PC/event/e{id:04}_m.sfd");
+                let path = install.join(&movie);
+                if path.try_exists()? {
+                    let src = Extra::read(
+                        &path,
+                        movie,
+                        (128usize * 1024 * 1024 - byte_total).min(80 * 1024 * 1024) as u64,
+                        "story-event-movie",
+                    )?;
+                    let mut result = stop("awaitingMoviePlayback");
+                    result["movie"] = sa2_asset_tools::story_movie::inspect_movie(id, &src.bytes)?;
+                    extras.push(src);
+                    break result;
+                }
+            }
             break stop("missingMainEvent");
         }
         let remaining = (128usize * 1024 * 1024).saturating_sub(byte_total);
@@ -55,4 +76,31 @@ pub(super) fn run(
     Ok(
         json!({"sequence":name,"events":events,"stop":stop,"mode":"headless event timeline; no rendering, level clears, save writes or Chao rewards"}),
     )
+}
+
+pub(super) fn level_player(
+    exe: &[u8],
+    character: i8,
+    level: i16,
+    rows: &[sa2_asset_tools::stage_positions::PositionRow],
+) -> Result<(
+    Option<sa2_asset_tools::fan_stage::EntryPose>,
+    sa2_asset_tools::player_physics::PlayerPhysics,
+)> {
+    let defaults = sa2_asset_tools::player_physics::read(exe)?
+        .into_iter()
+        .find(|p| p.slot == character as usize)
+        .ok_or_else(|| Error::invalid("unknown story character slot"))?;
+    let name = defaults
+        .character
+        .ok_or_else(|| Error::invalid("unnamed story character slot"))?;
+    use sa2_asset_tools::stage_positions::{PositionKind, Variant};
+    let pose = sa2_asset_tools::fan_stage::select_pose(
+        rows,
+        level as u16,
+        name,
+        PositionKind::Start,
+        Variant::Single,
+    )?;
+    Ok((pose, defaults))
 }

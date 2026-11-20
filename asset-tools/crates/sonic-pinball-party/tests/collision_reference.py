@@ -11,6 +11,7 @@ import random
 import struct
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_HOOK_CODE
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_SP
+import spp_vectors  # noqa: E402
 
 SHA = "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
 BASE, STATE, POINT, STOP = 0x08000000, 0x02000000, 0x02001000, 0x03007f00
@@ -338,7 +339,7 @@ if __name__ == "__main__":
     p.add_argument("--generate",action="store_true")
     args=p.parse_args()
     result=reference(args.rom)
-    out=Path(__file__).with_name("collision-vectors.json")
+    out=spp_vectors.path("collision-vectors.json")
     if args.generate:
         out.write_text(json.dumps(result,separators=(",",":"))+"\n")
     else:

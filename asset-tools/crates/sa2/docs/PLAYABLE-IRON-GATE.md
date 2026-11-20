@@ -14,7 +14,7 @@ and the mover the engine says it stands on), and `Session::step` runs the
 native object rules against it. See
 [PLAYABLE-PRISON-LANE.md](PLAYABLE-PRISON-LANE.md) for the shared design.
 
-Rotations use the GameCube main program's own trigonometry (`ninja_trig`, read from the GSNE8P main.dol of the person's disc; every PC stage-module import maps onto it): njRotateX/Y/Z convert the angle to radians and call MSL sinf/cosf, and njSin/njCos read the start-up table. The sines and cosines are bit-for-bit ports; the matrix products that combine them are evaluated as plain single-precision steps rather than in the paired-single order of the SDK matrix routines, so a result can differ in its last bit. Lift, elevator and
+Rotations use the GameCube main program's own trigonometry (`ninja_trig`, read from the GSNE8P main.dol of the person's disc; every PC stage-module import maps onto it): njRotateX/Y/Z convert the angle to radians and call MSL sinf/cosf, and njSin/njCos read the start-up table. The sines and cosines are bit-for-bit ports; the matrix products that combine them are evaluated as plain single-precision steps rather than in the paired-single order of the SDK matrix routines, so a result can differ in its last bit. Collision boxes (CollisionData form 3) follow the GameCube CCL (`ccl_box_tris`): the row centre is moved by the task position and rotation (0x8000EAA0: rotate Z, X, Y, or Y, Z, X with attribute 0x200; none with 0x8000; a world point with 0x20), and the box itself is aligned to the yaw only (Rotation.y plus the row's Y angle; the box tests such as 0x800090E8 turn the relative vector by njRotateY of minus that sum), so X and Z rotations never tilt a box. Lift, elevator and
 bridge collision objects keep the placement's Y rotation only (stg09D.rel
 0x4930, 0x30CC, 0x510; stg11D.rel likewise), and the elevator's object sits
 40 below its placement (checked constant in both modules). Goal contact is
@@ -34,7 +34,8 @@ goal ring writes is exposed as is rather than interpreted as a clear.
 | Object collision models | PC_SA2/STG11.ini RVAs 0x7F0A68 (lift), 0x7F58A8 (bridge), 0x7FED08 (elevator) |
 | Iron containers (CONTIRON, 7) | stg11D.rel 0x20714 registers CollisionData sec5+0x656D8 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10, a 20-unit cube; all 7 placements are built |
 | Chao and wooden containers (CONTCHAO 3, CONTWOOD 27) | 0x1FDA4 and 0x2132C register the same cube rows (sec5+0x649E0, +0x666C8); all built as solids, breaking (player attacks) not run |
-| Fuse boxes (MECHA, 13) | 0x53E4 registers sec5+0x51198: form 3, centre (0, 20, 2), half-extents (10, 20, 5); its exec only runs that collision. The 4 placed at yaw 0 are built; the centre is off the Y axis, so the others wait on the rotation rule |
+| Fuse boxes (MECHA, 13) | 0x53E4 registers sec5+0x51198: form 3, centre (0, 20, 2), half-extents (10, 20, 5); its exec only runs that collision. All 13 are built |
+| Invisible cubes (CCUBE, 3) | 0x17140 registers sec5+0x5E5B0 (form 3, attr 0x2000); helper 0x16F94 sets its sizes to 10 + Scale. All 3 are built |
 | Springs (SPRA, SPRB) | `spring::StageSpring` tasks and launch vectors (njRotate); contact is not run |
 | Rings | o_ring_M1: pickup strictly within 14 of the collision centre, AddScore(10), AddNumRing(1) |
 | Goal ring | `goal_ring` initialization and Contact branch, run on a host-reported touch; contact writes slot word 2 |

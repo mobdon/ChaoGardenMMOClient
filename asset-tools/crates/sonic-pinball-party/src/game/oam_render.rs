@@ -214,10 +214,10 @@ mod tests {
         OamSubmissionQueue::from_words(count, &records, &order).unwrap()
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_native_compositor_vectors_match_complete_order_and_staged_ram() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/oam_render-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("oam_render-vectors.json")).unwrap();
         assert_eq!(data["routine"]["sha256"], COMPOSE_SHA256);
         assert_eq!(data["masks"]["sha256"], MASK_SHA256);
         for case in data["cases"].as_array().unwrap() {

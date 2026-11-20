@@ -21,3 +21,7 @@ cargo test --locked --test event_camera -- --include-ignored
 ```
 
 Choose a new private output directory for the native motion exports and oracle. The tools ran on Windows with DOTNET_ROLL_FORWARD set to Major for the installed Windows Desktop runtime.
+
+For character MTN cameras use `character-camera MTN.prs OUTPUT.json SLOT FRAME`. The explicit slot and fractional clip frame select position, target, roll and field of view. This command does not read event attributes from a character archive. The four installed tracks are Super Sonic 106/108 and Super Shadow 111/115. Their durations are 90/64 frames respectively for each character. All 616 integer/half-frame samples match SAModel's evaluator bit for bit. The tests cover the final fractional interval, reject the end boundary, and do not establish when the game activates a track.
+
+To regenerate the comparison, supply `tests/character_camera_reference.ps1` with the SA Tools 786 root and the private directory containing the splitMTN exports (ssonicmtn and sshadowmtn). Set SA2_SET_DIR to gd_PC and run `cargo test --locked --test character_camera_local -- --include-ignored`.

@@ -888,22 +888,6 @@ pub fn splash_resource(module: &[u8], q: i32) -> Result<(String, usize)> {
         u32::from_be_bytes(data[p..p + 4].try_into().unwrap()) as usize,
     ))
 }
-pub fn splash_textures(prs: &[u8], count: usize) -> Result<Value> {
-    let data = crate::archive::decompress_prs(prs, 16 * 1024 * 1024)?;
-    let entries = crate::archive::read_gvm(&data)?;
-    if entries.len() != count {
-        return Err(Error::invalid(
-            "splash GVM count disagrees with stage texture list",
-        ));
-    }
-    let mut rows = Vec::new();
-    for e in entries {
-        let image = crate::texture::decode_gvr(e.data, None)?;
-        rows.push(json!({"index":e.index,"name":e.name,"globalIndex":e.global_index,"width":image.width,"height":image.height,
-            "rgbaSha256":manifest::sha256(&image.rgba),"nonopaquePixels":image.rgba.as_chunks::<4>().0.iter().filter(|p|p[3]!=255).count()}));
-    }
-    Ok(json!({"textures":rows,"archiveSha256":manifest::sha256(prs)}))
-}
 pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let invalid = || Error::invalid("unexpected stage 20 entry module");
     let rel = identified_module(module)?;

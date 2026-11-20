@@ -26,6 +26,20 @@ pub struct LevelDispatch {
     pub character: i8,
     pub level: u16,
 }
+const DEMOS: [&str; 7] = [
+    "Sonic SA2 The Trial Demo Sequence",
+    "Sonic Demo Sequence",
+    "Mech Tails Demo Sequence",
+    "Knuckles Demo Sequence",
+    "Shadow Demo Sequence",
+    "Mech Eggman Demo Sequence",
+    "Rouge Demo Sequence",
+];
+const BOSS_RUSHES: [&str; 3] = [
+    "Hero Boss Rush Story Sequence",
+    "Dark Boss Rush Story Sequence",
+    "All Boss Rush Story Sequence",
+];
 struct LevelConfig {
     section: String,
     set_prefix: String,
@@ -35,10 +49,14 @@ struct LevelConfig {
 /// Immutable index of normal story routes; resource bytes are requested lazily by mount.
 pub struct Campaign {
     levels: Vec<LevelDispatch>,
+    boss_rushes: Vec<LevelDispatch>,
+    demos: Vec<LevelDispatch>,
     configs: BTreeMap<u16, LevelConfig>,
     tables: BTreeMap<String, ObjectList>,
     positions: Vec<stage_positions::PositionRow>,
     kart_routes: BTreeMap<i8, KartRoute>,
+    physics: Vec<crate::player_physics::PlayerPhysics>,
+    ranks: Vec<crate::mission_ranks::RankRow>,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,19 +95,86 @@ pub struct KartRankRow {
     pub b: [u8; 2],
     pub a: [u8; 2],
 }
+#[derive(Debug, Serialize)]
+pub struct KartProfile {
+    pub slot: usize,
+    pub name: &'static str,
+    pub source_rva: u32,
+    pub sha256: String,
+    pub physics: KartPhysics,
+}
+
+// Names correspond to the split filenames in SA Tools PC_SA2/CART.ini.
+const KART_PROFILES: [&str; 15] = [
+    "TailsStory",
+    "RougeStory",
+    "SonicKart",
+    "KnucklesKart",
+    "TailsKart",
+    "EggmanKart",
+    "ShadowKart",
+    "RougeKart",
+    "Placeholder",
+    "SonicAltKart",
+    "KnucklesAltKart",
+    "ChaoKart",
+    "EggmanAltKart",
+    "ShadowAltKart",
+    "EggroboKart",
+];
+fn read_kart_profile(
+    r: &crate::model::Reader<'_>,
+    pe: &crate::pe::PeImage,
+    slot: usize,
+) -> Result<KartProfile> {
+    let name = *KART_PROFILES
+        .get(slot)
+        .ok_or_else(|| Error::invalid("unknown kart profile slot"))?;
+    let physics_rva = 0xbf9ef0 + 40 * slot as u32;
+    let pa = pe.rva_to_offset(physics_rva, 40)?;
+    let f = |i: usize| r.f32(pa + 4 * i);
+    let physics = KartPhysics {
+        acceleration: f(0)?,
+        brake_power: f(1)?,
+        deceleration: f(2)?,
+        speed_cap: f(3)?,
+        weight: f(4)?,
+        unknown1: f(5)?,
+        drift_handling: f(6)?,
+        drift_speed_threshold: f(7)?,
+        unknown2: f(8)?,
+        top_speed: f(9)?,
+    };
+    let physics_sha256 = crate::manifest::sha256(r.span(pa, 40)?);
+    Ok(KartProfile {
+        slot,
+        name,
+        source_rva: physics_rva,
+        sha256: physics_sha256,
+        physics,
+    })
+}
+pub fn kart_profiles(exe: &[u8]) -> Result<Vec<KartProfile>> {
+    let pe = crate::object_table::verify_image(exe)?;
+    let r = crate::model::Reader { data: exe };
+    (0..KART_PROFILES.len())
+        .map(|slot| read_kart_profile(&r, &pe, slot))
+        .collect()
+}
+
 /// The two kart stage dispatches use separate course descriptors rather than a static landtable.
 fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
     let pe = crate::pe::read_pe(exe)?;
     let r = crate::model::Reader { data: exe };
     let mut routes = BTreeMap::new();
-    for (ch, name, descriptor_rva, expected, set_filename, physics_rva, rank_times_rva) in [
+    for (ch, name, descriptor_rva, expected, set_filename, profile_slot, rank_times_rva) in [
         (
             6,
             "Route 101",
             0xaf82bc,
             321,
             "setCartTails.bin",
-            0xbf9ef0,
+            0,
             0x133b378,
         ),
         (
@@ -98,31 +183,12 @@ fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
             0xaf82c4,
             369,
             "setCartRouge.bin",
-            0xbf9f18,
+            1,
             0x133b3a5,
         ),
     ] {
-        let at = pe.rva_to_offset(descriptor_rva, 8)?;
-        let count = r.u32(at + 4)? as usize;
-        if count != expected {
-            return Err(Error::invalid("unknown kart course row"));
-        }
-        let ptr = pe.va_to_offset(r.u32(at)?, count)?;
-        let pa = pe.rva_to_offset(physics_rva, 40)?;
-        let f = |i: usize| r.f32(pa + 4 * i);
-        let physics = KartPhysics {
-            acceleration: f(0)?,
-            brake_power: f(1)?,
-            deceleration: f(2)?,
-            speed_cap: f(3)?,
-            weight: f(4)?,
-            unknown1: f(5)?,
-            drift_handling: f(6)?,
-            drift_speed_threshold: f(7)?,
-            unknown2: f(8)?,
-            top_speed: f(9)?,
-        };
-        let physics_sha256 = crate::manifest::sha256(r.span(pa, 40)?);
+        let ids = crate::kart_course::read_piece_ids(&r, &pe, descriptor_rva, expected)?;
+        let profile = read_kart_profile(&r, &pe, profile_slot)?;
         let ranks = r.span(pe.rva_to_offset(rank_times_rva, 45)?, 45)?;
         let mut rank_times = Vec::with_capacity(5);
         for &[level, dm, ds, cm, cs, bm, bs, am, asec] in ranks.as_chunks::<9>().0 {
@@ -142,13 +208,13 @@ fn kart_routes(exe: &[u8]) -> Result<BTreeMap<i8, KartRoute>> {
             KartRoute {
                 name,
                 descriptor_rva,
-                physics_rva,
-                physics_sha256,
-                physics,
+                physics_rva: profile.source_rva,
+                physics_sha256: profile.sha256,
+                physics: profile.physics,
                 rank_times_rva,
                 rank_times_sha256: crate::manifest::sha256(ranks),
                 rank_times,
-                course_parts: r.span(ptr, count)?.to_vec(),
+                course_parts: ids.to_vec(),
                 set_filename,
             },
         );
@@ -162,6 +228,33 @@ pub struct EntryPose {
     pub row_va: u32,
     pub position: [f32; 3],
     pub yaw: u16,
+}
+/// Select a pose for the authored character only; missing rows stay absent.
+pub fn select_pose(
+    positions: &[crate::stage_positions::PositionRow],
+    level: u16,
+    ch: &str,
+    kind: PositionKind,
+    variant: Variant,
+) -> Result<Option<EntryPose>> {
+    let mut rows = positions
+        .iter()
+        .filter(|r| r.stage == level && r.kind == kind && r.character == ch);
+    let pose = rows.next().and_then(|r| {
+        r.poses
+            .iter()
+            .find(|p| p.variant == variant)
+            .map(|p| EntryPose {
+                character: r.character,
+                row_va: r.row_va,
+                position: p.position,
+                yaw: p.yaw,
+            })
+    });
+    if rows.next().is_some() {
+        return Err(Error::invalid("ambiguous campaign position row"));
+    }
+    Ok(pose)
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,7 +286,11 @@ pub struct MountedStage<'a> {
     pub end_pose: Option<EntryPose>,
     pub mission2_end_pose: Option<EntryPose>,
     pub mission3_end_pose: Option<EntryPose>,
+    /// Static defaults for the dispatched character, including when riding a kart.
+    pub character_defaults: &'a crate::player_physics::PlayerPhysics,
     pub kart_route: Option<&'a KartRoute>,
+    /// Authored rows only; absence does not imply an automatic grade.
+    pub mission_ranks: Vec<&'a crate::mission_ranks::RankRow>,
     pub object_table: Option<&'a ObjectList>,
     #[serde(skip)]
     checkpoint_items: Option<crate::checkpoint::StageItemTable>,
@@ -282,28 +379,34 @@ impl Campaign {
             }
         }
         let sequences = story::read(exe, story_config)?;
-        let mut levels = Vec::new();
-        for sequence in STORIES {
-            let mut cursor = story::Cursor::new(
-                sequences
-                    .get(sequence)
-                    .ok_or_else(|| Error::invalid("missing campaign sequence"))?,
-            );
-            let mut action_index = 0;
-            while let Some(d) = cursor.dispatch() {
-                if let story::Action::Level { character, level } = d.action {
-                    levels.push(LevelDispatch {
-                        sequence,
-                        action_index,
-                        source_rva: d.source_rva,
-                        character,
-                        level: level as u16,
-                    });
+        let collect_levels = |names: &[&'static str]| -> Result<Vec<LevelDispatch>> {
+            let mut rows = Vec::new();
+            for &sequence in names {
+                let mut cursor = story::Cursor::new(
+                    sequences
+                        .get(sequence)
+                        .ok_or_else(|| Error::invalid("missing campaign sequence"))?,
+                );
+                let mut action_index = 0;
+                while let Some(d) = cursor.dispatch() {
+                    if let story::Action::Level { character, level } = d.action {
+                        rows.push(LevelDispatch {
+                            sequence,
+                            action_index,
+                            source_rva: d.source_rva,
+                            character,
+                            level: level as u16,
+                        });
+                    }
+                    cursor.acknowledge(&d.token)?;
+                    action_index += 1;
                 }
-                cursor.acknowledge(&d.token)?;
-                action_index += 1;
             }
-        }
+            Ok(rows)
+        };
+        let levels = collect_levels(&STORIES)?;
+        let boss_rushes = collect_levels(&BOSS_RUSHES)?;
+        let demos = collect_levels(&DEMOS)?;
         let mut names = BTreeMap::new();
         for (section, fields) in sections(object_config, &["filename", "type"])? {
             if fields.get("type").is_some_and(|v| v == "objlist") {
@@ -325,7 +428,12 @@ impl Campaign {
             let Some(id) = fields.get("levelid").and_then(|s| s.parse::<u16>().ok()) else {
                 continue;
             };
-            if !levels.iter().any(|l| l.level == id) {
+            if !levels
+                .iter()
+                .chain(&boss_rushes)
+                .chain(&demos)
+                .any(|l| l.level == id)
+            {
                 continue;
             }
             let object_section = fields
@@ -348,11 +456,52 @@ impl Campaign {
         }
         Ok(Self {
             levels,
+            boss_rushes,
+            demos,
             configs,
             tables: object_table::mapped_tables(exe, object_config)?,
             positions: stage_positions::read_rows(exe)?,
             kart_routes: kart_routes(exe)?,
+            physics: crate::player_physics::read(exe)?,
+            ranks: crate::mission_ranks::read(exe)?,
         })
+    }
+    pub fn rank_rows(&self, dispatch: &LevelDispatch) -> Vec<&crate::mission_ranks::RankRow> {
+        let course = if dispatch.level == 70 {
+            let Some(route) = self.kart_routes.get(&dispatch.character) else {
+                return vec![];
+            };
+            Some(route.name)
+        } else {
+            None
+        };
+        self.ranks
+            .iter()
+            .filter(|r| r.level == dispatch.level && r.course == course)
+            .collect()
+    }
+    pub fn demos(&self) -> &[LevelDispatch] {
+        &self.demos
+    }
+    pub fn boss_rushes(&self) -> &[LevelDispatch] {
+        &self.boss_rushes
+    }
+    pub fn dispatch(&self, sequence: &str, ordinal: usize) -> Option<&LevelDispatch> {
+        self.levels
+            .iter()
+            .chain(&self.boss_rushes)
+            .chain(&self.demos)
+            .find(|d| d.sequence == sequence && d.action_index == ordinal)
+    }
+    /// Inspect entry data without loading stage geometry or substituting another character's start.
+    pub fn story_starts(&self) -> Result<Vec<serde_json::Value>> {
+        self.levels.iter().map(|d|{
+            let player=self.physics.get(d.character as usize).ok_or_else(||Error::invalid("unknown story player"))?;
+            let ch=player.character.ok_or_else(||Error::invalid("unnamed story player"))?;
+            let pose=select_pose(&self.positions,d.level,ch,PositionKind::Start,Variant::Single)?;
+            let kart=if d.level==70 {self.kart_routes.get(&d.character)} else {None};
+            Ok(serde_json::json!({"dispatch":d,"characterName":ch,"physicsRowVa":player.source_va,"entryPose":pose,"kartRoute":kart.map(|k|serde_json::json!({"name":k.name,"descriptorRva":k.descriptor_rva}))}))
+        }).collect()
     }
     pub fn levels(&self) -> &[LevelDispatch] {
         &self.levels
@@ -435,11 +584,13 @@ impl Campaign {
         mut load: impl FnMut(&str) -> Result<Option<Vec<u8>>>,
     ) -> Result<MountedStage<'_>> {
         let dispatch = self
-            .levels
-            .iter()
-            .find(|d| d.sequence == sequence && d.action_index == action_index)
+            .dispatch(sequence, action_index)
             .ok_or_else(|| Error::invalid("not an authored single-player campaign level action"))?
             .clone();
+        let character_defaults = usize::try_from(dispatch.character)
+            .ok()
+            .and_then(|slot| self.physics.get(slot))
+            .ok_or_else(|| Error::invalid("unknown story character slot"))?;
         let ch = Self::actor_name(&dispatch)?;
         let lookup_pose = |kind, variant| self.lookup_pose(&dispatch, ch, kind, variant);
         let entry_pose = lookup_pose(PositionKind::Start, Variant::Single)?;
@@ -521,7 +672,25 @@ impl Campaign {
                 &mut layers,
                 &mut gaps,
             )?;
-            gaps.push("Kart course part IDs are available; track assembly, driving and race conditions are not ported.".into());
+            // CartD installs an empty landtable; each course piece's task
+            // registers its posed collision object as dynamic land instead.
+            const KART_DLL: &str = "DLL/Win32/Data_DLL.dll";
+            match load(KART_DLL)? {
+                Some(bytes) => {
+                    let stage =
+                        crate::kart_course::course_collision_stage(&bytes, &route.course_parts)?;
+                    terrain = Some(Terrain {
+                        geometry_path: format!("CartCourseModels/{}", route.name),
+                        filename: KART_DLL,
+                        symbol: "CartCourseModels",
+                        entries: stage.entries.len(),
+                        basic_attachments: stage.basic_attachments.len(),
+                        stage,
+                    });
+                }
+                None => gaps.push(format!("No mounted source for {KART_DLL}.")),
+            }
+            gaps.push("Kart driving and race conditions are not ported; course collision is the union of every piece task's object, which the engine registers only near a kart.".into());
         } else {
             gaps.push(format!(
                 "No matching sa2lvl.ini section for campaign stage {}.",
@@ -544,7 +713,10 @@ impl Campaign {
         } else {
             None
         };
+        let mission_ranks = self.rank_rows(&dispatch);
         Ok(MountedStage {
+            character_defaults,
+            mission_ranks,
             checkpoint_items,
             dispatch,
             level_section: config.map(|c| c.section.as_str()),

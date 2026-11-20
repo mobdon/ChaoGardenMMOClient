@@ -547,8 +547,7 @@ mod tests {
             address: 0x0866a0b8,
             samples: &samples,
         }];
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/collision-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("collision-vectors.json")).unwrap();
         let cases = vectors["retail"].as_array().unwrap();
         assert_eq!(cases.len(), 1000);
         for (index, case) in cases.iter().enumerate() {
@@ -666,8 +665,7 @@ mod tests {
             math::RejectBiosMath,
             None,
         );
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/ball-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("ball-vectors.json")).unwrap();
         for (index, case) in vectors["integrator"].as_array().unwrap().iter().enumerate() {
             let mut memory = Memory::default();
             memory.bind(STATE, &[0x55; flippers::STATE_BYTES]);
@@ -738,7 +736,7 @@ mod tests {
             "missing collision stack binding cannot fabricate globals"
         );
         let flipper_vectors: Value =
-            serde_json::from_str(include_str!("../../tests/flipper-native-vectors.json")).unwrap();
+            serde_json::from_str(vectors!("flipper-native-vectors.json")).unwrap();
         let mut ports = ports.with_audio(CapturedTestAudio::default());
         for (index, case) in flipper_vectors["cases"]
             .as_array()
@@ -1018,19 +1016,19 @@ mod tests {
         for (label, source, entry, suffix) in [
             (
                 "lifecycle01",
-                include_str!("../../tests/lifecycle-vectors.json"),
+                vectors!("lifecycle-vectors.json"),
                 0x2e1a0,
                 false,
             ),
             (
                 "lifecycle_tables",
-                include_str!("../../tests/lifecycle_tables-vectors.json"),
+                vectors!("lifecycle_tables-vectors.json"),
                 0x2e1a0,
                 true,
             ),
             (
                 "table_events",
-                include_str!("../../tests/table_events-vectors.json"),
+                vectors!("table_events-vectors.json"),
                 0x2ea04,
                 false,
             ),
@@ -1143,8 +1141,7 @@ mod tests {
             None,
         )
         .with_nudge_curve(&curve);
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/nudge-native-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("nudge-native-vectors.json")).unwrap();
         let mut checked = 0;
         let bind_input = |memory: &mut Memory, input: &Value| {
             for (address, field) in [

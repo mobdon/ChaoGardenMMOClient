@@ -13,9 +13,10 @@ from pathlib import Path
 import struct
 
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
 
-FIXTURE = Path(__file__).with_name("garden-save-vectors.json")
+FIXTURE = spp_vectors.path("garden-save-vectors.json")
 EWRAM, IWRAM = 0x02000000, 0x03000000
 SAVE, LENGTH = IWRAM + 0x4AA0, 0x858
 SNAPSHOT_LENGTH = 0x7400

@@ -72,10 +72,12 @@ The emulator check needs the GameCube stg11D.rel loaded and relocated, with
 r13-0x7A00 pointing at its `objLandTable0011`. The installed module and the
 disc's copy are byte-identical (SHA-1 8fbe506bcbbe6f012d2bb8240edb5f6c8cb6ece0).
 
-## fres
+## Gekko estimates
 
-njScalor ends in `fres`, and PSMTXInverse starts its reciprocal with one.
-`msl_math::gekko_fres` is Gekko's table estimate (Dolphin's transcription,
-copied from #425's player_range.rs), and `tests/gekko_fres.py` installs the
-same estimate in the harness, which otherwise computes an exact reciprocal.
-Like the frsqrte table, it is GPL-derived data awaiting the owner's decision.
+`frsqrte` (everywhere) and `fres` (njScalor, PSMTXInverse) are Gekko table
+estimates. The tables are GPL-derived, so they live in a local, git-ignored
+file read by `msl_math::gekko_tables()` and `tests/gekko_tables.py`
+(`.local/research/gekko-estimate-tables.json`, or `SA2_GEKKO_TABLES`).
+Without it the port uses exact `1/sqrt(x)` and `1/x`, and the main.dol
+checks skip. Create it with
+`python asset-tools/crates/sa2/tests/gekko_tables.py --extract-from-git fc5e0a3`.

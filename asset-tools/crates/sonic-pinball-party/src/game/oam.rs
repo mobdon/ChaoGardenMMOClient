@@ -133,10 +133,10 @@ mod tests {
         value.as_u64().unwrap() as u32
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_submission_vectors_preserve_complete_queue_and_opaque_words() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/oam-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("oam-vectors.json")).unwrap();
         for case in data["cases"].as_array().unwrap() {
             let seed = integer(&case["seed"]);
             let flat = pattern(seed, CAPACITY * RECORD_WORDS);

@@ -6,11 +6,12 @@ from pathlib import Path
 
 import reference_parity as parity
 import garden_shop_reference as shop
+import spp_vectors  # noqa: E402
 
 P,I,T,K,G = shop.P,shop.I,shop.T,shop.K,shop.G
 CHILD=shop.OBJ+36*5
 MODE,BOARD=I+0x1ae6,I+0x1ae8
-FIXTURE=Path(__file__).with_name("garden-puzzle-objects-vectors.json")
+FIXTURE=spp_vectors.path("garden-puzzle-objects-vectors.json")
 SPANS={a:b for a,b in [(0xd8a4,0xd9a8),(0xd9a8,0xda04),(0xda04,0xda58),(0xda58,0xdac0),
     (0xdac0,0xdb28),(0xdb28,0xdba8),(0xdba8,0xde24),(0xde24,0xdfbc),(0xdfbc,0xe02c),
     (0xe1f0,0xe3b4),(0xe3b4,0xe430),(0xe6d8,0xe888),(0xe888,0xe974),(0xf2dc,0xf404),

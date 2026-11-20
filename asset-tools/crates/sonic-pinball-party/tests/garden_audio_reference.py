@@ -11,8 +11,9 @@ from pathlib import Path
 import struct
 
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("garden-audio-vectors.json")
+FIXTURE = spp_vectors.path("garden-audio-vectors.json")
 EWRAM, IWRAM = 0x02000000, 0x03000000
 SIGNATURE = 0x68736D53
 INFO, HEADER, CHANNEL = IWRAM + 0x6100, EWRAM + 0x30000, IWRAM + 0x4000

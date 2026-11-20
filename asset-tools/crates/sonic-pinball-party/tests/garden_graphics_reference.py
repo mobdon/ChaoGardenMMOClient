@@ -21,12 +21,13 @@ from unicorn.arm_const import (UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2,
     UC_ARM_REG_R8, UC_ARM_REG_R9, UC_ARM_REG_R10, UC_ARM_REG_R11,
     UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC)
 import reference_parity
+import spp_vectors  # noqa: E402
 
 BASE = 0x02000000
 SHA256 = "33dcbab013c9007ad838d8cbff693eef140768ca4110c9617c4055aa75659efb"
 LENGTH = 0x2E12C
 SENTINEL = 0x03007F00
-FIXTURE = Path(__file__).with_name("garden-graphics-vectors.json")
+FIXTURE = spp_vectors.path("garden-graphics-vectors.json")
 ROUTINES = [("registerScript", 0x163C, 0x34, "b072578615dc6e52b9acc3cc116b5807560ecabb5f19376ff2982e2ae48488be"),
     ("mapStamp", 0x1718, 0x48, "1ea0a9a7a33516d2b16df64a8f24309fc9dbfa4d70870ea0d51d93b73b6ae9e8"),
     ("initialize", 0xD294, 0x270, "d43e126197c66c6f15fbe3927eff5c0f6f76a1ff491c772339dfe158c6b0a7aa")]

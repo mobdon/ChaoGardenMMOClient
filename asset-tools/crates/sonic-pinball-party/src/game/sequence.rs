@@ -222,10 +222,11 @@ mod tests {
             self.voice.get(i..i.checked_add(n)?)
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn command_leaves_match_native_player_and_track_snapshots() {
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/sequence-vectors.json")).unwrap();
+            serde_json::from_str(vectors!("sequence-vectors.json")).unwrap();
         for (index, case) in fixture["cases"].as_array().unwrap().iter().enumerate() {
             let seed = case["voiceSeed"].as_u64().unwrap() as u8;
             let data = Data {

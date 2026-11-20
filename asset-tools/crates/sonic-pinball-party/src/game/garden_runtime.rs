@@ -493,7 +493,7 @@ mod tests {
             .unwrap();
         let payload = crate::catalog::extract_garden(&rom).unwrap().bytes;
         let f: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/garden-runtime-vectors.json")).unwrap();
+            serde_json::from_str(vectors!("garden-runtime-vectors.json")).unwrap();
         let regions = [
             (0x02000000, 0x40000),
             (0x03000000, 0x7000),

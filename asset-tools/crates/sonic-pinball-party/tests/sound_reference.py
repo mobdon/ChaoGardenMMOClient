@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import random
 import struct
+import spp_vectors  # noqa: E402
 
 ROM_SHA256="5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
 ROUTINES={"request":(0x37D4,0x78),"force":(0x384C,0x50),"status":(0x38FC,0x24),"force-channel2":(0x38D4,0x14)}
@@ -64,7 +65,7 @@ def generate(path):
 
 if __name__=="__main__":
     p=argparse.ArgumentParser();p.add_argument("--rom",required=True);p.add_argument("--generate",action="store_true");a=p.parse_args()
-    actual=generate(a.rom);fixture=Path(__file__).with_name("sound-vectors.json")
+    actual=generate(a.rom);fixture=spp_vectors.path("sound-vectors.json")
     if a.generate: fixture.write_text(json.dumps(actual,separators=(",",":"))+"\n",encoding="utf8")
     elif json.loads(fixture.read_text(encoding="utf8"))!=actual: raise SystemExit("Native sound routing vectors differ")
     print(json.dumps({"cases":len(actual["cases"]),"sourceSha256":ROM_SHA256,"boundary":actual["boundary"]}))

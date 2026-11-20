@@ -2011,18 +2011,28 @@ impl RegularMotion {
         }
     }
     pub fn cleanup_call(self, latched: bool, task_field_30_present: bool) -> Option<u32> {
-        (latched && self.timer >= 60).then_some(if task_field_30_present {
-            0x80065148
-        } else {
-            0x80071878
-        })
+        goal_cleanup_call(self.timer, latched, task_field_30_present)
     }
+}
+/// Shared tail after contact; the alternate path does not run regular motion.
+pub fn goal_cleanup_call(timer: u16, latched: bool, task_field_30_present: bool) -> Option<u32> {
+    (latched && timer >= 60).then_some(if task_field_30_present {
+        0x80065148
+    } else {
+        0x80071878
+    })
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseObservation {
     work56: u32,
     nested: u32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlternateLifecycle {
+    task_field_30_present: bool,
+    release: Option<ReleaseObservation>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2639,6 +2649,7 @@ struct Request {
     game_byte_23: i8,
     frames: Vec<GoalFrame>,
     lifecycle: Option<LifecycleInput>,
+    alternate_lifecycle: Option<AlternateLifecycle>,
     probe: Option<Probe>,
 }
 #[derive(Deserialize)]
@@ -2841,6 +2852,11 @@ pub fn replay(
         .frames
         .iter()
         .any(|f| matches!(f,GoalFrame::Sample(s) if s.alternate_timer.is_some()));
+    if r.alternate_lifecycle.is_some() && (!alternate || angle_x % 3 == 0) {
+        return Err(Error::invalid(
+            "alternate lifecycle requires sampled alternate goal motion",
+        ));
+    }
     let mut phase = 0f32;
     for observation in r.frames {
         let (hit, game_byte, motion_gate, entry, alt_timer) = match observation {
@@ -2940,7 +2956,19 @@ pub fn replay(
         let cleanup = r
             .lifecycle
             .as_ref()
-            .and_then(|v| motion.cleanup_call(state.latched, v.task_field_30_present));
+            .and_then(|v| motion.cleanup_call(state.latched, v.task_field_30_present))
+            .or_else(|| {
+                r.alternate_lifecycle.as_ref().and_then(|v| {
+                    goal_cleanup_call(
+                        alt_timer.expect("validated sampled alternate timer"),
+                        state.latched,
+                        v.task_field_30_present,
+                    )
+                })
+            });
+        if r.alternate_lifecycle.is_some() {
+            frame["cleanupCall"] = json!(cleanup);
+        }
         if r.lifecycle.is_some() {
             frame["regularMotion"] = json!(motion);
             frame["cleanupCall"] = json!(cleanup);
@@ -2950,7 +2978,15 @@ pub fn replay(
             break;
         }
     }
-    let released = if let Some(obs) = r.lifecycle.as_ref().and_then(|l| l.release.as_ref()) {
+    let released = if let Some(obs) = r
+        .lifecycle
+        .as_ref()
+        .and_then(|l| l.release.as_ref())
+        .or_else(|| {
+            r.alternate_lifecycle
+                .as_ref()
+                .and_then(|l| l.release.as_ref())
+        }) {
         if !frames.last().is_some_and(|f| !f["cleanupCall"].is_null()) {
             return Err(Error::invalid(
                 "observed release requires a cleanup request",

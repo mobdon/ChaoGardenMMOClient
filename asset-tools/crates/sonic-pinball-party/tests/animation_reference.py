@@ -15,8 +15,9 @@ import struct
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("animation-vectors.json")
+FIXTURE = spp_vectors.path("animation-vectors.json")
 OBJECT = 0x03005000
 COMMANDS = 0x03003000
 SIZE = 0x58
