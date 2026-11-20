@@ -31,13 +31,16 @@ fn main() {
 const PER_FILE: usize = 150;
 
 /// Write the `sa2-host` crate: links the generated main.dol and REL crates
-/// into `sa2_recomp::host`. Run it as `sa2-host MAIN.DOL SYMBOLS.TXT [CALLS]`.
+/// into `sa2_recomp::host`. Run it as `sa2-host MAIN.DOL SYMBOLS.TXT [CALLS]
+/// [SECONDS]`. The REL modules are the optional `rels` feature: boot needs
+/// main.dol only, and linking all 94 modules costs a long build.
 fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> {
     let p = |x: &Path| std::path::absolute(x).map(|a| a.display().to_string().replace('\\', "/")).map_err(|e| e.to_string());
     let me = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string().replace('\\', "/");
     let toml = format!(
         "[package]\nname = \"sa2-host\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[workspace]\n\n\
-         [dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\nsa2-recomp-gen = {{ path = \"{}\" }}\nsa2-recomp-rels = {{ path = \"{}\" }}\n",
+         [features]\nrels = [\"dep:sa2-recomp-rels\"]\n\n\
+         [dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\nsa2-recomp-gen = {{ path = \"{}\" }}\nsa2-recomp-rels = {{ path = \"{}\", optional = true }}\n",
         p(main_crate)?,
         p(rels_crate)?
     );
@@ -45,15 +48,19 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         fn main() {\n\
         \x20   let a: Vec<String> = std::env::args().collect();\n\
         \x20   if a.len() < 3 {\n\
-        \x20       eprintln!(\"usage: sa2-host MAIN.DOL SYMBOLS.TXT [CALLS]\");\n\
+        \x20       eprintln!(\"usage: sa2-host MAIN.DOL SYMBOLS.TXT [CALLS] [SECONDS]\");\n\
         \x20       std::process::exit(2);\n\
         \x20   }\n\
         \x20   let dol = std::fs::read(&a[1]).expect(\"read main.dol\");\n\
         \x20   let syms = std::fs::read_to_string(&a[2]).unwrap_or_default();\n\
         \x20   let budget = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(100_000_000);\n\
+        \x20   let secs = a.get(4).and_then(|s| s.parse().ok()).unwrap_or(20);\n\
+        \x20   #[cfg(feature = \"rels\")]\n\
+        \x20   let register: fn(&mut sa2_recomp::rt::Runtime) = sa2_recomp_rels::register;\n\
+        \x20   #[cfg(not(feature = \"rels\"))]\n\
+        \x20   let register: fn(&mut sa2_recomp::rt::Runtime) = |_| {};\n\
         \x20   std::panic::set_hook(Box::new(|_| {}));\n\
-        \x20   let r = sa2_recomp::host::run(&dol, sa2_recomp_gen::dispatch, sa2_recomp_rels::register, budget).expect(\"host\");\n\
-        \x20   sa2_recomp::host::print(&r, &syms);\n\
+        \x20   sa2_recomp::host::run(&dol, &syms, sa2_recomp_gen::dispatch, register, budget, secs).expect(\"host\");\n\
         }\n";
     std::fs::create_dir_all(out.join("src")).map_err(|e| e.to_string())?;
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;
@@ -141,7 +148,7 @@ fn run(dol_path: &Path, sym_path: &Path, out: &Path) -> Result<(), String> {
     let me = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string().replace('\\', "/");
     let toml = format!(
         "[package]\nname = \"sa2-recomp-gen\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n\
-         [workspace]\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\n\n\
+         [workspace]\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}/rt\", package = \"sa2-recomp-rt\" }}\n\n\
          [profile.dev]\nopt-level = 1\n"
     );
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;

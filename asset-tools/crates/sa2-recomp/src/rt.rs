@@ -4,6 +4,8 @@
 //! the recompiled function at that GSNE8P address.
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU32, AtomicU64};
 
 pub type Func = fn(&mut Cpu, &mut Mem);
 
@@ -58,27 +60,26 @@ pub struct Runtime {
     /// Recompiled REL modules: (module id, code section size) -> dispatch(section,
     /// offset). The size tells apart modules that share an id.
     pub rels: HashMap<(u32, u32), fn(u32, u32) -> Option<Func>>,
-    /// Calls made so far, and the most recent targets (ring, newest at
-    /// `calls % TRACE`), for reporting where a run stopped.
-    pub calls: u64,
-    pub trace: [u32; TRACE],
-    /// Stop with a panic after this many calls (0 = no limit): a hardware
-    /// poll that never sees its bit would otherwise spin forever.
+    /// Stop with a panic after this many calls (0 = no limit).
     pub budget: u64,
 }
 
+/// Calls made so far and the most recent targets (ring, newest at
+/// `CALLS % TRACE`). Globals so a watchdog thread can report where a run that
+/// spins in a loop without calls is stuck.
+pub static CALLS: AtomicU64 = AtomicU64::new(0);
+pub static RING: [AtomicU32; TRACE] = [const { AtomicU32::new(0) }; TRACE];
 pub const TRACE: usize = 32;
+
+/// The most recent call targets, oldest first.
+pub fn trace() -> Vec<u32> {
+    let n = CALLS.load(Relaxed);
+    (n.saturating_sub(TRACE as u64)..n).map(|i| RING[i as usize % TRACE].load(Relaxed)).collect()
+}
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self {
-            overrides: HashMap::new(),
-            generated: |_| None,
-            rels: HashMap::new(),
-            calls: 0,
-            trace: [0; TRACE],
-            budget: 0,
-        }
+        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new(), budget: 0 }
     }
 }
 
@@ -115,9 +116,9 @@ impl Runtime {
 
 /// Call the function at `addr` (bl, bctrl, blrl and tail calls all end here).
 pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    c.rt.trace[c.rt.calls as usize % TRACE] = addr;
-    c.rt.calls += 1;
-    if c.rt.budget != 0 && c.rt.calls > c.rt.budget {
+    let n = CALLS.fetch_add(1, Relaxed);
+    RING[n as usize % TRACE].store(addr, Relaxed);
+    if c.rt.budget != 0 && n >= c.rt.budget {
         panic!("sa2-recomp: call budget of {} reached at {addr:#010x}", c.rt.budget);
     }
     match c.rt.resolve(m, addr) {

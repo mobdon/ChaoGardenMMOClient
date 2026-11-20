@@ -141,7 +141,7 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     let me = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string().replace('\\', "/");
     let crate_toml = |name: &str, deps: &str| {
         format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\n{deps}"
+            "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}/rt\", package = \"sa2-recomp-rt\" }}\n{deps}"
         )
     };
     let mut members = Vec::new();

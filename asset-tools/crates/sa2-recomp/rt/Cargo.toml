@@ -1,0 +1,8 @@
+[package]
+name = "sa2-recomp-rt"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Runtime the recompiled SA2 code links against (kept apart so generator and host changes do not rebuild the generated crates)"
+
+[dependencies]
