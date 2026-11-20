@@ -2,8 +2,9 @@
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
     walker_move::{
-        accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, jump_assist, steer,
-        AccelWork, JumpTarget, JumpWork, SteerCalls, SteerInput,
+        accel, accel_air, accel_gravity, accel_hover, accel_mode43, accel_run, aim_carry,
+        aim_toward, air_level, jump_assist, steer, turn_back, AccelWork, JumpTarget, JumpWork,
+        SteerCalls, SteerInput,
     },
 };
 use serde_json::{json, Value};
@@ -27,6 +28,7 @@ fn bits(v: [f32; 3]) -> [u32; 3] {
 
 struct Log {
     stick: Option<i32>,
+    mag: f32,
     calls: Vec<Value>,
 }
 
@@ -36,6 +38,9 @@ impl SteerCalls for Log {
     }
     fn analog(&mut self) -> Option<i32> {
         self.stick
+    }
+    fn analog_magnitude(&mut self) -> Option<(i32, f32)> {
+        self.stick.map(|a| (a, self.mag))
     }
     fn slope_turn(&mut self) {
         self.calls.push(json!(["slope", 0]));
@@ -232,6 +237,7 @@ fn matches_main_dol() {
         };
         let mut log = Log {
             stick: (c["stick"][0].as_u64().unwrap() != 0).then(|| i(&c["stick"][1])),
+            mag: 0.0,
             calls: vec![],
         };
         let mut aim = i(&c["aim"]);
@@ -275,6 +281,7 @@ fn matches_main_dol() {
             .collect();
         let mut log = Log {
             stick: (c["stick"][0].as_u64().unwrap() != 0).then(|| i(&c["stick"][1])),
+            mag: 0.0,
             calls: vec![],
         };
         let mut aim = i(&c["aim"]);
@@ -310,5 +317,67 @@ fn matches_main_dol() {
             ];
             assert_eq!(Value::from(got.to_vec()), *want, "{c}");
         }
+    }
+    for c in v["small"].as_array().unwrap() {
+        let i = |x: &Value| x.as_i64().unwrap() as i32;
+        let g = |k: &str| f(&c["f"][k]);
+        let flag = c["flag"].as_u64().unwrap() as i16;
+        let mut ang = i3(&c["ang"]);
+        let mut spd = v3(&c["spd"]);
+        let mut aim = i(&c["aim"]);
+        let mut log = Log {
+            stick: (c["stick"][0].as_u64().unwrap() != 0).then(|| i(&c["stick"][1])),
+            mag: f(&c["stick"][2]),
+            calls: vec![],
+        };
+        let touch = c["touch"].as_bool().unwrap();
+        let mut acc = [1.5, 2.5, 3.5];
+        let mut ret = 0u64;
+        match c["fn"].as_u64().unwrap() {
+            0x8004E490 => {
+                let mut touched = vec![];
+                let r = turn_back(flag, ang[1], &mut log, &mut |k| {
+                    touched.push(k);
+                    touch
+                });
+                for k in touched {
+                    log.calls.push(json!(["touch", k]));
+                }
+                ret = r as u64;
+            }
+            0x80048400 => aim_toward(flag, ang[1], &mut aim, &mut log),
+            0x80048370 => aim_carry(
+                &mut stack,
+                flag,
+                c["mode2"].as_u64().unwrap() as u8,
+                &mut ang,
+                g("0x34"),
+                &mut spd,
+                &mut aim,
+                &mut log,
+            ),
+            _ => {
+                acc = accel_hover(
+                    &mut stack,
+                    ang,
+                    spd,
+                    [g("0x110"), g("0x118"), g("0x11c")],
+                    g("0xe8"),
+                    g("0x100"),
+                    g("0x10c"),
+                    v3(&c["mwacc"]),
+                    &mut aim,
+                    &mut log,
+                )
+            }
+        }
+        if c["fn"].as_u64().unwrap() == 0x8004E490 {
+            assert_eq!(ret, c["ret"].as_u64().unwrap(), "{c}");
+        }
+        assert_eq!(ang, i3(&c["ang_after"]), "{c}");
+        assert_eq!(bits(spd), bits(v3(&c["spd_after"])), "{c}");
+        assert_eq!(bits(acc), bits(v3(&c["acc_after"])), "{c}");
+        assert_eq!(aim, i(&c["aim_after"]), "{c}");
+        assert_eq!(Value::from(log.calls), c["log"], "{c}");
     }
 }

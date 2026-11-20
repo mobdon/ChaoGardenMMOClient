@@ -391,6 +391,9 @@ pub trait SteerCalls {
     fn flagged_turn(&mut self);
     /// fn_8004E560(task, player, &angle, NULL): the stick angle when held.
     fn analog(&mut self) -> Option<i32>;
+    /// fn_8004E560(task, player, &angle, &magnitude): the stick angle and
+    /// magnitude when held.
+    fn analog_magnitude(&mut self) -> Option<(i32, f32)>;
     /// fn_80048150(task, motion, player).
     fn slope_turn(&mut self);
     /// fn_800473B4(task, motion, player, aim).
@@ -634,4 +637,128 @@ pub fn jump_assist(
         return true;
     }
     false
+}
+
+/// fn_8004E490: whether the stick asks to turn back. False with task flag
+/// 0x4000 or 0x2000, without the stick, or while `touching` (fn_800060EC on
+/// the player's task with kind 0x11) finds a contact; otherwise whether the
+/// stick is more than 0x6000 off the yaw.
+pub fn turn_back(
+    task_flag: i16,
+    yaw: i32,
+    calls: &mut dyn SteerCalls,
+    touching: &mut dyn FnMut(i32) -> bool,
+) -> bool {
+    if task_flag & 0x4000 != 0 || task_flag & 0x2000 != 0 {
+        return false;
+    }
+    let Some(ang) = calls.analog() else {
+        return false;
+    };
+    if touching(0x11) {
+        return false;
+    }
+    diff_angle(yaw, ang) > 0x6000
+}
+
+/// fn_80048400: with task flag 0x4000 nothing; otherwise the aim becomes
+/// the stick angle (or the yaw without it) and `turn_toward` runs.
+pub fn aim_toward(task_flag: i16, yaw: i32, aim: &mut i32, calls: &mut dyn SteerCalls) {
+    if task_flag & 0x4000 != 0 {
+        return;
+    }
+    *aim = calls.analog().unwrap_or(yaw);
+    calls.turn_toward(aim);
+}
+
+const KEEP_SLOPE: f32 = f32::from_bits(0x3ecc_cccd); // r2-0x7518, 0.4
+const KEEP_OLD: f32 = f32::from_bits(0x3f7d_70a4); // r2-0x7498, 0.99
+const KEEP_NEW: f32 = f32::from_bits(0x3c23_d700); // r2-0x7494, 0.01
+
+/// fn_80047220(task, motion, player, aim): turn the yaw toward `aim` by
+/// 0x38 (task byte +2 is 3) or 0x30, then blend the speed with itself
+/// re-expressed in the new frame: 0.99 old + 0.01 new when `dotp` is above
+/// 0.4, else half and half.
+pub fn turn_carry(
+    stack: &mut MatrixStack,
+    task_mode2: u8,
+    angles: &mut [i32; 3],
+    dotp: f32,
+    spd: &mut Vec3,
+    aim: i32,
+) {
+    let world = rotate_by_angles(stack, *angles, *spd);
+    let step = if task_mode2 == 3 { 0x38 } else { 0x30 };
+    angles[1] = adjust_angle(angles[1], aim, step);
+    let new = unrotate_by_angles(stack, *angles, world);
+    let (keep, take) = if dotp > KEEP_SLOPE {
+        (KEEP_OLD, KEEP_NEW)
+    } else {
+        (HALF, HALF)
+    };
+    for j in 0..3 {
+        spd[j] = fmadds(spd[j], keep, new[j] * take);
+    }
+}
+
+/// fn_80048370: as `aim_toward`, ending in `turn_carry` (fn_80047220).
+pub fn aim_carry(
+    stack: &mut MatrixStack,
+    task_flag: i16,
+    task_mode2: u8,
+    angles: &mut [i32; 3],
+    dotp: f32,
+    spd: &mut Vec3,
+    aim: &mut i32,
+    calls: &mut dyn SteerCalls,
+) {
+    if task_flag & 0x4000 != 0 {
+        return;
+    }
+    *aim = calls.analog().unwrap_or(angles[1]);
+    turn_carry(stack, task_mode2, angles, dotp, spd, *aim);
+}
+
+/// fn_8004B168: `accel_air` without gravity or the falling boost: the
+/// motion work's acceleration in the task frame, air resistance (+0x110 for
+/// x), and the stick's push on x through `turn_smoothly`.
+#[allow(clippy::too_many_arguments)]
+pub fn accel_hover(
+    stack: &mut MatrixStack,
+    angles: [i32; 3],
+    spd: Vec3,
+    air_resist: Vec3,
+    run_speed: f32,
+    f_100: f32,
+    f_10c: f32,
+    mw_acc: Vec3,
+    aim: &mut i32,
+    calls: &mut dyn SteerCalls,
+) -> Vec3 {
+    let mut a = unrotate_by_angles(stack, angles, mw_acc);
+    for j in 0..3 {
+        a[j] = fmadds(air_resist[j], spd[j], a[j]);
+    }
+    let mag = match calls.analog_magnitude() {
+        None => {
+            *aim = angles[1];
+            ZERO
+        }
+        Some((ang, mag)) => {
+            let d = diff_angle(angles[1], ang);
+            let mag = if spd[0] > run_speed && d > 0x6000 {
+                f_10c * mag
+            } else if d > 0x1000 {
+                *aim = ang;
+                ZERO
+            } else {
+                *aim = ang;
+                f_100 * mag
+            };
+            calls.turn_smoothly(aim);
+            mag
+        }
+    };
+    a[0] += mag;
+    a
 }
