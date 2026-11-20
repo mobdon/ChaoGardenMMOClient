@@ -4,11 +4,14 @@ Places every section (and .bss) at `base` upwards, then applies the module's
 own and main.dol (module 0) relocations. Returns the section addresses.
 Supported kinds: ADDR32 (1), ADDR16_LO (4), ADDR16_HI (5), ADDR16_HA (6),
 REL24 (10), plus the NOP / SECTION / END markers (201, 202, 203).
+`others` maps the id of an already loaded module (for example ChaoMain) to the
+section addresses load_rel returned for it, so imports from it resolve too. Imports from module ids in `skip` are left
+unrelocated (for modules the caller never runs, such as ChaoMotionsD).
 """
 import struct
 
 
-def load_rel(m, data, base):
+def load_rel(m, data, base, others=None, skip=()):
     w = lambda o: struct.unpack_from(">I", data, o)[0]
     module = w(0)
     count, info = w(12), w(16)
@@ -32,8 +35,12 @@ def load_rel(m, data, base):
         m.u.mem_write(cursor, bytes(bss_size))
     for k in range(imp_size // 8):
         mod, at = struct.unpack_from(">II", data, imp + 8 * k)
-        if mod not in (0, module):
+        others = others or {}
+        if mod in skip:
+            continue
+        if mod not in (0, module) and mod not in others:
             raise ValueError(f"import from module {mod}")
+        target = addrs if mod == module else others.get(mod)
         section, offset = None, 0
         while True:
             delta, kind, s, addend = struct.unpack_from(">HBBI", data, at)
@@ -46,7 +53,7 @@ def load_rel(m, data, base):
                 continue
             if kind == 201:
                 continue
-            value = addend if mod == 0 else addrs[s] + addend
+            value = addend if mod == 0 else target[s] + addend
             where = addrs[section] + offset
             if kind == 1:
                 m.u.mem_write(where, struct.pack(">I", value & 0xFFFFFFFF))
