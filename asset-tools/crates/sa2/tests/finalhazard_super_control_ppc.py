@@ -1,10 +1,11 @@
 """Compare the Rust super-form action selection with installed PPC instructions.
 
 Usage: python finalhazard_super_control_ppc.py SA2_ASSETS_EXE Boss_Last2D.rel
-Runs Boss_Last2D.rel section 1 + 0xbad0 to its return. Engine queries and
-the local checks 0xdf44, 0xe120 and 0xe200 return the request's values;
-0xe1ac is observed. Every call, local call, argument and non-stack store
-is compared in order.
+Runs Boss_Last2D.rel section 1 + 0xbad0 to its return, with the local
+checks 0xdf44, 0xe120, 0xe200 and 0xe1ac running natively. Engine queries
+return the request's values; the engine vector services write the
+request's vectors in place. Every call, local call, argument, float and
+vector argument and non-stack store is compared in order.
 """
 import json
 from pathlib import Path
@@ -44,13 +45,15 @@ for i in range(imp_off, imp_off + imp_size, 8):
 
 CODE, RETURN, STACK = 0x100000, 0x0FFFF0, 0x0F0000
 START, END = 0xBAD0, 0xC4FC
+LOCAL = (0xDF44, 0xE370)
 cpu = Uc(UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN)
 cpu.mem_map(0, 0x200000)
 cpu.reg_write(R.UC_PPC_REG_MSR, cpu.reg_read(R.UC_PPC_REG_MSR) | 0x2000)
 cpu.mem_write(CODE + START, data[code + START:code + END])
+cpu.mem_write(CODE + LOCAL[0], data[code + LOCAL[0]:code + LOCAL[1]])
 windows, imports = {}, {}
 for at, (t, mod, s, add) in sorted(relocs.items()):
-    if not START <= at < END:
+    if not (START <= at < END or LOCAL[0] <= at < LOCAL[1]):
         continue
     if t == 10:
         imports[at] = add
@@ -68,11 +71,17 @@ JUMPS = windows[(88, 5, 0x3FE60)]
 for i in range(68):
     t, mod, s, add = data_relocs[(5, 0x3FE60 + 4 * i)]
     cpu.mem_write(JUMPS + 4 * i, struct.pack(">I", CODE + add))
+PREV = windows[(88, 5, 0x3FF70)]
+for i in range(29):
+    t, mod, s, add = data_relocs[(5, 0x3FF70 + 4 * i)]
+    cpu.mem_write(PREV + 4 * i, struct.pack(">I", CODE + add))
 BUTTONS = [windows[(0, 9, a)] for a in (0x803AD498, 0x803AD494, 0x803AD488, 0x803AD484)]
 PAD = windows[(0, 7, 0x801E5038)]
-ENT, D2, PL = 0x80000, 0x81000, 0x82000
+ENT, D2, PL, BOSS = 0x80000, 0x81000, 0x82000, 0x83000
 REGIONS = [("entity", ENT), ("data2", D2), ("player", PL)]
-CHECKS = {0xDF44: 0, 0xE120: 1, 0xE200: 2}
+NATIVE = {0xDF44, 0xE120, 0xE200, 0xE1AC}
+vec = lambda u, p: list(struct.unpack(">3f", u.mem_read(p, 12)))
+d2f = lambda q: struct.unpack(">d", struct.pack(">Q", q))[0]
 f32 = lambda v: struct.unpack(">f", struct.pack(">f", v))[0]
 
 
@@ -87,9 +96,23 @@ def code_hook(u, pc, size, _):
     regs = [u.reg_read(getattr(R, f"UC_PPC_REG_{n}")) for n in (3, 4, 5, 6, 7)]
     if off in imports:
         target = imports[off]
-        events.append(dict(site=off, call=target, args=regs))
-        ret = 0
-        if target == 0x800554CC:  # engine hit check updates entity halfword 6
+        ev = dict(site=off, call=target, args=regs,
+                  floats=[d2f(u.reg_read(getattr(R, f"UC_PPC_REG_FPR{n}"))) for n in (1, 2, 3)])
+        if target in (0x8011562C, 0x80114EAC, 0x801159DC, 0x8003E804):
+            ev["vectors"] = {"3": vec(u, regs[0]), "4": vec(u, regs[1])}
+        events.append(ev)
+        ret, fret = 0, None
+        charge = inp.get("charge") or {}
+        if target == 0x8011562C:
+            u.mem_write(regs[0], struct.pack(">3f", *charge["difference"]))
+        elif target == 0x80114EAC:
+            fret = charge["length"]
+        elif target == 0x801159DC:
+            u.mem_write(regs[0], struct.pack(">3f", *charge["normalized"]))
+        elif target == 0x8003E804:
+            u.mem_write(regs[1], struct.pack(">3f", *charge["transformed"]))
+            ret = charge["result"]
+        elif target == 0x800554CC:  # engine hit check updates entity halfword 6
             u.mem_write(ENT + 6, struct.pack(">H", inp["hit_timer_after"]))
         elif target == 0x8004E2F8:
             ret = inp["held"]
@@ -101,8 +124,18 @@ def code_hook(u, pc, size, _):
             li -= 0x4000000
         target = off + li
         events.append(dict(site=off, local=target, args=regs))
-        ret = inp["checks"][CHECKS[target]] if target in CHECKS else 0
+        if target in NATIVE:
+            return
+        assert target == 0x9F4, hex(target)
+        boss = inp["boss"]
+        if boss is not None:
+            u.mem_write(BOSS + 0x34, struct.pack(">I", BOSS + 0x100))
+            u.mem_write(BOSS + 0x104, struct.pack(">h", boss["flags"]))
+            u.mem_write(BOSS + 0x114, struct.pack(">3f", *boss["position"]))
+        ret, fret = (0 if boss is None else BOSS), None
     u.reg_write(R.UC_PPC_REG_3, ret & 0xFFFFFFFF)
+    if fret is not None:
+        u.reg_write(R.UC_PPC_REG_FPR1, struct.unpack(">Q", struct.pack(">d", fret))[0])
     u.reg_write(R.UC_PPC_REG_PC, pc + 4)
 
 
@@ -125,8 +158,10 @@ cpu.hook_add(UC_HOOK_MEM_WRITE, write_hook)
 def run():
     global events
     events = []
-    for base in (ENT, D2, PL, PAD, *BUTTONS):
+    for base in (ENT, D2, PL, PAD, BOSS, *BUTTONS):
         cpu.mem_write(base, bytes(0x400))
+    cpu.mem_write(ENT + 0x14, struct.pack(">3f", *inp["position"]))
+    cpu.mem_write(PL + 0x28, struct.pack(">i", inp["word_28"]))
     cpu.mem_write(ENT, struct.pack(">bbxxhH", inp["action"], inp["action_previous"],
                                    inp["entity_flags"], inp["hit_timer"]))
     cpu.mem_write(D2 + 0x1C, struct.pack(">I", inp["data2_1c"]))
@@ -157,7 +192,7 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
     for n in range(4000):
         slot = rng.choice((0, 1))
         inp = dict(path="super_control", entity=ENT, data2=D2, player=PL,
-                   action=rng.choice(actions), action_previous=rng.choice((15, 0, 59)),
+                   action=rng.choice(actions), action_previous=rng.choice((15, 0, 59, 9, 33, 36, 37)),
                    entity_flags=rng.choice((0, 0x400, -0x8000, -1, 0x1404, 4)),
                    hit_timer=rng.choice((0, 0, 0, 1, 5)), slot=slot,
                    character=rng.choice((9, 10, 0)),
@@ -171,7 +206,18 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
                    hit_timer_after=rng.choice((0, 0, 30)),
                    held=rng.choice((0, 1)), landed=rng.choice((0, 1)),
                    buttons=[rng.choice((0, 0, 1, -1)) for _ in range(4)],
-                   checks=[rng.choice((0, 0, 0, 1)) for _ in range(3)])
+                   position=[f32(rng.uniform(-100, 100)) for _ in range(3)],
+                   word_28=rng.choice((0, 0, 87, 0x12345, -3)),
+                   boss=rng.choice((None, dict(flags=rng.choice((0, 4, 3, -1)),
+                                               position=[f32(rng.uniform(-100, 100)) for _ in range(3)]))),
+                   charge=dict(difference=[f32(rng.uniform(-50, 50)) for _ in range(3)],
+                               length=f32(rng.choice((10.0, 100.0, 500.0, 2000.0, 200.0, rng.uniform(0, 3000)))),
+                               normalized=[f32(rng.uniform(-1, 1)) for _ in range(3)],
+                               transformed=[f32(rng.uniform(-5, 5)) for _ in range(3)],
+                               result=rng.choice((0, 1, -0x7FFFEDCC))))
+        if rng.random() < 0.4:
+            inp["entity_flags"] |= 0x1000
+            inp["action_previous"] = rng.choice((9, 15, 33, 36, 37, 10))
         native = run()
         q = p / "request.json"
         out = p / f"{n}.json"
@@ -186,11 +232,18 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
                 assert r == e, (n, r, e)
                 continue
             assert r.get("call") == e.get("call") and r.get("local") == e.get("local"), (n, r, e)
-            assert r["args"] == [v & 0xFFFFFFFF for v in e["args"][:len(r["args"])]], (n, r, e)
+            if "args" in r:
+                assert r["args"] == [v & 0xFFFFFFFF for v in e["args"][:len(r["args"])]], (n, r, e)
+            if "floats" in r:
+                assert r["floats"] == e["floats"][:len(r["floats"])], (n, r, e)
+            for reg, value in r.get("vectors", {}).items():
+                assert value == e["vectors"][reg], (n, reg, r, e)
         seen.update(e["site"] for e in native)
         cases += 1
 stores = {0xBB24, 0xBBCC, 0xBBF4, 0xBC04, 0xBC10, 0xBCB0, 0xBD10, 0xBD94, 0xBE88, 0xBEE8,
           0xBF70, 0xBFEC, 0xC030, 0xC07C, 0xC0C0, 0xC100, 0xC144, 0xC184, 0xC1C8, 0xC208,
-          0xC274, 0xC2A0, 0xC318, 0xC340, 0xC3B8, 0xC398, 0xC418, 0xC460, 0xC49C, 0xC4D8}
+          0xC274, 0xC2A0, 0xC318, 0xC340, 0xC3B8, 0xC398, 0xC418, 0xC460, 0xC49C, 0xC4D8,
+          0xDFD0, 0xDFFC, 0xE018, 0xE050, 0xE074, 0xE0D8, 0xE0EC, 0xE0F4, 0xE184, 0xE2C0,
+          0xE310, 0xE334, 0xE350}
 assert stores <= seen, sorted(hex(s) for s in stores - seen)
 print(f"{cases} installed PPC super-control updates matched")

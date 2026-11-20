@@ -156,12 +156,22 @@ the hit timer (entity halfword 6). A running timer counts down. Otherwise the en
 and a fresh hit plays the character's hit sound (0x300b or 0x301d), enters stun action 15 with pose
 21, and sets the speed to minus player float 0xe8.
 
-The action table at section 5 + 0x3fd60 then moves between flight (59), steering (60), the four
+The action table at section 5 + 0x3fe60 then moves between flight (59), steering (60), the four
 boosts (61–64, pose 90/92/94/96, with player float 0x68 pushed past ±2.7), the charge action (67,
 120 frames), landing (12 → 1), stun recovery (15 → 59), and the returns from actions 53, 54, 58 and
 66. Inputs are the player's bytes in the four engine button tables 0x803ad498, 0x803ad494,
-0x803ad488 and 0x803ad484. The results of the stick queries and the local checks 0xdf44, 0xe120
-and 0xe200 are request inputs.
+0x803ad488 and 0x803ad484. The stick and landing queries are request inputs.
+
+The three local checks are ported with it:
+- **0xdf44** leaves the current action when entity flag 0x1000 is set. The previous action
+  (entity byte 1) picks the exit: 9 → 18, 15 → 59, 33 → 53, 36 → 59, 37 → 57 with a voice line.
+- **0xe120** settles into flight (pose 87) when the stick is released at zero speed.
+- **0xe200** launches toward the boss when it is unshielded and within 200 units. It sets action
+  67 and pose 89, with a launch vector of 10 × the normalized difference. It returns the engine
+  transform call's result, as the native code does.
+
+The engine vector services that 0xe200 uses write results in place; those results are request
+inputs (`charge`).
 
 ## Verification
 

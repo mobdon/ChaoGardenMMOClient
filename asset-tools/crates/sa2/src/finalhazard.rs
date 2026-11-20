@@ -3779,11 +3779,21 @@ fn super_free_move(
     Ok(serde_json::json!({"events":ev,"position":pos}))
 }
 
-/// Inputs to section 1 + 0xbad0. `hit_timer_after` is entity halfword 6
-/// after the engine hit check 0x800554cc; `held` and `landed` are the
-/// results of 0x8004e2f8 and 0x8004e228; `buttons` are the player's bytes in
-/// the engine tables 0x803ad498, 0x803ad494, 0x803ad488 and 0x803ad484;
-/// `checks` are the results of the local checks 0xdf44, 0xe120 and 0xe200.
+/// Boss object the charge check (0xe200) reads through the local lookup
+/// 0x9f4: halfword 4 of its word 0x34 object and that object's position.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperBoss {
+    pub flags: i16,
+    pub position: [f32; 3],
+}
+/// Inputs to section 1 + 0xbad0 and the local checks it calls (0xdf44,
+/// 0xe120, 0xe200). `hit_timer_after` is entity halfword 6 after the engine
+/// hit check 0x800554cc; `held` and `landed` are the results of 0x8004e2f8
+/// and 0x8004e228; `buttons` are the player's bytes in the engine tables
+/// 0x803ad498, 0x803ad494, 0x803ad488 and 0x803ad484. For the charge check,
+/// `charge` holds the engine's in-place vector results (difference,
+/// length, normalized, transformed) and the transform call's return value.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SuperControlFrame {
@@ -3791,12 +3801,13 @@ pub struct SuperControlFrame {
     pub data2: u32,
     pub player: u32,
     pub action: i8,
-    /// Entity byte 1, halfwords 4 and 6.
+    /// Entity byte 1, halfwords 4 and 6, position 0x14..0x1c.
     pub action_previous: i8,
     pub entity_flags: i16,
     pub hit_timer: u16,
+    pub position: [f32; 3],
     /// Player bytes 0 (slot) and 1 (character), halfwords 0x10, 0x176,
-    /// 0x178, 0x180, 0x35e, floats 0x68 and 0xe8.
+    /// 0x178, 0x180, 0x35e, word 0x28, floats 0x64, 0x68 and 0xe8.
     pub slot: i8,
     pub character: i8,
     pub flags_10: i16,
@@ -3804,10 +3815,10 @@ pub struct SuperControlFrame {
     pub anim_178: i16,
     pub flags_180: i16,
     pub timer_35e: i16,
+    pub word_28: i32,
+    pub speed: f32,
     pub f68: f32,
     pub fe8: f32,
-    /// Player float 0x64 (speed).
-    pub speed: f32,
     /// Data2 word 0x1c and controller word 0x10.
     pub data2_1c: u32,
     pub pad_10: u32,
@@ -3820,306 +3831,450 @@ pub struct SuperControlFrame {
     #[serde(default)]
     pub buttons: [i8; 4],
     #[serde(default)]
-    pub checks: [i32; 3],
+    pub boss: Option<SuperBoss>,
+    #[serde(default)]
+    pub charge: Option<SuperCharge>,
 }
-/// Section 1 + 0xbad0: hit reaction and the action transitions between
-/// flight (59), steering (60), the four boosts (61-64), action 67, the
-/// hit stun (15), and actions 12, 18, 53, 54, 58 and 66.
-fn super_control(
-    rel: &crate::city_rel::CityRel<'_>,
-    f: &SuperControlFrame,
-) -> Result<serde_json::Value> {
-    let k = |site: usize| stage_f32(rel, site, 4, 0);
-    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
-        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
-    };
-    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
-    let st = |site: u32, region: &str, offset: u32, size: u32, value: u64| {
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperCharge {
+    pub difference: [f32; 3],
+    pub length: f32,
+    pub normalized: [f32; 3],
+    pub transformed: [f32; 3],
+    pub result: i32,
+}
+struct SuperCtl<'a, 'r> {
+    rel: &'a crate::city_rel::CityRel<'r>,
+    f: &'a SuperControlFrame,
+    ev: Vec<serde_json::Value>,
+    action: i8,
+    flags: i16,
+    anim: i16,
+    flags_10: i16,
+    f68: f32,
+    speed: f32,
+    timer: i16,
+    hit_timer: u16,
+}
+impl SuperCtl<'_, '_> {
+    fn st(&mut self, site: u32, region: &str, offset: u32, size: u32, value: u64) {
         let mask = if size == 4 {
             u32::MAX as u64
         } else {
             (1u64 << (8 * size)) - 1
         };
-        serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value & mask})
+        self.ev.push(
+            serde_json::json!({"site":site,"store":region,"offset":offset,
+            "size":size,"value":value & mask}),
+        );
+    }
+    fn action(&mut self, site: u32, v: i8) {
+        self.action = v;
+        self.st(site, "entity", 0, 1, v as u8 as u64);
+    }
+    fn anim(&mut self, site: u32, v: i16) {
+        self.anim = v;
+        self.st(site, "player", 0x176, 2, v as u16 as u64);
+    }
+    fn flags(&mut self, site: u32, v: i16) {
+        self.flags = v;
+        self.st(site, "entity", 4, 2, v as u16 as u64);
+    }
+    fn call(&mut self, site: u32, args: serde_json::Value) -> Result<()> {
+        let target = engine_import(self.rel, site)?;
+        self.ev
+            .push(serde_json::json!({"site":site,"call":target,"args":args}));
+        Ok(())
+    }
+    fn local(&mut self, site: u32, target: u32, args: serde_json::Value) {
+        self.ev
+            .push(serde_json::json!({"site":site,"local":target,"args":args}));
+    }
+    fn four(&self) -> serde_json::Value {
+        serde_json::json!([self.f.entity, self.f.data2, self.f.player, self.f.player])
+    }
+    /// Section 1 + 0xdf44: leave an action when the entity's 0x1000 flag is
+    /// set, by the previous action (9, 15, 33, 36, 37).
+    fn interrupted(&mut self, site: u32) -> Result<bool> {
+        let args = self.four();
+        self.local(site, 0xdf44, args);
+        if self.flags & 0x1000 == 0 {
+            return Ok(false);
+        }
+        let f = self.f;
+        let pose = f.word_28 as i16;
+        match f.action_previous {
+            9 => {
+                self.action(0xdfa8, 18);
+                self.anim(0xdfb4, pose);
+                self.call(0xdfc0, serde_json::json!([f.data2, f.player]))?;
+                self.flags(0xdfd0, self.flags & -0x2501);
+            }
+            15 => {
+                if f.word_28 != 0 {
+                    self.action(0xdfe8, 59);
+                    self.anim(0xdff4, pose);
+                    self.st(0xdffc, "player", 0x18, 2, 0);
+                } else {
+                    self.action(0xe008, 59);
+                    self.st(0xe010, "player", 0x18, 2, 0);
+                    self.anim(0xe018, 87);
+                }
+                self.flags(0xe028, self.flags & -0x2501);
+            }
+            33 => {
+                self.action(0xe034, 53);
+                self.anim(0xe040, pose);
+                self.flags(0xe050, self.flags & -0x2501);
+            }
+            36 => {
+                self.flags(0xe060, self.flags & !0x3c);
+                self.flags_10 &= 0x3ffc;
+                self.st(0xe074, "player", 0x10, 2, self.flags_10 as u16 as u64);
+                self.action(0xe07c, 59);
+                self.st(0xe084, "player", 0x18, 2, 0);
+                self.anim(0xe08c, 87);
+                self.flags(0xe09c, self.flags & -0x2501);
+            }
+            37 => {
+                self.action(0xe0a8, 57);
+                self.anim(0xe0b0, 59);
+                self.flags(0xe0c0, self.flags & -0x2501);
+                match f.character {
+                    9 => self.call(0xe0d8, serde_json::json!([0x61f]))?,
+                    10 => self.call(0xe0ec, serde_json::json!([0x61c]))?,
+                    _ => {}
+                }
+                self.timer = 0;
+                self.st(0xe0f4, "player", 0x35e, 2, 0);
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+    /// Section 1 + 0xe120: with the stick released and zero speed, settle
+    /// into flight with pose 87.
+    fn settled(&mut self, site: u32) -> Result<bool> {
+        let f = self.f;
+        self.local(site, 0xe120, serde_json::json!([f.entity, f.player]));
+        self.call(0xe14c, serde_json::json!([f.entity, f.player, 0, 0]))?;
+        if f.held == 0 && stage_f32(self.rel, 0xe15a, 4, 0)? == self.speed {
+            self.action(0xe174, 59);
+            self.st(0xe17c, "player", 0x18, 2, 0);
+            self.anim(0xe184, 87);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    /// Section 1 + 0xe200: within range of a boss that is not shielded,
+    /// launch toward it (action 67, pose 89). Returns the engine transform
+    /// call's result, as the native code does.
+    fn charged(&mut self, site: u32) -> Result<bool> {
+        let f = self.f;
+        let args = self.four();
+        self.local(site, 0xe200, args);
+        self.local(0xe224, 0x9f4, serde_json::json!([]));
+        let Some(boss) = &f.boss else {
+            return Ok(false);
+        };
+        if boss.flags & 4 != 0 {
+            return Ok(false);
+        }
+        let c = f
+            .charge
+            .as_ref()
+            .ok_or_else(|| Error::invalid("charge check needs the engine vector results"))?;
+        self.ev.push(
+            serde_json::json!({"site":0xe27c,"call":engine_import(self.rel, 0xe27c)?,
+            "vectors":{"3":boss.position,"4":f.position}}),
+        );
+        self.ev.push(
+            serde_json::json!({"site":0xe284,"call":engine_import(self.rel, 0xe284)?,
+            "vectors":{"3":c.difference}}),
+        );
+        if c.length > stage_f32(self.rel, 0xe28a, 4, 0)? {
+            return Ok(false);
+        }
+        self.ev.push(
+            serde_json::json!({"site":0xe2a8,"call":engine_import(self.rel, 0xe2a8)?,
+            "vectors":{"3":c.difference}}),
+        );
+        self.ev.push(
+            serde_json::json!({"site":0xe2c0,"call":engine_import(self.rel, 0xe2c0)?,
+            "args":[f.slot as i32 as u32],"floats":c.normalized}),
+        );
+        let scale = stage_f32(self.rel, 0xe2ca, 4, 0)?;
+        let v = c.normalized.map(|x| x * scale);
+        for (i, site) in [0xe304u32, 0xe308, 0xe310].into_iter().enumerate() {
+            self.st(site, "data2", 4 * i as u32, 4, v[i].to_bits().into());
+        }
+        self.ev.push(
+            serde_json::json!({"site":0xe31c,"call":engine_import(self.rel, 0xe31c)?,
+            "args":[f.entity],"vectors":{"4":v}}),
+        );
+        let t = c.transformed;
+        for (i, site) in [0xe328u32, 0xe32c, 0xe334].into_iter().enumerate() {
+            self.st(
+                site,
+                "player",
+                0x64 + 4 * i as u32,
+                4,
+                t[i].to_bits().into(),
+            );
+        }
+        self.speed = t[0];
+        self.f68 = t[1];
+        self.action(0xe33c, 67);
+        self.anim(0xe344, 89);
+        self.flags(0xe350, self.flags | 0x400);
+        Ok(c.result != 0)
+    }
+    fn boost_sound(&mut self, sites: (u32, u32), first: u32, pair: (u32, u32)) -> Result<()> {
+        let e = self.f.entity;
+        self.call(sites.0, serde_json::json!([4, 0, 0, 0x4c, e + 0x14]))?;
+        self.call(sites.1, serde_json::json!([first, pair.0, pair.1, 0]))
+    }
+}
+/// Section 1 + 0xbad0: hit reaction and the action transitions between
+/// flight (59), steering (60), the four boosts (61-64), the boss charge
+/// (67), the hit stun (15), and actions 12, 18, 53, 54, 58 and 66,
+/// including the local checks 0xdf44, 0xe120 and 0xe200.
+fn super_control(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperControlFrame,
+) -> Result<serde_json::Value> {
+    let k = |site: usize| stage_f32(rel, site, 4, 0);
+    let mut c = SuperCtl {
+        rel,
+        f,
+        ev: Vec::new(),
+        action: f.action,
+        flags: f.entity_flags,
+        anim: f.anim_176,
+        flags_10: f.flags_10,
+        f68: f.f68,
+        speed: f.speed,
+        timer: f.timer_35e,
+        hit_timer: f.hit_timer,
     };
     let (e, d2, p) = (f.entity, f.data2, f.player);
-    let four = serde_json::json!([e, d2, p, p]);
     let slot = f.slot as i32 as u32;
-    let mut ev = Vec::new();
-    let mut action = f.action;
-    let mut flags = f.entity_flags;
-    let mut anim = f.anim_176;
-    let mut f68 = f.f68;
-    let mut timer = f.timer_35e;
-    let mut hit_timer = f.hit_timer;
-    let mut flags_10 = f.flags_10;
-    let mut speed = None;
-    macro_rules! set_action {
-        ($site:expr, $v:expr) => {{
-            action = $v;
-            ev.push(st($site, "entity", 0, 1, ($v as u8).into()));
-        }};
-    }
-    macro_rules! set_anim {
-        ($site:expr, $v:expr) => {{
-            anim = $v;
-            ev.push(st($site, "player", 0x176, 2, ($v as u16).into()));
-        }};
-    }
-    macro_rules! set_flags {
-        ($site:expr, $v:expr) => {{
-            flags = $v;
-            ev.push(st($site, "entity", 4, 2, (flags as u16).into()));
-        }};
-    }
     // Hit handling.
-    if p != 0 && flags_10 as u16 & 0x8000 != 0 {
-        set_flags!(0xbb1c, flags | -0x8000);
-        hit_timer = 0;
-        ev.push(st(0xbb24, "entity", 6, 2, 0));
-    } else if hit_timer == 0 {
-        ev.push(call(0xbb40, serde_json::json!([e, p]))?);
-        hit_timer = f.hit_timer_after;
-        if hit_timer != 0 {
-            let sound = match f.character {
-                9 => Some((0xbb74, 0x300b)),
-                10 => Some((0xbb98, 0x301d)),
-                _ => None,
-            };
-            if let Some((site, id)) = sound {
-                ev.push(call(site, serde_json::json!([id, 0, 0, 0x7f, e + 0x14]))?);
+    if p != 0 && c.flags_10 as u16 & 0x8000 != 0 {
+        c.flags(0xbb1c, c.flags | -0x8000);
+        c.hit_timer = 0;
+        c.st(0xbb24, "entity", 6, 2, 0);
+    } else if c.hit_timer == 0 {
+        c.call(0xbb40, serde_json::json!([e, p]))?;
+        c.hit_timer = f.hit_timer_after;
+        if c.hit_timer != 0 {
+            match f.character {
+                9 => c.call(0xbb74, serde_json::json!([0x300b, 0, 0, 0x7f, e + 0x14]))?,
+                10 => c.call(0xbb98, serde_json::json!([0x301d, 0, 0, 0x7f, e + 0x14]))?,
+                _ => {}
             }
-            set_flags!(0xbba4, flags | -0x8000);
-            set_flags!(0xbbb4, flags & -0x1401);
-            if flags_10 & 3 != 0 {
-                flags_10 &= !3;
-                ev.push(st(0xbbcc, "player", 0x10, 2, (flags_10 as u16).into()));
+            c.flags(0xbba4, c.flags | -0x8000);
+            c.flags(0xbbb4, c.flags & -0x1401);
+            if c.flags_10 & 3 != 0 {
+                c.flags_10 &= !3;
+                c.st(0xbbcc, "player", 0x10, 2, c.flags_10 as u16 as u64);
             }
-            set_action!(0xbbd4, 15);
-            set_anim!(0xbbdc, 21);
-            set_flags!(0xbbe8, flags & !4);
-            let v = -f.fe8;
-            speed = Some(v);
-            ev.push(st(0xbbf4, "player", 0x64, 4, v.to_bits().into()));
+            c.action(0xbbd4, 15);
+            c.anim(0xbbdc, 21);
+            c.flags(0xbbe8, c.flags & !4);
+            c.speed = -f.fe8;
+            c.st(0xbbf4, "player", 0x64, 4, c.speed.to_bits().into());
         } else {
-            set_flags!(0xbc04, flags & !(-0x8000i16));
+            c.flags(0xbc04, c.flags & 0x7fff);
         }
     } else {
-        hit_timer -= 1;
-        ev.push(st(0xbc10, "entity", 6, 2, hit_timer.into()));
-        set_flags!(0xbc1c, flags & !4);
+        c.hit_timer -= 1;
+        c.st(0xbc10, "entity", 6, 2, c.hit_timer.into());
+        c.flags(0xbc1c, c.flags & !4);
     }
     let [b498, b494, b488, b484] = f.buttons;
-    let check = |ev: &mut Vec<serde_json::Value>,
-                 site: u32,
-                 target: u32,
-                 args: serde_json::Value|
-     -> Result<bool> {
-        ev.push(local(site, target, args));
-        let i = match target {
-            0xdf44 => 0,
-            0xe120 => 1,
-            _ => 2,
-        };
-        Ok(f.checks[i] != 0)
-    };
-    let boost_sound = |ev: &mut Vec<serde_json::Value>,
-                       sites: (u32, u32),
-                       first: u32,
-                       pair: (u32, u32)|
-     -> Result<()> {
-        ev.push(call(sites.0, serde_json::json!([4, 0, 0, 0x4c, e + 0x14]))?);
-        ev.push(call(
-            sites.1,
-            serde_json::json!([first, pair.0, pair.1, 0]),
-        )?);
-        Ok(())
-    };
-    match action {
+    match c.action {
         0 | 59 => {
-            if action == 0 {
-                set_action!(0xbc4c, 59);
+            if c.action == 0 {
+                c.action(0xbc4c, 59);
             }
-            if !check(&mut ev, 0xbc60, 0xdf44, four.clone())? {
-                ev.push(call(0xbc98, serde_json::json!([e, p, 0, 0]))?);
+            if !c.interrupted(0xbc60)? {
+                c.call(0xbc98, serde_json::json!([e, p, 0, 0]))?;
                 if f.held != 0 {
-                    set_action!(0xbca8, 60);
-                    set_anim!(0xbcb0, 88);
+                    c.action(0xbca8, 60);
+                    c.anim(0xbcb0, 88);
                 } else if b498 != 0 {
-                    set_action!(0xbce0, 61);
-                    set_anim!(0xbce8, 90);
-                    set_flags!(0xbcf4, flags | 0x400);
-                    if f68 < k(0xbcfe)? {
-                        f68 = k(0xbcfe)?;
-                        ev.push(st(0xbd10, "player", 0x68, 4, f68.to_bits().into()));
+                    c.action(0xbce0, 61);
+                    c.anim(0xbce8, 90);
+                    c.flags(0xbcf4, c.flags | 0x400);
+                    if c.f68 < k(0xbcfe)? {
+                        c.f68 = k(0xbcfe)?;
+                        c.st(0xbd10, "player", 0x68, 4, c.f68.to_bits().into());
                     }
-                    boost_sound(&mut ev, (0xbd28, 0xbd3c), 0, (4, 0xf))?;
+                    c.boost_sound((0xbd28, 0xbd3c), 0, (4, 0xf))?;
                 } else if b494 != 0 {
-                    set_action!(0xbd64, 62);
-                    set_anim!(0xbd6c, 92);
-                    set_flags!(0xbd78, flags | 0x400);
-                    if f68 > k(0xbd82)? {
-                        f68 = k(0xbd82)?;
-                        ev.push(st(0xbd94, "player", 0x68, 4, f68.to_bits().into()));
+                    c.action(0xbd64, 62);
+                    c.anim(0xbd6c, 92);
+                    c.flags(0xbd78, c.flags | 0x400);
+                    if c.f68 > k(0xbd82)? {
+                        c.f68 = k(0xbd82)?;
+                        c.st(0xbd94, "player", 0x68, 4, c.f68.to_bits().into());
                     }
-                    boost_sound(&mut ev, (0xbdac, 0xbdc0), 0, (4, 0xf))?;
+                    c.boost_sound((0xbdac, 0xbdc0), 0, (4, 0xf))?;
                 }
             }
         }
         60 => {
-            if !check(&mut ev, 0xbdd8, 0xdf44, four.clone())?
-                && !check(&mut ev, 0xbdec, 0xe120, serde_json::json!([e, p]))?
-            {
-                let charged =
-                    (b488 != 0 || b484 != 0) && check(&mut ev, 0xbe48, 0xe200, four.clone())?;
-                if charged {
-                    boost_sound(&mut ev, (0xbe68, 0xbe80), slot, (3, 7))?;
-                    timer = 0;
-                    ev.push(st(0xbe88, "player", 0x35e, 2, 0));
+            if !c.interrupted(0xbdd8)? && !c.settled(0xbdec)? {
+                if (b488 != 0 || b484 != 0) && c.charged(0xbe48)? {
+                    c.boost_sound((0xbe68, 0xbe80), slot, (3, 7))?;
+                    c.timer = 0;
+                    c.st(0xbe88, "player", 0x35e, 2, 0);
                 } else if b498 != 0 {
-                    set_action!(0xbeb8, 63);
-                    set_anim!(0xbec0, 94);
-                    set_flags!(0xbecc, flags | 0x400);
-                    if f68 < k(0xbed6)? {
-                        f68 = k(0xbed6)?;
-                        ev.push(st(0xbee8, "player", 0x68, 4, f68.to_bits().into()));
+                    c.action(0xbeb8, 63);
+                    c.anim(0xbec0, 94);
+                    c.flags(0xbecc, c.flags | 0x400);
+                    if c.f68 < k(0xbed6)? {
+                        c.f68 = k(0xbed6)?;
+                        c.st(0xbee8, "player", 0x68, 4, c.f68.to_bits().into());
                     }
-                    boost_sound(&mut ev, (0xbf00, 0xbf18), slot, (4, 0xf))?;
+                    c.boost_sound((0xbf00, 0xbf18), slot, (4, 0xf))?;
                 } else if b494 != 0 {
-                    set_action!(0xbf40, 64);
-                    set_anim!(0xbf48, 96);
-                    set_flags!(0xbf54, flags | 0x400);
-                    if f68 > k(0xbf5e)? {
-                        f68 = k(0xbf5e)?;
-                        ev.push(st(0xbf70, "player", 0x68, 4, f68.to_bits().into()));
+                    c.action(0xbf40, 64);
+                    c.anim(0xbf48, 96);
+                    c.flags(0xbf54, c.flags | 0x400);
+                    if c.f68 > k(0xbf5e)? {
+                        c.f68 = k(0xbf5e)?;
+                        c.st(0xbf70, "player", 0x68, 4, c.f68.to_bits().into());
                     }
-                    boost_sound(&mut ev, (0xbf88, 0xbfa0), slot, (4, 0xf))?;
+                    c.boost_sound((0xbf88, 0xbfa0), slot, (4, 0xf))?;
                 }
             }
         }
         61 | 62 => {
-            let s = if action == 61 {
+            let s = if c.action == 61 {
                 [0xbfb8, 0xbfd4, 0xbfe4, 0xbfec, 0xc01c, 0xc024, 0xc030]
             } else {
                 [0xc048, 0xc064, 0xc074, 0xc07c, 0xc0ac, 0xc0b4, 0xc0c0]
             };
-            if !check(&mut ev, s[0], 0xdf44, four.clone())? {
-                ev.push(call(s[1], serde_json::json!([e, p, 0, 0]))?);
-                let button = if action == 61 { b498 } else { b494 };
+            let boost = c.action;
+            if !c.interrupted(s[0])? {
+                c.call(s[1], serde_json::json!([e, p, 0, 0]))?;
+                let button = if boost == 61 { b498 } else { b494 };
                 if f.held != 0 {
-                    let (a, n) = if action == 61 { (63, 94) } else { (64, 96) };
-                    set_action!(s[2], a);
-                    set_anim!(s[3], n);
+                    let (a, n) = if boost == 61 { (63, 94) } else { (64, 96) };
+                    c.action(s[2], a);
+                    c.anim(s[3], n);
                 } else if button == 0 {
-                    set_action!(s[4], 59);
-                    set_anim!(s[5], 87);
-                    set_flags!(s[6], flags & !0x400);
+                    c.action(s[4], 59);
+                    c.anim(s[5], 87);
+                    c.flags(s[6], c.flags & !0x400);
                 }
             }
         }
         63 | 64 => {
-            let s = if action == 63 {
+            let s = if c.action == 63 {
                 [0xc0d8, 0xc0ec, 0xc100, 0xc130, 0xc138, 0xc144]
             } else {
                 [0xc15c, 0xc170, 0xc184, 0xc1b4, 0xc1bc, 0xc1c8]
             };
-            if !check(&mut ev, s[0], 0xdf44, four.clone())? {
-                let button = if action == 63 { b498 } else { b494 };
-                if check(&mut ev, s[1], 0xe120, serde_json::json!([e, p]))? {
-                    set_flags!(s[2], flags & !0x400);
+            let button = if c.action == 63 { b498 } else { b494 };
+            if !c.interrupted(s[0])? {
+                if c.settled(s[1])? {
+                    c.flags(s[2], c.flags & !0x400);
                 } else if button == 0 {
-                    set_action!(s[3], 60);
-                    ev.push(local(s[4], 0xe1ac, serde_json::json!([p])));
-                    set_flags!(s[5], flags & !0x400);
+                    c.action(s[3], 60);
+                    c.local(s[4], 0xe1ac, serde_json::json!([p]));
+                    c.flags(s[5], c.flags & !0x400);
                 }
             }
         }
         67 => {
-            if !check(&mut ev, 0xc1e0, 0xdf44, four.clone())? {
-                if check(&mut ev, 0xc1f4, 0xe120, serde_json::json!([e, p]))? {
-                    set_flags!(0xc208, flags & !0x400);
+            if !c.interrupted(0xc1e0)? {
+                if c.settled(0xc1f4)? {
+                    c.flags(0xc208, c.flags & !0x400);
                 } else {
                     let mut leave = true;
-                    if (b498 != 0 || b494 != 0) && check(&mut ev, 0xc260, 0xe200, four.clone())? {
-                        let t = timer;
-                        timer = timer.wrapping_add(1);
-                        ev.push(st(0xc274, "player", 0x35e, 2, (timer as u16).into()));
+                    if (b498 != 0 || b494 != 0) && c.charged(0xc260)? {
+                        let t = c.timer;
+                        c.timer = c.timer.wrapping_add(1);
+                        c.st(0xc274, "player", 0x35e, 2, c.timer as u16 as u64);
                         leave = t > 120;
                     }
                     if leave {
-                        set_action!(0xc284, 60);
-                        ev.push(local(0xc28c, 0xe1ac, serde_json::json!([p])));
-                        set_flags!(0xc298, flags & !0x400);
-                        timer = 0;
-                        ev.push(st(0xc2a0, "player", 0x35e, 2, 0));
+                        c.action(0xc284, 60);
+                        c.local(0xc28c, 0xe1ac, serde_json::json!([p]));
+                        c.flags(0xc298, c.flags & !0x400);
+                        c.timer = 0;
+                        c.st(0xc2a0, "player", 0x35e, 2, 0);
                     }
                 }
             }
         }
         12 => {
-            if !check(&mut ev, 0xc2b8, 0xdf44, four.clone())? {
+            if !c.interrupted(0xc2b8)? {
                 let mut landed = false;
-                if f.speed <= k(0xc2ca)? {
-                    ev.push(call(0xc2e8, serde_json::json!([e, p]))?);
+                if c.speed <= k(0xc2ca)? {
+                    c.call(0xc2e8, serde_json::json!([e, p]))?;
                     landed = f.landed != 0;
                 }
                 if landed {
-                    set_action!(0xc2f8, 1);
-                    set_anim!(0xc300, 27);
-                    ev.push(call(0xc310, serde_json::json!([e, d2, p]))?);
-                    ev.push(st(0xc318, "entity", 0xc, 4, f.data2_1c.into()));
-                } else if anim != 18 {
-                    set_action!(0xc330, 59);
-                    ev.push(st(0xc338, "player", 0x18, 2, 0));
-                    set_anim!(0xc340, 87);
+                    c.action(0xc2f8, 1);
+                    c.anim(0xc300, 27);
+                    c.call(0xc310, serde_json::json!([e, d2, p]))?;
+                    c.st(0xc318, "entity", 0xc, 4, f.data2_1c.into());
+                } else if c.anim != 18 {
+                    c.action(0xc330, 59);
+                    c.st(0xc338, "player", 0x18, 2, 0);
+                    c.anim(0xc340, 87);
                 }
             }
         }
         15 => {
-            if !check(&mut ev, 0xc358, 0xdf44, four.clone())? {
-                if anim == 21 || anim == 22 {
-                    if hit_timer == 0 {
-                        set_action!(0xc3b0, 59);
-                        set_anim!(0xc3b8, 99);
+            if !c.interrupted(0xc358)? {
+                if c.anim == 21 || c.anim == 22 {
+                    if c.hit_timer == 0 {
+                        c.action(0xc3b0, 59);
+                        c.anim(0xc3b8, 99);
                     }
-                } else if check(&mut ev, 0xc380, 0xe120, serde_json::json!([e, p]))? {
-                    set_action!(0xc390, 59);
-                    set_anim!(0xc398, 99);
+                } else if c.settled(0xc380)? {
+                    c.action(0xc390, 59);
+                    c.anim(0xc398, 99);
                 }
             }
         }
         18 => {
-            check(&mut ev, 0xc3d0, 0xdf44, four.clone())?;
+            c.interrupted(0xc3d0)?;
         }
         53 | 66 => {
-            let s = if action == 53 {
+            let s = if c.action == 53 {
                 [0xc3e8, 0xc408, 0xc410, 0xc418]
             } else {
                 [0xc430, 0xc450, 0xc458, 0xc460]
             };
-            if !check(&mut ev, s[0], 0xdf44, four.clone())? && f.flags_180 & 1 != 0 {
-                set_action!(s[1], 59);
-                ev.push(st(s[2], "player", 0x18, 2, 0));
-                set_anim!(s[3], 87);
+            if !c.interrupted(s[0])? && f.flags_180 & 1 != 0 {
+                c.action(s[1], 59);
+                c.st(s[2], "player", 0x18, 2, 0);
+                c.anim(s[3], 87);
             }
         }
-        54 => {
-            if f.action_previous == 15 {
-                set_action!(0xc47c, 59);
-                ev.push(st(0xc484, "player", 0x18, 2, 0));
-                set_anim!(0xc48c, 87);
-                set_flags!(0xc49c, flags & -0x2501);
-            }
+        54 if f.action_previous == 15 => {
+            c.action(0xc47c, 59);
+            c.st(0xc484, "player", 0x18, 2, 0);
+            c.anim(0xc48c, 87);
+            c.flags(0xc49c, c.flags & -0x2501);
         }
         58 if f.pad_10 & 4 != 0 => {
-            set_action!(0xc4d0, 59);
-            set_anim!(0xc4d8, 87);
+            c.action(0xc4d0, 59);
+            c.anim(0xc4d8, 87);
         }
         _ => {}
     }
     Ok(
-        serde_json::json!({"events":ev,"action":action,"entity_flags":flags,"anim_176":anim,
-        "f68":f68,"timer_35e":timer,"hit_timer":hit_timer,"flags_10":flags_10,"speed":speed,
-        "scope":"Control flow of 0xbad0; the local checks 0xdf44, 0xe120 and 0xe200 and the engine queries are request inputs."}),
+        serde_json::json!({"events":c.ev,"action":c.action,"entity_flags":c.flags,
+        "anim_176":c.anim,"f68":c.f68,"speed":c.speed,"timer_35e":c.timer,
+        "hit_timer":c.hit_timer,"flags_10":c.flags_10,
+        "scope":"0xbad0 with its local checks; engine queries and vector services are request inputs."}),
     )
 }
