@@ -92,9 +92,7 @@ fn installed_mover_rules_and_session_inventory() {
             (count("lift"), count("elevator"), count("bridge")),
             (5, 3, 2)
         );
-        // Every spring has an X or Z angle that is not a quarter turn, so
-        // its launch vector would need the unread trig table.
-        assert_eq!(s.springs.len(), 0);
+        assert_eq!(s.springs.len(), 6);
         assert_eq!(s.checkpoints.len(), 3);
         assert_eq!(s.rings_placed.len(), 10);
         // Only the regular goal reaches its contact route for Mission 1.

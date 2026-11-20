@@ -99,8 +99,9 @@ fn installed_mover_rules_and_session_inventory() {
             (15, 2, 2)
         );
         assert_eq!(s.checkpoints.len(), 3);
-        // 15 of the 17 RING_LINEAR lines are exact (flat, Y rotation only).
-        assert_eq!(s.rings_placed.len(), 56);
+        // 17 RING_LINEAR lines (njSin arch, njRotate Z/Y/X).
+        assert_eq!(s.rings_placed.len(), 64);
+        assert_eq!(s.springs.len(), 1);
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [-4439.9966, 967.0, -1133.4259]);
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
@@ -117,11 +118,6 @@ fn installed_mover_rules_and_session_inventory() {
             s.unimplemented
                 .get("CCUBE (rotated: rotation rule not read)"),
             Some(&8)
-        );
-        assert_eq!(
-            s.unimplemented
-                .get("RING_LINEAR (arched or tilted: trig/axis calls not read)"),
-            Some(&2)
         );
         assert!(s.death_zone_count() > 0);
         assert_eq!((s.level, s.character, s.physics.slot), (9, 6, 6));

@@ -98,15 +98,14 @@ pub fn death_zone_triangles(zone: &DeathZone) -> Result<Vec<[V3; 3]>> {
 
 /// Rotate a local point by a SET placement's Y angle (BAMS) and translate it,
 /// as the collision objects these stages register do (Y kept, X and Z
-/// zeroed). None unless the yaw is a whole quarter turn, the only angles
-/// whose sine and cosine are exact without the engine's trig table.
-pub fn place_y(p: V3, yaw_bams: u16, at: V3) -> Option<V3> {
-    let (s, c) = crate::iron_gate_movers::exact_sin_cos(yaw_bams)?;
-    Some([
+/// zeroed) through njRotateY (`ninja_trig::nj_rotate_sin_cos`).
+pub fn place_y(p: V3, yaw_bams: u16, at: V3) -> V3 {
+    let (s, c) = crate::iron_gate_movers::rotate_sin_cos(yaw_bams);
+    [
         at[0] + p[0] * c + p[2] * s,
         at[1] + p[1],
         at[2] - p[0] * s + p[2] * c,
-    ])
+    ]
 }
 
 #[cfg(test)]
@@ -115,9 +114,9 @@ mod tests {
 
     #[test]
     fn yaw_placement_matches_ninja_bams() {
-        let p = place_y([10.0, 1.0, 0.0], 0x4000, [100.0, 0.0, 0.0]).unwrap();
-        assert_eq!(p, [100.0, 1.0, -10.0]);
-        assert!(place_y([10.0, 1.0, 0.0], 0x2000, [0.0; 3]).is_none());
+        let p = place_y([10.0, 1.0, 0.0], 0x4000, [100.0, 0.0, 0.0]);
+        // njRotateY's cosine for 0x4000 is a few 1e-7, not zero.
+        assert!((p[0] - 100.0).abs() < 1e-4 && p[2] == -10.0, "{p:?}");
     }
 }
 

@@ -19,9 +19,7 @@ engine says it stands on) and `Session::step` runs the native object rules.
 cargo run --release -- $game $pcSa2Config --stage prison-lane out.json
 ```
 
-Rotations are evaluated only at whole quarter turns, where sine and cosine
-are exactly 0 or +/-1; the engine's trig table is main-program data, so
-placements at other angles are listed as unimplemented. Lift, elevator and
+Rotations use the GameCube main program's own trigonometry (`ninja_trig`, read from the GSNE8P main.dol of the person's disc; every PC stage-module import maps onto it): njRotateX/Y/Z convert the angle to radians and call MSL sinf/cosf, and njSin/njCos read the start-up table. The sines and cosines are bit-for-bit ports; the matrix products that combine them are evaluated as plain single-precision steps rather than in the paired-single order of the SDK matrix routines, so a result can differ in its last bit. Lift, elevator and
 bridge collision objects keep the placement's Y rotation only (stg09D.rel
 0x4930, 0x30CC, 0x510; stg11D.rel likewise), and the elevator's object sits
 40 below its placement (checked constant in both modules). Goal contact is
@@ -62,11 +60,11 @@ outer door (114 frames) gates travel.
 | CONTIRON (18) | 0x1978C registers CollisionData sec5+0x52A18 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10 (a 20-unit cube; Iron Gate's row is identical) | The 11 placed at a whole quarter turn, since a cube square in XZ is unchanged by those |
 | CONTCHAO (3), CONTWOOD (17) | 0x18E1C and 0x1A3A4 register the same cube rows (sec5+0x51D20, +0x53A08); breaking (player attacks) is not run | All 3 CONTCHAO; the 14 CONTWOOD at quarter turns |
 | MECHA (12) | 0x527C registers sec5+0x41DB4: form 3, centre (0, 0, 2), half-extents (10, 10, 5); its exec only runs that collision | The 2 at yaw 0 (the centre is off the Y axis) |
-| RING_LINEAR (17 lines) | 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | The 15 flat lines turned only about Y (0x801154E0, the goal ring spin call): 56 rings, Scale.z clamped to 1..=8, spaced 10 + Scale.x along local -Z |
+| RING_LINEAR (17 lines) | 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | All 17 (64 rings): Scale.z clamped to 1..=8, ring i at (0, Scale.y * njSin(i * (0x4000 / n)), -i * (10 + Scale.x)) under rotate Z, Y, X (GSNE8P njRotateZ 0x801158A8, njRotateY 0x80115828, njRotateX 0x80115C60; the arch call is njSin 0x80112398) |
 | Rings | o_ring_M1 | Pickup strictly within 14 of the collision centre |
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact branch on a host-reported touch; writes slot word 2 |
 | Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Volumes only |
-| Checkpoints, springs | placements; `spring::StageSpring` | Checkpoint positions only; the one spring is tilted at a non-quarter angle and is listed as unimplemented |
+| Checkpoints, springs | placements; `spring::StageSpring` | Checkpoint positions; spring launch vectors (njRotate); contact is not run |
 
 Everything else is listed by name in `Session::unimplemented`, including
 the rotated CCUBE and fence placements, the angled fence rows (form 2), the
@@ -81,6 +79,6 @@ spinning model), TANK, SPHERE, CCYL, item boxes and enemies.
 
 | Check | Result on the pinned Steam build |
 | --- | --- |
-| Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL, 9 CCUBE, 21 fence boxes, 56 rings; stg11D.rel is rejected for this layout |
+| Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL, 9 CCUBE, 21 fence boxes, 64 rings; stg11D.rel is rejected for this layout |
 | Standing on the one-way diagonal elevator | Starts on frame 183, arrives at its Scale target and stops for good; the bridge that extended toward it on frame 1 stays out (its 120-frame cooldown was not met) |
 | Ring and goal contact | Rings within 14 of the centre are taken for 10 points each; a host-reported goal touch plays sound 0x1013 and writes slot word 2 |

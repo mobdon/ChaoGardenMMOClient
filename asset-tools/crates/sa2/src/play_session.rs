@@ -17,9 +17,8 @@ use crate::{
     death_zones,
     fan_stage::MountedStage,
     goal_ring,
-    iron_gate_movers::{
-        self as movers, exact_sin_cos, Bridge, Elevator, Lift, MoverLayout, MoverProgram,
-    },
+    iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
+    ninja_trig::{nj_rotate_sin_cos, nj_sin},
     play_objects::{collision_rows, death_zone_triangles, place_y, read_object_solid},
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
@@ -219,9 +218,9 @@ pub struct Spring {
 
 impl Spring {
     /// Launch position and velocity this spring gives a slow player standing on it.
-    pub fn launch(&self) -> Option<(V3, V3, i32)> {
+    pub fn launch(&self) -> (V3, V3, i32) {
         let t = &self.task;
-        Some(match t.kind {
+        match t.kind {
             SpringKind::A => (t.position, self.out, 0),
             SpringKind::B => (
                 [
@@ -229,10 +228,10 @@ impl Spring {
                     t.position[1] + self.out[1] * 0.8,
                     t.position[2] + self.out[2],
                 ],
-                rotate_zxy([0.0, t.scale[1] + 5.0, 0.0], t.angles)?,
+                rotate_zxy([0.0, t.scale[1] + 5.0, 0.0], t.angles),
                 (t.scale[0] as i32).max(0),
             ),
-        })
+        }
     }
 }
 
@@ -284,16 +283,27 @@ fn box_tris(h: V3, c: V3) -> Vec<[V3; 3]> {
 }
 
 /// Ninja order used by the spring tasks: unit, rotate Z, rotate X, rotate Y,
-/// calculate point. The point is rotated by Y first, then X, then Z. None
-/// unless every angle is a whole quarter turn (`exact_sin_cos`).
-pub fn rotate_zxy(v: V3, angles: [i32; 3]) -> Option<V3> {
-    let sc = |a: i32| exact_sin_cos(u16::try_from(a & 0xffff).ok()?);
-    let (sy, cy) = sc(angles[1])?;
+/// calculate point. The point is rotated by Y first, then X, then Z.
+pub fn rotate_zxy(v: V3, angles: [i32; 3]) -> V3 {
+    let (sy, cy) = nj_rotate_sin_cos(angles[1]);
     let v = [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy];
-    let (sx, cx) = sc(angles[0])?;
+    let (sx, cx) = nj_rotate_sin_cos(angles[0]);
     let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
-    let (sz, cz) = sc(angles[2])?;
-    Some([v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]])
+    let (sz, cz) = nj_rotate_sin_cos(angles[2]);
+    [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
+}
+
+/// Matrix order unit, translate, rotate Z, rotate Y, rotate X (the
+/// RING_LINEAR helper 0x1B21C; its calls map to GSNE8P njRotateZ 0x801158A8,
+/// njRotateY 0x80115828 and njRotateX 0x80115C60): the point is rotated by
+/// X first, then Y, then Z.
+pub fn rotate_xyz(v: V3, angles: [i32; 3]) -> V3 {
+    let (sx, cx) = nj_rotate_sin_cos(angles[0]);
+    let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
+    let (sy, cy) = nj_rotate_sin_cos(angles[1]);
+    let v = [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy];
+    let (sz, cz) = nj_rotate_sin_cos(angles[2]);
+    [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
 }
 
 /// Whether a CCUBE's box is the same however its rotation is applied:
@@ -304,28 +314,23 @@ pub fn cube_rotation_is_exact(rotation: [u16; 3]) -> bool {
     rotation[0] == 0 && rotation[2] == 0 && rotation[1] & 0x7fff == 0
 }
 
-/// Whether a RING_LINEAR line is placed exactly from read rules alone: with
-/// Scale.y 0 the trig call (0x80112050, sine or cosine) drops out, and with
-/// no X/Z rotation only rotate Y (0x801154E0, the goal ring's spin call)
-/// is applied.
-pub fn ring_line_is_exact(rotation: [u16; 3], scale: V3) -> bool {
-    rotation[0] == 0 && rotation[2] == 0 && scale[1] == 0.0 && exact_sin_cos(rotation[1]).is_some()
-}
-
-/// RING_LINEAR (stg09D.rel 0x1B448 with helpers 0x1B1E8 and 0x1B21C) for a
-/// line that `ring_line_is_exact` accepts: the ring count is Scale.z
-/// truncated and clamped to 1..=8, and ring i sits at local
-/// (0, 0, -i * (10 + Scale.x)) turned by the placement's Y rotation.
-/// None unless the yaw is a whole quarter turn.
-pub fn ring_line(position: V3, yaw_bams: u16, scale: V3) -> Option<Vec<V3>> {
+/// RING_LINEAR (stg09D.rel 0x1B448 with helpers 0x1B1E8 and 0x1B21C): the
+/// ring count n is Scale.z truncated and clamped to 1..=8, and ring i sits
+/// at local (0, Scale.y * njSin(i * (0x4000 / n)), -i * (10 + Scale.x))
+/// under the placement's translation and rotate Z, Y, X. The arch call
+/// (PC import 0x80112050) is njSin, the start-up table lookup (GSNE8P
+/// 0x80112398).
+pub fn ring_line(position: V3, angles: [i32; 3], scale: V3) -> Vec<V3> {
     let n = (scale[2] as i32).clamp(1, 8);
+    let step = 0x4000 / n;
     (0..n)
         .map(|i| {
-            let local = [0.0, 0.0, -(i as f32) * (RING_LINE_BASE + scale[0])];
-            Some(add(
-                position,
-                rotate_zxy(local, [0, i32::from(yaw_bams), 0])?,
-            ))
+            let local = [
+                0.0,
+                scale[1] * nj_sin(i * step),
+                -(i as f32) * (RING_LINE_BASE + scale[0]),
+            ];
+            add(position, rotate_xyz(local, angles))
         })
         .collect()
 }
@@ -336,18 +341,16 @@ mod ring_line_tests {
 
     #[test]
     fn ring_line_spacing_count_and_yaw() {
-        let r = ring_line([0.0, 0.0, 0.0], 0x4000, [15.0, 0.0, 3.0]).unwrap();
+        let r = ring_line([0.0, 0.0, 0.0], [0, 0x4000, 0], [15.0, 0.0, 3.0]);
         assert_eq!(r.len(), 3);
         // Local -Z turned a quarter about Y points along -X; spacing 25.
         assert!((r[1][0] + 25.0).abs() < 1e-3 && r[1][2].abs() < 1e-3);
         assert!((r[2][0] + 50.0).abs() < 1e-3 && r[2][1] == 0.0);
-        assert_eq!(ring_line([0.0; 3], 0, [20.0, 0.0, 0.2]).unwrap().len(), 1);
-        assert_eq!(ring_line([0.0; 3], 0, [20.0, 0.0, 12.0]).unwrap().len(), 8);
-        // Lines needing the unread trig or X/Z axis calls are not built.
-        assert!(!ring_line_is_exact([0, 0x4000, 0], [15.5, 4.0, 3.0]));
-        assert!(!ring_line_is_exact([1, 0, 192], [20.0, 0.0, 5.0]));
-        assert!(!ring_line_is_exact([0, 0x2000, 0], [20.0, 0.0, 5.0]));
-        assert!(ring_line([0.0; 3], 0x2000, [20.0, 0.0, 3.0]).is_none());
+        assert_eq!(ring_line([0.0; 3], [0; 3], [20.0, 0.0, 0.2]).len(), 1);
+        assert_eq!(ring_line([0.0; 3], [0; 3], [20.0, 0.0, 12.0]).len(), 8);
+        // The arch follows njSin of i * (0x4000 / n).
+        let a = ring_line([0.0; 3], [0; 3], [15.5, 4.0, 3.0]);
+        assert_eq!(a[1][1], 4.0 * nj_sin(0x1555));
         assert!(cube_rotation_is_exact([0, 0x8000, 0]));
         assert!(!cube_rotation_is_exact([0, 0x4000, 0]));
     }
@@ -523,16 +526,10 @@ impl Session {
                 let name = def.name.trim_end();
                 // Collision objects keep the placement's Y rotation only
                 // (stg09D.rel 0x4930, 0x30CC, 0x510 and helper 0x9A4C zero
-                // X and Z); None unless the yaw is a whole quarter turn.
-                let place_at = |tris: &[[V3; 3]], at: V3| -> Option<Vec<[V3; 3]>> {
+                // X and Z), applied through njRotateY.
+                let place_at = |tris: &[[V3; 3]], at: V3| -> Vec<[V3; 3]> {
                     tris.iter()
-                        .map(|t| {
-                            Some([
-                                place_y(t[0], pl.rotation[1], at)?,
-                                place_y(t[1], pl.rotation[1], at)?,
-                                place_y(t[2], pl.rotation[1], at)?,
-                            ])
-                        })
+                        .map(|t| t.map(|v| place_y(v, pl.rotation[1], at)))
                         .collect()
                 };
                 let place = |tris: &[[V3; 3]]| place_at(tris, pl.position);
@@ -543,7 +540,6 @@ impl Session {
                             .collect(),
                     )
                 };
-                let inexact = format!("{name} (rotation not a quarter turn)");
                 match (def.function_va, name) {
                     (RING_VA, "RING") => rings_placed.push(Pickup {
                         layer: li,
@@ -551,12 +547,9 @@ impl Session {
                         position: pl.position,
                         taken: false,
                     }),
-                    (RING_LINEAR_VA, "RING_LINEAR")
-                        if rules.ring_lines && ring_line_is_exact(pl.rotation, pl.parameters) =>
-                    {
-                        let line = ring_line(pl.position, pl.rotation[1], pl.parameters)
-                            .expect("exact lines have quarter-turn yaws");
-                        for position in line {
+                    (RING_LINEAR_VA, "RING_LINEAR") if rules.ring_lines => {
+                        let angles = pl.rotation.map(i32::from);
+                        for position in ring_line(pl.position, angles, pl.parameters) {
                             rings_placed.push(Pickup {
                                 layer: li,
                                 index: p.placement_index,
@@ -598,11 +591,7 @@ impl Session {
                         };
                         let angles = pl.rotation.map(i32::from);
                         let task = StageSpring::new(kind, pl.position, angles, pl.parameters);
-                        let Some(out) = rotate_zxy([0.0, 5.0 + pl.parameters[1], 0.0], angles)
-                        else {
-                            *unimplemented.entry(inexact).or_insert(0) += 1;
-                            continue;
-                        };
+                        let out = rotate_zxy([0.0, 5.0 + pl.parameters[1], 0.0], angles);
                         springs.push(Spring {
                             layer: li,
                             index: p.placement_index,
@@ -612,11 +601,7 @@ impl Session {
                         });
                     }
                     (_, "MLIFT") => {
-                        let Some(tris) = place(&lift_solid) else {
-                            *unimplemented.entry(inexact).or_insert(0) += 1;
-                            continue;
-                        };
-                        let solid = solid(tris);
+                        let solid = solid(place(&lift_solid));
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
@@ -637,11 +622,7 @@ impl Session {
                             pl.position[1] - movers_program.elevator_collision_drop,
                             pl.position[2],
                         ];
-                        let Some(tris) = place_at(&elevator_solid, at) else {
-                            *unimplemented.entry(inexact).or_insert(0) += 1;
-                            continue;
-                        };
-                        let solid = solid(tris);
+                        let solid = solid(place_at(&elevator_solid, at));
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
@@ -674,14 +655,8 @@ impl Session {
                             .or_insert(0) += 1;
                     }
                     (_, "BRIDGE") => {
-                        let (Some(tris), Some(bridge)) = (
-                            place(&bridge_solid),
-                            Bridge::new(&movers_program, pl.position, pl.rotation[1]),
-                        ) else {
-                            *unimplemented.entry(inexact).or_insert(0) += 1;
-                            continue;
-                        };
-                        let solid = solid(tris);
+                        let bridge = Bridge::new(&movers_program, pl.position, pl.rotation[1]);
+                        let solid = solid(place(&bridge_solid));
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
@@ -692,11 +667,7 @@ impl Session {
                     }
                     (_, n) if static_solids.iter().any(|(s, _)| *s == n) => {
                         let (_, tris) = static_solids.iter().find(|(s, _)| *s == n).unwrap();
-                        let Some(tris) = place(tris) else {
-                            *unimplemented.entry(inexact).or_insert(0) += 1;
-                            continue;
-                        };
-                        for t in tris {
+                        for t in place(tris) {
                             if let Some(t) = make_tri(t, 1, u32::MAX) {
                                 world.push(t);
                             }
@@ -746,13 +717,6 @@ impl Session {
                     (CCUBE_VA, "CCUBE") if rules.invisible_cubes => {
                         *unimplemented
                             .entry(format!("{name} (rotated: rotation rule not read)"))
-                            .or_insert(0) += 1;
-                    }
-                    (RING_LINEAR_VA, "RING_LINEAR") if rules.ring_lines => {
-                        *unimplemented
-                            .entry(format!(
-                                "{name} (arched or tilted: trig/axis calls not read)"
-                            ))
                             .or_insert(0) += 1;
                     }
                     _ => *unimplemented.entry(name.to_string()).or_insert(0) += 1,

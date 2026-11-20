@@ -278,17 +278,9 @@ fn step_toward(pos: &mut [f32; 3], target: [f32; 3], speed: f32) -> bool {
     f == 1.0
 }
 
-/// Sine and cosine of a BAMS angle, only for whole quarter turns: the
-/// engine's trig table is main-program data that is not read here, and
-/// these are the only angles whose values are exact (0 and +/-1).
-pub fn exact_sin_cos(bams: u16) -> Option<(f32, f32)> {
-    match bams {
-        0 => Some((0.0, 1.0)),
-        0x4000 => Some((1.0, 0.0)),
-        0x8000 => Some((0.0, -1.0)),
-        0xc000 => Some((-1.0, 0.0)),
-        _ => None,
-    }
+/// Sine and cosine njRotateY uses for a BAMS yaw (`ninja_trig`).
+pub fn rotate_sin_cos(bams: u16) -> (f32, f32) {
+    crate::ninja_trig::nj_rotate_sin_cos(i32::from(bams))
 }
 
 /// MLIFT: rises by `20 + Scale.x` after the player stands on it for 30
@@ -465,19 +457,19 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    /// None unless the yaw is a whole quarter turn, the only angles whose
-    /// sine and cosine are known exactly without the engine's trig table.
-    pub fn new(p: &MoverProgram, position: [f32; 3], yaw_bams: u16) -> Option<Self> {
-        let (s, c) = exact_sin_cos(yaw_bams)?;
+    /// stg09D.rel 0x388..0x3E8: unit, translate, njRotateY(yaw), then
+    /// njCalcPoint of (bridge_extend_x, 0, 0).
+    pub fn new(p: &MoverProgram, position: [f32; 3], yaw_bams: u16) -> Self {
+        let (s, c) = rotate_sin_cos(yaw_bams);
         let x = p.bridge_extend_x;
-        Some(Self {
+        Self {
             retracted: position,
             extended: [position[0] + x * c, position[1], position[2] - x * s],
             position,
             is_extended: false,
             moving: false,
             ready: p.bridge_ready_frames,
-        })
+        }
     }
 
     /// `elevators` gives each registered elevator's position and whether it is moving.
@@ -549,8 +541,7 @@ mod tests {
     #[test]
     fn bridge_extends_toward_a_resting_elevator() {
         let p = program();
-        assert!(Bridge::new(&p, [0.0; 3], 0x1000).is_none());
-        let mut b = Bridge::new(&p, [2127.0, -669.5, -1027.0], 0).unwrap();
+        let mut b = Bridge::new(&p, [2127.0, -669.5, -1027.0], 0);
         assert_eq!(b.extended, [1987.0, -669.5, -1027.0]);
         let top = ([1576.0, -270.0, -1027.5], false);
         let bottom = ([1803.5, -663.0, -1027.5], false);
