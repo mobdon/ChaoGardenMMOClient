@@ -70,19 +70,21 @@ not yet located; the first task of that phase is to find it in
 | Address | What it is | Source |
 | --- | --- | --- |
 | 0x8000325C | `__start`; sets r2 = 0x803B6520, r13 = 0x803B52C0 | WALKER-PORT-MAP.md |
-| 0x80071BA4 | Task allocation (worker spawn) | enemy_lib |
-| 0x80071AF0 | `DestroyTask` | shared stage objects |
-| 0x80065E54 | SET loader (sign-extends rotations into the task) | ENEMY-LIB.md |
+| 0x80071E0C | `CreateElementalTask` (recorded in the crate as 0x80071BA4, the Steam-REL build address) | ENGINE-MAP.md |
+| 0x800709F8 / 0x80071AE0 | `CreateChildTask` / `FreeTask` (Steam-REL 0x80070790 / 0x80071878) | ENGINE-MAP.md |
+| 0x80071AF0 | `DestroyTask` (Steam-REL 0x80071888) | ENGINE-MAP.md |
+| 0x800706B0–0x80072080 | Task code: lists `btp` 0x801FCEB8, exec pass 0x80071214, display pass 0x80070C54 | ENGINE-MAP.md |
+| 0x80065E54 | Instruction in the SET spawner fn_80065C40 (sign-extends rotations into the task) | ENEMY-LIB.md, ENGINE-MAP.md |
 | 0x80065120 / 0x80065404 | SET read / SET entry exec gate (flag 0x20) | shared stage objects |
-| 0x8000F8B8 | `InitCollision` (object collision setup) | stage objects |
+| 0x8000F8B8 | `CCL_Init` (per-task collision setup; the crate's `InitCollision`) | stage objects |
 | 0x800232A4 | Dynamic land-object register | stage objects |
 | 0x8001A13C | Stage light load | stage lighting |
 | 0x8001DD78 | Current stage number getter | tests |
-| 0x801CC168, 0x801CBD88 | Game state blocks (+0x23 mission, +0x37 time stopped) | goal ring, spring |
+| 0x801CC168 | Game state block G (+0x23 mission, +0x37 stops the frame counter; recorded as 0x801CBD88 in Steam-REL code) | goal ring, spring, ENGINE-MAP.md |
 | 0x801CC1E4 | Frame counter | player_analog |
 | 0x801E53F8 | Per-player stick table (8 bytes per player) | player_analog |
 | 0x801E5624 | Gravity vector | player_analog |
-| 0x801E4FF8 | Camera block | stage objects |
+| 0x801E4FF8 | Steam-REL address of the stick table 0x801E53F8 (+0x400), **not a camera block** | ENGINE-MAP.md |
 | 0x801E7768 / 0x801E7788 / 0x801E7368 | `playertwp` / `playerpwp` / player tables | player code |
 | 0x80196578 | PhysicsArray (0x84-byte rows; ChaoWalker and DarkChaoWalker rows included) | PLAYER-PHYSICS.md |
 | 0x8004F838 | Shared player-work setup, called by all 14 character loaders | WALKER-PORT-MAP.md |
@@ -90,7 +92,8 @@ not yet located; the first task of that phase is to find it in
 | 0x8004C734 | Shared ground movement (0xF9C bytes, 7 character mains) | SONIC-MOVEMENT-NATIVE.md |
 | 0x80083E44 / 0x8007E89C | Sonic main / action state machine | SONIC-MOVEMENT-NATIVE.md |
 | 0x80086BA4, 0x80086E3C, 0x800871C4, 0x800874C0 | Sonic-family loaders | SONIC-MOVEMENT-NATIVE.md |
-| 0x800B56E8 / 0x800B5AC0 | Mech Eggman / Mech Tails loaders | WALKER-PORT-MAP.md |
+| 0x800B5D2C / 0x800B5AC0 | Mech Eggman (row 7) / Mech Tails (row 6) loaders | WALKER-PORT-MAP.md |
+| 0x800B56E8 / 0x800B58D4 | Alternate walker loaders, rows 0xE / 0xD, both install 0x800B3A8C | WALKER-PORT-MAP.md |
 | 0x800B3A8C / 0x800AF558 | Walker exec / display | WALKER-PORT-MAP.md |
 | 0x8010DC88 | MSL `rand` | enemy_lib |
 | 0x80119C74, 0x801181A0, 0x802D7758 | Ninja matrix stack, sine-table builder, njSinCosTbl | ninja_matrix, ninja_trig |
@@ -118,12 +121,14 @@ compare against the native code.
 
 The single biggest gap. Today each routine runs alone from a JSON request.
 
-- **Task system:** task allocation 0x80071BA4, `CreateElementalTask` (trace;
-  called by loaders, e.g. `CreateElementalTask(7, 1, 0x800B3A8C)`),
-  `DestroyTask` 0x80071AF0, the per-frame exec and display passes over the task
-  lists (trace), child tasks.
-- **Frame step:** native 60 Hz tick, frame counter 0x801CC1E4, game state
-  0x801CC168 / 0x801CBD88.
+- **Task system:** `CreateElementalTask` 0x80071E0C (called by loaders, e.g.
+  `CreateElementalTask(7, 1, 0x800B3A8C)`), `CreateChildTask` 0x800709F8,
+  `FreeTask` 0x80071AE0, `DestroyTask` 0x80071AF0, exec pass 0x80071214,
+  display pass 0x80070C54 (ENGINE-MAP.md). The crate's recorded 0x80071BA4,
+  0x80070790, 0x80071878, 0x80071888 are the same functions in the Steam-REL
+  build (+0x268).
+- **Frame step:** native 60 Hz tick (in-stage frame 0x8001E45C), frame counter
+  0x801CC1E4, game state 0x801CC168 (0x801CBD88 in the Steam-REL build).
 - **Stage load sequence:** stage number 0x8001DD78, SET loader 0x80065E54 and
   exec gate 0x80065404, `InitCollision` 0x8000F8B8, land registration
   0x800232A4, lights 0x8001A13C, start positions, death zones, paths (all
@@ -162,8 +167,9 @@ exec 0x800B3A8C or a close sibling.
   with native materials, textures and lighting (decoders exist; the renderer is
   new). WebGL2 in the browser through a Rust/WASM build of `sa2-runtime`
   (the `sonic-advance` crate's wasm build is the pattern to follow).
-- **Minimum camera:** the stage's default player camera (trace; camera block
-  0x801E4FF8).
+- **Minimum camera:** the stage's default player camera (camera task
+  fn_800C4458 → fn_800C3DA0 → njSetCamera; mode routine still to trace).
+  0x801E4FF8 is the Steam-REL stick table, not the camera.
 - **Minimum HUD:** rings, time, score, life count from the native HUD routine
   (trace).
 - **Sound:** ADX stage music (decoder done) and stage sound effects through
@@ -198,7 +204,7 @@ Ordered by how many stages each unlocks.
 
 | Moveset | Characters | Entry points | Depends on | Owner |
 | --- | --- | --- | --- | --- |
-| Mech walkers | Tails, Eggman, Chao Walker, Dark Chao Walker | 0x800B3A8C exec, 0x800AF558 display, loaders 0x800B56E8 / 0x800B5AC0; lock-on, laser, hover (trace) | #435 | Make first story level playable; Make Prison Lane playable |
+| Mech walkers | Tails, Eggman, Chao Walker, Dark Chao Walker | 0x800B3A8C exec, 0x800AF558 display, loaders 0x800B5D2C / 0x800B5AC0 (alternate rows 0x800B56E8 / 0x800B58D4); lock-on, laser, hover (trace) | #435 | Make first story level playable; Make Prison Lane playable |
 | Speed | Sonic, Shadow, Amy, Metal Sonic | 0x8004C734 tree; main 0x80083E44; actions 0x8007E89C; loaders 0x80086BA4… ; homing, spin dash, light dash, grind, somersault (trace) | Phase 1 | Build Sonic speed-stage controller |
 | Treasure hunt | Knuckles, Rouge, Tikal, Chaos | Loaders (trace via 0x8004F838 callers); glide, climb, dig, emerald radar and hints (trace) | Phase 1; Wild Canyon emerald logic (done) | Unowned |
 | Super forms | Super Sonic, Super Shadow | Boss_Last2D.rel routines (PPC-verified) | Phase 1 | Verify Finalhazard camera switch path |
