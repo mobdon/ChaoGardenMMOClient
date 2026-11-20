@@ -98,3 +98,13 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         c.rt.set_override(a, nothing);
     }
 }
+
+/// Scripted input for headless runs: port 0 holds A and Start for 3 frames
+/// out of every 60, enough to click through warning and title screens.
+pub fn autopress(frame: u64) {
+    let mut pads = default_pads();
+    if frame % 60 < 3 {
+        pads[0].button = 0x0100 | 0x1000; // A | Start
+    }
+    set(pads);
+}

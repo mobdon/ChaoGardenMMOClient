@@ -152,6 +152,8 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     for (name, d, s) in &pairs {
         let differs = matches!((d, s), (Some(d), Some(s)) if d.bytes != s.bytes);
         let (rel, from_steam) = match (d, s) {
+            // SA2_DISC_MODULES=a,b: use the disc copy of these (no import mapping).
+            (Some(d), _) if disc_only(name) => (d, false),
             (_, Some(s)) if differs || d.is_none() => (s, true),
             (Some(d), _) => (d, false),
             _ => {
@@ -169,6 +171,17 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         // Relocations in the text section, as Rust target expressions.
         let mut relocs = HashMap::new();
         let mut starts: BTreeSet<u32> = BTreeSet::from([0]);
+        // The header's prolog, epilog and unresolved handlers (section byte at
+        // 0x30..0x33, offsets at 0x34..0x3F) are called by address.
+        for k in 0..3 {
+            let sec = rel.bytes.get(0x30 + k).copied().unwrap_or(0) as u32;
+            let at = 0x34 + 4 * k;
+            if sec == ti {
+                if let Some(b) = rel.bytes.get(at..at + 4) {
+                    starts.insert(u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+                }
+            }
+        }
         let mut extra = BTreeSet::new();
         let mut unmapped = 0;
         let mut bad_calls = 0;
@@ -280,4 +293,8 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         map.len()
     );
     Ok(())
+}
+
+fn disc_only(name: &str) -> bool {
+    std::env::var("SA2_DISC_MODULES").unwrap_or_default().split(',').any(|s| s.trim() == "*" || s.trim().eq_ignore_ascii_case(name))
 }

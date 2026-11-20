@@ -66,6 +66,10 @@ pub struct Runtime {
     /// (the host: an interrupt for a spin-wait, a yield for a thread).
     pub ticks: u64,
     pub preempt: Option<Func>,
+    /// Module code ranges seen linked: (start, end, id, size, section). The
+    /// game may call a module's epilog after OSUnlink took it off the list;
+    /// its code is still in memory until another module is linked there.
+    pub seen: std::cell::RefCell<Vec<(u32, u32, u32, u32, u32)>>,
 }
 
 /// Calls made so far and the most recent targets (ring, newest at
@@ -83,7 +87,7 @@ pub fn trace() -> Vec<u32> {
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new(), budget: 0, ticks: 0, preempt: None }
+        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new(), budget: 0, ticks: 0, preempt: None, seen: Default::default() }
     }
 }
 
@@ -109,12 +113,18 @@ impl Runtime {
                 let size = m.r32(tab + sec * 8 + 4);
                 let base = off & !1;
                 if off & 1 != 0 && (base..base + size).contains(&addr) {
+                    let end = base.wrapping_add(size);
+                    let mut seen = self.seen.borrow_mut();
+                    seen.retain(|s| s.1 <= base || s.0 >= end);
+                    seen.push((base, end, id, size, sec));
                     return self.rels.get(&(id, size)).and_then(|d| d(sec, addr - base));
                 }
             }
             info = m.r32(info + 4);
         }
-        None
+        let seen = self.seen.borrow();
+        let &(base, _, id, size, sec) = seen.iter().find(|s| (s.0..s.1).contains(&addr))?;
+        self.rels.get(&(id, size)).and_then(|d| d(sec, addr - base))
     }
 }
 
@@ -152,11 +162,22 @@ pub fn sec(m: &Mem, id: u32, sec: u32) -> u32 {
     let mut info = m.r32(OS_MODULE_HEAD);
     while info != 0 {
         if m.r32(info) == id {
+            LINKED.with_borrow_mut(|l| l.insert(id, info));
             return m.r32(m.r32(info + 0x10) + sec * 8) & !1;
         }
         info = m.r32(info + 4);
     }
-    panic!("sa2-recomp: module {id} is not linked");
+    // Unlinked but still in memory (the game runs a module's code after
+    // OSUnlink, e.g. its epilog): its section table is still there.
+    match LINKED.with_borrow(|l| l.get(&id).copied()) {
+        Some(info) => m.r32(m.r32(info + 0x10) + sec * 8) & !1,
+        None => panic!("sa2-recomp: module {id} is not linked"),
+    }
+}
+
+thread_local! {
+    /// The last OSModuleInfo seen linked for each module id.
+    static LINKED: std::cell::RefCell<HashMap<u32, u32>> = std::cell::RefCell::new(HashMap::new());
 }
 
 impl Cpu {

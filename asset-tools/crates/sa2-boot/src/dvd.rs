@@ -37,6 +37,11 @@ pub fn set_files(files: Box<dyn GameFiles>) {
 
 fn entry(m: &Mem, path: u32) -> Option<i32> {
     let p = cstr(m, path);
+    // SA2_SKIP_FILES=a,b: files that look absent (e.g. a movie to skip).
+    let skip = std::env::var("SA2_SKIP_FILES").unwrap_or_default();
+    if skip.split(',').any(|s| !s.is_empty() && p.eq_ignore_ascii_case(s.trim())) {
+        return None;
+    }
     let r = DVD.with_borrow_mut(|d| d.as_mut()?.entry(&p));
     if std::env::var_os("SA2_TRACE_DVD").is_some() {
         eprintln!("dvd: {p:?} -> {r:?}");

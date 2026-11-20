@@ -72,13 +72,23 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20   use sa2_runtime::dvd::{DirFiles, FlatDir, GameFiles, Layered};\n\
         \x20   let mut files: Vec<Box<dyn GameFiles>> = vec![Box::new(DirFiles { root: root.into() })];\n\
         \x20   // Files the Steam release dropped come from an extracted disc folder.\n\
+        \x20   // SA2_DISC_FIRST: the disc folder before Steam (a GameCube-faithful run).\n\
         \x20   if let Some(dir) = std::env::var_os(\"SA2_DISC_DIR\") {\n\
-        \x20       files.push(Box::new(FlatDir { dir: dir.into() }));\n\
+        \x20       let disc: Box<dyn GameFiles> = Box::new(FlatDir { dir: dir.into() });\n\
+        \x20       if std::env::var_os(\"SA2_DISC_FIRST\").is_some() {\n\
+        \x20           files.insert(0, disc);\n\
+        \x20       } else {\n\
+        \x20           files.push(disc);\n\
+        \x20       }\n\
         \x20   }\n\
         \x20   sa2_boot::install_all(c, m, Box::new(Layered(files)));\n\
         \x20   sa2_recomp::os::add_frame_hook(|_, _| {\n\
         \x20       let n = sa2_boot::gx::take_frames().len() as u64;\n\
-        \x20       sa2_recomp::host::FRAMES.fetch_add(n, std::sync::atomic::Ordering::Relaxed);\n\
+        \x20       let f = sa2_recomp::host::FRAMES.fetch_add(n, std::sync::atomic::Ordering::Relaxed);\n\
+        \x20       // SA2_AUTOPRESS: press A+Start now and then to get through menus.\n\
+        \x20       if std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
+        \x20           sa2_boot::pad::autopress(f);\n\
+        \x20       }\n\
         \x20   });\n\
         }\n";
     std::fs::create_dir_all(out.join("src")).map_err(|e| e.to_string())?;

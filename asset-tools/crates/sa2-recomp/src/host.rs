@@ -104,6 +104,11 @@ pub fn run(dol_bytes: &[u8], symbols: &str, dispatch: fn(u32) -> Option<Func>, r
                 Ok(()) => "entry point returned".to_string(),
                 Err(p) => p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default(),
             };
+            if std::env::var_os("SA2_REGS").is_some() {
+                let r: Vec<String> = c.r.iter().enumerate().map(|(i, v)| format!("r{i}={v:08x}")).collect();
+                eprintln!("regs: {} lr={:08x} ctr={:08x} cr={:08x}", r.join(" "), c.lr, c.ctr, c.cr);
+                eprintln!("gqr: {:08x?}", c.gqr);
+            }
             // Debug: SA2_PEEK=addr,... prints each word and the 8 words it points at.
             for a in std::env::var("SA2_PEEK").unwrap_or_default().split(',').filter_map(|s| u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok()) {
                 let v = m.r32(a);

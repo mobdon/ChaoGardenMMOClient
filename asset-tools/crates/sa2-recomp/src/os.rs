@@ -63,6 +63,20 @@ pub fn install(c: &mut Cpu) {
     c.rt.set_override(OS_EXIT_THREAD, |c, _| std::panic::panic_any(ThreadExit(c.r[3])));
     c.rt.set_override(OS_SUSPEND_THREAD, suspend_thread);
     c.rt.preempt = Some(preempt);
+    c.rt.set_override(OS_SET_THREAD_PRIORITY, set_thread_priority);
+}
+
+pub const OS_SET_THREAD_PRIORITY: u32 = 0x800E_CA80;
+
+// OSSetThreadPriority(thread, prio): set the OSThread's effective (0x2D0) and
+// base (0x2D4) priority. The SDK version also re-sorts the ready queues, which
+// this model doesn't keep consistent (it walked them forever).
+fn set_thread_priority(c: &mut Cpu, m: &mut Mem) {
+    let (t, prio) = (c.r[3], c.r[4]);
+    m.w32(t.wrapping_add(0x2D0), prio);
+    m.w32(t.wrapping_add(0x2D4), prio);
+    THREADS.with_borrow_mut(|ts| ts.iter_mut().filter(|x| x.addr == t).for_each(|x| x.prio = prio));
+    c.r[3] = 1;
 }
 
 /// The main thread's priority (the SDK's default).
@@ -76,22 +90,21 @@ const VI_WAIT_FOR_RETRACE: u32 = 0x800F_28A8;
 /// alarms are what such waits wait for.
 fn preempt(c: &mut Cpu, m: &mut Mem) {
     match RUNNING.with_borrow(|r| r.last().copied()) {
-        Some((me, true)) => {
-            THREADS.with_borrow_mut(|ts| ts.iter_mut().filter(|t| t.addr == me).for_each(|t| t.waiting = true));
-            std::panic::panic_any(ThreadYield);
-        }
-        Some((me, false)) => {
-            // shortcut: a thread that spins 16 periods without one call (an
-            // idle meter at high priority) is preempted too; restarting a pure
-            // spin loses nothing. Real preemption would replace this.
+        Some((me, background)) => {
+            // shortcut: a thread that spins 4 periods without one call is an
+            // idle meter (SA2 runs one at high priority); it does no work, so
+            // it is retired for good. Real preemption would replace this.
             let n = rt::CALLS.load(std::sync::atomic::Ordering::Relaxed);
             let spun = SPIN.with(|s| {
                 let (last, k) = s.get();
                 let k = if last == n { k + 1 } else { 0 };
                 s.set((n, k));
-                k >= 16
+                k >= 4
             });
             if spun {
+                std::panic::panic_any(ThreadExit(0));
+            }
+            if background {
                 THREADS.with_borrow_mut(|ts| ts.iter_mut().filter(|t| t.addr == me).for_each(|t| t.waiting = true));
                 std::panic::panic_any(ThreadYield);
             }
