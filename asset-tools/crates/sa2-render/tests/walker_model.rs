@@ -28,12 +28,12 @@ fn walker_bank_triangulates() {
             mesh.draws.len()
         );
     }
-    let body = bank.iter().find(|r| r.id == 277).expect("row 277");
+    let body = bank.iter().find(|r| r.id == 248).expect("row 248");
     let (body, skipped) = model_mesh(&body.model);
     assert!(body.indices.len() / 3 > 1500 && skipped.is_empty());
 }
 
-/// The walker body (row 277) with its textures, drawn offscreen from close by.
+/// The walker body (row 248, the model the action table draws) with its textures, drawn offscreen from close by.
 /// With SA2_RENDER_OUT the frame is written there as a PNG.
 #[test]
 #[ignore = "requires the installed Steam game (SA2_GAME_PATH) and a GPU"]
@@ -43,7 +43,7 @@ fn walker_body_draws() {
     let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").expect("SA2_GAME_PATH"));
     let gd = game.join("resource/gd_PC");
     let bank = model_bank::read_prs(&fs::read(gd.join("ewalkmdl.prs")).unwrap()).unwrap();
-    let row = bank.iter().find(|r| r.id == 277).unwrap();
+    let row = bank.iter().find(|r| r.id == 248).unwrap();
     let (mesh, _) = model_mesh(&row.model);
     let tex =
         sa2_render::textures::gvm_textures(&fs::read(gd.join("ewalktex.prs")).unwrap()).unwrap();
@@ -126,4 +126,43 @@ fn walker_body_draws() {
         drawn > (SIZE[0] * SIZE[1] / 20) as usize,
         "the walker fills part of the frame"
     );
+}
+
+/// The model ids Mech Eggman's action table (in sonic2app.exe) draws.
+#[test]
+#[ignore = "requires the installed Steam game (SA2_GAME_PATH)"]
+fn walker_action_models() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").expect("SA2_GAME_PATH"));
+    let exe = fs::read(game.join("sonic2app.exe")).unwrap();
+    let t = sa2_asset_tools::character_animations::read(&exe).unwrap();
+    let t = t.into_iter().find(|t| t.character == "MechEggman").unwrap();
+    let mut ids = std::collections::BTreeMap::<i64, usize>::new();
+    for r in &t.rows {
+        *ids.entry(i64::from(r.model)).or_default() += 1;
+    }
+    eprintln!("action rows {} model ids {ids:?}", t.rows.len());
+    assert!(ids.contains_key(&248));
+}
+
+/// Which installed model banks hold a given id (SA2_FIND_ID, default 248).
+#[test]
+#[ignore = "requires the installed Steam game (SA2_GAME_PATH)"]
+fn find_model_id() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").expect("SA2_GAME_PATH"));
+    let want: i32 = std::env::var("SA2_FIND_ID")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(248);
+    for e in fs::read_dir(game.join("resource/gd_PC")).unwrap() {
+        let p = e.unwrap().path();
+        let n = p.file_name().unwrap().to_string_lossy().to_lowercase();
+        if !n.ends_with("mdl.prs") {
+            continue;
+        }
+        if let Ok(bank) = model_bank::read_prs(&fs::read(&p).unwrap()) {
+            if let Some(r) = bank.iter().find(|r| r.id == want) {
+                eprintln!("{n}: id {want} nodes {}", r.model.nodes.len());
+            }
+        }
+    }
 }

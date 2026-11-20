@@ -59,10 +59,12 @@ pub struct App {
     pub triangles: u32,
 }
 
-/// Bank row of `ewalkmdl.prs` drawn as the walker. shortcut: picked as the
-/// bank's only full body (23 nodes, 1,840 triangles); the row the loader
-/// 0x800B5D2C installs is not traced yet.
-const WALKER_BODY: i32 = 277;
+/// Bank row of `ewalkmdl.prs` drawn as the walker: the display fn_800B15B8
+/// draws CharacterModels (0x801E6688)[action row +2], and 137 of Mech
+/// Eggman's 139 action rows name 248 (the loader 0x800B5D2C reads
+/// EWALKMDL.PRS, or EWALK2MDL.PRS for costume 1). shortcut: drawn in its
+/// bind pose; per-action models (268, 287) and motions come later.
+const WALKER_BODY: i32 = 248;
 
 /// The walker body from `ewalkmdl.prs`, its textures (`ewalktex.prs`)
 /// appended to `textures` with the draws' ids moved past the land's.
