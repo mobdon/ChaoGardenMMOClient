@@ -98,4 +98,6 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 
 [Playable Iron Gate](PLAYABLE-IRON-GATE.md) runs the first Dark stage live: walker movement, collision, lifts, elevators, bridges, springs, rings, checkpoints, death zones and the goal ring. Two of its three segments clear offline; the controller is an adaptation.
 
+[Stand-in Sonic controller](SPEED-CONTROLLER.md) runs City Escape headless on Sonic's native PhysicsArray values with adapted rules for running, slopes, jumps, spin, homing attack and grind rails. It explains why the native controller cannot be ported from the Steam install. The opening 10,000 units clear offline.
+
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.

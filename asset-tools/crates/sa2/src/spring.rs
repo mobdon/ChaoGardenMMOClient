@@ -42,7 +42,7 @@ pub enum SpringCall {
     DeadOut,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StageSpring {
     pub kind: SpringKind,
     pub position: [f32; 3],

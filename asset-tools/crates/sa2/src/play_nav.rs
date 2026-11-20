@@ -41,6 +41,11 @@ pub struct NavGrid {
     /// Nodes at or above this index were added with `add_node` and are only
     /// entered through links (or from other added nodes).
     lattice: u32,
+    /// Opt-in hop height for long links (0 = off): a long link whose straight
+    /// path is blocked at the higher height may still pass this much higher.
+    hop: f32,
+    /// Opt-in long-link reach in cells (default from the body radius).
+    reach: Option<i32>,
 }
 
 impl NavGrid {
@@ -57,6 +62,8 @@ impl NavGrid {
             clearance: None,
             links: HashMap::new(),
             lattice: u32::MAX,
+            hop: 0.0,
+            reach: None,
         };
         for ix in 0..=nx {
             for iz in 0..=nz {
@@ -87,6 +94,13 @@ impl NavGrid {
         let w = world.clone();
         g.clearance = Some(Box::new(move |p: V3| fits(&w, body, p)));
         g
+    }
+
+    /// Let long links hop `height` over low lips and reach `cells` cells.
+    /// Off by default, so existing planners are unchanged.
+    pub fn set_hops(&mut self, height: f32, cells: i32) {
+        self.hop = height;
+        self.reach = Some(cells);
     }
 
     fn pos(&self, ix: i32, iz: i32) -> (f32, f32) {
@@ -204,7 +218,9 @@ impl NavGrid {
         // landing, and walking off a ledge whose face keeps the lower samples
         // out of the 8-neighbourhood. The straight path at the higher height
         // must be clear; a drop also needs an open landing column.
-        let reach = (body.radius * 3.0 / self.spacing).ceil() as i32;
+        let reach = self
+            .reach
+            .unwrap_or((body.radius * 3.0 / self.spacing).ceil() as i32);
         for dx in -reach..=reach {
             for dz in -reach..=reach {
                 if dx.abs() <= 1 && dz.abs() <= 1 {
@@ -229,11 +245,14 @@ impl NavGrid {
                     let a = self.node_pos(id);
                     let b = self.node_pos(n);
                     let top = a[1].max(b[1]);
-                    let clear = (1..4).all(|k| {
-                        let t = k as f32 / 4.0;
-                        let p = [a[0] + (b[0] - a[0]) * t, top, a[2] + (b[2] - a[2]) * t];
-                        self.world_clear(p)
-                    });
+                    let clear_at = |y: f32| {
+                        (1..4).all(|k| {
+                            let t = k as f32 / 4.0;
+                            let p = [a[0] + (b[0] - a[0]) * t, y, a[2] + (b[2] - a[2]) * t];
+                            self.world_clear(p)
+                        })
+                    };
+                    let clear = clear_at(top) || (self.hop > 0.0 && clear_at(top + self.hop));
                     if clear {
                         let h = self.spacing * ((dx * dx + dz * dz) as f32).sqrt();
                         let jump = if dy > -body.step { 40.0 } else { 0.0 };
@@ -387,5 +406,37 @@ mod tests {
         assert!(down.reached);
         let up = g.route(body, [150.0, 0.0, 0.0], [-150.0, 100.0, 0.0], 20.0, 30.0);
         assert!(!up.reached);
+    }
+
+    #[test]
+    fn opt_in_hops_cross_a_low_lip() {
+        // Two decks at y=0 split by a 20-unit-high, 4-unit-thick lip at x=0.
+        let mut t = quad(0.0, -200.0, -2.0, -50.0, 50.0);
+        t.extend(quad(0.0, 2.0, 200.0, -50.0, 50.0));
+        for x in [-2.0f32, 2.0] {
+            let (a, b, c, d) = (
+                [x, 0.0, -50.0],
+                [x, 0.0, 50.0],
+                [x, 20.0, 50.0],
+                [x, 20.0, -50.0],
+            );
+            t.push(make_tri([a, b, c], 1, 0).unwrap());
+            t.push(make_tri([a, c, d], 1, 0).unwrap());
+        }
+        t.extend(quad(20.0, -2.0, 2.0, -50.0, 50.0));
+        let w = PlayWorld::from_tris(t);
+        let body = Body {
+            radius: 4.0,
+            height: 10.0,
+            step: 12.0,
+            jump: 10.0,
+        };
+        let from = [-150.0, 0.0, 0.0];
+        let to = [150.0, 0.0, 0.0];
+        let plain = NavGrid::build(&w, body, 10.0);
+        assert!(!plain.route(body, from, to, 15.0, 10.0).reached);
+        let mut hops = NavGrid::build(&w, body, 10.0);
+        hops.set_hops(30.0, 3);
+        assert!(hops.route(body, from, to, 15.0, 10.0).reached);
     }
 }
