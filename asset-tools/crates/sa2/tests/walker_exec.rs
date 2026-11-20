@@ -107,7 +107,10 @@ fn matches_main_dol() {
                 exec,
                 name,
                 pwp_byte0,
-            } = *call;
+            } = *call
+            else {
+                panic!("{call:?}");
+            };
             let got = [list as u64, flags as u64, exec as u64, name as u64];
             assert_eq!(got, [0, 1, 2, 3].map(|j| u(&wv[j])), "{c}");
             assert_eq!(pwp_byte0.map(u64::from), Some(u(&c["newpw"])), "{c}");

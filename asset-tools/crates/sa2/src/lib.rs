@@ -67,6 +67,7 @@ pub mod play_objects;
 pub mod play_session;
 pub mod play_world;
 pub mod player_shadow;
+pub mod player_stand;
 pub mod player_analog;
 pub mod player_motion;
 pub mod player_physics;

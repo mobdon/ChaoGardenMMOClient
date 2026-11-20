@@ -22,6 +22,8 @@ pub enum EngineCall {
         name: u32,
         pwp_byte0: Option<u8>,
     },
+    /// fn_80011714(id): play a voice line.
+    PlayVoice { id: i16 },
 }
 
 /// The per-player history the engine keeps at r13-0x7910 (ring indices),
