@@ -25,7 +25,7 @@ export function captureChaoPose(imported) {
   }));
 }
 
-function cloneNativeMotion(imported, source, targetPose, name, state) {
+export function cloneNativeMotion(imported, source, targetPose, name, state) {
   const native = source.animationGroups.find(group => {
     const sourceName = group.name.toLowerCase();
     return sourceName === name || sourceName.endsWith(`-${name}`) || sourceName.endsWith(`_${name}`);

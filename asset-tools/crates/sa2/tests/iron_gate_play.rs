@@ -102,7 +102,8 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&7));
         assert_eq!(s.unimplemented.get("CONTCHAO row (solid only)"), Some(&3));
         assert_eq!(s.unimplemented.get("CONTWOOD row (solid only)"), Some(&27));
-        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&4));
+        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&13));
+        assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&3));
         assert!(s.death_zone_count() > 0);
         assert_eq!(s.physics.slot, 7);
     });
@@ -119,8 +120,12 @@ fn standing_on_a_lift_raises_it_by_its_native_rule() {
         let top = l.top;
         let stand = PlayerSample {
             center: s.movers[i].position(),
+            position: s.movers[i].position(),
+            action: 0,
+            grounded: false,
             standing_on: Some(i),
             touching_goal: None,
+            hit_cam_lens: None,
         };
         let mut started = None;
         for _ in 0..400 {
@@ -147,9 +152,13 @@ fn goal_contact_writes_the_slot_word() {
         let goal = s.goals[0].position;
         let events = s.step(Some(PlayerSample {
             center: goal,
+            position: goal,
+            action: 0,
+            grounded: false,
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),
+            hit_cam_lens: None,
         }));
         assert!(events
             .iter()
