@@ -60,6 +60,13 @@ for _ in range(600):
     m.u.mem_write(VA, struct.pack('>3f', *a)); m.u.mem_write(VB, struct.pack('>3f', *b)); m.u.mem_write(VC, struct.pack('>3f', *c))
     m.call(0x8002B7C4, r3=VA, r4=VB, r5=VC if use else 0)
     va_cases.append([[fb(v) for v in a], [fb(v) for v in b], [fb(v) for v in c] if use else None, m.gpr(3)])
+# A NaN side dot (a zero motion vector normalised) must leave the angle alone.
+for _ in range(20):
+    a, b = unit(), unit()
+    c = [float('nan'), 0.0, 0.0]
+    m.u.mem_write(VA, struct.pack('>3f', *a)); m.u.mem_write(VB, struct.pack('>3f', *b)); m.u.mem_write(VC, struct.pack('>3f', *c))
+    m.call(0x8002B7C4, r3=VA, r4=VB, r5=VC)
+    va_cases.append([[fb(v) for v in a], [fb(v) for v in b], [fb(v) for v in c], m.gpr(3)])
 analog = []
 for _ in range(1500):
     p = rng.choice([0, 1])
