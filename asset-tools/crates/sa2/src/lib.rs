@@ -165,6 +165,7 @@ pub mod kart_fall_recovery;
 pub mod kart_driving_audio;
 
 pub mod city_motion_registry;
+pub mod egg_golem;
 pub mod finalhazard;
 pub mod finalhazard_visual;
 pub mod kart_balloon;
