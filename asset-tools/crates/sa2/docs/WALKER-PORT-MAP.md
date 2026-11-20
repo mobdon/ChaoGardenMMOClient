@@ -73,7 +73,7 @@ does the following:
   and z if |z| <= 0.9 * `run_accel`; when airborne, zeroes x and z at or
   below 0.001;
 - stores the result in `spd`, and masks all six angles to 16 bits;
-- sets `dotp` to -dot(global vector at 0x801D5624, `floor_normal`) when
+- sets `dotp` to -dot(global vector at 0x801E5624, `floor_normal`) when
   grounded, otherwise 1.0.
 
 On stage 0x5A it also clears `spd.x` below a slope-dependent threshold built
