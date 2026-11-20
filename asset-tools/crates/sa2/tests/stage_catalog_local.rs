@@ -171,30 +171,39 @@ fn installed_numbered_boss_and_chao_sets() {
                 semantic.update(b"UNKNOWN\0");
             }
         }
+        // Dry Lagoon 2P (set0046_2p_s.bin) used to leave ids 89, 92 and 94
+        // unresolved: they were looked up in Pyramid Race's 89-entry list. With
+        // its own 100-entry list (object_table::HEAD_CORRECTIONS) they resolve.
         let expected = match name.as_str() {
             "set0011_2p_s.bin" => BTreeMap::from([(92, 38)]),
-            "set0046_2p_s.bin" => BTreeMap::from([(89, 1), (92, 1), (94, 1)]),
             _ => BTreeMap::new(),
         };
         assert_eq!(report.unresolved_id_counts, expected);
     }
-    assert_eq!(totals, [[209, 58592, 94], [14, 156, 0], [9, 272, 0]]);
+    assert_eq!(totals, [[209, 58592, 91], [14, 156, 0], [9, 272, 0]]);
     assert_eq!(
         format!("{:x}", source.finalize()),
         "f35a34578d4ca308558f7302cd3ac57c5c3296b45cfc0f98829a96356596bdc9"
     );
+    // Changed with the Dry Lagoon 2P correction: its placements now resolve
+    // against its own list (the totals above lose exactly those 3 unresolved ids).
     assert_eq!(
         format!("{:x}", semantic.finalize()),
-        "78be8cf2eefe3875b191a97b4b97a162bfe9ea9782ac132ed251ba4c84ce9b65"
+        "4ccd8c0fccca58082a3fc8d181c92f66c8a4bf30f24fb8745b39b0e024545f8b"
     );
     let empty = [0; 32];
-    for (k, alias) in [("0046", "0047"), ("0029", "0056")] {
-        let x = catalog.bind(&empty, cases[k]).unwrap();
-        assert!(x.sections_sharing_table.contains(&cases[alias].to_string()));
-    }
+    // Dry Lagoon 2P (0046) no longer shares Pyramid Race's (0047) table.
+    let dry_lagoon_2p = catalog.bind(&empty, cases["0046"]).unwrap();
+    assert!(!dry_lagoon_2p
+        .sections_sharing_table
+        .contains(&cases["0047"].to_string()));
+    let shared = catalog.bind(&empty, cases["0029"]).unwrap();
+    assert!(shared
+        .sections_sharing_table
+        .contains(&cases["0056"].to_string()));
     for section in [r"Bosses\\Final Hazard", r"Chao World\\Chao Lobby"] {
         assert!(catalog.bind(&empty, section).unwrap().table_gap.is_some());
     }
     assert!(catalog.bind(&empty, "0090").is_err());
-    eprintln!("232 source SET files, 59020 placements, 58926 matched to configured executable definitions");
+    eprintln!("232 source SET files, 59020 placements, 58929 matched to configured executable definitions");
 }

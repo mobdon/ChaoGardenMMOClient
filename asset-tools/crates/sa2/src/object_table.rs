@@ -83,6 +83,25 @@ pub struct ObjectList {
     pub entries: Vec<ObjectDefinition>,
 }
 
+/// Object list headers where the mapping's address is wrong for the pinned
+/// executable: (section name, mapped header RVA, verified header RVA).
+///
+/// Dry Lagoon 2P: ObjectLists.ini gives header 0x11A76B0 for both Dry Lagoon 2P
+/// and Pyramid Race. That header holds 89 entries at VA 0x15A7120, which match
+/// the disc's Pyramid Race list (stg47D.rel) 89 of 89. The disc's Dry Lagoon 2P
+/// list (stg46D.rel, 100 entries) matches the exe exactly, 100 of 100, only at
+/// VA 0x1564770, and the one header pointing there is RVA 0x1164DB0 (count 100).
+/// Compared on load flags, list, flags and distance; pointers excluded.
+const HEAD_CORRECTIONS: &[(&str, u32, u32)] =
+    &[("Dry Lagoon 2P Object List", 0x11A76B0, 0x1164DB0)];
+
+pub(crate) fn corrected_head(name: &str, mapped: u32) -> u32 {
+    HEAD_CORRECTIONS
+        .iter()
+        .find(|(n, from, _)| *n == name && *from == mapped)
+        .map_or(mapped, |(_, _, to)| *to)
+}
+
 /// Resolve each declared objlist in SA Tools' owner-supplied ObjectLists.ini.
 /// Other mapping types and global options do not select an object table.
 pub fn mapped_tables(bytes: &[u8], config: &str) -> Result<BTreeMap<String, ObjectList>> {
@@ -99,8 +118,11 @@ pub fn mapped_tables(bytes: &[u8], config: &str) -> Result<BTreeMap<String, Obje
         let address = fields
             .get("address")
             .ok_or_else(|| Error::invalid("missing object list address"))?;
-        let rva = u32::from_str_radix(address, 16)
-            .map_err(|_| Error::invalid("invalid object list RVA"))?;
+        let rva = corrected_head(
+            &name,
+            u32::from_str_radix(address, 16)
+                .map_err(|_| Error::invalid("invalid object list RVA"))?,
+        );
         let entries = read_table(bytes, &image, rva)?;
         total += entries.len();
         if total > 65536 {
@@ -118,4 +140,23 @@ pub fn mapped_tables(bytes: &[u8], config: &str) -> Result<BTreeMap<String, Obje
         return Err(Error::invalid("no objlist mappings in config"));
     }
     Ok(tables)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn corrects_only_the_verified_dry_lagoon_2p_header() {
+        assert_eq!(
+            corrected_head("Dry Lagoon 2P Object List", 0x11A76B0),
+            0x1164DB0
+        );
+        // Pyramid Race keeps the shared mapped header, which is its own list.
+        assert_eq!(
+            corrected_head("Pyramid Race Object List", 0x11A76B0),
+            0x11A76B0
+        );
+        // A different mapped address is not rewritten.
+        assert_eq!(corrected_head("Dry Lagoon 2P Object List", 0x1234), 0x1234);
+    }
 }

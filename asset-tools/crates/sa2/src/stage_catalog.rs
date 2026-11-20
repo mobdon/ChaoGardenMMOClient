@@ -109,8 +109,11 @@ impl<'a> Catalog<'a> {
             let address = fields
                 .get("address")
                 .ok_or_else(|| Error::invalid("objlist missing address"))?;
-            let rva = u32::from_str_radix(address, 16)
-                .map_err(|_| Error::invalid("invalid objlist RVA"))?;
+            let rva = crate::object_table::corrected_head(
+                &section,
+                u32::from_str_radix(address, 16)
+                    .map_err(|_| Error::invalid("invalid objlist RVA"))?,
+            );
             if mappings
                 .insert(list_key(file), Mapping { section, rva })
                 .is_some()

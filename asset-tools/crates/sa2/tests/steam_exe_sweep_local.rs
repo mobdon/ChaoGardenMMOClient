@@ -91,14 +91,29 @@ fn every_executable_and_dll_table_reader_loads_the_steam_install() {
     report(
         "object lists (ObjectLists.ini)",
         object_table::mapped_tables(&exe, &ini("ObjectLists.ini"))
-            .map(|t| {
-                format!(
+            .map_err(e)
+            .and_then(|t| {
+                // Dry Lagoon 2P reads its own 100-entry list, not Pyramid Race's 89.
+                let dl = t
+                    .get("Dry Lagoon 2P Object List")
+                    .ok_or("no Dry Lagoon 2P list")?;
+                let pr = t
+                    .get("Pyramid Race Object List")
+                    .ok_or("no Pyramid Race list")?;
+                if (dl.head_rva, dl.entries.len(), pr.entries.len()) != (0x1164DB0, 100, 89) {
+                    return Err(format!(
+                        "Dry Lagoon 2P head {:#x} with {} entries, Pyramid Race {}",
+                        dl.head_rva,
+                        dl.entries.len(),
+                        pr.entries.len()
+                    ));
+                }
+                Ok(format!(
                     "{} lists, {} objects",
                     t.len(),
                     t.values().map(|l| l.entries.len()).sum::<usize>()
-                )
-            })
-            .map_err(e),
+                ))
+            }),
         f,
     );
     report(
