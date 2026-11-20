@@ -22,11 +22,63 @@ fn read_rel(p: &Path) -> Option<Rel> {
 }
 
 fn find(dir: &Path, name: &str) -> Option<PathBuf> {
-    ["rel", "prs", "REL"].iter().map(|e| dir.join(format!("{name}.{e}"))).find(|p| p.exists())
+    // .prs first: the Chao folders also hold a stale, unpacked ChaoStgLobby.rel.
+    ["prs", "rel", "REL"].iter().map(|e| dir.join(format!("{name}.{e}"))).find(|p| p.exists())
 }
 
 fn main_relocs(r: &Rel) -> Vec<&Reloc> {
     r.relocs.iter().filter(|x| x.module == 0).collect()
+}
+
+/// What a main.dol relocation site looks like apart from the address: its
+/// kind, section, and the instruction with the relocated field cleared.
+fn site_key(r: &Rel, x: &Reloc) -> (u8, u8, u32) {
+    let word = r
+        .sections
+        .get(x.section as usize)
+        .filter(|s| s.exec && s.offset != 0)
+        .map_or(0, |s| r.word(s, x.offset));
+    let mask = match x.kind {
+        R_REL24 => 0xFC00_0003,
+        4..=6 => 0xFFFF_0000,
+        _ => 0,
+    };
+    (x.kind, x.section, word & mask)
+}
+
+/// Pair the disc and Steam builds' main.dol relocations of one module: the
+/// longest common subsequence of their sites (inserted or removed code shifts
+/// offsets, so pairing by position fails once the counts differ).
+fn align<'a>(d: &'a Rel, s: &'a Rel) -> Vec<(&'a Reloc, &'a Reloc)> {
+    let (a, b) = (main_relocs(d), main_relocs(s));
+    if a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| x.kind == y.kind) {
+        return a.into_iter().zip(b).collect();
+    }
+    // shortcut: plain O(n*m) table, capped; fine for SA2's modules (largest ~6k sites).
+    if a.len().saturating_mul(b.len()) > 64_000_000 {
+        return Vec::new();
+    }
+    let (ka, kb): (Vec<_>, Vec<_>) = (a.iter().map(|x| site_key(d, x)).collect(), b.iter().map(|x| site_key(s, x)).collect());
+    let w = b.len() + 1;
+    let mut t = vec![0u16; (a.len() + 1) * w];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            t[i * w + j] = if ka[i] == kb[j] { t[(i + 1) * w + j + 1] + 1 } else { t[(i + 1) * w + j].max(t[i * w + j + 1]) };
+        }
+    }
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < a.len() && j < b.len() {
+        if ka[i] == kb[j] {
+            out.push((a[i], b[j]));
+            i += 1;
+            j += 1;
+        } else if t[(i + 1) * w + j] >= t[i * w + j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
 }
 
 pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), String> {
@@ -45,19 +97,34 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         let d = find(disc, n).and_then(|p| read_rel(&p));
         let s = find(steam, n).and_then(|p| read_rel(&p));
         if let (Some(d), Some(s)) = (&d, &s) {
-            let (a, b) = (main_relocs(d), main_relocs(s));
-            if a.len() == b.len() {
-                for (x, y) in a.iter().zip(&b) {
-                    if x.kind == y.kind {
-                        *votes.entry(y.addend).or_default().entry(x.addend).or_default() += 1;
-                    }
-                }
+            for (x, y) in align(d, s) {
+                *votes.entry(y.addend).or_default().entry(x.addend).or_default() += 1;
             }
         }
         pairs.push((n.clone(), d, s));
     }
-    let map: HashMap<u32, u32> =
+    let mut map: HashMap<u32, u32> =
         votes.into_iter().map(|(k, v)| (k, v.into_iter().max_by_key(|(_, c)| *c).unwrap().0)).collect();
+    // Addresses no aligned pair covers: the two builds differ by inserted code,
+    // so the Steam->disc shift is constant over long stretches. Use it when the
+    // nearest mapped addresses on both sides agree on it.
+    let known: BTreeMap<u32, u32> = map.iter().map(|(k, v)| (*k, *v)).collect();
+    for p in &pairs {
+        let Some(s) = &p.2 else { continue };
+        for r in main_relocs(s) {
+            if map.contains_key(&r.addend) {
+                continue;
+            }
+            let lo = known.range(..r.addend).next_back();
+            let hi = known.range(r.addend..).next();
+            if let (Some((la, ld)), Some((ha, hd))) = (lo, hi) {
+                let shift = ld.wrapping_sub(*la);
+                if hd.wrapping_sub(*ha) == shift {
+                    map.insert(r.addend, r.addend.wrapping_add(shift));
+                }
+            }
+        }
+    }
 
     std::fs::create_dir_all(out.join("src")).map_err(|e| e.to_string())?;
     let mut lib = String::from(
@@ -66,6 +133,9 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
          use sa2_recomp::rt::Runtime;\n",
     );
     let mut register = String::from("pub fn register(rt: &mut Runtime) {\n");
+    let dol_syms = std::fs::read_to_string(config.join("symbols.txt")).unwrap_or_default();
+    let dol_funcs: BTreeSet<u32> =
+        crate::dol::parse_symbols(&dol_syms).into_iter().filter(|s| s.function).map(|s| s.addr).collect();
     // One crate per module in one workspace: they compile in parallel, and no
     // single rustc has to hold all ~65k functions.
     let me = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string().replace('\\', "/");
@@ -101,6 +171,7 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         let mut starts: BTreeSet<u32> = BTreeSet::from([0]);
         let mut extra = BTreeSet::new();
         let mut unmapped = 0;
+        let mut bad_calls = 0;
         for r in &rel.relocs {
             let target = if r.module == 0 {
                 let a = if from_steam {
@@ -113,6 +184,13 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
                     }
                 } else {
                     r.addend
+                };
+                // Check: a call into main.dol must land on a GSNE8P function start.
+                if r.kind == R_REL24 && !dol_funcs.contains(&a) {
+                    bad_calls += 1;
+                }
+                let a = {
+                    a
                 };
                 format!("{a:#010x}u32")
             } else {
@@ -169,7 +247,7 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         let _ = writeln!(register, "    rt.rels.insert(({id}, {:#x}), {modname}::dispatch);", text.size);
         let _ = writeln!(
             report,
-            "{name}: id {id} {} functions {} unknown {unknown} unmapped main.dol imports {unmapped}",
+            "{name}: id {id} {} functions {} unknown {unknown} calls not at a main.dol function {bad_calls} unmapped main.dol imports {unmapped}",
             if from_steam { "STEAM" } else { "disc" },
             funcs.len()
         );
@@ -185,6 +263,10 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     let toml = crate_toml("sa2-recomp-rels", &deps)
         + &format!("\n[workspace]\nmembers = [{}]\n\n[profile.dev]\nopt-level = 1\n", list.join(", "));
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;
+    // 24 of these crates compiling at once made rustc abort (0xc0000409) on a
+    // 32 GB machine; 6 at a time builds all 94 in under 3 minutes.
+    std::fs::create_dir_all(out.join(".cargo")).map_err(|e| e.to_string())?;
+    std::fs::write(out.join(".cargo/config.toml"), "[build]\njobs = 6\n").map_err(|e| e.to_string())?;
     std::fs::write(out.join("REPORT.txt"), &report).map_err(|e| e.to_string())?;
     println!(
         "modules {} | functions {total_fns} | unknown instructions {total_unknown} | unmapped Steam imports {unmapped_total} | address map {} entries | details in REPORT.txt",

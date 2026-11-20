@@ -65,6 +65,7 @@ pub struct Symbol {
     pub section: String,
     pub addr: u32,
     pub size: u32,
+    /// A callable entry: a function, or a global label in .text.
     pub function: bool,
 }
 
@@ -78,15 +79,17 @@ pub fn parse_symbols(text: &str) -> Vec<Symbol> {
             let (section, addr) = loc.split_once(':')?;
             let addr = u32::from_str_radix(addr.trim().trim_start_matches("0x"), 16).ok()?;
             let mut size = 0;
-            let mut function = false;
+            let (mut function, mut label, mut global) = (false, false, false);
             for a in attrs.trim_start_matches(|c| c == ' ' || c == '/').split_whitespace() {
                 if let Some(v) = a.strip_prefix("size:0x") {
                     size = u32::from_str_radix(v, 16).unwrap_or(0);
                 }
-                if a == "type:function" {
-                    function = true;
-                }
+                function |= a == "type:function";
+                label |= a == "type:label";
+                global |= a == "scope:global";
             }
+            // Global labels in code are extra entry points (_savegpr_14.., _restgpr_..).
+            let function = function || (label && global && section.trim() == ".text");
             Some(Symbol { name: name.trim().into(), section: section.trim().into(), addr, size, function })
         })
         .collect()
