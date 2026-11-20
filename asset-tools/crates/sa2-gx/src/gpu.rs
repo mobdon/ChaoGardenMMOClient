@@ -218,8 +218,9 @@ pub struct GxRenderer {
     /// Viewport for the next [`Self::render`] (x, y, w, h, near, far in
     /// target pixels); `None` covers the target.
     pub viewport: Option<[f32; 6]>,
-    /// Passes of the frame drawn last (by its serial and first draw).
-    passes: FastMap<(u64, usize), Pass>,
+    /// Passes of the frame drawn last (by its serial and draw range: an empty
+    /// clear-only pass starts where the next real one does).
+    passes: FastMap<(u64, usize, usize), Pass>,
     passes_of: u64,
     /// Textures made by EFB copies, by id (reused by the next copy).
     efb_copies: FastMap<TextureId, wgpu::Texture>,
@@ -688,12 +689,12 @@ impl GxRenderer {
     }
 
     /// Draw a pass. With `key` (a recorded frame's serial and the pass's
-    /// first draw), a pass drawn before is drawn again from what it prepared
+    /// draw range), a pass drawn before is drawn again from what it prepared
     /// then, with only the position matrices written anew: pictures between
     /// game frames move matrices and nothing else.
     fn render_pass(
         &mut self,
-        key: Option<(u64, usize)>,
+        key: Option<(u64, usize, usize)>,
         target: &wgpu::TextureView,
         size: [u32; 2],
         clear: Option<[f64; 4]>,
@@ -965,7 +966,7 @@ impl GxRenderer {
                     v[5].clamp(0.0, 1.0),
                 ]
             });
-            let key = (frame.serial != 0).then_some((frame.serial, start));
+            let key = (frame.serial != 0).then_some((frame.serial, start, end));
             self.render_pass(key, target, size, clear.take(), &scene, &draws);
             if end == start {
                 break;

@@ -273,6 +273,9 @@ pub struct Gx {
     xf_matrices: Vec<f32>,
     post_tex_mtx: [Mtx34; 20],
     current_mtx: u32,
+    /// Each texgen's matrix (GXTexMtx: TEXMTX0 30 ... IDENTITY 60), from
+    /// XF_MATRIXINDEX0/1 beside the position matrix index.
+    tex_mtx_idx: [u32; 8],
     projection: [[f32; 4]; 4],
     viewport: [f32; 6],
     scissor: [u32; 4],
@@ -369,6 +372,7 @@ impl Gx {
             xf_matrices: xf,
             post_tex_mtx: [IDENTITY34; 20],
             current_mtx: 0,
+            tex_mtx_idx: [tex_gen_matrix::IDENTITY; 8],
             projection: [
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],
@@ -838,6 +842,7 @@ impl Gx {
             swap_sel: self.swap_sel,
             swap_tables: self.swap_tables,
             dst_alpha: self.dst_alpha,
+            tex_mtx_idx: self.tex_mtx_idx,
             pn: self.vcd[attr::PNMTXIDX as usize].ty,
             tex_mtx: std::array::from_fn(|t| self.vcd[attr::TEX0MTXIDX as usize + t].ty),
         };
@@ -855,6 +860,9 @@ impl Gx {
         let mut b = self.mat.clone();
         b.set_num_tev_stages(self.num_tev_stages.max(1));
         b.set_num_tex_gens(self.num_tex_gens);
+        for (i, &m) in self.tex_mtx_idx.iter().enumerate() {
+            b.set_tex_gen_matrix(i, m);
+        }
         b.set_num_ind_stages(self.num_ind_stages);
         b.set_num_chans(self.num_chans);
         for s in 0..self.num_tev_stages.max(1) {
@@ -1045,7 +1053,17 @@ impl Gx {
                     _ => {}
                 }
             }
-            a if a == xf_register::XF_MATRIXINDEX0_ID => self.current_mtx = v & 0x3F,
+            a if a == xf_register::XF_MATRIXINDEX0_ID => {
+                self.current_mtx = v & 0x3F;
+                for (t, m) in self.tex_mtx_idx[..4].iter_mut().enumerate() {
+                    *m = (v >> (6 + 6 * t)) & 0x3F;
+                }
+            }
+            a if a == xf_register::XF_MATRIXINDEX1_ID => {
+                for (t, m) in self.tex_mtx_idx[4..].iter_mut().enumerate() {
+                    *m = (v >> (6 * t)) & 0x3F;
+                }
+            }
             a if (xf_register::XF_VPSCALEX_ID..=xf_register::XF_VPOFFSETZ_ID).contains(&a) => {
                 self.vp_regs[(a - xf_register::XF_VPSCALEX_ID) as usize] = f;
                 // Undo GXSetViewport: scale (w/2, -h/2, (far-near)*zmax),
@@ -1541,6 +1559,9 @@ impl Gx {
     ) {
         self.mat
             .set_tex_coord_gen(dst, ty, src, mtx, normalize, post_mtx);
+        if let Some(m) = self.tex_mtx_idx.get_mut(dst as usize) {
+            *m = mtx;
+        }
     }
 
     /// `GXSetTexCoordGen`.
@@ -1832,6 +1853,7 @@ struct MatKey {
     swap_sel: [(u32, u32); 16],
     swap_tables: [crate::material::SwapTable; 4],
     dst_alpha: Option<u8>,
+    tex_mtx_idx: [u32; 8],
     pn: u32,
     tex_mtx: [u32; 8],
 }

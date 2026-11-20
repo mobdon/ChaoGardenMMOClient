@@ -106,6 +106,25 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
             }
             eprintln!("  {} distinct viewport/projection pairs", seen.len());
         }
+        // SA2_SNAP_COPIES: the frame's EFB copies and every draw sampling one.
+        if std::env::var_os("SA2_SNAP_COPIES").is_some() {
+            for c in &f.tex_copies {
+                eprintln!("frame {n}: copy {c:?}");
+            }
+            let ids: Vec<_> = f.tex_copies.iter().map(|c| c.id).collect();
+            for (i, d) in f.draws.iter().enumerate() {
+                let maps = &d.material_params.texture_mappings;
+                let Some(map) = maps.iter().position(|m| m.texture.is_some_and(|t| ids.contains(&t))) else {
+                    continue;
+                };
+                eprintln!("  draw {i} samples copy at map {map}: texgens {:?}", d.material.tex_gens);
+                eprintln!("    tev {:?}", d.material.tev_stages.iter().map(|s| (s.tex_coord_id, s.tex_map)).collect::<Vec<_>>());
+                eprintln!("    pos_mtx0 {:?}", d.draw_params.pos_mtx[0]);
+                eprintln!("    tex_mtx {:?}", &d.material_params.tex_mtx[..3]);
+                eprintln!("    post_tex_mtx {:?}", &d.material_params.post_tex_mtx[..3]);
+                eprintln!("    proj {:?} viewport {:?}", d.projection, d.viewport);
+            }
+        }
         let view = s.target.create_view(&Default::default());
         s.renderer.render_frame(f, &view, [W, H]);
         let mut enc = s.device.create_command_encoder(&Default::default());
