@@ -53,6 +53,7 @@ pub mod stage_positions;
 pub mod stage_spring_host;
 pub mod story;
 pub mod texture;
+pub mod three_spring;
 pub mod visual;
 pub mod visual_glb;
 pub mod wild_canyon;

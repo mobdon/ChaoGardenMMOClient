@@ -35,6 +35,7 @@ speed stages.
 | Bush blocks | GREEN_B Basic collision at RVA 0xCAA350, placed by SET position and Y angle (18 placements) |
 | Goal | The stg13D.rel goal-ring program and each GOALRING's native initialization route. Of the two placements, only the Rotation.x 0 one reaches contact. |
 | Dash panels | One `dash_panel::DashPanel` task per KASOKU placement (82), running the callback ported below |
+| Triple springs | One `three_spring::ThreeSpring` task per 3SPRING placement (2), running the code ported below |
 | Ring groups | One `ring_group::RingGroup` task per RING_LINEAR (46) and RING_CIRCLE (4) placement, running the code ported below |
 | Everything else | Raw SET rows (position, rotation words, Scale) by object name, including the 3 SAVEPOINTs. Their behaviour is not interpreted. |
 
@@ -106,3 +107,30 @@ installed instructions for 96 randomized groups. That includes the RING
 link and unlink helpers they call; the engine is stubbed, with deterministic
 sine, cosine and calc-point. All 814 runs and every destructor match Rust:
 calls and arguments bit for bit, entry flags, children, count and positions.
+
+## Triple spring (3SPRING)
+
+`three_spring` ports o_3spring and its launch helper (stg13D.rel section 1
+0x225CC to 0x22A68). `Program::read` checks the range and 25 engine imports
+and reads the constants.
+
+- **Init:** after the clip gate, allocates 12 bytes (a two-float bounce and a
+  cooldown byte per player slot), registers collision (import 0x8000F8B8,
+  1, 4) and sets 0x40 in the collision info's flags. A failed allocation
+  retries on the next run.
+- **Update:** after the clip gate, a player hit with slot 0 or 1 launches
+  that player unless its cooldown is running, and in either case sets the
+  cooldown to 10. Both cooldowns then count down, collision is entered, and
+  the bounce advances: a = 0.95 * (a - b * 0.25), b = b + a. A launch first
+  sets a = 1 and b = 0.
+- **Launch:** takes the player position into the spring's frame (push,
+  unit, translate, rotate by the Z, X then Y angles, push, invert,
+  calc-point). There it sets local Z to 8 + 0.3 * (Z - 8) and adds 5 to
+  local Y, then pops and calc-points back to world space. That becomes the
+  player position. The velocity is local (0, 5 + Scale.x, 0) with the angles
+  (X, Y + 0x8000, Z) and 30 frames without control, followed by sound 0x1000
+  and a rumble (4, 15, 0).
+
+`tests/three_spring.rs` runs `tests/three_spring_ppc.py` over 80 randomized
+springs. All 3,200 updates (252 launches) and the destructors match Rust bit
+for bit.
