@@ -263,6 +263,9 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         let members: Vec<usize> = (0..s.enemies.len())
             .filter(|&i| s.enemies[i].group == group && s.enemies[i].counted)
             .collect();
+        // Native enemies join their groups in their set-up, on their first
+        // frame.
+        s.step(None);
         assert!(!members.is_empty() && !s.group_clear(group));
         // Closed while the group lives.
         for _ in 0..60 {
@@ -272,8 +275,24 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         for &i in &members {
             assert!(s.destroy_enemy(i));
         }
+        // A native kill path leaves the group on the enemy's next frame, before
+        // the doors read the counts.
+        let first = s.step(None);
+        let killed = first
+            .iter()
+            .filter(|e| matches!(e, Event::EnemyDestroyed { .. }))
+            .count();
+        // E AI, E GOLD and E KUMI run their own kill paths.
+        let native = members
+            .iter()
+            .filter(|&&i| s.enemy_ai.iter().any(|(e, _)| *e == i))
+            .count();
+        assert_eq!(killed, native);
         assert!(s.group_clear(group));
-        let mut opening = None;
+        let mut opening = first
+            .iter()
+            .any(|e| matches!(e, Event::DoorOpening { door } if *door == d))
+            .then_some(s.frame);
         let mut opened = None;
         for _ in 0..400 {
             for e in s.step(None) {
