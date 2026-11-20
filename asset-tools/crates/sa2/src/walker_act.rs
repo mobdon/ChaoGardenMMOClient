@@ -10,7 +10,7 @@ use crate::{
     ninja_matrix::{rotate_by_angles, MatrixStack, Vec3},
     ninja_trig::fmadds,
     ninja_vector::inner_product,
-    walker_exec::{Engine, EngineCall, PlayerHistory},
+    walker_exec::{approach, Engine, EngineCall, PlayerHistory},
     walker_move::{slope_aim, turn_back, SteerCalls},
 };
 
@@ -1094,4 +1094,435 @@ pub fn action_step(
         }
         _ => {}
     }
+}
+
+/// What the damage step asks the engine's collision lists and the other
+/// players (through `playertp[pnum]`, the player's own task).
+pub trait DamageWorld {
+    /// fn_800063F4, CCL_IsHitPlayer (0x800066F4), fn_80006270: whether
+    /// each finds a hit on the player's task.
+    fn hit_63f4(&mut self) -> bool;
+    fn hit_player(&mut self) -> bool;
+    fn hit_6270(&mut self) -> bool;
+    /// The hit records fn_80006574 walks: whether the last one's owner
+    /// (+8) is the player's own task (`None` without records).
+    fn last_record_is_self(&mut self) -> Option<bool>;
+    /// fn_80005874(task, 0): the kind of the first hit.
+    fn first_kind(&mut self) -> i32;
+    /// fn_800060EC(task, kind): the task met through an info entry of
+    /// `kind`, with its position and IsThisTaskPlayer's answer (-1 when
+    /// it is not a player) and that player's character byte.
+    fn kind_hit(&mut self, kind: u8) -> Option<(Vec3, i32, i8)>;
+    /// The damage the attacker's collision (+0xA4, kinds 2 and 3) names:
+    /// its +0x9C task's motion work +0x54.
+    fn attacker_damage(&mut self) -> Option<f32>;
+    /// The other player's character byte +3 (`playerpwp[pnum ^ 1]`), if any.
+    fn other_voice_char(&mut self) -> Option<i8>;
+    /// fn_80039B04(pnum, x, y, z): face the player along the vector.
+    fn face(&mut self, pnum: i8, v: Vec3);
+    /// fn_800542A0 on the player's motion work.
+    fn release_hold(&mut self, t: &mut Work, p: &mut Work);
+    /// Whether `playerpwp[0]` has status bit 0x4000.
+    fn p1_status_4000(&mut self) -> bool;
+}
+
+const HURT_SPEED: f32 = 0.5; // r2-0x7398
+const KNOCK: f32 = 8.0; // r2-0x7390
+const BIG_HIT: f32 = 3.0; // r2-0x7388
+const MID_HIT: f32 = 6.0; // r2-0x7328
+const FAT_HIT: f32 = 5.0; // r2-0x73DC
+const DMG_SPIKE: f32 = f32::from_bits(0x409c_cccd); // r2-0x731C, 4.9
+const DMG_CHAO: f32 = f32::from_bits(0x3f99_999a); // r2-0x7318, 1.2
+const DMG_EGG: f32 = f32::from_bits(0x3f33_3333); // r2-0x7330, 0.7
+const DMG_D: f32 = f32::from_bits(0x3f4c_cccd); // r2-0x738C, 0.8
+const HP_MAX: f32 = 10.0; // r2-0x7600
+const HP_BONUS: f32 = 2.0; // r2-0x75FC
+const DMG_SOFT: f32 = 2.0; // r2-0x73CC
+
+/// AddMechHP (0x80035CF0)(pnum, delta) on a walker's player work: add to
+/// the health +0x48, at least 0 and at most 10 (12 with +0x24 bit
+/// 0x800000), with the character's voice when it fills up.
+pub fn add_mech_hp(p: &mut Work, delta: f32, eng: &mut dyn Engine) {
+    let c = p.ub(pw::CHAR);
+    if c != 6 && c != 7 {
+        return;
+    }
+    let old = p.f(0x48);
+    p.set_f(0x48, old + delta);
+    let mut max = HP_MAX;
+    if p.w(0x24) & 0x80_0000 != 0 {
+        max += HP_BONUS;
+    }
+    if p.f(0x48) <= 0.0 {
+        p.set_f(0x48, 0.0);
+    } else if p.f(0x48) >= max {
+        p.set_f(0x48, max);
+        if old != max {
+            match p.b(3) {
+                0xD => eng.call(EngineCall::PlayVoice { id: 0xA88 }),
+                0xE => eng.call(EngineCall::PlayVoice { id: 0xA93 }),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// fn_80056D34(task work, player work): the walker's damage from what hit
+/// it, then AddMechHP and KillPlayer at zero health.
+fn mech_damage(p: &mut Work, gs: &Work, w: &mut dyn DamageWorld, eng: &mut dyn Engine) {
+    let other = w.other_voice_char();
+    let base = if gs.b(0x1E) != 0 && gs.ub(0x1F) == 1 {
+        0.0
+    } else if p.w(0x88) & 0x400 != 0 {
+        BIG_HIT
+    } else if let Some(d) = w.attacker_damage() {
+        d
+    } else {
+        let scale = |d: f32| if other == Some(0xE) { d * DMG_CHAO } else { d };
+        if w.kind_hit(8).is_some() {
+            scale(DMG_SPIKE)
+        } else if w.kind_hit(0xA).is_some() || w.kind_hit(9).is_some() {
+            scale(BIG_HIT)
+        } else if w.kind_hit(7).is_some() {
+            1.0
+        } else {
+            BIG_HIT
+        }
+    };
+    let mut d = base;
+    if p.b(3) == 0xE {
+        d *= DMG_EGG;
+    }
+    if other == Some(0xD) {
+        d *= DMG_D;
+    }
+    eng.call(se_call(if d <= DMG_SOFT { 0x2014 } else { 0x2015 }));
+    add_mech_hp(p, -d, eng);
+    if p.f(0x48) <= 0.0 {
+        eng.call(EngineCall::KillPlayer {
+            pnum: p.b(pw::PNUM),
+        });
+    }
+}
+
+fn battle_voice(eng: &mut dyn Engine, id: i32) {
+    eng.call(EngineCall::BattleVoice { id });
+}
+
+/// fn_80055734(task work, player work): the damage step. Returns whether
+/// the player was hurt.
+pub fn damage_step(
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    g: &ActGlobals,
+    w: &mut dyn DamageWorld,
+    eng: &mut dyn Engine,
+) -> bool {
+    let gs = &g.gs;
+    let mut voice: i32 = -1;
+    if gs.b(0x42) != 0 || t.ub(2) == 2 {
+        return false;
+    }
+    let mode = t.b(tw::MODE);
+    if (0x37..0x3A).contains(&mode) {
+        return false;
+    }
+    let c = p.b(pw::CHAR);
+    if t.h(tw::FLAG) & 4 != 0
+        && (c == 6 || c == 7)
+        && !w.hit_63f4()
+        && !w.hit_player()
+        && w.last_record_is_self() == Some(true)
+    {
+        t.clear_h(tw::FLAG, 4);
+    }
+    if t.h(tw::FLAG) & 4 != 0 && g.stage == 0x2A && (w.hit_6270() || w.hit_63f4()) {
+        t.clear_h(tw::FLAG, 4);
+    }
+    if t.h(tw::FLAG) & 4 == 0 {
+        if w.first_kind() == 3 || p.w(0x88) & 0x400 == 0 {
+            return false;
+        }
+    }
+    t.set_h(tw::WTIMER, 0x78);
+    let pnum = p.b(pw::PNUM);
+    let rp = if g.stage == 0x42 { 0 } else { pnum as i32 };
+    eng.call(EngineCall::Rumble {
+        addr: 0x8002_F9D4,
+        args: [rp, 7, 0x3B, 0x18],
+    });
+    if p.w(0x24) & 0x8000 != 0 {
+        p.set_f(pw::SPD, p.f(pw::SPD) * HURT_SPEED);
+        return false;
+    }
+    if p.h(pw::STATUS) & 0x4000 != 0 {
+        return false;
+    }
+    if t.ub(tw::MODE) != 0x38 {
+        t.set_b(tw::MODE, 0xF);
+        if p.ub(3) == 0xE {
+            if w.kind_hit(8).is_some() && w.kind_hit(0xA).is_some() && w.kind_hit(9).is_some() {
+                p.set_h(pw::ACTION, 0x15);
+            }
+        } else {
+            p.set_h(pw::ACTION, 0x15);
+        }
+        t.clear_h(tw::FLAG, 4);
+        p.set_f(0x68, p.f(0xD8));
+        p.set_f(pw::SPD, -p.f(0xE8));
+    }
+    t.clear_h(tw::FLAG, 0x2500);
+    if let Some((opos, who, och)) = w.kind_hit(7) {
+        let burst = |eng: &mut dyn Engine, n: usize| {
+            for _ in 0..n {
+                eng.call(EngineCall::Deferred {
+                    addr: 0x800B_CF50,
+                    arg: pnum as i32,
+                });
+            }
+        };
+        if who == -1 {
+            burst(eng, 4);
+            eng.call(EngineCall::DeferredAt {
+                addr: 0x800B_F6A4,
+                arg: 0x30,
+                points: [p.v3(0x218), p.v3(0x2B4)],
+            });
+        } else if och == 7 {
+            burst(eng, 2);
+        } else {
+            eng.call(EngineCall::DeferredAt {
+                addr: 0x800B_F6A4,
+                arg: 0x30,
+                points: [p.v3(0x218), p.v3(0x2B4)],
+            });
+        }
+        let pos = t.v3(tw::POS);
+        let d = crate::land_contact::unit_vector([
+            pos[0] - opos[0],
+            pos[1] - opos[1],
+            pos[2] - opos[2],
+        ]);
+        w.face(pnum, [-d[0], 0.0, -d[2]]);
+        let v = d.map(|x| x * KNOCK);
+        m.set_v3(0, v);
+        let mut stack = MatrixStack::new();
+        let local = crate::ninja_matrix::unrotate_by_angles(&mut stack, t.ang3(tw::ANG), v);
+        p.set_v3(pw::SPD, local);
+        p.set_h(0x14, 0x3C);
+        t.set_b(tw::MODE, 0x43);
+        p.set_h(pw::ACTION, 0x18);
+    }
+    if p.h(pw::STATUS) & 3 != 0 {
+        p.clear_h(pw::STATUS, 3);
+        return true;
+    }
+    eng.call(EngineCall::Indirect {
+        ptr: 0x801A_2A18,
+        arg: pnum as i32,
+    });
+    eng.call(EngineCall::GameStateBytes {
+        at: (0x2D + 3 * pnum as isize) as u16,
+        len: 3,
+        value: 0,
+    });
+    let c = p.b(pw::CHAR);
+    if c == 7 || c == 6 {
+        let before = p.f(0x48);
+        mech_damage(p, gs, w, eng);
+        let hp = p.f(0x48);
+        if t.ub(2) != 3 {
+            if !(hp <= 0.0) {
+                let pick = |a, b, cc, d| match p.b(3) {
+                    0xD => a,
+                    0xE => b,
+                    6 => cc,
+                    7 => d,
+                    _ => -1,
+                };
+                if before > BIG_HIT && hp <= BIG_HIT {
+                    voice = pick(0xA83, 0xA8E, 0x67F, 0x67E);
+                } else if before > MID_HIT && hp <= MID_HIT {
+                    voice = pick(0xA82, 0xA8D, 0x67D, 0x67C);
+                }
+            }
+            if voice != -1 {
+                eng.call(EngineCall::PlayVoice { id: voice as i16 });
+            }
+        } else {
+            let st = g.stage;
+            if (st == 0x14 || st == 0x1D) && before >= FAT_HIT && p.f(0x48) < FAT_HIT {
+                voice = match (st, p.b(3)) {
+                    (0x14, 6) => 0x8D8,
+                    (0x14, 7) => 0x818,
+                    (0x1D, 6) => 0x8E0,
+                    (0x1D, 7) => 0x821,
+                    _ => -1,
+                };
+            }
+            if voice != -1 {
+                battle_voice(eng, voice);
+            }
+        }
+    } else if t.ub(2) == 3 {
+        let before = p.f(0x48);
+        p.set_f(0x48, approach(before, 0.0, 1.0));
+        if p.f(0x48) <= 0.0 {
+            eng.call(EngineCall::KillPlayer { pnum });
+        } else if before > 1.0 && p.f(0x48) <= 1.0 {
+            voice = match (g.stage, p.b(3)) {
+                (0x13, 0) => 0x8BF,
+                (0x13, 1) => 0x8A7,
+                (0x2A, 0) => 0x8C9,
+                (0x2A, 1) => 0x8B2,
+                (0x21, 4) => 0x83E,
+                (0x21, 5) => 0x895,
+                _ => -1,
+            };
+            if voice != -1 {
+                battle_voice(eng, voice);
+            }
+        }
+    }
+    let dead = (t.h(tw::FLAG) & 0x1000 != 0 && t.ub(tw::SMODE) == 0x25)
+        || (t.ub(2) == 3 && p.f(0x48) <= 0.0 && !w.p1_status_4000());
+    if dead {
+        w.release_hold(t, p);
+        if voice == -1 {
+            if t.ub(2) != 3 {
+                voice = match p.ub(3) {
+                    0 | 9 => 0x61F,
+                    1 | 0xA => 0x61C,
+                    2 | 6 => 0x68D,
+                    3 | 7 => 0x68C,
+                    4 => 0x514,
+                    5 => 0x515,
+                    8 => 0xA6B,
+                    0xF => 0xA9D,
+                    _ => -1,
+                };
+                if voice != -1 {
+                    eng.call(EngineCall::PlayVoice { id: voice as i16 });
+                }
+            } else {
+                let st = g.stage;
+                voice = match p.ub(3) {
+                    0 if st == 0x13 => 0x8C2,
+                    0 if st == 0x2A => 0x8CC,
+                    1 if st == 0x13 => 0x8AA,
+                    1 if st == 0x2A => 0x8B3,
+                    4 => 0x83F,
+                    5 => 0x896,
+                    6 if st == 0x14 => 0x8D9,
+                    6 if st == 0x1D => 0x8E1,
+                    7 if st == 0x14 => 0x819,
+                    7 if st == 0x1D => 0x822,
+                    _ => -1,
+                };
+                if voice != -1 {
+                    battle_voice(eng, voice);
+                }
+            }
+        }
+        if !(t.ub(2) == 3 && !(p.f(0x48) <= 0.0)) {
+            t.set_b(tw::MODE, 0x39);
+            p.set_h(pw::ACTION, 0x3B);
+            t.clear_h(tw::FLAG, 0x2500);
+        }
+        return true;
+    }
+    if voice != -1 {
+        return true;
+    }
+    if t.ub(2) != 3 {
+        let id = match p.ub(3) {
+            0 | 9 => 0x300B,
+            1 | 0xA | 0xE => 0x301D,
+            2 | 6 => 0x3005,
+            3 | 7 => 0x300F,
+            4 => 0x300A,
+            5 => 0x301B,
+            8 => 0x3026,
+            0xD => 0x3017,
+            0xF => 0x3027,
+            _ => -1,
+        };
+        if id != -1 {
+            eng.call(se_call(id));
+        }
+        return true;
+    }
+    let st = g.stage;
+    let hp = p.f(0x48);
+    let id = match p.ub(3) {
+        0 if st == 0x13 => {
+            if hp > DMG_SOFT {
+                0x8BD
+            } else {
+                0x8BE
+            }
+        }
+        0 if st == 0x2A => {
+            if hp > DMG_SOFT {
+                0x8BD
+            } else {
+                0x8C8
+            }
+        }
+        1 if st == 0x13 => {
+            if hp > DMG_SOFT {
+                0x8A5
+            } else {
+                0x8A6
+            }
+        }
+        1 if st == 0x2A => {
+            if hp > DMG_SOFT {
+                0x8A5
+            } else {
+                0x8B1
+            }
+        }
+        4 => {
+            if hp >= BIG_HIT {
+                0x83C
+            } else {
+                0x83D
+            }
+        }
+        5 => {
+            if hp >= BIG_HIT {
+                0x893
+            } else {
+                0x894
+            }
+        }
+        7 => {
+            if hp > MID_HIT {
+                0x814
+            } else {
+                0x815
+            }
+        }
+        6 if st == 0x14 => {
+            if hp > MID_HIT {
+                0x8D4
+            } else {
+                0x8D5
+            }
+        }
+        6 if st == 0x1D => {
+            if hp > MID_HIT {
+                0x8D4
+            } else {
+                0x8DF
+            }
+        }
+        _ => -1,
+    };
+    if id != -1 {
+        battle_voice(eng, id);
+    }
+    true
 }

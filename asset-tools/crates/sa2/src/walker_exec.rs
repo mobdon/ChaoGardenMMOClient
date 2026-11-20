@@ -47,6 +47,17 @@ pub enum EngineCall {
     },
     /// fn_80069C58(id, task work): stop this task's sound `id`.
     StopSound { id: i32 },
+    /// _rename_KillPlayer (0x8003BB7C)(pnum).
+    KillPlayer { pnum: i8 },
+    /// The battle voice queue (fn_800118E0/fn_8001162C over both players,
+    /// then fn_800117EC(id, 3)).
+    BattleVoice { id: i32 },
+    /// A call through the function pointer stored at `ptr` (for example
+    /// 0x801A2A18, the ring loss), with one argument.
+    Indirect { ptr: u32, arg: i32 },
+    /// Write `len` bytes of `value` into the game state block 0x801CC168
+    /// at `at`.
+    GameStateBytes { at: u16, len: u8, value: u8 },
     /// CCL_Entry (0x8000F4EC)(task): enter the task's collision for this
     /// frame.
     CclEntry,
