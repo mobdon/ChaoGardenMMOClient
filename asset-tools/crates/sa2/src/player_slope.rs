@@ -10,7 +10,7 @@
 use crate::{
     msl_math::atan2f,
     ninja_matrix::{rotate_by_angles, unrotate_by_angles, MatrixStack},
-    ninja_trig::fctiwz,
+    ninja_trig::{fctiwz, fctiwz_f64},
     ninja_vector::{inner_product, scalor, unit_vector},
     player_analog::AnalogContext,
     player_turn::{adjust_angle, turn_smoothly, TurnPlayer},
@@ -66,14 +66,6 @@ fn downhill_aim(p: &SlopePlayer, mut g: [f32; 3], rates: (f32, f32), scale_by_sp
         fctiwz(rates.1 * g[2])
     };
     adjust_angle(p.aim, target, step)
-}
-
-fn fctiwz_f64(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 {
-        i32::MIN
-    } else {
-        x as i32
-    }
 }
 
 /// gravity . unit(motion velocity), when that velocity is faster than

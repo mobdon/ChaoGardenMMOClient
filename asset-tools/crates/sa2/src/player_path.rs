@@ -10,7 +10,7 @@
 use crate::{
     msl_math::{asinf, atan2f},
     ninja_matrix::{rotate_by_angles, MatrixStack},
-    ninja_trig::{fctiwz, fmadds, fnmsubs, nj_cos, nj_sin},
+    ninja_trig::{fctiwz, fctiwz_f64, fmadds, fnmsubs, nj_cos, nj_sin},
     ninja_vector::{acosf, inner_product, outer_product, scalor, unit_vector, vector_angle},
     player_range::{distance, engine_sqrtf},
     player_turn::{adjust_angle, diff_angle, sub_angle},
@@ -378,14 +378,6 @@ pub fn sample(path: &Path, s: &mut Sample) -> bool {
         s.angles[3] = bams(atan2f(s.up1[0], s.up1[1])).wrapping_neg();
     }
     true
-}
-
-fn fctiwz_f64(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 {
-        i32::MIN
-    } else {
-        x as i32
-    }
 }
 
 /// The player state fn_80038F40 reads and writes.

@@ -63,6 +63,7 @@ pub mod physical_board;
 pub mod play_objects;
 pub mod play_session;
 pub mod play_world;
+pub mod player_accel;
 pub mod player_analog;
 pub mod player_path;
 pub mod player_physics;
