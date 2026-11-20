@@ -113,3 +113,30 @@ export function updateNativeShoeEffects(effects, blend, speed) {
     effect.mesh.visibility = blend;
   }
 }
+
+// Native animal-part sockets, traced from the GameCube ChaoMain module
+// (fn_60_23148, node table .data 0x43EE0, list-slot table 0x43F20): the part
+// model replaces the object model on that Chao node with no extra offset.
+export const CHAO_PART_NODES = {
+  leftArm: '003', rightArm: '010', leftEar: '024', rightEar: '026', forehead: '029', leftHorn: '030', rightHorn: '031',
+  leftLeg: '006', rightLeg: '013', tail: '008', leftWing: '037', rightWing: '039', tongue: '028',
+};
+export const CHAO_PART_CATEGORY_SOCKETS = {
+  arms: ['leftArm', 'rightArm'], ears: ['leftEar', 'rightEar'], forehead: ['forehead'], horns: ['leftHorn', 'rightHorn'],
+  legs: ['leftLeg', 'rightLeg'], tail: ['tail'], wings: ['leftWing', 'rightWing'], tongue: ['tongue'],
+};
+// SA2BAnimal enum order 0-20 (X-Hax SA2Enums.h), matching the server keys.
+export const NATIVE_ANIMAL_KEYS = ['penguin', 'seal', 'otter', 'rabbit', 'cheetah', 'warthog', 'bear', 'tiger', 'gorilla', 'peacock', 'parrot',
+  'condor', 'skunk', 'sheep', 'raccoon', 'half-fish', 'skeleton-dog', 'bat', 'dragon', 'unicorn', 'phoenix'];
+
+// Asset keys for the parts a Chao shows; unknown categories or IDs are ignored.
+export function animalPartAssets(parts, age = 'child') {
+  if (!parts || typeof parts !== 'object' || !['child', 'adult'].includes(age)) return [];
+  const result = [];
+  for (const [category, id] of Object.entries(parts)) {
+    const sockets = CHAO_PART_CATEGORY_SOCKETS[category];
+    if (!sockets || !Number.isInteger(id) || id < 0 || id >= NATIVE_ANIMAL_KEYS.length) continue;
+    for (const socket of sockets) result.push({ socket, node: CHAO_PART_NODES[socket], key: `animal-part-${NATIVE_ANIMAL_KEYS[id]}-${age}-${socket}` });
+  }
+  return result;
+}

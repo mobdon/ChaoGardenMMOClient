@@ -97,3 +97,11 @@ The audit uses the installed Steam executable, official SA Tools 786 PC mappings
 - CWE's optional character-Chao evolution is mod behavior. It does not prove the retail Chaos Chao condition formula.
 
 Open native-rule work includes item application/grade curves, stage spawn/drop tables and carry limits, behavior acquisition and persistence, rare-animal handling, morph/alignment influence, animal-history reset timing, full Neutral/Hero/Dark Chaos evolution criteria and independent breeding/personality inheritance. Cross-reference `CAT-ANIMAL-*`, `CAT-GROW-*` and the ordered `ANIMAL-*` tasks rather than marking the whole animal system complete from an asset count.
+
+## Garden care client (November 20, 2026)
+
+The desktop **Garden care** panel (`G`, `src/garden-care.js`) renders the server's `snapshot.care` and sends only care intents: `consume`, `purchase`, `plant`, `water` and `harvest`. It never computes growth, fruit, effects or parts. Trees follow the server's native ChaoMain rules (`native-gc-chaomain-tree-v1`): the native tree spots (three permanent trees and four plots per garden), watering a seed, young tree or adult, and harvest as one shake (a ripe fruit drops after several shakes; feedback shows how many fell). Seeds are not sold until their native prices are traced. The panel lists nearby places within 2 m, carried fruit, animals, drives and seeds, and the animal parts the server reports. A lost acknowledgement is resent with the identical request after reconnect. Tiny Garden lists native fruit (`sa2-fruit:N`) and seeds (`seed:<family>`); seeds are planted on desktop.
+
+The scene draws each server plot in the current garden. A plot with a tree loads the locally converted native model `tree-<family>-<young|mature|dying>.glb` through the server's allowlisted asset route when it exists; until then a labelled procedural stand-in shows stage and hanging fruit only. Plot positions are the native tree spots; plot height currently assumes ground level `y = 0`, and native tree scale still needs an in-browser check against the real garden terrain.
+
+Animal parts on the Chao rig are not rendered yet. They need the resolved socket-to-node mapping and the converted `animal-part-<species>-<child|adult>-<socket>.glb` models from the local audit; the server already records which parts each Chao shows (`care.animalParts`).
