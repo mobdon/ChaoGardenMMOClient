@@ -18,6 +18,7 @@ use crate::{
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 
+pub mod green_forest;
 pub mod sonic_vs_shadow1;
 
 /// The two released copies of one stage module.
@@ -84,6 +85,13 @@ impl<'a> StageRel<'a> {
         let d = self.rel.data(section)?;
         d.get(at as usize..at as usize + 4)
             .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+            .ok_or_else(|| bad(self.name, at))
+    }
+    /// The halfword at `section + at`.
+    pub fn half(&self, section: u8, at: u32) -> Result<u16> {
+        let d = self.rel.data(section)?;
+        d.get(at as usize..at as usize + 2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]))
             .ok_or_else(|| bad(self.name, at))
     }
     /// The single-precision float at `section + at`.
