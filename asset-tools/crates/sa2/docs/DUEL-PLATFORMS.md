@@ -45,8 +45,36 @@ DODAI starts to fall on the first update whose signed timer exceeds 900. When
 the first slot of the player data table (0x801E7328, field +0xA0) references
 an inactive platform, that platform is activated with timer 720; an activated
 timer counts up on updates where game byte +0x37 is clear and +0x42 is not 1,
-so it falls about 180 updates later. The fall itself and the meteor objects
-are not ported here.
+so it falls 181 updates after activation. Meteor objects are not ported here.
+
+## The platform update
+
+`duel_platform_motion` ports DODAI's update (code +0x1D68) as a state machine
+whose engine queries are inputs and whose engine calls are recorded:
+
+- Mode 0 (first update): two allocations, a copy of the template object and
+  model, and registration with flags `0x28000001`; the update tail then runs.
+- Mode 1: a visibility query with radius `16 + 173.29` sets or clears flag
+  0x100. With a signed timer above 900 the platform enters mode 2, calls the
+  local debris helper (+0x1E8DC) with 150, 50, 7, 0.5 and 1, requests a
+  60-frame rumble of strength 2 if player 0's flag bit 1 is set and that
+  player is on this platform, sets its Y velocity to −0.15 and plays sound
+  (4, 0, 0, 0x50).
+- Mode 2: the same visibility query, then Y += velocity and each angle +=
+  its spin; the collision object copies Y and the angles. Once Y is below
+  −100 the engine task check runs (true ends the update with flag 0x100
+  cleared), the velocity drops by 0.1 per update until it reaches −2.1, and
+  if the X spin is zero three `rand()` values set the spins: X and Y are
+  `24 − (trunc(64·r/32768) & ~15)` and `32 − (…)`, Z is
+  `trunc(16·r/32768 − 32)`; words +0..+0x18 are then copied to +0x1C. Below
+  −100 every update also calls the fall effect (5, work, 1, 0x28, 0x78).
+- Mode 3 frees the task and returns.
+- Tail: a player standing on an inactive platform activates it with timer
+  720, and an active timer counts as described above.
+
+If task +0x30 is nonzero, the engine task check runs first and a true result
+skips the whole update. The debris helper body, rendering and collision
+response are not executed.
 
 Consecutive platforms abut, forming one deck along +X. With both authored
 start rows at X 0 (Sonic Z −15, Shadow Z +15), the first two updates spawn
@@ -62,13 +90,17 @@ seven platforms from X 0 to 1800, a solid deck from −150 to 1950.
   loop would never end.
 - `duel_platform::start_terrain(rel, players_x)` returns the opening platforms
   and their world-space collision triangles.
+- `duel_platform_motion::Platform::step(work, frame, rand)` replays one DODAI
+  update from a spawn.
 
 ```powershell
 sa2-assets duel-terrain <game>\resource\gd_PC\stg42D.rel .local\out\terrain42.json <game>\sonic2app.exe
 sa2-assets duel-generator <game>\resource\gd_PC\stg42D.rel .local\out\gen.json REQUEST.json
+sa2-assets duel-platform-update <game>\resource\gd_PC\stg42D.rel .local\out\platform.json PLATFORM.json
 ```
 
 `REQUEST.json` is `{"frames":[{"players":[x|null,x|null],"resultMode":false,"paused":false}, ...]}`.
+`PLATFORM.json` is `{"spawn":{"x":0,"timer":0,"activated":false},"taskField30":false,"rand":[...],"frames":[{"taskCheck":false,"visible":true,"standing":false,"playerFlag":false,"paused":false,"gameByte42":0}, ...]}`.
 
 ## Verification
 
@@ -76,9 +108,10 @@ sa2-assets duel-generator <game>\resource\gd_PC\stg42D.rel .local\out\gen.json R
 $env:SA2_GAME_PATH = '<Steam>\Sonic Adventure 2'
 cargo test --manifest-path asset-tools/crates/sa2/Cargo.toml --test duel_terrain -- --include-ignored
 python asset-tools/crates/sa2/tests/duel_generator_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_platform_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
-The second command needs Unicorn 2.1 on `PYTHONPATH` and must run from the
+The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
 repository root (it writes temporary requests under the ignored `.local`).
 It relocates DODAIGEN's own code and runs it under Unicorn with stub
 allocator and register-save imports. Over a 36,800-update race (pause,
@@ -86,5 +119,14 @@ missing player slot, a 12,000-unit jump, the deadline), the result-platform
 path and a timer-wraparound case, every update's mode, cursor bits, flags and
 counter and all 3,259 spawned X bits, timers and activation bytes match
 `duel-generator`. The stubs show the generator never writes a spawned
-platform's Y or Z. Allocation failure, the engine allocator itself and the
-DODAI update are not executed. Nothing launches the game.
+platform's Y or Z. Allocation failure and the engine allocator itself are not
+executed.
+
+`duel_platform_ppc.py` runs DODAI's constructor, update and collision
+transform helper (+0x1AD0..+0x2278) with sections 4 and 5 relocated and every
+engine import stubbed. Across three platforms (stand, activate, pause, game
+byte 0x42, rumble, fall and removal; spawned behind the players with task
++0x30 set; spawned after the deadline), all 2,456 updates match
+`duel-platform-update` in every work field, the collision object's Y and
+angles, all 14 motion words, and the ordered engine calls with their
+arguments. Mode 3 is not reached by these inputs. Nothing launches the game.

@@ -65,13 +65,13 @@ pub fn read_split(bytes: &[u8]) -> Result<Platform> {
     decode(&bytes[..end], root)
 }
 
-fn module(bytes: &[u8]) -> Result<CityRel<'_>> {
+pub(crate) fn module(bytes: &[u8]) -> Result<CityRel<'_>> {
     if bytes.len() != REL_LEN || manifest::sha256(bytes) != REL_SHA256 {
         return Err(Error::invalid("unsupported stage 42 REL revision"));
     }
     CityRel::read_identified(bytes, MODULE)
 }
-fn invalid() -> Error {
+pub(crate) fn invalid() -> Error {
     Error::invalid("unexpected stage 42 platform code")
 }
 /// The data-section target of the LO half of a `lis/addi` pair at `pc`.
@@ -86,7 +86,7 @@ fn target(rel: &CityRel<'_>, pc: u32, section: u8) -> Result<u32> {
         _ => Err(invalid()),
     }
 }
-fn float(rel: &CityRel<'_>, pc: u32) -> Result<f32> {
+pub(crate) fn float(rel: &CityRel<'_>, pc: u32) -> Result<f32> {
     let at = target(rel, pc, 4)? as usize;
     let b = rel.data(4)?.get(at..at + 4).ok_or_else(invalid)?;
     Ok(f32::from_be_bytes(b.try_into().unwrap()))

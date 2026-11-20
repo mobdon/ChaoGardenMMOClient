@@ -160,3 +160,65 @@ fn installed_template_matches_executable_platform() {
         .fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[0]), h.max(v[0])));
     assert_eq!((lo, hi), (-150.0, 1950.0));
 }
+
+#[test]
+fn platform_activates_then_falls_after_the_stand_timer() {
+    use sa2_asset_tools::duel_platform_motion::{
+        Call, MotionConstants, Platform, PlatformFrame, PlatformWork,
+    };
+    let g = synthetic();
+    let c = MotionConstants {
+        visibility_pad: 16.0,
+        debris: [150.0, 50.0, 7.0, 0.5, 1.0],
+        rumble_strength: 2.0,
+        fall_velocity: -0.15,
+        floor_y: -100.0,
+        terminal_velocity: -2.1,
+        acceleration: 0.1,
+        rand_scale: 1.0 / 32768.0,
+        spin_scale: 64.0,
+        roll_scale: 16.0,
+        roll_offset: 32.0,
+    };
+    let p = Platform {
+        generator: &g,
+        constants: &c,
+        has_task_field_30: false,
+    };
+    let mut w = PlatformWork::spawned(&Spawn {
+        x: 0.0,
+        timer: 0,
+        activated: false,
+    });
+    let mut rand = [16384, 0, 32767].into_iter();
+    let idle = PlatformFrame::default();
+    let calls = p.step(&mut w, &idle, &mut rand).unwrap();
+    assert!(matches!(calls[0], Call::Init { .. }));
+    assert_eq!((w.mode, w.timer), (1, 0));
+    let stand = PlatformFrame {
+        standing: true,
+        ..Default::default()
+    };
+    p.step(&mut w, &stand, &mut rand).unwrap();
+    assert_eq!((w.activated, w.timer), (1, 721));
+    let mut frames = 1;
+    while w.mode == 1 {
+        p.step(&mut w, &idle, &mut rand).unwrap();
+        frames += 1;
+    }
+    // 180 more increments reach 901; the next update starts the fall.
+    assert_eq!((frames, w.velocity()), (182, -0.15));
+    while w.position[1] >= -100.0 {
+        p.step(&mut w, &idle, &mut rand).unwrap();
+    }
+    // Below the floor: accelerate once and draw the spin from three rand values.
+    assert_eq!(
+        w.motion[1..4],
+        [
+            (24 - 32) as u32,
+            32,
+            (16.0f32 * (32767.0 / 32768.0) - 32.0) as i32 as u32
+        ]
+    );
+    assert_eq!(w.motion[8..11], w.motion[1..4]);
+}

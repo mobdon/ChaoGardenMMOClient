@@ -19,6 +19,7 @@ pub mod damage_ring_stage;
 pub mod death_zones;
 pub mod demo;
 pub mod duel_platform;
+pub mod duel_platform_motion;
 pub mod event;
 pub mod event_camera;
 pub mod glb_cli;
