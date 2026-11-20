@@ -98,6 +98,7 @@ pub mod walker_collide;
 pub mod walker_frame;
 pub mod walker_ground;
 pub mod walker_move;
+pub mod weapons_bed;
 pub mod wild_canyon;
 
 use std::fmt;
