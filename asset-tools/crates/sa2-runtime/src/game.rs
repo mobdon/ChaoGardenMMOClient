@@ -78,6 +78,10 @@ impl RuntimeEngine<'_> {
 /// unported instead of ending the run.
 pub trait WalkerExec {
     fn exec(&mut self, w: WalkerWork<'_>, eng: &mut RuntimeEngine<'_>);
+    /// The player history ring this exec keeps (r13-0x7910), if any.
+    fn history(&self) -> Option<&sa2_asset_tools::walker_exec::PlayerHistory> {
+        None
+    }
 }
 
 /// The Steam files a run reads (never committed).
@@ -363,6 +367,11 @@ impl Game {
         let pause = stage_frame(&mut self.rt, &mut with_set, &mut self.frame, &mut self.host);
         self.frames += 1;
         pause
+    }
+
+    /// Player `i`'s pad copy (0x801E5438 + 0x34 * i).
+    pub fn pad_copy(&self, i: usize) -> &[u8] {
+        self.host.pads.copies.get(i).map_or(&[], |c| &c[..])
     }
 
     /// A digest of everything the run keeps (tasks, events, globals).

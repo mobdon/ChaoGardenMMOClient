@@ -459,6 +459,17 @@ fn_8001E45C reads word +0x10 (pressed) of `*0x801E55D8[i]`.
   fn_800C9CA8 (mode 3's routine), `GetPlayerCharacter`, floorf,
   `njScalor`, `njUnitVector`; 3 paired-single words. Iron Gate's SET may
   push other modes over slot 0 (camera areas); not traced.
+- **Ported (sa2-runtime `follow.rs`):** CARMEL is a state machine on slot
+  work +0x18. State 2 (the steady one) runs **fn_800C9CA8** each frame: the
+  target leads the player by 12x its mean move over 5 frames (history ring
+  r13-0x7910) and eases 0.1 per frame; the camera keeps 20..70 units and at
+  least 30 on the ground plane, pitch eases to -0xE38, triggers (pad copy
+  +0x18/+0x1A) or C buttons turn it. States 0/1 ease back along the 50-point
+  trail 0x80208C30 (fn_800C6B38 adds a point per unit moved), 3..5 search 60
+  directions (0x801CBC40) for a clear spot; only characters 4 and 5 leave
+  state 2. fn_800C7590 case 0 derives the angles, fn_800C7464 keeps the view
+  in the block (+0x194). Not ported: fn_800CA864 (hunters), fn_800C3214
+  (line test), the action-40 switch and the exec's other steps.
 
 ## 7. Draw path
 

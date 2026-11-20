@@ -10,7 +10,7 @@ use sa2_render::gc::GcSource;
 use sa2_render::gpu::{look_at, Renderer};
 use sa2_render::land::{land_mesh, Mesh, Vertex};
 use sa2_runtime::game::{Game, SteamData};
-use sa2_runtime::walker_slot;
+use sa2_runtime::{follow, walker_slot};
 use wasm_bindgen::prelude::*;
 
 fn err(e: impl std::fmt::Display) -> JsValue {
@@ -45,6 +45,19 @@ fn marker(p: [f32; 3], h: f32) -> Mesh {
             .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     m
+}
+
+/// The camera's line test (fn_800C3214) is not ported. CARMEL only asks it
+/// for characters 4 and 5, never for Mech Eggman (7).
+struct NoLines;
+
+impl follow::FollowHost for NoLines {
+    fn line(&mut self, _: [f32; 3], _: [f32; 3]) -> i32 {
+        0
+    }
+    fn search_angles(&mut self, _: i32) -> Option<[i32; 2]> {
+        None
+    }
 }
 
 #[wasm_bindgen]
@@ -201,22 +214,38 @@ impl App {
         pads[0].stick = [stick_x, stick_y];
         pads[0].button = buttons;
         self.game.step(pads);
-        let (pos, ang, height) = self
+        let p = self
             .player
             .and_then(|t| self.game.rt.task(t))
             .map(|t| {
                 let f = |o| f32::from_bits(t.twp_word(o));
                 let a = |o| t.twp_word(o) as i32;
-                // Player work +0x13C (the camera's target height).
-                let h = t
-                    .w40
-                    .as_ref()
-                    .and_then(|w| w.get(0x13C..0x140))
+                let w40 = t.w40.as_deref().unwrap_or(&[]);
+                // Player work +0x13C (the camera's target height), +1 the
+                // character.
+                let height = w40
+                    .get(0x13C..0x140)
                     .map_or(0.0, |b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]));
-                ([f(0x14), f(0x18), f(0x1C)], [a(0x8), a(0xC), a(0x10)], h)
+                follow::Player {
+                    pos: [f(0x14), f(0x18), f(0x1C)],
+                    ang: [a(0x8), a(0xC), a(0x10)],
+                    height,
+                    action: (t.twp_word(0) >> 24) as i8,
+                    character: w40.get(1).map_or(0, |&b| b as i8),
+                }
             })
-            .unwrap_or(([0.0; 3], [0; 3], 0.0));
-        let cam = self.camera.step(pos, ang, height);
+            .unwrap_or_default();
+        let (pos, ang) = (p.pos, p.ang);
+        let hist = self.game.walker.as_deref().and_then(|w| w.history());
+        let inp = follow::Inputs {
+            stage: self.game.frame.stage,
+            g: &self.game.frame.g,
+            pad: self.game.pad_copy(0),
+            second_player: false,
+            history_index: hist.map_or(0, |h| h.index[0]),
+            history_pos: hist.map_or(&[], |h| &h.pos[..]),
+        };
+        let cam = self.camera.step(&mut NoLines, &p, &inp);
         match &self.walker {
             Some(m) => self
                 .renderer
