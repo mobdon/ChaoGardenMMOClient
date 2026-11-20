@@ -40,8 +40,8 @@ pub enum Event {
         speed: V3,
         angles: [i32; 3],
     },
-    /// fn_8002FB2C(player, 3, 7, 0).
-    PlayerHurt { player: i32 },
+    /// fn_8002FB2C(player, a, b, 0): the player reacts to the enemy.
+    PlayerHurt { player: i32, a: i32, b: i32 },
     /// fn_80016D10(task, parts, models): the explosion into parts.
     Debris,
     /// fn_80062E0C(points).
@@ -54,14 +54,20 @@ pub enum Event {
     },
     /// CCL_ClearInfo(task).
     ClearCollision,
-    /// The first collision entry's attribute word gets bit 0x10 (the kill
-    /// path turns it off).
-    CollisionOff,
-    /// The first collision entry's attribute bit 0x10 is cleared again.
-    CollisionOn,
-    /// CCL_Init(task, rows, 2, 3): the collision entries are set up from
+    /// A collision entry's attribute word gets bit 0x10 (it is turned off).
+    CollisionOff { entry: u8 },
+    /// A collision entry's attribute bit 0x10 is cleared again.
+    CollisionOn { entry: u8 },
+    /// fn_800068BC(task, r): the collision's range (cwp +8).
+    CollisionRange { range: f32 },
+    /// SetSpringVelocityP(player, 0, speed, 0) and SE_Call(0x1000, ...):
+    /// the player is bounced (E KUMI kind 6).
+    Spring { player: i32, speed: f32 },
+    /// fn_800BD92C(task, position, 15).
+    Burrow { pos: V3 },
+    /// CCL_Init(task, rows, count, 3): the collision entries are set up from
     /// the REL rows at this section-5 offset.
-    CollisionInit { rows: u32 },
+    CollisionInit { rows: u32, count: u8 },
     /// The task is freed (FreeTask) or set to die (DeadOut).
     Free,
     /// _rename_SetFlag0x20(task): the SET entry is marked so the enemy is
@@ -76,8 +82,27 @@ pub trait EnemyHost {
     /// The bytes at 0x801CC168+0x39 and +0x42 (players are not tested
     /// while either is 1).
     fn game_39_42(&self) -> (u8, u8);
-    /// The word at 0x801CC168+0x7C (E GOLD's set-up reads it).
+    /// The word at 0x801CC168+0x7C: a frame counter (fn_80062B38 adds 1
+    /// each frame +0x37 is clear; fn_80064278 resets it).
     fn game_7c(&self) -> i32;
+    /// The byte at 0x801CC168+0x3C.
+    fn game_3c(&self) -> u8 {
+        0
+    }
+    /// GetShadowPos(x, y, z): the ground height below a point, or -1e6.
+    fn shadow_pos(&mut self, _pos: V3) -> f32 {
+        -1.0e6
+    }
+    /// fn_80005F88(task, 1): the player (0 or 1) touching collision entry
+    /// 1, if any (E KUMI kind 6's spring).
+    fn spring_touch(&mut self) -> Option<i32> {
+        None
+    }
+    /// Whether E KUMI's shared display task for this model (stg09D.rel
+    /// s6+0x2DC0 for 0xA6A94, s6+0x2DC4 for 0xA8FF8) holds its buffer.
+    fn kumi_display_buffer(&mut self, _model: u32) -> bool {
+        false
+    }
     /// The two player tasks (playertwp[0..2]); the rest are empty.
     fn players(&self) -> [Option<PlayerView>; 2];
     /// The player task's mode byte (twp +0).

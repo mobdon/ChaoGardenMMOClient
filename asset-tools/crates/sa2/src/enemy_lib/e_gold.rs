@@ -120,6 +120,7 @@ impl EGold {
         t.kind = 0;
         host.event(Event::CollisionInit {
             rows: rows::COLLISION,
+            count: 1,
         });
         w.interval = ((t.ang[0] & 0xff) * 10) as i16;
         t.ang[2] &= 0xff00;
@@ -143,7 +144,7 @@ impl EGold {
         engine::set_home(t, &mut w);
         t.mode = 2;
         w.motion.request = 0;
-        host.event(Event::CollisionOff);
+        host.event(Event::CollisionOff { entry: 0 });
         w.motion.step(&self.table);
         w.f_ec = 12.0;
         w.f_f0 = k(0x3f99_999a);
@@ -241,7 +242,7 @@ impl EGold {
         } else {
             self.task.mode = 1;
             self.task.timer = 0;
-            host.event(Event::CollisionOn);
+            host.event(Event::CollisionOn { entry: 0 });
         }
     }
 
@@ -261,7 +262,7 @@ impl EGold {
             w.f_ac = engine::approach(w.f_ac, -1.0, k(0x3d4c_cccd));
         } else {
             self.task.mode = 5;
-            host.event(Event::CollisionOff);
+            host.event(Event::CollisionOff { entry: 0 });
         }
     }
 
@@ -280,7 +281,7 @@ impl EGold {
             return;
         }
         self.task.mode = 5;
-        host.event(Event::CollisionOff);
+        host.event(Event::CollisionOff { entry: 0 });
         self.task.timer = 0;
         engine::set_home(&self.task, &mut self.work);
         host.event(Event::Debris);

@@ -224,6 +224,7 @@ impl EAi {
         };
         host.event(Event::CollisionInit {
             rows: rows::COLLISION + if t.kind == 5 { 0x60 } else { 0 },
+            count: 2,
         });
         let kind = t.kind;
         let burst_and_interval = |w: &mut EnemyWork, t: &EnemyTask, min: bool| {
@@ -950,7 +951,11 @@ impl EAi {
                             volume: 10,
                             pos: self.task.pos,
                         });
-                        host.event(Event::PlayerHurt { player: p });
+                        host.event(Event::PlayerHurt {
+                            player: p,
+                            a: 3,
+                            b: 7,
+                        });
                         host.event(Event::ClearCollision);
                         return;
                     }
@@ -959,7 +964,7 @@ impl EAi {
         }
         // The kill.
         self.task.mode = 10;
-        host.event(Event::CollisionOff);
+        host.event(Event::CollisionOff { entry: 0 });
         self.task.timer = 0;
         engine::set_home(&self.task, &mut self.work);
         host.event(Event::Debris);

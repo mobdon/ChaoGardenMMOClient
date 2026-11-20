@@ -12,6 +12,7 @@
 //! +0x38, 0x210 bytes from fn_80018D28).
 pub mod e_ai;
 pub mod e_gold;
+pub mod e_kumi;
 pub mod engine;
 pub mod host;
 pub mod motion;
@@ -66,6 +67,8 @@ pub struct EnemyWork {
     pub side_accel: f32,
     /// +0x18: frames until the next wander target.
     pub wander_timer: i32,
+    /// +0x1C: E KUMI kind 7's base yaw around home.
+    pub circle_yaw: i32,
     /// +0x40: non-null (a pointer the game sets; kind 5 counts as noticing
     /// while it is set).
     pub link_40: bool,
@@ -74,12 +77,16 @@ pub struct EnemyWork {
     pub b_44: i8,
     /// +0x45: the switch group (-1 for none).
     pub group: i8,
+    /// +0x46: E KUMI's sunk-frame cycle (0..8).
+    pub b_46: i8,
     /// +0x47: shots per burst (Rotation.x low byte for most kinds).
     pub burst: i8,
     /// +0x48: frames between bursts (Rotation.z, at least 60, for most kinds).
     pub interval: i16,
     /// +0x4C: flags.
     pub flags: i16,
+    /// +0x4E: E KUMI's sunk-frame count.
+    pub h_4e: i16,
     /// +0x54.
     pub f_54: f32,
     /// +0x58: home.
@@ -132,4 +139,63 @@ pub struct EnemyWork {
     pub notice_range_sq: f32,
     /// +0x1E0: the motion sequencer.
     pub motion: motion::Motion,
+}
+
+/// One of the stage REL enemies this library runs.
+#[derive(Debug, Clone)]
+pub enum StageEnemy {
+    Ai(e_ai::EAi),
+    Gold(e_gold::EGold),
+    Kumi(e_kumi::EKumi),
+}
+
+impl StageEnemy {
+    pub fn task(&self) -> &EnemyTask {
+        match self {
+            StageEnemy::Ai(e) => &e.task,
+            StageEnemy::Gold(e) => &e.task,
+            StageEnemy::Kumi(e) => &e.task,
+        }
+    }
+
+    pub fn task_mut(&mut self) -> &mut EnemyTask {
+        match self {
+            StageEnemy::Ai(e) => &mut e.task,
+            StageEnemy::Gold(e) => &mut e.task,
+            StageEnemy::Kumi(e) => &mut e.task,
+        }
+    }
+
+    pub fn work(&self) -> &EnemyWork {
+        match self {
+            StageEnemy::Ai(e) => &e.work,
+            StageEnemy::Gold(e) => &e.work,
+            StageEnemy::Kumi(e) => &e.work,
+        }
+    }
+
+    /// In or past the mode its kill path sets: it takes no more hits.
+    pub fn dying(&self) -> bool {
+        let m = self.task().mode;
+        match self {
+            StageEnemy::Ai(_) => m >= 10,
+            StageEnemy::Gold(_) => m >= 5,
+            StageEnemy::Kumi(_) => m >= 8,
+        }
+    }
+
+    /// One frame of the enemy's row callback.
+    pub fn exec(
+        &mut self,
+        host: &mut impl host::EnemyHost,
+        stack: &mut crate::ninja_matrix::MatrixStack,
+        rand: &mut Rand,
+        counts: &mut engine::GroupCounts,
+    ) {
+        match self {
+            StageEnemy::Ai(e) => e.exec(host, stack, rand, counts),
+            StageEnemy::Gold(e) => e.exec(host, stack, rand, counts),
+            StageEnemy::Kumi(e) => e.exec(host, stack, rand, counts),
+        }
+    }
 }

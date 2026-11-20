@@ -6,6 +6,7 @@ use sa2_asset_tools::{
     enemy_lib::{
         e_ai::{rows, EAi},
         e_gold::{rows as gold_rows, EGold},
+        e_kumi::{rows as kumi_rows, EKumi},
         engine::GroupCounts,
         host::{EnemyHost, Event},
         motion::{read_table, Motion},
@@ -77,12 +78,15 @@ fn decode_work(b: &[u8], sec5: u32) -> EnemyWork {
         accel: b.f(0xC),
         side_accel: b.f(0x14),
         wander_timer: b.w(0x18) as i32,
+        circle_yaw: b.w(0x1C) as i32,
         link_40: b.w(0x40) != 0,
         b_44: b.0[0x44] as i8,
         group: b.0[0x45] as i8,
+        b_46: b.0[0x46] as i8,
         burst: b.0[0x47] as i8,
         interval: b.h(0x48),
         flags: b.h(0x4C),
+        h_4e: b.h(0x4E),
         f_54: b.f(0x54),
         home: b.v(0x58),
         wander_target: b.v(0x64),
@@ -142,6 +146,8 @@ struct Host<'a> {
     tail: Vec<Value>,
     radius: Option<f32>,
     attr0: Option<u32>,
+    attr1: Option<u32>,
+    g3c: u8,
 }
 
 impl Host<'_> {
@@ -159,6 +165,23 @@ impl EnemyHost for Host<'_> {
     }
     fn game_7c(&self) -> i32 {
         self.g7c
+    }
+    fn game_3c(&self) -> u8 {
+        self.g3c
+    }
+    fn shadow_pos(&mut self, pos: V3) -> f32 {
+        self.events
+            .push(json!(["shadow", bits(pos)[0], bits(pos)[1], bits(pos)[2]]));
+        f(&self.i["shadow_pos"])
+    }
+    fn spring_touch(&mut self) -> Option<i32> {
+        self.b("spring")
+            .then(|| self.i["hit_index"].as_i64().unwrap() as i32)
+    }
+    fn kumi_display_buffer(&mut self, _model: u32) -> bool {
+        // One E KUMI per run creates the shared task, with its buffer when
+        // +0x3C is 1 (syCalloc succeeds in the harness).
+        self.g3c == 1
     }
     fn players(&self) -> [Option<PlayerView>; 2] {
         std::array::from_fn(|k| {
@@ -242,7 +265,10 @@ impl EnemyHost for Host<'_> {
                 speed,
                 angles,
             } => json!(["knock", player as u32, bits(speed), angles]),
-            Event::PlayerHurt { player } => json!(["hurt", player as u32]),
+            Event::PlayerHurt { player, a, b } => json!(["hurt", player as u32, a, b]),
+            Event::CollisionRange { range } => json!(["range", range.to_bits()]),
+            Event::Spring { player, speed } => json!(["spring", player as u32, speed.to_bits()]),
+            Event::Burrow { pos } => json!(["burrow", bits(pos)]),
             Event::Debris => json!(["debris"]),
             Event::Score { points } => json!(["score", points]),
             Event::Drop { animal, .. } => {
@@ -254,13 +280,26 @@ impl EnemyHost for Host<'_> {
                 }
             }
             Event::ClearCollision => json!(["clear"]),
-            Event::CollisionOff => {
+            Event::CollisionOff { entry: 1 } => {
+                *self.attr1.as_mut().unwrap() |= 0x10;
+                return;
+            }
+            Event::CollisionOn { entry: 1 } => {
+                *self.attr1.as_mut().unwrap() &= !0x10;
+                return;
+            }
+            Event::CollisionOff { entry: 0 } => {
                 *self.attr0.as_mut().unwrap() |= 0x10;
                 return;
             }
-            Event::CollisionInit { rows } => {
+            Event::CollisionOff { entry: 2.. } | Event::CollisionOn { entry: 2.. } => {
+                unreachable!()
+            }
+            Event::CollisionInit { rows, count } => {
                 let r = &self.rel5[rows as usize..];
                 self.attr0 = Some(u32::from_be_bytes(r[4..8].try_into().unwrap()));
+                self.attr1 =
+                    (count > 1).then(|| u32::from_be_bytes(r[0x34..0x38].try_into().unwrap()));
                 self.radius = Some(f32::from_be_bytes(r[0xC..0x10].try_into().unwrap()));
                 json!(["ccl_init", rows])
             }
@@ -275,7 +314,7 @@ impl EnemyHost for Host<'_> {
                 self.tail.push(json!(["hidden"]));
                 return;
             }
-            Event::CollisionOn => {
+            Event::CollisionOn { entry: 0 } => {
                 *self.attr0.as_mut().unwrap() &= !0x10;
                 return;
             }
@@ -289,6 +328,7 @@ impl EnemyHost for Host<'_> {
 enum Enemy {
     Ai(EAi),
     Gold(EGold),
+    Kumi(EKumi),
 }
 
 impl Enemy {
@@ -296,24 +336,28 @@ impl Enemy {
         match self {
             Enemy::Ai(e) => &e.task,
             Enemy::Gold(e) => &e.task,
+            Enemy::Kumi(e) => &e.task,
         }
     }
     fn task_mut(&mut self) -> &mut EnemyTask {
         match self {
             Enemy::Ai(e) => &mut e.task,
             Enemy::Gold(e) => &mut e.task,
+            Enemy::Kumi(e) => &mut e.task,
         }
     }
     fn work(&self) -> &EnemyWork {
         match self {
             Enemy::Ai(e) => &e.work,
             Enemy::Gold(e) => &e.work,
+            Enemy::Kumi(e) => &e.work,
         }
     }
     fn work_mut(&mut self) -> &mut EnemyWork {
         match self {
             Enemy::Ai(e) => &mut e.work,
             Enemy::Gold(e) => &mut e.work,
+            Enemy::Kumi(e) => &mut e.work,
         }
     }
 }
@@ -330,6 +374,12 @@ fn e_gold_matches_stg09d() {
     run("gold");
 }
 
+#[test]
+#[ignore = "requires SA2_MAIN_DOL, SA2_STAGE_REL (GC stg09D.rel) and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+fn e_kumi_matches_stg09d() {
+    run("kumi");
+}
+
 fn run(enemy: &str) {
     let python = std::env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
     let o = Command::new(python)
@@ -342,6 +392,8 @@ fn run(enemy: &str) {
     let rel = std::fs::read(std::env::var("SA2_STAGE_REL").unwrap()).unwrap();
     let table = if enemy == "gold" {
         read_table(&rel, 9, 5, gold_rows::MOTION, gold_rows::MOTION_ROWS).unwrap()
+    } else if enemy == "kumi" {
+        read_table(&rel, 9, 5, kumi_rows::MOTION, kumi_rows::MOTION_ROWS).unwrap()
     } else {
         read_table(&rel, 9, 5, rows::MOTION, rows::MOTION_ROWS).unwrap()
     };
@@ -367,10 +419,14 @@ fn run(enemy: &str) {
         };
         let mut e = if enemy == "gold" {
             Enemy::Gold(EGold::new(task, table.clone()))
+        } else if enemy == "kumi" {
+            Enemy::Kumi(EKumi::new(task, table.clone()))
         } else {
             Enemy::Ai(EAi::new(task, table.clone()))
         };
         let g7c = u(&init["g7c"]) as i32;
+        let g3c = u(&init["g3c"]) as u8;
+        let mut attr1 = None;
         let mut rand = Rand(u(&init["rand"]));
         let mut counts: GroupCounts = [0; 256];
         let mut radius = None;
@@ -394,15 +450,19 @@ fn run(enemy: &str) {
                 tail: vec![],
                 radius,
                 attr0,
+                attr1,
+                g3c,
             };
             match &mut e {
                 Enemy::Ai(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
                 Enemy::Gold(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
+                Enemy::Kumi(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
             }
             let mut got = host.events.clone();
             got.extend(host.tail.clone());
             radius = host.radius;
             attr0 = host.attr0;
+            attr1 = host.attr1;
             let at = format!("run {ri} frame {fi}");
             assert_eq!(*e.task(), decode_task(&hex(&fr["twp"])), "task, {at}");
             if !fr["work"].is_null() {
@@ -432,6 +492,9 @@ fn run(enemy: &str) {
                     "radius, {at}"
                 );
                 assert_eq!(attr0, Some(u(&fr["attr0"])), "attr, {at}");
+                if let Some(a) = attr1 {
+                    assert_eq!(a, u(&fr["attr1"]), "attr 1, {at}");
+                }
             }
             assert_eq!(rand.0, u(&fr["rand"]), "rand, {at}");
             assert_eq!(counts.to_vec(), hex(&fr["counts"]), "group counts, {at}");

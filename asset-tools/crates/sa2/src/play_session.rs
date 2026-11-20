@@ -38,9 +38,11 @@ use crate::{
 use crate::{
     enemy_lib::{
         e_ai::{rows as e_ai_rows, EAi},
+        e_gold::{rows as e_gold_rows, EGold},
+        e_kumi::{rows as e_kumi_rows, EKumi},
         host::{EnemyHost, Event as EnemyEvent},
         motion::read_table,
-        EnemyTask, EnemyWork, PlayerView, Rand,
+        EnemyTask, EnemyWork, PlayerView, Rand, StageEnemy,
     },
     ninja_matrix::MatrixStack,
 };
@@ -697,6 +699,12 @@ pub struct Session {
     pub enemy_ai: Vec<(usize, EnemyAi)>,
     #[serde(skip)]
     stack: MatrixStack,
+    /// GAME+0x7C (0x801CC1E4): the frame counter fn_80062B38 advances
+    /// while +0x37 is clear. Here it counts the steps before this one with
+    /// `effects_suppressed` clear; where the game advances it relative to
+    /// the enemies' tasks is not traced.
+    #[serde(skip)]
+    pub game_frames: i32,
     pub doors: Vec<PrisonDoor>,
     pub walls: Vec<ElevatorWall>,
     #[serde(skip)]
@@ -827,7 +835,7 @@ impl Session {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let (e_ai_table, e_ai_radius) = if rules.prison_doors {
+        let (e_ai_table, e_ai_radius, e_gold_table, e_kumi_table) = if rules.prison_doors {
             let info = crate::stage_land::catalog()
                 .iter()
                 .find(|i| i.filename == rules.movers.module_file)
@@ -852,9 +860,23 @@ impl Session {
                     radius(e_ai_rows::COLLISION)?,
                     radius(e_ai_rows::COLLISION + 0x60)?,
                 ],
+                read_table(
+                    src.stage_module,
+                    info.module,
+                    5,
+                    e_gold_rows::MOTION,
+                    e_gold_rows::MOTION_ROWS,
+                )?,
+                read_table(
+                    src.stage_module,
+                    info.module,
+                    5,
+                    e_kumi_rows::MOTION,
+                    e_kumi_rows::MOTION_ROWS,
+                )?,
             )
         } else {
-            (vec![], [0.0; 2])
+            (vec![], [0.0; 2], vec![], vec![])
         };
         let mut enemy_ai = vec![];
         let mut world = PlayWorld::from_collision(&collision);
@@ -1048,19 +1070,28 @@ impl Session {
                             velocity: 0.0,
                         }),
                     (_, n) if rules.prison_doors && enemy_counts(n, pl.parameters).is_some() => {
-                        if is_e_ai(n) {
-                            // The SET loader (0x80065E54) sign-extends the
-                            // rotation halfwords.
-                            let task = EnemyTask {
-                                ang: pl.rotation.map(|a| a as i16 as i32),
-                                pos: pl.position,
-                                scl: pl.parameters,
-                                ..Default::default()
-                            };
-                            enemy_ai.push((
-                                enemies.len(),
-                                EnemyAi::new(EAi::new(task, e_ai_table.clone()), e_ai_radius),
-                            ));
+                        // The SET loader (0x80065E54) sign-extends the
+                        // rotation halfwords.
+                        let task = EnemyTask {
+                            ang: pl.rotation.map(|a| a as i16 as i32),
+                            pos: pl.position,
+                            scl: pl.parameters,
+                            ..Default::default()
+                        };
+                        let native = match runs_natively(n) {
+                            Some("E AI") => {
+                                Some(StageEnemy::Ai(EAi::new(task, e_ai_table.clone())))
+                            }
+                            Some("E GOLD") => {
+                                Some(StageEnemy::Gold(EGold::new(task, e_gold_table.clone())))
+                            }
+                            Some("E KUMI") => {
+                                Some(StageEnemy::Kumi(EKumi::new(task, e_kumi_table.clone())))
+                            }
+                            _ => None,
+                        };
+                        if let Some(e) = native {
+                            enemy_ai.push((enemies.len(), EnemyAi::new(e, e_ai_radius)));
                         }
                         enemies.push(Enemy {
                             layer: li,
@@ -1071,7 +1102,7 @@ impl Session {
                             counted: enemy_counts(n, pl.parameters) == Some(true),
                             alive: true,
                         });
-                        if !is_e_ai(n) {
+                        if runs_natively(n).is_none() {
                             *unimplemented
                                 .entry(format!("{name} (group count only)"))
                                 .or_insert(0) += 1;
@@ -1234,15 +1265,20 @@ impl Session {
             world,
             death_zones: zones,
             group_counts: {
-                // E AI counts itself in its set-up (below).
+                // The enemies that run natively count themselves in their
+                // set-up.
                 let mut c = [0u8; 256];
-                for e in enemies.iter().filter(|e| e.counted && !is_e_ai(&e.name)) {
+                for e in enemies
+                    .iter()
+                    .filter(|e| e.counted && runs_natively(&e.name).is_none())
+                {
                     c[e.group as usize] = c[e.group as usize].wrapping_add(1);
                 }
                 c
             },
             enemy_ai,
             stack: MatrixStack::new(),
+            game_frames: 0,
             enemies,
             doors,
             door_rows,
@@ -1273,7 +1309,7 @@ impl Session {
     /// next step. Others leave their group count as 0x80018B88 does.
     pub fn destroy_enemy(&mut self, i: usize) -> bool {
         if let Some((_, ai)) = self.enemy_ai.iter_mut().find(|(e, _)| *e == i) {
-            if !self.enemies[i].alive || ai.eai.task.mode >= 10 {
+            if !self.enemies[i].alive || ai.enemy.dying() {
                 return false;
             }
             ai.hit = true;
@@ -1426,6 +1462,9 @@ impl Session {
             }
         }
         self.step_enemies(player, &mut events);
+        if !self.effects_suppressed {
+            self.game_frames = self.game_frames.wrapping_add(1);
+        }
         for (i, d) in self.doors.iter_mut().enumerate() {
             let was = d.state;
             let clear = self.group_counts[d.group as usize] == 0;
@@ -1482,26 +1521,28 @@ impl Session {
         }
     }
 
-    /// One frame of every live E AI (stg09D.rel 0x51034).
+    /// One frame of every live enemy that runs natively (E AI, E GOLD and
+    /// E KUMI).
     fn step_enemies(&mut self, player: Option<PlayerSample>, events: &mut Vec<Event>) {
         for (i, ai) in self.enemy_ai.iter_mut() {
             if !self.enemies[*i].alive {
                 continue;
             }
             if std::mem::take(&mut ai.hit) {
-                ai.eai.task.flags |= 4;
+                ai.enemy.task_mut().flags |= 4;
             }
             let mut host = EnemyWorld {
                 player,
                 game_37: self.effects_suppressed,
-                hit: ai.eai.task.flags & 4 != 0,
+                game_7c: self.game_frames,
+                hit: ai.enemy.task().flags & 4 != 0,
                 row_radius: ai.row_radius,
                 radius: &mut ai.radius,
                 events: vec![],
             };
             // One rand state for the whole game (MSL `next`).
             let mut rand = Rand(self.rand.seed);
-            ai.eai.exec(
+            ai.enemy.exec(
                 &mut host,
                 &mut self.stack,
                 &mut rand,
@@ -1526,17 +1567,22 @@ impl Session {
     }
 }
 
-fn is_e_ai(name: &str) -> bool {
-    name.strip_suffix("_F")
+/// The enemies whose own logic runs here (their `_F` and `_N` variants
+/// share the row callbacks).
+fn runs_natively(name: &str) -> Option<&'static str> {
+    let base = name
+        .strip_suffix("_F")
         .or_else(|| name.strip_suffix("_N"))
-        .unwrap_or(name)
-        == "E AI"
+        .unwrap_or(name);
+    ["E AI", "E GOLD", "E KUMI"]
+        .into_iter()
+        .find(|&n| n == base)
 }
 
-/// An E AI and what the session keeps for it.
+/// An enemy that runs natively and what the session keeps for it.
 #[derive(Debug, Clone)]
 pub struct EnemyAi {
-    pub eai: EAi,
+    pub enemy: StageEnemy,
     /// Its first collision entry's radius (cwp->info[0] +0xC).
     pub radius: f32,
     /// The first rows' radii in its CollisionData (stg09D.rel section 5
@@ -1546,9 +1592,9 @@ pub struct EnemyAi {
 }
 
 impl EnemyAi {
-    fn new(eai: EAi, row_radius: [f32; 2]) -> Self {
+    fn new(enemy: StageEnemy, row_radius: [f32; 2]) -> Self {
         Self {
-            eai,
+            enemy,
             radius: 0.0,
             row_radius,
             hit: false,
@@ -1559,12 +1605,14 @@ impl EnemyAi {
 /// What the session tells its enemies. Player contact, culling, ground
 /// collision are main-program code it does not run: the player is never
 /// touched or bumped, enemies are never culled and ground collision leaves
-/// them where they are. Of the flags at 0x801CC168, +0x37 is the host's
-/// `effects_suppressed`; +0x39, +0x42 and the word at +0x7C keep their
-/// main.dol initial values (0).
+/// them where they are, GetShadowPos finds no ground (-1e6), and no player
+/// touches a spring. Of the game state at 0x801CC168, +0x37 is the host's
+/// `effects_suppressed` and +0x7C counts frames (`Session::game_frames`);
+/// +0x39, +0x3C and +0x42 keep their main.dol initial values (0).
 struct EnemyWorld<'a> {
     player: Option<PlayerSample>,
     game_37: bool,
+    game_7c: i32,
     hit: bool,
     row_radius: [f32; 2],
     radius: &'a mut f32,
@@ -1579,7 +1627,19 @@ impl EnemyHost for EnemyWorld<'_> {
         (0, 0)
     }
     fn game_7c(&self) -> i32 {
+        self.game_7c
+    }
+    fn game_3c(&self) -> u8 {
         0
+    }
+    fn shadow_pos(&mut self, _pos: V3) -> f32 {
+        -1.0e6
+    }
+    fn spring_touch(&mut self) -> Option<i32> {
+        None
+    }
+    fn kumi_display_buffer(&mut self, _model: u32) -> bool {
+        false
     }
     fn players(&self) -> [Option<PlayerView>; 2] {
         [
@@ -1632,10 +1692,14 @@ impl EnemyHost for EnemyWorld<'_> {
     }
     fn collision_entry(&mut self) {}
     fn event(&mut self, e: EnemyEvent) {
-        if let EnemyEvent::CollisionInit { rows } = e {
-            // CCL_Init copies the rows; the enemy may change the radius
-            // later in the same frame.
-            *self.radius = self.row_radius[(rows != e_ai_rows::COLLISION) as usize];
+        if let EnemyEvent::CollisionInit { rows, .. } = e {
+            // CCL_Init copies the rows; E AI may change the radius later in
+            // the same frame.
+            if rows == e_ai_rows::COLLISION {
+                *self.radius = self.row_radius[0];
+            } else if rows == e_ai_rows::COLLISION + 0x60 {
+                *self.radius = self.row_radius[1];
+            }
         }
         self.events.push(e);
     }

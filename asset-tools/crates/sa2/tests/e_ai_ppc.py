@@ -121,7 +121,20 @@ m.stub(0x80062E0C, lambda mm: ev('score', mm.gpr(3)))
 m.stub(0x80016D10, lambda mm: ev('debris'))
 m.stub(0x80015730, lambda mm: ev('carried', mm.gpr(3), mm.gpr(4) - rel.bases[5]))
 m.stub(0x80039EB0, lambda mm: ev('knock', mm.gpr(3), vec(mm, 4), [mm.get(mm.gpr(5) + 4 * k, 'i') for k in range(3)]))
-m.stub(0x8002FB2C, lambda mm: ev('hurt', mm.gpr(3)))
+m.stub(0x8002FB2C, lambda mm: ev('hurt', mm.gpr(3), mm.gpr(4), mm.gpr(5)))
+# E KUMI's main.dol calls.
+m.stub(0x80067AF0, lambda mm: (ev('shadow', fbits(mm, 1), fbits(mm, 2), fbits(mm, 3)), mm.fpr(1, f32(struct.unpack('>f', struct.pack('>I', frame_in['shadow_pos']))[0]))))
+m.stub(0x800068BC, lambda mm: ev('range', fbits(mm, 1)))
+m.stub(0x80005F88, ret(lambda: PARTNER if frame_in['spring'] else 0))
+m.stub(0x8003A2B8, lambda mm: ev('spring', mm.gpr(3), fbits(mm, 2)))
+m.stub(0x8006B978, lambda mm: None)              # SE_Call
+m.stub(0x800BD92C, lambda mm: ev('burrow', vec(mm, 4)))
+m.stub(0x8011F50C, ret(0x10))
+# The shared display tasks' texture and fog set-up.
+for a in (0x80116E18, 0x80024CB8, 0x8011C2B0, 0x8011C310, 0x8011F520, 0x8011F504):
+    m.stub(a, lambda mm: None)
+m.stub(R1(0x427EC), lambda mm: ev('child', 0x427EC))
+m.stub(R1(0x4286C), lambda mm: ev('child', 0x4286C, vec(mm, 6), mm.gpr(3), mm.gpr(4), mm.gpr(5)))
 m.stub(0x8000F748, lambda mm: ev('clear'))       # CCL_ClearInfo
 
 
@@ -155,8 +168,8 @@ m.stub(R1(0x45638), lambda mm: ev('child', 0x45638, vec(mm, 4), vec(mm, 5), fbit
 m.stub(R1(0x4358C), lambda mm: ev('child', 0x4358C, vec(mm, 4), vec(mm, 5)))
 m.stub(R1(0x3D71C), lambda mm: ev('child', 0x3D71C, vec(mm, 3), mm.gpr(4), fbits(mm, 1), fbits(mm, 2)))
 ENEMY = os.environ.get("SA2_ENEMY", "ai")
-CALLBACK = {'ai': 0x51034, 'gold': 0x4A024}[ENEMY]
-if ENEMY == 'gold':
+CALLBACK = {'ai': 0x51034, 'gold': 0x4A024, 'kumi': 0x4C408}[ENEMY]
+if ENEMY in ('gold', 'kumi'):
     m.stub(R1(0x45F3C), lambda mm: ev('child', 0x45F3C, vec(mm, 5), mm.gpr(4)))
 else:
     m.stub(R1(0x45F3C), lambda mm: ev('child', 0x45F3C, mm.gpr(4)))
@@ -192,13 +205,22 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
     for i, x in enumerate(ang):
         m.put(TWP + 8 + 4 * i, 'i', x)
     m.u.mem_write(TWP + 0x14, struct.pack('>6f', *pos, *scl))
+    for off in range(0x2DB8, 0x2DE8, 4):
+        m.put(rel.addr(6, off), 'I', 0)
+    g3c = rng.choice([0, 1])
+    m.put(GAME + 0x3C, 'B', g3c)
     seed = rng.randrange(1 << 32)
     m.put(NEXT, 'I', seed)
     if ENEMY == 'gold':
         for i, x in enumerate([(rng.randrange(256) << 8) | rng.randrange(0, 50), ang[1], rng.randrange(0, 0x10000)]):
             m.put(TWP + 8 + 4 * i, 'i', x)
             ang[i] = x
-    init = {'g7c': g7c, 'pos': [fb(x) for x in pos], 'ang': ang, 'scl': [fb(x) for x in scl], 'rand': seed}
+    if ENEMY == 'kumi':
+        kind = run % 8 if run < 48 else rng.randrange(-1, 10)
+        scl[0] = f32(kind + rf(0, 0.99))
+        scl[1] = rng.choice([rf(0, 6), f32(rng.randrange(0, 300))])
+        m.u.mem_write(TWP + 0x20, struct.pack('>3f', *scl))
+    init = {'g3c': g3c, 'g7c': g7c, 'pos': [fb(x) for x in pos], 'ang': ang, 'scl': [fb(x) for x in scl], 'rand': seed}
     # Player paths.
     p0 = [pos[0] + rf(-300, 300), pos[1] + rf(-20, 20), pos[2] + rf(-300, 300)]
     v0 = [rf(-2, 2), 0.0, rf(-2, 2)]
@@ -244,7 +266,8 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
             'hit_player': int(rng.random() < 0.03), 'hit_by_player': int(rng.random() < 0.5),
             'hit_index': rng.choice([0, 1, -1]), 'score_doubled': int(rng.random() < 0.5),
             'probe_y': fb(rf(-50, 50)), 'shadow_y': fb(rf(-50, 50)), 'landed': int(rng.random() < 0.3),
-            'flag4': int(hit), 'cwp_bit': int(cwp_bit), 'a4': a4,
+            'flag4': int(hit), 'spring': int(rng.random() < 0.02),
+            'shadow_pos': fb(rng.choice([-1e6, rf(-300, 300)])), 'cwp_bit': int(cwp_bit), 'a4': a4,
             'players': [[fb(x) for x in p] if p else None for p in pls],
             'modes': [m.get(PLAYERS[i], 'b') for i in range(2)],
         }
@@ -288,6 +311,7 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
             'work': m.u.mem_read(work, 0x210).hex() if work else None,
             'radius': fb(m.get(m.get(cwp + 0xC, 'I') + 0xC, 'f')) if cwp else None,
             'attr0': m.get(m.get(cwp + 0xC, 'I') + 4, 'I') if cwp else None,
+            'attr1': m.get(m.get(cwp + 0xC, 'I') + 0x34, 'I') if cwp else None,
             'events': events,
             'rand': m.get(NEXT, 'I'),
             'counts': m.u.mem_read(COUNTS, 0x100).hex(),
