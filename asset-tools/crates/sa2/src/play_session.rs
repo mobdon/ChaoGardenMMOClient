@@ -14,7 +14,9 @@
 //! centre and the mover it stands on each frame (`PlayerSample`), and the
 //! session runs the native object rules against it.
 use crate::{
+    chao_pipe::{ChaoPipe, PipeEvent},
     death_zones,
+    effect_emitter::{EffectEmitter, Emission},
     fan_stage::MountedStage,
     goal_ring,
     iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
@@ -24,10 +26,12 @@ use crate::{
     },
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
+    prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
     prison_doors::{
         enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
         WALL_ROW_COUNT,
     },
+    prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -158,8 +162,13 @@ const FRAME_RATE: f32 = 60.0;
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSample {
-    /// Collision centre (feet plus the PhysicsArray center_height).
+    /// Collision centre (feet plus the PhysicsArray center_height); the
+    /// range test 0x800398D8 reads it.
     pub center: V3,
+    /// The player task's position (twp +0x14), which CAM aims at.
+    pub position: V3,
+    /// The player task's Action byte (twp +0), which CHAOPIPE reads.
+    pub action: u8,
     /// The engine's "player standing on this object" answer, as an index
     /// into `Session::movers`.
     pub standing_on: Option<usize>,
@@ -167,8 +176,9 @@ pub struct PlayerSample {
     /// (an index into `Session::goals`); the player's own collision shape
     /// and the CCL test are main-program code.
     pub touching_goal: Option<usize>,
-    /// The player task's mode byte (twp +0); E AI kind 4 reads it.
-    pub mode: i8,
+    /// A security camera lens (an index into `Session::cams`) whose
+    /// collision the engine reports hit by the player's attack this frame.
+    pub hit_cam_lens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -204,6 +214,21 @@ pub enum Event {
     EnemyDestroyed {
         enemy: usize,
         points: i32,
+    },
+    /// A security camera was destroyed (sound 0x14).
+    CamDestroyed {
+        cam: usize,
+        explosion: CamExplosion,
+    },
+    /// An EFFOBJ0 emitter spawned an effect.
+    Effect {
+        emitter: usize,
+        emission: Emission,
+    },
+    /// A CHAOPIPE requested the pipe action or released a chao.
+    Pipe {
+        pipe: usize,
+        event: PipeEvent,
     },
     GoalContact {
         layer: usize,
@@ -372,7 +397,7 @@ fn rotate_yzx(v: V3, angles: [i32; 3]) -> V3 {
 /// moved by translate(position) and, unless attribute 0x8000 is set, the
 /// task rotation (rotate Y, Z, X with attribute 0x200, else Z, X, Y).
 pub fn ccl_center(position: V3, rotation: [u16; 3], row: &CollisionRow) -> V3 {
-    let angles = rotation.map(i32::from);
+    let angles = rotation.map(|r| i32::from(r as i16));
     if row.attr & 0x20 != 0 {
         row.center
     } else if row.attr & 0x8000 != 0 {
@@ -389,7 +414,7 @@ pub fn ccl_center(position: V3, rotation: [u16; 3], row: &CollisionRow) -> V3 {
 /// task rotation, both in the attribute's order (Y, Z, X with 0x200, else
 /// Z, X, Y), as a vector (0x801154EC ignores translation).
 pub fn ccl_axis(rotation: [u16; 3], row: &CollisionRow) -> V3 {
-    let task = rotation.map(i32::from);
+    let task = rotation.map(|r| i32::from(r as i16));
     let own = row.angles.map(|a| a as i32);
     let turn = |v: V3, a: [i32; 3]| {
         if row.attr & 0x200 != 0 {
@@ -469,7 +494,7 @@ pub fn ccl_box_tris(
     row: &CollisionRow,
     half: V3,
 ) -> Vec<[V3; 3]> {
-    let angles = rotation.map(i32::from);
+    let angles = rotation.map(|r| i32::from(r as i16));
     let center = ccl_center(position, rotation, row);
     let yaw = angles[1].wrapping_add(row.angles[1] as i32);
     let (s, c) = nj_rotate_sin_cos(yaw);
@@ -670,17 +695,24 @@ pub struct Session {
     /// The enemies whose own logic runs (E AI), by index into `enemies`.
     #[serde(skip)]
     pub enemy_ai: Vec<(usize, EnemyAi)>,
-    /// MSL rand's state. It starts at main.dol's initial `next` (1); the
-    /// game's state on entering the stage depends on everything before it,
-    /// so a host that knows it sets it.
-    #[serde(skip)]
-    pub rand: Rand,
     #[serde(skip)]
     stack: MatrixStack,
     pub doors: Vec<PrisonDoor>,
     pub walls: Vec<ElevatorWall>,
     #[serde(skip)]
     wall_rows: Vec<CollisionRow>,
+    pub sirens: Vec<Siren>,
+    pub cams: Vec<SecurityCamera>,
+    pub emitters: Vec<EffectEmitter>,
+    pub pipes: Vec<ChaoPipe>,
+    /// The byte at GSNE8P 0x801CC168 + 0x37 that stops EFFOBJ0 emitting;
+    /// the host sets it.
+    pub effects_suppressed: bool,
+    pub fluos: Vec<Fluo>,
+    pub searchlights: Vec<Searchlight>,
+    pub sound_emitters: Vec<SoundEmitter>,
+    /// MSL rand state the visual objects draw from (seed 1).
+    pub rand: MslRand,
     /// Round collision shapes (forms 0-2), kept analytic.
     pub shapes: Vec<RoundShape>,
     #[serde(skip)]
@@ -834,6 +866,14 @@ impl Session {
         let mut enemies: Vec<Enemy> = vec![];
         let mut doors = vec![];
         let mut walls = vec![];
+        let mut sirens = vec![];
+        let mut cams = vec![];
+        let mut emitters = vec![];
+        let mut pipes = vec![];
+        let mut fluos = vec![];
+        let mut searchlights = vec![];
+        let mut sound_emitters = vec![];
+        let mut rand = MslRand::default();
         let mut unimplemented = std::collections::BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -866,7 +906,7 @@ impl Session {
                         taken: false,
                     }),
                     (RING_LINEAR_VA, "RING_LINEAR") if rules.ring_lines => {
-                        let angles = pl.rotation.map(i32::from);
+                        let angles = pl.rotation.map(|r| i32::from(r as i16));
                         for position in ring_line(pl.position, angles, pl.parameters) {
                             rings_placed.push(Pickup {
                                 layer: li,
@@ -907,7 +947,7 @@ impl Session {
                         } else {
                             SpringKind::B
                         };
-                        let angles = pl.rotation.map(i32::from);
+                        let angles = pl.rotation.map(|r| i32::from(r as i16));
                         let task = StageSpring::new(kind, pl.position, angles, pl.parameters);
                         let out = rotate_zxy([0.0, 5.0 + pl.parameters[1], 0.0], angles);
                         springs.push(Spring {
@@ -917,6 +957,74 @@ impl Session {
                             task,
                             out,
                         });
+                    }
+                    (_, "SIREN") if rules.prison_doors => {
+                        // stg09D.rel 0x5A30: radius-5 sphere at sec5+0x45858.
+                        sirens.push(Siren::new(li, p.placement_index, pl.position, &mut rand));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: SIREN_RADIUS,
+                        });
+                    }
+                    (_, "CAM") if rules.prison_doors => {
+                        // stg09D.rel 0x2450: the body's radius-8.5 sphere
+                        // (sec5+0x3A7C4); the lens sphere stays on the camera.
+                        cams.push(SecurityCamera::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation[1],
+                        ));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: CAM_RADIUS,
+                        });
+                    }
+                    (_, "CHAOPIPE") if rules.prison_doors => {
+                        pipes.push(ChaoPipe::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation,
+                            pl.parameters,
+                        ));
+                        // Its CollisionData (sec5+0x51574) is form 6, which
+                        // this crate does not build.
+                        *unimplemented
+                            .entry("CHAOPIPE collision (form 6)".to_string())
+                            .or_insert(0) += 1;
+                    }
+                    (_, "EFFOBJ0") if rules.prison_doors => emitters.push(EffectEmitter::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters,
+                    )),
+                    (_, "SEARCHLIGHT") if rules.prison_doors => searchlights.push(Searchlight {
+                        layer: li,
+                        index: p.placement_index,
+                        position: pl.position,
+                        yaw: pl.rotation[1],
+                        speed: u32::from(pl.rotation[0]),
+                        phase: 0,
+                    }),
+                    (_, "SE") if rules.prison_doors => sound_emitters.push(SoundEmitter::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation[0],
+                    )),
+                    (_, "FLUO") if rules.prison_doors => {
+                        // stg09D.rel 0x418C: radius-5 sphere at sec5+0x40504.
+                        fluos.push(Fluo::new(li, p.placement_index, pl.position));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: FLUO_RADIUS,
+                        });
+                    }
+                    (_, "SIGNA") if rules.prison_doors => {
+                        // stg09D.rel 0x58D8: draw only, no state.
                     }
                     (_, "WALL") if rules.prison_doors => walls.push(ElevatorWall::new(
                         li,
@@ -1134,13 +1242,21 @@ impl Session {
                 c
             },
             enemy_ai,
-            rand: Rand(1),
             stack: MatrixStack::new(),
             enemies,
             doors,
             door_rows,
             walls,
             wall_rows,
+            sirens,
+            cams,
+            emitters,
+            pipes,
+            effects_suppressed: false,
+            fluos,
+            searchlights,
+            sound_emitters,
+            rand,
             shapes,
         })
     }
@@ -1273,6 +1389,37 @@ impl Session {
             };
             events.extend(started);
         }
+        for s in &mut self.sirens {
+            s.step();
+        }
+        let centres = [player.map(|p| p.center), None];
+        let positions = [player.map(|p| p.position), None];
+        for (i, e) in self.emitters.iter().enumerate() {
+            if let Some(emission) = e.step(self.effects_suppressed, &mut self.rand) {
+                events.push(Event::Effect {
+                    emitter: i,
+                    emission,
+                });
+            }
+        }
+        let actions = [player.map(|p| p.action), None];
+        for (i, pipe) in self.pipes.iter_mut().enumerate() {
+            if let Some(event) = pipe.step(self.character, &centres, &actions) {
+                events.push(Event::Pipe { pipe: i, event });
+            }
+        }
+        for (i, c) in self.cams.iter_mut().enumerate() {
+            let hit = player.and_then(|p| p.hit_cam_lens) == Some(i);
+            if let Some(explosion) = c.step(&centres, &positions, hit) {
+                events.push(Event::CamDestroyed { cam: i, explosion });
+            }
+        }
+        for f in &mut self.fluos {
+            f.step(&mut self.rand);
+        }
+        for s in &mut self.searchlights {
+            s.step();
+        }
         for (i, w) in self.walls.iter_mut().enumerate() {
             if w.step(&elevators) {
                 events.push(Event::WallDropping { wall: i });
@@ -1337,7 +1484,6 @@ impl Session {
 
     /// One frame of every live E AI (stg09D.rel 0x51034).
     fn step_enemies(&mut self, player: Option<PlayerSample>, events: &mut Vec<Event>) {
-        let center_height = self.physics.center_height;
         for (i, ai) in self.enemy_ai.iter_mut() {
             if !self.enemies[*i].alive {
                 continue;
@@ -1347,18 +1493,21 @@ impl Session {
             }
             let mut host = EnemyWorld {
                 player,
-                center_height,
+                game_37: self.effects_suppressed,
                 hit: ai.eai.task.flags & 4 != 0,
                 row_radius: ai.row_radius,
                 radius: &mut ai.radius,
                 events: vec![],
             };
+            // One rand state for the whole game (MSL `next`).
+            let mut rand = Rand(self.rand.seed);
             ai.eai.exec(
                 &mut host,
                 &mut self.stack,
-                &mut self.rand,
+                &mut rand,
                 &mut self.group_counts,
             );
+            self.rand.seed = rand.0;
             for e in host.events {
                 match e {
                     EnemyEvent::Score { points } => {
@@ -1408,13 +1557,14 @@ impl EnemyAi {
 }
 
 /// What the session tells its enemies. Player contact, culling, ground
-/// collision and the game flags at 0x801CC168 are main-program code it
-/// does not run: the player is never touched or bumped, enemies are never
-/// culled, ground collision leaves them where they are, and the flags keep
-/// their main.dol initial values (all 0).
+/// collision are main-program code it does not run: the player is never
+/// touched or bumped, enemies are never culled and ground collision leaves
+/// them where they are. Of the flags at 0x801CC168, +0x37 is the host's
+/// `effects_suppressed`; +0x39 and +0x42 keep their main.dol initial value
+/// (0).
 struct EnemyWorld<'a> {
     player: Option<PlayerSample>,
-    center_height: f32,
+    game_37: bool,
     hit: bool,
     row_radius: [f32; 2],
     radius: &'a mut f32,
@@ -1423,7 +1573,7 @@ struct EnemyWorld<'a> {
 
 impl EnemyHost for EnemyWorld<'_> {
     fn game_37(&self) -> bool {
-        false
+        self.game_37
     }
     fn game_39_42(&self) -> (u8, u8) {
         (0, 0)
@@ -1431,7 +1581,7 @@ impl EnemyHost for EnemyWorld<'_> {
     fn players(&self) -> [Option<PlayerView>; 2] {
         [
             self.player.map(|p| PlayerView {
-                pos: [p.center[0], p.center[1] - self.center_height, p.center[2]],
+                pos: p.position,
                 center: p.center,
             }),
             None,
@@ -1439,7 +1589,7 @@ impl EnemyHost for EnemyWorld<'_> {
     }
     fn player_mode(&self, index: usize) -> i8 {
         match (index, self.player) {
-            (0, Some(p)) => p.mode,
+            (0, Some(p)) => p.action as i8,
             _ => 0,
         }
     }
