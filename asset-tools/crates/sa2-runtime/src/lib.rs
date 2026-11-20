@@ -16,6 +16,7 @@ pub mod objects;
 pub mod player;
 pub mod session;
 pub mod set;
+pub mod sound;
 pub mod stage;
 pub mod task;
 pub mod walker_slot;
