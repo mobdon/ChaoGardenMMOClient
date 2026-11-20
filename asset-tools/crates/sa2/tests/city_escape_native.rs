@@ -59,6 +59,6 @@ fn installed_city_escape_inputs() {
     assert_eq!(c.ring_groups.len(), 50);
     assert_eq!(c.three_springs.len(), 2);
     assert_eq!(c.rows["GREEN_B"].len(), 18);
-    assert!(!c.bush_solids.is_empty());
+    assert!(!c.bush_model.is_empty());
     assert!(!c.death_zones.is_empty());
 }

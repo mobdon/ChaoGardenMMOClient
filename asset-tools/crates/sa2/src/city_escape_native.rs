@@ -4,7 +4,7 @@
 //! This is everything a Sonic speed-stage session needs that the install
 //! provides as data: Sonic's PhysicsArray row, the start row, terrain, the
 //! grind-rail paths, death zones, spring tasks, dash-panel, ring-group and
-//! triple-spring tasks (ported from stg13D.rel), bush-block collision and the goal-ring program, plus the raw
+//! triple-spring tasks (ported from stg13D.rel), the bush-block collision model and the goal-ring program, plus the raw
 //! SET rows of every other placement.
 //!
 //! The player controller is deliberately absent. Its code is not readable
@@ -16,7 +16,7 @@ use crate::{
     death_zones,
     fan_stage::MountedStage,
     goal_ring,
-    play_objects::{death_zone_triangles, place_y, read_object_solid},
+    play_objects::{death_zone_triangles, read_object_solid},
     play_world::V3,
     player_physics::PlayerParameters,
     ring_group::{self, RingGroup},
@@ -38,7 +38,6 @@ pub const PATH_CONFIG: &str = "[City Escape Paths]\ntype=pathlist\naddress=CDB35
 pub const RAIL_CALLBACK_VA: u32 = 0x4980c0;
 /// PC_SA2/STG13.ini [City Escape Bush Block Collision].
 pub const GREEN_B_COLLISION_RVA: u32 = 0xcaa350;
-const GREEN_B_VA: u32 = 0x5e2b40;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
 const GOALRING_VA: u32 = 0x6c63c0;
@@ -129,8 +128,9 @@ pub struct CityEscape {
     pub three_springs: Vec<TripleSpring>,
     pub rails: Vec<RailPath>,
     pub death_zones: Vec<Vec<[V3; 3]>>,
-    /// GREEN_B Basic collision placed by SET position and Y angle.
-    pub bush_solids: Vec<[V3; 3]>,
+    /// GREEN_B Basic collision in model space, as stored. How the GREEN_B
+    /// task places it is not ported; its placements are in `rows`.
+    pub bush_model: Vec<[V3; 3]>,
     /// Every other placement, by object name, as raw SET rows.
     pub rows: BTreeMap<String, Vec<Row>>,
     #[serde(skip)]
@@ -162,7 +162,7 @@ impl CityEscape {
             .swap_remove(physics_slot)
             .parameters;
         let goal_program = goal_ring::Program::read(LEVEL, stage_module)?;
-        let bush = read_object_solid(exe, GREEN_B_COLLISION_RVA)?;
+        let bush_model = read_object_solid(exe, GREEN_B_COLLISION_RVA)?;
         let dash_panel_program = dash_panel::Program::read(MODULE_FILE, stage_module)?;
         let ring_group_program = ring_group::Program::read(MODULE_FILE, stage_module)?;
         let three_spring_program = three_spring::Program::read(MODULE_FILE, stage_module)?;
@@ -172,7 +172,6 @@ impl CityEscape {
         let mut dash_panels = vec![];
         let mut ring_groups = vec![];
         let mut three_springs = vec![];
-        let mut bush_solids = vec![];
         let mut rows: BTreeMap<String, Vec<Row>> = BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -248,13 +247,6 @@ impl CityEscape {
                         ),
                         row,
                     }),
-                    (GREEN_B_VA, "GREEN_B") => {
-                        bush_solids.extend(
-                            bush.iter()
-                                .map(|t| t.map(|v| place_y(v, pl.rotation[1], pl.position))),
-                        );
-                        rows.entry(row.name.clone()).or_default().push(row);
-                    }
                     _ => rows.entry(row.name.clone()).or_default().push(row),
                 }
             }
@@ -297,7 +289,7 @@ impl CityEscape {
             three_springs,
             rails,
             death_zones,
-            bush_solids,
+            bush_model,
             rows,
             terrain,
         })

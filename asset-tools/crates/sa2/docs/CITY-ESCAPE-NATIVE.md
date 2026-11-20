@@ -32,7 +32,7 @@ speed stages.
 | Grind rails | The 12 paths whose callback is 0x4980C0 in the PC_SA2/STG13.ini path list at RVA 0xCDB35C: 147 points, with rotation words and lengths as stored |
 | Death zones | PC_SA2/STG13.ini table at RVA 0xCDC678 |
 | Springs | `spring::StageSpring` tasks for the 10 SPRA/SPRB placements (the C-verified callback) |
-| Bush blocks | GREEN_B Basic collision at RVA 0xCAA350, placed by SET position and Y angle (18 placements) |
+| Bush blocks | The GREEN_B Basic collision model at RVA 0xCAA350, in model space. The GREEN_B task that places it is not ported; its 18 placements stay raw rows. |
 | Goal | The stg13D.rel goal-ring program and each GOALRING's native initialization route. Of the two placements, only the Rotation.x 0 one reaches contact. |
 | Dash panels | One `dash_panel::DashPanel` task per KASOKU placement (82), running the callback ported below |
 | Triple springs | One `three_spring::ThreeSpring` task per 3SPRING placement (2), running the code ported below |
