@@ -957,7 +957,7 @@ impl EAi {
                             volume: 10,
                             pos: self.task.pos,
                         });
-                        host.event(Event::PlayerHurt {
+                        host.event(Event::Vibrate {
                             player: p,
                             a: 3,
                             b: 7,

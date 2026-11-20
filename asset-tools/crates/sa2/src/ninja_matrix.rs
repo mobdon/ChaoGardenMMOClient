@@ -8,7 +8,10 @@
 //! of the compiled instructions, so results match bit for bit, down to the
 //! signs of zeros. `tests/ninja_matrix_dol.rs` checks every routine against
 //! main.dol run under `tests/dol_ppc.py`.
-use crate::ninja_trig::{fmadds, nj_rotate_sin_cos};
+use crate::{
+    msl_math::gekko_frsqrte,
+    ninja_trig::{fmadds, fnmsubs, nj_rotate_sin_cos},
+};
 
 pub type Mtx = [[f32; 4]; 3];
 pub type Vec3 = [f32; 3];
@@ -149,6 +152,13 @@ impl MatrixStack {
         rotate(self.current_mut(), axis, angle);
     }
 
+    /// `njRotate` (0x80115218): m = m * R(axis, angle).
+    pub fn rotate_axis(&mut self, axis: Vec3, angle: i32) {
+        let (s, c) = nj_rotate_sin_cos(angle);
+        let m = self.current_mut();
+        *m = concat(m, &rot_axis(axis, s, c));
+    }
+
     pub fn calc_vector(&self, v: Vec3) -> Vec3 {
         mult_vec_sr(self.current(), v)
     }
@@ -156,6 +166,32 @@ impl MatrixStack {
     pub fn calc_point(&self, v: Vec3) -> Vec3 {
         mult_vec(self.current(), v)
     }
+}
+
+/// `PSVECNormalize`: one Newton step on Gekko's frsqrte estimate.
+pub fn normalize(v: Vec3) -> Vec3 {
+    let sq = fmadds(v[2], v[2], v[0] * v[0]) + v[1] * v[1];
+    let e = gekko_frsqrte(sq as f64);
+    let e2 = (e * e) as f32;
+    let half = (e * 0.5) as f32;
+    let r = fnmsubs(e2, sq, 3.0) * half;
+    v.map(|c| c * r)
+}
+
+/// `PSMTXRotAxisRad(axis, rad)` from the angle's sine and cosine, in the
+/// compiled lane order.
+pub fn rot_axis(axis: Vec3, s: f32, c: f32) -> Mtx {
+    let [nx, ny, nz] = normalize(axis);
+    let t = 1.0 - c;
+    let (xt, yt, zt) = (nx * t, ny * t, nz * t);
+    let (txx, txy, tyy) = (xt * nx, xt * ny, yt * ny);
+    let (txz, tyz, tzz) = (xt * nz, yt * nz, zt * nz);
+    let (xs, ys) = (nx * s, ny * s);
+    [
+        [txx + c, fnmsubs(nz, s, txy), txz + ys, 0.0],
+        [fmadds(nz, s, txy), c + tyy, -xs + tyz, 0.0],
+        [txz + -ys, xs + tyz, tzz + c, 0.0],
+    ]
 }
 
 /// fn_8003E9E0: rotate `v` by Z, then X, then the negated Y angle of a task

@@ -770,7 +770,8 @@ pub enum ItemEvent {
     BreakEffect { pos: V3, vector: V3, size: f32 },
     /// SE_Call(id, 0, 0, 0) (0x8006B978).
     SeCall(i32),
-    /// fn_8002FB2C(player, a, b, c).
+    /// fn_8002FB2C(player, a, b, c): the controller vibration request
+    /// ("VibTask"; native as `player_contact::fn_8002fb2c`).
     Fn8002FB2C { player: i32, a: i32, b: i32, c: i32 },
     /// syFree (0x80119828).
     SyFree,

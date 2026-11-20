@@ -75,3 +75,33 @@ fn fctiwz_f64(x: f64) -> i32 {
         x as i32
     }
 }
+
+/// `njScalor` (0x801151F4): a vector's length as Gekko estimates it,
+/// `fres(frsqrte(x*x + y*y + z*z))`.
+pub fn scalor(v: Vec3) -> f32 {
+    let s = v[0] * v[0];
+    let s = fmadds(v[1], v[1], s);
+    let s = fmadds(v[2], v[2], s);
+    crate::msl_math::gekko_fres(crate::msl_math::gekko_frsqrte(s as f64)) as f32
+}
+
+/// `njUnitVector` (0x80115D24): scale `v` by the frsqrte estimate of its
+/// squared length (no refinement). Returns the scaled vector and the
+/// routine's return value, fres of that estimate.
+pub fn unit_vector(v: Vec3) -> (Vec3, f32) {
+    let s = v[0] * v[0];
+    let s = fmadds(v[1], v[1], s);
+    let s = fmadds(v[2], v[2], s);
+    let e = crate::msl_math::gekko_frsqrte(s as f64);
+    // An invalid product (inf * 0) gives PowerPC's default NaN, which is
+    // positive (x86 would give a negative one).
+    let out = v.map(|c| {
+        let r = e * c as f64;
+        if r.is_nan() && !e.is_nan() && !c.is_nan() {
+            f32::from_bits(0x7fc0_0000)
+        } else {
+            r as f32
+        }
+    });
+    (out, crate::msl_math::gekko_fres(e) as f32)
+}

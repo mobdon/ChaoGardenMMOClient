@@ -89,7 +89,7 @@ pub fn display(rel: &[u8], prs: &[u8], s: DisplayInput) -> Result<serde_json::Va
         return Err(Error::invalid("expected one kart atlas"));
     };
     let img = texture::decode_gvr(atlas.data, None)?;
-    let module = CityRel::read_identified(rel, 80)?;
+    let module = CityRel::read_stage(rel, "CartD.rel")?;
     let constants = module.data(4)?;
     let data = module.data(5)?;
     let f = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());

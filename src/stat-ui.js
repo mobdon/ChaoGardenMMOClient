@@ -1,7 +1,41 @@
-const labels = {
-  swim: [0, 78, 46, 16], fly: [49, 78, 29, 17], run: [81, 78, 36, 16],
-  power: [121, 78, 54, 16], stamina: [176, 78, 71, 16],
-};
+import './stat-labels.css';
+
+const labels = { swim: 'Swim', fly: 'Fly', run: 'Run', power: 'Power', stamina: 'Stamina', luck: 'Luck', intelligence: 'Intelligence' };
+// Foreground left bearing/width measured from unchanged ad_22ascii.png.
+// Three native pixels between foregrounds retain room for the original shadow.
+const glyphMetrics = { F: [5, 13], I: [6, 10], L: [5, 12], P: [4, 13], R: [4, 14], S: [4, 13],
+  a: [6, 11], c: [5, 11], e: [5, 12], g: [5, 11], i: [9, 3], k: [5, 12], l: [9, 4], m: [4, 15],
+  n: [5, 11], o: [4, 12], r: [5, 9], t: [6, 8], u: [5, 12], w: [3, 16], y: [4, 13] };
+const glyphScale = 16 / 22;
+let fontReady;
+function nativeFontReady() {
+  return fontReady ??= new Promise(resolve => {
+    const image = new Image();
+    image.onload = () => resolve(true); image.onerror = () => resolve(false);
+    image.src = '/api/assets/chao-stat-font.png';
+  });
+}
+
+function nativeLabel(name) {
+  const label = document.createElement('span'); label.className = 'stat-name native-stat-name';
+  const text = labels[name] || name;
+  const fallback = document.createElement('span'); fallback.className = 'native-stat-fallback'; fallback.textContent = text;
+  label.append(fallback);
+  if (!labels[name]) return label;
+  const glyphs = document.createElement('span'); glyphs.className = 'native-stat-glyphs'; glyphs.setAttribute('aria-hidden', 'true');
+  for (const character of text) {
+    const index = character.codePointAt(0) - 33, [left, width] = glyphMetrics[character];
+    const glyph = document.createElement('span'); glyph.className = 'native-stat-glyph';
+    glyph.style.setProperty('--glyph-x', `${-(index % 23) * 16}px`);
+    glyph.style.setProperty('--glyph-y', `${-Math.floor(index / 23) * 16}px`);
+    glyph.style.setProperty('--glyph-left', `${(1 - left) * glyphScale}px`);
+    glyph.style.setProperty('--glyph-advance', `${(width + 3) * glyphScale}px`);
+    glyphs.append(glyph);
+  }
+  label.append(glyphs);
+  void nativeFontReady().then(loaded => label.classList.toggle('native-font-ready', loaded));
+  return label;
+}
 const grades = ['E', 'D', 'C', 'B', 'A', 'S'];
 const gradeCells = { S: [88, 44], A: [198, 22], B: [220, 22], C: [242, 22], D: [264, 22], E: [286, 22] };
 
@@ -22,16 +56,7 @@ function nativeFrame() {
 export function createStatRow(name) {
   const row = document.createElement('div');
   row.className = 'stat-row'; row.dataset.stat = name;
-  const label = document.createElement('span');
-  label.className = 'stat-name'; label.textContent = name;
-  if (labels[name]) {
-    const [x, y, width, height] = labels[name];
-    label.classList.add('native-stat-label');
-    label.style.setProperty('--sprite-x', `${-x}px`);
-    label.style.setProperty('--sprite-y', `${-y}px`);
-    label.style.setProperty('--sprite-width', `${width}px`);
-    label.style.setProperty('--sprite-height', `${height}px`);
-  }
+  const label = nativeLabel(name);
   const bar = document.createElement('div');
   bar.className = 'stat-bar'; bar.append(document.createElement('span'));
   const level = document.createElement('span'); level.className = 'stat-level';

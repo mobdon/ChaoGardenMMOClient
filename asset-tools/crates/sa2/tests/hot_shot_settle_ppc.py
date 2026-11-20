@@ -12,10 +12,9 @@ import tempfile
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_BIG_ENDIAN, UC_MODE_PPC32
 from unicorn import ppc_const as regs
 
-game = Path(os.environ["SA2_GAME_PATH"])
-module = game / "resource/gd_PC/boss_hotshotD.rel"
+module = Path(os.environ["SA2_GC_REL_DIR"]) / "boss_hotshotD.rel"
 raw = module.read_bytes()
-assert hashlib.sha256(raw).hexdigest() == "9e0caebeefbdeb2e2829f17510b44d9238956342b3eed10a2ae7e1ff56358960"
+assert hashlib.sha256(raw).hexdigest() == "0989db26abb7559760ff7b49e6156c249b36b97211a18b59fc343e63ddcf460d"
 word = lambda off: struct.unpack_from(">I", raw, off)[0]
 section = lambda n: word(word(16) + n * 8) & ~3
 cpu = Uc(UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN)
@@ -39,7 +38,7 @@ for owner, at in struct.iter_unpack(">II", raw[word(40):word(40)+word(44)]):
         off += delta
         if source != 1 or not lo <= off < hi:
             continue
-        assert (owner, sec) == (82, 4) and kind in (4, 6)
+        assert (owner, sec) == (83, 4) and kind in (4, 6)
         address = data + add
         half = (address + 0x8000) >> 16 if kind == 6 else address
         cpu.mem_write(code + off, struct.pack(">H", half & 65535))

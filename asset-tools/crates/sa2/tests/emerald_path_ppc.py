@@ -6,7 +6,7 @@ import wild_canyon_ppc as native
 u, R, base = native.u, native.R, native.base
 # Matching City Escape source names both player-slot calls njDistanceP2P.
 # Resolve both installed modules' import tables rather than assuming DOL addresses.
-city=(native.game/"resource/gd_PC/stg13D.rel").read_bytes()
+city=(Path(os.environ["SA2_GC_REL_DIR"])/"stg13D.rel").read_bytes()
 w=lambda i:struct.unpack_from(">I",city,i)[0]
 board_imports={}
 for module,at in struct.iter_unpack(">II",city[w(40):w(40)+w(44)]):
@@ -17,7 +17,7 @@ for module,at in struct.iter_unpack(">II",city[w(40):w(40)+w(44)]):
         if kind==202:destination=section;offset=0;continue
         offset+=inc
         if module==0 and destination==1 and kind==10:board_imports[offset]=target
-assert board_imports[0x9ac]==board_imports[0xa40]==native.engines[0x21914]==native.engines[0x21b08]==0x8011b314
+assert board_imports[0x9ac]==board_imports[0xa40]==native.engines[0x21914]==native.engines[0x21b08]==0x8011b65c
 paths = native.emerald_paths()
 scratch = native.stage + 1200
 def fp(x):

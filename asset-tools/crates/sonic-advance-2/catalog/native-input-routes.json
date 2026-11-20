@@ -464,7 +464,7 @@
           "is_boosting": false,
           "walk_anim": 0,
           "control_lock": 0,
-          "char_state": 14,
+          "char_state": 9,
           "sprite_offset_x": 6,
           "sprite_offset_y": 14,
           "sprite_frame_flags": 0,

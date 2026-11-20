@@ -60,7 +60,7 @@ mod tests {
     }
 }
 
-/// City Escape savepoint work fields advanced by module 12, text 0x4496c.
+/// City Escape savepoint work fields advanced by GSNE8P module 13 (Steam 12), text 0x4496c.
 /// Angles and steps are sign-extended from their low 16 bits each tick.
 #[derive(Debug, PartialEq)]
 pub struct CheckpointSpin {
@@ -145,9 +145,9 @@ pub struct CheckpointBonus {
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BonusCounters {
-    /// Signed halfword at 0x801cbd88 + 0x6e.
+    /// Signed halfword at 0x801cc168 + 0x6e.
     pub direct: i16,
-    /// Signed halfword at (*0x803ad460) + 0x10.
+    /// Signed halfword at (*0x803ad860) + 0x10.
     pub indirect: i16,
 }
 
@@ -213,7 +213,7 @@ pub struct ContactPlayer {
     pub rotation: [i32; 3],
 }
 
-/// Arguments to module zero's 0x8001c9f4 at City Escape text +0x447a4.
+/// Arguments to module zero's 0x8001ca78 at City Escape text +0x447a4.
 /// The implementation of that engine call is not part of the stage REL.
 #[derive(Debug, PartialEq, Eq, serde::Serialize)]
 pub struct CheckpointContactCall {
@@ -639,14 +639,8 @@ impl StageItemTable {
             .find(|r| r.0 == level)
             .ok_or_else(|| Error::invalid("unsupported checkpoint stage"))?;
         let filename = format!("stg{level:02}D.rel");
-        let info = crate::stage_land::catalog()
-            .iter()
-            .find(|r| r.filename == filename)
-            .ok_or_else(|| Error::invalid("missing stage identity"))?;
-        if info.size != module.len() || info.sha256 != crate::manifest::sha256(module) {
-            return Err(Error::invalid("unsupported checkpoint REL revision"));
-        }
-        let rel = crate::city_rel::CityRel::read_identified(module, info.module)?;
+        let rel = crate::city_rel::CityRel::read_stage(module, &filename)
+            .map_err(|_| Error::invalid("unsupported checkpoint REL revision"))?;
         let data = rel.data(5)?;
         let code = rel.data(1)?;
         let mut entries = [(0, 0); 11];
@@ -661,7 +655,7 @@ impl StageItemTable {
             let link = rel
                 .reference(5, (at + 4) as u32)
                 .ok_or_else(|| Error::invalid("missing item handler relocation"))?;
-            if (link.module, link.section, link.kind) != (info.module, 1, 1)
+            if (link.module, link.section, link.kind) != (rel.module_id(), 1, 1)
                 || link.addend % 4 != 0
                 || code.get(link.addend as usize..).is_none_or(|s| s.len() < 4)
             {
@@ -744,12 +738,12 @@ mod item_tests {
             assert_eq!(t.dispatch(1, 0x4000, id).unwrap(), None);
         }
         for (id, points, amount, scalar, last) in [
-            (0, 100, Some(10), Some(0.5f32), 0x80035a88),
-            (1, 200, Some(20), Some(1.0), 0x80035a88),
-            (2, 50, Some(5), Some(0.25), 0x80035a88),
-            (3, 200, None, None, 0x80037278),
-            (6, 200, None, None, 0x80037394),
-            (8, 200, None, None, 0x800374b0),
+            (0, 100, Some(10), Some(0.5f32), 0x80035cf0),
+            (1, 200, Some(20), Some(1.0), 0x80035cf0),
+            (2, 50, Some(5), Some(0.25), 0x80035cf0),
+            (3, 200, None, None, 0x800374e0),
+            (6, 200, None, None, 0x800375fc),
+            (8, 200, None, None, 0x80037718),
         ] {
             let mut calls = Vec::new();
             assert!(t
@@ -758,7 +752,7 @@ mod item_tests {
             assert_eq!(
                 calls[0],
                 ItemEngineCall {
-                    target: 0x80063524,
+                    target: 0x8006378c,
                     r3: points,
                     r4: None,
                     f1_bits: None
@@ -769,7 +763,7 @@ mod item_tests {
                 assert_eq!(
                     calls[1],
                     ItemEngineCall {
-                        target: 0x80063584,
+                        target: 0x800637ec,
                         r3: 1,
                         r4: amount,
                         f1_bits: None
@@ -823,23 +817,23 @@ impl StageItemTable {
         // Verified distance back from the dispatcher to each handler entry.
         let (points, amount, scalar, target) =
             match self.dispatcher.checked_sub(dispatch.handler_offset) {
-                Some(0x2dc) => (100, Some(10), Some(0x3f000000), 0x80035a88),
-                Some(0x17c) => (200, Some(20), Some(0x3f800000), 0x80035a88),
-                Some(0x204) => (50, Some(5), Some(0x3e800000), 0x80035a88),
-                Some(0x12c) => (200, None, None, 0x80037278),
-                Some(0x74) => (200, None, None, 0x80037394),
-                Some(0x1b4) => (200, None, None, 0x800374b0),
+                Some(0x2dc) => (100, Some(10), Some(0x3f000000), 0x80035cf0),
+                Some(0x17c) => (200, Some(20), Some(0x3f800000), 0x80035cf0),
+                Some(0x204) => (50, Some(5), Some(0x3e800000), 0x80035cf0),
+                Some(0x12c) => (200, None, None, 0x800374e0),
+                Some(0x74) => (200, None, None, 0x800375fc),
+                Some(0x1b4) => (200, None, None, 0x80037718),
                 _ => return Err(Error::invalid("unsupported checkpoint item handler")),
             };
         visit(ItemEngineCall {
-            target: 0x80063524,
+            target: 0x8006378c,
             r3: points,
             r4: None,
             f1_bits: None,
         });
         if let Some(n) = amount {
             visit(ItemEngineCall {
-                target: 0x80063584,
+                target: 0x800637ec,
                 r3: player,
                 r4: Some(n),
                 f1_bits: None,

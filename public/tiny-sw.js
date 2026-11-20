@@ -1,15 +1,18 @@
 // Only the Tiny Garden document is controlled. API state and credentials are
 // always network-only; an offline shell cannot mint or queue gameplay results.
-const CACHE = 'tiny-garden-shell-v1';
+const CACHE = 'tiny-garden-shell-v2';
 const art = new Set(['tiny-neutral-chaos.png', 'tiny-hero-chaos.png', 'tiny-dark-chaos.png',
   'chao-flame.png', 'hub-grass.png', 'chao-stat-panel.png', 'chao-stat-font.png', 'discord-icon.png',
   ...['red', 'blue', 'green', 'cyan', 'purple', 'yellow', 'white'].map(color => `emerald-${color}.png`)]);
+const tinyArt = new Set(['tiny-garden-a2ne.png', 'tiny-garden-a2ne-sidebar-1.png',
+  ...['cyan', 'blue', 'yellow', 'red', 'green', 'purple', 'white'].map(color => `widget-emerald-${color}.png`)]);
 
 function publicFile(url) {
   return url.origin === self.location.origin && !url.search
     && (url.pathname === '/tiny.html' || url.pathname === '/tiny.webmanifest'
       || /^\/assets\/[\w.-]+\.(?:js|css)$/.test(url.pathname)
-      || (url.pathname.startsWith('/api/assets/') && art.has(url.pathname.slice('/api/assets/'.length))));
+      || (url.pathname.startsWith('/api/assets/') && art.has(url.pathname.slice('/api/assets/'.length)))
+      || (url.pathname.startsWith('/__widget-art/') && tinyArt.has(url.pathname.slice('/__widget-art/'.length))));
 }
 
 self.addEventListener('install', event => {

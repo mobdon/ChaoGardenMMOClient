@@ -146,13 +146,13 @@ pub(super) fn run(
                 [if right { 120. } else { -120. }, 0.]
             };
             let mut row = json!({"mode":mode,"submode":sub,"targetXZ":target,"extraByte2":counter,
-            "enableShape7Attribute16":entered,"callHelper55d78":mode==4});
+            "enableShape7Attribute16":entered,"callHelper5606c":mode==4});
             let mut calls = Vec::new();
             if armed {
                 if entered {
                     calls.extend([
-                        json!("create55248"),
-                        json!("attach5649c"),
+                        json!("create5553c"),
+                        json!("attach56790"),
                         json!({"helperEnabled":1}),
                     ]);
                 }

@@ -1,0 +1,25 @@
+{
+  "exercise": {
+    "phase": "exercise",
+    "realRustTransport": true,
+    "watchPetCommitted": true,
+    "staleAndDuplicateIntentRejected": true,
+    "pairReplayRejected": true,
+    "canonicalChaoPreserved": true,
+    "pairedCredentialRead": true,
+    "unauthorizedRejected": true
+  },
+  "binarySha256": "76df7aa256296b26468aa25a7bb5c2973d6b6a6fd9fea9413a78a34d89aca913",
+  "sourceCommit": "56af22dece8551376f4c8b9a1882acecfff02bf1",
+  "backend": "real Rust accounts-v2 service, isolated loopback port 4317",
+  "restart": {
+    "phase": "restart",
+    "realRustTransport": true,
+    "committedCareSurvivedRestart": true,
+    "sequenceReplayRejectedAfterRestart": true,
+    "revokedCredentialRejected": true,
+    "sameCanonicalChaoAndStats": true,
+    "pairedCredentialSurvivedRestart": true
+  },
+  "transport": "production Android Gateway via test-only localhost HTTPS proxy; default hostname verification retained"
+}

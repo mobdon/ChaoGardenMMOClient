@@ -45,7 +45,7 @@ Supply `child_hit` only when the child collision query runs, `body_hit` only whe
 
 The installed PPC comparator executes section 1 from 0x557C through the post-hit branch, including the two shape update helpers and the byte counter. It checks 291 callbacks across three traces, covering suppressed hits, body fallback, repeated hits, health carried from four to zero, randomized shape bytes and both lethal transitions, including height exactly 5. These tests observe the native search results; they do not manufacture a successful campaign result.
 
-After a lethal hit, damage.defeatClock projects the boss timer from its next update. Below height 5, the first countdown takes 91 updates and the second takes 241; at or above 5, there is only the 241-update countdown. On the final update both paths wrap the timer to 65535 and call engine addresses 8001c78c and 80022bdc in order with argument zero. Nonlethal traces return null. The installed PPC comparator executes the timer and branch blocks, skipping intervening motion and effects. The engine calls are observations; their execution, story advancement and a playable clear remain unverified.
+After a lethal hit, damage.defeatClock projects the boss timer from its next update. Below height 5, the first countdown takes 91 updates and the second takes 241; at or above 5, there is only the 241-update countdown. On the final update both paths wrap the timer to 65535 and call GSNE8P engine addresses 8001c810 and 80022e24 (Steam imports 8001c78c and 80022bdc) in order with argument zero. Nonlethal traces return null. The installed PPC comparator executes the timer and branch blocks, skipping intervening motion and effects. The engine calls are observations; their execution, story advancement and a playable clear remain unverified.
 
 After a takeoff trace reaches mode 3, supply optional first_flight with ticks containing player_xz, boss_x and velocity_x. The first pass enables attribute 0x10 on collision shape 7, follows the player's X and clamps target Z to [-90,90]. Once the X gap is strictly below 10 it centers target Z; subsequent updates select the edge by horizontal velocity (zero chooses left). Crossing strictly beyond the selected edge at X +/-120 enters mode 4 and decrements the extra-work byte modulo 256.
 
@@ -106,3 +106,15 @@ The collision replay's shotRegistration reports the projectile's local descripto
 An active shot tick may supply effect_allocations in impact-call order. Each success initializes the kind-4 task at the impact position, installs its native callbacks and requests shared resources; a failed allocation leaves effectTask null and still frees the projectile. Omitting this observation preserves the dispatch-only replay. The comparison executes section 1 routines 0x42648 and 0x42540; the allocator and shared resource manager are observed boundaries. This does not draw the effect or determine player contact.
 
 After lethal damage, optional post_defeat supplies the pose at the end of the countdown and subsequent ticks. Both boss callbacks still run after the two handoff calls. They roll the timer from 65535 to zero; engine byte 0x43 equal to one snaps X/Z to the route's REL vector, keeps height, queries heading and overrides yaw to 0x4000. Mode 10 requests a kind-5 effect every fifth timer value including zero. Mode 13 instead calls the angle helper for pitch on every update (approach_result required). The comparison runs the original submode dispatch, pose helper and callback blocks for 12 more updates on each of three lethal traces. This assumes the boss remains scheduled; the engine's handoff calls, scene lifetime and story advancement are not simulated.
+
+## REL revisions
+
+The disc copies of boss_bigfootD.rel (module 82) and boss_hotshotD.rel
+(module 83) each add one 0x2F4-byte routine, with 8 bytes of section-4
+constants and 0xC0 bytes of section-5 data (`city_rel::BOSS_INSERTS`: Big Foot
+1:0x174BC, 4:0x990, 5:0x46418; Hot Shot 1:0xF034, 4:0x840, 5:0x1E680). The
+ports use disc offsets and GSNE8P engine addresses. `DiscLayout` reads the
+Steam copy (modules 81, 82) in disc layout: it inserts the missing blocks as
+zeros, moves every offset and self-reference past them, and re-targets local
+branches across the inserted routine. With that, every other byte and
+relocation matches the disc copy. The PPC harnesses run the disc copies.

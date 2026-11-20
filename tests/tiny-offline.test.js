@@ -18,7 +18,7 @@ function harness() {
 
 test('Tiny offline shell never intercepts auth, API state, mutations or credential URLs', () => {
   const h = harness();
-  for (const url of ['/api/account', '/api/session', '/api/intent', '/api/lease', '/api/pairing/claim', '/api/status', '/ws?token=secret', '/tiny.html?token=secret', '/api/assets/unknown.png', 'https://external.test/assets/example.js']) assert.equal(h.load(url), undefined, url);
+  for (const url of ['/api/account', '/api/session', '/api/intent', '/api/lease', '/api/pairing/claim', '/api/status', '/ws?token=secret', '/tiny.html?token=secret', '/api/assets/unknown.png', '/__widget-art/unknown.png', '/__widget-art/tiny-garden-a2ne.png?token=secret', 'https://external.test/assets/example.js']) assert.equal(h.load(url), undefined, url);
   assert.equal(h.load('/tiny.html', 'POST'), undefined);
 });
 
@@ -26,11 +26,14 @@ test('Tiny offline shell retains approved presentation and uses it only on netwo
   const h = harness();
   const first = await h.load('/assets/tiny-version.js');
   await h.load('/api/assets/tiny-dark-chaos.png');
+  const nativeArt = ['/__widget-art/tiny-garden-a2ne.png', '/__widget-art/tiny-garden-a2ne-sidebar-1.png', '/__widget-art/widget-emerald-cyan.png'];
+  for (const path of nativeArt) await h.load(path);
   h.goOffline();
   assert.equal(await h.load('/assets/tiny-version.js'), first);
   assert.ok(await h.load('/api/assets/tiny-dark-chaos.png'));
+  for (const path of nativeArt) assert.ok(await h.load(path));
   await assert.rejects(h.load('/assets/not-yet-cached.js'), /offline/);
-  assert.equal(h.saved.size, 2);
+  assert.equal(h.saved.size, 5);
 });
 
 test('install scope and entry carry no identity or credential', async () => {

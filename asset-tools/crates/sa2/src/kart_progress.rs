@@ -145,7 +145,7 @@ pub fn segment_geometry(bytes: &[u8], s: SegmentInput) -> Result<SegmentGeometry
     if direction[0] == 0. && direction[2] == 0. {
         return Ok(SegmentGeometry::Miss);
     }
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     let constants = rel.data(4)?;
     let number = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());
     let [a, _, c, b] = s.segment_xz;
@@ -191,7 +191,7 @@ pub fn crossing_directory(bytes: &[u8], exe: &[u8]) -> Result<serde_json::Value>
 }
 pub(crate) fn read_crossings<'a>(bytes: &[u8], exe: &'a [u8]) -> Result<CrossingDirectory<'a>> {
     verify(bytes)?;
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     let invalid = || Error::invalid("invalid CartD crossing directory");
     let directory = |at| -> Result<u32> {
         let hi = rel.reference(1, at).ok_or_else(invalid)?;
@@ -427,7 +427,7 @@ fn resolve_cues(
     alternate_profiles: &std::collections::BTreeSet<u8>,
     calls: &[(usize, &str, Option<u8>)],
 ) -> Result<Vec<CueRequest>> {
-    let module = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let module = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     let data = module.data(5)?;
     let mut requests = Vec::new();
     for &(slot, name, kind) in calls {

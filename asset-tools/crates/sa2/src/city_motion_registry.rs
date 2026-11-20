@@ -63,10 +63,10 @@ impl CityDefaults {
             }
         }
         for (at, target) in [
-            (0x11774, 0x8003d56c),
-            (0x117b4, 0x80054fd4),
-            (0x117d0, 0x8003d56c),
-            (0x11810, 0x80054fd4),
+            (0x11774, 0x8003d7d4),
+            (0x117b4, 0x8005523c),
+            (0x117d0, 0x8003d7d4),
+            (0x11810, 0x8005523c),
         ] {
             let r = rel
                 .reference(1, at)
@@ -93,7 +93,7 @@ impl CityDefaults {
                 Slot {
                     tag: i16::from_be_bytes([row[2], row[3]]),
                     address: Some(MotionAddress::Stage {
-                        module: 12,
+                        module: rel.module_id(),
                         section,
                         offset,
                     }),

@@ -412,6 +412,7 @@ fn goal_player_callbacks_match_original_c() {
             GoalPhase::Victory => 4,
             GoalPhase::CameraShift => 5,
             GoalPhase::SpecialTransition => 6,
+            GoalPhase::SpecialExit => 7,
         };
         let flags = u32::from(output.start_long_brake)
             | u32::from(output.stop_long_brake) << 1

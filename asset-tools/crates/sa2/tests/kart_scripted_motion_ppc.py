@@ -1,5 +1,6 @@
 """Run CartD vehicle movement callbacks 8 and 9 against the Rust command."""
 import json, struct, subprocess, sys, tempfile
+from gsne8p import steam_rel
 from pathlib import Path
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -18,7 +19,7 @@ for section, addr in base.items():
 off, n = struct.unpack_from(">II", data, 40)
 for mod, at in struct.iter_unpack(">II", data[off:off+n]):
     while True:
-        delta, k, s, a = struct.unpack_from(">HBBI", data, at)
+        delta, k, s, a = steam_rel(struct.unpack_from(">HBBI", data, at), mod)
         at += 8
         if k == 203: break
         if k == 202:

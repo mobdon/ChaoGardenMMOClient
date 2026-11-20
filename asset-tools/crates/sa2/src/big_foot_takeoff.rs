@@ -67,7 +67,7 @@ fn from_ground(
             0 => {
                 calls.extend([
                     json!({"enableCollision":8}),
-                    json!("helper58c78"),
+                    json!("helper58f6c"),
                     json!({"motion":0}),
                 ]);
                 sub = 1;
@@ -78,7 +78,7 @@ fn from_ground(
                 if ready {
                     ay = 0.8;
                     calls.extend([
-                        json!("helper58d30"),
+                        json!("helper59024"),
                         json!({"motion":1}),
                         json!({"effectDescriptor":680}),
                     ]);

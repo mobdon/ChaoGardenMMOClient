@@ -1,0 +1,7 @@
+# Down, rolling and spin-dash source verification
+
+Tests/native_spin_oracle.py checks the original shared/stage/player.c blob 0e99fe239ec75a8d188769913aafd9485dc76908 at commit 2dd3f17d30cd3c156e508aac0017620ae485b9ba. It compiles the unmodified input decision, charge/release branch, rolling speed/steering branch, and initializer/offset adjustment, with callback dispatch, pitch and nonessential services isolated at the indicated boundaries. The retail ROM speed table is 9 signed words at 0xD6920: 1536, 1632, 1728, 1824, 1920, 2016, 2112, 2208, 2304 (Q8.8). The sine table is read from 0x97AA4.
+
+The Rust test matches 65,536 original-C outputs per group (262,144 total): directional and move-state blockers, crouch angle/signed speed gates, two-direction steering and control locks, rolling slope and signed speed limits, spin charge decay/tap pitch/release direction, and setup speed and rotated offset changes. A tap decays first, captures pitch with its low seven bits cleared, then adds Q(2) and applies a lower bound of Q(8). A stationary crouch requires Down alone and the floor-facing rotation band. The source jump edge that starts spin immediately calls the charging callback; release schedules SpinAttack for the next player tick and retains the remainder of the current physics callback. Scope excludes dust rendering, sound synthesis and full-route input parity.
+
+Run cargo test --test source_native_spin -- --ignored with verified A2NE_ROM set locally.

@@ -598,6 +598,17 @@ impl Runtime {
         }
     }
 
+    /// Call a task's exec directly, as `fn_8001E89C` does for one player
+    /// task (no `makethread` update, no null check natively).
+    pub fn run_exec(&mut self, n: &mut dyn Natives, task: TaskId) {
+        match self.task(task).map(|t| t.slot(Slot::Exec)) {
+            Some(0) | None => self
+                .events
+                .push(Event::Anomaly("direct exec of a missing task or null exec")),
+            Some(exec) => self.dispatch(n, exec, task),
+        }
+    }
+
     /// `fn_80071A40(level)`: exec walk of one level.
     pub fn exec_level(&mut self, n: &mut dyn Natives, level: usize) {
         let Some(mut first) = self.btp.get(level).copied().flatten() else {
@@ -758,7 +769,8 @@ impl Runtime {
         }
     }
 
-    fn engine(&mut self, addr: u32, args: Vec<u32>) {
+    /// Log an engine routine call (not run here).
+    pub fn engine(&mut self, addr: u32, args: Vec<u32>) {
         self.events.push(Event::Engine { addr, args });
     }
 

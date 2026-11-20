@@ -1,5 +1,6 @@
 """Compare four ring effect spawns and allocated particle writes with CartD."""
 from pathlib import Path
+from gsne8p import steam_rel
 import json,struct,subprocess,sys,tempfile
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -15,13 +16,13 @@ for s,addr in base.items():
 o,n=struct.unpack_from(">II",data,40)
 for mod,at in struct.iter_unpack(">II",data[o:o+n]):
     while True:
-        delta,k,s,a=struct.unpack_from(">HBBI",data,at);at+=8
+        delta,k,s,a=steam_rel(struct.unpack_from(">HBBI", data, at), mod);at+=8
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
         if t==1 and k in (4,6) and (0xab04<=l<0xac40 or 0xf5e8<=l<0xf918):
-            if mod!=80 and a not in (0x80174f98,0x803ad6d4):continue
-            p=base[s]+a if mod==80 else (0x85004000 if a==0x80174f98 else 0x85004100)
+            if mod!=80 and a not in (0x80175378,0x803adad4):continue
+            p=base[s]+a if mod==80 else (0x85004000 if a==0x80175378 else 0x85004100)
             u.mem_write(base[1]+l,struct.pack(">H",(p if k==4 else (p+32768)>>16)&65535))
 ram=0x85000000;u.mem_map(ram,65536)
 parent,tw,wk,child,cw=[ram+x for x in (256,512,1024,2048,2304)]

@@ -251,6 +251,7 @@ pub enum GoalPhase {
     Victory,
     CameraShift,
     SpecialTransition,
+    SpecialExit,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct GoalController {
@@ -330,11 +331,6 @@ impl GoalController {
                     self.phase = GoalPhase::Init;
                 }
                 GoalPhase::Init => {
-                    if p.move_state & GOAL_REACHED != 0 && special_rings >= 7 {
-                        self.phase = GoalPhase::SpecialTransition;
-                        output.special_transition = true;
-                        return Ok(output);
-                    }
                     output.stop_water_sound = p.move_state & 0x20000 != 0;
                     p.move_state &= !0x330ee730;
                     p.unk61 = 0;
@@ -344,6 +340,13 @@ impl GoalController {
                     p.unk71 = 0;
                     p.move_state &= !(player::SPIN_ATTACK | player::FACING_LEFT);
                     p.change_sprite_offsets(6, 14, false);
+                    if p.move_state & GOAL_REACHED != 0 && special_rings >= 7 {
+                        p.is_boosting = false;
+                        p.char_state = player::WALK;
+                        self.victory_timer = 0;
+                        self.phase = GoalPhase::SpecialTransition;
+                        continue;
+                    }
                     if p.q_speed_ground <= 0 {
                         self.victory(p, level, shift_y);
                         return Ok(output);
@@ -414,12 +417,91 @@ impl GoalController {
                     return Ok(output);
                 }
                 GoalPhase::SpecialTransition => {
+                    p.q_speed_ground = if p.q_speed_ground > 1408 {
+                        p.q_speed_ground.wrapping_sub(128)
+                    } else if p.q_speed_air_x < 1216 {
+                        p.q_speed_ground.wrapping_add(64)
+                    } else {
+                        1280
+                    };
+                    self.victory_timer = self.victory_timer.saturating_add(1);
+                    if self.victory_timer == 120 {
+                        p.char_state = 32;
+                    }
+                    output.begin_results = self.victory_timer == 180;
                     output.special_transition = true;
+                    output.advance_ground = true;
+                    return Ok(output);
+                }
+                GoalPhase::SpecialExit => {
+                    output.special_transition = true;
+                    output.advance_ground = true;
                     return Ok(output);
                 }
             }
         }
     }
+}
+
+/// The special-exit callbacks perform their camera/boost writes after ground motion.
+impl GoalController {
+    pub fn finish_special_motion(
+        &mut self,
+        p: &mut PlayerState,
+        camera: &mut crate::native_camera::NativeCamera,
+    ) -> bool {
+        match self.phase {
+            GoalPhase::SpecialTransition => {
+                shift_camera(&mut camera.shift_y);
+                if p.move_state & 0x04000000 != 0 {
+                    p.is_boosting = true;
+                    p.held_input = player::RIGHT;
+                    p.q_speed_ground = 2560;
+                    p.char_state = player::WALK;
+                    self.phase = GoalPhase::SpecialExit;
+                    return true;
+                }
+            }
+            GoalPhase::SpecialExit => {
+                camera.q_max_step_x = camera.q_max_step_x.wrapping_sub(56);
+            }
+            _ => {}
+        }
+        false
+    }
+}
+/// Ordinary single-player sub_80232D0 special gate, before native bounds.
+pub fn special_course_wrap(
+    rom: &VerifiedRom,
+    level: u8,
+    p: &mut PlayerState,
+    c: &mut crate::native_camera::NativeCamera,
+) -> Result<(), Error> {
+    if !crate::native_stage::is_course_act(level) {
+        return Err(Error("Special course wrap requires an ordinary act".into()));
+    }
+    let pair = |table| -> Result<[i32; 2], Error> {
+        let b = rom.range("rom", table + usize::from(level) * 8, 8)?;
+        Ok([
+            i32::from_le_bytes(b[..4].try_into().unwrap()),
+            i32::from_le_bytes(b[4..].try_into().unwrap()),
+        ])
+    };
+    let [tx, ty] = pair(0xd650c)?;
+    let [dx, dy] = pair(0xd661c)?;
+    if ty != -1 || dy != 0 {
+        return Err(Error("Unexpected vertical wrap in ordinary course".into()));
+    }
+    if tx >= 0
+        && p.q_world_x >= tx.wrapping_mul(256)
+        && c.q_max_step_x != 0
+        && c.axes_locked & 1 == 0
+    {
+        p.q_world_x = p.q_world_x.wrapping_add(dx.wrapping_mul(256));
+        c.x = c.x.wrapping_add(dx);
+        c.target_x = c.target_x.wrapping_add(dx);
+    }
+    Ok(())
 }
 
 pub fn time_bonus(course_time: u32) -> u32 {

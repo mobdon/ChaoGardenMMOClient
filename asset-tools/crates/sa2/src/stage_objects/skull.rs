@@ -19,11 +19,10 @@
 //!   twp +3 (bits 4-7: drop chance, bits 0-3: drop kind); registers the
 //!   three CollisionData rows at sec5 +0x1ED10 (`CCL_Init(task, row, 3,
 //!   4)`) and sets bit 0x10 on infos 0 and 1 and clears it on info 2; calls
-//!   the stage module's movable-object set-up 0x4B44 (which runs
-//!   `ObjectMovableInitialize(twp, mwp, 10)`, 0x800DE884, and allocates the
-//!   dynamic land object at task +0x3C through 0x49F8); when that object
-//!   exists it stores 0.1 (sec4 +0x9A0) at its +0x84 and sets bit 0x10 of
-//!   its +0x60 flags; the state becomes 2, the fade 1.0, and the movable
+//!   the stage module's movable-object set-up 0x4B44 (`dyn_land::setup`:
+//!   `ObjectMovableInitialize(twp, mwp, 10)`, 0x800DE884, and the body at
+//!   task +0x3C from 0x49F8); when the body exists it stores 0.1 (sec4
+//!   +0x9A0) as its ground bounce (+0x84) and sets its rest flag 0x10; the state becomes 2, the fade 1.0, and the movable
 //!   work's word +0x30 (mwp = task +0x38) 0x1300.
 //! * PSKULL exec 0x1D62C, after the range check, by state (signed byte):
 //!   - 2: when the collision reports a hit (`cwp +4` bit 0) the vertical
@@ -55,9 +54,9 @@
 //!     ends: `DeadOut` (0x800653B0) with a SET entry, else `FreeTask`
 //!     (0x80071AE0), and nothing more runs. Every other path of this branch
 //!     ends with the movable-object update 0x4BE0.
-//! * The shared destructor 0x1D598 releases the dynamic land object
-//!   (0x4BA8: `syFree` through 0x49D0 when task +0x3C is set, then clears
-//!   it) and zeroes the fade.
+//! * The shared destructor 0x1D598 releases the movable body
+//!   (0x4BA8, `dyn_land::release`: `syFree` through 0x49D0 when task +0x3C
+//!   is set, then clears it) and zeroes the fade.
 //! * The shared display 0x1DA40: `njSetTexture` (texlist sec5 +0x1E3DC),
 //!   push, `njTranslateEx(position)`, `njRotateY(0, Rotation.y)`, then with
 //!   the fade at 1.0 or more fn_8011E158(model sec5 +0x1ECF0); else the
@@ -66,17 +65,21 @@
 //!   1.0, 1.0), the model, fn_8002B348, fn_8002B2F8); pop.
 //!
 //! The movable-object routines 0x4B44 (set-up), 0x4BA8 (release) and 0x4BE0
-//! (per-frame update) belong to the stage module's dynamic land helpers
-//! (0x378C..0x4BE0 with 0x74CC, about 6 KB, also used by the stage's ORI);
-//! they are not ported here and are host hooks named after their offsets.
-//! The SET-state, drop, delete and draw calls are engine boundaries.
+//! (per-frame update) are the stage module's shared helpers, ported in
+//! `dyn_land`; their own engine calls (allocation, the land probes) go
+//! through [`MovableHost`], which [`SkullHost`] extends. The per-frame
+//! update needs the body: the original reads it through task +0x3C even
+//! when the set-up's allocation failed (a null read on GC); the port skips
+//! the update then. The SET-state, drop, delete and draw calls are engine
+//! boundaries.
 //!
 //! 0x1D3E0, 0x1D598 and 0x1D62C call those helpers with a direct `bl`
 //! whose displacement the REL does not relocate; their bytes match the
 //! other stages only with that displacement masked too, so they are listed
 //! in [`BL_MASKED_ROUTINES`] (`tests/so_skull.rs` checks them). PSKULL's
 //! load 0x1D500 is found as it is in 39 other stage RELs.
-use super::host::{Event, ObjectHost, V3};
+use super::dyn_land::{self, Body, Movable, MovableHost};
+use super::host::{Event, V3};
 use crate::enemy_lib::Rand;
 use crate::player_range::player_in_range;
 
@@ -193,15 +196,6 @@ pub struct Twp {
     pub scale: V3,
 }
 
-/// The fields of the dynamic land object (task +0x3C) PSKULL writes.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Land {
-    /// +0x60 flags.
-    pub flags: u32,
-    /// +0x84.
-    pub f84: f32,
-}
-
 /// A SKULL or PSKULL task.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SkullTask {
@@ -223,8 +217,8 @@ pub struct SkullTask {
     pub speed: V3,
     /// mwp +0x30.
     pub mwp_30: u32,
-    /// task +0x3C, when set.
-    pub land: Option<Land>,
+    /// task +0x3C: the movable body (`dyn_land`), when set.
+    pub land: Option<Movable>,
 }
 
 /// A player as PSKULL reads it.
@@ -281,10 +275,6 @@ pub enum Draw {
 /// What SKULL and PSKULL start or change outside their task.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SkullEvent {
-    /// stg42D 0x4BE0: the movable-object update.
-    MovableUpdate4be0,
-    /// stg42D 0x4BA8: the dynamic land object is released (task +0x3C).
-    MovableRelease4ba8,
     /// `_rename_SetConditionFlag(task, 1)` (0x8006539C).
     SetCondition,
     /// fn_800260FC(kind, at): the drop.
@@ -299,10 +289,7 @@ pub enum SkullEvent {
     Draw(Draw),
 }
 
-pub trait SkullHost: ObjectHost {
-    /// stg42D 0x4B44: the movable-object set-up; returns the dynamic land
-    /// object (task +0x3C) it made, if any.
-    fn movable_create_4b44(&mut self) -> Option<Land>;
+pub trait SkullHost: MovableHost {
     /// fn_80065388(task): the SET entry's condition (as a signed byte).
     fn condition(&mut self) -> i8;
     /// The two player slots.
@@ -342,8 +329,7 @@ pub fn skull_exec(t: &mut SkullTask, host: &mut impl SkullHost) {
 
 /// The shared destructor (0x1D598).
 pub fn destructor(t: &mut SkullTask, host: &mut impl SkullHost) {
-    host.skull(SkullEvent::MovableRelease4ba8);
-    t.land = None;
+    dyn_land::release(&mut t.land, host);
     t.alpha = 0.0;
 }
 
@@ -362,10 +348,10 @@ fn pskull_setup(t: &mut SkullTask, rows: u32, host: &mut impl SkullHost) {
     t.attr[0] |= 0x10;
     t.attr[1] |= 0x10;
     t.attr[2] &= !0x10;
-    t.land = host.movable_create_4b44();
+    t.land = dyn_land::setup(&mut t.twp.flag, &mut t.twp.b2, true, t.twp.pos, host);
     if let Some(l) = &mut t.land {
-        l.f84 = TENTH;
-        l.flags |= 0x10;
+        l.ground_bounce = TENTH;
+        l.flags |= dyn_land::F_REST;
     }
     t.twp.id = 2;
     t.alpha = ONE;
@@ -485,7 +471,17 @@ pub fn pskull_exec(t: &mut SkullTask, host: &mut impl SkullHost) {
             }
         }
     }
-    host.skull(SkullEvent::MovableUpdate4be0);
+    // 0x4BE0.
+    if let Some(st) = &mut t.land {
+        let b = Body {
+            flag: t.twp.flag,
+            ang: &mut t.twp.ang,
+            pos: &mut t.twp.pos,
+            speed: &mut t.speed,
+            cwp_flag: Some(t.cwp_flag),
+        };
+        dyn_land::update(b, st, host);
+    }
 }
 
 /// fn_8011E158, the model draw the display uses.

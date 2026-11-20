@@ -278,41 +278,20 @@ pub fn nearest_player(players: &[Option<PlayerView>; 2], from: V3) -> usize {
 /// `njScalor` (0x801151F4): fres(frsqrte(x*x + y*y + z*z)), with Gekko's
 /// estimates for both.
 pub fn scalor(v: V3) -> f32 {
-    use crate::ninja_trig::fmadds;
-    let s = fmadds(v[1], v[1], v[0] * v[0]);
-    let s = fmadds(v[2], v[2], s);
-    crate::msl_math::gekko_fres(gekko_frsqrte(s as f64)) as f32
+    crate::ninja_vector::scalor(v)
 }
 
 /// `njUnitVector` with its return value: Gekko's `fres` of the estimate
 /// (the length, roughly) and the scaled vector.
 pub fn unit_vector_len(v: V3) -> (f32, V3) {
-    use crate::ninja_trig::fmadds;
-    let s = fmadds(v[1], v[1], v[0] * v[0]);
-    let s = fmadds(v[2], v[2], s);
-    let e = gekko_frsqrte(s as f64);
-    (
-        crate::msl_math::gekko_fres(e) as f32,
-        [
-            (e * v[0] as f64) as f32,
-            (e * v[1] as f64) as f32,
-            (e * v[2] as f64) as f32,
-        ],
-    )
+    let (n, len) = crate::ninja_vector::unit_vector(v);
+    (len, n)
 }
 
-/// `njUnitVector` (0x80115D24): v times frsqrte of its squared length.
+/// `njUnitVector` (0x80115D24): v times frsqrte of its squared length
+/// (PowerPC's positive default NaN for a zero vector).
 pub fn unit_vector(v: V3) -> V3 {
-    use crate::ninja_trig::fmadds;
-    let s = fmadds(v[1], v[1], v[0] * v[0]);
-    let s = fmadds(v[2], v[2], s);
-    // fmuls with the double-precision estimate, rounded once to single.
-    let e = gekko_frsqrte(s as f64);
-    [
-        (e * v[0] as f64) as f32,
-        (e * v[1] as f64) as f32,
-        (e * v[2] as f64) as f32,
-    ]
+    crate::ninja_vector::unit_vector(v).0
 }
 
 /// fn_80017918: when the enemy is `range` or more from home (3D distance),

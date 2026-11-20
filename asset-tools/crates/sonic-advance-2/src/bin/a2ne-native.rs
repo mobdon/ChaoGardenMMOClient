@@ -234,7 +234,7 @@ fn serve(rom: &VerifiedRom<'_>, port: u16, level: u8) -> Result<()> {
     let mut game = NativeHarness::for_level(rom, level)?;
     let mut cues = std::collections::HashMap::<u16, Vec<u8>>::new();
     println!("A2NE native Rust execution slice: http://{host}/");
-    println!("One local session. Left/right and A (Z/space). Ctrl+C stops the lab.");
+    println!("One local session. Left/right, down and A (Z/space). Ctrl+C stops the lab.");
     for stream in listener.incoming() {
         let mut stream = stream?;
         let result = (|| -> Result<()> {

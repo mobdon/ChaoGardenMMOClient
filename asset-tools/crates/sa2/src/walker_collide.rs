@@ -627,26 +627,9 @@ pub fn wall_slide(
     true
 }
 
-/// DiffAngle (0x8002B8E0): |b - a| as a 16-bit angle.
-pub fn diff_angle(a: i32, b: i32) -> i32 {
-    let d = ((b & 0xffff) - (a & 0xffff)) as i16 as i32;
-    d.abs() & 0xffff
-}
-
-/// SubAngle (0x8002B904): b - a as a signed 16-bit angle.
-pub fn sub_angle(a: i32, b: i32) -> i32 {
-    ((b & 0xffff) - (a & 0xffff)) as i16 as i32
-}
-
-/// AdjustAngle (0x8002B918): turn `a` toward `b` by at most `step`.
-pub fn adjust_angle(a: i32, b: i32, step: i32) -> i32 {
-    let (a, b) = (a & 0xffff, b & 0xffff);
-    let d = (b - a) as i16 as i32;
-    if d <= step && d >= step.wrapping_neg() {
-        return b;
-    }
-    (if d & 0x8000 != 0 { a - step } else { a + step }) & 0xffff
-}
+/// DiffAngle, SubAngle and AdjustAngle (0x8002B8E0, 0x8002B904, 0x8002B918)
+/// live in `player_turn`, checked against main.dol there.
+pub use crate::player_turn::{adjust_angle, diff_angle, sub_angle};
 
 /// The player-work speeds fn_80042694 compares `spd.x` with.
 #[derive(Debug, Clone, Copy)]
@@ -1418,4 +1401,32 @@ pub fn any_wall_ahead(i: &SlideInput, hits: &[ContactHit], motion: Vec3) -> bool
         };
         ang < WALL_ANGLE && inner_product(t, h.facing) < ZERO
     })
+}
+
+const LINE_NEAR: f32 = f32::from_bits(0x3ccc_cccd); // r2-0x55A0, 0.025
+
+/// fn_8011B51C: the distance from `p` to the line, and the foot of the
+/// perpendicular when asked. Squared distances below 0.025 give 0.
+pub fn line_distance(p: Vec3, line: &Line, foot: Option<&mut Vec3>) -> f32 {
+    let (q, d) = (line.point, line.dir);
+    let along = d[2] * (p[2] - q[2]) + (d[0] * (p[0] - q[0]) + d[1] * (p[1] - q[1]));
+    let t = along / (d[2] * d[2] + (d[0] * d[0] + d[1] * d[1]));
+    let sq = match foot {
+        Some(out) => {
+            *out = [q[0] + d[0] * t, q[1] + d[1] * t, q[2] + d[2] * t];
+            let (dz, dx, dy) = (p[2] - out[2], p[0] - out[0], p[1] - out[1]);
+            dz * dz + (dx * dx + dy * dy)
+        }
+        None => {
+            let dz = p[2] - (q[2] + d[2] * t);
+            let dx = p[0] - (q[0] + d[0] * t);
+            let dy = p[1] - (q[1] + d[1] * t);
+            dz * dz + (dx * dx + dy * dy)
+        }
+    };
+    if sq < LINE_NEAR {
+        ZERO
+    } else {
+        sqrtf(sq)
+    }
 }

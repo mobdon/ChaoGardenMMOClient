@@ -1,5 +1,7 @@
 # Chao Garden RPG — working design
 
+The long-term target is a whole-game Sonic Adventure 2 port to Rust, including the original playable characters and their stage interactions. The garden is a consumer of that work. Keep reusable native format readers, collision queries and action rules in Rust; distinguish extracted source data, playable adaptations and retail-verified behavior in every milestone. Current character progress: [SA2 character port](SA2-CHARACTER-PORT.md).
+
 ## Agreed direction
 
 Play **as a Chao** in a browser RPG with shared gardens. The intended game requires the player's own Steam installation of **Sonic Adventure 2 and BATTLE DLC**. This is a Chao-centered game: its missions can draw on the wider SA2 game, but the player remains a Chao rather than switching to Sonic or another main character.
@@ -233,3 +235,7 @@ Debug tools should help resolve the user's actual reported problems: movement di
 ## Ordered delivery
 
 The working queue is [TASKS.md](../TASKS.md). First preserve and verify the current preview, complete the Rust transition and source split, and finish the movement/mech asset proof. Then implement movement states and one authoritative race/karate/mission feature at a time. Add production persistence and account ownership before public hosting. Validate 100, then 250, then 500 concurrent players before describing capacity as delivered.
+
+### Tiny phone shop and visitor order
+
+Shop mode uses the retail nine-slot shelf with an adjacent touch detail view; one canonical wallet funds fruit, eggs, toys and AFK training. The source-backed shelf and current differences are recorded in TINY-CHAO-SHOP-SCOPE.md. In the isolated Rust authority, AFK costs 1/2/3/4 rings per minute at the selected skill's level thresholds 0/25/50/75, paid upfront. Finish garden parity before social-only visits (including optional player visits, manual developer visits and a rare dev Chao Easter egg) and the mobile Game Boy shelf. Visitors must never transfer items, spend a host's rings or earn rewards for showing up.
