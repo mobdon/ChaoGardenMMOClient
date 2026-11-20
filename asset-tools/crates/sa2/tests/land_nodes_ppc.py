@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import dol_ppc  # noqa: E402
+import gekko_fres  # noqa: E402
 from dol_ppc import DEFAULT_PAIRED, Dol  # noqa: E402
 from rel_load import load_rel  # noqa: E402
 
@@ -31,7 +33,9 @@ assert hashlib.sha1(rel).hexdigest() == "8fbe506bcbbe6f012d2bb8240edb5f6c8cb6ece
 paired = dict(DEFAULT_PAIRED)
 paired.update({0x8011BEF0: "fn_8011BEF0", 0x8011BF0C: "njRotateXTbl", 0x8011BF64: "njRotateYTbl",
                0x8011BFE0: "njRotateZTbl", 0x8011C21C: "njUnitMatrixEx"})
-m = Dol(sys.argv[1] if len(sys.argv) > 1 else os.environ["SA2_MAIN_DOL"]).machine(paired=paired)
+m = Dol(sys.argv[1] if len(sys.argv) > 1 else os.environ["SA2_MAIN_DOL"]).machine(paired=paired, boot=False)
+gekko_fres.install(m, dol_ppc)  # njScalor and PSMTXInverse use fres
+m.boot()
 REL_BASE = 0x80800000
 addrs = load_rel(m, rel, REL_BASE)
 sec5_off = struct.unpack_from(">I", rel, struct.unpack_from(">I", rel, 16)[0] + 5 * 8)[0] & ~1

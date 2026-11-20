@@ -288,6 +288,71 @@ pub fn asinf(x: f32) -> f32 {
     atanf(x * inv_sqrtf(fnmsubs(x, x, ONE)))
 }
 
+/// Gekko `fres` estimate table (Dolphin, Source/Core/Common/FloatUtils.cpp,
+/// ApproximateReciprocal; copied from player_range.rs on #425) (base, slope) per 1024-entry segment.
+const FRES_EXPECTED: [(i64, i64); 32] = [
+    (0x7ff800, 0x3e1),
+    (0x783800, 0x3a7),
+    (0x70ea00, 0x371),
+    (0x6a0800, 0x340),
+    (0x638800, 0x313),
+    (0x5d6200, 0x2ea),
+    (0x579000, 0x2c4),
+    (0x520800, 0x2a0),
+    (0x4cc800, 0x27f),
+    (0x47ca00, 0x261),
+    (0x430800, 0x245),
+    (0x3e8000, 0x22a),
+    (0x3a2c00, 0x212),
+    (0x360800, 0x1fb),
+    (0x321400, 0x1e5),
+    (0x2e4a00, 0x1d1),
+    (0x2aa800, 0x1be),
+    (0x272c00, 0x1ac),
+    (0x23d600, 0x19b),
+    (0x209e00, 0x18b),
+    (0x1d8800, 0x17c),
+    (0x1a9000, 0x16e),
+    (0x17ae00, 0x15b),
+    (0x14f800, 0x15b),
+    (0x124400, 0x143),
+    (0x0fbe00, 0x143),
+    (0x0d3800, 0x12d),
+    (0x0ade00, 0x12d),
+    (0x088400, 0x11a),
+    (0x065000, 0x11a),
+    (0x041c00, 0x108),
+    (0x020c00, 0x106),
+];
+
+/// Gekko's `fres` on a double.
+pub fn gekko_fres(x: f64) -> f64 {
+    let bits = x.to_bits() as i64;
+    let mantissa = bits & ((1i64 << 52) - 1);
+    let sign = bits & (1u64 << 63) as i64;
+    let exponent = bits & (0x7ffi64 << 52);
+    if mantissa == 0 && exponent == 0 {
+        return f64::INFINITY.copysign(x);
+    }
+    if exponent == 0x7ff << 52 {
+        if mantissa == 0 {
+            return 0.0f64.copysign(x);
+        }
+        return f64::from_bits(x.to_bits() | 0x0008_0000_0000_0000);
+    }
+    if exponent < 895 << 52 {
+        return (f32::MAX as f64).copysign(x);
+    }
+    if exponent >= 1149 << 52 {
+        return 0.0f64.copysign(x);
+    }
+    let exponent = (0x7fdi64 << 52) - exponent;
+    let i = mantissa >> 37;
+    let (base, dec) = FRES_EXPECTED[(i / 1024) as usize];
+    let m = (base - (dec * (i % 1024) + 1) / 2) << 29;
+    f64::from_bits((sign | exponent | m) as u64)
+}
+
 /// MSL `acosf` (0x80111124): pi/2 - atanf(x / sqrt(1 - x * x)), the same
 /// arctangent as `asinf`.
 pub fn acosf(x: f32) -> f32 {

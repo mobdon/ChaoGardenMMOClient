@@ -75,11 +75,10 @@ The emulator check needs the GameCube stg11D.rel loaded and relocated, with
 r13-0x7A00 pointing at its `objLandTable0011`. The installed module and the
 disc's copy are byte-identical (SHA-1 8fbe506bcbbe6f012d2bb8240edb5f6c8cb6ece0).
 
-## Known difference: fres
+## fres
 
 njScalor ends in `fres`, and PSMTXInverse starts its reciprocal with one.
-Gekko answers `fres` from a 12-bit estimate table.
-The emulator (and so this port, to stay checkable) uses the reciprocal
-rounded to single. Matching the hardware needs Dolphin's fres table, the
-same GPL-derived kind of data as the frsqrte table, which waits on the
-owner's decision.
+`msl_math::gekko_fres` is Gekko's table estimate (Dolphin's transcription,
+copied from #425's player_range.rs), and `tests/gekko_fres.py` installs the
+same estimate in the harness, which otherwise computes an exact reciprocal.
+Like the frsqrte table, it is GPL-derived data awaiting the owner's decision.
