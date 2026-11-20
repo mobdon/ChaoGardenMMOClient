@@ -133,11 +133,11 @@ impl<'a> CityRel<'a> {
         Self::read_identified(bytes, 12)
     }
     /// The module id this REL was read as.
-    pub(crate) fn module_id(&self) -> u32 {
+    pub fn module_id(&self) -> u32 {
         self.module
     }
     /// Caller must first identify the released module by pinned digest.
-    pub(crate) fn read_identified(bytes: &'a [u8], module: u32) -> Result<Self> {
+    pub fn read_identified(bytes: &'a [u8], module: u32) -> Result<Self> {
         let word = |at: usize| -> Result<u32> {
             Ok(u32::from_be_bytes(
                 bytes

@@ -10,6 +10,7 @@
 pub mod camera;
 pub mod frame;
 pub mod input;
+pub mod objects;
 pub mod player;
 pub mod session;
 pub mod set;

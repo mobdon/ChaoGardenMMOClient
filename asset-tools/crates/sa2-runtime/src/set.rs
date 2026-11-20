@@ -11,7 +11,7 @@
 //! definition's exec is created as is, so an object whose routine is not
 //! registered fails closed as [`crate::Event::Unported`].
 use crate::stage::SetState;
-use crate::task::{Event, Runtime, TaskId};
+use crate::task::{Event, Natives, Runtime, TaskId};
 
 /// `fn_80066274`, the SET task's exec.
 pub const SET_EXEC: u32 = 0x8006_6274;
@@ -320,6 +320,23 @@ pub fn spawn_1p(rt: &mut Runtime, s: &mut SetState) {
             e.count = e.count.wrapping_add(1);
             e.keep = KEEP_MARGIN + dist;
             e.task = Some(task);
+        }
+    }
+}
+
+/// Natives that run the SET task's exec and pass every other address on.
+pub struct WithSet<'a> {
+    pub inner: &'a mut dyn Natives,
+    pub set: &'a mut SetState,
+}
+
+impl Natives for WithSet<'_> {
+    fn run(&mut self, rt: &mut Runtime, addr: u32, task: TaskId) -> bool {
+        if addr == SET_EXEC {
+            set_exec(rt, self.set, task);
+            true
+        } else {
+            self.inner.run(rt, addr, task)
         }
     }
 }
