@@ -20,6 +20,7 @@ WALKER-PORT-MAP.md on #424.
 | fn_800D1020: the broadphase, candidate triangles near a moving sphere (njScalor 0x801151F4 included) | `land_nodes::LandNodes::query` | same, 160 queries including a full 0xC0 candidate list |
 | fn_800CEE08: a moving sphere against one object's candidate triangles (with PSMTXInverse, njUnitVector, and #426's acosf) | `land_contact`, `LandNodes::collide` | same, every query's objects with candidates in both modes, over 300 hits |
 | fn_800D0904 with fn_800D13A0, fn_800D14C8, fn_800D17E0, fn_800D2298, fn_800D23A8, fn_800D24B4, fn_800D251C and Ninja's table rotations, njTranslateEx and fn_8011610C: the land collision node list and its bucketed triangles | `land_nodes::LandNodes::update` | tests/land_nodes.rs, 40 frames on stg11D.rel plus synthetic object trees, triangle, quad and flipped strip sets, flag 0x08000000 and a full triangle pool |
+| Walker collision helpers: fn_800428F8 (sphere offset), fn_800420C0 (surface physics), fn_800414F0 / fn_80041984 (floor and wall hit sorting), fn_80040ACC (wall slide), fn_80042694 (contact tilt), plane helpers 0x8011B6C8 / 0x8011B7B8 / 0x8011BDB4, sqrtf 0x8002F15C, fn_80027C2C, DiffAngle / SubAngle / AdjustAngle | `walker_collide` | tests/walker_collide.rs, 3,000 to 4,000 random cases each |
 | 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within +/-0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
 Set `SA2_MAIN_DOL` and `SA2_GSNE8P_DOL` to the extracted main.dol, and set
@@ -38,6 +39,12 @@ njInnerProduct only until #426 publishes it. The Prison Lane port owns trig
 (`ninja_trig`). #426 owns the matrix ops (`ninja_matrix`).
 
 ## Next: the collision core under 0x80045880
+
+Still to port: the bodies of fn_8003EAFC (walls) and fn_80043ED4 (floor),
+with fn_80042E0C, fn_80043600, fn_80042B4C, fn_80040F48, fn_80041C78 and
+fn_800424C8 (riding dynamic land through its callback table), then
+0x80045880 itself.
+
 
 0x80045880 sets the walker against the stage. It calls fn_8003EAFC (0xC64
 bytes) and fn_80043ED4 (0x19AC bytes), which reach the PhysicsArray readers
