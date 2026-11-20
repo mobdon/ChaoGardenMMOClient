@@ -421,7 +421,44 @@ fn approach_handler_matches_the_gamecube_powerpc() {
     let rows =
         k::read_motion_table(&std::fs::read(env::var_os("SA2_CHAO_KARATE_REL").unwrap()).unwrap())
             .unwrap();
-    for c in doc.as_array().unwrap() {
+    for c in doc["idle"].as_array().unwrap() {
+        let mut aux = k::MotionAux {
+            motion: i(&c["motion"]) as i8,
+            bits: u(&c["bits0"]) as u8,
+            ..Default::default()
+        };
+        let mut rec = StateRecord::default();
+        for fr in c["frames"].as_array().unwrap() {
+            let mut calls = vec![];
+            let input = k::MotionInput {
+                frame: 0.0,
+                linking: fr["linking"].as_bool().unwrap(),
+                stopped: false,
+            };
+            k::idle(&mut aux, &mut rec, &rows, input, &mut calls);
+            let got: Vec<Value> = calls
+                .iter()
+                .map(|call| match *call {
+                    k::MotionCall::Link { motion, link_step } => {
+                        serde_json::json!(["link", motion, link_step])
+                    }
+                    _ => unreachable!(),
+                })
+                .collect();
+            assert_eq!(Value::Array(got), fr["calls"], "idle calls {fr}");
+            assert_eq!(
+                [i64::from(aux.step), i64::from(aux.bits), i64::from(aux.row)],
+                [i(&fr["step"]), i(&fr["bits"]), i(&fr["row"])],
+                "idle aux {fr}"
+            );
+            assert_eq!(
+                u64::from(rec.flags & 0x8000),
+                u(&fr["twp"]) & 0x8000,
+                "idle end {fr}"
+            );
+        }
+    }
+    for c in doc["approach"].as_array().unwrap() {
         let mut aux = k::MotionAux {
             motion: 3,
             ..Default::default()

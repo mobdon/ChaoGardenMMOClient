@@ -106,4 +106,27 @@ for case in range(int(env.get("SA2_KARATE_RUNS", "300"))):
             "calls": list(calls), "aux": [m.get(aux + 1, "b"), m.get(aux + 8, "H"), m.get(aux + 0xC, "i")],
             "twp": m.get(twp + 4, "H"), "out": [bits32(m.get(mwp + 4 * k, "f")) for k in range(6)]})
     out.append({"frames": frames})
-print(json.dumps(out))
+
+# fn_72_B720 (ready/idle motions 0, 1, 2, 13-17, 36, 41).
+stub(0xB7B0, lambda mm: calls.append(["link", mm.gpr(4), mm.gpr(5) & 0xFFFF]))
+idle = []
+for case in range(int(env.get("SA2_KARATE_RUNS", "300"))):
+    motion = rng.choice([0, 1, 2, 13, 14, 15, 16, 17, 36, 41])
+    for o in range(0, 0x30, 4):
+        if o != 0x24:
+            m.put(aux + o, "I", 0)
+    m.put(aux, "b", motion); m.put(aux + 5, "B", rng.choice([0, 8, 0x10]))
+    m.put(twp + 4, "H", rng.choice([0, 0x8000]))
+    bits0 = m.get(aux + 5, "B")
+    link_left = rng.randrange(1, 5)
+    frames = []
+    for t in range(8):
+        linking = link_left > 0
+        link_left -= 1
+        m.put(ctrl, "H", 2 if linking else 0)
+        calls.clear()
+        m.call(ka[1] + 0xB720, r3=task)
+        frames.append({"linking": linking, "calls": list(calls), "step": m.get(aux + 1, "b"),
+            "bits": m.get(aux + 5, "B"), "row": m.get(aux + 0xC, "i"), "twp": m.get(twp + 4, "H")})
+    idle.append({"motion": motion, "bits0": bits0, "frames": frames})
+print(json.dumps({"approach": out, "idle": idle}))
