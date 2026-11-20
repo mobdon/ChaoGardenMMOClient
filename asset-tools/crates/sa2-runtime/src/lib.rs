@@ -6,6 +6,7 @@
 //! `sa2` crate and are registered into the runtime by their native address.
 #![forbid(unsafe_code)]
 
+pub mod sound;
 pub mod task;
 
 pub use task::{

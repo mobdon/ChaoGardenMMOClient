@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SA2 Sound Test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 12px 16px; background: #0d1018; color: #d8dce6; font: 14px system-ui, sans-serif; }
+  section { margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, input, button { font: inherit; }
+  #status { opacity: .8; }
+</style>
+</head>
+<body>
+<label>Steam "Sonic Adventure 2" folder: <input id="folder" type="file" webkitdirectory directory></label>
+<p id="status">Pick the game folder. Nothing leaves this computer.</p>
+<section>Music <select id="bgm"></select> <button id="play">Play</button> <button id="stop">Stop</button>
+  <label>volume <input id="vol" type="range" min="0" max="1" step="0.05" value="0.8"></label></section>
+<section>Sound effect <select id="bank"></select> <input id="sub" type="number" min="1" value="1" style="width:5em"> <button id="se">Play</button> <span id="seinfo"></span></section>
+<script type="module">
+import { Sa2Audio } from './sa2-audio.js';
+const $ = id => document.getElementById(id);
+const status = t => { $('status').textContent = t; };
+let audio, byPath = new Map();
+const readFile = async p => {
+  const f = byPath.get(p.toLowerCase());
+  return f ? new Uint8Array(await f.arrayBuffer()) : null;
+};
+async function ready(paths) {
+  audio ??= await Sa2Audio.create({ readFile });
+  const adx = paths.filter(p => /^resource\/gd_pc\/adx\/[^/]+\.adx$/.test(p)).map(p => p.split('/').pop()).sort();
+  const csb = paths.filter(p => /^resource\/gd_pc\/.*\.csb$/.test(p)).map(p => p.slice(15)).sort();
+  $('bgm').innerHTML = adx.map(n => `<option>${n}</option>`).join('');
+  $('bank').innerHTML = csb.map(n => `<option>${n}</option>`).join('');
+  status(`${adx.length} music files, ${csb.length} sound banks.`);
+}
+// Paths are matched without case, as on Windows.
+$('folder').addEventListener('change', e => {
+  byPath = new Map();
+  for (const f of e.target.files) byPath.set(f.webkitRelativePath.split('/').slice(1).join('/').toLowerCase(), f);
+  ready([...byPath.keys()]).catch(err => status('Could not start: ' + err.message));
+});
+$('play').onclick = async () => { await audio.resume(); await audio.run({ PlayBgm: { file: $("bgm").value } }); status('Playing ' + $("bgm").value); };
+$('stop').onclick = () => audio.run('StopBgm');
+$('vol').oninput = e => audio?.run({ SetVolume: { bus: 'Bgm', volume: +e.target.value } });
+$('se').onclick = async () => {
+  await audio.resume();
+  const p = $('bank').value, i = p.lastIndexOf('/');
+  const part = +p.slice(i + 1).replace('.csb', '');
+  await audio.run({ PlaySe: { bank: p.slice(0, i), part, subsong: +$('sub').value } });
+};
+// Development: ?from=<url prefix> reads the same files from a local server; ?list=<url> gives the paths.
+const q = new URLSearchParams(location.search);
+if (q.get('from')) {
+  const from = q.get('from');
+  const fetchFile = async p => { const r = await fetch(from + p); return r.ok ? new Uint8Array(await r.arrayBuffer()) : null; };
+  audio = await Sa2Audio.create({ readFile: fetchFile });
+  window.sa2audio = audio;
+  const paths = await (await fetch(q.get('list'))).json();
+  await ready(paths.map(p => p.toLowerCase()));
+}
+</script>
+</body>
+</html>
