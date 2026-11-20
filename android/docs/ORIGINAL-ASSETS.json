@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "verifiedOn": "2026-11-18",
+  "kind": "metadata-only; original image/model bytes remain local and excluded from Git",
+  "presentation": "Static front-idle widget presentation adapted from original SA2 desktop Chaos models and native poses. These are rendered phone atlases, not original or recovered unused GBA sprites.",
+  "deployment": "The paired HTTPS server must explicitly serve exactly these hash-pinned PNGs at /api/assets routes. Gateway verifies SHA-256 before decoding. Missing, changed, or unavailable source assets produce an unavailable-art marker, never a substitute Chao.",
+  "identityRules": {
+    "normal": "No Chaos mapping for normal, missing, or unknown non-Chaos forms.",
+    "chaos": "Matches src/tiny-avatar.js chaosVariant: form contains chaos; hero in form or alignment >= 60 wins; otherwise dark in form or alignment <= -60; otherwise neutral.",
+    "owner": "Only a literal canonical server admin=true adds one fixed cyan chest emerald and all seven native colored orbit sprites. This display flag grants no authority."
+  },
+  "atlas": {
+    "width": 768,
+    "height": 768,
+    "frameSize": 96,
+    "columns": 8,
+    "rows": 8,
+    "frameIndex": 0,
+    "frameMeaning": "front direction, first original Idle pose",
+    "sourceRigUnchanged": true,
+    "nativeBones": 40
+  },
+  "assets": [
+    {
+      "kind": "adapted-phone-atlas",
+      "variant": "neutral",
+      "path": "/api/assets/tiny-neutral-chaos.png",
+      "sha256": "16f703550b4c8fc103156095e5d2ed6f5ca966fa5814377b2a4b333333801a92",
+      "width": 768,
+      "height": 768,
+      "sourceModel": "neutral-chaos.glb",
+      "sourceSha256": "acab16a3486fb5c02b6ba33b978a66f8994f660b3983037446c7cecc0b3d51d3"
+    },
+    {
+      "kind": "adapted-phone-atlas",
+      "variant": "hero",
+      "path": "/api/assets/tiny-hero-chaos.png",
+      "sha256": "e30110f7b3e74cf6f53eec5b508564e47e3a2d62e3a0db657e6a610218ced708",
+      "width": 768,
+      "height": 768,
+      "sourceModel": "hero-chaos.glb",
+      "sourceSha256": "cc436264b233b8b49c743214db6427c4d551ae5c1e3386a8614f56de9cb05d5c"
+    },
+    {
+      "kind": "adapted-phone-atlas",
+      "variant": "dark",
+      "path": "/api/assets/tiny-dark-chaos.png",
+      "sha256": "035f532da8e1b21a11192b2fb6cc301f8d18224bf4d38258aa127f1e74e9fc85",
+      "width": 768,
+      "height": 768,
+      "sourceModel": "dark-chaos.glb",
+      "sourceSha256": "b61ddb66e798d0ea908b7e40917baf6104c3f51ced451b66b4b0b07566f1b8fe"
+    },
+    {
+      "kind": "original-dark-head-effect",
+      "path": "/api/assets/chao-flame.png",
+      "sha256": "f90fba571d8bbd3c9e184961f75f75ba9c91b47eec46601e3515410752393952",
+      "width": 512,
+      "height": 32,
+      "frames": 16,
+      "frameSize": 32,
+      "widgetFrame": 0,
+      "matte": "original black matte converted to coverage for transparent composition"
+    },
+    {
+      "kind": "original-emerald-facet-image",
+      "color": "cyan",
+      "path": "/api/assets/emerald-cyan.png",
+      "sha256": "a6f3fe23d1962e8871a513f34f10ab53e8f3556cf21e2ec0256a67f5537f1ca1",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "kind": "original-emerald-facet-image",
+      "color": "blue",
+      "path": "/api/assets/emerald-blue.png",
+      "sha256": "21d7b47a691819840d14c8d7e383583ec6e727037b347924339d84cc1344b833",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "kind": "original-emerald-facet-image",
+      "color": "yellow",
+      "path": "/api/assets/emerald-yellow.png",
+      "sha256": "ece5c5d96158eba56009c4dac3369c56de7bcd5f90a32813641d0b67b599e835",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "kind": "original-emerald-facet-image",
+      "color": "red",
+      "path": "/api/assets/emerald-red.png",
+      "sha256": "157bfdfff6064f142330bd0bfe9cadf8483851b691fc7e683861121092f0b5e1",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "kind": "original-emerald-facet-image",
+      "color": "green",
+      "path": "/api/assets/emerald-green.png",
+      "sha256": "ac27cedd76e1fca87a4bd9d6fba1c9aa6800a867a0a4e20b7c8b3f3795b1208d",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "kind": "original-emerald-facet-image",
+      "color": "purple",
+      "path": "/api/assets/emerald-purple.png",
+      "sha256": "a05bc333b6c0d4fa943f951d5af997fdcfae1c492c83e61dc57d02c4ca3812a8",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "kind": "original-emerald-facet-image",
+      "color": "white",
+      "path": "/api/assets/emerald-white.png",
+      "sha256": "fbe877077a5d24e0e49459b095d6a93831e130807ba643315b06c7421eb20440",
+      "width": 64,
+      "height": 64
+    }
+  ],
+  "verification": "All eleven output hashes and PNG dimensions were read from local files. All three atlas output hashes and source GLB hashes matched the existing tiny-chao-atlas source manifest. No copyrighted data, credentials, source installation paths, or absolute user paths are embedded."
+}
