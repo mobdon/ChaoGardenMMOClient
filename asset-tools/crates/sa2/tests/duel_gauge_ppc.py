@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run stage 42's gauge task update and compare duel-gauge.
 
-Usage: python duel_gauge_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_gauge_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes stg42D.rel +0x2052C under Unicorn: a full rise, drain and removal
 sequence plus random single updates. The game is never started.
 """
@@ -8,10 +8,10 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
-B,D,T,STOP,G=0x81000000,0x82000000,0x90000000,0x80f00000,0x801cbd88
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
+B,D,T,STOP,G=0x81000000,0x82000000,0x90000000,0x80f00000,0x801cc168
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -52,7 +52,7 @@ u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
 TASK,WORK,GAUGE=T+0x100,T+0x200,T+0x300
 calls=[]
 def hook(uc,pc,sz,_):
-    assert pc==0x80071878 and reg(3)==TASK;calls.append({'engine':'0x80071878','args':['task']})
+    assert pc==0x80071ae0 and reg(3)==TASK;calls.append({'engine':'0x80071ae0','args':['task']})
 for a in imports:u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 fb=lambda x:struct.unpack('>I',struct.pack('>f',x))[0]
 f32=lambda x:struct.unpack('>f',struct.pack('>f',x))[0]

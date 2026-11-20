@@ -3,7 +3,7 @@
 //! delete +0xADE4), and the apply (+0xAA50) and blend (+0xAB5C) helpers that
 //! drive the engine fog calls. Module state lives in section 6 +0x640..+0x654;
 //! fog parameter blocks (flags, ARGB colour, far, near) are inputs, as are
-//! the engine colour lerp (0x80033248) and float-to-unsigned (0x8010ABF4)
+//! the engine colour lerp (0x800334b0) and float-to-unsigned (0x8010af3c)
 //! results.
 use crate::{duel_platform, Error, Result};
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ pub struct FogState {
     pub blend: f32,
     /// s6+0x650 busy flag.
     pub busy: u32,
-    /// 0x803AD7C8.
+    /// 0x803adbc8.
     pub engine_fog: u32,
 }
 
@@ -83,10 +83,10 @@ pub struct FogInputs {
     /// Parameter blocks by address (the ones `current`/`target` point to).
     #[serde(default)]
     pub params: std::collections::BTreeMap<String, FogParams>,
-    /// 0x80071BA4 result for a worker spawn (0: null).
+    /// 0x80071e0c result for a worker spawn (0: null).
     #[serde(default)]
     pub spawned: u32,
-    /// 0x80033248 colour lerp and 0x8010ABF4 conversion results for a blend.
+    /// 0x800334b0 colour lerp and 0x8010af3c conversion results for a blend.
     #[serde(default)]
     pub lerp_color: u32,
     #[serde(default)]
@@ -120,14 +120,14 @@ impl<'a> Fog<'a> {
             .ok_or_else(duel_platform::invalid)
     }
     fn disable(&self, calls: &mut Vec<Value>, p: &FogParams) {
-        call(calls, 0x8011bfc0, json!([0]));
+        call(calls, 0x8011c308, json!([0]));
         call(
             calls,
-            0x8011bfb4,
+            0x8011c2fc,
             json!([self.c.default_near.to_bits(), p.far.to_bits()]),
         );
-        call(calls, 0x8011bf80, json!([rgba(p.color)]));
-        call(calls, 0x8011bf74, json!([]));
+        call(calls, 0x8011c2c8, json!([rgba(p.color)]));
+        call(calls, 0x8011c2bc, json!([]));
     }
     /// +0xAA50
     pub fn apply(&self, calls: &mut Vec<Value>, p: &FogParams) -> Result<()> {
@@ -141,11 +141,11 @@ impl<'a> Fog<'a> {
         } else {
             (5, self.c.default_near)
         };
-        call(calls, 0x8011bfc0, json!([kind]));
-        call(calls, 0x8011bfb4, json!([near.to_bits(), p.far.to_bits()]));
-        call(calls, 0x8011bf80, json!([rgba(p.color)]));
-        call(calls, 0x8011bf68, json!([]));
-        call(calls, 0x8011bfc8, json!([]));
+        call(calls, 0x8011c308, json!([kind]));
+        call(calls, 0x8011c2fc, json!([near.to_bits(), p.far.to_bits()]));
+        call(calls, 0x8011c2c8, json!([rgba(p.color)]));
+        call(calls, 0x8011c2b0, json!([]));
+        call(calls, 0x8011c310, json!([]));
         Ok(())
     }
     /// +0xAB5C
@@ -170,22 +170,22 @@ impl<'a> Fog<'a> {
         }
         call(
             calls,
-            0x80033248,
+            0x800334b0,
             json!([a.color, b.color, t.to_bits(), i.lerp_color]),
         );
         let far = a.far + t * (b.far - a.far);
-        call(calls, 0x8010abf4, json!([far.to_bits(), i.far_int]));
+        call(calls, 0x8010af3c, json!([far.to_bits(), i.far_int]));
         let far_f = i.far_int as f64 as f32;
         let (kind, near) = if a.flags & 2 != 0 {
             (self.fog_type(a.flags)?, a.near + t * (b.near - a.near))
         } else {
             (5, self.c.blend_near)
         };
-        call(calls, 0x8011bfc0, json!([kind]));
-        call(calls, 0x8011bfb4, json!([near.to_bits(), far_f.to_bits()]));
-        call(calls, 0x8011bf80, json!([rgba(i.lerp_color)]));
-        call(calls, 0x8011bf68, json!([]));
-        call(calls, 0x8011bfc8, json!([]));
+        call(calls, 0x8011c308, json!([kind]));
+        call(calls, 0x8011c2fc, json!([near.to_bits(), far_f.to_bits()]));
+        call(calls, 0x8011c2c8, json!([rgba(i.lerp_color)]));
+        call(calls, 0x8011c2b0, json!([]));
+        call(calls, 0x8011c310, json!([]));
         Ok(())
     }
     fn params(&self, i: &FogInputs, at: u32) -> Result<FogParams> {
@@ -200,7 +200,7 @@ impl<'a> Fog<'a> {
         if st.worker == 0 {
             call(
                 &mut calls,
-                0x80071ba4,
+                0x80071e0c,
                 json!([0, 1, s(1, 0xad48), self.c.worker_name, i.spawned]),
             );
             st.worker = i.spawned;
@@ -215,20 +215,20 @@ impl<'a> Fog<'a> {
     pub fn manager_delete(&self, st: &mut FogState, me: u32) -> Vec<Value> {
         let mut calls = Vec::new();
         if st.worker != 0 {
-            call(&mut calls, 0x80071888, json!([st.worker]));
+            call(&mut calls, 0x80071af0, json!([st.worker]));
             st.worker = 0;
         }
         if st.manager == me {
-            call(&mut calls, 0x8011bfc0, json!([0]));
+            call(&mut calls, 0x8011c308, json!([0]));
             call(
                 &mut calls,
-                0x8011bfb4,
+                0x8011c2fc,
                 json!([self.c.default_near.to_bits(), self.c.delete_far.to_bits()]),
             );
-            call(&mut calls, 0x8011bf80, json!([-1]));
-            call(&mut calls, 0x8011bf74, json!([]));
-            call(&mut calls, 0x8011bf74, json!([]));
-            call(&mut calls, 0x8011bfc8, json!([]));
+            call(&mut calls, 0x8011c2c8, json!([-1]));
+            call(&mut calls, 0x8011c2bc, json!([]));
+            call(&mut calls, 0x8011c2bc, json!([]));
+            call(&mut calls, 0x8011c310, json!([]));
             st.engine_fog = 0;
             st.manager = 0;
         }

@@ -114,10 +114,10 @@ impl PlatformWork {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PlatformFrame {
-    /// Return of the engine task check (0x8006538C) whenever it is called.
+    /// Return of the engine task check (0x800655f4) whenever it is called.
     #[serde(default)]
     pub task_check: bool,
-    /// Return of the visibility query (0x80039670).
+    /// Return of the visibility query (0x800398d8).
     #[serde(default)]
     pub visible: bool,
     /// Player data slot 0 field +0xA0 refers to this task.
@@ -140,14 +140,14 @@ pub struct PlatformFrame {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "call", rename_all = "camelCase")]
 pub enum Call {
-    /// Engine allocator (0x80119488) and its result.
+    /// Engine allocator (0x801197d0) and its result.
     Alloc {
         size: u32,
         ok: bool,
     },
-    /// Engine free (0x801194E0) of the object copy after a failed model copy.
+    /// Engine free (0x80119828) of the object copy after a failed model copy.
     FreeObject,
-    /// Dynamic-collision registration (0x8002305C).
+    /// Dynamic-collision registration (0x800232a4).
     #[serde(rename_all = "camelCase")]
     Register {
         collision_flags: u32,
