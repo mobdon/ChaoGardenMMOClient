@@ -62,6 +62,7 @@ pub mod object_table;
 pub mod ori;
 pub mod pe;
 pub mod physical_board;
+pub mod ninja_axis;
 pub mod play_objects;
 pub mod play_session;
 pub mod play_world;
@@ -96,6 +97,7 @@ pub mod visual_glb;
 pub mod walker_collide;
 pub mod walker_frame;
 pub mod walker_ground;
+pub mod walker_move;
 pub mod wild_canyon;
 
 use std::fmt;
