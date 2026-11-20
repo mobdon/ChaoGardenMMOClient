@@ -970,6 +970,9 @@ pub enum PlacementClock {
     CoreShrink(Box<CoreShrinkFrame>),
     /// Section 1 + 0x7f58: core action 5 (stunned).
     CoreStun(Box<CoreStunFrame>),
+    /// Section 1 + 0x83dc, 0x88c0 and 0x89e8: core draw, drifting spark
+    /// update and spark draw.
+    CoreDraw(Box<CoreDrawFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2766,6 +2769,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::CorePulse(frame) => return core_pulse(&rel, &frame),
         PlacementClock::CoreShrink(frame) => return core_shrink(&rel, &frame),
         PlacementClock::CoreStun(frame) => return core_stun(&rel, &frame),
+        PlacementClock::CoreDraw(frame) => return core_draw(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -7874,6 +7878,247 @@ fn core_stun(rel: &crate::city_rel::CityRel<'_>, f: &CoreStunFrame) -> Result<se
         if f64::from(left) < f64::from(k(0x82e6)?) {
             ev.push(st(0x82fc, "entity", 0, 1, 3));
             ev.push(st(0x8304, "entity", 1, 1, 0));
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of the core draw routines; values are as the code reads them.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum CoreDrawFrame {
+    /// 0x83dc: draw the core. `scales` are entity floats 0x20..0x28,
+    /// `block_scale` block float 0x24, `block_bytes` block bytes 0 and 1,
+    /// `byte` the engine byte at 0x803ad526.
+    Draw {
+        scales: [f32; 3],
+        block_scale: f32,
+        block_bytes: [i8; 2],
+        byte: i8,
+    },
+    /// 0x88c0: drifting spark update. `pause` and `freeze` are global bytes
+    /// 0x801cbd88 + 0x37 and + 9; `spark` is task word 0x38; `velocity` the
+    /// spark's floats 0xc..0x14 after the two 0x80114ba0 calls; `size`,
+    /// `growth` and `fade` entity floats 0x20, 0x24 and 0x28; `timer` entity
+    /// half-word 6.
+    Drift {
+        task: u32,
+        entity: u32,
+        spark: u32,
+        pause: i8,
+        freeze: i8,
+        velocity: [f32; 3],
+        size: f32,
+        growth: f32,
+        fade: f32,
+        timer: u16,
+    },
+    /// 0x89e8: spark draw. `position` is entity floats 0x14..0x1c (copied as
+    /// words), `size` and `fade` entity floats 0x20 and 0x28, `frame` the
+    /// signed entity byte 1.
+    Glow {
+        position: [u32; 3],
+        size: f32,
+        fade: f32,
+        frame: i8,
+    },
+}
+/// Sections 1 + 0x83dc / 0x88c0 / 0x89e8.
+fn core_draw(rel: &crate::city_rel::CityRel<'_>, f: &CoreDrawFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let fcall =
+        |site: u32, args: serde_json::Value, floats: Vec<f64>| -> Result<serde_json::Value> {
+            let mut e = call(site, args)?;
+            e["floats"] = serde_json::json!(floats);
+            Ok(e)
+        };
+    let st = |site: u32, region: &str, offset: serde_json::Value, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let k5 = |site: u32, offset: usize| -> Result<f32> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 5)
+            .ok_or_else(|| Error::invalid("missing core draw data"))?;
+        let at = r.addend as usize + offset;
+        let b = rel
+            .data(5)?
+            .get(at..at + 4)
+            .ok_or_else(|| Error::invalid("core draw data out of range"))?;
+        Ok(f32::from_be_bytes(b.try_into().unwrap()))
+    };
+    let d = |v: f32| f64::from(v);
+    let mut ev = Vec::new();
+    match f {
+        CoreDrawFrame::Draw {
+            scales,
+            block_scale,
+            block_bytes,
+            byte,
+        } => {
+            let table = rel
+                .reference(1, 0x844e)
+                .filter(|r| r.module == 88 && r.section == 5)
+                .ok_or_else(|| Error::invalid("missing core attachment table"))?
+                .addend;
+            let entry = table
+                .wrapping_add((224 * i32::from(block_bytes[0])) as u32)
+                .wrapping_add((28 * i32::from(block_bytes[1])) as u32);
+            let kind = *rel
+                .data(5)?
+                .get(entry as usize)
+                .ok_or_else(|| Error::invalid("core attachment table out of range"))?
+                as i8;
+            let one = d(k(0x8426)?);
+            let full = d(k(0x84d2)?);
+            ev.extend([
+                call(0x83fc, serde_json::json!([]))?,
+                call(0x8400, serde_json::json!([]))?,
+                call(0x8408, serde_json::json!([0x820]))?,
+                call(0x8414, serde_json::json!([1, 0x800]))?,
+                call(0x841c, serde_json::json!([9]))?,
+                fcall(
+                    0x8438,
+                    serde_json::json!([]),
+                    vec![d(*block_scale), one, one, one],
+                )?,
+                call(0x843c, serde_json::json!([]))?,
+                call(
+                    0x8488,
+                    serde_json::json!([0, module_ref(rel, 0x847e, (48 * i32::from(kind)) as u32)?]),
+                )?,
+                call(
+                    0x8490,
+                    serde_json::json!([format!("88:5+{:#x}", entry + 0x10)]),
+                )?,
+                call(
+                    0x849c,
+                    serde_json::json!([format!("88:5+{:#x}", entry + 4), 0]),
+                )?,
+                fcall(
+                    0x84b0,
+                    serde_json::json!([0]),
+                    scales.iter().map(|v| d(*v)).collect(),
+                )?,
+                call(0x84bc, serde_json::json!([module_ref(rel, 0x84b6, 0)?]))?,
+                call(0x84c8, serde_json::json!([module_ref(rel, 0x84c2, 0)?]))?,
+                call(0x84cc, serde_json::json!([]))?,
+                fcall(0x84e8, serde_json::json!([]), vec![full, full, full, full])?,
+                call(0x84ec, serde_json::json!([]))?,
+                call(0x84f0, serde_json::json!([]))?,
+                call(0x8504, serde_json::json!([*byte as i32 as u32]))?,
+            ]);
+        }
+        CoreDrawFrame::Drift {
+            task,
+            entity,
+            spark,
+            pause,
+            freeze,
+            velocity,
+            size,
+            growth,
+            fade,
+            timer,
+        } => {
+            if *pause == 0 && *freeze == 0 {
+                let drag = k5(0x892a, 0x20)?;
+                ev.extend([
+                    call(0x8914, serde_json::json!([spark, spark + 0xc]))?,
+                    call(0x8920, serde_json::json!([entity + 0x14, spark]))?,
+                ]);
+                for (i, site) in [0x893cu32, 0x894c, 0x895c].into_iter().enumerate() {
+                    ev.push(st(
+                        site,
+                        "spark",
+                        serde_json::json!(0xc + 4 * i as u32),
+                        4,
+                        (velocity[i] * drag).to_bits(),
+                    ));
+                }
+                if d(*size) < d(k5(0x892a, 0x18)?) {
+                    ev.push(st(
+                        0x8978,
+                        "entity",
+                        serde_json::json!(0x20),
+                        4,
+                        (size + growth).to_bits(),
+                    ));
+                }
+                if *timer == 0 {
+                    let left = fade - k5(0x898e, 0x24)?;
+                    ev.push(st(
+                        0x899c,
+                        "entity",
+                        serde_json::json!(0x28),
+                        4,
+                        left.to_bits(),
+                    ));
+                    if d(left) < d(k(0x89a6)?) {
+                        ev.push(call(0x89bc, serde_json::json!([task]))?);
+                    }
+                } else {
+                    ev.push(st(
+                        0x89c8,
+                        "entity",
+                        serde_json::json!(6),
+                        2,
+                        u32::from(timer - 1),
+                    ));
+                }
+            }
+        }
+        CoreDrawFrame::Glow {
+            position,
+            size,
+            fade,
+            frame,
+        } => {
+            let sprite = module_ref(rel, 0x8a06, 0)?;
+            let m = |o: u32| -> Result<serde_json::Value> {
+                Ok(serde_json::json!(module_ref(rel, 0x8a06, o)?))
+            };
+            let factor = {
+                let r = rel
+                    .reference(1, 0x8a2e)
+                    .filter(|r| r.module == 88 && r.section == 4)
+                    .ok_or_else(|| Error::invalid("missing spark size factor"))?;
+                let at = r.addend as usize;
+                let b = rel
+                    .data(4)?
+                    .get(at..at + 8)
+                    .ok_or_else(|| Error::invalid("spark size factor out of range"))?;
+                f64::from_bits(u64::from_be_bytes(b.try_into().unwrap()))
+            };
+            let scaled = (factor * d(*size)) as f32;
+            let texture = module_ref(rel, 0x89fe, 0)?;
+            let tex = |o: u32| -> Result<serde_json::Value> {
+                Ok(serde_json::json!(module_ref(rel, 0x89fe, o)?))
+            };
+            ev.extend([
+                st(0x8a10, "module", m(0x1c)?, 4, 0),
+                st(0x8a1c, "module", m(0)?, 4, position[0]),
+                st(0x8a20, "module", m(4)?, 4, position[1]),
+                st(0x8a28, "module", m(8)?, 4, position[2]),
+                st(0x8a44, "module", m(0x10)?, 4, scaled.to_bits()),
+                st(0x8a48, "module", m(0xc)?, 4, scaled.to_bits()),
+                st(
+                    0x8a5c,
+                    "module",
+                    tex(0x10)?,
+                    2,
+                    ((i32::from(*frame) + 6) as u32) & 0xffff,
+                ),
+                fcall(0x8a70, serde_json::json!([]), vec![d(*fade); 4])?,
+                call(0x8a7c, serde_json::json!([0, 8]))?,
+                call(0x8a88, serde_json::json!([1, 0xa]))?,
+                call(0x8a98, serde_json::json!([sprite, 0, 0x32]))?,
+                call(0x8aa4, serde_json::json!([0, 8]))?,
+                call(0x8ab0, serde_json::json!([1, 6]))?,
+            ]);
+            // The word stored at 0x8a10 is the texture list address itself.
+            ev[0]["value"] = serde_json::json!(texture);
         }
     }
     Ok(serde_json::json!({"events":ev}))
