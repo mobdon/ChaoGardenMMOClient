@@ -45,6 +45,10 @@ m.stub(0x8006B7EC, lambda mm: log.append(["se", 0x8006B7EC, mm.gpr(3), [mm.gpr(4
 RIDE = 0x81180000
 m.stub(0x8004E560, lambda mm: (log.append(["analog"]), mm.gpr(3, g["stick"])))
 m.stub(0x8004F11C, lambda mm: (log.append(["hold"]), mm.gpr(3, g["hold"])))
+m.stub(0x800542A0, lambda mm: log.append(["release"]))
+HPOS, HANG = 0x81140000, 0x81150000
+m.put(R13 - 0x7908, "I", HPOS)
+m.put(R13 - 0x7904, "I", HANG)
 
 
 def floats(n):
@@ -64,6 +68,7 @@ FUNCS = {
     "jump": 0x800ADD34,
     "jump41": 0x800ADED0,
     "stop": 0x800548E0,
+    "leave": 0x800545D0,
 }
 cases = []
 for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
@@ -113,13 +118,63 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
     m.put(0x801E7748 + 4 * p[0], "I", MW)
     p[3] = rng.choice([0xD, 0xE, 6, 7, 0])
     m.u.mem_write(PW, bytes(p))
+    if name == "leave":
+        t[0] = rng.choice([1, 1, 0x3D, 0x44, 0x40, 0])
+        struct.pack_into(">H", t, 4, rng.choice([0, 0, 0x100, 0x800, 1]))
+        p[1] = rng.choice([0, 1, 6, 7, 2])
+        p[3] = rng.randrange(0, 0x11)
+        struct.pack_into(">I", p, 0x8C, rng.choice([0, 0x08000000]))
+        struct.pack_into(">h", p, 0x14, rng.choice([0, 0, 2]))
+        nrm = rng.choice([[0.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.3, 0.9, 0.0]])
+        struct.pack_into(">3f", p, 0x7C, *nrm)
+        struct.pack_into(">f", p, 0x64, rng.choice([1.0, 3.0, 0.0]))
+        struct.pack_into(">f", p, 0xE4, rng.choice([0.5, 2.0]))
+        struct.pack_into(">3f", p, 0x70, *rng.choice([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]))
+        y = struct.unpack_from(">f", t, 0x18)[0]
+        struct.pack_into(">f", p, 0x1B4, f32(y - rng.choice([70, 50, 60])))
+        struct.pack_into(">f", p, 0x1B0, f32(y + rng.choice([70, 50, 60])))
+        struct.pack_into(">I", p, 0x1A8, rng.choice([0, 0, 2]))
+        grav = rng.choice([[0.0, -1.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 0.0]])
+        m.u.mem_write(0x801E5624, struct.pack(">3f", *grav))
+        g["grav"] = [fb(x) for x in grav]
+        pn = p[0]
+        idx = rng.randrange(0, 0x100)
+        m.put(R13 - 0x7910 + pn, "B", idx)
+        m.put(0x801E7768 + 4 * pn, "I", 0x81160000)
+        hist = {}
+        for back in (2, 3):
+            slot = (pn << 8) + ((idx - back) & 0xFF)
+            hp = [fb(f32(rng.uniform(-100, 100))) for _ in range(3)]
+            ha = [rng.randrange(0, 0x10000) for _ in range(3)]
+            m.u.mem_write(HPOS + 0xC * slot, struct.pack(">3I", *hp))
+            m.u.mem_write(HANG + 0xC * slot, struct.pack(">3i", *ha))
+            hist[back] = [hp, ha]
+        g["hist"] = {"idx": idx, "e": hist}
+        gs[0x3F + pn] = rng.choice([0, 1, 1])
+        if rng.random() < 0.5:
+            gs[0x3F + pn] = 1
+            struct.pack_into(">H", t, 4, 0)
+            struct.pack_into(">I", p, 0x8C, 0)
+            struct.pack_into(">h", p, 0x14, 0)
+            p[1] = rng.choice([0, 1, 2, 3])
+            struct.pack_into(">3f", p, 0x7C, 0.0, 1.0, 0.0)
+            struct.pack_into(">f", p, 0x64, 3.0)
+            struct.pack_into(">3f", p, 0x70, 0.0, 0.0, 0.0)
+            grav = [0.0, -1.0, 0.0] if rng.random() < 0.7 else [0.0, 1.0, 0.0]
+            struct.pack_into(">3f", p, 0x7C, 0.0, -grav[1], 0.0)
+            m.u.mem_write(0x801E5624, struct.pack(">3f", *grav))
+            g["grav"] = [fb(x) for x in grav]
+        m.u.mem_write(GS, bytes(gs))
+        g["gs"] = gs.hex()
+        m.u.mem_write(TW, bytes(t))
+        m.u.mem_write(PW, bytes(p))
     log.clear()
     a = FUNCS[name]
     if name == "f48":
         m.call(a, r3=PW)
     elif name in ("pressed", "held", "queue", "events", "buttons", "ground", "jump", "jump41"):
         m.call(a, r3=TW, r4=PW)
-    elif name in ("go_stand", "stop"):
+    elif name in ("go_stand", "stop", "leave"):
         m.call(a, r3=TW, r4=MW, r5=PW)
     else:
         m.call(a, r3=TW, r4=MW, r5=PW, r6=PW)

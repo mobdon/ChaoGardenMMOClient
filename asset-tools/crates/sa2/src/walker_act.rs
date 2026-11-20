@@ -27,6 +27,8 @@ pub struct ActGlobals {
     /// Whether the character motion table's entry 0x56 is loaded
     /// (0x801E5D28 + 0x2B4).
     pub motion_56: bool,
+    /// The gravity vector (0x801E5624).
+    pub gravity: Vec3,
 }
 
 /// The routines the action step hands over to.
@@ -39,6 +41,9 @@ pub trait ActSteps {
     /// fn_8004F11C(task work, player work): the flags of what the player
     /// holds or hangs from (its +0x94/+0x9C objects).
     fn hold_flags(&mut self, t: &Work, p: &Work) -> u32;
+    /// fn_800542A0(task work, motion work, player work): let go of the
+    /// held object.
+    fn release_hold(&mut self, t: &mut Work, m: &mut Work, p: &mut Work);
 }
 
 /// fn_8004691C(motion work, player work): zero both speeds.
@@ -458,5 +463,110 @@ pub fn stop_check(
     } else {
         go_stand(t, m, p, g, s);
     }
+    true
+}
+
+/// fn_80038008(pnum, back, pos, ang): the player's position and angles
+/// `back` frames ago from the history ring, when `playertwp[pnum]` exists.
+pub fn history_back(
+    hist: &crate::walker_exec::PlayerHistory,
+    pnum: i8,
+    back: u8,
+) -> (Vec3, [i32; 3]) {
+    let n = pnum as usize;
+    let slot = (n << 8) + hist.index[n].wrapping_sub(back) as usize;
+    (hist.pos[slot], hist.ang[slot])
+}
+
+const LAND_UP: f32 = f32::from_bits(0xbf7c_1bda); // r2-0x7358
+const LAND_DOWN: f32 = f32::from_bits(0xbf7f_ff58); // r2-0x7354
+const LAND_REACH: f32 = 60.0; // r2-0x7350
+const LAND_UP_FLIP: f32 = f32::from_bits(0x3f7f_ff58); // r2-0x734C
+
+/// fn_800545D0(task work, motion work, player work): leaving the ground.
+/// A running non-walker that ran off flat ground with the floor (or, under
+/// reversed gravity, the ceiling) within 60 is put back on the path
+/// (mode 0xB, action 0x3D) at its position 3 (walkers) or 2 frames ago,
+/// with its character's sound or voice. Otherwise the task falls: mode 6
+/// with task flag 0x100, the hold modes with 0x800, else mode 0xA, action
+/// 0xF. Returns whether it left the ground.
+pub fn leave_ground(
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    g: &ActGlobals,
+    hist: &crate::walker_exec::PlayerHistory,
+    s: &mut dyn ActSteps,
+    eng: &mut dyn Engine,
+) -> bool {
+    if t.h(tw::FLAG) & 3 != 0 {
+        return false;
+    }
+    let pnum = p.b(pw::PNUM);
+    let c = p.b(pw::CHAR);
+    let mode = t.b(tw::MODE);
+    let eligible = g.gs.b((0x3F + pnum as isize) as usize) != 0
+        && p.w(0x8C) & 0x0800_0000 == 0
+        && c != 6
+        && c != 7
+        && (mode == 1 || ((c as u8) <= 1 && (0x3D..=0x44).contains(&mode)))
+        && p.h(0x14) == 0
+        && crate::ninja_vector::inner_product(p.v3(0x7C), g.gravity) < LAND_UP
+        && p.f(pw::SPD) >= p.f(0xE4)
+        && 0.0 == crate::land_nodes::nj_scalor(p.v3(0x70));
+    if eligible {
+        let gy = g.gravity[1];
+        let y = t.f(tw::POS + 4);
+        let back_on = (gy < LAND_DOWN && p.f(0x1B4) <= y - LAND_REACH)
+            || (gy > LAND_UP_FLIP && p.f(0x1B0) >= LAND_REACH + y);
+        if back_on && p.w(0x1A8) & 0x2002 == 0 {
+            t.set_b(tw::MODE, 0xB);
+            p.set_h(pw::ACTION, 0x3D);
+            zero_speeds(m, p);
+            let back = if c == 7 || c == 6 { 3 } else { 2 };
+            let (pos, ang) = history_back(hist, pnum, back);
+            t.set_v3(tw::POS, pos);
+            t.set_ang3(tw::ANG, ang);
+            p.set_h(0x18, 0);
+            let voice = |eng: &mut dyn Engine, id| {
+                eng.call(EngineCall::PlayVoice { id });
+                None
+            };
+            let sound = match p.ub(3) {
+                0 | 4 | 6 => Some(0x3002),
+                1 | 0xD => Some(0x3014),
+                2 => voice(eng, 0x65F),
+                3 => voice(eng, 0x65E),
+                5 => Some(0x3013),
+                7 => Some(0x300C),
+                8 => voice(eng, 0xA72),
+                0xE => Some(0x301A),
+                0xF => Some(0x3022),
+                _ => None,
+            };
+            if let Some(id) = sound {
+                eng.call(se_at(id, t.v3(tw::POS)));
+            }
+            return true;
+        }
+        t.set_b(tw::MODE, 0xA);
+        p.set_h(pw::ACTION, 0xF);
+        return true;
+    }
+    let flag = t.h(tw::FLAG);
+    if flag & 0x100 != 0 {
+        t.set_b(tw::MODE, 6);
+        return true;
+    }
+    if flag & 0x800 != 0 {
+        let r = s.hold_flags(t, p);
+        if r & 0x200 != 0 {
+            set_mode(t, p, 0x1C, 0x2F);
+            return true;
+        }
+        s.release_hold(t, m, p);
+    }
+    t.set_b(tw::MODE, 0xA);
+    p.set_h(pw::ACTION, 0xF);
     true
 }

@@ -1,6 +1,7 @@
 //! Compare `walker_act` with main.dol (tests/walker_act_ppc.py) on whole
 //! native work areas.
-use sa2_asset_tools::walker_act::{stop_check, walker_jump};
+use sa2_asset_tools::walker_act::{leave_ground, stop_check, walker_jump};
+use sa2_asset_tools::walker_exec::PlayerHistory;
 use sa2_asset_tools::{
     native_work::Work,
     ninja_matrix::MatrixStack,
@@ -48,6 +49,9 @@ impl ActSteps for Log {
         self.0.push(json!(["hold"]));
         self.2
     }
+    fn release_hold(&mut self, _: &mut Work, _: &mut Work, _: &mut Work) {
+        self.0.push(json!(["release"]));
+    }
 }
 
 fn globals(g: &Value) -> ActGlobals {
@@ -65,6 +69,11 @@ fn globals(g: &Value) -> ActGlobals {
         held: arr("held"),
         motion_56: g["m56"].as_bool().unwrap(),
         gs: hex(&g["gs"]),
+        gravity: if g["grav"].is_array() {
+            v3(&g["grav"])
+        } else {
+            [0.0; 3]
+        },
     }
 }
 
@@ -128,6 +137,22 @@ fn walker_act_matches_main_dol() {
                 None
             }
             "stop" => Some(stop_check(&mut t, &mut m, &mut p, &g, &mut steps)),
+            "leave" => {
+                let h = &case["g"]["hist"];
+                let pn = p.b(0) as usize;
+                let idx = h["idx"].as_u64().unwrap() as u8;
+                let mut hist = PlayerHistory::new(4);
+                hist.index[pn] = idx;
+                for back in [2u8, 3] {
+                    let e = &h["e"][back.to_string()];
+                    let slot = (pn << 8) + idx.wrapping_sub(back) as usize;
+                    hist.pos[slot] = v3(&e[0]);
+                    hist.ang[slot] = [0, 1, 2].map(|j| e[1][j].as_i64().unwrap() as i32);
+                }
+                Some(leave_ground(
+                    &mut t, &mut m, &mut p, &g, &hist, &mut steps, &mut calls,
+                ))
+            }
             "f48" => {
                 reset_f48(&mut p, &g);
                 None
