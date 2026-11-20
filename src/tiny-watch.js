@@ -59,6 +59,10 @@ export function createTinyWatch({ send }) {
       : watching ? 'Take control' : busy ? 'Finish your round first' : 'Let my Chao play');
     care.hidden = !watching;
     for (const button of careButtons) button.disabled = !!pending || !connected || busy;
+    // Under the server's native ChaoMain routine (behaviour published) there is
+    // no native command to put a Chao to sleep or wake it; only petting remains.
+    const native = !!profile?.watch?.behaviour;
+    for (const button of careButtons) if (button.dataset.care !== 'pet') button.hidden = native;
     const description = !connected
       ? 'Reconnect to check on your Chao. Their routine can continue while the garden server is running.'
       : !supported() ? 'This garden server needs an update before it can host your Chao’s routine.'
