@@ -438,7 +438,7 @@ mod tests {
     const SIZE: usize = 0x1734;
 
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/garden-payload-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("garden-payload-vectors.json")).unwrap()
     }
     fn ram() -> MemoryImage<'static> {
         MemoryImage::fixture(vec![Region {
@@ -471,6 +471,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn setup_matches_native_with_injected_tables() {
         let tables = BoardSetupTables {
@@ -529,6 +530,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn bracketed_flips_match_native_ram_and_effect_order() {
         for case in fixture()["flipCases"].as_array().unwrap() {
@@ -618,6 +620,7 @@ mod tests {
             }
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn frame_matches_original_conditional_uploads_and_exit_branches() {
         for case in fixture()["frameCases"].as_array().unwrap() {
@@ -677,6 +680,7 @@ mod tests {
         assert_eq!(calls.log, *case["calls"].as_array().unwrap());
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn strict_calls_stop_at_first_missing_dependency() {
         let mut memory = full_ram();
@@ -753,6 +757,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn concrete_object_pool_and_register_queue_match_instructions() {
         let f = fixture();

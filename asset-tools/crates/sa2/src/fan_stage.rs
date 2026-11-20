@@ -672,7 +672,25 @@ impl Campaign {
                 &mut layers,
                 &mut gaps,
             )?;
-            gaps.push("Kart course part IDs are available; track assembly, driving and race conditions are not ported.".into());
+            // CartD installs an empty landtable; each course piece's task
+            // registers its posed collision object as dynamic land instead.
+            const KART_DLL: &str = "DLL/Win32/Data_DLL.dll";
+            match load(KART_DLL)? {
+                Some(bytes) => {
+                    let stage =
+                        crate::kart_course::course_collision_stage(&bytes, &route.course_parts)?;
+                    terrain = Some(Terrain {
+                        geometry_path: format!("CartCourseModels/{}", route.name),
+                        filename: KART_DLL,
+                        symbol: "CartCourseModels",
+                        entries: stage.entries.len(),
+                        basic_attachments: stage.basic_attachments.len(),
+                        stage,
+                    });
+                }
+                None => gaps.push(format!("No mounted source for {KART_DLL}.")),
+            }
+            gaps.push("Kart driving and race conditions are not ported; course collision is the union of every piece task's object, which the engine registers only near a kart.".into());
         } else {
             gaps.push(format!(
                 "No matching sa2lvl.ini section for campaign stage {}.",

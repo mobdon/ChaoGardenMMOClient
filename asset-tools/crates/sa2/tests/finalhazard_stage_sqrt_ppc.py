@@ -3,7 +3,7 @@
 Usage: python finalhazard_stage_sqrt_ppc.py SA2_ASSETS_EXE Boss_Last2D.rel
 Runs Boss_Last2D.rel section 1 + 0x40cc natively for many single-precision
 inputs, with its `frsqrte` replaced by the Gekko hardware estimate
-(gekko_float.py, from Dolphin). Every result must match the Rust port bit
+(gekko_tables.py, loaded from .local). Every result must match the Rust port bit
 for bit. It also counts the inputs where an exact reciprocal-root estimate
 (Unicorn's own) would give a different final result.
 """

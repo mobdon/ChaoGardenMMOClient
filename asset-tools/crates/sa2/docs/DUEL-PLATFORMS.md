@@ -210,11 +210,41 @@ local calls.
 ## Power gauge
 
 \duel_gauge\ ports the rival gauge task's creator (+0x20470) and update
-(+0x2052C); its display (+0x20700) is a renderer. The gauge waits 40 updates,
+(+0x2052C); its display (+0x20700) is in `duel_display`. The gauge waits 40 updates,
 grows by 0.8 per update to 32 x the starting gauge, then drains by 0.4 per
 update toward 32 x the current gauge; once empty it refills to the start and
 then shrinks by 1.6 per update, freeing its task below 10. It holds still
 while game byte +0x37 or +0x39 is set.
+
+## Title card
+
+`duel_title` ports BossTitleExec: the creator (+0x22070), the task update
+(+0x21DE4) and delete (+0x2200C), the per-glyph update (+0x211FC) and the
+optional window update (+0x218AC), with the module's own helpers (square root
++0x74CC, glyph scale +0x20E54, line width +0x20FB4, line copy +0x21D48). A
+title is created from a descriptor read out of the REL (`descriptor`, a
+section 5 offset) or given inline (`inline`). Allocation and task results,
+the mode query, fade values and the halfword the native code reads past the
+last glyph entry (`beyond`) are request inputs. Its displays (+0x2140C,
++0x21A00) are in `duel_display`.
+
+## Display callbacks
+
+`duel_display` ports the stage's draw callbacks: the DODAI display (+0x19C8)
+and delete (+0x1A58), the meteor display (+0x25BC), the debris display
+(+0x91A8), BgExec's display (+0x312C), the gauge display (+0x20700) and the
+title card's glyph (+0x2140C) and window (+0x21A00) displays with their
+render-state helpers (+0x20DD4, +0x20E28). It also ports the module's colour
+helpers: +0x615C/+0x5D24 copy a type 0x23 chunk vertex list into the scratch
+buffer 0x80FFFE60 with each colour channel scaled, and +0x61F0/+0x5FA0 do the
+same for a GC model's colour arrays. The engine renderer is not run. Each
+engine call is recorded in order with the data its pointer arguments point
+to (vectors, sprite and animation blocks, quads), and each write to the
+scratch buffer, the module data and the task is recorded. Engine results
+(sine, floor, colour lerp) and engine state (game bytes, camera, task links,
+work fields) are request inputs, and models are read from the REL. A vertex
+list that does not end in 0xFF makes the native copy loop forever; the port
+reports that instead.
 
 ## Inputs, not assumptions
 
@@ -261,6 +291,8 @@ python asset-tools/crates/sa2/tests/duel_stage_setup_ppc.py asset-tools/crates/s
 python asset-tools/crates/sa2/tests/duel_fog_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_director_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_gauge_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_title_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_display_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the

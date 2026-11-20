@@ -1,6 +1,6 @@
 //! Stage 42's rival power gauge task (`BossPowerGuageExec`): the creator
-//! (+0x20470) and update (+0x2052C). The display (+0x20700) is a renderer and
-//! is ported separately. Work layout: +0 mode, +6 timer, +8 pointer to the
+//! (+0x20470) and update (+0x2052C). The display (+0x20700) is in
+//! `duel_display`. Work layout: +0 mode, +6 timer, +8 pointer to the
 //! rival's gauge, +0x14 shown length, +0x1C fill rate, +0x24 drain rate,
 //! +0x28 starting gauge.
 use crate::{duel_platform, Error, Result};

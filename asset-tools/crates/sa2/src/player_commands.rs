@@ -6,7 +6,7 @@ use sa2_asset_tools::{
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="demo-prs-window DEMO.prs OUTPUT.json FIRST_RECORD COUNT\nfan-demos EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-boss-rushes EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstory-sections EXE OUTPUT.json SAVE_DATA_IMAGE\nstory-progress SAVE_DATA_IMAGE OUTPUT.json\nstage-result SAVE_DATA_IMAGE OUTPUT.json SLOT MISSION\nfan-rank EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX MISSION storedScore|seconds VALUE\nfan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nfinalhazard-textures EXE OUTPUT.json modeltex_bosslast2.prs\nfinalhazard-visual EXE OUTPUT.json CLIP_INDEX FRAME\nfinalhazard-weighted-pose EXE OUTPUT.json CLIP_INDEX FRAME\nfinalhazard-cancel-placement Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-placement-clock Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-request-placement Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-retract Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-contact Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-weakpoint-update Boss_Last2D.rel OUTPUT.json GATE_BYTE MODE\nfinalhazard-pose EXE OUTPUT.json CLIP_INDEX FRAME\nfinalhazard-polygons EXE OUTPUT.json\nfinalhazard-mode5-tail Boss_Last2D.rel OUTPUT.json TIMER SUBMODE WORK24\nfinalhazard-origins Boss_Last2D.rel OUTPUT.json EXE CLIP_INDEX FRAME\nfinalhazard-placements Boss_Last2D.rel OUTPUT.json\nfinalhazard-weights EXE OUTPUT.json\nfinalhazard-motions EXE OUTPUT.json\nfinalhazard-geometry EXE OUTPUT.json\nfinalhazard-rigs EXE OUTPUT.json\nduel-platform EXE OUTPUT.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-starts EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nkart-finish-display CartD.rel OUTPUT.json resultCart.prs INPUT.json\nkart-drift-step CartD.rel OUTPUT.json INPUT.json\nkart-drift-windup CartD.rel OUTPUT.json INPUT.json\nkart-scripted-motion CartD.rel OUTPUT.json INPUT.json\nkart-active-profile CartD.rel OUTPUT.json INPUT.json\nkart-vehicle-init CartD.rel OUTPUT.json INPUT.json\nkart-spin-drive CartD.rel OUTPUT.json INPUT.json\nkart-recovery-drive CartD.rel OUTPUT.json INPUT.json\nkart-buffer-tuning CartD.rel OUTPUT.json PRE_RELOCATION_BUFFER.bin ENGINE_WORD_B4\nkart-race-tuning CartD.rel OUTPUT.json INPUT.json\nkart-guided-drive CartD.rel OUTPUT.json INPUT.json\nkart-contact-step CartD.rel OUTPUT.json INPUT.json\nkart-normal-contact CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-contact-recovery CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-course-recovery CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-fall-recovery CartD.rel OUTPUT.json INPUT.json\nkart-ring-particle CartD.rel OUTPUT.json INPUT.json\nkart-balloon-display CartD.rel OUTPUT.json INPUT.json\nkart-dash-display CartD.rel OUTPUT.json INPUT.json\nkart-ring-display CartD.rel OUTPUT.json INPUT.json\nkart-ring-pickup CartD.rel OUTPUT.json INPUT.json\nkart-driving-audio CartD.rel OUTPUT.json INPUT.json\nkart-update-gate CartD.rel OUTPUT.json INPUT.json\nkart-drive-input CartD.rel OUTPUT.json INPUT.json\nkart-timeout CartD.rel OUTPUT.json INPUT.json\nkart-pursuit-clock CartD.rel OUTPUT.json INPUT.json\nkart-target-model CartD.rel OUTPUT.json MODE\nkart-target-textures CartD.rel OUTPUT.json MODE\nkart-target-display CartD.rel OUTPUT.json INPUT.json\nkart-story-target CartD.rel OUTPUT.json INPUT.json\nkart-finish-menu CartD.rel OUTPUT.json INPUT.json\nkart-field-update CartD.rel OUTPUT.json FIELD.json\nkart-standings CartD.rel OUTPUT.json OCCUPIED_SLOTS.json\nkart-crossing-directory CartD.rel OUTPUT.json EXE\nkart-segment-geometry CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-progress-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-race-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-time-extension CartD.rel OUTPUT.json\nkart-story-gate-display CartD.rel OUTPUT.json INPUT.json\nkart-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-ramp-response CartD.rel OUTPUT.json RESPONSE_INPUT.json\nkart-dash-panel CartD.rel OUTPUT.json INPUT.json\nkart-ramp-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-ramp-init CartD.rel OUTPUT.json TASK_POSE.json\nkart-story-gate-sequence CartD.rel OUTPUT.json EXE SET CONTACTS.json\nkart-story-gates CartD.rel OUTPUT.json EXE SET\nkart-balloon-layout CartD.rel OUTPUT.json EXE SET\nkart-ring-groups CartD.rel OUTPUT.json EXE SET\nkart-objects SET OUTPUT.json EXE\nkart-vehicles EXE OUTPUT.json\nkart-courses EXE OUTPUT.json\nkart-raycast EXE OUTPUT.json DATA_DLL COURSE(101|280|beginner|standard|expert) REQUEST.json\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nhot-shot-target-display boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-target-rotation boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-target-clock boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-target-follow boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-nine boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-settle boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-two-exit boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-two-step boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-two-opening boss_hotshotD.rel OUTPUT.json POLLS READY_ON_LAST(true|false)\nhot-shot-intro-clock boss_hotshotD.rel OUTPUT.json UPDATES\nhot-shot-arena boss_hotshotD.rel OUTPUT.json X Y Z\nstage-registration STAGE.rel OUTPUT.json\ncity-board-draw-defaults stg13D.rel OUTPUT.json DRAW_INPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\ncharacter-state-pose MTN.prs OUTPUT.json EXE MDL.prs STATE FRAME\nsonic-state-pose MTN.prs OUTPUT.json EXE SONICMDL.prs STATE FRAME\ncharacter-camera MTN.prs OUTPUT.json SLOT FRAME\ncharacter-motion MTN.prs OUTPUT.json SLOT\ncharacter-motion-bank MTN.prs OUTPUT.json\ncharacter-animations EXE OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT\nduel-generator stg42D.rel OUTPUT.json REQUEST.json\nduel-platform-update stg42D.rel OUTPUT.json REQUEST.json\nduel-meteor stg42D.rel OUTPUT.json REQUEST.json\nduel-debris stg42D.rel OUTPUT.json REQUEST.json\nduel-dust stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-frame stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-setup stg42D.rel OUTPUT.json REQUEST.json\nduel-fog stg42D.rel OUTPUT.json REQUEST.json\nduel-director stg42D.rel OUTPUT.json REQUEST.json\nduel-gauge stg42D.rel OUTPUT.json REQUEST.json\nfan-stage-reuse EXE OUTPUT.json PC_SA2_CONFIG_DIR";
+pub(super) const USAGE:&str="demo-prs-window DEMO.prs OUTPUT.json FIRST_RECORD COUNT\nfan-demos EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-boss-rushes EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstory-sections EXE OUTPUT.json SAVE_DATA_IMAGE\nstory-progress SAVE_DATA_IMAGE OUTPUT.json\nstage-result SAVE_DATA_IMAGE OUTPUT.json SLOT MISSION\nfan-rank EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX MISSION storedScore|seconds VALUE\nfan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-starts EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nkart-finish-display CartD.rel OUTPUT.json resultCart.prs INPUT.json\nkart-drift-step CartD.rel OUTPUT.json INPUT.json\nkart-drift-windup CartD.rel OUTPUT.json INPUT.json\nkart-scripted-motion CartD.rel OUTPUT.json INPUT.json\nkart-active-profile CartD.rel OUTPUT.json INPUT.json\nkart-vehicle-init CartD.rel OUTPUT.json INPUT.json\nkart-spin-drive CartD.rel OUTPUT.json INPUT.json\nkart-recovery-drive CartD.rel OUTPUT.json INPUT.json\nkart-buffer-tuning CartD.rel OUTPUT.json PRE_RELOCATION_BUFFER.bin ENGINE_WORD_B4\nkart-race-tuning CartD.rel OUTPUT.json INPUT.json\nkart-guided-drive CartD.rel OUTPUT.json INPUT.json\nkart-contact-step CartD.rel OUTPUT.json INPUT.json\nkart-normal-contact CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-contact-recovery CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-course-recovery CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-fall-recovery CartD.rel OUTPUT.json INPUT.json\nkart-ring-particle CartD.rel OUTPUT.json INPUT.json\nkart-balloon-display CartD.rel OUTPUT.json INPUT.json\nkart-dash-display CartD.rel OUTPUT.json INPUT.json\nkart-ring-display CartD.rel OUTPUT.json INPUT.json\nkart-ring-pickup CartD.rel OUTPUT.json INPUT.json\nkart-driving-audio CartD.rel OUTPUT.json INPUT.json\nkart-update-gate CartD.rel OUTPUT.json INPUT.json\nkart-drive-input CartD.rel OUTPUT.json INPUT.json\nkart-timeout CartD.rel OUTPUT.json INPUT.json\nkart-pursuit-clock CartD.rel OUTPUT.json INPUT.json\nkart-target-model CartD.rel OUTPUT.json MODE\nkart-target-textures CartD.rel OUTPUT.json MODE\nkart-target-display CartD.rel OUTPUT.json INPUT.json\nkart-story-target CartD.rel OUTPUT.json INPUT.json\nkart-finish-menu CartD.rel OUTPUT.json INPUT.json\nkart-field-update CartD.rel OUTPUT.json FIELD.json\nkart-standings CartD.rel OUTPUT.json OCCUPIED_SLOTS.json\nkart-crossing-directory CartD.rel OUTPUT.json EXE\nkart-segment-geometry CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-progress-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-race-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-time-extension CartD.rel OUTPUT.json\nkart-story-gate-display CartD.rel OUTPUT.json INPUT.json\nkart-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-ramp-response CartD.rel OUTPUT.json RESPONSE_INPUT.json\nkart-dash-panel CartD.rel OUTPUT.json INPUT.json\nkart-ramp-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-ramp-init CartD.rel OUTPUT.json TASK_POSE.json\nkart-story-gate-sequence CartD.rel OUTPUT.json EXE SET CONTACTS.json\nkart-story-gates CartD.rel OUTPUT.json EXE SET\nkart-balloon-layout CartD.rel OUTPUT.json EXE SET\nkart-ring-groups CartD.rel OUTPUT.json EXE SET\nkart-objects SET OUTPUT.json EXE\nkart-vehicles EXE OUTPUT.json\nkart-courses EXE OUTPUT.json\nkart-piece-collision EXE OUTPUT.json DATA_DLL COURSE CASES.json\nkart-native-layout EXE OUTPUT.json DATA_DLL COURSE\nkart-course-billboards EXE OUTPUT.json DATA_DLL CartD.rel COURSE RANDS.json\nkart-course-background EXE OUTPUT.json DATA_DLL CartD.rel COURSE FRAMES.json\nkart-course-materials EXE OUTPUT.json DATA_DLL CartD.rel course.pak COURSE\nkart-raycast EXE OUTPUT.json DATA_DLL COURSE(101|280|beginner|standard|expert) REQUEST.json\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\ncharacter-state-pose MTN.prs OUTPUT.json EXE MDL.prs STATE FRAME\nsonic-state-pose MTN.prs OUTPUT.json EXE SONICMDL.prs STATE FRAME\ncharacter-camera MTN.prs OUTPUT.json SLOT FRAME\ncharacter-motion MTN.prs OUTPUT.json SLOT\ncharacter-motion-bank MTN.prs OUTPUT.json\ncharacter-animations EXE OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT\nfan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nduel-generator stg42D.rel OUTPUT.json REQUEST.json\nduel-platform-update stg42D.rel OUTPUT.json REQUEST.json\nduel-meteor stg42D.rel OUTPUT.json REQUEST.json\nduel-debris stg42D.rel OUTPUT.json REQUEST.json\nduel-dust stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-frame stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-setup stg42D.rel OUTPUT.json REQUEST.json\nduel-fog stg42D.rel OUTPUT.json REQUEST.json\nduel-director stg42D.rel OUTPUT.json REQUEST.json\nduel-gauge stg42D.rel OUTPUT.json REQUEST.json\nduel-title stg42D.rel OUTPUT.json REQUEST.json\nduel-display stg42D.rel OUTPUT.json REQUEST.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-stage-reuse EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT\nfinalhazard-textures EXE OUTPUT.json modeltex_bosslast2.prs\nfinalhazard-visual EXE OUTPUT.json CLIP_INDEX FRAME\nfinalhazard-weighted-pose EXE OUTPUT.json CLIP_INDEX FRAME\nfinalhazard-cancel-placement Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-placement-clock Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-request-placement Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-retract Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-contact Boss_Last2D.rel OUTPUT.json REQUEST.json\nfinalhazard-weakpoint-update Boss_Last2D.rel OUTPUT.json GATE_BYTE MODE\nfinalhazard-pose EXE OUTPUT.json CLIP_INDEX FRAME\nfinalhazard-polygons EXE OUTPUT.json\nfinalhazard-mode5-tail Boss_Last2D.rel OUTPUT.json TIMER SUBMODE WORK24\nfinalhazard-origins Boss_Last2D.rel OUTPUT.json EXE CLIP_INDEX FRAME\nfinalhazard-placements Boss_Last2D.rel OUTPUT.json\nfinalhazard-weights EXE OUTPUT.json\nfinalhazard-motions EXE OUTPUT.json\nfinalhazard-geometry EXE OUTPUT.json\nfinalhazard-rigs EXE OUTPUT.json\nhot-shot-target-display boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-target-rotation boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-target-clock boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-target-follow boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-nine boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-settle boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-two-exit boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-two-step boss_hotshotD.rel OUTPUT.json STATE.json\nhot-shot-mode-two-opening boss_hotshotD.rel OUTPUT.json POLLS READY_ON_LAST(true|false)\nhot-shot-intro-clock boss_hotshotD.rel OUTPUT.json UPDATES\nhot-shot-arena boss_hotshotD.rel OUTPUT.json X Y Z\ncity-board-draw-defaults stg13D.rel OUTPUT.json DRAW_INPUT.json";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
         "kart-time-extension"
@@ -39,10 +39,14 @@ pub(super) fn arity(cmd: &str) -> Option<usize> {
         | "kart-contact-recovery"
         | "kart-course-recovery"
         | "kart-raycast"
+        | "kart-piece-collision"
         | "event-camera"
         | "hot-shot-arena"
         | "fan-stage" => Some(6),
         "fan-emerald-contact"
+        | "kart-course-materials"
+        | "kart-course-background"
+        | "kart-course-billboards"
         | "fan-wild-canyon"
         | "fan-big-foot"
         | "character-state-pose"
@@ -56,6 +60,7 @@ pub(super) fn arity(cmd: &str) -> Option<usize> {
         | "finalhazard-weighted-pose"
         | "finalhazard-pose"
         | "kart-story-gates"
+        | "kart-native-layout"
         | "kart-balloon-layout"
         | "kart-ring-groups"
         | "kart-buffer-tuning"
@@ -77,7 +82,9 @@ pub(super) fn arity(cmd: &str) -> Option<usize> {
         | "duel-stage-setup"
         | "duel-fog"
         | "duel-director"
-        | "duel-gauge" => Some(4),
+        | "duel-gauge"
+        | "duel-title"
+        | "duel-display" => Some(4),
         "finalhazard-cancel-placement"
         | "finalhazard-placement-clock"
         | "finalhazard-request-placement"
@@ -386,6 +393,30 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 "generator-frames",
             )?;
             let result = sa2_asset_tools::duel_platform::replay(&bytes, &req.bytes)?;
+            extras.push(req);
+            result
+        }
+        "duel-display" => {
+            let path = Path::new(&args[3]);
+            let req = Extra::read(
+                path,
+                basename(path)?.to_owned(),
+                4 * 1024 * 1024,
+                "display-request",
+            )?;
+            let result = sa2_asset_tools::duel_display::replay(&bytes, &req.bytes)?;
+            extras.push(req);
+            result
+        }
+        "duel-title" => {
+            let path = Path::new(&args[3]);
+            let req = Extra::read(
+                path,
+                basename(path)?.to_owned(),
+                4 * 1024 * 1024,
+                "title-ops",
+            )?;
+            let result = sa2_asset_tools::duel_title::replay(&bytes, &req.bytes)?;
             extras.push(req);
             result
         }
@@ -1384,6 +1415,124 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 .parse::<u16>()
                 .map_or_else(|_| json!(route), |n| json!(n));
             json!({"route":route,"request":req,"hit":query.hit,"occurrencesWithoutCollision":query.without_collision,"scope":"static course geometry in native units"})
+        }
+        "kart-piece-collision" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128 * 1024 * 1024),
+                (5, "activation-cases", 1024 * 1024),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(path, source_label(path, root)?, limit, kind)?);
+            }
+            let cases: Vec<serde_json::Value> = serde_json::from_slice(&extras[1].bytes)?;
+            let invalid =
+                || Error::invalid("expected occurrence, count, raceMode and six kartOwners");
+            let activation = cases
+                .iter()
+                .map(|c| {
+                    let n = |k: &str| c[k].as_i64().ok_or_else(invalid);
+                    let owners = c["kartOwners"]
+                        .as_array()
+                        .filter(|a| a.len() == 6)
+                        .ok_or_else(invalid)?;
+                    let mut slots = [None; 6];
+                    for (slot, v) in slots.iter_mut().zip(owners) {
+                        *slot = if v.is_null() {
+                            None
+                        } else {
+                            Some(v.as_i64().ok_or_else(invalid)? as i32)
+                        };
+                    }
+                    Ok(sa2_asset_tools::kart_course::piece_collision_active(
+                        u16::try_from(n("occurrence")?).map_err(|_| invalid())?,
+                        n("count")? as i32,
+                        n("raceMode")? as i32,
+                        &slots,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            json!({"pieces": sa2_asset_tools::kart_course::piece_collision_tasks(
+                &bytes,
+                &extras[0].bytes,
+                text_arg(&args[4])?,
+            )?, "activation": activation})
+        }
+        "kart-native-layout" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                source_label(path, root)?,
+                128 * 1024 * 1024,
+                "kart-course-models",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_course::native_course_placements(
+                &bytes,
+                &extras[0].bytes,
+                text_arg(&args[4])?,
+            )?)?
+        }
+        "kart-course-billboards" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128 * 1024 * 1024),
+                (4, "kart-module", 16 * 1024 * 1024),
+                (6, "rand-observations", 4 * 1024 * 1024),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(path, source_label(path, root)?, limit, kind)?);
+            }
+            let rand: Vec<i32> = serde_json::from_slice(&extras[2].bytes)?;
+            serde_json::to_value(sa2_asset_tools::kart_course::course_billboards(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                text_arg(&args[5])?,
+                &rand,
+            )?)?
+        }
+        "kart-course-background" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128 * 1024 * 1024),
+                (4, "kart-module", 16 * 1024 * 1024),
+                (6, "frame-list", 1024 * 1024),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(path, source_label(path, root)?, limit, kind)?);
+            }
+            let frames: Vec<u32> = serde_json::from_slice(&extras[2].bytes)?;
+            let sea = frames
+                .iter()
+                .map(|&frame| {
+                    Ok(json!({"frame": frame, "colors": sa2_asset_tools::kart_course::sea_colors(&extras[1].bytes, frame)?}))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            json!({"background": sa2_asset_tools::kart_course::course_background(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                text_arg(&args[5])?,
+            )?, "sea": sea})
+        }
+        "kart-course-materials" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128),
+                (4, "kart-module", 16),
+                (5, "kart-course-textures", 64),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(
+                    path,
+                    source_label(path, root)?,
+                    limit * 1024 * 1024,
+                    kind,
+                )?);
+            }
+            serde_json::to_value(sa2_asset_tools::kart_course::course_materials(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                &extras[2].bytes,
+                text_arg(&args[6])?,
+            )?)?
         }
         "stage-raycast" => {
             let p = Path::new(&args[4]);

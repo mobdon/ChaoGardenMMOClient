@@ -456,7 +456,7 @@ mod tests {
         }
     }
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/intro-callbacks-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("intro-callbacks-vectors.json")).unwrap()
     }
     fn assert_observations(case: &Value, memory: &Memory, calls: &Calls, resources: &Resources) {
         memory.assert_snapshot(case);
@@ -479,6 +479,7 @@ mod tests {
         assert_eq!(resources.requests, expected);
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_callbacks_match_all_ram_writes_call_order_and_resource_transactions() {
         let data = fixture();
@@ -512,6 +513,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn installed_stack_runs_326_native_ticks_then_stops_at_actual_unported_animation() {
         let data = fixture();
@@ -573,6 +575,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn strict_stops_preserve_mutations_at_the_real_call_position_and_bound_depths() {
         use super::super::intro::RejectUnportedIntroCalls;

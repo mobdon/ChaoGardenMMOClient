@@ -631,7 +631,7 @@ mod tests {
         }
     }
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/garden-graphics-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("garden-graphics-vectors.json")).unwrap()
     }
     fn word(case: &Value, name: &str) -> u32 {
         case[name].as_u64().unwrap() as u32
@@ -667,6 +667,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn independent_native_helpers_and_static_scene() {
         let data = fixture();
@@ -684,6 +685,7 @@ mod tests {
             );
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_source_and_bios_metadata_are_exact() {
         let data = fixture();
@@ -792,6 +794,7 @@ mod tests {
         assert!(GardenPayload::new(&[]).is_err());
         assert!(GardenPayload::new(&vec![0; PAYLOAD_LENGTH]).is_err());
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn authentic_local_payload_resources_and_native_scene() {
         let Ok(path) = std::env::var("SPP_GARDEN_PAYLOAD") else {

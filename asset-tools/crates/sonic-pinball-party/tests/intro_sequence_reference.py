@@ -17,8 +17,9 @@ import struct
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("intro-sequence-vectors.json")
+FIXTURE = spp_vectors.path("intro-sequence-vectors.json")
 ROUTINES = {"sequence": (0x6824, 0x6DF0), "copy": (0x613A8, 0x61408),
             "unsignedDivide": (0x60E7C, 0x60EF4), "interpolation": (0x663C, 0x66F8),
             "submission": (0x2614, 0x2690), "pop": (0x2FA8, 0x2FBC),
@@ -68,7 +69,7 @@ def generate(path):
         cpu.reg_write(UC_ARM_REG_PC, cpu.reg_read(UC_ARM_REG_LR))
 
     oracle.uc.hook_add(UC_HOOK_CODE, hook)
-    intro = json.loads(Path(__file__).with_name("intro-vectors.json").read_text(encoding="utf8"))
+    intro = json.loads(spp_vectors.path("intro-vectors.json").read_text(encoding="utf8"))
     original_contexts = [struct.pack("<16H", *row) for row in intro["initializers"][0]["contextStates"]]
     prefix = intro["initializers"][0]["stackPrefix"]
 

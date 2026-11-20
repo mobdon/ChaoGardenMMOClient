@@ -167,10 +167,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_register_writes_and_wait_branches_match() {
-        let fixture: Value =
-            serde_json::from_str(include_str!("../../tests/display-vectors.json")).unwrap();
+        let fixture: Value = serde_json::from_str(vectors!("display-vectors.json")).unwrap();
         for case in fixture["cases"].as_array().unwrap() {
             let mut memory = Memory {
                 shadow: std::array::from_fn(|i| case["shadow"][i].as_u64().unwrap() as u16),

@@ -424,10 +424,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn matches_256_original_instruction_cases_with_synthetic_geometry() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/flipper-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("flipper-vectors.json")).unwrap();
         let geometry =
             Geometry::decode(&bytes(vectors["synthetic_geometry"].as_str().unwrap())).unwrap();
         check_cases(&vectors, &geometry);
@@ -441,8 +441,7 @@ mod tests {
         )
         .unwrap();
         let geometry = Geometry::load(&rom).unwrap();
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/flipper-native-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("flipper-native-vectors.json")).unwrap();
         check_cases(&vectors, &geometry);
     }
 

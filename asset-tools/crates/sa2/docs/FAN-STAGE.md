@@ -28,7 +28,7 @@ All 49 dispatches mounted or reported their precise resource gaps. The result co
 
 **43 of 49** dispatches have a start row for the exact authored character. Big Foot (60), Hot Shot (61), Flying Dog (62), Biolizard (65) and both kart dispatches (70) have no matching general single-player start row. No character substitution or invented start position is used. Final Hazard (66) has an authored pose and a level section, but its configured BossLast2 object-list path lacks a matching mapping in ObjectLists.ini. No normal SET or static landtable is declared/available there.
 
-**44 of 49** dispatches mount verified static terrain from **40 distinct levels**. All 40 built a Rust collision world. Sonic vs Shadow 2 (42) has no static landtable in either story; Final Hazard and both kart courses also have none. Some boss tables contain only visual entries; the existence of a landtable does not imply a solid floor or a port of a boss routine. The original five Cannon's Core sections are not five independent Last Story dispatches: the story selects 36. In-level character handoffs are outside this loader.
+**46 of 49** dispatches mount verified static terrain from **41 distinct levels**. All 41 built a Rust collision world. Sonic vs Shadow 2 (42) has no static landtable in either story, and Final Hazard has none. The kart course installs an empty landtable; its terrain is the native piece collision described under Kart routes. Some boss tables contain only visual entries; the existence of a landtable does not imply a solid floor or a port of a boss routine. The original five Cannon's Core sections are not five independent Last Story dispatches: the story selects 36. In-level character handoffs are outside this loader.
 
 ## Kart routes
 
@@ -39,7 +39,49 @@ Both kart actions dispatch stage 70, but Hero selects MechTails and Dark selects
 | Route 101 | 321 | e93d8da2d30b59a53f3e3750323da91d6e3bea470a99975cf5d4438d91b79c1c | 34 |
 | Route 280 | 369 | 08154159fc8b6a97bf113308b85e7f93959d818a938d07e55ee025e79a2e1aea | 29 |
 
-For an independent reference, split the two kartcourse sections of CART.ini with SA Tools 786 split.exe binary and the installed executable; hash the decimal lines of each exported course as bytes in order. The local test compares both complete byte sequences to these reference digests. The offline kart geometry query below assembles both tracks. Driving physics, timing and completion remain unverified.
+For an independent reference, split the two kartcourse sections of CART.ini with SA Tools 786 split.exe binary and the installed executable; hash the decimal lines of each exported course as bytes in order. The local test compares both complete byte sequences to these reference digests. The offline kart geometry query below assembles both tracks.
+
+### Course collision
+
+CartD's stage init passes an empty landtable (section 5 +0x1400, zero entries) to LandChangeLandTable. Course ground comes from tasks instead. Setup (+0x63bc) creates one task for every occurrence except model-less pieces 25 to 27 (+0x6494). Each task (+0x65f0) allocates 0x38 bytes and copies the piece's Basic collision object into them. It clears flag bits 0 and 1, writes the occurrence's native origin as the position and (0, yaw, 0) as the rotation, and keeps the attachment, scale and links. Every frame (+0x64b8) the task keeps the copy registered in the engine's dynamic land list (PC import 0x8002305c, GSNE8P 0x800232A4) with flags 0x20000001 while any of the six kart slots is near. Near means the occurrence is within 10 pieces behind to 4 ahead of the piece owning the kart's segment, among the first five, after count - 5, or in the last 30 in race modes 0 and 1. An empty slot ends the check and unregisters the copy. The register adds 0x10000000 when the attachment centre's squared length is at least 225.0 and a rotation word has bits in 0xFFF0.
+
+`kart-piece-collision EXE OUTPUT.json DATA_DLL COURSE CASES.json` lists every task's object copy and surface flags, and evaluates activation cases. The story mount uses those copies, in order, as a collision-only view (`kart_course::course_collision_stage`). Each entry's root is the native copy with its native flags; bounds stay zero because the dynamic list has none. The view holds every copy at once, while the engine registers each only near a kart. Route 101 has 321 entries and 13,643 triangles; Route 280 has 369 entries and 18,439 triangles.
+
+`tests/kart_piece_collision_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs +0x65f0 under Unicorn on the GameCube rows for all 1,006 tasked occurrences of the five courses, and +0x64b8 on 400 generated cases. It compares flags, position, rotation, scale and the register decision. `tests/kart_piece_flags_dol.py PRIVATE_DIR DATA_DLL` then calls main.dol's register for every copy and compares the stored flags.
+
+### Race background
+
+CartD's bgExec task (+0xdfc) draws a distant view (+0xd00) and then a sea (+0x9ac) every frame. Both follow the active camera's X and Z. Their height comes from the course minimum: course setup starts it at 100000.0 (section 4 +0x2D0) and lowers it to each origin's Y from occurrence 1 on (+0x736c).
+
+- **Distant view:** the object at section 5 +0x35C4 is drawn with the 3-entry prnbg list at (camera X, minimum + 350.0, camera Z).
+- **Sea:** the 11×11 chunk object at section 5 +0x23BC is drawn at (camera X, minimum, camera Z), scaled 4.0. Its texture slot is (frame / 2) mod 20 into tx_sea001..020. Each frame, CartD rebuilds the vertex chunk: positions are copied, and every vertex colour blends the source row (row + s) mod 11 with the following row by t. Here r = frame mod (11 × 50), s = r / 50 and t = (r − 50 s) / 50 in single precision. The blend is main.dol's ARGB routine (GSNE8P 0x800334B0): per byte, trunc(t × (b − a) + a) with one fused add, and 255 for a result outside 0..255.
+
+`kart-course-background EXE OUTPUT.json DATA_DLL CartD.rel COURSE FRAMES.json` reports both parts and the sea colours for each listed frame. Route 101's minimum is −2900 and Route 280's is −3700. `tests/kart_background_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` (`SA2_MAIN_DOL` set) runs CartD's sea builder under Unicorn for 17 frame counters, with the blend call running main.dol's routine through the shared harness. It also runs the course-minimum update for all five courses. Every colour and minimum matches Rust. The camera position and the chunk geometry decoding stay outside this port.
+
+### Course textures
+
+`kart-course-materials EXE OUTPUT.json DATA_DLL CartD.rel course.pak COURSE` reports how a course's display pieces bind textures, using only native data. CartD's course display callback (+0x684c) passes the 74-entry course list at section 5 +0xF9C34 to engine routine 0x80116AD0 before drawing pieces. The command checks that those names equal the Data_DLL `texlist_course` export (RVA 0x58AEE8), in order. For every distinct piece, it lists each GC mesh in native order: opaque or translucent list, the low half of its own texture parameter (the course slot), the high half unchanged, and its raw blend-alpha word. Each slot used resolves to `course\NAME.dds` in course.pak, with the DDS and decoded RGBA digests and a count of texels with alpha below 255. Meshes that declare no texture parameter are counted; no texture is inherited for them.
+
+| Route | Display meshes | Meshes without a texture parameter | Course slots used | Slots with alpha below 255 |
+|---|---:|---:|---:|---:|
+| Route 101 | 3,981 | 45 | 42 | 0 |
+| Route 280 | 4,853 | 128 | 45 | 0 |
+
+Lighting and the background are separate.
+
+### Native course placement
+
+`kart-native-layout EXE OUTPUT.json DATA_DLL COURSE` places every occurrence the way CartD course setup does (+0x72a4..+0x7368), using the GameCube main program routines its imports resolve to (GSNE8P main.dol; import 0x8011xxxx maps to +0x348 and 0x80027xxx to +0x268 there). The first occurrence sits at section 4 +0x2E4 (0.0) with yaw 0. Each later one uses the previous occurrence's row. CartD builds a unit matrix (njUnitMatrix) and rotates it by the previous yaw word (njRotateY, with MSL `sinf`/`cosf` from `ninja_trig`, shared with the walker port). It transforms the row displacement with njCalcVector (PSMTXMultVecSR: two single products summed, then one fused add of the third), adds the result to the previous origin with single-precision adds (njAddVector), and adds the row's turn to the yaw word. Positions are single precision and the yaw is the full 32-bit word.
+
+`tests/kart_layout_dol.py CLI EXE DATA_DLL PRIVATE_DIR` (needs `SA2_MAIN_DOL` and the shared `tests/dol_ppc.py` harness) runs those main.dol routines in CartD's order for every occurrence of all five courses. All 1,013 origins match the Rust result bit for bit.
+
+### Course billboards and draw distance
+
+`kart-course-billboards EXE OUTPUT.json DATA_DLL CartD.rel COURSE RANDS.json` ports the rest of the native course display. Each course row lists roadside slots (row +0x64, count +0x68): a piece-local position and a BAMS yaw. The PC Data_DLL rows and the GameCube CartD rows hold the same slots for all 85 pieces. During course setup (CartD +0x71b8..+0x72a0), each of the first four slots of every occurrence except the last 20 calls the engine rand(). With u = rand / 32768 in binary32, a slot shows a picture only when u is strictly above 0.5. The picture is then trunc(rand2 / 32768 × 4 + 1). The last 20 occurrences are left unwritten. RANDS.json lists the rand() returns in call order, and missing or unused values are rejected.
+
+The display callback draws a piece, and its shown slots, only when the squared distance between its origin and the active camera position (njSubVector, then njScalor2) is below a threshold. The threshold is 9,000,000 (3000²) when engine byte 0x801CBD88+0x20 is set and 25,000,000 (5000²) otherwise (CartD section 4 +0x2AC / +0x2B0, chosen at +0x69e0). Every shown slot uses the single model at CartD section 5 +0x7E6C, translated and turned by the slot. Its texture is patched to course slot 12, 39, 67 or 68 (`chao_p`, `poster1`, `sonic`, `sonicspin`) for pictures 1 to 4.
+
+`tests/kart_billboards_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs the original instructions under Unicorn with a fixed rand() sequence and compares every occurrence's four picture words with the Rust result. With that sequence, Route 101 makes 345 rand() calls and shows 123 billboards; Route 280 makes 284 calls and shows 96. The camera position, the engine's rand() generator and the billboard model geometry stay outside this port. Driving physics, timing and completion remain unverified.
 
 ## Rust interface and checks
 

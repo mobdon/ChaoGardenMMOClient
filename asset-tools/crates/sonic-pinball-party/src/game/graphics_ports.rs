@@ -204,8 +204,7 @@ mod tests {
             .take((crate::catalog::ROM_LEN + 1) as u64)
             .read_to_end(&mut rom)
             .unwrap();
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/graphics_ports-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("graphics_ports-vectors.json")).unwrap();
         for c in v["cases"].as_array().unwrap() {
             let seed = c["seed"].as_u64().unwrap() as u8;
             let mut m = MemoryImage::new(

@@ -331,7 +331,25 @@ fn mounted_campaign_routes() {
             match level {
                 70 => {
                     let route = stage.kart_route.unwrap();
-                    assert!(stage.level_section.is_none() && stage.terrain.is_none());
+                    assert!(stage.level_section.is_none());
+                    // One native posed collision object per tasked piece.
+                    let t = stage.terrain.as_ref().unwrap();
+                    let pieces = route.course_parts.len();
+                    assert_eq!((t.entries, t.stage.visual_count), (pieces, 0));
+                    assert_eq!(t.geometry_path, format!("CartCourseModels/{}", route.name));
+                    assert!(t
+                        .stage
+                        .entries
+                        .iter()
+                        .all(|e| e.surface_flags & 0x2000_0001 == 0x2000_0001));
+                    let world = stage.collision_world().unwrap().unwrap();
+                    let triangles: usize = world.meshes.iter().map(|m| m.triangles.len()).sum();
+                    assert_eq!(triangles, if pieces == 321 { 13643 } else { 18439 });
+                    let ground = world
+                        .raycast([0., 200., -200.], [0., -1., 0.], 1000.)
+                        .unwrap()
+                        .expect("course start has ground below");
+                    assert_eq!(world.meshes[ground.mesh_index].entry_index, 0);
                     assert_eq!(stage.object_table.unwrap().entries.len(), 13);
                     let (n, h) = if sequence == "Hero Story Sequence" {
                         (
@@ -485,7 +503,7 @@ fn mounted_campaign_routes() {
     assert_eq!(mounts, 94);
     assert_eq!(
         (placements, unresolved, starts, grounds, terrain_ids.len()),
-        (24162, 0, 43, 44, 40)
+        (24162, 0, 43, 46, 41)
     );
     assert!(campaign
         .mount("Hero Story Sequence", 0, |_| panic!(

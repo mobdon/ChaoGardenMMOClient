@@ -508,7 +508,7 @@ mod tests {
             .collect()
     }
     fn vectors() -> Value {
-        serde_json::from_str(include_str!("../../tests/notes-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("notes-vectors.json")).unwrap()
     }
     fn synthetic_tables(vectors: &Value) -> PitchTables {
         let scales = bytes(&vectors["syntheticScales"]);
@@ -644,6 +644,7 @@ mod tests {
             Ok(result)
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn note_selection_matches_512_original_controller_cases() {
         let vectors = vectors();
@@ -672,6 +673,7 @@ mod tests {
         }
         assert!(started > 300, "allocation branches must be exercised");
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn synthetic_pitch_and_arm_multiply_match_4352_original_calls() {
         let vectors = vectors();
@@ -868,6 +870,7 @@ mod tests {
             );
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn malformed_inputs_and_unimplemented_psg_stop_explicitly() {
         let vectors = vectors();

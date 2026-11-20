@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import random
 import struct
+import spp_vectors  # noqa: E402
 
 ROM_SHA256 = "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
 ROUTINES = {"open": (0x5F0F8, 0x78), "clear64": (0x5E130, 0x18), "clear64Wrapper": (0x5EDA4, 0x14),
@@ -134,7 +135,7 @@ if __name__ == "__main__":
     p.add_argument("--generate", action="store_true")
     a = p.parse_args()
     actual = generate(a.rom)
-    fixture = Path(__file__).with_name("mplay-vectors.json")
+    fixture = spp_vectors.path("mplay-vectors.json")
     if a.generate:
         fixture.write_text(json.dumps(actual, separators=(",", ":"))+"\n", encoding="utf8")
     elif json.loads(fixture.read_text(encoding="utf8")) != actual:

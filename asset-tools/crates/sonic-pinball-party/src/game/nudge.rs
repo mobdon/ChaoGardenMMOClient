@@ -219,10 +219,10 @@ mod tests {
             }
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn matches_original_instructions_with_synthetic_curve() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/nudge-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("nudge-vectors.json")).unwrap();
         assert_eq!(vectors["cases"].as_array().unwrap().len(), 320);
         assert_eq!(vectors["sequences"].as_array().unwrap().len(), 16);
         check(
@@ -236,8 +236,7 @@ mod tests {
         let rom = std::fs::read(std::env::var_os("SPP_ROM").expect("Set local SPP_ROM")).unwrap();
         let curve = Curve::load(&rom).unwrap();
         assert_eq!(crate::sha256(&rom[OFFSET..OFFSET + LENGTH]), SHA256);
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/nudge-native-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("nudge-native-vectors.json")).unwrap();
         check(&vectors, &curve);
     }
     #[test]

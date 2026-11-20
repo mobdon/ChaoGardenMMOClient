@@ -15,8 +15,9 @@ import struct
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("interpolation-vectors.json")
+FIXTURE = spp_vectors.path("interpolation-vectors.json")
 OBJECT = 0x03005000
 DESCRIPTOR = 0x03006000
 RECORDS = 0x03001250

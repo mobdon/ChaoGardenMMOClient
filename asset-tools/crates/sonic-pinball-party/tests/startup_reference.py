@@ -15,8 +15,9 @@ import random
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("startup-vectors.json")
+FIXTURE = spp_vectors.path("startup-vectors.json")
 POINTER_SLOT = 0x02001CA0
 INITIAL_CONTEXT = 0x020199A0
 DEPENDENCIES = [0x6EF4, 0x7840, 0x8168]

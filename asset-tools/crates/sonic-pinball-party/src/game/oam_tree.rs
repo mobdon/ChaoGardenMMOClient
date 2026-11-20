@@ -157,10 +157,10 @@ mod tests {
             .collect()
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_tree_compositor_matches_synthetic_scratch_and_hardware_ram() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/oam_tree-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("oam_tree-vectors.json")).unwrap();
         assert_eq!(data["routine"]["sha256"], COMPOSE_SHA256);
         for case in data["cases"].as_array().unwrap() {
             let seed = integer(&case["seed"]);

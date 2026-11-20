@@ -511,7 +511,7 @@ mod tests {
         value.as_u64().unwrap() as u32
     }
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/intro-sequence-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("intro-sequence-vectors.json")).unwrap()
     }
     fn pattern(seed: u32, length: usize) -> Vec<u8> {
         (0..length / 4)
@@ -693,6 +693,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_state_sequence_matches_real_interpolation_and_oam_with_declared_synthetic_resources()
     {
@@ -733,6 +734,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn unknown_resources_indices_and_required_native_saved_register_stop_bounded() {
         let data = fixture();
@@ -778,6 +780,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn strict_external_dependency_stops_after_actual_pre_call_state_only() {
         let data = fixture();

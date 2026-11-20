@@ -9,8 +9,9 @@ Only hashes, synthetic controls and source metadata are retained.
 import argparse,json,os,struct,math
 from pathlib import Path
 import reference_parity as p
+import spp_vectors  # noqa: E402
 BASE=0x02000000
-FIXTURE=Path(__file__).with_name('garden-runtime-vectors.json')
+FIXTURE=spp_vectors.path('garden-runtime-vectors.json')
 REGIONS=[(0x02000000,0x40000),(0x03000000,0x7000),(0x04000000,0x400),(0x05000000,0x400),(0x06000000,0x18000),(0x07000000,0x400)]
 def generate(path):
     from unicorn import Uc,UC_ARCH_ARM,UC_MODE_THUMB,UC_HOOK_INTR

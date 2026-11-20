@@ -9,7 +9,8 @@ This does not execute the newly allocated tasks or prove boot/device acceptance.
 import argparse,json,os,struct
 from pathlib import Path
 import reference_parity as p
-FIXTURE=Path(__file__).with_name('garden-home-vectors.json')
+import spp_vectors  # noqa: E402
+FIXTURE=spp_vectors.path('garden-home-vectors.json')
 BASE=0x02000000
 ARITY={0x19c:0,0x248:0,0x480:0,0xc6c:0,0x18a0:0,0x105e8:0,0x228:1,0xbe24:0,0xd27c:0,
        0x17a4:0,0xc90:0,0xd04:3,0x167c:2,0x1066c:1}
