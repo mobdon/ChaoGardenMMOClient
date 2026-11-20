@@ -128,3 +128,10 @@ pub fn scripted(frame: u64) -> bool {
     set(pads);
     true
 }
+
+/// Controller port 0 only (the others stay disconnected).
+pub fn set_port0(p: PadStatus) {
+    let mut pads = default_pads();
+    pads[0] = p;
+    set(pads);
+}

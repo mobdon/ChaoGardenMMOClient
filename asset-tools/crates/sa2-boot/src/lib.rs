@@ -14,6 +14,7 @@ pub mod gx;
 pub mod io;
 pub mod pad;
 pub mod snap;
+pub mod window;
 pub mod vi;
 
 use sa2_recomp::rt::{call, Cpu, Mem};

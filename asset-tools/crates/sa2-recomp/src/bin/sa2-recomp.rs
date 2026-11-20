@@ -82,6 +82,10 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20       }\n\
         \x20   }\n\
         \x20   sa2_boot::install_all(c, m, Box::new(Layered(files)));\n\
+        \x20   // SA2_WINDOW: show the game in a window; the keyboard is controller 0.\n\
+        \x20   if std::env::var_os(\"SA2_WINDOW\").is_some() {\n\
+        \x20       sa2_boot::window::start();\n\
+        \x20   }\n\
         \x20   sa2_recomp::os::add_frame_hook(|_, _| {\n\
         \x20       let frames = sa2_boot::gx::take_frames();\n\
         \x20       let n = frames.len() as u64;\n\
@@ -98,8 +102,19 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20           }\n\
         \x20       }\n\
         \x20       // SA2_INPUT=frame:buttons,... scripted presses; else SA2_AUTOPRESS.\n\
-        \x20       if !sa2_boot::pad::scripted(f) && std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
-        \x20           sa2_boot::pad::autopress(f);\n\
+        \x20       let window = std::env::var_os(\"SA2_WINDOW\").is_some();\n\
+        \x20       if !sa2_boot::pad::scripted(f) {\n\
+        \x20           if window {\n\
+        \x20               sa2_boot::pad::set_port0(sa2_boot::window::pad());\n\
+        \x20           } else if std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
+        \x20               sa2_boot::pad::autopress(f);\n\
+        \x20           }\n\
+        \x20       }\n\
+        \x20       if window {\n\
+        \x20           for (_, fr) in frames {\n\
+        \x20               sa2_boot::window::submit(fr);\n\
+        \x20           }\n\
+        \x20           sa2_boot::window::pace();\n\
         \x20       }\n\
         \x20   });\n\
         }\n";
