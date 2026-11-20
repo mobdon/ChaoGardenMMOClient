@@ -8,16 +8,19 @@ stack, the Ninja matrix stack (0x81700000) and its pointer words
 (0x803AE0C0/C4), and constants (.text, .rodata, .sdata2 and the routines'
 jump tables). Engine calls the port leaves to its host are stubbed and
 recorded with their return values: SE_Call, fn_80011714 (voice),
-Jingle_Play, fn_800BE308/374/408, CreateElementalTask, MAlloc, DestroyTask
-and fn_80063E34. Everything else (the Ninja matrix routines, MSL sinf,
-GetStageNum, the routines' own callees) runs as compiled.
+Jingle_Play, CreateElementalTask, CreateChildTask, MAlloc, DestroyTask,
+FreeTask, and the Ninja drawing calls of the effect displays. Everything
+else (the Ninja matrix routines, MSL sinf, sqrtf, njDistanceP2P, rand,
+GetStageNum, the 2P rank and the effect tasks, the routines' own callees)
+runs as compiled.
 Usage: python so_contact_ppc.py [cases per routine]
 """
 import json, os, random, struct, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from dol_ppc import Dol, STACK_TOP  # noqa: E402
-from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE  # noqa: E402
+from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE  # noqa: E402
+from unicorn import ppc_const as R  # noqa: E402
 
 fb = lambda x: struct.unpack('>I', struct.pack('>f', x))[0]
 bf = lambda b: struct.unpack('>f', struct.pack('>I', b))[0]
@@ -47,10 +50,18 @@ LOG = S + 0x7000                                    # 4 * 256 * 12 bytes
 NEWT = [S + 0xB000 + 0x100 * k for k in range(4)]   # tasks CreateElementalTask returns
 NEWW = [S + 0xB800 + 0x40 * k for k in range(4)]    # their +0x40 / +0x3C blocks
 ARGS = S + 0xC000                                   # vectors passed by pointer
+NEWTW = [S + 0xC100 + 0x40 * k for k in range(4)]   # twp of the tasks CreateElementalTask returns
+CHILD = [S + 0xC200 + 0x40 * k for k in range(4)]   # tasks CreateChildTask returns
+CHILDW = [S + 0xC300 + 0x40 * k for k in range(4)]  # their twp
+RACE = S + 0xC400                                   # the 2P race block (r13 - 0x7838)
+STARTP = S + 0xC480                                 # what lbl_801E7788 points at
+MODEW, RACEP, STARTT, SEED = 0x803AD828, 0x803ADA88, 0x801E7788, 0x803AD6A0
+GOALS = 0x801BB2AC
 
 EXCL = [(0x80000000, 0x80173180 + 0x7960),  # .init/.text/ctors/rodata
         (0x803AE520, 0x803AE520 + 0x2F40),  # .sdata2
         (0x80196F84, 0x80197038), (0x801B59BC, 0x801B5A24),  # jump tables
+        (0x80195034, 0x80195060),
         (STACK_TOP - 0x4000, STACK_TOP + 0x200),
         (0x81700000, 0x81701000), (0x803AE0C0, 0x803AE0C8)]
 
@@ -112,12 +123,51 @@ def pick_task(args):
 m.stub(0x8006B978, stub_void('se', 1))
 m.stub(0x80011714, stub_void('voice', 1))
 m.stub(0x800110A4, stub_void('jingle', 1))
-for a in (0x800BE308, 0x800BE374, 0x800BE408):
-    m.stub(a, stub_ret('be%x' % (a & 0xfff), 1, lambda _: rng.choice([0, 0x81300000, 1])))
+# The drawing calls are stubbed only in the effect displays: the matrix
+# routines also run natively inside SetVelocityP and fn_80039EB0.
+DRAWING = {'on': False}
+DISPLAYS = {'fn_800bd478', 'fn_800bd120', 'fn_800bd5c0'}
+
+
+def draw_stub(addr, fn):
+    def hook(uc, pc, size, _):
+        if DRAWING['on']:
+            fn(m)
+            uc.reg_write(R.UC_PPC_REG_PC, uc.reg_read(R.UC_PPC_REG_LR))
+    u.hook_add(UC_HOOK_CODE, hook, begin=addr, end=addr)
+
+
 m.stub(0x80071E0C, stub_ret('cet', 4, pick_task))
 m.stub(0x801197D0, stub_ret('malloc', 1, lambda _: rng.choice([0] + NEWW)))
 m.stub(0x80071AF0, stub_void('destroy', 1))
-m.stub(0x80063E34, stub_ret('rank', 1, lambda _: rng.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, -1])))
+m.stub(0x80071AE0, stub_void('free', 1))
+m.stub(0x800709F8, stub_ret('cct', 3, lambda _: rng.choice([0] + CHILD)))
+for a, name, nargs in [(0x8011C2BC, 'nofog', 0), (0x8011C2B0, 'fog', 0), (0x8011C310, 'setfog', 0),
+                       (0x80116098, 'push', 0), (0x801160E4, 'pop', 0), (0x80115DC8, 'popn', 1),
+                       (0x80116E18, 'tex', 1), (0x8011616C, 'trans', 1), (0x80115828, 'roty', 2),
+                       (0x80115C60, 'rotx', 2), (0x8011DF20, 'cnk', 1), (0x8011E158, 'model', 1)]:
+    draw_stub(a, stub_void(name, nargs))
+
+
+def stub_scale(mm):
+    events.append(['scale', r(3)] + [fb(f32(mm.fpr(k))) if mm.fpr(k) == mm.fpr(k) else 0x7fc00000
+                                     for k in (1, 2, 3)])
+
+
+draw_stub(0x80115178, stub_scale)
+
+
+def table_stages():
+    st = {m.get(GOALS + 16 * k, 'i') for k in range(11)}
+    for t in (0x8019109C, 0x80191438, 0x80191D54, 0x80191750, 0x80191A68, 0x80192174,
+              0x80191DAC, 0x801924E4, 0x80192568):
+        while m.get(t, 'h') != 0x5b:
+            st.add(m.get(t, 'h'))
+            t += 0x2c
+    return sorted(st) + [0x13, 0x14, 0x1d, 0x21, 0x2a, 0x46, 0x47, 0x5a, 0x5b]
+
+
+STAGES = table_stages()
 
 
 # --- randomized world -----------------------------------------------------------
@@ -219,6 +269,35 @@ def world():
     put(SEARCH + 4, 'I', rng.choice([0, 0x800065A8, 0x80006428, 0x800059C8, rng.randrange(1 << 32)]))
     put(SEARCH + 8, 'i', rng.choice([-1, 0, 1, 3, 14, 15, 16, 17, -3, rng.randrange(-20, 20)]))
     put(SEARCH + 0xc, 'i', rng.randrange(-5, 5))
+    # the effect tasks
+    put(SEED, 'I', rng.randrange(1 << 32))
+    for k in range(4):
+        put(NEWT[k] + 0x34, 'I', NEWTW[k])
+        put(CHILD[k] + 0x34, 'I', CHILDW[k])
+        put(CHILDW[k] + 3, 'B', rng.choice([0, 1, 7, 10, 11, 12, 15, 16, 29, 30, 31, rng.randrange(256)]))
+        pf(CHILDW[k] + 0x28, rng.choice([1.0, 0.5, 0.6, 0.025, 0.02, 0.0, -0.0, -1.0, rf(-2, 2)]))
+    for k, t in enumerate(TASKS):
+        put(TWPS[k] + 6, 'H', rng.choice([0, 1, 2, 0x4eb, 0x4ec, 0x4ed, 0xffff, rng.randrange(0x10000)]))
+        put(TWPS[k] + 3, 'B', rng.choice([0, 1, 7, 10, 11, 15, 16, 29, 30, 31, rng.randrange(256)]))
+        pf(TWPS[k] + 0x28, rng.choice([1.0, 0.5, 0.6, 0.025, 0.02, 0.0, -0.0, -1.0, rf(-2, 2)]))
+    put(GAME + 0x42, 'B', rng.choice([0, 1, 2, 0]))
+    for n in range(4):
+        pf(PTWP[n] + 0x20, rng.choice([1.0, 0.5, rf(-3, 3)]))
+    # the 2P rank
+    put(GAME + 0x5f, 'B', rng.choice([0, 1, 2, 2, 3, rng.randrange(256)]))
+    for k in range(2):
+        put(MODEW + 4 * k, 'i', rng.choice([-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, rng.randrange(-1 << 31, 1 << 31)]))
+    put(RACEP, 'I', RACE)
+    for o in (0xa, 0xb, 0xc, 0xd):
+        put(RACE + o, 'b', rng.choice([0, 1, 2, 3, -1, rng.randrange(-128, 128)]))
+    for o in (0x2c, 0x3c, 0x4c):
+        put(RACE + o, 'b', rng.choice([-2, -2, 0, -1, rng.randrange(-128, 128)]))
+        put(RACE + o + 1, 'b', rng.choice([0, 1, 0, 1, 2, -1]))
+    for n in range(4):
+        put(STARTT + 4 * n, 'I', opt([STARTP], 0.1))
+        for o in (0x14, 0x18, 0x1c):
+            pf(PTWP[n] + o, rf(-20000, 20000))
+    put(STAGE, 'h', rng.choice(STAGES + [rng.randrange(-0x8000, 0x8000)]))
 
 
 # --- cases --------------------------------------------------------------------------
@@ -393,6 +472,8 @@ def add_mech_hp():
 
 @routine(0x800637EC)
 def add_num_ring():
+    if rng.random() < 0.6:
+        rank_setup()
     p = rng.choice([0, 1, 2, 3, -1])
     if rng.random() < 0.7:
         put(GAME + 0x68 + 2 * (p & 1), 'h', rng.randrange(0, 130))
@@ -419,6 +500,108 @@ def fn_8002fb2c():
     return [p, a, b, c], dict(r3=p, r4=a & 0xffffffff, r5=b & 0xffffffff, r6=c & 0xffffffff)
 
 
+# --- the 2P rank -------------------------------------------------------------------
+@routine(0x80038108)
+def get_player_character():
+    n = rng.choice([0, 1, 2, 3])
+    return [n], dict(r3=n)
+
+
+@routine(0x8001DDA8)
+def fn_8001dda8():
+    n = rng.choice([0, 1, 2, -1])
+    return [n], dict(r3=n & 0xffffffff)
+
+
+@routine(0x8001DB4C)
+def fn_8001db4c():
+    full_players()
+    n = rng.choice([0, 1, 2, 3])
+    p, a = rng.choice([0, ARGS]), rng.choice([0, ARGS + 0x10])
+    return [n, p, a], dict(r3=n, r4=p, r5=a)
+
+
+@routine(0x800736F0)
+def fn_800736f0():
+    p = rng.choice([0, ARGS, ARGS])
+    return [p], dict(r3=rng.randrange(4), r4=p, r5=0)
+
+
+def rank_setup():
+    full_players()
+    put(GAME + 0x1e, 'b', 0 if rng.random() < 0.1 else 1)
+    if rng.random() < 0.7:
+        put(GAME + 0x5f, 'B', rng.choice([1, 2]))
+    for k in range(2):
+        if rng.random() < 0.8:
+            put(MODEW + 4 * k, 'i', rng.choice([0, 1, 4, 5, 6, 7]))
+    if rng.random() < 0.5:
+        # the two players near each other, one ahead
+        a = [m.get(PTWP[0] + o, 'f') for o in (0x14, 0x18, 0x1c)]
+        for o, x in zip((0x14, 0x18, 0x1c), a):
+            pf(PTWP[1] + o, f32(x + rng.uniform(-3000, 3000)))
+    for n in range(2):
+        if rng.random() < 0.5:
+            pf(PWPS[n] + 0x48, rng.choice([0.0, 2.5, 5.0, 7.5, 10.0, rf(0, 12)]))
+
+
+@routine(0x80063E34)
+def fn_80063e34():
+    rank_setup()
+    p = rng.choice([0, 1, 0, 1, 2, -1])
+    return [p], dict(r3=p & 0xffffffff)
+
+
+# --- the effect tasks -------------------------------------------------------------
+def effect_task():
+    full_players()
+    t = rng.choice(TASKS)
+    k = TASKS.index(t)
+    put(t + 0x34, 'I', TWPS[k])
+    put(TWPS[k] + 1, 'b', rng.choice([0, 1, 2, 3]))
+    return t, k
+
+
+def exec_case():
+    t, k = effect_task()
+    n = m.get(TWPS[k] + 1, 'b')
+    if rng.random() < 0.5:
+        put(PWPS[n] + 0x10, 'H', rng.choice([0, 1, 2, 3, 0x8000, 0x8003]))
+    if rng.random() < 0.1:
+        put(TWP_T + 4 * n, 'I', 0)
+    return [t], dict(r3=t)
+
+
+def child_case():
+    t, k = effect_task()
+    # a parent with a child list
+    par = rng.choice([x for x in TASKS if x != t])
+    put(t + 8, 'I', par)
+    kp = TASKS.index(par)
+    put(par + 0x34, 'I', TWPS[kp])
+    first = rng.choice([t, t, rng.choice(TASKS)])
+    put(par + 0xc, 'I', first)
+    put(first + 4, 'I', rng.choice([t, t, 0, rng.choice(TASKS)]))
+    return [t], dict(r3=t)
+
+
+for name, addr, gen in [('fn_800be308', 0x800BE308, item), ('fn_800be374', 0x800BE374, item),
+                        ('fn_800be408', 0x800BE408, item),
+                        ('fn_800bd2f0', 0x800BD2F0, exec_case), ('fn_800bd6e8', 0x800BD6E8, exec_case),
+                        ('fn_800be0bc', 0x800BE0BC, exec_case),
+                        ('fn_800bd2b4', 0x800BD2B4, exec_case), ('fn_800bd6ac', 0x800BD6AC, exec_case),
+                        ('fn_800bdfbc', 0x800BDFBC, exec_case),
+                        ('fn_800bd858', 0x800BD858, exec_case), ('fn_800be234', 0x800BE234, exec_case),
+                        ('fn_800bd478', 0x800BD478, exec_case),
+                        ('fn_800bd120', 0x800BD120, child_case), ('fn_800bd5c0', 0x800BD5C0, child_case)]:
+    ROUTINES[name] = (addr, gen)
+
+
+@routine(0x8010DC88)
+def rand():
+    return [], {}
+
+
 def coalesce(d):
     out, run = [], None
     for a in sorted(d):
@@ -441,6 +624,7 @@ for name, (addr, gen) in ROUTINES.items():
         events.clear()
         track['reads'], track['written'] = {}, set()
         track['on'] = True
+        DRAWING['on'] = name in DISPLAYS
         try:
             m.call(addr, **regs)
         except Exception:
