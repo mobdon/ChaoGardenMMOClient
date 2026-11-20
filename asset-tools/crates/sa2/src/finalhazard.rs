@@ -952,6 +952,8 @@ pub enum PlacementClock {
     /// Section 1 + 0x1e04, 0x1ed8, 0x1f94, 0x1fc8, 0x2078 and 0x210c: the boss
     /// draw handler and its small engine wrappers.
     BossSupport(Box<BossSupportFrame>),
+    /// Section 1 + 0x2138, 0x2218 and 0x2300: boss texture scroll draws.
+    BossScroll(Box<BossScrollFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2740,6 +2742,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossPoints(frame) => return boss_points(&rel, &frame),
         PlacementClock::BossVoice(frame) => return boss_voice(&rel, &frame),
         PlacementClock::BossSupport(frame) => return boss_support(&rel, &frame),
+        PlacementClock::BossScroll(frame) => return boss_scroll(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6750,5 +6753,83 @@ fn boss_support(
             ev.push(call(0x211c, serde_json::json!([*kind as i32 as u32]))?);
         }
     }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// A texture scroll draw: `routine` is 0x2138, 0x2218 or 0x2300; `angle`
+/// is the r3 argument of the first two; `speed` is module word 5:0x31f0 and
+/// `frame_count` the global frame word 0x801cbd88 + 0x7c, each as read for
+/// the first and the second scroll.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossScrollFrame {
+    pub routine: u32,
+    pub angle: u32,
+    pub speed: [i32; 2],
+    pub frame_count: [u32; 2],
+}
+/// Sections 1 + 0x2138 / 0x2218 / 0x2300: scroll two textures by
+/// (speed * frame) & 0x1fff (0x2218 negates the speed) and draw the models
+/// between them; the first two draw a model rotated by `angle`.
+fn boss_scroll(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossScrollFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let m = |site: u32| module_ref(rel, site, 0);
+    let negate = f.routine == 0x2218;
+    let offset = |i: usize| {
+        let speed = if negate {
+            f.speed[i].wrapping_neg()
+        } else {
+            f.speed[i]
+        };
+        (speed as u32).wrapping_mul(f.frame_count[i]) & 0x1fff
+    };
+    let ev = match f.routine {
+        0x2138 | 0x2218 => {
+            // Call sites, then relocation sites, of the two copies.
+            let (c, r) = if negate {
+                (
+                    [
+                        0x227cu32, 0x2284, 0x2288, 0x2294, 0x22a0, 0x22a4, 0x22d4, 0x22dc,
+                    ],
+                    [0x223au32, 0x224a, 0x229a, 0x22aa, 0x22b6],
+                )
+            } else {
+                (
+                    [
+                        0x2198, 0x21a0, 0x21a4, 0x21b0, 0x21bc, 0x21c0, 0x21ec, 0x21f4,
+                    ],
+                    [0x215a, 0x216a, 0x21b6, 0x21c6, 0x21d2],
+                )
+            };
+            vec![
+                call(c[0], serde_json::json!([m(r[0])?, m(r[1])?, 0, offset(0)]))?,
+                call(c[1], serde_json::json!([m(r[0])?]))?,
+                call(c[2], serde_json::json!([]))?,
+                call(c[3], serde_json::json!([0, f.angle]))?,
+                call(c[4], serde_json::json!([m(r[2])?]))?,
+                call(c[5], serde_json::json!([]))?,
+                call(c[6], serde_json::json!([m(r[3])?, m(r[4])?, 0, offset(1)]))?,
+                call(c[7], serde_json::json!([m(r[3])?]))?,
+            ]
+        }
+        0x2300 => vec![
+            call(
+                0x2358,
+                serde_json::json!([m(0x231a)?, m(0x232a)?, 0, offset(0)]),
+            )?,
+            call(0x2360, serde_json::json!([m(0x231a)?]))?,
+            call(
+                0x238c,
+                serde_json::json!([m(0x2366)?, m(0x2372)?, 0, offset(1)]),
+            )?,
+            call(0x2394, serde_json::json!([m(0x2366)?]))?,
+        ],
+        _ => return Err(Error::invalid("not a boss texture scroll routine")),
+    };
     Ok(serde_json::json!({"events":ev}))
 }
