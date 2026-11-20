@@ -245,22 +245,12 @@ fn checks() -> Vec<Group> {
     ]
 }
 
-/// Files the readers refuse whose GameCube disc copies are byte-identical, so
-/// they are reader limits, not Steam gaps. The Steam-edited text banks
-/// (French, German, Italian, Spanish) carry the -1 terminator and are read.
-const NO_TERMINATOR: &str = "offset table has no -1 terminator; message_bank requires one";
-const KNOWN_REFUSALS: &[(&str, &str)] = &[
-    (
-        "event/e0350.prs",
-        "header byte 0x2b is 4; event::read accepts 0 or 1",
-    ),
-    ("message/text_e.prs", NO_TERMINATOR),
-    ("message/text_j.prs", NO_TERMINATOR),
-    ("messagek/text_e.prs", NO_TERMINATOR),
-    ("messagek/text_g.prs", NO_TERMINATOR),
-    ("messagek/text_j.prs", NO_TERMINATOR),
-    ("messagek/text_s.prs", NO_TERMINATOR),
-];
+/// Files the retail readers refuse whose GameCube disc copies are
+/// byte-identical, so they are reader limits, not Steam gaps.
+const KNOWN_REFUSALS: &[(&str, &str)] = &[(
+    "event/e0350.prs",
+    "older event layout; read by event::read_beta, not the retail reader",
+)];
 
 fn known(path: &Path, root: &Path) -> Option<&'static str> {
     let rel = path
@@ -303,6 +293,25 @@ fn every_gamecube_format_reader_accepts_the_steam_data() {
             }
         }
         println!("{group:32} ok {ok:4}  skipped {skipped:4}  known limits {limits}");
+    }
+    // The one older-layout event, through its own reader.
+    match fs::read(root.join("event/e0350.prs"))
+        .map_err(e)
+        .and_then(|b| event::read_beta_prs(&b).map_err(e))
+    {
+        Ok(ev) => {
+            let counts: Vec<usize> = ev.scenes.iter().map(|s| s.entities.len()).collect();
+            println!(
+                "{:32} scenes {} entities {counts:?} textures {}",
+                "Older-layout event e0350",
+                ev.scenes.len(),
+                ev.texture_names.len()
+            );
+            if counts != [1, 49] || ev.texture_names.len() != 10 {
+                failures.push(format!("e0350: unexpected shape {counts:?}"));
+            }
+        }
+        Err(err) => failures.push(format!("e0350 older layout: {err}")),
     }
     // Every CSB sound bank (Steam's replacement for the GameCube .mlt/.mpb banks).
     let mut banks = Vec::new();
