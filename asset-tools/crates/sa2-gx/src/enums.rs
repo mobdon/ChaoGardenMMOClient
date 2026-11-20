@@ -63,6 +63,8 @@ pub mod command {
     pub const LOAD_BP_REG: u32 = 0x61;
     pub const LOAD_CP_REG: u32 = 8;
     pub const LOAD_XF_REG: u32 = 0x10;
+    pub const CALL_DL: u32 = 0x40;
+    pub const INVAL_VTX_CACHE: u32 = 0x48;
 }
 
 /// GX `Attr`.

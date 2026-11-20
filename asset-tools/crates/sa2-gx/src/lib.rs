@@ -9,6 +9,7 @@
 
 pub mod api;
 pub mod enums;
+pub mod fifo;
 pub mod gpu;
 pub mod material;
 pub mod params;

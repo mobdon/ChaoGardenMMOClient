@@ -239,6 +239,13 @@ pub struct Gx {
     regs: crate::vtx::DisplayListRegisters,
     dual_tex: [u32; 8],
     chan_regs: [u32; 4],
+    // XF projection (0x1020..=0x1026) and viewport (0x101A..=0x101F) words.
+    proj_regs: [f32; 7],
+    vp_regs: [f32; 6],
+    /// Palettes loaded into TMEM through BP 0x64/0x65: offset -> (address, entries).
+    tlut_loads: HashMap<u32, (u32, u32)>,
+    /// Inside a `GXCallDisplayList` (lists can't call lists).
+    in_call: bool,
     // Output.
     immediate: Option<Immediate>,
     frame: Frame,
@@ -309,6 +316,10 @@ impl Gx {
             },
             dual_tex: [0; 8],
             chan_regs: [0; 4],
+            proj_regs: [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+            vp_regs: [320.0, -240.0, 16_777_215.0, 662.0, 582.0, 16_777_215.0],
+            tlut_loads: HashMap::new(),
+            in_call: false,
             immediate: None,
             frame: Frame::default(),
         };
@@ -560,11 +571,43 @@ impl Gx {
 
     /// `GXCallDisplayList`: run the list at `addr` (`size` bytes).
     pub fn call_display_list(&mut self, addr: u32, size: u32, mem: &dyn GxMemory) {
+        if self.in_call {
+            return;
+        }
         let Some(dl) = mem.read(addr, size as usize) else {
             return;
         };
         let dl = dl.to_vec();
+        self.in_call = true;
         self.run_display_list(&dl, mem);
+        self.in_call = false;
+    }
+
+    /// Bytes in the command at the start of `b` under the current vertex
+    /// format, or `None` while it is incomplete. An unknown opcode is one
+    /// byte (the hardware skips it with an error).
+    pub fn command_len(&self, b: &[u8]) -> Option<usize> {
+        let cmd = u32::from(*b.first()?);
+        let be16 = |o: usize| {
+            b.get(o..o + 2)
+                .map(|x| usize::from(u16::from_be_bytes([x[0], x[1]])))
+        };
+        let n = match cmd {
+            command::LOAD_BP_REG => 5,
+            command::LOAD_CP_REG => 6,
+            command::LOAD_XF_REG => 5 + 4 * (be16(1)? + 1),
+            command::LOAD_INDX_A
+            | command::LOAD_INDX_B
+            | command::LOAD_INDX_C
+            | command::LOAD_INDX_D => 5,
+            command::CALL_DL => 9,
+            _ if (command::DRAW_QUADS..=command::DRAW_POINTS + 7).contains(&cmd) => {
+                let size = vtx::source_vertex_size(&self.vat[(cmd & 7) as usize], &self.vcd);
+                3 + size * be16(1)?
+            }
+            _ => 1,
+        };
+        (n <= b.len()).then_some(n)
     }
 
     /// Run a display list already in hand.
@@ -630,6 +673,11 @@ impl Gx {
                     self.run_draws(&one, mem);
                     i = end;
                 }
+                command::CALL_DL => {
+                    self.call_display_list(be32(i + 1), be32(i + 5), mem);
+                    i += 9;
+                }
+                command::INVAL_VTX_CACHE => i += 1,
                 _ => break,
             }
         }
@@ -805,6 +853,45 @@ impl Gx {
                     13..=15 => l.direction[k % 16 - 13] = f,
                     _ => {}
                 }
+            }
+            a if a == xf_register::XF_MATRIXINDEX0_ID => self.current_mtx = v & 0x3F,
+            a if (xf_register::XF_VPSCALEX_ID..=xf_register::XF_VPOFFSETZ_ID).contains(&a) => {
+                self.vp_regs[(a - xf_register::XF_VPSCALEX_ID) as usize] = f;
+                // Undo GXSetViewport: scale (w/2, -h/2, (far-near)*zmax),
+                // offset (x+w/2+342, y+h/2+342, far*zmax).
+                let [sx, sy, sz, ox, oy, oz] = self.vp_regs;
+                let zmax = 16_777_215.0;
+                let far = oz / zmax;
+                self.viewport = [
+                    ox - 342.0 - sx,
+                    oy - 342.0 + sy,
+                    2.0 * sx,
+                    -2.0 * sy,
+                    far - sz / zmax,
+                    far,
+                ];
+            }
+            a if (xf_register::XF_PROJECTIONA_ID..=xf_register::XF_PROJECTORTHO_ID)
+                .contains(&a) =>
+            {
+                self.proj_regs[(a - xf_register::XF_PROJECTIONA_ID) as usize] = f;
+                let [p0, p1, p2, p3, p4, p5, ortho] = self.proj_regs;
+                // The ortho flag is written as an integer word.
+                self.projection = if ortho.to_bits() != 0 {
+                    [
+                        [p0, 0.0, 0.0, p1],
+                        [0.0, p2, 0.0, p3],
+                        [0.0, 0.0, p4, p5],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ]
+                } else {
+                    [
+                        [p0, 0.0, p1, 0.0],
+                        [0.0, p2, p3, 0.0],
+                        [0.0, 0.0, p4, p5],
+                        [0.0, 0.0, -1.0, 0.0],
+                    ]
+                };
             }
             a if a == xf_register::XF_NUMCOLORS_ID => self.num_chans = v as usize & 3,
             a if a == xf_register::XF_NUMTEX_ID => self.num_tex_gens = v as usize & 0xF,
@@ -1007,6 +1094,37 @@ impl Gx {
                     self.params.colors[color_kind::CPREV + k] = rgba;
                 }
             }
+            0x20 | 0x21 => {
+                // SU_SCIS0/1: top/left and bottom/right, 11 bits each.
+                // shortcut: assumes GX's default scissor offset of 342; read BP 0x59 if a game moves it.
+                let (a, b) = (r.bp[0x20], r.bp[0x21]);
+                let (top, left) = (a & 0x7FF, (a >> 12) & 0x7FF);
+                let (bottom, right) = (b & 0x7FF, (b >> 12) & 0x7FF);
+                self.scissor = [
+                    left.saturating_sub(342),
+                    top.saturating_sub(342),
+                    (right + 1).saturating_sub(left),
+                    (bottom + 1).saturating_sub(top),
+                ];
+            }
+            0x4F | 0x50 => {
+                // PE copy clear: 0x4F is A,R and 0x50 is G,B.
+                let (ar, gb) = (r.bp[0x4F], r.bp[0x50]);
+                self.frame.clear_color =
+                    rgba8([ar as u8, (gb >> 8) as u8, gb as u8, (ar >> 8) as u8]);
+            }
+            0x65 => {
+                // TX_LOADTLUT1: TMEM offset and count (16-entry units);
+                // the source address came in TX_LOADTLUT0.
+                let addr = (r.bp[0x64] & 0x1F_FFFF) << 5;
+                self.tlut_loads
+                    .insert(v & 0x3FF, (addr, ((v >> 10) & 0x7FF) * 16));
+            }
+            0x66 => self.tex_cache.clear(),
+            0x80..=0x9B | 0xA0..=0xBB => {
+                let i = ((addr & 3) + if addr >= 0xA0 { 4 } else { 0 }) as usize;
+                self.tex_map_from_regs(i);
+            }
             bp::PE_ZMODE_ID | bp::PE_CMODE0_ID | bp::TEV_ALPHAFUNC_ID => {
                 self.mat.set_rop_state_from_registers(&r)
             }
@@ -1019,6 +1137,59 @@ impl Gx {
             }
             _ => {}
         }
+    }
+
+    /// Texture map `i` from its BP registers (SETMODE0/1, SETIMAGE0/3, SETTLUT).
+    fn tex_map_from_regs(&mut self, i: usize) {
+        let base = if i < 4 { i as u32 } else { 0x20 + i as u32 - 4 };
+        let reg = |at: u32| self.regs.bp[(at + base) as usize] & 0x00FF_FFFF;
+        let (m0, m1, im0, im3, tl) = (reg(0x80), reg(0x84), reg(0x88), reg(0x94), reg(0x98));
+        let format = (im0 >> 20) & 0xF;
+        let hw_min = ((m0 >> 5) & 7) as usize;
+        use tex_filter as tf;
+        let min_filter = [
+            tf::NEAR,
+            tf::NEAR_MIP_NEAR,
+            tf::NEAR_MIP_LIN,
+            tf::NEAR,
+            tf::LINEAR,
+            tf::LIN_MIP_NEAR,
+            tf::LIN_MIP_LIN,
+            tf::LINEAR,
+        ][hw_min];
+        let tlut_name =
+            matches!(format, tex_format::C4 | tex_format::C8 | tex_format::C14X2).then(|| {
+                let tmem = tl & 0x3FF;
+                let name = 0x1_0000 | tmem;
+                if let Some(&(addr, entries)) = self.tlut_loads.get(&tmem) {
+                    self.tluts.insert(
+                        name,
+                        TlutObj {
+                            addr,
+                            format: (tl >> 10) & 3,
+                            entries,
+                        },
+                    );
+                }
+                name
+            });
+        self.tex_maps[i] = Some(TexObj {
+            image_addr: (im3 & 0x1F_FFFF) << 5,
+            width: (im0 & 0x3FF) + 1,
+            height: ((im0 >> 10) & 0x3FF) + 1,
+            format,
+            wrap_s: m0 & 3,
+            wrap_t: (m0 >> 2) & 3,
+            mipmap: matches!(hw_min, 1 | 2 | 5 | 6),
+            min_filter,
+            mag_filter: (m0 >> 4) & 1,
+            min_lod: (m1 & 0xFF) as f32 / 16.0,
+            max_lod: ((m1 >> 8) & 0xFF) as f32 / 16.0,
+            // s2.5 fixed point.
+            lod_bias: f32::from((m0 >> 9) as u8 as i8) / 32.0,
+            max_aniso: (m0 >> 19) & 3,
+            tlut_name,
+        });
     }
 
     // ---- transform -------------------------------------------------------
