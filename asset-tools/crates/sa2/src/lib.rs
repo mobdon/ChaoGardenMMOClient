@@ -108,6 +108,7 @@ pub mod walker_adapter;
 pub mod walker_collide;
 pub mod walker_exec;
 pub mod walker_frame;
+pub mod walker_frame_steps;
 pub mod walker_ground;
 pub mod walker_move;
 pub mod wild_canyon;

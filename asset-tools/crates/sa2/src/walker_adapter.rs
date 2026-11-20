@@ -666,3 +666,49 @@ impl ExecSteps for MoveSteps<'_> {
         self.rest.set_ccl_centers(a, b)
     }
 }
+
+/// [`Turns`] for callers that hold the work areas themselves (the action
+/// step passes them to `walker_move` while these callbacks run): it reaches
+/// them through raw pointers, one callback at a time.
+pub struct PtrTurns<'e> {
+    t: *mut Work,
+    m: *mut Work,
+    p: *mut Work,
+    env: &'e MoveEnv,
+}
+
+impl<'e> PtrTurns<'e> {
+    /// # Safety
+    /// The work areas must outlive this value, and no other reference to
+    /// them may be used while one of its callbacks runs.
+    pub unsafe fn new(t: *mut Work, m: *mut Work, p: *mut Work, env: &'e MoveEnv) -> Self {
+        Self { t, m, p, env }
+    }
+
+    fn with<R>(&mut self, f: impl FnOnce(&mut Turns) -> R) -> R {
+        // SAFETY: see `new`.
+        let mut tu = unsafe { Turns::new(&mut *self.t, &mut *self.m, &mut *self.p, self.env) };
+        f(&mut tu)
+    }
+}
+
+impl SteerCalls for PtrTurns<'_> {
+    fn flagged_turn(&mut self) {
+        self.with(|t| t.flagged_turn())
+    }
+    fn analog(&mut self) -> Option<i32> {
+        self.with(|t| t.analog())
+    }
+    fn analog_magnitude(&mut self) -> Option<(i32, f32)> {
+        self.with(|t| t.analog_magnitude())
+    }
+    fn slope_turn(&mut self) {
+        self.with(|t| t.slope_turn())
+    }
+    fn turn_toward(&mut self, aim: &mut i32) {
+        self.with(|t| t.turn_toward(aim))
+    }
+    fn turn_smoothly(&mut self, aim: &mut i32) {
+        self.with(|t| t.turn_smoothly(aim))
+    }
+}
