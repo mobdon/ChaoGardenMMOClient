@@ -342,3 +342,35 @@ impl Rand {
         ((self.0 >> 16) & 0x7fff) as i32
     }
 }
+
+/// fn_80018A4C: a player (1 or 2, the first found) is within the notice
+/// range in 3D, or within the outer range (+0x1D8, squared) and inside
+/// the view angle (+0x1D4) of the enemy's facing.
+pub fn player_in_view(
+    task: &EnemyTask,
+    w: &EnemyWork,
+    players: &[Option<PlayerView>; 2],
+    game_39: u8,
+    game_42: u8,
+) -> i32 {
+    if !players_tested(game_39, game_42) {
+        return 0;
+    }
+    for (i, p) in players.iter().enumerate() {
+        let Some(p) = p else { continue };
+        let dx = p.pos[0] - task.pos[0];
+        let dy = p.pos[1] - task.pos[1];
+        let dz = p.pos[2] - task.pos[2];
+        let d = dz * dz + (dx * dx + dy * dy);
+        if d < w.notice_range_sq {
+            return i as i32 + 1;
+        }
+        if d < w.f_1d8 {
+            let yaw = fctiwz_f64(BAMS_PER_RADIAN * atan2f(dx, dz) as f64);
+            if diff_angle(yaw.wrapping_sub(0x4000), task.ang[1]) < w.i_1d4 {
+                return i as i32 + 1;
+            }
+        }
+    }
+    0
+}

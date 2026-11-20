@@ -1,10 +1,11 @@
-//! Replay tests/e_ai_ppc.py's scripted E AI runs (stg09D.rel's own code
-//! under the Unicorn harness) through enemy_lib::e_ai and compare the task,
+//! Replay tests/e_ai_ppc.py's scripted E AI and E GOLD runs (stg09D.rel's
+//! own code under the Unicorn harness) through enemy_lib and compare the task,
 //! the enemy work, the collision radius and attribute, the switch-group
 //! counts, rand and every host call, frame by frame.
 use sa2_asset_tools::{
     enemy_lib::{
         e_ai::{rows, EAi},
+        e_gold::{rows as gold_rows, EGold},
         engine::GroupCounts,
         host::{EnemyHost, Event},
         motion::{read_table, Motion},
@@ -88,6 +89,9 @@ fn decode_work(b: &[u8], sec5: u32) -> EnemyWork {
         home_offset: b.v(0x70),
         last_pos: b.v(0x7C),
         f_94: b.f(0x94),
+        f_98: b.f(0x98),
+        f_ac: b.f(0xAC),
+        scale: b.v(0xB0),
         f_c0: b.f(0xC0),
         f_c8: b.f(0xC8),
         f_cc: b.f(0xCC),
@@ -104,6 +108,7 @@ fn decode_work(b: &[u8], sec5: u32) -> EnemyWork {
         shadow_y: b.f(0x150),
         f_1c0: b.f(0x1C0),
         bob: b.w(0x1C4) as i32,
+        i_1cc: b.w(0x1CC) as i32,
         turn_rate: b.w(0x1C8) as i32,
         target_yaw: b.w(0x1D0) as i32,
         i_1d4: b.w(0x1D4) as i32,
@@ -131,6 +136,7 @@ fn decode_work(b: &[u8], sec5: u32) -> EnemyWork {
 /// The scripted game around the enemy, from one frame's inputs.
 struct Host<'a> {
     rel5: &'a [u8],
+    g7c: i32,
     i: Value,
     events: Vec<Value>,
     tail: Vec<Value>,
@@ -150,6 +156,9 @@ impl EnemyHost for Host<'_> {
     }
     fn game_39_42(&self) -> (u8, u8) {
         (u(&self.i["g39"]) as u8, u(&self.i["g42"]) as u8)
+    }
+    fn game_7c(&self) -> i32 {
+        self.g7c
     }
     fn players(&self) -> [Option<PlayerView>; 2] {
         std::array::from_fn(|k| {
@@ -255,6 +264,21 @@ impl EnemyHost for Host<'_> {
                 self.radius = Some(f32::from_be_bytes(r[0xC..0x10].try_into().unwrap()));
                 json!(["ccl_init", rows])
             }
+            Event::WorkSound {
+                id,
+                a,
+                volume,
+                b,
+                pos,
+            } => json!(["work_sound", id, a, volume as u32, b, bits(pos)]),
+            Event::Hidden => {
+                self.tail.push(json!(["hidden"]));
+                return;
+            }
+            Event::CollisionOn => {
+                *self.attr0.as_mut().unwrap() &= !0x10;
+                return;
+            }
             Event::Free => json!(["free"]),
             Event::SetEntryDead => json!(["set_dead"]),
         };
@@ -262,18 +286,65 @@ impl EnemyHost for Host<'_> {
     }
 }
 
+enum Enemy {
+    Ai(EAi),
+    Gold(EGold),
+}
+
+impl Enemy {
+    fn task(&self) -> &EnemyTask {
+        match self {
+            Enemy::Ai(e) => &e.task,
+            Enemy::Gold(e) => &e.task,
+        }
+    }
+    fn task_mut(&mut self) -> &mut EnemyTask {
+        match self {
+            Enemy::Ai(e) => &mut e.task,
+            Enemy::Gold(e) => &mut e.task,
+        }
+    }
+    fn work(&self) -> &EnemyWork {
+        match self {
+            Enemy::Ai(e) => &e.work,
+            Enemy::Gold(e) => &e.work,
+        }
+    }
+    fn work_mut(&mut self) -> &mut EnemyWork {
+        match self {
+            Enemy::Ai(e) => &mut e.work,
+            Enemy::Gold(e) => &mut e.work,
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires SA2_MAIN_DOL, SA2_STAGE_REL (GC stg09D.rel) and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
 fn e_ai_matches_stg09d() {
+    run("ai");
+}
+
+#[test]
+#[ignore = "requires SA2_MAIN_DOL, SA2_STAGE_REL (GC stg09D.rel) and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+fn e_gold_matches_stg09d() {
+    run("gold");
+}
+
+fn run(enemy: &str) {
     let python = std::env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
     let o = Command::new(python)
         .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/e_ai_ppc.py"))
+        .env("SA2_ENEMY", enemy)
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let c: Value = serde_json::from_slice(&o.stdout).unwrap();
     let rel = std::fs::read(std::env::var("SA2_STAGE_REL").unwrap()).unwrap();
-    let table = read_table(&rel, 9, 5, rows::MOTION, rows::MOTION_ROWS).unwrap();
+    let table = if enemy == "gold" {
+        read_table(&rel, 9, 5, gold_rows::MOTION, gold_rows::MOTION_ROWS).unwrap()
+    } else {
+        read_table(&rel, 9, 5, rows::MOTION, rows::MOTION_ROWS).unwrap()
+    };
     let sec5 = u(&c["sec5"]);
     let rel5 = {
         // Section 5 of the GC REL, as the CCL rows are read from it.
@@ -294,7 +365,12 @@ fn e_ai_matches_stg09d() {
             scl: v3(&init["scl"]),
             ..Default::default()
         };
-        let mut e = EAi::new(task, table.clone());
+        let mut e = if enemy == "gold" {
+            Enemy::Gold(EGold::new(task, table.clone()))
+        } else {
+            Enemy::Ai(EAi::new(task, table.clone()))
+        };
+        let g7c = u(&init["g7c"]) as i32;
         let mut rand = Rand(u(&init["rand"]));
         let mut counts: GroupCounts = [0; 256];
         let mut radius = None;
@@ -302,31 +378,39 @@ fn e_ai_matches_stg09d() {
         for (fi, fr) in run["frames"].as_array().unwrap().iter().enumerate() {
             let i = fr["in"].clone();
             if i["flag4"].as_i64().unwrap() != 0 {
-                e.task.flags |= 4;
+                e.task_mut().flags |= 4;
             }
             if fi > 0 {
-                e.work.link_40 = i["link40"].as_i64().unwrap() != 0;
+                e.work_mut().link_40 = i["link40"].as_i64().unwrap() != 0;
                 if i["carry"].as_i64().unwrap() != 0 {
-                    e.work.flags |= 0x400;
+                    e.work_mut().flags |= 0x400;
                 }
             }
             let mut host = Host {
                 rel5: &rel5,
+                g7c,
                 i,
                 events: vec![],
                 tail: vec![],
                 radius,
                 attr0,
             };
-            e.exec(&mut host, &mut stack, &mut rand, &mut counts);
+            match &mut e {
+                Enemy::Ai(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
+                Enemy::Gold(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
+            }
             let mut got = host.events.clone();
             got.extend(host.tail.clone());
             radius = host.radius;
             attr0 = host.attr0;
             let at = format!("run {ri} frame {fi}");
-            assert_eq!(e.task, decode_task(&hex(&fr["twp"])), "task, {at}");
+            assert_eq!(*e.task(), decode_task(&hex(&fr["twp"])), "task, {at}");
             if !fr["work"].is_null() {
-                assert_eq!(e.work, decode_work(&hex(&fr["work"]), sec5), "work, {at}");
+                assert_eq!(
+                    *e.work(),
+                    decode_work(&hex(&fr["work"]), sec5),
+                    "work, {at}"
+                );
             }
             let want: Vec<Value> = fr["events"].as_array().unwrap().clone();
             assert_eq!(got.len(), want.len(), "events, {at}: {got:?} vs {want:?}");

@@ -1560,8 +1560,8 @@ impl EnemyAi {
 /// collision are main-program code it does not run: the player is never
 /// touched or bumped, enemies are never culled and ground collision leaves
 /// them where they are. Of the flags at 0x801CC168, +0x37 is the host's
-/// `effects_suppressed`; +0x39 and +0x42 keep their main.dol initial value
-/// (0).
+/// `effects_suppressed`; +0x39, +0x42 and the word at +0x7C keep their
+/// main.dol initial values (0).
 struct EnemyWorld<'a> {
     player: Option<PlayerSample>,
     game_37: bool,
@@ -1577,6 +1577,9 @@ impl EnemyHost for EnemyWorld<'_> {
     }
     fn game_39_42(&self) -> (u8, u8) {
         (0, 0)
+    }
+    fn game_7c(&self) -> i32 {
+        0
     }
     fn players(&self) -> [Option<PlayerView>; 2] {
         [

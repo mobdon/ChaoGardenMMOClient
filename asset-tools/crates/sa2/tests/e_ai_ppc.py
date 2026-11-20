@@ -1,4 +1,5 @@
-"""Run stg09D.rel's E AI (row callback 0x51034) frame by frame under the
+"""Run stg09D.rel's E AI (row callback 0x51034), or with SA2_ENEMY=gold its
+E GOLD (0x4A024), frame by frame under the
 dol_ppc harness, with the game around it scripted, and print JSON: each
 frame's inputs, the task and enemy work bytes after the frame, and the
 calls it made to the routines enemy_lib leaves to its host.
@@ -153,7 +154,13 @@ m.stub(R1(0x44BA0), lambda mm: ev('child', 0x44BA0, vec(mm, 5), vec(mm, 6), mm.g
 m.stub(R1(0x45638), lambda mm: ev('child', 0x45638, vec(mm, 4), vec(mm, 5), fbits(mm, 1)))
 m.stub(R1(0x4358C), lambda mm: ev('child', 0x4358C, vec(mm, 4), vec(mm, 5)))
 m.stub(R1(0x3D71C), lambda mm: ev('child', 0x3D71C, vec(mm, 3), mm.gpr(4), fbits(mm, 1), fbits(mm, 2)))
-m.stub(R1(0x45F3C), lambda mm: ev('child', 0x45F3C, mm.gpr(4)))
+ENEMY = os.environ.get("SA2_ENEMY", "ai")
+CALLBACK = {'ai': 0x51034, 'gold': 0x4A024}[ENEMY]
+if ENEMY == 'gold':
+    m.stub(R1(0x45F3C), lambda mm: ev('child', 0x45F3C, vec(mm, 5), mm.gpr(4)))
+else:
+    m.stub(R1(0x45F3C), lambda mm: ev('child', 0x45F3C, mm.gpr(4)))
+m.stub(0x80069D60, lambda mm: ev('work_sound', mm.gpr(3), mm.gpr(5), mm.gpr(6), mm.gpr(7), vec(mm, 8)))
 
 m.stub(0x8000F4EC, lambda mm: ev('ccl_entry'))   # CCL_Entry
 m.u.mem_write(GAME, bytes(0x50))
@@ -170,6 +177,8 @@ def rf(lo, hi):
 runs = []
 for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
     kind = run % 10 if run < 30 else rng.randrange(-2, 12)
+    g7c = rng.choice([0, 1, rng.randrange(0, 100000)])
+    m.put(GAME + 0x7C, 'I', g7c)
     HEAP[0] = 0x81100000
     m.u.mem_write(TASK, bytes(0x600))
     m.u.mem_write(COUNTS, bytes(0x100))
@@ -185,7 +194,11 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
     m.u.mem_write(TWP + 0x14, struct.pack('>6f', *pos, *scl))
     seed = rng.randrange(1 << 32)
     m.put(NEXT, 'I', seed)
-    init = {'pos': [fb(x) for x in pos], 'ang': ang, 'scl': [fb(x) for x in scl], 'rand': seed}
+    if ENEMY == 'gold':
+        for i, x in enumerate([(rng.randrange(256) << 8) | rng.randrange(0, 50), ang[1], rng.randrange(0, 0x10000)]):
+            m.put(TWP + 8 + 4 * i, 'i', x)
+            ang[i] = x
+    init = {'g7c': g7c, 'pos': [fb(x) for x in pos], 'ang': ang, 'scl': [fb(x) for x in scl], 'rand': seed}
     # Player paths.
     p0 = [pos[0] + rf(-300, 300), pos[1] + rf(-20, 20), pos[2] + rf(-300, 300)]
     v0 = [rf(-2, 2), 0.0, rf(-2, 2)]
@@ -260,7 +273,10 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
         frame_in['radius_in'] = fb(m.get(m.get(cwp + 0xC, 'I') + 0xC, 'f')) if cwp else None
         events = []
         FAKE.clear()
-        m.call(R1(0x51034), r3=TASK, count=20_000_000)
+        shown = m.get(TASK + 0x14, 'I')
+        m.call(R1(CALLBACK), r3=TASK, count=20_000_000)
+        if shown and not m.get(TASK + 0x14, 'I'):
+            events.append(['hidden'])
         if any(e[0] == 'sound' and e[1] == 0x8015 for e in events):
             t = m.get(FAKE[-1] + 0x34, 'I')
             events.append(['animal', m.get(t + 6, 'h'), m.get(t + 1, 'b')])
@@ -279,4 +295,4 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
         if any(e[0] == 'free' for e in events):
             break
     runs.append({'init': init, 'frames': frames})
-print(json.dumps({'runs': runs, 'sec5': rel.bases[5]}))
+print(json.dumps({'enemy': ENEMY, 'runs': runs, 'sec5': rel.bases[5]}))

@@ -53,7 +53,7 @@ pub mod creators {
 }
 
 /// Ninja's matrix calls as the REL makes them on the current matrix.
-fn translate(m: &mut Mtx, v: V3) {
+pub(crate) fn translate(m: &mut Mtx, v: V3) {
     // __internal_njTranslate (paired singles): per row,
     // (m2*z + m0*x) + (m3*1 + m1*y), the madds fused.
     for r in m.iter_mut() {

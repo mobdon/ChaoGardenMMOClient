@@ -12,6 +12,17 @@ pub enum Event {
     Sound { id: i32, volume: i32, pos: V3 },
     /// fn_8006A5F4(id, task, 0, volume): a sound following the task.
     TaskSound { id: i32, volume: i32 },
+    /// fn_80069D60(id, twp, a, volume, b, position): a sound tied to the
+    /// task's work.
+    WorkSound {
+        id: i32,
+        a: i32,
+        volume: i32,
+        b: i32,
+        pos: V3,
+    },
+    /// The task's display callback is cleared (task +0x14 = 0).
+    Hidden,
     /// A child task the stage REL creates (its creator's REL offset), with
     /// the vectors and numbers it is given.
     Child {
@@ -46,6 +57,8 @@ pub enum Event {
     /// The first collision entry's attribute word gets bit 0x10 (the kill
     /// path turns it off).
     CollisionOff,
+    /// The first collision entry's attribute bit 0x10 is cleared again.
+    CollisionOn,
     /// CCL_Init(task, rows, 2, 3): the collision entries are set up from
     /// the REL rows at this section-5 offset.
     CollisionInit { rows: u32 },
@@ -63,6 +76,8 @@ pub trait EnemyHost {
     /// The bytes at 0x801CC168+0x39 and +0x42 (players are not tested
     /// while either is 1).
     fn game_39_42(&self) -> (u8, u8);
+    /// The word at 0x801CC168+0x7C (E GOLD's set-up reads it).
+    fn game_7c(&self) -> i32;
     /// The two player tasks (playertwp[0..2]); the rest are empty.
     fn players(&self) -> [Option<PlayerView>; 2];
     /// The player task's mode byte (twp +0).

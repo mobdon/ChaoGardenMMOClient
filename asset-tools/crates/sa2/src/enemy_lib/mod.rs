@@ -11,6 +11,7 @@
 //! offset in the task's work (`twp`, task +0x34) or the enemy work (task
 //! +0x38, 0x210 bytes from fn_80018D28).
 pub mod e_ai;
+pub mod e_gold;
 pub mod engine;
 pub mod host;
 pub mod motion;
@@ -91,6 +92,10 @@ pub struct EnemyWork {
     pub last_pos: V3,
     /// +0x94: Scale.y for most kinds.
     pub f_94: f32,
+    /// +0x98, +0xAC, +0xB0..+0xB8 (E GOLD: glow, spin and scale).
+    pub f_98: f32,
+    pub f_ac: f32,
+    pub scale: V3,
     /// +0xC0, +0xC8, +0xCC, +0xD4..+0xE8, +0xEC, +0xF0.
     pub f_c0: f32,
     pub f_c8: f32,
@@ -114,6 +119,8 @@ pub struct EnemyWork {
     pub f_1c0: f32,
     /// +0x1C4: the bobbing angle.
     pub bob: i32,
+    /// +0x1CC: E GOLD's bobbing step count.
+    pub i_1cc: i32,
     /// +0x1C8: turn rate (BAMS per frame).
     pub turn_rate: i32,
     /// +0x1D0: the yaw being turned toward.
