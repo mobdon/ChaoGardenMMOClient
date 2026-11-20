@@ -17,11 +17,11 @@
   <label>Steam "Sonic Adventure 2" folder:
     <input id="folder" type="file" webkitdirectory directory>
   </label>
-  <span id="status">Pick the game folder. Nothing leaves this computer. Arrows or WASD to move, Space is A.</span>
+  <span id="status">Pick the game folder. Nothing leaves this computer. Arrows or WASD to move, Space is A. A controller works too.</span>
 </header>
 <canvas id="view"></canvas>
 <script type="module">
-import init, { App } from './pkg/sa2_runtime_wasm.js';
+import init, { App, browser_pad } from './pkg/sa2_runtime_wasm.js';
 // The sound player (asset-tools/vgmstream-wasm/web; serve.py maps it to /sound/).
 import { Sa2Audio } from './sound/sa2-audio.js';
 
@@ -47,12 +47,26 @@ function fit() {
 const keys = new Set();
 addEventListener('keydown', e => { keys.add(e.code); if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
 addEventListener('keyup', e => keys.delete(e.code));
+// Raw GameCube values (PADRead's output); the game's own PADClamp limits
+// them. Keys: stick arrows/WASD, C-stick IJKL, L/R Q/E, A Space, B X, Start Enter.
 function pad() {
   const k = c => keys.has(c);
-  const x = (k('ArrowRight') || k('KeyD') ? 72 : 0) - (k('ArrowLeft') || k('KeyA') ? 72 : 0);
-  const y = (k('ArrowUp') || k('KeyW') ? 72 : 0) - (k('ArrowDown') || k('KeyS') ? 72 : 0);
-  const b = (k('Space') ? 0x100 : 0) | (k('KeyX') ? 0x200 : 0) | (k('Enter') ? 0x1000 : 0);
-  return [x, y, b];
+  const dir = (p, n) => (p ? 127 : 0) - (n ? 127 : 0);
+  const x = dir(k('ArrowRight') || k('KeyD'), k('ArrowLeft') || k('KeyA'));
+  const y = dir(k('ArrowUp') || k('KeyW'), k('ArrowDown') || k('KeyS'));
+  const cx = dir(k('KeyL'), k('KeyJ')), cy = dir(k('KeyI'), k('KeyK'));
+  const l = k('KeyQ') ? 255 : 0, r = k('KeyE') ? 255 : 0;
+  const b = (k('Space') ? 0x100 : 0) | (k('KeyX') ? 0x200 : 0) | (k('Enter') ? 0x1000 : 0)
+    | (l ? 0x40 : 0) | (r ? 0x20 : 0);
+  return [x, y, cx, cy, l, r, b];
+}
+
+// The first connected controller, in the browser's standard layout.
+function gamepad() {
+  for (const g of navigator.getGamepads?.() ?? []) {
+    if (g?.connected) return [Float32Array.from(g.axes), Float32Array.from(g.buttons, b => b.value)];
+  }
+  return [new Float32Array(), new Float32Array()];
 }
 
 // readFile(path under the game folder) -> Uint8Array | null, for sound files read on demand.
@@ -77,8 +91,9 @@ async function run(files, readFile) {
     last = now;
     while (owed >= tick) {
       owed -= tick;
-      const [x, y, b] = pad();
-      status.textContent = app.frame(x, y, b);
+      const [axes, buttons] = gamepad();
+      const p = browser_pad(axes, buttons, ...pad());
+      status.textContent = app.frame_pad(...p);
       for (const cmd of JSON.parse(app.sounds())) audio?.run(cmd);
     }
     requestAnimationFrame(step);
