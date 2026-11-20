@@ -12,6 +12,14 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const binary = await readFile(path.join(game.gamePath, 'sonic2app.exe'));
 const pe = binary.readUInt32LE(60), optional = pe + 24, imageBase = binary.readUInt32LE(optional + 28);
 const sectionStart = optional + binary.readUInt16LE(pe + 20);
+const zeroFill = (address, length) => {
+  const rva = address - imageBase;
+  for (let i = 0; i < binary.readUInt16LE(pe + 6); i++) {
+    const at = sectionStart + i * 40, start = binary.readUInt32LE(at + 12), size = binary.readUInt32LE(at + 16), virtualSize = binary.readUInt32LE(at + 8);
+    if (rva >= start + size && rva + length <= start + virtualSize) return true;
+  }
+  return false;
+};
 const toFile = (address, length) => {
   const rva = address - imageBase;
   for (let i = 0; i < binary.readUInt16LE(pe + 6); i++) {
@@ -51,7 +59,7 @@ assert.deepEqual(data.drives.map(item => item.id), [21,22,23,24]);
 assert.equal(data.reservedStatRows[0].index, 25);
 verifyStats([...data.animals, ...data.drives, ...data.reservedStatRows], splitAnimalStats, 0x008a6240, 26);
 verifyStats(data.fruitStats, splitFruitStats, 0x008a6448, 24);
-let partSlotCount = 0, attachedPartCount = 0, mappedPartCount = 0, ambiguousPartCount = 0, runtimePartLists = 0;
+let partSlotCount = 0, attachedPartCount = 0, mappedPartCount = 0, ambiguousPartCount = 0, runtimePartLists = 0, zeroInitializedPartLists = 0;
 for (const animal of data.animals) {
   const modelPointerAt = toFile(0x012966f0 + animal.id * 4, 4);
   assert.equal(Number.parseInt(animal.source.modelPointer), binary.readUInt32LE(modelPointerAt));
@@ -60,6 +68,13 @@ for (const animal of data.animals) {
     const record = animal.parts[age], pointer = binary.readUInt32LE(toFile(table + animal.id * 4, 4));
     assert.equal(Number.parseInt(record.pointer), pointer);
     const listAt = toFile(pointer, 52);
+    if (listAt === null && zeroFill(pointer, 52)) {
+      assert.equal(record.status, 'zero-initialized-empty-list');
+      assert.equal(record.mapped, true);
+      assert.deepEqual(record.slots.map(slot => [slot.pointer, slot.model]), Array.from({ length: 13 }, () => [null, null]));
+      zeroInitializedPartLists++;
+      continue;
+    }
     if (listAt === null) {
       assert.equal(record.status, 'runtime-list-not-file-backed');
       assert.equal(record.mapped, false);
@@ -89,6 +104,9 @@ for (const animal of data.animals) {
     }
   }
 }
+assert.deepEqual(data.partHierarchyGaps, [], 'Every mapped part hierarchy must have a valid object layout.');
+assert.equal(mappedPartCount, attachedPartCount, 'Every non-null native part slot must map to an extracted model.');
+assert.equal(runtimePartLists, 0);
 for (const drive of data.drives) {
   assert.equal(drive.grantsAnimalHistoryBit, false);
   assert.equal(drive.animalParts, false);
@@ -96,6 +114,12 @@ for (const drive of data.drives) {
 const config = await readFile('.local/extracted/care/care.ini', 'utf8');
 const extractedFiles = [...config.matchAll(/^filename=(.+)$/gm)].map(match => path.resolve('.local/extracted/care', match[1].trim()));
 for (const file of extractedFiles) assert.ok((await stat(file)).size > 0, `Missing extracted resource: ${file}`);
+for (const correction of data.addressCorrections || []) {
+  const at = toFile(Number.parseInt(correction.corrected, 16) + imageBase, 52);
+  assert.ok(at !== null && binary.readUInt32LE(at) <= 0xffff, `Corrected address must hold an object: ${correction.name}`);
+  const section = config.split(/(?=^\[)/m).find(block => block.startsWith(`[${correction.name}]`));
+  assert.match(section || '', new RegExp(`^address=${correction.corrected}$`, 'm'), `care.ini must use the corrected address: ${correction.name}`);
+}
 for (const source of manifest.sources) {
   const bytes = await readFile(path.join(game.gamePath, source.relativePath));
   assert.equal(bytes.length, source.bytes);
@@ -109,8 +133,8 @@ const report = {
   independentSAtoolsStatRowsMatched: 50, extractedResources: extractedFiles.length,
   animalModels: manifest.animalModels, animalMotionSections: manifest.animalMotionSections, animalPartModels: manifest.animalPartModels,
   fileBackedPartSlots: partSlotCount, nonzeroPartSlots: attachedPartCount, mappedPartSlots: mappedPartCount,
-  ambiguousPartSlots: ambiguousPartCount, runtimePartLists, partHierarchyGaps: data.partHierarchyGaps,
-  limits: ['No item-application formula or live care action claimed.', 'Six rare-animal part lists require runtime inspection; one mapped Rabbit child ear resource remains unverified.', 'No animal GLBs, learned-behavior grants or Chaos evolution formula validated by this check.'],
+  ambiguousPartSlots: ambiguousPartCount, runtimePartLists, zeroInitializedPartLists, addressCorrections: data.addressCorrections || [], partHierarchyGaps: data.partHierarchyGaps,
+  limits: ['No item-application formula or live care action claimed.', 'Half Fish, Skeleton Dog and Bat part lists are the shared zero-filled list (no parts); cross-checked against GameCube ChaoMain.rel, not observed at run time.', 'No animal GLBs, learned-behavior grants or Chaos evolution formula validated by this check.'],
 };
 await mkdir('.local/care', { recursive:true });
 await writeFile('.local/care/verification-report.json', `${JSON.stringify(report,null,2)}\n`);
