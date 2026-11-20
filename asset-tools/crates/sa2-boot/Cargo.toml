@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.100"
 publish = false
-description = "Host hooks the recompiled GSNE8P boot plugs in: DVD from Steam files, the GX FIFO, VI retrace, PAD, audio stubs and the clock"
+description = "Host hooks the recompiled GSNE8P boot plugs in: DVD from Steam files, the GX FIFO, VI retrace, PAD, AX audio mixed on the host, and the clock"
 
 # Standalone, like the other sa2 crates.
 [workspace]
@@ -18,3 +18,4 @@ wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl"
 pollster = "0.4.0"
 png = "0.18.1"
 winit = "0.30.12"
+cpal = "0.15.3"
