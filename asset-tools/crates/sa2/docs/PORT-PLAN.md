@@ -143,7 +143,7 @@ The single biggest gap. Today each routine runs alone from a JSON request.
 
 ### Phase 2: First playable level on the website, as a Chao
 
-**Recommended target: Iron Gate, played as the Chao Walker.** SA2 Battle ships
+**Target (decided by mob): Iron Gate, played as the Chao Walker.** SA2 Battle ships
 a native Chao character: the Chao Walker and Dark Chao Walker (PhysicsArray rows
 and animation lists, at Steam `sonic2app.exe` 0xA0F680 / 0xA102E0, are already
 read). They are mech-family characters, so they should run on the same walker
@@ -270,9 +270,13 @@ engine breadth → mech stages and bosses → speed moveset and stages → hunte
 kart → Cannon's Core and Finalhazard → menus, events, 2P. Chao Race and Karate
 run in parallel on the server.
 
+## Decided
+
+- **First playable: Iron Gate as the Chao Walker** (mob, November 20, 2026).
+  Speed and treasure-hunt stages have no native Chao character; how a Chao
+  plays those is still open.
+
 ## Open questions for mob
 
-1. Is the Chao Walker the right native way to play levels as a Chao? It covers
-   mech stages natively; speed and hunter stages have no native Chao character.
-2. How the website gets the player's Steam data: a local folder picker in the
+1. How the website gets the player's Steam data: a local folder picker in the
    browser is assumed here; nothing is hosted.
