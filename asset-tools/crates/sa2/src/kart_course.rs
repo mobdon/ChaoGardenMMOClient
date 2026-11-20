@@ -142,15 +142,13 @@ mod collision_reference {
             let count = r.u32(attach + 8).unwrap() as usize;
             let reference = r.span(first, count * 12).unwrap();
             assert_eq!(bank.len(), count);
-            for (a, b) in bank
-                .as_flattened()
-                .chunks_exact(4)
-                .zip(reference.chunks_exact(4))
-            {
+            let (converted, _) = bank.as_flattened().as_chunks::<4>();
+            let (reference, _) = reference.as_chunks::<4>();
+            for (a, b) in converted.iter().zip(reference) {
                 if a != b {
                     assert_eq!(
                         (a, b),
-                        (&0x80000000u32.to_le_bytes()[..], &0u32.to_le_bytes()[..]),
+                        (&0x80000000u32.to_le_bytes(), &0u32.to_le_bytes()),
                         "piece {i}"
                     );
                     normalized_zeros += 1;

@@ -1,26 +1,33 @@
-// Select the genuine native Chao Run119 clip; preserve its original hierarchy
+// Select genuine native Chao Run119 and jump/recovery132–137; preserve their hierarchy
 // and every retained binary accessor byte, compacting only unused resources.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 const sourceFile='.local/imports/activity-motions/chao-actions.glb';
 const outputFile='.local/imports/chao-locomotion.glb';
+const assetRoot=resolve(process.env.CHAO_ASSET_ROOT || '.');
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
-const source=await readFile(sourceFile);
+const source=await readFile(resolve(assetRoot,sourceFile));
 assert.equal(source.readUInt32LE(0),0x46546c67);
 const jsonSize=source.readUInt32LE(12),document=JSON.parse(source.subarray(20,20+jsonSize));
 assert.equal(source.readUInt32LE(24+jsonSize),0x004e4942);
 const binary=source.subarray(28+jsonSize);
-const manifest=JSON.parse(await readFile('.local/extracted/activity-motions/manifest.json','utf8'));
-const state=manifest.commonStates.find(row=>row.index===119);
-assert.equal(state.nativeName,'alm_run');assert.equal(state.nativeFile,'common/alm_run.saanim');
-const library=JSON.parse(await readFile('.local/imports/activity-motions/conversion-report.json','utf8')).libraries.find(row=>row.name==='chao-actions');
-const evidence=library.actions.find(row=>row.name==='alm_run');assert.ok(evidence);
-const nativeFile=`.local/extracted/activity-motions/${state.nativeFile}`;
-assert.equal(digest(await readFile(nativeFile)),evidence.sourceSha256);
-const selected=document.animations.filter(animation=>animation.name==='alm_run');
-assert.equal(selected.length,1);assert.equal(selected[0].channels.length,120);
+const manifest=JSON.parse(await readFile(resolve(assetRoot,'.local/extracted/activity-motions/manifest.json'),'utf8'));
+const library=JSON.parse(await readFile(resolve(assetRoot,'.local/imports/activity-motions/conversion-report.json'),'utf8')).libraries.find(row=>row.name==='chao-actions');
+const clips=[];
+for(const[index,name]of[[119,'alm_run'],[132,'alm_jump_up'],[135,'alm_jump_down']]){
+  const state=manifest.commonStates.find(row=>row.index===index);
+  assert.equal(state.nativeName,name);assert.equal(state.nativeFile,`common/${name}.saanim`);
+  const evidence=library.actions.find(row=>row.name===name);assert.ok(evidence);
+  const nativeFile=`.local/extracted/activity-motions/${state.nativeFile}`;
+  assert.equal(digest(await readFile(resolve(assetRoot,nativeFile))),evidence.sourceSha256);
+  clips.push({nativeState:index,nativeName:name,nativeMotionLabel:state.nativeMotionLabel,nativeFile,sourceSha256:evidence.sourceSha256,frameRange:evidence.frameRange,
+    states:manifest.commonStates.filter(row=>row.nativeFile===state.nativeFile).map(row=>({index:row.index,tableProperties:row.tableProperties}))});
+}
+const selected=clips.map(clip=>document.animations.find(animation=>animation.name===clip.nativeName));
+assert.ok(selected.every(Boolean));for(const animation of selected)assert.equal(animation.channels.length,120);
 const retained=structuredClone(document);retained.animations=structuredClone(selected);
 const accessorIds=new Set();
 for(const mesh of retained.meshes)for(const primitive of mesh.primitives){
@@ -44,7 +51,7 @@ for(const skin of retained.skins||[])if(skin.inverseBindMatrices!==undefined)ski
 for(const animation of retained.animations)for(const sampler of animation.samplers){sampler.input=accessorMap.get(sampler.input);sampler.output=accessorMap.get(sampler.output);}
 for(const image of retained.images||[])if(image.bufferView!==undefined)image.bufferView=viewMap.get(image.bufferView);
 retained.buffers=[{byteLength:length}];
-retained.asset.extras={...retained.asset.extras,chaoLocomotion:{nativeState:119,nativeName:state.nativeName,nativeMotionLabel:state.nativeMotionLabel,nativeFile,sourceSha256:evidence.sourceSha256,tableProperties:state.tableProperties,referenceFps:60,note:'Genuine Chao Run only; original hierarchy/rest/geometry/channel bytes preserved. Runtime native-to-Chaos retargeting remains separate.'}};
+retained.asset.extras={...retained.asset.extras,chaoLocomotion:{version:2,clips,referenceFps:60,note:'Genuine Chao Run/jump/recovery; original hierarchy/rest/geometry/channel bytes preserved. State timing and native-to-Chaos retargeting remain separate.'}};
 let encoded=Buffer.from(JSON.stringify(retained));encoded=Buffer.concat([encoded,Buffer.alloc((-encoded.length)&3,0x20)]);
 let compact=Buffer.concat(parts);compact=Buffer.concat([compact,Buffer.alloc((-compact.length)&3)]);
 const header=Buffer.alloc(20);header.writeUInt32LE(0x46546c67,0);header.writeUInt32LE(2,4);header.writeUInt32LE(28+encoded.length+compact.length,8);header.writeUInt32LE(encoded.length,12);header.writeUInt32LE(0x4e4f534a,16);
@@ -53,7 +60,7 @@ const output=Buffer.concat([header,encoded,binHeader,compact]);
 // Verify unchanged hierarchy/skin references and all retained native bytes.
 assert.deepEqual(retained.nodes,document.nodes);assert.deepEqual(retained.scenes,document.scenes);
 for(const[old,index]of viewMap){const from=document.bufferViews[old],to=retained.bufferViews[index];assert.ok(binary.subarray(from.byteOffset||0,(from.byteOffset||0)+from.byteLength).equals(compact.subarray(to.byteOffset,to.byteOffset+to.byteLength)));}
-await writeFile(outputFile,output);
-const report={version:1,passed:true,source:sourceFile,sourceSha256:digest(source),output:outputFile,sha256:digest(output),bytes:output.length,sourceBytes:source.length,nativeFile,nativeSha256:evidence.sourceSha256,nativeState:119,clip:'alm_run',channels:120,nativeNodeCount:40,gltfNodes:retained.nodes.length,meshes:retained.meshes.length,retainedAccessors:accessors.length,retainedBufferViews:views.length,retainedBinaryBytes:length,allRetainedBinaryViewsExact:true,hierarchyRestAndGeometryPreserved:true,tableProperties:state.tableProperties,referenceFps:60};
+await mkdir('.local/imports',{recursive:true});await writeFile(outputFile,output);
+const report={version:2,passed:true,source:sourceFile,sourceSha256:digest(source),output:outputFile,sha256:digest(output),bytes:output.length,sourceBytes:source.length,clips,channels:selected.reduce((sum,animation)=>sum+animation.channels.length,0),nativeNodeCount:40,gltfNodes:retained.nodes.length,meshes:retained.meshes.length,retainedAccessors:accessors.length,retainedBufferViews:views.length,retainedBinaryBytes:length,allRetainedBinaryViewsExact:true,hierarchyRestAndGeometryPreserved:true,referenceFps:60};
 await writeFile('.local/imports/chao-locomotion-proof.json',`${JSON.stringify(report,null,2)}\n`);
 console.log(JSON.stringify(report,null,2));

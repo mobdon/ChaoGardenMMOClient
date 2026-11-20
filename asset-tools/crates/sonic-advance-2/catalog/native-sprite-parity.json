@@ -1,0 +1,27 @@
+{
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "paletteExpansion": "restore five-bit channels; bit replication; invisible RGB zero",
+  "frames": [
+    {
+      "frame": 0,
+      "width": 32,
+      "height": 40,
+      "pngGitBlobSha1": "d2b9ba9880fe18dec34f7c2c63ca9c19ee4d5a80",
+      "rgbaSha256": "2ad8759e75d4d0d6d2b32e148e4f878a881d99684070e8f2e6ff669ff63b973c"
+    },
+    {
+      "frame": 1,
+      "width": 32,
+      "height": 32,
+      "pngGitBlobSha1": "96b20b449c3ab6f4b0ac0e95448b116a3bd43e63",
+      "rgbaSha256": "d6837ca7fd28e58d36d0c8595ff579191c294299ed2ee347dece9622f9cacefb"
+    },
+    {
+      "frame": 4,
+      "width": 32,
+      "height": 40,
+      "pngGitBlobSha1": "b5ceb7a23a9b9094cc068367f2d0024b64decd8d",
+      "rgbaSha256": "84cd760c2f457dd600e9559724ecf3a895f0c3b65d489cd3b0c4931e82c51dc7"
+    }
+  ]
+}

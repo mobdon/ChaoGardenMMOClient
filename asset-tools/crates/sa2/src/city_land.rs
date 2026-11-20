@@ -277,6 +277,31 @@ fn decode(
     Ok(result)
 }
 
+/// Rebase a single local REL Basic object (no child or sibling) through the
+/// same validated relocation view used for REL land tables.
+pub(crate) fn rel_basic_object(
+    rel: &CityRel<'_>,
+    sec: u8,
+    root: usize,
+) -> Result<crate::duel_platform::Platform> {
+    let src = rel.data(sec)?;
+    let mut v = View {
+        source: Source::Rel(rel, sec),
+        src,
+        out: vec![0; src.len() + BASE],
+    };
+    v.word(root)?;
+    let base = v
+        .ptr(root + 4)?
+        .ok_or_else(|| Error::invalid("missing Basic model"))?;
+    v.words(root + 8, 9)?;
+    if v.ptr(root + 44)?.is_some() || v.ptr(root + 48)?.is_some() {
+        return Err(Error::invalid("expected a single Basic platform object"));
+    }
+    v.attach(base)?;
+    crate::duel_platform::decode(&v.out, (root + BASE) as u32)
+}
+
 /// Rebase a single unlinked Win32 Basic object using the same pointer and
 /// polygon layouts as installed land. The private offsets are file offsets + 16.
 pub(crate) fn win32_basic_object(

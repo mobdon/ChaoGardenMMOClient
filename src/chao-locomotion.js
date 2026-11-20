@@ -4,7 +4,19 @@ export const RUN_ENTER_SPEED = 1.05;
 export const RUN_EXIT_SPEED = 0.95;
 export const GAIT_INPUT_SCALE = { walk: 0.4, run: 0.62, auto: 1 };
 export const NATIVE_RUN_PLAY_SPEED = 0.21;
+export const LOCOMOTION_SPEED_BLEND_SECONDS = 0.24;
 const indexOf = node => node.name.match(/(?:^|-)(\d{3})_object_/)?.[1];
+
+// Ease only the animation's observed speed between server snapshots. Callers
+// clear this presentation value on stale/air/mounted states. It never feeds
+// movement input, root position, progression or any authoritative decision.
+export function smoothObservedSpeed(previous, speed, dt, seconds = LOCOMOTION_SPEED_BLEND_SECONDS) {
+  const current = Number.isFinite(previous) ? Math.max(0, Math.min(3, previous)) : 0;
+  const target = Number.isFinite(speed) ? Math.max(0, Math.min(3, speed)) : 0;
+  const elapsed = Math.max(0, Math.min(.1, Number.isFinite(dt) ? dt : 0));
+  const duration = Number.isFinite(seconds) && seconds > 0 ? seconds : LOCOMOTION_SPEED_BLEND_SECONDS;
+  return current + (target - current) * (1 - Math.exp(-elapsed / duration));
+}
 
 export function captureChaoPose(imported) {
   return new Map(imported.visual.getDescendants().flatMap(node => {
@@ -13,10 +25,13 @@ export function captureChaoPose(imported) {
   }));
 }
 
-export function attachNativeRun(imported, source, targetPose) {
-  const native = source.animationGroups.find(group => /(?:^|[-_])alm_run$/i.test(group.name));
+export function cloneNativeMotion(imported, source, targetPose, name, state) {
+  const native = source.animationGroups.find(group => {
+    const sourceName = group.name.toLowerCase();
+    return sourceName === name || sourceName.endsWith(`-${name}`) || sourceName.endsWith(`_${name}`);
+  });
   if (!native || imported.visual.isDisposed()) return null;
-  const group = new AnimationGroup(`${imported.visual.name}-NativeRun119`, imported.visual.getScene());
+  const group = new AnimationGroup(`${imported.visual.name}-Native${state}`, imported.visual.getScene());
   for (const entry of native.targetedAnimations) {
     const reference = targetPose.get(indexOf(entry.target));
     if (!reference || entry.animation.targetProperty === 'scaling') continue;
@@ -39,8 +54,71 @@ export function attachNativeRun(imported, source, targetPose) {
   }
   if (!group.targetedAnimations.length) { group.dispose(); return null; }
   group.enableBlending = true; group.blendingSpeed = 0.12;
-  imported.entries.animationGroups.push(group); imported.run = group;
+  imported.entries.animationGroups.push(group);
   return group;
+}
+
+export function attachNativeRun(imported, source, targetPose) {
+  return imported.run = cloneNativeMotion(imported, source, targetPose, 'alm_run', 'Run119');
+}
+
+export function attachNativeLocomotion(imported, source, targetPose) {
+  attachNativeRun(imported, source, targetPose);
+  imported.jumpUp = cloneNativeMotion(imported, source, targetPose, 'alm_jump_up', 'Jump132');
+  imported.jumpDown = cloneNativeMotion(imported, source, targetPose, 'alm_jump_down', 'Fall135');
+  return imported;
+}
+
+export function createNativeMotionState() {
+  return { gait: 'Idle', mode: 'Idle', elapsed: 0, wasGrounded: null, jumpOffset: null };
+}
+
+// State132 ascends through frames0–6 at .2;133 holds6–7. State135
+// descends through0–4 at .2;136 holds4–5. Landing reuses the genuine
+// state137 reverse4–0 recovery. Server jump timing drives selection: the
+// trigger/hold mapping is an MMO presentation adaptation, not retail physics.
+export function selectNativeMotion(state, dt, { speed = 0, grounded = false,
+  jumpOffset, verticalVelocity, fresh = false, mounted = false, swimming = false } = {}) {
+  dt = Math.max(0, Math.min(.1, Number.isFinite(dt) ? dt : 0));
+  const offset = Number.isFinite(jumpOffset) && jumpOffset >= 0 ? jumpOffset : null;
+  const blocked = !fresh || mounted || swimming || offset === null;
+  let mode;
+  if (blocked) {
+    mode = 'Idle'; state.wasGrounded = null; state.jumpOffset = null;
+  } else {
+    const delta = offset !== null && state.jumpOffset !== null ? offset - state.jumpOffset : 0;
+    const descending = Number.isFinite(verticalVelocity) ? verticalVelocity < -.03 : delta < -.0001;
+    if (!grounded) mode = descending || state.mode === 'Fall' ? 'Fall' : 'Jump';
+    else if (state.wasGrounded === false || state.mode === 'Land' && state.elapsed < 4 / (60 * .2)) mode = 'Land';
+    else mode = chooseNativeGait(speed, state.gait);
+    state.wasGrounded = !!grounded; state.jumpOffset = offset;
+  }
+  state.elapsed = mode === state.mode ? state.elapsed + dt : 0;
+  state.mode = mode;
+  if (mode === 'Idle' || mode === 'Walk' || mode === 'Run') state.gait = mode;
+  if (mode === 'Jump') return { mode, key: 'jumpUp', frame: Math.min(6, state.elapsed * 60 * .2), rate: .2, nativeState: state.elapsed < .5 ? 132 : 133 };
+  if (mode === 'Fall') return { mode, key: 'jumpDown', frame: Math.min(4, state.elapsed * 60 * .2), rate: .2, nativeState: state.elapsed < 1 / 3 ? 135 : 136 };
+  if (mode === 'Land') return { mode, key: 'jumpDown', frame: Math.max(0, 4 - state.elapsed * 60 * .2), rate: -.2, nativeState: 137 };
+  return { mode, key: mode.toLowerCase(), rate: nativeGaitRate(mode, speed), nativeState: mode === 'Run' ? 119 : null };
+}
+
+export function updateNativeLocomotion(imported, state, dt, snapshot) {
+  const motion = selectNativeMotion(state, dt, snapshot);
+  const animation = imported[motion.key] || (motion.mode === 'Run' ? imported.walk : null) || imported.idle;
+  const sampled = animation === imported[motion.key] && Number.isFinite(motion.frame);
+  const changed = imported.current !== animation || imported.nativeMotionMode !== motion.mode;
+  if (animation && changed) {
+    imported.current?.stop();
+    animation.start(true, sampled ? 1 : motion.rate);
+    if (sampled) animation.pause();
+    imported.current = animation;
+  }
+  if (animation) {
+    if (sampled) animation.goToFrame(motion.frame);
+    else animation.speedRatio = nativeGaitRate(animation === imported.run ? 'Run' : animation === imported.walk ? 'Walk' : 'Idle', snapshot.visualSpeed ?? snapshot.speed);
+  }
+  imported.nativeMotionMode = motion.mode;
+  return { ...motion, rate: sampled ? motion.rate : animation?.speedRatio ?? motion.rate, available: !!animation && animation === imported[motion.key] };
 }
 
 export function chooseNativeGait(speed, previous = 'Idle') {

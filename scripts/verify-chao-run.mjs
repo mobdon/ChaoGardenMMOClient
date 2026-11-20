@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { NullEngine, Scene, LoadAssetContainerAsync, TransformNode } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
 import { attachNativeRun, captureChaoPose, nativeGaitRate } from '../src/chao-locomotion.js';
 
 const engine = new NullEngine(), scene = new Scene(engine);
+const assetRoot = resolve(process.env.CHAO_ASSET_ROOT || '.');
 try {
   const bytes = await readFile('.local/imports/chao-locomotion.glb');
   const source = await LoadAssetContainerAsync(new Uint8Array(bytes), scene, { pluginExtension: '.glb', pluginOptions: { gltf: { skipMaterials: true } } });
-  assert.deepEqual(source.animationGroups.map(group => group.name), ['alm_run']);
+  assert.ok(source.animationGroups.some(group => group.name === 'alm_run'));
   const forms = [];
   for (const name of ['neutral-chaos', 'hero-chaos', 'dark-chaos']) {
-    const asset = await LoadAssetContainerAsync(new Uint8Array(await readFile(`.local/imports/${name}.glb`)), scene, { pluginExtension: '.glb', pluginOptions: { gltf: { skipMaterials: true } } });
+    const asset = await LoadAssetContainerAsync(new Uint8Array(await readFile(resolve(assetRoot, `.local/imports/${name}.glb`))), scene, { pluginExtension: '.glb', pluginOptions: { gltf: { skipMaterials: true } } });
     const entries = asset.instantiateModelsToScene(value => `${name}-${value}`, false, { doNotInstantiate: true });
     const visual = new TransformNode(name, scene); visual.scaling.setAll(.1);
     for (const node of entries.rootNodes) node.parent = visual;

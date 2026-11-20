@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "sourceGitBlobs": {
+    "src/game/sa2/stage/interactables/leaf_forest/stage_goal.c": "26a8d51f29371755b129f1fb2fa0a59cb9d90a81",
+    "src/game/sa2/ui/stage_results.c": "27c7baf8463f161552a37f298f93f0fce099806a",
+    "include/game/globals.h": "dff72b844fae51ba1af3fa7f8040e17ec88f8833",
+    "include/constants/zones.h": "8743af77f3cf53d8c30127dbbdb540f596b61902",
+    "include/constants/sa2/characters.h": "31139cd7efc1a05f9bbde67bf104e14524b66fbf",
+    "include/constants/sa2/animations.h": "55638f02ec05405324d6dfc2cf182789096f9745",
+    "include/constants/sa2/char_states.h": "382b77b106f6aa0b6d7f1c237b109bd49e316e01",
+    "include/constants/sa2/move_states.h": "d6a8a15088d0ace855a532dba713873c04ea608a",
+    "include/constants/sa2/player_transitions.h": "d0eced6d71ce895e36f481315775d023620c0ab6",
+    "include/constants/sa2/songs.h": "d7d10941bb46132c2abf02e4a1ec6d40df7eb99a",
+    "include/game/shared/stage/camera.h": "85c3075383ca2be6695a7f4d324e31e3c0fd8133"
+  },
+  "goalSeed": 2724241665,
+  "bonusSeed": 2724241666,
+  "sequenceScenarios": 64,
+  "sequenceFrames": 1300,
+  "outputs": {
+    "goals": {
+      "cases": 4096,
+      "rowWords": 9,
+      "bytes": 147456,
+      "sha256": "d46f5c75d174ed3b190f64425dfe9659ec7cc3c4bd1900a9b4ba5e3514d24527"
+    },
+    "bonuses": {
+      "cases": 512,
+      "rowWords": 6,
+      "bytes": 12288,
+      "sha256": "90b5c5a65e39e2db98bebd2a1230e673c8fdd94c3c7654962668090ab03d3a39"
+    },
+    "sequences": {
+      "cases": 83200,
+      "rowWords": 24,
+      "bytes": 7987200,
+      "sha256": "d5d10624eb611fae6c1fff70a108e2dbf0048e332c59a345698724d27163f9c5"
+    },
+    "placements": {
+      "cases": 122,
+      "rowWords": 8,
+      "bytes": 3904,
+      "sha256": "fc11105f7b8024acc87b4db1938036200bae2ce066f63e6208c5df81ece15cc7"
+    }
+  },
+  "boundary": "Exact C goal toggle and results arithmetic/transitions; graphics/audio/fade/task/scene services are explicit stubs; original-ROM placements independently decoded"
+}

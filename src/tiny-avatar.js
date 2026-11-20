@@ -13,8 +13,11 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 export function chaosVariant(profile) {
   const form = String(profile?.form || '').toLowerCase();
   if (!form.includes('chaos')) return null;
-  if (form.includes('hero') || profile.alignment >= 60) return 'hero';
-  if (form.includes('dark') || profile.alignment <= -60) return 'dark';
+  if (form.includes('hero')) return 'hero';
+  if (form.includes('dark')) return 'dark';
+  if (form.includes('neutral')) return 'neutral';
+  if (profile.alignment >= 60) return 'hero';
+  if (profile.alignment <= -60) return 'dark';
   return 'neutral';
 }
 
