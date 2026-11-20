@@ -102,7 +102,8 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&7));
         assert_eq!(s.unimplemented.get("CONTCHAO row (solid only)"), Some(&3));
         assert_eq!(s.unimplemented.get("CONTWOOD row (solid only)"), Some(&27));
-        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&4));
+        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&13));
+        assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&3));
         assert!(s.death_zone_count() > 0);
         assert_eq!(s.physics.slot, 7);
     });

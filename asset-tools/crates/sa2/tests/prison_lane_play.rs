@@ -1,4 +1,4 @@
-﻿//! Prison Lane's native stage rules on the installed Steam data. The
+//! Prison Lane's native stage rules on the installed Steam data. The
 //! session runs only rules read from the game files; these tests supply the
 //! player sample the engine would report and check the native responses.
 use sa2_asset_tools::{
@@ -105,20 +105,24 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [-4439.9966, 967.0, -1133.4259]);
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
-        assert_eq!(s.unimplemented.get("FENCES row (solid only)"), Some(&20));
-        assert_eq!(s.unimplemented.get("FENCEL row (solid only)"), Some(&1));
-        // CONTIRON: a 20-unit cube row, unchanged by quarter turns.
-        assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&11));
-        assert_eq!(s.unimplemented.get("CONTCHAO row (solid only)"), Some(&3));
-        assert_eq!(s.unimplemented.get("CONTWOOD row (solid only)"), Some(&14));
-        // MECHA's box is off the Y axis, so only yaw-0 placements are exact.
-        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&2));
-        assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&9));
-        assert_eq!(
-            s.unimplemented
-                .get("CCUBE (rotated: rotation rule not read)"),
-            Some(&8)
-        );
+        // CollisionData boxes placed by the CCL box rule.
+        for (name, n) in [
+            ("FENCES row (solid only)", 39),
+            ("FENCEL row (solid only)", 12),
+            ("ROLL row (solid only)", 4),
+            ("SPHERE (solid only)", 4),
+            ("CCYL (solid only)", 1),
+            ("TANK row (solid only)", 1),
+            ("CONTIRON row (solid only)", 18),
+            ("CONTCHAO row (solid only)", 3),
+            ("CONTWOOD row (solid only)", 17),
+            ("MECHA row (solid only)", 12),
+            ("CCUBE (solid only)", 17),
+        ] {
+            assert_eq!(s.unimplemented.get(name), Some(&n), "{name}");
+        }
+        // 8 fence rails, 4 gears, 4 spheres, 1 cylinder and the tank.
+        assert_eq!(s.shapes.len(), 18);
         assert!(s.death_zone_count() > 0);
         assert_eq!((s.level, s.character, s.physics.slot), (9, 6, 6));
     });
@@ -206,12 +210,20 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
 #[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
 fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
     with_session(|mut s| {
-        assert_eq!(s.doors.len(), 11);
+        // 11 CAGED, 14 CAGE, 2 CAGEB, 3 CAGEC.
+        assert_eq!(s.doors.len(), 30);
+        for (k, n) in [("CAGED", 11), ("CAGE", 14), ("CAGEB", 2), ("CAGEC", 3)] {
+            assert_eq!(
+                s.doors.iter().filter(|d| d.kind.name == k).count(),
+                n,
+                "{k}"
+            );
+        }
         // The cell door on the route near (-3329, 730, 130): group 10.
         let d = s
             .doors
             .iter()
-            .position(|d| d.index == 36)
+            .position(|d| d.index == 36 && d.kind.name == "CAGED")
             .expect("CAGED 36");
         let group = s.doors[d].group;
         assert_eq!(group, 10);
@@ -243,5 +255,96 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         // Scale.x 0.5 per frame to the 50-unit stop.
         assert_eq!(b - a, 100);
         assert!((s.doors[d].slide - 50.0).abs() < 1.0);
+        // The collision box moved with the slide (Rotation.z bit 0 clear:
+        // toward -local Z, which the half-turn yaw points along +Z).
+        let z = |tris: Vec<[[f32; 3]; 3]>| tris.iter().flatten().map(|v| v[2]).sum::<f32>() / 36.0;
+        let mut closed = s.doors[d].clone();
+        closed.slide = 0.0;
+        let open_z = z(s.door_solid(d));
+        let shut = std::mem::replace(&mut s.doors[d], closed);
+        let closed_z = z(s.door_solid(d));
+        s.doors[d] = shut;
+        assert!(
+            (open_z - closed_z - 50.0).abs() < 1.0,
+            "{open_z} {closed_z}"
+        );
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn a_wide_cage_drops_its_bars_and_its_collision_when_open() {
+    with_session(|mut s| {
+        let d = s
+            .doors
+            .iter()
+            .position(|d| d.kind.name == "CAGEB")
+            .expect("CAGEB");
+        let group = s.doors[d].group;
+        // Four boxes: floor, bars and two posts.
+        assert_eq!(s.door_solid(d).len(), 4 * 12);
+        let members: Vec<usize> = (0..s.enemies.len())
+            .filter(|&i| s.enemies[i].group == group && s.enemies[i].counted)
+            .collect();
+        for &i in &members {
+            s.destroy_enemy(i);
+        }
+        let mut opened = None;
+        for _ in 0..600 {
+            if s.step(None)
+                .iter()
+                .any(|e| matches!(e, Event::DoorOpened { door } if *door == d))
+            {
+                opened.get_or_insert(s.frame);
+            }
+        }
+        assert!(
+            opened.is_some(),
+            "group {group} with {} members",
+            members.len()
+        );
+        // Stop 39; once open the exec stops registering the collision.
+        assert_eq!(s.doors[d].state, 2);
+        assert!(s.door_solid(d).is_empty());
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn wall_gates_drop_when_no_resting_elevator_is_near() {
+    with_session(|mut s| {
+        assert_eq!(s.walls.len(), 2);
+        let elevators: Vec<[f32; 3]> = s
+            .movers
+            .iter()
+            .filter_map(|m| match &m.state {
+                MoverState::Elevator(e) => Some(e.position),
+                _ => None,
+            })
+            .collect();
+        let near: Vec<bool> = s
+            .walls
+            .iter()
+            .map(|w| {
+                elevators.iter().any(|e| {
+                    let d = [
+                        w.position[0] - e[0],
+                        w.position[1] - e[1],
+                        w.position[2] - e[2],
+                    ];
+                    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() < 450.0
+                })
+            })
+            .collect();
+        assert!(s.walls.iter().all(|w| w.slide == 50.0 && w.state == 0));
+        let events = s.step(None);
+        for (i, &n) in near.iter().enumerate() {
+            let dropping = events
+                .iter()
+                .any(|e| matches!(e, Event::WallDropping { wall } if *wall == i));
+            assert_eq!(dropping, !n, "wall {i}");
+        }
+        // Five boxes each.
+        assert_eq!(s.wall_solid(0).len(), 5 * 12);
     });
 }
