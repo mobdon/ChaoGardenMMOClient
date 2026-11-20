@@ -33,7 +33,7 @@
 //! allocators refuse the last free entry. The game does not check the node
 //! allocation; this port stops building when it would fail.
 use crate::{
-    msl_math::gekko_frsqrte,
+    msl_math::{gekko_fres, gekko_frsqrte},
     ninja_matrix::{mult_vec, MatrixStack, Mtx, Vec3, IDENTITY},
     ninja_trig::{fmadds, nj_cos, nj_sin},
 };
@@ -455,12 +455,11 @@ impl LandNodes {
     }
 }
 
-/// njScalor (0x801151F4): `fres(frsqrte(x*x + y*y + z*z))`. `fres` here is
-/// the reciprocal rounded to single, as the emulator computes it; Gekko's own
-/// estimate is a 12-bit table lookup (see docs/WALKER-NATIVE.md).
+/// njScalor (0x801151F4): `fres(frsqrte(x*x + y*y + z*z))`, both Gekko
+/// table estimates.
 pub fn nj_scalor(v: Vec3) -> f32 {
     let d = fmadds(v[2], v[2], fmadds(v[1], v[1], v[0] * v[0]));
-    (1.0 / gekko_frsqrte(d as f64)) as f32
+    gekko_fres(gekko_frsqrte(d as f64)) as f32
 }
 
 impl LandNodes {

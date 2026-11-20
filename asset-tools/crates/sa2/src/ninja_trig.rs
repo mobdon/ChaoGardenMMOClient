@@ -55,15 +55,47 @@ pub fn fmadds(a: f32, c: f32, b: f32) -> f32 {
     (a as f64 * c as f64 + b as f64) as f32
 }
 
+/// PowerPC negates a negative-multiply-add result unless it is a NaN.
+fn negate_unless_nan(v: f32) -> f32 {
+    if v.is_nan() {
+        v
+    } else {
+        -v
+    }
+}
+
+/// `fnmadds`: -(a * c + b).
+pub fn fnmadds(a: f32, c: f32, b: f32) -> f32 {
+    negate_unless_nan(fmadds(a, c, b))
+}
+
+/// `fnmsubs`: -(a * c - b).
+pub fn fnmsubs(a: f32, c: f32, b: f32) -> f32 {
+    negate_unless_nan(fmadds(a, c, -b))
+}
+
+/// `fctiwz`: truncate toward zero. NaN and every out-of-range value give
+/// 0x80000000, as QEMU's core (tests/dol_ppc.py) and x86's cvttss2si do.
+/// Gekko itself saturates positive overflow to 0x7FFFFFFF.
+pub fn fctiwz(x: f32) -> i32 {
+    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 {
+        i32::MIN
+    } else {
+        x as i32
+    }
+}
+
 fn reduce(x: f32) -> (f32, usize) {
     let scaled = C0 * x;
     // fctiwz truncates toward zero.
     let n = if x.is_sign_negative() {
-        (scaled - HALF) as i32
+        fctiwz(scaled - HALF)
     } else {
-        (HALF + scaled) as i32
+        fctiwz(HALF + scaled)
     };
-    let mut y = x - (2 * n) as f32;
+    // slwi wraps; the exact integer is rounded once to single.
+    let twice = (n as u32).wrapping_shl(1) as i32;
+    let mut y = x - twice as f32;
     for w in FOUR_OVER_PI_M1 {
         y = fmadds(f32::from_bits(w), x, y);
     }
@@ -74,17 +106,15 @@ fn reduce(x: f32) -> (f32, usize) {
 pub fn msl_cosf(x: f32) -> f32 {
     let (y, q) = reduce(x);
     let (s, c) = (QUADRANT[2 * q], QUADRANT[2 * q + 1]);
-    if y.abs() < SMALL {
-        // fnmsubs: -(y * s - c)
-        return (c as f64 - y as f64 * s as f64) as f32;
+    if y.abs() < SMALL || y.is_nan() {
+        return fnmsubs(y, s, c);
     }
     let y2 = y * y;
     if q & 1 != 0 {
         let mut t = fmadds(p(1), y2, p(3));
         t = fmadds(y2, t, p(5));
         t = fmadds(y2, t, p(7));
-        // fnmadds: -(y2 * t + p9)
-        let t = (-(y2 as f64 * t as f64 + p(9) as f64)) as f32;
+        let t = fnmadds(y2, t, p(9));
         return (y * t) * s;
     }
     let mut t = fmadds(p(0), y2, p(2));
@@ -98,7 +128,7 @@ pub fn msl_cosf(x: f32) -> f32 {
 pub fn msl_sinf(x: f32) -> f32 {
     let (y, q) = reduce(x);
     let (s, c) = (QUADRANT[2 * q], QUADRANT[2 * q + 1]);
-    if y.abs() < SMALL {
+    if y.abs() < SMALL || y.is_nan() {
         return fmadds(p(9), y * c, s);
     }
     let y2 = y * y;
@@ -142,6 +172,15 @@ pub fn nj_sin(angle: i32) -> f32 {
 /// njCos: the start-up table entry for `angle & 0xFFFF`.
 pub fn nj_cos(angle: i32) -> f32 {
     table()[(angle & 0xffff) as usize].1
+}
+
+/// njSinCosTbl (GSNE8P 0x802D7758) as main.dol stores it: big-endian
+/// (sin, cos) single pairs.
+pub fn table_be_bytes() -> Vec<u8> {
+    table()
+        .iter()
+        .flat_map(|&(s, c)| s.to_be_bytes().into_iter().chain(c.to_be_bytes()))
+        .collect()
 }
 
 #[cfg(test)]

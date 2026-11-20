@@ -25,9 +25,10 @@
 //! The triangle drawing for the debug byte at 0x801CC16B is left out.
 use crate::{
     land_nodes::{nj_scalor, rotate_pair, rotate_y, Candidate, LandNodes, Query},
-    msl_math::{acosf, atan2f, gekko_frsqrte, normal_angles},
+    msl_math::{atan2f, gekko_fres, gekko_frsqrte, normal_angles},
     ninja_matrix::{mult_vec, Mtx, Vec3, IDENTITY},
     ninja_trig::fmadds,
+    ninja_vector::acosf,
 };
 
 const ZERO: f32 = 0.0; // r2-0x60B0
@@ -89,7 +90,7 @@ pub struct Contact {
 }
 
 /// njUnitVector (0x80115D24): scale by Gekko's `frsqrte` estimate alone.
-fn unit_vector(v: Vec3) -> Vec3 {
+pub(crate) fn unit_vector(v: Vec3) -> Vec3 {
     let d = fmadds(v[2], v[2], fmadds(v[1], v[1], v[0] * v[0]));
     let e = gekko_frsqrte(d as f64);
     v.map(|c| (e * c as f64) as f32)
@@ -104,9 +105,8 @@ fn fnmadds(a: f32, c: f32, b: f32) -> f32 {
 }
 
 /// PSMTXInverse (0x800ED484) in place, as njInvertMatrix(NULL) calls it.
-/// A zero determinant leaves the matrix alone. The reciprocal is `fres`
-/// (the reciprocal rounded to single, as the emulator has it) and one
-/// Newton step.
+/// A zero determinant leaves the matrix alone. The reciprocal is Gekko's
+/// `fres` estimate and one Newton step.
 fn invert(m: &mut Mtx) {
     let [[m00, m01, m02, m03], [m10, m11, m12, m13], [m20, m21, m22, m23]] = *m;
     let a0 = fmsubs(m11, m22, m21 * m12);
@@ -122,7 +122,7 @@ fn invert(m: &mut Mtx) {
     if det == 0.0 {
         return;
     }
-    let r = (1.0 / det as f64) as f32;
+    let r = gekko_fres(det as f64) as f32;
     let inv = -fmsubs(det, r * r, r + r);
     let row = |a: f32, b: f32, c: f32| {
         let (a, b, c) = (a * inv, b * inv, c * inv);

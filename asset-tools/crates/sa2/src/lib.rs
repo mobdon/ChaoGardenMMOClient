@@ -42,6 +42,7 @@ pub mod physical_board;
 pub mod player_physics;
 pub mod player_range;
 pub mod ninja_matrix;
+pub mod ninja_vector;
 pub mod ninja_trig;
 pub mod prison_visuals;
 pub mod prison_doors;
