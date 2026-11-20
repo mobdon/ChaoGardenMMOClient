@@ -778,11 +778,9 @@ pub fn light_attack(
                 aux.step = 4;
             }
         }
-        4 => {
-            if input.stopped {
-                rec.flags |= state_flag::MOTION_END;
-                aux.step = 5;
-            }
+        4 if input.stopped => {
+            rec.flags |= state_flag::MOTION_END;
+            aux.step = 5;
         }
         _ => {}
     }
@@ -849,15 +847,13 @@ pub fn heavy_attack(
                 aux.step = 5;
             }
         }
-        5 => {
-            if input.stopped {
-                if aux.row == 5 {
-                    aux.row = 1;
-                    calls.push(MotionCall::Skip(rows[1].motion));
-                }
-                rec.flags |= state_flag::MOTION_END;
-                aux.step = 6;
+        5 if input.stopped => {
+            if aux.row == 5 {
+                aux.row = 1;
+                calls.push(MotionCall::Skip(rows[1].motion));
             }
+            rec.flags |= state_flag::MOTION_END;
+            aux.step = 6;
         }
         _ => {}
     }
