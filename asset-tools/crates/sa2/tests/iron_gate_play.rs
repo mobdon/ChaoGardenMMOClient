@@ -122,6 +122,7 @@ fn standing_on_a_lift_raises_it_by_its_native_rule() {
             center: s.movers[i].position(),
             standing_on: Some(i),
             touching_goal: None,
+            mode: 0,
         };
         let mut started = None;
         for _ in 0..400 {
@@ -151,6 +152,7 @@ fn goal_contact_writes_the_slot_word() {
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),
+            mode: 0,
         }));
         assert!(events
             .iter()

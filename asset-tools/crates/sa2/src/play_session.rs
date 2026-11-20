@@ -31,6 +31,15 @@ use crate::{
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
+use crate::{
+    enemy_lib::{
+        e_ai::{rows as e_ai_rows, EAi},
+        host::{EnemyHost, Event as EnemyEvent},
+        motion::read_table,
+        EnemyTask, EnemyWork, PlayerView, Rand,
+    },
+    ninja_matrix::MatrixStack,
+};
 use serde::Serialize;
 
 /// SA Tools PC_SA2/STG11.ini collision model RVAs in the Steam executable.
@@ -158,6 +167,8 @@ pub struct PlayerSample {
     /// (an index into `Session::goals`); the player's own collision shape
     /// and the CCL test are main-program code.
     pub touching_goal: Option<usize>,
+    /// The player task's mode byte (twp +0); E AI kind 4 reads it.
+    pub mode: i8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -187,6 +198,12 @@ pub enum Event {
     /// A WALL gate started to drop (no resting elevator near).
     WallDropping {
         wall: usize,
+    },
+    /// An enemy's own kill path ran (E AI 0x4F1C4): it left its group and
+    /// scored `points`.
+    EnemyDestroyed {
+        enemy: usize,
+        points: i32,
     },
     GoalContact {
         layer: usize,
@@ -650,6 +667,16 @@ pub struct Session {
     /// Live-enemy count per group (the byte table at 0x801E4AB8).
     #[serde(skip)]
     pub group_counts: [u8; 256],
+    /// The enemies whose own logic runs (E AI), by index into `enemies`.
+    #[serde(skip)]
+    pub enemy_ai: Vec<(usize, EnemyAi)>,
+    /// MSL rand's state. It starts at main.dol's initial `next` (1); the
+    /// game's state on entering the stage depends on everything before it,
+    /// so a host that knows it sets it.
+    #[serde(skip)]
+    pub rand: Rand,
+    #[serde(skip)]
+    stack: MatrixStack,
     pub doors: Vec<PrisonDoor>,
     pub walls: Vec<ElevatorWall>,
     #[serde(skip)]
@@ -768,6 +795,36 @@ impl Session {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let (e_ai_table, e_ai_radius) = if rules.prison_doors {
+            let info = crate::stage_land::catalog()
+                .iter()
+                .find(|i| i.filename == rules.movers.module_file)
+                .ok_or_else(|| Error::invalid("stage module is not catalogued"))?;
+            let rel = crate::city_rel::CityRel::read_identified(src.stage_module, info.module)?;
+            let d = rel.data(5)?;
+            let radius = |row: u32| {
+                let at = (row + 0xC) as usize;
+                d.get(at..at + 4)
+                    .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
+                    .ok_or_else(|| Error::invalid("E AI collision row"))
+            };
+            (
+                read_table(
+                    src.stage_module,
+                    info.module,
+                    5,
+                    e_ai_rows::MOTION,
+                    e_ai_rows::MOTION_ROWS,
+                )?,
+                [
+                    radius(e_ai_rows::COLLISION)?,
+                    radius(e_ai_rows::COLLISION + 0x60)?,
+                ],
+            )
+        } else {
+            (vec![], [0.0; 2])
+        };
+        let mut enemy_ai = vec![];
         let mut world = PlayWorld::from_collision(&collision);
         let mut movers = vec![];
         let mut rings_placed = vec![];
@@ -883,6 +940,20 @@ impl Session {
                             velocity: 0.0,
                         }),
                     (_, n) if rules.prison_doors && enemy_counts(n, pl.parameters).is_some() => {
+                        if is_e_ai(n) {
+                            // The SET loader (0x80065E54) sign-extends the
+                            // rotation halfwords.
+                            let task = EnemyTask {
+                                ang: pl.rotation.map(|a| a as i16 as i32),
+                                pos: pl.position,
+                                scl: pl.parameters,
+                                ..Default::default()
+                            };
+                            enemy_ai.push((
+                                enemies.len(),
+                                EnemyAi::new(EAi::new(task, e_ai_table.clone()), e_ai_radius),
+                            ));
+                        }
                         enemies.push(Enemy {
                             layer: li,
                             index: p.placement_index,
@@ -892,9 +963,11 @@ impl Session {
                             counted: enemy_counts(n, pl.parameters) == Some(true),
                             alive: true,
                         });
-                        *unimplemented
-                            .entry(format!("{name} (group count only)"))
-                            .or_insert(0) += 1;
+                        if !is_e_ai(n) {
+                            *unimplemented
+                                .entry(format!("{name} (group count only)"))
+                                .or_insert(0) += 1;
+                        }
                     }
                     (_, "MLIFT") => {
                         let solid = solid(place(&lift_solid));
@@ -1053,12 +1126,16 @@ impl Session {
             world,
             death_zones: zones,
             group_counts: {
+                // E AI counts itself in its set-up (below).
                 let mut c = [0u8; 256];
-                for e in enemies.iter().filter(|e| e.counted) {
+                for e in enemies.iter().filter(|e| e.counted && !is_e_ai(&e.name)) {
                     c[e.group as usize] = c[e.group as usize].wrapping_add(1);
                 }
                 c
             },
+            enemy_ai,
+            rand: Rand(1),
+            stack: MatrixStack::new(),
             enemies,
             doors,
             door_rows,
@@ -1075,8 +1152,17 @@ impl Session {
     }
 
     /// Report an enemy destroyed (by the walker's attacks, which are
-    /// main-program code). Decrements its group count as 0x80018B88 does.
+    /// main-program code). An enemy whose own logic runs (E AI) is hit:
+    /// its task gets the collision-hit flag 4 and its kill path runs on the
+    /// next step. Others leave their group count as 0x80018B88 does.
     pub fn destroy_enemy(&mut self, i: usize) -> bool {
+        if let Some((_, ai)) = self.enemy_ai.iter_mut().find(|(e, _)| *e == i) {
+            if !self.enemies[i].alive || ai.eai.task.mode >= 10 {
+                return false;
+            }
+            ai.hit = true;
+            return true;
+        }
         let Some(e) = self.enemies.get_mut(i).filter(|e| e.alive) else {
             return false;
         };
@@ -1192,6 +1278,7 @@ impl Session {
                 events.push(Event::WallDropping { wall: i });
             }
         }
+        self.step_enemies(player, &mut events);
         for (i, d) in self.doors.iter_mut().enumerate() {
             let was = d.state;
             let clear = self.group_counts[d.group as usize] == 0;
@@ -1248,7 +1335,155 @@ impl Session {
         }
     }
 
+    /// One frame of every live E AI (stg09D.rel 0x51034).
+    fn step_enemies(&mut self, player: Option<PlayerSample>, events: &mut Vec<Event>) {
+        let center_height = self.physics.center_height;
+        for (i, ai) in self.enemy_ai.iter_mut() {
+            if !self.enemies[*i].alive {
+                continue;
+            }
+            if std::mem::take(&mut ai.hit) {
+                ai.eai.task.flags |= 4;
+            }
+            let mut host = EnemyWorld {
+                player,
+                center_height,
+                hit: ai.eai.task.flags & 4 != 0,
+                row_radius: ai.row_radius,
+                radius: &mut ai.radius,
+                events: vec![],
+            };
+            ai.eai.exec(
+                &mut host,
+                &mut self.stack,
+                &mut self.rand,
+                &mut self.group_counts,
+            );
+            for e in host.events {
+                match e {
+                    EnemyEvent::Score { points } => {
+                        self.score = self.score.wrapping_add(points as u32);
+                        events.push(Event::EnemyDestroyed { enemy: *i, points });
+                    }
+                    EnemyEvent::Free => self.enemies[*i].alive = false,
+                    _ => {}
+                }
+            }
+        }
+    }
+
     pub fn elapsed_seconds(&self) -> f32 {
         self.frame as f32 / FRAME_RATE
+    }
+}
+
+fn is_e_ai(name: &str) -> bool {
+    name.strip_suffix("_F")
+        .or_else(|| name.strip_suffix("_N"))
+        .unwrap_or(name)
+        == "E AI"
+}
+
+/// An E AI and what the session keeps for it.
+#[derive(Debug, Clone)]
+pub struct EnemyAi {
+    pub eai: EAi,
+    /// Its first collision entry's radius (cwp->info[0] +0xC).
+    pub radius: f32,
+    /// The first rows' radii in its CollisionData (stg09D.rel section 5
+    /// +0xC3DC8 and, for kind 5, +0xC3E28), read from the REL.
+    row_radius: [f32; 2],
+    hit: bool,
+}
+
+impl EnemyAi {
+    fn new(eai: EAi, row_radius: [f32; 2]) -> Self {
+        Self {
+            eai,
+            radius: 0.0,
+            row_radius,
+            hit: false,
+        }
+    }
+}
+
+/// What the session tells its enemies. Player contact, culling, ground
+/// collision and the game flags at 0x801CC168 are main-program code it
+/// does not run: the player is never touched or bumped, enemies are never
+/// culled, ground collision leaves them where they are, and the flags keep
+/// their main.dol initial values (all 0).
+struct EnemyWorld<'a> {
+    player: Option<PlayerSample>,
+    center_height: f32,
+    hit: bool,
+    row_radius: [f32; 2],
+    radius: &'a mut f32,
+    events: Vec<EnemyEvent>,
+}
+
+impl EnemyHost for EnemyWorld<'_> {
+    fn game_37(&self) -> bool {
+        false
+    }
+    fn game_39_42(&self) -> (u8, u8) {
+        (0, 0)
+    }
+    fn players(&self) -> [Option<PlayerView>; 2] {
+        [
+            self.player.map(|p| PlayerView {
+                pos: [p.center[0], p.center[1] - self.center_height, p.center[2]],
+                center: p.center,
+            }),
+            None,
+        ]
+    }
+    fn player_mode(&self, index: usize) -> i8 {
+        match (index, self.player) {
+            (0, Some(p)) => p.mode,
+            _ => 0,
+        }
+    }
+    fn range_out(&mut self) -> bool {
+        false
+    }
+    fn set_entry_dead(&self) -> bool {
+        false
+    }
+    fn hit_player(&self) -> bool {
+        false
+    }
+    fn bumped(&self) -> bool {
+        false
+    }
+    fn hit_by_player(&mut self) -> bool {
+        self.hit
+    }
+    fn damage_hook(&mut self, _pos: V3) -> bool {
+        false
+    }
+    fn collision_hit(&self) -> bool {
+        false
+    }
+    fn hit_by_player_index(&mut self) -> Option<i32> {
+        None
+    }
+    fn score_doubled(&mut self) -> bool {
+        false
+    }
+    fn ground(&mut self, _task: &mut EnemyTask, _work: &mut EnemyWork) {}
+    fn collision_radius(&self) -> f32 {
+        *self.radius
+    }
+    fn set_collision_radius(&mut self, r: f32) {
+        *self.radius = r;
+    }
+    fn collision_entry(&mut self) {}
+    fn event(&mut self, e: EnemyEvent) {
+        if let EnemyEvent::CollisionInit { rows } = e {
+            // CCL_Init copies the rows; the enemy may change the radius
+            // later in the same frame.
+            *self.radius = self.row_radius[(rows != e_ai_rows::COLLISION) as usize];
+        }
+        self.events.push(e);
     }
 }

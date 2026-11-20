@@ -145,6 +145,7 @@ fn standing_on_the_one_way_elevator_carries_it_to_its_target() {
             center: s.movers[i].position(),
             standing_on: Some(i),
             touching_goal: None,
+            mode: 0,
         };
         let mut started = None;
         let mut bridge = None;
@@ -184,6 +185,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
             center: ring,
             standing_on: None,
             touching_goal: None,
+            mode: 0,
         }));
         // Strictly within 14 of the centre; two lines overlap here, 10 apart.
         let taken = events
@@ -198,6 +200,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),
+            mode: 0,
         }));
         assert!(events
             .iter()
@@ -230,6 +233,8 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         let members: Vec<usize> = (0..s.enemies.len())
             .filter(|&i| s.enemies[i].group == group && s.enemies[i].counted)
             .collect();
+        // E AI joins its group in its set-up, on its first frame.
+        s.step(None);
         assert!(!members.is_empty() && !s.group_clear(group));
         // Closed while the group lives.
         for _ in 0..60 {
@@ -239,8 +244,23 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         for &i in &members {
             assert!(s.destroy_enemy(i));
         }
+        // E AI's own kill path leaves the group on its next frame, before
+        // the doors read the counts.
+        let first = s.step(None);
+        let killed = first
+            .iter()
+            .filter(|e| matches!(e, Event::EnemyDestroyed { .. }))
+            .count();
+        let e_ai = members
+            .iter()
+            .filter(|&&i| s.enemies[i].name.starts_with("E AI"))
+            .count();
+        assert_eq!(killed, e_ai);
         assert!(s.group_clear(group));
-        let mut opening = None;
+        let mut opening = first
+            .iter()
+            .any(|e| matches!(e, Event::DoorOpening { door } if *door == d))
+            .then_some(s.frame);
         let mut opened = None;
         for _ in 0..400 {
             for e in s.step(None) {
