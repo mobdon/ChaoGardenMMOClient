@@ -325,7 +325,7 @@ mod tests {
     }
 
     fn vectors() -> Vectors {
-        serde_json::from_str(include_str!("../../tests/palette-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("palette-vectors.json")).unwrap()
     }
 
     fn synthetic_words(mut seed: u32) -> [u16; COLOR_COUNT] {
@@ -346,6 +346,7 @@ mod tests {
         )
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn scalar_blend_matches_984_original_machine_code_vectors() {
         let vectors = vectors();
@@ -358,6 +359,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_setter_truncation_and_copy_cache_ranges_match_reference() {
         let vectors = vectors();
@@ -384,6 +386,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn changed_bank_engine_matches_native_outputs_and_inhibition() {
         for vector in vectors().update_vectors {

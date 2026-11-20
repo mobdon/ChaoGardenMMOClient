@@ -11,8 +11,9 @@ import struct
 from pathlib import Path
 
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("garden-payload-vectors.json")
+FIXTURE = spp_vectors.path("garden-payload-vectors.json")
 EWRAM = 0x02000000
 IWRAM = 0x03000000
 BOARD = IWRAM + 0x1ae8

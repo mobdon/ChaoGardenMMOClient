@@ -158,7 +158,7 @@ enters `0xD504`. Static graphics alone do not execute that route.
 
 `tests/garden_systems_reference.py` authenticates the whole local ROM and decoded
 Garden, bounds every named span, and compares hashes with the metadata-only
-`tests/garden-systems-vectors.json` (`evidenceOnly: true`). It uses the independent bounded decoder in
+`garden-systems-vectors.json` (local vectors directory, see `tests/spp_vectors.py`) (`evidenceOnly: true`). It uses the independent bounded decoder in
 `tests/reference_parity.py`. It neither executes native instructions nor tests
 Rust gameplay. No original bytes are written or included in the fixture.
 

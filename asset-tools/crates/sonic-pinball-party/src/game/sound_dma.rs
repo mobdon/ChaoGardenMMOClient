@@ -203,10 +203,10 @@ mod tests {
         m.io[0xd0..0xd4].copy_from_slice(&dma2.to_le_bytes());
         m
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_sound_dma_transactions_and_controlled_fill_match() {
-        let f: Value =
-            serde_json::from_str(include_str!("../../tests/sound_dma-vectors.json")).unwrap();
+        let f: Value = serde_json::from_str(vectors!("sound_dma-vectors.json")).unwrap();
         for c in f["cases"].as_array().unwrap() {
             let mut m = memory(
                 c["seed"].as_u64().unwrap() as u8,

@@ -13,9 +13,10 @@ from pathlib import Path
 import struct
 
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
 
-FIXTURE = Path(__file__).with_name("garden-systems-vectors.json")
+FIXTURE = spp_vectors.path("garden-systems-vectors.json")
 PAYLOAD_SHA = "33dcbab013c9007ad838d8cbff693eef140768ca4110c9617c4055aa75659efb"
 PAYLOAD_LENGTH = 0x2E12C
 STORED_SHA = "72fd1b2645fc1358ad131a697dac1c53b4ae57f195759ff78e1535ebda70d29f"

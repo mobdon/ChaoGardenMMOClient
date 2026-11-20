@@ -7,6 +7,7 @@ import argparse
 import importlib
 import json
 from pathlib import Path
+import spp_vectors  # noqa: E402
 
 
 def check(module, function, arguments, fixture):
@@ -14,7 +15,7 @@ def check(module, function, arguments, fixture):
     # JSON object keys (including address-keyed native read maps) are strings.
     # Normalize through the fixture encoding before structural comparison.
     actual = json.loads(json.dumps(actual))
-    expected = json.loads(Path(__file__).with_name(fixture).read_text(encoding="utf8"))
+    expected = json.loads(spp_vectors.path(fixture).read_text(encoding="utf8"))
     if actual != expected:
         raise ValueError("Native oracle differs: "+fixture)
 

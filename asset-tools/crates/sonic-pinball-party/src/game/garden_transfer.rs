@@ -845,10 +845,10 @@ mod tests {
         }
         assert_eq!(count, v["cases"].as_array().unwrap().len());
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_link_matches_opaque_records_registers_and_flash() {
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/garden-transfer-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("garden-transfer-vectors.json")).unwrap();
         let mut data = vec![0; 0x40000];
         for (i, b) in data[0x6b8..0x6b8 + 0x520].iter_mut().enumerate() {
             *b = (i * 11 + 1) as u8;

@@ -295,10 +295,10 @@ mod tests {
         AnimationState::from_bytes(&bytes(words)).unwrap()
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_initializer_handlers_and_dispatcher_match_complete_synthetic_objects() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/animation-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("animation-vectors.json")).unwrap();
         for case in data["initializers"].as_array().unwrap() {
             let mut object = state(&case["initial"]);
             object.initialize();

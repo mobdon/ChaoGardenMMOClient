@@ -434,10 +434,10 @@ mod tests {
             Ok(args[0])
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_services_match_all_synthetic_task_queue_and_oam_snapshots() {
-        let f: Value =
-            serde_json::from_str(include_str!("../../tests/garden-services-vectors.json")).unwrap();
+        let f: Value = serde_json::from_str(vectors!("garden-services-vectors.json")).unwrap();
         for c in f["cases"].as_array().unwrap() {
             let seed = c["seed"].as_u64().unwrap() as u8;
             let mut m = MemoryImage::fixture(vec![

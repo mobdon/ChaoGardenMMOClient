@@ -184,10 +184,10 @@ mod tests {
         value.as_u64().unwrap() as u32
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_wrapper_vectors_with_explicitly_intercepted_dependencies() {
-        let fixture: Value =
-            serde_json::from_str(include_str!("../../tests/startup-vectors.json")).unwrap();
+        let fixture: Value = serde_json::from_str(vectors!("startup-vectors.json")).unwrap();
         for case in fixture["cases"].as_array().unwrap() {
             let mut callbacks =
                 CallbackStack::from_halfwords(&words(&case["mainInitial"])).unwrap();

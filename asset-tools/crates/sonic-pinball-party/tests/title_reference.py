@@ -19,8 +19,9 @@ import unittest
 import control_reference as control
 import interpolation_reference as interpolation
 import reference_parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("title-vectors.json")
+FIXTURE = spp_vectors.path("title-vectors.json")
 ROUTINES = {"constructor": (0x8260,0x8358), "interpolation": (0x8358,0x8414),
             "paletteFade": (0x8414,0x8450), "specialFade": (0x8450,0x8494),
             "timeoutFade": (0x8494,0x8520), "idle": (0x8520,0x88AC),
@@ -236,7 +237,7 @@ def generate(path):
         copies=interpolation.generate(path)
     finally:
         interpolation.ROUTINES=old
-    existing=json.loads(Path(__file__).with_name("interpolation-vectors.json").read_text(encoding="utf8"))
+    existing=json.loads(spp_vectors.path("interpolation-vectors.json").read_text(encoding="utf8"))
     if copies["constructors"]!=existing["constructors"] or copies["updates"]!=existing["updates"]:
         raise AssertionError("Title interpolation copies differ from completed Rust contract")
     return {"schemaVersion":1,"romSha256":control.ROM_SHA256,
@@ -245,7 +246,7 @@ def generate(path):
             "resourceSpans":[{"address":address,"length":length,"sha256":hashlib.sha256(oracle.rom[address-control.ROM_BASE:address-control.ROM_BASE+length]).hexdigest()} for address,length in RESOURCE_SPANS],
             "authenticAssets":assets,"initialParticlePrefix":INITIAL_PREFIX,"cases":cases,
             "scalarResources":{"backgroundDestinations":list(struct.unpack_from("<8I",oracle.rom,0x66C54)),"titleAudioPlayer":struct.unpack_from("<I",oracle.rom,0x6DD878)[0]},
-            "interpolationCopyParity":{"constructors":len(copies["constructors"]),"updateOperations":sum(len(case["steps"]) for case in copies["updates"]),"existingFixtureSha256":hashlib.sha256(Path(__file__).with_name("interpolation-vectors.json").read_bytes()).hexdigest()},
+            "interpolationCopyParity":{"constructors":len(copies["constructors"]),"updateOperations":sum(len(case["steps"]) for case in copies["updates"]),"existingFixtureSha256":hashlib.sha256(spp_vectors.path("interpolation-vectors.json").read_bytes()).hexdigest()},
             "nativeTableStartSequence":{"initial":initial,"initialized":initial_result,"ticks":ticks,"nextCallback":main}}
 
 

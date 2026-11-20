@@ -17,8 +17,9 @@ import unittest
 
 import control_reference as control
 import reference_parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("intro-vectors.json")
+FIXTURE = spp_vectors.path("intro-vectors.json")
 ROUTINES = {"initialize": (0x6EF4, 0x7840), "resume": (0x7840, 0x8168), "update": (0x8168, 0x81E8),
             "constructor": (0x6544, 0x663C), "addressLookup": (0x3628, 0x3640), "codecDispatch": (0x39A0, 0x3A20)}
 ARITY = {0x3250: 0, 0x5F0BC: 0, 0x0884: 0, 0x5F040: 0, 0x3278: 0, 0x3010: 0,
