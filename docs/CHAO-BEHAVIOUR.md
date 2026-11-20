@@ -4,7 +4,7 @@ The server (`src/behaviour.rs` in ChaoGardenMMOServer) picks what an opted-in
 resident Chao is doing and publishes it as `watch.behaviour`:
 `kind` (`idle`, `wander`, `sit`, `sleep`, `play`, `happy`, `startled`),
 `variant`, `phase` (`enter`, `loop`, `exit`) and server-time bounds. Weights and
-durations are server **adapted tuning**. The native behaviour controllers and
+durations are server **placeholder tuning** until the decoded native controller values replace them. The native behaviour controllers and
 activity timers are mapped (CAT-LIFE-03) but not decoded, so nothing here
 claims native selection logic.
 

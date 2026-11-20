@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { BEHAVIOUR_FACES, chooseClip, readBehaviour, readCatalog, registerChaoFaceApi, selectBehaviourMotion, updateNativeBehaviour } from '../src/chao-behaviour.js';
 
 const behaviour = (kind, phase = 'loop', extra = {}) => ({ kind, phase, variant: 0, startedAt: 1000, until: 9000,
-  phaseStartedAt: 1000, phaseUntil: 9000, rules: 'adapted-tuning', ...extra });
+  phaseStartedAt: 1000, phaseUntil: 9000, rules: 'placeholder-tuning', ...extra });
 const catalog = readCatalog({ chaoBehaviour: { clips: [
   { kind: 'sit', phase: 'enter', nativeName: 'clip_sit_down', nativeState: 1, tableProperties: { StartFrame: 0, EndFrame: 10, PlaySpeed: .5 } },
   { kind: 'sit', phase: 'loop', nativeName: 'clip_sit', nativeState: 2, tableProperties: { StartFrame: 0, EndFrame: 20, PlaySpeed: 1 } },
