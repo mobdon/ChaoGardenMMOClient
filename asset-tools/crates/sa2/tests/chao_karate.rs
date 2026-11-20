@@ -279,3 +279,81 @@ fn steam_motion_table_equals_the_gamecube_table() {
     assert_eq!(gc[4].events, vec![4.0, 6.0]);
     assert_eq!(gc[4].motion, 579);
 }
+
+#[test]
+#[ignore = "requires the user's GameCube main.dol, ChaoMain.rel and ChaoStgKarate.rel and Python with Unicorn"]
+fn attack_motion_handlers_match_the_gamecube_powerpc() {
+    let python = env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
+    let o = Command::new(python)
+        .arg("-I")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/chao_karate_motion_ppc.py"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    if o.stdout.is_empty() {
+        return;
+    }
+    let doc: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let rows =
+        k::read_motion_table(&std::fs::read(env::var_os("SA2_CHAO_KARATE_REL").unwrap()).unwrap())
+            .unwrap();
+    for c in doc.as_array().unwrap() {
+        let motion = i(&c["motion"]) as i8;
+        let f0 = &c["flags0"];
+        let mut aux = k::MotionAux {
+            motion,
+            bits: u(&f0[0]) as u8,
+            ..Default::default()
+        };
+        let mut rec = StateRecord {
+            flags: u(&f0[1]) as u16,
+            ..Default::default()
+        };
+        let work_flags = u(&f0[2]) as u16;
+        for fr in c["frames"].as_array().unwrap() {
+            let input = k::MotionInput {
+                frame: f(&fr["frame"]),
+                linking: fr["linking"].as_bool().unwrap(),
+                stopped: fr["stopped"].as_bool().unwrap(),
+            };
+            let mut calls = vec![];
+            if matches!(motion, 4 | 7) {
+                k::light_attack(&mut aux, &mut rec, &rows, input, &mut calls);
+            } else {
+                k::heavy_attack(&mut aux, &mut rec, &rows, input, work_flags, &mut calls);
+            }
+            let got: Vec<Value> = calls
+                .iter()
+                .filter_map(|call| match *call {
+                    k::MotionCall::StopMovement => None,
+                    k::MotionCall::Link { motion, link_step } => {
+                        Some(serde_json::json!(["link", motion, link_step]))
+                    }
+                    k::MotionCall::Speed(s) => Some(serde_json::json!(["speed", s.to_bits()])),
+                    k::MotionCall::Skip(m) => Some(serde_json::json!(["skip", m])),
+                    k::MotionCall::Sound(s) => Some(serde_json::json!(["sound", s])),
+                })
+                .collect();
+            assert_eq!(Value::Array(got), fr["calls"], "calls {c}");
+            let want = &fr["aux"];
+            assert_eq!(
+                [
+                    i64::from(aux.motion),
+                    i64::from(aux.step),
+                    i64::from(aux.event),
+                    i64::from(aux.bits),
+                    i64::from(aux.row)
+                ],
+                [
+                    i(&want[0]),
+                    i(&want[1]),
+                    i(&want[2]),
+                    i(&want[3]),
+                    i(&want[4])
+                ],
+                "aux {fr}"
+            );
+            assert_eq!(u64::from(rec.flags), u(&fr["twp"]), "twp {fr}");
+        }
+    }
+}

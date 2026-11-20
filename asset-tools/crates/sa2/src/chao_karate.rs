@@ -669,3 +669,196 @@ pub fn read_motion_table(rel: &[u8]) -> crate::Result<Vec<MotionRow>> {
         })
         .collect()
 }
+
+/// The karate motion record (work +0xC, "aux"): +0 motion id, +1 step, +2
+/// event index, +5 event bits, +0xC table row, +0x14 motion frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MotionAux {
+    pub motion: i8,
+    pub step: i8,
+    pub event: i8,
+    pub bits: u8,
+    pub row: i32,
+}
+
+/// aux +5 event bits.
+pub mod motion_bit {
+    /// Read by fn_72_FE9C step 1: run the hit check.
+    pub const HIT_CHECK: u8 = 8;
+    /// Read by fn_72_FE9C step 2: the blow lands.
+    pub const IMPACT: u8 = 0x10;
+}
+
+/// Engine calls a motion handler makes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MotionCall {
+    /// Movement +0, +8, +0xC, +0x14 set to 0.
+    StopMovement,
+    /// CM AL_SetMotionLinkStep(chao, motion, link_step).
+    Link {
+        motion: i32,
+        link_step: u16,
+    },
+    /// main SetMotionSpd(ctrl, speed).
+    Speed(f32),
+    /// main SetMotionSkip(ctrl, motion).
+    Skip(i32),
+    Sound(u16),
+}
+
+/// fn_72_B620: start motion `id` (clears the motion-end flag and events).
+pub fn set_motion(aux: &mut MotionAux, rec: &mut StateRecord, id: i8) {
+    rec.flags &= !state_flag::MOTION_END;
+    aux.bits &= !motion_bit::HIT_CHECK;
+    aux.bits &= !motion_bit::IMPACT;
+    aux.motion = id;
+    aux.step = 0;
+    aux.event = 0;
+}
+
+/// What the motion engine reports this frame: aux +0x14 (GetMotionFrame),
+/// motion-control flag 2 (a link is still blending) and IsMotionStop.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MotionInput {
+    pub frame: f32,
+    pub linking: bool,
+    pub stopped: bool,
+}
+
+fn reached(rows: &[MotionRow], aux: &MotionAux, frame: f32) -> bool {
+    let at = rows[aux.row as usize]
+        .events
+        .get(aux.event as usize)
+        .copied()
+        // The table's terminator: frame >= -1 always holds.
+        .unwrap_or(-1.0);
+    frame >= at
+}
+
+/// fn_72_C0C4 (motions 4 and 7): hit check as soon as the link ends, the
+/// blow at event 0, its end at event 1, motion end when the clip stops.
+pub fn light_attack(
+    aux: &mut MotionAux,
+    rec: &mut StateRecord,
+    rows: &[MotionRow],
+    input: MotionInput,
+    calls: &mut Vec<MotionCall>,
+) {
+    match aux.step {
+        0 => {
+            calls.push(MotionCall::StopMovement);
+            aux.row = i32::from(aux.motion);
+            let r = &rows[aux.row as usize];
+            calls.push(MotionCall::Link {
+                motion: r.motion,
+                link_step: r.link_step,
+            });
+            rec.flags &= !state_flag::MOTION_END;
+            aux.step = 1;
+        }
+        1 => {
+            if !input.linking {
+                aux.bits |= motion_bit::HIT_CHECK;
+                aux.step = 2;
+            }
+        }
+        2 => {
+            if reached(rows, aux, input.frame) {
+                aux.bits &= !motion_bit::HIT_CHECK;
+                aux.bits |= motion_bit::IMPACT;
+                calls.push(MotionCall::Sound(0x6070));
+                aux.event += 1;
+                aux.step = 3;
+            }
+        }
+        3 => {
+            if reached(rows, aux, input.frame) {
+                aux.bits &= !motion_bit::IMPACT;
+                aux.event += 1;
+                aux.step = 4;
+            }
+        }
+        4 => {
+            if input.stopped {
+                rec.flags |= state_flag::MOTION_END;
+                aux.step = 5;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// fn_72_C3B4 (motions 5 and 8): like fn_72_C0C4 but the hit check waits for
+/// event 0, every step runs at speed 1.1 when work +4 has flag 8 (param
+/// +0xD6), and motion 5 skips to row 1's clip when it stops.
+pub fn heavy_attack(
+    aux: &mut MotionAux,
+    rec: &mut StateRecord,
+    rows: &[MotionRow],
+    input: MotionInput,
+    work_flags: u16,
+    calls: &mut Vec<MotionCall>,
+) {
+    let fast = |calls: &mut Vec<MotionCall>| {
+        if work_flags & flag::D6 != 0 {
+            calls.push(MotionCall::Speed(1.1));
+        }
+    };
+    match aux.step {
+        0 => {
+            calls.push(MotionCall::StopMovement);
+            aux.row = i32::from(aux.motion);
+            let r = &rows[aux.row as usize];
+            calls.push(MotionCall::Link {
+                motion: r.motion,
+                link_step: r.link_step,
+            });
+            rec.flags &= !state_flag::MOTION_END;
+            aux.bits &= !motion_bit::IMPACT;
+            aux.step = 1;
+        }
+        1 => {
+            fast(calls);
+            if !input.linking {
+                aux.step = 2;
+            }
+        }
+        2 => {
+            fast(calls);
+            if reached(rows, aux, input.frame) {
+                aux.bits |= motion_bit::HIT_CHECK;
+                aux.event += 1;
+                aux.step = 3;
+            }
+        }
+        3 => {
+            fast(calls);
+            if reached(rows, aux, input.frame) {
+                aux.bits &= !motion_bit::HIT_CHECK;
+                aux.bits |= motion_bit::IMPACT;
+                calls.push(MotionCall::Sound(0x6071));
+                aux.event += 1;
+                aux.step = 4;
+            }
+        }
+        4 => {
+            fast(calls);
+            if reached(rows, aux, input.frame) {
+                aux.bits &= !motion_bit::IMPACT;
+                aux.event += 1;
+                aux.step = 5;
+            }
+        }
+        5 => {
+            if input.stopped {
+                if aux.row == 5 {
+                    aux.row = 1;
+                    calls.push(MotionCall::Skip(rows[1].motion));
+                }
+                rec.flags |= state_flag::MOTION_END;
+                aux.step = 6;
+            }
+        }
+        _ => {}
+    }
+}
