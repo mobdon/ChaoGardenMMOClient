@@ -185,6 +185,10 @@ pub struct TextureUpload {
 pub struct Frame {
     pub clear_color: [f32; 4],
     pub draws: Vec<DrawCmd>,
+    /// `draws.len()` at each EFB copy to a texture (GXCopyTex: render to
+    /// texture, e.g. shadows). Draws before the last one belong to those
+    /// passes, not to the picture copied to the screen.
+    pub tex_copies: Vec<usize>,
     pub uploads: Vec<TextureUpload>,
 }
 
@@ -1142,6 +1146,9 @@ impl Gx {
                     None
                 }
             }
+            // PE copy execute: bit 14 set copies to the XFB (the screen),
+            // clear copies to a texture.
+            0x52 if v & 0x4000 == 0 => self.frame.tex_copies.push(self.frame.draws.len()),
             _ => *self.unhandled.entry(format!("BP {addr:#04x}")).or_default() += 1,
         }
     }

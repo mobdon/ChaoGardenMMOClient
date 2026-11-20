@@ -701,7 +701,10 @@ impl GxRenderer {
         let lod_bias = params::calc_lod_bias(size[0] as f32, size[1] as f32);
         let c = frame.clear_color;
         let mut clear = Some([c[0] as f64, c[1] as f64, c[2] as f64, c[3] as f64]);
-        let mut start = 0;
+        // Draws before the last copy to a texture were render-to-texture
+        // passes (shadows and the like), not part of this picture.
+        // shortcut: those passes are not drawn into their textures yet.
+        let mut start = frame.tex_copies.last().copied().unwrap_or(0).min(frame.draws.len());
         while start < frame.draws.len() || clear.is_some() {
             let first = frame.draws.get(start);
             let mut end = start;
