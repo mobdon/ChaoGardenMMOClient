@@ -102,6 +102,132 @@ impl Event {
 pub fn read_prs(compressed: &[u8]) -> Result<Event> {
     read(&archive::decompress_prs(compressed, LIMIT)?)
 }
+
+/// Pointer base of the one older-layout event, `e0350.prs` (byte-identical on
+/// Steam and the GameCube disc). Established from the file: at this base its
+/// texture list's ten name pointers land on the names in `e0350texture.prs`.
+pub const BETA_BASE: u32 = 0x812f_fe60;
+
+/// One 32-byte entity row of the older layout. Only the first two words are
+/// identified as in-file pointers; the rest are kept raw.
+#[derive(Serialize, Debug)]
+pub struct BetaEntity {
+    pub model_offset: Option<usize>,
+    pub second_offset: Option<usize>,
+    pub words: [u32; 8],
+}
+#[derive(Serialize, Debug)]
+pub struct BetaScene {
+    pub frames: u32,
+    pub entities: Vec<BetaEntity>,
+    pub camera_motions: Vec<i32>,
+    pub particle_motions: Vec<i32>,
+    pub big_offset: Option<usize>,
+}
+#[derive(Serialize, Debug)]
+pub struct BetaEvent {
+    pub scenes: Vec<BetaScene>,
+    pub texture_names: Vec<String>,
+}
+
+fn beta_offset(b: &[u8], ptr: u32, len: usize) -> Result<usize> {
+    let at = ptr
+        .checked_sub(BETA_BASE)
+        .ok_or_else(|| Error::invalid("pointer below the older event base"))? as usize;
+    at.checked_add(len)
+        .filter(|end| *end <= b.len())
+        .ok_or_else(|| Error::invalid("older event pointer outside source"))?;
+    Ok(at)
+}
+fn beta_ref(b: &[u8], ptr: u32) -> Result<Option<usize>> {
+    if ptr == 0 {
+        return Ok(None);
+    }
+    beta_offset(b, ptr, 4).map(Some)
+}
+
+pub fn read_beta_prs(compressed: &[u8]) -> Result<BetaEvent> {
+    read_beta(&archive::decompress_prs(compressed, LIMIT)?)
+}
+
+/// Read the older event layout: the retail 32-byte scene table, 32-byte entity
+/// rows instead of 44, and a texture list (header word 1) of name pointers.
+pub fn read_beta(b: &[u8]) -> Result<BetaEvent> {
+    if b.len() < 0x30 || b.len() > LIMIT || b[0] != 0x81 {
+        return Err(Error::invalid("expected an older-layout event image"));
+    }
+    let last = word(b, 8) as usize;
+    if last >= 4096 {
+        return Err(Error::invalid("event scene count"));
+    }
+    let scene_len = (last + 1) * 32;
+    let at = beta_offset(b, word(b, 0), scene_len)?;
+    let mut budget = 262_144usize;
+    let mut scenes = Vec::with_capacity(last + 1);
+    for s in b[at..at + scene_len].as_chunks::<32>().0 {
+        let count = |i| word(s, i) as usize;
+        for n in [count(4), count(12), count(20)] {
+            budget = budget
+                .checked_sub(n)
+                .ok_or_else(|| Error::invalid("event record budget exceeded"))?;
+        }
+        let rows = |ptr: u32, n: usize, stride: usize| -> Result<&[u8]> {
+            if n == 0 {
+                return Ok(&[]);
+            }
+            let len = n
+                .checked_mul(stride)
+                .ok_or_else(|| Error::invalid("event array overflow"))?;
+            let at = beta_offset(b, ptr, len)?;
+            Ok(&b[at..at + len])
+        };
+        let mut entities = Vec::with_capacity(count(4));
+        for row in rows(word(s, 0), count(4), 32)?.as_chunks::<32>().0 {
+            let words = std::array::from_fn(|i| word(row, i * 4));
+            entities.push(BetaEntity {
+                model_offset: beta_ref(b, words[0])?,
+                second_offset: beta_ref(b, words[1])?,
+                words,
+            });
+        }
+        let ids = |ptr, n| -> Result<Vec<i32>> {
+            Ok(rows(ptr, n, 4)?
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|x| word(x, 0) as i32)
+                .collect())
+        };
+        scenes.push(BetaScene {
+            frames: word(s, 28),
+            entities,
+            camera_motions: ids(word(s, 8), count(12))?,
+            particle_motions: ids(word(s, 16), count(20))?,
+            big_offset: beta_ref(b, word(s, 24))?,
+        });
+    }
+    // NJS_TEXLIST: {names, count}; each NJS_TEXNAME is 12 bytes, name first.
+    let list = beta_offset(b, word(b, 4), 8)?;
+    let n = word(b, list + 4) as usize;
+    if n > 4096 {
+        return Err(Error::invalid("older event texture count"));
+    }
+    let names = beta_offset(b, word(b, list), n * 12)?;
+    let mut texture_names = Vec::with_capacity(n);
+    for i in 0..n {
+        let at = beta_offset(b, word(b, names + i * 12), 1)?;
+        let text = &b[at..b.len().min(at + 64)];
+        let end = text
+            .iter()
+            .position(|c| *c == 0)
+            .ok_or_else(|| Error::invalid("unterminated texture name"))?;
+        texture_names.push(String::from_utf8_lossy(&text[..end]).trim_end().to_string());
+    }
+    Ok(BetaEvent {
+        scenes,
+        texture_names,
+    })
+}
 pub fn read(b: &[u8]) -> Result<Event> {
     if b.len() < 0x2c || b.len() > LIMIT || b[0] != 0x81 || b[0x2a] != 0 || b[0x2b] > 1 {
         return Err(Error::invalid("expected a retail BATTLE event image"));
@@ -162,6 +288,57 @@ pub fn read(b: &[u8]) -> Result<Event> {
         });
     }
     Ok(Event { scenes })
+}
+
+#[cfg(test)]
+mod beta_tests {
+    use super::*;
+    fn put(b: &mut [u8], at: usize, v: u32) {
+        b[at..at + 4].copy_from_slice(&v.to_be_bytes());
+    }
+    /// Synthetic older-layout image: header, one texture, two scenes with
+    /// 1 and 2 entities of 32 bytes.
+    fn image() -> Vec<u8> {
+        let p = |off: usize| BETA_BASE + off as u32;
+        let mut b = vec![0u8; 0x200];
+        put(&mut b, 0, p(0x40)); // scene table
+        put(&mut b, 4, p(0x80)); // texlist
+        put(&mut b, 8, 1); // last scene index
+        put(&mut b, 0x40 + 4, 1);
+        put(&mut b, 0x40, p(0xa0));
+        put(&mut b, 0x40 + 28, 4);
+        put(&mut b, 0x60, p(0xc0));
+        put(&mut b, 0x60 + 4, 2);
+        put(&mut b, 0x60 + 28, 4);
+        put(&mut b, 0xc0, p(0x100)); // model pointer
+        put(&mut b, 0x80, p(0x88));
+        put(&mut b, 0x84, 1);
+        put(&mut b, 0x88, p(0x180));
+        b[0x180..0x186].copy_from_slice(b"logo  ");
+        b[0] = 0x81;
+        b
+    }
+    #[test]
+    fn reads_the_older_layout() {
+        let e = read_beta(&image()).unwrap();
+        assert_eq!(e.scenes.len(), 2);
+        assert_eq!(e.scenes[0].entities.len(), 1);
+        assert_eq!(e.scenes[1].entities.len(), 2);
+        assert_eq!(e.scenes[1].entities[0].model_offset, Some(0x100));
+        assert_eq!(e.scenes[1].frames, 4);
+        assert_eq!(e.texture_names, ["logo"]);
+    }
+    #[test]
+    fn older_layout_bounds_never_panic() {
+        let b = image();
+        for end in 0..b.len() {
+            let _ = read_beta(&b[..end]);
+        }
+        let mut far = b.clone();
+        put(&mut far, 0x60 + 4, 100_000);
+        assert!(read_beta(&far).is_err());
+        assert!(read(&b).is_err()); // the retail reader still refuses it
+    }
 }
 
 #[cfg(test)]

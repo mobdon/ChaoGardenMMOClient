@@ -2,7 +2,7 @@
 //!
 //! Format evidence: vgmstream `src/meta/adx.c` and `src/coding/adx_decoder.c`
 //! (upstream inspected 2026-11-18). The mathematical decoder is implemented
-//! here independently. Fixed-profile mono AHX uses Rust Layer II synthesis; encrypted ADX and CSB are unsupported.
+//! here independently. Fixed-profile mono AHX uses Rust Layer II synthesis; encrypted ADX is unsupported; Steam CSB banks are read by `csb`.
 
 use crate::{Error, Result};
 use serde::Serialize;
