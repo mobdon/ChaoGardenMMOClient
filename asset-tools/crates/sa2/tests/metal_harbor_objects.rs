@@ -37,9 +37,10 @@ fn calls(v: &Value) -> Vec<String> {
 }
 
 /// Every case, with a check on its result.
-fn cases() -> Vec<(&'static str, Value, fn(&Value))> {
+type Case = (&'static str, Value, fn(&Value));
+fn cases() -> Vec<Case> {
     let one = 1f32.to_bits();
-    let mut out: Vec<(&'static str, Value, fn(&Value))> = Vec::new();
+    let mut out: Vec<Case> = Vec::new();
     for loader in [0x2414, 0x2d4c, 0x36ac, 0x9a00] {
         out.push((
             "container_load",

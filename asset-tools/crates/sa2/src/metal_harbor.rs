@@ -814,11 +814,11 @@ pub fn bridge_dest(obj: bool) -> Value {
 
 /// Loaders that only pass module data to a shared constructor (owned by the
 /// shared stage objects and reported as a `module` call): COVER, DAMMY,
-/// CBRI, NET, ISLAND.
-pub const THIN_LOADERS: [u32; 5] = [0x5278, 0x52c8, 0x5314, 0x5360, 0x53a8];
+/// CBRI, NET, ISLAND, and PIC (+0x8A88, to the shared +0xFDB0).
+pub const THIN_LOADERS: [u32; 6] = [0x5278, 0x52c8, 0x5314, 0x5360, 0x53a8, 0x8a88];
 
 /// The shared constructors and how many arguments after the task they take.
-const THIN_TARGETS: [(u32, usize); 2] = [(0xdc24, 5), (0xe020, 6)];
+const THIN_TARGETS: [(u32, usize); 3] = [(0xdc24, 5), (0xe020, 6), (0xfdb0, 4)];
 
 /// A thin loader, decoded from its own code: each of r4..r9 is an
 /// immediate (`li`), a module address (`lis`/`addi` with relocation) or the
@@ -1372,11 +1372,7 @@ pub fn container_display(mh: &MetalHarbor<'_>, i: &ContainerDisplayInput) -> Res
     }
     c.push(engine(0x8002b2d8, json!([0x2400])));
     if d == 0xa250 {
-        let colour = if i.clock % 48 <= 20 {
-            -1i32 as u32
-        } else {
-            0xff80_8080
-        };
+        let colour = blink(i.clock, 48, 20);
         let at = |pc| -> Result<Value> { Ok(s(5, mh.at(pc, 5)? + 8)) };
         c.extend([
             engine(0x80116098, json!([])),
@@ -1431,14 +1427,15 @@ impl MetalHarbor<'_> {
     }
 }
 
-/// The blink colour fn_80031260 gets: white for 21 of every 48 frames of
-/// the game clock (0x801CC168 +0x7C), else 0xFF808080 (immediates of the
-/// `li`/`lis`+`addi` in the routine).
-fn blink(clock: u32) -> u32 {
-    if clock % 48 <= 20 {
-        u32::MAX
-    } else {
+/// The lamp colour fn_80031260 gets from the game clock (0x801CC168
+/// +0x7C): 0xFF808080 (dim) while `clock % period` is at most `dim`, else
+/// white (-1); the period, threshold and colours are the routine's
+/// immediates.
+fn blink(clock: u32, period: u32, dim: u32) -> u32 {
+    if clock % period <= dim {
         0xff80_8080
+    } else {
+        u32::MAX
     }
 }
 
@@ -1594,13 +1591,13 @@ pub fn slider_display(mh: &MetalHarbor<'_>, i: &SliderDisplayInput) -> Result<Va
                 engine(0x80115bd8, json!([0, mh.f(0x8e48)?.to_bits(), yz, yz])),
                 engine(
                     0x80031260,
-                    json!([mh.child_model(0x8e70, 44)?, blink(i.clock)]),
+                    json!([mh.child_model(0x8e70, 44)?, blink(i.clock, 48, 20)]),
                 ),
             ]);
         }
         0x9210 => c.push(engine(
             0x80031260,
-            json!([mh.child_model(0x926c, 44)?, blink(i.clock)]),
+            json!([mh.child_model(0x926c, 44)?, blink(i.clock, 48, 20)]),
         )),
         _ => {
             let k = mh.fs(&[0x967c, 0x968c])?.to_bits();
@@ -1635,6 +1632,480 @@ struct SliderDestInput {
     dest: u32,
     dyn_set: bool,
     obj: bool,
+}
+
+impl MetalHarbor<'_> {
+    /// The constant a `lis rD,hi` at `pc` and `addi rD,rD,lo` after it build.
+    fn lis_addi(&self, pc: u32) -> Result<u32> {
+        let (hi, lo) = (self.word(1, pc)?, self.word(1, pc + 4)?);
+        if hi >> 26 != 15 || lo >> 26 != 14 || (hi >> 21) & 31 != (lo >> 21) & 31 {
+            return Err(Error::invalid(format!("no lis/addi at +0x{pc:x}")));
+        }
+        Ok((hi << 16).wrapping_add(lo as u16 as i16 as i32 as u32))
+    }
+}
+
+// ---- BOARD (+0x1AD4): a board that follows its player while the player
+// is not boarding (actions 121..=144) and is drawn with the player's board
+// texture.
+
+/// +0x1AD4: work +1 = bit 0 of work +8 (the player index); install the
+/// exec +0x1B1C, display +0x1CA8 and destructor +0x1F18.
+pub fn board_load(mh: &MetalHarbor<'_>, flags: u32) -> Result<Value> {
+    Ok(json!({ "calls": [], "state": {
+        "index": flags & 1,
+        "task": [mh.ptr(0x1af0, 1)?, mh.ptr(0x1b08, 1)?, mh.ptr(0x1afc, 1)?] } }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardPlayer {
+    /// playertwp: +8, +0xC, +0x10 angles, +0x14 position.
+    pub rot: [u32; 3],
+    pub pos: [u32; 3],
+    /// playermwp +0..+8.
+    pub mwp: [u32; 3],
+    /// playerpwp +0x174, +0x178 (action), +0x184 (bit pattern).
+    pub p174: i16,
+    pub action: i16,
+    pub p184: u32,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardExecInput {
+    /// Work +0 and +1 (player index).
+    pub mode: i8,
+    pub index: i8,
+    /// playertwp[index] (None: null).
+    pub player: Option<BoardPlayer>,
+}
+
+/// +0x1B1C: outside actions 121..=144 copy the player's place (Y angle
+/// mirrored as 0x8000 - angle) and motion words, mode 1, and the board
+/// texture index (+0x178) and +0x184 when +0x174 > 2; during them mode 1
+/// becomes 2, and mode 2 calls fn_800DE3F8 and CheckRangeOut.
+pub fn board_exec(i: &BoardExecInput) -> Result<Value> {
+    if i.index < 0 {
+        return Err(Error::invalid("negative player index"));
+    }
+    let mut c = Vec::new();
+    let mut st = json!({ "mode": i.mode });
+    if let Some(p) = &i.player {
+        if (121..=144).contains(&p.action) {
+            let mut mode = i.mode;
+            if mode == 1 {
+                mode = 2;
+            }
+            if mode == 2 {
+                c.extend([
+                    engine(0x800de3f8, json!(["task"])),
+                    engine(0x800655f4, json!(["task"])),
+                ]);
+            }
+            st["mode"] = json!(mode);
+        } else {
+            st = json!({ "mode": 1, "pos": p.pos,
+                "rot": [p.rot[0], 0x8000u32.wrapping_sub(p.rot[1]), p.rot[2]],
+                "dyn": p.mwp });
+            if p.p174 > 2 {
+                st["dyn+0x18"] = json!(i32::from(p.action));
+                st["dyn+0x1c"] = json!(p.p184);
+            }
+        }
+    }
+    Ok(json!({ "calls": c, "state": st }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BoardDisplayInput {
+    pub mode: i8,
+    pub index: i8,
+    /// playertwp[index] is set.
+    pub twp: bool,
+    /// Work +8, +0xC, +0x10.
+    pub rot: [u32; 3],
+    /// playerpwp +0x174, +0x178, +0x184 (bit pattern).
+    pub p174: i16,
+    pub action: i16,
+    pub p184: u32,
+    /// `dyn`+0x18 (texture index) and +0x1C (bit pattern).
+    pub tex: i32,
+    pub blend: u32,
+    /// 0x801E5D28 entry +4 at index action + 24 and at tex + 24.
+    pub entry_action: u32,
+    pub entry_tex: u32,
+}
+
+/// +0x1CA8 (with the matrix callback +0x1C80): draw the board at its place,
+/// in mode 1 with the player's board texture (fn_8011E214, or the blend
+/// fn_8011E19C for texture indexes 145..=168 when +0x174 is 2).
+pub fn board_display(mh: &MetalHarbor<'_>, i: &BoardDisplayInput) -> Result<Value> {
+    if i.index < 0 {
+        return Err(Error::invalid("negative player index"));
+    }
+    let mut c = Vec::new();
+    if !i.twp {
+        return Ok(json!({ "calls": c, "state": {} }));
+    }
+    let obj = mh.ptr(0x1d90, 5)?;
+    let rot_ex = s(5, mh.at(0x1d9c, 5)? + 20); // addi r3,r3,20 at +0x1DA0
+    let matrix = mh.ptr(0x1db0, 6)?;
+    let place = |c: &mut Vec<Value>| {
+        c.extend([
+            engine(0x8011616c, json!(["work+0x14"])),
+            engine(0x801158a8, json!([0, i.rot[2]])),
+            engine(0x80115c60, json!([0, i.rot[0]])),
+            engine(0x80115828, json!([0, i.rot[1].wrapping_add(0x4000)])),
+        ]);
+    };
+    c.extend([
+        engine(0x8011c3a0, json!([mh.ptr(0x1d34, 1)?])),
+        engine(0x80116e18, json!([mh.ptr(0x1d40, 5)?])),
+        engine(0x80116098, json!([])),
+    ]);
+    let plain = |c: &mut Vec<Value>| -> Result<()> {
+        c.extend([
+            engine(0x8011df44, json!([obj.clone()])),
+            engine(0x80115f68, json!([rot_ex.clone(), 0])),
+            engine(0x80114f6c, json!([matrix.clone()])),
+        ]);
+        Ok(())
+    };
+    if i.mode != 1 {
+        place(&mut c);
+        plain(&mut c)?;
+    } else if i.entry_action != 0 {
+        place(&mut c);
+        if i.p174 != 2 {
+            c.push(engine(0x8011e214, json!([obj, i.entry_action, i.p184])));
+        } else if (145..=168).contains(&i.tex.wrapping_add(24)) {
+            let w = mh.f(0x1e78)?.to_bits();
+            c.push(engine(
+                0x8011e19c,
+                json!([obj, [i.entry_tex, i.entry_action, i.blend, w], i.p184]),
+            ));
+        } else {
+            plain(&mut c)?;
+        }
+    }
+    c.extend([
+        engine(0x8002b2e8, json!([0x2400])),
+        engine(0x80115928, json!([0, mh.ptr(0x1ed8, 6)?])),
+        engine(0x8011e244, json!([mh.ptr(0x1ee4, 5)?])),
+        engine(0x8002b2d8, json!([0x2400])),
+        engine(0x801160e4, json!([])),
+        engine(0x8011c3a0, json!([0])),
+    ]);
+    Ok(json!({ "calls": c, "state": {} }))
+}
+
+/// +0x1C80, the matrix callback the BOARD display installs: njGetMatrix
+/// into .bss+0x80.
+pub fn board_matrix(mh: &MetalHarbor<'_>) -> Result<Value> {
+    Ok(json!({ "calls": [engine(0x80114f6c, json!([mh.ptr(0x1c90, 6)?]))], "state": {} }))
+}
+
+// ---- BOAB (+0x1F2C): a breakable box that bursts (module +0x12958) when
+// its collision is hit.
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BoabLoadInput {
+    pub range_out: bool,
+    /// Work +0 before the loader.
+    pub mode: i8,
+    /// Task +0x30 (the set entry) is set, and fn_80065388's answer.
+    pub set_entry: bool,
+    pub condition: i8,
+}
+
+/// +0x1F2C: install +0x2040/+0x21D4/+0x1FF4, read the set entry's condition
+/// flag into work +0 and set up the collision (the second list when set).
+pub fn boab_load(mh: &MetalHarbor<'_>, i: &BoabLoadInput) -> Result<Value> {
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    if i.range_out {
+        return Ok(json!({ "calls": c, "state": { "task": Value::Null } }));
+    }
+    let mut mode = i.mode;
+    if i.set_entry {
+        c.push(engine(0x80065388, json!(["task"])));
+        mode = i.condition;
+    }
+    let colli = if mode != 0 {
+        s(5, mh.at(0x1fac, 5)? + 48) // addi r4,r4,48 at +0x1FB0
+    } else {
+        mh.ptr(0x1fcc, 5)?
+    };
+    c.push(engine(0x8000f8b8, json!(["task", colli, 1, 4])));
+    Ok(json!({ "calls": c, "state": { "mode": mode,
+        "task": [mh.ptr(0x1f68, 1)?, mh.ptr(0x1f5c, 1)?, mh.ptr(0x1f74, 1)?] } }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BoabExecInput {
+    pub range_out: bool,
+    pub mode: i8,
+    /// Work +0x2C (collision) is set and its +4 bit 0 (hit).
+    pub colli: bool,
+    pub hit: bool,
+    /// Work +0xC, +0x14 position; playermwp[0] +4 and playertwp[0] +0x18
+    /// (bit patterns).
+    pub rot: u32,
+    pub pos: [u32; 3],
+    pub mwp_y: u32,
+    pub player_y: u32,
+}
+
+/// +0x2040: when hit, burst (module +0x12958 with the debris table
+/// .data+0x8B844), play the sounds and free the task; else feed the
+/// collision while unbroken or while player 0 is below it.
+pub fn boab_exec(mh: &MetalHarbor<'_>, i: &BoabExecInput) -> Result<Value> {
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let mut mode = i.mode;
+    if !i.range_out {
+        if mode == 0 && i.colli && i.hit {
+            let a = mh.fs(&[0x20b8, 0x20ec])?;
+            let up = (mh.f(0x20c8)? + f32::from_bits(i.mwp_y)).to_bits();
+            mode = 1;
+            let flags = mh.lis_addi(0x213c)?; // lis r8,1; addi r8,r8,-32752
+            c.extend([
+                mh.local_call(
+                    0x2150,
+                    json!([
+                        i.pos,
+                        i.rot,
+                        mh.ptr(0x210c, 5)?,
+                        mh.li(0x2110, 6)?,
+                        mh.fs(&[0x2118, 0x2124])?.to_bits(),
+                        mh.fs(&[0x2118, 0x2124])?.to_bits(),
+                        mh.f(0x2130)?.to_bits(),
+                        [a.to_bits(), up, a.to_bits()],
+                        flags,
+                        mh.f(0x2148)?.to_bits()
+                    ]),
+                )?,
+                engine(0x8006b978, json!([5, 0, 0, 0])),
+                engine(0x8002fb2c, json!([0, 6, 25, 0])),
+                engine(0x80071ae0, json!(["task"])),
+            ]);
+        } else if mode == 0 || f32::from_bits(i.player_y) < f32::from_bits(i.pos[1]) {
+            c.push(engine(0x8000f4ec, json!(["task"])));
+        }
+    }
+    Ok(json!({ "calls": c, "state": { "mode": mode } }))
+}
+
+/// +0x21D4: draw the box while unbroken.
+pub fn boab_display(mh: &MetalHarbor<'_>, mode: i8, rot: u32) -> Result<Value> {
+    let mut c = Vec::new();
+    if mode == 0 {
+        c.extend([
+            engine(0x80116098, json!([])),
+            engine(0x8011616c, json!(["work+0x14"])),
+            engine(0x80115828, json!([0, rot])),
+            engine(0x80116e18, json!([mh.ptr(0x221c, 5)?])),
+            engine(0x80031a28, json!([mh.loaded(0x2228, 4)?])),
+            engine(0x801160e4, json!([])),
+        ]);
+    }
+    Ok(json!({ "calls": c, "state": {} }))
+}
+
+/// +0x1FF4: store work +0 back as the set entry's condition flag.
+pub fn boab_dest(set_entry: bool, mode: i8) -> Value {
+    let c = if set_entry {
+        vec![engine(0x8006539c, json!(["task", mode as u8]))]
+    } else {
+        Vec::new()
+    };
+    json!({ "calls": c, "state": {} })
+}
+
+// ---- BCOL (+0x23BC): an invisible trigger that makes the player who
+// touches it act (SetInputP 34 or 15) and may advance the frame task.
+
+/// +0x23BC: install the exec +0x2260 and destructor +0x224C when in range.
+pub fn bcol_load(mh: &MetalHarbor<'_>, range_out: bool) -> Result<Value> {
+    let c = vec![engine(0x800655f4, json!(["task"]))];
+    let task = if range_out {
+        Value::Null
+    } else {
+        json!([mh.ptr(0x23ec, 1)?, Value::Null, mh.ptr(0x23f8, 1)?])
+    };
+    Ok(json!({ "calls": c, "state": { "task": task } }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BcolExecInput {
+    pub range_out: bool,
+    pub mode: i8,
+    /// Work +8 (bit 0: the strong kind), +0x20 radius (bit pattern).
+    pub kind: u32,
+    pub radius: u32,
+    /// _rename_EitherPlayerWithinSphere's answer (player number + 1).
+    pub within: i32,
+    /// Task +0x30 is set.
+    pub set_entry: bool,
+    /// The frame task (.bss+0xB8): its work mode, if present.
+    pub frame: Option<i8>,
+}
+
+/// +0x2260.
+pub fn bcol_exec(mh: &MetalHarbor<'_>, i: &BcolExecInput) -> Result<Value> {
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let mut mode = i.mode;
+    let mut frame = i.frame.map(|m| json!({ "mode": m }));
+    if !i.range_out && mode == 0 {
+        let r = mh.f(0x22a8)? + f32::from_bits(i.radius);
+        c.push(engine(0x800398d8, json!(["work+0x14", r.to_bits()])));
+        if i.within != 0 {
+            mode = 1;
+            let strong = i.kind & 1 != 0;
+            let act = if strong {
+                mh.li(0x22e4, 4)?
+            } else {
+                mh.li(0x2320, 4)?
+            };
+            c.push(engine(0x8003a508, json!([i.within - 1, act, 0])));
+            if strong {
+                c.push(engine(
+                    if i.set_entry { 0x800653b0 } else { 0x80071ae0 },
+                    json!(["task"]),
+                ));
+            }
+            mh.at(0x2330, 6)?; // .bss+0xB8
+            if let Some(m) = i.frame {
+                if m != 6 && strong {
+                    frame = Some(json!({ "mode": 6, "timer": 0 }));
+                }
+            }
+        }
+    }
+    Ok(json!({ "calls": c, "state": { "mode": mode, "frame": frame } }))
+}
+
+// ---- RADER (+0x8AE0): a radar dish turning by work +0xC every frame;
+// SIGNAL (+0x8C40): a lamp post with collision; PIC (+0x8A88) is a thin
+// loader (see THIN_LOADERS).
+
+/// +0x8AE0 (RADER) and +0x8C40 (SIGNAL, SIGNAL_F) loaders.
+pub fn rader_signal_load(mh: &MetalHarbor<'_>, loader: u32, range_out: bool) -> Result<Value> {
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let base = match loader {
+        0x8ae0 | 0x8c40 => loader,
+        _ => return Err(Error::invalid("not RADER or SIGNAL")),
+    };
+    if range_out {
+        return Ok(json!({ "calls": c, "state": { "task": Value::Null } }));
+    }
+    let task = [
+        mh.ptr(base + 0x3c, 1)?,
+        mh.ptr(base + 0x30, 1)?,
+        mh.ptr(base + 0x48, 1)?,
+    ];
+    if base == 0x8c40 {
+        c.push(engine(
+            0x8000f8b8,
+            json!(["task", mh.ptr(0x8c98, 5)?, 1, 4]),
+        ));
+    }
+    Ok(json!({ "calls": c, "state": { "task": task } }))
+}
+
+/// +0x8B58: work +6 (16 bits) += work +0xC.
+pub fn rader_exec(range_out: bool, angle: u16, speed: u32) -> Value {
+    let c = vec![engine(0x800655f4, json!(["task"]))];
+    let angle = if range_out {
+        angle
+    } else {
+        angle.wrapping_add(speed as u16)
+    };
+    json!({ "calls": c, "state": { "angle": angle } })
+}
+
+/// +0x8BAC: the base, then the dish at its child object's place turned by
+/// work +6.
+pub fn rader_display(mh: &MetalHarbor<'_>, angle: u16) -> Result<Value> {
+    let obj = mh.at(0x8bdc, 5)?;
+    let child = match mh.rel.local_pointer(5, obj + 44)? {
+        Some((5, off)) => off,
+        _ => return Err(invalid()),
+    };
+    Ok(json!({ "calls": [
+        engine(0x80116e18, json!([mh.ptr(0x8bd0, 5)?])),
+        engine(0x80115d60, json!([0])),
+        engine(0x8011538c, json!([0, "work+0x14"])),
+        engine(0x80121bdc, json!([mh.data_value(5, obj + 4)?])),
+        engine(0x8011538c, json!([0, s(5, child + 8)])),
+        engine(0x80115828, json!([0, angle])),
+        engine(0x80121bdc, json!([mh.data_value(5, child + 4)?])),
+        engine(0x80115dc8, json!([1])),
+    ], "state": {} }))
+}
+
+/// +0x8CD0: feed the collision while in range.
+pub fn signal_exec(range_out: bool) -> Value {
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    if !range_out {
+        c.push(engine(0x8000f4ec, json!(["task"])));
+    }
+    json!({ "calls": c, "state": {} })
+}
+
+/// +0x8D18: the post, then its lamp at the child object's place, white for
+/// the first 20 of every 40 frames of the game clock, else 0xFF808080.
+pub fn signal_display(mh: &MetalHarbor<'_>, rot: u32, clock: u32) -> Result<Value> {
+    let obj = mh.at(0x8d48, 5)?;
+    let child = match mh.rel.local_pointer(5, obj + 44)? {
+        Some((5, off)) => off,
+        _ => return Err(invalid()),
+    };
+    let colour = if clock % 40 < 20 {
+        u32::MAX
+    } else {
+        0xff80_8080
+    };
+    Ok(json!({ "calls": [
+        engine(0x80116e18, json!([mh.ptr(0x8d3c, 5)?])),
+        engine(0x80115d60, json!([0])),
+        engine(0x8011538c, json!([0, "work+0x14"])),
+        engine(0x80115828, json!([0, rot])),
+        engine(0x80031a28, json!([mh.data_value(5, obj + 4)?])),
+        engine(0x8011538c, json!([0, s(5, child + 8)])),
+        engine(0x80031260, json!([mh.data_value(5, child + 4)?, colour])),
+        engine(0x80115dc8, json!([1])),
+    ], "state": {} }))
+}
+
+/// The destructors +0x1F18 (BOARD), +0x224C (BCOL), +0x8B44 (RADER),
+/// +0x8CBC (SIGNAL) and +0xAE94 (stage task) only read their work pointer
+/// into their own frame: no effect.
+pub const NO_EFFECT_DESTRUCTORS: [u32; 5] = [0x1f18, 0x224c, 0x8b44, 0x8cbc, 0xae94];
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SmallInput {
+    #[serde(default)]
+    range_out: bool,
+    #[serde(default)]
+    loader: u32,
+    #[serde(default)]
+    flags: u32,
+    #[serde(default)]
+    mode: i8,
+    #[serde(default)]
+    rot: u32,
+    #[serde(default)]
+    angle: u16,
+    #[serde(default)]
+    speed: u32,
+    #[serde(default)]
+    clock: u32,
+    #[serde(default)]
+    set_entry: bool,
 }
 
 /// Run one routine by name on a JSON input (the oracle's case format).
@@ -1672,6 +2143,36 @@ pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
         "slider_dest" => {
             let i: SliderDestInput = parse(input)?;
             slider_dest(i.dest, i.dyn_set, i.obj)
+        }
+        "board_load" => board_load(&mh, parse::<SmallInput>(input)?.flags),
+        "board_exec" => board_exec(&parse(input)?),
+        "board_display" => board_display(&mh, &parse(input)?),
+        "board_matrix" => board_matrix(&mh),
+        "boab_load" => boab_load(&mh, &parse(input)?),
+        "boab_exec" => boab_exec(&mh, &parse(input)?),
+        "boab_display" => {
+            let i: SmallInput = parse(input)?;
+            boab_display(&mh, i.mode, i.rot)
+        }
+        "boab_dest" => {
+            let i: SmallInput = parse(input)?;
+            Ok(boab_dest(i.set_entry, i.mode))
+        }
+        "bcol_load" => bcol_load(&mh, parse::<SmallInput>(input)?.range_out),
+        "bcol_exec" => bcol_exec(&mh, &parse(input)?),
+        "rader_signal_load" => {
+            let i: SmallInput = parse(input)?;
+            rader_signal_load(&mh, i.loader, i.range_out)
+        }
+        "rader_exec" => {
+            let i: SmallInput = parse(input)?;
+            Ok(rader_exec(i.range_out, i.angle, i.speed))
+        }
+        "rader_display" => rader_display(&mh, parse::<SmallInput>(input)?.angle),
+        "signal_exec" => Ok(signal_exec(parse::<SmallInput>(input)?.range_out)),
+        "signal_display" => {
+            let i: SmallInput = parse(input)?;
+            signal_display(&mh, i.rot, i.clock)
         }
         _ => Err(Error::invalid(format!(
             "unknown stage 10 routine {routine}"
