@@ -19,7 +19,7 @@ fn main() {
     ];
     let mut out = String::from("use sa2_recomp::rt::{self, *};\n");
     for (start, words) in funcs {
-        let ctx = gen::Ctx { start, end: start + 4 * words.len() as u32 };
+        let ctx = gen::Ctx { start, end: start + 4 * words.len() as u32, ..Default::default() };
         let (code, unknown) = gen::function("synthetic", &ctx, words, &Default::default());
         assert_eq!(unknown, 0);
         out.push_str(&code);

@@ -55,13 +55,13 @@ impl Default for Cpu {
 pub struct Runtime {
     pub overrides: HashMap<u32, Func>,
     pub generated: fn(u32) -> Option<Func>,
-    /// Loaded REL modules: (runtime .text start, end, dispatch by offset).
-    pub rels: Vec<(u32, u32, fn(u32) -> Option<Func>)>,
+    /// Recompiled REL modules: module id -> dispatch(section, offset).
+    pub rels: HashMap<u32, fn(u32, u32) -> Option<Func>>,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self { overrides: HashMap::new(), generated: |_| None, rels: Vec::new() }
+        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new() }
     }
 }
 
@@ -69,26 +69,54 @@ impl Runtime {
     pub fn set_override(&mut self, addr: u32, f: Func) {
         self.overrides.insert(addr, f);
     }
-    pub fn resolve(&self, addr: u32) -> Option<Func> {
+    pub fn resolve(&self, m: &Mem, addr: u32) -> Option<Func> {
         if let Some(f) = self.overrides.get(&addr) {
             return Some(*f);
         }
         if let Some(f) = (self.generated)(addr) {
             return Some(f);
         }
-        self.rels
-            .iter()
-            .find(|(s, e, _)| (*s..*e).contains(&addr))
-            .and_then(|(s, _, d)| d(addr - s))
+        // Code inside a loaded REL: find the module and section that hold it.
+        let mut info = m.r32(OS_MODULE_HEAD);
+        while info != 0 {
+            let id = m.r32(info);
+            let n = m.r32(info + 0xC);
+            let tab = m.r32(info + 0x10);
+            for sec in 0..n {
+                let off = m.r32(tab + sec * 8);
+                let size = m.r32(tab + sec * 8 + 4);
+                let base = off & !1;
+                if off & 1 != 0 && (base..base + size).contains(&addr) {
+                    return self.rels.get(&id).and_then(|d| d(sec, addr - base));
+                }
+            }
+            info = m.r32(info + 4);
+        }
+        None
     }
 }
 
 /// Call the function at `addr` (bl, bctrl, blrl and tail calls all end here).
 pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    match c.rt.resolve(addr) {
+    match c.rt.resolve(m, addr) {
         Some(f) => f(c, m),
         None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x})", c.lr),
     }
+}
+
+/// OS module queue head (OSModuleInfo list linked by OSLink).
+pub const OS_MODULE_HEAD: u32 = 0x8000_30C8;
+
+/// Run-time load address of a REL section (after the game's own OSLink).
+pub fn sec(m: &Mem, id: u32, sec: u32) -> u32 {
+    let mut info = m.r32(OS_MODULE_HEAD);
+    while info != 0 {
+        if m.r32(info) == id {
+            return m.r32(m.r32(info + 0x10) + sec * 8) & !1;
+        }
+        info = m.r32(info + 4);
+    }
+    panic!("sa2-recomp: module {id} is not linked");
 }
 
 impl Cpu {

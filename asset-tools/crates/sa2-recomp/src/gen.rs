@@ -8,14 +8,35 @@ use std::collections::BTreeSet;
 use std::fmt::Write;
 
 /// What the translator needs to know about the function being emitted.
+#[derive(Default)]
 pub struct Ctx {
     pub start: u32,
     pub end: u32,
+    /// REL code: (module id, section). Addresses are then section offsets and
+    /// the section's load address is looked up at run time.
+    pub rel: Option<(u32, u32)>,
+    /// Relocations by instruction address: (type, Rust expression for the target).
+    pub relocs: std::collections::HashMap<u32, (u8, String)>,
 }
+
+pub const R_ADDR16_LO: u8 = 4;
+pub const R_ADDR16_HI: u8 = 5;
+pub const R_ADDR16_HA: u8 = 6;
+pub const R_REL24: u8 = 10;
 
 impl Ctx {
     fn local(&self, t: u32) -> bool {
         (self.start..self.end).contains(&t)
+    }
+    /// Absolute address expression for an address in this code's space.
+    pub fn abs(&self, t: &str) -> String {
+        match self.rel {
+            Some((id, sec)) => format!("rt::sec(m, {id}, {sec}).wrapping_add({t})"),
+            None => t.to_string(),
+        }
+    }
+    fn base(&self) -> String {
+        self.abs("0")
     }
 }
 
@@ -74,7 +95,7 @@ fn goto(ctx: &Ctx, t: u32, targets: &mut Vec<u32>) -> String {
         targets.push(t);
         format!("pc = {t:#010x}; continue;")
     } else {
-        format!("rt::call(c, m, {t:#010x}); return;")
+        format!("rt::call(c, m, {}); return;", ctx.abs(&format!("{t:#010x}")))
     }
 }
 
@@ -92,6 +113,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
     let mut ends = false;
     let mut unknown = false;
     let si = simm(w);
+    let reloc = ctx.relocs.get(&pc).cloned();
     let ui = w & 0xFFFF;
     let rd = |v: &str| format!("c.r[{d}] = {v};");
     let ra_set = |v: &str| format!("c.r[{a}] = {v};");
@@ -172,6 +194,26 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
             let r = if op == 13 { format!(" c.rec(c.r[{d}]);") } else { String::new() };
             format!("c.r[{d}] = {{ let (v, k) = adde(c.r[{a}], {:#x}, false); c.ca = k; v }};{r}", si as u32)
         }
+        14 | 15 | 24 | 25 | 32..=55 if reloc.is_some() => {
+            let (ty, r) = reloc.unwrap();
+            let v = match ty {
+                R_ADDR16_HA => format!("({r}).wrapping_add(0x8000) & 0xFFFF0000"),
+                R_ADDR16_HI => format!("({r}) & 0xFFFF0000"),
+                _ if op == 24 => format!("({r}) & 0xFFFF"),
+                _ => format!("({r}) as u16 as i16 as u32"),
+            };
+            let base = if a == 0 || op == 24 || op == 25 { String::new() } else { format!("c.r[{a}].wrapping_add") };
+            match op {
+                14 | 15 => rd(&if a == 0 { v } else { format!("{base}({v})") }),
+                24 | 25 => ra_set(&format!("c.r[{d}] | ({v})")),
+                _ => {
+                    let ea = if a == 0 { v } else { format!("{base}({v})") };
+                    let x = translate(w & 0xFFFF_0000, pc, &Ctx { start: ctx.start, end: ctx.end, ..Default::default() }).code;
+                    let old = ea_d(a, 0);
+                    x.replacen(&format!("let ea = {old};"), &format!("let ea = {ea};"), 1)
+                }
+            }
+        }
         14 => rd(&ea_d(a, si)),
         15 => rd(&ea_d(a, si << 16)),
         16 => {
@@ -179,7 +221,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
             let t = if w & 2 != 0 { bd as u32 } else { pc.wrapping_add(bd as u32) };
             let (pre, cond) = bc_cond(d, a);
             if w & 1 != 0 {
-                format!("{pre}if {cond} {{ c.lr = {next:#010x}; rt::call(c, m, {t:#010x}); }}")
+                format!("{pre}if {cond} {{ c.lr = {next:#010x}; rt::call(c, m, {}); }}", ctx.abs(&format!("{t:#010x}")))
             } else {
                 if cond == "true" {
                     ends = true;
@@ -191,8 +233,14 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
         18 => {
             let li = ((w & 0x03FF_FFFC) << 6) as i32 >> 6;
             let t = if w & 2 != 0 { li as u32 } else { pc.wrapping_add(li as u32) };
-            if w & 1 != 0 {
-                format!("c.lr = {next:#010x}; rt::call(c, m, {t:#010x});")
+            if let Some((R_REL24, r)) = &reloc {
+                if w & 1 == 0 {
+                    ends = true;
+                }
+                let tail = if w & 1 == 0 { " return;" } else { "" };
+                format!("c.lr = {next:#010x}; rt::call(c, m, {r});{tail}")
+            } else if w & 1 != 0 {
+                format!("c.lr = {next:#010x}; rt::call(c, m, {});", ctx.abs(&format!("{t:#010x}")))
             } else {
                 ends = true;
                 goto(ctx, t, &mut targets)
@@ -236,7 +284,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                             ends = true;
                         }
                         // Jump tables land on local blocks; anything else is a tail call.
-                        format!("if {cond} {{ pc = c.ctr; continue; }}")
+                        format!("if {cond} {{ pc = c.ctr.wrapping_sub({}); continue; }}", ctx.base())
                     }
                 }
                 _ => {
@@ -510,7 +558,7 @@ pub fn function(name: &str, ctx: &Ctx, words: &[u32], extra: &BTreeSet<u32>) -> 
     let unknown = ins.iter().filter(|x| x.unknown).count();
     let mut s = String::new();
     let _ = writeln!(s, "/// {name}");
-    let _ = writeln!(s, "pub fn f_{:08X}(c: &mut Cpu, m: &mut Mem) {{", ctx.start);
+    let _ = writeln!(s, "pub fn {}(c: &mut Cpu, m: &mut Mem) {{", fn_name(ctx));
     let _ = writeln!(s, "    let mut pc: u32 = {:#010x};", ctx.start);
     let _ = writeln!(s, "    loop {{\n        match pc {{");
     let mut open = false;
@@ -535,7 +583,14 @@ pub fn function(name: &str, ctx: &Ctx, words: &[u32], extra: &BTreeSet<u32>) -> 
     if open {
         let _ = writeln!(s, "                pc = {:#010x};\n            }}", ctx.end);
     }
-    let _ = writeln!(s, "            _ => {{ rt::call(c, m, pc); return; }}");
+    let _ = writeln!(s, "            _ => {{ rt::call(c, m, {}); return; }}", ctx.abs("pc"));
     let _ = writeln!(s, "        }}\n    }}\n}}");
     (s, unknown)
+}
+
+pub fn fn_name(ctx: &Ctx) -> String {
+    match ctx.rel {
+        Some((id, sec)) => format!("r{id}_{sec}_{:X}", ctx.start),
+        None => format!("f_{:08X}", ctx.start),
+    }
 }

@@ -9,13 +9,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::path::Path;
 
+use sa2_recomp::relgen as rels;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 5 || args[1] != "dol" {
-        eprintln!("usage: sa2-recomp dol MAIN.DOL SYMBOLS.TXT OUT_DIR");
-        std::process::exit(2);
-    }
-    if let Err(e) = run(Path::new(&args[2]), Path::new(&args[3]), Path::new(&args[4])) {
+    let r = match (args.get(1).map(String::as_str), args.len()) {
+        (Some("dol"), 5) => run(Path::new(&args[2]), Path::new(&args[3]), Path::new(&args[4])),
+        (Some("rels"), 6) => rels::run(Path::new(&args[2]), Path::new(&args[3]), Path::new(&args[4]), Path::new(&args[5])),
+        _ => {
+            eprintln!("usage: sa2-recomp dol MAIN.DOL SYMBOLS.TXT OUT_DIR\n       sa2-recomp rels DISC_REL_DIR STEAM_GD_PC_DIR DECOMP_CONFIG_GSNE8P OUT_DIR");
+            std::process::exit(2);
+        }
+    };
+    if let Err(e) = r {
         eprintln!("sa2-recomp: {e}");
         std::process::exit(1);
     }
@@ -74,7 +80,7 @@ fn run(dol_path: &Path, sym_path: &Path, out: &Path) -> Result<(), String> {
         let mut src = String::from("use sa2_recomp::rt::{self, *};\n\n");
         for (a, end, name) in chunk {
             let words: Vec<u32> = (*a..*end).step_by(4).map(|x| dol.word(x).unwrap_or(0)).collect();
-            let ctx = gen::Ctx { start: *a, end: *end };
+            let ctx = gen::Ctx { start: *a, end: *end, ..Default::default() };
             for (i, &w) in words.iter().enumerate() {
                 let pc = a + 4 * i as u32;
                 if gen::translate(w, pc, &ctx).unknown {
