@@ -106,6 +106,8 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
         assert_eq!(s.unimplemented.get("FENCES row (solid only)"), Some(&20));
         assert_eq!(s.unimplemented.get("FENCEL row (solid only)"), Some(&1));
+        // CONTIRON: a 20-unit cube row, unchanged by quarter turns.
+        assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&11));
         assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&9));
         assert_eq!(
             s.unimplemented

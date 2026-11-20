@@ -50,6 +50,7 @@ outer door (114 frames) gates travel.
 | PANEL (17) | stg09D.rel 0x2A4C passes its model to the static-collision helper 0x9A4C with flags 6 (Y rotation kept, X and Z dropped) | All 17 |
 | CCUBE (17) | stg09D.rel 0x11CDC: CollisionData form 3 (sec5+0x4C080), sizes 10 + Scale per axis (helper 0x11B30) | The 9 whose shape cannot depend on the unread rotation rule (no X/Z rotation, yaw 0 or a half turn) |
 | FENCES (39), FENCEL (4) | 0x2A94 / 0x2AF8 register CollisionData rows sec5+0x3C54C (1) and +0x3C57C (3) via helper 0x2B5C, read at load by `play_objects::collision_rows` | Form 3 boxes by the same rule: 20 FENCES, 1 FENCEL |
+| CONTIRON (18) | 0x1978C registers CollisionData sec5+0x52A18 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10 (a 20-unit cube; Iron Gate's row is identical) | The 11 placed at a whole quarter turn, since a cube square in XZ is unchanged by those |
 | RING_LINEAR (17 lines) | 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | The 15 flat lines turned only about Y (0x801154E0, the goal ring spin call): 56 rings, Scale.z clamped to 1..=8, spaced 10 + Scale.x along local -Z |
 | Rings | o_ring_M1 | Pickup strictly within 14 of the collision centre |
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact; slot word 2 is the clear |

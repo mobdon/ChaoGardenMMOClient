@@ -98,6 +98,8 @@ fn installed_mover_rules_and_session_inventory() {
         // Only the regular goal reaches its contact route for Mission 1.
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [6231.24, -1488.0, -1229.35]);
+        // CONTIRON CollisionData (stg11D.rel sec5+0x656D8): a 20-unit cube.
+        assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&7));
         assert!(s.death_zone_count() > 0);
         assert_eq!(s.physics.slot, 7);
     });

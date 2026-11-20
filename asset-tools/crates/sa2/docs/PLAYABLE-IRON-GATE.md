@@ -25,6 +25,7 @@ native object rules against it. See
 | Elevators (ELV, 3) | stg11D.rel 0x1A84/0x1F7C: both doors -9.5 and 0.2 per frame, 120-frame ready counter, travel to the SET Scale vector at 0.3 per frame, one-way when Rotation.x bit 0 is set |
 | Bridges (BRIDGE, 2) | stg11D.rel 0x2F8/0x688: extend -140 along local X at 8 per frame while a resting elevator is within 450 of the extended point, 120-frame cooldown |
 | Object collision models | PC_SA2/STG11.ini RVAs 0x7F0A68 (lift), 0x7F58A8 (bridge), 0x7FED08 (elevator) |
+| Iron containers (CONTIRON, 7) | stg11D.rel 0x20714 registers CollisionData sec5+0x656D8 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10, a 20-unit cube; all 7 placements are built |
 | Springs (SPRA, SPRB) | `spring::StageSpring` tasks and native launch vectors; contact is not run |
 | Rings | o_ring_M1: pickup strictly within 14 of the collision centre, AddScore(10), AddNumRing(1) |
 | Goal ring | `goal_ring` initialization and Contact branch; 25-unit sphere against the collision centre plus radius; contact writes slot word 2, treated as the clear |

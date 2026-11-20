@@ -60,7 +60,8 @@ pub const IRON_GATE: StageRules = StageRules {
     bridge_collision: BRIDGE_COLLISION_RVA,
     elevator_collision: ELEVATOR_COLLISION_RVA,
     static_solids: &[],
-    collision_boxes: &[],
+    // stg11D.rel 0x20714 (CONTIRON) registers this row through 0x8000F7D8.
+    collision_boxes: &[("CONTIRON", 0x656d8, 1)],
     invisible_cubes: false,
     ring_lines: false,
     death_zone_config: DEATH_ZONE_CONFIG,
@@ -79,7 +80,12 @@ pub const PRISON_LANE: StageRules = StageRules {
     static_solids: &[("PANEL", 0xc40390)],
     // stg09D.rel 0x2A94 (FENCES) and 0x2AF8 (FENCEL) register these rows
     // through the helper at 0x2B5C (InitCollision 0x8000F8B8, flags 4).
-    collision_boxes: &[("FENCES", 0x3c54c, 1), ("FENCEL", 0x3c57c, 3)],
+    // stg09D.rel 0x1978C (CONTIRON) registers its row through 0x8000F7D8.
+    collision_boxes: &[
+        ("FENCES", 0x3c54c, 1),
+        ("FENCEL", 0x3c57c, 3),
+        ("CONTIRON", 0x52a18, 1),
+    ],
     invisible_cubes: true,
     ring_lines: true,
     death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
@@ -662,11 +668,19 @@ impl Session {
                             // Form 3 boxes with no row angles, whose shape is
                             // the same however the placement rotation is
                             // applied (see `cube_rotation_is_exact`).
+                            let on_axis = row.center[0] == 0.0 && row.center[2] == 0.0;
+                            // A box square in XZ about the Y axis is also
+                            // unchanged by quarter turns.
+                            let quarter = on_axis
+                                && row.size[0] == row.size[2]
+                                && pl.rotation[0] == 0
+                                && pl.rotation[2] == 0
+                                && pl.rotation[1] & 0x3fff == 0;
                             let exact = row.form == 3
                                 && row.angles == [0; 3]
-                                && cube_rotation_is_exact(pl.rotation)
-                                && (pl.rotation[1] == 0
-                                    || (row.center[0] == 0.0 && row.center[2] == 0.0));
+                                && (quarter
+                                    || (cube_rotation_is_exact(pl.rotation)
+                                        && (pl.rotation[1] == 0 || on_axis)));
                             if !exact {
                                 *unimplemented
                                     .entry(format!("{name} row (form {}): rule not read", row.form))
