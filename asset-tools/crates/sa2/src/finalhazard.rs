@@ -998,6 +998,9 @@ pub enum PlacementClock {
     PieceHoming(Box<PieceHomingFrame>),
     /// Section 1 + 0x4888: piece action 2 (aim and launch).
     PieceLaunch(Box<PieceLaunchFrame>),
+    /// Section 1 + 0x6d64..0x7154: spark spawn, texture load and release,
+    /// vector scaling, reseed and aim angles.
+    BossUtility(Box<BossUtilityFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2806,6 +2809,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::PieceMotion(frame) => return piece_motion(&rel, &frame),
         PlacementClock::PieceHoming(frame) => return piece_homing(&rel, &frame),
         PlacementClock::PieceLaunch(frame) => return piece_launch(&rel, &frame),
+        PlacementClock::BossUtility(frame) => return boss_utility(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -9809,4 +9813,217 @@ fn piece_launch(
         st(0x4bfc, "entity", 1, 1, 0),
     ]);
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of the utility routines; values are as the code reads them.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum BossUtilityFrame {
+    /// 0x6d64: spawn a spark of `kind` for `parent` at the vector `position`
+    /// points at (`position_words`); `task` is the engine task.
+    SparkSpawn {
+        parent: u32,
+        position: u32,
+        position_words: [u32; 3],
+        kind: i8,
+        task: u32,
+    },
+    /// 0x6e58: load the four boss texture lists.
+    LoadTextures,
+    /// 0x6ec4: release them.
+    ReleaseTextures,
+    /// 0x6f10: scale `source` to `length` into the target vector. `magnitude` and
+    /// `normal` are the 0x80114eac and 0x801159dc results.
+    ScaleTo {
+        source: [u32; 3],
+        length: f32,
+        magnitude: f32,
+        normal: [f32; 3],
+    },
+    /// 0x7008: step the LCG at 6:0x478 (`seed`) and reseed the engine.
+    Reseed { seed: u32 },
+    /// 0x705c: yaw from the entity to `point` (x, z); `angle` is the
+    /// 0x80110e20 result.
+    Yaw {
+        point: [f32; 2],
+        position: [f32; 2],
+        angle: f64,
+    },
+    /// 0x70b8: pitch from the entity to `point` plus `offset`; `root` is the
+    /// f1 result of local 0x40cc, `angle` the 0x80110e20 result.
+    Pitch {
+        point: [f32; 3],
+        position: [f32; 3],
+        offset: i32,
+        root: f32,
+        angle: f64,
+    },
+}
+/// Sections 1 + 0x6d64, 0x6e58, 0x6ec4, 0x6f10, 0x7008, 0x705c, 0x70b8.
+fn boss_utility(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossUtilityFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32,
+              region: &str,
+              offset: serde_json::Value,
+              size: u32,
+              value: serde_json::Value| {
+        serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value})
+    };
+    let n = |v: u32| serde_json::json!(v);
+    let m = |site: u32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!(module_ref(rel, site, 0)?))
+    };
+    let k = |site: u32| boss_constant(rel, site);
+    let kd = |site: u32| -> Result<f64> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 4)
+            .ok_or_else(|| Error::invalid("missing angle scale"))?;
+        let at = r.addend as usize;
+        let b = rel
+            .data(4)?
+            .get(at..at + 8)
+            .ok_or_else(|| Error::invalid("angle scale out of range"))?;
+        Ok(f64::from_bits(u64::from_be_bytes(b.try_into().unwrap())))
+    };
+    let mut ev = Vec::new();
+    let mut returned = None;
+    match f {
+        BossUtilityFrame::SparkSpawn {
+            parent,
+            position,
+            position_words,
+            kind,
+            task,
+        } => {
+            returned = Some(0);
+            if *parent != 0 {
+                ev.push(call(
+                    0x6db8,
+                    serde_json::json!([2, module_ref(rel, 0x6dae, 0)?, parent]),
+                )?);
+                if *task != 0 {
+                    let table = rel
+                        .reference(1, 0x6d8e)
+                        .filter(|r| r.module == 88 && r.section == 5)
+                        .ok_or_else(|| Error::invalid("missing spark table"))?
+                        .addend
+                        .wrapping_add((28 * i32::from(*kind)) as u32)
+                        as usize;
+                    let d = rel.data(5)?;
+                    let half = |o: usize| -> Result<u16> {
+                        d.get(table + o..table + o + 2)
+                            .map(|b| u16::from_be_bytes([b[0], b[1]]))
+                            .ok_or_else(|| Error::invalid("spark table out of range"))
+                    };
+                    ev.extend([
+                        st(0x6dd8, "task", n(0x14), 4, m(0x6dd2)?),
+                        st(0x6de4, "task", n(0x18), 4, m(0x6dde)?),
+                        st(0x6df4, "entity", n(0x14), 4, n(position_words[0])),
+                        st(0x6df8, "entity", n(0x18), 4, n(position_words[1])),
+                        st(0x6e00, "entity", n(0x1c), 4, n(position_words[2])),
+                        st(0x6e08, "entity", n(6), 2, n(half(0)?.into())),
+                        st(0x6e0c, "entity", n(3), 1, n(*kind as u8 as u32)),
+                        st(0x6e10, "entity", n(8), 4, n(*position)),
+                        st(0x6e20, "entity", n(0x28), 4, n(k(0x6e16)?.to_bits())),
+                        serde_json::json!({"site":0x6e38,"local":0x6a54,
+                            "args":[parent, position, half(4)? as u8 as i8 as i32 as u32, *kind as i32 as u32]}),
+                    ]);
+                    returned = Some(*task);
+                }
+            }
+        }
+        BossUtilityFrame::LoadTextures => {
+            for (site, a, b) in [
+                (0x6e74u32, 0x6e66u32, 0x6e6eu32),
+                (0x6e88, 0x6e7a, 0x6e82),
+                (0x6e9c, 0x6e8e, 0x6e96),
+                (0x6eb0, 0x6ea2, 0x6eaa),
+            ] {
+                ev.push(call(
+                    site,
+                    serde_json::json!([module_ref(rel, a, 0)?, module_ref(rel, b, 0)?]),
+                )?);
+            }
+        }
+        BossUtilityFrame::ReleaseTextures => {
+            for (site, a) in [
+                (0x6ed8u32, 0x6ed2u32),
+                (0x6ee4, 0x6ede),
+                (0x6ef0, 0x6eea),
+                (0x6efc, 0x6ef6),
+            ] {
+                ev.push(call(site, serde_json::json!([module_ref(rel, a, 0)?]))?);
+            }
+        }
+        BossUtilityFrame::ScaleTo {
+            source,
+            length,
+            magnitude,
+            normal,
+        } => {
+            let zero = f64::from(k(0x6f4a)?);
+            let mut out = *source;
+            if f64::from(*length) != zero {
+                ev.push(call(0x6f7c, serde_json::json!(["stack"]))?);
+                if f64::from(*magnitude) != zero {
+                    ev.push(call(0x6fac, serde_json::json!(["stack"]))?);
+                    out = normal.map(|c| (c * length).to_bits());
+                }
+            }
+            let (a, b, c) = if f64::from(*length) == zero {
+                (0x6f64u32, 0x6f68u32, 0x6f70u32)
+            } else if f64::from(*magnitude) == zero {
+                (0x6f94, 0x6f98, 0x6fa0)
+            } else {
+                (0x6fdc, 0x6fe0, 0x6fe8)
+            };
+            for (i, site) in [a, b, c].into_iter().enumerate() {
+                ev.push(st(site, "target", n(4 * i as u32), 4, n(out[i])));
+            }
+        }
+        BossUtilityFrame::Reseed { seed } => {
+            let next = seed.wrapping_mul(0x41c6_4e6d).wrapping_add(0x3039);
+            ev.push(call(0x7038, serde_json::json!([next]))?);
+            ev.push(st(0x7040, "module", m(0x701e)?, 4, n(next)));
+        }
+        BossUtilityFrame::Yaw {
+            point,
+            position,
+            angle,
+        } => {
+            let mut e = call(0x7088, serde_json::json!([]))?;
+            e["floats"] = serde_json::json!([
+                f64::from(point[0] - position[0]),
+                f64::from(point[1] - position[1])
+            ]);
+            ev.push(e);
+            returned = Some(fctiwz(kd(0x708e)? * angle) as u32);
+        }
+        BossUtilityFrame::Pitch {
+            point,
+            position,
+            offset,
+            root,
+            angle,
+        } => {
+            let dx = point[0] - position[0];
+            let dz = point[2] - position[2];
+            ev.push(serde_json::json!({"site":0x7104,"local":0x40cc,"args":[],"floats":[f64::from(dx * dx + dz * dz)]}));
+            let mut e = call(0x7114, serde_json::json!([]))?;
+            e["floats"] = serde_json::json!([f64::from(*root), f64::from(point[1] - position[1])]);
+            ev.push(e);
+            returned = Some(fctiwz(kd(0x711a)? * angle).wrapping_add(*offset) as u32);
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
 }

@@ -65,6 +65,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `piece_motion` | 0x4524, 0x46e0 | Piece action 0 (fly out at a random speed 4:0x210 + 4:0x214 * roll, slow down below 4:0x218, snap to the slot and action 1 once past it) and the wobble (scale spring 0x434c, phase step from the old scale, three sines around 4:0x228, spin step unless block word 0x10 is 1). Not Unicorn-checked |
 | `piece_homing` | 0x4c20 | Piece action 3, the homing shot: explodes at the target (4:0x218), out of range (4:0x240) or past the plane in boss state 1 (4:0x244); follows the curve 0x80111d70 with the target refreshed from the player while the timer runs, else steps straight at it; curve speed grows; velocity and trail 0x6794. Not Unicorn-checked |
 | `piece_launch` | 0x4888 | Piece action 2: settle (30 frames, collision flag 0x40 cleared, height bob from the runtime float 6:0x270, spark and sound), then aim at the player with a random turn, two curve handles at 4:0x234 / 4:0x238, curve speed 5:0x3fa0 / distance, action 3 with the timer 5:0x3fec. Not Unicorn-checked |
+| `boss_utility` | 0x6d64, 0x6e58, 0x6ec4, 0x6f10, 0x7008, 0x705c, 0x70b8 | Spark spawn (update 0x6b48, draw 0x6c28, table 5:0x40f4), texture list load and release, vector scale-to-length, the LCG at 6:0x478 (seed * 0x41c64e6d + 0x3039), yaw and pitch toward a point (0x80110e20 times the double 4:0x290). Not Unicorn-checked |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
