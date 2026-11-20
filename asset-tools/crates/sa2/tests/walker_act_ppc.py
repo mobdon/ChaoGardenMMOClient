@@ -49,6 +49,9 @@ FUNCS = {
     "held": 0x8004E400,
     "queue": 0x80053784,
     "f48": 0x800B5630,
+    "events": 0x800AD584,
+    "buttons": 0x80053C74,
+    "ground": 0x80053DBC,
 }
 cases = []
 for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
@@ -63,6 +66,7 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
     p[1] = rng.choice([6, 7, 5])
     p[3] = rng.choice([6, 7, 0])
     p[0xC] = rng.choice([0, 0, 1, 7, 8, 0xFF])
+    p[0xD] = rng.choice([0x2D, 0x2E, 0x30, 0x32, 0, 7])
     struct.pack_into(">h", p, 0x12, rng.randrange(-5, 40))
     struct.pack_into(">i", p, 0xC0, rng.randrange(0, 40))
     struct.pack_into(">i", p, 0x28, rng.choice([0x36, 0x55, 0x56, 0x57, 3, 0x54]))
@@ -74,7 +78,10 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
     m.u.mem_write(TW, bytes(t))
     m.u.mem_write(MW, bytes(mw))
     m.u.mem_write(PW, bytes(p))
-    m.put(GS + 0x49, "b", g["b49"])
+    gs = bytearray(rng.choice([0, 0, 0, 1, 2, 0xFF]) for _ in range(0x100))
+    gs[0x49] = g["b49"] & 0xFF
+    g["gs"] = gs.hex()
+    m.u.mem_write(GS, bytes(gs))
     m.u.mem_write(R13 - 0x7A38, bytes(x & 0xFF for x in g["pressed"]))
     m.u.mem_write(R13 - 0x7A28, bytes(x & 0xFF for x in g["held"]))
     m.put(0x801E5D28 + 0x2B4, "I", 0x81300000 if g["m56"] else 0)
@@ -82,7 +89,7 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
     a = FUNCS[name]
     if name == "f48":
         m.call(a, r3=PW)
-    elif name in ("pressed", "held", "queue"):
+    elif name in ("pressed", "held", "queue", "events", "buttons", "ground"):
         m.call(a, r3=TW, r4=PW)
     elif name == "go_stand":
         m.call(a, r3=TW, r4=MW, r5=PW)

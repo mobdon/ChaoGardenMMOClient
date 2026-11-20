@@ -3,8 +3,9 @@
 use sa2_asset_tools::{
     native_work::Work,
     walker_act::{
-        button_held, button_pressed, go_stand, queue_stand_requests, reset_f48, walker_command,
-        ActGlobals, ActSteps,
+        button_held, button_pressed, go_stand, queue_button_requests, queue_event_requests,
+        queue_ground_request, queue_stand_requests, reset_f48, walker_command, ActGlobals,
+        ActSteps,
     },
     walker_exec::EngineCall,
 };
@@ -42,6 +43,7 @@ fn globals(g: &Value) -> ActGlobals {
         pressed: arr("pressed"),
         held: arr("held"),
         motion_56: g["m56"].as_bool().unwrap(),
+        gs: hex(&g["gs"]),
     }
 }
 
@@ -85,6 +87,9 @@ fn walker_act_matches_main_dol() {
             "pressed" => Some(button_pressed(&t, &p, &g)),
             "held" => Some(button_held(&t, &mut p, &g)),
             "queue" => Some(queue_stand_requests(&t, &mut p)),
+            "events" => Some(queue_event_requests(&t, &mut p, &g)),
+            "buttons" => Some(queue_button_requests(&t, &mut p)),
+            "ground" => Some(queue_ground_request(&t, &mut p)),
             "f48" => {
                 reset_f48(&mut p, &g);
                 None

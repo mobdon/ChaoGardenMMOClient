@@ -5,7 +5,7 @@
 use crate::ninja_matrix::Vec3;
 
 /// One work area.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Work(pub Vec<u8>);
 
 impl Work {

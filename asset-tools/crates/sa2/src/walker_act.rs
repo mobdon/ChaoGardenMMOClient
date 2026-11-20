@@ -10,8 +10,10 @@ use crate::{
 };
 
 /// Engine state the action step reads.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ActGlobals {
+    /// The game state block at 0x801CC168 (0x100 bytes).
+    pub gs: Work,
     /// GetStageNum.
     pub stage: i32,
     /// 0x801CC168 +0x49.
@@ -214,5 +216,87 @@ pub fn walker_command(
         _ => return false,
     }
     t.clear_h(tw::FLAG, 0x2500);
+    true
+}
+
+/// fn_800AD584(task work, player work): in stage 0x1D or with game byte
+/// +0x1E, for a standing or running player with no lock (+0x33 per
+/// player) and no game pause (+0x42), queue request 0x41, 0x40 or 0x3F
+/// for the player's set flags at +0x2F/+0x2E/+0x2D (3 bytes per player).
+pub fn queue_event_requests(t: &Work, p: &mut Work, g: &ActGlobals) -> bool {
+    let gs = &g.gs;
+    if gs.b(0x1E) == 0 && g.stage != 0x1D {
+        return false;
+    }
+    let n = p.b(pw::PNUM) as isize;
+    let at = |o: isize| o as usize;
+    if gs.b(at(0x33 + n)) > 0 || gs.b(0x42) != 0 {
+        return false;
+    }
+    let mode = t.b(tw::MODE);
+    if mode != 0 && mode != 1 {
+        return false;
+    }
+    let b = 3 * n;
+    let req = if gs.ub(at(0x2F + b)) == 1 {
+        0x41
+    } else if gs.ub(at(0x2E + b)) == 1 {
+        0x40
+    } else if gs.ub(at(0x2D + b)) == 1 {
+        0x3F
+    } else {
+        return false;
+    };
+    push_request(p, req);
+    true
+}
+
+/// fn_80053C74(task work, player work): standing, queue request 0x2E or
+/// 0x2D (by +0xD) when the character's button bit in +0x24 is set, else
+/// 0x30 when +0xD is 0x2D or 0x30.
+pub fn queue_button_requests(t: &Work, p: &mut Work) -> bool {
+    if t.b(tw::MODE) != 0 {
+        return false;
+    }
+    let bit = match p.b(pw::CHAR) {
+        0 => 0x20,
+        1 => 0x8_0000,
+        4 => 0x4000,
+        5 => 0x1000_0000,
+        7 => 0x100_0000,
+        6 => 0x200,
+        _ => 0,
+    };
+    let held = p.w(0x24) & bit != 0;
+    let d = p.b(0xD);
+    let req = if held {
+        match d {
+            0x2E => 0x2E,
+            0x2D => 0x2D,
+            _ => return false,
+        }
+    } else if d == 0x2D || d == 0x30 {
+        0x30
+    } else {
+        return false;
+    };
+    push_request(p, req);
+    true
+}
+
+/// fn_80053DBC(task work, player work): on the ground, standing or
+/// running with +0xD at 0x32, queue request 0x32.
+pub fn queue_ground_request(t: &Work, p: &mut Work) -> bool {
+    if t.h(tw::FLAG) & 3 == 0 {
+        return false;
+    }
+    let mode = t.b(tw::MODE);
+    if mode != 0 && mode != 1 {
+        return false;
+    }
+    if p.ub(0xD) != 0x32 {
+        return false;
+    }
+    push_request(p, 0x32);
     true
 }
