@@ -207,5 +207,37 @@ for _ in range(4000):
                  "hits": [[[fb(x) for x in v] for v in h] for h in hits],
                  "ret": m.gpr(3), "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)],
                  "vel_after": [W(VEL + 4 * j) for j in range(3)], "wall_after": [W(PW + 0x70 + 4 * j) for j in range(3)]})
+# fn_80042694: tilt the task toward the contact angles; and the angle helpers.
+tilt = []
+for _ in range(3000):
+    ang = [rng.randrange(-0x20000, 0x20000) for _ in range(3)]
+    qa = [rng.randrange(0, 0x10000), rng.randrange(0, 0x10000)]
+    if rng.random() < 0.5:
+        qa = [(ang[0] + rng.randrange(-0x3000, 0x3000)) & 0xFFFF, (ang[2] + rng.randrange(-0x3000, 0x3000)) & 0xFFFF]
+    facing = unit() if rng.random() < 0.7 else [0.0, 1.0, 0.0]
+    up = [0.0, 1.0, 0.0] if rng.random() < 0.5 else unit()
+    glob = [0.0, -1.0, 0.0] if rng.random() < 0.7 else unit()
+    status = rng.choice([0, 1, 3, 0x2001, rng.randrange(1 << 16)])
+    spd = [f32(rng.uniform(-1, 12)), f32(rng.uniform(1, 2)), f32(rng.uniform(2, 4)), f32(rng.uniform(4, 6)), f32(rng.uniform(6, 9))]
+    flags = rng.choice([0, 0x00100000, rng.randrange(1 << 32)])
+    m.u.mem_write(TASK + 8, struct.pack(">3i", *ang))
+    m.u.mem_write(Q + 0x34, struct.pack(">2i", *qa))
+    put3(Q + 0x48, facing); put3(Q + 0x1C, up); put3(GLOBAL, glob)
+    m.put(PW + 0x1C, "H", status)
+    for o, x in zip((0x64, 0xE4, 0xE8, 0xEC, 0xF4), spd):
+        m.put(PW + o, "f", x)
+    m.call(0x80042694, r3=TASK, r4=PW, r5=Q, r6=flags)
+    tilt.append({"ang": ang, "qa": qa, "facing": [fb(x) for x in facing], "up": [fb(x) for x in up],
+                 "global": [fb(x) for x in glob], "status": status, "spd": [fb(x) for x in spd], "flags": flags,
+                 "after": [m.get(TASK + 8 + 4 * j, "i") for j in range(3)]})
+angles = []
+for _ in range(3000):
+    a, b, st = rng.randrange(-0x20000, 0x20000), rng.randrange(-0x20000, 0x20000), rng.randrange(0, 0x9000)
+    out = []
+    for addr, extra in ((0x8002B8E0, {}), (0x8002B904, {}), (0x8002B918, {"r5": st})):
+        m.call(addr, r3=a & 0xFFFFFFFF, r4=b & 0xFFFFFFFF, **extra)
+        out.append(m.gpr(3))
+    angles.append([a, b, st] + out)
 print(json.dumps({"lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
+                  "tilt": tilt, "angles": angles,
                   "row74": [m.get(PHYS + 0x74, "I"), m.get(PHYS + 0xF8, "I")]}))

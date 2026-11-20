@@ -1,9 +1,11 @@
 //! Compare `walker_collide` with main.dol (tests/walker_collide_ppc.py).
 use sa2_asset_tools::land_contact::ContactHit;
 use sa2_asset_tools::land_nodes::Candidate;
+use sa2_asset_tools::ninja_matrix::MatrixStack;
 use sa2_asset_tools::walker_collide::{
-    apply_surface, plane_intersection, slide_airborne, slide_grounded, sphere_lift, wall_slide,
-    LiftInput, Line, PhysicsRow, Plane, SlideInput, SurfaceWork, WallSlideInput,
+    adjust_angle, apply_surface, diff_angle, plane_intersection, slide_airborne, slide_grounded,
+    sphere_lift, sub_angle, tilt_to_contact, wall_slide, LiftInput, Line, PhysicsRow, Plane,
+    SlideInput, SurfaceWork, TiltSpeeds, WallSlideInput,
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -213,5 +215,38 @@ fn matches_main_dol() {
         assert_eq!(bits3(along), bits3(v3(&c["along_after"])), "{c}");
         assert_eq!(bits3(vel), bits3(v3(&c["vel_after"])), "{c}");
         assert_eq!(bits3(wall), bits3(v3(&c["wall_after"])), "{c}");
+    }
+    for c in v["angles"].as_array().unwrap() {
+        let g = |k: usize| c[k].as_i64().unwrap() as i32;
+        let (a, b, st) = (g(0), g(1), g(2));
+        let got = [diff_angle(a, b), sub_angle(a, b), adjust_angle(a, b, st)].map(|x| x as u32);
+        let want = [3, 4, 5].map(|k| c[k].as_u64().unwrap() as u32);
+        assert_eq!(got, want, "{c}");
+    }
+    let mut stack = MatrixStack::new();
+    for c in v["tilt"].as_array().unwrap() {
+        let g = |x: &Value| x.as_i64().unwrap() as i32;
+        let mut ang = [g(&c["ang"][0]), g(&c["ang"][1]), g(&c["ang"][2])];
+        let sp = &c["spd"];
+        let speeds = TiltSpeeds {
+            spd_x: f(&sp[0]),
+            jog: f(&sp[1]),
+            run: f(&sp[2]),
+            f_ec: f(&sp[3]),
+            f_f4: f(&sp[4]),
+        };
+        tilt_to_contact(
+            &mut stack,
+            &mut ang,
+            c["status"].as_u64().unwrap() as u16 as i16,
+            &speeds,
+            (g(&c["qa"][0]), g(&c["qa"][1])),
+            v3(&c["facing"]),
+            v3(&c["up"]),
+            v3(&c["global"]),
+            u(&c["flags"]),
+        );
+        let want = [g(&c["after"][0]), g(&c["after"][1]), g(&c["after"][2])];
+        assert_eq!(ang, want, "{c}");
     }
 }

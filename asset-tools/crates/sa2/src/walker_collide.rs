@@ -1,16 +1,22 @@
 //! The walker's collision helpers under fn_8003EAFC and fn_80043ED4
 //! (GSNE8P main.dol), ported instruction by instruction and checked against
 //! main.dol by tests/walker_collide.rs.
+// Negated comparisons keep the compiled branches' NaN behaviour.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use crate::{
     land_contact::{unit_vector, ContactHit},
     land_nodes::nj_scalor,
     land_select::inline_sqrt,
-    ninja_matrix::Vec3,
+    msl_math::atan2f,
+    ninja_matrix::{Axis, MatrixStack, Vec3},
     ninja_trig::{fmadds, fnmsubs, nj_cos},
     ninja_vector::{inner_product, outer_product, vector_angle},
 };
 
 const ZERO: f32 = 0.0; // r2-0x75F8
+/// Radians to BAMS (double at r2-0x75E8).
+const BAMS_PER_RAD: f64 = f64::from_bits(0x40c4_5f30_b217_88bb);
 const LIFT_FALLING: f32 = f32::from_bits(0x3f19_999a); // r2-0x7514, 0.6
 const LIFT_RISING: f32 = f32::from_bits(0x3e4c_cccd); // r2-0x7590, 0.2
 const LIFT_SLOW: f32 = f32::from_bits(0x3e99_999a); // r2-0x7580, 0.3
@@ -617,4 +623,89 @@ pub fn wall_slide(
     *vel = line.dir.map(|c| c * speed);
     *along = *vel;
     true
+}
+
+/// DiffAngle (0x8002B8E0): |b - a| as a 16-bit angle.
+pub fn diff_angle(a: i32, b: i32) -> i32 {
+    let d = ((b & 0xffff) - (a & 0xffff)) as i16 as i32;
+    d.abs() & 0xffff
+}
+
+/// SubAngle (0x8002B904): b - a as a signed 16-bit angle.
+pub fn sub_angle(a: i32, b: i32) -> i32 {
+    ((b & 0xffff) - (a & 0xffff)) as i16 as i32
+}
+
+/// AdjustAngle (0x8002B918): turn `a` toward `b` by at most `step`.
+pub fn adjust_angle(a: i32, b: i32, step: i32) -> i32 {
+    let (a, b) = (a & 0xffff, b & 0xffff);
+    let d = (b - a) as i16 as i32;
+    if d <= step && d >= step.wrapping_neg() {
+        return b;
+    }
+    (if d & 0x8000 != 0 { a - step } else { a + step }) & 0xffff
+}
+
+/// The player-work speeds fn_80042694 compares `spd.x` with.
+#[derive(Debug, Clone, Copy)]
+pub struct TiltSpeeds {
+    pub spd_x: f32,
+    /// PhysicsArray `jog_speed`, `run_speed` (+0xE4, +0xE8), +0xEC and +0xF4.
+    pub jog: f32,
+    pub run: f32,
+    pub f_ec: f32,
+    pub f_f4: f32,
+}
+
+/// fn_80042694: tilt the task's X and Z rotation toward the contact's
+/// angles (query +0x34, +0x38). It snaps when the surface faces up less
+/// than the player's up vector does, when the player is not on the ground
+/// (status bit 1) or is in the 0x2000 state; otherwise it turns by at most
+/// the slope's own angle (from the facing in the player's frame), capped by
+/// speed, or 0x400 with flag 0x00100000.
+#[allow(clippy::too_many_arguments)]
+pub fn tilt_to_contact(
+    stack: &mut MatrixStack,
+    task_angles: &mut [i32; 3],
+    status: i16,
+    speeds: &TiltSpeeds,
+    contact_angles: (i32, i32),
+    facing: Vec3,
+    up: Vec3,
+    global: Vec3,
+    flags: u32,
+) {
+    let gf = inner_product(global, facing);
+    if inner_product(global, up) > gf || status & 1 == 0 || status & 0x2000 != 0 {
+        task_angles[0] = contact_angles.0;
+        task_angles[2] = contact_angles.1;
+        return;
+    }
+    stack.push_unit();
+    stack.rotate(Axis::Y, task_angles[1]);
+    stack.rotate(Axis::X, task_angles[0].wrapping_neg());
+    stack.rotate(Axis::Z, task_angles[2].wrapping_neg());
+    let v = stack.calc_vector(facing);
+    stack.pop();
+    let h = sqrtf(v[2] * v[2] + v[0] * v[0]);
+    let mut ang = ((BAMS_PER_RAD * atan2f(h, v[1]) as f64) as i32) & 0xffff;
+    if ang > 0x8000 {
+        ang = 0x10000 - ang;
+    }
+    let s = speeds;
+    let step = if flags & 0x0010_0000 != 0 {
+        0x400
+    } else if s.spd_x >= s.f_f4 {
+        ang
+    } else if s.spd_x >= s.f_ec {
+        ang.min(0x2000)
+    } else if s.spd_x >= s.run {
+        ang.min(0x1500)
+    } else if s.spd_x >= s.jog {
+        ang.min(0x1000)
+    } else {
+        0x400
+    };
+    task_angles[0] = adjust_angle(task_angles[0], contact_angles.0, step);
+    task_angles[2] = adjust_angle(task_angles[2], contact_angles.1, step);
 }
