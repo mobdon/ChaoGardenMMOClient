@@ -627,26 +627,9 @@ pub fn wall_slide(
     true
 }
 
-/// DiffAngle (0x8002B8E0): |b - a| as a 16-bit angle.
-pub fn diff_angle(a: i32, b: i32) -> i32 {
-    let d = ((b & 0xffff) - (a & 0xffff)) as i16 as i32;
-    d.abs() & 0xffff
-}
-
-/// SubAngle (0x8002B904): b - a as a signed 16-bit angle.
-pub fn sub_angle(a: i32, b: i32) -> i32 {
-    ((b & 0xffff) - (a & 0xffff)) as i16 as i32
-}
-
-/// AdjustAngle (0x8002B918): turn `a` toward `b` by at most `step`.
-pub fn adjust_angle(a: i32, b: i32, step: i32) -> i32 {
-    let (a, b) = (a & 0xffff, b & 0xffff);
-    let d = (b - a) as i16 as i32;
-    if d <= step && d >= step.wrapping_neg() {
-        return b;
-    }
-    (if d & 0x8000 != 0 { a - step } else { a + step }) & 0xffff
-}
+/// DiffAngle, SubAngle and AdjustAngle (0x8002B8E0, 0x8002B904, 0x8002B918)
+/// live in `player_turn`, checked against main.dol there.
+pub use crate::player_turn::{adjust_angle, diff_angle, sub_angle};
 
 /// The player-work speeds fn_80042694 compares `spd.x` with.
 #[derive(Debug, Clone, Copy)]
