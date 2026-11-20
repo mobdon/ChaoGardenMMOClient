@@ -18,6 +18,7 @@ pub mod effect_emitter;
 pub mod chao_pipe;
 pub mod collision;
 pub mod color_blend;
+pub mod csb;
 mod collision_record;
 pub use collision_record::chao_collision;
 pub mod damage_ring;

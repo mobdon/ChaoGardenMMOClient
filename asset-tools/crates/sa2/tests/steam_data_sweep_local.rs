@@ -4,8 +4,8 @@
 //! `.../Sonic Adventure 2/resource/gd_PC` and run with `--ignored --nocapture`.
 //! Executables and DLLs are never opened; game data is read, never copied.
 use sa2_asset_tools::{
-    archive, audio, character_motions::Bank, demo, event, message_bank, set, stage_fog, stage_land,
-    stage_lighting, texture,
+    archive, audio, character_motions::Bank, csb, demo, event, message_bank, set, stage_fog,
+    stage_land, stage_lighting, texture,
 };
 use std::{
     collections::BTreeMap,
@@ -71,6 +71,40 @@ fn pak_archive(_: &Path, b: &[u8]) -> Result<String, String> {
         }
     }
     Ok(format!("{} entries, {dds} DDS decoded", entries.len()))
+}
+
+/// Read a CSB bank and decode every ADX segment it stores.
+fn csb_bank(b: &[u8]) -> Result<(usize, usize), String> {
+    let bank = csb::read(b).map_err(e)?;
+    let (mut decoded, mut other) = (0, 0);
+    for el in &bank.elements {
+        for s in &el.segments {
+            if !s.adx || s.silent {
+                other += 1;
+                continue;
+            }
+            let adx = &b[s.offset..s.offset + s.length];
+            audio::decode_adx(adx, 64 << 20).map_err(|err| format!("{}: {err}", el.name))?;
+            decoded += 1;
+        }
+    }
+    if bank.cues.is_empty() {
+        return Err("bank has no cues".into());
+    }
+    Ok((decoded, other))
+}
+
+fn csb_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for p in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+        if p.is_dir() {
+            csb_files(&p, out);
+        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("csb")) {
+            out.push(p);
+        }
+    }
 }
 
 fn checks() -> Vec<Group> {
@@ -270,6 +304,25 @@ fn every_gamecube_format_reader_accepts_the_steam_data() {
         }
         println!("{group:32} ok {ok:4}  skipped {skipped:4}  known limits {limits}");
     }
+    // Every CSB sound bank (Steam's replacement for the GameCube .mlt/.mpb banks).
+    let mut banks = Vec::new();
+    csb_files(&root, &mut banks);
+    let (mut decoded, mut other) = (0, 0);
+    for path in &banks {
+        let bytes = fs::read(path).expect("read Steam CSB");
+        match csb_bank(&bytes) {
+            Ok((d, o)) => {
+                decoded += d;
+                other += o;
+            }
+            Err(err) => failures.push(format!("CSB sound banks: {}: {err}", path.display())),
+        }
+    }
+    println!(
+        "{:32} ok {:4}  ADX segments decoded {decoded}, silent stubs or non-ADX {other}",
+        "CSB sound banks",
+        banks.len()
+    );
     // Every static landtable the catalog maps in the Steam stage, boss and Chao modules.
     let mut by_file: BTreeMap<&str, Vec<_>> = BTreeMap::new();
     for row in stage_land::catalog() {
