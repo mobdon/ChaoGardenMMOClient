@@ -203,9 +203,10 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   other characters' loaders and 0x800B56E8, `fn_8001D74C` (start position),
   `CCL_Init`, the motion/model loaders 0x80072548 / 0x80050210 / 0x80050094,
   `fn_800645F8`, `fn_8003D8D0`, `fn_80010CC4`, the GX texture setup, and the
-  camera mode routines. The PhysicsArray row and upgrade bytes come from the
-  host (Steam: `sonic2app.exe`'s PhysicsArray through the `sa2` readers; not
-  wired yet).
+  camera mode routines. PhysicsArray rows come from the Steam `sonic2app.exe`
+  (`player::steam_physics_rows`, via the `sa2` reader); all 17 named rows are
+  identical to main.dol's (tests/steam_physics.rs). Upgrade bytes come from the
+  host (save data, not wired yet).
 - **Part 2 (next):** the session init `fn_80021828` around these, the stage
   module load `fn_8001EB80` and stg11D's init fn_11_A434 (landtable and
   lights, SET files, the SET task and spawner, death zones, stage callbacks)

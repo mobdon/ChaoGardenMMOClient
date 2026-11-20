@@ -386,3 +386,57 @@ fn player_work(
     );
     rt.engine(TEX_INIT_LOD, vec![ARG_PWP | 0x308, 1, 1, 0, 0, 0]);
 }
+
+/// The 17 named PhysicsArray rows from the Steam `sonic2app.exe` (the `sa2`
+/// crate's pinned reader), in main.dol's big-endian row layout (0x84 bytes:
+/// `jump2_timer` as a word, then 32 floats), so a [`PlayerHost`] can serve
+/// `physics_row` from the player's own install.
+pub fn steam_physics_rows(exe: &[u8]) -> sa2_asset_tools::Result<Vec<[u8; 0x84]>> {
+    let rows = sa2_asset_tools::player_physics::read(exe)?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let p = &r.parameters;
+            let floats = [
+                p.pos_error,
+                p.lim_h_spd,
+                p.lim_v_spd,
+                p.max_x_spd,
+                p.max_psh_spd,
+                p.jmp_y_spd,
+                p.nocon_speed,
+                p.slide_speed,
+                p.jog_speed,
+                p.run_speed,
+                p.rush_speed,
+                p.crash_speed,
+                p.dash_speed,
+                p.jmp_addit,
+                p.run_accel,
+                p.air_accel,
+                p.slow_down,
+                p.run_break,
+                p.air_break,
+                p.air_resist_air,
+                p.air_resist,
+                p.air_resist_y,
+                p.air_resist_z,
+                p.grd_frict,
+                p.grd_frict_z,
+                p.lim_frict,
+                p.rat_bound,
+                p.rad,
+                p.height,
+                p.weight,
+                p.eyes_height,
+                p.center_height,
+            ];
+            let mut row = [0; 0x84];
+            row[0..4].copy_from_slice(&(p.jump2_timer as u32).to_be_bytes());
+            for (i, f) in floats.iter().enumerate() {
+                row[4 + 4 * i..8 + 4 * i].copy_from_slice(&f.to_bits().to_be_bytes());
+            }
+            row
+        })
+        .collect())
+}

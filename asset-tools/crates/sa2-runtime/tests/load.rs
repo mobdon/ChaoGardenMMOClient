@@ -100,12 +100,26 @@ fn player_load_matches_main_dol() {
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
             .collect()
     };
-    let physics: Vec<Vec<u8>> = out["physics"]
-        .as_array()
-        .expect("physics")
-        .iter()
-        .map(|r| unhex(r.as_str().expect("row")))
-        .collect();
+    // The Steam install's PhysicsArray when present (identical to main.dol's, see
+    // steam_physics.rs), else the rows the oracle read from main.dol.
+    let physics: Vec<Vec<u8>> = match std::env::var_os("SA2_GAME_PATH") {
+        Some(game) => {
+            let exe =
+                std::fs::read(std::path::Path::new(&game).join("sonic2app.exe")).expect("exe");
+            eprintln!("physics rows from the Steam install");
+            sa2_runtime::player::steam_physics_rows(&exe)
+                .expect("rows")
+                .iter()
+                .map(|r| r.to_vec())
+                .collect()
+        }
+        None => out["physics"]
+            .as_array()
+            .expect("physics")
+            .iter()
+            .map(|r| unhex(r.as_str().expect("row")))
+            .collect(),
+    };
     let mut compared = 0;
     for sc in out["scenarios"].as_array().expect("scenarios") {
         let name = sc["name"].as_str().expect("name");
