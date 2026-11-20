@@ -36,7 +36,7 @@ pub struct PlayerPhysics {
     pub parameters: PlayerParameters,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct PlayerParameters {
     pub jump2_timer: i32,
     pub pos_error: f32,
