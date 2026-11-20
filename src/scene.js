@@ -461,7 +461,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       await loadChaoFaceManifest();
       if (!item.root.isDisposed()) {
         await loadChaoLookManifest();
-        applyChaoLook(visual, item.bodyState?.look);
+        applyChaoLook(visual, item.bodyState);
         configureChaoFace(visual, item.bodyState?.typeName);
         resetChaoFace(visual);
         item.faceRoot = visual;
@@ -1456,6 +1456,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item = replacement;
       }
       item.bodyState = data.body;
+      // Native look and blended material diffuse follow the server body.
+      if (item.faceRoot && !item.faceRoot.isDisposed()) applyChaoLook(item.faceRoot, item.bodyState);
       item.target.set(data.x || 0, data.y || 0, data.z || 0);
       if (item.root.position.lengthSquared() === 0) item.root.position.copyFrom(item.target);
       item.self = data.id === next.selfId;

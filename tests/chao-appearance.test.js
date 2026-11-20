@@ -60,16 +60,29 @@ test('native lid motion and blink timing', () => {
   assert.equal(frozen.blinkTimer, 1);
 });
 
-import { chaoColour, nodeIndexOf } from '../src/chao-look.js';
+import { blendDiffuse, lookPlan, nodeIndexOf } from '../src/chao-look.js';
 
-test('native colour applies only for ColorNum != 0 from the local table', () => {
-  const table = [[1, 1, 1, 255], [255, 0, 51, 255]];
-  assert.equal(chaoColour({ color: 0 }, table), null);
-  assert.deepEqual(chaoColour({ color: 1 }, table), [1, 0, 0.2, 1]);
-  assert.equal(chaoColour({ color: 5 }, table), null);
-  assert.equal(chaoColour({ color: 1 }, undefined), null);
+test('fn_60_5140C look plan: shiny, jewel, gxColorTable colour, monotone', () => {
+  const table = { gxColorTable: [[255, 255, 0, 255], [255, 255, 255, 255]] };
+  assert.deepEqual(lookPlan({}, table), { monotone: false, colour: null, environment: null, additive: false });
+  assert.deepEqual(lookPlan({ color: 1 }, table).colour, [1, 1, 0]);
+  assert.equal(lookPlan({ color: 9 }, table).colour, null);
+  assert.deepEqual(lookPlan({ jewel: 3, color: 1 }, table), { monotone: false, colour: [1, 1, 1], environment: 20, additive: false });
+  const shiny = lookPlan({ shiny: true, color: 2 }, table);
+  assert.equal(shiny.environment, 34);
+  assert.equal(shiny.additive, true);
+  assert.deepEqual(shiny.colour, [1, 1, 1]);
+  assert.equal(lookPlan({ monotone: true }, table).monotone, true);
   assert.equal(nodeIndexOf({ name: 'p-016_object_0001BA34', parent: null }), 16);
   assert.equal(nodeIndexOf({ name: 'mesh', parent: { name: 'x-023_object_1', parent: null } }), 23);
+});
+
+test('material diffuse blends across the morph set with server weights', () => {
+  const entry = { base: [[1, 0, 0]], f: [[0, 1, 0]], p: [[0, 0, 1]] };
+  assert.deepEqual(blendDiffuse(entry, ['f', 'p'], [0, 0]), [[1, 0, 0]]);
+  assert.deepEqual(blendDiffuse(entry, ['f', 'p'], [0.5, 0]), [[0.5, 0.5, 0]]);
+  assert.deepEqual(blendDiffuse(entry, ['f', 'p'], [0.5, 0.5]), [[0, 0.5, 0.5]]);
+  assert.equal(blendDiffuse(undefined), null);
 });
 
 import { MOUTH_TEXTURES } from '../src/chao-face.js';
