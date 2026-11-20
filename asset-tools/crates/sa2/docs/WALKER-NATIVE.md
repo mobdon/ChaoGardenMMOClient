@@ -15,6 +15,7 @@ WALKER-PORT-MAP.md on #424.
 | fn_8003E668: world velocity into the player frame, `spd` and `dotp` | `walker_frame::player_speed_from_world` | tests/walker_frame.rs, 1,500 cases |
 | fn_80046950: speed clamp to `lim_h_spd` / `lim_v_spd` | `walker_frame::clamp_speed` | same, 600 cases |
 | fn_8002334C static pass: land-table entries near the players | `land_select::select_static` | tests/land_select.rs, 300 cases on the relocated GC stg11D.rel |
+| fn_800D0904 with fn_800D13A0, fn_800D14C8, fn_800D17E0, fn_800D2298, fn_800D23A8, fn_800D24B4, fn_800D251C and Ninja's table rotations, njTranslateEx and fn_8011610C: the land collision node list and its bucketed triangles | `land_nodes::LandNodes::update` | tests/land_nodes.rs, 40 frames on stg11D.rel plus synthetic object trees, triangle, quad and flipped strip sets, flag 0x08000000 and a full triangle pool |
 | 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within +/-0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
 Set `SA2_MAIN_DOL` and `SA2_GSNE8P_DOL` to the extracted main.dol, and set
@@ -50,7 +51,9 @@ game lays it out. The port goes bottom-up from fn_800D1020 and fn_800CEE08.
    entries near the player tasks (`playertwp`, 0x801E7768). It writes 12-byte
    records {flags, NJS_OBJECT*, ...} to r13-0x79F4, with the count at
    r13-0x79A4 (at most 0xC0).
-2. fn_800D0904 (0x638) turns that list into collision nodes. The nodes are
+2. fn_800D0904 (0x638) turns that list into collision nodes (ported, see
+   `land_nodes`). A quirk it keeps: when the rebuild object at r13-0x7750
+   is listed, its old node survives next to the new one. The nodes are
    0x40 bytes each, from a pool set up by fn_800D2560 (free list at
    r13-0x773C, active list at r13-0x7738). Each node keeps its object's
    transform and bounding sphere. A removed entry goes back through
