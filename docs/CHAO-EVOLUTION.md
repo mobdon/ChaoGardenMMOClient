@@ -34,12 +34,10 @@ including native node scale. Unit-only scale channels that SAIO adds are
 dropped.
 
 In 10 of 15 adult families, a preview at weight 1 per target matches the native
-model rendered alone (mean pixel difference ≤ 1.2e-4). The remaining
-differences are textures, not geometry:
-
-- Hero and dark child material diffuse and palettes are not blended yet.
-- al_hsz, al_nsz s/f/r and al_drz f use different UVs in the native target
-  models. Morphs keep the z model's UVs.
+model rendered alone (mean pixel difference ≤ 1.2e-4). The other five (al_hsz,
+al_nsz s/f/r, al_drz f) differ only in UVs, and that difference is native: the
+live Chao model is a deep copy of the z model (fn_60_266B4/fn_60_27058), so the
+game always draws z's strips and UVs, as the morphs here do.
 
 Run: `blender --background --factory-startup --python scripts/convert-chao-evolution.py [-- --only al_nnz] [-- --preview]`.
 
@@ -75,22 +73,34 @@ dark set by |APos|. The server publishes these as named glTF weights.
 - **Lid drawing (al_draw_B):** node 19 gets Rz(+slope)·Rx(close), node 22 gets Rz(−slope)·Rx(close). CloseAng = blink + lid − 0x4000. Lids are not drawn when CloseAng is −0x4000.
 - **Behaviour faces:** behaviour call sites are keyed by native address in the AI thread's presenter.
 
-## Colour (`src/chao-look.js`)
+## Look (`src/chao-look.js`)
 
-AL_MaterialInit calls AL_MatSetChaoColor (fn_60_17BF4) only when ColorNum ≠ 0.
-That call replaces the diffuse word on nodes 1, 3, 6, 8, 10, 13, 16, 19, 22, 23,
-24, 25, 26, 30 and 31 with the 28-entry table at rodata 0x1D60.
-`scripts/extract-chao-look.py` checks the local `ChaoMain.rel` SHA-1, then reads the table (big-endian 0xAARRGGBB) and the node list (.data+0x6E18). The node list is the native one, so eyes 18/21 and the mouth 27 keep their own diffuse.
+al_draw_B calls fn_60_52480 → fn_60_5140C for every body node except the eyes
+18/21 (0x8DC8), the mouth 27 (0x8DA0) and nodes 37/39 (0x8E3C/0x8E44):
 
-## Unresolved (left out, not approximated)
+- **Shiny** (MultiNum ≠ 0): body texture × lit colour, plus chao_rare00
+  (al_body 34) sphere-mapped by view normal, added weighted by its own alpha.
+- **Jewel** (JewelNum > 0): the body texture is replaced by al_body[JewelNum+17]
+  (gold … topaz, pearl, metal0/1, glass, golf), sphere-mapped, times white.
+- **Colour** (JewelNum = 0, ColorNum > 0): gxColorTable[ColorNum−1] (data
+  0x38E7D0, 13 entries in SA2BColour order) replaces the material colour.
+- **Monotone** (NonTex): no texture, lit colour only. Two-tone is the default.
+- Sphere map (TEXMTX9): u = 0.5 + 0.5·nx, v = 0.5 − 0.5·ny in view space.
+- **Material diffuse:** AL_DeformObject blends it across the morph set with the
+  same weights as the vertices but growth clamped to 1 (server
+  `morph.diffuseWeights`; per-node values in `extras.chaoMorph.materialDiffuse`).
 
-- Jewel, shiny and monotone drawing. ChaoMain does not read these fields; the
-  likely place is main.dol's chunk or palette path.
-- Mouth drawing: which texture list the node-27 mouth texture pairs index.
-- Hero and dark child material diffuse and palette blending
-  (AL_PaletteSetColorRatio 0x1F1FC).
-- Eye position offsets (face work +20/+24).
-- Native diffuse blending for uncoloured Chao (the existing presentation shows textures without native diffuse).
-- The garden-stage APos drift sign, the capture APos sign (per-character table),
-  the species 12–20 random pick, and the AddUserLike APos shift sign.
-- AL_SucceedGeneParam carry-over of the Aim* values on reincarnation.
+`scripts/extract-chao-look.py` checks the local `ChaoMain.rel` SHA-1, then writes
+`chao-look.json` (gxColorTable, bodyTextureFiles 18–34, lookNodesExcluded,
+palettes) and copies the al_body look PNGs unchanged to `chao-look-*.png`.
+
+## Palettes (traced, not drawn yet)
+
+ALPaletteInit loads 39 GVPs (pointer table .data 0x43CE8) into gPalette (bss
+0x1D50, 39 × 48 RGBA8): 0 AL_NC00, 1 AL_NC01, 2–7 AL_HC{Z,N,S,F,R,P}, 8 AL_DC,
+9–38 AL_H{N,S,F,R,P}{Z,N,S,F,R,P}. GVP: 'GVPL', u16 format 1 (RGB565), 48
+entries from +0x10. The jumptable at .data 0x43DD0 gives the blend base by type:
+child 0, hero normal 9, swim 15, fly 21, run 27, power 33. Other types keep
+their texture's own bank (alpalSetBank, jumptable 0x43D84). Hero adults blend
+slots base+0..5 (z, n, s, f, r, p) with the diffuse weights.
+
