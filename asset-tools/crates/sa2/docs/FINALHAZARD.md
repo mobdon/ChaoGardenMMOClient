@@ -15,6 +15,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `voice_gate` | 0xeb38 | Whether a stage voice may play |
 | `arena_clamp` | 0xee8c, 0x40cc | Per-frame arena bounds for both players |
 | `timed_voice` | 0xf070 | Timed boss voice lines |
+| `super_player` | 0xad8c | One update of a super-form player (control flow) |
 
 ## Handoff camera
 
@@ -85,6 +86,37 @@ jump-table case (section 5 + 0x40008). The case holds a frame threshold (1800 �
 voice IDs for each player. A busy category-3 channel or a held object defers the line. Otherwise
 the local voice-task helper 0x18ed0 is called; it stays unported.
 
+## Super-form player update
+
+The constructors 0xa87c and 0xab04 build the two super-form players. They write character 9 and
+character 10 to the 0x37c-byte player block, and install 0xad8c as the update. `super_player`
+reproduces one call to it. It takes the object addresses, the entity action and flags, the
+collision flags, the player block fields it reads, an optional effect block (player word 0x36c),
+and engine results in call order (`lengths`, `randoms`, `trig`, `approach`, `defeat_query`).
+
+Every frame sets the collision object's flags. Boost actions 61–64 and 67 clear bit 0x10 of inner
+word 0x34; any other action sets it. When the player's bit in global byte 0x37 is set, the update
+runs the engine follow and tail calls only. Otherwise it counts the 6-frame cycle at player byte
+0x35c. If the 0x64 vector is longer than player float 0xec, it spawns a spark (except in actions
+0, 15, 53, 57 and 59). It then dispatches the action through the 68-entry table at section 5 +
+0x3fd50:
+
+| Action | Behavior |
+| --- | --- |
+| 0 → 59 | Flight; hover handler 0xe9f0 while posing 99, else 0x80048228 and movement 0xe370 |
+| 60 | Movement, then 0xe1ac |
+| 61–64 | Player float 0x68 approaches (4, 0.1), (−4, 0.1), (2, 0.4) or (−2, 0.4) through 0x8002abf4, then movement |
+| 67 | 0xc67c |
+| 15, 53 | Engine movement calls; 53 also holds through 0xe9f0 |
+| 57 | Ring-out. After 40 frames: pose 104 and 15 debris pieces |
+| 58 | 0xdc90 |
+
+Every dispatch case ends with three engine calls: 0x80046b7c, 0x80045618 and 0x8003e400. The
+effect block then follows the travel since the last frame. For character 9 the scale is 0.25,
+with thresholds 0.8 and 0.4; for character 10 it is 0.2, with 0.64 and 0.4. When 0x8004fda0
+reports a defeat, the action becomes 58. The local movement handlers 0xbad0, 0xc598, 0xe370,
+0xe9f0, 0xe1ac, 0xc67c and 0xdc90 are reported with their arguments, but not yet ported.
+
 ## Verification
 
 With a Python environment that has Unicorn 2, run each test as
@@ -95,6 +127,7 @@ instructions with relocated data and compare them against the Rust output:
 | --- | --- |
 | `tests/finalhazard_switch_camera_ppc.py` | 336 camera packets: both states, both slots, characters 9/10/−1, yaw wraparound, modes −1/13/14/20 |
 | `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 39,182 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
+| `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
 Deliberate one-line faults were caught by each test. These are offline comparisons with the
@@ -109,7 +142,7 @@ reached from, not what each object does.
 | --- | --- | --- |
 | 0xa04c, 0xa074 | REL prolog and epilog | Module entry points |
 | 0xa078, 0xa2a0 | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
-| 0xa87c, 0xab04 | 0xa078 | Each installs the stage player task (0xff7c → 0xf3f8, now replayed) and object 0xd2dc, with routines 0xad8c and 0xd60c |
+| 0xa87c, 0xab04 | 0xa078 | Super-form player constructors (characters 9 and 10). Each installs the update 0xad8c (control flow ported), the draw routine 0xd2dc, 0xd60c, and the stage player task (0xff7c → 0xf3f8, replayed) |
 | 0x18b5c | The voice-task helper 0x18ed0 | Allocates 0xdc bytes and installs 0x15f7c (about 7.5 KB), 0x17d18, 0x188f0, 0x18dbc and 0x191ac. It is created alongside each stage voice line |
 | 0x1844, 0x7f58 | 0x1bb8, 0x8328 | Encounter phase code covered by earlier request paths |
 

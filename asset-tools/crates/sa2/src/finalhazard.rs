@@ -888,6 +888,8 @@ pub enum PlacementClock {
         timer: u16,
     },
     InitialHealth,
+    /// Section 1 + 0xad8c: one update of a super-form player object.
+    SuperPlayer(Box<SuperPlayerFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2659,6 +2661,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 "scope":"Stage-side bounds only; the distance and position-set calls are engine code."}),
             );
         }
+        PlacementClock::SuperPlayer(frame) => return super_player(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -2853,5 +2856,476 @@ pub fn cancel_placement(bytes: &[u8], input: CancelPlacement) -> Result<serde_js
     state.submode = 0;
     Ok(
         serde_json::json!({"mode":3,"state":state,"task_flags":input.task_flags & !4,"external_calls":calls}),
+    )
+}
+
+/// Addresses of the engine objects a super-form player update touches, so
+/// pointer arguments can be reported exactly.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperAddresses {
+    pub task: u32,
+    /// Task words 0x34 (entity), 0x38 (second data block) and 0x40 (player).
+    pub entity: u32,
+    pub data2: u32,
+    pub player: u32,
+    /// Entity word 0x2c, its word 0xc, and player word 0x36c (0 when absent).
+    pub collision: u32,
+    pub inner: u32,
+    pub fx: u32,
+}
+/// Player word 0x36c points at this effect block.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperFx {
+    pub f04: f32,
+    pub i0c: i32,
+}
+/// Inputs to section 1 + 0xad8c. Engine results are consumed in call order:
+/// `lengths` for 0x80114eac, `randoms` for 0x8010d940, `trig` for
+/// 0x80112050/0x80112068.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperPlayerFrame {
+    pub addresses: SuperAddresses,
+    /// Engine global 0x801cbd88 byte 0x37.
+    pub enabled_mask: i8,
+    /// Entity byte 0 and halfword 4.
+    pub action: i8,
+    pub entity_flags: i16,
+    /// Collision halfword 4; inner byte 3, words 4 and 0x34.
+    pub collision_flags: u16,
+    pub inner_03: u8,
+    pub inner_04: u32,
+    pub inner_34: u32,
+    /// Player bytes 0 (slot) and 1 (character), halfword 0x10, floats 0x68,
+    /// 0xec, 0x134, 0x184, halfwords 0x176/0x178, byte 0x35c, halfword 0x35e,
+    /// vectors 0x218, 0x230, 0x360.
+    pub slot: i8,
+    pub character: i8,
+    pub flags_10: i16,
+    pub f68: f32,
+    pub fec: f32,
+    pub f134: f32,
+    pub f184: f32,
+    pub anim_176: i16,
+    pub anim_178: i16,
+    pub counter_35c: i8,
+    pub timer_35e: i16,
+    pub v218: [f32; 3],
+    pub v230: [f32; 3],
+    pub v360: [f32; 3],
+    pub fx: Option<SuperFx>,
+    #[serde(default)]
+    pub lengths: Vec<f32>,
+    #[serde(default)]
+    pub approach: f32,
+    #[serde(default)]
+    pub randoms: Vec<i32>,
+    #[serde(default)]
+    pub trig: Vec<f32>,
+    #[serde(default)]
+    pub defeat_query: i32,
+}
+/// Section 1 + 0xad8c: control flow of one super-form player update. Local
+/// movement handlers are reported as call sites with their arguments.
+fn super_player(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperPlayerFrame,
+) -> Result<serde_json::Value> {
+    let a = &f.addresses;
+    if a.collision == 0 || a.inner == 0 {
+        return Err(Error::invalid(
+            "super player update needs its collision object",
+        ));
+    }
+    let k = |site: usize| stage_f32(rel, site, 4, 0);
+    let mut lengths = f.lengths.iter().copied();
+    let mut randoms = f.randoms.iter().copied();
+    let mut trig = f.trig.iter().copied();
+    let missing = |what: &str| Error::invalid(format!("super player update needs more {what}"));
+    let mut ev: Vec<serde_json::Value> = Vec::new();
+    let call = |site: u32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?}))
+    };
+    let with = |mut v: serde_json::Value, key: &str, val: serde_json::Value| {
+        v[key] = val;
+        v
+    };
+    let store = |site: u32, region: &str, offset: u32, size: u32, value: u64| {
+        let mask = if size == 4 {
+            u32::MAX as u64
+        } else {
+            (1u64 << (8 * size)) - 1
+        };
+        serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value & mask})
+    };
+    let local = |site: u32, target: u32, args: &[u32]| serde_json::json!({"site":site,"local":target,"args":args});
+    let trio = [a.entity, a.data2, a.player];
+    let triple = |ev: &mut Vec<serde_json::Value>, sites: [u32; 3]| -> Result<()> {
+        for site in sites {
+            ev.push(with(call(site)?, "args", serde_json::json!(trio)));
+        }
+        Ok(())
+    };
+    let mut action = f.action;
+    let mut entity_flags = f.entity_flags;
+    let mut counter = f.counter_35c;
+    let mut timer = f.timer_35e;
+    let mut f68 = f.f68;
+    let mut anim_176 = f.anim_176;
+    let mut f18c = None;
+    let mut v360 = f.v360;
+    let mut fx = f.fx.as_ref().map(|x| (x.f04, x.i0c));
+    let float = |r: i32| r as f64 as f32;
+
+    ev.push(with(
+        call(0xadd8)?,
+        "args",
+        serde_json::json!([a.task, a.entity, a.data2, a.player]),
+    ));
+    let enabled = f.enabled_mask as i32 & (1i32.wrapping_shl(f.slot as u32)) != 0;
+    if !enabled {
+        ev.push(local(
+            0xae1c,
+            0xbad0,
+            &[a.entity, a.data2, a.player, a.player],
+        ));
+    }
+    // Collision flags for this frame.
+    let mut inner_04 = f.inner_04 & !0x4000;
+    ev.push(store(0xae38, "inner", 4, 4, inner_04.into()));
+    let (low, mid) = if f.flags_10 as u16 & 0x8000 != 0 {
+        (3, 3)
+    } else if entity_flags as u16 & 0x400 != 0 {
+        inner_04 |= 0x4000;
+        ev.push(store(0xae78, "inner", 4, 4, inner_04.into()));
+        (2, 1)
+    } else {
+        (0, 0)
+    };
+    let mut inner_03 = (f.inner_03 & 0xfc) | (low & 3);
+    ev.push(store(0xae98, "inner", 3, 1, inner_03.into()));
+    inner_03 = (inner_03 & 0xf3) | ((mid << 2) & 0xc);
+    ev.push(store(0xaeac, "inner", 3, 1, inner_03.into()));
+    let boosting = action == 61 || (action as u8).wrapping_sub(62) <= 2 || action == 67;
+    let inner_34 = if boosting {
+        f.inner_34 & !0x10
+    } else {
+        f.inner_34 | 0x10
+    };
+    ev.push(store(
+        if boosting { 0xaee0 } else { 0xaef0 },
+        "inner",
+        0x34,
+        4,
+        inner_34.into(),
+    ));
+    let mut collision_flags = f.collision_flags;
+    // Unless the player is posing, the engine is given the player radius
+    // plus the length of the player's 0x64 vector.
+    let camera_follow = |ev: &mut Vec<serde_json::Value>,
+                         lengths: &mut dyn Iterator<Item = f32>,
+                         sites: [u32; 3]|
+     -> Result<()> {
+        ev.push(with(call(sites[0])?, "args", serde_json::json!([a.task])));
+        ev.push(with(
+            call(sites[1])?,
+            "args",
+            serde_json::json!([a.player + 0x64]),
+        ));
+        let len = lengths.next().ok_or_else(|| missing("lengths"))?;
+        ev.push(with(
+            with(call(sites[2])?, "args", serde_json::json!([a.task])),
+            "floats",
+            serde_json::json!([f.f134 + len]),
+        ));
+        Ok(())
+    };
+    let clear_follow =
+        |ev: &mut Vec<serde_json::Value>, collision_flags: &mut u16, sites: [u32; 3]| {
+            *collision_flags &= !0x1f;
+            ev.push(store(sites[0], "collision", 0xa2, 2, 0xffff));
+            ev.push(store(sites[1], "collision", 0xa4, 4, 0));
+            ev.push(store(
+                sites[2],
+                "collision",
+                4,
+                2,
+                (*collision_flags).into(),
+            ));
+        };
+    if enabled {
+        ev.push(local(0xaf24, 0xc598, &[a.entity, a.data2, a.player]));
+        ev.push(with(
+            call(0xaf30)?,
+            "args",
+            serde_json::json!([a.entity, a.player]),
+        ));
+        let anim = f.anim_178;
+        let posing = anim == 54
+            || (anim as u16).wrapping_sub(100) <= 2
+            || (anim as u16).wrapping_sub(112) <= 1
+            || anim == 85;
+        if posing {
+            clear_follow(&mut ev, &mut collision_flags, [0xaf94, 0xafa0, 0xafb0]);
+        } else {
+            camera_follow(&mut ev, &mut lengths, [0xaf6c, 0xaf74, 0xaf84])?;
+        }
+        ev.push(with(call(0xafc0)?, "args", serde_json::json!(trio)));
+    } else {
+        counter = counter.wrapping_add(1);
+        ev.push(store(0xafd0, "player", 0x35c, 1, counter as u8 as u64));
+        if counter >= 6 {
+            counter = 0;
+            ev.push(store(0xafe8, "player", 0x35c, 1, 0));
+        }
+        // Spark effect when the player moves faster than its threshold.
+        if !matches!(action, 15 | 53 | 0 | 59 | 57) {
+            ev.push(with(
+                call(0xb020)?,
+                "args",
+                serde_json::json!([a.player + 0x64]),
+            ));
+            let len = lengths.next().ok_or_else(|| missing("lengths"))?;
+            if len > f.fec {
+                ev.push(call(0xb030)?);
+                let r = randoms.next().ok_or_else(|| missing("randoms"))?;
+                let n = (k(0xb06a)? * (k(0xb05a)? * float(r))) as f64 as i32;
+                ev.push(with(
+                    call(0xb094)?,
+                    "args",
+                    serde_json::json!([f.slot as i32 as u32, n as u32, a.player + 0x218, a.data2]),
+                ));
+            }
+        }
+        // Action dispatch (jump table at section 5 + 0x3fd50).
+        let approach = |ev: &mut Vec<serde_json::Value>,
+                        f68: &mut f32,
+                        sites: (u32, usize, usize, u32)|
+         -> Result<()> {
+            ev.push(with(
+                call(sites.0)?,
+                "floats",
+                serde_json::json!([*f68, k(sites.1)?, k(sites.2)?]),
+            ));
+            *f68 = f.approach;
+            ev.push(store(
+                sites.3,
+                "player",
+                0x68,
+                4,
+                f.approach.to_bits().into(),
+            ));
+            Ok(())
+        };
+        let move3 =
+            |ev: &mut Vec<serde_json::Value>, site: u32| ev.push(local(site, 0xe370, &trio));
+        let hold3 =
+            |ev: &mut Vec<serde_json::Value>, site: u32| ev.push(local(site, 0xe9f0, &trio));
+        match action {
+            0 | 59 => {
+                if action == 0 {
+                    action = 59;
+                    ev.push(store(0xb0c4, "entity", 0, 1, 59));
+                }
+                if f.anim_178 == 99 {
+                    hold3(&mut ev, 0xb104);
+                } else {
+                    ev.push(with(call(0xb0e0)?, "args", serde_json::json!(trio)));
+                    move3(&mut ev, 0xb0f0);
+                }
+                triple(&mut ev, [0xb114, 0xb124, 0xb134])?;
+            }
+            60 => {
+                move3(&mut ev, 0xb148);
+                triple(&mut ev, [0xb158, 0xb168, 0xb178])?;
+                ev.push(local(0xb180, 0xe1ac, &[a.player]));
+            }
+            61..=64 => {
+                let i = (action - 61) as u32;
+                let sites = [
+                    (0xb1a4, 0xb18e, 0xb19a, 0xb1a8),
+                    (0xb20c, 0xb1f6, 0xb202, 0xb210),
+                    (0xb274, 0xb25e, 0xb26a, 0xb278),
+                    (0xb2dc, 0xb2c6, 0xb2d2, 0xb2e0),
+                ][i as usize];
+                approach(&mut ev, &mut f68, sites)?;
+                move3(&mut ev, sites.0 + 0x14);
+                triple(&mut ev, [sites.0 + 0x24, sites.0 + 0x34, sites.0 + 0x44])?;
+            }
+            67 => {
+                triple(&mut ev, [0xb334, 0xb344, 0xb354])?;
+                ev.push(local(0xb364, 0xc67c, &[a.entity, a.player, a.player]));
+            }
+            15 => triple(&mut ev, [0xb378, 0xb388, 0xb398])?,
+            53 => {
+                hold3(&mut ev, 0xb3ac);
+                triple(&mut ev, [0xb3bc, 0xb3cc, 0xb3dc])?;
+            }
+            57 => {
+                // Ring-out: after 40 frames a burst of 15 debris pieces.
+                let t = timer;
+                timer = timer.wrapping_add(1);
+                ev.push(store(0xb3ec, "player", 0x35e, 2, timer as u16 as u64));
+                if t > 40 && f.anim_178 != 104 {
+                    f18c = Some(f.f184);
+                    ev.push(store(0xb408, "player", 0x18c, 4, f.f184.to_bits().into()));
+                    anim_176 = 104;
+                    ev.push(store(0xb410, "player", 0x176, 2, 104));
+                    let scale = k(0xb422)?;
+                    for _ in 0..15 {
+                        let mut u = || -> Result<f32> {
+                            Ok(scale * float(randoms.next().ok_or_else(|| missing("randoms"))?))
+                        };
+                        let mut us = [0f32; 6];
+                        for (i, site) in [0xb48c, 0xb4cc, 0xb50c, 0xb54c, 0xb588, 0xb5d0]
+                            .into_iter()
+                            .enumerate()
+                        {
+                            ev.push(call(site)?);
+                            us[i] = u()?;
+                        }
+                        let pos = [
+                            k(0xb432)? - k(0xb42a)? * us[0],
+                            k(0xb442)? - k(0xb43a)? * us[1],
+                            k(0xb432)? + k(0xb44a)? * us[2],
+                        ];
+                        let speed = k(0xb45a)? + k(0xb452)? * us[3];
+                        let ang_a = (k(0xb46a)? - k(0xb462)? * us[4]) as f64 as i32;
+                        let ang_b = (k(0xb472)? * us[5]) as f64 as i32;
+                        let mut t5 = [0f32; 5];
+                        for (i, (site, ang)) in [
+                            (0xb614, ang_b),
+                            (0xb620, ang_a),
+                            (0xb634, ang_a),
+                            (0xb644, ang_b),
+                            (0xb650, ang_a),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            ev.push(with(call(site)?, "args", serde_json::json!([ang as u32])));
+                            t5[i] = trig.next().ok_or_else(|| missing("trig"))?;
+                        }
+                        let dir = [speed * t5[1] * t5[0], speed * t5[2], speed * t5[4] * t5[3]];
+                        ev.push(with(
+                            call(0xb668)?,
+                            "vectors",
+                            serde_json::json!([dir, f.v230]),
+                        ));
+                        ev.push(call(0xb66c)?);
+                        let size = k(0xb47a)? + u()?;
+                        ev.push(serde_json::json!({"site":0xb6ac,"local":0x1425c,"vectors":[dir, pos],"floats":[size]}));
+                    }
+                }
+                ev.push(with(call(0xb6c8)?, "args", serde_json::json!(trio)));
+                hold3(&mut ev, 0xb6d8);
+                triple(&mut ev, [0xb6e8, 0xb6f8, 0xb708])?;
+            }
+            58 => ev.push(local(
+                0xb720,
+                0xdc90,
+                &[a.entity, a.data2, a.player, a.player],
+            )),
+            _ => {}
+        }
+        ev.push(with(
+            call(0xb728)?,
+            "args",
+            serde_json::json!([a.player + 0x174]),
+        ));
+        ev.push(local(0xb738, 0xc598, &trio));
+        if let Some((mut f04, mut i0c)) = fx {
+            ev.push(call(0xb748)?);
+            let r = randoms.next().ok_or_else(|| missing("randoms"))?;
+            let jitter = k(0xb772)? * float(r);
+            // Character 9 and 10 each scale the travel since last frame.
+            for (ch, s) in [
+                (
+                    9,
+                    [
+                        0xb7b0u32, 0xb7b8, 0xb7be, 0xb7d4, 0xb808, 0xb816, 0xb85a, 0xb85a, 0xb87c,
+                        0xb88e, 0xb8a8, 0xb8b0,
+                    ],
+                ),
+                (
+                    10,
+                    [
+                        0xb8e4, 0xb8ec, 0xb8f2, 0xb908, 0xb93c, 0xb94a, 0xb98e, 0xb99a, 0xb9bc,
+                        0xb9ce, 0xb9e8, 0xb9f0,
+                    ],
+                ),
+            ] {
+                if f.character != ch {
+                    continue;
+                }
+                ev.push(with(
+                    call(s[0])?,
+                    "vectors",
+                    serde_json::json!([f.v218, v360]),
+                ));
+                ev.push(with(call(s[1])?, "vectors", serde_json::json!([f.v218])));
+                let len = lengths.next().ok_or_else(|| missing("lengths"))?;
+                let travel = k(s[2] as usize)? * len;
+                v360 = f.v218;
+                for (i, v) in v360.iter().enumerate() {
+                    ev.push(store(
+                        s[3] + [0, 4, 0xc][i],
+                        "player",
+                        0x360 + 4 * i as u32,
+                        4,
+                        v.to_bits().into(),
+                    ));
+                }
+                if travel.abs() > f04.abs() {
+                    f04 = travel;
+                    ev.push(store(s[4], "fx", 4, 4, f04.to_bits().into()));
+                }
+                if travel.abs() >= k(s[5] as usize)? {
+                    let step = if ch == 9 {
+                        k(s[6] as usize)? + k(s[6] as usize)? * jitter
+                    } else {
+                        k(s[6] as usize)? + k(s[7] as usize)? * jitter
+                    };
+                    i0c = (float(i0c) + step) as f64 as i32;
+                    ev.push(store(s[8], "fx", 0xc, 4, i0c as u32 as u64));
+                } else if travel.abs() > k(s[9] as usize)? {
+                    i0c = 0x4000;
+                    ev.push(store(s[10], "fx", 0xc, 4, 0x4000));
+                }
+                ev.push(with(call(s[11])?, "args", serde_json::json!([a.fx])));
+            }
+            fx = Some((f04, i0c));
+        }
+        ev.push(with(
+            call(0xb9fc)?,
+            "args",
+            serde_json::json!([f.slot as i32 as u32]),
+        ));
+        if f.defeat_query != 0 {
+            action = 58;
+            ev.push(store(0xba0c, "entity", 0, 1, 58));
+            entity_flags &= -0x3501;
+            ev.push(store(0xba1c, "entity", 4, 2, entity_flags as u16 as u64));
+        }
+        ev.push(with(
+            call(0xba28)?,
+            "args",
+            serde_json::json!([a.entity, a.player]),
+        ));
+        if f.anim_178 == 54 || f.anim_178 == 85 || action == 54 {
+            clear_follow(&mut ev, &mut collision_flags, [0xba7c, 0xba88, 0xba98]);
+        } else {
+            camera_follow(&mut ev, &mut lengths, [0xba54, 0xba5c, 0xba6c])?;
+        }
+        ev.push(with(call(0xbaa8)?, "args", serde_json::json!(trio)));
+    }
+    Ok(
+        serde_json::json!({"events":ev,"action":action,"entity_flags":entity_flags,
+        "collision_flags":collision_flags,"inner_03":inner_03,"inner_04":inner_04,"inner_34":inner_34,
+        "counter_35c":counter,"timer_35e":timer,"f68":f68,"anim_176":anim_176,"f18c":f18c,
+        "v360":v360,"fx":fx.map(|(a, b)| serde_json::json!({"f04":a,"i0c":b})),
+        "scope":"Control flow of 0xad8c. Engine services and the local movement handlers 0xbad0, 0xc598, 0xe370, 0xe9f0, 0xe1ac, 0xc67c and 0xdc90 are reported, not run."}),
     )
 }
