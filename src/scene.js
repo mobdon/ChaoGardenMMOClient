@@ -16,6 +16,7 @@ import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
 import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
 import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
+import { attachNativeBehaviours, readBehaviour, updateNativeBehaviour } from './chao-behaviour.js';
 import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
@@ -249,6 +250,17 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     return `${String(data.form || 'normal').toLowerCase()}:${!!data.admin}:${assetFor(data)}:${vehicleFor(data) || ''}:${data.body?.look?.color ?? 0}`;
   }
 
+  // Babylon does not expose top-level glTF asset extras; read them from the
+  // GLB JSON chunk so tooling provenance (e.g. native clip tables) is available.
+  function readGlbAssetExtras(bytes) {
+    try {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (view.getUint32(16, true) !== 0x4e4f534a) return null;
+      const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + view.getUint32(12, true))));
+      return json.asset?.extras ?? null;
+    } catch { return null; }
+  }
+
   function loadLocalAsset(key) {
     if (assetContainers.has(key)) return assetContainers.get(key);
     const task = (async () => {
@@ -261,6 +273,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         if (bytes.byteLength < 12 || new DataView(bytes.buffer).getUint32(0, true) !== 0x46546c67 || disposed) return null;
         const container = await LoadAssetContainerAsync(bytes, scene, { pluginExtension: '.glb', name: `${key}.glb` });
         if (disposed) { container.dispose(); return null; }
+        container.gltfAssetExtras = readGlbAssetExtras(bytes);
         for (const group of container.animationGroups) group.stop();
         const faceMaterials = {
           chao: ['al_ncz.sa2mdl_3', 'al_ncz.sa2mdl_4', 'al_ncz.sa2mdl_5'],
@@ -446,6 +459,14 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         attachNativeLocomotion(item.imported, source, locomotionPose);
         canvas.dataset.nativeRun = item.imported.run ? 'native119-loaded' : 'unavailable';
         canvas.dataset.nativeAir = item.imported.jumpUp && item.imported.jumpDown ? 'native132-137-loaded' : 'unavailable';
+      }
+    });
+    // Native motion states for the server's ChaoMain behaviour port are an
+    // optional local import; without them residents use locomotion.
+    void loadLocalAsset('chao-behaviour').then(source => {
+      if (source && !disposed && !item.root.isDisposed()) {
+        attachNativeBehaviours(item.imported, source, locomotionPose);
+        canvas.dataset.nativeBehaviour = item.imported.behaviourCatalog.size ? `${item.imported.behaviourCatalog.size}-loaded` : 'unavailable';
       }
     });
     item.imported.skate = createShadowSkate(item.imported);
@@ -1465,6 +1486,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       item.absoluteY = Number.isFinite(data.groundY);
       item.heading = Number.isFinite(data.facing) ? data.facing : null;
       item.mech = data.mech || null;
+      // Server-run native behaviour: motion state, frame and face as of this
+      // snapshot, extrapolated locally until the next one (presentation only).
+      item.behaviour = readBehaviour(data.watch, performance.now());
       const previous = item.motionSample;
       if (!Number.isFinite(previous?.serverTime) || previous.zone !== data.zone || next.serverTime > previous.serverTime) {
         item.motionSample = observeSkateMotion(previous, data, next.serverTime, performance.now());
@@ -1613,7 +1637,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item.nativeVisualSpeed = movingPose ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
         const kinematics = { speed, visualSpeed: item.nativeVisualSpeed, grounded,
           jumpOffset: motion?.jumpOffset, verticalVelocity: motion?.verticalVelocity, fresh, swimming, mounted };
-        const groundMotion = grounded
+        const behaviourMotion = item.behaviour && grounded && imported.behaviourCatalog?.size
+          ? updateNativeBehaviour(imported, item.root, item.behaviour, { now: performance.now(), fresh, mounted, swimming })
+          : null;
+        const groundMotion = grounded && !behaviourMotion
           ? updateNativeLocomotion(imported, imported.motionState, dt, kinematics) : null;
 
         skate?.update(dt, {
@@ -1623,9 +1650,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           footwear: item.gear?.footwear === 'shadow-air-shoes' && !!item.ownerGear?.footwear?.length,
         });
         const skating = skate?.diagnostics;
-        item.nativeMotion = groundMotion ?? updateNativeLocomotion(imported, imported.motionState, dt, {
-          ...kinematics, grounded: !!skating?.coasting,
-        });
+        item.nativeMotion = behaviourMotion ? { mode: 'Behaviour', nativeState: behaviourMotion.nativeState, behaviour: behaviourMotion.fn }
+          : groundMotion ?? updateNativeLocomotion(imported, imported.motionState, dt, {
+            ...kinematics, grounded: !!skating?.coasting,
+          });
         item.nativeGait = item.nativeMotion.mode;
         const groundJets = fresh && grounded && !swimming && !mounted && item.nativeMotion.mode !== 'Land';
         for (const entry of item.ownerGear?.footwear || []) {
