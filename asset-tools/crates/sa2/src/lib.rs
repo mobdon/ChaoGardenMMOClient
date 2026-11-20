@@ -41,6 +41,7 @@ pub mod enemy_lib;
 pub mod event;
 pub mod event_camera;
 pub mod glb_cli;
+pub mod hunter;
 pub mod input;
 pub mod iron_gate_movers;
 mod key_pickup;
