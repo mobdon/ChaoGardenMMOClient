@@ -46,6 +46,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `boss_voice` | 0xaf0 | Voice roll: player within 4:0xcc of work point 6:0x200, random roll (native int-to-float bias trick) below 4:0xd4 plays voice 0x11 with a random length through 0x80112050 |
 | `boss_support` | 0x1e04, 0x1ed8, 0x1f94, 0x1fc8, 0x2078, 0x210c | Boss draw handler (GX state, rotation, motion draw); screen effect with its stack parameter block (table 5:0x2dd4, clock reset past 13); screen reset; mirrored follow point (z negated, pushed to 4:0x118 / 4:0x11c near the plane); effect block from template 5:0x2de0; effect kind. Request field `routine` picks one |
 | `boss_scroll` | 0x2138, 0x2218, 0x2300 | Texture scroll draws: offset (speed 5:0x31f0 * frame counter) & 0x1fff (0x2218 negates the speed), models drawn between the two scrolls, the first two rotated by the argument |
+| `boss_core` | 0x8328, 0x8528, 0x866c, 0x86b8, 0x87e4, 0x8818, 0x8880, 0x8ac8 | Boss core (child) object: update dispatch (actions 1, 2, 3, 5 to 0x783c, 0x79dc, 0x7d6c, 0x7f58), construction (update 0x8328, draw 0x83dc, delete 0x8524), reset, stage set (0x743c slot, collision word 4 flag 0x10), hit query (entity flag 4), clear, pattern table 5:0x36d2c, release. Request field `routine` picks one |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -275,6 +276,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_boss_voice_ppc.py` | 2000 seeded rolls: distance around the radius, random words including sign and width extremes for the first roll (the second stays within rand range, since Unicorn does not saturate fctiwz overflow as PowerPC does) |
 | `tests/finalhazard_boss_support_ppc.py` | 497 calls with stack parameter blocks compared word by word: draw, screen effect indices, flags and counts, follow points around the plane edge (signed zeros included), effect block, effect kind |
 | `tests/finalhazard_boss_scroll_ppc.py` | 900 draws: speed extremes and signs, full-range frame counters, both reads changed independently |
+| `tests/finalhazard_boss_core_ppc.py` | 247 calls: pause and every action, each construction failure, stage set by action and slot, hit flags, the whole pattern table, release |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 

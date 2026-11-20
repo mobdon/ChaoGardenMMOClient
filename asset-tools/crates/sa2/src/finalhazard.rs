@@ -954,6 +954,8 @@ pub enum PlacementClock {
     BossSupport(Box<BossSupportFrame>),
     /// Section 1 + 0x2138, 0x2218 and 0x2300: boss texture scroll draws.
     BossScroll(Box<BossScrollFrame>),
+    /// Section 1 + 0x8328..0x8b0c: the boss core (child) object.
+    BossCore(Box<BossCoreFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2743,6 +2745,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossVoice(frame) => return boss_voice(&rel, &frame),
         PlacementClock::BossSupport(frame) => return boss_support(&rel, &frame),
         PlacementClock::BossScroll(frame) => return boss_scroll(&rel, &frame),
+        PlacementClock::BossCore(frame) => return boss_core(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6832,4 +6835,242 @@ fn boss_scroll(
         _ => return Err(Error::invalid("not a boss texture scroll routine")),
     };
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of a boss core routine. `task` is the core task; its entity is
+/// task word 0x34 and its block task word 0x40. Values are as the code
+/// reads them, after any call that comes first.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum BossCoreFrame {
+    /// 0x8328: core update; `pause` is global byte 0x801cbd88 + 0x37.
+    Update { task: u32, pause: i8, action: i8 },
+    /// 0x8528: core construction for `parent` with stage byte `stage`; the
+    /// task and block allocations, and byte 3 of the 0x80005588 result.
+    Construct {
+        parent: u32,
+        stage: u8,
+        task: u32,
+        block: u32,
+        collision_flags: u8,
+    },
+    /// 0x866c: core reset.
+    Reset { task: u32 },
+    /// 0x86b8: set the core stage `value`; `block_stage` and `block_slot` are
+    /// block bytes 0 and 1, `slot` the result of 0x743c, `action` the
+    /// entity action, `collision_word` word 4 of the 0x80005588 result.
+    SetStage {
+        task: u32,
+        value: i8,
+        block_stage: i8,
+        block_slot: u8,
+        slot: u8,
+        action: i8,
+        collision_word: u32,
+    },
+    /// 0x87e4: hit query; `flags` is entity half-word 4.
+    HitQuery { task: u32, flags: i16 },
+    /// 0x8818: clear the hit; `flags` is entity half-word 4 after the calls.
+    Clear { task: u32, flags: i16 },
+    /// 0x8880: table byte for block bytes 0 and 1.
+    Pattern {
+        task: u32,
+        block_stage: i8,
+        block_slot: i8,
+    },
+    /// 0x8ac8: free task word 0x38.
+    Release { block: u32 },
+}
+/// The boss core object: update dispatch (actions 1, 2, 3, 5 to 0x783c,
+/// 0x79dc, 0x7d6c, 0x7f58, then 0x7684 and 0x8000f4ec), construction, reset,
+/// stage set, hit query and clear, the pattern table 5:0x36d2c and release.
+fn boss_core(rel: &crate::city_rel::CityRel<'_>, f: &BossCoreFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: serde_json::Value| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!(boss_constant(rel, site)?.to_bits()))
+    };
+    let n = |v: u32| serde_json::json!(v);
+    let mut ev = Vec::new();
+    let mut returned = None;
+    match f {
+        BossCoreFrame::Update {
+            task,
+            pause,
+            action,
+        } => {
+            if *pause == 0 {
+                let target = match action {
+                    1 => Some((0x8390, 0x783c)),
+                    2 => Some((0x839c, 0x79dc)),
+                    3 => Some((0x83a8, 0x7d6c)),
+                    5 => Some((0x83b4, 0x7f58)),
+                    _ => None,
+                };
+                if let Some((site, routine)) = target {
+                    ev.push(local(site, routine, serde_json::json!([task])));
+                }
+                ev.push(local(0x83bc, 0x7684, serde_json::json!([task])));
+                ev.push(call(0x83c4, serde_json::json!([task]))?);
+            }
+        }
+        BossCoreFrame::Construct {
+            parent,
+            stage,
+            task,
+            block,
+            collision_flags,
+        } => {
+            returned = Some(0);
+            if *parent != 0 {
+                ev.push(call(
+                    0x8564,
+                    serde_json::json!([2, module_ref(rel, 0x855e, 0)?]),
+                )?);
+                if *task != 0 {
+                    ev.extend([
+                        st(
+                            0x8584,
+                            "task",
+                            0x14,
+                            4,
+                            serde_json::json!(module_ref(rel, 0x857e, 0)?),
+                        ),
+                        st(
+                            0x8590,
+                            "task",
+                            0x18,
+                            4,
+                            serde_json::json!(module_ref(rel, 0x858a, 0)?),
+                        ),
+                        call(0x85a0, serde_json::json!([1, 0x28]))?,
+                    ]);
+                    if *block == 0 {
+                        ev.push(call(0x85b0, serde_json::json!([task]))?);
+                    } else {
+                        ev.extend([
+                            st(0x85bc, "task", 0x40, 4, n(*block)),
+                            st(0x85c4, "entity", 0, 1, n(0)),
+                            st(0x85c8, "block", 0, 1, n((*stage).into())),
+                            st(0x85d8, "block", 0x24, 4, k(0x85ce)?),
+                            st(0x85e8, "entity", 0x24, 4, k(0x85de)?),
+                            st(0x85f8, "entity", 0x20, 4, k(0x85ee)?),
+                            st(0x8600, "entity", 0x28, 4, k(0x85ee)?),
+                            call(0x8618, serde_json::json!([task, module_ref(rel, 0x860a, 0)?, 1, 3]))?,
+                            serde_json::json!({"site":0x862c,"call":engine_import(rel, 0x862c)?,"args":[task],
+                                "floats":[f64::from(boss_constant(rel, 0x8622)?)]}),
+                            call(0x8638, serde_json::json!([task, 0]))?,
+                            st(0x8648, "collision", 3, 1, n(u32::from(collision_flags | 0xc))),
+                        ]);
+                        returned = Some(*task);
+                    }
+                }
+            }
+        }
+        BossCoreFrame::Reset { task } => {
+            ev.extend([
+                st(0x8688, "block", 3, 1, n(0xff)),
+                st(0x868c, "block", 2, 1, n(0xff)),
+                local(0x8690, 0x8818, serde_json::json!([task])),
+                st(0x8698, "entity", 0, 1, n(3)),
+                st(0x86a0, "entity", 1, 1, n(0)),
+            ]);
+        }
+        BossCoreFrame::SetStage {
+            task,
+            value,
+            block_stage,
+            block_slot,
+            slot,
+            action,
+            collision_word,
+        } => {
+            let v = n(*value as u8 as u32);
+            ev.push(local(0x86e8, 0x8818, serde_json::json!([task])));
+            if value != block_stage {
+                ev.push(local(0x8704, 0x743c, serde_json::json!([u32::MAX])));
+            } else {
+                ev.push(local(0x8710, 0x743c, serde_json::json!([block_slot])));
+            }
+            let s = n((*slot).into());
+            match action {
+                2 => ev.extend([
+                    st(0x8724, "block", 2, 1, v),
+                    st(0x8728, "block", 3, 1, s),
+                    st(0x8730, "entity", 0, 1, n(3)),
+                    st(0x8738, "entity", 1, 1, n(0)),
+                ]),
+                3 => ev.extend([st(0x8748, "block", 1, 1, s), st(0x874c, "block", 0, 1, v)]),
+                _ => {
+                    ev.extend([
+                        st(0x8758, "block", 1, 1, s),
+                        st(0x875c, "block", 0, 1, v),
+                        st(0x876c, "entity", 0x20, 4, k(0x8762)?),
+                        st(0x8774, "entity", 0x28, 4, k(0x8762)?),
+                        call(0x8780, serde_json::json!([task, 0]))?,
+                        st(0x878c, "collision", 4, 4, n(collision_word & !0x10)),
+                        local(0x8790, 0x1f94, serde_json::json!([])),
+                        st(0x8798, "entity", 0, 1, n(1)),
+                        st(0x87a0, "entity", 1, 1, n(0)),
+                    ]);
+                }
+            }
+            ev.push(call(0x87b0, serde_json::json!([task, 0, 0]))?);
+            ev.push(call(0x87c0, serde_json::json!([task, 0, 3]))?);
+        }
+        BossCoreFrame::HitQuery { task, flags } => {
+            returned = Some(if *task == 0 {
+                u32::MAX
+            } else if flags & 4 != 0 {
+                1
+            } else {
+                0
+            });
+        }
+        BossCoreFrame::Clear { task, flags } => {
+            if *task != 0 {
+                ev.extend([
+                    call(0x8848, serde_json::json!([task, 0, 1]))?,
+                    call(0x8858, serde_json::json!([task, 0, 0]))?,
+                    st(0x8864, "entity", 4, 2, n(u32::from(*flags as u16 & !4))),
+                ]);
+            }
+        }
+        BossCoreFrame::Pattern {
+            task,
+            block_stage,
+            block_slot,
+        } => {
+            returned = Some(if *task == 0 {
+                u32::MAX
+            } else {
+                let table = rel
+                    .reference(1, 0x88a2)
+                    .filter(|r| r.module == 88 && r.section == 5)
+                    .ok_or_else(|| Error::invalid("missing core pattern table"))?
+                    .addend as i64;
+                let at = table + 8 * i64::from(*block_stage) + i64::from(*block_slot);
+                u32::from(
+                    usize::try_from(at)
+                        .ok()
+                        .and_then(|at| rel.data(5).ok()?.get(at).copied())
+                        .ok_or_else(|| Error::invalid("core pattern index out of range"))?,
+                )
+            });
+        }
+        BossCoreFrame::Release { block } => {
+            if *block != 0 {
+                ev.push(call(0x8aec, serde_json::json!([block]))?);
+                ev.push(st(0x8af4, "task", 0x38, 4, n(0)));
+            }
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
 }
