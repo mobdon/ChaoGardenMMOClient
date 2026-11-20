@@ -177,7 +177,7 @@ pub fn target_fps() -> u32 {
 fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
     let attrs = Window::default_attributes()
         .with_title("SA2 (recompiled)")
-        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 960.0));
+        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
     let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let surface = instance
@@ -272,6 +272,12 @@ impl ApplicationHandler for App {
                 for mut f in self.rx.try_iter() {
                     for u in f.uploads.drain(..) {
                         g.renderer.replace_texture(u.id, &u.levels);
+                    }
+                    // A window wider than 4:3 sees more of the 3D view, with
+                    // the HUD at its edges (SA2_ASPECT=4:3 keeps the original).
+                    if std::env::var("SA2_ASPECT").map_or(true, |a| a.trim() != "4:3") {
+                        let aspect = g.config.width as f32 / g.config.height.max(1) as f32;
+                        sa2_gx::widescreen::widen(&mut f, aspect);
                     }
                     let prev = self.last.take();
                     self.tween = prev

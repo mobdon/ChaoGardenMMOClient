@@ -113,6 +113,27 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
             }
             eprintln!("  {} distinct viewport/projection pairs", seen.len());
         }
+        // SA2_SNAP_2D: the last 40 draws (the HUD) and their textures.
+        if std::env::var_os("SA2_SNAP_2D").is_some() {
+            for (i, d) in f.draws.iter().enumerate().skip(f.draws.len().saturating_sub(40)) {
+                for m in d.material_params.texture_mappings.iter().filter(|m| m.texture.is_some()) {
+                    eprintln!(
+                        "frame {n} 2d draw {i}: {} verts, tex {:?} {}x{} wrap {}/{} filter {}/{} lod {}..{}",
+                        d.indices.len(),
+                        m.texture,
+                        m.width,
+                        m.height,
+                        m.sampler.wrap_s,
+                        m.sampler.wrap_t,
+                        m.sampler.min_filter,
+                        m.sampler.mag_filter,
+                        m.sampler.min_lod_x16,
+                        m.sampler.max_lod_x16
+                    );
+                }
+                eprintln!("frame {n} 2d draw {i}: mtx0 {:?} proj {:?} vp {:?} pn {}", d.draw_params.pos_mtx[0], d.projection, d.viewport, d.material.use_pn_mtx_idx);
+            }
+        }
         // SA2_SNAP_COPIES: the frame's EFB copies and every draw sampling one.
         if std::env::var_os("SA2_SNAP_COPIES").is_some() {
             for c in &f.tex_copies {

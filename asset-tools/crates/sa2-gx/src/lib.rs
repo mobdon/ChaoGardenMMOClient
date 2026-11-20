@@ -17,3 +17,4 @@ pub mod params;
 pub mod shader;
 pub mod texture;
 pub mod vtx;
+pub mod widescreen;
