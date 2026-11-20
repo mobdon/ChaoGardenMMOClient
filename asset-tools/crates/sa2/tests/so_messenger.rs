@@ -3,10 +3,14 @@
 //! (tests/so_messenger_ppc.py), case by case and frame by frame: the calls
 //! the REL code makes and the state it leaves.
 use sa2_asset_tools::ninja_matrix::{MatrixStack, Mtx};
+use sa2_asset_tools::prison_visuals::MslRand;
 use sa2_asset_tools::stage_objects::{
+    dyn_land::{Movable, MovableHost, ShadowBlock, WORDS},
     host::{Event as HostEvent, ObjectHost},
     messenger::{
         self,
+        omochao::PlaceHost,
+        shadow::{self, Gx, Shadow, ShadowHost},
         trail::{self, Trail, TrailDesc, TrailDraw, TrailHost},
         Event, MessengerHost, MessengerTask, NewTask, SpawnArgs, Spawned, Twp, Work, STG42D,
     },
@@ -57,9 +61,11 @@ struct Recorder {
     out: bool,
     calloc_ok: VecDeque<bool>,
     tasks_ok: VecDeque<bool>,
-    cwp: VecDeque<Option<u32>>,
     windows: VecDeque<u32>,
-    place: VecDeque<([f32; 3], [f32; 3])>,
+    bones: VecDeque<Option<[f32; 3]>>,
+    chara: VecDeque<i32>,
+    player0: Option<[f32; 3]>,
+    body: u32,
     state: i32,
     frame: i32,
     reset: i8,
@@ -75,9 +81,10 @@ impl Recorder {
     fn plans(&mut self, p: &Value) {
         self.calloc_ok = deque(&p["calloc_ok"], |b| b.as_bool().unwrap());
         self.tasks_ok = deque(&p["tasks_ok"], |b| b.as_bool().unwrap());
-        self.cwp = deque(&p["cwp"], |c| c.as_i64().map(|c| c as u32));
         self.windows = deque(&p["windows"], u);
-        self.place = deque(&p["place"], |p| (v3(&p[0]), v3(&p[1])));
+        self.bones = deque(&p["bones"], |b| (!b.is_null()).then(|| v3(b)));
+        self.chara = deque(&p["chara"], i);
+        self.player0 = (!p["player0"].is_null()).then(|| v3(&p["player0"]));
     }
     fn new_id(&mut self) -> u32 {
         let id = self.next;
@@ -163,14 +170,55 @@ impl TrailHost for Recorder {
     }
 }
 
-impl MessengerHost for Recorder {
-    fn ccl_init(&mut self, task: u32, rows: u32, count: u8, list: u8) -> Option<u32> {
-        self.events.push(json!(["ccl", task, rows, count, list]));
-        self.cwp.pop_front().flatten()
+impl MovableHost for Recorder {
+    fn sy_calloc_801197fc(&mut self, count: u32, size: u32) -> bool {
+        match self.sy_calloc(count, size) {
+            Some(id) => {
+                self.body = id;
+                true
+            }
+            None => false,
+        }
     }
-    fn place_init(&mut self) -> ([f32; 3], [f32; 3]) {
-        self.events.push(json!(["place_init", 0]));
-        self.place.pop_front().unwrap_or(([0.0; 3], [0.0; 3]))
+    fn sy_free_80119828(&mut self) {
+        let id = self.body;
+        self.sy_free(id);
+    }
+    fn get_shadow_pos_xyz_80067210(&mut self, _: &mut ShadowBlock) {
+        unreachable!()
+    }
+    fn shadow_water_80066e1c(&mut self, _: &mut ShadowBlock) -> bool {
+        unreachable!()
+    }
+    fn byte_801cc19f(&self) -> i8 {
+        unreachable!()
+    }
+}
+
+impl PlaceHost for Recorder {
+    fn fn_80038008(&mut self, n: i32, node: i32) -> Option<[f32; 3]> {
+        let r = self.bones.pop_front().flatten();
+        self.events
+            .push(json!(["bone", n, node, u32::from(r.is_some())]));
+        r
+    }
+    fn player_position(&mut self, n: i32) -> Option<[f32; 3]> {
+        if n == 0 {
+            self.player0
+        } else {
+            None
+        }
+    }
+    fn player_character(&mut self, n: i32) -> i32 {
+        let v = self.chara.pop_front().unwrap_or(0);
+        self.events.push(json!(["chara", n, v]));
+        v
+    }
+}
+
+impl MessengerHost for Recorder {
+    fn ccl_init(&mut self, task: u32, rows: u32, count: u8, list: u8) {
+        self.events.push(json!(["ccl", task, rows, count, list]));
     }
     fn create_child_task(&mut self, flags: u8, exec: u32, parent: u32) -> Option<NewTask> {
         self.task(json!(["child", flags, exec, parent]))
@@ -219,11 +267,6 @@ impl MessengerHost for Recorder {
     }
     fn msg_event(&mut self, e: Event) {
         let v = match e {
-            Event::ShadowInit { work, size } => json!(["shadow_init", work, size]),
-            Event::ShadowFree { work } => json!(["shadow_free", work]),
-            Event::LandInit { task } => json!(["land_init", task]),
-            Event::LandFree { task } => json!(["land_free", task]),
-            Event::Place { task, a, b } => json!(["place", task, bits(a), bits(b)]),
             Event::ChildInit { task, pos } => {
                 self.children.push(json!([task, bits(pos), 6]));
                 return;
@@ -234,30 +277,96 @@ impl MessengerHost for Recorder {
             Event::Fog(on) => json!(["fog", u8::from(on)]),
             Event::SetFog => json!(["setfog"]),
             Event::Blend(a, b) => json!(["blend", a, b]),
-            Event::ShadowCapture { work, pos, sin } => json!([
-                "shadow_capture",
-                work,
-                1.0f32.to_bits(),
-                bits(pos),
-                0,
-                0,
-                sin.to_bits()
-            ]),
             Event::SetTexture(t) => json!(["settexture", t]),
             Event::DrawModel { model, matrix } => {
                 let m: Vec<u32> = matrix.iter().flatten().map(|x| x.to_bits()).collect();
                 json!(["model", model, m])
             }
-            Event::ShadowEnd { work } => json!(["shadow_end", work]),
-            Event::ShadowDraw {
-                kind,
-                pos,
-                size,
-                work,
-            } => json!(["shadow_draw", kind, bits(pos), size.to_bits(), work]),
         };
         self.events.push(v);
     }
+}
+
+impl ShadowHost for Recorder {
+    fn gx(&mut self, call: Gx) {
+        let fl = |v: &[f32]| json!(v.iter().map(|x| x.to_bits()).collect::<Vec<_>>());
+        let v = match call {
+            Gx::InitTexObj {
+                owner,
+                buf,
+                width,
+                height,
+                format,
+                wrap_s,
+                wrap_t,
+                mipmap,
+            } => json!(["tex_init", owner, buf, width, height, format, wrap_s, wrap_t, mipmap]),
+            Gx::InitTexObjLod {
+                owner,
+                min_filt,
+                mag_filt,
+                lods,
+                bias_clamp,
+                edge_lod,
+                max_aniso,
+            } => json!([
+                "tex_lod",
+                owner,
+                min_filt,
+                mag_filt,
+                fl(&lods),
+                bias_clamp,
+                edge_lod,
+                max_aniso
+            ]),
+            Gx::InvalidateTexAll => json!(["tex_inval"]),
+            Gx::Viewport(v) => json!(["viewport", fl(&v)]),
+            Gx::Scissor(v) => json!(["scissor", v]),
+            Gx::Fog(on) => json!(["fog", u8::from(on)]),
+            Gx::SetFog => json!(["setfog"]),
+            Gx::Projection { m, kind } => json!(["projection", fl(m.as_flattened()), kind]),
+            Gx::TexCopySrc(v) => json!(["copy_src", v]),
+            Gx::TexCopyDst {
+                width,
+                height,
+                format,
+                mipmap,
+            } => json!(["copy_dst", width, height, format, mipmap]),
+            Gx::CopyTex { buf, clear } => json!(["copy_tex", buf, clear]),
+            Gx::PixModeSync => json!(["pix_sync"]),
+            Gx::Queue {
+                kind,
+                pos,
+                size,
+                owner,
+                buf,
+            } => json!([
+                "shadow_queue",
+                kind,
+                bits(pos),
+                size.to_bits(),
+                owner,
+                buf,
+                owner
+            ]),
+        };
+        self.events.push(v);
+    }
+}
+
+fn shadow_from(v: &Value) -> Shadow {
+    Shadow {
+        matrix: matrix(&v["matrix"]),
+        size: u(&v["size"]),
+        buf: u(&v["buf"]),
+    }
+}
+
+fn shadow_json(s: &Shadow) -> Value {
+    json!({
+        "matrix": s.matrix.as_flattened().iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        "size": s.size, "buf": s.buf,
+    })
 }
 
 fn trail_from(v: &Value) -> Option<Trail> {
@@ -380,7 +489,9 @@ fn twp_from(v: &Value) -> Twp {
     Twp {
         mode: u(&v["mode"]) as u8,
         flag1: u(&v["flag1"]) as u8,
+        id: u(&v["id"]) as u8,
         flags: i(&v["flags"]) as i16,
+        wtimer: u(&v["wtimer"]) as u16,
         ang: [i(&v["ang"][0]), i(&v["ang"][1]), i(&v["ang"][2])],
         pos: v3(&v["pos"]),
         scale: v3(&v["scale"]),
@@ -393,6 +504,7 @@ fn work_from(v: &Value) -> Option<Work> {
     }
     let mut w = Work::new(u(&v["id"]));
     w.pos = v3(&v["pos"]);
+    w.anchor = v3(&v["anchor"]);
     w.bob = i(&v["bob"]);
     w.f30 = f(&v["f30"]);
     w.sub_task = u(&v["sub_task"]);
@@ -403,6 +515,7 @@ fn work_from(v: &Value) -> Option<Work> {
     for (k, t) in w.trails.iter_mut().enumerate() {
         *t = trail_from(&v["trails"][k]);
     }
+    w.shadow = shadow_from(&v["shadow"]);
     Some(w)
 }
 
@@ -412,7 +525,11 @@ fn task_from(id: u32, has_mwp: bool, s: &Value) -> MessengerTask {
         mode: i(&s["mode"]),
         has_mwp,
         mwp_30: s["mwp_30"].as_i64().unwrap_or(0) as u32,
-        cwp_flags: s["cwp_60"].as_i64().map(|c| c as u32),
+        body: s["land"].as_array().map(|a| {
+            let w: Vec<u32> = a.iter().map(u).collect();
+            let w: [u32; WORDS] = w.try_into().unwrap();
+            Movable::from_words(&w)
+        }),
         callbacks: None,
         twp: twp_from(&s["twp"]),
         work: work_from(&s["work"]),
@@ -426,17 +543,19 @@ fn task_json(t: &MessengerTask) -> Value {
     let tw = &t.twp;
     let work = t.work.as_ref().map_or(Value::Null, |w| {
         json!({
-            "id": w.id, "pos": bits(w.pos), "bob": w.bob, "f30": w.f30.to_bits(),
+            "id": w.id, "pos": bits(w.pos), "anchor": bits(w.anchor), "bob": w.bob, "f30": w.f30.to_bits(),
             "sub_task": w.sub_task, "home": bits(w.home), "w4c": w.w4c, "w50": w.w50,
             "player": w.player,
             "trails": w.trails.iter().map(|t| trail_json(t.as_ref())).collect::<Vec<_>>(),
+            "shadow": shadow_json(&w.shadow),
         })
     });
     json!({
         "callbacks": cb, "mode": t.mode,
         "mwp_30": if t.has_mwp { json!(t.mwp_30) } else { Value::Null },
-        "cwp_60": t.cwp_flags,
-        "twp": {"mode": tw.mode, "flag1": tw.flag1, "flags": tw.flags, "ang": tw.ang,
+        "land": t.body.as_ref().map(|b| b.to_words().to_vec()),
+        "twp": {"mode": tw.mode, "flag1": tw.flag1, "id": tw.id, "flags": tw.flags,
+                "wtimer": tw.wtimer, "ang": tw.ang,
                 "pos": bits(tw.pos), "scale": bits(tw.scale)},
         "work": work,
     })
@@ -463,7 +582,11 @@ fn messenger_matches_stg42d() {
                     ..Default::default()
                 };
                 h.plans(&case["plans"]);
-                messenger::create(&mut task, &STG42D, &mut h);
+                let mut rand = MslRand {
+                    seed: u(&case["plans"]["seed"]),
+                };
+                messenger::create(&mut task, &STG42D, &mut rand, &mut h);
+                assert_eq!(rand.seed, u(&case["seed_after"]), "{case}");
                 assert_eq!(json!(h.events), case["events"], "{case}");
                 assert_eq!(task_json(&task), case["created"], "{case}");
                 assert_eq!(json!(h.children), case["children"], "{case}");
@@ -497,7 +620,11 @@ fn messenger_matches_stg42d() {
                     ..Default::default()
                 };
                 h.plans(&case["plans"]);
-                let r = messenger::spawn(&args, &STG42D, &mut h);
+                let mut rand = MslRand {
+                    seed: u(&case["plans"]["seed"]),
+                };
+                let r = messenger::spawn(&args, &STG42D, &mut rand, &mut h);
+                assert_eq!(rand.seed, u(&case["seed_after"]), "{case}");
                 assert_eq!(json!(h.events), case["events"], "{case}");
                 match r {
                     None => assert_eq!(u(&case["ret"]), 0, "{case}"),
@@ -555,7 +682,7 @@ fn displays_match_stg42d() {
         if u(&case["fn"]) == 0x18040 {
             messenger::display_trails(&mut task, &STG42D, &mut stack, &mut h);
         } else {
-            messenger::display_shadow(&task, &STG42D, &mut stack, &mut h);
+            messenger::display_shadow(&mut task, &STG42D, &mut stack, &mut h);
         }
         assert_eq!(*stack.current(), m);
         assert_eq!(json!(h.events), case["events"], "{case}");
@@ -565,6 +692,74 @@ fn displays_match_stg42d() {
         let mut got = task_json(&task);
         got["callbacks"] = json!([0, 0, 0, 0, 0]);
         assert_eq!(got, after, "{case}");
+    }
+}
+
+#[test]
+#[ignore = "requires SA2_MAIN_DOL, SA2_GC_REL_DIR, the Gekko tables and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+fn shadow_helpers_match_stg42d() {
+    let Some(c) = oracle("shadow") else {
+        return;
+    };
+    let cases = c["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 1000);
+    for case in cases {
+        let id = u(&case["id"]);
+        let mut h = Recorder {
+            next: id + 1,
+            ..Default::default()
+        };
+        let mut stack = MatrixStack::new();
+        if case["kind"] == "init" {
+            h.calloc_ok = deque(&case["calloc_ok"], |b| b.as_bool().unwrap());
+            let mut sh = Shadow::default();
+            shadow::init(&mut sh, id, u(&case["size"]), &mut h);
+            assert_eq!(json!(h.events), case["events"], "{case}");
+            assert_eq!(shadow_json(&sh), case["after"], "{case}");
+            h.events.clear();
+            shadow::free(&mut sh, &mut h);
+            shadow::free(&mut sh, &mut h);
+            assert_eq!(json!(h.events), case["free_events"], "{case}");
+            assert_eq!(shadow_json(&sh), case["freed"], "{case}");
+            continue;
+        }
+        let mut sh = shadow_from(&case["before"]);
+        let m = matrix(&case["matrix"]);
+        *stack.current_mut() = m;
+        let pos = v3(&case["pos"]);
+        match case["kind"].as_str().unwrap() {
+            "end" => {
+                stack.push();
+                shadow::end(&sh, &mut stack, &mut h);
+                assert_eq!(stack.depth(), 0);
+            }
+            "draw" => shadow::draw(
+                u(&case["queue_kind"]),
+                pos,
+                f(&case["size"]),
+                id,
+                &sh,
+                &mut h,
+            ),
+            kind => {
+                let a = |k: usize| case["angles"][k].as_i64().map(|x| x as i32);
+                let (hw, sin) = (f(&case["half_width"]), f(&case["sin"]));
+                if kind == "capture" {
+                    shadow::capture(&mut sh, hw, pos, a(0), a(1), sin, &mut stack, &mut h);
+                } else {
+                    let ts = f(&case["tex_scale"]);
+                    shadow::capture_ex(&mut sh, hw, ts, sin, pos, a(0), a(1), &mut stack, &mut h);
+                }
+                assert_eq!(stack.depth(), 1);
+                assert_eq!(*stack.current(), matrix(&case["current"]), "{case}");
+                assert_eq!(json!(h.events), case["capture_events"], "{case}");
+                h.events.clear();
+                shadow::end(&sh, &mut stack, &mut h);
+                assert_eq!(*stack.current(), m);
+            }
+        }
+        assert_eq!(json!(h.events), case["events"], "{case}");
+        assert_eq!(shadow_json(&sh), case["after"], "{case}");
     }
 }
 

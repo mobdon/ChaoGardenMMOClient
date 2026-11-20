@@ -4,6 +4,179 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 pub const SHA256: &str = "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b";
+/// GameCube disc (GSNE8P) copies of stage RELs: (file name, SHA-256, module id).
+/// The stage copies' sections match the Steam copies byte for byte; the boss
+/// copies differ by the blocks in [`BOSS_INSERTS`].
+pub const GC_RELS: &[(&str, &str, u32)] = &[
+    (
+        "stg13D.rel",
+        "f5a986c2be0c7f8577538202cca0f714299617203a8cb1d7ef37d4d11f827423",
+        13,
+    ),
+    (
+        "stg16D.rel",
+        "2bb313a3578036a98ebfa76351cdc5da8adb09f450fe62f37dc321a331a250c0",
+        16,
+    ),
+    (
+        "stg20D.rel",
+        "ad76f467c63b903e5f635cee2c55e5dd0098c651bb473ba6791cebe7834f4a76",
+        20,
+    ),
+    (
+        "boss_bigfootD.rel",
+        "84b7b7ca970495a9f7d246ea4fc23ba88297659211e677571b0fb39495fc6faa",
+        82,
+    ),
+    (
+        "boss_hotshotD.rel",
+        "0989db26abb7559760ff7b49e6156c249b36b97211a18b59fc343e63ddcf460d",
+        83,
+    ),
+];
+/// Blocks only the disc copy of a boss REL has: (section, disc offset, length).
+/// Each disc copy adds one 0x2F4-byte routine (placed after the `blr` ending the
+/// preceding routine) with 8 bytes of constants and 0xC0 bytes of data; with
+/// branches across the routine re-targeted, every other byte and relocation
+/// matches the Steam copy (found by comparing the two copies).
+pub const BOSS_INSERTS: &[(&str, [(u8, u32, u32); 3])] = &[
+    (
+        "boss_bigfootD.rel",
+        [(1, 0x174bc, 0x2f4), (4, 0x990, 8), (5, 0x46418, 0xc0)],
+    ),
+    (
+        "boss_hotshotD.rel",
+        [(1, 0xf034, 0x2f4), (4, 0x840, 8), (5, 0x1e680, 0xc0)],
+    ),
+];
+/// A boss REL in its disc layout: the disc copy as is, or the Steam copy with
+/// the disc-only blocks left as zeros and every offset moved past them.
+pub(crate) struct DiscLayout<'a> {
+    source: &'a [u8],
+    filename: &'static str,
+    image: Option<(Vec<u8>, Vec<Section>)>,
+}
+impl<'a> DiscLayout<'a> {
+    pub(crate) fn new(source: &'a [u8], filename: &'static str) -> Result<Self> {
+        let inserts = Self::inserts(filename)?;
+        let digest = manifest::sha256(source);
+        if GC_RELS
+            .iter()
+            .any(|(f, h, _)| *f == filename && *h == digest)
+        {
+            return Ok(Self {
+                source,
+                filename,
+                image: None,
+            });
+        }
+        let steam = CityRel::read_stage(source, filename)?;
+        let mut image = Vec::new();
+        let mut sections = Vec::new();
+        for (i, s) in steam.sections.iter().enumerate() {
+            let insert = inserts.iter().find(|r| r.0 as usize == i);
+            let size = s.size + insert.map_or(0, |r| r.2);
+            if s.file_offset == 0 {
+                sections.push(Section { size, ..*s });
+                continue;
+            }
+            let mut data = steam.data(i as u8)?.to_vec();
+            if let Some(&(_, at, len)) = insert {
+                data.splice(
+                    at as usize..at as usize,
+                    std::iter::repeat_n(0, len as usize),
+                );
+            }
+            if i == 1 {
+                // Local branches carry no relocation; re-target the ones crossing the routine.
+                for pc in (0..s.size).step_by(4) {
+                    let at = shift(inserts, 1, pc) as usize;
+                    let word = u32::from_be_bytes(data[at..at + 4].try_into().unwrap());
+                    if word >> 26 != 18 || word & 2 != 0 || steam.reference(1, pc).is_some() {
+                        continue;
+                    }
+                    let target = pc.wrapping_add((((word & 0x03ff_fffc) << 6) as i32 >> 6) as u32);
+                    let moved = shift(inserts, 1, target).wrapping_sub(at as u32);
+                    data[at..at + 4].copy_from_slice(
+                        &((word & 0xfc00_0003) | (moved & 0x03ff_fffc)).to_be_bytes(),
+                    );
+                }
+            }
+            sections.push(Section {
+                file_offset: image.len() as u32,
+                size,
+                ..*s
+            });
+            image.extend(data);
+        }
+        Ok(Self {
+            source,
+            filename,
+            image: Some((image, sections)),
+        })
+    }
+    fn inserts(filename: &str) -> Result<&'static [(u8, u32, u32)]> {
+        BOSS_INSERTS
+            .iter()
+            .find(|(f, _)| *f == filename)
+            .map(|(_, r)| r.as_slice())
+            .ok_or_else(invalid)
+    }
+    pub(crate) fn rel(&self) -> Result<CityRel<'_>> {
+        let Some((image, sections)) = &self.image else {
+            return CityRel::read_stage(self.source, self.filename);
+        };
+        let inserts = Self::inserts(self.filename)?;
+        let module = GC_RELS
+            .iter()
+            .find(|(f, _, _)| *f == self.filename)
+            .ok_or_else(invalid)?
+            .2;
+        let steam = CityRel::read_stage(self.source, self.filename)?;
+        let refs = steam
+            .refs
+            .iter()
+            .map(|(&(s, at), &r)| {
+                let r = if r.module == steam.module {
+                    Reference {
+                        module,
+                        addend: shift(inserts, r.section, r.addend),
+                        ..r
+                    }
+                } else {
+                    r
+                };
+                ((s, shift(inserts, s, at)), r)
+            })
+            .collect();
+        Ok(CityRel {
+            bytes: image,
+            module,
+            sections: sections.clone(),
+            refs,
+        })
+    }
+}
+/// A Steam-copy offset moved past the disc-only blocks before it.
+fn shift(inserts: &[(u8, u32, u32)], section: u8, offset: u32) -> u32 {
+    inserts
+        .iter()
+        .filter(|&&(s, at, _)| s == section && offset >= at)
+        .fold(offset, |o, &(_, _, len)| o + len)
+}
+/// The Steam CartD.rel (module 80). Its disc copy differs beyond relocations
+/// (see docs/FAN-STAGE.md), so the kart ports keep the Steam offsets and only
+/// report engine imports at their GSNE8P addresses.
+const CART_D_SHA256: &str = "71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c";
+/// The GSNE8P main.dol address of each Steam stage REL import addend.
+const GSNE8P_IMPORTS: &[(u32, u32)] = include!("gsne8p_imports.rs");
+/// GSNE8P main.dol address for an engine address a Steam stage REL imports.
+pub fn gsne8p_import(steam: u32) -> Option<u32> {
+    GSNE8P_IMPORTS
+        .binary_search_by_key(&steam, |&(s, _)| s)
+        .ok()
+        .map(|i| GSNE8P_IMPORTS[i].1)
+}
 fn invalid() -> Error {
     Error::invalid("invalid or unsupported installed REL reference")
 }
@@ -125,12 +298,32 @@ impl<'a> CityRel<'a> {
         }
         Err(invalid())
     }
-    /// Distinct from the GSNE8P decompilation's expected disc build.
+    /// City Escape's stg13D.rel, Steam or GameCube disc copy.
     pub fn read(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() != 3_304_912 || manifest::sha256(bytes) != SHA256 {
-            return Err(Error::invalid("unsupported City Escape REL revision"));
+        Self::read_stage(bytes, "stg13D.rel")
+            .map_err(|_| Error::invalid("unsupported City Escape REL revision"))
+    }
+    /// A stage REL by file name: its GameCube disc copy, or the installed Steam
+    /// copy with every engine import moved to its GSNE8P main.dol address.
+    pub(crate) fn read_stage(bytes: &'a [u8], filename: &str) -> Result<Self> {
+        let digest = manifest::sha256(bytes);
+        if let Some(&(_, _, module)) = GC_RELS
+            .iter()
+            .find(|(f, h, _)| *f == filename && *h == digest)
+        {
+            return Self::read_identified(bytes, module);
         }
-        Self::read_identified(bytes, 12)
+        let module = crate::stage_land::catalog()
+            .iter()
+            .find(|i| i.filename == filename && i.size == bytes.len() && i.sha256 == digest)
+            .map(|i| i.module)
+            .or_else(|| (filename == "CartD.rel" && digest == CART_D_SHA256).then_some(80))
+            .ok_or_else(|| Error::invalid("unsupported stage REL revision"))?;
+        let mut rel = Self::read_identified(bytes, module)?;
+        for r in rel.refs.values_mut().filter(|r| r.module == 0) {
+            r.addend = gsne8p_import(r.addend).ok_or_else(invalid)?;
+        }
+        Ok(rel)
     }
     /// The module id this REL was read as.
     pub fn module_id(&self) -> u32 {
@@ -269,18 +462,18 @@ impl<'a> CityRel<'a> {
         match (self.reference(1, at), self.reference(1, at + 4)) {
             (
                 Some(Reference {
-                    module: 12,
+                    module: m,
                     section: 5,
                     kind: 6,
                     addend: a,
                 }),
                 Some(Reference {
-                    module: 12,
+                    module: n,
                     section: 5,
                     kind: 4,
                     addend: b,
                 }),
-            ) if a == b => Ok(a),
+            ) if a == b && m == self.module && n == self.module => Ok(a),
             _ => Err(invalid()),
         }
     }
@@ -446,7 +639,7 @@ impl<'a> CityRel<'a> {
         for at in [0xa04u32, 0xa20, 0xa98, 0xab4] {
             let reference = self
                 .reference(1, at)
-                .filter(|r| r.module == 0 && r.kind == 10 && r.addend == 0x8003a2a0)
+                .filter(|r| r.module == 0 && r.kind == 10 && r.addend == 0x8003a508)
                 .ok_or_else(invalid)?;
             let fetch = |p: u32| -> Result<u32> {
                 Ok(u32::from_be_bytes(
@@ -728,14 +921,14 @@ pub fn stage_registration(bytes: &[u8]) -> Result<serde_json::Value> {
 
 /// Run Hot Shot's slot-zero stage constraint (section 1:7050 -> 6fcc).
 pub fn hot_shot_arena(bytes: &[u8], mut position: [f32; 3]) -> Result<[f32; 3]> {
-    identify_hot_shot(bytes)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
     if !position.iter().all(|v| v.is_finite()) {
         return Err(Error::invalid("expected finite player coordinates"));
     }
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let rel = layout.rel()?;
     let bound = |offset| -> Result<f32> {
         let hi = rel.reference(1, offset).ok_or_else(invalid)?;
-        if (hi.module, hi.section, hi.kind) != (82, 4, 6)
+        if (hi.module, hi.section, hi.kind) != (rel.module_id(), 4, 6)
             || rel.reference(1, offset + 4) != Some(Reference { kind: 4, ..hi })
         {
             return Err(invalid());
@@ -755,21 +948,11 @@ pub fn hot_shot_arena(bytes: &[u8], mut position: [f32; 3]) -> Result<[f32; 3]> 
     Ok(position)
 }
 
-fn identify_hot_shot(bytes: &[u8]) -> Result<()> {
-    if bytes.len() != 1_180_821
-        || manifest::sha256(bytes)
-            != "9e0caebeefbdeb2e2829f17510b44d9238956342b3eed10a2ae7e1ff56358960"
-    {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
 /// State after N consecutive intro callbacks beginning in submode zero.
 /// Engine calls are reported at their call sites; their effects are not simulated.
 pub fn hot_shot_intro_clock(bytes: &[u8], updates: u16) -> Result<serde_json::Value> {
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
     let code = rel.data(1)?;
     let immediate = |at: usize| u16::from_be_bytes([code[at + 2], code[at + 3]]);
     let initial = immediate(0xdb8);
@@ -783,7 +966,7 @@ pub fn hot_shot_intro_clock(bytes: &[u8], updates: u16) -> Result<serde_json::Va
     Ok(serde_json::json!({
         "updates":updates, "mode":if exited {2} else {1},
         "submode":if exited {0} else {1}, "timer":timer,
-        "callsEngine8006ab94":timer < immediate(0xeb8) && timer > immediate(0xec0),
+        "callsEngine8006adfc":timer < immediate(0xeb8) && timer > immediate(0xec0),
         "entersNextMode":exited
     }))
 }
@@ -794,13 +977,13 @@ pub fn hot_shot_mode_two_opening(
     polls: u16,
     ready_on_last: bool,
 ) -> Result<serde_json::Value> {
-    identify_hot_shot(bytes)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
     if ready_on_last && polls == 0 {
         return Err(Error::invalid(
             "readiness requires at least one submode-one poll",
         ));
     }
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let rel = layout.rel()?;
     let scalar = |at| hot_shot_scalar(&rel, at);
     let mut amount = scalar(0x1142)?;
     let step = scalar(0x11b2)?;
@@ -821,7 +1004,7 @@ pub fn hot_shot_mode_two_opening(
 fn hot_shot_scalar(rel: &CityRel, at: u32) -> Result<f32> {
     let data = rel.data(4)?;
     let hi = rel.reference(1, at).ok_or_else(invalid)?;
-    if (hi.module, hi.section, hi.kind) != (82, 4, 6)
+    if (hi.module, hi.section, hi.kind) != (rel.module_id(), 4, 6)
         || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
     {
         return Err(invalid());
@@ -857,8 +1040,8 @@ pub fn hot_shot_mode_two_step(bytes: &[u8], request: &[u8]) -> Result<serde_json
             "expected finite work fields, counter 0..14 and readiness only for controller state 1",
         ));
     }
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
     let scalar = |at| hot_shot_scalar(&rel, at);
     let request_two = s.ready == Some(true);
     let flags = if request_two { s.flags & !1 } else { s.flags };
@@ -897,8 +1080,8 @@ pub fn hot_shot_mode_two_exit(bytes: &[u8], request: &[u8]) -> Result<serde_json
     if !s.x.is_finite() || !s.private28.is_finite() {
         return Err(Error::invalid("expected finite boss state"));
     }
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
     let scalar = |at| hot_shot_scalar(&rel, at);
     let mode = if !s.ready {
         2
@@ -944,8 +1127,8 @@ pub fn hot_shot_settle(bytes: &[u8], request: &[u8]) -> Result<serde_json::Value
             "expected finite state and readiness only for controller state one",
         ));
     }
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
     let c = |at| hot_shot_scalar(&rel, at);
     let target = c(0x13ce)?;
     let delta = (s.y - target).clamp(c(0x1412)?, c(0x13f6)?);
@@ -985,8 +1168,8 @@ pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Va
             "expected a mode-nine submode 0..4 and finite work fields",
         ));
     }
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
     let target = if let Some(pos) = s.entry_player_position {
         if s.submode != 0 || !pos.iter().all(|v| v.is_finite()) {
             return Err(Error::invalid(
@@ -995,19 +1178,19 @@ pub fn hot_shot_mode_nine(bytes: &[u8], request: &[u8]) -> Result<serde_json::Va
         }
         let address = |at, section| -> Result<u32> {
             let hi = rel.reference(1, at).ok_or_else(invalid)?;
-            if (hi.module, hi.section, hi.kind) != (82, section, 6)
+            if (hi.module, hi.section, hi.kind) != (rel.module_id(), section, 6)
                 || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
             {
                 return Err(invalid());
             }
             Ok(hi.addend)
         };
-        let unit = hot_shot_scalar(&rel, 0x4ce3e)?;
+        let unit = hot_shot_scalar(&rel, 0x4d132)?;
         Some(serde_json::json!({
             "sourcePlayerSlot":0,"position":pos,"savedPosition":pos,"scale":vec![unit;3],
-            "work3c":hot_shot_scalar(&rel,0x4b86)?,"work44":hot_shot_scalar(&rel,0x4ce56)?,
-            "updateSection1":address(0x4cdb6,1)?,"displaySection1":address(0x4ce92,1)?,
-            "destroySection1":address(0x4ce9e,1)?,"collisionSection5":address(0x4ce6a,5)?,
+            "work3c":hot_shot_scalar(&rel,0x4b86)?,"work44":hot_shot_scalar(&rel,0x4d14a)?,
+            "updateSection1":address(0x4d0aa,1)?,"displaySection1":address(0x4d186,1)?,
+            "destroySection1":address(0x4d192,1)?,"collisionSection5":address(0x4d15e,5)?,
             "workSize":84,"bossWork54":pos
         }))
     } else {
@@ -1081,8 +1264,8 @@ pub fn hot_shot_target_follow(bytes: &[u8], request: &[u8]) -> Result<serde_json
         normalized: Option<[f32; 3]>,
     }
     let s: State = serde_json::from_slice(request)?;
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
     let speed = hot_shot_scalar(&rel, 0x4b86)?;
     let limited = s.engine_length > speed;
     if !s.engine_length.is_finite()
@@ -1107,8 +1290,8 @@ pub fn hot_shot_target_follow(bytes: &[u8], request: &[u8]) -> Result<serde_json
         if !squared.is_finite() {
             return Err(Error::invalid("target distance overflow"));
         }
-        let step = if squared.sqrt() > hot_shot_scalar(&rel, 0x4cf7e)? {
-            speed * hot_shot_scalar(&rel, 0x4cf92)?
+        let step = if squared.sqrt() > hot_shot_scalar(&rel, 0x4d272)? {
+            speed * hot_shot_scalar(&rel, 0x4d286)?
         } else {
             speed
         };
@@ -1139,8 +1322,8 @@ pub fn hot_shot_target_clock(bytes: &[u8], request: &[u8]) -> Result<serde_json:
     if !s.phase.is_finite() || !s.rate.is_finite() {
         return Err(Error::invalid("expected finite target phase and rate"));
     }
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
     let c = |at| hot_shot_scalar(&rel, at);
     let follows = s.global37 == 0 && s.lock_word == 0;
     if s.global37 == 0 {
@@ -1148,16 +1331,16 @@ pub fn hot_shot_target_clock(bytes: &[u8], request: &[u8]) -> Result<serde_json:
             s.phase += s.rate;
             if s.counter == 60 {
                 s.counter = 0;
-                s.rate += c(0x4d0be)?;
+                s.rate += c(0x4d3b2)?;
             } else {
                 s.counter = s.counter.wrapping_add(1);
             }
         } else {
-            s.phase += c(0x4d0da)?;
+            s.phase += c(0x4d3ce)?;
             s.counter = 0;
-            s.rate = c(0x4d0f6)?;
+            s.rate = c(0x4d3ea)?;
         }
-        let wrap = c(0x4d10a)?;
+        let wrap = c(0x4d3fe)?;
         if s.phase >= wrap {
             s.phase -= wrap;
         }
@@ -1181,19 +1364,19 @@ pub fn hot_shot_target_rotation(bytes: &[u8], request: &[u8]) -> Result<serde_js
         engine_samples: [i32; 3],
     }
     let mut s: State = serde_json::from_slice(request)?;
-    identify_hot_shot(bytes)?;
-    let rel = CityRel::read_identified(bytes, 82)?;
-    let hi = rel.reference(1, 0x4d12e).ok_or_else(invalid)?;
-    if (hi.module, hi.section, hi.kind) != (82, 5, 6)
-        || rel.reference(1, 0x4d132) != Some(Reference { kind: 4, ..hi })
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
+    let rel = layout.rel()?;
+    let hi = rel.reference(1, 0x4d422).ok_or_else(invalid)?;
+    if (hi.module, hi.section, hi.kind) != (rel.module_id(), 5, 6)
+        || rel.reference(1, 0x4d426) != Some(Reference { kind: 4, ..hi })
     {
         return Err(invalid());
     }
     let start = hi.addend as usize;
     let table = rel.data(5)?.get(start..start + 24).ok_or_else(invalid)?;
     let step = |i: usize| i32::from_be_bytes(table[i * 4..i * 4 + 4].try_into().unwrap());
-    let scale = hot_shot_scalar(&rel, 0x4d18e)?;
-    let base = hot_shot_scalar(&rel, 0x4d19e)?;
+    let scale = hot_shot_scalar(&rel, 0x4d482)?;
+    let base = hot_shot_scalar(&rel, 0x4d492)?;
     for i in 0..3 {
         s.fixed[i] = s.fixed[i].wrapping_add(step(i));
         let weight = base + base * (scale * s.engine_samples[i] as f32);
@@ -1221,24 +1404,24 @@ pub fn hot_shot_target_display(bytes: &[u8], request: &[u8]) -> Result<serde_jso
         phase: f32,
     }
     let s: State = serde_json::from_slice(request)?;
-    identify_hot_shot(bytes)?;
+    let layout = DiscLayout::new(bytes, "boss_hotshotD.rel")?;
     if s.flags & 0x200 != 0 {
         return Ok(serde_json::json!({"hidden":true,"draws":[]}));
     }
     if !s.position.iter().chain(&s.scale).all(|v| v.is_finite()) || !s.phase.is_finite() {
         return Err(Error::invalid("expected finite target display state"));
     }
-    let rel = CityRel::read_identified(bytes, 82)?;
+    let rel = layout.rel()?;
     let ptr = |at| -> Result<u32> {
         let hi = rel.reference(1, at).ok_or_else(invalid)?;
-        if (hi.module, hi.section, hi.kind) != (82, 5, 6)
+        if (hi.module, hi.section, hi.kind) != (rel.module_id(), 5, 6)
             || rel.reference(1, at + 4) != Some(Reference { kind: 4, ..hi })
         {
             return Err(invalid());
         }
         Ok(hi.addend)
     };
-    let base = ptr(0x4d4da)? as usize;
+    let base = ptr(0x4d7ce)? as usize;
     let data = rel.data(5)?;
     let fixed: Vec<i32> = data
         .get(base..base + 12)
@@ -1247,14 +1430,67 @@ pub fn hot_shot_target_display(bytes: &[u8], request: &[u8]) -> Result<serde_jso
         .map(|w| i32::from_be_bytes(w.try_into().unwrap()))
         .collect();
     let [x, y, z] = s.position;
-    let floor = hot_shot_scalar(&rel, 0x4d4aa)?;
-    let offset = hot_shot_scalar(&rel, 0x4d512)?;
-    let ground = hot_shot_scalar(&rel, 0x4d54e)?;
+    let floor = hot_shot_scalar(&rel, 0x4d79e)?;
+    let offset = hot_shot_scalar(&rel, 0x4d806)?;
+    let ground = hot_shot_scalar(&rel, 0x4d842)?;
     Ok(
-        serde_json::json!({"hidden":false,"textureNames":rel.texture_names(ptr(0x4d492)?)?,"textureListSection5":ptr(0x4d492)?,"phase":s.phase,
-        "draws":[{"objectSection5":ptr(0x4d526)?,"motionSection5":ptr(0x4d52e)?,
+        serde_json::json!({"hidden":false,"textureNames":rel.texture_names(ptr(0x4d786)?)?,"textureListSection5":ptr(0x4d786)?,"phase":s.phase,
+        "draws":[{"objectSection5":ptr(0x4d81a)?,"motionSection5":ptr(0x4d822)?,
         "translation":[x,y.max(floor),z],"rotations":[fixed,s.varied],"rotationArgument":1,
         "scale":s.scale,"localTranslation":[0.,offset,0.]},
-        {"objectSection5":ptr(0x4d562)?,"motionSection5":ptr(0x4d56a)?,"translation":[x,ground,z]}]}),
+        {"objectSection5":ptr(0x4d856)?,"motionSection5":ptr(0x4d85e)?,"translation":[x,ground,z]}]}),
     )
+}
+
+#[cfg(test)]
+mod disc_layout_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    #[ignore = "requires SA2_GAME_PATH (Steam) and SA2_GC_REL_DIR (GameCube disc RELs)"]
+    fn steam_boss_rels_match_their_disc_copies() {
+        let steam =
+            PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap()).join("resource/gd_PC");
+        let disc = PathBuf::from(std::env::var_os("SA2_GC_REL_DIR").unwrap());
+        for (file, inserts) in BOSS_INSERTS {
+            let (a, b) = (
+                std::fs::read(steam.join(file)).unwrap(),
+                std::fs::read(disc.join(file)).unwrap(),
+            );
+            let (a, b) = (
+                DiscLayout::new(&a, file).unwrap(),
+                DiscLayout::new(&b, file).unwrap(),
+            );
+            let (a, b) = (a.rel().unwrap(), b.rel().unwrap());
+            let inside = |s: u8, o: u32| {
+                inserts
+                    .iter()
+                    .any(|&(t, at, n)| t == s && (at..at + n).contains(&o))
+            };
+            assert_eq!(a.module_id(), b.module_id());
+            for s in 0..a.sections().len() as u8 {
+                let (x, y) = (a.sections()[s as usize], b.sections()[s as usize]);
+                assert_eq!(x.size, y.size, "{file} section {s}");
+                if x.file_offset == 0 {
+                    continue;
+                }
+                let (x, y) = (a.data(s).unwrap(), b.data(s).unwrap());
+                for o in 0..x.len() as u32 {
+                    let relocated = (o.saturating_sub(3)..=o).any(|p| b.reference(s, p).is_some());
+                    if !inside(s, o) && !relocated {
+                        assert_eq!(x[o as usize], y[o as usize], "{file} {s}:{o:#x}");
+                    }
+                }
+            }
+            let outside = |r: &CityRel<'_>| {
+                r.refs
+                    .iter()
+                    .filter(|((s, o), _)| !inside(*s, *o))
+                    .map(|(k, v)| (*k, *v))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(outside(&a), outside(&b), "{file} relocations");
+        }
+    }
 }

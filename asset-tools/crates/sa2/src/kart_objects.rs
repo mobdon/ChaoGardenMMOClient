@@ -91,7 +91,7 @@ pub fn read(exe: &[u8], set_bytes: &[u8]) -> Result<KartObjects> {
 pub fn ring_groups(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<serde_json::Value> {
     use serde_json::json;
     crate::kart_progress::verify(module)?;
-    let rel = crate::city_rel::CityRel::read_identified(module, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(module, "CartD.rel")?;
     let objects = read(exe, set_bytes)?;
     let invalid = || Error::invalid("mismatched Kart ring task registration");
     let d = rel.data(5)?;
@@ -135,7 +135,7 @@ pub fn ring_groups(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<serde_
     Ok(
         json!({"setFile":objects.set_file,"setSha256":manifest::sha256(set_bytes),
         "groupCallback":0xbab0,"child":{"callback":0xa824,"mode":0,"loadArgs":[2,2],"nameOffset":0x2ed418},
-        "parentRelease":0x80065148u32,"ringCount":total,"groups":groups}),
+        "parentRelease":0x800653b0u32,"ringCount":total,"groups":groups}),
     )
 }
 
@@ -143,7 +143,7 @@ pub fn ring_groups(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<serde_
 pub fn balloon_layout(module: &[u8], exe: &[u8], set_bytes: &[u8]) -> Result<serde_json::Value> {
     use serde_json::json;
     crate::kart_progress::verify(module)?;
-    let rel = crate::city_rel::CityRel::read_identified(module, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(module, "CartD.rel")?;
     let objects = read(exe, set_bytes)?;
     let invalid = || Error::invalid("mismatched kart balloon registration");
     let pc = objects.definitions.get(9).ok_or_else(invalid)?;

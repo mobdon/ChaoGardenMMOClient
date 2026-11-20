@@ -1,5 +1,6 @@
 """Run the installed jump-panel post-allocation block; observe both engine calls."""
 from pathlib import Path
+from gsne8p import steam_rel
 import hashlib,json,struct,subprocess,sys,tempfile
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN
 from unicorn import ppc_const as R
@@ -16,7 +17,7 @@ for sec,addr in base.items():
 calls={}
 for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
     while True:
-        inc,k,s,a=struct.unpack_from(">HBBI",d,at);at+=8
+        inc,k,s,a=steam_rel(struct.unpack_from(">HBBI", d, at), mod);at+=8
         if k==203:break
         if k==202:target=s;off=0;continue
         off+=inc

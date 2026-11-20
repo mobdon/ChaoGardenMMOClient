@@ -1,4 +1,4 @@
-//! Local-space stepping for Wild Canyon type-zero paths (module 15, 1:0x21808).
+//! Local-space stepping for Wild Canyon type-zero paths (GSNE8P module 16, Steam module 15; 1:0x21808).
 use crate::{Error, Result};
 
 /// The eight mounted alternate placements use two zero rotation words. Compose
@@ -14,7 +14,7 @@ pub fn translate_path_point(translation: [f32; 3], point: [f32; 3]) -> [f32; 3] 
     std::array::from_fn(|i| point[i] + translation[i])
 }
 
-/// Module 15, 1:0x217ac. The engine angle service takes horizontal X then Z.
+/// GSNE8P module 16, 1:0x217ac. The engine angle service takes horizontal X then Z.
 pub fn segment_heading(from: [f32; 3], to: [f32; 3], angle: impl FnOnce(f32, f32) -> f64) -> i16 {
     // fsubs followed by fneg preserves the original signed zero at an axis.
     let radians = angle(-(from[0] - to[0]), -(from[2] - to[2]));
@@ -257,7 +257,7 @@ impl PathTaskWork {
         *self = Self::default();
     }
 }
-/// Module 15, 1:0x1fac4: only these piece types inspect the player task.
+/// GSNE8P module 16, 1:0x1fac4: only these piece types inspect the player task.
 pub(crate) fn checks_player_action(kind: u64) -> bool {
     matches!(kind, 4..=6)
 }
@@ -268,7 +268,7 @@ pub(crate) fn mode_allows_pickup(mode: i32) -> bool {
     matches!(mode, 8 | 16 | 18 | 41 | 46)
 }
 
-/// Stage-owned decisions in module 15, 1:0x22300. Services operate on the same
+/// Stage-owned decisions in GSNE8P module 16, 1:0x22300. Services operate on the same
 /// task and may update its cursor, transformed position, or engine collision data.
 pub trait MovingEmeraldServices {
     fn mode_zero_gate(&mut self) -> i32;

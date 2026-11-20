@@ -301,7 +301,7 @@ impl EnemyHost for Host<'_> {
                 speed,
                 angles,
             } => json!(["knock", player as u32, bits(speed), angles]),
-            Event::PlayerHurt { player, a, b } => json!(["hurt", player as u32, a, b]),
+            Event::Vibrate { player, a, b } => json!(["vibrate", player as u32, a, b]),
             Event::CollisionRange { range } => json!(["range", range.to_bits()]),
             Event::Spring { player, speed } => json!(["spring", player as u32, speed.to_bits()]),
             Event::Burrow { pos } => json!(["burrow", bits(pos)]),

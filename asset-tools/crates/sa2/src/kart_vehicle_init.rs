@@ -27,7 +27,7 @@ pub struct Init {
 }
 pub fn init(bytes: &[u8], s: Input) -> Result<Init> {
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let c = rel.data(4)?;
     let zero = f32::from_be_bytes(c[0x1c8..0x1cc].try_into().unwrap());
     let guided = s.work_44 == 0;
@@ -235,7 +235,7 @@ pub(crate) fn story_boost(
                 "recovery driving requires exclusive state 1 dispatch",
             ));
         }
-        let rel = CityRel::read_identified(bytes, 80)?;
+        let rel = CityRel::read_stage(bytes, "CartD.rel")?;
         output.recovery_drive = Some(drive.step(
             &rel,
             bytes,
@@ -258,7 +258,7 @@ pub(crate) fn story_boost(
         )?);
     }
     if let Some(drive) = input.drive {
-        let rel = CityRel::read_identified(bytes, 80)?;
+        let rel = CityRel::read_stage(bytes, "CartD.rel")?;
         output.drive = Some(drive.step(
             b.velocity,
             [
@@ -289,7 +289,7 @@ pub fn profile(bytes: &[u8], s: ProfileInput) -> Result<Profile> {
             "unsupported base/alternate kart profile",
         ));
     }
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let data = rel.data(5)?;
     let offset = if s.alternate {
         0x3834 + (s.profile - 2) * 40
@@ -453,7 +453,7 @@ struct Boost {
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum BoostCall {
-    Effect800bf43c {
+    Effect800bf6a4 {
         slot: i32,
         kind: i32,
         position: [f32; 3],
@@ -507,7 +507,7 @@ fn boost_step(
             .position
             .ok_or_else(|| crate::Error::invalid("missing boost effect position"))?;
         position[1] -= f(0x29c);
-        b.calls.push(BoostCall::Effect800bf43c {
+        b.calls.push(BoostCall::Effect800bf6a4 {
             slot: s.work_70,
             kind: 5,
             position,

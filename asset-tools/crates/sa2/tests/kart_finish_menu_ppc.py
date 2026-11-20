@@ -1,5 +1,6 @@
 """Compare restricted finish input and timeouts with the installed PPC task."""
 import json, struct, subprocess, sys, tempfile
+from gsne8p import steam_rel
 from pathlib import Path
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_BIG_ENDIAN, UC_MODE_PPC32, UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -12,13 +13,13 @@ u.mem_map(code,0x10000)
 u.mem_write(code,data[232:232+0x10000])
 u.mem_map(ram,0x10000)
 task, work = ram+0x100, ram+0x200
-pointers = {(0,0x801e4f98):ram+0x300,(0,0x803acf80):ram+0x308,
+pointers = {(0,0x801e5398):ram+0x300,(0,0x803ad380):ram+0x308,
             (80,0x3ce24):ram+0x30c,(80,0xd734):code+0xd734,(80,0xd954):code+0xd954}
 callsites = {}
 off,n = struct.unpack_from(">II",data,40)
 for mod,at in struct.iter_unpack(">II",data[off:off+n]):
     while True:
-        delta,kind,sec,add = struct.unpack_from(">HBBI",data,at);at += 8
+        delta,kind,sec,add = steam_rel(struct.unpack_from(">HBBI", data, at), mod);at += 8
         if kind == 203: break
         if kind == 202: target,loc = sec,0;continue
         loc += delta
@@ -30,11 +31,11 @@ for mod,at in struct.iter_unpack(">II",data[off:off+n]):
 def intercept(machine,addr,*unused):
     target = callsites[addr]
     arg = machine.reg_read(R.UC_PPC_REG_3)
-    if target == 0x80071888:
+    if target == 0x80071af0:
         assert arg == task
         calls.append(["engine_80071888_task",None])
     else:
-        if target == 0x8006b710:
+        if target == 0x8006b978:
             assert all(machine.reg_read(getattr(R,f"UC_PPC_REG_{n}"))==0 for n in (4,5,6))
         calls.append([f"engine_{target:x}",arg])
     machine.reg_write(R.UC_PPC_REG_PC,addr+4)

@@ -547,7 +547,7 @@ pub struct DisplayInput {
 pub fn display(bytes: &[u8], pak: &[u8], s: DisplayInput) -> crate::Result<serde_json::Value> {
     use serde_json::json;
     crate::kart_progress::verify(bytes)?;
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     let data = rel.data(5)?;
     let constants = rel.data(4)?;
     let f = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());

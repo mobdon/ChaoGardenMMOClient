@@ -1,5 +1,5 @@
 //! Big Foot's stage task creates the boss, then runs the slot-zero arena constraint.
-use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+use crate::{city_rel::DiscLayout, Error, Result};
 #[path = "big_foot_collision.rs"]
 mod collision;
 #[path = "big_foot_damage.rs"]
@@ -59,9 +59,9 @@ fn intro(position: [f32; 3], cfg: Intro, scalar: &impl Fn(u32) -> Result<f32>) -
             calls.push(json!({"openingView":{"slot":0,"args":[scalar(0xe0c)?,24576,scalar(0xe34)?,scalar(0xe44)?,0x471c],"focus":focus}}));
             calls.push(json!({"setPlayerPosition":{"slot":0,"position":[-position[0],0.,0.]}}));
             calls.push(json!({"setMotionLinkSync":6}));
-            calls.push(json!("createHelper53da8"));
-            calls.push(json!("createHelper59bc4"));
-            calls.push(json!("setup54b74"));
+            calls.push(json!("createHelper5409c"));
+            calls.push(json!("createHelper59eb8"));
+            calls.push(json!("setup54e68"));
             timer = 450;
             submode = 1;
         } else {
@@ -70,10 +70,10 @@ fn intro(position: [f32; 3], cfg: Intro, scalar: &impl Fn(u32) -> Result<f32>) -
                 let exit = cfg.exit.as_ref().unwrap();
                 calls.push(json!("endOpeningView"));
                 calls.push(json!({"nextView":{"slot":0,"focus":focus,"args":[scalar(0xf44)?,scalar(0xf54)?,10,1,0,scalar(0xf64)?,scalar(0xf8c)?,0]}}));
-                calls.push(json!("engineCall80022c1c"));
+                calls.push(json!("engineCall80022e64"));
                 flags |= 0x1000;
                 if cfg.helper_task_created {
-                    calls.push(json!("freeHelper59bc4"));
+                    calls.push(json!("freeHelper59eb8"));
                 }
                 let index = exit.query_result.wrapping_sub(1);
                 if (index >= 0) != exit.player_position.is_some() {
@@ -82,11 +82,11 @@ fn intro(position: [f32; 3], cfg: Intro, scalar: &impl Fn(u32) -> Result<f32>) -
                     ));
                 }
                 if let Some([x, y, z]) = exit.player_position {
-                    let point = [x, y + scalar(0x547b4)?, z];
+                    let point = [x, y + scalar(0x54aa8)?, z];
                     if !point.iter().all(|v| v.is_finite()) {
                         return Err(Error::invalid("invalid exit position"));
                     }
-                    calls.push(json!({"local2e4b4":{"position":point,"slot":0,"argument":index.min(2),"kind":2}}));
+                    calls.push(json!({"local2e7a8":{"position":point,"slot":0,"argument":index.min(2),"kind":2}}));
                 }
                 mode = 2;
                 submode = 0;
@@ -98,21 +98,22 @@ fn intro(position: [f32; 3], cfg: Intro, scalar: &impl Fn(u32) -> Result<f32>) -
 }
 pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let invalid = || Error::invalid("unverified Big Foot stage program");
-    let info = stage_land::catalog()
-        .iter()
-        .find(|i| i.filename == "boss_bigfootD.rel")
-        .ok_or_else(invalid)?;
-    if module.len() != info.size || manifest::sha256(module) != info.sha256 {
-        return Err(invalid());
-    }
-    let rel = CityRel::read_identified(module, info.module)?;
+    let layout = DiscLayout::new(module, "boss_bigfootD.rel").map_err(|_| invalid())?;
+    let rel = layout.rel()?;
     let local = |pc: u32, section: u8| -> Result<u32> {
         let a = rel.reference(1, pc + 2).ok_or_else(invalid)?;
         let b = rel.reference(1, pc + 6).ok_or_else(invalid)?;
         if (
             a.module, a.section, a.kind, b.module, b.section, b.kind, b.addend,
-        ) != (81, section, 6, 81, section, 4, a.addend)
-        {
+        ) != (
+            rel.module_id(),
+            section,
+            6,
+            rel.module_id(),
+            section,
+            4,
+            a.addend,
+        ) {
             return Err(invalid());
         }
         Ok(a.addend)

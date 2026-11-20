@@ -45,12 +45,12 @@ fn descriptor(data: &[u8], offset: u32) -> Result<Value> {
     )
 }
 fn shot_registration(rel: &CityRel<'_>, data: &[u8]) -> Result<Value> {
-    let hi = rel.reference(1, 0x5760a);
-    let lo = rel.reference(1, 0x5760e);
+    let hi = rel.reference(1, 0x578fe);
+    let lo = rel.reference(1, 0x57902);
     let offset = match (hi, lo) {
         (Some(h), Some(l))
-            if (h.module, h.section, h.kind) == (81, 5, 6)
-                && (l.module, l.section, l.kind) == (81, 5, 4)
+            if (h.module, h.section, h.kind) == (rel.module_id(), 5, 6)
+                && (l.module, l.section, l.kind) == (rel.module_id(), 5, 4)
                 && h.addend == l.addend =>
         {
             h.addend

@@ -191,8 +191,8 @@ impl State {
                 let mut impact = json!({"position":p,"engineArgs":[0x4019,0,0,60],"effectKind":4,"freeChild":true});
                 if let Some(outcomes) = &effect_allocations {
                     impact["effectTask"] = if outcomes[i] {
-                        json!({"kind":4,"position":p,"mainOffset":0x42458,"displayOffset":266696,
-                        "destructorOffset":271444,"work10":0.0,"work24":0.34_f32,"work38":1.0,"requestResources":true})
+                        json!({"kind":4,"position":p,"mainOffset":0x4274c,"displayOffset":267452,
+                        "destructorOffset":272200,"work10":0.0,"work24":0.34_f32,"work38":1.0,"requestResources":true})
                     } else {
                         Value::Null
                     };

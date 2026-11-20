@@ -1,5 +1,6 @@
 """Compare original kart movement query, landing dispatch and response writes."""
 import math,json,struct,subprocess,sys,tempfile
+from gsne8p import steam_rel
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -17,17 +18,17 @@ u.mem_map(engine,4096)
 off,n=struct.unpack_from(">II",d,40)
 for mod,at in struct.iter_unpack(">II",d[off:off+n]):
     while True:
-        delta,k,s,a=struct.unpack_from(">HBBI",d,at);at+=8
+        delta,k,s,a=steam_rel(struct.unpack_from(">HBBI", d, at), mod);at+=8
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
         if mod==80 and t==5 and 0x3b94<=l<0x3bc0 and k==1:
             u.mem_write(base[5]+l,struct.pack(">I",base[s]+a))
         if t==1 and l==0x263c:
-            assert (mod,k,a)==(0,10,0x800c4fd0)
+            assert (mod,k,a)==(0,10,0x800c5238)
         if t!=1 or not (0x2628<=l<0x2630 or 0x23c0<=l<0x23c8 or 0x2ca4<=l<0x3024 or 0x5220<=l<0x52b0 or 0xc74<=l<0xd00 or 0x4a58<=l<0x4eb4 or 0x30dc<=l<0x3188) or k not in (4,6):continue
         if mod==80:p=base[s]+a
-        elif a==0x801cbd88:p=engine
+        elif a==0x801cc168:p=engine
         else:continue
         u.mem_write(base[1]+l,struct.pack(">H",(p if k==4 else (p+32768)>>16)&65535))
 def put(p,fmt,v):u.mem_write(p,struct.pack(">"+fmt,v))

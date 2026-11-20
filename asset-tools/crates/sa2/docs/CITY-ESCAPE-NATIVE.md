@@ -65,7 +65,7 @@ Per update, unless the engine's clip gate returns nonzero:
 
 The engine services are boundaries the caller observes: the clip gate,
 CCL_IsHitPlayer, the players' status words, and the value the timer
-conversion (import 0x80110FA0) returns. How the engine turns the local
+conversion (import 0x801112E8) returns. How the engine turns the local
 velocity and angles into player motion is part of the player code, which is
 not available.
 
@@ -134,3 +134,17 @@ and reads the constants.
 `tests/three_spring.rs` runs `tests/three_spring_ppc.py` over 80 randomized
 springs. All 3,200 updates (252 launches) and the destructors match Rust bit
 for bit.
+
+## REL revisions and engine addresses
+
+City Escape (stg13D), Wild Canyon (stg16D) and Tails vs Eggman 1 (stg20D) exist
+as Steam copies (modules 12, 15, 19) and GameCube disc (GSNE8P) copies
+(modules 13, 16, 20) with byte-identical sections. Only the import relocations
+differ. `CityRel::read_stage` accepts either copy. For a Steam copy it moves
+every engine import to the GSNE8P main.dol address that the same relocation
+site has on the disc. The table (`src/gsne8p_imports.rs`) pairs the import
+sites of 59 Steam/disc REL pairs with no conflicts. All engine addresses the
+ports report are GSNE8P addresses, and module ids come from the REL that was
+read. The PPC harnesses run the disc copies from `SA2_GC_REL_DIR`. Harnesses
+that also sweep other levels' Steam RELs translate those imports through
+`tests/gsne8p.py`.

@@ -1,8 +1,10 @@
 # SA2 Battle Rust port: phased plan (November 20, 2026)
 
 This is the working order for the rest of the port. It is ordered toward one
-goal first: **a level a person can play, as a Chao, on mob's website**. Later
-phases widen that to every character, stage, boss, kart and Chao competition.
+goal first: **a level a person can play on mob's website, with the stage's
+native character**. Later phases widen that to every character, stage, boss,
+kart and Chao competition. Playing levels as a Chao comes after the whole game
+is ported (mob, November 20, 2026).
 
 [FULL-GAME-PORT.md](FULL-GAME-PORT.md) stays the acceptance ledger and
 [issue #11](https://github.com/mobdon/ChaoGardenMMOClient/issues/11) stays the
@@ -10,16 +12,41 @@ umbrella tracker. Each phase below has its own issue under #11.
 
 ## Where we start
 
-From the audit of November 20, 2026 (both repos, all 467 PRs, main):
+From the audit and recount of November 20, 2026 (both repos, all 476 PRs, every
+branch, main at e5cbd92; full report in the project's
+`reports/stage-port-audit-2026-11-20.md`):
 
-- About 20% of a playable port by weighted estimate. **Nothing is playable yet.**
-- Data readers are about 80% done. Gameplay logic is about 15%. The engine
-  runtime (task loop, renderer, camera, input, sound playback) is about 5%.
-- About 175 of main.dol's 4,713 functions are referenced by address in the
-  crate. Stage and boss modules add more on top.
-- Most advanced pieces: kart logic (CartD.rel, 60–70%, PPC-verified), walker
-  land collision (bit-exact), walker exec (open PR #435), Finalhazard super
-  forms (replay), and the shared stage objects and enemy library (started).
+- **Nothing is playable yet.** The engine (frame step, input, stage load,
+  camera, renderer) is the blocker.
+- **Level data is done for every stage.** Terrain (102 landtables in 79 files),
+  all 232 SET files (58,926 of 59,020 placements matched to the native object
+  table), start and end positions, paths, death zones, lights, fog and story
+  order are read natively and checked against SA Tools. About 85% of the
+  game's data file types are read natively.
+- **Stage code is the gap.** Ten stages and bosses have their own native code
+  (Iron Gate, Prison Lane, City Escape, Wild Canyon, Tails vs Eggman 1, Sonic vs
+  Shadow 2, Big Foot, Hot Shot, Finalhazard, kart). The other stages have only
+  the shared objects (rows 0–23) and their data. About 5–10% of the 634 native
+  story-SET tasks are ported.
+- **Port percentage, by native code:**
+
+  | Measure | Ported | Share |
+  | --- | ---: | ---: |
+  | main.dol functions | 284–364 of 4,713 | 6–8% |
+  | main.dol code bytes | of 1,499,216 | 6.6–8.6% |
+  | Stage, boss and kart REL bytes, each routine once | 241,588 of 22,936,360 | 1.1% |
+  | Same, counting each REL's copy of the shared objects | | 19–27% |
+  | Chao REL bytes (server) | 62,160 of 735,788 | about 8% |
+  | Data file types read natively | | about 85% |
+
+  Code alone is about **5%**. Weighting code 80% and data 20% gives about
+  **21%**. The earlier 20% and 28% figures were weighted feature estimates that
+  overstated started-but-small areas.
+- **Unmerged native work:** open #455 (Finalhazard core actions), open #456
+  (walker frame and land probes), branch `codex/sa2-sonic-ground-movement`
+  (path following, slope and smoothed turns; no PR yet), and server branch
+  `codex/tiny-chao-shop` (Tiny Chao Garden minigames and garden systems; no PR
+  yet). No merged or closed PR lost code on main.
 
 ## Rules every phase follows
 
@@ -51,15 +78,61 @@ From the audit of November 20, 2026 (both repos, all 467 PRs, main):
 | Area | Owner thread | Open PR |
 | --- | --- | --- |
 | Shared ground movement fn_8004C734 tree, `player_turn.rs`, Sonic action machine | Build Sonic speed-stage controller | — |
-| Walker exec 0x800B3A8C, walker_move (fn_80047A1C, fn_80048ACC, fn_80048EC4, fn_8004B330), `msl_math`, land collision, Iron Gate session | Make first story level playable | #435 |
+| Walker exec 0x800B3A8C (merged #435), walker_move, `msl_math`, land collision, shared player motion step fn_8003D8D0 and its tree, land probes fn_80067600 / fn_8006779C, Iron Gate session | Make first story level playable | #456 |
 | Prison Lane session (Tails walker) | Make Prison Lane playable | — |
 | `enemy_lib` (bullets and beams next) | Port native enemy behaviour | — |
 | Generic stage objects (rows 0–23), itemBoxManager, Tobitiri, the 78 shared routines found in Boss_Last2D | Port shared stage objects | — |
-| Finalhazard's 62 unique routines (Boss_Last2D.rel) | Verify Finalhazard camera switch path | #436 |
+| Finalhazard's 62 unique routines (Boss_Last2D.rel; setup merged #436) | Verify Finalhazard camera switch path | #455 |
 | Steam data loaders, GC↔Steam file map | Load Steam game files natively | — |
 | Native Chao Race and Karate (replacing `competition_sim.rs`) | Port Chao Race and Karate natively | — |
-| Engine runtime: task system, master loop, stage load/unload, input, camera, Ninja/GX renderer, web build ([ENGINE-CORE-PLAN.md](ENGINE-CORE-PLAN.md)) | Port the engine core and renderer | — |
-| Knuckles/Rouge, Amy/Metal Sonic/Tikal/Chaos, remaining bosses, menus, saves, events | **Unowned** | — |
+| Engine runtime: task system (E1 merged #454), master loop, stage load/unload, input, camera, Ninja/GX renderer, web build ([ENGINE-CORE-PLAN.md](ENGINE-CORE-PLAN.md)) | Port the engine core and renderer | — |
+| Knuckles, Rouge, Shadow, Amy, Metal Sonic, Tikal, Chaos (workstream C below) | Port the other playable characters | — |
+| GSNE8P address moves (workstream A), remaining stage code (workstream B), remaining bosses, menus, saves, events | **Unowned** | — |
+
+## New workstreams (November 20, 2026)
+
+### A. Move the Steam-addressed stages to GSNE8P
+
+Six stages and bosses record addresses from the Steam copies of their RELs (or
+the PC exe) instead of the GC disc. Each needs its routines re-pointed at the
+GSNE8P REL and re-checked under Unicorn, as #452 did for Sonic vs Shadow 2
+(stg42D).
+
+| Stage | Module | Addresses now |
+| --- | --- | --- |
+| City Escape | stg13D.rel | Steam REL and PC exe |
+| Wild Canyon | stg16D.rel | Steam REL offsets |
+| Tails vs Eggman 1 | stg20D.rel | Steam REL |
+| Big Foot | boss_bigfootD.rel | Steam REL |
+| Hot Shot | boss_hotshotD.rel | Steam REL |
+| Finalhazard | Boss_Last2D.rel | Steam REL and PC exe |
+| Kart (Route 101 / 280) | CartD.rel | Mixed |
+
+Depends on ENGINE-CORE-PLAN E1 item 7 (the Steam-REL alias table).
+**Acceptance:** every routine in these modules names a GSNE8P address and its
+Unicorn test runs against the GC REL.
+
+### B. Stage code for the remaining stages
+
+Every stage's data loads; these have none of their own code ported beyond the
+shared objects: White Jungle, Pumpkin Hill, Sky Rail, Aquatic Mine, Security
+Hall, Metal Harbor, Weapons Bed, Radical Highway, Mission Street, Dry Lagoon,
+Sonic vs Shadow 1, Sand Ocean, Crazy Gadget, Hidden Base, Eternal Engine, Death
+Chamber, Egg Quarters, Lost Colony, Pyramid Cave, Tails vs Eggman 2, Final Rush,
+Green Hill, Meteor Herd, Knuckles vs Rouge, Cannon's Core (stg34D–stg38D),
+Final Chase, Cosmic Wall, Mad Space, Flying Dog, King Boom Boo, both Egg Golems
+and Biolizard. Green Forest has only the shared ring and spring checks.
+Per-stage task lists come from `sa2-assets fan-tasks`. Order follows Phase 5
+(mech first). **Acceptance:** each stage's native tasks from its SET files are
+ported with Unicorn tests, and the stage runs headless in `sa2-runtime`.
+
+### C. The unported playable characters
+
+Knuckles, Rouge, Tikal and Chaos (treasure hunt), Shadow, Amy and Metal Sonic
+(speed variants). Start from a map of each character's loader and exec in
+main.dol (`CHARACTER-PORT-MAP.md`), then port the hunter tree, then each
+character's deltas, reusing the shared ground movement and walker motion code.
+**Owner:** Port the other playable characters.
 
 ## Known entry points (main.dol, GSNE8P)
 
@@ -157,7 +230,7 @@ Chao Walker trace is kept for then: all four walker loaders install the walker
 exec 0x800B3A8C, and the Chao rows are reached natively only from the
 two-player select (ENGINE-MAP.md 8, 8a, 8b).
 
-- **Player:** walker exec #435 (owner: Make first story level playable), the
+- **Player:** walker exec (merged #435, frame in #456; owner: Make first story level playable), the
   Mech Eggman loader 0x800B5D2C, lock-on and laser (trace from the exec's mode
   switch).
 - **Stage:** Iron Gate objects (owner: Port shared stage objects); the enemies
@@ -177,7 +250,7 @@ two-player select (ENGINE-MAP.md 8, 8a, 8b).
 - **Goal and results:** goal ring (ported) into the native results flow (trace).
 - **Website:** a page that loads the player's own Steam data locally, runs the
   WASM build and plays Iron Gate. No game data is hosted.
-- **Depends on:** Phase 1, #435.
+- **Depends on:** Phase 1, #456.
 - **Acceptance:** on mob's website, a person plays Iron Gate Mission 1 from the
   start to the goal ring as Mech Eggman, with input-driven native ticks and
   a stored replay that reproduces the run.
@@ -204,9 +277,9 @@ Ordered by how many stages each unlocks.
 
 | Moveset | Characters | Entry points | Depends on | Owner |
 | --- | --- | --- | --- | --- |
-| Mech walkers | Tails, Eggman, Chao Walker, Dark Chao Walker | 0x800B3A8C exec, 0x800AF558 display, loaders 0x800B5D2C / 0x800B5AC0 (alternate rows 0x800B56E8 / 0x800B58D4); lock-on, laser, hover (trace) | #435 | Make first story level playable; Make Prison Lane playable |
+| Mech walkers | Tails, Eggman, Chao Walker, Dark Chao Walker | 0x800B3A8C exec, 0x800AF558 display, loaders 0x800B5D2C / 0x800B5AC0 (alternate rows 0x800B56E8 / 0x800B58D4); lock-on, laser, hover (trace) | #435 (merged), #456 | Make first story level playable; Make Prison Lane playable |
 | Speed | Sonic, Shadow, Amy, Metal Sonic | 0x8004C734 tree; main 0x80083E44; actions 0x8007E89C; loaders 0x80086BA4… ; homing, spin dash, light dash, grind, somersault (trace) | Phase 1 | Build Sonic speed-stage controller |
-| Treasure hunt | Knuckles, Rouge, Tikal, Chaos | Loaders (trace via 0x8004F838 callers); glide, climb, dig, emerald radar and hints (trace) | Phase 1; Wild Canyon emerald logic (done) | Unowned |
+| Treasure hunt | Knuckles, Rouge, Tikal, Chaos | Loaders (trace via 0x8004F838 callers); glide, climb, dig, emerald radar and hints (trace) | Phase 1; Wild Canyon emerald logic (done) | Port the other playable characters |
 | Super forms | Super Sonic, Super Shadow | Boss_Last2D.rel routines (PPC-verified) | Phase 1 | Verify Finalhazard camera switch path |
 | Kart | all | CartD.rel | Phase 1 | See Phase 7 |
 

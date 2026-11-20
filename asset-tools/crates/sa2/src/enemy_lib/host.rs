@@ -40,8 +40,10 @@ pub enum Event {
         speed: V3,
         angles: [i32; 3],
     },
-    /// fn_8002FB2C(player, a, b, 0): the player reacts to the enemy.
-    PlayerHurt { player: i32, a: i32, b: i32 },
+    /// fn_8002FB2C(player, a, b, 0): the controller vibration request (it
+    /// clamps the strength and length and fn_8002FCE0 starts "VibTask";
+    /// native as `stage_objects::player_contact::fn_8002fb2c`).
+    Vibrate { player: i32, a: i32, b: i32 },
     /// fn_80016D10(task, parts, models): the explosion into parts.
     Debris,
     /// fn_80062E0C(points).

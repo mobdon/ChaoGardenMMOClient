@@ -1,4 +1,4 @@
-//! Wild Canyon stage registration and its first scheduled callback (GSNE8P module 15).
+//! Wild Canyon stage registration and its first scheduled callback (Steam module 15, GSNE8P module 16).
 use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
 use serde_json::{json, Value};
 
@@ -8,7 +8,7 @@ use crate::collision_record::collision_record;
 /// normalizing only the byte order of the eleven 32-bit fields.
 pub fn pc_collision_templates(exe: &[u8], module: &[u8]) -> Result<Value> {
     let pe = crate::pe::read_pe(exe)?;
-    let rel = CityRel::read_identified(module, 15)?;
+    let rel = CityRel::read_stage(module, "stg16D.rel")?;
     let data = rel.data(5)?;
     let mut matches = Vec::new();
     for (source, rva) in [(0x976ccusize, 0x7435ccu32), (0x97730, 0x7435fc)] {
@@ -49,15 +49,12 @@ pub fn enter(
         .iter()
         .find(|s| s.filename == "stg16D.rel")
         .ok_or_else(invalid)?;
-    if module.len() != info.size || manifest::sha256(module) != info.sha256 {
-        return Err(invalid());
-    }
-    let rel = CityRel::read_identified(module, info.module)?;
+    let rel = CityRel::read_stage(module, "stg16D.rel").map_err(|_| invalid())?;
     let pair = |pc: u32, section: u8| -> Result<u32> {
         let h = rel.reference(1, pc + 2).ok_or_else(invalid)?;
         let l = rel.reference(1, pc + 6).ok_or_else(invalid)?;
-        if (h.module, h.section, h.kind) != (15, section, 6)
-            || (l.module, l.section, l.kind) != (15, section, 4)
+        if (h.module, h.section, h.kind) != (rel.module_id(), section, 6)
+            || (l.module, l.section, l.kind) != (rel.module_id(), section, 4)
             || l.addend != h.addend
         {
             return Err(invalid());
@@ -391,7 +388,7 @@ pub fn contacts(
     let tasks = rows["emeraldTasks"]
         .as_array()
         .ok_or_else(|| Error::invalid("missing emerald tasks"))?;
-    let rel = CityRel::read_identified(module, 15)?;
+    let rel = CityRel::read_stage(module, "stg16D.rel")?;
     let hi = rel
         .reference(1, 0x20c96)
         .ok_or_else(|| Error::invalid("missing spin table"))?;
@@ -400,7 +397,7 @@ pub fn contacts(
         .ok_or_else(|| Error::invalid("missing spin table"))?;
     if (
         hi.module, hi.section, hi.kind, lo.module, lo.section, lo.kind,
-    ) != (15, 5, 6, 15, 5, 4)
+    ) != (rel.module_id(), 5, 6, rel.module_id(), 5, 4)
         || hi.addend != lo.addend
     {
         return Err(Error::invalid("unknown spin table"));

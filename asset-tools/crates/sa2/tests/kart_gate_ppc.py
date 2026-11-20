@@ -1,5 +1,6 @@
 """Compare active GATE2 writes and call order with installed PPC instructions."""
 import hashlib,json,struct,subprocess,sys,tempfile
+from gsne8p import steam_rel
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -17,7 +18,7 @@ u.mem_map(0x801cb000,0x2000)
 variables={};callsites={}
 for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
     while True:
-        inc,k,s,a=struct.unpack_from(">HBBI",d,at);at+=8
+        inc,k,s,a=steam_rel(struct.unpack_from(">HBBI", d, at), mod);at+=8
         if k==203:break
         if k==202:target=s;loc=0;continue
         loc+=inc

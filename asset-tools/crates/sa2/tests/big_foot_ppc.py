@@ -5,8 +5,8 @@ from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
 
 game=Path(os.environ["SA2_GAME_PATH"])
-d=(game/"resource/gd_PC/boss_bigfootD.rel").read_bytes()
-assert hashlib.sha256(d).hexdigest()=="fc92758679726f1f6bf2d816c878e79f44ad0adce2f9b32dd9ea549f0fea0f9d"
+d=(Path(os.environ["SA2_GC_REL_DIR"])/"boss_bigfootD.rel").read_bytes()
+assert hashlib.sha256(d).hexdigest()=="84b7b7ca970495a9f7d246ea4fc23ba88297659211e677571b0fb39495fc6faa"
 w=lambda i:struct.unpack_from(">I",d,i)[0]
 sec=lambda s:w(w(16)+8*s)&~1
 B,D,T=0x81000000,0x82000000,0x100000
@@ -20,7 +20,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 def reg(i):return u.reg_read(getattr(R,"UC_PPC_REG_"+str(i)))
 def setreg(i,v):u.reg_write(getattr(R,"UC_PPC_REG_"+str(i)),v)
-ranges=[(0x2ff0,0x3020),(0x4204,0x4230),(0x3eec,0x402c),(0x45ec,0x4650),(0x574b4,0x57524),(0x42540,0x42590),(0x42648,0x426bc),(0x57524,0x57d10),(0x57dcc,0x57e5c),(0x2ae4,0x2d8c),(0x2820,0x2ae4),(0x57d10,0x57da0),(0x1e50,0x2820),(0x2800,0x2820),(0x55948,0x55968),(0x55c10,0x55c5c),(0x55d20,0x55d78),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x570ac,0x57104),(0x57178,0x571a0),(0x58948,0x589b0),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x5470c,0x547fc),(0x63a8,0x6434),(0x66bc,0x67f4)]
+ranges=[(0x2ff0,0x3020),(0x4204,0x4230),(0x3eec,0x402c),(0x45ec,0x4650),(0x577a8,0x57818),(0x42834,0x42884),(0x4293c,0x429b0),(0x57818,0x58004),(0x580c0,0x58150),(0x2ae4,0x2d8c),(0x2820,0x2ae4),(0x58004,0x58094),(0x1e50,0x2820),(0x2800,0x2820),(0x55c3c,0x55c5c),(0x55f04,0x55f50),(0x56014,0x5606c),(0x1bcc,0x1e50),(0x3c8,0x6b8),(0x19b0,0x1b18),(0x163c,0x19b4),(0x63a0,0x63a8),(0x306c,0x3074),(0x30b8,0x30c4),(0x36ac,0x36c0),(0x36e8,0x3700),(0x3eb8,0x3eec),(0x4298,0x42ac),(0x45b8,0x45ec),(0,0x35c),(0x557c,0x5810),(0x573a0,0x573f8),(0x5746c,0x57494),(0x58c3c,0x58ca4),(0x810,0xa58),(0xd90,0x1628),(0xb64,0xbbc),(0x54a00,0x54af0),(0x63a8,0x6434),(0x66bc,0x67f4)]
 for lo,hi in ranges:
     for pc in range(lo,hi,4):page(B+pc)
     u.mem_write(B+lo,d[sec(1)+lo:sec(1)+hi])
@@ -37,7 +37,7 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==202:target=s;off=0;continue
         off+=inc
         if target==5 and 796<=off<832 and k==1:
-            assert module==81 and s==1
+            assert module==82 and s==1
             dst=D+5*0x400000+off;page(dst);bind_relocs.append((dst,B+a))
         if target==5 and 528<=off<748 and k==1:
             dst=D+5*0x400000+off;page(dst);bind_relocs.append((dst,D+s*0x400000+a))
@@ -51,7 +51,7 @@ for module,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         val=(B+a if s==1 else D+s*0x400000+a) if module else a;page(val)
         if module and s in (4,5):u.mem_write(val,d[sec(s)+a:sec(s)+a+16])
         if off==0x3f6e:u.mem_write(val,d[sec(s)+a:sec(s)+a+60])
-        if off==0x5760e:u.mem_write(val,d[sec(s)+a:sec(s)+a+48])
+        if off==0x57902:u.mem_write(val,d[sec(s)+a:sec(s)+a+48])
         if off==0x673a:player_ptr=val
         assert k in (4,6)
         put(B+off,"H",(val if k==4 else (val+0x8000)>>16)&65535)
@@ -60,8 +60,8 @@ u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|8192)
 adjust_sites=(0x21c0,0x2200,0x22a0,0x22b4,0x22c8,0x239c,0x23b0,0x23c4,0x23d8,0x23ec,0x2400)
 recovery_sites=(0x2b60,0x2b80,0x2be4,0x2c2c,0x2c3c,0x2cb8,0x2d00,0x2d08,0x2d24,0x2d6c)
 effect=T+0x39000;page(effect);allocations=[]
-shot_sites=(0x4266c,0x426a0,0x57574,0x57598,0x57618,0x577ac,0x577bc,0x577cc,0x577d4,0x57830,0x57840,0x578dc,0x578e8,0x578f8,0x57904,0x5790c,0x57b80,0x57b90,0x57bd4,0x57c00,0x57c40,0x57c7c,0x57cd8,0x57cf0,0x576d0,0x576dc,0x576e4,0x57cc8,0x57ce0,0x57cf8)
-volley_sites=(0x2830,0x28e8,0x2954,0x295c,0x57d78,0x2a54,0x2a60,0x2ac8,0x2ad4)
+shot_sites=(0x42960,0x42994,0x57868,0x5788c,0x5790c,0x57aa0,0x57ab0,0x57ac0,0x57ac8,0x57b24,0x57b34,0x57bd0,0x57bdc,0x57bec,0x57bf8,0x57c00,0x57e74,0x57e84,0x57ec8,0x57ef4,0x57f34,0x57f70,0x57fcc,0x57fe4,0x579c4,0x579d0,0x579d8,0x57fbc,0x57fd4,0x57fec)
+volley_sites=(0x2830,0x28e8,0x2954,0x295c,0x5806c,0x2a54,0x2a60,0x2ac8,0x2ad4)
 landing_sites=(0x2478,0x248c,0x24a0,0x24d0,0x2520,0x2558,0x2564,0x2648,0x2684,0x26e4,0x273c,0x275c,0x276c,0x27b0,0x27c4,0x27dc)
 aim_sites=(0x21d0,0x2210,0x2224,0x2268,0x22f0,0x2428)
 def signed(v):return (v+2**31)%2**32-2**31
@@ -75,20 +75,20 @@ def hook(uc,pc,size,_):
         if off==0x1e2c:assert reg(4)==0
         turn_helpers.append(off)
     if off==0x16f8:
-        helper_calls.append("create55248");setreg(3,helper)
+        helper_calls.append("create5553c");setreg(3,helper)
     if off==0x1728:
-        assert reg(3)==helper;helper_calls.append("attach5649c")
+        assert reg(3)==helper;helper_calls.append("attach56790")
     if off in (0x1734,0x1890,0x1948):
         assert reg(3)==helper;helper_calls.append(dict(helperEnabled=reg(4)))
-        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x55948);return
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x55c3c);return
     if off in (0x18c8,0x1980):
         assert reg(3)==helper;helper_calls.append("freeHelper")
     if off==0x19cc:
         assert reg(3)==helper;angle_queries.append(True)
-        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x5595c);return
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x55c50);return
     if off==0x19fc:
         assert reg(3)==binding
-        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x55d20);return
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x56014);return
     if off in (0x2478,0x248c,0x24a0):
         land_calls.append(dict(angle=[signed(reg(k)) for k in (3,4,5)]))
         setreg(3,land_angles[len(land_calls)-1]&0xffffffff)
@@ -118,7 +118,7 @@ def hook(uc,pc,size,_):
         assert reg(3)==BOSS and reg(4)==0;setreg(3,hd&0xffffffff)
     if off==0x295c:
         dv_args.append([signed(reg(3)),signed(reg(4))]);setreg(3,dv&0xffffffff)
-    if off==0x57d78:
+    if off==0x5806c:
         assert [reg(i) for i in (3,4,5,6)]==[0x4000,0,0,60]
         released.append(reg(7)-20)
     if off==0x2a54:assert [reg(i) for i in (3,4,5,6,7)]==[11,0,0,10,WORK+20]
@@ -128,60 +128,60 @@ def hook(uc,pc,size,_):
     if off==0x2648:
         assert reg(3)==BOSS and reg(5)==WORK+8
         f1=struct.unpack(">d",struct.pack(">Q",u.reg_read(R.UC_PPC_REG_FPR1)))[0]
-        anchor=reg(4)-(D+6*0x400000);land_calls.append(dict(helper57524=[anchor,f1]))
+        anchor=reg(4)-(D+6*0x400000);land_calls.append(dict(helper57818=[anchor,f1]))
         h=T+0x20000+len(children)*0x400;page(h);put(h+0x34,"I",h+0x80);put(h+0x38,"I",h+0x100)
         u.mem_write(h+0x80,bytes(0x180));children.append((h,anchor))
-        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x57524);return
-    if off==0x57574:setreg(3,children[-1][0])
-    if off==0x57598:setreg(3,children[-1][0]+0x100)
-    if off==0x57618:
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x57818);return
+    if off==0x57868:setreg(3,children[-1][0])
+    if off==0x5788c:setreg(3,children[-1][0]+0x100)
+    if off==0x5790c:
         h=children[-1][0];assert reg(3)==h and reg(5)==1 and reg(6)==3;put(h+0xac,"I",h+0x200)
         seed=(0xffff if len(children)%2 else 0xa501);put(h+0x204,"H",seed)
         ptr=reg(4);v=get(ptr,"4BI7f3i")
         shot_registrations.append((dict(descriptor=dict(descriptorOffset=ptr-D-5*0x400000,
             headerBytes=list(v[:4]),attributes=v[4],originalCenter=list(v[5:8]),
             parameters=list(v[8:12]),angles=list(v[12:])),count=reg(5),collisionId=reg(6)),h,seed))
-    if off in (0x577bc,0x578e8):rotation_angle[:]=[signed(reg(4))]
-    if off in (0x577cc,0x578f8):
+    if off in (0x57ab0,0x57bdc):rotation_angle[:]=[signed(reg(4))]
+    if off in (0x57ac0,0x57bec):
         vec=get(reg(4),"fff");rotations.append([rotation_angle[0],list(vec)])
         # Deterministic Y rotation: the engine matrix routine itself is outside this comparison.
         a=rotation_angle[0]*math.tau/65536
         put(reg(5),"fff",vec[0]*math.cos(a)+vec[2]*math.sin(a),vec[1],vec[2]*math.cos(a)-vec[0]*math.sin(a))
         transformed[:]=get(reg(5),"fff")
-    if off in (0x57904,0x57b80):
+    if off in (0x57bf8,0x57e74):
         lhs=get(reg(3),"fff");rhs=get(reg(4),"fff");put(reg(3),"fff",*(x+y for x,y in zip(lhs,rhs)))
-    if off in (0x57bd4,0x57c00):
+    if off in (0x57ec8,0x57ef4):
         args=[struct.unpack(">d",struct.pack(">Q",u.reg_read(r)))[0] for r in (R.UC_PPC_REG_FPR1,R.UC_PPC_REG_FPR2)]
         radians=math.atan2(*args);atan_args.append(args);atan_results.append(radians)
         u.reg_write(R.UC_PPC_REG_FPR1,struct.unpack(">Q",struct.pack(">d",radians))[0])
-    if off in (0x57c40,0x57c7c,0x57cd8,0x57cf0):
-        events.append({0x57c40:"ground",0x57c7c:"radius",0x57cd8:"player",0x57cf0:"other"}[off])
-        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x576a0);return
-    if off==0x576d0:impacts.append(dict(position=list(get(reg(7),"fff")),engineArgs=[reg(i) for i in (3,4,5,6)]))
-    if off==0x576dc:
+    if off in (0x57f34,0x57f70,0x57fcc,0x57fe4):
+        events.append({0x57f34:"ground",0x57f70:"radius",0x57fcc:"player",0x57fe4:"other"}[off])
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x57994);return
+    if off==0x579c4:impacts.append(dict(position=list(get(reg(7),"fff")),engineArgs=[reg(i) for i in (3,4,5,6)]))
+    if off==0x579d0:
         assert get(reg(4),"fff")==tuple(impacts[-1]["position"]);impacts[-1]["effectKind"]=reg(3)
-        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x42648);return
-    if off==0x4266c:
+        u.reg_write(R.UC_PPC_REG_LR,pc+4);u.reg_write(R.UC_PPC_REG_PC,B+0x4293c);return
+    if off==0x42960:
         success=len(allocations)%2==0;allocations.append(success)
         impacts[-1]["effectTask"]=None
         if success:
             u.mem_write(effect,bytes([0xcd])*256);put(effect+0x40,"I",effect+0x80)
             impacts[-1]["effectTask"]={"mainOffset":reg(3)-B}
         setreg(3,effect if success else 0)
-    if off==0x426a0:
+    if off==0x42994:
         assert reg(3)==effect
         wk=get(effect+0x40,"I")[0]
         impacts[-1]["effectTask"].update(kind=get(wk+1,"B")[0],position=list(get(wk+4,"fff")),
             displayOffset=get(effect+0x14,"I")[0]-B,destructorOffset=get(effect+0x18,"I")[0]-B,
             work10=get(wk+0x10,"f")[0],work24=get(wk+0x24,"f")[0],work38=get(wk+0x38,"f")[0],requestResources=True)
-    if off==0x576e4:removals.append(reg(3));impacts[-1]["freeChild"]=True
-    if off==0x57cc8:setreg(3,int(hit_player))
-    if off==0x57ce0:setreg(3,int(hit_other))
-    if off==0x57cf8:events.append("register")
+    if off==0x579d8:removals.append(reg(3));impacts[-1]["freeChild"]=True
+    if off==0x57fbc:setreg(3,int(hit_player))
+    if off==0x57fd4:setreg(3,int(hit_other))
+    if off==0x57fec:events.append("register")
     if off==0x2684:
         assert reg(3)==BOSS;land_calls.append(dict(disableCollision=reg(4)))
     if off==0x273c:
-        assert reg(3)==WORK+20 and reg(4)==0;land_calls.append("helper55148")
+        assert reg(3)==WORK+20 and reg(4)==0;land_calls.append("helper5543c")
     if off==0x276c:
         assert [reg(i) for i in (3,4,5)]==[7,0,0];land_calls.append("engine276c")
     if off==0x27b0:
@@ -232,16 +232,16 @@ def hook(uc,pc,size,_):
         intro_calls.append({"setPlayerPosition":{"slot":0,"position":list(get(PLAYER+20,"fff"))}})
         intro_calls.append({"setMotionLinkSync":reg(4)})
     if off in (0xeb8,0xeec,0xf08,0xf38,0xfb0,0xfcc):
-        intro_calls.append({0xeb8:"createHelper53da8",0xeec:"createHelper59bc4",0xf08:"setup54b74",0xf38:"endOpeningView",0xfb0:"engineCall%08x"%2147626012,0xfcc:"freeHelper59bc4"}[off])
+        intro_calls.append({0xeb8:"createHelper5409c",0xeec:"createHelper59eb8",0xf08:"setup54e68",0xf38:"endOpeningView",0xfb0:"engineCall%08x"%2147626596,0xfcc:"freeHelper59eb8"}[off])
         if off==0xeec:setreg(3,T+0xd00 if created else 0)
     if off==0xfa8:
         arg=reg(4);intro_calls.append({"nextView":{"slot":reg(3),"focus":list(get(get(arg,"I")[0],"fff")),"args":[*get(arg+4,"ffI"),*get(arg+16,"BB"),*get(arg+20,"ffI")]}})
-    if off==0x54764:setreg(3,query & 0xffffffff)
-    if off==0x547dc:intro_calls.append({"local2e4b4":{"position":list(get(reg(3),"fff")),"slot":reg(5),"argument":reg(6),"kind":reg(7)}})
+    if off==0x54a58:setreg(3,query & 0xffffffff)
+    if off==0x54ad0:intro_calls.append({"local2e7a8":{"position":list(get(reg(3),"fff")),"slot":reg(5),"argument":reg(6),"kind":reg(7)}})
     if off in (0x1134,0x1248,0x12c0,0x145c):
         assert ready is not None;setreg(3,int(ready));motion_queries.append(off)
     if off==0x10b8:take_calls.append({"enableCollision":reg(4)})
-    if off in (0x10c0,0x1150):take_calls.append({0x10c0:"helper58c78",0x1150:"helper58d30"}[off])
+    if off in (0x10c0,0x1150):take_calls.append({0x10c0:"helper58f6c",0x1150:"helper59024"}[off])
     if off in (0x10d8,0x115c,0x1268,0x12e0,0x149c):take_calls.append({"motion":reg(4)})
     if off in (0x112c,0x1234,0x12fc,0x14b4):take_calls.append({"helper6b8":list(get(reg(4),"fff")) if reg(4) else None})
     if off==0x12f0:take_calls.append({"turnArgs":[reg(4),reg(5)]})
@@ -273,7 +273,7 @@ def hook(uc,pc,size,_):
         assert get(reg(3),"fff")==tuple(position)
         put(reg(3),"fff",*vector);calls.append(off)
     u.reg_write(R.UC_PPC_REG_PC,pc+4)
-for off in (*shot_sites,*recovery_sites,*volley_sites,*landing_sites,*adjust_sites,*aim_sites,0x1e60,0x2810,0x1ed8,0x1efc,0x1fc8,0x1fec,0x1f70,0x207c,0x20cc,0x2804,0x16f8,0x1728,0x1734,0x1890,0x1948,0x18c8,0x1980,0x19cc,0x19fc,0x1a04,0x1a28,0x1e20,0x1e2c,0x1d8c,0x1db0,0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54764,0x547dc,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
+for off in (*shot_sites,*recovery_sites,*volley_sites,*landing_sites,*adjust_sites,*aim_sites,0x1e60,0x2810,0x1ed8,0x1efc,0x1fc8,0x1fec,0x1f70,0x207c,0x20cc,0x2804,0x16f8,0x1728,0x1734,0x1890,0x1948,0x18c8,0x1980,0x19cc,0x19fc,0x1a04,0x1a28,0x1e20,0x1e2c,0x1d8c,0x1db0,0x414,0x41c,0x48c,0x4c4,0x1a84,0x1aa8,0x1764,0x18d8,0x1990,0x10,0x34,0x44,0x54,0x68,0x80,0x94,0x134,0x168,0x180,0x1a4,0x1d4,0x1e0,0x208,0x238,0x250,0x338,0x55a4,0x5598,0x580c,0x55ac,0x5740,0x5644,0x57e8,0x824,0xa48,0x8d0,0x8dc,0x8e8,0x910,0x91c,0x8f8,0x92c,0x978,0x9b8,0x9f0,0xa14,0x6790,0xda0,0xe64,0xea0,0xeb8,0xeec,0xf08,0xf38,0xfa8,0xfb0,0xfcc,0x54a58,0x54ad0,0x1004,0x1024,0x1618,0x10b8,0x10c0,0x10d8,0x112c,0x1134,0x1150,0x115c,0x11a0,0x1234,0x1248,0x1268,0x12c0,0x12e0,0x12f0,0x12fc,0x145c,0x149c,0x14b4,0x15a0,0x15c4):
     u.hook_add(UC_HOOK_CODE,hook,begin=B+off,end=B+off)
 def invoke(pc,task=STAGE):
     setreg(1,T+0x2ff0);setreg(3,task);u.reg_write(R.UC_PPC_REG_LR,ret)
@@ -311,7 +311,7 @@ def after_defeat(low):
     ticks=[];rows=[]
     def trace(uc,pc,size,_):
         off=pc-B
-        if off==0x574fc:
+        if off==0x577f0:
             assert reg(3)==BOSS and reg(4)==0
             row["headingQuery"]=True;setreg(3,3)
         elif off==0x4648:
@@ -323,10 +323,10 @@ def after_defeat(low):
             assert bytes(u.mem_read(pars,60))==d[sec(4)+1020:sec(4)+1080]
             row["effect"]=dict(kind=get(packet,"B")[0],angles=list(get(packet+4,"iii")),position=list(get(packet+16,"fff")),parameterOffset=1020)
         uc.reg_write(R.UC_PPC_REG_PC,pc+4)
-    handles=[u.hook_add(UC_HOOK_CODE,trace,begin=B+i,end=B+i) for i in (0x574fc,0x4648,0x4028)]
+    handles=[u.hook_add(UC_HOOK_CODE,trace,begin=B+i,end=B+i) for i in (0x577f0,0x4648,0x4028)]
     try:
         for flag in (0,-1,1,0,0,1,2,1,0,1,1,0):
-            put(2149367176+0x43,"b",flag);setreg(1,T+0x2d00)
+            put(2149368168+0x43,"b",flag);setreg(1,T+0x2d00)
             tick=dict(engine_byte_43=flag);row=dict(headingQuery=False,approach=None,effect=None)
             u.emu_start(B+entry,B+end,count=180);assert u.reg_read(R.UC_PPC_REG_PC)==B+end
             row.update(timer=get(WORK+6,"H")[0],position=list(get(WORK+20,"fff")),angles=list(get(WORK+8,"iii")))
@@ -338,15 +338,15 @@ def step_shot(h,j,k):
     global rotation_angle,hit_player,hit_other,rotations,transformed,events,removals,impacts,atan_args,atan_results
     rotation_angle=[]
     paused=k==1
-    put(2149367176+0x37,"B",int(paused));hit_player=j==2 and k==4;hit_other=j in (2,3) and k==4
+    put(2149368168+0x37,"B",int(paused));hit_player=j==2 and k==4;hit_other=j in (2,3) and k==4
     rotations=[];transformed=[];events=[];removals=[];impacts=[];atan_args=[];atan_results=[]
-    invoke(0x57dcc,h)
+    invoke(0x580c0,h)
     assert len(removals)==sum(e!="register" for e in events)
     observation=("paused" if paused else dict(active=dict(atan_results=atan_results,rotated_vector=transformed or None,hit_player=hit_player,hit_other=hit_other,effect_allocations=[x["effectTask"] is not None for x in impacts])))
     row=(dict(position=list(get(h+0x94,"fff")),velocity=list(get(h+0x100,"fff")),timer=get(h+0x86,"H")[0],
         submode=get(h+0x81,"B")[0],curveTime=get(h+0x140,"f")[0],curveStep=get(h+0x144,"f")[0],
         rotation=rotations[0] if rotations else None,events=events,impacts=impacts,atanArgs=atan_args or None,angles=list(get(h+0x88,"iii"))))
-    put(2149367176+0x37,"B",0)
+    put(2149368168+0x37,"B",0)
     return observation,row,bool(removals)
 rng=random.Random(60)
 positions=[[0,7,0],[120,50,0],[72,-70,96],[120.00001,1,0],[119.99999,1,0]]
@@ -437,7 +437,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
         request=json.loads(req.read_text());traces=[]
         helper=T+0x3900;put(helper+0x34,"I",helper+0x50)
         binding=T+0x3a00;put(PRIVATE,"I",binding);put(binding+0x44,"I",binding+0x80)
-        u.mem_write(binding+0x100,d[sec(4)+448:sec(4)+484]);setreg(4,binding+0x100);invoke(0x55c10,binding)
+        u.mem_write(binding+0x100,d[sec(4)+448:sec(4)+484]);setreg(4,binding+0x100);invoke(0x55f04,binding)
         for cycle in range(3):
             first=[];expected_flight=[]
             approach=[(60.,4.,0.,rng.uniform(-6,6)) for _ in range(96 if cycle==0 else 9)]
@@ -458,7 +458,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
                 assert get(table+0x154,"I")== (0x90,)
                 expected_flight.append(dict(mode=get(WORK,"B")[0],submode=get(WORK+1,"B")[0],
                     targetXZ=[get(motion+k,"f")[0] for k in (0x54,0x5c)],extraByte2=get(EXTRA+2,"B")[0],
-                    enableShape7Attribute16=0x1764 in flight_calls,callHelper55d78=any(a in flight_calls for a in (0x18d8,0x1990))))
+                    enableShape7Attribute16=0x1764 in flight_calls,callHelper5606c=any(a in flight_calls for a in (0x18d8,0x1990))))
                 if angle_queries:helper_calls.append(dict(helperAngles=list(get(binding+0x94,"iii"))))
                 if cycle:expected_flight[-1]["helperCalls"]=helper_calls
                 if angle_queries:first[-1]["helper_angles"]=angles
@@ -569,7 +569,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
                     if dead:retired.add(idx);live.remove(idx)
                 else:
                     loc=[float(5+idx+frame/16),18.,idx-5.]
-                    put(D+6*0x400000+anchor,"fff",*loc);invoke(0x57dcc,h)
+                    put(D+6*0x400000+anchor,"fff",*loc);invoke(0x580c0,h)
                     obs.append(dict(slot=idx,update=dict(attached=loc)));rows.append(dict(slot=idx,anchorOffset=anchor,
                         position=list(get(h+0x94,"fff")),angles=list(get(h+0x88,"iii"))))
             return obs,rows
@@ -583,7 +583,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/".local") as tmp:
             else:
                 for idx,(h,anchor) in enumerate(children[:get(EXTRA+1,"B")[0]]):
                     loc=(180 if idx==7 and case==2 else 10+anchor/4+frame/16,12+case,idx-5)
-                    put(D+6*0x400000+anchor,"fff",*loc);invoke(0x57dcc,h)
+                    put(D+6*0x400000+anchor,"fff",*loc);invoke(0x580c0,h)
                     assert get(h+0x94,"fff")==loc
             released=[];dv_args=[];volley_motion=[]
             invoke(0x2820,BOSS)

@@ -48,9 +48,25 @@ be at stg42D's offsets.
 | - | Tobitiri (scattered ring) | `ring` | update 0x19FF0; setup 0x19D70 reused from `finalhazard` ring_drop |
 | - | trail plugin (table 0x801E77D8) | `messenger::trail` | alloc 0x635C, steps 0x6478/0x6938, dispatch 0x6E50, free 0x6EA4, drop-oldest, clip |
 | - | effects | `effects` | 10 particle creators, their execs, SpSparkExec manager |
+| - | Omochao (MSGER mode 2) | `messenger::omochao` | exec 0x156CC, display 0x17468 (logic; draws are events), follow 0x14DEC, steer 0x14AC8, turn limit 0x1451C, placement 0x14608/0x148A4, hints 0x14344/0x14484, holder 0x6300, force query 0x7558 |
+| - | movable objects (moving floors) | `dyn_land` | probe 0x378C, ceiling 0x38AC, ground 0x3924, walls 0x3B68, physics step 0x491C, free/create 0x49D0/0x49F8, set-up 0x4B44, release 0x4BA8, update 0x4BE0; main.dol fn_80012EA4 and ObjectMovableInitialize 0x800DE884 |
+| - | 2P ring rank (main.dol) | `player_contact::rank` | fn_80063E34 with fn_8001DDA8, fn_800736F0, fn_8001DB4C, GetPlayerCharacter 0x80038108 (AddNumRing's 2P path calls it) |
+| - | barrier / invincibility tasks (main.dol) | `player_contact::effects` | creators fn_800BE308/fn_800BE374/fn_800BE408, execs fn_800BD2F0/fn_800BE0BC/fn_800BD6E8, sparkle execs, displays fn_800BD478/fn_800BE234 (= fn_800BD858), sparkle displays fn_800BD120/fn_800BD5C0, rand 0x8010DC88 |
+| - | MSGER shadow texture | `messenger::shadow` | init 0x7344, free 0x7400, capture 0x6F94/0x6FC4, end 0x72D0, draw 0x7440; main.dol C_MTXLookAt, C_MTXFrustum, C_MTXLightFrustum, C_MTXConcat, PSVECCrossProduct |
+| - | trail particle effects | `effects` | creators 0x1DFE0 and 0x1E194 (exec 0x1E6BC); Omochao calls 0x1DFE0. `duel_debris` inlines the same logic against another main.dol's addresses |
+| - | player contact (main.dol) | `player_contact` | 30 routines: CCL hit searches and hit lists, IsThisTaskPlayer, the container attack checks fn_800368A0/fn_8003699C, SetVelocityP, SetInputP, fn_80039EB0, fn_800399BC, fn_8003A54C, On/OffControl3D, AddScore, AddNumRing, AddMechHP, 1-up fn_800641B8, the item effects fn_800373B8/fn_800374E0/fn_800375FC/fn_80037718, the vibration request fn_8002FB2C |
 
 Rows 7 (ORI) and 16 (EFFOBJ0) are ported by the Prison Lane work
 (`ori.rs`, `effect_emitter.rs`) and are not repeated here.
+
+The stage setup (stg42D +0x2E84..+0x2F1C) only stores addresses into
+main.dol's hook slots, each when it is still empty: the Tobitiri setup
+0x19D70 at 0x801A2A18, the item callback 0x9FB8 at 0x801A2A20, and the
+trail routines into the table at 0x801E77D8 (+4 alloc, +8 step, +0xC free).
+These are the GSNE8P values from the disc REL's own relocations. The Steam
+install's `resource/gd_PC/*.rel` are a different build linked against
+another main.dol (its main.dol data imports sit about 0x400 lower, e.g.
+0x801A2638, 0x801A2640, 0x801E73D8) and must not be paired with GSNE8P's.
 
 ## Engine boundary
 
@@ -61,6 +77,12 @@ objects use runs on the crate's existing native ports: `ninja_trig`,
 `ninja_matrix`, `msl_math`, `enemy_lib::engine`, `player_range`,
 `land_contact::invert`, `land_nodes::translate`, `color_blend`,
 `solid_box::fall_step`, `damage_ring::gravity_face`.
+
+The player-contact routines the objects call are native in
+`player_contact` (checked against main.dol itself, every byte they write).
+Each object host can answer its contact hooks with them; the module lists
+which function answers which host method. PSKULL and Omochao run their
+movable body through `dyn_land`.
 
 ## Verification
 
@@ -79,7 +101,8 @@ replay every case and compare events and state bit for bit.
 
     cargo test --release --test stage_objects_shared --test stage_objects \
       --test so_bigcat --test so_containers --test so_effects --test so_hintbox \
-      --test so_itembox --test so_messenger --test so_ring --test so_skull -- --ignored
+      --test so_itembox --test so_messenger --test so_ring --test so_skull \
+      --test so_dynland --test so_omochao --test so_contact -- --ignored
 
 ## Not ported
 
@@ -87,12 +110,19 @@ replay every case and compare events and state bit for bit.
   SCHBOX 0x1CB18/0x1CCD4/0x1CF3C/0x1BF34, CONTWOOD/CONTIRON 0xF380, 0xF42C,
   0xFF28, 0x10034, spark display 0xDF88, the item icon quads 0x9C08/0x9D08,
   the explosion sphere 0x7684. They are hooks.
-* The stage's movable-object (dynamic land) helpers 0x378C-0x4BE0 that
-  PSKULL, UDREEL and the Omochao use: about 6 KB, shared with ORI; hooked.
-* Omochao's exec 0x156CC and display 0x17468 (MSGER mode 2 installs them).
 * ORI's helpers 0x193EC/0x1949C and its rocket table 0x1B824/0x1B878.
-* Player contact itself (attack checks fn_800368A0/fn_8003699C, item effects
-  on the player, grabs): hooks for the player-collision work.
+* Engine calls the contact routines make that are not player contact: sound,
+  voice and jingles, task creation, allocation and freeing, and the effect
+  tasks' draw calls (`player_contact::effects::EffectDraw`).
+* The magnetic barrier's sparkle display fn_800BDD88 (0x234): pure drawing
+  (sprite vertex buffer and texture draws); its exec installs the address.
+* Omochao's message window (fn_800E00E8/fn_800E018C/fn_800E0118), player
+  bone position fn_80038008 and its draw calls; MSGER's GX state calls
+  (texture objects, viewport, scissor, projection, texture copy, fog) and the
+  shadow list push fn_80066AC8.
+* The walls routine's fallbacks for a zero unit-vector estimate (0x3DD4..,
+  0x40C0.., 0x43AC.., 0x4694.., 0x47B4..0x4854) are ported but no oracle
+  case reaches them; they appear unreachable.
 * Paths where the original reads through a null pointer or overruns a work
   block (a 21st queued item, failed allocations): the port stops or skips
   instead; the oracles do not exercise them.

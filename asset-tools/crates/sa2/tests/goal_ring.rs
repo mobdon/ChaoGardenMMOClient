@@ -365,11 +365,11 @@ fn compare_installed_init_and_contact() {
                     Call::Identify => "identify",
                     Call::Register => "register",
                     Call::Main {
-                        address: 0x8001baa4,
+                        address: 0x8001bb28,
                         ..
                     } => "main2",
                     Call::Main {
-                        address: 0x8001c78c,
+                        address: 0x8001c810,
                         ..
                     } => "main1",
                     Call::Local {
@@ -521,17 +521,17 @@ fn mounted_goal_cli() {
     let frames = doc["replay"]["frames"].as_array().unwrap();
     assert_eq!(
         doc["replay"]["textureSetup"]["calls"][1],
-        serde_json::json!([0x801194b4u32, 1, 4096])
+        serde_json::json!([0x801197fcu32, 1, 4096])
     );
     assert_eq!(
         doc["replay"]["observedRelease"]["events"][0],
-        serde_json::json!(["free", 0x801194e0u32, 8192])
+        serde_json::json!(["free", 0x80119828u32, 8192])
     );
     assert_eq!(frames.len(), 61);
     assert_eq!(frames[0]["regularMotion"]["timer"], 0);
     assert_eq!(frames[59]["regularMotion"]["timer"], 59);
     assert!(frames[59]["cleanupCall"].is_null());
-    assert_eq!(frames[60]["cleanupCall"], 0x80071878u32);
+    assert_eq!(frames[60]["cleanupCall"], 0x80071ae0u32);
     fs::remove_file(request).unwrap();
     fs::remove_dir(dir).unwrap();
 }
