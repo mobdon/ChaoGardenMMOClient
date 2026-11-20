@@ -937,6 +937,8 @@ pub enum PlacementClock {
     BossBeam(Box<BossBeamFrame>),
     /// Section 1 + 0x1640: boss actions 11 and 12 (beam with attack).
     BossCombo(Box<BossComboFrame>),
+    /// Section 1 + 0x1844: boss action 13 (defeat).
+    BossDefeat(Box<BossDefeatFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2718,6 +2720,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossAttack(frame) => return boss_attack(&rel, &frame),
         PlacementClock::BossBeam(frame) => return boss_beam(&rel, &frame),
         PlacementClock::BossCombo(frame) => return boss_combo(&rel, &frame),
+        PlacementClock::BossDefeat(frame) => return boss_defeat(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6151,5 +6154,148 @@ fn boss_combo(rel: &crate::city_rel::CityRel<'_>, f: &BossComboFrame) -> Result<
         }
         _ => {}
     }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What boss action 13 reads, each where the code reads it: the step
+/// (entity byte 1) at entry and before each increment, state words 0x14 /
+/// 0x18 (the stage handles) and 0x10 (the child), the entity flags
+/// half-word 4 as read before it is cleared, motion float 0x1c before each
+/// window check, the global frame word 0x801cbd88 + 0x7c before each
+/// period check, the results of 0x8002cb2c and 0x800c3974, and stage byte 0
+/// (through module word 6:0x4a8).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossDefeatFrame {
+    pub task: u32,
+    pub motion: u32,
+    pub step: i8,
+    pub step_after: [u8; 2],
+    pub handles: [u32; 2],
+    pub child: u32,
+    pub entity_flags: i16,
+    pub motion_frame: [f32; 3],
+    pub frame_count: [u32; 3],
+    pub motion_done: i32,
+    pub clock: u32,
+    pub stage_id: i8,
+}
+/// The compiler's unsigned division by a constant: the high word of the
+/// product with `magic`, an optional add-back step, then a shift.
+fn magic_divide(n: u32, magic: u32, add: bool, shift: u32) -> u32 {
+    let high = ((u64::from(n) * u64::from(magic)) >> 32) as u32;
+    if add {
+        (((n - high) >> 1) + high) >> shift
+    } else {
+        high >> shift
+    }
+}
+/// Section 1 + 0x1844: boss action 13, the defeat sequence. Step 0 frees
+/// the stage handles, starts motion 3, sets the lights, resets the child
+/// (0x866c), clears entity flag 4 and the camera. Every frame of step 0/1:
+/// a rumble every 45 frames before motion frame 4:0xf8, three sound and
+/// voice windows (the second on task + 1 with a long voice), the explosion
+/// 0x92c0 every 30 frames and the flash 0x9518 every 10 frames before 4:0x114;
+/// when the motion ends the result clock is set and the story advances
+/// (0x8001c78c with the stage byte). Stage half-word 0xa is cleared.
+fn boss_defeat(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossDefeatFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32, offset: usize| -> Result<f64> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 4)
+            .ok_or_else(|| Error::invalid("missing boss defeat constant"))?;
+        let at = r.addend as usize + offset;
+        let b = rel
+            .data(4)?
+            .get(at..at + 4)
+            .ok_or_else(|| Error::invalid("boss defeat constant out of range"))?;
+        Ok(f64::from(f32::from_be_bytes(b.try_into().unwrap())))
+    };
+    let code = rel.data(1)?;
+    let imm = |at: usize| u32::from(u16::from_be_bytes([code[at + 2], code[at + 3]]));
+    let magic = |hi: usize| (imm(hi) << 16).wrapping_add(imm(hi + 4) as u16 as i16 as i32 as u32);
+    let mut ev = Vec::new();
+    if (0..=1).contains(&f.step) {
+        if f.step == 0 {
+            for (i, (free, clear)) in [(0x18acu32, 0x18b4u32), (0x18c4, 0x18cc)]
+                .into_iter()
+                .enumerate()
+            {
+                if f.handles[i] != 0 {
+                    ev.push(call(free, serde_json::json!([f.handles[i]]))?);
+                    ev.push(st(clear, "state", 0x14 + 4 * i as u32, 4, 0));
+                }
+            }
+            ev.extend([
+                call(0x18d8, serde_json::json!([f.motion, 3]))?,
+                serde_json::json!({"site":0x18f0,"local":0x1ed8,"args":[2, 0],"floats":[k(0x18e2, 0x6c)?]}),
+                local(0x18f8, 0x866c, serde_json::json!([f.child])),
+                st(0x1904, "entity", 4, 2, (f.entity_flags as u16 & !4).into()),
+                call(0x190c, serde_json::json!([3]))?,
+                st(0x1918, "entity", 1, 1, f.step_after[0].wrapping_add(1).into()),
+            ]);
+        }
+        let frame = f64::from(f.motion_frame[0]);
+        if frame < k(0x1922, 0)? {
+            let g = f.frame_count[0];
+            if g - magic_divide(g, magic(0x1940), true, 5) * 45 == 0 {
+                ev.push(call(0x197c, serde_json::json!([1, 0, 0, 0]))?);
+                ev.push(call(0x198c, serde_json::json!([0, 0, 0x64]))?);
+            }
+        }
+        let window =
+            |lo: u32, hi: u32| -> Result<bool> { Ok(frame > k(lo, 0)? && frame < k(hi, 0)?) };
+        if window(0x1992, 0x19a6)? {
+            ev.push(call(0x19cc, serde_json::json!([0x10, f.task, 1, 0, 0xb4]))?);
+            ev.push(call(0x19dc, serde_json::json!([f.task, 0x10, 0x7f]))?);
+        }
+        if window(0x19e2, 0x19f6)? {
+            let t = f.task.wrapping_add(1);
+            ev.push(call(0x1a20, serde_json::json!([0x10, t, 1, 0, 0xb4]))?);
+            ev.push(call(0x1a30, serde_json::json!([t, 0x10, 0x7f]))?);
+            ev.push(call(0x1a40, serde_json::json!([t, 0x10, 0x3fff]))?);
+        }
+        if window(0x1a46, 0x1a5a)? {
+            ev.push(call(0x1a80, serde_json::json!([0x12, f.task, 1, 0, 0xf0]))?);
+            ev.push(call(0x1a90, serde_json::json!([f.task, 0x12, 0x7f]))?);
+        }
+        let g = f.frame_count[1];
+        if g - magic_divide(g, magic(0x1aa4), false, 4) * 30 == 0
+            && f64::from(f.motion_frame[1]) < k(0x1aca, 0)?
+        {
+            ev.push(local(0x1ae0, 0x92c0, serde_json::json!([f.task])));
+        }
+        let g = f.frame_count[2];
+        if g - magic_divide(g, magic(0x1ae8), false, 3) * 10 == 0
+            && f64::from(f.motion_frame[2]) < k(0x1b0e, 0)?
+        {
+            ev.push(call(0x1b30, serde_json::json!([0, 3, 0xa, 1]))?);
+            ev.push(local(0x1b34, 0x9518, serde_json::json!([])));
+        }
+        ev.push(call(0x1b3c, serde_json::json!([f.motion]))?);
+        if f.motion_done != 0 {
+            ev.extend([
+                call(0x1b4c, serde_json::json!([0]))?,
+                call(0x1b58, serde_json::json!([0, f.clock]))?,
+                call(0x1b70, serde_json::json!([f.stage_id as i32 as u32]))?,
+                st(
+                    0x1b7c,
+                    "entity",
+                    1,
+                    1,
+                    f.step_after[1].wrapping_add(1).into(),
+                ),
+            ]);
+        }
+    }
+    ev.push(st(0x1b90, "stage", 0xa, 2, 0));
     Ok(serde_json::json!({"events":ev}))
 }
