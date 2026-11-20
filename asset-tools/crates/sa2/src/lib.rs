@@ -9,6 +9,7 @@ pub mod board_motion;
 mod board_replay;
 pub mod chao_karate;
 pub mod chao_pipe;
+pub mod chao_race;
 pub mod character_animations;
 pub mod character_motions;
 pub mod city_music;
