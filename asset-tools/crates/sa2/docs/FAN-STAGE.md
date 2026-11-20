@@ -49,6 +49,15 @@ CartD's stage init passes an empty landtable (section 5 +0x1400, zero entries) t
 
 `tests/kart_piece_collision_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs +0x65f0 under Unicorn on the GameCube rows for all 1,006 tasked occurrences of the five courses, and +0x64b8 on 400 generated cases. It compares flags, position, rotation, scale and the register decision. `tests/kart_piece_flags_dol.py PRIVATE_DIR DATA_DLL` then calls main.dol's register for every copy and compares the stored flags.
 
+### Race background
+
+CartD's bgExec task (+0xdfc) draws a distant view (+0xd00) and then a sea (+0x9ac) every frame. Both follow the active camera's X and Z. Their height comes from the course minimum: course setup starts it at 100000.0 (section 4 +0x2D0) and lowers it to each origin's Y from occurrence 1 on (+0x736c).
+
+- **Distant view:** the object at section 5 +0x35C4 is drawn with the 3-entry prnbg list at (camera X, minimum + 350.0, camera Z).
+- **Sea:** the 11×11 chunk object at section 5 +0x23BC is drawn at (camera X, minimum, camera Z), scaled 4.0. Its texture slot is (frame / 2) mod 20 into tx_sea001..020. Each frame, CartD rebuilds the vertex chunk: positions are copied, and every vertex colour blends the source row (row + s) mod 11 with the following row by t. Here r = frame mod (11 × 50), s = r / 50 and t = (r − 50 s) / 50 in single precision. The blend is main.dol's ARGB routine (GSNE8P 0x800334B0): per byte, trunc(t × (b − a) + a) with one fused add, and 255 for a result outside 0..255.
+
+`kart-course-background EXE OUTPUT.json DATA_DLL CartD.rel COURSE FRAMES.json` reports both parts and the sea colours for each listed frame. Route 101's minimum is −2900 and Route 280's is −3700. `tests/kart_background_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` (`SA2_MAIN_DOL` set) runs CartD's sea builder under Unicorn for 17 frame counters, with the blend call running main.dol's routine through the shared harness. It also runs the course-minimum update for all five courses. Every colour and minimum matches Rust. The camera position and the chunk geometry decoding stay outside this port.
+
 ### Course textures
 
 `kart-course-materials EXE OUTPUT.json DATA_DLL CartD.rel course.pak COURSE` reports how a course's display pieces bind textures, using only native data. CartD's course display callback (+0x684c) passes the 74-entry course list at section 5 +0xF9C34 to engine routine 0x80116AD0 before drawing pieces. The command checks that those names equal the Data_DLL `texlist_course` export (RVA 0x58AEE8), in order. For every distinct piece, it lists each GC mesh in native order: opaque or translucent list, the low half of its own texture parameter (the course slot), the high half unchanged, and its raw blend-alpha word. Each slot used resolves to `course\NAME.dds` in course.pak, with the DDS and decoded RGBA digests and a count of texels with alpha below 255. Meshes that declare no texture parameter are counted; no texture is inherited for them.

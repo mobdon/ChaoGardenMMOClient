@@ -1321,3 +1321,228 @@ mod collision_stage {
         }
     }
 }
+
+/// The race background CartD's bgExec task draws each frame (+0xdfc calls
+/// the distant view +0xd00, then the sea +0x9ac). Both follow the active
+/// camera's X/Z; their height comes from the course's lowest piece origin.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseBackground {
+    pub course: &'static str,
+    /// Lowest Y over occurrences 1.. (course setup +0x736c, from 100000.0).
+    pub minimum_y: f32,
+    /// Section 5 object drawn at (camera X, minimum_y + offset, camera Z).
+    pub distant_object: u32,
+    pub distant_height_offset: f32,
+    pub distant_textures: Vec<String>,
+    /// Section 5 object drawn at (camera X, minimum_y, camera Z), scaled.
+    pub sea_object: u32,
+    pub sea_scale: f32,
+    pub sea_grid: u32,
+    /// Game frames per grid row of colour scroll (section 5 +0x368c).
+    pub sea_period: u32,
+    /// The sea's texture slot is (frame / 2) % 20 into this list.
+    pub sea_textures: Vec<String>,
+}
+
+struct SeaSource {
+    vertex_list: u32,
+    count: u32,
+    period: u32,
+}
+
+fn rel_names(rel: &crate::city_rel::CityRel<'_>, list: u32) -> Result<Vec<String>> {
+    let data = rel.data(5)?;
+    let invalid = || Error::invalid("unexpected CartD texture list");
+    let ptr = |at: u32| -> Result<usize> {
+        rel.local_pointer(5, at)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v as usize)
+            .ok_or_else(invalid)
+    };
+    let names = ptr(list)?;
+    let count = data
+        .get(list as usize + 4..list as usize + 8)
+        .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        .filter(|&n| n <= 4096)
+        .ok_or_else(invalid)?;
+    (0..count as usize)
+        .map(|k| {
+            let at = ptr((names + 12 * k) as u32)?;
+            let name = std::ffi::CStr::from_bytes_until_nul(data.get(at..).ok_or_else(invalid)?)
+                .map_err(|_| invalid())?;
+            Ok(name.to_str().map_err(|_| invalid())?.trim_end().to_owned())
+        })
+        .collect()
+}
+
+fn background_module(cart: &[u8]) -> Result<(crate::city_rel::CityRel<'_>, [u32; 8])> {
+    if sha256(cart) != CART_D_SHA256 {
+        return Err(Error::invalid("unsupported CartD.rel revision"));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(cart, 80)?;
+    let invalid = || Error::invalid("unexpected CartD background code");
+    // (LO relocation site, section) for each value the background code uses.
+    let mut v = [0u32; 8];
+    for (k, (site, section)) in [
+        (0xd5e, 5),  // distant height offset
+        (0xd82, 5),  // distant object
+        (0xd1a, 5),  // distant texture list
+        (0x9ca, 5),  // sea object
+        (0xa56, 5),  // sea period
+        (0xc32, 4),  // sea scale
+        (0xbaa, 5),  // sea texture list
+        (0x7106, 4), // course minimum start value
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        v[k] = rel
+            .reference(1, site)
+            .filter(|r| (r.module, r.section, r.kind) == (80, section, 4))
+            .map(|r| r.addend)
+            .ok_or_else(invalid)?;
+    }
+    if v != [0x3690, 0x35c4, 0x3680, 0x23bc, 0x368c, 0x160, 0x2764, 0x2d0] {
+        return Err(invalid());
+    }
+    Ok((rel, v))
+}
+
+fn be_word(data: &[u8], at: u32) -> Result<u32> {
+    data.get(at as usize..at as usize + 4)
+        .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+        .ok_or_else(|| Error::invalid("CartD background word outside section"))
+}
+
+fn sea_source(rel: &crate::city_rel::CityRel<'_>, v: &[u32; 8]) -> Result<SeaSource> {
+    let invalid = || Error::invalid("unexpected CartD sea model");
+    let ptr = |at: u32| -> Result<u32> {
+        rel.local_pointer(5, at)?
+            .filter(|(s, _)| *s == 5)
+            .map(|(_, v)| v)
+            .ok_or_else(invalid)
+    };
+    let data = rel.data(5)?;
+    let attach = ptr(v[3] + 4)?;
+    let vertex_list = ptr(attach)?;
+    let count = be_word(data, vertex_list + 4)? >> 16;
+    // The vertex chunk must hold count 16-byte position/colour vertices.
+    if be_word(data, vertex_list)? & 0xff != 0x23 || count == 0 || count > 4096 {
+        return Err(invalid());
+    }
+    be_word(data, vertex_list + 8 + 16 * count)?;
+    Ok(SeaSource {
+        vertex_list,
+        count,
+        period: be_word(data, v[4])?,
+    })
+}
+
+/// CartD +0xc74: square root through frsqrte and three Newton steps in
+/// double precision, rounded to single (the input is the vertex count).
+fn cart_sqrt(x: f32) -> f32 {
+    if x <= 0.0 {
+        return x;
+    }
+    let x = x as f64;
+    let mut y = 1.0 / x.sqrt();
+    for _ in 0..3 {
+        y = (0.5 * y) * (3.0 - x * (y * y));
+    }
+    (x * y) as f32
+}
+
+/// main.dol colour blend (PC import 0x80033248, GSNE8P 0x800334B0): each
+/// ARGB byte becomes trunc(t * (b - a) + a) in single precision with one
+/// fused add; a result outside 0..=255 becomes 255.
+pub fn blend_argb(a: u32, b: u32, t: f32) -> u32 {
+    (0..4).fold(0, |out, k| {
+        let shift = 24 - 8 * k;
+        let (x, y) = (((a >> shift) & 0xff) as f32, ((b >> shift) & 0xff) as f32);
+        let v = (t as f64 * (y - x) as f64 + x as f64) as f32 as i32;
+        out | (if v as u32 & 0xffff_ff00 != 0 {
+            0xff
+        } else {
+            v as u32
+        }) << shift
+    })
+}
+
+/// Vertex colours the sea draws on a frame (CartD +0x9ac..+0xb84): rows of
+/// the source grid scroll by one every `period` frames, blending each row
+/// with the next by the fraction of the period elapsed. Positions are
+/// copied unchanged.
+pub fn sea_colors(cart: &[u8], frame: u32) -> Result<Vec<u32>> {
+    let (rel, v) = background_module(cart)?;
+    let sea = sea_source(&rel, &v)?;
+    let data = rel.data(5)?;
+    let n = cart_sqrt(sea.count as f32) as i32;
+    let p = sea.period as i32;
+    if n <= 0 || n * n > sea.count as i32 || p <= 0 {
+        return Err(Error::invalid("unexpected CartD sea grid"));
+    }
+    let r = frame % (n * p) as u32;
+    let shift = r as i32 / p;
+    let t = (r as i32 - shift * p) as f32 / p as f32;
+    let color = |i: i32| be_word(data, sea.vertex_list + 8 + 16 * i as u32 + 12);
+    let mut out = Vec::with_capacity((n * n) as usize);
+    for row in 0..n {
+        let wrap = |i: i32| if i < n { i } else { i - n };
+        let (a, b) = (wrap(row + shift) * n, wrap(row + shift + 1) * n);
+        for col in 0..n {
+            out.push(blend_argb(color(a + col)?, color(b + col)?, t));
+        }
+    }
+    Ok(out)
+}
+
+pub fn course_background(
+    exe: &[u8],
+    dll: &[u8],
+    cart: &[u8],
+    name: &str,
+) -> Result<CourseBackground> {
+    let (rel, v) = background_module(cart)?;
+    let sea = sea_source(&rel, &v)?;
+    let placements = native_course_placements(exe, dll, name)?;
+    let s4 = rel.data(4)?;
+    let s5 = rel.data(5)?;
+    let mut minimum_y = f32::from_bits(be_word(s4, v[7])?);
+    for p in placements.iter().skip(1) {
+        if p.position[1] < minimum_y {
+            minimum_y = p.position[1];
+        }
+    }
+    Ok(CourseBackground {
+        course: courses(exe)?
+            .into_iter()
+            .find(|c| c.name == name)
+            .map(|c| c.name)
+            .ok_or_else(|| Error::invalid("unknown kart course"))?,
+        minimum_y,
+        distant_object: v[1],
+        distant_height_offset: f32::from_bits(be_word(s5, v[0])?),
+        distant_textures: rel_names(&rel, v[2])?,
+        sea_object: v[3],
+        sea_scale: f32::from_bits(be_word(s4, v[5])?),
+        sea_grid: cart_sqrt(sea.count as f32) as u32,
+        sea_period: sea.period,
+        sea_textures: rel_names(&rel, v[6])?,
+    })
+}
+
+#[cfg(test)]
+mod background_blend {
+    use super::{blend_argb, cart_sqrt};
+
+    #[test]
+    fn blend_endpoints_and_truncation() {
+        assert_eq!(blend_argb(0x1020_3040, 0xffee_ddcc, 0.0), 0x1020_3040);
+        assert_eq!(blend_argb(0x1020_3040, 0xffee_ddcc, 1.0), 0xffee_ddcc);
+        // 0 + 0.5 * 255 = 127.5 truncates to 127 in every channel.
+        assert_eq!(blend_argb(0, 0xffff_ffff, 0.5), 0x7f7f_7f7f);
+        assert_eq!(cart_sqrt(121.0), 11.0);
+        assert_eq!(cart_sqrt(0.0), 0.0);
+    }
+}
