@@ -564,6 +564,10 @@ fn call_turning(
             }
             r as i32
         }
+        0x8003_8A70 => {
+            path_place(stack, t, m, p, env);
+            0
+        }
         0x8004_6950 => {
             let v = clamp_speed(m.v3(0), p.f(0xC8), p.f(0xCC));
             m.set_v3(0, v);
@@ -711,4 +715,84 @@ impl SteerCalls for PtrTurns<'_> {
     fn turn_smoothly(&mut self, aim: &mut i32) {
         self.with(|t| t.turn_smoothly(aim))
     }
+}
+
+/// fn_80038A70(task work, motion work, player work): the path mode's
+/// placing step. The player's path distance (+0x30) moves by its speed,
+/// forward or back by which way the task faces along the path; the task
+/// then sits on the path there with its X and Z angles, its yaw turned by
+/// at most 0x800 toward the path direction (seen in its own plane) and the
+/// aim set to the opposite angle, and flags 0x2001 set. Off the path the
+/// task just moves by the motion work's speed.
+fn path_place(stack: &mut MatrixStack, t: &mut Work, m: &mut Work, p: &mut Work, env: &MoveEnv) {
+    use crate::{
+        land_contact::unit_vector,
+        ninja_matrix::{rotate_by_angles, Axis},
+        ninja_vector::{inner_product, vector_angle},
+        player_path::{sample, Sample},
+        walker_collide::{adjust_angle, diff_angle, plane_distance, Plane},
+    };
+    t.clear_h(tw::FLAG, 0x2003);
+    let drift = |t: &mut Work, m: &Work| {
+        let (a, b) = (t.v3(tw::POS), m.v3(0));
+        t.set_v3(tw::POS, [a[0] + b[0], a[1] + b[1], a[2] + b[2]]);
+    };
+    let Some(path) = env.path.as_ref() else {
+        drift(t, m);
+        return;
+    };
+    let mut sm = Sample {
+        dist: p.f(0x30),
+        ..Default::default()
+    };
+    if !sample(path, &mut sm) {
+        drift(t, m);
+        return;
+    }
+    let angles = t.ang3(tw::ANG);
+    let fwd = rotate_by_angles(stack, angles, [1.0, 0.0, 0.0]);
+    let back = inner_product(fwd, sm.dir) < 0.0;
+    p.set_f(
+        0x30,
+        if back {
+            p.f(0x30) - p.f(pw::SPD)
+        } else {
+            p.f(0x30) + p.f(pw::SPD)
+        },
+    );
+    let mut sm = Sample {
+        dist: p.f(0x30),
+        ..Default::default()
+    };
+    if !sample(path, &mut sm) {
+        drift(t, m);
+        return;
+    }
+    stack.push_unit();
+    stack.rotate(Axis::Z, angles[2]);
+    stack.rotate(Axis::X, angles[0]);
+    let flat = stack.calc_vector([1.0, 0.0, 0.0]);
+    stack.pop();
+    let up = rotate_by_angles(stack, angles, [0.0, 1.0, 0.0]);
+    let d = if back { sm.dir.map(|x| -x) } else { sm.dir };
+    let mut foot = [0.0; 3];
+    plane_distance(
+        d,
+        &Plane {
+            point: [0.0; 3],
+            normal: up,
+        },
+        Some(&mut foot),
+    );
+    let foot = unit_vector(foot);
+    let mut a = vector_angle(flat, foot, Some(up));
+    if diff_angle(m.i(0x1C), a) > 0x4000 {
+        a = a.wrapping_add(0x8000);
+    }
+    m.set_i(0x1C, a.wrapping_neg());
+    t.set_i(tw::ANG + 4, adjust_angle(angles[1], a, 0x800));
+    t.set_i(tw::ANG, sm.angles[2]);
+    t.set_i(tw::ANG + 8, sm.angles[3]);
+    t.set_v3(tw::POS, sm.pos);
+    t.or_h(tw::FLAG, 0x2001);
 }
