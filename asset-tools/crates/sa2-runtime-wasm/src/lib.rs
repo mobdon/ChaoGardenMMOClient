@@ -68,6 +68,7 @@ impl App {
         set_s: Option<Vec<u8>>,
         set_u: Option<Vec<u8>>,
         motions: Option<Vec<u8>>,
+        landtx: Option<Vec<u8>>,
     ) -> Result<App, JsValue> {
         let data = SteamData {
             exe,
@@ -127,6 +128,9 @@ impl App {
         surface.configure(&device, &config);
         let mut renderer = Renderer::new(device, queue, config.format);
         renderer.set_meshes(&[&land]);
+        if let Some(t) = landtx {
+            renderer.set_textures(&sa2_render::textures::gvm_textures(&t).map_err(err)?);
+        }
         let player = game.frame.player_tasks[0];
         Ok(App {
             game,

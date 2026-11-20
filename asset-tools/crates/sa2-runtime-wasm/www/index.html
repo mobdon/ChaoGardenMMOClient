@@ -31,6 +31,7 @@ const want = {
   set_s: 'resource/gd_PC/set0011_s.bin',
   set_u: 'resource/gd_PC/set0011_u.bin',
   motions: 'resource/gd_PC/ewalkmtn.prs',
+  landtx: 'resource/gd_PC/landtx11.prs',
 };
 
 function fit() {
@@ -54,7 +55,7 @@ async function run(files) {
   fit();
   status.textContent = 'Loading Iron Gate…';
   await init();
-  const app = await App.start(canvas, files.exe, files.stg11, files.set_s ?? undefined, files.set_u ?? undefined, files.motions ?? undefined);
+  const app = await App.start(canvas, files.exe, files.stg11, files.set_s ?? undefined, files.set_u ?? undefined, files.motions ?? undefined, files.landtx ?? undefined);
   status.textContent = `Iron Gate · ${app.triangles} land triangles`;
   addEventListener('resize', () => { fit(); app.resize(canvas.width, canvas.height); });
   // The game runs at 60 frames a second whatever the display's rate.
