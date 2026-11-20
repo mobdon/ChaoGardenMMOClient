@@ -1,4 +1,4 @@
-﻿//! Prison Lane's native stage rules on the installed Steam data. The
+//! Prison Lane's native stage rules on the installed Steam data. The
 //! session runs only rules read from the game files; these tests supply the
 //! player sample the engine would report and check the native responses.
 use sa2_asset_tools::{
@@ -105,20 +105,19 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [-4439.9966, 967.0, -1133.4259]);
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
-        assert_eq!(s.unimplemented.get("FENCES row (solid only)"), Some(&20));
-        assert_eq!(s.unimplemented.get("FENCEL row (solid only)"), Some(&1));
-        // CONTIRON: a 20-unit cube row, unchanged by quarter turns.
-        assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&11));
-        assert_eq!(s.unimplemented.get("CONTCHAO row (solid only)"), Some(&3));
-        assert_eq!(s.unimplemented.get("CONTWOOD row (solid only)"), Some(&14));
-        // MECHA's box is off the Y axis, so only yaw-0 placements are exact.
-        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&2));
-        assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&9));
-        assert_eq!(
-            s.unimplemented
-                .get("CCUBE (rotated: rotation rule not read)"),
-            Some(&8)
-        );
+        // CollisionData boxes placed by the CCL box rule.
+        for (name, n) in [
+            ("FENCES row (solid only)", 39),
+            ("FENCEL row (solid only)", 4),
+            ("FENCEL row (form 2): rule not read", 8),
+            ("CONTIRON row (solid only)", 18),
+            ("CONTCHAO row (solid only)", 3),
+            ("CONTWOOD row (solid only)", 17),
+            ("MECHA row (solid only)", 12),
+            ("CCUBE (solid only)", 17),
+        ] {
+            assert_eq!(s.unimplemented.get(name), Some(&n), "{name}");
+        }
         assert!(s.death_zone_count() > 0);
         assert_eq!((s.level, s.character, s.physics.slot), (9, 6, 6));
     });
@@ -243,5 +242,18 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         // Scale.x 0.5 per frame to the 50-unit stop.
         assert_eq!(b - a, 100);
         assert!((s.doors[d].slide - 50.0).abs() < 1.0);
+        // The collision box moved with the slide (Rotation.z bit 0 clear:
+        // toward -local Z, which the half-turn yaw points along +Z).
+        let z = |tris: Vec<[[f32; 3]; 3]>| tris.iter().flatten().map(|v| v[2]).sum::<f32>() / 36.0;
+        let mut closed = s.doors[d].clone();
+        closed.slide = 0.0;
+        let open_z = z(s.door_solid(d));
+        let shut = std::mem::replace(&mut s.doors[d], closed);
+        let closed_z = z(s.door_solid(d));
+        s.doors[d] = shut;
+        assert!(
+            (open_z - closed_z - 50.0).abs() < 1.0,
+            "{open_z} {closed_z}"
+        );
     });
 }

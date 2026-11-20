@@ -19,7 +19,7 @@ engine says it stands on) and `Session::step` runs the native object rules.
 cargo run --release -- $game $pcSa2Config --stage prison-lane out.json
 ```
 
-Rotations use the GameCube main program's own trigonometry (`ninja_trig`, read from the GSNE8P main.dol of the person's disc; every PC stage-module import maps onto it): njRotateX/Y/Z convert the angle to radians and call MSL sinf/cosf, and njSin/njCos read the start-up table. The sines and cosines are bit-for-bit ports; the matrix products that combine them are evaluated as plain single-precision steps rather than in the paired-single order of the SDK matrix routines, so a result can differ in its last bit. Lift, elevator and
+Rotations use the GameCube main program's own trigonometry (`ninja_trig`, read from the GSNE8P main.dol of the person's disc; every PC stage-module import maps onto it): njRotateX/Y/Z convert the angle to radians and call MSL sinf/cosf, and njSin/njCos read the start-up table. The sines and cosines are bit-for-bit ports; the matrix products that combine them are evaluated as plain single-precision steps rather than in the paired-single order of the SDK matrix routines, so a result can differ in its last bit. Collision boxes (CollisionData form 3) follow the GameCube CCL (`ccl_box_tris`): the row centre is moved by the task position and rotation (0x8000EAA0: rotate Z, X, Y, or Y, Z, X with attribute 0x200; none with 0x8000; a world point with 0x20), and the box itself is aligned to the yaw only (Rotation.y plus the row's Y angle; the box tests such as 0x800090E8 turn the relative vector by njRotateY of minus that sum), so X and Z rotations never tilt a box. Lift, elevator and
 bridge collision objects keep the placement's Y rotation only (stg09D.rel
 0x4930, 0x30CC, 0x510; stg11D.rel likewise), and the elevator's object sits
 40 below its placement (checked constant in both modules). Goal contact is
@@ -55,13 +55,13 @@ outer door (114 frames) gates travel.
 | Terrain | `objLandTable0009`, `collision::bake_stage` | Geometry only |
 | Object models | PC_SA2/STG09.ini: lift 0xC3C538, bridge 0xC42EA0, elevator 0xC39660, panel 0xC40390 | Native Basic models |
 | PANEL (17) | stg09D.rel 0x2A4C passes its model to the static-collision helper 0x9A4C with flags 6 (Y rotation kept, X and Z dropped) | All 17 |
-| CCUBE (17) | stg09D.rel 0x11CDC: CollisionData form 3 (sec5+0x4C080), sizes 10 + Scale per axis (helper 0x11B30) | The 9 whose shape cannot depend on the unread rotation rule (no X/Z rotation, yaw 0 or a half turn) |
-| FENCES (39), FENCEL (4) | 0x2A94 / 0x2AF8 register CollisionData rows sec5+0x3C54C (1) and +0x3C57C (3) via helper 0x2B5C, read at load by `play_objects::collision_rows` | Form 3 boxes by the same rule: 20 FENCES, 1 FENCEL |
-| CONTIRON (18) | 0x1978C registers CollisionData sec5+0x52A18 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10 (a 20-unit cube; Iron Gate's row is identical) | The 11 placed at a whole quarter turn, since a cube square in XZ is unchanged by those |
-| CONTCHAO (3), CONTWOOD (17) | 0x18E1C and 0x1A3A4 register the same cube rows (sec5+0x51D20, +0x53A08); breaking (player attacks) is not run | All 3 CONTCHAO; the 14 CONTWOOD at quarter turns |
-| MECHA (12) | 0x527C registers sec5+0x41DB4: form 3, centre (0, 0, 2), half-extents (10, 10, 5); its exec only runs that collision | The 2 at yaw 0 (the centre is off the Y axis) |
+| CCUBE (17) | stg09D.rel 0x11CDC: CollisionData sec5+0x4C080 (form 3, attr 0x2000), sizes 10 + Scale per axis (helper 0x11B30) | All 17, by the CCL box rule |
+| FENCES (39), FENCEL (4) | 0x2A94 / 0x2AF8 register CollisionData rows sec5+0x3C54C (1) and +0x3C57C (3) via helper 0x2B5C, read at load by `play_objects::collision_rows` | Every form 3 row by the CCL box rule: 39 FENCES and 4 FENCEL boxes; FENCEL's two angled form 2 rows are not built |
+| CONTIRON (18) | 0x1978C registers CollisionData sec5+0x52A18 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10 (a 20-unit cube; Iron Gate's row is identical) | All 18 |
+| CONTCHAO (3), CONTWOOD (17) | 0x18E1C and 0x1A3A4 register the same cube rows (sec5+0x51D20, +0x53A08); breaking (player attacks) is not run | All 20 |
+| MECHA (12) | 0x527C registers sec5+0x41DB4: form 3, centre (0, 0, 2), half-extents (10, 10, 5); its exec only runs that collision | All 12 |
 | Enemy groups | GSNE8P 0x80018C88/0x80018C10 (count up), 0x80018B88/0x80016598 (count down), 0x80018E30 (query: count is zero); stg09D.rel E KUMI 0x4C848 (not counted when its kind, Scale.x truncated, is 4), E EMI 0x4E900, E AI 0x513D4, E NAMIE 0x54080, E GOLD 0x4A3D4 | Group = low byte of Rotation.y. Counts are built from the SET; `Session::destroy_enemy` reports a kill (the walker's attacks are not ported). Enemy behaviour itself is not run |
-| CAGED sliding cell doors (11) | 0x1EB0 set-up, 0x2000 exec | Ported: closed until the group named by Rotation.x's low byte is clear, then slide open by Scale.x per frame to 50 (sound 0x1020 while sliding, 0x1021 at the stop), settle with velocity 0.5, pull 0.4 and keep 0.96, and snap shut if the group fills again. The collision box (form 3, centre (0, 30, +/-slide) by Rotation.z bit 0) is not built until the box rotation rule is read |
+| CAGED sliding cell doors (11) | 0x1EB0 set-up, 0x2000 exec | Ported: closed until the group named by Rotation.x's low byte is clear, then slide open by Scale.x per frame to 50 (sound 0x1020 while sliding, 0x1021 at the stop), settle with velocity 0.5, pull 0.4 and keep 0.96, and snap shut if the group fills again. Its collision box (sec5+0x38F68: form 3, centre (0, 30, 0), half-extents (5, 31, 30)) has its centre Z set to +slide or -slide by Rotation.z bit 0 each frame (0x22EC); `Session::door_solid` places it by the CCL box rule |
 | RING_LINEAR (17 lines) | 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | All 17 (64 rings): Scale.z clamped to 1..=8, ring i at (0, Scale.y * njSin(i * (0x4000 / n)), -i * (10 + Scale.x)) under rotate Z, Y, X (GSNE8P njRotateZ 0x801158A8, njRotateY 0x80115828, njRotateX 0x80115C60; the arch call is njSin 0x80112398) |
 | Rings | o_ring_M1 | Pickup strictly within 14 of the collision centre |
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact branch on a host-reported touch; writes slot word 2 |
@@ -69,7 +69,7 @@ outer door (114 frames) gates travel.
 | Checkpoints, springs | placements; `spring::StageSpring` | Checkpoint positions; spring launch vectors (njRotate); contact is not run |
 
 Everything else is listed by name in `Session::unimplemented`, including
-the rotated CCUBE and fence placements, the angled fence rows (form 2),
+the angled FENCEL rows (form 2),
 CAGE/CAGEB/CAGEC (gated on the same group query as CAGED, not yet ported), WALL (player-distance logic), ROLL (an angled form 2 row and a
 spinning model), TANK, SPHERE, CCYL, item boxes and enemies.
 

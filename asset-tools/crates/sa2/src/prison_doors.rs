@@ -55,7 +55,7 @@ pub struct PrisonDoor {
     pub layer: usize,
     pub index: usize,
     pub position: V3,
-    pub yaw: u16,
+    pub rotation: [u16; 3],
     /// Rotation.x low byte: the enemy group that must be cleared.
     pub group: u8,
     /// Scale.x: opening speed per frame.
@@ -145,7 +145,7 @@ mod tests {
             layer: 0,
             index: 0,
             position: [0.0; 3],
-            yaw: 0,
+            rotation: [10, 0, 0],
             group: 10,
             speed,
             positive: false,
