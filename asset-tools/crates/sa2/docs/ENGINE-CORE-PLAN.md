@@ -6,9 +6,12 @@ renderer path. It expands Phase 1 of [PORT-PLAN.md](PORT-PLAN.md) (issue
 [#440](https://github.com/mobdon/ChaoGardenMMOClient/issues/440)) and the
 renderer, camera and web-build parts of Phases 2 and 3 (#441, #442).
 
-**First target (mob's choice): Iron Gate played as the Chao Walker, in a
-browser.** The walker exec 0x800B3A8C is ported in PR #435. This plan makes the
-engine able to run that stage's tasks around it.
+**First target (mob's choice): Iron Gate played with its native character,
+Mech Eggman, in a browser.** The stage loads exactly as the one-player story does:
+loader 0x800B5D2C (PhysicsArray row 7), G+0x1E = 0. The walker exec 0x800B3A8C
+is ported in PR #435. This plan makes the engine able to run that stage's tasks
+around it. Playing as a Chao (the Chao Walker rows) is deferred until after the
+full port (mob, November 20, 2026); ENGINE-MAP.md 8a/8b keep the trace for then.
 
 ## Rules (from PORT-PLAN.md, restated for this work)
 
@@ -149,8 +152,15 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   copy, exec, fn_80006B00, fn_800D0904, frame counter fn_80062B38 per tick;
   then display), stage modes 0x803AD81A (7 start, 0x10 play, 0x11 pause =
   display only), frame counter G+0x7C (0x801CC1E4) stopped by G+0x37, the
-  stage clock, and the vsync tick count 0x803AD8AC (its float formula is still
-  unresolved). G is 0x801CC168 (0x801CBD88 in the Steam-REL build).
+  stage clock, and the vsync tick count 0x803AD8AC. G is 0x801CC168
+  (0x801CBD88 in the Steam-REL build).
+- **Done** (`sa2-runtime/src/frame.rs`): `fn_8001E45C`, `fn_8001E89C`,
+  `fn_8001E12C`, `fn_80062B38`, `fn_80070C20`, `fn_80070BA8`. The tick count's
+  float formula turned out to be dead code: its result is overwritten with 1 at
+  0x8001E518, so ticks are 1, plus 1 every fifth frame when G+0xF == 2.
+  Engine callees not ported yet are logged and not run. Not ported here: the
+  GX pre-pass `fn_80070F5C` (so the +0x2C walk it runs is not run yet), the
+  stage-mode switch `fn_8001F368` and the master loop around it.
 - Headless and deterministic: no wall clock inside the tick. The browser drives
   ticks from requestAnimationFrame with a fixed 1/60 s accumulator (a web
   choice, written down in E7's doc).
@@ -168,6 +178,13 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   documented, never a gameplay rule.
 - **Verification:** the native fill routine under Unicorn on recorded pad
   states, bit for bit.
+- **Done** (`sa2-runtime/src/input.rs`): `fn_80119A04` (with the `sa2` crate's
+  `pad_clamp`, now checked against main.dol's PADClamp), `fn_80119B84`,
+  `fn_80119BD8`, `fn_80119C4C`, `fn_800226E0`, `fn_80022048`. Matches main.dol
+  bit for bit on 55 recorded ops (tests/input_ppc.py). Not ported yet:
+  `PADReset` (logged), and `fn_80022BC4`, `fn_80021E68` (demo record/playback),
+  `fn_80021D0C`, `fn_80022A94` (logged). The frame step still takes pad words
+  from its host; wiring `PadSystem` into it is part of E5.
 
 ### E4. Stage load and unload: Iron Gate
 
@@ -175,9 +192,49 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   through the SET loader and exec gate, objects, lights, fog, death zones,
   paths, start position, in the order of stg11D's init fn_11_A434
   (ENGINE-MAP.md 4.2), with players loaded first by fn_8001DEA8 as the session
-  init does. Player loaders: Mech Eggman is **0x800B5D2C** (row 7); the walker
-  rows are 0x800B58D4 (row 0xD) and 0x800B56E8 (row 0xE), reached when G+0x1E
-  and the per-player byte G+0x55+i are set.
+  init does, exactly as the one-player story: character 7, loader
+  **0x800B5D2C** (Mech Eggman, row 7), G+0x1E = 0 (no player 2, one viewport).
+- **Part 1 done** (`sa2-runtime/src/player.rs`, `camera.rs`): `fn_8001DEA8`
+  (players by character), the Mech Eggman loader `fn_800B5D2C`, `fn_8004F838`
+  (player work, PhysicsArray row copy, special-stage values, upgrade bits,
+  player tables), `fn_800B5630`, and the camera task creation `fn_800C4458`
+  (im 2, level 0). Matches main.dol on 24 ops (tests/load_ppc.py), every word
+  of the 0x454-byte player work included. Fail closed (logged, not run): the
+  other characters' loaders and 0x800B56E8, `fn_8001D74C` (start position),
+  `CCL_Init`, the motion/model loaders 0x80072548 / 0x80050210 / 0x80050094,
+  `fn_800645F8`, `fn_8003D8D0`, `fn_80010CC4`, the GX texture setup, and the
+  camera mode routines. PhysicsArray rows come from the Steam `sonic2app.exe`
+  (`player::steam_physics_rows`, via the `sa2` reader); all 17 named rows are
+  identical to main.dol's (tests/steam_physics.rs). Upgrade bytes come from the
+  host (save data, not wired yet).
+- **Session init done** (`sa2-runtime/src/session.rs`): `fn_80021828` with the
+  camera and player load inside it, checked against main.dol on 15 ops
+  (tests/session_ppc.py; PhysicsArray from the Steam install). Fail closed:
+  its 22 engine callees, and `fn_800DEA3C` returns 0 until the HUD/message
+  loader is ported.
+- **Stage module load done** (`sa2-runtime/src/stage.rs`): `fn_8001EB80`
+  (character swaps, table clears, subprogram init, camera reset
+  `fn_800C4370`) and stg11D's init fn_11_A434 ported as Rust (REL addresses as
+  section base + offset): the stage task fn_11_AE18, death zones
+  `fn_8003BCC4`, fn_11_B484, fn_11_16DE0, the object-list copy fn_11_A230,
+  the callback tables 0x801A2A18 / 0x801E77D8 / 0x803ADC30, and the SET task
+  `fn_8006638C`. Checked against main.dol with the GC stg11D.rel running
+  under Unicorn (tests/stage_ppc.py, needs SA2_STG11D_REL) on 10 ops, every
+  task and stage global included. Fail closed: the file loaders
+  (`fn_800245EC` landtable and lights, `fn_80065048` SET files, fn_11_C2F0,
+  fn_11_152EC), fn_11_330DC, fn_11_28038 and 18 other engine callees.
+- **SET rows and spawner done** (`sa2-runtime/src/set.rs`, `objects.rs`):
+  the `_s`/`_u` join `fn_800651EC`, entry setup `fn_800658EC`, ring total
+  `fn_80064F08`, the SET exec `fn_80066274` and the one-player spawner
+  `fn_80065C40` (range test `fn_80066180`). The object list is read from the
+  Steam `stg11D.rel` (.data+0x5D4FC): module-local execs through the stg11D
+  layout, main.dol execs moved to GSNE8P by section 0's offsets; an ignored
+  installed-data test checks all 92 definitions equal the GC disc module's.
+  Spawned objects run only if their exec is registered (fail closed). Not
+  ported: the two-player spawner `fn_80065EC8`, the reload `fn_80065B28`,
+  the saved-twp entry route (entry bit 1), and the unload (fn_11_A76C,
+  `fn_8002176C`). Ported per the "fastest decent plan": unit tests and the
+  existing stage oracle, no new Unicorn parity check.
 - SET rows whose task is not ported are listed by name and not spawned.
 - Unload frees every task and returns the runtime to its empty state.
 - `play_session::Session` stops taking a host `PlayerSample`: the walker task
@@ -199,9 +256,12 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
 ### E6. Default player camera (Phase 2, #441)
 
 - Port the camera task (fn_800C4458; exec fn_800C3DA0, display fn_800C3FCC,
-  fn_800C4278 → `njSetCamera`). Which mode routine Iron Gate uses by default is
-  still to be traced. 0x801E4FF8 was not a camera block (it is the Steam-REL
-  address of the stick table).
+  fn_800C4278 → `njSetCamera`). **Traced:** the default is mode 0xD "CARMEL"
+  (fn_800C86A4) in slot 0, entered after mode 0x13 "INIT" (fn_800C96BC) in
+  slot 0xE runs for 5 frames (ENGINE-MAP.md 6, mode slots). Port order: the
+  slot routines (fn_800C3A94, fn_800C3780, fn_800C382C), fn_800C5730, INIT,
+  then CARMEL with its helpers. 0x801E4FF8 was not a camera block (it is
+  the Steam-REL address of the stick table).
 - **Verification:** under Unicorn against recorded player states.
 
 ### E7. Ninja renderer path (Phase 2 minimum, #441; breadth in #442)
@@ -273,5 +333,6 @@ objects or enemies; it calls them. Shared helpers stay in their owner's file.
    PORT-PLAN.md).
 2. ~~Whether the Chao Walker loader installs the walker exec~~ — answered by
    E0: yes, all four walker loaders install 0x800B3A8C.
-3. How the game sets G+0x1E and G+0x55+i (the walker-row gate): being traced
-   ("Chao Walker selection path" in ENGINE-MAP.md).
+3. ~~How the game sets G+0x1E and G+0x55+i~~ — traced (ENGINE-MAP.md 8a/8b):
+   only the two-player select and the title demos do. Not needed for the first
+   target, which uses the native character.

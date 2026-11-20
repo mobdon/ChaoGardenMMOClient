@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iron Gate</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1018; color: #d8dce6; font: 14px system-ui, sans-serif; }
+  header { padding: 10px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  canvas { display: block; width: 100vw; height: calc(100vh - 52px); }
+  #status { opacity: .8; }
+</style>
+</head>
+<body>
+<header>
+  <label>Steam "Sonic Adventure 2" folder:
+    <input id="folder" type="file" webkitdirectory directory>
+  </label>
+  <span id="status">Pick the game folder. Nothing leaves this computer. Arrows or WASD to move, Space is A.</span>
+</header>
+<canvas id="view"></canvas>
+<script type="module">
+import init, { App } from './pkg/sa2_runtime_wasm.js';
+
+const status = document.getElementById('status');
+const canvas = document.getElementById('view');
+const want = {
+  exe: 'sonic2app.exe',
+  stg11: 'resource/gd_PC/stg11D.rel',
+  set_s: 'resource/gd_PC/set0011_s.bin',
+  set_u: 'resource/gd_PC/set0011_u.bin',
+  motions: 'resource/gd_PC/ewalkmtn.prs',
+  landtx: 'resource/gd_PC/landtx11.prs',
+  walker_mdl: 'resource/gd_PC/ewalkmdl.prs',
+  walker_tex: 'resource/gd_PC/ewalktex.prs',
+};
+
+function fit() {
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.round(r.width * devicePixelRatio));
+  canvas.height = Math.max(1, Math.round(r.height * devicePixelRatio));
+}
+
+const keys = new Set();
+addEventListener('keydown', e => { keys.add(e.code); if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
+addEventListener('keyup', e => keys.delete(e.code));
+function pad() {
+  const k = c => keys.has(c);
+  const x = (k('ArrowRight') || k('KeyD') ? 72 : 0) - (k('ArrowLeft') || k('KeyA') ? 72 : 0);
+  const y = (k('ArrowUp') || k('KeyW') ? 72 : 0) - (k('ArrowDown') || k('KeyS') ? 72 : 0);
+  const b = (k('Space') ? 0x100 : 0) | (k('KeyX') ? 0x200 : 0) | (k('Enter') ? 0x1000 : 0);
+  return [x, y, b];
+}
+
+async function run(files) {
+  fit();
+  status.textContent = 'Loading Iron Gate…';
+  await init();
+  const app = await App.start(canvas, files.exe, files.stg11, files.set_s ?? undefined, files.set_u ?? undefined, files.motions ?? undefined, files.landtx ?? undefined, files.walker_mdl ?? undefined, files.walker_tex ?? undefined);
+  status.textContent = `Iron Gate · ${app.triangles} land triangles`;
+  addEventListener('resize', () => { fit(); app.resize(canvas.width, canvas.height); });
+  // The game runs at 60 frames a second whatever the display's rate.
+  const tick = 1000 / 60;
+  let last = performance.now(), owed = 0;
+  const step = now => {
+    owed = Math.min(owed + (now - last), 4 * tick);
+    last = now;
+    while (owed >= tick) {
+      owed -= tick;
+      const [x, y, b] = pad();
+      status.textContent = app.frame(x, y, b);
+    }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function fail(e) { status.textContent = 'Could not start: ' + (e?.message ?? e); console.error(e); }
+
+document.getElementById('folder').addEventListener('change', async e => {
+  const byPath = new Map();
+  for (const f of e.target.files) {
+    const p = f.webkitRelativePath.split('/').slice(1).join('/').toLowerCase();
+    byPath.set(p, f);
+  }
+  const files = {};
+  for (const [k, p] of Object.entries(want)) {
+    const f = byPath.get(p.toLowerCase());
+    if (!f && (k === 'exe' || k === 'stg11')) return fail(`missing ${p}`);
+    files[k] = f ? new Uint8Array(await f.arrayBuffer()) : null;
+  }
+  run(files).catch(fail);
+});
+
+// Development: ?from=<url prefix> fetches the same files from a local server.
+const from = new URLSearchParams(location.search).get('from');
+if (from) {
+  (async () => {
+    const files = {};
+    for (const [k, p] of Object.entries(want)) {
+      const r = await fetch(from + p);
+      files[k] = r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+    }
+    await run(files);
+  })().catch(fail);
+}
+</script>
+</body>
+</html>

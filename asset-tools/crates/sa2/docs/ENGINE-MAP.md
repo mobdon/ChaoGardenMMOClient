@@ -279,17 +279,27 @@ Stage number: `GetStageNum` 0x8001DD78 returns the halfword 0x803AD820.
 
 ### 4.1 Order
 
-1. Top-level case 4 → `fn_80021828` (session init): mode 0x803AD81A = 3 → 0,
-   `fn_80064428`, `fn_8006445C`, `fn_80064470`, `fn_80064414`, `fn_800DDA3C`,
-   `fn_80027C20`, `fn_8002309C`, display flags, **`clearBtp`**,
-   `fn_80071FA8`, 4 × `fn_800DEA3C`, `fn_80072820`, `srand`, 4 ×
-   `fn_800C4458` (camera task, section 6), `fn_8001A8A8`, `fn_800C3C8C`,
-   `fn_800503C8`, **`fn_8001DEA8` (load players, 4.3)**, `fn_80066488`,
-   `fn_80024B2C`, `fn_80018E5C`, `fn_80012CC0`, `fn_80067D58`, `fn_8006CA48`,
-   `fn_80019CCC`, `fn_800DCBC8`, `fn_800DB604`.
+1. Top-level case 4 → `fn_80021828` (session init; ported in E4, checked
+   against main.dol): 0x803AD81C = 0, mode 0x803AD81A = 3; when G+0x4D == 0,
+   mode 0 and `fn_80064428`, `fn_8006445C`, `fn_80064470`, `fn_80064414`,
+   `fn_800DDA3C`, `fn_80027C20`; 0x803AD830..34 = -1; `fn_8002309C`; pause
+   cursor/flag 0; G+0x20/+0x23 (two players: G+0x20 = 1 when a character is 6
+   or 7 or G+0x1F is 1 or 4, untouched for stage 0x47, else 0; one player:
+   G+0x20 = 0, and G+0x23 = 0 for stages > 0x3C except 0x46, and 0x13, 0x14,
+   0x1D, 0x21, 0x2A); **`clearBtp`**; `fn_80071FA8`; 4 × `fn_800DEA3C` →
+   0x803AD83C..48 (a non-null first result gets layout writes);
+   `fn_80072820(0x80174190, 0x803AD368)`; `srand(0xDEAD0CAB)` when G+0x00 is
+   set; stage 0x5A: 4 viewports and `fn_8001A8A8`, else `fn_800C4458(4/2/1)`
+   by G+0x20/+0x21; clear 0x8000 words at 0x817BFE60; **players
+   (`fn_800503C8`, `fn_8001DEA8`) only when stage < 0x46 or ≥ 0x48**, else
+   `fn_800C3C8C`; `fn_80066488`, `fn_80024B2C`, `fn_80018E5C`,
+   `fn_80012CC0(0)`, `fn_80067D58`, `fn_8006CA48`, `fn_80019CCC`; G+0x47,
+   +0x14, +0x15 = 0; `fn_800DCBC8`; G+0x15 = 1 when 0x803AD420 ≥ 0 and
+   `fn_800DB604()` returns -1. Returns 1.
 2. Mode 2/3 → `fn_8001EB80` (stage load): 0x803AD824 = stage, fog table
-   (`njGenerateFogTable3`, `njSetFogTable`), character swaps for stages 0x5A,
-   3 and 0x3C..0x46 (destroy player 0, set 0x803AD828, reload players), clear
+   (`njGenerateFogTable3`, `njSetFogTable`), character swaps (destroy player 0,
+   set 0x803AD828, reload players): stage 0x5A turns 7 into 3 and 6 into 2;
+   stages 3..0x3C and 0x46 turn 3 into 7 and 2 into 6 (corrected in E4), clear
    0x801E5870 and 0x801E5630, `fn_80067FF4`, **`fn_8001A3BC` → `fn_8001A5B0`:
    read `stg11D.rel`, `OSLink`, call module prolog (header +0x34)**,
    **`fn_80019E18`: call the subprogram's init**, `fn_8001EDFC`, G+0x16 = 1,
@@ -386,11 +396,21 @@ VI post-retrace: fn_80022F5C → fn_80119A04
 Per tick: fn_800226E0 (and fn_8002239C)
   0x801E55D8[i] = fn_80119B84(port map) → &0x80357E60[port], or the
                   idle record 0x801950E8 when disconnected
-  copy the record into 0x801E5438 + 0x34·i (G+0x3E/+0x3F/+0x40 select
-                  replay/demo cases, not traced further)
-  fn_80022048 → per player: 0x801E53F8 + 8·i = { angle s32 (atan2f), magnitude f32 };
-                  0x801E53B8 + 8·i second pair
-  fn_80021E68 → also writes 0x801E53F8 (override path, **unresolved**)
+  G+0x3E == 1 (input on): copy record 0 to 0x801E5438 when G+0x3F == 1 and
+                  record 1 to 0x801E546C when G+0x40 == 1; every other of
+                  the 8 copies is neutralised (+0x2C = old held, held 0,
+                  +0xC = ~0, pressed/released 0, sticks and triggers 0).
+                  G+0x3E != 1: all 8 are neutralised.
+  fn_80022048 → for i in 0..8 (sticks only for i < 2): dead zone ±14,
+                  angle = BAMS(atan2f(y, x)) (axis cases 0/0x4000/0x8000/
+                  0xC000) minus the camera angle [*(0x80175378 + 4i) + 0x10]
+                  when *0x803ADB04 is set, magnitude = min(|v|³ / 125000, 1)
+                  (|v| by frsqrte + 3 Newton steps); 0x801E53B8 + 8·i always,
+                  0x801E53F8 + 8·i only when G+0x3E == 1 and G+0x3F+i == 1;
+                  0x803AD874[i] = 1 when the magnitude crosses 0.5 upward
+  then fn_80022BC4, fn_80021E68 (demo record/playback when G+0x00 is 1/2,
+                  writes the copies and 0x801E53F8), fn_80021D0C,
+                  fn_80022A94(0..3): not ported yet
 ```
 
 `GetAnalog` 0x8004E560 reads 0x801E53F8 (92 callers). The pause check in
@@ -399,7 +419,8 @@ fn_8001E45C reads word +0x10 (pressed) of `*0x801E55D8[i]`.
 ## 6. Camera
 
 - `fn_800C4458` 0x800C4458: if 0x803ADAF8 is empty,
-  `CreateElementalTask(0, 2, fn_800C3CF0, …)` → 0x803ADAF8, destructor
+  `CreateElementalTask(2, 0, fn_800C3CF0, …)` (im 2, level 0; corrected in E4)
+  → 0x803ADAF8, destructor
   fn_800C3D90; then fn_800C34C4, fn_800C5914, fn_800C6F70, fn_800C91C4;
   0x803ADAD4 = viewport count argument; 0x803ADAD0 = 0; camera work at
   0x801FF424 initialised (0x31C7, 0x31C7, 0x4000); fn_800C36A4, fn_800C3A94,
@@ -415,8 +436,29 @@ fn_8001E45C reads word +0x10 (pressed) of `*0x801E55D8[i]`.
   0x8011242C, fn_80024CB8.
 - Display fn_800C3FCC: per viewport, 0x803ADAD0 = index, `fn_800C4278`
   (re-applies that viewport's Ninja camera before the display pass draws it).
-- Which mode routine is the "default player camera" for Iron Gate is
-  **unresolved**; 0x801E4FF8 is not a camera block in GSNE8P (section 0).
+- 0x801E4FF8 is not a camera block in GSNE8P (section 0).
+- **Mode slots** (traced for E6): each viewport block (0x801FF424 + 0x24D8 *
+  vp) holds 16 mode slots of 0x114 bytes at +0x258; +0x254 is the top
+  (active) slot. `fn_800C3A94(vp, slot, mode)` fills a slot: +0x258 mode,
+  +0x25C = 0, +0x260 frame counter = 0, +0x264 routine from the **mode table
+  0x80175410** (12-byte rows: name pointer, routine, flag), 0x80 bytes at
+  +0x26C cleared; a slot above the top becomes the top. `fn_800C3BDC(vp)`
+  reads the top, `fn_800C3BBC(vp, slot)` a slot's mode. `fn_800C5730(vp)`
+  calls the top slot's routine with the slot as r4, then counts +0x260 up.
+- **Default player camera:** `fn_800C4458` puts mode 0xD **"CARMEL"**
+  (fn_800C86A4, 0x6D8 bytes) in slot 0 of every viewport, and for stages
+  below 0x3C mode 0x13 **"INIT"** (fn_800C96BC, 0x164 bytes) in slot 0xE on
+  top of it. INIT reads the player twp from 0x80217768[vp] and the player
+  work from 0x80217728[vp]: camera target = player position with the work's
+  +0x13C added to y; camera position = position − k·dir (fn_800C5524 from
+  the twp's angle, k at r2−0x6290) plus r2−0x628C in y, written to
+  0x801FF3E4 +0xC..+0x14 / +0x30..+0x38. After 5 frames it calls fn_800C6CDC
+  and drops slot 0xE (fn_800C3780), so CARMEL runs from then on. CARMEL's
+  callees: fn_800C382C, fn_800C3BDC, fn_800C55BC, fn_800C56F4, fn_800C5B78,
+  fn_800C5D54, fn_800C5E4C, fn_800C6A90, fn_800C6AF4, fn_800C6AFC,
+  fn_800C9CA8 (mode 3's routine), `GetPlayerCharacter`, floorf,
+  `njScalor`, `njUnitVector`; 3 paired-single words. Iron Gate's SET may
+  push other modes over slot 0 (camera areas); not traced.
 
 ## 7. Draw path
 
@@ -578,6 +620,71 @@ the store; a site reached from two branches may store either.)
   (advertiseD's strings were not mapped). Whether any other module writes
   these bytes through a pointer the scan cannot follow (a store through a
   register loaded from memory) is not excluded.
+
+## 8b. One-player via the native select route
+
+Question: can the game's own values (only what advertiseD/titleD write) give
+player 1 = selection 13 or 14 (row 0xD / 0xE walker) with **no** player 2 in
+stage 11?
+
+**1. What decides whether player 2 is loaded** (`fn_8001DEA8`, loop over
+player r31 = 0, 1):
+
+| Address | Condition |
+| --- | --- |
+| 0x8001DF7C | player index == 1 (player 0 is always loaded) |
+| 0x8001DF84 | G+0x1E (0x801CC186) ≠ 0, tested as a signed byte against zero only |
+| 0x8001DF90–0x8001E02C | dispatch on the character word 0x803AD82C: each of 0, 1, 4, 5, 2, 3, 7, 6 calls its loader; any other value calls no loader |
+| 0x8001E034 | `fn_8001D74C(1)` (start position) runs whenever the first two pass, whether or not a loader ran |
+
+Nothing else is read: no player-count byte, no "none" character value,
+G+0x55+1 is not tested here (only inside the char-6/7 loaders).
+0x803AD82C lies in .sbss (zero-initialised, so character 0 until written).
+Every constant written to it is 0 or 1 (titleD `fn_8001DDC0(1, 0/1)`). The
+other writes go through `fn_8001DDC0(1, rX)` with a register value (advertiseD
+7 sites, titleD 2 sites); the select writer `fn_91_201D8` only produces 0..7
+or leaves the word unchanged (selections 9–11). No write of a value outside
+0..7 was found; the register-valued sites are **not bounded statically**
+(unresolved).
+
+**2. Other readers of G+0x1E.** In main.dol, 163 reads: 156 are zero tests,
+3 use the byte as a value (fn_800101E0 +0x58, fn_800107EC +0x7C, fn_80069118
++0x3C) and 4 compare it with 2 (fn_8001C810 +0xC0, fn_8001EFA8 +0x48,
+fn_8005F230 +0x104, fn_80061EF4 +0x2C). What 1 versus 2 selects is
+**unresolved**. The walker loaders read it only as zero/non-zero:
+0x800B5AC0 / 0x800B5D2C at entry (alternate-row gate) and again at
+0x800B5BC0 / 0x800B5E2C, where G+0x1E ≠ 0 and G+0x53+player == 1 pick a
+different pair of model/motion tables and set player-work byte +0x2 = 1.
+0x800B58D4 / 0x800B56E8 do not read G+0x1E.
+
+Session init `fn_80021828` (0x800218AC–0x80021980): with G+0x1E ≠ 0 it sets
+G+0x23 = 0 and **G+0x20 = 1 (split screen) when either player's character is 6
+or 7**, or when G+0x1F is 1 or 4. Otherwise G+0x20 = 0 (stage 0x47 is left
+as it is). With G+0x1E == 0, G+0x20 = 0. G+0x20 then selects the
+multi-viewport display (`fn_80070BA8`) and the camera task's viewport count
+(`fn_800C4458(4/2/1)` at 0x80021AF0–0x80021B0C). So a native two-player walker
+game runs split screen.
+
+**3. Stage 11 under G+0x1E ≠ 0.** The init fn_11_A434 does not read G+0x1E,
+so nothing refuses to load. 13 zero tests exist in stg11D's object and display
+code: fn_11_14D28 (4, around fn_800148FC / fn_80014CD8 / fn_8001475C),
+fn_11_2497C, fn_11_2549C, fn_11_2633C (each next to a stage-number check and
+`IsThisTaskPlayer`), fn_11_3DCFC (before `SetNoRevive`), fn_11_3DF60 (2,
+around fog and fn_800618B4), fn_11_3E0F0, fn_11_47040 (2). What each branch
+changes is **unresolved**.
+
+**4. Conclusion.** No natively reachable state was found that gives player 1
+the row-0xD/0xE walker with no player 2:
+- the alternate row needs G+0x1E ≠ 0 (0x800B5AC0 / 0x800B5D2C);
+- G+0x1E ≠ 0 always runs player 2's dispatch, and player 2's character word
+  is 0 by default with every write found in 0..7, so a player-2 task is
+  loaded;
+- with a walker character it also switches to split screen (G+0x20 = 1).
+
+A one-player Iron Gate as the walker therefore needs a port-side choice
+(calling 0x800B58D4 or 0x800B56E8 for player 0 with G+0x1E = 0). Main.dol
+never does this. The one gap is the register-valued writes to 0x803AD82C,
+which this static pass does not bound.
 
 ## 9. Unresolved, for the next milestones
 

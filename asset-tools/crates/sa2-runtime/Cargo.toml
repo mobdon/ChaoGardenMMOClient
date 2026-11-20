@@ -9,5 +9,8 @@ description = "Native SA2B engine core (task system first), ported from main.dol
 # Kept out of the sa2 crate so its manifest and lockfile stay unchanged.
 [workspace]
 
+[dependencies]
+sa2-asset-tools = { path = "../sa2" }
+
 [dev-dependencies]
 serde_json = "1.0.154"

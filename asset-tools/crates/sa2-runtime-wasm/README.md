@@ -1,0 +1,19 @@
+# sa2-runtime-wasm
+
+Iron Gate in the browser (E8): the native game core (`sa2-runtime`) drawn
+with `sa2-render` on WebGPU, or WebGL2 through wgpu's fallback. The page
+reads the files it needs from the Steam "Sonic Adventure 2" folder the
+player picks; nothing from the game is bundled or uploaded.
+
+Build (needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli`
+0.2.130, matching the lockfile):
+
+```powershell
+cargo build --release --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir www/pkg target/wasm32-unknown-unknown/release/sa2_runtime_wasm.wasm
+python -I serve.py "C:/Program Files (x86)/Steam/steamapps/common/Sonic Adventure 2"
+```
+
+Open http://127.0.0.1:8411/ and pick the game folder, or open
+`?from=/game/` to load the same files from `serve.py` (development).
+Arrows or WASD move the stick, Space is A.
