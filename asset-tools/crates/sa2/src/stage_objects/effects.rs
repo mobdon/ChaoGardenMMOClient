@@ -44,6 +44,11 @@
 //! (+0x10), drag (+0x14), gravity (+0x18) and size growth (+0x1C), then
 //! compare the animation frame with the descriptor's frame count (+0xC);
 //! see [`exec`].
+//!
+//! The spark manager 0xD970 / 0xDCC8 / 0xE0F8 ("SpSparkExec", also called
+//! from EFFOBJ0's spawner table) is in [`sparks`].
+pub mod sparks;
+
 use crate::ninja_trig::{fctiwz, nj_sin};
 use crate::prison_visuals::MslRand;
 
@@ -146,6 +151,37 @@ pub const ROUTINES: &[super::Routine] = &[
         0xd714,
         0x18c,
         "3c6865ce28b15fd5e5d8459430f8830ded5ceb9c113c02602ed9c7856349dc81",
+    ),
+    r(
+        "SpSparkExec spawner 0xD970",
+        0xd970,
+        0x358,
+        "6864cf41373fbc74e4b4f1c9013d14b1098e61e211e360e9ce811e84dfe47956",
+    ),
+    // 0xDCC8 without its two unrelocated `bl fabsf` (0xDDC0, 0xDE4C).
+    r(
+        "SpSparkExec exec 0xDCC8 (1/3)",
+        0xdcc8,
+        0xf8,
+        "5fcb25e9a175cb26527f03b5d8164a872ae9b5fb87ce9b3a1ba89f42abca27e7",
+    ),
+    r(
+        "SpSparkExec exec 0xDCC8 (2/3)",
+        0xddc4,
+        0x88,
+        "974d32d893fee1f6abb25567f11975c809e350b2c7cfed39b25c5795c2204b99",
+    ),
+    r(
+        "SpSparkExec exec 0xDCC8 (3/3)",
+        0xde50,
+        0x138,
+        "6a702b17c9f748f5528430c08f3a10cf4c0ab6f11961bac67974a373c0caadc5",
+    ),
+    r(
+        "SpSparkExec destructor 0xE0F8",
+        0xe0f8,
+        0x80,
+        "8df4c73651959bfdd4a270d017c9962b045b71cf9722226b8b69f2f37591ec03",
     ),
     r(
         "particle exec 0xD8A0",

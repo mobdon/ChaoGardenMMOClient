@@ -168,8 +168,10 @@ fn rel(data: Vec<u8>) -> Rel {
     }
 }
 
-/// The section-4 values (and 0xD540's colour word in section 5) each ported
-/// routine loads are the same in every stage REL that carries the routine,
+/// The section-4 and section-5 words each ported routine addresses (its
+/// constants, 0xD540's colour, the spark manager's drag, bounce and
+/// gravity, the first word of each descriptor) are the same in every stage
+/// REL that carries the routine,
 /// so the constants written into the port hold for all of them (the
 /// relocation-masked hash alone does not show this: 0xC238 and
 /// MakeParticle hash the same and load different constants).
@@ -190,17 +192,12 @@ fn routine_constants_are_shared_across_stage_rels() {
             .filter(|(s, o, k, ts, _)| {
                 *s == 1 && (start..start + len).contains(o) && *k == 4 && (*ts == 4 || *ts == 5)
             })
-            .filter_map(|&(_, o, _, ts, to)| {
+            .map(|&(_, o, _, ts, to)| {
                 let at = r.sections[ts as usize] + to;
                 let word = &r.data[at..at + 4];
-                // Section 5 targets are descriptors (passed by address)
-                // except 0xD540's colour, the one word it loads (+0x19C).
-                if ts == 5 && !(len == 0x1d4 && o - start == 0x19e) {
-                    return None;
-                }
                 // The 0x43300000 magic doubles are read as 8 bytes.
                 let n = if word == [0x43, 0x30, 0, 0] { 8 } else { 4 };
-                Some((o - start, r.data[at..at + n].to_vec()))
+                (o - start, r.data[at..at + n].to_vec())
             })
             .collect();
         v.sort();
@@ -261,4 +258,113 @@ fn routine_constants_are_shared_across_stage_rels() {
         }
     }
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+mod sparks_replay {
+    use super::*;
+    use sa2_asset_tools::manifest::sha256;
+    use sa2_asset_tools::stage_objects::effects::sparks::{SparkHost, Sparks};
+
+    /// Plays the oracle's scripted engine results and records the calls.
+    struct Host {
+        tasks: Vec<u32>,
+        callocs: Vec<bool>,
+        events: Vec<Value>,
+    }
+
+    impl SparkHost for Host {
+        fn create_task(&mut self) -> u32 {
+            let t = if self.tasks.is_empty() {
+                0
+            } else {
+                self.tasks.remove(0)
+            };
+            self.events.push(json!(["create", 0, 2, 0xdcc8, 0xe18c, t]));
+            t
+        }
+        fn calloc_buffer(&mut self) -> bool {
+            let ok = self.callocs.is_empty() || self.callocs.remove(0);
+            self.events.push(json!(["calloc", 1, 0x5bac, ok]));
+            ok
+        }
+        fn free_buffer(&mut self) {
+            self.events.push(json!(["free", true]));
+        }
+        fn destroy_task(&mut self, task: u32) {
+            self.events.push(json!(["destroy", task]));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires SA2_MAIN_DOL, SA2_GC_REL_DIR and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+    fn spark_manager_matches_stg42d() {
+        let Some(c) = oracle("sparks") else {
+            return;
+        };
+        let cases = c["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 40);
+        for (n, case) in cases.iter().enumerate() {
+            // The scripted results, read back from the recorded events.
+            let ops = case["ops"].as_array().unwrap();
+            let all: Vec<&Value> = ops
+                .iter()
+                .flat_map(|o| o["events"].as_array().unwrap())
+                .collect();
+            let mut host = Host {
+                tasks: all
+                    .iter()
+                    .filter(|e| e[0] == "create")
+                    .map(|e| u(&e[5]))
+                    .collect(),
+                callocs: all
+                    .iter()
+                    .filter(|e| e[0] == "calloc")
+                    .map(|e| e[3].as_bool().unwrap())
+                    .collect(),
+                events: Vec::new(),
+            };
+            let mut rand = MslRand {
+                seed: u(&case["seed"]),
+            };
+            let mut sparks = Sparks::default();
+            for (k, op) in ops.iter().enumerate() {
+                host.events.clear();
+                match op["op"].as_str().unwrap() {
+                    "spawn" => sparks.spawn(
+                        v3(&op["pos"]),
+                        v3(&op["vel"]),
+                        f(&op["size"]),
+                        f(&op["floor"]),
+                        &mut rand,
+                        &mut host,
+                    ),
+                    "exec" => sparks.exec(u(&op["task"]), &mut host),
+                    _ => sparks.destroy(u(&op["task"]), &mut host),
+                }
+                let at = format!("case {n} op {k}");
+                assert_eq!(json!(host.events), op["events"], "{at}");
+                let st = &op["state"];
+                assert_eq!(
+                    sparks.buffer.is_some(),
+                    st["buf"].as_bool().unwrap(),
+                    "{at}"
+                );
+                assert_eq!(sparks.task, u(&st["task"]), "{at}");
+                assert_eq!(i64::from(sparks.refs), st["refs"].as_i64().unwrap(), "{at}");
+                if let Some(b) = &sparks.buffer {
+                    assert_eq!(i64::from(b.head), st["head"].as_i64().unwrap(), "{at}");
+                    assert_eq!(i64::from(b.count), st["count"].as_i64().unwrap(), "{at}");
+                    assert_eq!(
+                        sha256(&b.to_be_bytes()),
+                        st["hash"].as_str().unwrap(),
+                        "{at}"
+                    );
+                }
+                assert_eq!(rand.seed, u(&op["seed"]), "{at}");
+            }
+            for cb in case["callbacks"].as_array().unwrap() {
+                assert_eq!(cb, &json!([0xdcc8, 0xdf88, 0xe0f8]));
+            }
+        }
+    }
 }

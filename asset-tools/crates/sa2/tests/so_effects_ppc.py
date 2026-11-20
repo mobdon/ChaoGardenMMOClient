@@ -101,5 +101,77 @@ def execs():
             out['cases'].append({'kind': name, 'seed': seed, 'desc': desc, 'p': p, 'frames': frames})
 
 
-{'creators': creators, 'execs': execs}[which]()
+def sparks():
+    """0xD970 / 0xDCC8 / 0xE0F8 driven through random sequences."""
+    import hashlib
+    BUF, TASK0 = SCRATCH + 0x10000, SCRATCH + 0x1000
+    G = S6(0x660)
+    plan = {}
+
+    def create(mm):
+        t = plan['tasks'].pop(0) if plan['tasks'] else 0
+        ev('create', mm.gpr(3), mm.gpr(4), mm.gpr(5) - S1(0), mm.gpr(6) - S5(0), t)
+        mm.gpr(3, t)
+
+    def calloc(mm):
+        ok = plan['calloc'].pop(0) if plan['calloc'] else True
+        ev('calloc', mm.gpr(3), mm.gpr(4), ok)
+        if ok:
+            clear(BUF, 0x5bac)
+        mm.gpr(3, BUF if ok else 0)
+    m.stub(0x80071E0C, create)
+    m.stub(0x801197FC, calloc)
+    m.stub(0x80119828, lambda mm: ev('free', mm.gpr(3) == BUF))
+    m.stub(0x80071AF0, lambda mm: ev('destroy', mm.gpr(3)))
+
+    def state():
+        buf = m.get(G, 'I')
+        st = {'buf': buf != 0, 'task': m.get(G + 4, 'I'), 'refs': m.get(G + 8, 'i')}
+        if buf:
+            data = bytes(m.u.mem_read(BUF, 0x5bac))
+            st['hash'] = hashlib.sha256(data).hexdigest()
+            st['head'], st['count'] = m.get(BUF + 0x5ba4, 'i'), m.get(BUF + 0x5ba8, 'i')
+        return st
+
+    for case in range(40):
+        clear(G, 12)
+        full = case % 8 == 0
+        n_ops = 760 if full else 320
+        tasks = [TASK0 + 0x40 * k if rng.random() < 0.85 else 0 for k in range(12)]
+        plan['tasks'] = list(tasks)
+        plan['calloc'] = [rng.random() < 0.85 for _ in range(12)]
+        seed = rng.randrange(1 << 32)
+        m.put(SEED, 'I', seed)
+        ops = []
+        for k in range(n_ops):
+            r = rng.random()
+            events.clear()
+            if (full and k < 560) or r < 0.25:
+                pos = [f32(rng.uniform(-100, 100)) for _ in range(3)]
+                vel = [f32(rng.uniform(-3, 3)) for _ in range(3)]
+                size = f32(rng.choice([0.0, 1.0, rng.uniform(0, 5)]))
+                floor = f32(pos[1] - rng.choice([0.0, 1.0, rng.uniform(0, 30), -5.0]))
+                for j in range(3):
+                    m.put(POS + 4 * j, 'f', pos[j])
+                    m.put(VEL + 4 * j, 'f', vel[j])
+                m.call(S1(0xD970), r3=POS, r4=VEL, f1=size, f2=floor)
+                op = {'op': 'spawn', 'pos': [fb(x) for x in pos], 'vel': [fb(x) for x in vel],
+                      'size': fb(size), 'floor': fb(floor)}
+            elif r < 0.97:
+                t = m.get(G + 4, 'I') or rng.choice(tasks + [TASK0])
+                m.call(S1(0xDCC8), r3=t, count=20_000_000)
+                op = {'op': 'exec', 'task': t}
+            else:
+                t = m.get(G + 4, 'I') if rng.random() < 0.8 else TASK0 + 0x400
+                m.call(S1(0xE0F8), r3=t)
+                op = {'op': 'destroy', 'task': t}
+            op['events'] = list(events)
+            op['state'] = state()
+            op['seed'] = m.get(SEED, 'I')
+            ops.append(op)
+        created = [[m.get(t + o, 'I') - S1(0) for o in (0x10, 0x14, 0x18)] for t in tasks if t]
+        out['cases'].append({'seed': seed, 'ops': ops, 'callbacks': created[:1]})
+
+
+{'creators': creators, 'execs': execs, 'sparks': sparks}[which]()
 print(json.dumps(out))
