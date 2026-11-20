@@ -1,6 +1,8 @@
 //! Compare `player_motion::motion_step` with main.dol's fn_8003D8D0
 //! (tests/player_motion_ppc.py).
-use sa2_asset_tools::player_motion::{motion_step, Action, BlendEvent, MotionTables, MotionWork};
+use sa2_asset_tools::player_motion::{
+    motion_settle, motion_step, Action, BlendEvent, MotionTables, MotionWork,
+};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Command};
 
@@ -80,7 +82,11 @@ fn motion_step_matches_main_dol() {
             has_blend: w0["buf"].as_bool().unwrap(),
         };
         modes[(w.mode as usize).min(16)] += 1;
-        let ev = motion_step(&mut w, &t);
+        let ev = if case["fn"].as_u64() == Some(0x8003_D7D4) {
+            motion_settle(&mut w, &t)
+        } else {
+            motion_step(&mut w, &t)
+        };
         let mut log = vec![];
         for e in ev {
             match e {

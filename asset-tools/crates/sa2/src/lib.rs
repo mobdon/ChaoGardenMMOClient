@@ -71,6 +71,7 @@ pub mod player_stand;
 pub mod player_analog;
 pub mod player_motion;
 pub mod player_physics;
+pub mod player_pre;
 pub mod player_range;
 pub mod pose;
 pub mod prison_cam;

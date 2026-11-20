@@ -1,4 +1,4 @@
-"""Run main.dol's player motion step fn_8003D8D0 on random motion works and
+"""Run main.dol's player motion step fn_8003D8D0 (and fn_8003D7D4) on random motion works and
 action tables and print JSON for tests/player_motion.rs. The blend
 routines (fn_8003D678, fn_8003C908) and the allocator are stubbed and
 logged.
@@ -85,9 +85,10 @@ for _ in range(20000):
     m.put(SA, "f", w["sa"])
     m.put(SB, "f", w["sb"])
     log.clear()
-    m.call(0x8003D8D0, r3=MW)
+    fn = 0x8003D7D4 if rng.random() < 0.15 else 0x8003D8D0
+    m.call(fn, r3=MW)
     out = struct.unpack(">6hhh3I", m.u.mem_read(MW, 0x1C))
-    cases.append({"frames": frames, "keys": keys, "acts": [a[:4] + [fb(a[4]), fb(a[5])] for a in acts],
+    cases.append({"fn": fn, "frames": frames, "keys": keys, "acts": [a[:4] + [fb(a[4]), fb(a[5])] for a in acts],
                   "w": {**w, "frame": fb(w["frame"]), "last_frame": fb(w["last_frame"]), "start": fb(w["start"]),
                         "sa": fb(w["sa"]), "sb": fb(w["sb"])},
                   "out": list(out[:7]) + list(out[8:]), "buf_after": m.get(MW + 0x28, "I") != 0, "log": log[:]})

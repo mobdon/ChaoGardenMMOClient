@@ -311,3 +311,15 @@ fn mode2(w: &mut MotionWork, t: &MotionTables, ev: &mut Vec<BlendEvent>) {
         start_after(w, t);
     }
 }
+
+/// fn_8003D7D4(motion work): end a blend at once. In mode 2 the current
+/// action's mode starts, as when the blend completes.
+pub fn motion_settle(w: &mut MotionWork, t: &MotionTables) -> Vec<BlendEvent> {
+    let mut ev = vec![];
+    if w.mode == 2 {
+        w.mode = t.act_s(w.action).mode;
+        ev.push(BlendEvent::FreeKeys { request: w.request });
+        start_after(w, t);
+    }
+    ev
+}
