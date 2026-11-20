@@ -4,8 +4,8 @@
 //! `.../Sonic Adventure 2/resource/gd_PC` and run with `--ignored --nocapture`.
 //! Executables and DLLs are never opened; game data is read, never copied.
 use sa2_asset_tools::{
-    archive, audio, character_motions::Bank, csb, demo, event, message_bank, set, stage_fog,
-    stage_land, stage_lighting, texture,
+    archive, audio, character_motions::Bank, csb, demo, event, message_bank, model_bank, set,
+    stage_fog, stage_land, stage_lighting, texture,
 };
 use std::{
     collections::BTreeMap,
@@ -308,6 +308,60 @@ fn every_gamecube_format_reader_accepts_the_steam_data() {
         }
         println!("{group:32} ok {ok:4}  skipped {skipped:4}  known limits {limits}");
     }
+    // Character model banks: every model, node and Chunk attachment, plus a
+    // range check of plain strip indices (types 64-66 without user data)
+    // against the vertex ranges the same model declares.
+    let (mut banks_ok, mut models, mut attachments) = (0, 0, 0);
+    let (mut inside, mut outside) = (0u64, 0u64);
+    for path in files(&root, |n| n.ends_with("mdl.prs")) {
+        let bytes = fs::read(&path).expect("read Steam model bank");
+        match model_bank::read_prs(&bytes) {
+            Ok(bank) => {
+                banks_ok += 1;
+                for m in &bank {
+                    models += 1;
+                    attachments += m.model.attachments.len();
+                    let mut top = 0usize;
+                    for a in &m.model.attachments {
+                        for v in &a.vertex_chunks {
+                            top = top.max(v.index_offset as usize + v.vertices.len());
+                        }
+                    }
+                    for a in &m.model.attachments {
+                        for p in &a.polygon_chunks {
+                            let stride = match p.kind {
+                                64 => 1,
+                                65 | 66 => 3,
+                                _ => continue,
+                            };
+                            let w = &p.raw_words;
+                            if w.len() < 3 || w[2] >> 14 != 0 {
+                                continue;
+                            }
+                            let mut q = 3;
+                            for _ in 0..(w[2] & 0x3fff) {
+                                let Some(&len) = w.get(q) else { break };
+                                q += 1;
+                                for _ in 0..(len as i16).unsigned_abs() {
+                                    match w.get(q) {
+                                        Some(&i) if (i as usize) < top => inside += 1,
+                                        Some(_) => outside += 1,
+                                        None => break,
+                                    }
+                                    q += stride;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(err) => failures.push(format!("Model banks: {}: {err}", path.display())),
+        }
+    }
+    println!(
+        "{:32} ok {banks_ok:4}  models {models}, attachments {attachments}, strip indices in range {inside}, outside {outside}",
+        "Character model banks"
+    );
     // The one older-layout event, through its own reader.
     match fs::read(root.join("event/e0350.prs"))
         .map_err(e)

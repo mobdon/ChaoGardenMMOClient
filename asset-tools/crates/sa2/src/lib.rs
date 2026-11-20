@@ -50,6 +50,7 @@ pub mod land_probe;
 pub mod land_select;
 pub mod manifest;
 pub mod model;
+pub mod model_bank;
 pub mod msl_math;
 pub mod motion;
 pub mod ninja_matrix;
