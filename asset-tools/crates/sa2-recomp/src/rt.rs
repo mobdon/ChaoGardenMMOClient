@@ -175,9 +175,19 @@ pub fn sec(m: &Mem, id: u32, sec: u32) -> u32 {
     }
 }
 
-thread_local! {
-    /// The last OSModuleInfo seen linked for each module id.
-    static LINKED: std::cell::RefCell<HashMap<u32, u32>> = std::cell::RefCell::new(HashMap::new());
+/// The last OSModuleInfo seen linked for each module id. Process-wide: game
+/// threads run on host threads of their own.
+static LINKED: Linked = Linked(std::sync::LazyLock::new(Default::default));
+
+struct Linked(std::sync::LazyLock<std::sync::Mutex<HashMap<u32, u32>>>);
+
+impl Linked {
+    fn with_borrow_mut<R>(&self, f: impl FnOnce(&mut HashMap<u32, u32>) -> R) -> R {
+        f(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+    fn with_borrow<R>(&self, f: impl FnOnce(&HashMap<u32, u32>) -> R) -> R {
+        self.with_borrow_mut(|m| f(m))
+    }
 }
 
 impl Cpu {

@@ -3,7 +3,7 @@
 //! is the runtime's port. Port 0 is connected until told otherwise.
 use sa2_asset_tools::input::{pad_clamp, PadStatus};
 use sa2_recomp::rt::{Cpu, Mem};
-use std::cell::Cell;
+use sa2_recomp::{global, global::Global};
 
 pub const PAD_CLAMP: u32 = 0x800F_3A00;
 pub const PAD_RESET: u32 = 0x800F_4368;
@@ -25,9 +25,7 @@ fn default_pads() -> [PadStatus; 4] {
     p
 }
 
-thread_local! {
-    static PADS: Cell<[PadStatus; 4]> = Cell::new(default_pads());
-}
+static PADS: Global<[PadStatus; 4]> = global!(default_pads());
 
 /// This frame's controllers.
 pub fn set(pads: [PadStatus; 4]) {

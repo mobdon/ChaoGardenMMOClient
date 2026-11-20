@@ -6,6 +6,7 @@
 
 pub mod dol;
 pub mod gen;
+pub mod global;
 pub mod host;
 pub mod os;
 pub mod rel;

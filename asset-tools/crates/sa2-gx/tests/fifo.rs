@@ -143,6 +143,34 @@ fn texture_from_bp_registers() {
 }
 
 #[test]
+fn invalidate_reuploads_under_the_same_id() {
+    // The game invalidates textures every frame; new ids each time made the
+    // renderer keep every frame's copy (gigabytes within a minute).
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    bp(&mut s, 0x80 << 24 | 4 << 5 | 1 << 4);
+    bp(&mut s, 0x88 << 24 | 6 << 20 | 3 << 10 | 7);
+    bp(&mut s, 0x94 << 24);
+    s.extend(triangle());
+    let ram = vec![0xFFu8; 0x400];
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        f.write(&s, &Ram(&ram));
+        let frame = f.gx.take_frame();
+        assert_eq!(frame.uploads.len(), 1, "decoded again after the invalidate");
+        ids.push(frame.uploads[0].id);
+        let mut inv = Vec::new();
+        bp(&mut inv, 0x66 << 24);
+        f.write(&inv, &Ram(&ram));
+    }
+    assert_eq!(ids, [ids[0]; 3]);
+    // Without an invalidate the cached texture is used as is.
+    f.write(&s, &Ram(&ram));
+    f.write(&s, &Ram(&ram));
+    assert_eq!(f.gx.take_frame().uploads.len(), 1);
+}
+
+#[test]
 fn unknown_bytes_are_skipped() {
     let mut f = GxFifo::default();
     let mut s = vec![0x07, 0xFF];

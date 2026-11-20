@@ -5,7 +5,7 @@
 use crate::{cstr, guest_call};
 use sa2_recomp::rt::{Cpu, Mem};
 use sa2_runtime::dvd::{Dvd, GameFiles};
-use std::cell::RefCell;
+use sa2_recomp::{global, global::Global};
 
 pub const DVD_CONVERT_PATH_TO_ENTRYNUM: u32 = 0x800E_ECFC;
 pub const DVD_OPEN: u32 = 0x800E_EFF0;
@@ -26,9 +26,7 @@ const CB_TRANSFERRED: u32 = 0x20;
 const FI_START: u32 = 0x30;
 const FI_LENGTH: u32 = 0x34;
 
-thread_local! {
-    static DVD: RefCell<Option<Dvd<Box<dyn GameFiles>>>> = const { RefCell::new(None) };
-}
+static DVD: Global<Option<Dvd<Box<dyn GameFiles>>>> = global!(None);
 
 /// The files the disc is served from.
 pub fn set_files(files: Box<dyn GameFiles>) {

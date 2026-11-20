@@ -3,7 +3,7 @@
 //! drawn at 640x480 and written as a PNG.
 use sa2_gx::api::Frame;
 use sa2_gx::gpu::GxRenderer;
-use std::cell::RefCell;
+use sa2_recomp::{global, global::Global};
 use std::path::{Path, PathBuf};
 
 const W: u32 = 640;
@@ -18,9 +18,7 @@ struct Snap {
     buf: wgpu::Buffer,
 }
 
-thread_local! {
-    static SNAP: RefCell<Option<Snap>> = const { RefCell::new(None) };
-}
+static SNAP: Global<Option<Snap>> = global!(None);
 
 fn open() -> Result<Snap, String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -66,10 +64,9 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
             for u in &f.uploads {
                 s.renderer.replace_texture(u.id, &u.levels);
             }
-            // Texture uploads stage their bytes until a submission; submit
-            // (nothing) and poll so wgpu frees them and the textures they
-            // replaced. Snapshots, every few hundred frames, are the only
-            // blocking polls.
+            // Flush the uploads and free what they replaced: queued texture
+            // writes wait for a submit, and only every `every`-th frame
+            // submits, so they piled up (gigabytes within a minute).
             s.queue.submit([]);
             let _ = s.device.poll(wgpu::PollType::Poll);
             return Ok(None);

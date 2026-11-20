@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 /// Where the game's files come from. Paths are relative to the game folder,
 /// with `/` separators (`resource/gd_PC/stg11D.rel`).
-pub trait GameFiles {
+pub trait GameFiles: Send {
     /// Every file path available.
     fn paths(&self) -> Vec<String>;
     fn size(&self, path: &str) -> Option<u64>;
