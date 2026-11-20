@@ -6,14 +6,14 @@
 //! instruction by instruction and checked bit for bit against main.dol by
 //! `tests/hunter_dol.rs`. Shared player code is called, not copied:
 //! `ninja_matrix::rotate_by_angles` (fn_8003E9E0) and
-//! `enemy_lib::engine::unit_vector` (njUnitVector, 0x80115D24).
+//! `ninja_vector::unit_vector` (njUnitVector, 0x80115D24).
 //!
 //! Field names follow the offsets the code reads: `twp` is the task work
 //! (task +0x34), `pwp` the 0x420-byte hunter player work (task +0x40).
 use crate::{
-    enemy_lib::engine::unit_vector,
     ninja_matrix::{rotate_by_angles, MatrixStack, Vec3},
     ninja_trig::fmadds,
+    ninja_vector::unit_vector,
 };
 
 const ZERO: f32 = 0.0; // r2-0x6CC4 (0x803AF85C)
@@ -115,16 +115,7 @@ pub fn collision_center(
     let v = rotate_by_angles(stack, angles, [ZERO, center_height, ZERO]);
     let mut c = v;
     if matches!(action, 0x3d | 0x3e | 0x41 | 0x42) {
-        // shortcut: enemy_lib's unit_vector keeps x86's negative NaN for
-        // inf * 0 (a zero vector); PowerPC gives its positive default NaN.
-        // Drop this once the shared njUnitVector does it.
-        let u = unit_vector(v).map(|x| {
-            if x.is_nan() {
-                f32::from_bits(0x7fc0_0000)
-            } else {
-                x
-            }
-        });
+        let (u, _) = unit_vector(v);
         for k in 0..3 {
             c[k] = fmadds(push_3b4, u[k], c[k]);
         }

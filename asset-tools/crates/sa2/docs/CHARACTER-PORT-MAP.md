@@ -55,11 +55,13 @@ Those branches are the per-character deltas:
 
 Arguments are the task (`r3`), with `twp` = task+0x34, `mwp` = task+0x38 and `pwp` = task+0x40.
 
-1. In stages 0x2C and 0x32 with a player work, it swaps the gravity vector 0x801E5624 for
-   0x801E5618, saving the old one at 0x801FEAC8. It also swaps 0x803AD90C..0x803AD918.
+1. For player 2 (pwp+0 non-zero) in stages 0x2C and 0x32, it swaps the gravity vector
+   0x801E5624 for 0x801E5618, saving the old one at 0x801FEAC8. It also swaps
+   0x803AD90C..0x803AD918. All of these are restored at exit.
 2. It runs the input step fn_80056450.
-3. If the action (twp+0) is 0x37 or 0x39 and the character byte isn't 0x24, it calls
-   fn_8005523C. Otherwise it calls the action machine fn_8009B8FC.
+3. In actions 0x37 and 0x39 it calls the action machine only when twp+1 isn't 0x24. When
+   twp+1 is 0x24, it clears flag bits 0x3C, masks pwp+0x10 to 0x3FFC and calls fn_8005523C.
+   Every other action calls the action machine fn_8009B8FC.
 4. It counts frames at pwp+0x3A2 while flag bit 0x100 is set.
 5. It runs the per-action body through the 0x58-entry jump table at 0x801C2AD4. The typical
    ground case calls fn_80048490 → **fn_8004C734** → fn_80046DE4 → fn_80045880 →
@@ -76,13 +78,13 @@ The action machine fn_8009B8FC has 22 internal callees and dispatches through it
 
 | Routine | Role | Owner / state |
 | --- | --- | --- |
-| fn_8004C734 + tree (0x8004BA74, 0x8004B568, 0x80038F40, 0x80047714, 0x800473B4, 0x80047CBC, 0x80048150) | shared ground move | Sonic thread (codex/sa2-sonic-ground-movement: player_path, player_slope, player_turn); not on main |
+| fn_8004C734 + tree (0x8004BA74, 0x8004B568, 0x80038F40, 0x80047714, 0x800473B4, 0x80047CBC, 0x80048150) | shared ground move | Sonic thread: `player_accel::ground_move`, PR #481 (merged into this branch, not into main yet) |
 | fn_80046DE4, fn_80045880, fn_8003E668 | movement run, frame | walker thread; fn_8003E668 is on main (`walker_frame`) |
-| fn_8003D8D0 + tree (0x8003CA00, 0x8003C908, 0x8003D720, 0x8003D678, 0x8002B54C, 0x8002B6C0) | motion step | walker thread, PR #456 (not merged) |
+| fn_8003D8D0 + tree (0x8003CA00, 0x8003C908, 0x8003D720, 0x8003D678, 0x8002B54C, 0x8002B6C0) | motion step | walker thread, PR #456 (merged into this branch, not into main yet) |
 | fn_80067600, fn_8006779C | land probes | walker thread |
 | fn_8004E560 | analog input | on main (`player_analog`) |
 | fn_8003E9E0 / fn_8003EA6C | player-frame rotate | on main (`ninja_matrix`) |
-| njUnitVector, njScalor | Ninja vectors | on main (`enemy_lib::engine`). That copy's inf×0 NaN sign differs from PowerPC; the Sonic branch's `ninja_vector` copy fixes it |
+| njUnitVector, njScalor | Ninja vectors | `ninja_vector` (PR #481, with PowerPC's NaN), which `enemy_lib` now calls |
 | PhysicsArray rows | parameters | on main (`player_physics`) |
 
 ## Already in the crate
@@ -100,6 +102,19 @@ adaptations built from Steam tables. They are not ports.
 | fn_80091454 (action machine, 9 call sites) | `hunter::drop_check` | 3,000 cases bit-exact |
 | fn_80093270 (action machine) | `hunter::climb_request` | 3,000 cases bit-exact |
 | fn_8009B708 (exec) | `hunter::collision_center` | 1,500 cases bit-exact |
+| fn_8009F8A0 (the exec, all 0x58 cases and the tail) | `hunter_exec::hunter_exec` | ported from the listing; unit tests for dispatch order, the climb results, the player-2 swap, Rouge's motion switch and the push-out bound (not Unicorn) |
+
+`hunter_exec` keeps twp, mwp and pwp in their native layout (`native_work::Work`). It calls
+each shared routine by address through `HunterWorld::step`: the ground move fn_8004C734
+(`player_accel::ground_move`, PR #481), the walker steps (`walker_move`, PR #456), the land
+probe fn_80067600, and the hunter routines not ported yet (the action machine fn_8009B8FC,
+fn_800936AC, fn_80092C00 and others). A runtime binds the addresses to their ports.
+Sounds, rumble and effects are `walker_exec::EngineCall`s. The player history is
+`walker_act::history_back`, and `sqrtf` is `player_turn::inline_sqrtf`.
+
+Still to port in the hunter module: the action machine fn_8009B8FC (0x3FA4), its helpers,
+the climb/glide routines fn_800936AC, fn_80090C80 and fn_80092C00, and the runtime adapter
+that binds `HunterWorld::step` to the Rust ports.
 
 ### Hunter module inventory (0x8008D888..0x800A29AC)
 
