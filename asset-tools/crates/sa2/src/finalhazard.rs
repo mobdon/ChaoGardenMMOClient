@@ -994,6 +994,10 @@ pub enum PlacementClock {
     /// Section 1 + 0x4524 and 0x46e0: piece actions 0 (fly out) and the
     /// wobble 0x46e0 runs in action 1.
     PieceMotion(Box<PieceMotionFrame>),
+    /// Section 1 + 0x4c20: piece action 3 (homing shot).
+    PieceHoming(Box<PieceHomingFrame>),
+    /// Section 1 + 0x4888: piece action 2 (aim and launch).
+    PieceLaunch(Box<PieceLaunchFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2800,6 +2804,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::Piece(frame) => return piece(&rel, &frame),
         PlacementClock::PieceAction(frame) => return piece_action(&rel, &frame),
         PlacementClock::PieceMotion(frame) => return piece_motion(&rel, &frame),
+        PlacementClock::PieceHoming(frame) => return piece_homing(&rel, &frame),
+        PlacementClock::PieceLaunch(frame) => return piece_launch(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -9495,5 +9501,312 @@ fn piece_motion(
             }
         }
     }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What piece action 3 reads, each where the code reads it. `position` is
+/// the entity position (words) at entry, `target` block words 0x68..0x70
+/// (the aim point), `distance` / `reach` the f1 results of local 0x40cc
+/// for the distance to the target and from the origin, `boss_states` the
+/// two 0xc60 results, `timer` entity half-word 6, `player_position` the
+/// player entity's words 0x14..0x1c (through 0x801e7368 + 4 * stage byte),
+/// `speed` block float 0x24, `curve` block words 0x74..0x94, `curve_point`
+/// what 0x80111d70 writes, `lengths` the two 0x80114eac results (velocity
+/// then gap), `stepped` what 0x80027ab4 writes, `growth` block floats 0x1c
+/// and 0x20.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PieceHomingFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub block: u32,
+    pub position: [u32; 3],
+    pub target: [u32; 3],
+    pub distance: f32,
+    pub reach: f32,
+    pub boss_states: [i8; 2],
+    pub timer: u16,
+    pub player_position: [u32; 3],
+    pub speed: f32,
+    pub curve: [u32; 9],
+    pub curve_point: [u32; 3],
+    pub lengths: [f32; 2],
+    pub stepped: [u32; 3],
+    pub growth: [f32; 2],
+}
+/// Section 1 + 0x4c20: the homing shot. It hums, explodes on reaching the
+/// target (4:0x218), when too far out (4:0x240) or, while the boss is in
+/// state 1, past the plane (4:0x244). Far from the target and while the
+/// curve parameter is below 4:0x228 it follows the curve 0x80111d70 through
+/// the block points to a target refreshed from the player each frame of
+/// the timer; otherwise it steps straight at the target. The curve speed
+/// grows, and the velocity and trail (0x6794) follow.
+fn piece_homing(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &PieceHomingFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":4,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let fl = |w: u32| f32::from_bits(w);
+    let words = |w: &[u32]| w.iter().map(|v| f64::from(fl(*v))).collect::<Vec<_>>();
+    let e = f.entity;
+    let mut ev = vec![call(
+        0x4c60,
+        serde_json::json!([0xb, f.task, 1, 0, 5, e + 0x14]),
+    )?];
+    let p = f.position.map(fl);
+    let t = f.target.map(fl);
+    let d = |i: usize| t[i] - p[i];
+    let mut root = local(0x4cb4, 0x40cc, serde_json::json!([]));
+    root["floats"] = serde_json::json!([f64::from(d(2) * d(2) + (d(0) * d(0) + d(1) * d(1)))]);
+    ev.push(root);
+    if f64::from(f.distance) < f64::from(k(0x4cbe)?) {
+        ev.extend([
+            call(0x4ce4, serde_json::json!([0xa, 0, 0, 0x1e, e + 0x14]))?,
+            local(0x4cec, 0x50a4, serde_json::json!([f.task])),
+            call(0x4d08, serde_json::json!([0x8015, 0, 0, 0, e + 0x14]))?,
+        ]);
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    let mut out = local(0x4d30, 0x40cc, serde_json::json!([]));
+    out["floats"] = serde_json::json!([f64::from(p[2] * p[2] + (p[0] * p[0] + p[1] * p[1]))]);
+    ev.push(out);
+    if f64::from(f.reach) > f64::from(k(0x4d36)?) {
+        ev.push(local(0x4d4c, 0x50a4, serde_json::json!([f.task])));
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    ev.push(local(0x4d54, 0xc60, serde_json::json!([])));
+    if f.boss_states[0] == 1 {
+        let mut abs = local(0x4d68, 0x2130, serde_json::json!([]));
+        abs["floats"] = serde_json::json!([f64::from(p[2])]);
+        ev.push(abs);
+        if f64::from(p[2].abs()) > f64::from(k(0x4d6e)?) {
+            ev.push(local(0x4d84, 0x50a4, serde_json::json!([f.task])));
+            return Ok(serde_json::json!({"events":ev}));
+        }
+    }
+    let curved = f64::from(f.distance) > f64::from(k(0x4d8e)?)
+        && f64::from(f.speed) <= f64::from(k(0x4da6)?);
+    if curved {
+        let mut aim = f.target;
+        if f.timer != 0 {
+            ev.push(local(0x4dc8, 0xc60, serde_json::json!([])));
+            if f.boss_states[1] == 0 {
+                aim = f.player_position;
+                for (i, site) in [0x4e08u32, 0x4e0c, 0x4e14].into_iter().enumerate() {
+                    ev.push(st(site, "block", 0x68 + 4 * i as u32, aim[i]));
+                }
+            }
+            ev.push(serde_json::json!({"site":0x4e20,"store":"entity","offset":6,"size":2,"value":f.timer - 1}));
+        }
+        let mut points: Vec<u32> = f.curve.to_vec();
+        points.extend(aim);
+        let mut c = call(0x4e94, serde_json::json!(["stack", "stack", 0]))?;
+        c["floats"] = serde_json::json!([f64::from(f.speed)]);
+        c["block"] = serde_json::json!(points);
+        ev.push(c);
+        for (i, site) in [0x4ea0u32, 0x4ea4, 0x4eac].into_iter().enumerate() {
+            ev.push(st(site, "entity", 0x14 + 4 * i as u32, f.curve_point[i]));
+        }
+    } else {
+        let step = if f64::from(f.lengths[1]) < f64::from(f.lengths[0]) {
+            f.lengths[1]
+        } else {
+            f.lengths[0]
+        };
+        let mut scale = local(0x4ef0, 0x6f10, serde_json::json!(["stack", "stack"]));
+        scale["floats"] = serde_json::json!([f64::from(step)]);
+        ev.extend([
+            call(
+                0x4ec0,
+                serde_json::json!([f.block + 0x68, e + 0x14, "stack"]),
+            )?,
+            call(0x4ec8, serde_json::json!([f.block + 0x2c]))?,
+            call(0x4ed4, serde_json::json!(["stack"]))?,
+            scale,
+            call(0x4f00, serde_json::json!([e + 0x14, "stack", "stack"]))?,
+        ]);
+        for (i, site) in [0x4f0cu32, 0x4f10, 0x4f18].into_iter().enumerate() {
+            ev.push(st(site, "entity", 0x14 + 4 * i as u32, f.stepped[i]));
+        }
+    }
+    let first = f.speed + f.growth[0];
+    let speed = first + f.growth[1];
+    ev.push(st(0x4f28, "block", 0x24, first.to_bits()));
+    ev.push(st(0x4f38, "block", 0x24, speed.to_bits()));
+    if f64::from(f.growth[1]) < f64::from(k(0x4f42)?) {
+        ev.push(st(
+            0x4f64,
+            "block",
+            0x20,
+            (f.growth[1] + k(0x4f56)?).to_bits(),
+        ));
+    }
+    let mut trail = local(0x4f84, 0x6794, serde_json::json!([0, "stack", e + 0x14]));
+    trail["vectors"] = serde_json::json!({"1": words(&f.position)});
+    ev.push(call(
+        0x4f74,
+        serde_json::json!([e + 0x14, "stack", f.block + 0x2c]),
+    )?);
+    ev.push(trail);
+    Ok(serde_json::json!({"events":ev}))
+}
+
+fn rel_word(rel: &crate::city_rel::CityRel<'_>, site: u32, section: u8) -> Result<u32> {
+    let r = rel
+        .reference(1, site)
+        .filter(|r| r.module == 88 && r.section == section)
+        .ok_or_else(|| Error::invalid("missing module data reference"))?;
+    let at = r.addend as usize;
+    let b = rel
+        .data(section)?
+        .get(at..at + 4)
+        .ok_or_else(|| Error::invalid("module data out of range"))?;
+    Ok(u32::from_be_bytes(b.try_into().unwrap()))
+}
+
+/// What piece action 2 reads, each where the code reads it: entity byte 1
+/// (the step), the collision object (entity word 0x2c) and its flags
+/// half-word 4, block word 8 (the bob angle) and its 0x80112050 sine, the
+/// runtime float 6:0x270, the entity height (float 0x18) and position
+/// (words), entity half-word 6 (the timer), the player position words
+/// (through 0x801e7368 + 4 * stage byte), the two random words, the
+/// rotated aim vector 0x801151a4 leaves, the 0x800279c4 distance and the
+/// two square roots local 0x40cc returns.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PieceLaunchFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub block: u32,
+    pub step: i8,
+    pub step_after: u8,
+    pub collision_flags: u16,
+    pub bob_angle: u32,
+    pub sine: f32,
+    pub bob: f32,
+    pub height: f32,
+    pub timer: u16,
+    pub player_position: [u32; 3],
+    pub position: [u32; 3],
+    pub randoms: [i32; 2],
+    pub rotated: [f32; 3],
+    pub distance: f32,
+    pub roots: [f32; 2],
+}
+/// Section 1 + 0x4888: piece action 2. Step 0 settles the piece (30-frame
+/// timer, collision flag 0x40 cleared, height bobbed by the runtime float
+/// 6:0x270, spark, sound). When the timer runs out it aims at the player:
+/// the aim vector is turned by a random angle (4:0x230 + 4:0x230 * roll,
+/// sign from a second roll's parity), two curve handles are placed at
+/// 4:0x234 and 4:0x238 of it, the curve speed is set from the distance
+/// (5:0x3fa0 / distance) and the piece goes to action 3 with the timer
+/// from 5:0x3fec.
+fn piece_launch(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &PieceLaunchFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let e = f.entity;
+    let b = f.block;
+    let mut ev = Vec::new();
+    if !(0..=1).contains(&f.step) {
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    let mut timer = f.timer;
+    if f.step == 0 {
+        ev.extend([
+            st(0x48d4, "entity", 6, 2, 0x1e),
+            st(
+                0x48e8,
+                "collision",
+                4,
+                2,
+                u32::from(f.collision_flags & !0x40),
+            ),
+            call(0x48f0, serde_json::json!([f.bob_angle]))?,
+            st(
+                0x490c,
+                "entity",
+                0x18,
+                4,
+                (f.height + f.bob * f.sine).to_bits(),
+            ),
+            st(0x4914, "block", 8, 4, 0),
+            local(0x4924, 0x6d64, serde_json::json!([f.task, e + 0x14, 0])),
+            call(0x493c, serde_json::json!([0xc, 0, 0, 0, e + 0x14]))?,
+            st(0x4948, "entity", 1, 1, f.step_after.wrapping_add(1).into()),
+        ]);
+        timer = 0x1e;
+    }
+    ev.push(st(0x4954, "entity", 6, 2, timer.wrapping_sub(1).into()));
+    if timer != 0 {
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    for (i, site) in [0x4990u32, 0x4994, 0x499c].into_iter().enumerate() {
+        ev.push(st(
+            site,
+            "block",
+            0x68 + 4 * i as u32,
+            4,
+            f.player_position[i],
+        ));
+    }
+    for (i, site) in [0x49a8u32, 0x49ac, 0x49b4].into_iter().enumerate() {
+        ev.push(st(site, "block", 0x74 + 4 * i as u32, 4, f.position[i]));
+    }
+    let unit = k(0x49f2)?;
+    let span = k(0x4a02)?;
+    let mut angle = fctiwz(f64::from(
+        span + span * (unit * biased_float(rel, 0x49ce, f.randoms[0])?),
+    ));
+    let parity = fctiwz(f64::from(
+        k(0x4a4e)? * (unit * biased_float(rel, 0x4a26, f.randoms[1])?),
+    )) as i8 as i32;
+    if parity % 2 == 0 {
+        angle = angle.wrapping_neg();
+    }
+    ev.extend([
+        call(0x49c4, serde_json::json!([b + 0x68, e + 0x14, "stack"]))?,
+        call(0x49c8, serde_json::json!([]))?,
+        call(0x4a20, serde_json::json!([]))?,
+        call(0x4a88, serde_json::json!([]))?,
+        call(0x4a94, serde_json::json!([0, angle as u32]))?,
+        call(0x4aa4, serde_json::json!([0, "stack", "stack"]))?,
+        call(0x4aa8, serde_json::json!([]))?,
+    ]);
+    for (site, scale_site, out) in [(0x4b08u32, 0x4acau32, 0x80u32), (0x4b68, 0x4b2a, 0x8c)] {
+        let s = k(scale_site)?;
+        let v: Vec<f64> = f.rotated.iter().map(|c| f64::from(c * s)).collect();
+        let mut c = call(site, serde_json::json!([e + 0x14, "stack", b + out]))?;
+        c["vectors"] = serde_json::json!({"1": v});
+        ev.push(c);
+    }
+    ev.push(call(0x4b74, serde_json::json!([e + 0x14, b + 0x68]))?);
+    for site in [0x4b80u32, 0x4b98] {
+        let mut r = local(site, 0x40cc, serde_json::json!([]));
+        r["floats"] = serde_json::json!([f64::from(f.distance)]);
+        ev.push(r);
+    }
+    let one = k(0x4b86)?;
+    let pace =
+        f32::from_bits(rel_word(rel, 0x4baa, 5)?) * ((one / f.roots[1]) * (one / f.roots[0]));
+    ev.extend([
+        st(0x4bb8, "block", 0x1c, 4, pace.to_bits()),
+        st(0x4bc8, "block", 0x24, 4, k(0x4bbe)?.to_bits()),
+        st(0x4bd8, "block", 0x20, 4, k(0x4bce)?.to_bits()),
+        st(0x4bec, "entity", 6, 2, rel_word(rel, 0x4bde, 5)? & 0xffff),
+        st(0x4bf4, "entity", 0, 1, 3),
+        st(0x4bfc, "entity", 1, 1, 0),
+    ]);
     Ok(serde_json::json!({"events":ev}))
 }
