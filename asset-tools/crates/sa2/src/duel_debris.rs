@@ -1,7 +1,7 @@
 //! The stage 42 module's shared debris manager (task name "EfCrash3DExec").
 //! stg42D.rel code: spawn +0x8308 (wrapper of +0x8348), update +0x888C,
 //! delete +0x8820, wind query +0x7558 and trail effects +0x1DFE0/+0x1E194.
-//! The display callback (+0x91A8) is not executed. Every engine result
+//! The display callback (+0x91A8) is in `duel_display`. Every engine result
 //! (allocations, matrix transform, rand, wind callbacks, vector length) is an
 //! input; every engine call is recorded with its arguments.
 use crate::duel_platform::{self, invalid};
