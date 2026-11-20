@@ -58,7 +58,7 @@ From the audit of November 20, 2026 (both repos, all 467 PRs, main):
 | Finalhazard's 62 unique routines (Boss_Last2D.rel) | Verify Finalhazard camera switch path | #436 |
 | Steam data loaders, GC↔Steam file map | Load Steam game files natively | — |
 | Native Chao Race and Karate (replacing `competition_sim.rs`) | Port Chao Race and Karate natively | — |
-| Engine runtime (phases 1 and 3), renderer, web build | **Unowned: needs a thread** | — |
+| Engine runtime: task system, master loop, stage load/unload, input, camera, Ninja/GX renderer, web build ([ENGINE-CORE-PLAN.md](ENGINE-CORE-PLAN.md)) | Port the engine core and renderer | — |
 | Knuckles/Rouge, Amy/Metal Sonic/Tikal/Chaos, remaining bosses, menus, saves, events | **Unowned** | — |
 
 ## Known entry points (main.dol, GSNE8P)
@@ -136,7 +136,9 @@ The single biggest gap. Today each routine runs alone from a JSON request.
 - **Deliverable:** a `sa2-runtime` crate that mounts a stage from Steam files,
   spawns its SET tasks and player, and steps ported routines together,
   deterministic and headless, with a replay test (inputs in, per-tick state out).
-- **Depends on:** Phase 0. **Owner:** unowned (new thread needed).
+- **Depends on:** Phase 0. **Owner:** Port the engine core and renderer
+  (issue #440). Step-by-step milestones E0–E8, including the camera,
+  renderer and web build for Phase 2: [ENGINE-CORE-PLAN.md](ENGINE-CORE-PLAN.md).
 - **Acceptance:** Iron Gate mounts and ticks 600 frames with the walker exec
   and its stage objects running inside the task loop; same inputs give the same
   trace every run.
@@ -185,7 +187,8 @@ exec 0x800B3A8C or a close sibling.
 - **Saves:** write side of story progress, stage results, emblems and Chao
   data, matching the native save layout (readers done). The MMO server stays
   authoritative for anything it owns.
-- **Depends on:** Phase 2. **Owner:** unowned.
+- **Depends on:** Phase 2. **Owner:** renderer and camera: Port the engine core
+  and renderer (ENGINE-CORE-PLAN.md E6–E7); HUD, pause, sound and saves: unowned.
 - **Acceptance:** Iron Gate and Prison Lane play with full HUD, pause, all
   their cameras and sound, and results write a native-layout save.
 
