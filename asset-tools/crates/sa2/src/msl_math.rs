@@ -353,12 +353,6 @@ pub fn gekko_fres(x: f64) -> f64 {
     f64::from_bits((sign | exponent | m) as u64)
 }
 
-/// MSL `acosf` (0x80111124): pi/2 - atanf(x / sqrt(1 - x * x)), the same
-/// arctangent as `asinf`.
-pub fn acosf(x: f32) -> f32 {
-    HALF_PI - asinf(x)
-}
-
 /// 0x8005071C: tilt angles (x, z) in BAMS from a unit floor normal.
 pub fn normal_angles(nx: f32, ny: f32, nz: f32) -> (i32, i32) {
     let flat = ny.abs() < NORMAL_FLAT && nx.abs() < NORMAL_FLAT;

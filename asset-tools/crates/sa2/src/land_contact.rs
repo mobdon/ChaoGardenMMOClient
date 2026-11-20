@@ -25,9 +25,10 @@
 //! The triangle drawing for the debug byte at 0x801CC16B is left out.
 use crate::{
     land_nodes::{nj_scalor, rotate_pair, rotate_y, Candidate, LandNodes, Query},
-    msl_math::{acosf, atan2f, gekko_fres, gekko_frsqrte, normal_angles},
+    msl_math::{atan2f, gekko_fres, gekko_frsqrte, normal_angles},
     ninja_matrix::{mult_vec, Mtx, Vec3, IDENTITY},
     ninja_trig::fmadds,
+    ninja_vector::acosf,
 };
 
 const ZERO: f32 = 0.0; // r2-0x60B0

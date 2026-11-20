@@ -18,7 +18,7 @@ WALKER-PORT-MAP.md on #424.
 | fn_8002334C in full, with the dynamic land objects movers register | `land_select::select_frame` | tests/land_nodes.rs, 40 frames with synthetic movers and tasks |
 | fn_80023808: each query's re-pick from the frame's dynamic and static subsets | `land_select::Selection::reselect` | same, 160 queries |
 | fn_800D1020: the broadphase, candidate triangles near a moving sphere (njScalor 0x801151F4 included) | `land_nodes::LandNodes::query` | same, 160 queries including a full 0xC0 candidate list |
-| fn_800CEE08: a moving sphere against one object's candidate triangles (with PSMTXInverse, njUnitVector and MSL acosf 0x80111124) | `land_contact`, `LandNodes::collide` | same, every query's objects with candidates in both modes, over 300 hits |
+| fn_800CEE08: a moving sphere against one object's candidate triangles (with PSMTXInverse, njUnitVector, and #426's acosf) | `land_contact`, `LandNodes::collide` | same, every query's objects with candidates in both modes, over 300 hits |
 | fn_800D0904 with fn_800D13A0, fn_800D14C8, fn_800D17E0, fn_800D2298, fn_800D23A8, fn_800D24B4, fn_800D251C and Ninja's table rotations, njTranslateEx and fn_8011610C: the land collision node list and its bucketed triangles | `land_nodes::LandNodes::update` | tests/land_nodes.rs, 40 frames on stg11D.rel plus synthetic object trees, triangle, quad and flipped strip sets, flag 0x08000000 and a full triangle pool |
 | 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within +/-0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
