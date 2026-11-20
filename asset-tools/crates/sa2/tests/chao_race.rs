@@ -146,4 +146,9 @@ fn steam_course_rows_equal_the_gamecube_rows() {
             .unwrap();
     assert_eq!(steam, gc);
     assert_eq!(steam.len(), 62);
+    let exe = PathBuf::from(env::var_os("SA2_GAME_PATH").unwrap()).join("sonic2app.exe");
+    let steam = r::read_rivals_exe(&std::fs::read(exe).unwrap()).unwrap();
+    let gc = r::read_rivals_rel(&std::fs::read(env::var_os("SA2_CHAO_MAIN_REL").unwrap()).unwrap())
+        .unwrap();
+    assert_eq!(steam, gc);
 }

@@ -167,4 +167,43 @@ for case in range(runs):
     m.call(CM(CM_PROGRESS_GET), r3=course & 0xFFFFFFFF)
     got = struct.unpack(">i", struct.pack(">I", m.gpr(3)))[0]
     out["progress"].append({"course": course, "old": old, "level": level, "after": got})
+# Rival skills: CM fn_60_253D4 builds a rival from racer record i. Only the
+# rand() draws made by its skill block (0x26198..0x263D0) are reported.
+from unicorn import UC_HOOK_CODE
+from unicorn import ppc_const as R
+log = []
+def rand_logged(uc, pc, size, _):
+    v = rng.randrange(0, 32768) if rng.random() < 0.9 else rng.choice([0, 1, 16383, 16384, 32767])
+    lr = uc.reg_read(R.UC_PPC_REG_LR)
+    log.append((lr, v))
+    uc.reg_write(R.UC_PPC_REG_3, v)
+    uc.reg_write(R.UC_PPC_REG_PC, lr)
+m2 = dol.machine(boot=False)
+cm2 = load_rel(m2, main_rel, MAIN_BASE, skip=(61,))
+m2.u.hook_add(UC_HOOK_CODE, rand_logged, begin=RAND, end=RAND)
+bots = cm2[5] + 0x93ED4
+out["rivals"] = []
+for case in range(min(runs, 400)):
+    i = case % 115
+    buf = 0x81500000
+    m2.u.mem_write(buf, bytes(0x800))
+    log.clear()
+    m2.call(cm2[1] + 0x253D4, r3=buf, r4=bots + 0x54 * i, count=5_000_000)
+    lo, hi = cm2[1] + 0x26198, cm2[1] + 0x263D4
+    out["rivals"].append({"bot": i, "rand": [v for lr, v in log if lo <= lr <= hi],
+        "skills": [m2.get(buf + 0x38 + 2 * k, "H") for k in range(7)]})
+
+# Lane order: CM fn_60_24F48 on rival set k, with fn_60_253D4 recording its record.
+m3 = dol.machine(boot=False)
+cm3 = load_rel(m3, main_rel, MAIN_BASE, skip=(61,))
+picked = []
+m3.stub(cm3[1] + 0x253D4, lambda mm: picked.append((mm.gpr(4) - (cm3[5] + 0x93ED4)) // 0x54))
+m3.stub(RAND, lambda mm: mm.gpr(3, rands.pop(0)))
+out["order"] = []
+for case in range(min(runs, 300)):
+    k = case % 62
+    rr = [rng.randrange(0, 32768) if rng.random() < 0.9 else rng.choice([0, 32767]) for _ in range(64)]
+    rands[:] = list(rr); picked.clear()
+    m3.call(cm3[1] + 0x24F48, r3=cm3[5] + 0x93E98 + 0x25F8 + 0x24 * k)
+    out["order"].append({"set": k, "rand": rr[:64 - len(rands)], "bots": list(picked)})
 print(json.dumps(out))

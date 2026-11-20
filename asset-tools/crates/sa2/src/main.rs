@@ -1316,13 +1316,18 @@ fn run() -> Result<()> {
             // Native Chao Race / Karate tables from the user's own sonic2app.exe.
             let karate = sa2_asset_tools::chao_karate::Tables::read_exe(&bytes)?;
             let race = sa2_asset_tools::chao_race::read_course_rows_exe(&bytes)?;
+            let (race_bots, rival_sets) = sa2_asset_tools::chao_race::read_rivals_exe(&bytes)?;
             let report = serde_json::json!({
                 "karate": karate,
                 "raceCourses": race,
+                "raceBots": race_bots,
+                "rivalSets": rival_sets,
                 "source": {
                     "karateDescriptors": format!("{:#010x}", sa2_asset_tools::chao_karate::EXE_DESCRIPTORS),
                     "karateSkills": format!("{:#010x}", sa2_asset_tools::chao_karate::EXE_SKILLS),
                     "raceCourses": format!("{:#010x}", sa2_asset_tools::chao_race::EXE_COURSE_ROWS),
+                    "raceBots": format!("{:#010x}", sa2_asset_tools::chao_race::EXE_RACE_BOTS),
+                    "rivalSets": format!("{:#010x}", sa2_asset_tools::chao_race::EXE_RIVAL_SETS),
                 },
             });
             save_runtime_document(

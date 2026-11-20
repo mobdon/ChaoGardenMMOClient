@@ -229,8 +229,8 @@ impl Class {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseRow {
-    /// +0: per-class index for the challenge, hero and dark rows (not read by
-    /// the routines ported here).
+    /// +0: challenge rows name their rival set with it (CM fn_60_24E40
+    /// 0x24ED8: set 42 + index).
     pub index: i32,
     /// +4: race land, 0 neutral, 1 hero, 2 dark (fn_76_1A94 0x1ABC).
     pub land: i32,
@@ -456,4 +456,157 @@ mod tests {
                 .is_empty()
         );
     }
+}
+
+/// One 0x54-byte AI racer record (CM .data 0x93ED4 + 0x54 i; sonic2app.exe
+/// VA 0x011CE2A0, 115 records). Only the fields the skill code reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RaceBot {
+    /// +0x30: 0 and 2 = shared total, 1 = per-skill (base, spread) pairs.
+    pub mode: u16,
+    /// +0x34: total split over 7 skills.
+    pub shared: u32,
+    /// +0x38: (base, spread) per skill, swim..intellect.
+    pub pairs: [[u16; 2]; 7],
+}
+
+/// One 0x24-byte rival set (CM .data 0x93E98 + 0x25F8 + 0x24 i; sonic2app.exe
+/// VA 0x011D0888, 62 sets): +0 0 = shuffle the lanes, +8 seven racer records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RivalSet {
+    pub fixed: i32,
+    pub unknown4: i32,
+    pub bots: [i32; 7],
+}
+
+pub const EXE_RACE_BOTS: u32 = 0x011C_E2A0;
+pub const RACE_BOTS: usize = 115;
+pub const EXE_RIVAL_SETS: u32 = 0x011D_0888;
+pub const RIVAL_SETS: usize = 62;
+/// CM .data offsets of the same tables.
+pub const REL_RACE_BOTS: usize = 0x93ED4;
+pub const REL_RIVAL_SETS: usize = 0x93E98 + 0x25F8;
+
+fn bot(b: &[u8], u16v: fn([u8; 2]) -> u16, u32v: fn([u8; 4]) -> u32) -> RaceBot {
+    RaceBot {
+        mode: u16v([b[0x30], b[0x31]]),
+        shared: u32v([b[0x34], b[0x35], b[0x36], b[0x37]]),
+        pairs: std::array::from_fn(|i| {
+            let o = 0x38 + 4 * i;
+            [u16v([b[o], b[o + 1]]), u16v([b[o + 2], b[o + 3]])]
+        }),
+    }
+}
+fn set(b: &[u8], i32v: fn([u8; 4]) -> i32) -> RivalSet {
+    let w = |k: usize| i32v([b[4 * k], b[4 * k + 1], b[4 * k + 2], b[4 * k + 3]]);
+    RivalSet {
+        fixed: w(0),
+        unknown4: w(1),
+        bots: std::array::from_fn(|k| w(2 + k)),
+    }
+}
+
+/// Reads the racer records and rival sets from the user's sonic2app.exe.
+pub fn read_rivals_exe(exe: &[u8]) -> crate::Result<(Vec<RaceBot>, Vec<RivalSet>)> {
+    let image = crate::pe::read_pe(exe)?;
+    let at = image.va_to_offset(EXE_RACE_BOTS, RACE_BOTS * 0x54)?;
+    let bots = exe[at..at + RACE_BOTS * 0x54]
+        .chunks(0x54)
+        .map(|b| bot(b, u16::from_le_bytes, u32::from_le_bytes))
+        .collect();
+    let at = image.va_to_offset(EXE_RIVAL_SETS, RIVAL_SETS * 0x24)?;
+    let sets = exe[at..at + RIVAL_SETS * 0x24]
+        .chunks(0x24)
+        .map(|b| set(b, i32::from_le_bytes))
+        .collect();
+    Ok((bots, sets))
+}
+
+/// The same tables from a GameCube ChaoMain.rel.
+pub fn read_rivals_rel(chao_main: &[u8]) -> crate::Result<(Vec<RaceBot>, Vec<RivalSet>)> {
+    let word = |o: usize| -> crate::Result<u32> {
+        chao_main
+            .get(o..o + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+            .ok_or_else(|| crate::Error::invalid("REL is truncated"))
+    };
+    if word(0)? != 60 {
+        return Err(crate::Error::invalid(
+            "not the GameCube ChaoMain.rel (module 60)",
+        ));
+    }
+    let data = (word(word(16)? as usize + 8 * 5)? & !1) as usize;
+    let get = |o: usize, n: usize| {
+        chao_main
+            .get(data + o..data + o + n)
+            .ok_or_else(|| crate::Error::invalid("REL is truncated"))
+    };
+    let bots = get(REL_RACE_BOTS, RACE_BOTS * 0x54)?
+        .chunks(0x54)
+        .map(|b| bot(b, u16::from_be_bytes, u32::from_be_bytes))
+        .collect();
+    let sets = get(REL_RIVAL_SETS, RIVAL_SETS * 0x24)?
+        .chunks(0x24)
+        .map(|b| set(b, i32::from_be_bytes))
+        .collect();
+    Ok((bots, sets))
+}
+
+/// CM fn_60_24E40: the rival set of a race (challenge rows name it in +0).
+pub fn rival_set_index(class: Class, course: u8, level: u8, rows: &[CourseRow]) -> Option<usize> {
+    let row = class.row(course, level)?;
+    match class {
+        Class::Challenge => usize::try_from(rows.get(row)?.index).ok().map(|i| 42 + i),
+        _ => Some(row),
+    }
+}
+
+/// CM fn_60_24F48 0x24F98..0x25064: the lane order, shuffled with 32 random
+/// swaps (index = (int)(6.9999 * rand / 32768), rodata 0x74A8) unless +0 is set.
+pub fn rival_order(set: &RivalSet, rng: &mut impl FnMut() -> i32) -> [usize; 7] {
+    let mut order = [0, 1, 2, 3, 4, 5, 6];
+    if set.fixed == 0 {
+        let pick = |r: i32| (6.999_9f32 * unit(r)) as i32 as usize;
+        for _ in 0..32 {
+            let a = pick(rng());
+            let b = pick(rng());
+            order.swap(a, b);
+        }
+    }
+    order
+}
+
+/// CM fn_60_253D4 0x26198..0x263D0: a rival's param skills (+0x38, swim..
+/// intellect). Mode 0/2: shared / 7 + (int)(500 * rand / 32768); mode 1:
+/// base + (int)(spread * (2 * rand / 32768 - 1)), then stamina and guts copy
+/// intellect. Every skill is stored, then divided by 3 (the race stage's
+/// AL_ParameterGetSkill multiplies by 3 again). The appearance rand draws
+/// that come before this in fn_60_253D4 are not ported.
+pub fn rival_skills(bot: &RaceBot, rng: &mut impl FnMut() -> i32) -> [u16; 7] {
+    let mut s = [0u16; 7];
+    match bot.mode {
+        0 | 2 => {
+            let base = bot.shared / 7;
+            for v in &mut s {
+                let r = (500.0f32 * unit(rng())) as i32 as u16;
+                let sum = base.wrapping_add(u32::from(r)) as u16;
+                *v = (i32::from(sum) / 3) as u16;
+            }
+        }
+        1 => {
+            for (i, v) in s.iter_mut().enumerate() {
+                let u = unit(rng());
+                let k = 2.0f32 * u - 1.0f32;
+                let r = (bot.pairs[i][1] as f32 * k) as i32;
+                let sum = (i32::from(bot.pairs[i][0]).wrapping_add(r)) as u16;
+                *v = (i32::from(sum) / 3) as u16;
+            }
+            s[4] = s[6];
+            s[5] = s[6];
+        }
+        _ => {}
+    }
+    s
 }
