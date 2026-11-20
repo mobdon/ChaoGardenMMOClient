@@ -138,3 +138,24 @@ fn second_jump_edge_emits_native_insta_shield_in_the_player_loop() {
     assert_eq!((action.player.char_state, action.animation), (18, 17));
     assert!(action.animation_sound_ids.contains(&113));
 }
+
+#[test]
+#[ignore="requires verified A2NE_ROM"]
+fn down_and_jump_launch_sonic_from_rest_into_a_moving_roll() {
+    use sonic_advance_2_assets::native_game::HarnessCallback as C;
+    let b=std::fs::read(std::env::var_os("A2NE_ROM").unwrap()).unwrap();
+    let rom=VerifiedRom::parse(&b).unwrap();let mut game=NativeHarness::new(&rom).unwrap();
+    for _ in 0..8 {game.tick(0).unwrap();}
+    assert_eq!(game.tick(128).unwrap().callback,C::InitCrouch);
+    assert_eq!(game.tick(128).unwrap().animation,2);
+    let first=game.tick(129).unwrap();
+    assert_eq!(first.callback,C::Spindash);assert_eq!(first.animation,3);
+    assert_eq!(first.animation_sound_ids,vec![109,109]);
+    game.tick(128).unwrap();let rev=game.tick(129).unwrap();
+    assert_eq!(rev.animation_sound_ids,vec![109]);assert_eq!(rev.variant,1);
+    let release=game.tick(0).unwrap();
+    assert_eq!(release.callback,C::InitRoll);assert_eq!(release.animation_sound_ids,vec![110]);
+    assert_eq!(release.player.q_speed_ground,2304);
+    let roll=game.tick(0).unwrap();assert_eq!(roll.callback,C::Rolling);assert_eq!(roll.animation,4);
+    assert!(roll.player.q_world_x>release.player.q_world_x);assert_eq!(roll.player.sprite_offset_y,9);
+}

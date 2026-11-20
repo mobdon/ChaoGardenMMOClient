@@ -13,9 +13,29 @@ pub mod native_campaign_save;
 pub mod native_checkpoints;
 pub mod native_collision;
 pub mod native_combat;
+pub mod native_boss1;
+pub mod native_bouncy_bar;
 pub mod native_enemies;
 pub mod native_entities;
 pub mod native_game;
+pub mod native_garden_behavior;
+pub mod native_garden_memory;
+pub mod native_garden_second;
+pub mod native_garden_session;
+#[path = "reused/shop.rs"]
+pub mod shop;
+#[path = "reused/native_growth.rs"]
+pub mod native_growth;
+#[path = "reused/native_hatching.rs"]
+pub mod native_hatching;
+#[path = "reused/native_shop_state.rs"]
+pub mod native_shop_state;
+#[path = "reused/native_weeds.rs"]
+pub mod native_weeds;
+pub mod native_garden_progress;
+pub mod native_garden_art;
+pub mod native_garden_home_art;
+pub mod native_garden_background;
 pub mod native_goal;
 mod native_hud;
 pub mod native_lifecycle;
@@ -29,6 +49,7 @@ pub mod native_save;
 pub mod native_scatter;
 pub mod native_sonic;
 pub mod native_special_rings;
+pub mod native_spin;
 pub mod native_springs;
 pub mod native_stage;
 pub mod save_layout;
