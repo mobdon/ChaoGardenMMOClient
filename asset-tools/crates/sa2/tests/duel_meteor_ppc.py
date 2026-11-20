@@ -1,7 +1,7 @@
 """Local PowerPC oracle: run the installed stage 42 FIREBALL task and compare duel-meteor.
 
-Usage: python duel_meteor_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
-Executes the meteor's constructor, update and destructor (module 41, section 1
+Usage: python duel_meteor_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
+Executes the meteor's constructor, update and destructor (stg42D, section 1
 +0x24BC..+0x2B8C) under Unicorn. Every engine import, the shared debris task
 (+0x8308) and the Ninja matrix calls are recording stubs whose results come from
 the scenario. The game is never started.
@@ -10,11 +10,11 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP=0x81000000,0x82000000,0x90000000,0x80f00000
 FIRST,END,INIT,UPDATE,DELETE,DEBRIS=0x24bc,0x2b8c,0x24bc,0x2670,0x2590,0x8308
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -61,35 +61,35 @@ fb=lambda x:struct.unpack('>I',struct.pack('>f',x))[0]
 calls=[];frame={};rands=[];ctx={}
 def hook(uc,pc,size,_):
     f=frame
-    if pc==0x8006538c:calls.append(('taskCheck',));uc.reg_write(R.UC_PPC_REG_3,int(f.get('taskCheck',False)))
+    if pc==0x800655f4:calls.append(('taskCheck',));uc.reg_write(R.UC_PPC_REG_3,int(f.get('taskCheck',False)))
     elif pc==0x8000f8b8:
         assert reg(3)==ctx['task'];calls.append(('collisionInit',reg(4)-S5,reg(5),reg(6)))
-    elif pc==0x800c5868:
+    elif pc==0x800c5ad0:
         p=reg(3);calls.append(('light',get(p,'I'),vec(p+4),vec(p+0x10),get(p+0x1c,'I'),get(p+0x24,'I')))
         uc.reg_write(R.UC_PPC_REG_3,ctx['light'])
-    elif pc==0x800c5854:calls.append(('lightFree',reg(3)))
+    elif pc==0x800c5abc:calls.append(('lightFree',reg(3)))
     elif pc==0x800066f4:calls.append(('hit',));uc.reg_write(R.UC_PPC_REG_3,0x90001234 if f.get('hit') else 0)
-    elif pc==0x80115d50:calls.append(('push',))
-    elif pc==0x8011509c:calls.append(('unit',reg(3)))
-    elif pc==0x80115e24:calls.append(('translate',vec(reg(3))))
-    elif pc==0x80115560:calls.append(('rotA',reg(3),struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
-    elif pc==0x80115918:calls.append(('rotB',reg(3),struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
-    elif pc==0x80114bc4:
+    elif pc==0x80116098:calls.append(('push',))
+    elif pc==0x801153e4:calls.append(('unit',reg(3)))
+    elif pc==0x8011616c:calls.append(('translate',vec(reg(3))))
+    elif pc==0x801158a8:calls.append(('rotA',reg(3),struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
+    elif pc==0x80115c60:calls.append(('rotB',reg(3),struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
+    elif pc==0x80114f0c:
         calls.append(('calcPoint',reg(3),vec(reg(4))));t=f['transforms'][ctx['piece']]
         for i,v in enumerate(t['point']):put(reg(5)+4*i,'f',v)
-    elif pc==0x801151a4:
+    elif pc==0x801154ec:
         calls.append(('calcVector',reg(3),vec(reg(4))));t=f['transforms'][ctx['piece']];ctx['piece']+=1
         for i,v in enumerate(t['vector']):put(reg(5)+4*i,'f',v)
     elif pc==B+DEBRIS:
         calls.append(('debris',vec(reg(3)),tuple(get(reg(4)+4*i,'i') for i in range(3)),vec(reg(5)),fpr(1),reg(6)-S5,reg(7),reg(8)-S5,reg(9)))
-    elif pc==0x80115d9c:calls.append(('pop',))
-    elif pc==0x80115a80:calls.append(('popN',reg(3)))
-    elif pc==0x80065148:assert reg(3)==ctx['task'];calls.append(('destroy',))
+    elif pc==0x801160e4:calls.append(('pop',))
+    elif pc==0x80115dc8:calls.append(('popN',reg(3)))
+    elif pc==0x800653b0:assert reg(3)==ctx['task'];calls.append(('destroy',))
     elif pc==0x8000f4ec:assert reg(3)==ctx['task'];calls.append(('collide',))
-    elif pc==0x80039670:calls.append(('visible',vec(reg(3)),fpr(1)));uc.reg_write(R.UC_PPC_REG_3,int(f.get('visible',False)))
-    elif pc==0x8010d940:
+    elif pc==0x800398d8:calls.append(('visible',vec(reg(3)),fpr(1)));uc.reg_write(R.UC_PPC_REG_3,int(f.get('visible',False)))
+    elif pc==0x8010dc88:
         v=rands.pop(0);calls.append(('rand',v));uc.reg_write(R.UC_PPC_REG_3,v)
-    elif pc==0x800e23b8:
+    elif pc==0x800e2694:
         calls.append(('smoke',vec(reg(3)),vec(reg(4)),fpr(1),fpr(2)))
         if f.get('smokeAllocated'):
             ctx['particle']=alloc(0x40);uc.reg_write(R.UC_PPC_REG_3,ctx['particle'])
@@ -121,21 +121,21 @@ def rust(cs):
             o.append(('debris',F(c['position']),tuple(c['angles']),F(c['velocity']),fb(c['floorY']),int(c['model'][5:],16),c['flags'],int(c['texlist'][5:],16),c['mode']));continue
         if 'particleColor' in c:o.append(('color',int(c['particleColor'],16)));continue
         e=int(c['engine'],16);a=c['args']
-        name={0x8006538c:'taskCheck',0x800066f4:'hit',0x80115d50:'push',0x80115d9c:'pop',0x80065148:'destroy',0x8000f4ec:'collide'}.get(e)
+        name={0x800655f4:'taskCheck',0x800066f4:'hit',0x80116098:'push',0x801160e4:'pop',0x800653b0:'destroy',0x8000f4ec:'collide'}.get(e)
         if name:o.append((name,))
         elif e==0x8000f8b8:o.append(('collisionInit',int(a['collisionData'][5:],16),a['count'],a['list']))
-        elif e==0x800c5868:o.append(('light',a['kind'],F(a['position']),F(a['vector']),fb(a['radius']),fb(a['radiusSquared'])))
-        elif e==0x800c5854:o.append(('lightFree',a[0]))
-        elif e==0x8011509c:o.append(('unit',a[0]))
-        elif e==0x80115e24:o.append(('translate',F(a['translate'])))
-        elif e==0x80115560:o.append(('rotA',*a))
-        elif e==0x80115918:o.append(('rotB',*a))
-        elif e==0x80114bc4:o.append(('calcPoint',0,F(a['point'])))
-        elif e==0x801151a4:o.append(('calcVector',0,F(a['vector'])))
-        elif e==0x80115a80:o.append(('popN',a[0]))
-        elif e==0x80039670:o.append(('visible',F(a['position']),fb(a['radius'])))
-        elif e==0x8010d940:o.append(('rand',a['returned']))
-        elif e==0x800e23b8:o.append(('smoke',F(a['position']),F(a['velocity']),fb(a['scale']),fb(a['rotation'])))
+        elif e==0x800c5ad0:o.append(('light',a['kind'],F(a['position']),F(a['vector']),fb(a['radius']),fb(a['radiusSquared'])))
+        elif e==0x800c5abc:o.append(('lightFree',a[0]))
+        elif e==0x801153e4:o.append(('unit',a[0]))
+        elif e==0x8011616c:o.append(('translate',F(a['translate'])))
+        elif e==0x801158a8:o.append(('rotA',*a))
+        elif e==0x80115c60:o.append(('rotB',*a))
+        elif e==0x80114f0c:o.append(('calcPoint',0,F(a['point'])))
+        elif e==0x801154ec:o.append(('calcVector',0,F(a['vector'])))
+        elif e==0x80115dc8:o.append(('popN',a[0]))
+        elif e==0x800398d8:o.append(('visible',F(a['position']),fb(a['radius'])))
+        elif e==0x8010dc88:o.append(('rand',a['returned']))
+        elif e==0x800e2694:o.append(('smoke',F(a['position']),F(a['velocity']),fb(a['scale']),fb(a['rotation'])))
         else:raise AssertionError(c)
     return o
 rng=random.Random(42)

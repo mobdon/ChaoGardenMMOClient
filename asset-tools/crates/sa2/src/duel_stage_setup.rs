@@ -73,17 +73,17 @@ impl Script {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SetupInputs {
-    /// Returns of the first and (if reached) second 0x8001DD24(0) calls.
+    /// Returns of the first and (if reached) second 0x8001dda8(0) calls.
     pub mode_queries: Vec<i32>,
-    /// 0x801E7388 slot 1 is filled; then player data slot 1 byte +3.
+    /// 0x801e7788 slot 1 is filled; then player data slot 1 byte +3.
     pub rival_character: Option<i8>,
     /// Engine task allocator results in call order (true: non-null).
     pub tasks: Vec<bool>,
-    /// 0x801194B4 results in call order.
+    /// 0x801197fc results in call order.
     pub allocations: Vec<bool>,
-    /// 0x80064F84 (SET load) return.
+    /// 0x800651ec (SET load) return.
     pub set_handle: u32,
-    /// 0x801E5470 after the base light load: the 384 bytes the derive reads.
+    /// 0x801e5870 after the base light load: the 384 bytes the derive reads.
     pub light_source_memory: Vec<u8>,
     /// Returns of the base and `_gc` light file loads.
     pub light_loads: [i32; 2],
@@ -97,7 +97,7 @@ pub struct SetupInputs {
     /// Message files the engine finds, by name: load address and words
     /// (through the 0xFFFFFFFF terminator).
     pub message_files: BTreeMap<String, (u32, Vec<u32>)>,
-    /// Prior contents of the engine callback slots at 0x801A2638 and +8.
+    /// Prior contents of the engine callback slots at 0x801a2a18 and +8.
     pub callback_slots: [u32; 2],
 }
 
@@ -119,35 +119,35 @@ pub fn setup(rel_bytes: &[u8], i: &SetupInputs) -> Result<Value> {
         let v = modes
             .next()
             .ok_or_else(|| Error::invalid("missing mode query result"))?;
-        sc.call(0x8001dd24, json!([0, v]));
+        sc.call(0x8001dda8, json!([0, v]));
         Ok(v)
     };
     if mode(&mut sc)? == 0 {
-        sc.call(0x80086bd4, json!([1]));
+        sc.call(0x80086e3c, json!([1]));
     } else if mode(&mut sc)? == 1 {
-        sc.call(0x80087258, json!([1]));
+        sc.call(0x800874c0, json!([1]));
     }
     if let Some(character) = i.rival_character {
-        sc.call(0x8001d6c8, json!([1]));
+        sc.call(0x8001d74c, json!([1]));
         sc.write("player1[1]+0x2", json!(3));
-        sc.call(0x80022bdc, json!([1]));
+        sc.call(0x80022e24, json!([1]));
         // +0x18AC
         let made = take(&mut tasks, "task")?;
         sc.call(
-            0x80071ba4,
+            0x80071e0c,
             json!([0, 0, s(1, 0x3cc), d.cstr(d.s5(0x18da)?)?, made]),
         );
         if made {
             let got = take(&mut allocs, "allocation")?;
-            sc.call(0x801194b4, json!([1, 0x20, got]));
+            sc.call(0x801197fc, json!([1, 0x20, got]));
             if !got {
-                sc.call(0x80071878, json!(["task0"]));
+                sc.call(0x80071ae0, json!(["task0"]));
             } else {
                 sc.write("task0+0x40", json!("alloc0"));
                 let gauge = d.f4(0x191a)?;
                 sc.write("player2[1]+0x48", json!(gauge));
                 // +0x20470 with a parent adds a child task (no null check).
-                sc.call(0x80070790, json!([2, s(1, 0x2052c)]));
+                sc.call(0x800709f8, json!([2, s(1, 0x2052c)]));
                 sc.write("child.work+0x8", json!("player2[1]+0x48"));
                 sc.write("child.work+0x28", json!(gauge));
                 sc.write("child.work+0x14", json!(d.f4(0x204da)?));
@@ -163,7 +163,7 @@ pub fn setup(rel_bytes: &[u8], i: &SetupInputs) -> Result<Value> {
                     _ => None,
                 };
                 if let Some((tex, list, delete)) = titles {
-                    sc.call(0x800725b8, json!([d.cstr(d.s5(tex)?)?, s(5, d.s5(list)?)]));
+                    sc.call(0x80072820, json!([d.cstr(d.s5(tex)?)?, s(5, d.s5(list)?)]));
                     sc.write("task0+0x18", json!(s(1, delete)));
                 }
             }
@@ -171,11 +171,11 @@ pub fn setup(rel_bytes: &[u8], i: &SetupInputs) -> Result<Value> {
     }
     for (a, b) in [(0x2d7a, 0x2d86), (0x2da2, 0x2dae)] {
         let (a, b) = (s(5, d.s5(a)?), s(5, d.s5(b)?));
-        sc.call(0x80072008, json!([a, b]));
-        sc.call(0x80071fb0, json!([a, b]));
+        sc.call(0x80072270, json!([a, b]));
+        sc.call(0x80072218, json!([a, b]));
     }
     sc.call(
-        0x80064f84,
+        0x800651ec,
         json!([
             d.cstr(d.s5(0x2dca)?)?,
             d.cstr(d.s5(0x2dd2)?)?,
@@ -184,12 +184,12 @@ pub fn setup(rel_bytes: &[u8], i: &SetupInputs) -> Result<Value> {
         ]),
     );
     sc.write("s6+0x0", json!(i.set_handle));
-    sc.call(0x80066124, json!([s(5, d.s5(0x2dee)?), i.set_handle]));
+    sc.call(0x8006638c, json!([s(5, d.s5(0x2dee)?), i.set_handle]));
     sc.call(0x8001a8a8, json!([]));
-    sc.call(0x800334a8, json!([]));
+    sc.call(0x80033710, json!([]));
     let made = take(&mut tasks, "task")?;
     sc.call(
-        0x80071ba4,
+        0x80071e0c,
         json!([2, 1, s(1, 0x3128), d.cstr(d.s5(0x2e16)?)?, made]),
     );
     if made {
@@ -202,48 +202,48 @@ pub fn setup(rel_bytes: &[u8], i: &SetupInputs) -> Result<Value> {
         Some(p) => format!("{}{suffix}", &name[..p]),
         None => format!("{name}{suffix}"),
     };
-    sc.write("0x802b6c20", json!(name));
-    sc.call(0x8000532c, json!(["0x801e5470", 0, 0x20]));
+    sc.write("0x802b7020", json!(name));
+    sc.call(0x8000532c, json!(["0x801e5870", 0, 0x20]));
     sc.call(0x8001a13c, json!([name, "0x80fffe60", i.light_loads[0]]));
     if i.light_loads[0] > 0 {
         sc.call(
-            0x801193a4,
-            json!(["0x801e5470", "0x80fffe60", i.light_loads[0]]),
+            0x801196ec,
+            json!(["0x801e5870", "0x80fffe60", i.light_loads[0]]),
         );
     }
-    sc.call(0x8000532c, json!(["0x801e5230", 0, 0x30]));
+    sc.call(0x8000532c, json!(["0x801e5630", 0, 0x30]));
     for (k, row) in stage_lighting::derive(&i.light_source_memory)?
         .iter()
         .enumerate()
     {
-        sc.write(format!("0x{:08x}", 0x801e5230 + 0x30 * k), json!(row));
+        sc.write(format!("0x{:08x}", 0x801e5630 + 0x30 * k), json!(row));
     }
     sc.call(0x8001a13c, json!([gc, "0x80fffe60", i.light_loads[1]]));
     if i.light_loads[1] > 0 {
         sc.call(
-            0x801193a4,
-            json!(["0x801e5230", "0x80fffe60", i.light_loads[1]]),
+            0x801196ec,
+            json!(["0x801e5630", "0x80fffe60", i.light_loads[1]]),
         );
     }
     // +0xAFEC
     if i.fog_task == 0 {
         sc.write("s6+0x644", json!(s(6, 0xc)));
         sc.write("s6+0x648", json!(0));
-        sc.write("0x803ad7c8", json!(s(6, 0x644)));
+        sc.write("0x803adbc8", json!(s(6, 0x644)));
         let fog = d.cstr(d.s5(0x2e42)?)?;
-        sc.write("0x802b6c00", json!(fog));
+        sc.write("0x802b7000", json!(fog));
         sc.call(0x8001a16c, json!([fog, "0x80fffe60", i.fog_load]));
         if i.fog_load == 0 {
-            sc.call(0x801193a4, json!([s(6, 0xc), "0x80fffe60", 0x210]));
+            sc.call(0x801196ec, json!([s(6, 0xc), "0x80fffe60", 0x210]));
         } else {
-            sc.call(0x80119430, json!([s(6, 0xc), 0, 0x210]));
+            sc.call(0x80119778, json!([s(6, 0xc), 0, 0x210]));
             sc.write("s6+0x14", json!(d.f4(0xa9b2)?));
         }
-        sc.call(0x8011bf74, json!([]));
-        sc.call(0x8011bfc8, json!([]));
+        sc.call(0x8011c2bc, json!([]));
+        sc.call(0x8011c310, json!([]));
         let made = take(&mut tasks, "task")?;
         sc.call(
-            0x80071ba4,
+            0x80071e0c,
             json!([0, 1, s(1, 0xae04), d.cstr(d.s5(0xb06a)?)?, made]),
         );
         sc.write("s6+0x654", if made { json!("task2") } else { json!(0) });
@@ -252,8 +252,8 @@ pub fn setup(rel_bytes: &[u8], i: &SetupInputs) -> Result<Value> {
         }
         sc.write("s6+0x650", json!(0));
     }
-    sc.call(0x8011bf68, json!([]));
-    sc.call(0x8011bfc8, json!([]));
+    sc.call(0x8011c2b0, json!([]));
+    sc.call(0x8011c310, json!([]));
     // +0x14278
     if i.message_banks == [0, 0] {
         let letters = d.s5(0xe716)?;
@@ -306,31 +306,33 @@ pub fn setup(rel_bytes: &[u8], i: &SetupInputs) -> Result<Value> {
         }
     }
     sc.call(
-        0x80117844,
+        0x80117b8c,
         json!([0xff00_1020u32, 0xff00_1020u32, 0xff00_1020u32]),
     );
-    sc.call(0x8003ba5c, json!([s(5, d.s5(0x2e7e)?)]));
+    sc.call(0x8003bcc4, json!([s(5, d.s5(0x2e7e)?)]));
     if i.callback_slots[0] == 0 {
-        sc.write("0x801a2638", json!(s(1, 0x19d70)));
+        sc.write("0x801a2a18", json!(s(1, 0x19d70)));
     }
+    // itemBoxManager's item callback, ported as
+    // `stage_objects::itembox::queue::item_callback`.
     if i.callback_slots[1] == 0 {
-        sc.write("0x801a2640", json!(s(1, 0x9fb8)));
+        sc.write("0x801a2a20", json!(s(1, 0x9fb8)));
     }
     let mut table = vec![
-        json!("0x800dfe70"),
+        json!("0x800e014c"),
         json!(s(1, 0x635c)),
         json!(s(1, 0x6e50)),
         json!(s(1, 0x6ea4)),
     ];
     table.extend((0..10).map(|_| json!(0)));
-    sc.write("0x801e73d8", json!(table));
+    sc.write("0x801e77d8", json!(table));
     sc.call(
-        0x8006d298,
+        0x8006d500,
         json!([d.cstr(d.s5(0x2f32)?)?, s(4, d.s4(0x2f3a)?)]),
     );
     sc.call(0x80011a04, json!([0]));
     sc.call(0x80011050, json!([d.cstr(d.s5(0x2f4e)?)?]));
-    sc.call(0x80112278, json!([d.f4(0x2f5a)?, d.f4(0x2f66)?]));
+    sc.call(0x801125c0, json!([d.f4(0x2f5a)?, d.f4(0x2f66)?]));
     Ok(sc.finish())
 }
 
@@ -341,7 +343,7 @@ fn free_messages(d: &Data<'_>, sc: &mut Script, banks: [u32; 2]) -> Result<()> {
         .enumerate()
     {
         if banks[bank] != 0 {
-            sc.call(0x801194e0, json!([banks[bank]]));
+            sc.call(0x80119828, json!([banks[bank]]));
             sc.write(s(6, slot), json!(0));
             sc.write(s(5, d.s5(count_pc)?), json!(-1));
         }
@@ -353,7 +355,7 @@ fn free_messages(d: &Data<'_>, sc: &mut Script, banks: [u32; 2]) -> Result<()> {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TeardownInputs {
     pub message_banks: [u32; 2],
-    /// Current contents of 0x801A2638 and +8 (a module address as "s1+0x..").
+    /// Current contents of 0x801a2a18 and +8 (a module address as "s1+0x..").
     pub callback_slots: [String; 2],
     pub fog_task: u32,
     pub set_handle: u32,
@@ -366,35 +368,35 @@ pub fn teardown(rel_bytes: &[u8], i: &TeardownInputs) -> Result<Value> {
     let mut sc = Script::default();
     free_messages(&d, &mut sc, i.message_banks)?;
     if i.callback_slots[0] == s(1, 0x19d70) {
-        sc.write("0x801a2638", json!(0));
+        sc.write("0x801a2a18", json!(0));
     }
     if i.callback_slots[1] == s(1, 0x9fb8) {
-        sc.write("0x801a2640", json!(0));
+        sc.write("0x801a2a20", json!(0));
     }
     // +0xAF64
     if i.fog_task != 0 {
-        sc.call(0x80071888, json!([i.fog_task]));
+        sc.call(0x80071af0, json!([i.fog_task]));
         sc.write("s6+0x654", json!(0));
-        sc.write("0x803ad7c8", json!(0));
+        sc.write("0x803adbc8", json!(0));
     }
-    sc.call(0x8011bfc0, json!([0]));
-    sc.call(0x8011bfb4, json!([d.f4(0xafae)?, d.f4(0xafba)?]));
-    sc.call(0x8011bf80, json!([-1]));
+    sc.call(0x8011c308, json!([0]));
+    sc.call(0x8011c2fc, json!([d.f4(0xafae)?, d.f4(0xafba)?]));
+    sc.call(0x8011c2c8, json!([-1]));
     for a in [
-        0x8011bf74, 0x8011bf74, 0x8011bfc8, 0x8011bf74, 0x8011bfc8, 0x80033474,
+        0x8011c2bc, 0x8011c2bc, 0x8011c310, 0x8011c2bc, 0x8011c310, 0x800336dc,
     ] {
         sc.call(a, json!([]));
     }
     for (a, b) in [(0x2ffe, 0x3006), (0x3012, 0x301a)] {
-        sc.call(0x80071eb0, json!([s(5, d.s5(a)?), s(5, d.s5(b)?)]));
+        sc.call(0x80072118, json!([s(5, d.s5(a)?), s(5, d.s5(b)?)]));
     }
-    sc.call(0x800660fc, json!([]));
+    sc.call(0x80066364, json!([]));
     if i.set_handle != 0 {
         sc.call(0x8001a2b0, json!([i.set_handle]));
         sc.write("s6+0x0", json!(0));
     }
-    sc.call(0x80024370, json!([]));
-    sc.call(0x80112278, json!([d.f4(0x304e)?, d.f4(0x305a)?]));
+    sc.call(0x800245b8, json!([]));
+    sc.call(0x801125c0, json!([d.f4(0x304e)?, d.f4(0x305a)?]));
     Ok(sc.finish())
 }
 

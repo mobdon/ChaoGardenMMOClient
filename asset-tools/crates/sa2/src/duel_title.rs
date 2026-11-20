@@ -263,7 +263,7 @@ pub struct CreateInputs {
     pub flags: i16,
     pub fade: f32,
     pub fade_rate: f32,
-    /// 0x80070790 result for the window child (a null child is not checked).
+    /// 0x800709f8 result for the window child (a null child is not checked).
     pub window_task: bool,
     /// Register r10 when create starts. +0x21D48 reads it as the previous
     /// code for a leading code 1 or 2; the line copy then sees the window
@@ -284,25 +284,25 @@ pub fn create(
     if i.parent {
         call(
             &mut calls,
-            0x80070790,
+            0x800709f8,
             json!([2, "s1+0x21de4", "parent", i.task]),
         );
     } else {
         call(
             &mut calls,
-            0x80071ba4,
+            0x80071e0c,
             json!([2, 3, "s1+0x21de4", "BossTitleExec", i.task]),
         );
     }
     if !i.task {
         return Ok((calls, None));
     }
-    call(&mut calls, 0x801194b4, json!([1, 0x2c, i.copy]));
+    call(&mut calls, 0x801197fc, json!([1, 0x2c, i.copy]));
     if !i.copy {
-        call(&mut calls, 0x80071878, json!(["task"]));
+        call(&mut calls, 0x80071ae0, json!(["task"]));
         return Ok((calls, None));
     }
-    call(&mut calls, 0x8001dcf4, json!([i.mode_query]));
+    call(&mut calls, 0x8001dd78, json!([i.mode_query]));
     let mut desc = d.clone();
     let mut work = TitleWork {
         index: 0,
@@ -324,18 +324,18 @@ pub fn create(
     if let Some(src) = &d.window {
         call(
             &mut calls,
-            0x801194b4,
+            0x801197fc,
             json!([d.window_count, 0x10, i.window_buffer]),
         );
         if !i.window_buffer {
-            call(&mut calls, 0x80071888, json!(["task"]));
+            call(&mut calls, 0x80071af0, json!(["task"]));
             return Ok((calls, None));
         }
         let line = copy_line(src, d.window_count, 0, i.r10);
         let w = line_width(c, &line, desc.window_count, c.zero, desc.scale);
         call(
             &mut calls,
-            0x80070790,
+            0x800709f8,
             json!([2, "s1+0x218ac", "task", i.window_task]),
         );
         window = i.window_task.then_some(WindowWork {
@@ -360,11 +360,11 @@ pub fn create(
     {
         call(
             &mut calls,
-            0x801194b4,
+            0x801197fc,
             json!([d.count, 0x10, i.line_buffer]),
         );
         if !i.line_buffer {
-            call(&mut calls, 0x80071888, json!(["task"]));
+            call(&mut calls, 0x80071af0, json!(["task"]));
             return Ok((calls, None));
         }
         let delay = if desc.flags & 4 != 0 { 0 } else { desc.delay };
@@ -421,7 +421,7 @@ pub fn update(c: &TitleConstants, t: &mut Title, p: &Pauses, beyond: u16) -> (Ve
             if e.code != 0 {
                 call(
                     &mut calls,
-                    0x80070790,
+                    0x800709f8,
                     json!([2, "s1+0x211fc", "task", true]),
                 );
                 t.glyphs.push(GlyphWork {
@@ -436,7 +436,7 @@ pub fn update(c: &TitleConstants, t: &mut Title, p: &Pauses, beyond: u16) -> (Ve
                     color: (t.desc.color & 0xff_ffff).wrapping_sub(0x0100_0000),
                 });
                 if w.sound != -1 {
-                    call(&mut calls, 0x8006b710, json!([w.sound, 0, 0, 0]));
+                    call(&mut calls, 0x8006b978, json!([w.sound, 0, 0, 0]));
                 }
             }
             let s = t.desc.scale;
@@ -449,7 +449,7 @@ pub fn update(c: &TitleConstants, t: &mut Title, p: &Pauses, beyond: u16) -> (Ve
     if w.life != 0 {
         w.life -= 1;
         if w.life == 0 {
-            call(&mut calls, 0x80071878, json!(["task"]));
+            call(&mut calls, 0x80071ae0, json!(["task"]));
             return (calls, true);
         }
     }
@@ -457,7 +457,7 @@ pub fn update(c: &TitleConstants, t: &mut Title, p: &Pauses, beyond: u16) -> (Ve
         t.desc.scale *= c.fade_grow;
         w.fade -= w.fade_rate;
         if w.fade <= c.zero {
-            call(&mut calls, 0x80071878, json!(["task"]));
+            call(&mut calls, 0x80071ae0, json!(["task"]));
             return (calls, true);
         }
     }
@@ -467,9 +467,9 @@ pub fn update(c: &TitleConstants, t: &mut Title, p: &Pauses, beyond: u16) -> (Ve
 /// +0x2200C
 pub fn delete(t: &Title) -> Vec<Value> {
     let mut calls = Vec::new();
-    call(&mut calls, 0x801194e0, json!(["line"]));
+    call(&mut calls, 0x80119828, json!(["line"]));
     if t.window_line.is_some() {
-        call(&mut calls, 0x801194e0, json!(["windowLine"]));
+        call(&mut calls, 0x80119828, json!(["windowLine"]));
     }
     calls
 }
