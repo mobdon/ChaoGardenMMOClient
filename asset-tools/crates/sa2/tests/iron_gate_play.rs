@@ -121,6 +121,7 @@ fn standing_on_a_lift_raises_it_by_its_native_rule() {
         let stand = PlayerSample {
             center: s.movers[i].position(),
             position: s.movers[i].position(),
+            yaw: 0,
             action: 0,
             grounded: false,
             standing_on: Some(i),
@@ -153,6 +154,7 @@ fn goal_contact_writes_the_slot_word() {
         let events = s.step(Some(PlayerSample {
             center: goal,
             position: goal,
+            yaw: 0,
             action: 0,
             grounded: false,
             standing_on: None,
