@@ -25,6 +25,27 @@ export function captureChaoPose(imported) {
   }));
 }
 
+// State 81 reaches its seated pose at native frame 15 (60 Hz).
+export function seatChaoPilot(rest, source) {
+  const sit = source?.animationGroups.find(group => group.name.endsWith('alm_sit_dowwwn'));
+  if (!sit) return false;
+  for (const {node, position, quaternion} of rest.values()) {
+    node.position.copyFrom(position);
+    node.rotationQuaternion.copyFrom(quaternion);
+  }
+  for (const {target, animation} of sit.targetedAnimations) {
+    const bind = rest.get(indexOf(target));
+    if (!bind) continue;
+    const value = animation.evaluate(animation.framePerSecond * 15 / 60);
+    if (animation.targetProperty === 'position') {
+      bind.node.position.copyFrom(bind.position.add(value.subtract(target.position)));
+    } else if (animation.targetProperty === 'rotationQuaternion') {
+      bind.node.rotationQuaternion.copyFrom(bind.quaternion.multiply(target.rotationQuaternion.conjugate()).multiply(value).normalize());
+    }
+  }
+  return true;
+}
+
 export function attachNativeRun(imported, source, targetPose) {
   const native = source.animationGroups.find(group => /(?:^|[-_])alm_run$/i.test(group.name));
   if (!native || imported.visual.isDisposed()) return null;

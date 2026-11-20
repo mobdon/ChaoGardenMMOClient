@@ -1,5 +1,7 @@
 // These are new phone atlases rendered from the original SA2 Chaos models and
 // original Idle/Walk poses. They are not original GBA sprites or new Chao rigs.
+import { getTinyFlameLayer } from './tiny-flame.js';
+
 const variants = ['neutral', 'hero', 'dark'];
 const atlases = new Map(variants.map(variant => {
   const image = new Image();
@@ -55,10 +57,11 @@ export function drawTinyAvatar(context, profile, x, y, size, options = {}) {
   context.save();
   context.imageSmoothingEnabled = true;
   context.drawImage(image, column * 96, direction * 96, 96, 96, x - size / 2, y - size / 2, size, size);
-  if (variant === 'dark' && flame.complete && flame.naturalWidth === 512 && flame.naturalHeight === 32) {
+  const flameLayer = variant === 'dark' ? getTinyFlameLayer(flame) : null;
+  if (flameLayer) {
     const frame = Math.floor(time * 18 / 1000) % 16;
     context.globalCompositeOperation = 'lighter';
-    context.drawImage(flame, frame * 32, 0, 32, 32, x - size * 0.17, y - size * 0.66, size * 0.34, size * 0.34);
+    context.drawImage(flameLayer, frame * 32, 0, 32, 32, x - size * 0.17, y - size * 0.66, size * 0.34, size * 0.34);
   }
   context.restore();
   return true;

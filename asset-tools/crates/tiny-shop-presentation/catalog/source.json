@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "kind": "original-a2ne-static-tiny-shop-art-metadata",
+  "gameCode": "A2NE",
+  "romSha256": "f2b7a3329401a02706d87560f61da3e6da2ca42f2b9ae98a86d78e0529cb7260",
+  "gardenSha1": "2c7da8e1c9af85986eecf4effae39197cdac9abf",
+  "gardenLength": 191340,
+  "referenceCommit": "2dd3f17d30cd3c156e508aac0017620ae485b9ba",
+  "spans": [
+    {
+      "id": "obj-tiles-secondary",
+      "offset": 157876,
+      "length": 3812,
+      "sha256": "fe67f7c742546face674d447daadd7f7df8cba1c7f7c14ec3a8c32ab0aa14e8a"
+    },
+    {
+      "id": "obj-palette",
+      "offset": 149220,
+      "length": 512,
+      "sha256": "af6cd3b3c5efb363e25dc86f562c788d9b674346c148db96bbf779bb3c6d68be"
+    },
+    {
+      "id": "egg-palette-bank",
+      "offset": 150180,
+      "length": 384,
+      "sha256": "fc60fc3a28f74a8de6f29ed69fa4862345827159307ebd89c3e1353ffb4b68f8"
+    },
+    {
+      "id": "simple-subject-record",
+      "offset": 132580,
+      "length": 8,
+      "sha256": "59fd20c1aeda978014344d66b4f0385a5f326624e521995d5ea27408e4d19831"
+    },
+    {
+      "id": "fruit-palette-banks",
+      "offset": 134908,
+      "length": 7,
+      "sha256": "85fe2cefac60ab44ce07a1e0d5986c9bbce5a660748587d8f4e950bbbe55e76d"
+    },
+    {
+      "id": "toy-palette-banks",
+      "offset": 134915,
+      "length": 3,
+      "sha256": "6688e761164ac22e8e63f75ac1b33389ba28b253302c4f8acb3ce4274327d5c2"
+    },
+    {
+      "id": "font-tiles",
+      "offset": 139500,
+      "sha256": "9129752f5d82fb7199f6e15166a8b8660de31c2af7fb53777488e7d0b265a56f",
+      "length": 2904
+    },
+    {
+      "id": "bg-palette",
+      "offset": 144380,
+      "sha256": "3d8663b493740046758985db3c5897c3683d518bee45c8e932c66cb974f76e2f",
+      "length": 512
+    },
+    {
+      "id": "sidebar-ui-tiles",
+      "offset": 144892,
+      "sha256": "09150fd1ffeee7968e88b8c1617e0747681a45cfdce15725f94772abaefaf369",
+      "length": 4124
+    },
+    {
+      "id": "sidebar-layouts",
+      "offset": 149016,
+      "sha256": "f2a39d8ee811318023252d7ff0116f8471c1d0b17a3d61041d38a6965e0dee3c",
+      "length": 204
+    }
+  ],
+  "subjects": [
+    {
+      "kind": "fruit",
+      "nativeId": 0,
+      "filename": "tiny-native-fruit-0-a2ne.png",
+      "nativeTileIndex": 188,
+      "paletteBank": 2,
+      "paletteSource": 149220,
+      "sha256": "287d3835dd7619be83c684f63a53fc95f34186572689660f4063ac4367c8560c",
+      "label": "Orange Fruit"
+    },
+    {
+      "kind": "fruit",
+      "nativeId": 1,
+      "filename": "tiny-native-fruit-1-a2ne.png",
+      "nativeTileIndex": 192,
+      "paletteBank": 3,
+      "paletteSource": 149220,
+      "sha256": "97c00d4dd60961c41325d184cc44d5f41d1d6d3bbcb0a46cd2d04eff4734cb73",
+      "label": "Blue Fruit"
+    },
+    {
+      "kind": "fruit",
+      "nativeId": 2,
+      "filename": "tiny-native-fruit-2-a2ne.png",
+      "nativeTileIndex": 196,
+      "paletteBank": 5,
+      "paletteSource": 149220,
+      "sha256": "9cd2993571e47a6f8d5e43f2599186b2f72916cc4929ca14ab98e9ee114652ba",
+      "label": "Pink Fruit"
+    },
+    {
+      "kind": "fruit",
+      "nativeId": 3,
+      "filename": "tiny-native-fruit-3-a2ne.png",
+      "nativeTileIndex": 200,
+      "paletteBank": 4,
+      "paletteSource": 149220,
+      "sha256": "c5a1d84a3dd3c295d295675070aa8c90a3f7961cdfccca9838bb63bc6fb6f3d4",
+      "label": "Green Fruit"
+    },
+    {
+      "kind": "fruit",
+      "nativeId": 4,
+      "filename": "tiny-native-fruit-4-a2ne.png",
+      "nativeTileIndex": 204,
+      "paletteBank": 3,
+      "paletteSource": 149220,
+      "sha256": "6d6169b291bfa0d016ec4b6e014b32a1137ebe87498d004a8a70b23cdf109988",
+      "label": "Purple Fruit"
+    },
+    {
+      "kind": "fruit",
+      "nativeId": 5,
+      "filename": "tiny-native-fruit-5-a2ne.png",
+      "nativeTileIndex": 208,
+      "paletteBank": 4,
+      "paletteSource": 149220,
+      "sha256": "431d13ee5dc5395837643bb205306d5bee41198d67ff7a08e1d3a0c50670bc55",
+      "label": "Yellow Fruit"
+    },
+    {
+      "kind": "fruit",
+      "nativeId": 6,
+      "filename": "tiny-native-fruit-6-a2ne.png",
+      "nativeTileIndex": 212,
+      "paletteBank": 2,
+      "paletteSource": 149220,
+      "sha256": "5fb96e8187637a92450019d9e8d4e27fc2b4318e7d635b78e6402978db3033f5",
+      "label": "Red Fruit"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 0,
+      "filename": "tiny-native-egg-0-a2ne.png",
+      "nativeTileIndex": 216,
+      "paletteBank": 14,
+      "paletteSource": 150180,
+      "sha256": "e2eed259b3ec864dc7df6a5f2042d284407dd43ff0e9d54a9665f13a88cb43bb",
+      "label": "Normal spotted shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 1,
+      "filename": "tiny-native-egg-1-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150212,
+      "sha256": "e663fbc988b2dddbb4200e90f9aaea1ff08d62faa5e3e10120916958e1c69ceb",
+      "label": "Gold/yellow appearance"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 2,
+      "filename": "tiny-native-egg-2-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150244,
+      "sha256": "33b88a5beed622030a8e69f6e59d1e1e163bcfe284022410dd55c649d0f3afbf",
+      "label": "Silver/white appearance"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 3,
+      "filename": "tiny-native-egg-3-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150276,
+      "sha256": "9e15c9a2b10847707c8327216d8e402eabfdb4806c37386d234637a4dd3bae0a",
+      "label": "Pink shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 4,
+      "filename": "tiny-native-egg-4-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150308,
+      "sha256": "a184a5e487278ec55f702742d1845e4761a852fb46029263049c3f42a604d807",
+      "label": "Blue shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 5,
+      "filename": "tiny-native-egg-5-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150340,
+      "sha256": "b28422efe5dbe6bf07334a58a2d6ebb51e1b0ed9b657c8a925628eb1a85429b7",
+      "label": "Green/mint shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 6,
+      "filename": "tiny-native-egg-6-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150372,
+      "sha256": "e526539aec3ce189ba260c9db0dbb8da39d5a1d2a8039b2f800e1e2697dc37b0",
+      "label": "Purple shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 7,
+      "filename": "tiny-native-egg-7-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150404,
+      "sha256": "34754e9e509872733de21bdaf48371c9f1130446de5d3e6eb704541065289238",
+      "label": "Cyan shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 8,
+      "filename": "tiny-native-egg-8-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150436,
+      "sha256": "ae149f5178b4316d40706e366478ed6ab941f448f7557a3fdb6852eade023791",
+      "label": "Red shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 9,
+      "filename": "tiny-native-egg-9-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150468,
+      "sha256": "a6e0eb3004408f0b72f93bd77ec9e5abb01d695c17f3c52fc42acc50404ddee4",
+      "label": "Gray/dark-purple shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 10,
+      "filename": "tiny-native-egg-10-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150500,
+      "sha256": "ef4ebd034f136c581117e6e0dc87bfa4b25fe715d939f2a9f38e2b14333bb0c2",
+      "label": "Yellow-green shell"
+    },
+    {
+      "kind": "egg",
+      "nativeId": 11,
+      "filename": "tiny-native-egg-11-a2ne.png",
+      "nativeTileIndex": 220,
+      "paletteBank": 14,
+      "paletteSource": 150532,
+      "sha256": "fced9dc15c683cdd03c1755858853fa59e8bb7cf3f753148a18d599a9a27dbc5",
+      "label": "Orange shell"
+    },
+    {
+      "kind": "toy",
+      "nativeId": 0,
+      "filename": "tiny-native-toy-0-a2ne.png",
+      "nativeTileIndex": 224,
+      "paletteBank": 5,
+      "paletteSource": 149220,
+      "sha256": "b48252234469be5112f0fb6a55c2f7bf4989e6c52590205e95949f5fe73f7eac",
+      "label": "Trumpet"
+    },
+    {
+      "kind": "toy",
+      "nativeId": 1,
+      "filename": "tiny-native-toy-1-a2ne.png",
+      "nativeTileIndex": 228,
+      "paletteBank": 7,
+      "paletteSource": 149220,
+      "sha256": "26ded04269bedc2c1a9077195a90a3d0ef4a594bc6c73f811998b4ac2dd4ac36",
+      "label": "Rubber Duck"
+    },
+    {
+      "kind": "toy",
+      "nativeId": 2,
+      "filename": "tiny-native-toy-2-a2ne.png",
+      "nativeTileIndex": 232,
+      "paletteBank": 6,
+      "paletteSource": 149220,
+      "sha256": "a9ee8233e42d1d367e7832895af65a0ba2a544afffea6fc7dfbc9c2e14127170",
+      "label": "Television"
+    }
+  ],
+  "fontOutputs": [
+    {
+      "text": "Luck",
+      "filename": "tiny-native-label-luck-a2ne.png",
+      "height": 8,
+      "sha256": "3f8ddd0ee9462e497137a9fd2ca70b29266104e05fb0acff820d52bffe263284",
+      "width": 20
+    },
+    {
+      "text": "Intelligence",
+      "filename": "tiny-native-label-intelligence-a2ne.png",
+      "height": 8,
+      "sha256": "b9fbee9e35fc0dbeb2ffd392526fe720a618e8d4bc9631bdce45f1bbc8e415cb",
+      "width": 51
+    },
+    {
+      "text": "ASCII 32..126",
+      "filename": "tiny-native-sidebar-ascii-a2ne.png",
+      "height": 48,
+      "sha256": "233baf8c9db6559fbc6cb465b568a851cabb8e2d07d2606392d7d7ceeb0e94e7",
+      "width": 128
+    }
+  ]
+}

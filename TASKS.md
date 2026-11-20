@@ -182,3 +182,15 @@ Detailed decisions/evidence: [docs/TINY-GARDEN.md](docs/TINY-GARDEN.md). A full 
 - Preserve profiles and original assets; leave a working preview available when possible.
 - Keep source repos independent and local content excluded from commits.
 - Continue the next unblocked item; ask the user only when a missing decision actually prevents useful work.
+
+## Tiny Garden phone follow-through (isolated QA)
+
+- Verified: retail shop shelf and prices, tap-to-inspect, bag, and Rust-backed purchase/reconnect on :5182. See docs/TINY-CHAO-SHOP-SCOPE.md. Never publish private exports.
+- Next garden gaps: check ordinary Chao palettes, sleep/gear alignment and toy audio/approach/reactions; add a read-only pose/gear inspector. Verify source Search and minigame presentation; test the Android widget on a device separately.
+- After garden parity: optional social garden visits, manual dev visits and a very rare nonrewarding dev Chao visitor across gardens. Keep the mobile Game Boy shelf queued behind the garden.
+
+- SA2 care parity: Tiny Garden now exposes the canonical bag directly at feeding; Dark Chaos owner uses SA2 eating/petting pose samples. Still verify SA2 pet duration, affection changes, appetite/refusals, bite pacing, carrying/dropping fruit, animal/drive interactions, and pose coverage for other forms before calling it a full behavior port. Original weed pull/removal is traced in A2NE; any indirect mood trigger requires separate evidence. Check minigame source and presentation gaps separately, especially original Search.
+
+- Character port: [source, completed controller coverage, verification and remaining family-specific moves](docs/SA2-CHARACTER-PORT.md). Primary actions work in an isolated Rust preview; full retail controllers remain open.
+
+- Character-tech preview: Rust homing, Sky Rail path 14, hunter traversal/digging, walker lock salvos and super flight; original garden static collision data in Rust. Keep the whole-game port and retail comparison gates in docs/SA2-CHARACTER-PORT.md.

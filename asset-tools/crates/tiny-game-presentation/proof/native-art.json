@@ -1,0 +1,47 @@
+{
+  "result": "pass",
+  "assets": 166,
+  "affineSourceTextures": 16,
+  "catalogSha256": "6f5f76efc5177b27d9fcf2cf1455666b44b49f726241e891a123c5a55448a838",
+  "nativeLoaderLayouts": {
+    "A2NE": {
+      "bgTilesSha256": "460ebfce50c34f3b7bb06acd3d3778f5802e9fdc6507bdc7fdddb0aec90521fa",
+      "bgExtendedTilesSha256": "4fe7b59af6de3b665b67788cc2f99892ab827efae3a467342b3bb4e3bc8e5bfe",
+      "bgMapsSha256": "efc96750f5c220013ab51575f91ccdbfe5eb3abaca114d3b1b21eeca7fc659a9",
+      "objTilesSha256": "774949f66bd32c92ebd30da9aa8d8a289e10347adce5cbfb942825d9380dea07",
+      "bgPaletteSha256": "02265a563b7980a42424abaf0592054f1e3249a3abaa6e33c2630abe2195881d",
+      "objPaletteSha256": "de80d388228279e76dc806c336187a2cbbf3b6666cadbe24a3362552b6584ebc"
+    },
+    "ASOE": {
+      "bgTilesSha256": "20dd8f38f09cdb107c493f76d4078ff930534b8241243ace4142de6be01f00d2",
+      "bgExtendedTilesSha256": "4fe7b59af6de3b665b67788cc2f99892ab827efae3a467342b3bb4e3bc8e5bfe",
+      "bgMapsSha256": "5b7aa626f1740c6504c8421f1326b57afed8269dd3bd3a4be864f8f517fe69c9",
+      "objTilesSha256": "52c632351337f07343926aa37ef7e8860c99cd975850a6386d82c83e3eef9f76",
+      "bgPaletteSha256": "ebe716a142b6c472f44b620c685aaa2a126041c33d82e739cc89adb7fc27968b",
+      "objPaletteSha256": "08359fabcc5a4256ba4c261a89aa847e0b36ab16a10a889a1213f7b708cc2144"
+    },
+    "A3VE": {
+      "bgTilesSha256": "cdd54028ddce4af416eeb141c858d8ec3550a9d3b8647bfccc942ef09b6f6f0e",
+      "bgExtendedTilesSha256": "4fe7b59af6de3b665b67788cc2f99892ab827efae3a467342b3bb4e3bc8e5bfe",
+      "bgMapsSha256": "cb3478b455e2e525df5b9f605ee2e1d001075ad3d7f832d5016c55d464349835",
+      "objTilesSha256": "15d3dd3af89c958171ae5c529d5af1e5b55fb32bc64cd1b58f891c3448a0b554",
+      "bgPaletteSha256": "6a5b389826ae83cbb6344a004dd93aaf92f491465bc9ee0e111b30e51611ad56",
+      "objPaletteSha256": "fc62ebd9d26dc0a19ed03a8473ba36a4567ffaa6fc81907e7ddcf140f9a44d7d"
+    },
+    "A2NE-Bounce": {
+      "bgTilesSha256": "a00dfbb0b4db3dba0b68c68fc4d9ec60f2363b684e68797cc54348a745003a4b",
+      "bgExtendedTilesSha256": "67a75ed3632379d6bbfd40dc61e7fc6a2a43e1a279177ec169b210276a24da96",
+      "bgMapsSha256": "dfae30275b596a060745361bdeb96c5ea57f3b66981bf7a91053e4704e1a94fd",
+      "objTilesSha256": "3916c83521e1ac172f68e651d44bc1a9a0de987b344444af15ea08382d5cf4ba",
+      "bgPaletteSha256": "1d404af2e7c76fb2a442e736a6c255027612dabfffc0cfc6e98322a79977eac2",
+      "objPaletteSha256": "947daa043ea71555526b6ca6f7e37e897f17066aff2302470de8cdb1a83189c4"
+    }
+  },
+  "copyLzCalls": {
+    "A2NE": 53,
+    "ASOE": 12,
+    "A3VE": 5,
+    "A2NE-Bounce": 10
+  },
+  "scope": "Original Thumb video loaders/OAM producers and independent pixel decoding; explicit BIOS copy/LZ shims, no hardware color/timing/affine claim"
+}

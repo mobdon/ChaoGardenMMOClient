@@ -1,3 +1,4 @@
+import { DEV_ROSTER } from './dev-roster.js';
 import './style.css';
 import './sonic.css';
 import './title.css';
@@ -78,6 +79,7 @@ function action(name) {
   if (!player) { toast('Enter the garden to start your adventure.'); return; }
   if (name.startsWith('train-') && nearNPC(INTERACTION_ANCHORS.trainer)) audio.speak('knuckles');
   if (name === 'race' && nearNPC({ zone: 'hub', x: 12, z: 6, radius: 2 })) audio.speak('tails');
+  if (name === 'school') { openSchool(); return; }
   if (name === 'shop') { openShop(); return; }
   send({ type: 'action', action: name });
 }
@@ -104,7 +106,7 @@ try {
   toast('The 3D renderer could not start. Enable browser hardware acceleration and reload.', 'error');
 }
 
-function updatePaused() { garden?.setPaused(saving || welcome.open || setupDialog.open || shopDialog.open || stagesDialog.open || !player); updateWatchButton(); }
+function updatePaused() { garden?.setPaused(saving || $('#school-dialog').open || welcome.open || setupDialog.open || shopDialog.open || stagesDialog.open || !player); updateWatchButton(); }
 
 function rememberChao(savedAt) {
   if (!player || !sessionToken) return;
@@ -158,8 +160,9 @@ document.querySelectorAll('[data-close-panel]').forEach((button) => button.addEv
 document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => action(button.dataset.action)));
 window.addEventListener('keydown', (event) => {
   if (saving || welcome.open || setupDialog.open || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
+  if ($('#school-dialog').open) return;
   if (event.code === 'KeyB') { if (shopDialog.open) shopDialog.close(); else openShop(); return; }
-  if (shopDialog.open || stagesDialog.open) return;
+  if (shopDialog.open || stagesDialog.open || $('#school-dialog').open) return;
   if (event.code === 'KeyC') panel(currentPanel === 'character' ? 'world' : 'character');
   if (event.code === 'KeyJ') panel(currentPanel === 'journal' ? 'world' : 'journal');
   if (event.code === 'Escape') panel('world');
@@ -215,7 +218,7 @@ function render(next) {
   $('#garden').dataset.playerZ = player.z.toFixed(3);
   $('#garden').dataset.playerY = (player.y || 0).toFixed(3);
   $('#garden').dataset.zone = player.zone;
-  const mounted = player.vehicle === 'dark-chao-walker';
+  const mounted = !player.devActor && player.vehicle === 'dark-chao-walker';
   $('#garden').dataset.vehicle = player.vehicle || 'none';
   $('#mech-hud').hidden = !mounted;
   const boost = Math.max(0, Math.min(100, player.mech?.boostEnergy ?? 100));
@@ -229,6 +232,8 @@ function render(next) {
     attackButton.querySelector('small').textContent = mounted ? 'Fire' : 'Fight';
     attackButton.title = mounted ? 'Fire the Dark Chao Walker cannon (F)' : 'Attack a nearby robot (F)';
   }
+  $('#school-open').hidden=player.zone!=='hub';
+  if ($('#school-dialog').open) renderSchool();
   garden?.setSnapshot(next);
   audio.setZone(player.zone);
   const zone = zones[player.zone] || zones.garden;
@@ -248,6 +253,11 @@ function render(next) {
   $('#ring-count').textContent = player.rings.toLocaleString();
   $('#profile-name').textContent = player.name;
   $('#profile-form').textContent = `${player.form === 'chaos' && player.alignment <= -60 ? 'Dark Chaos' : form} · Happiness ${player.happiness} · Energy ${player.energy}`;
+  $('#dev-roster-row').hidden = !player.admin || !import.meta.env.DEV;
+  const techHelp=document.getElementById('dev-tech-help'), key=player.devActor;
+  techHelp.hidden=!key;
+  if(key)techHelp.textContent=(key.endsWith('walk')?'Hold Q to lock robots, release to fire':key==='sshadow'||key==='ssonic'?'Q: ascend · Release: hover · Space: descend · 1 ring/sec':['knuck','rouge','tical','chaos0'].includes(key)?'Hold Q: glide or climb a wall · G: dig in soil':['sonic','terios','metalsonic','metalsonicblack'].includes(key)?'Airborne F: home on a robot · Q near rail: grind · Space: dismount':'Space: jump · F: attack')+(player.rosterLocks?.length?' · '+player.rosterLocks.length+' locked':'');
+  $('#dev-roster').value = garden?.devActor || '';
   $('#owner-badge').hidden = !player.admin;
   $('#owner-badge').textContent = 'ADMIN';
   $('#owner-dark-form').hidden = !player.admin;
@@ -423,7 +433,24 @@ $('#setup-open').addEventListener('click', () => { setupDialog.showModal(); upda
 $('#setup-close').addEventListener('click', () => setupDialog.close());
 setupDialog.addEventListener('close', updatePaused);
 
+function renderSchool(){
+  $('#school-report').textContent=player.name+' · Health '+player.hp+'/'+player.maxHp+' · Energy '+player.energy+' · Happiness '+player.happiness;
+}
+function openSchool(){
+  if(!player || $('#school-dialog').open)return;
+  renderSchool();$('#school-name').value=player.name;
+  $('#school-dialog').showModal();updatePaused();
+}
+$('#school-open').addEventListener('click',openSchool);
+$('#school-close').addEventListener('click',()=>$('#school-dialog').close());
+$('#school-dialog').addEventListener('close',updatePaused);
+$('#school-name-form').addEventListener('submit',event=>{
+  event.preventDefault();const name=$('#school-name').value.trim();
+  if(name && player && name!==player.name)send({type:'action',action:'rename',name});
+});
+$('#school-market').addEventListener('click',()=>{$('#school-dialog').close();openShop();});
 function openShop() {
+  if(shopDialog.open)return;
   if (!player) { toast('Enter the garden first.'); return; }
   if (nearNPC(INTERACTION_ANCHORS.shop)) audio.speak('amy');
   renderShop();
@@ -465,6 +492,13 @@ $('#shop-open').addEventListener('click', openShop);
 $('#shop-close').addEventListener('click', () => shopDialog.close());
 shopDialog.addEventListener('close', updatePaused);
 $('#owner-dark-form').addEventListener('click', () => action('admin-dark-chaos'));
+const rosterSelect = $('#dev-roster');
+for (const [value,label] of Object.entries(DEV_ROSTER)) rosterSelect.add(new Option(label,value));
+rosterSelect.addEventListener('change', () => {
+  if(!player?.admin || !garden)return;
+  if(player.rosterEnabled)send({type:"action",action:"dev-actor",character:rosterSelect.value});
+  else garden.selectDevActor(rosterSelect.value);
+});
 $('#owner-walker').addEventListener('click', () => action(player?.vehicle === 'dark-chao-walker' ? 'dismount-vehicle' : 'mount-dark-walker'));
 for (const [selector, slot, item] of [
   ['#owner-air-shoes', 'footwear', 'shadow-air-shoes'],
