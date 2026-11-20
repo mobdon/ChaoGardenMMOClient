@@ -107,6 +107,12 @@ fn ar_start_dma(c: &mut Cpu, m: &mut Mem) {
 fn arq_post_request(c: &mut Cpu, m: &mut Mem) {
     // ARQPostRequest(req, owner, type, prio, source, dest, length, callback).
     let [req, ty, src, dst, len, cb] = [c.r[3], c.r[5], c.r[7], c.r[8], c.r[9], c.r[10]];
+    // Fill the ARQRequest as the SDK does: callbacks read it back (the ADX
+    // output's callback finds its stream and channel from `owner`).
+    let fields = [0, c.r[4], ty, c.r[6], src, dst, len, cb];
+    for (i, v) in fields.into_iter().enumerate() {
+        m.w32(req + 4 * i as u32, v);
+    }
     if ty == 0 {
         dma(m, true, src, dst, len);
     } else {
