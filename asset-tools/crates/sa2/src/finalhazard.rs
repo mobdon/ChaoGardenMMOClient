@@ -962,6 +962,8 @@ pub enum PlacementClock {
     /// Section 1 + 0x743c, 0x7548 and 0x7684: core slot roll, attachment
     /// placement and hit reaction.
     CoreHit(Box<CoreHitFrame>),
+    /// Section 1 + 0x783c: core action 1 (grow in).
+    CoreGrow(Box<CoreGrowFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2754,6 +2756,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossCore(frame) => return boss_core(&rel, &frame),
         PlacementClock::CoreContact(frame) => return core_contact(&rel, &frame),
         PlacementClock::CoreHit(frame) => return core_hit(&rel, &frame),
+        PlacementClock::CoreGrow(frame) => return core_grow(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -7450,4 +7453,85 @@ fn core_hit(rel: &crate::city_rel::CityRel<'_>, f: &CoreHitFrame) -> Result<serd
         out["returned"] = serde_json::json!(r);
     }
     Ok(out)
+}
+
+/// What core action 1 reads: block float 0x24 and entity float 0x24 at
+/// entry, block bytes 0 and 1, block float 0x24 again after 0x7548 and
+/// after the sound call.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoreGrowFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub block_scale: f32,
+    pub entity_scale: f32,
+    pub block_bytes: [u8; 2],
+    pub block_scale_after: f32,
+    pub block_scale_final: f32,
+}
+/// Section 1 + 0x783c: core action 1. Both scales grow by 5:0x36d3c (the
+/// entity's clamped at 4:0x314), the attachment is placed (0x7548), a hum
+/// plays with a pitch from the scale clamped to -128..70, and once the
+/// block scale reaches 4:0x30c the core settles and switches to action 2.
+fn core_grow(rel: &crate::city_rel::CityRel<'_>, f: &CoreGrowFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let step = {
+        let r = rel
+            .reference(1, 0x786a)
+            .filter(|r| r.module == 88 && r.section == 5)
+            .ok_or_else(|| Error::invalid("missing core growth step"))?;
+        let at = r.addend as usize;
+        let b = rel
+            .data(5)?
+            .get(at..at + 4)
+            .ok_or_else(|| Error::invalid("core growth step out of range"))?;
+        f32::from_be_bytes(b.try_into().unwrap())
+    };
+    let entity_scale = f.entity_scale + step;
+    let mut ev = vec![
+        st(0x7878, "block", 0x24, 4, (f.block_scale + step).to_bits()),
+        st(0x7888, "entity", 0x24, 4, entity_scale.to_bits()),
+    ];
+    let limit = k(0x7892)?;
+    if f64::from(entity_scale) >= f64::from(limit) {
+        ev.push(st(0x78a8, "entity", 0x24, 4, limit.to_bits()));
+    }
+    ev.push(serde_json::json!({"site":0x78b8,"local":0x7548,"args":[f.task, f.block_bytes[0], f.block_bytes[1]]}));
+    let raw = fctiwz(f64::from(k(0x78be)? + k(0x78ca)? * f.block_scale_after)) as u32;
+    let mut pitch = raw;
+    if (raw as u16 as i16) < -128 {
+        pitch = (-128i32) as u32;
+    }
+    if (pitch as u16 as i16) > 70 {
+        pitch = 70;
+    }
+    ev.push(call(
+        0x7928,
+        serde_json::json!([5, f.task, 1, pitch, 5, f.entity + 0x14]),
+    )?);
+    let full = k(0x7932)?;
+    if f64::from(f.block_scale_final) >= f64::from(full) {
+        let unit = k(0x7956)?;
+        ev.extend([
+            st(0x7948, "block", 0x24, 4, full.to_bits()),
+            st(0x7950, "entity", 8, 4, 0),
+            st(0x7960, "entity", 0x24, 4, unit.to_bits()),
+            st(0x7968, "entity", 0x28, 4, unit.to_bits()),
+            st(0x7970, "entity", 0x20, 4, unit.to_bits()),
+            st(0x7974, "block", 4, 4, 0),
+            st(0x7978, "block", 8, 4, 0),
+            st(0x7980, "block", 0xc, 4, 0x4000),
+            st(0x7984, "block", 0x10, 4, 0),
+            st(0x798c, "block", 0x14, 4, full.to_bits()),
+            call(0x799c, serde_json::json!([f.task, 0, 1]))?,
+            call(0x79ac, serde_json::json!([f.task, 0, 0]))?,
+            st(0x79b4, "entity", 0, 1, 2),
+            st(0x79b8, "entity", 1, 1, 0),
+        ]);
+    }
+    Ok(serde_json::json!({"events":ev}))
 }
