@@ -279,14 +279,23 @@ Stage number: `GetStageNum` 0x8001DD78 returns the halfword 0x803AD820.
 
 ### 4.1 Order
 
-1. Top-level case 4 → `fn_80021828` (session init): mode 0x803AD81A = 3 → 0,
-   `fn_80064428`, `fn_8006445C`, `fn_80064470`, `fn_80064414`, `fn_800DDA3C`,
-   `fn_80027C20`, `fn_8002309C`, display flags, **`clearBtp`**,
-   `fn_80071FA8`, 4 × `fn_800DEA3C`, `fn_80072820`, `srand`, 4 ×
-   `fn_800C4458` (camera task, section 6), `fn_8001A8A8`, `fn_800C3C8C`,
-   `fn_800503C8`, **`fn_8001DEA8` (load players, 4.3)**, `fn_80066488`,
-   `fn_80024B2C`, `fn_80018E5C`, `fn_80012CC0`, `fn_80067D58`, `fn_8006CA48`,
-   `fn_80019CCC`, `fn_800DCBC8`, `fn_800DB604`.
+1. Top-level case 4 → `fn_80021828` (session init; ported in E4, checked
+   against main.dol): 0x803AD81C = 0, mode 0x803AD81A = 3; when G+0x4D == 0,
+   mode 0 and `fn_80064428`, `fn_8006445C`, `fn_80064470`, `fn_80064414`,
+   `fn_800DDA3C`, `fn_80027C20`; 0x803AD830..34 = -1; `fn_8002309C`; pause
+   cursor/flag 0; G+0x20/+0x23 (two players: G+0x20 = 1 when a character is 6
+   or 7 or G+0x1F is 1 or 4, untouched for stage 0x47, else 0; one player:
+   G+0x20 = 0, and G+0x23 = 0 for stages > 0x3C except 0x46, and 0x13, 0x14,
+   0x1D, 0x21, 0x2A); **`clearBtp`**; `fn_80071FA8`; 4 × `fn_800DEA3C` →
+   0x803AD83C..48 (a non-null first result gets layout writes);
+   `fn_80072820(0x80174190, 0x803AD368)`; `srand(0xDEAD0CAB)` when G+0x00 is
+   set; stage 0x5A: 4 viewports and `fn_8001A8A8`, else `fn_800C4458(4/2/1)`
+   by G+0x20/+0x21; clear 0x8000 words at 0x817BFE60; **players
+   (`fn_800503C8`, `fn_8001DEA8`) only when stage < 0x46 or ≥ 0x48**, else
+   `fn_800C3C8C`; `fn_80066488`, `fn_80024B2C`, `fn_80018E5C`,
+   `fn_80012CC0(0)`, `fn_80067D58`, `fn_8006CA48`, `fn_80019CCC`; G+0x47,
+   +0x14, +0x15 = 0; `fn_800DCBC8`; G+0x15 = 1 when 0x803AD420 ≥ 0 and
+   `fn_800DB604()` returns -1. Returns 1.
 2. Mode 2/3 → `fn_8001EB80` (stage load): 0x803AD824 = stage, fog table
    (`njGenerateFogTable3`, `njSetFogTable`), character swaps for stages 0x5A,
    3 and 0x3C..0x46 (destroy player 0, set 0x803AD828, reload players), clear

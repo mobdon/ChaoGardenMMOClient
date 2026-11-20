@@ -207,7 +207,12 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   (`player::steam_physics_rows`, via the `sa2` reader); all 17 named rows are
   identical to main.dol's (tests/steam_physics.rs). Upgrade bytes come from the
   host (save data, not wired yet).
-- **Part 2 (next):** the session init `fn_80021828` around these, the stage
+- **Session init done** (`sa2-runtime/src/session.rs`): `fn_80021828` with the
+  camera and player load inside it, checked against main.dol on 15 ops
+  (tests/session_ppc.py; PhysicsArray from the Steam install). Fail closed:
+  its 22 engine callees, and `fn_800DEA3C` returns 0 until the HUD/message
+  loader is ported.
+- **Part 2 (next):** the stage
   module load `fn_8001EB80` and stg11D's init fn_11_A434 (landtable and
   lights, SET files, the SET task and spawner, death zones, stage callbacks)
   from Steam data, and the unload `fn_11_A76C` / `fn_8002176C`.
