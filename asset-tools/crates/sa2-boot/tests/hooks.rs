@@ -143,3 +143,83 @@ fn audio_aram_round_trip_and_idle_regs() {
     assert_eq!(m.r16(audio::DSP_REGS + 0xA), 0);
     m.w32(audio::AI_REGS, 5);
 }
+
+/// A parameter block at `pb` (no next), running, unity volumes, no conversion.
+fn put_pb(m: &mut Mem, pb: u32, format: u16, looped: bool, start: u32, end: u32) {
+    for o in (0..0xC0).step_by(2) {
+        m.w16(pb + o, 0);
+    }
+    m.w16(pb + 0x08, 2); // srcSelect: none
+    m.w16(pb + 0x0E, 1); // running
+    m.w16(pb + 0x12, 0x8000); // vL
+    m.w16(pb + 0x16, 0x4000); // vR
+    m.w16(pb + 0x64, 0x8000); // ve.currentVolume
+    m.w16(pb + 0x6E, looped as u16);
+    m.w16(pb + 0x70, format);
+    m.w32(pb + 0x72, start);
+    m.w32(pb + 0x76, end);
+    m.w32(pb + 0x7A, start);
+}
+
+fn to_aram(c: &mut Cpu, m: &mut Mem, at: u32, bytes: &[u8]) {
+    m.load(0x8000_7000, bytes);
+    c.r[3..7].copy_from_slice(&[0, 0x8000_7000, at, bytes.len() as u32]);
+    call(c, m, audio::AR_START_DMA);
+}
+
+#[test]
+fn ax_pcm16_voice_mixes_then_stops() {
+    let (mut c, mut m) = setup();
+    // Four samples at ARAM 0x10000 (sample address 0x8000).
+    to_aram(
+        &mut c,
+        &mut m,
+        0x1_0000,
+        &[0x10, 0, 0x20, 0, 0xF0, 0, 0x7F, 0xFF],
+    );
+    put_pb(&mut m, 0x8000_9000, 10, false, 0x8000, 0x8003);
+    let out = audio::mix_voices(&mut m, 0x8000_9000);
+    // Two samples of delay from the resampler history.
+    assert_eq!(out[0], [0, 0]);
+    assert_eq!(out[1], [0, 0]);
+    assert_eq!(out[2], [0x1000, 0x800]);
+    assert_eq!(out[4], [-0x1000, -0x800]);
+    assert_eq!(out[5][0], 0x7FFF);
+    assert_eq!(out[7], [0, 0]);
+    assert_eq!(m.r16(0x8000_9000 + 0x0E), 0, "stopped at the end");
+    // A stopped voice adds nothing.
+    assert_eq!(audio::mix_voices(&mut m, 0x8000_9000)[0], [0, 0]);
+}
+
+#[test]
+fn ax_adpcm_voice_decodes_and_loops() {
+    let (mut c, mut m) = setup();
+    // One frame: predictor 0 / scale 0 with zero coefficients, so each sample
+    // is its nibble: 1, 2, -1, 7, ...
+    to_aram(&mut c, &mut m, 0x2_0000, &[0x00, 0x12, 0xF7, 0, 0, 0, 0, 0]);
+    // Nibble addresses: frame at 0x40000, samples from 0x40002, end after four.
+    put_pb(&mut m, 0x8000_9000, 0, true, 0x4_0002, 0x4_0005);
+    let out = audio::mix_voices(&mut m, 0x8000_9000);
+    let left: Vec<i32> = out[2..11].iter().map(|s| s[0]).collect();
+    assert_eq!(left, [1, 2, -1, 7, 1, 2, -1, 7, 1]);
+    assert_eq!(
+        m.r16(0x8000_9000 + 0x0E),
+        1,
+        "a looping voice keeps running"
+    );
+}
+
+#[test]
+fn arq_moves_bytes_now_and_calls_back_later() {
+    let (mut c, mut m) = setup();
+    c.rt.set_override(0x8000_5000, mark_callback);
+    m.w32(0x8000_4000, 0);
+    m.load(0x8000_7000, &[9, 8, 7, 6]);
+    // ARQPostRequest(req, owner, type 0 (MRAM to ARAM), prio, src, dst, len, cb).
+    c.r[3..11].copy_from_slice(&[0x8000_6100, 0, 0, 0, 0x8000_7000, 0x3_0000, 4, 0x8000_5000]);
+    call(&mut c, &mut m, audio::ARQ_POST_REQUEST);
+    assert_eq!(m.r32(0x8000_4000), 0, "no callback inside the post");
+    c.r[3..7].copy_from_slice(&[1, 0x8000_8000, 0x3_0000, 4]);
+    call(&mut c, &mut m, audio::AR_START_DMA);
+    assert_eq!(m.r32(0x8000_8000), 0x0908_0706);
+}
