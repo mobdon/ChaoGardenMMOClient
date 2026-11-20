@@ -1418,6 +1418,225 @@ pub fn container_dest(dest: u32, obj: bool) -> Result<Value> {
     Ok(json!({ "calls": c, "state": { "task+0x40": 0, "dyn": 0 } }))
 }
 
+impl MetalHarbor<'_> {
+    /// The model of the object a data word points at: the `addi` at `pc`
+    /// names an object, its word `d` points at another object (section 5),
+    /// whose +4 is returned (`lwz rX,d(rX); lwz rX,4(rX)`).
+    fn child_model(&self, pc: u32, d: u32) -> Result<Value> {
+        let obj = self.at(pc, 5)? + d;
+        match self.rel.local_pointer(5, obj)? {
+            Some((5, off)) => self.data_value(5, off + 4),
+            _ => Err(invalid()),
+        }
+    }
+}
+
+/// The blink colour fn_80031260 gets: white for 21 of every 48 frames of
+/// the game clock (0x801CC168 +0x7C), else 0xFF808080 (immediates of the
+/// `li`/`lis`+`addi` in the routine).
+fn blink(clock: u32) -> u32 {
+    if clock % 48 <= 20 {
+        u32::MAX
+    } else {
+        0xff80_8080
+    }
+}
+
+// ---- MHSLIDER, STOPPER, TANK: three loaders of one shape (+0x8FEC,
+// +0x93F8, +0x97DC) whose block (`dyn`) lives at task +0x40.
+
+/// Loader, exec, display, destructor of MHSLIDER, STOPPER and TANK.
+pub const SLIDERS: [[u32; 4]; 3] = [
+    [0x8fec, 0x8f40, 0x8de8, 0x8ed8],
+    [0x93f8, 0x934c, 0x9210, 0x92d4],
+    [0x97dc, 0x9730, 0x961c, 0x96c8],
+];
+fn slider(routine: u32) -> Result<[u32; 4]> {
+    SLIDERS
+        .into_iter()
+        .find(|c| c.contains(&routine))
+        .ok_or_else(|| Error::invalid("not a stage 10 slider routine"))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SliderLoadInput {
+    pub loader: u32,
+    pub range_out: bool,
+    pub alloc: bool,
+    /// Work +0xC (Y angle) and +0x14 position.
+    pub rot: u32,
+    pub pos: [u32; 3],
+}
+
+/// A slider loader: allocate the 68-byte block at task +0x40, copy the
+/// template object into it at the task's place, register it (size class
+/// from the model radius), transform the model centre into `dyn`+0x38 and
+/// install the callbacks.
+pub fn slider_load(mh: &MetalHarbor<'_>, i: &SliderLoadInput) -> Result<Value> {
+    let [l, exec, display, dest] = slider(i.loader)?;
+    if l != i.loader {
+        return Err(Error::invalid("not a stage 10 slider loader"));
+    }
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let none =
+        |c: Vec<Value>| json!({ "calls": c, "state": { "task": Value::Null, "dyn": Value::Null } });
+    if i.range_out {
+        return Ok(none(c));
+    }
+    let size = mh.li(l + 0x3c, 4)?;
+    c.push(engine(0x801197fc, json!([1, size])));
+    if !i.alloc {
+        return Ok(none(c));
+    }
+    let template = mh.at(l + 0x5c, 5)?;
+    let mut d: Vec<Value> = (0..14)
+        .map(|k| mh.data_value(5, template + 4 * k))
+        .collect::<Result<_>>()?;
+    let first = d[0].as_u64().ok_or_else(invalid)? as u32;
+    d[0] = json!(first & !3);
+    d[2..5].clone_from_slice(&i.pos.map(|v| json!(v)));
+    d[5] = json!(0);
+    d[6] = json!(i.rot);
+    d[7] = json!(0);
+    d.resize(size as usize / 4, json!(0));
+    let (model, radius) = mh.template_model(template)?;
+    let r = mh.f(l + 0x114)? + radius;
+    let class = size_class(r, [mh.f(l + 0x12c)?, mh.f(l + 0x144)?, mh.f(l + 0x160)?]);
+    let base = mh.li(l + 0x10c, 29)? as u32; // li r29,1
+    c.extend([
+        engine(0x800232a4, json!([base | class, "task", "dyn"])),
+        engine(0x80116098, json!([])),
+        engine(0x801153e4, json!([0])),
+        engine(0x8011538c, json!([0, "dyn+0x8"])),
+        engine(0x80115828, json!([0, i.rot])),
+        engine(0x80114f0c, json!([0, s(5, model + 0x18), "dyn+0x38"])),
+        engine(0x80115dc8, json!([1])),
+    ]);
+    let task = [
+        mh.ptr(l + 0x1ec, 1)?,
+        mh.ptr(l + 0x1e0, 1)?,
+        mh.ptr(l + 0x1f8, 1)?,
+    ];
+    if task != [s(1, exec), s(1, display), s(1, dest)] {
+        return Err(invalid());
+    }
+    Ok(json!({ "calls": c, "state": { "task": task, "dyn": d } }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SliderExecInput {
+    pub exec: u32,
+    pub range_out: bool,
+    /// Task +0x40 is set; its +4 (the registered model) is set.
+    pub dyn_set: bool,
+    pub obj: bool,
+    pub within: bool,
+    /// Work +4.
+    pub flags: i16,
+}
+
+/// +0x8F40, +0x934C, +0x9730: set flag 0x100 of work +4 while a player is
+/// within the model's sphere (pad + radius around `dyn`+0x38), else clear it.
+pub fn slider_exec(mh: &MetalHarbor<'_>, i: &SliderExecInput) -> Result<Value> {
+    let [l, e, ..] = slider(i.exec)?;
+    if e != i.exec {
+        return Err(Error::invalid("not a stage 10 slider exec"));
+    }
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let mut flags = i.flags;
+    if !i.range_out && i.dyn_set && i.obj {
+        let (_, radius) = mh.template_model(mh.at(l + 0x5c, 5)?)?;
+        let r = mh.f(e + 0x54)? + radius;
+        c.push(engine(0x800398d8, json!(["dyn+0x38", r.to_bits()])));
+        if i.within {
+            flags |= 0x100;
+        } else {
+            flags &= !0x100;
+        }
+    }
+    Ok(json!({ "calls": c, "state": { "flags": flags } }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SliderDisplayInput {
+    pub display: u32,
+    pub rot: u32,
+    /// Game state 0x801CC168 +0x7C (MHSLIDER, STOPPER).
+    #[serde(default)]
+    pub clock: u32,
+    /// Work +0x24 (TANK's level, bit pattern).
+    #[serde(default)]
+    pub level: u32,
+}
+
+/// +0x8DE8 (MHSLIDER: body and a blinking lamp raised by a fixed offset),
+/// +0x9210 (STOPPER: body and blinking lamp), +0x961C (TANK: body and the
+/// part raised to work +0x24).
+pub fn slider_display(mh: &MetalHarbor<'_>, i: &SliderDisplayInput) -> Result<Value> {
+    let d = i.display;
+    if slider(d)?[2] != d {
+        return Err(Error::invalid("not a stage 10 slider display"));
+    }
+    let mut c = vec![
+        engine(0x80116e18, json!([mh.ptr(d + 0x20, 5)?])),
+        engine(0x80115d60, json!([0])),
+        engine(0x8011538c, json!([0, "work+0x14"])),
+        engine(0x80115828, json!([0, i.rot])),
+        engine(0x80031a28, json!([mh.loaded(d + 0x4c, 4)?])),
+    ];
+    match d {
+        0x8de8 => {
+            let yz = mh.fs(&[0x8e54, 0x8e60])?.to_bits();
+            c.extend([
+                engine(0x80115bd8, json!([0, mh.f(0x8e48)?.to_bits(), yz, yz])),
+                engine(
+                    0x80031260,
+                    json!([mh.child_model(0x8e70, 44)?, blink(i.clock)]),
+                ),
+            ]);
+        }
+        0x9210 => c.push(engine(
+            0x80031260,
+            json!([mh.child_model(0x926c, 44)?, blink(i.clock)]),
+        )),
+        _ => {
+            let k = mh.fs(&[0x967c, 0x968c])?.to_bits();
+            c.extend([
+                engine(0x80115bd8, json!([0, k, i.level, k])),
+                engine(0x80031a28, json!([mh.child_model(0x969c, 44)?])),
+            ]);
+        }
+    }
+    c.push(engine(0x80115dc8, json!([1])));
+    Ok(json!({ "calls": c, "state": {} }))
+}
+
+/// +0x8ED8, +0x92D4, +0x96C8: when task +0x40 is set, unregister it if its
+/// model is registered, free it and clear task +0x40.
+pub fn slider_dest(dest: u32, dyn_set: bool, obj: bool) -> Result<Value> {
+    if slider(dest)?[3] != dest {
+        return Err(Error::invalid("not a stage 10 slider destructor"));
+    }
+    let mut c = Vec::new();
+    if dyn_set {
+        if obj {
+            c.push(engine(0x800231cc, json!(["task", "dyn"])));
+        }
+        c.push(engine(0x80119828, json!(["dyn"])));
+    }
+    Ok(json!({ "calls": c, "state": { "task+0x40": 0 } }))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SliderDestInput {
+    dest: u32,
+    dyn_set: bool,
+    obj: bool,
+}
+
 /// Run one routine by name on a JSON input (the oracle's case format).
 pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
     let mh = MetalHarbor::read(rel_bytes)?;
@@ -1446,6 +1665,13 @@ pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
         "container_dest" => {
             let i: DestInput = parse(input)?;
             container_dest(i.dest, i.obj)
+        }
+        "slider_load" => slider_load(&mh, &parse(input)?),
+        "slider_exec" => slider_exec(&mh, &parse(input)?),
+        "slider_display" => slider_display(&mh, &parse(input)?),
+        "slider_dest" => {
+            let i: SliderDestInput = parse(input)?;
+            slider_dest(i.dest, i.dyn_set, i.obj)
         }
         _ => Err(Error::invalid(format!(
             "unknown stage 10 routine {routine}"
