@@ -1,0 +1,11 @@
+[package]
+name = "sa2-recomp"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Static recompiler: GSNE8P main.dol and disc RELs (PowerPC Gekko) to Rust, plus the runtime the generated code links against"
+
+# Standalone, like sa2-runtime, so other manifests and lockfiles stay unchanged.
+[workspace]
+
+[dependencies]
