@@ -271,7 +271,7 @@ impl App {
             30000.0,
         );
         self.renderer.render(&view, size, vp);
-        self.renderer.queue.present(frame);
+        self.renderer.queue().present(frame);
         format!(
             "frame {} · player {:.1} {:.1} {:.1}",
             self.game.frames, pos[0], pos[1], pos[2]
@@ -282,6 +282,6 @@ impl App {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
-        self.surface.configure(&self.renderer.device, &self.config);
+        self.surface.configure(self.renderer.device(), &self.config);
     }
 }

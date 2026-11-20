@@ -30,11 +30,27 @@ pub struct Draw {
     pub count: u32,
 }
 
+/// A GameCube model mesh as sa2-gx's vertex loader left it: vertices in
+/// the loader's layout, in model space, placed by `model`.
+#[derive(Debug, Clone)]
+pub struct GxPart {
+    pub layout: sa2_gx::vtx::LoadedVertexLayout,
+    pub vertices: Vec<u8>,
+    pub indices: Vec<u32>,
+    pub texture: Option<u16>,
+    /// The vertices carry color 0.
+    pub colors: bool,
+    pub model: sa2_gx::params::Mtx34,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Mesh {
+    /// Chunk geometry, in world space.
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub draws: Vec<Draw>,
+    /// GameCube model meshes.
+    pub parts: Vec<GxPart>,
 }
 
 impl Mesh {
@@ -266,7 +282,10 @@ impl Builder<'_> {
             self.gc,
             n.attach_offset.checked_sub(STAGE_BASE),
         ) {
-            gc.model(at, &|p, w| apply(m, p, w), &mut self.mesh);
+            let model = [m[0], m[1], m[2]];
+            self.mesh
+                .parts
+                .extend(gc.model(at).into_iter().map(|p| GxPart { model, ..p }));
         }
     }
 
@@ -351,6 +370,12 @@ pub fn place(mesh: &Mesh, pos: [f32; 3], ang: [i32; 3]) -> Mesh {
     for v in &mut out.vertices {
         v.pos = apply(&m, v.pos, 1.0);
         v.normal = apply(&m, v.normal, 0.0);
+    }
+    for p in &mut out.parts {
+        let mut pm = IDENTITY;
+        pm[..3].copy_from_slice(&p.model);
+        let r = mul(&m, &pm);
+        p.model = [r[0], r[1], r[2]];
     }
     out
 }

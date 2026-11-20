@@ -1,24 +1,21 @@
-//! The wgpu draw of a [`Mesh`]: one pipeline, depth test, back faces culled
-//! off (Ninja strips carry their own winding), lambert from a fixed light.
-//! Runs on WebGPU in the browser (WebGL2 through wgpu's fallback) and on
-//! native backends for tests.
-use crate::land::{Draw, Mesh, Vertex};
-use wgpu::util::DeviceExt;
-
-pub const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Uniforms {
-    view_proj: [[f32; 4]; 4],
-    light: [f32; 4],
-}
-
-struct GpuMesh {
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    draws: Vec<Draw>,
-}
+//! The draw of [`Mesh`]es through sa2-gx's `GxRenderer` (noclip's GX
+//! renderer in Rust): GameCube land meshes as the vertex loader left them,
+//! chunk geometry packed into the same vertex layout. One material for all:
+//! texture times the lit vertex color (one directional light and an
+//! ambient level), alpha test at one half, no culling (Ninja strips carry
+//! their own winding). Runs on WebGPU in the browser (WebGL2 through
+//! wgpu's fallback) and on native backends for tests.
+use crate::land::{GxPart, Mesh, Vertex};
+use sa2_gx::enums::*;
+use sa2_gx::gpu::{GpuDraw, GxRenderer};
+use sa2_gx::material::{GxMaterial, GxMaterialBuilder, Light};
+use sa2_gx::params::{
+    color_kind, DrawParams, MaterialParams, SceneParams, TextureId, TextureMapping,
+};
+use sa2_gx::vtx::{
+    compile_loaded_vertex_layout, InputFormat, LoadedVertexLayout, Vcd, VertexInput, VtxDesc,
+    ATTR_COUNT,
+};
 
 /// An RGBA8 image for [`Renderer::set_textures`].
 pub struct Rgba {
@@ -27,289 +24,280 @@ pub struct Rgba {
     pub pixels: Vec<u8>,
 }
 
+/// Where the light comes from (the old land shader's direction), far away.
+const LIGHT_DIR: [f32; 3] = [0.3, 0.8, 0.5];
+const AMBIENT: f32 = 0.55;
+const DIFFUSE: f32 = 0.45;
+
+/// One draw ready for the renderer.
+struct Part {
+    layout: LoadedVertexLayout,
+    vertices: Vec<u8>,
+    indices: Vec<u32>,
+    texture: Option<u16>,
+    colors: bool,
+    draw: DrawParams,
+}
+
 pub struct Renderer {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub gx: GxRenderer,
     pub format: wgpu::TextureFormat,
-    pipeline: wgpu::RenderPipeline,
-    uniforms: wgpu::Buffer,
-    bind: wgpu::BindGroup,
-    depth: Option<(wgpu::TextureView, [u32; 2])>,
-    meshes: Vec<GpuMesh>,
-    tex_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    /// Bind groups by texture id; `white` for untextured draws.
-    textures: Vec<wgpu::BindGroup>,
-    white: wgpu::BindGroup,
+    parts: Vec<Part>,
+    /// How many of `parts` are the land (kept by [`Self::set_extra`]).
+    land: usize,
+    textures: Vec<(TextureId, u32, u32)>,
+    materials: [GxMaterial; 2],
+}
+
+/// The material: one channel lit by light 0 with the vertex color (or the
+/// white material register) as material color, one TEV stage of texture
+/// times rasterized color.
+fn material(vertex_color: bool) -> GxMaterial {
+    let mut b = GxMaterialBuilder::new();
+    b.set_cull_mode(cull_mode::NONE);
+    b.set_num_chans(1);
+    let src = if vertex_color {
+        color_src::VTX
+    } else {
+        color_src::REG
+    };
+    b.set_chan_ctrl(
+        color_channel_id::COLOR0A0,
+        true,
+        color_src::REG,
+        src,
+        1,
+        diffuse_function::CLAMP,
+        attenuation_function::NONE,
+    );
+    b.set_num_tex_gens(1);
+    b.set_tex_coord_gen(
+        0,
+        tex_gen_type::MTX2x4,
+        tex_gen_src::TEX0,
+        tex_gen_matrix::IDENTITY,
+        false,
+        post_tex_gen_matrix::PTIDENTITY,
+    );
+    b.set_num_tev_stages(1);
+    b.set_tev_order(
+        0,
+        tex_coord_id::TEXCOORD0,
+        tex_map_id::TEXMAP0,
+        // The TEV order takes the rasterized channel id.
+        ras_color_channel_id::COLOR0A0,
+    );
+    b.set_tev_color_in(0, cc::ZERO, cc::TEXC, cc::RASC, cc::ZERO);
+    b.set_tev_alpha_in(0, ca::ZERO, ca::TEXA, ca::RASA, ca::ZERO);
+    b.set_tev_color_op(
+        0,
+        tev_op::ADD,
+        tev_bias::ZERO,
+        tev_scale::SCALE_1,
+        true,
+        register::PREV,
+    );
+    b.set_tev_alpha_op(
+        0,
+        tev_op::ADD,
+        tev_bias::ZERO,
+        tev_scale::SCALE_1,
+        true,
+        register::PREV,
+    );
+    b.set_alpha_compare(
+        compare_type::GREATER,
+        127,
+        alpha_op::AND,
+        compare_type::ALWAYS,
+        0,
+    );
+    b.finish()
+}
+
+/// The layout chunk geometry is packed in: position, normal, color 0 and
+/// texcoord 0, direct.
+fn chunk_layout() -> LoadedVertexLayout {
+    let mut vcd: Vcd = [VtxDesc::default(); ATTR_COUNT];
+    for a in [attr::POS, attr::NRM, attr::CLR0, attr::TEX0] {
+        vcd[a as usize].ty = attr_type::DIRECT;
+    }
+    compile_loaded_vertex_layout(&vcd, false)
+}
+
+/// `vertices` in `layout` (little-endian floats, color as four bytes).
+fn pack(layout: &LoadedVertexLayout, vertices: &[Vertex]) -> Vec<u8> {
+    let mut out = vec![0u8; layout.stride * vertices.len()];
+    for (v, dst) in vertices.iter().zip(out.chunks_exact_mut(layout.stride)) {
+        for l in &layout.inputs {
+            let floats: &[f32] = match l.input {
+                VertexInput::Pos => &[v.pos[0], v.pos[1], v.pos[2], 0.0],
+                VertexInput::Nrm => &v.normal,
+                VertexInput::Tex01 => &[v.uv[0], v.uv[1], 0.0, 0.0],
+                VertexInput::Clr0 => &v.color,
+                _ => &[],
+            };
+            match l.format {
+                InputFormat::Unorm8x4 => {
+                    for (k, c) in floats.iter().enumerate().take(4) {
+                        dst[l.offset + k] = (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    }
+                }
+                InputFormat::F32(n) => {
+                    for (k, c) in floats.iter().enumerate().take(n as usize) {
+                        dst[l.offset + 4 * k..l.offset + 4 * k + 4]
+                            .copy_from_slice(&c.to_le_bytes());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn parts_of(mesh: &Mesh, chunk: &LoadedVertexLayout) -> Vec<Part> {
+    let mut out = Vec::new();
+    if !mesh.indices.is_empty() {
+        let vertices = pack(chunk, &mesh.vertices);
+        let whole = [crate::land::Draw {
+            texture: None,
+            first: 0,
+            count: mesh.indices.len() as u32,
+        }];
+        let draws = if mesh.draws.is_empty() {
+            &whole[..]
+        } else {
+            &mesh.draws[..]
+        };
+        for d in draws {
+            let range = d.first as usize..(d.first + d.count) as usize;
+            out.push(Part {
+                layout: chunk.clone(),
+                vertices: vertices.clone(),
+                indices: mesh.indices.get(range).unwrap_or(&[]).to_vec(),
+                texture: d.texture,
+                colors: true,
+                draw: DrawParams::default(),
+            });
+        }
+    }
+    out.extend(mesh.parts.iter().map(|p: &GxPart| {
+        let mut draw = DrawParams::default();
+        draw.pos_mtx[0] = p.model;
+        Part {
+            layout: p.layout.clone(),
+            vertices: p.vertices.clone(),
+            indices: p.indices.clone(),
+            texture: p.texture,
+            colors: p.colors,
+            draw,
+        }
+    }));
+    out
 }
 
 impl Renderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("land"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("land.wgsl").into()),
-        });
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("uniforms"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("uniforms"),
-            size: std::mem::size_of::<Uniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("uniforms"),
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniforms.as_entire_binding(),
-            }],
-        });
-        let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("texture"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        // GX wrap mode REPEAT for both axes (per-texture clamp/mirror comes
-        // with the material's tile flags).
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("repeat"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("land"),
-            bind_group_layouts: &[Some(&layout), Some(&tex_layout)],
-            immediate_size: 0,
-        });
-        let attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("land"),
-            layout: Some(&pl),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &attrs,
-                })],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(format.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let white = texture_bind(
-            &device,
-            &queue,
-            &tex_layout,
-            &sampler,
-            &Rgba {
-                width: 1,
-                height: 1,
-                pixels: vec![255; 4],
-            },
-        );
         Self {
-            device,
-            queue,
+            gx: GxRenderer::new(device, queue, format),
             format,
-            pipeline,
-            uniforms,
-            bind,
-            depth: None,
-            meshes: Vec::new(),
-            tex_layout,
-            sampler,
+            parts: Vec::new(),
+            land: 0,
             textures: Vec::new(),
-            white,
+            materials: [material(false), material(true)],
         }
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.gx.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.gx.queue
     }
 
     /// The stage's textures, in texture-id order.
     pub fn set_textures(&mut self, images: &[Rgba]) {
+        for (id, _, _) in self.textures.drain(..) {
+            self.gx.destroy_texture(id);
+        }
         self.textures = images
             .iter()
             .map(|i| {
-                texture_bind(
-                    &self.device,
-                    &self.queue,
-                    &self.tex_layout,
-                    &self.sampler,
-                    i,
-                )
+                let (w, h) = (i.width.max(1), i.height.max(1));
+                (self.gx.create_texture(&[(w, h, i.pixels.clone())]), w, h)
             })
             .collect();
     }
 
-    /// Replace the drawn meshes.
+    /// Replace the drawn meshes; the first is the land.
     pub fn set_meshes(&mut self, meshes: &[&Mesh]) {
-        self.meshes = meshes
-            .iter()
-            .filter(|m| !m.indices.is_empty())
-            .map(|m| GpuMesh {
-                vertices: self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("vertices"),
-                        contents: bytemuck::cast_slice(&m.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-                indices: self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("indices"),
-                        contents: bytemuck::cast_slice(&m.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    }),
-                draws: if m.draws.is_empty() {
-                    vec![Draw {
-                        texture: None,
-                        first: 0,
-                        count: m.indices.len() as u32,
-                    }]
-                } else {
-                    m.draws.clone()
-                },
-            })
-            .collect();
-    }
-
-    /// Keep the first mesh (the land) and replace the rest (moving things).
-    pub fn set_extra(&mut self, meshes: &[&Mesh]) {
-        self.meshes.truncate(1);
-        let land = std::mem::take(&mut self.meshes);
-        self.set_meshes(meshes);
-        let extra = std::mem::replace(&mut self.meshes, land);
-        self.meshes.extend(extra);
-    }
-
-    fn depth_view(&mut self, size: [u32; 2]) -> wgpu::TextureView {
-        if let Some((v, s)) = &self.depth {
-            if *s == size {
-                return v.clone();
+        let chunk = chunk_layout();
+        self.parts.clear();
+        self.land = 0;
+        for (i, m) in meshes.iter().enumerate() {
+            self.parts.extend(parts_of(m, &chunk));
+            if i == 0 {
+                self.land = self.parts.len();
             }
         }
-        let t = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
-                width: size[0],
-                height: size[1],
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let v = t.create_view(&Default::default());
-        self.depth = Some((v.clone(), size));
-        v
+    }
+
+    /// Keep the land and replace the rest (moving things).
+    pub fn set_extra(&mut self, meshes: &[&Mesh]) {
+        let chunk = chunk_layout();
+        self.parts.truncate(self.land);
+        for m in meshes {
+            self.parts.extend(parts_of(m, &chunk));
+        }
     }
 
     /// Draw every mesh into `target` (of `size`) with this view-projection
-    /// (column-major, clip space z 0..1).
+    /// (column-major, clip space z 0..1). The model matrices stay in the
+    /// draws' position matrices, so lighting is in world space.
     pub fn render(&mut self, target: &wgpu::TextureView, size: [u32; 2], view_proj: [[f32; 4]; 4]) {
-        let u = Uniforms {
-            view_proj,
-            light: [0.3, 0.8, 0.5, 0.0],
+        let scene = SceneParams {
+            projection: view_proj,
+            lod_bias: 0.0,
         };
-        self.queue
-            .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&u));
-        let depth = self.depth_view(size);
-        let mut enc = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("land"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.06,
-                            b: 0.09,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind, &[]);
-            for m in &self.meshes {
-                pass.set_vertex_buffer(0, m.vertices.slice(..));
-                pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
-                for d in &m.draws {
-                    let t = d
-                        .texture
-                        .and_then(|i| self.textures.get(usize::from(i)))
-                        .unwrap_or(&self.white);
-                    pass.set_bind_group(1, t, &[]);
-                    pass.draw_indexed(d.first..d.first + d.count, 0, 0..1);
+        let params: Vec<MaterialParams> = self
+            .parts
+            .iter()
+            .map(|p| {
+                let mut m = MaterialParams::default();
+                m.colors[color_kind::AMB0] = [AMBIENT, AMBIENT, AMBIENT, 1.0];
+                m.lights[0] = Light {
+                    position: LIGHT_DIR.map(|c| c * 1.0e6),
+                    color: [DIFFUSE, DIFFUSE, DIFFUSE, 1.0],
+                    ..Light::default()
+                };
+                if let Some(&(id, w, h)) = p.texture.and_then(|t| self.textures.get(usize::from(t)))
+                {
+                    m.texture_mappings[0] = TextureMapping {
+                        texture: Some(id),
+                        width: w as f32,
+                        height: h as f32,
+                        ..TextureMapping::default()
+                    };
                 }
-            }
-        }
-        self.queue.submit([enc.finish()]);
+                m
+            })
+            .collect();
+        let draws: Vec<GpuDraw<'_>> = self
+            .parts
+            .iter()
+            .zip(&params)
+            .map(|(p, m)| GpuDraw {
+                material: &self.materials[usize::from(p.colors)],
+                layout: &p.layout,
+                vertices: &p.vertices,
+                indices: &p.indices,
+                material_params: m,
+                draw_params: &p.draw,
+            })
+            .collect();
+        self.gx
+            .render(target, size, Some([0.05, 0.06, 0.09, 1.0]), &scene, &draws);
     }
 }
 
@@ -361,48 +349,4 @@ pub fn look_at(
         }
     }
     std::array::from_fn(|c| std::array::from_fn(|r| m[r][c]))
-}
-
-fn texture_bind(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-    img: &Rgba,
-) -> wgpu::BindGroup {
-    let size = wgpu::Extent3d {
-        width: img.width.max(1),
-        height: img.height.max(1),
-        depth_or_array_layers: 1,
-    };
-    let t = device.create_texture_with_data(
-        queue,
-        &wgpu::TextureDescriptor {
-            label: Some("texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        },
-        wgpu::util::TextureDataOrder::LayerMajor,
-        &img.pixels,
-    );
-    let view = t.create_view(&Default::default());
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("texture"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
-    })
 }
