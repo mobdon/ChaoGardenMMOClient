@@ -459,7 +459,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       item.root.metadata.chaoBodyDispose = attachChaoBody(visual, entries.animationGroups, () => item.bodyState);
       await loadChaoFaceManifest();
       if (!item.root.isDisposed()) {
-        configureChaoFace(visual, item.bodyState?.typeName, item.bodyState?.heroDark);
+        configureChaoFace(visual, item.bodyState?.typeName);
         resetChaoFace(visual);
         item.faceRoot = visual;
         // Native lid/blink logic runs per 60 Hz frame.

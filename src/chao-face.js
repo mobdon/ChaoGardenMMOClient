@@ -198,9 +198,10 @@ export function stepChaoFace(root, random = Math.random) {
   applyLids(faceParts(root), state.lids);
 }
 
-// Body type decides the eye-colour texture; dark Chao force default eye 10.
-export function configureChaoFace(root, typeName = 'child', heroDark = 0) {
-  const align = typeName.startsWith('hero') ? 'hero' : typeName.startsWith('dark') ? 'dark' : null;
-  const eyeColour = align || (typeName === 'child' && Math.abs(heroDark) >= 0.5 ? (heroDark > 0 ? 'hero' : 'dark') : 'normal');
-  root.metadata = { ...(root.metadata || {}), chaoFace: { ...(root.metadata?.chaoFace || {}), eyeColour, defaultEye: eyeColour === 'dark' && align ? 10 : 0 } };
+// Adult hero/dark models carry the hero (al_eye11) or dark (al_eye10) eye
+// colour natively, and dark Chao force default eye 10. How AL_BODY_INFO EyeColor
+// is chosen for children is not traced yet, so children keep the normal eye.
+export function configureChaoFace(root, typeName = 'child') {
+  const align = typeName.startsWith('hero') ? 'hero' : typeName.startsWith('dark') ? 'dark' : 'normal';
+  root.metadata = { ...(root.metadata || {}), chaoFace: { ...(root.metadata?.chaoFace || {}), eyeColour: align, defaultEye: align === 'dark' ? 10 : 0 } };
 }
