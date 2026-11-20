@@ -260,3 +260,22 @@ fn steam_tables_equal_the_gamecube_tables() {
     assert_eq!(steam, gc);
     assert_eq!(steam.descriptors.len(), 27);
 }
+
+#[test]
+#[ignore = "requires the user's GameCube ChaoStgKarate.rel (SA2_CHAO_KARATE_REL) and Steam install (SA2_GAME_PATH)"]
+fn steam_motion_table_equals_the_gamecube_table() {
+    let prs = std::fs::read(
+        PathBuf::from(env::var_os("SA2_GAME_PATH").expect("SA2_GAME_PATH"))
+            .join("resource/gd_PC/ChaoStgKarate.prs"),
+    )
+    .unwrap();
+    let steam_rel = sa2_asset_tools::archive::decompress_prs(&prs, 16 << 20).unwrap();
+    let steam = k::read_motion_table(&steam_rel).unwrap();
+    let gc =
+        k::read_motion_table(&std::fs::read(env::var_os("SA2_CHAO_KARATE_REL").unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(steam, gc);
+    // fn_72_FCC8 attack motions 4/5/7/8 carry their hit frames.
+    assert_eq!(gc[4].events, vec![4.0, 6.0]);
+    assert_eq!(gc[4].motion, 579);
+}

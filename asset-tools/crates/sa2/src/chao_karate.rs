@@ -615,3 +615,57 @@ mod tests {
         assert_eq!(opponent_row(&rows, 5, 0, &mut || 0), None);
     }
 }
+
+/// One karate motion row (ChaoStgKarate .data 0x168A0, 46 rows of 0x2C, the
+/// same offset in the GC module 72 and the Steam gd_PC module 71). fn_72_C3B4
+/// and the other motion handlers (jump table .data 0x17290 from fn_72_E868)
+/// start it with AL_SetMotionLinkStep(chao, motion, link_step) and raise their
+/// events when GetMotionFrame reaches each frame in `events`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionRow {
+    /// +0: link step (frames).
+    pub link_step: u16,
+    /// +4: Chao motion number (ChaoMain motion table .data 0x3F870).
+    pub motion: i32,
+    /// +0x18..+0x2C: event frames, up to the first -1.
+    pub events: Vec<f32>,
+}
+
+pub const MOTION_ROWS: usize = 46;
+pub const REL_MOTION_TABLE: usize = 0x168A0;
+
+/// Reads the motion rows from a ChaoStgKarate.rel (GC module 72 or Steam 71).
+pub fn read_motion_table(rel: &[u8]) -> crate::Result<Vec<MotionRow>> {
+    let word = |o: usize| -> crate::Result<u32> {
+        rel.get(o..o + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+            .ok_or_else(|| crate::Error::invalid("REL is truncated"))
+    };
+    if !matches!(word(0)?, 71 | 72) {
+        return Err(crate::Error::invalid(
+            "not ChaoStgKarate.rel (module 71 or 72)",
+        ));
+    }
+    let data = (word(word(16)? as usize + 8 * 5)? & !1) as usize + REL_MOTION_TABLE;
+    (0..MOTION_ROWS)
+        .map(|i| {
+            let at = data + 0x2C * i;
+            let link_step = (word(at)? >> 16) as u16;
+            let motion = word(at + 4)? as i32;
+            let mut events = vec![];
+            for k in 0..5 {
+                let f = f32::from_bits(word(at + 0x18 + 4 * k)?);
+                if f == -1.0 {
+                    break;
+                }
+                events.push(f);
+            }
+            Ok(MotionRow {
+                link_step,
+                motion,
+                events,
+            })
+        })
+        .collect()
+}
