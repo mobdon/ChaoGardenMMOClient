@@ -94,14 +94,15 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     let mut pairs = Vec::new();
     let mut votes: HashMap<u32, HashMap<u32, u32>> = HashMap::new();
     for n in &names {
-        let d = find(disc, n).and_then(|p| read_rel(&p));
+        let disc_path = find(disc, n);
+        let d = disc_path.as_deref().and_then(read_rel);
         let s = find(steam, n).and_then(|p| read_rel(&p));
         if let (Some(d), Some(s)) = (&d, &s) {
             for (x, y) in align(d, s) {
                 *votes.entry(y.addend).or_default().entry(x.addend).or_default() += 1;
             }
         }
-        pairs.push((n.clone(), d, s));
+        pairs.push((n.clone(), d, s, disc_path));
     }
     let mut map: HashMap<u32, u32> =
         votes.into_iter().map(|(k, v)| (k, v.into_iter().max_by_key(|(_, c)| *c).unwrap().0)).collect();
@@ -149,13 +150,37 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     let mut report = String::new();
     let (mut total_fns, mut total_unknown, mut unmapped_total) = (0, 0, 0);
 
-    for (name, d, s) in &pairs {
-        let differs = matches!((d, s), (Some(d), Some(s)) if d.bytes != s.bytes);
+    std::fs::create_dir_all(out.join("hybrid")).map_err(|e| e.to_string())?;
+    let mut hybrids = String::new();
+    for (name, d, s, disc_path) in &pairs {
+        // Disc code, Steam values (the default): the disc module, which matches
+        // GSNE8P's main.dol, with Steam's section bytes where they line up.
+        // SA2_STEAM_MODULES=a,b|* uses Steam's own copy (imports remapped).
+        let packed = disc_path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("prs")));
+        let built;
         let (rel, from_steam) = match (d, s) {
-            // SA2_DISC_MODULES=a,b: use the disc copy of these (no import mapping).
-            (Some(d), _) if disc_only(name) => (d, false),
-            (_, Some(s)) if differs || d.is_none() => (s, true),
-            (Some(d), _) => (d, false),
+            (_, Some(s)) if steam_only(name) || d.is_none() => (s, true),
+            (Some(d), Some(s)) if !packed && !plain(name) => {
+                let h = crate::hybrid::hybrid(d, s);
+                let _ = writeln!(hybrids, "{name}: {} bytes from Steam, {} unmatched", h.patched, h.unmatched.len());
+                for u in &h.unmatched {
+                    let _ = writeln!(hybrids, "    {u}");
+                }
+                std::fs::write(out.join("hybrid").join(format!("{name}.rel")), &h.bytes).map_err(|e| e.to_string())?;
+                built = Rel::parse(h.bytes).map_err(|e| format!("{name}: {e}"))?;
+                (&built, false)
+            }
+            (Some(d), _) => {
+                // A PRS-packed disc module can't be repacked with Steam's values:
+                // the disc file is served as it is.
+                if let Some(p) = disc_path {
+                    let file = p.file_name().unwrap_or_default();
+                    std::fs::copy(p, out.join("hybrid").join(file)).map_err(|e| e.to_string())?;
+                }
+                let why = if packed { "PRS-packed" } else if plain(name) { "Steam values not applied" } else { "no Steam copy" };
+                let _ = writeln!(hybrids, "{name}: disc copy as is ({why})");
+                (d, false)
+            }
             _ => {
                 let _ = writeln!(report, "{name}: missing in both folders");
                 continue;
@@ -287,6 +312,7 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     std::fs::create_dir_all(out.join(".cargo")).map_err(|e| e.to_string())?;
     std::fs::write(out.join(".cargo/config.toml"), "[build]\njobs = 6\n").map_err(|e| e.to_string())?;
     std::fs::write(out.join("REPORT.txt"), &report).map_err(|e| e.to_string())?;
+    std::fs::write(out.join("HYBRID.txt"), &hybrids).map_err(|e| e.to_string())?;
     println!(
         "modules {} | functions {total_fns} | unknown instructions {total_unknown} | unmapped Steam imports {unmapped_total} | address map {} entries | details in REPORT.txt",
         pairs.len(),
@@ -295,6 +321,14 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     Ok(())
 }
 
-fn disc_only(name: &str) -> bool {
-    std::env::var("SA2_DISC_MODULES").unwrap_or_default().split(',').any(|s| s.trim() == "*" || s.trim().eq_ignore_ascii_case(name))
+fn steam_only(name: &str) -> bool {
+    std::env::var("SA2_STEAM_MODULES").unwrap_or_default().split(',').any(|s| s.trim() == "*" || s.trim().eq_ignore_ascii_case(name))
+}
+
+/// Modules kept as the disc has them (no Steam values): SA2_PLAIN_MODULES,
+/// plus eventD by default. shortcut: eventD's patched data crashes the opening
+/// event (a wild pointer at frame 882); find the bad patch, then drop it here.
+fn plain(name: &str) -> bool {
+    name.eq_ignore_ascii_case("eventD")
+        || std::env::var("SA2_PLAIN_MODULES").unwrap_or_default().split(',').any(|s| s.trim().eq_ignore_ascii_case(name))
 }

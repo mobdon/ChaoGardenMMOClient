@@ -117,16 +117,34 @@ pub fn autopress(frame: u64) {
 /// opened, so they cannot land on the screens the anchored steps handle.
 /// Returns false when SA2_INPUT is unset.
 pub fn scripted(frame: u64) -> bool {
-    let Ok(script) = std::env::var("SA2_INPUT") else { return false };
+    match script(frame) {
+        Some(p) => {
+            set_port0(p);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Port 0 as SA2_INPUT has it this frame (None when SA2_INPUT is unset).
+/// Values are hex: PAD button bits, plus 0x10000 / 0x20000 / 0x40000 /
+/// 0x80000 for the stick held up / down / left / right. `*N` holds a press N
+/// frames instead of 3 (e.g. `stg11D.REL+500:10000*300`).
+pub fn script(frame: u64) -> Option<PadStatus> {
+    let script = std::env::var("SA2_INPUT").ok()?;
     let opens = OPENS.lock().unwrap_or_else(|e| e.into_inner());
     let anchor = script
         .split(',')
         .find_map(|i| i.rsplit_once(':')?.0.split_once('+').map(|(f, _)| f.trim().to_lowercase()));
     let anchored = anchor.is_some_and(|a| opens.iter().any(|(n, _)| *n == a));
-    let mut pads = default_pads();
+    let mut p = PadStatus::default();
     for item in script.split(',') {
-        let Some((at, b)) = item.rsplit_once(':') else { continue };
-        let Ok(b) = u16::from_str_radix(b.trim().trim_start_matches("0x"), 16) else { continue };
+        let Some((at, v)) = item.rsplit_once(':') else { continue };
+        let (v, hold) = match v.split_once('*') {
+            Some((v, n)) => (v, n.trim().parse::<u64>().unwrap_or(3)),
+            None => (v, 3),
+        };
+        let Ok(v) = u32::from_str_radix(v.trim().trim_start_matches("0x"), 16) else { continue };
         let starts: Vec<u64> = match at.trim().split_once('+') {
             Some((file, d)) => {
                 let Ok(d) = d.trim().parse::<u64>() else { continue };
@@ -138,13 +156,24 @@ pub fn scripted(frame: u64) -> bool {
                 _ => continue,
             },
         };
-        if starts.iter().any(|s| (*s..*s + 3).contains(&frame)) {
-            pads[0].button |= b;
+        if starts.iter().any(|s| (*s..*s + hold).contains(&frame)) {
+            p.button |= v as u16;
+            let on = |bit: u32| v & bit != 0;
+            if on(0x10000) {
+                p.stick[1] = 100;
+            }
+            if on(0x20000) {
+                p.stick[1] = -100;
+            }
+            if on(0x40000) {
+                p.stick[0] = -100;
+            }
+            if on(0x80000) {
+                p.stick[0] = 100;
+            }
         }
     }
-    drop(opens);
-    set(pads);
-    true
+    Some(p)
 }
 
 /// Files the game opened, with the frame of each open (SA2_INPUT anchors).

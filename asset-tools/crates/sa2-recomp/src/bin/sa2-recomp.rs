@@ -81,6 +81,10 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20           files.push(disc);\n\
         \x20       }\n\
         \x20   }\n\
+        \x20   // SA2_REL_DIR: the hybrid modules (disc code, Steam values) first.\n\
+        \x20   if let Some(dir) = std::env::var_os(\"SA2_REL_DIR\") {\n\
+        \x20       files.insert(0, Box::new(FlatDir { dir: dir.into() }));\n\
+        \x20   }\n\
         \x20   sa2_boot::install_all(c, m, Box::new(Layered(files)));\n\
         \x20   // SA2_WINDOW: show the game in a window; the keyboard is controller 0.\n\
         \x20   if std::env::var_os(\"SA2_WINDOW\").is_some() {\n\
@@ -101,14 +105,25 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20               }\n\
         \x20           }\n\
         \x20       }\n\
-        \x20       // SA2_INPUT=frame:buttons,... scripted presses; else SA2_AUTOPRESS.\n\
+        \x20       // Controller 1: in the window the keyboard, with any SA2_INPUT\n\
+        \x20       // presses added (the keyboard works throughout and has the pad to\n\
+        \x20       // itself once the script is done); headless SA2_INPUT, else\n\
+        \x20       // SA2_AUTOPRESS.\n\
         \x20       let window = std::env::var_os(\"SA2_WINDOW\").is_some();\n\
-        \x20       if !sa2_boot::pad::scripted(f) {\n\
-        \x20           if window {\n\
-        \x20               sa2_boot::pad::set_port0(sa2_boot::window::pad());\n\
-        \x20           } else if std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
-        \x20               sa2_boot::pad::autopress(f);\n\
+        \x20       let script = sa2_boot::pad::script(f);\n\
+        \x20       if window {\n\
+        \x20           let mut p = sa2_boot::window::pad();\n\
+        \x20           if let Some(s) = script {\n\
+        \x20               p.button |= s.button;\n\
+        \x20               if s.stick != [0, 0] {\n\
+        \x20                   p.stick = s.stick;\n\
+        \x20               }\n\
         \x20           }\n\
+        \x20           sa2_boot::pad::set_port0(p);\n\
+        \x20       } else if let Some(s) = script {\n\
+        \x20           sa2_boot::pad::set_port0(s);\n\
+        \x20       } else if std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
+        \x20           sa2_boot::pad::autopress(f);\n\
         \x20       }\n\
         \x20       if window {\n\
         \x20           for (_, fr) in frames {\n\
