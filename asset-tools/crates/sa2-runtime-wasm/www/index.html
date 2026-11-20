@@ -17,7 +17,7 @@
   <label>Steam "Sonic Adventure 2" folder:
     <input id="folder" type="file" webkitdirectory directory>
   </label>
-  <span id="status">Pick the game folder. Nothing leaves this computer. Arrows or WASD to move, Space is A. A controller works too.</span>
+  <span id="status">Pick the game folder. Nothing leaves this computer. WASD to move, Space is A. A controller works too.</span>
 </header>
 <canvas id="view"></canvas>
 <script type="module">
@@ -45,15 +45,15 @@ function fit() {
 }
 
 const keys = new Set();
-addEventListener('keydown', e => { keys.add(e.code); if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
+addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space') e.preventDefault(); });
 addEventListener('keyup', e => keys.delete(e.code));
 // Raw GameCube values (PADRead's output); the game's own PADClamp limits
-// them. Keys: stick arrows/WASD, C-stick IJKL, L/R Q/E, A Space, B X, Start Enter.
+// them. Keys: stick WASD (arrow keys are not bound), C-stick IJKL, L/R Q/E, A Space, B X, Start Enter.
 function pad() {
   const k = c => keys.has(c);
   const dir = (p, n) => (p ? 127 : 0) - (n ? 127 : 0);
-  const x = dir(k('ArrowRight') || k('KeyD'), k('ArrowLeft') || k('KeyA'));
-  const y = dir(k('ArrowUp') || k('KeyW'), k('ArrowDown') || k('KeyS'));
+  const x = dir(k('KeyD'), k('KeyA'));
+  const y = dir(k('KeyW'), k('KeyS'));
   const cx = dir(k('KeyL'), k('KeyJ')), cy = dir(k('KeyI'), k('KeyK'));
   const l = k('KeyQ') ? 255 : 0, r = k('KeyE') ? 255 : 0;
   const b = (k('Space') ? 0x100 : 0) | (k('KeyX') ? 0x200 : 0) | (k('Enter') ? 0x1000 : 0)
