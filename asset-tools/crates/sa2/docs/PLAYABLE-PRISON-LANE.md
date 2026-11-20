@@ -79,17 +79,12 @@ outer door (114 frames) gates travel.
 | ORI cage block (1) | `ori` (0x31058 set-up, 0x311D4 exec) | Ported: the same 20-unit cube and fall as SOLIDBOX, in the same stack (`Session::ori_solid`). A hit (host-reported: `Session::ori_attacks` for the attack query 0x800060EC(task, 0x13), `Session::ori_rockets` when a rocket links to it) waits trunc(max(distance - 18, 0)) frames for a rocket (0x8011B65C, matched against main.dol on 4,000 samples) or 1, plays sound 0x1011 (variant = break count mod 5) and 0x14, collapses the stack above on its second frame, and from its fourth throws 16 + 4 + 4 debris pieces (unless (Rotation.x & 0xF) % 3 is 2) and 14 sparks drawn from MSL rand, then goes. The debris and spark tasks themselves are not run |
 | ROCKETMISSSILE (1) | `rocket` (0x35AC8 set-up, 0x35E10 exec) | Ported: arms (sound 0x1005) when its mode allows (Rotation.x & 3: 2 waits for its switch, 3 for a player within 100 and a clear enemy group) and an ORI with its id is listed; opens its hatch, rises 9 and lifts; once a grounded player stands within 6.5 of its stand point (`PlayerSample::grounded`) it aims at its Scale target at 0x140 BAMS a frame with smoke and wobble, closes, builds thrust, rumbles the rider, flies 5.1 a frame with exhaust and on arrival links the ORI (which breaks) and explodes; then re-arms, stops or stays by mode. The particles, explosion, rumble, its dynamic land model and its child's damage byte are reported or not run; the switch bytes are `Session::switches` |
 | MINIMAL animal capsules (11) | `minimal` (main program: GSNE8P 0x80025C7C set-up, 0x80026AFC exec) | Ported, and matched frame by frame against main.dol's own exec under the harness (examples/minimal_check.rs: 1,500 random states, 3,744 frames, every mode, pickups and walker requests). Set-up picks the animal slot from Rotation.x (MSL rand where it is left open); collection by character-sized reach (12 / -5..18 for character 7, 11 / -5..15 for 6, 7 / -5..10 otherwise) gives the animal (`Event::Minimal`); mode 0 orbits, 2 asks a walker for action 0x2A, 3 flies off for 600 frames, 4 settles on the land and 5 hops toward the player through fn_800D05D0. The level's animal table (0x80195B54) and motion table (0x801E5B88) are filled at run time and come from the host, as do the land probes (`Session::land_probes`) and the gravity mode (`Session::gravity_mode`) |
+| KNUDAI Mystic Melody shrine (1) | `knudai` (0x2979C set-up, 0x29AA0 exec) | Ported: within 38 of a player's collision centre, by that player's Action (`PlayerSample::action`) and the shrine's melody bit (1 << (Rotation.x mod 8) in `Session::melody_bits`, GSNE8P 0x803ADC14): 0x2D plays sound 0x101E and sets the bit; 0x2E / 0x2F / 0x30 show the character's hint (600 frames from the loaded message table, else the module's placeholder text for 200) once the shrine's counter is past 10 and player 1's motion pair allows it; any other action asks for 0x2D (or 0x2E once played) unless a message is showing; the player turns a third of the way toward the shrine each frame (`KnudaiEvent::TurnPlayer`, `PlayerSample::yaw`). Messages, sounds and the shrine's dynamic land model are reported, not run |
 | BIG THE CAT | 0x33E3C | The GameCube module's callback does nothing |
 
-Everything else is listed by name in `Session::unimplemented`: item boxes,
-enemies and KNUDAI. The colour blend those objects
-share (GSNE8P 0x800334B0) is ported as `color_blend::blend_argb`. What holds
-the rest back, as read from the code:
-
-* KNUDAI (0x2979C) is the Mystic Melody shrine: a dynamic land model
-  (sec5+0x62D98, yaw only), a range of 38, the player actions 0x2D to 0x30,
-  the hint messages (0x800E0118) and the melody bit at 0x803ADC14 (bit
-  Rotation.x & 7).
+Everything else is listed by name in `Session::unimplemented`: item boxes and
+enemies. The colour blend the effects share (GSNE8P 0x800334B0) is ported as
+`color_blend::blend_argb`.
 
 ## Offline verification
 

@@ -44,6 +44,7 @@ pub mod glb_cli;
 pub mod input;
 pub mod iron_gate_movers;
 mod key_pickup;
+pub mod knudai;
 pub mod land_contact;
 pub mod land_nodes;
 pub mod land_probe;
