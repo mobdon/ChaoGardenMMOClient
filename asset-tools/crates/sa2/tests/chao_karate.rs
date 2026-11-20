@@ -357,3 +357,49 @@ fn attack_motion_handlers_match_the_gamecube_powerpc() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires the user's GameCube main.dol, ChaoMain.rel, ChaoStgKarate.rel, the local Gekko tables and Python with Unicorn"]
+fn arena_edge_and_distance_match_the_gamecube_powerpc() {
+    let python = env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
+    let o = Command::new(python)
+        .arg("-I")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/chao_karate_ring_ppc.py"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    if o.stdout.is_empty() {
+        return;
+    }
+    let doc: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let v3 = |v: &Value| -> [f32; 3] { std::array::from_fn(|n| f(&v[n])) };
+    let bits3 = |a: [f32; 3]| -> Vec<u64> { a.iter().map(|x| u64::from(x.to_bits())).collect() };
+    for c in doc["edge"].as_array().unwrap() {
+        let mut flags = u(&c["flags"]) as u16;
+        let mut rec = StateRecord::default();
+        let (mut vel, mut acc) = (v3(&c["vel"]), v3(&c["acc"]));
+        let edge = k::arena_edge(
+            &mut flags,
+            &mut rec,
+            v3(&c["pos"]),
+            f(&c["bodyX"]),
+            &mut vel,
+            &mut acc,
+            i(&c["phase"]) as i8,
+            c["fighting"].as_bool().unwrap(),
+            f(&c["sin"]),
+            f(&c["cos"]),
+        );
+        assert_eq!(u64::from(edge != k::Edge::None), u(&c["ret"]), "return {c}");
+        assert_eq!(edge == k::Edge::RingOut, u(&c["mgr3"]) == 2, "ring-out {c}");
+        assert_eq!(u64::from(flags), u(&c["flagsOut"]), "work flags {c}");
+        assert_eq!(u64::from(rec.flags), u(&c["twpOut"]), "state flags {c}");
+        let want = |key: &str| -> Vec<u64> { c[key].as_array().unwrap().iter().map(u).collect() };
+        assert_eq!(bits3(vel), want("velOut"), "velocity {c}");
+        assert_eq!(bits3(acc), want("accOut"), "accel {c}");
+    }
+    for c in doc["distance"].as_array().unwrap() {
+        let d = k::fighter_distance(v3(&c["a"]), v3(&c["b"]));
+        assert_eq!(u64::from(d.to_bits()), u(&c["d"]), "distance {c}");
+    }
+}

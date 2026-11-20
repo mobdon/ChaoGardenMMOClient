@@ -858,3 +858,66 @@ pub fn heavy_attack(
         _ => {}
     }
 }
+
+/// What fn_72_F5B0 decided this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edge {
+    None,
+    /// Pushed back from the arena edge (returns 1 without a knock-out).
+    PushBack,
+    /// Ring-out: match manager +3 = 2, state flag 0x1000, work flag 0x100.
+    RingOut,
+}
+
+/// fn_72_F5B0: the arena edge. `position` is task+0x34 +0x14, `yaw` its +0xC,
+/// `body_x` the Chao's AL_SHAPE BodyPos.x (chaowk +0x5C0, via work +0x18),
+/// `stage_phase` the stage manager's state (lbl_72_bss_C +0x34 +0) and
+/// `fighting` the match manager's +4 == 2. `sin`/`cos` are njSin/njCos of
+/// yaw + 0x8000. Velocity/acceleration are the movement block.
+#[allow(clippy::too_many_arguments)]
+pub fn arena_edge(
+    work_flags: &mut u16,
+    rec: &mut StateRecord,
+    position: [f32; 3],
+    body_x: f32,
+    velocity: &mut [f32; 3],
+    accel: &mut [f32; 3],
+    stage_phase: i8,
+    fighting: bool,
+    sin: f32,
+    cos: f32,
+) -> Edge {
+    if stage_phase < 12 && *work_flags & 2 != 0 && body_x.abs() > 15.8 {
+        if position[1] > 7.0 {
+            accel[0] += 0.04f32 * sin;
+            accel[1] += 0.0f32;
+            accel[2] += 0.04f32 * cos;
+            return Edge::PushBack;
+        }
+        if position[1] < 0.05 {
+            for v in velocity.iter_mut() {
+                if *v > 0.05 {
+                    *v *= 0.5;
+                    if *v <= 0.05 {
+                        *v = 0.0;
+                    }
+                }
+            }
+        }
+    }
+    if !fighting {
+        return Edge::None;
+    }
+    if position[1] < 7.0 || (*work_flags & 2 != 0 && body_x.abs() > 16.0) {
+        rec.flags |= state_flag::KNOCKED_OUT;
+        *work_flags |= 0x100;
+        return Edge::RingOut;
+    }
+    Edge::None
+}
+
+/// fn_72_13258: the distance between the two fighters (njScalor of the
+/// position difference, Gekko estimates); 0 when either is missing.
+pub fn fighter_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    crate::land_nodes::nj_scalor([b[0] - a[0], b[1] - a[1], b[2] - a[2]])
+}
