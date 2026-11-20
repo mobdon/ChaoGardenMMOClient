@@ -968,6 +968,8 @@ pub enum PlacementClock {
     CorePulse(Box<CorePulseFrame>),
     /// Section 1 + 0x7d6c: core action 3 (shrink and switch stage).
     CoreShrink(Box<CoreShrinkFrame>),
+    /// Section 1 + 0x7f58: core action 5 (stunned).
+    CoreStun(Box<CoreStunFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2763,6 +2765,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::CoreGrow(frame) => return core_grow(&rel, &frame),
         PlacementClock::CorePulse(frame) => return core_pulse(&rel, &frame),
         PlacementClock::CoreShrink(frame) => return core_shrink(&rel, &frame),
+        PlacementClock::CoreStun(frame) => return core_stun(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -7746,6 +7749,132 @@ fn core_shrink(
             ]);
         }
         ev.push(local(0x7f34, 0x8818, serde_json::json!([f.task])));
+    }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What core action 5 reads: entity word 8 (the spin) and half-word 6 (the
+/// stun timer), block bytes 0 and 1, block words 8, 4 and 0xc, the three
+/// random words, and the engine sine results for the spin and block word
+/// 4 and the cosine of block word 0xc (single precision).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoreStunFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub spin: u32,
+    pub timer: u16,
+    pub block_bytes: [u8; 2],
+    pub angles: [i32; 3],
+    pub randoms: [i32; 3],
+    pub sines: [f32; 2],
+    pub cosine: f32,
+}
+/// Section 1 + 0x7f58: core action 5, the stunned core. A fast pulse from
+/// the spin (+0x400 a frame) with its hum, the attachment placed, three
+/// random wobble steps, a squash that eases out over the 90-frame stun
+/// timer, and when the timer is out the core shrinks by 5:0x36d44 and,
+/// below 4:0x374, goes to action 3.
+fn core_stun(rel: &crate::city_rel::CityRel<'_>, f: &CoreStunFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let wrap = |v: i32| {
+        if v > 0x10000 {
+            v.wrapping_sub(0x10000)
+        } else {
+            v
+        }
+    };
+    let scale = k(0x7f8a)? * f.sines[0];
+    let raw = fctiwz(f64::from(k(0x7f9e)? - k(0x7faa)? * scale)) as u32;
+    let mut pitch = raw;
+    if (raw as u16 as i16) < -128 {
+        pitch = (-128i32) as u32;
+    }
+    if (pitch as u16 as i16) > 70 {
+        pitch = 70;
+    }
+    let mut ev = vec![
+        call(0x7f84, serde_json::json!([f.spin]))?,
+        st(0x7f98, "block", 0x24, 4, scale.to_bits()),
+        call(
+            0x8008,
+            serde_json::json!([5, f.task, 1, pitch, 5, f.entity + 0x14]),
+        )?,
+        st(0x8014, "entity", 8, 4, f.spin.wrapping_add(0x400)),
+        serde_json::json!({"site":0x8024,"local":0x7548,"args":[f.task, f.block_bytes[0], f.block_bytes[1]]}),
+    ];
+    // (call, unit, scale, base, angle magic, store, wrap store, offset, angle)
+    let steps = [
+        (
+            0x8028u32, 0x8052u32, 0x8062u32, 0x8072u32, 0x8086u32, 0x80b4u32, 0x80ccu32, 8u32,
+            0usize,
+        ),
+        (0x80d0, 0x80fa, 0x810a, 0x811a, 0x812e, 0x815c, 0x8174, 4, 1),
+        (
+            0x8178, 0x81a2, 0x81b2, 0x81c2, 0x81d6, 0x8204, 0x821c, 0xc, 2,
+        ),
+    ];
+    let mut angles = [0i32; 3];
+    for (i, (site, us, ss, bs, ms, store, wrap_store, offset, angle)) in
+        steps.into_iter().enumerate()
+    {
+        ev.push(call(site, serde_json::json!([]))?);
+        let delta = k(bs)? + k(ss)? * (k(us)? * biased_float(rel, site + 6, f.randoms[i])?);
+        let raw = fctiwz(f64::from(biased_float(rel, ms, f.angles[angle])? + delta));
+        ev.push(st(store, "block", offset, 4, raw as u32));
+        let v = wrap(raw);
+        if v != raw {
+            ev.push(st(wrap_store, "block", offset, 4, v as u32));
+        }
+        angles[angle] = v;
+    }
+    let size = k(0x822a)?;
+    let base = k(0x823a)?;
+    let squash = base - k(0x8252)? * biased_float(rel, 0x8266, 0x5a - i32::from(f.timer))?;
+    ev.extend([
+        call(0x8224, serde_json::json!([angles[1] as u32]))?,
+        st(
+            0x8248,
+            "entity",
+            0x20,
+            4,
+            (base + size * f.sines[1]).to_bits(),
+        ),
+        st(0x8290, "entity", 0x24, 4, squash.to_bits()),
+        call(0x8298, serde_json::json!([angles[2] as u32]))?,
+        st(
+            0x82ac,
+            "entity",
+            0x28,
+            4,
+            (base + size * f.cosine).to_bits(),
+        ),
+    ]);
+    if f.timer != 0 {
+        ev.push(st(0x82c0, "entity", 6, 2, u32::from(f.timer - 1)));
+    } else {
+        let step = {
+            let r = rel
+                .reference(1, 0x82ce)
+                .filter(|r| r.module == 88 && r.section == 5)
+                .ok_or_else(|| Error::invalid("missing core shrink step"))?;
+            let at = r.addend as usize + 8;
+            let b = rel
+                .data(5)?
+                .get(at..at + 4)
+                .ok_or_else(|| Error::invalid("core shrink step out of range"))?;
+            f32::from_be_bytes(b.try_into().unwrap())
+        };
+        let left = scale - step;
+        ev.push(st(0x82dc, "block", 0x24, 4, left.to_bits()));
+        if f64::from(left) < f64::from(k(0x82e6)?) {
+            ev.push(st(0x82fc, "entity", 0, 1, 3));
+            ev.push(st(0x8304, "entity", 1, 1, 0));
+        }
     }
     Ok(serde_json::json!({"events":ev}))
 }

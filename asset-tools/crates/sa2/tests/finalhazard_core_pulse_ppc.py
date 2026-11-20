@@ -174,7 +174,8 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
         cpu.mem_write(0x80000, bytes(0x6000))
         cpu.mem_write(T + 0x34, struct.pack(">I", E))
         cpu.mem_write(T + 0x40, struct.pack(">I", B))
-        spin = rng.randrange(1 << 32)
+        # Kept above the test address windows so symbol() leaves it a number.
+        spin = rng.randrange(0x200000, 1 << 32)
         bb = [rng.randrange(256), rng.randrange(256)]
         angles = [rng.choice((0, 0x10000, 0xFFFF, 0x10001, 0x20000, -5, rng.randrange(-0x30000, 0x30000)))
                   for _ in range(3)]
