@@ -34,7 +34,7 @@ Per update, with work fields `+0` mode, `+4` flags, `+6` frame counter and
 2. Mode 1, if game byte +0x42 is set: spawn one platform at X −300 with timer
    0x8000 and enter mode 2. The authored end rows (Sonic −308, Shadow −292)
    stand on it.
-3. Otherwise, for each non-null player-table slot (0x801E7368) in order, while
+3. Otherwise, for each non-null player-table slot (0x801E7768) in order, while
    `cursor − player.x < 2100`: spawn DODAI at the cursor, set its timer to
    `trunc(max(0.4 × (player.x − cursor), −3600))` (low 16 bits), and add 300
    to the cursor. After the deadline flag, each new platform instead gets
@@ -43,7 +43,7 @@ Per update, with work fields `+0` mode, `+4` flags, `+6` frame counter and
    it stays at 36000 and sets flag 0x1000.
 
 DODAI starts to fall on the first update whose signed timer exceeds 900. When
-the first slot of the player data table (0x801E7328, field +0xA0) references
+the first slot of the player data table (0x801E7728, field +0xA0) references
 an inactive platform, that platform is activated with timer 720; an activated
 timer counts up on updates where game byte +0x37 is clear and +0x42 is not 1,
 so it falls 181 updates after activation. Meteor objects are not ported here.
@@ -142,7 +142,7 @@ and a random addition to field +0x18.
 ## Per-frame routine and SET wrap
 
 The stage's registered per-frame routine (+0x3078) asks the engine to handle a
-fall-out (0x8003B694 with 0) when the game pointer at 0x803AD5D0 is set with a
+fall-out (0x8003B8FC with 0) when the game pointer at 0x803AD9D0 is set with a
 zero +0xC word, both player slots are filled without player-data bit 0x4000,
 and player 1 is below Y -100. It then always runs the SET wrap (+0x2B8C):
 once player 1 has passed X 300, every SET entry whose object-list flags lack
@@ -166,7 +166,7 @@ to cleared fog with a 100000 far plane and creates `FogtaskManExec`, loads
 the `mh0042` and `mhsys` message banks for the current language letter
 (`jefsg`, then `j`, then none) and rebases their pointers, and finally sets
 the ambient colour, stage name, two engine callback slots, the 14-word
-callback table at 0x801E73D8, the `se_vs_shadow.mlt` sound bank, music
+callback table at 0x801E77D8, the `se_vs_shadow.mlt` sound bank, music
 `boss_05.ADX` and the draw range (-3, -20000). Teardown frees the message
 banks, clears the callback slots it owns, removes the fog manager and fog
 state, releases the texture sets and SET data, and sets the draw range
@@ -246,6 +246,18 @@ work fields) are request inputs, and models are read from the REL. A vertex
 list that does not end in 0xFF makes the native copy loop forever; the port
 reports that instead.
 
+## REL revisions and engine addresses
+
+Two copies of stg42D.rel exist. The Steam install ships module 41 (SHA-256
+51d7b743…385d). The GameCube disc (GSNE8P) has module 42 (SHA-256
+4403be7d…0538). Their code and data sections are byte-identical. Only the
+import relocations differ: the Steam copy links engine text 0x84 to 0x348
+lower and engine data 0x3E0 to 0x400 lower. The ports accept either copy,
+and every engine address they report is the GSNE8P main.dol address that
+the disc copy relocates to (for example, the item callback slot 0x801A2A20
+and the trail plugin table 0x801E77D8). The PPC harnesses run the disc copy
+from `SA2_GC_REL_DIR`. The installed-data tests still read the Steam copy.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -280,6 +292,7 @@ sa2-assets duel-meteor <game>\resource\gd_PC\stg42D.rel .local\out\meteor.json M
 
 ```powershell
 $env:SA2_GAME_PATH = '<Steam>\Sonic Adventure 2'
+$env:SA2_GC_REL_DIR = '<folder with the GameCube disc stg42D.rel>'
 cargo test --manifest-path asset-tools/crates/sa2/Cargo.toml --test duel_terrain -- --include-ignored
 python asset-tools/crates/sa2/tests/duel_generator_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_platform_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe

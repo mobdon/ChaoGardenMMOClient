@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run the installed stage 42 per-frame routine and compare duel-stage-frame.
 
-Usage: python duel_stage_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_stage_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes stg42D.rel +0x3078 and its SET wrap (+0x2B8C) under Unicorn against
 scenario engine state (players, SET status entries). The game is never started.
 """
@@ -8,11 +8,11 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP=0x81000000,0x82000000,0x90000000,0x80f00000
-GAME,OBJ1,OBJ2,ENTRIES,COUNT,LIST=0x803ad5d0,0x801e7368,0x801e7328,0x801f5568,0x803ad614,0x803ad62c
+GAME,OBJ1,OBJ2,ENTRIES,COUNT,LIST=0x803ad9d0,0x801e7768,0x801e7728,0x801f5968,0x803ada14,0x803ada2c
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -53,7 +53,7 @@ page(T,0x400000)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
 calls=[]
 def hook(uc,pc,size,_):
-    if pc==0x8003b694:calls.append(('kill',reg(3)))
+    if pc==0x8003b8fc:calls.append(('kill',reg(3)))
 for a in imports:u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 put(LIST,'I',S5+0x36cc)
 game_obj,objs1,objs2=T+0x100,[T+0x200,T+0x300],[T+0x400,T+0x500]

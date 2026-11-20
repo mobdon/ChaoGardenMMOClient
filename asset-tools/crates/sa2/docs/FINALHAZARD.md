@@ -24,6 +24,32 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `super_charge_draw` | 0xc67c | Action-67 charge effect draw call |
 | `super_draw` | 0xd2dc | Super-form player draw routine |
 | `super_effects` | 0xd60c | Super-form effects: spin, aura, fade and boost trail |
+| `stage_setup` | 0xa078 | Stage setup: lights, hit handler, object hooks, both super forms, boss and timer objects |
+| `super_construct` | 0xa87c, 0xab04 | Super-form constructors (characters 9 and 10): task and player block, engine set-up calls, effect block, task handlers, timer object; reports the engine table words read |
+| `stage_teardown` | 0xa2a0 | Stage teardown: timer and stage objects, ring drop hit handler, light lists, both player tasks |
+| `stage_object` | 0xa390 | Stage object set-up: boss set-up 0x414 when module word 5:0x382b8 is set, handlers 0xa3f4, 0xa560, 0xa758 |
+| `boss_construct` | 0x414 | Boss object construction: task (update 0x1bb8, handlers 0x1e04 and 0x638), work block, entity start and scale, collision flag, child object 0x8528; returns the task or 0 |
+| `boss_update` | 0x1bb8 | Boss task update: action mirror, pause gates (0x801cbd88 + 0x37 / + 0x39), stage change handling, action routine from the jump table at 5:0xfdc (actions 0..13), child follow 0x1fc8, then 0x744 and 0x920 |
+| `boss_helper` | 0x9d4, 0x9f4, 0xa40, 0xa88, 0xc60, 0xc98, 0xd04, 0xd40, 0xdc4 | Boss state helpers: boss task (6:0x0), child, state, stunned check, state timer start and clear, pattern table 5:0x514 step, action set |
+| `boss_action_zero` | 0xe2c | Boss action 0: motion start (step 0), sound and voice inside the motion window 4:0xe0..4:0xe8, then ring burst 0x18ed0 (players capped at 3), action 2 and the next sound when the motion ends; clears stage half-word 0xa |
+| (action 1) | 0x10a8 | Boss action 1 is an empty routine (a lone `blr`) |
+| `boss_action_two` | 0xff4 | Boss action 2: 60-frame wait (entity half-word 6), child 0x86b8, then the next pattern entry (0xd40) as the action |
+| `boss_action_three` | 0x10ac | Boss action 3: frees the stage handles and starts motion 2; resets lights, child (0x866c), camera and both players; in the window 4:0xc4..4:0xf4 plays sound and voice; at the motion end clears entity flag 4, child 0x8818, motion 1, action 1, stage byte 4 and the handoff start 0xec04 |
+| `boss_attack` | 0x12e8 | Boss actions 5, 6, 7: voice roll 0xaf0 each frame; spawn attack kind 0/1/2 (0x62a0) into state word 0x14, 60-frame wind-up, launch (0x63e8), wait for the attack to report 1 (0x6410), free it and take the next pattern entry |
+| `boss_beam` | 0x1440 | Boss actions 8, 9, 10: voice roll 0xaf0; beam parameter block (bytes 0/1, 1/1 or 1/2 by action, work vectors 6:0x164 and 6:0x170, the child) passed to 0x3e58, beam in state word 0x18, waits of 60 and 600 frames, fire 0x3fc0, wait for 0x403c to report 1, free, next pattern entry |
+| `boss_combo` | 0x1640 | Boss actions 11, 12: beam (block 1/2) plus attack kind 2, 60-frame wind-up, attack launch; action 11 then fires the beam once the attack reports 1 and waits for the beam before the next pattern entry; any other action hands the attack to 0x6460 and runs 0x86b8 on the child every 600 frames (step 4) |
+| `boss_defeat` | 0x1844 | Boss action 13 (defeat): frees the stage handles, motion 3, lights, child reset, clears entity flag 4; rumble every 45 frames before 4:0xf8, three sound and voice windows (4:0xfc..0x100, 0x104..0x108 on task + 1, 0x10c..0x110), explosion 0x92c0 every 30 frames and flash 0x9518 every 10 frames before 4:0x114 (native magic-number division); at the motion end the result clock (0x800c3974 → 0x800c3518) and story advance 0x8001c78c with the stage byte |
+| `boss_delete` | 0x638 | Boss task deleter: frees word 0x38, runs 0x1b070, clears the boss word 6:0x0 |
+| `boss_aim` | 0x690 | out = from + normalise(to - from) * (f1 + distance) through the engine vector calls, single precision |
+| `boss_hit` | 0x744 | Hit check: a child hit (0x87e4 == 1) outside action 3 costs 4:0xac health and sets action 3, or 13 at or below 4:0xc0, plus entity flag 4; otherwise a player hit (0x800065a8) on a collider (48-byte entries) pushes a point out towards the player (0x690), then stuns (0x7154 == 1: 0x71e0 with 4:0xc8, 0xc98) or knocks back (0x71e0 with 4:0xc4, camera shake), sparks 0x108f4, hit sound and voice |
+| `boss_points` | 0x920 | Places the 34 attachment entries at 5:0xb8c (0x80027ab4 with work vector 6:0x128 + 12 * byte 0) and attaches them (0x80005540), then 0x8000f4ec |
+| `boss_voice` | 0xaf0 | Voice roll: player within 4:0xcc of work point 6:0x200, random roll (native int-to-float bias trick) below 4:0xd4 plays voice 0x11 with a random length through 0x80112050 |
+| `boss_support` | 0x1e04, 0x1ed8, 0x1f94, 0x1fc8, 0x2078, 0x210c | Boss draw handler (GX state, rotation, motion draw); screen effect with its stack parameter block (table 5:0x2dd4, clock reset past 13); screen reset; mirrored follow point (z negated, pushed to 4:0x118 / 4:0x11c near the plane); effect block from template 5:0x2de0; effect kind. Request field `routine` picks one |
+| `boss_scroll` | 0x2138, 0x2218, 0x2300 | Texture scroll draws: offset (speed 5:0x31f0 * frame counter) & 0x1fff (0x2218 negates the speed), models drawn between the two scrolls, the first two rotated by the argument |
+| `boss_core` | 0x8328, 0x8528, 0x866c, 0x86b8, 0x87e4, 0x8818, 0x8880, 0x8ac8 | Boss core (child) object: update dispatch (actions 1, 2, 3, 5 to 0x783c, 0x79dc, 0x7d6c, 0x7f58), construction (update 0x8328, draw 0x83dc, delete 0x8524), reset, stage set (0x743c slot, collision word 4 flag 0x10), hit query (entity flag 4), clear, pattern table 5:0x36d2c, release. Request field `routine` picks one |
+| `core_contact` | 0x7154, 0x71e0, 0x72e0 | Hit compare (attack 0x800058bc beats defense 0x80005874), knockback 0x8003a174 (player side by stage byte and height above 4:0x298, or a normalised vector), proximity voice when the player comes within 4:0x2d8 (entity flag 0x100 edge) |
+| `core_hit` | 0x743c, 0x7548, 0x7684 | Core slot roll (skips the previous slot; 8 or 7 slots), attachment placement from table 5:0x36b6c (224-byte rows, 28-byte columns), hit reaction (knockback along the player direction, 0x9228, stun timer 90, action 5) |
+| `core_grow` | 0x783c | Core action 1: both scales grow by 5:0x36d3c (entity clamped at 4:0x314), attachment placed, hum with pitch 4:0x318 + 4:0x31c * scale clamped to -128..70 (half-word compares), settle and action 2 once the block scale reaches 4:0x30c |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -237,6 +263,26 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_super_effects_ppc.py` | 1,500 effect draws across spin, aura, fade (frame boundaries) and trail poses |
 | `tests/finalhazard_ring_drop_ppc.py` | 1,500 ring drops: zero, capped and negative counts, characters 6/7, failed allocations |
 | `tests/finalhazard_stage_sqrt_ppc.py` | 40,009 stage square roots on the Gekko estimate, bit for bit (skips without the local table file) |
+| `tests/finalhazard_stage_setup_ppc.py` | 24 stage setups: hit handler present or not, either player task present, module word 0x484 |
+| `tests/finalhazard_super_construct_ppc.py` | 72 constructions: both constructors, both slots, task or player allocation failing, global byte 0x801cbd88, module word 0x4ac |
+| `tests/finalhazard_stage_teardown_ppc.py` | 64 teardowns (module words 0x484 and 0x480, hit handler absent, foreign, ring drop or another module address, either player task) and 4 object set-ups |
+| `tests/finalhazard_boss_construct_ppc.py` | 240 constructions: each allocation failing, module byte 5:0x50c (signed extremes), collision flags, stage byte |
+| `tests/finalhazard_boss_update_ppc.py` | 600 seeded updates; memory read again after a call is changed at that point, so each request value is checked at its own read |
+| `tests/finalhazard_boss_helper_ppc.py` | 4160 helper calls with the nested helpers run natively: boss, data and state present or not, action, flags, state word 0xc, pattern rows and columns |
+| `tests/finalhazard_boss_action_zero_ppc.py` | 525 frames: steps 0, 1 and out of range, motion frames around both window edges, motion end, player counts |
+| `tests/finalhazard_boss_actions_ppc.py` | 120 action 2 frames and 2160 action 3 frames: steps, timers, patterns, stage handles, motion flags and window edges, motion end, entity flags |
+| `tests/finalhazard_boss_attack_ppc.py` | 960 frames: steps, actions 5..7, timers, attack states, attack freed or already gone, patterns |
+| `tests/finalhazard_boss_beam_ppc.py` | 1152 frames, with the beam parameter block read off the stack: steps, actions 8..10, timers, beam states, beam freed or gone, patterns |
+| `tests/finalhazard_boss_combo_ppc.py` | 1008 frames: steps 0..5, timers, action after launch (11, 12, other), attack and beam states, objects freed or gone, step-4 timer |
+| `tests/finalhazard_boss_defeat_ppc.py` | 1500 seeded frames: motion frames around every window edge, frame counters at and around the 45/30/10 periods and near 2^32, motion end |
+| `tests/finalhazard_boss_frame_ppc.py` | 1175 calls of 0x638, 0x690, 0x744 and 0x920 with stack vectors compared as floats: health around the action-13 edge, child and player hits, collider indices including the null array, stun or knockback |
+| `tests/finalhazard_boss_voice_ppc.py` | 2000 seeded rolls: distance around the radius, random words including sign and width extremes for the first roll (the second stays within rand range, since Unicorn does not saturate fctiwz overflow as PowerPC does) |
+| `tests/finalhazard_boss_support_ppc.py` | 497 calls with stack parameter blocks compared word by word: draw, screen effect indices, flags and counts, follow points around the plane edge (signed zeros included), effect block, effect kind |
+| `tests/finalhazard_boss_scroll_ppc.py` | 900 draws: speed extremes and signs, full-range frame counters, both reads changed independently |
+| `tests/finalhazard_boss_core_ppc.py` | 247 calls: pause and every action, each construction failure, stage set by action and slot, hit flags, the whole pattern table, release |
+| `tests/finalhazard_core_contact_ppc.py` | 1200 calls with f1..f3 compared: compare extremes, knockback with and without a vector, voice distance edges and flag states |
+| `tests/finalhazard_core_hit_ppc.py` | 916 calls: slot rolls over every previous value, attachments including negative indices, hit reactions with flag, hit and strength cases |
+| `tests/finalhazard_core_grow_ppc.py` | 1500 frames: scales at, just around and far from each threshold (an exact limit hit included), wide values for the pitch clamp |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
@@ -251,8 +297,8 @@ reached from, not what each object does.
 | Section 1 offset | Reached from | Notes |
 | --- | --- | --- |
 | 0xa04c, 0xa074 | REL prolog and epilog | Module entry points |
-| 0xa078, 0xa2a0 | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
-| 0xa87c, 0xab04 | 0xa078 | Super-form player constructors (characters 9 and 10). Each installs the update 0xad8c and its handlers (ported), the draw routine 0xd2dc (ported), 0xd60c, and the stage player task (0xff7c → 0xf3f8, replayed) |
+| 0xa078, 0xa2a0, 0xa390 (ported) | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
+| 0xa87c, 0xab04 (ported) | 0xa078 | Super-form player constructors (characters 9 and 10). Each installs the update 0xad8c and its handlers (ported), the draw routine 0xd2dc (ported), 0xd60c, and the stage player task (0xff7c → 0xf3f8, replayed) |
 | 0x18b5c | Mode 2 of the helper 0x18ed0 | Allocates 0xdc bytes and installs 0x15f7c (about 7.5 KB), 0x17d18, 0x188f0, 0x18dbc and 0x191ac. Not reached in this module (see below) |
 | 0x1844, 0x7f58 | 0x1bb8, 0x8328 | Encounter phase code covered by earlier request paths |
 

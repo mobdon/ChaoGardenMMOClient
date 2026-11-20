@@ -17,7 +17,6 @@ use crate::{duel_platform, Error, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-const MODULE: u32 = 41;
 const NO_RETURN: &str = "the native display loops forever on this model data";
 
 /// A float given as a number or as `"0x…"` single-precision bits.
@@ -119,11 +118,11 @@ impl<'a> Display<'a> {
     fn ptr(&self, at: u32) -> Result<u32> {
         match self.rel.reference(5, at) {
             Some(Reference {
-                module: MODULE,
+                module,
                 kind: 1,
                 section: 5,
                 addend,
-            }) => Ok(addend),
+            }) if module == self.rel.module_id() => Ok(addend),
             _ => Err(Error::invalid(
                 "stage 42 model pointer outside the module data",
             )),
@@ -182,9 +181,9 @@ impl<'a> Display<'a> {
         }
         Ok(())
     }
-    /// 0x8011DE10 for a chunk model, recording its vertex list.
+    /// 0x8011e158 for a chunk model, recording its vertex list.
     fn draw_chunk(&self, r: &mut Rec, model: u32) -> Result<()> {
-        r.call(0x8011de10, json!([s5(model), s5(self.ptr(model)?)]));
+        r.call(0x8011e158, json!([s5(model), s5(self.ptr(model)?)]));
         Ok(())
     }
     /// +0x615C: draw a chunk model tinted by `color`.
@@ -193,7 +192,7 @@ impl<'a> Display<'a> {
         if color != 0xffff_ffff && self.word(5, list)? & 0xffff == 0x23 {
             self.copy_d8(r, list, color)?;
             r.write(s5(model), json!("scratch"));
-            r.call(0x8011de10, json!([s5(model), "scratch"]));
+            r.call(0x8011e158, json!([s5(model), "scratch"]));
             r.write(s5(model), json!(s5(list)));
             Ok(())
         } else {
@@ -213,7 +212,7 @@ impl<'a> Display<'a> {
                 let data = self.ptr(e + 8)?;
                 r.write(s5(e + 8), json!("scratch"));
                 self.copy_colors(r, data, count, color)?;
-                r.call(0x800317c0, json!([s5(model)]));
+                r.call(0x80031a28, json!([s5(model)]));
                 r.write(s5(e + 8), json!(s5(data)));
             }
             e += 0x10;
@@ -224,17 +223,17 @@ impl<'a> Display<'a> {
     /// model copy +0x24 radius).
     pub fn platform(&self, r: &mut Rec, o: &PlatformObject) -> Result<()> {
         let p = v3f(o.position);
-        r.call(0x8002b080, json!([0x2400]));
-        r.call(0x80116ad0, json!([s5(self.t(0x19ea, 5)?)]));
-        r.call(0x80115d50, json!([]));
-        r.call(0x80115e24, json!([bits3(p)]));
-        r.call(0x80115c20, json!([o.angles, 0]));
-        r.call(0x800665b8, json!([0xff, bits3(p), b(o.radius.0)]));
-        r.call(0x8006633c, json!([bits3(p), o.angles]));
-        r.call(0x8012181c, json!([s5(self.t(0x1a2e, 5)?)]));
-        r.call(0x80066224, json!([]));
-        r.call(0x80115d9c, json!([]));
-        r.call(0x8002b070, json!([0x2400]));
+        r.call(0x8002b2e8, json!([0x2400]));
+        r.call(0x80116e18, json!([s5(self.t(0x19ea, 5)?)]));
+        r.call(0x80116098, json!([]));
+        r.call(0x8011616c, json!([bits3(p)]));
+        r.call(0x80115f68, json!([o.angles, 0]));
+        r.call(0x80066820, json!([0xff, bits3(p), b(o.radius.0)]));
+        r.call(0x800665a4, json!([bits3(p), o.angles]));
+        r.call(0x80121b64, json!([s5(self.t(0x1a2e, 5)?)]));
+        r.call(0x8006648c, json!([]));
+        r.call(0x801160e4, json!([]));
+        r.call(0x8002b2d8, json!([0x2400]));
         Ok(())
     }
     /// +0x1A58: free the collision object (task +0x40) and its model copy.
@@ -243,36 +242,36 @@ impl<'a> Display<'a> {
             return;
         }
         if d.model {
-            r.call(0x80022f84, json!(["task", "object"]));
-            r.call(0x801194e0, json!(["model"]));
+            r.call(0x800231cc, json!(["task", "object"]));
+            r.call(0x80119828, json!(["model"]));
             r.write("object+4".into(), json!(0));
         }
-        r.call(0x801194e0, json!(["object"]));
+        r.call(0x80119828, json!(["object"]));
         r.write("task+0x40".into(), json!(0));
     }
     /// +0x25BC for a meteor's work (+6 timer, +8 angles, +0x14 position).
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn meteor(&self, r: &mut Rec, m: &Meteor) -> Result<()> {
-        r.call(0x80116ad0, json!([s5(self.t(0x25d6, 5)?)]));
-        r.call(0x80115d50, json!([]));
-        r.call(0x80115e24, json!([bits3(v3f(m.position))]));
-        r.call(0x80115c20, json!([m.angles, 0]));
+        r.call(0x80116e18, json!([s5(self.t(0x25d6, 5)?)]));
+        r.call(0x80116098, json!([]));
+        r.call(0x8011616c, json!([bits3(v3f(m.position))]));
+        r.call(0x80115f68, json!([m.angles, 0]));
         let model = self.ptr(self.t(0x264e, 5)? + 4)?;
         if m.timer != 0 {
             let sin = m.sin.0;
-            r.call(0x80112050, json!([m.timer as u32 * 0x500, b(sin)]));
+            r.call(0x80112398, json!([m.timer as u32 * 0x500, b(sin)]));
             let c = self.k(0x260e)?;
             // fcmpo + bge: keep the sine unless it is below the floor.
             let f1 = if sin < c { c } else { sin };
             r.call(
-                0x80033248,
+                0x800334b0,
                 json!([0xffff_ffffu32, 0xffff_2020u32, b(f1), m.color]),
             );
             self.tinted(r, model, m.color)?;
         } else {
             self.draw_chunk(r, model)?;
         }
-        r.call(0x80115d9c, json!([]));
+        r.call(0x801160e4, json!([]));
         Ok(())
     }
     /// +0x91A8 over the debris pieces in list order.
@@ -281,7 +280,7 @@ impl<'a> Display<'a> {
         let fade = self.k(0x91de)?;
         let restore = self.k(0x91d6)?;
         let alpha = self.k(0x91e6)?;
-        r.call(0x80115d50, json!([]));
+        r.call(0x80116098, json!([]));
         for p in &d.pieces {
             let object = || {
                 p.object
@@ -295,15 +294,15 @@ impl<'a> Display<'a> {
             let life = p.life.0;
             // fcmpo + bge: NaN life is not fading.
             let low = life < fade;
-            r.call(0x80116ad0, json!([p.texlist]));
-            r.call(0x80115044, json!([0, bits3(v3f(p.position))]));
-            r.call(0x80115c20, json!([p.angles, 0]));
+            r.call(0x80116e18, json!([p.texlist]));
+            r.call(0x8011538c, json!([0, bits3(v3f(p.position))]));
+            r.call(0x80115f68, json!([p.angles, 0]));
             if low {
-                r.call(0x8002b09c, json!([]));
-                r.call(0x8002b0f4, json!([]));
-                r.call(0x8002b070, json!([0x220]));
-                r.call(0x8002b080, json!([0x810]));
-                r.call(0x80121580, json!([0xff, 0xa00]));
+                r.call(0x8002b304, json!([]));
+                r.call(0x8002b35c, json!([]));
+                r.call(0x8002b2d8, json!([0x220]));
+                r.call(0x8002b2e8, json!([0x810]));
+                r.call(0x801218c8, json!([0xff, 0xa00]));
                 r.call(0x800156fc, json!([b(life), b(fade), b(fade), b(fade)]));
             }
             let c = if gc {
@@ -311,9 +310,9 @@ impl<'a> Display<'a> {
             } else {
                 self.center(object()? + 8)?
             };
-            r.call(0x80115890, json!([0, bits3([-c[0], -c[1], -c[2]])]));
+            r.call(0x80115bd8, json!([0, bits3([-c[0], -c[1], -c[2]])]));
             if p.flags & 0x80000 != 0 {
-                r.call(0x80024a70, json!([3]));
+                r.call(0x80024cb8, json!([3]));
             }
             if p.flags & 0x2000 != 0 && low {
                 let a = fctiwz(alpha * life).clamp(0, 0xff) as u32;
@@ -325,30 +324,30 @@ impl<'a> Display<'a> {
                 }
             } else {
                 if gc {
-                    r.call(0x80121894, json!([s5(model()?)]));
+                    r.call(0x80121bdc, json!([s5(model()?)]));
                 } else if p.flags & 0x10000 != 0 {
-                    r.call(0x8011dbd8, json!([s5(object()?)]));
+                    r.call(0x8011df20, json!([s5(object()?)]));
                 } else {
                     self.draw_chunk(r, object()?)?;
                 }
-                r.call(0x801176b0, json!([0, 8]));
-                r.call(0x801176b0, json!([1, 6]));
+                r.call(0x801179f8, json!([0, 8]));
+                r.call(0x801179f8, json!([1, 6]));
             }
             if p.flags & 0x80000 != 0 {
-                r.call(0x80024a70, json!([d.game_byte as i32 as u32]));
+                r.call(0x80024cb8, json!([d.game_byte as i32 as u32]));
             }
             if low {
                 r.call(
                     0x800156fc,
                     json!([b(restore), b(restore), b(restore), b(restore)]),
                 );
-                r.call(0x8002b0e0, json!([]));
-                r.call(0x8002b090, json!([]));
+                r.call(0x8002b348, json!([]));
+                r.call(0x8002b2f8, json!([]));
             }
-            r.call(0x80115d9c, json!([]));
-            r.call(0x80115d50, json!([]));
+            r.call(0x801160e4, json!([]));
+            r.call(0x80116098, json!([]));
         }
-        r.call(0x80115d9c, json!([]));
+        r.call(0x801160e4, json!([]));
         Ok(())
     }
     /// One spinning background object (+8 position, +4 model) for BgExec.
@@ -363,17 +362,17 @@ impl<'a> Display<'a> {
     ) -> Result<()> {
         let model = self.ptr(obj + 4)?;
         let c = self.center(model + 8)?;
-        r.call(0x80115e24, json!([bits3(self.center(obj + 8)?)]));
-        r.call(0x80115890, json!([0, bits3(c)]));
+        r.call(0x8011616c, json!([bits3(self.center(obj + 8)?)]));
+        r.call(0x80115bd8, json!([0, bits3(c)]));
         r.call(
-            0x80115918,
+            0x80115c60,
             json!([0, rates[0].wrapping_mul(frame).wrapping_add(offset)]),
         );
-        r.call(0x801154e0, json!([0, rates[1].wrapping_mul(frame)]));
-        r.call(0x80114e30, json!([0, bits3([scale; 3])]));
-        r.call(0x80115890, json!([0, bits3([-c[0], -c[1], -c[2]])]));
+        r.call(0x80115828, json!([0, rates[1].wrapping_mul(frame)]));
+        r.call(0x80115178, json!([0, bits3([scale; 3])]));
+        r.call(0x80115bd8, json!([0, bits3([-c[0], -c[1], -c[2]])]));
         self.draw_chunk(r, model)?;
-        r.call(0x80115d9c, json!([]));
+        r.call(0x801160e4, json!([]));
         Ok(())
     }
     /// +0x312C, BgExec's display.
@@ -387,38 +386,38 @@ impl<'a> Display<'a> {
         let step = f5(0x31b6)?;
         let (k1d0, k1d4, k1d8) = (self.k(0x31f2)?, self.k(0x321a)?, self.k(0x323a)?);
         let cam = v3f(g.camera);
-        r.call(0x80115d50, json!([]));
-        r.call(0x80116ad0, json!([s5(self.t(0x31aa, 5)?)]));
-        r.call(0x80110ef8, json!([b(cam[0] / step), b(g.floor.0)]));
+        r.call(0x80116098, json!([]));
+        r.call(0x80116e18, json!([s5(self.t(0x31aa, 5)?)]));
+        r.call(0x80111240, json!([b(cam[0] / step), b(g.floor.0)]));
         let mut v = [step * g.floor.0 - k1d0 * step, g.bss8.0, k1d4];
         let ring = f5(0x3232)?;
         let tile = s5(self.t(0x3242, 5)?);
         for _ in 0..6 {
-            r.call(0x80115e24, json!([bits3(v)]));
-            r.call(0x80114e30, json!([0, bits3([ring, k1d8, ring])]));
-            r.call(0x8011de34, json!([tile]));
-            r.call(0x80115d9c, json!([]));
-            r.call(0x80115d50, json!([]));
+            r.call(0x8011616c, json!([bits3(v)]));
+            r.call(0x80115178, json!([0, bits3([ring, k1d8, ring])]));
+            r.call(0x8011e17c, json!([tile]));
+            r.call(0x801160e4, json!([]));
+            r.call(0x80116098, json!([]));
             v[0] += step;
         }
-        r.call(0x8011bf74, json!([]));
-        r.call(0x8011bfc8, json!([]));
-        r.call(0x80115e24, json!([bits3(cam)]));
+        r.call(0x8011c2bc, json!([]));
+        r.call(0x8011c310, json!([]));
+        r.call(0x8011616c, json!([bits3(cam)]));
         for (tex, y, sc, obj) in [
             (0x32ca, f5(0x32e6)?, 0x32fa, 0x331e),
             (0x3332, g.bss4.0, 0x335a, 0x3376),
         ] {
             let s = f5(sc)?;
-            r.call(0x80115d50, json!([]));
-            r.call(0x80116ad0, json!([s5(self.t(tex, 5)?)]));
-            r.call(0x80115890, json!([0, bits3([k1d4, y, k1d4])]));
-            r.call(0x80114e30, json!([0, bits3([s, k1d8, s])]));
-            r.call(0x8011de34, json!([s5(self.t(obj, 5)?)]));
-            r.call(0x80115d9c, json!([]));
+            r.call(0x80116098, json!([]));
+            r.call(0x80116e18, json!([s5(self.t(tex, 5)?)]));
+            r.call(0x80115bd8, json!([0, bits3([k1d4, y, k1d4])]));
+            r.call(0x80115178, json!([0, bits3([s, k1d8, s])]));
+            r.call(0x8011e17c, json!([s5(self.t(obj, 5)?)]));
+            r.call(0x801160e4, json!([]));
         }
         let scale = f5(0x3406)?;
-        r.call(0x80115d50, json!([]));
-        r.call(0x80116ad0, json!([s5(self.t(0x338a, 5)?)]));
+        r.call(0x80116098, json!([]));
+        r.call(0x80116e18, json!([s5(self.t(0x338a, 5)?)]));
         self.bg_spinner(
             r,
             self.t(0x3396, 5)?,
@@ -427,25 +426,25 @@ impl<'a> Display<'a> {
             0x3000,
             scale,
         )?;
-        r.call(0x80115d50, json!([]));
-        r.call(0x80116ad0, json!([s5(self.t(0x3456, 5)?)]));
+        r.call(0x80116098, json!([]));
+        r.call(0x80116e18, json!([s5(self.t(0x3456, 5)?)]));
         // The last spinner is not popped before the engine call.
         let obj = self.t(0x3462, 5)?;
         let model = self.ptr(obj + 4)?;
         let c = self.center(model + 8)?;
-        r.call(0x80115e24, json!([bits3(self.center(obj + 8)?)]));
-        r.call(0x80115890, json!([0, bits3(c)]));
+        r.call(0x8011616c, json!([bits3(self.center(obj + 8)?)]));
+        r.call(0x80115bd8, json!([0, bits3(c)]));
         r.call(
-            0x80115918,
+            0x80115c60,
             json!([0, w5(0x348e)?.wrapping_mul(g.frame).wrapping_add(0x3000)]),
         );
-        r.call(0x801154e0, json!([0, w5(0x34ae)?.wrapping_mul(g.frame)]));
-        r.call(0x80114e30, json!([0, bits3([scale; 3])]));
-        r.call(0x80115890, json!([0, bits3([-c[0], -c[1], -c[2]])]));
+        r.call(0x80115828, json!([0, w5(0x34ae)?.wrapping_mul(g.frame)]));
+        r.call(0x80115178, json!([0, bits3([scale; 3])]));
+        r.call(0x80115bd8, json!([0, bits3([-c[0], -c[1], -c[2]])]));
         self.draw_chunk(r, model)?;
-        r.call(0x80115a80, json!([2]));
-        r.call(0x8011bf68, json!([]));
-        r.call(0x8011bfc8, json!([]));
+        r.call(0x80115dc8, json!([2]));
+        r.call(0x8011c2b0, json!([]));
+        r.call(0x8011c310, json!([]));
         Ok(())
     }
 
@@ -481,7 +480,7 @@ impl<'a> Display<'a> {
                 .map(|i| ((h[2 * i] as u32) << 16) | h[2 * i + 1] as u32)
                 .collect();
             r.call(
-                0x8011e59c,
+                0x8011e8e4,
                 json!([
                     [
                         b(s[0]),
@@ -500,11 +499,11 @@ impl<'a> Display<'a> {
                 ]),
             );
         };
-        r.call(0x8011bf74, json!([]));
-        r.call(0x8011bfc8, json!([]));
-        r.call(0x80116ad0, json!([tex]));
-        r.call(0x801176b0, json!([0, 8]));
-        r.call(0x801176b0, json!([1, 6]));
+        r.call(0x8011c2bc, json!([]));
+        r.call(0x8011c310, json!([]));
+        r.call(0x80116e18, json!([tex]));
+        r.call(0x801179f8, json!([0, 8]));
+        r.call(0x801179f8, json!([1, 6]));
         let w = &g.work;
         if w.mode != 3 {
             let n = fctiwz(a84 + a84 * w.start.0) as i8 as i32;
@@ -600,25 +599,25 @@ impl<'a> Display<'a> {
             }
             r.call(0x800156fc, json!([b(a80), b(a80), b(a80), b(a80)]));
         }
-        r.call(0x8011bf68, json!([]));
-        r.call(0x8011bfc8, json!([]));
+        r.call(0x8011c2b0, json!([]));
+        r.call(0x8011c310, json!([]));
         Ok(())
     }
 
     /// +0x20DD4
     fn title_begin(&self, r: &mut Rec, texlist: u32) {
-        r.call(0x8011bf74, json!([]));
-        r.call(0x8011bfc8, json!([]));
-        r.call(0x80117938, json!([0]));
-        r.call(0x801176b0, json!([0, 8]));
-        r.call(0x801176b0, json!([1, 6]));
-        r.call(0x80116ad0, json!([texlist]));
+        r.call(0x8011c2bc, json!([]));
+        r.call(0x8011c310, json!([]));
+        r.call(0x80117c80, json!([0]));
+        r.call(0x801179f8, json!([0, 8]));
+        r.call(0x801179f8, json!([1, 6]));
+        r.call(0x80116e18, json!([texlist]));
     }
     /// +0x20E28
     fn title_end(&self, r: &mut Rec) {
-        r.call(0x80117938, json!([0x2000]));
-        r.call(0x8011bf68, json!([]));
-        r.call(0x8011bfc8, json!([]));
+        r.call(0x80117c80, json!([0x2000]));
+        r.call(0x8011c2b0, json!([]));
+        r.call(0x8011c310, json!([]));
     }
     fn quad(&self, pc: u32) -> Result<[u32; 24]> {
         let at = self.t(pc, 4)?;
@@ -649,7 +648,7 @@ impl<'a> Display<'a> {
             v[4] = b(f32::from_bits(v[4]) * g.sy.0);
             v[5] = g.color;
         }
-        r.call(0x8011c1c0, json!([q.to_vec(), 4, g.code, 1]));
+        r.call(0x8011c508, json!([q.to_vec(), 4, g.code, 1]));
         if t.state.parent.is_some_and(|p| p.last) {
             self.title_end(r);
         }
@@ -683,7 +682,7 @@ impl<'a> Display<'a> {
                 .line
                 .get(k as usize)
                 .ok_or_else(|| Error::invalid("window line shorter than its count"))?;
-            r.call(0x8011c1c0, json!([q.to_vec(), 4, code, 1]));
+            r.call(0x8011c508, json!([q.to_vec(), 4, code, 1]));
             for v in q.chunks_mut(6) {
                 v[0] = b(f32::from_bits(v[0]) + step);
             }
@@ -717,10 +716,10 @@ pub struct Meteor {
     pub timer: u16,
     pub angles: [i32; 3],
     pub position: [F; 3],
-    /// 0x80112050 result for timer x 0x500.
+    /// 0x80112398 result for timer x 0x500.
     #[serde(default = "zero")]
     pub sin: F,
-    /// 0x80033248 result.
+    /// 0x800334b0 result.
     #[serde(default)]
     pub color: u32,
 }
@@ -746,18 +745,18 @@ pub struct Piece {
 pub struct Debris {
     /// The list from section 6 +0x63C, following +0x4C.
     pub pieces: Vec<Piece>,
-    /// Signed byte 0x803AD526.
+    /// Signed byte 0x803ad926.
     pub game_byte: i8,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Background {
-    /// Signed game byte +0x3D and the screen index 0x803AD6D0.
+    /// Signed game byte +0x3D and the screen index 0x803adad0.
     pub game_byte: i8,
     pub screen: i32,
-    /// The camera position the 0x80174F98 table gives for the screen.
+    /// The camera position the 0x80175378 table gives for the screen.
     pub camera: [F; 3],
-    /// 0x80110EF8 result.
+    /// 0x80111240 result.
     pub floor: F,
     /// Section 6 +4 and +8.
     pub bss4: F,

@@ -3,7 +3,7 @@
 //! window around player 1 are moved by a whole period along X and marked for
 //! respawn, so rings and meteors keep reappearing ahead of the runners.
 //! Engine state (players, SET status entries, the game pointer at
-//! 0x803AD5D0) is an input; the one engine call is recorded.
+//! 0x803ad9d0) is an input; the one engine call is recorded.
 use crate::duel_platform;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ pub fn object_flags(rel_bytes: &[u8], c: &StageConstants) -> Result<Vec<i16>> {
         .collect()
 }
 
-/// One engine SET status entry (16 bytes at 0x801F5568 + 16 i).
+/// One engine SET status entry (16 bytes at 0x801f5968 + 16 i).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SetEntry {
@@ -71,7 +71,7 @@ pub struct SetEntry {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct StageFrame {
-    /// 0x803AD5D0 is non-null and its +0xC word is zero.
+    /// 0x803ad9d0 is non-null and its +0xC word is zero.
     pub game_ready: bool,
     /// Player 1 and 2 object +0x14 (X) and +0x18 (Y); `null` for an empty slot.
     pub players: [Option<[f32; 2]>; 2],
@@ -89,7 +89,7 @@ pub fn step(c: &StageConstants, flags: &[i16], f: &mut StageFrame) -> Result<Vec
     {
         // fcmpo/bge: request the fall-out only when y < -100.
         if y < c.fall_y {
-            calls.push(json!({ "engine": "0x8003b694", "args": [0] }));
+            calls.push(json!({ "engine": "0x8003b8fc", "args": [0] }));
         }
     }
     let px = p1.ok_or_else(|| Error::invalid("SET wrap reads player 1"))?[0];

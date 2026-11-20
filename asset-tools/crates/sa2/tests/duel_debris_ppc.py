@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run the installed stage 42 debris manager and compare duel-debris.
 
-Usage: python duel_debris_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_debris_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes the module's spawn (+0x8308 and +0x8348), update (+0x888C), delete
 (+0x8820), wind query (+0x7558) and trail effect helpers (+0x1DFE0, +0x1E194)
 under Unicorn. Engine imports and the wind force callback are recording stubs
@@ -10,10 +10,10 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP,WIND=0x81000000,0x82000000,0x90000000,0x80f00000,0x80f00100
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -54,7 +54,7 @@ for (t,off),(m,s,a,k) in refs.items():
         struct.pack_into('>I',code,off,0x48000001|((val-(B+off))&0x3fffffc))
 page(B,len(code));u.mem_write(B,bytes(code))
 for a in imports|{STOP,WIND}:page(a,4);put(a,'I',0x4e800020)
-page(T,0x800000);page(0x801cbd88,0x100)
+page(T,0x800000);page(0x801cc168,0x100)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
 heap=[T+0x1000]
 def alloc(n):
@@ -65,27 +65,27 @@ calls=[];op={};rands=[];ctx={'allocs':0,'effects':[],'winds':[]}
 def ok():
     n=ctx['allocs'];ctx['allocs']+=1;return n not in op.get('failedAllocations',[])
 def hook(uc,pc,size,_):
-    if pc==0x80071ba4:
+    if pc==0x80071e0c:
         made=ok();assert (reg(3),reg(4),reg(5),reg(6))==(2,3,B+0x888c,S5+0xd590)
         calls.append(('task',made))
         if made:t=alloc(0x60);put(t+0x34,'I',alloc(0x40));uc.reg_write(R.UC_PPC_REG_3,t)
         else:uc.reg_write(R.UC_PPC_REG_3,0)
-    elif pc==0x801194b4:
+    elif pc==0x801197fc:
         assert (reg(3),reg(4))==(1,0x50);got=ok();calls.append(('alloc',got))
         uc.reg_write(R.UC_PPC_REG_3,alloc(0x50) if got else 0)
-    elif pc==0x80115d50:calls.append(('push',))
-    elif pc==0x8011509c:calls.append(('unit',reg(3)))
-    elif pc==0x80115044:calls.append(('translate',vec(reg(4))))
-    elif pc in (0x80115560,0x801154e0,0x80115918):calls.append(('rot',pc,struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
-    elif pc==0x80114bc4:
+    elif pc==0x80116098:calls.append(('push',))
+    elif pc==0x801153e4:calls.append(('unit',reg(3)))
+    elif pc==0x8011538c:calls.append(('translate',vec(reg(4))))
+    elif pc in (0x801158a8,0x80115828,0x80115c60):calls.append(('rot',pc,struct.unpack('>i',struct.pack('>I',reg(4)))[0]))
+    elif pc==0x80114f0c:
         calls.append(('calcPoint',vec(reg(4))))
         for i,v in enumerate(op['point']):put(reg(5)+4*i,'f',v)
-    elif pc==0x80115a80:calls.append(('popN',reg(3)))
-    elif pc==0x8010d940:v=rands.pop(0);calls.append(('rand',v));uc.reg_write(R.UC_PPC_REG_3,v)
-    elif pc==0x801194e0:calls.append(('free',))
-    elif pc==0x80071888:calls.append(('freeTask',))
-    elif pc==0x800e254c:calls.append(('splash',vec(reg(3)),vec(reg(4)),fbits(1),fbits(2)))
-    elif pc==0x80032910:
+    elif pc==0x80115dc8:calls.append(('popN',reg(3)))
+    elif pc==0x8010dc88:v=rands.pop(0);calls.append(('rand',v));uc.reg_write(R.UC_PPC_REG_3,v)
+    elif pc==0x80119828:calls.append(('free',))
+    elif pc==0x80071af0:calls.append(('freeTask',))
+    elif pc==0x800e2828:calls.append(('splash',vec(reg(3)),vec(reg(4)),fbits(1),fbits(2)))
+    elif pc==0x80032b78:
         made=ok();calls.append(('effect',reg(3)-S5,made))
         if made:e=alloc(0x40);ctx['effects'].append(e);uc.reg_write(R.UC_PPC_REG_3,e)
         else:uc.reg_write(R.UC_PPC_REG_3,0)
@@ -93,7 +93,7 @@ def hook(uc,pc,size,_):
         wr=ctx['winds'].pop(0);buf=reg(5);put(buf,'I',wr['flags'])
         for i in range(3):put(buf+4+4*i,'f',wr['vector'][i]);put(buf+0x10+4*i,'f',wr['direction'][i])
         calls.append(('wind',wr['flags'],tuple(map(fb,wr['vector'])),tuple(map(fb,wr['direction']))))
-    elif pc==0x80114eac:
+    elif pc==0x801151f4:
         calls.append(('scalor',vec(reg(3))));setf(1,ctx['length'])
 for a in imports|{WIND}:u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 force=alloc(0x50);put(force+0x38,'I',WIND);put(S6+0x628,'I',force)
@@ -112,7 +112,7 @@ def run(ops):
         op.clear();op.update(o);calls.clear();ctx['allocs']=0;ctx['effects']=[]
         u.reg_write(R.UC_PPC_REG_1,T+0x7f0000);u.reg_write(R.UC_PPC_REG_LR,STOP)
         if o['call']=='spawn':
-            put(0x801cbd88+0x37,'b',int(o['paused']));pos,ang,vel=alloc(12),alloc(12),alloc(12)
+            put(0x801cc168+0x37,'b',int(o['paused']));pos,ang,vel=alloc(12),alloc(12),alloc(12)
             for i in range(3):put(pos+4*i,'f',o['position'][i]);put(ang+4*i,'i',o['angles'][i]);put(vel+4*i,'f',o['velocity'][i])
             u.reg_write(R.UC_PPC_REG_3,pos);u.reg_write(R.UC_PPC_REG_4,ang);u.reg_write(R.UC_PPC_REG_5,vel);setf(1,o['floorY'])
             if o['spin'] is None:
@@ -126,7 +126,7 @@ def run(ops):
         else:
             t=get(S6+0x638,'I');assert t;u.reg_write(R.UC_PPC_REG_3,t)
             if o['call']=='update':
-                put(0x801cbd88+0x37,'b',int(o['paused']));ctx['winds']=list(o['wind'])
+                put(0x801cc168+0x37,'b',int(o['paused']));ctx['winds']=list(o['wind'])
                 ctx['length']=o['wind'][0]['length'] if o['wind'] else 0.0
                 entry=0x888c
             else:entry=0x8820
@@ -143,20 +143,20 @@ def rust(cs):
         if 'windQuery' in c:q=c['windQuery'];o.append(('wind',q['flags'],F(q['vector']),F(q['direction'])));continue
         if 'trail' in c:continue
         e=int(c['engine'],16);a=c['args']
-        if e==0x80071ba4:o.append(('task',a['returnedNonzero']))
-        elif e==0x801194b4:o.append(('alloc',a['returnedNonzero']))
-        elif e==0x80115d50:o.append(('push',))
-        elif e==0x8011509c:o.append(('unit',a[0]))
-        elif e==0x80115044:o.append(('translate',F(a['translate'])))
-        elif e in (0x80115560,0x801154e0,0x80115918):o.append(('rot',e,a[1]))
-        elif e==0x80114bc4:o.append(('calcPoint',F(a['point'])))
-        elif e==0x80115a80:o.append(('popN',a[0]))
-        elif e==0x8010d940:o.append(('rand',a['returned']))
-        elif e==0x801194e0:o.append(('free',))
-        elif e==0x80071888:o.append(('freeTask',))
-        elif e==0x800e254c:o.append(('splash',F(a['position']),F(a['vector']),fb(a['scale']),fb(a['size'])))
-        elif e==0x80032910:o.append(('effect',int(a['descriptor'][5:],16),a['returnedNonzero']))
-        elif e==0x80114eac:o.append(('scalor',F(a['vector'])))
+        if e==0x80071e0c:o.append(('task',a['returnedNonzero']))
+        elif e==0x801197fc:o.append(('alloc',a['returnedNonzero']))
+        elif e==0x80116098:o.append(('push',))
+        elif e==0x801153e4:o.append(('unit',a[0]))
+        elif e==0x8011538c:o.append(('translate',F(a['translate'])))
+        elif e in (0x801158a8,0x80115828,0x80115c60):o.append(('rot',e,a[1]))
+        elif e==0x80114f0c:o.append(('calcPoint',F(a['point'])))
+        elif e==0x80115dc8:o.append(('popN',a[0]))
+        elif e==0x8010dc88:o.append(('rand',a['returned']))
+        elif e==0x80119828:o.append(('free',))
+        elif e==0x80071af0:o.append(('freeTask',))
+        elif e==0x800e2828:o.append(('splash',F(a['position']),F(a['vector']),fb(a['scale']),fb(a['size'])))
+        elif e==0x80032b78:o.append(('effect',int(a['descriptor'][5:],16),a['returnedNonzero']))
+        elif e==0x801151f4:o.append(('scalor',F(a['vector'])))
         else:raise AssertionError(c)
     o+=[('trail',F(t['position']),F(t['velocity']),fb(t['scale']),t['angle0'],t['angle2C'],fb(t['size']),fb(t['add18'])) for t in (x['trail'] for x in cs if 'trail' in x)]
     return o
