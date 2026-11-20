@@ -216,9 +216,13 @@ fn arq_moves_bytes_now_and_calls_back_later() {
     m.w32(0x8000_4000, 0);
     m.load(0x8000_7000, &[9, 8, 7, 6]);
     // ARQPostRequest(req, owner, type 0 (MRAM to ARAM), prio, src, dst, len, cb).
-    c.r[3..11].copy_from_slice(&[0x8000_6100, 0, 0, 0, 0x8000_7000, 0x3_0000, 4, 0x8000_5000]);
+    c.r[3..11].copy_from_slice(&[0x8000_6100, 5, 0, 1, 0x8000_7000, 0x3_0000, 4, 0x8000_5000]);
     call(&mut c, &mut m, audio::ARQ_POST_REQUEST);
     assert_eq!(m.r32(0x8000_4000), 0, "no callback inside the post");
+    // The request holds what was posted, as ARQPostRequest stores it: the ADX
+    // stream's callback finds its stream and channel from the owner.
+    let req: Vec<u32> = (0..8).map(|i| m.r32(0x8000_6100 + 4 * i)).collect();
+    assert_eq!(req, [0, 5, 0, 1, 0x8000_7000, 0x3_0000, 4, 0x8000_5000]);
     c.r[3..7].copy_from_slice(&[1, 0x8000_8000, 0x3_0000, 4]);
     call(&mut c, &mut m, audio::AR_START_DMA);
     assert_eq!(m.r32(0x8000_8000), 0x0908_0706);
