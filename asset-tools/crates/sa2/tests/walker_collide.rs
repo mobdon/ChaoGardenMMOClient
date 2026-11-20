@@ -1,6 +1,9 @@
 //! Compare `walker_collide` with main.dol (tests/walker_collide_ppc.py).
+use sa2_asset_tools::land_contact::ContactHit;
+use sa2_asset_tools::land_nodes::Candidate;
 use sa2_asset_tools::walker_collide::{
-    apply_surface, sphere_lift, LiftInput, PhysicsRow, SurfaceWork,
+    apply_surface, slide_airborne, slide_grounded, sphere_lift, LiftInput, PhysicsRow, SlideInput,
+    SurfaceWork,
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -86,5 +89,58 @@ fn matches_main_dol() {
         ];
         let want: Vec<u32> = c["after"].as_array().unwrap().iter().map(u).collect();
         assert_eq!(got[..], want[..], "{c}");
+    }
+    let r74 = &v["row74"];
+    for c in v["slide"].as_array().unwrap() {
+        let i = SlideInput {
+            task_mode: c["mode"].as_i64().unwrap() as i8,
+            character: c["ch"].as_i64().unwrap() as i8,
+            f134: f(&c["f134"]),
+            row0_74: f(&r74[0]),
+            row1_74: f(&r74[1]),
+            entry_has_task: c["task"].as_bool().unwrap(),
+            center: v3(&c["center"]),
+            up: v3(&c["up"]),
+            global: v3(&c["global"]),
+        };
+        let hits: Vec<ContactHit> = c["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| ContactHit {
+                candidate: Candidate { node: 0, tri: 0 },
+                angles: (0, 0),
+                normal: [0.0; 3],
+                facing: v3(&h[0]),
+                foot: [0.0; 3],
+                head: v3(&h[1]),
+                along: [0.0; 3],
+                across: [0.0; 3],
+                start_height: 0.0,
+                end_height: 0.0,
+            })
+            .collect();
+        let mut motion = v3(&c["motion"]);
+        let mut vel = v3(&c["vel"]);
+        let r = if c["air"].as_bool().unwrap() {
+            slide_airborne(&i, &hits, &mut motion, &mut vel)
+        } else {
+            slide_grounded(&i, &hits, &mut motion, &mut vel, f(&c["f26"]))
+        };
+        assert_eq!(
+            (r.hit as u64, r.stuck as u64),
+            (c["ret"].as_u64().unwrap(), c["stuck"].as_u64().unwrap()),
+            "{c}"
+        );
+        assert_eq!(
+            motion.map(f32::to_bits),
+            v3(&c["motion_after"]).map(f32::to_bits),
+            "{c}"
+        );
+        assert_eq!(
+            vel.map(f32::to_bits),
+            v3(&c["vel_after"]).map(f32::to_bits),
+            "{c}"
+        );
     }
 }

@@ -2,8 +2,12 @@
 //! (GSNE8P main.dol), ported instruction by instruction and checked against
 //! main.dol by tests/walker_collide.rs.
 use crate::{
-    land_contact::unit_vector, land_nodes::nj_scalor, ninja_matrix::Vec3, ninja_trig::fnmsubs,
-    ninja_vector::inner_product,
+    land_contact::{unit_vector, ContactHit},
+    land_nodes::nj_scalor,
+    land_select::inline_sqrt,
+    ninja_matrix::Vec3,
+    ninja_trig::{fmadds, fnmsubs},
+    ninja_vector::{inner_product, vector_angle},
 };
 
 const ZERO: f32 = 0.0; // r2-0x75F8
@@ -182,4 +186,206 @@ pub fn apply_surface(w: &mut SurfaceWork, pos_y: f32, attr: u32, stage: i32, row
     } else {
         ONE
     };
+}
+
+/// fn_80027C2C: the distance between two points (inline Gekko square root).
+pub fn point_distance(a: Vec3, b: Vec3) -> f32 {
+    let dy = a[1] - b[1];
+    let dx = a[0] - b[0];
+    let dz = a[2] - b[2];
+    let d = fmadds(dz, dz, fmadds(dx, dx, dy * dy));
+    if d > ZERO {
+        inline_sqrt(d)
+    } else {
+        d
+    }
+}
+
+const NEAR_LIMIT: f32 = 1000.0; // r2-0x7554
+const WALL_FACING: f32 = f32::from_bits(0xbe4c_cccd); // r2-0x7568, -0.2
+/// VectorAngle above which a hit is not floor (when the global vector also
+/// says so).
+const FLOOR_ANGLE: i32 = 0x2c00;
+const WALL_ANGLE: i32 = 0x7000;
+
+/// What fn_800414F0 / fn_80041984 need besides the hits.
+#[derive(Debug, Clone, Copy)]
+pub struct SlideInput {
+    /// Task byte +0 (the mode).
+    pub task_mode: i8,
+    /// Player byte +1 and +0x134.
+    pub character: i8,
+    pub f134: f32,
+    /// PhysicsArray rows 0 and 1, +0x74.
+    pub row0_74: f32,
+    pub row1_74: f32,
+    /// Whether the land entry has a task (dynamic land).
+    pub entry_has_task: bool,
+    /// Query center (+4) and up vector (+0x1C).
+    pub center: Vec3,
+    pub up: Vec3,
+    /// The global vector at 0x801E5624.
+    pub global: Vec3,
+}
+
+/// The outcome: the return value and whether r13-0x78F4 was set to 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlideResult {
+    pub hit: bool,
+    pub stuck: bool,
+}
+
+fn is_floor(i: &SlideInput, h: &ContactHit) -> (bool, i32) {
+    let ang = vector_angle(i.up, h.facing, None);
+    if ang <= FLOOR_ANGLE {
+        return (true, ang);
+    }
+    let gf = inner_product(i.global, h.facing);
+    (inner_product(i.global, i.up) > gf, ang)
+}
+
+/// The shared tail: mark the stuck flag on two or more distinct walls, stop
+/// a small character pressed by static walls, else clamp the motion to the
+/// nearest hit's distance.
+fn finish(
+    i: &SlideInput,
+    walls: i32,
+    near: Option<f32>,
+    clamp_on: bool,
+    motion: &mut Vec3,
+    vel: &mut Vec3,
+) -> SlideResult {
+    let mut r = SlideResult {
+        hit: false,
+        stuck: false,
+    };
+    if walls >= 2 && !(matches!(i.character, 0 | 1) && (0x4c..=0x52).contains(&i.task_mode)) {
+        r.stuck = true;
+    }
+    let small =
+        (i.character == 0 && i.f134 < i.row0_74) || (i.character == 1 && !(i.f134 >= i.row1_74));
+    if walls > 0 && small && !i.entry_has_task {
+        *motion = [ZERO; 3];
+        *vel = [ZERO; 3];
+        r.hit = true;
+        return r;
+    }
+    if clamp_on {
+        if let Some(d) = near {
+            if d < nj_scalor(*motion) {
+                *motion = if nj_scalor(*motion) == ZERO {
+                    [ZERO; 3]
+                } else {
+                    unit_vector(*motion).map(|c| c * d)
+                };
+                r.hit = true;
+            }
+        }
+    }
+    r
+}
+
+/// fn_800414F0 (grounded): sort this land entry's contact hits into floor
+/// and wall hits; two distinct walls set the stuck flag; the motion (+0x10
+/// of the query) is cut to the nearest floor hit's head distance.
+/// `wall_near_in` is the caller's f26, which the routine compares against
+/// before ever setting it.
+pub fn slide_grounded(
+    i: &SlideInput,
+    hits: &[ContactHit],
+    motion: &mut Vec3,
+    vel: &mut Vec3,
+    wall_near_in: f32,
+) -> SlideResult {
+    let mut floor_near = NEAR_LIMIT;
+    let mut wall_near = wall_near_in;
+    let (mut floors, mut walls) = (0, 0);
+    let (mut floor_at, mut wall_at): (Option<usize>, Option<usize>) = (None, None);
+    let mut dists = vec![];
+    for (k, h) in hits.iter().enumerate() {
+        let d = point_distance(h.head, i.center);
+        dists.push(d);
+        if is_floor(i, h).0 {
+            floors += 1;
+            if floor_near > d {
+                floor_near = d;
+                floor_at = Some(k);
+            }
+            continue;
+        }
+        let t = if nj_scalor(*motion) == ZERO {
+            *motion
+        } else {
+            unit_vector(*motion)
+        };
+        if inner_product(t, h.facing) < WALL_FACING {
+            let distinct = match wall_at {
+                None => true,
+                Some(w) => !(inner_product(h.facing, hits[w].facing) >= ONE),
+            };
+            if distinct {
+                walls += 1;
+            }
+            if wall_near > d {
+                wall_near = d;
+                wall_at = Some(k);
+            }
+        }
+    }
+    finish(
+        i,
+        walls,
+        floor_at.map(|k| dists[k]),
+        floors > 0,
+        motion,
+        vel,
+    )
+}
+
+/// fn_80041984 (airborne): like `slide_grounded`, but a wall is a non-floor
+/// hit within 0x7000 of the up vector that the motion runs into, and the
+/// motion is cut to the nearest wall hit.
+pub fn slide_airborne(
+    i: &SlideInput,
+    hits: &[ContactHit],
+    motion: &mut Vec3,
+    vel: &mut Vec3,
+) -> SlideResult {
+    let mut near = NEAR_LIMIT;
+    let mut walls = 0;
+    let mut at: Option<usize> = None;
+    let mut dists = vec![];
+    for (k, h) in hits.iter().enumerate() {
+        let d = point_distance(h.head, i.center);
+        dists.push(d);
+        let (floor, ang) = is_floor(i, h);
+        if floor {
+            continue;
+        }
+        let t = if nj_scalor(*motion) == ZERO {
+            *motion
+        } else {
+            unit_vector(*motion)
+        };
+        if ang < WALL_ANGLE && inner_product(t, h.facing) < ZERO {
+            let distinct = match at {
+                None => true,
+                Some(w) => !(inner_product(h.facing, hits[w].facing) >= ONE),
+            };
+            if distinct {
+                walls += 1;
+            }
+            if near > d {
+                near = d;
+                at = Some(k);
+            }
+        }
+    }
+    if walls == 0 {
+        return SlideResult {
+            hit: false,
+            stuck: false,
+        };
+    }
+    finish(i, walls, at.map(|k| dists[k]), true, motion, vel)
 }
