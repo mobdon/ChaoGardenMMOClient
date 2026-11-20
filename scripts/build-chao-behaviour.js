@@ -1,8 +1,9 @@
-// Select the native Chao clips that present server resident behaviours (sit,
-// sleep, play, reactions) from the local 279-clip library. Which native state
-// shows which behaviour is recorded in scripts/chao-behaviour-map.json. Every
-// row is checked against the local motion manifest by state index and native
-// name; the original hierarchy and every retained accessor byte is preserved.
+// Build the local native Chao motion library for server resident behaviour.
+// The server runs the ChaoMain behaviour port and publishes the native motion
+// state number (0..621), frame and link; the client plays that state's clip.
+// Every manifest state whose clip is in the local 279-clip library is kept,
+// with its table row, so no state is chosen by hand. The original hierarchy
+// and every retained accessor byte is preserved.
 // Output stays local: .local/imports/chao-behaviour.glb (+ proof JSON).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -13,18 +14,7 @@ const assetRoot = resolve(process.env.CHAO_ASSET_ROOT || '.');
 const sourceFile = '.local/imports/activity-motions/chao-actions.glb';
 const outputFile = '.local/imports/chao-behaviour.glb';
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-
-const map = JSON.parse(await readFile(new URL('./chao-behaviour-map.json', import.meta.url), 'utf8'));
-assert.equal(map.version, 1);
-const kinds = new Set(['idle', 'sit', 'sleep', 'play', 'happy', 'startled']);
-const phases = new Set(['enter', 'loop', 'exit']);
-const rows = map.clips.filter(row => row.nativeState !== null);
-assert.ok(rows.length, 'chao-behaviour-map.json has no confirmed native states yet.');
-for (const row of rows) {
-  assert.ok(kinds.has(row.kind), `Unknown kind ${row.kind}`);
-  assert.ok(phases.has(row.phase), `Unknown phase ${row.phase}`);
-  assert.ok(Number.isInteger(row.nativeState) && row.nativeState >= 0 && row.nativeState < 622);
-}
+const STATES = 622;
 
 const source = await readFile(resolve(assetRoot, sourceFile));
 assert.equal(source.readUInt32LE(0), 0x46546c67);
@@ -36,31 +26,29 @@ const library = JSON.parse(await readFile(resolve(assetRoot, '.local/imports/act
   .libraries.find(row => row.name === 'chao-actions');
 
 // Manifest table values are strings. Frames and speeds are decimal; the
-// transition speed is a signed 32-bit hex value. Absent StartFrame is 0 and
-// absent EndFrame is the clip end.
-function numericTable(raw = {}, frameRange = [0, 0]) {
-  const number = value => value === undefined ? undefined : Number.parseFloat(value);
-  const table = { StartFrame: number(raw.StartFrame) ?? 0, EndFrame: number(raw.EndFrame) ?? frameRange[1],
-    PlaySpeed: number(raw.PlaySpeed), LoopProperty: number(raw.LoopProperty), NextAnimation: number(raw.NextAnimation),
-    Pose: number(raw.Pose), TransitionSpeed: raw.TransitionSpeed === undefined ? undefined : (Number.parseInt(raw.TransitionSpeed, 16) | 0) };
-  for (const [key, value] of Object.entries(table)) if (value !== undefined) assert.ok(Number.isFinite(value), `${key} is not numeric.`);
+// transition speed is a signed 32-bit hex value. A missing field is 0 in the
+// native table (AL_motion_table), and a missing NextAnimation is -1.
+export function numericTable(raw = {}) {
+  const number = (value, fallback) => value === undefined ? fallback : Number.parseFloat(value);
+  const table = { StartFrame: number(raw.StartFrame, 0), EndFrame: number(raw.EndFrame, 0),
+    PlaySpeed: number(raw.PlaySpeed, 0), LoopProperty: number(raw.LoopProperty, 0), NextAnimation: number(raw.NextAnimation, -1),
+    Pose: number(raw.Pose, 0), TransitionSpeed: raw.TransitionSpeed === undefined ? 0 : (Number.parseInt(raw.TransitionSpeed, 16) | 0) };
+  for (const [key, value] of Object.entries(table)) assert.ok(Number.isFinite(value), `${key} is not numeric.`);
   return table;
 }
-const clips = [];
-for (const row of rows) {
-  const state = manifest.commonStates.find(entry => entry.index === row.nativeState);
-  assert.ok(state, `State ${row.nativeState} missing from the manifest.`);
-  assert.equal(state.nativeName, row.nativeName, `State ${row.nativeState} is ${state.nativeName}, not ${row.nativeName}.`);
+const animationNames = new Set(document.animations.map(animation => animation.name));
+const clips = [], missing = [];
+for (const state of manifest.commonStates) {
+  assert.ok(Number.isInteger(state.index) && state.index >= 0 && state.index < STATES, `Bad state ${state.index}`);
   const evidence = library.actions.find(action => action.name === state.nativeName);
-  assert.ok(evidence, `${state.nativeName} missing from conversion report.`);
+  if (!evidence || !animationNames.has(state.nativeName)) { missing.push(state.index); continue; }
   const nativeFile = `.local/extracted/activity-motions/${state.nativeFile}`;
   assert.equal(digest(await readFile(resolve(assetRoot, nativeFile))), evidence.sourceSha256);
-  clips.push({ kind: row.kind, phase: row.phase, loop: row.loop !== false, nativeState: row.nativeState,
-    nativeName: state.nativeName, nativeMotionLabel: state.nativeMotionLabel, nativeFile,
+  clips.push({ nativeState: state.index, nativeName: state.nativeName, nativeMotionLabel: state.nativeMotionLabel, nativeFile,
     sourceSha256: evidence.sourceSha256, frameRange: evidence.frameRange,
-    nativeTableProperties: state.tableProperties, tableProperties: numericTable(state.tableProperties, evidence.frameRange),
-    mapping: row.evidence ?? null });
+    nativeTableProperties: state.tableProperties, tableProperties: numericTable(state.tableProperties) });
 }
+assert.ok(clips.length, 'No native motion state has a clip in chao-actions.glb.');
 
 const names = [...new Set(clips.map(clip => clip.nativeName))];
 const selected = names.map(name => document.animations.find(animation => animation.name === name));
@@ -108,8 +96,8 @@ for (const skin of retained.skins || []) if (skin.inverseBindMatrices !== undefi
 for (const animation of retained.animations) for (const sampler of animation.samplers) { sampler.input = accessorMap.get(sampler.input); sampler.output = accessorMap.get(sampler.output); }
 for (const image of retained.images || []) if (image.bufferView !== undefined) image.bufferView = viewMap.get(image.bufferView);
 retained.buffers = [{ byteLength: length }];
-retained.asset.extras = { ...retained.asset.extras, chaoBehaviour: { version: 1, clips, referenceFps: 60, rules: map.rules,
-  note: 'Native Chao clips for server resident behaviours. The behaviour-to-state mapping is recorded in chao-behaviour-map.json; native controller selection is not ported.' } };
+retained.asset.extras = { ...retained.asset.extras, chaoBehaviour: { version: 2, clips, framesPerSecond: 60000 / 1001,
+  note: 'Native Chao motion states for the server ChaoMain behaviour port, keyed by native state number.' } };
 
 let encoded = Buffer.from(JSON.stringify(retained)); encoded = Buffer.concat([encoded, Buffer.alloc((-encoded.length) & 3, 0x20)]);
 let compact = Buffer.concat(parts); compact = Buffer.concat([compact, Buffer.alloc((-compact.length) & 3)]);
@@ -126,7 +114,7 @@ for (const [old, index] of viewMap) {
 await mkdir(resolve(assetRoot, '.local/imports'), { recursive: true });
 await writeFile(resolve(assetRoot, outputFile), output);
 const report = { version: 1, passed: true, source: sourceFile, sourceSha256: digest(source), output: outputFile, sha256: digest(output),
-  bytes: output.length, clipCount: clips.length, animations: names, clips: clips.map(({ kind, phase, nativeState, nativeName, nativeMotionLabel }) => ({ kind, phase, nativeState, nativeName, nativeMotionLabel })),
-  hierarchyRestAndGeometryPreserved: true, allRetainedBinaryViewsExact: true, referenceFps: 60 };
+  bytes: output.length, stateCount: clips.length, statesWithoutClip: missing, animations: names,
+  hierarchyRestAndGeometryPreserved: true, allRetainedBinaryViewsExact: true };
 await writeFile(resolve(assetRoot, '.local/imports/chao-behaviour-proof.json'), `${JSON.stringify(report, null, 2)}\n`);
 console.log(JSON.stringify(report, null, 2));

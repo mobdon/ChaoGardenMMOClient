@@ -446,12 +446,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         canvas.dataset.nativeAir = item.imported.jumpUp && item.imported.jumpDown ? 'native132-137-loaded' : 'unavailable';
       }
     });
-    // Native resident behaviour clips (sit, sleep, play...) are optional local
-    // imports; without them the server behaviour falls back to locomotion idle.
+    // Native motion states for the server's ChaoMain behaviour port are an
+    // optional local import; without them residents use locomotion.
     void loadLocalAsset('chao-behaviour').then(source => {
       if (source && !disposed && !item.root.isDisposed()) {
         attachNativeBehaviours(item.imported, source, locomotionPose);
-        canvas.dataset.nativeBehaviour = item.imported.behaviourCatalog.length ? `${item.imported.behaviourCatalog.length}-loaded` : 'unavailable';
+        canvas.dataset.nativeBehaviour = item.imported.behaviourCatalog.size ? `${item.imported.behaviourCatalog.size}-loaded` : 'unavailable';
       }
     });
     item.imported.skate = createShadowSkate(item.imported);
@@ -1447,10 +1447,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       item.absoluteY = Number.isFinite(data.groundY);
       item.heading = Number.isFinite(data.facing) ? data.facing : null;
       item.mech = data.mech || null;
-      // Server-chosen resident behaviour, with the local clock offset to
-      // estimate current server time between snapshots (presentation only).
-      item.behaviour = readBehaviour(data.watch);
-      if (Number.isFinite(next.serverTime)) item.serverClock = { serverTime: next.serverTime, observedAt: performance.now() };
+      // Server-run native behaviour: motion state, frame and face as of this
+      // snapshot, extrapolated locally until the next one (presentation only).
+      item.behaviour = readBehaviour(data.watch, performance.now());
       const previous = item.motionSample;
       if (!Number.isFinite(previous?.serverTime) || previous.zone !== data.zone || next.serverTime > previous.serverTime) {
         item.motionSample = observeSkateMotion(previous, data, next.serverTime, performance.now());
@@ -1599,9 +1598,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item.nativeVisualSpeed = movingPose ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
         const kinematics = { speed, visualSpeed: item.nativeVisualSpeed, grounded,
           jumpOffset: motion?.jumpOffset, verticalVelocity: motion?.verticalVelocity, fresh, swimming, mounted };
-        const serverNow = item.serverClock ? item.serverClock.serverTime + performance.now() - item.serverClock.observedAt : NaN;
-        const behaviourMotion = item.behaviour && grounded && imported.behaviourCatalog?.length
-          ? updateNativeBehaviour(imported, item.root, item.behaviour, { serverNow, speed: item.nativeVisualSpeed, fresh, mounted, swimming })
+        const behaviourMotion = item.behaviour && grounded && imported.behaviourCatalog?.size
+          ? updateNativeBehaviour(imported, item.root, item.behaviour, { now: performance.now(), fresh, mounted, swimming })
           : null;
         const groundMotion = grounded && !behaviourMotion
           ? updateNativeLocomotion(imported, imported.motionState, dt, kinematics) : null;
@@ -1613,7 +1611,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           footwear: item.gear?.footwear === 'shadow-air-shoes' && !!item.ownerGear?.footwear?.length,
         });
         const skating = skate?.diagnostics;
-        item.nativeMotion = behaviourMotion ? { mode: 'Behaviour', nativeState: behaviourMotion.nativeState, behaviour: behaviourMotion.key }
+        item.nativeMotion = behaviourMotion ? { mode: 'Behaviour', nativeState: behaviourMotion.nativeState, behaviour: behaviourMotion.fn }
           : groundMotion ?? updateNativeLocomotion(imported, imported.motionState, dt, {
             ...kinematics, grounded: !!skating?.coasting,
           });

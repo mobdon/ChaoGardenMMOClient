@@ -1,86 +1,82 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BEHAVIOUR_FACES, chooseClip, readBehaviour, readCatalog, registerChaoFaceApi, selectBehaviourMotion, updateNativeBehaviour } from '../src/chao-behaviour.js';
+import { FRAMES_PER_SECOND, advanceFrame, readBehaviour, readCatalog, registerChaoFaceApi, selectBehaviourMotion, updateNativeBehaviour } from '../src/chao-behaviour.js';
 
-const behaviour = (kind, phase = 'loop', extra = {}) => ({ kind, phase, variant: 0, startedAt: 1000, until: 9000,
-  phaseStartedAt: 1000, phaseUntil: 9000, rules: 'placeholder-tuning', ...extra });
+// Synthetic catalog for presentation tests only (not game data).
 const catalog = readCatalog({ chaoBehaviour: { clips: [
-  { kind: 'sit', phase: 'enter', nativeName: 'clip_sit_down', nativeState: 1, tableProperties: { StartFrame: 0, EndFrame: 10, PlaySpeed: .5 } },
-  { kind: 'sit', phase: 'loop', nativeName: 'clip_sit', nativeState: 2, tableProperties: { StartFrame: 0, EndFrame: 20, PlaySpeed: 1 } },
-  { kind: 'play', phase: 'loop', nativeName: 'clip_play_a', nativeState: 3 },
-  { kind: 'play', phase: 'loop', nativeName: 'clip_play_b', nativeState: 4 },
-  { kind: 'bogus', phase: 'loop', nativeName: 'x' },
+  { nativeState: 0, nativeName: 'clip_a', tableProperties: { StartFrame: 0, EndFrame: 20, PlaySpeed: 1, LoopProperty: 0 } },
+  { nativeState: 1, nativeName: 'clip_b', tableProperties: { StartFrame: 0, EndFrame: 10, PlaySpeed: 1, LoopProperty: 3 } },
+  { nativeState: 2, nativeName: 'clip_c', tableProperties: { StartFrame: 5, EndFrame: 15, PlaySpeed: 1, LoopProperty: 7 } },
+  { nativeState: 900, nativeName: 'out_of_range' },
 ] } });
+const watch = (motion, extra = {}) => ({ behaviour: { fn: 'ALBHV_Think', address: '0x47830', mode: 0,
+  motion: { num: 0, frame: 0, spd: 1, link: null, ...motion }, face: { eye: null, mouth: null },
+  rules: 'native-gsne8p-chaomain', ...extra } });
 
-test('malformed or legacy watch payloads are ignored', () => {
+test('malformed, legacy or placeholder payloads are ignored', () => {
   assert.equal(readBehaviour(null), null);
-  assert.equal(readBehaviour({ activity: 'idle' }), null, 'servers without behaviour keep legacy presentation');
-  assert.equal(readBehaviour({ behaviour: behaviour('dance') }), null);
-  assert.equal(readBehaviour({ behaviour: { ...behaviour('sit'), until: 'soon' } }), null);
-  assert.equal(readBehaviour({ behaviour: behaviour('sit', 'enter') }).phase, 'enter');
-  assert.equal(readBehaviour({ behaviour: { ...behaviour('sit'), variant: -3 } }).variant, 0);
-  assert.equal(catalog.length, 4, 'unknown kinds are dropped from the catalog');
+  assert.equal(readBehaviour({ activity: 'idle', behaviour: null }), null, 'no native data means locomotion');
+  assert.equal(readBehaviour({ behaviour: { kind: 'sit', phase: 'loop' } }), null, 'old placeholder shape is rejected');
+  assert.equal(readBehaviour(watch({ num: 622 })), null);
+  assert.equal(readBehaviour(watch({ frame: 'x' })), null);
+  assert.equal(readBehaviour(watch({ link: { target: 3, ratio: 'half', spd: .1 } })), null);
+  const b = readBehaviour(watch({ num: 1, link: { target: 2, ratio: .5, spd: .1, selfLoop: false } }, { face: { eye: 3, mouth: -1 } }), 42);
+  assert.deepEqual(b.motion.link, { target: 2, ratio: .5, spd: .1, selfLoop: false });
+  assert.deepEqual(b.face, { eye: 3, mouth: null });
+  assert.equal(b.receivedAt, 42);
+  assert.equal(catalog.size, 3, 'states outside 0..621 are dropped');
 });
 
-test('server variant picks the same clip for every observer and phases fall back to loop', () => {
-  assert.equal(chooseClip(catalog, behaviour('play', 'loop', { variant: 0 })).nativeName, 'clip_play_a');
-  assert.equal(chooseClip(catalog, behaviour('play', 'loop', { variant: 3 })).nativeName, 'clip_play_b');
-  assert.equal(chooseClip(catalog, behaviour('sit', 'exit')).nativeName, 'clip_sit', 'missing exit clip falls back to loop');
-  assert.equal(chooseClip(catalog, behaviour('wander')), null, 'wander always uses locomotion');
-  assert.equal(chooseClip(catalog, behaviour('sleep')), null, 'no native sleep clip means locomotion idle');
+test('frames extrapolate by the native mode between snapshots', () => {
+  assert.ok(Math.abs(FRAMES_PER_SECOND - 59.94) < .01);
+  assert.equal(advanceFrame(catalog.get(0), 18, 1, 4), 2, 'LOOP wraps');
+  assert.equal(advanceFrame(catalog.get(1), 8, 1, 4), 10, 'STOP holds its end');
+  assert.equal(advanceFrame(catalog.get(2), 13, 1, 4), 13, 'BACK ping-pongs');
+  const ms = 10 / FRAMES_PER_SECOND * 1000;
+  const shown = selectBehaviourMotion(catalog, readBehaviour(watch({ frame: 2 }), 0), { now: ms });
+  assert.ok(Math.abs(shown.frame - 12) < 1e-9);
+  const late = selectBehaviourMotion(catalog, readBehaviour(watch({ num: 1, frame: 0 }), 0), { now: 1e6 });
+  assert.equal(late.frame, 10, 'extrapolation is bounded and clamped');
 });
 
-test('native table timing samples enter once and loops the loop phase', () => {
-  const enter = selectBehaviourMotion(catalog, behaviour('sit', 'enter'), { serverNow: 1000 + 1000 / 60 * 8 });
-  assert.equal(enter.loop, false); assert.ok(Math.abs(enter.frame - 4) < 1e-9, 'PlaySpeed .5 at 60 reference frames');
-  const late = selectBehaviourMotion(catalog, behaviour('sit', 'enter'), { serverNow: 60000 });
-  assert.equal(late.frame, 10, 'enter holds its end frame');
-  const loop = selectBehaviourMotion(catalog, behaviour('sit'), { serverNow: 1000 + 1000 / 60 * 25 });
-  assert.equal(loop.loop, true); assert.ok(Math.abs(loop.frame - 5) < 1e-9);
-  assert.equal(loop.face, null, 'no face without a traced native value');
-  assert.ok(Object.values(BEHAVIOUR_FACES).every(face => face === null));
+test('a link blends source and target by the native ratio', () => {
+  const b = readBehaviour(watch({ num: 0, frame: 7, link: { target: 2, ratio: .25, spd: .05, selfLoop: false } }), 0);
+  const m = selectBehaviourMotion(catalog, b, { now: 5 / FRAMES_PER_SECOND * 1000 });
+  assert.equal(m.frame, 7, 'plain link freezes the source pose');
+  assert.equal(m.blend.frame, 5, 'target shows its start frame');
+  assert.ok(Math.abs(m.blend.weight - .5) < 1e-9);
 });
 
-test('behaviour never overrides movement, mounts, swimming or stale snapshots', () => {
-  const sit = behaviour('sit');
-  assert.ok(selectBehaviourMotion(catalog, sit, { serverNow: 2000, speed: 0 }));
-  assert.equal(selectBehaviourMotion(catalog, sit, { serverNow: 2000, speed: .5 }), null);
-  assert.equal(selectBehaviourMotion(catalog, sit, { serverNow: 2000, mounted: true }), null);
-  assert.equal(selectBehaviourMotion(catalog, sit, { serverNow: 2000, swimming: true }), null);
-  assert.equal(selectBehaviourMotion(catalog, sit, { serverNow: 2000, fresh: false }), null);
+test('no override when mounted, swimming, stale or the state has no clip', () => {
+  const b = readBehaviour(watch({}), 0);
+  assert.ok(selectBehaviourMotion(catalog, b, { now: 0 }));
+  assert.equal(selectBehaviourMotion(catalog, b, { now: 0, mounted: true }), null);
+  assert.equal(selectBehaviourMotion(catalog, b, { now: 0, swimming: true }), null);
+  assert.equal(selectBehaviourMotion(catalog, b, { now: 0, fresh: false }), null);
+  assert.equal(selectBehaviourMotion(catalog, readBehaviour(watch({ num: 5 }), 0), { now: 0 }), null);
 });
 
-test('update drives a paused native group and the face API once per change', () => {
+test('update drives paused native groups and the face API once per change', () => {
   const calls = [];
   registerChaoFaceApi({ setChaoFace: (root, face) => calls.push(['set', face]), resetChaoFace: () => calls.push(['reset']) });
-  const group = name => ({ name, frames: [], started: 0, stopped: 0, start() { this.started++; }, pause() {}, stop() { this.stopped++; }, goToFrame(frame) { this.frames.push(frame); } });
-  const clips = new Map(catalog.map(row => [row.nativeName, group(row.nativeName)]));
+  const group = name => ({ name, frames: [], weights: [], isPlaying: false, started: 0, stopped: 0,
+    start() { this.started++; this.isPlaying = true; }, pause() {}, stop() { this.stopped++; this.isPlaying = false; },
+    setWeightForAllAnimatables(w) { this.weights.push(w); }, goToFrame(frame) { this.frames.push(frame); } });
+  const clips = new Map([...catalog.values()].map(row => [row.nativeName, group(row.nativeName)]));
   const walk = group('walk');
   const imported = { behaviourCatalog: catalog, behaviourClips: clips, current: walk };
   const root = {};
-  assert.ok(updateNativeBehaviour(imported, root, behaviour('sit'), { serverNow: 1100 }));
-  assert.equal(walk.stopped, 1); assert.equal(imported.current, clips.get('clip_sit'));
-  updateNativeBehaviour(imported, root, behaviour('sit'), { serverNow: 1200 });
-  assert.equal(clips.get('clip_sit').started, 1, 'no restart while the same clip continues');
-  assert.equal(calls.length, 1);
-  assert.equal(updateNativeBehaviour(imported, root, behaviour('sit'), { serverNow: 1300, speed: 1 }), null);
+  assert.ok(updateNativeBehaviour(imported, root, readBehaviour(watch({}), 0), { now: 0 }));
+  assert.equal(walk.stopped, 1); assert.equal(imported.current, clips.get('clip_a'));
+  assert.deepEqual(calls, [['reset']], 'no native face numbers means the default face');
+  updateNativeBehaviour(imported, root, readBehaviour(watch({}, { face: { eye: 3, mouth: 3 } }), 0), { now: 0 });
+  assert.equal(clips.get('clip_a').started, 1, 'no restart while the same clip continues');
+  assert.deepEqual(calls.at(-1), ['set', { eye: 3, mouth: 3 }]);
+  updateNativeBehaviour(imported, root, readBehaviour(watch({ link: { target: 2, ratio: .5, spd: 0 } }), 0), { now: 0 });
+  assert.equal(clips.get('clip_c').weights.at(-1), .5);
+  assert.equal(clips.get('clip_a').weights.at(-1), .5);
+  assert.equal(updateNativeBehaviour(imported, root, readBehaviour(watch({}), 0), { now: 0, mounted: true }), null);
   assert.deepEqual(calls.at(-1), ['reset']);
+  assert.equal(clips.get('clip_c').isPlaying, false);
   registerChaoFaceApi(null);
-});
-
-test('recorded native state map is complete and well formed', async () => {
-  const { readFile } = await import('node:fs/promises');
-  const map = JSON.parse(await readFile(new URL('../scripts/chao-behaviour-map.json', import.meta.url), 'utf8'));
-  const keys = new Set();
-  for (const row of map.clips) {
-    assert.ok(['idle', 'sit', 'sleep', 'play', 'happy', 'startled'].includes(row.kind));
-    assert.ok(['enter', 'loop', 'exit'].includes(row.phase));
-    assert.ok(Number.isInteger(row.nativeState) && row.nativeState >= 0 && row.nativeState < 622);
-    assert.match(row.nativeName, /^alm_[a-z_]+$/);
-    assert.ok(row.evidence, 'every mapping records its evidence');
-    const key = `${row.kind}:${row.phase}:${row.variant}`; assert.ok(!keys.has(key), key); keys.add(key);
-  }
-  for (const kind of ['idle', 'sit', 'sleep', 'play', 'happy', 'startled']) assert.ok(keys.has(`${kind}:loop:0`), `${kind} needs a loop clip`);
-  // Server variant counts (src/behaviour.rs Kind::variants) are covered.
-  for (const [kind, count] of [['idle', 3], ['play', 4], ['sit', 2]]) assert.ok(keys.has(`${kind}:loop:${count - 1}`));
 });
