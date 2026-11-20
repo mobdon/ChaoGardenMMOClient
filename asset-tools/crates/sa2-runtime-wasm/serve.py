@@ -15,7 +15,8 @@ GAME = os.path.abspath(sys.argv[1])
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8411
 ALLOWED = {'sonic2app.exe', 'resource/gd_PC/stg11D.rel', 'resource/gd_PC/set0011_s.bin',
            'resource/gd_PC/set0011_u.bin', 'resource/gd_PC/landtx11.prs',
-           'resource/gd_PC/ewalkmtn.prs'}
+           'resource/gd_PC/ewalkmtn.prs', 'resource/gd_PC/ewalkmdl.prs',
+           'resource/gd_PC/ewalktex.prs'}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):

@@ -54,7 +54,40 @@ pub struct App {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     player: Option<sa2_runtime::TaskId>,
+    /// The walker's model in its own space (bind pose).
+    walker: Option<Mesh>,
     pub triangles: u32,
+}
+
+/// Bank row of `ewalkmdl.prs` drawn as the walker. shortcut: picked as the
+/// bank's only full body (23 nodes, 1,840 triangles); the row the loader
+/// 0x800B5D2C installs is not traced yet.
+const WALKER_BODY: i32 = 277;
+
+/// The walker body from `ewalkmdl.prs`, its textures (`ewalktex.prs`)
+/// appended to `textures` with the draws' ids moved past the land's.
+fn walker_mesh(
+    mdl: &[u8],
+    tex: Option<&[u8]>,
+    textures: &mut Vec<sa2_render::gpu::Rgba>,
+) -> Result<Mesh, JsValue> {
+    let bank = sa2_asset_tools::model_bank::read_prs(mdl).map_err(err)?;
+    let row = bank
+        .iter()
+        .find(|r| r.id == WALKER_BODY)
+        .ok_or_else(|| err("ewalkmdl.prs has no walker body row"))?;
+    let (mut mesh, _) = sa2_render::land::model_mesh(&row.model);
+    let base = u16::try_from(textures.len()).map_err(err)?;
+    match tex {
+        Some(t) => {
+            textures.extend(sa2_render::textures::gvm_textures(t).map_err(err)?);
+            for d in &mut mesh.draws {
+                d.texture = d.texture.and_then(|i| i.checked_add(base));
+            }
+        }
+        None => mesh.draws.iter_mut().for_each(|d| d.texture = None),
+    }
+    Ok(mesh)
 }
 
 #[wasm_bindgen]
@@ -69,6 +102,8 @@ impl App {
         set_u: Option<Vec<u8>>,
         motions: Option<Vec<u8>>,
         landtx: Option<Vec<u8>>,
+        walker_mdl: Option<Vec<u8>>,
+        walker_tex: Option<Vec<u8>>,
     ) -> Result<App, JsValue> {
         let data = SteamData {
             exe,
@@ -134,9 +169,15 @@ impl App {
         surface.configure(&device, &config);
         let mut renderer = Renderer::new(device, queue, srgb);
         renderer.set_meshes(&[&land]);
-        if let Some(t) = landtx {
-            renderer.set_textures(&sa2_render::textures::gvm_textures(&t).map_err(err)?);
-        }
+        let mut textures = match landtx {
+            Some(t) => sa2_render::textures::gvm_textures(&t).map_err(err)?,
+            None => Vec::new(),
+        };
+        let walker = match walker_mdl {
+            Some(m) => Some(walker_mesh(&m, walker_tex.as_deref(), &mut textures)?),
+            None => None,
+        };
+        renderer.set_textures(&textures);
         let player = game.frame.player_tasks[0];
         Ok(App {
             game,
@@ -144,6 +185,7 @@ impl App {
             surface,
             config,
             player,
+            walker,
             triangles: (land.indices.len() / 3) as u32,
         })
     }
@@ -155,15 +197,21 @@ impl App {
         pads[0].stick = [stick_x, stick_y];
         pads[0].button = buttons;
         self.game.step(pads);
-        let pos = self
+        let (pos, ang) = self
             .player
             .and_then(|t| self.game.rt.task(t))
             .map(|t| {
                 let f = |o| f32::from_bits(t.twp_word(o));
-                [f(0x14), f(0x18), f(0x1C)]
+                let a = |o| t.twp_word(o) as i32;
+                ([f(0x14), f(0x18), f(0x1C)], [a(0x8), a(0xC), a(0x10)])
             })
-            .unwrap_or([0.0; 3]);
-        self.renderer.set_extra(&[&marker(pos, 8.0)]);
+            .unwrap_or(([0.0; 3], [0; 3]));
+        match &self.walker {
+            Some(m) => self
+                .renderer
+                .set_extra(&[&sa2_render::land::place(m, pos, ang)]),
+            None => self.renderer.set_extra(&[&marker(pos, 8.0)]),
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

@@ -148,11 +148,20 @@ struct Builder<'a> {
     mesh: Mesh,
     /// Unsupported chunk kinds met, with counts.
     pub skipped: BTreeMap<u8, usize>,
+    /// Keep the vertex cache across attachments (character models).
+    shared: bool,
+    cache: BTreeMap<usize, ([f32; 3], [f32; 3])>,
 }
 
 impl Builder<'_> {
     fn model(&mut self, m: &Mtx, a: &ChunkAttachment) {
-        let mut pos: BTreeMap<usize, ([f32; 3], [f32; 3])> = BTreeMap::new();
+        // Character models share one vertex cache across their nodes
+        // (a node's strips may index vertices an earlier node wrote).
+        let mut pos = if self.shared {
+            std::mem::take(&mut self.cache)
+        } else {
+            BTreeMap::new()
+        };
         for vc in &a.vertex_chunks {
             for (i, v) in vc.vertices.iter().enumerate() {
                 let p = apply(m, v.position, 1.0);
@@ -174,6 +183,9 @@ impl Builder<'_> {
                 0..=5 => {}
                 k => *self.skipped.entry(k).or_default() += 1,
             }
+        }
+        if self.shared {
+            self.cache = pos;
         }
     }
 
@@ -285,6 +297,8 @@ pub fn land_mesh(stage: &Stage, gc: Option<&GcSource<'_>>) -> (Mesh, BTreeMap<u8
         gc_entry: false,
         mesh: Mesh::default(),
         skipped: BTreeMap::new(),
+        shared: false,
+        cache: BTreeMap::new(),
     };
     for e in &stage.entries {
         b.gc_entry = e.geometry_format == "gc-opaque";
@@ -299,4 +313,48 @@ pub fn land_mesh(stage: &Stage, gc: Option<&GcSource<'_>>) -> (Mesh, BTreeMap<u8
         }
     }
     (b.mesh, b.skipped)
+}
+
+/// A character model (one row of a `*mdl.prs` bank) in its own space, in
+/// its bind pose: every node's attachment through the node tree, sharing one
+/// vertex cache. Weighted vertex chunks are taken at the last node that
+/// wrote them (no skinning yet). Returns the polygon kinds it could not draw.
+pub fn model_mesh(model: &sa2_asset_tools::model::Model) -> (Mesh, BTreeMap<u8, usize>) {
+    let mut b = Builder {
+        attach: model.attachments.iter().map(|a| (a.offset, a)).collect(),
+        gc: None,
+        gc_entry: false,
+        mesh: Mesh::default(),
+        skipped: BTreeMap::new(),
+        shared: true,
+        cache: BTreeMap::new(),
+    };
+    let nodes: BTreeMap<u32, &Node> = model.nodes.iter().map(|n| (n.offset, n)).collect();
+    b.tree(&nodes, model.root_offset, &IDENTITY, 0);
+    (b.mesh, b.skipped)
+}
+
+/// `mesh` placed at `pos` and rotated Z·Y·X by `ang` (BAMS), the default
+/// Ninja node transform. shortcut: the walker's own display routine (its
+/// angle offsets and motion pose) is not traced; replace this once it is.
+pub fn place(mesh: &Mesh, pos: [f32; 3], ang: [i32; 3]) -> Mesh {
+    let n = Node {
+        offset: 0,
+        parent_offset: None,
+        flags: 0,
+        attach_offset: 0,
+        position: pos,
+        rotation_bams: ang,
+        scale: [1.0; 3],
+        child_offset: 0,
+        sibling_offset: 0,
+        quaternion_scalar: None,
+    };
+    let m = local(&n);
+    let mut out = mesh.clone();
+    for v in &mut out.vertices {
+        v.pos = apply(&m, v.pos, 1.0);
+        v.normal = apply(&m, v.normal, 0.0);
+    }
+    out
 }
