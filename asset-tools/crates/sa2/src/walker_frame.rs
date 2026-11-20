@@ -141,3 +141,23 @@ pub fn player_speed_from_world(stack: &mut MatrixStack, i: &FrameInput) -> Frame
         vector_angles: mask(i.vector_angles),
     }
 }
+
+/// fn_80046950: clamp a player-frame velocity to the PhysicsArray limits,
+/// x and z to ±`lim_h_spd` (+0xC8) and y to ±`lim_v_spd` (+0xCC). Both arms
+/// of its `taskwk.flag & 0x800` branch are identical. Comparisons are
+/// ordered, so a NaN component is left as it is.
+pub fn clamp_speed(v: Vec3, lim_h_spd: f32, lim_v_spd: f32) -> Vec3 {
+    let clamp = |x: f32, lim: f32| {
+        let x = if lim < x { lim } else { x };
+        if -lim > x {
+            -lim
+        } else {
+            x
+        }
+    };
+    [
+        clamp(v[0], lim_h_spd),
+        clamp(v[1], lim_v_spd),
+        clamp(v[2], lim_h_spd),
+    ]
+}

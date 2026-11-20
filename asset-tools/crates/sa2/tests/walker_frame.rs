@@ -2,7 +2,7 @@
 //! fn_8003E668 run under the Unicorn DOL harness.
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_frame::{player_speed_from_world, FrameInput},
+    walker_frame::{clamp_speed, player_speed_from_world, FrameInput},
 };
 use std::{path::PathBuf, process::Command};
 
@@ -20,7 +20,19 @@ fn matches_main_dol_bit_for_bit() {
     let v3 = |v: &serde_json::Value| [f(&v[0]), f(&v[1]), f(&v[2])];
     let i3 = |v: &serde_json::Value| std::array::from_fn(|k| v[k].as_i64().unwrap() as i32);
     let mut stack = MatrixStack::new();
-    let cases = cases.as_array().unwrap();
+    let clamps = cases["clamp"].as_array().unwrap();
+    for c in clamps {
+        let got = clamp_speed(v3(&c[0]), f(&c[1][0]), f(&c[1][1]));
+        let want: Vec<u32> = c[2]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_u64().unwrap() as u32)
+            .collect();
+        assert_eq!(got.map(f32::to_bits).to_vec(), want, "clamp {c}");
+    }
+    assert_eq!(clamps.len(), 600);
+    let cases = cases["frame"].as_array().unwrap();
     for c in cases {
         let i = &c["in"];
         let input = FrameInput {

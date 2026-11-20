@@ -74,4 +74,14 @@ for i in range(1500):
         "task": [m.get(TASK + 8 + 4 * k, "i") for k in range(3)],
         "vec": [m.get(VEC + 0x18 + 4 * k, "i") for k in range(3)],
     })
-print(json.dumps(out))
+clamps = []
+for i in range(600):
+    v = [rnd_speed() * rng.choice([1, 4]) for _ in range(3)]
+    lim = [f32(rng.choice([16.0, 1.0, rng.uniform(0, 8)])) for _ in range(2)]
+    flag = rng.choice([0, 0x800])
+    m.put(TASK + 4, "h", flag)
+    m.u.mem_write(VEC, struct.pack(">3f", *v))
+    m.u.mem_write(PWP + 0xC8, struct.pack(">2f", *lim))
+    m.call(0x80046950, r3=TASK, r4=VEC, r5=PWP)
+    clamps.append([[fb(x) for x in v], [fb(x) for x in lim], [m.get(VEC + 4 * k, "I") for k in range(3)]])
+print(json.dumps({"frame": out, "clamp": clamps}))
