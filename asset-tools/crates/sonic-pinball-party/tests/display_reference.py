@@ -12,8 +12,9 @@ import random
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("display-vectors.json")
+FIXTURE = spp_vectors.path("display-vectors.json")
 SHADOW = 0x03000770
 IO = 0x04000000
 ROUTINES = {"initialize": (0x3010, 0x30fc), "flush": (0x30fc, 0x3230),

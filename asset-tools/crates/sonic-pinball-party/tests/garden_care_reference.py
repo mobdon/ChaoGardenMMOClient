@@ -14,8 +14,9 @@ import math_reference
 from pathlib import Path
 
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
-FIXTURE=Path(__file__).with_name("garden-care-vectors.json")
+FIXTURE=spp_vectors.path("garden-care-vectors.json")
 BASE=0x02000000
 RAM=0x03000000
 TASK=RAM+0x5400

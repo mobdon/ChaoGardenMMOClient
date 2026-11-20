@@ -10,8 +10,9 @@ import struct
 from pathlib import Path
 
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("garden-shop-vectors.json")
+FIXTURE = spp_vectors.path("garden-shop-vectors.json")
 P, I = 0x02000000, 0x03000000
 S, G, K, OBJ = I+0x4aa0, I+0x4250, I+0x5310, I+0x5320
 T, HAND, CHAO = OBJ+0x24*2, OBJ+0x24*3, OBJ+0x24*4

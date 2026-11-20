@@ -1357,9 +1357,7 @@ mod tests {
         }
     }
     fn run(payload: Option<&[u8]>) {
-        let d: Value =
-            serde_json::from_str(include_str!("../../tests/garden-home-tasks-vectors.json"))
-                .unwrap();
+        let d: Value = serde_json::from_str(vectors!("garden-home-tasks-vectors.json")).unwrap();
         let u = |v: &Value| v.as_u64().unwrap() as u32;
         for case in d["cases"].as_array().unwrap() {
             let name = case["name"].as_str().unwrap();
@@ -1417,6 +1415,7 @@ mod tests {
             }
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn home_tasks_without_assets() {
         run(None);

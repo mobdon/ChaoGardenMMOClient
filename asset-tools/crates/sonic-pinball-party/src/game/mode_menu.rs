@@ -827,7 +827,7 @@ mod tests {
         value.as_u64().unwrap() as u32
     }
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/mode-menu-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("mode-menu-vectors.json")).unwrap()
     }
     fn pattern(seed: u32, length: usize) -> Vec<u8> {
         (0..length / 4)
@@ -1064,6 +1064,7 @@ mod tests {
         memory
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn actual_selection_input_animation_and_auxiliaries_match_native_snapshots() {
         let data = fixture();
@@ -1100,6 +1101,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn held_direction_sequences_preserve_movement_completion_repeat_delay_and_wrapping() {
         let data = fixture();
@@ -1122,6 +1124,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn original_mode_wrappers_match_transition_targets_save_flags_rng_and_call_order() {
         let data = fixture();
@@ -1149,6 +1152,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn lookup_is_bounded_and_preserves_native_special_indices() {
         let data = fixture();
@@ -1177,6 +1181,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn strict_native_boundaries_preserve_only_pre_call_mutations() {
         let data = fixture();

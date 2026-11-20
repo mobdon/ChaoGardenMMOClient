@@ -298,10 +298,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn matches_original_router_state_writes_and_calls() {
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/table_frame-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("table_frame-vectors.json")).unwrap();
         let cases = v["cases"].as_array().unwrap();
         assert_eq!(cases.len(), 172);
         for (i, case) in cases.iter().enumerate() {
@@ -348,11 +348,11 @@ mod tests {
         assert_eq!(calls.calls.len(), 2);
         assert!(update(&mut m, &mut Reject, 0).is_err());
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_queue_preserves_later_requests_and_direct_preparation_state() {
         use crate::game::table_calls::TableCalls;
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/table_frame-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("table_frame-vectors.json")).unwrap();
         for (idx, k) in v["sequences"].as_array().unwrap().iter().enumerate() {
             let mut m = Mem::default();
             m.patches(&k["init"]);

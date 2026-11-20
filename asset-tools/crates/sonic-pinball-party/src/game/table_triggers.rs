@@ -258,10 +258,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn matches_original_router_state_writes_and_calls() {
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/table_triggers-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("table_triggers-vectors.json")).unwrap();
         let cases = v["cases"].as_array().unwrap();
         assert_eq!(cases.len(), 256);
         for (i, case) in cases.iter().enumerate() {

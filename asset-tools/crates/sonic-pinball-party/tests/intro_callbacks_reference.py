@@ -17,8 +17,9 @@ import unittest
 
 import control_reference as control
 import reference_parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("intro-callbacks-vectors.json")
+FIXTURE = spp_vectors.path("intro-callbacks-vectors.json")
 CALLBACKS = {
     "fadeIn": (0x66F8, 0x6754),
     "complete": (0x6754, 0x6764),

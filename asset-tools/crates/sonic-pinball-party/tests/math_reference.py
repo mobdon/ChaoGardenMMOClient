@@ -18,8 +18,9 @@ import subprocess
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("math-vectors.json")
+FIXTURE = spp_vectors.path("math-vectors.json")
 PRIMARY_URL = "https://raw.githubusercontent.com/mgba-emu/mgba/0.10.3/src/gba/bios.c"
 PRIMARY_SHA256 = "8885962e1ca2d8c79a7f13a5d1e074bb2b39704a64aa164f76e1506868c8759a"
 

@@ -219,10 +219,10 @@ mod tests {
             .collect()
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_constructor_preserves_signed_truncation_and_explicit_stack_residue() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/interpolation-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("interpolation-vectors.json")).unwrap();
         assert_eq!(
             data["routines"]["constructor"]["sha256"],
             CONSTRUCTOR_SHA256
@@ -236,10 +236,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_update_and_real_submission_match_complete_context_queue_and_order() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/interpolation-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("interpolation-vectors.json")).unwrap();
         assert_eq!(data["routines"]["update"]["sha256"], UPDATE_SHA256);
         for case in data["updates"].as_array().unwrap() {
             let mut state = InterpolationState::from_bytes(&bytes(&case["initial"])).unwrap();

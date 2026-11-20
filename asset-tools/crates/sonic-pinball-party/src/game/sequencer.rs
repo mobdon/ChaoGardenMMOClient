@@ -985,8 +985,9 @@ mod tests {
         }
     }
     fn vectors() -> Value {
-        serde_json::from_str(include_str!("../../tests/sequencer-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("sequencer-vectors.json")).unwrap()
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn tick_matches_256_original_controller_cases_with_intercepted_dependencies() {
         let vectors = vectors();
@@ -1008,6 +1009,7 @@ mod tests {
             );
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn helpers_match_768_original_instruction_cases() {
         let vectors = vectors();
@@ -1072,6 +1074,7 @@ mod tests {
             memory.check(&case["after"], &format!("native composition {index}"));
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn budgets_cycles_and_unknown_callbacks_stop_explicitly() {
         let fixture = vectors();

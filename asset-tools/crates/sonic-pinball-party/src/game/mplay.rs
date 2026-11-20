@@ -371,10 +371,11 @@ mod tests {
             sound_info: bytes(&v["soundInfo"]),
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_player_and_track_state_vectors() {
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/mplay-vectors.json")).unwrap();
+            serde_json::from_str(vectors!("mplay-vectors.json")).unwrap();
         for (index, case) in fixture["cases"].as_array().unwrap().iter().enumerate() {
             let mut state = snapshot(&case["before"]);
             let effects = match case["routine"].as_str().unwrap() {

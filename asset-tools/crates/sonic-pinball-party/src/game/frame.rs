@@ -465,10 +465,10 @@ mod tests {
             assert_eq!(outcome.selected_balls as usize, count(0x3e0b0));
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn complete_wrapper_matches_128_original_instruction_cases_with_intercepted_dependencies() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/frame-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("frame-vectors.json")).unwrap();
         assert_eq!(vectors["cases"].as_array().unwrap().len(), 128);
         check_vectors(&vectors, None);
     }
@@ -479,8 +479,7 @@ mod tests {
         let geometry = super::super::flippers::Geometry::load(&rom).unwrap();
         assert_eq!(crate::sha256(&rom[OFFSET..OFFSET + LENGTH]), SHA256);
         let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/frame-native-leaf-vectors.json"))
-                .unwrap();
+            serde_json::from_str(vectors!("frame-native-leaf-vectors.json")).unwrap();
         assert_eq!(vectors["cases"].as_array().unwrap().len(), 48);
         check_vectors(&vectors, Some(&geometry));
     }
@@ -500,10 +499,10 @@ mod tests {
             .all(|byte| *byte == 0x33));
         assert_eq!(state.ball(), ball);
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn missing_dependencies_and_unbounded_multiball_count_fail_explicitly() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/frame-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("frame-vectors.json")).unwrap();
         let case = &vectors["cases"][0];
         let mut memory = Memory::from_spans(&case["input"]);
         assert_eq!(

@@ -512,10 +512,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_bootstrap_resume_match_all_contexts_ram_hashes_and_declared_call_boundaries() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/intro-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("intro-vectors.json")).unwrap();
         assert_eq!(data["routines"]["initialize"]["sha256"], INITIALIZE_SHA256);
         assert_eq!(data["routines"]["resume"]["sha256"], RESUME_SHA256);
         assert_eq!(
@@ -598,10 +598,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_update_matches_skip_input_and_auxiliary_dispatch_control() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/intro-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("intro-vectors.json")).unwrap();
         assert_eq!(data["routines"]["update"]["sha256"], UPDATE_SHA256);
         for case in data["updates"].as_array().unwrap() {
             let mut memory = Memory::new(integer(&case["seed"]));
@@ -630,10 +630,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn strict_unported_stop_and_malformed_memory_preserve_the_actual_source_boundary() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/intro-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("intro-vectors.json")).unwrap();
         let mut memory = Memory::new(0);
         let before_skip = memory.read_word(SKIP_STATE).unwrap();
         let mut resources = InterceptedResources::new(&data);
@@ -729,8 +729,7 @@ mod tests {
             .read_to_end(&mut bytes)
             .unwrap();
         let mut rom = IntroRom::new(&bytes).unwrap();
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/intro-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("intro-vectors.json")).unwrap();
         for resource in data["authenticLz77Resources"].as_array().unwrap() {
             let decoded = rom
                 .decode_lz77(integer(&resource["sourceAddress"]))

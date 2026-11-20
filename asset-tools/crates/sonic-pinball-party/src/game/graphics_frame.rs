@@ -114,10 +114,10 @@ mod tests {
         })
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_frame_helpers_match_complete_staged_ram_and_scalar_state() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/graphics_frame-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("graphics_frame-vectors.json")).unwrap();
         for case in data["cases"].as_array().unwrap() {
             let mut state = GraphicsFrameState {
                 staged: StagedOam {
@@ -159,10 +159,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_dma_register_write_read_order_matches_typed_request() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/graphics_frame-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("graphics_frame-vectors.json")).unwrap();
         assert_eq!(
             serde_json::to_value(oam_dma_commands()).unwrap(),
             data["dmaCommands"]

@@ -18,8 +18,9 @@ import unittest
 
 import control_reference as control
 import reference_parity
+import spp_vectors  # noqa: E402
 
-FIXTURE=Path(__file__).with_name("mode-menu-vectors.json")
+FIXTURE=spp_vectors.path("mode-menu-vectors.json")
 ROUTINES={"entry":(0x1CF4C,0x1D23C),"resume":(0x1B69C,0x1B6A8),
           "resumeSecond":(0x1B6A8,0x1B6D0),"resumeThird":(0x1B6D0,0x1B6F8),
           "lookup":(0x1B6F8,0x1B73C),"selection":(0x195E0,0x19DFC),

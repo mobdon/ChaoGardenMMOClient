@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import random
 import struct
+import spp_vectors  # noqa: E402
 
 ROM_SHA256 = "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
 ROUTINES = [("goto",0x5E1D8,0x20),("pattern",0x5E1F8,0x1C),("return",0x5E214,0x14),
@@ -72,7 +73,7 @@ if __name__=="__main__":
     p.add_argument("--generate",action="store_true")
     a=p.parse_args()
     actual=generate(a.rom)
-    target=Path(__file__).with_name("sequence-vectors.json")
+    target=spp_vectors.path("sequence-vectors.json")
     if a.generate:
         target.write_text(json.dumps(actual,separators=(",",":"))+"\n",encoding="utf8")
     elif json.loads(target.read_text(encoding="utf8"))!=actual:

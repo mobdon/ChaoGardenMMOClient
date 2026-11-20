@@ -11,8 +11,9 @@ from pathlib import Path
 import random
 import struct
 import reference_parity as p
+import spp_vectors  # noqa: E402
 
-FIXTURE=Path(__file__).with_name('garden-services-vectors.json')
+FIXTURE=spp_vectors.path('garden-services-vectors.json')
 BASE=0x02000000
 ROUTINES=[('backgrounds',0x1420,0x151c),('tasks',0xeac,0xed4),('unlink',0xed4,0xf34),
           ('compose',0x1088,0x117c),('sort',0x117c,0x1290),('draw',0x1374,0x1420),

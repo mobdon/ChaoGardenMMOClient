@@ -15,8 +15,9 @@ import struct
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("graphics_frame-vectors.json")
+FIXTURE = spp_vectors.path("graphics_frame-vectors.json")
 HARDWARE = 0x03000E50
 OUTPUT_COUNT = 0x030004F4
 AFFINE_COUNT = 0x0300005C

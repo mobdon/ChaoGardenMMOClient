@@ -101,10 +101,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_palette_selectors_match_all_source_ordered_memory_and_calls() {
-        let f: Value =
-            serde_json::from_str(include_str!("../../tests/garden-palette-vectors.json")).unwrap();
+        let f: Value = serde_json::from_str(vectors!("garden-palette-vectors.json")).unwrap();
         for c in f["cases"].as_array().unwrap() {
             let seed = c["seed"].as_u64().unwrap() as u8;
             let mut m = MemoryImage::fixture(vec![
