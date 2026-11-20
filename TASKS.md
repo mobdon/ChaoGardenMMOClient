@@ -91,8 +91,8 @@ Test readiness checked November18: existing saved-Chao browser Tiny is `http://1
 | RPG-01 | DONE | Hub shop and persistent cap ownership. | Fixed server prices/proximity; fruit/drives/cap transaction and duplicate purchase checks pass. |
 | RPG-02 | DONE | Prototype alignment, garden gates and Chaos evolution. | Server gates and milestones tested. Accurate original growth is separate. |
 | RPG-03 | DONE | Owner's perfect Dark Chaos form and hidden stats. | Five main S grades, seven level99 stats, hidden Luck/Intelligence255, owner-only authority and saved form. |
-| RPG-04 | TODO | Original Chao growth/evolution mechanic catalog and implementation. | Trace food/drives/animals/stat grades/alignment/morph/reincarnation requirements; label original vs adapted rules. |
-| RPG-05 | TODO | Mature Sonic-like and Shadow-like Chao appearances. | Validate growth/morph data before claiming the static run families reproduce mature forms. |
+| RPG-04 | IN PROGRESS | Original Chao growth/evolution mechanic catalog and implementation. See [CHAO-EVOLUTION.md](docs/CHAO-EVOLUTION.md). | Trace food/drives/animals/stat grades/alignment/morph/reincarnation requirements; label original vs adapted rules. |
+| RPG-05 | IN PROGRESS | Mature Sonic-like and Shadow-like Chao appearances. Native run families now morph from AL_Deform ([CHAO-EVOLUTION.md](docs/CHAO-EVOLUTION.md)). | Validate growth/morph data before claiming the static run families reproduce mature forms. |
 | MISSION-01 | DONE | Cooperative robot arena for rings. | Server combat range/cooldown, participant reward once, defeat/return and save checks pass. |
 | MISSION-02 | TODO | Choose and adapt one normal SA2 stage segment. | Chao-scale route with native scenery, collision, enemy/objective/checkpoint, clear condition and hub return. |
 | MISSION-03 | TODO | Catalog/use selected normal SA2 mechanics. | Ring/damage behavior, enemy actions, movement/traversal, switches/gates, mission objectives and scoring each have reference and testable adaptation. |
