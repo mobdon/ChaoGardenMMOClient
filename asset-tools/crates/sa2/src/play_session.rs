@@ -368,7 +368,7 @@ fn rotate_yzx(v: V3, angles: [i32; 3]) -> V3 {
 /// moved by translate(position) and, unless attribute 0x8000 is set, the
 /// task rotation (rotate Y, Z, X with attribute 0x200, else Z, X, Y).
 pub fn ccl_center(position: V3, rotation: [u16; 3], row: &CollisionRow) -> V3 {
-    let angles = rotation.map(i32::from);
+    let angles = rotation.map(|r| i32::from(r as i16));
     if row.attr & 0x20 != 0 {
         row.center
     } else if row.attr & 0x8000 != 0 {
@@ -385,7 +385,7 @@ pub fn ccl_center(position: V3, rotation: [u16; 3], row: &CollisionRow) -> V3 {
 /// task rotation, both in the attribute's order (Y, Z, X with 0x200, else
 /// Z, X, Y), as a vector (0x801154EC ignores translation).
 pub fn ccl_axis(rotation: [u16; 3], row: &CollisionRow) -> V3 {
-    let task = rotation.map(i32::from);
+    let task = rotation.map(|r| i32::from(r as i16));
     let own = row.angles.map(|a| a as i32);
     let turn = |v: V3, a: [i32; 3]| {
         if row.attr & 0x200 != 0 {
@@ -465,7 +465,7 @@ pub fn ccl_box_tris(
     row: &CollisionRow,
     half: V3,
 ) -> Vec<[V3; 3]> {
-    let angles = rotation.map(i32::from);
+    let angles = rotation.map(|r| i32::from(r as i16));
     let center = ccl_center(position, rotation, row);
     let yaw = angles[1].wrapping_add(row.angles[1] as i32);
     let (s, c) = nj_rotate_sin_cos(yaw);
@@ -835,7 +835,7 @@ impl Session {
                         taken: false,
                     }),
                     (RING_LINEAR_VA, "RING_LINEAR") if rules.ring_lines => {
-                        let angles = pl.rotation.map(i32::from);
+                        let angles = pl.rotation.map(|r| i32::from(r as i16));
                         for position in ring_line(pl.position, angles, pl.parameters) {
                             rings_placed.push(Pickup {
                                 layer: li,
@@ -876,7 +876,7 @@ impl Session {
                         } else {
                             SpringKind::B
                         };
-                        let angles = pl.rotation.map(i32::from);
+                        let angles = pl.rotation.map(|r| i32::from(r as i16));
                         let task = StageSpring::new(kind, pl.position, angles, pl.parameters);
                         let out = rotate_zxy([0.0, 5.0 + pl.parameters[1], 0.0], angles);
                         springs.push(Spring {
