@@ -17,7 +17,9 @@ use crate::{
     fan_stage::MountedStage,
     goal_ring,
     iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
-    play_objects::{death_zone_triangles, inside_volume, place_y, read_object_solid},
+    play_objects::{
+        collision_rows, death_zone_triangles, inside_volume, place_y, read_object_solid,
+    },
     play_world::{add, len, make_tri, scale, sub, Ground, PlayWorld, V3},
     player_physics::PlayerParameters,
     spring::{SpringCall, SpringKind, SpringPlayer, StageSpring},
@@ -42,6 +44,9 @@ pub struct StageRules {
     pub elevator_collision: u32,
     /// Other solid stage objects: (object-list name, Basic model address).
     pub static_solids: &'static [(&'static str, u32)],
+    /// Objects whose solidity is CollisionData rows in the stage module's
+    /// section 5: (object-list name, row offset, row count).
+    pub collision_boxes: &'static [(&'static str, u32, usize)],
     /// Build CCUBE placements as solid boxes (rule read from this stage's module).
     pub invisible_cubes: bool,
     /// Expand RING_LINEAR placements into collectable rings.
@@ -56,6 +61,7 @@ pub const IRON_GATE: StageRules = StageRules {
     bridge_collision: BRIDGE_COLLISION_RVA,
     elevator_collision: ELEVATOR_COLLISION_RVA,
     static_solids: &[],
+    collision_boxes: &[],
     invisible_cubes: false,
     ring_lines: false,
     death_zone_config: DEATH_ZONE_CONFIG,
@@ -72,6 +78,9 @@ pub const PRISON_LANE: StageRules = StageRules {
     // static-collision helper at 0x9A4C with flags 6 (bit 0 clear: the
     // placement's X and Z rotations are dropped, Y is kept).
     static_solids: &[("PANEL", 0xc40390)],
+    // stg09D.rel 0x2A94 (FENCES) and 0x2AF8 (FENCEL) register these rows
+    // through the helper at 0x2B5C (InitCollision 0x8000F8B8, flags 4).
+    collision_boxes: &[("FENCES", 0x3c54c, 1), ("FENCEL", 0x3c57c, 3)],
     invisible_cubes: true,
     ring_lines: true,
     death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
@@ -521,6 +530,16 @@ impl Session {
             .iter()
             .map(|&(n, rva)| Ok((n, read_object_solid(src.exe, rva)?)))
             .collect::<Result<Vec<_>>>()?;
+        let collision_boxes = rules
+            .collision_boxes
+            .iter()
+            .map(|&(n, offset, count)| {
+                Ok((
+                    n,
+                    collision_rows(src.stage_module, rules.movers.module_file, offset, count)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let mut world = PlayWorld::from_collision(&collision);
         let mut movers = vec![];
@@ -702,6 +721,36 @@ impl Session {
                         *unimplemented
                             .entry(format!("{name} (solid only)"))
                             .or_insert(0) += 1;
+                    }
+                    (_, n) if collision_boxes.iter().any(|(s, _)| *s == n) => {
+                        let (_, rows) = collision_boxes.iter().find(|(s, _)| *s == n).unwrap();
+                        for row in rows {
+                            // Form 3 boxes with no row angles, whose shape is
+                            // the same however the placement rotation is
+                            // applied (see `cube_rotation_is_exact`).
+                            let exact = row.form == 3
+                                && row.angles == [0; 3]
+                                && cube_rotation_is_exact(pl.rotation)
+                                && (pl.rotation[1] == 0
+                                    || (row.center[0] == 0.0 && row.center[2] == 0.0));
+                            if !exact {
+                                *unimplemented
+                                    .entry(format!("{name} row (form {}): rule not read", row.form))
+                                    .or_insert(0) += 1;
+                                continue;
+                            }
+                            let h = [row.size[0], row.size[1], row.size[2]];
+                            for t in box_tris(h, row.center) {
+                                if let Some(t) =
+                                    make_tri(t.map(|v| add(v, pl.position)), 1, u32::MAX)
+                                {
+                                    world.push(t);
+                                }
+                            }
+                            *unimplemented
+                                .entry(format!("{name} row (solid only)"))
+                                .or_insert(0) += 1;
+                        }
                     }
                     (CCUBE_VA, "CCUBE") if rules.invisible_cubes => {
                         *unimplemented

@@ -117,6 +117,9 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [-4439.9966, 967.0, -1133.4259]);
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
+        // Fence CollisionData boxes, by the same exactness rule.
+        assert_eq!(s.unimplemented.get("FENCES row (solid only)"), Some(&20));
+        assert_eq!(s.unimplemented.get("FENCEL row (solid only)"), Some(&1));
         // Only unrotated or half-turned CCUBEs are built; the rest wait on
         // the unread form-3 rotation rule.
         assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&9));
