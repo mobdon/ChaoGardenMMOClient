@@ -58,6 +58,7 @@ pub mod texture;
 pub mod three_spring;
 pub mod visual;
 pub mod visual_glb;
+pub mod walker_frame;
 pub mod wild_canyon;
 
 use std::fmt;
