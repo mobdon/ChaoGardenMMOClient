@@ -1,6 +1,6 @@
 //! Compare `walker_act` with main.dol (tests/walker_act_ppc.py) on whole
 //! native work areas.
-use sa2_asset_tools::walker_act::walker_jump;
+use sa2_asset_tools::walker_act::{stop_check, walker_jump};
 use sa2_asset_tools::{
     native_work::Work,
     ninja_matrix::MatrixStack,
@@ -23,7 +23,7 @@ fn hex(v: &Value) -> Work {
     )
 }
 
-struct Log(Vec<Value>);
+struct Log(Vec<Value>, i64, u32);
 
 struct Calls(Vec<EngineCall>);
 
@@ -39,6 +39,14 @@ impl Engine for Calls {
 impl ActSteps for Log {
     fn stand(&mut self, _: &mut Work, _: &mut Work, _: &mut Work) {
         self.0.push(json!(["stand"]));
+    }
+    fn analog(&mut self, _: &Work, _: &Work) -> bool {
+        self.0.push(json!(["analog"]));
+        self.1 != 0
+    }
+    fn hold_flags(&mut self, _: &Work, _: &Work) -> u32 {
+        self.0.push(json!(["hold"]));
+        self.2
     }
 }
 
@@ -93,7 +101,11 @@ fn walker_act_matches_main_dol() {
     for (ci, case) in c["cases"].as_array().unwrap().iter().enumerate() {
         let g = globals(&case["g"]);
         let (mut t, mut m, mut p) = (hex(&case["t"]), hex(&case["m"]), hex(&case["p"]));
-        let mut steps = Log(vec![]);
+        let mut steps = Log(
+            vec![],
+            case["g"]["stick"].as_i64().unwrap(),
+            case["g"]["hold"].as_u64().unwrap() as u32,
+        );
         let mut calls = Calls(vec![]);
         let ret: Option<bool> = match case["fn"].as_str().unwrap() {
             "command" => Some(walker_command(
@@ -115,6 +127,7 @@ fn walker_act_matches_main_dol() {
                 walker_jump(&mut t, &mut m, &mut p, ride, act, &mut calls);
                 None
             }
+            "stop" => Some(stop_check(&mut t, &mut m, &mut p, &g, &mut steps)),
             "f48" => {
                 reset_f48(&mut p, &g);
                 None

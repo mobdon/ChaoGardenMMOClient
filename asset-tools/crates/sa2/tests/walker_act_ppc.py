@@ -43,6 +43,8 @@ m.stub(0x8006B978, lambda mm: log.append(["se", 0x8006B978, mm.gpr(3), [mm.gpr(4
 m.stub(0x8006B7EC, lambda mm: log.append(["se", 0x8006B7EC, mm.gpr(3), [mm.gpr(4), mm.gpr(5), mm.gpr(6)],
                                           [m.get(mm.gpr(7) + 4 * j, "I") for j in range(3)]]))
 RIDE = 0x81180000
+m.stub(0x8004E560, lambda mm: (log.append(["analog"]), mm.gpr(3, g["stick"])))
+m.stub(0x8004F11C, lambda mm: (log.append(["hold"]), mm.gpr(3, g["hold"])))
 
 
 def floats(n):
@@ -61,6 +63,7 @@ FUNCS = {
     "ground": 0x80053DBC,
     "jump": 0x800ADD34,
     "jump41": 0x800ADED0,
+    "stop": 0x800548E0,
 }
 cases = []
 for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
@@ -78,12 +81,15 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
     p[0xD] = rng.choice([0x2D, 0x2E, 0x30, 0x32, 0, 7])
     struct.pack_into(">h", p, 0x12, rng.randrange(-5, 40))
     struct.pack_into(">i", p, 0xC0, rng.randrange(0, 40))
+    if rng.random() < 0.5:
+        struct.pack_into(">f", p, 0x64, 0.0)
     struct.pack_into(">i", p, 0x28, rng.choice([0x36, 0x55, 0x56, 0x57, 3, 0x54]))
     struct.pack_into(">I", p, 0x24, rng.choice([0, 0x800000, rng.randrange(0, 1 << 32)]))
     g.clear()
     g.update({"stage": rng.choice([0x1D, 0x14, 0xB, 0x22]), "b49": rng.choice([0, 1, 2, 0xF]),
               "pressed": [rng.choice([0, 0, 1]) for _ in range(8)], "held": [rng.choice([0, 1]) for _ in range(8)],
-              "m56": rng.random() < 0.5})
+              "m56": rng.random() < 0.5, "stick": rng.choice([0, 0, 1]),
+              "hold": rng.choice([0, 0x800, 0x400, 0xC00, 0x10])})
     m.u.mem_write(TW, bytes(t))
     m.u.mem_write(MW, bytes(mw))
     m.u.mem_write(PW, bytes(p))
@@ -113,7 +119,7 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
         m.call(a, r3=PW)
     elif name in ("pressed", "held", "queue", "events", "buttons", "ground", "jump", "jump41"):
         m.call(a, r3=TW, r4=PW)
-    elif name == "go_stand":
+    elif name in ("go_stand", "stop"):
         m.call(a, r3=TW, r4=MW, r5=PW)
     else:
         m.call(a, r3=TW, r4=MW, r5=PW, r6=PW)

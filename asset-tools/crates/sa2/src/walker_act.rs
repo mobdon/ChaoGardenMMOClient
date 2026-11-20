@@ -33,6 +33,12 @@ pub struct ActGlobals {
 pub trait ActSteps {
     /// fn_80054D04(task work, motion work, player work).
     fn stand(&mut self, t: &mut Work, m: &mut Work, p: &mut Work);
+    /// fn_8004E560(task work, player work, NULL, NULL): whether the stick
+    /// is held.
+    fn analog(&mut self, t: &Work, p: &Work) -> bool;
+    /// fn_8004F11C(task work, player work): the flags of what the player
+    /// holds or hangs from (its +0x94/+0x9C objects).
+    fn hold_flags(&mut self, t: &Work, p: &Work) -> u32;
 }
 
 /// fn_8004691C(motion work, player work): zero both speeds.
@@ -424,4 +430,33 @@ pub fn walker_jump(
     t.clear_h(tw::FLAG, 2);
     p.set_h(0x12, 0);
     jump_sounds(t, p, eng);
+}
+
+/// fn_800548E0(task work, motion work, player work): with the stick
+/// released and the player stopped, leave the current mode: hanging (task
+/// flag 0x800) picks mode 0x17, 0x16 or 0x15 by what is held, otherwise
+/// back to standing. Returns whether it stopped.
+pub fn stop_check(
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    g: &ActGlobals,
+    s: &mut dyn ActSteps,
+) -> bool {
+    if s.analog(t, p) || 0.0 != p.f(pw::SPD) {
+        return false;
+    }
+    if t.h(tw::FLAG) & 0x800 != 0 {
+        let r = s.hold_flags(t, p);
+        if r & 0x800 != 0 {
+            set_mode(t, p, 0x17, 0x2C);
+        } else if r & 0x400 != 0 {
+            set_mode(t, p, 0x16, 0x2C);
+        } else {
+            set_mode(t, p, 0x15, 0x23);
+        }
+    } else {
+        go_stand(t, m, p, g, s);
+    }
+    true
 }
