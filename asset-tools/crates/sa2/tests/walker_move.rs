@@ -2,8 +2,8 @@
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
     walker_move::{
-        accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, steer, AccelWork,
-        SteerCalls, SteerInput,
+        accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, jump_assist, steer,
+        AccelWork, JumpTarget, JumpWork, SteerCalls, SteerInput,
     },
 };
 use serde_json::{json, Value};
@@ -238,5 +238,77 @@ fn matches_main_dol() {
         steer(&mut stack, &inp, &mut aim, &mut log);
         assert_eq!(aim, i(&c["aim_after"]), "{c}");
         assert_eq!(Value::from(log.calls), c["log"], "{c}");
+    }
+    for c in v["jump"].as_array().unwrap() {
+        let i = |x: &Value| x.as_i64().unwrap() as i32;
+        let g = |k: &str| f(&c["f"][k]);
+        let mut yaw = i(&c["yaw"]);
+        let inp = SteerInput {
+            task_flag: 0,
+            angles: [0, yaw, 0],
+            attr: 0,
+            normal: [0.0; 3],
+            stick: (0, 0),
+            camera: (0, 0),
+        };
+        let w = JumpWork {
+            task_pos: v3(&c["pos"]),
+            mw_spd: v3(&c["mwspd"]),
+            air_resist: [g("0x110"), g("0x118"), g("0x11c")],
+            f_cc: g("0xcc"),
+            f_e8: g("0xe8"),
+            run_accel: g("0xfc"),
+            weight: g("0x138"),
+        };
+        let mut tg: Vec<JumpTarget> = c["tg"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| JumpTarget {
+                pos: [f(&t[0]), f(&t[1]), f(&t[2])],
+                reach: f(&t[3]),
+                rank: f(&t[4]),
+                dist: f(&t[5]),
+                turn: i(&t[6]),
+                dir: i(&t[7]),
+            })
+            .collect();
+        let mut log = Log {
+            stick: (c["stick"][0].as_u64().unwrap() != 0).then(|| i(&c["stick"][1])),
+            calls: vec![],
+        };
+        let mut aim = i(&c["aim"]);
+        let mut acc = v3(&c["mwacc"]);
+        let mut a43 = vec![];
+        let ret = jump_assist(
+            &mut stack,
+            &inp,
+            &mut yaw,
+            &mut aim,
+            &mut acc,
+            &w,
+            &mut tg,
+            &mut log,
+            &mut |_, y, a| a43.push(json!(["accel43", y, bits(a)])),
+        );
+        log.calls.extend(a43);
+        assert_eq!(ret as u64, c["ret"].as_u64().unwrap(), "{c}");
+        assert_eq!(yaw, i(&c["yaw_after"]), "{c}");
+        assert_eq!(aim, i(&c["aim_after"]), "{c}");
+        assert_eq!(bits(acc), bits(v3(&c["acc_after"])), "{c}");
+        assert_eq!(Value::from(log.calls), c["log"], "{c}");
+        for (t, want) in tg.iter().zip(c["tg_after"].as_array().unwrap()) {
+            let got = [
+                t.pos[0].to_bits() as i64,
+                t.pos[1].to_bits() as i64,
+                t.pos[2].to_bits() as i64,
+                t.reach.to_bits() as i64,
+                t.rank.to_bits() as i64,
+                t.dist.to_bits() as i64,
+                t.turn as i64,
+                t.dir as i64,
+            ];
+            assert_eq!(Value::from(got.to_vec()), *want, "{c}");
+        }
     }
 }

@@ -8,9 +8,9 @@ use crate::{
     msl_math::atan2f,
     ninja_axis::rotate_axis,
     ninja_matrix::{rotate_by_angles, unrotate_by_angles, Axis, MatrixStack, Vec3},
-    ninja_trig::{fmadds, fnmsubs},
+    ninja_trig::{fmadds, fnmsubs, nj_cos, nj_sin},
     ninja_vector::vector_angle,
-    walker_collide::{adjust_angle, diff_angle},
+    walker_collide::{adjust_angle, diff_angle, sub_angle},
 };
 
 const ZERO: f32 = 0.0; // r2-0x75F8
@@ -473,4 +473,165 @@ pub fn steer(stack: &mut MatrixStack, inp: &SteerInput, aim: &mut i32, calls: &m
         Some(ang) => *aim = ang,
     }
     calls.turn_smoothly(aim);
+}
+
+/// One 0x20-byte entry of the player's jump-target list (player +0xB4,
+/// count at +0x1E).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct JumpTarget {
+    pub pos: Vec3,
+    /// +0xC: the reach (horizontal distance limit).
+    pub reach: f32,
+    /// +0x10: the rank; the lowest wins.
+    pub rank: f32,
+    /// +0x14, +0x18, +0x1C: written by `jump_assist` (horizontal distance,
+    /// yaw difference, direction).
+    pub dist: f32,
+    pub turn: i32,
+    pub dir: i32,
+}
+
+/// What fn_80036CE4 reads from the task, motion and player work besides
+/// what `steer` and `accel_mode43` take.
+#[derive(Debug, Clone, Copy)]
+pub struct JumpWork {
+    pub task_pos: Vec3,
+    /// Motion work `spd` (+0) and `acc` (+0xC).
+    pub mw_spd: Vec3,
+    /// Player +0x110, +0x118 and +0x11C.
+    pub air_resist: Vec3,
+    /// Player +0xCC (fall speed limit), +0xE8, +0xFC (`run_accel`).
+    pub f_cc: f32,
+    pub f_e8: f32,
+    pub run_accel: f32,
+    /// `weight` (+0x138).
+    pub weight: f32,
+}
+
+const SQRT_TINY: f32 = 0.0;
+const REACH_FAR: f32 = 0.75; // r2-0x75D0
+const REACH_NEAR: f32 = 0.5; // r2-0x75CC
+
+fn hdist(dx: f32, dz: f32) -> f32 {
+    let d = dz * dz + dx * dx;
+    if d > SQRT_TINY {
+        crate::land_select::inline_sqrt(d)
+    } else {
+        d
+    }
+}
+
+/// fn_80036CE4: the walker's jump assist. Of the targets at or below the
+/// task, ahead within 0x1800 of its yaw or within their reach, the one with
+/// the lowest rank is taken if it is ahead and the stick (through `steer`,
+/// whose yaw and aim changes are undone) points within 0x1800 of it. The
+/// fall is then simulated for up to 0x78 frames with the motion work's
+/// speed, air resistance and gravity; on the frame it drops to the target's
+/// height the speed toward it is set from what is left to cover (scaled by
+/// the frame count, clamped to `run_accel`) and added to the motion work's
+/// acceleration x and z, the yaw turns toward it by 0x100 when within
+/// 0x1000, and `accel_mode43` runs. Returns whether it did.
+#[allow(clippy::too_many_arguments)]
+pub fn jump_assist(
+    stack: &mut MatrixStack,
+    steer_in: &SteerInput,
+    task_yaw: &mut i32,
+    aim: &mut i32,
+    mw_acc: &mut Vec3,
+    w: &JumpWork,
+    targets: &mut [JumpTarget],
+    calls: &mut dyn SteerCalls,
+    accel43: &mut dyn FnMut(&mut MatrixStack, i32, Vec3),
+) -> bool {
+    let p = w.task_pos;
+    let mut best: Option<usize> = None;
+    for k in 0..targets.len() {
+        let e = targets[k];
+        if p[1] < e.pos[1] {
+            continue;
+        }
+        let a = atan2f(e.pos[2] - p[2], e.pos[0] - p[0]);
+        let dir = fctiwz_f64(BAMS_PER_RAD * f64::from(a));
+        let d = sub_angle(*task_yaw, dir);
+        if d > 0x1800 || d < -0x1800 {
+            let h = hdist(e.pos[0] - p[0], e.pos[2] - p[2]);
+            if h > e.reach {
+                continue;
+            }
+        }
+        if let Some(b) = best {
+            if targets[b].rank < e.rank {
+                continue;
+            }
+        }
+        targets[k].turn = d;
+        targets[k].dir = dir;
+        best = Some(k);
+    }
+    let Some(b) = best else { return false };
+    let t = targets[b];
+    if t.turn > 0x1800 || t.turn < -0x1800 || !(t.rank >= ZERO) {
+        return false;
+    }
+    let mut new_aim = *aim;
+    let mut inp = *steer_in;
+    inp.angles[1] = *task_yaw;
+    steer(stack, &inp, &mut new_aim, calls);
+    if diff_angle(new_aim, t.dir) > 0x1800 {
+        return false;
+    }
+    let mut rel = sub(p, t.pos);
+    let dist = hdist(rel[0], rel[2]);
+    targets[b].dist = dist;
+    let mut v = w.mw_spd;
+    let fall = -w.weight;
+    for k in 0..0x78 {
+        v[0] += fmadds(w.air_resist[0], v[0], ZERO);
+        v[1] += fmadds(w.air_resist[1], v[1], fall);
+        v[2] += fmadds(w.air_resist[2], v[2], ZERO);
+        if -w.f_cc > v[1] {
+            v[1] = -w.f_cc;
+        }
+        rel = add(rel, v);
+        if !(rel[1] <= t.pos[1]) {
+            continue;
+        }
+        rel[0] += t.pos[0] - p[0];
+        rel[2] += t.pos[2] - p[2];
+        let h = hdist(rel[0], rel[2]);
+        let left = if h > dist {
+            Some(fnmsubs(REACH_FAR, t.reach, dist) - h)
+        } else if h > fnmsubs(REACH_FAR, t.reach, dist) {
+            if fmadds(v[2], v[2], v[0] * v[0]) > w.f_e8 {
+                Some((dist - t.reach) - h)
+            } else {
+                None
+            }
+        } else {
+            Some(fnmsubs(REACH_NEAR, t.reach, dist) - h)
+        };
+        let mut s = match left {
+            Some(l) => [l * nj_cos(t.dir), ZERO, l * nj_sin(t.dir)],
+            None => [ZERO; 3],
+        };
+        let frames = ONE + k as f32;
+        s[0] /= frames;
+        s[2] /= frames;
+        for j in [0, 2] {
+            if s[j] > w.run_accel {
+                s[j] = w.run_accel;
+            }
+            if s[j] < -w.run_accel {
+                s[j] = -w.run_accel;
+            }
+        }
+        mw_acc[0] += s[0];
+        mw_acc[2] += s[2];
+        if t.turn < 0x1000 && t.turn > -0x1000 {
+            *task_yaw = adjust_angle(*task_yaw, t.dir, 0x100);
+        }
+        accel43(stack, *task_yaw, *mw_acc);
+        return true;
+    }
+    false
 }

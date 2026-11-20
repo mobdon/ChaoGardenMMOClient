@@ -1,7 +1,7 @@
 """Local PowerPC oracle for the shared player movement steps (GSNE8P main.dol).
 
 Runs fn_80047A1C, fn_80048ACC, fn_80048EC4, fn_8004B330, fn_80048724 and
-fn_80048834, fn_80048490 on random player states and prints JSON for
+fn_80048834, fn_80048490, fn_80036CE4 on random player states and prints JSON for
 tests/walker_move.rs. Needs SA2_MAIN_DOL and the local Gekko tables.
 """
 import json
@@ -226,4 +226,50 @@ for _ in range(3000):
     m.call(0x80048490, r3=TASK, r4=MW, r5=PW)
     steer.append({"flag": flag, "ang": ang, "attr": attr, "n": [fb(x) for x in n], "stk": stk, "cam": cam,
                   "stick": [stick[0], stick[1]], "aim": aim, "aim_after": m.get(MW + 0x1C, "i"), "log": list(log)})
-print(json.dumps({"level": level, "acc": acc, "run": run, "air": air, "grav": grav, "m43": m43, "steer": steer}))
+# fn_80036CE4 with fn_80048490's callees and fn_80048834 stubbed and logged.
+m.stub(0x80048834, lambda mm: log.append(["accel43", mm.get(TASK + 0xC, "i"), get3(MW + 0xC)]))
+TGT = 0x81105000
+jump = []
+import math
+for _ in range(3000):
+    yaw = rng.randrange(0, 0x10000)
+    ang = [0, yaw, 0]
+    pos = [f32(rng.uniform(-50, 50)), f32(rng.uniform(0, 80)), f32(rng.uniform(-50, 50))]
+    th = yaw * math.pi / 0x8000
+    sp = rng.uniform(0, 4)
+    mwspd = [f32(sp * math.cos(th) + rng.uniform(-0.5, 0.5)), rf(3), f32(sp * math.sin(th) + rng.uniform(-0.5, 0.5))]
+    mwacc = [rf(0.2) for _ in range(3)]
+    tg = []
+    for _ in range(rng.choice([0, 1, 2, 3, 5])):
+        a = th + rng.uniform(-1.2, 1.2)
+        d = rng.uniform(2, 120)
+        tg.append([f32(pos[0] + d * math.cos(a)), f32(pos[1] - rng.uniform(-10, 60)), f32(pos[2] + d * math.sin(a)),
+                   f32(rng.uniform(5, 150)), f32(rng.choice([rng.uniform(-1, 5), 1.0])),
+                   rf(9), rng.randrange(-5, 5), rng.randrange(-5, 5)])
+    f = {o: f32(rng.uniform(lo, hi)) for o, lo, hi in ((0x110, -0.05, 0), (0x118, -0.05, 0), (0x11C, -0.05, 0),
+                                                       (0x138, 0.03, 0.12), (0xCC, 1, 8), (0xE8, 0, 6), (0xFC, 0.02, 1))}
+    stick[0] = rng.choice([0, 1, 1, 1])
+    stick[1] = (yaw + rng.randrange(-0x2400, 0x2400)) & 0xFFFF
+    aim = rng.randrange(0, 0x10000)
+    m.put(TASK + 4, "H", 0)
+    m.u.mem_write(TASK + 8, struct.pack(">3i", *ang))
+    put3(TASK + 0x14, pos)
+    put3(MW, mwspd)
+    put3(MW + 0xC, mwacc)
+    m.put(MW + 0x1C, "i", aim)
+    m.put(PW + 0x88, "I", 0)
+    for o, x in f.items():
+        m.put(PW + o, "f", x)
+    m.put(PW + 0x1E, "h", len(tg))
+    m.put(PW + 0xB4, "I", TGT)
+    for k, t in enumerate(tg):
+        m.u.mem_write(TGT + 0x20 * k, struct.pack(">6f2i", *t))
+    log.clear()
+    m.call(0x80036CE4, r3=TASK, r4=MW, r5=PW)
+    jump.append({"pos": [fb(x) for x in pos], "yaw": yaw, "mwspd": [fb(x) for x in mwspd], "mwacc": [fb(x) for x in mwacc],
+                 "f": {hex(o): fb(x) for o, x in f.items()}, "stick": [stick[0], stick[1]], "aim": aim,
+                 "tg": [[fb(x) for x in t[:6]] + t[6:] for t in tg], "ret": m.gpr(3),
+                 "tg_after": [list(struct.unpack(">6I2i", m.u.mem_read(TGT + 0x20 * k, 0x20))) for k in range(len(tg))],
+                 "yaw_after": m.get(TASK + 0xC, "i"), "aim_after": m.get(MW + 0x1C, "i"), "acc_after": get3(MW + 0xC),
+                 "log": list(log)})
+print(json.dumps({"level": level, "acc": acc, "run": run, "air": air, "grav": grav, "m43": m43, "steer": steer, "jump": jump}))
