@@ -88,7 +88,7 @@ For an inventory of the original object behaviors that still need implementation
 
 Across the normal story SETs, 24,162 placement visits reduce to 24,003 distinct placed rows after repeated visits to the same layout and object table are counted once. All map to 634 distinct native task addresses. The report groups names and level IDs by address and counts rows with partial callback adapters (1,390 including shared ring, spring, whistle pipe and Chao container tasks). A resolved address identifies a task; it does not execute it. This inventory excludes objects created dynamically and systems outside those normal SETs. For example, 877 placements reference the emerald task: they do not by themselves implement treasure hunting.
 
-For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-space platform collision model. Its motion, placement and live contact handler remain open.
+For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-space platform collision model, and [duel-generator](DUEL-PLATFORMS.md) replays the stage module's platform generator, PPC-verified, to place it. duel-platform-update replays each platform's activation, fall and spin from the same module. duel-meteor replays the meteors. Player collision response remains open.
 
 [Shared stage callbacks](SHARED-STAGE-TASKS.md) documents mounted replay and magnetic shield selection.
 
