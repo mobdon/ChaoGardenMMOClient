@@ -556,7 +556,7 @@ fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && args[0] == "--help" {
         println!("{}", player_commands::USAGE);
-        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, chao-collision, chao-competition-tables, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\nfinalhazard-boss-glb EXE OUTPUT.glb modeltex_bosslast2.prs CLIP_INDEX FRAME\nfinalhazard-weakpoint-glb EXE OUTPUT.glb modeltex_bosslast2.prs\ncity-player-keys stg13D.rel OUTPUT.json\ncity-player-motions stg13D.rel OUTPUT.json\ncity-board-inputs stg13D.rel OUTPUT.json\ncity-arrow-world SET OUTPUT.json EXE stg13D.rel REQUEST.json\ncity-arrow-display stg13D.rel OUTPUT.json MODE FRAME_COUNTER\ncity-scenery-descriptors stg13D.rel OUTPUT.json\ncity-scenery-proximity stg13D.rel OUTPUT.json LOCAL_POSITIONS.json\ncity-board-start SET OUTPUT.json EXE\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm|board-route REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
+        println!("sa2-assets [--source-root ROOT] COMMAND INPUT OUTPUT\nCommands: catalog, inspect, prs, extract, texture, adx, ahx, event-cues, event-lighting, event-effects, chao-collision, chao-competition-tables, chao-karate-motions, transporter, validate\nevent-subtitles evmesBANK_LANG.prs OUTPUT.json [eNNNN_LANG.prs]\nevent-music EVENT.prs OUTPUT.json ADX_DIRECTORY\nevent-voices eNNNN_SUFFIX.prs OUTPUT.json sonic2app.exe\nmovie-video MOVIE.sfd OUTPUT.m1v EVENT_ID\nmovie-audio MOVIE.sfd OUTPUT.wav EVENT_ID c0|c1\ntexture INPUT OUTPUT.png [PALETTE.gvp BANK | --mip LEVEL]\npose MODEL OUTPUT.json [MOTION FRAME]\ncollision STAGE OUTPUT.json [UNIFORM_SCALE]\nraycast STAGE OUTPUT.json REQUEST.json\nvisual MODEL OUTPUT.json\nglb MODEL OUTPUT.glb BINDINGS.json\nset SET.bin OUTPUT.json\nobject-tables EXE OUTPUT.json ObjectLists.ini\nfinalhazard-boss-glb EXE OUTPUT.glb modeltex_bosslast2.prs CLIP_INDEX FRAME\nfinalhazard-weakpoint-glb EXE OUTPUT.glb modeltex_bosslast2.prs\ncity-player-keys stg13D.rel OUTPUT.json\ncity-player-motions stg13D.rel OUTPUT.json\ncity-board-inputs stg13D.rel OUTPUT.json\ncity-arrow-world SET OUTPUT.json EXE stg13D.rel REQUEST.json\ncity-arrow-display stg13D.rel OUTPUT.json MODE FRAME_COUNTER\ncity-scenery-descriptors stg13D.rel OUTPUT.json\ncity-scenery-proximity stg13D.rel OUTPUT.json LOCAL_POSITIONS.json\ncity-board-start SET OUTPUT.json EXE\ncity-layout SET OUTPUT.json EXE\ncity-replay SET OUTPUT.json EXE INDEX|bgm|board-route REQUEST.json\nUse --source-root INSTALL for catalog-compatible source IDs; otherwise inputs have isolated basename identities.\nAll output paths must be under the checkout's ignored .local; existing files are never replaced.");
         return Ok(());
     }
     let source_root = if args.first().is_some_and(|a| a == "--source-root") {
@@ -597,6 +597,7 @@ fn run() -> Result<()> {
             | "event-voices"
             | "chao-collision"
             | "chao-competition-tables"
+            | "chao-karate-motions"
             | "city-player-keys"
             | "city-player-motions"
             | "city-board-inputs"
@@ -1337,6 +1338,25 @@ fn run() -> Result<()> {
                 output,
                 &report,
                 "chao-competition-tables-json",
+                &[],
+            )?;
+        }
+        "chao-karate-motions" => {
+            // ChaoStgKarate .data 0x168A0 from the user's own ChaoStgKarate.prs.
+            let rel = if bytes.starts_with(&[0, 0, 0]) {
+                bytes.clone()
+            } else {
+                sa2_asset_tools::archive::decompress_prs(&bytes, 16 << 20)?
+            };
+            let rows = sa2_asset_tools::chao_karate::read_motion_table(&rel)?;
+            let report = serde_json::json!({ "karateMotions": rows, "source": ".data 0x168a0" });
+            save_runtime_document(
+                input,
+                &label,
+                &bytes,
+                output,
+                &report,
+                "chao-karate-motions-json",
                 &[],
             )?;
         }
