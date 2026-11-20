@@ -16,10 +16,6 @@ written anywhere.
 import json, os, struct, sys
 from pathlib import Path
 
-if not os.environ.get('SA2_MAIN_DOL'):
-    print('skipped: SA2_MAIN_DOL is not set', file=sys.stderr)
-    sys.exit(0)
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sa2' / 'tests'))
 from dol_ppc import Dol  # noqa: E402
 from unicorn import UC_HOOK_CODE  # noqa: E402
@@ -342,4 +338,8 @@ def main():
     json.dump({'scenarios': out}, sys.stdout)
 
 
-main()
+if __name__ == '__main__':
+    if not os.environ.get('SA2_MAIN_DOL'):
+        print('skipped: SA2_MAIN_DOL is not set', file=sys.stderr)
+        sys.exit(0)
+    main()
