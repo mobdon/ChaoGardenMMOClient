@@ -223,12 +223,18 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   task and stage global included. Fail closed: the file loaders
   (`fn_800245EC` landtable and lights, `fn_80065048` SET files, fn_11_C2F0,
   fn_11_152EC), fn_11_330DC, fn_11_28038 and 18 other engine callees.
-- **Still to do in E4:** the SET rows from the Steam set files (fn_80065048,
-  then `fn_800658EC` entry setup, `fn_80064F08` ring count and the spawner
-  `fn_80066274` → `fn_80065C40`), and the unload (fn_11_A76C, `fn_8002176C`).
-  Open: stg11D's object list and callbacks are GC REL addresses; the Steam
-  REL links against a different main.dol, so its object list must be mapped
-  onto the same ported routines (see ENGINE-MAP.md section 0).
+- **SET rows and spawner done** (`sa2-runtime/src/set.rs`, `objects.rs`):
+  the `_s`/`_u` join `fn_800651EC`, entry setup `fn_800658EC`, ring total
+  `fn_80064F08`, the SET exec `fn_80066274` and the one-player spawner
+  `fn_80065C40` (range test `fn_80066180`). The object list is read from the
+  Steam `stg11D.rel` (.data+0x5D4FC): module-local execs through the stg11D
+  layout, main.dol execs moved to GSNE8P by section 0's offsets; an ignored
+  installed-data test checks all 92 definitions equal the GC disc module's.
+  Spawned objects run only if their exec is registered (fail closed). Not
+  ported: the two-player spawner `fn_80065EC8`, the reload `fn_80065B28`,
+  the saved-twp entry route (entry bit 1), and the unload (fn_11_A76C,
+  `fn_8002176C`). Ported per the "fastest decent plan": unit tests and the
+  existing stage oracle, no new Unicorn parity check.
 - SET rows whose task is not ported are listed by name and not spawned.
 - Unload frees every task and returns the runtime to its empty state.
 - `play_session::Session` stops taking a host `PlayerSample`: the walker task
