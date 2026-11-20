@@ -167,6 +167,7 @@ pub mod kart_driving_audio;
 pub mod city_motion_registry;
 pub mod finalhazard;
 pub mod finalhazard_visual;
+pub mod knuckles_rouge;
 pub mod kart_balloon;
 pub mod kart_object_range;
 pub mod kart_pickup;
