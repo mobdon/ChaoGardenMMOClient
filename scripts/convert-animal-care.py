@@ -1,7 +1,9 @@
 """Convert original Chao animal parts to GLB for attachment to the Chao rig.
 
 Run portable Blender --background --factory-startup --python this-file after
-scripts/extract-animal-care.js. Optional: -- --preview renders a few checks.
+scripts/extract-animal-care.js. Optional: -- --render NAME... renders checks.
+Also exports the seven tree kinds (young/mature/dying) and the 24 fruits as
+standalone Y-up GLBs (tree-<kind>-<stage>.glb, fruit-<key>.glb).
 All game-derived output stays in ignored .local/ storage.
 
 Each part GLB mirrors the converted Chao (scripts/convert-assets.py): its one
@@ -161,8 +163,21 @@ def main():
               'noParts': skipped, 'parts': records}
     (OUTPUT / 'animal-parts-manifest.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'count': len(records), 'noParts': len(skipped)}))
-    if '--preview' in sys.argv:
-        for name in sys.argv[sys.argv.index('--preview') + 1:]:
+    helpers.OUTPUT = OUTPUT
+    garden = []
+    for tree in catalog['treeModels']:
+        for stage, model in tree['stages'].items():
+            record = helpers.export_native(f"tree-{tree['key']}-{stage}", ROOT / model['path'], 'al_object')
+            garden.append({'kind': 'tree', 'treeKind': tree['kind'], 'key': tree['key'], 'stage': stage, 'fruitId': tree['fruitId'],
+                           'sourceModel': model['name'], 'nativeAddress': model['address'], **record})
+    for fruit in catalog['fruitModels']:
+        record = helpers.export_native(f"fruit-{fruit['key']}", ROOT / fruit['model']['path'], 'al_object')
+        garden.append({'kind': 'fruit', 'fruitId': fruit['id'], 'key': fruit['key'], 'sourceModel': fruit['model']['name'],
+                       'nativeAddress': fruit['model']['address'], **record})
+    (OUTPUT / 'garden-models-manifest.json').write_text(json.dumps({'version': 1, 'texturePack': 'al_object', 'models': garden}, indent=2) + '\n')
+    print(json.dumps({'garden': len(garden)}))
+    if '--render' in sys.argv:
+        for name in sys.argv[sys.argv.index('--render') + 1:]:
             helpers.clear_scene()
             bpy.ops.import_scene.gltf(filepath=str(OUTPUT / f'{name}.glb'))
             meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
