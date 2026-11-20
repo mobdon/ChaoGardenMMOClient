@@ -939,6 +939,14 @@ pub enum PlacementClock {
     BossCombo(Box<BossComboFrame>),
     /// Section 1 + 0x1844: boss action 13 (defeat).
     BossDefeat(Box<BossDefeatFrame>),
+    /// Section 1 + 0x638: boss task deleter.
+    BossDelete(Box<BossDeleteFrame>),
+    /// Section 1 + 0x690: point pushed out along a direction.
+    BossAim(Box<BossAimFrame>),
+    /// Section 1 + 0x744: boss hit check.
+    BossHit(Box<BossHitFrame>),
+    /// Section 1 + 0x920: boss attachment points.
+    BossPoints(Box<BossPointsFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2721,6 +2729,10 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossBeam(frame) => return boss_beam(&rel, &frame),
         PlacementClock::BossCombo(frame) => return boss_combo(&rel, &frame),
         PlacementClock::BossDefeat(frame) => return boss_defeat(&rel, &frame),
+        PlacementClock::BossDelete(frame) => return boss_delete(&rel, &frame),
+        PlacementClock::BossAim(frame) => return boss_aim(&rel, &frame),
+        PlacementClock::BossHit(frame) => return boss_hit(&rel, &frame),
+        PlacementClock::BossPoints(frame) => return boss_points(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6297,5 +6309,220 @@ fn boss_defeat(
         }
     }
     ev.push(st(0x1b90, "stage", 0xa, 2, 0));
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// The boss task and its word 0x38 (the 0x40-byte block) at deletion.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossDeleteFrame {
+    pub task: u32,
+    pub block: u32,
+}
+fn module_ref(rel: &crate::city_rel::CityRel<'_>, site: u32, offset: u32) -> Result<String> {
+    let r = rel
+        .reference(1, site)
+        .filter(|r| r.module == 88)
+        .ok_or_else(|| Error::invalid("missing boss module reference"))?;
+    Ok(format!("88:{}+{:#x}", r.section, r.addend + offset))
+}
+fn boss_constant(rel: &crate::city_rel::CityRel<'_>, site: u32) -> Result<f32> {
+    let r = rel
+        .reference(1, site)
+        .filter(|r| r.module == 88 && r.section == 4)
+        .ok_or_else(|| Error::invalid("missing boss constant"))?;
+    let at = r.addend as usize;
+    let b = rel
+        .data(4)?
+        .get(at..at + 4)
+        .ok_or_else(|| Error::invalid("boss constant out of range"))?;
+    Ok(f32::from_be_bytes(b.try_into().unwrap()))
+}
+/// Section 1 + 0x638: free the boss block, run 0x1b070 and clear the boss
+/// task word 6:0x0.
+fn boss_delete(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossDeleteFrame,
+) -> Result<serde_json::Value> {
+    let mut ev = Vec::new();
+    if f.block != 0 {
+        ev.push(
+            serde_json::json!({"site":0x658,"call":engine_import(rel, 0x658)?,"args":[f.block]}),
+        );
+        ev.push(serde_json::json!({"site":0x660,"store":"task","offset":0x38,"size":4,"value":0}));
+    }
+    ev.push(serde_json::json!({"site":0x668,"local":0x1b070,"args":[f.task]}));
+    ev.push(serde_json::json!({"site":0x678,"store":"module","offset":module_ref(rel, 0x672, 0)?,"size":4,"value":0}));
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// Inputs of 0x690: the from and to points, the output pointer, the extra
+/// distance (f1) and what the engine returns: the distance 0x800279c4
+/// reports and the direction 0x801159dc leaves after normalising.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossAimFrame {
+    pub from: u32,
+    pub to: u32,
+    pub out: u32,
+    pub extra: f32,
+    pub distance: f32,
+    pub direction: [f32; 3],
+}
+/// Section 1 + 0x690: out = from + normalise(to - from) * (extra +
+/// distance), through the engine vector calls. Single-precision
+/// arithmetic as the native fadds / fmuls.
+fn boss_aim(rel: &crate::city_rel::CityRel<'_>, f: &BossAimFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let scale = f.extra + f.distance;
+    let scaled: Vec<f64> = f.direction.iter().map(|d| f64::from(d * scale)).collect();
+    let mut last = call(0x71c, serde_json::json!([f.from, "stack", f.out]))?;
+    last["vectors"] = serde_json::json!({"1": scaled});
+    Ok(serde_json::json!({"events":[
+        call(0x6c8, serde_json::json!([f.from, f.to]))?,
+        call(0x6dc, serde_json::json!([f.to, f.from, "stack"]))?,
+        call(0x6e4, serde_json::json!(["stack"]))?,
+        last,
+    ]}))
+}
+
+/// What the boss hit check reads, each where the code reads it: the
+/// result of local 0x87e4 on the child (state word 0x10), the entity
+/// action, data float 0x28 (the health), the entity flags after 0xdc4, the
+/// hit record 0x800065a8 returns and its collider index (byte 0), the
+/// entity's collider array (collision object word 0xc), the player entity
+/// word at 0x801e7368 + 4 * stage byte 0, the point 0x690 writes,
+/// the offset 0x80027a80 writes and the result of 0x7154.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossHitFrame {
+    pub task: u32,
+    pub child: u32,
+    pub child_hit: i8,
+    pub action: i8,
+    pub health: f32,
+    pub entity_flags: i16,
+    pub hit: u32,
+    pub collider: i8,
+    pub colliders: u32,
+    pub player: u32,
+    pub point: [f32; 3],
+    pub offset: [f32; 3],
+    pub hit_kind: i32,
+}
+/// Section 1 + 0x744: per-frame boss hit check. When the child reports a hit
+/// (0x87e4 == 1) outside action 3 the boss loses 4:0xac health and goes to
+/// action 3, or to action 13 at or below 4:0xc0, and gets entity flag 4.
+/// Otherwise a player hit (0x800065a8) on a collider pushes a point out
+/// from the collider towards the player (0x690), then either starts the
+/// stunned timer (0x7154 == 1: 0x71e0 with 4:0xc8, 0xc98) or knocks the
+/// player back (0x71e0 with 4:0xc4, camera shake), spawns the spark
+/// 0x108f4 and plays the hit sound and voice.
+fn boss_hit(rel: &crate::city_rel::CityRel<'_>, f: &BossHitFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let v = |x: &[f32; 3]| x.iter().map(|c| f64::from(*c)).collect::<Vec<_>>();
+    let mut ev = vec![local(0x774, 0x87e4, serde_json::json!([f.child]))];
+    if f.child_hit == 1 && f.action != 3 {
+        let health = f.health - boss_constant(rel, 0x79a)?;
+        ev.push(serde_json::json!({"site":0x7a8,"store":"data","offset":0x28,"size":4,"value":health.to_bits()}));
+        if f64::from(health) > f64::from(boss_constant(rel, 0x7b2)?) {
+            ev.push(local(0x7cc, 0xdc4, serde_json::json!([f.task, 3])));
+        } else {
+            ev.push(local(0x7dc, 0xdc4, serde_json::json!([f.task, 13])));
+        }
+        ev.push(
+            serde_json::json!({"site":0x7e8,"store":"entity","offset":4,"size":2,
+            "value":(f.entity_flags as u16 | 4)}),
+        );
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    ev.push(call(0x7f4, serde_json::json!([f.task]))?);
+    if f.hit == 0 {
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    let collider = f
+        .colliders
+        .wrapping_add((f.collider as i32).wrapping_mul(48) as u32);
+    if collider == 0 {
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    let knock = boss_constant(rel, 0x85a)?;
+    let mut back = call(0x878, serde_json::json!(["stack", collider + 8, "stack"]))?;
+    back["vectors"] = serde_json::json!({"0": v(&f.point)});
+    ev.extend([
+        serde_json::json!({"site":0x868,"local":0x690,"args":[collider + 8, f.player + 0x14, "stack"],
+            "floats":[f64::from(knock)]}),
+        back,
+        local(0x884, 0x7154, serde_json::json!([f.task, f.hit])),
+    ]);
+    if f.hit_kind == 1 {
+        ev.push(serde_json::json!({"site":0x8a0,"local":0x71e0,"args":[0],
+            "floats":[f64::from(boss_constant(rel, 0x896)?)]}));
+        ev.push(local(0x8a4, 0xc98, serde_json::json!([])));
+    } else {
+        ev.push(
+            serde_json::json!({"site":0x8b4,"local":0x71e0,"args":["stack"],
+            "floats":[f64::from(knock)],"vectors":{"0": v(&f.offset)}}),
+        );
+        ev.push(call(0x8c8, serde_json::json!([0, 1, 5, 0]))?);
+    }
+    ev.extend([
+        serde_json::json!({"site":0x8d4,"local":0x108f4,"args":["stack", "stack"],
+            "vectors":{"0": v(&f.point), "1": v(&f.offset)}}),
+        call(0x8ec, serde_json::json!([9, f.task, 1, 0, 0x1e]))?,
+        call(0x8fc, serde_json::json!([f.task, 9, 0x1e]))?,
+    ]);
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// The boss task for the attachment point update.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossPointsFrame {
+    pub task: u32,
+}
+/// Section 1 + 0x920: for each of the 34 attachment entries at 5:0xb8c
+/// (32 bytes each) whose byte 0 is positive, place the entry (0x80027ab4
+/// with the work vector 6:0x128 + 12 * byte 0) and attach it to the boss
+/// (0x80005540); then 0x8000f4ec.
+fn boss_points(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossPointsFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let table = rel
+        .reference(1, 0x942)
+        .filter(|r| r.module == 88 && r.section == 5)
+        .ok_or_else(|| Error::invalid("missing attachment table"))?
+        .addend;
+    let data = rel.data(5)?;
+    let mut ev = Vec::new();
+    for i in 0..34u32 {
+        let entry = table + 0x20 * i;
+        let count = *data
+            .get(entry as usize)
+            .ok_or_else(|| Error::invalid("attachment table out of range"))?
+            as i8;
+        if count > 0 {
+            let out = format!("88:5+{:#x}", entry + 0x10);
+            ev.push(call(
+                0x984,
+                serde_json::json!([
+                    module_ref(rel, 0x956, 12 * count as u32)?,
+                    format!("88:5+{:#x}", entry + 4),
+                    out
+                ]),
+            )?);
+            ev.push(call(0x994, serde_json::json!([f.task, i, out]))?);
+        }
+    }
+    ev.push(call(0x9b0, serde_json::json!([f.task]))?);
     Ok(serde_json::json!({"events":ev}))
 }
