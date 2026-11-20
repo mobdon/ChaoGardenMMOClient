@@ -7,6 +7,7 @@
 //!
 //! | creator | descriptor (s5) | exec |
 //! |---------|-----------------|------|
+//! | 0xA67C  | +0xDA40 | 0xA7F0 |
 //! | 0xC238  | +0xDD18 | 0xC3D4 |
 //! | 0xC56C `MakeParticle` | +0xDD50 | 0xC708 |
 //! | 0xC8A0  | +0xDE70 | 0xCA94 |
@@ -17,9 +18,13 @@
 //! | 0xE178  | +0xE1F4 | main.dol 0x80032A8C (engine, not ported) |
 //! | 0xE334  | +0xE254 | 0xE4F8 |
 //!
+//! 0x1E6BC is the exec of the trail effects 0x1DFE0/0x1E194 (descriptor at
+//! s5 +0x1EEE8; the creators are ported in `duel_debris`); its code is
+//! 0xCA94's.
+//!
 //! Callers in stg42D: EFFOBJ0's exec 0x10C88 (stage-specific spawner
 //! table; EFFOBJ0 itself belongs to `effect_emitter` and is not ported
-//! here) calls 0xC238, 0xC8A0, 0xCCFC, 0xD0C4, 0xD540, 0xD714, 0xE178,
+//! here) calls 0xA67C, 0xC238, 0xC8A0, 0xCCFC, 0xD0C4, 0xD540, 0xD714, 0xE178,
 //! 0xE334 (and the 0xD970 manager); ITEMBOX (0x123FC) and ITEMBOXAIR
 //! (0x1337C) call 0xCCFC; `o_ring_0` (0x196B0) calls 0xC56C.
 //!
@@ -46,6 +51,18 @@ pub type V3 = [f32; 3];
 
 /// The routines this file ports (stg42D.rel section 1).
 pub const ROUTINES: &[super::Routine] = &[
+    r(
+        "particle creator 0xA67C",
+        0xa67c,
+        0x174,
+        "9f13765c1a6f6c64789609fd9b17df55278cace3ec6be04dc82fdea64deafc25",
+    ),
+    r(
+        "particle exec 0xA7F0",
+        0xa7f0,
+        0x198,
+        "9fd6ff66108eb265b3c2381ed3e4c2338c99f71a1bc586bd6093549250f78648",
+    ),
     r(
         "particle creator 0xC238",
         0xc238,
@@ -147,6 +164,12 @@ pub const ROUTINES: &[super::Routine] = &[
         0xe334,
         0x1c4,
         "401331ad87b30327daedef1d79a37b3ece70d4436e6d2d37bf87910456413432",
+    ),
+    r(
+        "particle exec 0x1E6BC",
+        0x1e6bc,
+        0xf8,
+        "877c2f9c074fe809f5a7c6a8efa3e737b18dde8c74fd36319ff7e3d48992eb18",
     ),
     r(
         "particle exec 0xE4F8",
@@ -317,6 +340,7 @@ pub enum Fixed {
 /// The particle creators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Creator {
+    A67c,
     C238,
     MakeParticle,
     C8a0,
@@ -339,6 +363,15 @@ const HALF: u32 = 0x3f00_0000;
 pub fn draws(kind: Creator) -> (&'static [Draw], &'static [(usize, Fixed)]) {
     use Dest::*;
     match kind {
+        // 0xA67C: 20 (+0x40C), 10 (+0x414), 0.5 (+0x418).
+        Creator::A67c => {
+            const D: &[Draw] = &[
+                d(c(0x41a0_0000), c(0x4120_0000), Angle),
+                d(None, c(HALF), Spin),
+            ];
+            const F: &[(usize, Fixed)] = &[(2, Fixed::WorkZero)];
+            (D, F)
+        }
         // 0xC238: 15 (+0x4B4), 7.5 (+0x4BC), 0.5 (+0x4C0).
         Creator::C238 => {
             const D: &[Draw] = &[
@@ -435,7 +468,8 @@ pub fn draws(kind: Creator) -> (&'static [Draw], &'static [(usize, Fixed)]) {
 }
 
 impl Creator {
-    pub const ALL: [Creator; 9] = [
+    pub const ALL: [Creator; 10] = [
+        Creator::A67c,
         Creator::C238,
         Creator::MakeParticle,
         Creator::C8a0,
@@ -450,6 +484,7 @@ impl Creator {
     /// The creator's offset in stg42D.rel section 1.
     pub fn stg42d(self) -> u32 {
         match self {
+            Self::A67c => 0xa67c,
             Self::C238 => 0xc238,
             Self::MakeParticle => 0xc56c,
             Self::C8a0 => 0xc8a0,
@@ -466,6 +501,7 @@ impl Creator {
     /// at its own offset).
     pub fn stg42d_descriptor(self) -> u32 {
         match self {
+            Self::A67c => 0xda40,
             Self::C238 => 0xdd18,
             Self::MakeParticle => 0xdd50,
             Self::C8a0 => 0xde70,
@@ -551,6 +587,8 @@ pub fn create(
 /// The exec callbacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exec {
+    /// 0xA7F0 (for 0xA67C).
+    A7f0,
     /// 0xC3D4 (for 0xC238).
     C3d4,
     /// 0xC708 (for MakeParticle).
@@ -567,10 +605,13 @@ pub enum Exec {
     D8a0,
     /// 0xE4F8 (for 0xE334).
     E4f8,
+    /// 0x1E6BC (for 0x1DFE0 and 0x1E194).
+    X1e6bc,
 }
 
 impl Exec {
-    pub const ALL: [Exec; 8] = [
+    pub const ALL: [Exec; 10] = [
+        Exec::A7f0,
         Exec::C3d4,
         Exec::C708,
         Exec::Ca94,
@@ -579,11 +620,13 @@ impl Exec {
         Exec::D448,
         Exec::D8a0,
         Exec::E4f8,
+        Exec::X1e6bc,
     ];
 
     /// The exec's offset in stg42D.rel section 1.
     pub fn stg42d(self) -> u32 {
         match self {
+            Self::A7f0 => 0xa7f0,
             Self::C3d4 => 0xc3d4,
             Self::C708 => 0xc708,
             Self::Ca94 => 0xca94,
@@ -592,6 +635,7 @@ impl Exec {
             Self::D448 => 0xd448,
             Self::D8a0 => 0xd8a0,
             Self::E4f8 => 0xe4f8,
+            Self::X1e6bc => 0x1e6bc,
         }
     }
 }
@@ -659,10 +703,10 @@ fn fade(p: &mut Particle) -> u32 {
 /// returns in r3 (the engine keeps the particle while it is nonzero).
 pub fn exec(kind: Exec, desc: &Descriptor, p: &mut Particle, rand: &mut MslRand) -> u32 {
     match kind {
-        Exec::C3d4 | Exec::C708 => {
+        Exec::C3d4 | Exec::C708 | Exec::A7f0 => {
             integrate(desc, p);
-            // njSin (0x80112398) of the phase, times 10 (s4 +0x4D0) and
-            // BAMS (+0x4B0); the phase steps by 0x222.
+            // njSin (0x80112398) of the phase, times 10 (s4 +0x4D0; +0x414
+            // for 0xA7F0) and BAMS (+0x4B0; +0x408); the phase steps by 0x222.
             let s = nj_sin(p.work as i32);
             p.angle2 = fctiwz(BAMS * (f32::from_bits(0x4120_0000) * s)).wrapping_add(0x4000);
             p.work = p.work.wrapping_add(0x222);
@@ -692,7 +736,7 @@ pub fn exec(kind: Exec, desc: &Descriptor, p: &mut Particle, rand: &mut MslRand)
                 1
             }
         }
-        Exec::Ca94 | Exec::D448 => {
+        Exec::Ca94 | Exec::D448 | Exec::X1e6bc => {
             integrate(desc, p);
             if frame_done(desc, p) {
                 clamp_frame(desc, p);

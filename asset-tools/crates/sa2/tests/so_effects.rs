@@ -57,7 +57,7 @@ fn particle_creators_match_stg42d() {
         return;
     };
     let cases = c["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 9 * 120);
+    assert_eq!(cases.len(), 10 * 120);
     for case in cases {
         let kind = Creator::ALL
             .into_iter()
@@ -97,7 +97,7 @@ fn particle_execs_match_stg42d() {
         return;
     };
     let cases = c["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 8 * 120);
+    assert_eq!(cases.len(), 10 * 120);
     for case in cases {
         let kind = Exec::ALL
             .into_iter()
