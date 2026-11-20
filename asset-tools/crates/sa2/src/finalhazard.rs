@@ -966,6 +966,8 @@ pub enum PlacementClock {
     CoreGrow(Box<CoreGrowFrame>),
     /// Section 1 + 0x79dc: core action 2 (pulse).
     CorePulse(Box<CorePulseFrame>),
+    /// Section 1 + 0x7d6c: core action 3 (shrink and switch stage).
+    CoreShrink(Box<CoreShrinkFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2760,6 +2762,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::CoreHit(frame) => return core_hit(&rel, &frame),
         PlacementClock::CoreGrow(frame) => return core_grow(&rel, &frame),
         PlacementClock::CorePulse(frame) => return core_pulse(&rel, &frame),
+        PlacementClock::CoreShrink(frame) => return core_shrink(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -7637,5 +7640,112 @@ fn core_pulse(rel: &crate::city_rel::CityRel<'_>, f: &CorePulseFrame) -> Result<
         )?,
         serde_json::json!({"site":0x7d50,"local":0x72e0,"args":[f.task]}),
     ]);
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What core action 3 reads: block float 0x24 and entity float 0x24 at
+/// entry, block bytes 0 and 1, block float 0x24 after 0x7548, block bytes 2
+/// and 3 (the pending stage and slot) and word 4 of the 0x80005588 result.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoreShrinkFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub block_scale: f32,
+    pub entity_scale: f32,
+    pub block_bytes: [u8; 2],
+    pub block_scale_after: f32,
+    pub pending: [u8; 2],
+    pub collision_word: u32,
+}
+/// Section 1 + 0x7d6c: core action 3. Both scales shrink by 5:0x36d44
+/// (the entity's held at 4:0x30c), the hum pitch follows the block scale
+/// (clamped to -128..60), the attachment is placed, and once the block
+/// scale reaches 4:0x350 the core resets its scales and either takes the
+/// pending stage and slot and grows again (action 1) or, with none
+/// pending, goes to action 4 with collision flag 0x10.
+fn core_shrink(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &CoreShrinkFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let k = |site: u32| boss_constant(rel, site);
+    let step = {
+        let r = rel
+            .reference(1, 0x7d9a)
+            .filter(|r| r.module == 88 && r.section == 5)
+            .ok_or_else(|| Error::invalid("missing core shrink step"))?;
+        let at = r.addend as usize + 8;
+        let b = rel
+            .data(5)?
+            .get(at..at + 4)
+            .ok_or_else(|| Error::invalid("core shrink step out of range"))?;
+        f32::from_be_bytes(b.try_into().unwrap())
+    };
+    let block_scale = f.block_scale - step;
+    let entity_scale = f.entity_scale - step;
+    let mut ev = vec![
+        st(0x7dac, "block", 0x24, 4, block_scale.to_bits()),
+        st(0x7dbc, "entity", 0x24, 4, entity_scale.to_bits()),
+    ];
+    let floor = k(0x7dc6)?;
+    if f64::from(entity_scale) < f64::from(floor) {
+        ev.push(st(0x7dd8, "entity", 0x24, 4, floor.to_bits()));
+    }
+    let raw = fctiwz(f64::from(k(0x7dde)? + k(0x7dea)? * block_scale)) as u32;
+    let mut pitch = raw;
+    if (raw as u16 as i16) < -128 {
+        pitch = (-128i32) as u32;
+    }
+    if (pitch as u16 as i16) > 60 {
+        pitch = 60;
+    }
+    ev.push(call(
+        0x7e48,
+        serde_json::json!([5, f.task, 1, pitch, 5, f.entity + 0x14]),
+    )?);
+    ev.push(local(
+        0x7e58,
+        0x7548,
+        serde_json::json!([f.task, f.block_bytes[0], f.block_bytes[1]]),
+    ));
+    let empty = k(0x7e62)?;
+    if f64::from(f.block_scale_after) <= f64::from(empty) {
+        let unit = k(0x7e7e)?;
+        let base = k(0x7e8e)?;
+        ev.extend([
+            st(0x7e78, "block", 0x24, 4, empty.to_bits()),
+            st(0x7e88, "entity", 0x24, 4, unit.to_bits()),
+            st(0x7e98, "entity", 0x20, 4, base.to_bits()),
+            st(0x7ea0, "entity", 0x28, 4, base.to_bits()),
+            st(0x7ea8, "block", 0x14, 4, unit.to_bits()),
+            st(0x7eb0, "block", 0x10, 4, 0),
+        ]);
+        if f.pending[1] as i8 >= 0 {
+            ev.extend([
+                call(0x7ecc, serde_json::json!([f.task, 0]))?,
+                st(0x7ed8, "collision", 4, 4, f.collision_word & !0x10),
+                st(0x7ee0, "block", 0, 1, f.pending[0].into()),
+                st(0x7ee8, "block", 1, 1, f.pending[1].into()),
+                st(0x7ef0, "block", 3, 1, 0xff),
+                st(0x7ef4, "block", 2, 1, 0xff),
+                local(0x7ef8, 0x1f94, serde_json::json!([])),
+                st(0x7f00, "entity", 0, 1, 1),
+                st(0x7f04, "entity", 1, 1, 0),
+            ]);
+        } else {
+            ev.extend([
+                call(0x7f14, serde_json::json!([f.task, 0]))?,
+                st(0x7f20, "collision", 4, 4, f.collision_word | 0x10),
+                st(0x7f28, "entity", 0, 1, 4),
+                st(0x7f2c, "entity", 1, 1, 0),
+            ]);
+        }
+        ev.push(local(0x7f34, 0x8818, serde_json::json!([f.task])));
+    }
     Ok(serde_json::json!({"events":ev}))
 }
