@@ -1006,6 +1006,8 @@ pub enum PlacementClock {
     /// Section 1 + 0x6508..0x6a50: the trail object, the glow chain update
     /// and the glow draw.
     Trail(Box<TrailFrame>),
+    /// Section 1 + 0x3ae8..0x40c8: the beam controller and its segments.
+    Beam(Box<BeamFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2817,6 +2819,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossUtility(frame) => return boss_utility(&rel, &frame),
         PlacementClock::Glow(frame) => return glow(&rel, &frame),
         PlacementClock::Trail(frame) => return trail(&rel, &frame),
+        PlacementClock::Beam(frame) => return beam(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -10559,4 +10562,361 @@ fn trail(rel: &crate::city_rel::CityRel<'_>, f: &TrailFrame) -> Result<serde_jso
         }
     }
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of the beam routines; values are as the code reads them and
+/// local results are request inputs.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum BeamFrame {
+    /// 0x3ae8: spawn a beam segment of `kind` for `parent` at the point
+    /// whose words are `position_words`, aimed at the player
+    /// (`player_position` words) with `mode`. `task` / `block` are the
+    /// allocations; `stage_id` is stage byte 0.
+    Segment {
+        parent: u32,
+        kind: u8,
+
+        position_words: [u32; 3],
+        mode: u32,
+        task: u32,
+        entity: u32,
+        block: u32,
+        stage_id: u8,
+        player_position: [u32; 3],
+    },
+    /// 0x3cb0: fire a segment (entity flag 0x100); `entity` / `block` are
+    /// task words 0x34 / 0x40, `flags` entity half-word 4.
+    Fire {
+        task: u32,
+        entity: u32,
+        block: u32,
+        flags: i16,
+    },
+    /// 0x3ce4: segment finished (entity flag 0x200).
+    Done {
+        task: u32,
+        entity: u32,
+        block: u32,
+        flags: i16,
+    },
+    /// 0x3d34: segment `slot` of the controller (entity words 8 / 0xc).
+    Slot { slot: i8, segments: [u32; 2] },
+    /// 0x3d64: controller update.
+    Update { controller: u32 },
+    /// 0x3dcc: controller deleter; `segments` are the 0x3d34 results.
+    Delete { controller: u32, segments: [u32; 2] },
+    /// 0x3e58: spawn a controller for `parent` from the parameter block
+    /// (`kind`, `count`, the two aim pointers and the child task);
+    /// `anchor` is the child entity position address, `pattern` the 0x8880
+    /// result and `segments` the 0x3ae8 results in call order.
+    Spawn {
+        parent: u32,
+        task: u32,
+        kind: u8,
+        count: i8,
+        aims: [u32; 2],
+        child: u32,
+        anchor: u32,
+        pattern: i8,
+        segments: Vec<u32>,
+    },
+    /// 0x3fc0: fire every segment; `count` is entity byte 1, `segments` the
+    /// 0x3d34 results.
+    FireAll {
+        controller: u32,
+        count: i8,
+        segments: Vec<u32>,
+    },
+    /// 0x403c: status of the segments (last 0x3ce4 result).
+    Status {
+        controller: u32,
+        count: i8,
+        segments: Vec<u32>,
+        states: Vec<i8>,
+    },
+}
+/// Sections 1 + 0x3ae8 (segment: update 0x36ac, draw 0x38b0, deleter
+/// 0x3ae4, aim through 0x23b4 / 0x24fc / 0x25c8), 0x3cb0, 0x3ce4, 0x3d34,
+/// 0x3d64, 0x3dcc, 0x3e58 (controller: update 0x3d64, deleter 0x3dcc),
+/// 0x3fc0 and 0x403c.
+fn beam(rel: &crate::city_rel::CityRel<'_>, f: &BeamFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: serde_json::Value| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let n = |v: u32| serde_json::json!(v);
+    let m = |site: u32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!(module_ref(rel, site, 0)?))
+    };
+    let k = |site: u32| boss_constant(rel, site);
+    let mut ev = Vec::new();
+    let mut returned: Option<u32> = None;
+    match f {
+        BeamFrame::Segment {
+            parent,
+            kind,
+            position_words,
+            mode,
+            task,
+            entity,
+            block,
+            stage_id,
+            player_position,
+        } => {
+            returned = Some(0);
+            if *parent != 0 {
+                ev.push(call(
+                    0x3b2c,
+                    serde_json::json!([2, module_ref(rel, 0x3b22, 0)?, parent]),
+                )?);
+                if *task != 0 {
+                    ev.extend([
+                        st(0x3b50, "task", 0x14, 4, m(0x3b4a)?),
+                        st(0x3b5c, "task", 0x18, 4, m(0x3b56)?),
+                        call(0x3b68, serde_json::json!([1, 0x6c]))?,
+                    ]);
+                    if *block == 0 {
+                        ev.push(call(0x3b7c, serde_json::json!([task]))?);
+                    } else {
+                        let one = n(k(0x3ba6)?.to_bits());
+                        ev.push(st(0x3b88, "task", 0x40, 4, n(*block)));
+                        for (i, site) in [0x3b94u32, 0x3b98, 0x3ba0].into_iter().enumerate() {
+                            ev.push(st(
+                                site,
+                                "entity",
+                                0x14 + 4 * i as u32,
+                                4,
+                                n(position_words[i]),
+                            ));
+                        }
+                        ev.extend([
+                            st(0x3bb0, "entity", 0x20, 4, one.clone()),
+                            st(0x3bb8, "block", 2, 1, n(2)),
+                            st(0x3bc0, "block", 4, 4, one),
+                            st(0x3bc4, "block", 1, 1, n((*kind).into())),
+                            st(0x3bd4, "block", 8, 4, n(rel_word(rel, 0x3bca, 5)?)),
+                            st(0x3bdc, "entity", 6, 2, n(1)),
+                            st(0x3be4, "entity", 0, 1, n(4)),
+                            st(0x3bf8, "block", 0, 1, n((*stage_id).into())),
+                            st(0x3bfc, "block", 0x20, 4, n(*mode)),
+                        ]);
+                        for (base, sites) in [
+                            (0x48u32, [0x3c08u32, 0x3c0c, 0x3c14]),
+                            (0x54, [0x3c20, 0x3c24, 0x3c2c]),
+                        ] {
+                            for (i, site) in sites.into_iter().enumerate() {
+                                ev.push(st(
+                                    site,
+                                    "block",
+                                    base + 4 * i as u32,
+                                    4,
+                                    n(position_words[i]),
+                                ));
+                            }
+                        }
+                        for (i, site) in [0x3c58u32, 0x3c5c, 0x3c64].into_iter().enumerate() {
+                            ev.push(st(
+                                site,
+                                "block",
+                                0x3c + 4 * i as u32,
+                                4,
+                                n(player_position[i]),
+                            ));
+                        }
+                        ev.extend([
+                            local(
+                                0x3c74,
+                                0x23b4,
+                                serde_json::json!([mode, block + 0x3c, block + 0x24]),
+                            ),
+                            local(
+                                0x3c80,
+                                0x24fc,
+                                serde_json::json!([entity + 0x14, block + 0x24]),
+                            ),
+                            local(
+                                0x3c90,
+                                0x25c8,
+                                serde_json::json!([entity + 0x14, block + 0x24, entity + 8]),
+                            ),
+                        ]);
+                        returned = Some(*task);
+                    }
+                }
+            }
+        }
+        BeamFrame::Fire {
+            task,
+            entity,
+            block,
+            flags,
+        } => {
+            if *task != 0 && *entity != 0 && *block != 0 {
+                ev.push(st(
+                    0x3cdc,
+                    "entity",
+                    4,
+                    2,
+                    n(u32::from(*flags as u16 | 0x100)),
+                ));
+            }
+        }
+        BeamFrame::Done {
+            task,
+            entity,
+            block,
+            flags,
+        } => {
+            returned = Some(if *task == 0 || *entity == 0 || *block == 0 {
+                u32::MAX
+            } else {
+                u32::from(flags & 0x200 != 0)
+            });
+        }
+        BeamFrame::Slot { slot, segments } => {
+            returned = Some(match slot {
+                0 => segments[0],
+                1 => segments[1],
+                _ => {
+                    return Err(Error::invalid(
+                        "slots other than 0 and 1 return a leftover register",
+                    ))
+                }
+            });
+        }
+        BeamFrame::Update { controller } => {
+            ev.push(local(0x3d80, 0x3d34, serde_json::json!([controller, 0])));
+            ev.push(local(0x3d8c, 0x3d34, serde_json::json!([controller, 1])));
+        }
+        BeamFrame::Delete {
+            controller,
+            segments,
+        } => {
+            ev.push(local(0x3df4, 0x3d34, serde_json::json!([controller, 0])));
+            ev.push(local(0x3e04, 0x3d34, serde_json::json!([controller, 1])));
+            if segments[0] != 0 {
+                ev.push(call(0x3e18, serde_json::json!([segments[0]]))?);
+                ev.push(st(0x3e20, "entity", 8, 4, n(0)));
+            }
+            if segments[1] != 0 {
+                ev.push(call(0x3e30, serde_json::json!([segments[1]]))?);
+                ev.push(st(0x3e38, "entity", 0xc, 4, n(0)));
+            }
+        }
+        BeamFrame::Spawn {
+            parent,
+            task,
+            kind,
+            count,
+            aims,
+            child,
+            anchor,
+            pattern,
+            segments,
+        } => {
+            returned = Some(0);
+            if *parent != 0 {
+                ev.push(call(
+                    0x3e94,
+                    serde_json::json!([2, module_ref(rel, 0x3e8a, 0)?, parent]),
+                )?);
+                if *task != 0 {
+                    let mut next = segments.iter().copied();
+                    let mut seg = || {
+                        next.next()
+                            .ok_or_else(|| Error::invalid("missing beam segment"))
+                    };
+                    let make = |site: u32, aim: u32| {
+                        local(
+                            site,
+                            0x3ae8,
+                            serde_json::json!([parent, *kind, aim, anchor]),
+                        )
+                    };
+                    ev.push(st(0x3eb4, "task", 0x18, 4, m(0x3eae)?));
+                    ev.push(st(0x3ec0, "entity", 1, 1, n(*count as u8 as u32)));
+                    if *count == 1 {
+                        if aims[1] != 0 {
+                            ev.push(local(0x3eec, 0x8880, serde_json::json!([child])));
+                            if *pattern == 0 {
+                                ev.push(make(0x3f0c, aims[0]));
+                                ev.push(st(0x3f10, "entity", 8, 4, n(seg()?)));
+                            } else {
+                                ev.push(make(0x3f28, aims[1]));
+                                ev.push(st(0x3f2c, "entity", 8, 4, n(seg()?)));
+                            }
+                            ev.push(st(0x3f34, "entity", 0xc, 4, n(0)));
+                        } else {
+                            ev.push(make(0x3f4c, aims[0]));
+                            ev.push(st(0x3f50, "entity", 8, 4, n(seg()?)));
+                            ev.push(st(0x3f58, "entity", 0xc, 4, n(0)));
+                        }
+                    } else {
+                        ev.push(make(0x3f70, aims[0]));
+                        ev.push(st(0x3f74, "entity", 8, 4, n(seg()?)));
+                        if aims[1] != 0 {
+                            ev.push(make(0x3f90, aims[1]));
+                            ev.push(st(0x3f94, "entity", 0xc, 4, n(seg()?)));
+                        } else {
+                            ev.push(st(0x3fa0, "entity", 0xc, 4, n(0)));
+                        }
+                    }
+                    returned = Some(*task);
+                }
+            }
+        }
+        BeamFrame::FireAll {
+            controller,
+            count,
+            segments,
+        } => {
+            if *controller != 0 {
+                for i in 0..i32::from(*count).max(0) {
+                    let s = *segments
+                        .get(i as usize)
+                        .ok_or_else(|| Error::invalid("missing beam segment"))?;
+                    ev.push(local(
+                        0x4000,
+                        0x3d34,
+                        serde_json::json!([controller, i as u32]),
+                    ));
+                    ev.push(local(0x4004, 0x3cb0, serde_json::json!([s])));
+                }
+            }
+        }
+        BeamFrame::Status {
+            controller,
+            count,
+            segments,
+            states,
+        } => {
+            if *controller == 0 {
+                returned = Some(u32::MAX);
+            } else {
+                let mut last = 0i8;
+                for i in 0..i32::from(*count).max(0) {
+                    let s = *segments
+                        .get(i as usize)
+                        .ok_or_else(|| Error::invalid("missing beam segment"))?;
+                    ev.push(local(
+                        0x4088,
+                        0x3d34,
+                        serde_json::json!([controller, i as u32]),
+                    ));
+                    ev.push(local(0x408c, 0x3ce4, serde_json::json!([s])));
+                    last = *states
+                        .get(i as usize)
+                        .ok_or_else(|| Error::invalid("missing segment state"))?;
+                }
+                returned = Some(last as i32 as u32);
+            }
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
 }
