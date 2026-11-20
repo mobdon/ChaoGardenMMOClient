@@ -44,8 +44,8 @@ goal ring writes is exposed as is rather than interpreted as a clear.
 | Checkpoints | Placement positions only |
 
 `MoverProgram::verify` checks the module digest, object rows, instruction
-words and relocated constants. Containers, doors, switches, enemies, item
-boxes and everything else are listed by name in `Session::unimplemented`.
+words and relocated constants. Doors, switches, enemies, item boxes,
+springs and everything else are listed by name in `Session::unimplemented`.
 
 ## Offline verification
 
