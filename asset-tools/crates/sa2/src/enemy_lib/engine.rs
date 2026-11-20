@@ -162,15 +162,15 @@ pub fn new_work(task: &EnemyTask) -> EnemyWork {
 
 /// fn_80018C88: the work set-up for enemies that take part in switch
 /// groups. The group is the low byte of the task's Rotation.y, which keeps
-/// only its high byte; the group's live count goes up.
+/// only its high byte; the group's live count goes up. (Its fn_8008CEB0
+/// call for groups other than -1 is left to the host.)
 pub fn new_counted_work(task: &mut EnemyTask, counts: &mut GroupCounts) -> EnemyWork {
     let mut w = new_work(task);
     w.group = task.ang[1] as i8;
     task.ang[1] &= 0xff00;
-    if w.group != -1 {
-        let c = &mut counts[w.group as u8 as usize];
-        *c = c.wrapping_add(1);
-    }
+    // A group of -1 skips only the fn_8008CEB0 call; it is counted too.
+    let c = &mut counts[w.group as u8 as usize];
+    *c = c.wrapping_add(1);
     w.flags |= 0x20;
     w
 }

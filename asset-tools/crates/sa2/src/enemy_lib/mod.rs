@@ -10,7 +10,9 @@
 //! Field names follow what the code does with them; each field notes its
 //! offset in the task's work (`twp`, task +0x34) or the enemy work (task
 //! +0x38, 0x210 bytes from fn_80018D28).
+pub mod e_ai;
 pub mod engine;
+pub mod host;
 pub mod motion;
 
 pub type V3 = [f32; 3];
@@ -63,7 +65,11 @@ pub struct EnemyWork {
     pub side_accel: f32,
     /// +0x18: frames until the next wander target.
     pub wander_timer: i32,
-    /// +0x44.
+    /// +0x40: non-null (a pointer the game sets; kind 5 counts as noticing
+    /// while it is set).
+    pub link_40: bool,
+    /// +0x44: passed as the player to fn_80015730 when the enemy becomes a
+    /// carried object.
     pub b_44: i8,
     /// +0x45: the switch group (-1 for none).
     pub group: i8,
@@ -99,6 +105,11 @@ pub struct EnemyWork {
     pub i_e8: i32,
     pub f_ec: f32,
     pub f_f0: f32,
+    /// +0xF4: the ground probe position (fn_800186B0).
+    pub probe: V3,
+    /// +0x150: the ground height under the probe (GetShadowPosXYZ's
+    /// result at +0x140).
+    pub shadow_y: f32,
     /// +0x1C0.
     pub f_1c0: f32,
     /// +0x1C4: the bobbing angle.
