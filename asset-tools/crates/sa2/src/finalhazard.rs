@@ -1421,12 +1421,26 @@ pub struct StageFrame {
     #[serde(default)]
     pub sound_queries: [i32; 2],
 }
+/// Engine results a state 4 frame observes when it spawns debris (every
+/// fourth frame): the seven 0x8010d940 results, the five trigonometric
+/// results in call order (0x80112050(b), 0x80112068(a), 0x80112050(a),
+/// 0x80112068(b), 0x80112068(a)) and words 0x230..0x238 of the active
+/// 0x801e7328 entry.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebrisFrame {
+    pub randoms: [i32; 7],
+    pub trig: [f32; 5],
+    pub origin: [f32; 3],
+}
 /// Engine results one handoff frame observes.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandoffFrame {
     #[serde(default)]
     pub stage: Option<StageFrame>,
+    #[serde(default)]
+    pub debris: Option<DebrisFrame>,
     pub poll: i32,
     /// Byte 1 of each 0x801e7328 entry and word 0xc of each 0x801e7368 entry.
     pub characters: [i8; 2],
@@ -2211,9 +2225,9 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                         "frame {n} is in state 0 and needs a stage block"
                     )));
                 }
-                if switch_state == 4 {
+                if switch_state == 4 && f.global_7c & 3 == 0 && f.debris.is_none() {
                     return Err(Error::invalid(format!(
-                        "frame {n} is in state 4 (0xf8cc), which is not ported"
+                        "frame {n} spawns state 4 debris and needs a debris block"
                     )));
                 }
                 let mut ev = Vec::new();
@@ -2472,6 +2486,58 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                             }
                         }
                         sound_tail(&mut ev, s, player)?;
+                    }
+                    4 => {
+                        // Section 1 + 0xf8cc: after a ring-out, debris every
+                        // fourth frame around the defeated player.
+                        let me = r31 as usize;
+                        let k = |site: usize| stage_f32(&rel, site, 4, 0);
+                        if f.global_7c & 3 == 0 {
+                            let d = f.debris.as_ref().unwrap();
+                            let scale = k(0xf912)?;
+                            let u = |i: usize| scale * (d.randoms[i] as f64 as f32);
+                            for site in [0xf97c, 0xf9bc, 0xf9fc, 0xfa3c, 0xfa78, 0xfac0] {
+                                ev.push(call(site, &[])?);
+                            }
+                            let pos = [
+                                k(0xf922)? - k(0xf91a)? * u(0),
+                                k(0xf932)? - k(0xf92a)? * u(1),
+                                k(0xf93a)? + k(0xf91a)? * u(2),
+                            ];
+                            let speed = k(0xf94a)? + k(0xf942)? * u(3);
+                            let a = (k(0xf95a)? - k(0xf952)? * u(4)) as f64 as i32;
+                            let b = (k(0xf962)? * u(5)) as f64 as i32;
+                            for (site, angle) in [
+                                (0xfb04, b),
+                                (0xfb10, a),
+                                (0xfb24, a),
+                                (0xfb34, b),
+                                (0xfb40, a),
+                            ] {
+                                ev.push(call(site, &[angle as u32])?);
+                            }
+                            let t = d.trig;
+                            let dir = [speed * t[1] * t[0], speed * t[2], speed * t[4] * t[3]];
+                            ev.push(serde_json::json!({"site":0xfb58,
+                                "call":engine_import(&rel, 0xfb58)?,"vectors":[dir, d.origin]}));
+                            ev.push(call(0xfb5c, &[])?);
+                            let size = k(0xf972)? + k(0xf96a)? * u(6);
+                            ev.push(serde_json::json!({"site":0xfba0,"local":0x1425c,
+                                "vectors":[dir, pos],"floats":[size]}));
+                        }
+                        for (site, offset, constant) in
+                            [(0xfbc4, 0xc, 0xfba6), (0xfbd8, 0x10, 0xfbca)]
+                        {
+                            let bits = k(constant)?.to_bits();
+                            ev.push(store(
+                                site,
+                                "player_task",
+                                Some(me as u8),
+                                offset,
+                                4,
+                                bits.into(),
+                            ));
+                        }
                     }
                     s if !(0..=4).contains(&s) => {
                         let st = f.stage.as_ref().ok_or_else(|| {

@@ -11,7 +11,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | Path | Section 1 code | What it reproduces |
 | --- | --- | --- |
 | `switch_camera` | 0xf5cc–0xf6a8, 0xf724–0xf7fc | Six-word camera request when the handoff enters state 2 or 3 |
-| `switch_replay` | 0xf458–0xff34 per frame | Stage player task: state 0 (ring drain, handoff trigger) and handoff states 1–3 |
+| `switch_replay` | 0xf458–0xff34 per frame | Stage player task: states 0 (ring drain, handoff trigger), 1–3 (handoff) and 4 (ring-out debris) |
 | `voice_gate` | 0xeb38 | Whether a stage voice may play |
 | `arena_clamp` | 0xee8c, 0x40cc | Per-frame arena bounds for both players |
 | `timed_voice` | 0xf070 | Timed boss voice lines |
@@ -48,8 +48,15 @@ the engine is told through 0x8003b914, and the task enters state 4. The handoff 
 once the active player passes Z −50 (player 0) or +50 (player 1). That needs no boss hold flag 4,
 switch reason other than 1, and neither slot posing (0x6d on slot 0, 0x74 on slot 1). A pair of
 engine sound calls ordered by the active player ends the frame. The engine's ring services are
-modeled as a plain counter (`rings`), assuming the add call adds exactly. State 4 (0xf8cc, random
-debris) is not ported, and a frame in state 4 is rejected. The ring transfer inside 0xec04 needs
+modeled as a plain counter (`rings`), assuming the add call adds exactly.
+
+State 4 (0xf8cc) follows a ring-out. On every fourth frame it builds a debris burst from seven
+engine random values (scaled by 1/32768) and five trigonometric results. Those values give an
+offset of (−0.2 − 0.1u, 0.08 − 0.04u, −0.05 + 0.1u), a speed of 4 + 3u and angles 16384 − 32768u
+and 65536u. The stage passes the direction and the defeated player's 0x801e7328 word 0x230 vector to
+0x80114ba0, whose effect is not modeled. It then calls the local spawn 0x1425c with a size of
+1 + 0.5u. Every state 4 frame then writes 0.2 and 0.01 to words 0xc and 0x10 of that player's
+0x801e7348 entry. Such frames need a `debris` block (`randoms`, `trig`, `origin`). The ring transfer inside 0xec04 needs
 switch reason 1, which blocks this trigger; only the boss's own call reaches it.
 
 A frame without `stage` reports the voice gate and the tail's two local calls as call sites only;
@@ -85,7 +92,7 @@ instructions with relocated data and compare them against the Rust output:
 | Test | Cases |
 | --- | --- |
 | `tests/finalhazard_switch_camera_ppc.py` | 336 camera packets: both states, both slots, characters 9/10/−1, yaw wraparound, modes −1/13/14/20 |
-| `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 31,130 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
+| `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 32,992 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
 Deliberate one-line faults were caught by each test. These are offline comparisons with the

@@ -86,6 +86,7 @@ PRESENT = windows[(0, 7, 0x801E7388)]
 CHANNELS, BOSS = 0x8A000, 0x8B000
 HOLD = windows[(88, 6, 0x664)]
 rings = [0, 0]
+counters = {}
 GLOBAL = windows[(0, 6, 0x801CBD88)]
 TABLE1, TABLE2, TABLE3 = (windows[(0, 7, a)] for a in (0x801E7368, 0x801E7328, 0x801E7348))
 RESOURCES = windows[(0, 7, 0x801E5928)]
@@ -108,7 +109,7 @@ SUBMIT = {0xF6A8, 0xF7FC}
 
 
 def region(addr):
-    for name, base, slots in (("player1", P1, 2), ("player2", P2, 2)):
+    for name, base, slots in (("player1", P1, 2), ("player2", P2, 2), ("player_task", TASKS, 2)):
         if base <= addr < base + 0x800 * slots:
             return name, (addr - base) // 0x800, (addr - base) % 0x800
     if GLOBAL <= addr < GLOBAL + 0x1000:
@@ -151,6 +152,16 @@ def code_hook(u, pc, size, _):
             slot = u.reg_read(R.UC_PPC_REG_28)
             bits = struct.unpack(">Q", struct.pack(">d", stage["distances"][slot]))[0]
             u.reg_write(R.UC_PPC_REG_FPR1, bits)
+        elif target in (0x80112050, 0x80112068):  # engine trigonometry
+            events.append(dict(site=off, call=target, args=[r3]))
+            value = frame["debris"]["trig"][counters["trig"]]
+            counters["trig"] += 1
+            u.reg_write(R.UC_PPC_REG_FPR1, struct.unpack(">Q", struct.pack(">d", value))[0])
+            u.reg_write(R.UC_PPC_REG_PC, pc + 4)
+            return
+        elif target == 0x80114BA0:  # engine vector helper (no effect modeled)
+            vec = lambda p: list(struct.unpack(">3f", u.mem_read(p, 12)))
+            events.append(dict(site=off, call=target, vectors=[vec(r3), vec(r4)]))
         elif target == 0x80039754:  # engine set position(slot, x, y, z)
             fpr = lambda n: struct.unpack(">d", struct.pack(
                 ">Q", u.reg_read(getattr(R, f"UC_PPC_REG_FPR{n}"))))[0]
@@ -172,6 +183,9 @@ def code_hook(u, pc, size, _):
                 rings[r3] = (rings[r3] + struct.unpack(">i", struct.pack(">I", r4))[0])
             elif target == 0x80022BC4:
                 ret = stage["sound_queries"][r3]
+            elif target == 0x8010D940:  # engine random
+                ret = frame["debris"]["randoms"][counters["rand"]]
+                counters["rand"] += 1
         if target not in SAVE | RESTORE and target not in (0x8011B314,):
             u.reg_write(R.UC_PPC_REG_3, ret & 0xFFFFFFFF)
         u.reg_write(R.UC_PPC_REG_PC, pc + 4)
@@ -189,6 +203,12 @@ def code_hook(u, pc, size, _):
             u.mem_write(BOSS + 0x34, struct.pack(">I", BOSS + 0x100))
             u.mem_write(BOSS + 0x104, struct.pack(">h", flags))
         u.reg_write(R.UC_PPC_REG_3, 0 if flags is None else BOSS)
+        u.reg_write(R.UC_PPC_REG_PC, pc + 4)
+        return
+    if off == 0xFBA0:  # local debris spawn 0x1425c stays external
+        vec = lambda p: list(struct.unpack(">3f", u.mem_read(p, 12)))
+        f1 = struct.unpack(">d", struct.pack(">Q", u.reg_read(R.UC_PPC_REG_FPR1)))[0]
+        events.append(dict(site=off, local=target, vectors=[vec(r3), vec(r4)], floats=[f1]))
         u.reg_write(R.UC_PPC_REG_PC, pc + 4)
         return
     if off == 0xF3DC:  # voice-task helper 0x18ed0 stays external
@@ -219,6 +239,10 @@ cpu.hook_add(UC_HOOK_MEM_WRITE, write_hook)
 cpu.mem_write(windows[(88, 6, 0x4A8)], struct.pack(">I", WORK))
 
 
+def player_now():
+    return struct.unpack(">b", cpu.mem_read(WORK, 1))[0] & 1
+
+
 def run(start):
     """Emulate one replay and return the native per-frame events and state."""
     player, state, timer, countdown, visits, line, extra, frames_in = start
@@ -234,6 +258,9 @@ def run(start):
     global frame, events
     for frame in frames_in:
         events = []
+        counters.update(rand=0, trig=0)
+        if "debris" in frame:
+            cpu.mem_write(player2[player_now()] + 0x230, struct.pack(">3f", *frame["debris"]["origin"]))
         cpu.mem_write(GLOBAL + 0x7C, struct.pack(">I", frame["global_7c"] & 0xFFFFFFFF))
         for s in range(2):
             cpu.mem_write(player1[s] + 0xC, struct.pack(">i", frame["yaws"][s]))
@@ -270,7 +297,7 @@ def run(start):
             after.update(line=ln, reason=r4, switch_count=r5, ring_clock=rc, pool=pl,
                          rings=list(rings), visits=list(struct.unpack(">bb", cpu.mem_read(WORK + 2, 2))))
         native.append((events, after))
-        if st == 4 or (st == 0 and stage is None):
+        if st == 0 and stage is None:
             break
     return native
 
@@ -322,7 +349,7 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
         state = (1, 2, 3)[case // 2 % 3]
         normal = case >= 240  # replays that start in state 0 (or out of range)
         if normal:
-            state = rng.choice((0, 0, 0, 0, 7, -1))
+            state = rng.choice((0, 0, 0, 0, 4, 7, -1))
         timer = rng.choice((0, 100, 119, 120, 121, 179, 180, 181, -3, 32767))
         countdown = rng.choice((0, 1, 5, -2))
         visits = [rng.choice((-1, 0, 1, 2, 3)) for _ in range(2)]
@@ -349,6 +376,11 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
                 global_7c=(clock + k) if with_stage else rng.choice((0, 14399, 14400, 14401)))
             if with_stage:
                 fr["stage"] = stage_frame(rng)
+                fr["debris"] = dict(
+                    randoms=[rng.choice((0, 1, 16384, 32767, rng.randrange(32768), -5, 40000))
+                             for _ in range(7)],
+                    trig=[f32(rng.uniform(-1, 1)) for _ in range(5)],
+                    origin=[f32(rng.uniform(-100, 100)) for _ in range(3)])
             if normal:
                 for pos in fr["stage"]["positions"]:
                     pos[2] = f32(rng.choice((-60.0, -50.0, -40.0, 0.0, 40.0, 50.0, 60.0)))
@@ -369,8 +401,9 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
         q = p / "request.json"
         out = p / f"{case}.json"
         q.write_text(json.dumps(inp))
-        subprocess.run([exe, "finalhazard-placement-clock", module, out, q], check=True,
-                       stdout=subprocess.DEVNULL)
+        res = subprocess.run([exe, "finalhazard-placement-clock", module, out, q],
+                             capture_output=True, text=True)
+        assert res.returncode == 0, (case, res.stderr[-600:])
         got = json.loads(out.read_text())
         assert len(got["frames"]) == len(native), (case, len(got["frames"]), len(native))
         for n, (rust, (events, after)) in enumerate(zip(got["frames"], native)):
@@ -392,7 +425,7 @@ required = {0xF47C, 0xF498, 0xF4C4, 0xF4D8, 0xF52C, 0xF55C, 0xF564, 0xF5C8, 0xF6
             0xF6A8, 0xF6C0, 0xF718, 0xF7E4, 0xF7F0, 0xF7FC, 0xF800, 0xF838, 0xF848, 0xF86C,
             0xF87C, 0xF884, 0xF8BC, 0xF8C4, 0xFF34, 0xEBC0, 0xEF74, 0xF038, 0xF0E8, 0xF380,
             0xF3A4, 0xF3DC, 0xFC28, 0xFC54, 0xFC68, 0xFC8C, 0xFC9C, 0xFCC0, 0xFD18, 0xFD7C,
-            0xFDA4, 0xFDD8, 0xFDDC, 0xFE90, 0xFEC4, 0xFECC, 0xFEDC, 0xFEFC, 0xFF10, 0xED08}
+            0xFDA4, 0xFDD8, 0xFDDC, 0xFE90, 0xFEC4, 0xFECC, 0xFEDC, 0xFEFC, 0xFF10, 0xED08, 0xF97C, 0xFB58, 0xFBA0, 0xFBC4, 0xFBD8}
 # The ring transfer inside 0xec04 needs reason 1, which blocks the state 0 trigger;
 # only the boss's own call reaches it, so it is not required here.
 assert required <= seen, sorted(hex(s) for s in required - seen)
