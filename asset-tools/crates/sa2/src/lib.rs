@@ -43,6 +43,7 @@ pub mod event_camera;
 pub mod glb_cli;
 pub mod input;
 pub mod iron_gate_movers;
+pub mod lost_colony;
 mod key_pickup;
 pub mod knudai;
 pub mod land_contact;
