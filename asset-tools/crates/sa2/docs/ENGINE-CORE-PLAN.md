@@ -212,10 +212,23 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   (tests/session_ppc.py; PhysicsArray from the Steam install). Fail closed:
   its 22 engine callees, and `fn_800DEA3C` returns 0 until the HUD/message
   loader is ported.
-- **Part 2 (next):** the stage
-  module load `fn_8001EB80` and stg11D's init fn_11_A434 (landtable and
-  lights, SET files, the SET task and spawner, death zones, stage callbacks)
-  from Steam data, and the unload `fn_11_A76C` / `fn_8002176C`.
+- **Stage module load done** (`sa2-runtime/src/stage.rs`): `fn_8001EB80`
+  (character swaps, table clears, subprogram init, camera reset
+  `fn_800C4370`) and stg11D's init fn_11_A434 ported as Rust (REL addresses as
+  section base + offset): the stage task fn_11_AE18, death zones
+  `fn_8003BCC4`, fn_11_B484, fn_11_16DE0, the object-list copy fn_11_A230,
+  the callback tables 0x801A2A18 / 0x801E77D8 / 0x803ADC30, and the SET task
+  `fn_8006638C`. Checked against main.dol with the GC stg11D.rel running
+  under Unicorn (tests/stage_ppc.py, needs SA2_STG11D_REL) on 10 ops, every
+  task and stage global included. Fail closed: the file loaders
+  (`fn_800245EC` landtable and lights, `fn_80065048` SET files, fn_11_C2F0,
+  fn_11_152EC), fn_11_330DC, fn_11_28038 and 18 other engine callees.
+- **Still to do in E4:** the SET rows from the Steam set files (fn_80065048,
+  then `fn_800658EC` entry setup, `fn_80064F08` ring count and the spawner
+  `fn_80066274` → `fn_80065C40`), and the unload (fn_11_A76C, `fn_8002176C`).
+  Open: stg11D's object list and callbacks are GC REL addresses; the Steam
+  REL links against a different main.dol, so its object list must be mapped
+  onto the same ported routines (see ENGINE-MAP.md section 0).
 - SET rows whose task is not ported are listed by name and not spawned.
 - Unload frees every task and returns the runtime to its empty state.
 - `play_session::Session` stops taking a host `PlayerSample`: the walker task

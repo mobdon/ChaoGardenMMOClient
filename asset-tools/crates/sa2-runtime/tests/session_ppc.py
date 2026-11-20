@@ -118,4 +118,5 @@ def main():
                'scenarios': out}, sys.stdout)
 
 
-main()
+if __name__ == '__main__':
+    main()

@@ -297,8 +297,9 @@ Stage number: `GetStageNum` 0x8001DD78 returns the halfword 0x803AD820.
    +0x14, +0x15 = 0; `fn_800DCBC8`; G+0x15 = 1 when 0x803AD420 ≥ 0 and
    `fn_800DB604()` returns -1. Returns 1.
 2. Mode 2/3 → `fn_8001EB80` (stage load): 0x803AD824 = stage, fog table
-   (`njGenerateFogTable3`, `njSetFogTable`), character swaps for stages 0x5A,
-   3 and 0x3C..0x46 (destroy player 0, set 0x803AD828, reload players), clear
+   (`njGenerateFogTable3`, `njSetFogTable`), character swaps (destroy player 0,
+   set 0x803AD828, reload players): stage 0x5A turns 7 into 3 and 6 into 2;
+   stages 3..0x3C and 0x46 turn 3 into 7 and 2 into 6 (corrected in E4), clear
    0x801E5870 and 0x801E5630, `fn_80067FF4`, **`fn_8001A3BC` → `fn_8001A5B0`:
    read `stg11D.rel`, `OSLink`, call module prolog (header +0x34)**,
    **`fn_80019E18`: call the subprogram's init**, `fn_8001EDFC`, G+0x16 = 1,
