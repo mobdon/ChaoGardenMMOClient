@@ -988,6 +988,12 @@ pub enum PlacementClock {
     AttackVolley(Box<AttackVolleyFrame>),
     /// Section 1 + 0x5264..0x5804: the attack piece object.
     Piece(Box<PieceFrame>),
+    /// Section 1 + 0x4fa8, 0x50a4 and 0x5130: piece burst, explosion and
+    /// contact.
+    PieceAction(Box<PieceActionFrame>),
+    /// Section 1 + 0x4524 and 0x46e0: piece actions 0 (fly out) and the
+    /// wobble 0x46e0 runs in action 1.
+    PieceMotion(Box<PieceMotionFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2792,6 +2798,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::AttackHold(frame) => return attack_hold(&rel, &frame),
         PlacementClock::AttackVolley(frame) => return attack_volley(&rel, &frame),
         PlacementClock::Piece(frame) => return piece(&rel, &frame),
+        PlacementClock::PieceAction(frame) => return piece_action(&rel, &frame),
+        PlacementClock::PieceMotion(frame) => return piece_motion(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -9153,4 +9161,339 @@ fn piece(rel: &crate::city_rel::CityRel<'_>, f: &PieceFrame) -> Result<serde_jso
         out["returned"] = serde_json::json!(r);
     }
     Ok(out)
+}
+
+/// One call of the piece burst, explosion or contact routines; values are
+/// as the code reads them.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum PieceActionFrame {
+    /// 0x4fa8: piece action 5. `step` / `step_after` are entity byte 1,
+    /// `timer` entity half-word 6, `fade` block float 0x28.
+    Burst {
+        task: u32,
+        entity: u32,
+        step: i8,
+        step_after: u8,
+        timer: u16,
+        fade: f32,
+    },
+    /// 0x50a4: piece action 4. `owner` is task word 8, `action` the entity
+    /// action.
+    Explode {
+        task: u32,
+        entity: u32,
+        owner: u32,
+        action: i8,
+    },
+    /// 0x5130: contact check. `player` is the player entity word at
+    /// 0x801e7368 + 4 * stage byte 0, `player_position` its floats 0x14 and
+    /// 0x1c (x, z), `position` the piece's x and z, `root` the f1 result of
+    /// local 0x40cc, `hit` the 0x800065a8 result, `kind` the 0x7154 result.
+    Contact {
+        task: u32,
+        entity: u32,
+        block: u32,
+        player_position: [f32; 2],
+        position: [f32; 2],
+        root: f32,
+        hit: u32,
+        kind: i32,
+    },
+}
+/// Sections 1 + 0x4fa8 (spark burst at 60 and 30 frames, then fade by
+/// 4:0x254 and free below 4:0x258), 0x50a4 (explosion effect 0x800e26e0
+/// with the vector 4:0x25c and size 4:0x268; the owner's timer ticks below
+/// action 2) and 0x5130 (flat distance to the player; within 4:0x26c a
+/// player hit either knocks the player back and stuns the boss or just
+/// explodes the piece).
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn piece_action(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &PieceActionFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let mut ev = Vec::new();
+    match f {
+        PieceActionFrame::Burst {
+            task,
+            entity,
+            step,
+            step_after,
+            timer,
+            fade,
+        } => {
+            let mut fading = true;
+            if (0..=1).contains(step) {
+                let mut timer = *timer;
+                if *step == 0 {
+                    ev.extend([
+                        local(0x4ff8, 0x6d64, serde_json::json!([task, entity + 0x14, 0])),
+                        st(0x5000, "entity", 6, 2, 0x3c),
+                        st(0x500c, "entity", 1, 1, step_after.wrapping_add(1).into()),
+                    ]);
+                    timer = 0x3c;
+                }
+                if timer == 30 {
+                    ev.push(local(
+                        0x5028,
+                        0x6d64,
+                        serde_json::json!([task, entity + 0x14, 0]),
+                    ));
+                }
+                ev.push(st(0x5034, "entity", 6, 2, timer.wrapping_sub(1).into()));
+                if timer == 0 {
+                    ev.push(call(0x5044, serde_json::json!([task]))?);
+                    fading = false;
+                }
+            }
+            if fading {
+                let left = fade - k(0x5052)?;
+                ev.push(st(0x5060, "block", 0x28, 4, left.to_bits()));
+                if f64::from(left) < f64::from(k(0x506a)?) {
+                    ev.push(call(0x5080, serde_json::json!([task]))?);
+                }
+            }
+        }
+        PieceActionFrame::Explode {
+            task,
+            entity,
+            owner,
+            action,
+        } => {
+            if *action <= 1 {
+                ev.push(local(0x50f4, 0x6494, serde_json::json!([owner])));
+            }
+            let vector = {
+                let r = rel
+                    .reference(1, 0x50c2)
+                    .filter(|r| r.module == 88 && r.section == 4)
+                    .ok_or_else(|| Error::invalid("missing explosion vector"))?;
+                let d = rel.data(4)?;
+                (0..3)
+                    .map(|i| {
+                        let at = r.addend as usize + 4 * i;
+                        d.get(at..at + 4)
+                            .map(|b| f64::from(f32::from_be_bytes(b.try_into().unwrap())))
+                            .ok_or_else(|| Error::invalid("explosion vector out of range"))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            let mut e = call(0x510c, serde_json::json!([entity + 0x14, "stack"]))?;
+            e["floats"] = serde_json::json!([f64::from(k(0x5102)?)]);
+            e["vectors"] = serde_json::json!({"1": vector});
+            ev.push(e);
+            ev.push(call(0x5114, serde_json::json!([task]))?);
+        }
+        PieceActionFrame::Contact {
+            task,
+            entity,
+            block,
+            player_position,
+            position,
+            root,
+            hit,
+            kind,
+        } => {
+            let dx = player_position[0] - position[0];
+            let dz = player_position[1] - position[1];
+            ev.push(serde_json::json!({"site":0x51a8,"local":0x40cc,"args":[],"floats":[f64::from(dx * dx + dz * dz)]}));
+            ev.push(st(0x51ac, "block", 0x14, 4, root.to_bits()));
+            if !(f64::from(*root) > f64::from(k(0x51b6)?)) {
+                ev.push(call(0x51cc, serde_json::json!([task]))?);
+                if *hit != 0 {
+                    ev.push(local(0x51e0, 0x7154, serde_json::json!([task, hit])));
+                    if *kind == 1 {
+                        let mut knock = local(0x5214, 0x71e0, serde_json::json!([0]));
+                        knock["floats"] = serde_json::json!([f64::from(k(0x520a)?)]);
+                        ev.extend([
+                            call(0x5200, serde_json::json!([0xa, 0, 0, 0x1e, entity + 0x14]))?,
+                            knock,
+                            local(0x521c, 0x50a4, serde_json::json!([task])),
+                            local(0x5220, 0xc98, serde_json::json!([])),
+                        ]);
+                    } else {
+                        ev.push(local(0x522c, 0x50a4, serde_json::json!([task])));
+                    }
+                }
+                ev.push(call(0x523c, serde_json::json!([task, 0, block + 0x98]))?);
+                ev.push(call(0x5244, serde_json::json!([task]))?);
+            }
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of the piece motion routines; values are as the code reads
+/// them (engine and local results single precision).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum PieceMotionFrame {
+    /// 0x4524: fly out to the slot position (block words 0x68..0x70,
+    /// `target`). `random` is the 0x8010d940 result, `velocity` the
+    /// vector local 0x6f10 leaves, `speed` the length 0x80114eac returns
+    /// for block 0x2c, `velocity_now` block floats 0x2c..0x34 at that point,
+    /// `reach` the lengths of the entity position and of the target.
+    Fly {
+        entity: u32,
+        block: u32,
+        step: i8,
+        step_after: u8,
+        random: i32,
+        velocity: [f32; 3],
+        speed: f32,
+        velocity_now: [f32; 3],
+        reach: [f32; 2],
+        target: [u32; 3],
+    },
+    /// 0x46e0: wobble. `scale` is block float 0x38 (words 0x38..0x40 are
+    /// copied first as `scale_words`), `spring` the f1 result of local
+    /// 0x434c, `phase` block word 4, `sines` the three 0x80112050 results,
+    /// `mode` block word 0x10, `spin` / `spin_step` block words 8 and 0xc.
+    Wobble {
+        block: u32,
+        scale_words: [u32; 3],
+        spring: f32,
+        phase: i32,
+        sines: [f32; 3],
+        mode: i32,
+        spin: i32,
+        spin_step: i32,
+    },
+}
+/// Sections 1 + 0x4524 and 0x46e0.
+fn piece_motion(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &PieceMotionFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let k = |site: u32| boss_constant(rel, site);
+    let mut ev = Vec::new();
+    match f {
+        PieceMotionFrame::Fly {
+            entity,
+            block,
+            step,
+            step_after,
+            random,
+            velocity,
+            speed,
+            velocity_now,
+            reach,
+            target,
+        } => {
+            if (0..=1).contains(step) {
+                if *step == 0 {
+                    let pace = k(0x45be)?
+                        + k(0x45ae)? * (k(0x459e)? * biased_float(rel, 0x457a, *random)?);
+                    let mut scale =
+                        serde_json::json!({"site":0x45d4,"local":0x6f10,"args":["stack", "stack"]});
+                    scale["floats"] = serde_json::json!([f64::from(pace)]);
+                    ev.extend([
+                        call(
+                            0x4570,
+                            serde_json::json!([block + 0x68, entity + 0x14, "stack"]),
+                        )?,
+                        call(0x4574, serde_json::json!([]))?,
+                        scale,
+                        st(0x45e0, "block", 0x2c, 4, velocity[0].to_bits()),
+                        st(0x45e4, "block", 0x30, 4, velocity[1].to_bits()),
+                        st(0x45ec, "block", 0x34, 4, velocity[2].to_bits()),
+                        st(0x45f8, "entity", 1, 1, step_after.wrapping_add(1).into()),
+                    ]);
+                }
+                ev.push(call(
+                    0x4604,
+                    serde_json::json!([entity + 0x14, block + 0x2c]),
+                )?);
+                ev.push(call(0x460c, serde_json::json!([block + 0x2c]))?);
+                if f64::from(*speed) < f64::from(k(0x4612)?) {
+                    let drag = k(0x462a)?;
+                    for (i, site) in [0x4638u32, 0x4648, 0x4658].into_iter().enumerate() {
+                        ev.push(st(
+                            site,
+                            "block",
+                            0x2c + 4 * i as u32,
+                            4,
+                            (velocity_now[i] * drag).to_bits(),
+                        ));
+                    }
+                }
+                ev.push(call(0x4660, serde_json::json!([entity + 0x14]))?);
+                ev.push(call(0x466c, serde_json::json!([block + 0x68]))?);
+                if f64::from(reach[1]) <= f64::from(reach[0]) {
+                    let rest = k(0x4696)?.to_bits();
+                    ev.extend([
+                        st(0x4680, "entity", 0x14, 4, target[0]),
+                        st(0x4688, "entity", 0x18, 4, target[1]),
+                        st(0x4690, "entity", 0x1c, 4, target[2]),
+                        st(0x46a0, "block", 0x2c, 4, rest),
+                        st(0x46a8, "block", 0x30, 4, rest),
+                        st(0x46b0, "block", 0x34, 4, rest),
+                        st(0x46b8, "entity", 0, 1, 1),
+                        st(0x46c0, "entity", 1, 1, 0),
+                    ]);
+                }
+            }
+        }
+        PieceMotionFrame::Wobble {
+            block,
+            scale_words,
+            spring,
+            phase,
+            sines,
+            mode,
+            spin,
+            spin_step,
+        } => {
+            let old = f32::from_bits(scale_words[0]);
+            ev.extend([
+                st(0x4704, "block", 0x44, 4, scale_words[0]),
+                st(0x4708, "block", 0x48, 4, scale_words[1]),
+                st(0x4710, "block", 0x4c, 4, scale_words[2]),
+            ]);
+            let mut e = serde_json::json!({"site":0x4720,"local":0x434c,"args":[block + 0x50, 0]});
+            e["floats"] = serde_json::json!([f64::from(old)]);
+            ev.extend([
+                e,
+                st(0x4724, "block", 0x38, 4, spring.to_bits()),
+                st(0x472c, "block", 0x40, 4, spring.to_bits()),
+                st(0x4730, "block", 0x3c, 4, spring.to_bits()),
+            ]);
+            let delta = k(0x475e)? + k(0x476a)? * (k(0x4776)? * (old - k(0x4786)?));
+            let raw = fctiwz(f64::from(biased_float(rel, 0x473a, *phase)? + delta));
+            ev.push(st(0x47b0, "block", 4, 4, raw as u32));
+            let mut p = raw;
+            if p >= 0x10000 {
+                p = p.wrapping_sub(0x10000);
+                ev.push(st(0x47c8, "block", 4, 4, p as u32));
+            }
+            let size = k(0x47d6)?;
+            let base = k(0x47e6)?;
+            ev.extend([
+                call(0x47d0, serde_json::json!([p as u32]))?,
+                st(0x47f4, "block", 0x44, 4, (base + size * sines[0]).to_bits()),
+                call(0x4804, serde_json::json!([p.wrapping_add(0x8000) as u32]))?,
+                st(0x4818, "block", 0x48, 4, (base + size * sines[1]).to_bits()),
+                call(0x4820, serde_json::json!([p as u32]))?,
+                st(0x4834, "block", 0x4c, 4, (base + size * sines[2]).to_bits()),
+            ]);
+            if *mode != 1 {
+                let s = spin.wrapping_add(*spin_step);
+                ev.push(st(0x4850, "block", 8, 4, s as u32));
+                if s > 0x10000 {
+                    ev.push(st(0x4868, "block", 8, 4, s.wrapping_sub(0x10000) as u32));
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
 }

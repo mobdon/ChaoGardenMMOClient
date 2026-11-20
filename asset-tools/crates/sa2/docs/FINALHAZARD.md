@@ -61,6 +61,8 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `attack_hold` | 0x5c04 | Attack hold: while entity flag 0x100 is set, count down and relaunch (30 frames, action 2) |
 | `attack_volley` | 0x5c4c | Attack volley: with no child it parks (action 4) or waits 120 frames in action 8; every 30 frames it fires one piece (two unless the count is the kind-0 count 5:0x3f90): rolls a slot (0x8010abf4 conversion), walks to the next live one, releases it (0x57f0), clears it and decrements block half-word 2; a walk that runs out releases the last slot it fired |
 | `piece` | 0x55d8, 0x5328, 0x55b4, 0x57f0, 0x5304, 0x5264 | Attack piece object: spawn (update 0x5328, draw 0x5404, deleter 0x55b4, start delay from 5:0x3f9c), update dispatch (actions 0..5 to 0x4524, 0x46e0, 0x4888, 0x4c20, 0x50a4, 0x4fa8, then 0x5264, 0x5304, 0x5130), deleter, release, position copy, player distance through stage_sqrt |
+| `piece_action` | 0x4fa8, 0x50a4, 0x5130 | Piece action 5 (spark bursts at 60 and 30 frames, fade by 4:0x254, freed below 4:0x258), action 4 explosion (0x800e26e0 with 4:0x25c / 4:0x268, the owner ticks below action 2), contact (flat player distance through stage_sqrt; within 4:0x26c a hit knocks back and stuns or just explodes). Not Unicorn-checked |
+| `piece_motion` | 0x4524, 0x46e0 | Piece action 0 (fly out at a random speed 4:0x210 + 4:0x214 * roll, slow down below 4:0x218, snap to the slot and action 1 once past it) and the wobble (scale spring 0x434c, phase step from the old scale, three sines around 4:0x228, spin step unless block word 0x10 is 1). Not Unicorn-checked |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
