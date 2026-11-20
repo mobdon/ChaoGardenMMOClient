@@ -561,7 +561,7 @@ fn mounted_story_goal_samples_live_game_bytes() {
                 attempt(1, 120, false),
                 attempt(1, 120, true)
             ]);
-            request["frames"] = serde_json::json!([{"kind":"player","slot":0}]);
+            request["frames"] = serde_json::json!([{"hit":{"kind":"player","slot":0},"game_byte_23":1,"game_byte_37":0,"alternate_timer":32769}]);
             let replay = sa2_asset_tools::goal_ring::replay(
                 &stage,
                 layer,
@@ -586,6 +586,14 @@ fn mounted_story_goal_samples_live_game_bytes() {
                 .iter()
                 .all(|v| v["work"] == serde_json::json!({"mode":1,"angle_x":2})));
             assert_eq!(replay["frames"][0]["latched"], true);
+            assert_eq!(
+                replay["frames"][0]["alternateMotion"]["soundBeforeContact"]["r6"],
+                -2
+            );
+            assert_eq!(
+                replay["frames"][0]["alternateMotion"]["soundBeforeContact"]["code"],
+                0x1012
+            );
             hunters.insert(dispatch.character);
             continue;
         }
