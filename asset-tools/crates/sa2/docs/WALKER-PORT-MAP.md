@@ -18,11 +18,13 @@ Function names are from the reconstruction's `config/GSNE8P/symbols.txt`;
 | --- | --- | --- |
 | 0x80196578 | PhysicsArray, 0x84-byte rows | Rows match the Steam table; Mech Tails at 0x80196890 (slot 6), Mech Eggman at 0x80196914 (slot 7) |
 | 0x8004F838 | Shared player-work setup | Allocates player work and copies the PhysicsArray row; called by all 14 character loaders |
-| 0x800B56E8 | Mech Eggman loader | Character byte 7, 0x454-byte player work, `CreateElementalTask(7, 1, 0x800B3A8C)` |
-| 0x800B5AC0 | Mech Tails loader | Character byte 6 |
-| 0x800B3A8C | Mech Eggman exec (task +0x10) | 0x1BA4 bytes; the per-frame update |
-| 0x800AF558 | Mech Eggman display (task +0x14) | Matrix and model calls only |
-| 0x800B245C, 0x800AF2E8, 0x800B0D7C, 0x800B10CC | Further task callbacks (+0x18, +0x1C, +0x2C, +0x28) | Installed by the loader |
+| 0x800B5D2C | Mech Eggman loader | Character byte 7, PhysicsArray row 7, display 0x800B15B8 / +0x1C 0x800B110C |
+| 0x800B5AC0 | Mech Tails loader | Character byte 6, row 6, display 0x800AE574 / +0x1C 0x800AE2E0 |
+| 0x800B56E8 | Alternate walker loader (row 0xE) | Character byte 7, row 0xE, display 0x800AF558 / +0x1C 0x800AF2E8; called by 0x800B5D2C when G+0x1E and G+0x55+player are set |
+| 0x800B58D4 | Alternate walker loader (row 0xD) | Character byte 6, row 0xD, display 0x800B0324 / +0x1C 0x800AFFC0; called by 0x800B5AC0 under the same condition |
+| 0x800B3A8C | Walker exec (task +0x10), shared by all four loaders | 0x1BA4 bytes; the per-frame update; every loader does `CreateElementalTask(7, 1, 0x800B3A8C)` and a 0x454-byte player work at task +0x40 |
+| 0x800AF558 | Row-0xE walker display (task +0x14) | Matrix and model calls only (ENGINE-MAP.md section 8) |
+| 0x800B245C, 0x800B0D7C, 0x800B10CC | Further task callbacks (+0x18, +0x2C, +0x28) | Installed by all four loaders |
 
 ## Size of the port
 
