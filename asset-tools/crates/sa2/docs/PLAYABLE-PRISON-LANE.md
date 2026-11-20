@@ -78,8 +78,23 @@ outer door (114 frames) gates travel.
 | BIG THE CAT | 0x33E3C | The GameCube module's callback does nothing |
 
 Everything else is listed by name in `Session::unimplemented`: item boxes,
-enemies, KNUDAI, ORI and ROCKETMISSSILE. The colour blend
-they share (GSNE8P 0x800334B0) is ported as `color_blend::blend_argb`.
+enemies, KNUDAI, ORI, ROCKETMISSSILE and MINIMAL. The colour blend those objects
+share (GSNE8P 0x800334B0) is ported as `color_blend::blend_argb`. What holds
+the rest back, as read from the code:
+
+* ORI (0x31058) moves through the solid-object physics helper 0x96B0 (the
+  one SOLIDBOX uses), which needs the main program's ground queries.
+* ROCKETMISSSILE (0x35AC8, a rocket the player rides, registered as a
+  dynamic land object) stays in its waiting state until an ORI with its id
+  (Rotation.z & 0x1F) is in the table at sec5+0x88204 (ORI adds itself
+  through 0x35A1C), or until its enemy group is clear (0x80018E30) with a
+  player within 100, depending on Rotation.x & 3.
+* MINIMAL's callback is in the main program (GSNE8P 0x80025C7C): it spawns
+  the small animals, which walk with ground physics.
+* KNUDAI (0x2979C) is the Mystic Melody shrine: a dynamic land model
+  (sec5+0x62D98, yaw only), a range of 38, the player actions 0x2D to 0x30,
+  the hint messages (0x800E0118) and the melody bit at 0x803ADC14 (bit
+  Rotation.x & 7).
 
 ## Offline verification
 
