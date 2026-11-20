@@ -24,6 +24,10 @@ pub enum EngineCall {
     },
     /// fn_80011714(id): play a voice line.
     PlayVoice { id: i16 },
+    /// A visual-effect routine not ported yet (for example fn_800BCF50,
+    /// the walker's debris burst), with its argument. It only feeds what
+    /// is drawn.
+    Deferred { addr: u32, arg: i32 },
 }
 
 /// The per-player history the engine keeps at r13-0x7910 (ring indices),
