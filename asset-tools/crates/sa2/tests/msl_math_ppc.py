@@ -12,6 +12,10 @@ from pathlib import Path
 from unicorn import UC_ARCH_PPC, UC_HOOK_CODE, UC_MODE_BIG_ENDIAN, UC_MODE_PPC32, Uc
 from unicorn import ppc_const as R
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+from gekko_float import install_frsqrte  # noqa: E402
+
 dol = Path(os.environ["SA2_GSNE8P_DOL"]).read_bytes()
 assert hashlib.sha1(dol).hexdigest() == "e4c50f32242a3cd36cdc8ae776661601a52130a2"
 
@@ -26,6 +30,7 @@ for o, a, s in zip(offs, addrs, sizes):
 STACK, SENTINEL, OUT = 0x803F0000, 0x80000100, 0x803F8000
 u.mem_write(SENTINEL, struct.pack(">I", 0x60000000))  # nop; stopped by hook
 u.reg_write(R.UC_PPC_REG_MSR, u.reg_read(R.UC_PPC_REG_MSR) | 0x2000)
+install_frsqrte(u, 0x801110C0)  # _inv_sqrtf: Gekko's estimate, not QEMU's exact one
 
 ATANF, ATAN2F, ASINF, INV_SQRTF, ANGLES = 0x80110E64, 0x80111168, 0x80111058, 0x801110B4, 0x8005071C
 

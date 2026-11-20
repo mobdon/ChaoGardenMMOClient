@@ -12,7 +12,9 @@
 //! * 0x8005071C: tilt angles (BAMS) from a unit floor normal.
 //!
 //! `fmadds` is evaluated as a fused double-precision multiply-add rounded to
-//! single once; `fnmsubs` in double precision, then rounded to single. `frsqrte` is a hardware
+//! single once; `fnmsubs` in double precision, then rounded to single.
+//! `frsqrte` returns Gekko's table estimate (`gekko_frsqrte`, the same
+//! transcription as tests/gekko_float.py), rounded to single by `frsp`. `frsqrte` is a hardware
 //! estimate; it is modelled as the correctly rounded reciprocal square root
 //! rounded to single, and three Newton steps follow as in the original.
 //! Gekko's estimate table is not reproduced.
@@ -96,9 +98,87 @@ fn fnmsubs(a: f32, c: f32, b: f32) -> f32 {
     (-(a as f64 * c as f64 - b as f64)) as f32
 }
 
-/// `frsqrte` modelled as the correctly rounded estimate, then `frsp`.
+/// Gekko `frsqrte` estimate table (base, slope) per 2048-entry segment.
+const FRSQRTE_EXPECTED: [(i64, i64); 32] = [
+    (0x1A7E800, -0x568),
+    (0x17CB800, -0x4F3),
+    (0x1552800, -0x48D),
+    (0x130C000, -0x435),
+    (0x10F2000, -0x3E7),
+    (0x0EFF000, -0x3A2),
+    (0x0D2E000, -0x365),
+    (0x0B7C000, -0x32E),
+    (0x09E5000, -0x2FC),
+    (0x0867000, -0x2D0),
+    (0x06FF000, -0x2A8),
+    (0x05AB800, -0x283),
+    (0x046A000, -0x261),
+    (0x0339800, -0x243),
+    (0x0218800, -0x226),
+    (0x0105800, -0x20B),
+    (0x3FFA000, -0x7A4),
+    (0x3C29000, -0x700),
+    (0x38AA000, -0x670),
+    (0x3572000, -0x5F2),
+    (0x3279000, -0x584),
+    (0x2FB7000, -0x524),
+    (0x2D26000, -0x4CC),
+    (0x2AC0000, -0x47E),
+    (0x2881000, -0x43A),
+    (0x2665000, -0x3FA),
+    (0x2468000, -0x3C2),
+    (0x2287000, -0x38E),
+    (0x20C1000, -0x35E),
+    (0x1F12000, -0x332),
+    (0x1D79000, -0x30A),
+    (0x1BF4000, -0x2E6),
+];
+
+/// Gekko's `frsqrte` on a double.
+pub fn gekko_frsqrte(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let mut mantissa = bits & ((1u64 << 52) - 1);
+    let sign = bits & (1u64 << 63);
+    let mut exponent = (bits & (0x7ffu64 << 52)) as i64;
+    if mantissa == 0 && exponent == 0 {
+        return f64::from_bits(if sign != 0 {
+            0xfff0_0000_0000_0000
+        } else {
+            0x7ff0_0000_0000_0000
+        });
+    }
+    if exponent == 0x7ff << 52 {
+        if mantissa == 0 {
+            return f64::from_bits(if sign != 0 { 0x7ff8_0000_0000_0000 } else { 0 });
+        }
+        return f64::from_bits(bits | 0x0008_0000_0000_0000);
+    }
+    if sign != 0 {
+        return f64::from_bits(0x7ff8_0000_0000_0000);
+    }
+    if exponent == 0 {
+        loop {
+            exponent -= 1 << 52;
+            mantissa <<= 1;
+            if mantissa & (1u64 << 52) != 0 {
+                break;
+            }
+        }
+        mantissa &= (1u64 << 52) - 1;
+        exponent += 1 << 52;
+    }
+    let exponent_lsb = (exponent & (1 << 52)) as u64;
+    // C++ signed division truncates toward zero, as Rust's does.
+    let half = (exponent - (0x3fe << 52)) / 2;
+    let exponent = (((0x3ff_i64 << 52) - half) & (0x7ff << 52)) as u64;
+    let i = ((exponent_lsb | mantissa) >> 37) as i64;
+    let (base, dec) = FRSQRTE_EXPECTED[(i / 2048) as usize];
+    let m = ((base + dec * (i % 2048)) as u64) << 26;
+    f64::from_bits(sign | exponent | m)
+}
+
 fn frsqrte(x: f32) -> f32 {
-    (1.0 / (x as f64).sqrt()) as f32
+    gekko_frsqrte(x as f64) as f32
 }
 
 /// MSL `_inv_sqrtf` (0x801110B4).
