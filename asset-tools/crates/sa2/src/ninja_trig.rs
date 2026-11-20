@@ -74,6 +74,15 @@ pub fn fnmsubs(a: f32, c: f32, b: f32) -> f32 {
     negate_unless_nan(fmadds(a, c, -b))
 }
 
+/// `fctiwz` on a double (a product left in double precision).
+pub fn fctiwz_f64(x: f64) -> i32 {
+    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 {
+        i32::MIN
+    } else {
+        x as i32
+    }
+}
+
 /// `fctiwz`: truncate toward zero. NaN and every out-of-range value give
 /// 0x80000000, as QEMU's core (tests/dol_ppc.py) and x86's cvttss2si do.
 /// Gekko itself saturates positive overflow to 0x7FFFFFFF.

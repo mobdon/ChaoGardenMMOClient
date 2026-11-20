@@ -53,7 +53,11 @@ rules, so the check is "the same instructions, on this machine model".
 | Ninja matrix stack | fn_80119C74 (0xE0000000, 0x30 bytes each), njPush/PopMatrix, njRotateX/Y/Z (PSMTXRotRad + PSMTXConcat), njCalcVector (PSMTXMultVecSR), njCalcPoint (PSMTXMultVec) | **Ported** (`ninja_matrix`) |
 | Player-frame vectors | fn_8003E9E0 (rotate by Z, X, -Y), fn_8003EA6C (rotate by Y, -X, -Z) | **Ported** (`ninja_matrix::rotate_by_angles`, `unrotate_by_angles`) |
 | Analog input | fn_8004E560 (`GetAnalog` on PC): stick angle and strength, confusion remap, steering on kind-0x11 collision objects; with njInnerProduct, njOuterProduct, MSL acosf and VectorAngle (0x8002B7C4) | **Ported** (`player_analog`, `ninja_vector`) |
-| Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
+| Turning | SubAngle 0x8002B904, DiffAngle 0x8002B8E0, AdjustAngle 0x8002B918; fn_800473B4 (turn toward a yaw, faster turns slow down above dash_speed, velocity carried round); fn_80047714 (smoothed turn with stick-dependent velocity blend) | **Ported** (`player_turn`) |
+| Facing downhill | njScalor 0x801151F4 and njUnitVector 0x80115D24 (Gekko frsqrte/fres estimates); fn_80047CBC and fn_80048150 aim the motion yaw down slopes from gravity in the player's frame | **Ported** (`ninja_vector::scalor`, `unit_vector`, `player_slope`) |
+| Path following (loops, rails) | fn_80038F40 with MSL floorf 0x80111240, fn_8002B770 (wrap), fn_80027D50, fn_8011B51C (point-line), fn_800CE5E8 (point-segment), fn_8005C460 (nearest point), fn_8005CDCC (segment record), fn_8005C910 (sample); reuses Iron Gate's plane_distance (fn_8011B6C8) and njDistanceP2P/sqrtf | **Ported** (`player_path`) |
+| Ground acceleration | fn_8004B568 (stick-relative) and fn_8004BA74 (camera-relative steering, with njRotate 0x80115218 = PSMTXRotAxisRad + PSVECNormalize) | **Ported** (`player_accel`) |
+| Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; hands over to fn_8004BA74 (surface 0x100000) or fn_8004B568 (surface 0x100) | **Ported** (`player_accel::ground_move`) |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
 ## Ported so far
@@ -92,3 +96,75 @@ rules, so the check is "the same instructions, on this machine model".
   `tests/player_analog_dol.rs` matches 1,500 vector-product and `acosf`
   cases, 600 `VectorAngle` cases and 1,500 fn_8004E560 cases against
   main.dol bit for bit.
+
+- **Turning** (`player_turn`): the 16-bit angle helpers and fn_800473B4.
+  fn_800473B4 rotates the local velocity into world space, turns the yaw
+  toward the target by 0x100 per frame. Above `dash_speed` the step is
+  `256 - 256 * sqrt((speed - dash) / 16)`, with the compiler's inline
+  frsqrte-and-Newton square root. It then rotates back and blends the result
+  into the velocity (0.99/0.01 when the player work's +0x34 exceeds 0.4,
+  otherwise half and half). `tests/player_turn_dol.rs` matches 3,000
+  angle-helper cases and 1,500 turns against main.dol. fn_80047714
+  (`turn_smoothly`) steps by 0x800 beyond 0x2000 away and otherwise by a quarter
+  or an eighth of the gap. It keeps 10% of the old velocity off the ground,
+  and on the ground 5% without stick input or 99%/50% with it, scaled by
+  the player work's +0x40 below 1. It is checked on 1,500 more turns.
+
+- **Facing downhill** (`player_slope`): fn_80047CBC and fn_80048150 rotate
+  gravity into the player's frame and, on slopes, aim the motion work's yaw
+  down them. The aim steps by 4096|z|*speed/jog_speed or 2048|z| in the
+  strong version, and 3072|z| or 1536|z| in the soft one. The strong one
+  then turns the yaw by up to 0x2000; the soft one hands over to
+  fn_80047714. Both skip when the motion velocity (njScalor, Gekko's
+  estimate) is slower than jog_speed or points steeply along gravity.
+  `tests/player_slope_dol.rs` matches 1,500 njScalor/njUnitVector cases and
+  2,400 slope turns. This includes PowerPC's positive default NaN for a zero
+  vector.
+
+- **Path following** (`player_path`): fn_80038F40 runs the player along the
+  player work's path (+0xB8). It needs at least 1.2x dash_speed while the
+  stick is held, finds the nearest point and path distance, and advances
+  that distance by the speed in whichever direction the player faces. It
+  then aims the motion yaw at a point 9 units ahead projected onto the floor
+  plane, and turns the task yaw by a step chosen from how parallel the two
+  path crosses are. The path helpers cover open and looped type-1 (angled)
+  and type-2 (vectored) paths. Type 2's wrap reads its first record at +8,
+  as the original does. `tests/player_path_dol.rs` checks 2,000
+  floorf/wrap cases, 1,500 point-line and point-segment cases, 500 random
+  paths (nearest point, every segment record, 2,000 samples) and 1,500
+  path-follow frames against main.dol, bit for bit. Where degenerate
+  geometry yields NaN, it is PowerPC's positive default NaN.
+
+- **Ground acceleration** (`player_accel`): fn_8004B568 adds gravity times
+  weight and air resistance, turns toward the stick (on the spot when
+  standing, fn_800473B4 or fn_80047714 when moving), and adds the stick's
+  push (run_accel, 0.4x at run speed, 0.8x on a sharp turn) or the
+  slow-down. A friction limit (lim_frict) holds a standing player still.
+  fn_8004BA74 is the camera-relative version. It turns the raw stick about
+  the player's own gravity axis (player work +0x7C) from the camera's
+  side, eases the aim downhill by 512|z|, and scales the push by speed band
+  (max_x_spd, jog, run, rush). It follows the path when status bit 0x2000
+  is set, and applies the surface grip (grd_frict, grd_frict_z) when the
+  surface flag 4 is set. The camera position (camera work +0x18 via
+  0x80175378) and the raw stick are inputs. `tests/player_accel_dol.rs`
+  matches 3,000 frames of each and 800 njRotate cases against main.dol,
+  bit for bit. To run PSMTXRotAxisRad, the harness now lets a paired-single
+  function call plain code (MSL sinf/cosf): Unicorn runs the callee and
+  hands back to the interpreter.
+
+- **Shared ground movement** (`player_accel::ground_move`, fn_8004C734).
+  Surface flag 0x100000 hands over to fn_8004BA74 and 0x100 to fn_8004B568.
+  Otherwise it adds gravity times weight in the player's frame, with more
+  on steep ground: all of it on a banked wall at speed, 5x, 0.8x or 0.4x
+  extra weight below up -0.4, -0.3, -0.1, and 4.225x, 2x or 1.4x more
+  sideways pull on walls and slants. After air resistance it turns toward
+  the stick: on the spot when standing, then fn_80047714 or fn_800473B4
+  by speed and turn size, the strong downhill turn (fn_80047CBC) on surface
+  0x80000, and the path (fn_80038F40) on status 0x2000. Pushing into a wall
+  (player work +0x70) bends the stick along it: the plane intersection of
+  the wall and the player's gravity plane (Iron Gate's fn_8011B7B8). The
+  walkers (characters 6 and 7) turn with fn_800473B4 throughout, or always
+  when their object's +0x35C byte is 1. The same friction steps as
+  fn_8004BA74 finish the frame, damped 10x when the player is tipped and
+  slow. `tests/player_accel_dol.rs` matches 6,000 frames against main.dol,
+  bit for bit.
