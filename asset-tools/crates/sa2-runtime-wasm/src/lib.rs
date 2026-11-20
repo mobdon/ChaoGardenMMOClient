@@ -110,11 +110,17 @@ impl App {
             })
             .await
             .map_err(err)?;
-        let config = surface
+        let mut config = surface
             .get_default_config(&adapter, w, h)
             .ok_or_else(|| err("surface not supported by the adapter"))?;
+        // WebGPU canvases offer only non-sRGB formats (bgra8unorm); the shader
+        // writes linear colour, so draw through the sRGB view to encode it.
+        let srgb = config.format.add_srgb_suffix();
+        if srgb != config.format {
+            config.view_formats = vec![srgb];
+        }
         surface.configure(&device, &config);
-        let mut renderer = Renderer::new(device, queue, config.format);
+        let mut renderer = Renderer::new(device, queue, srgb);
         renderer.set_meshes(&[&land]);
         if let Some(t) = landtx {
             renderer.set_textures(&sa2_render::textures::gvm_textures(&t).map_err(err)?);
@@ -151,7 +157,10 @@ impl App {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => return "frame skipped".into(),
         };
-        let view = frame.texture.create_view(&Default::default());
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.renderer.format),
+            ..Default::default()
+        });
         let size = [self.config.width, self.config.height];
         let vp = look_at(
             [pos[0] - 260.0, pos[1] + 180.0, pos[2] + 260.0],
