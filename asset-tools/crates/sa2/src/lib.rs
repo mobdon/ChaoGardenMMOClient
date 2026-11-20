@@ -40,9 +40,6 @@ pub mod play_world;
 pub mod pose;
 pub mod ring_magnet;
 pub mod set;
-pub mod speed_autopilot;
-pub mod speed_controller;
-pub mod speed_session;
 pub mod spring;
 pub mod stage;
 pub mod stage_catalog;
@@ -87,6 +84,7 @@ impl From<serde_json::Error> for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub mod city_escape_native;
 pub mod city_land;
 
 pub mod checkpoint;

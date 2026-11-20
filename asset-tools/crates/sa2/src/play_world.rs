@@ -182,33 +182,14 @@ impl PlayWorld {
 
     /// Push a sphere out of non-walkable triangles (walls and ceilings).
     /// Returns the total correction and the last contact normal.
-    pub fn push_out(&self, c: V3, r: f32, iterations: usize) -> (V3, Option<V3>) {
-        self.push_sphere(c, r, iterations, false)
-    }
-
-    /// Like `push_out`, but a wall only pushes a sphere whose centre lies on
-    /// its front side (the side its source winding faces). Opt-in; used by
-    /// the speed session.
-    pub fn push_out_front(&self, c: V3, r: f32, iterations: usize) -> (V3, Option<V3>) {
-        self.push_sphere(c, r, iterations, true)
-    }
-
-    fn push_sphere(
-        &self,
-        mut c: V3,
-        r: f32,
-        iterations: usize,
-        front_only: bool,
-    ) -> (V3, Option<V3>) {
+    pub fn push_out(&self, mut c: V3, r: f32, iterations: usize) -> (V3, Option<V3>) {
         let start = c;
         let mut normal = None;
         for _ in 0..iterations {
             let mut moved = false;
             let mut deepest: Option<(f32, V3)> = None;
             self.each_in([c[0] - r, c[2] - r], [c[0] + r, c[2] + r], |_, t| {
-                if t.n[1].abs() >= WALKABLE_NORMAL_Y
-                    || (front_only && dot(sub(c, t.v[0]), t.n) < 0.0)
-                {
+                if t.n[1].abs() >= WALKABLE_NORMAL_Y {
                     return;
                 }
                 let q = closest_point(c, t);

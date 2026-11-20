@@ -2,7 +2,6 @@
 //!
 //!     sa2-play GAME_DIR PC_SA2_CONFIG                    # window (feature native-window)
 //!     sa2-play GAME_DIR PC_SA2_CONFIG --headless OUT.json [MAX_FRAMES [CHECKPOINT]]
-//!     sa2-play GAME_DIR PC_SA2_CONFIG --city-escape OUT.json [MAX_FRAMES [CHECKPOINT]]
 //!
 //! GAME_DIR is the Steam "Sonic Adventure 2" folder; PC_SA2_CONFIG is SA Tools
 //! 786's GameConfig/PC_SA2 directory. Nothing is written except OUT.json.
@@ -10,8 +9,6 @@ use sa2_asset_tools::{
     fan_stage::Campaign,
     play_autopilot::Autopilot,
     play_session::{Outcome, Session, Sources},
-    speed_autopilot::SpeedAutopilot,
-    speed_session::{self, SpeedSession},
 };
 use std::{fs, path::PathBuf, process::ExitCode};
 
@@ -53,27 +50,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             None
         })
     };
-    if args.get(3).map(String::as_str) == Some("--city-escape") {
-        let stage = campaign.mount("Hero Story Sequence", 1, load)?;
-        let module = fs::read(gd.join(speed_session::MODULE_FILE))?;
-        let mut session = SpeedSession::city_escape(
-            &stage,
-            speed_session::Sources {
-                exe: &exe,
-                stage_module: &module,
-            },
-        )?;
-        let out = args.get(4).ok_or("--city-escape needs an output path")?;
-        let max: u32 = args
-            .get(5)
-            .map(|v| v.parse())
-            .transpose()?
-            .unwrap_or(60 * 60 * 10);
-        if let Some(k) = args.get(6) {
-            session.restart_from_checkpoint(k.parse()?)?;
-        }
-        return speed_headless(session, PathBuf::from(out), max);
-    }
     let stage = campaign.mount(SEQUENCE, ACTION, load)?;
     let module = fs::read(gd.join(sa2_asset_tools::iron_gate_movers::MODULE_FILE))?;
     let session = Session::iron_gate(
@@ -100,93 +76,6 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         None => window(session),
         Some(other) => Err(format!("unknown option {other}").into()),
     }
-}
-
-/// City Escape with the stand-in Sonic controller, driven by the offline
-/// autopilot. Writes a report; never opens a window.
-fn speed_headless(
-    mut s: SpeedSession,
-    out: PathBuf,
-    max: u32,
-) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let mut pilot = SpeedAutopilot::new(&s);
-    let mut events = vec![];
-    let mut track = vec![];
-    let mut top_speed: f32 = 0.0;
-    while s.frame < max && s.outcome == speed_session::Outcome::Playing && !pilot.gave_up {
-        let c = pilot.controls(&s);
-        for e in s.step(c) {
-            events.push(serde_json::json!({"frame": s.frame, "event": e}));
-        }
-        top_speed = top_speed.max(s.player.speed());
-        if s.frame.is_multiple_of(60) {
-            track.push(serde_json::json!({
-                "frame": s.frame,
-                "position": s.player.position,
-                "speed": s.player.speed(),
-                "mode": s.player.mode,
-            }));
-        }
-    }
-    let cleared = s.outcome == speed_session::Outcome::Cleared;
-    let count = |k: &str| events.iter().filter(|e| e["event"]["kind"] == k).count();
-    let actions = |k: &str| {
-        events
-            .iter()
-            .filter(|e| e["event"]["kind"] == "controller" && e["event"]["action"]["kind"] == k)
-            .count()
-    };
-    let summary = serde_json::json!({
-        "rings": count("ring"),
-        "checkpoints": count("checkpoint"),
-        "springs": count("spring"),
-        "dashPanels": count("dashPanel"),
-        "destroyed": count("destroyed"),
-        "deaths": s.deaths,
-        "jumps": actions("jump"),
-        "homingStarts": actions("homingStart"),
-        "railRides": actions("railOn"),
-        "topSpeed": top_speed,
-    });
-    let report = serde_json::json!({
-        "level": s.level,
-        "character": s.character,
-        "controller": "stand-in (native PhysicsArray values, adapted rules)",
-        "outcome": s.outcome,
-        "frames": s.frame,
-        "seconds": s.elapsed_seconds(),
-        "rings": s.rings,
-        "score": s.score,
-        "summary": summary,
-        "physics": s.physics,
-        "jumpHeight": s.physics.jump_height(),
-        "finalPosition": s.player.position,
-        "autopilotGaveUp": pilot.gave_up,
-        "autopilotPartial": pilot.partial,
-        "plans": pilot.plans,
-        "links": pilot.links,
-        "goals": s.goals,
-        "checkpoints": s.checkpoints,
-        "rails": s.rails.len(),
-        "dashPanels": s.panels.len(),
-        "homingTargets": s.targets.len(),
-        "deathZones": s.death_zone_count(),
-        "unimplementedPlacements": s.unimplemented,
-        "events": events,
-        "track": track,
-    });
-    fs::write(&out, serde_json::to_vec_pretty(&report)?)?;
-    println!(
-        "{} after {} frames ({:.1} s); {summary}",
-        if cleared { "CLEARED" } else { "NOT CLEARED" },
-        s.frame,
-        s.elapsed_seconds(),
-    );
-    Ok(if cleared {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
 }
 
 fn headless(
