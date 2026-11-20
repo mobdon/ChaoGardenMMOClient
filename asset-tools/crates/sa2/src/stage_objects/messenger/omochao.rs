@@ -16,7 +16,8 @@
 //!   0x7558 ([`force_query`]).
 //!
 //! Reused native ports: the trail library (`trail::drop_oldest`, 0x6EE4),
-//! the particle creator 0xA67C (`effects::create`), the depth clip 0x6F28
+//! the particle creators 0xA67C and the trail effect 0x1DFE0
+//! (`effects::create`), the depth clip 0x6F28
 //! (as [`clip_depth`]; `messenger::clip` returns only its test), the REL's
 //! `sqrtf` 0x74CC (`enemy_lib::engine::sqrtf_rel`), main.dol's `rand`
 //! (`prison_visuals::MslRand`), `atan2f` (`msl_math`), `njSin`
@@ -28,7 +29,7 @@
 //! update 0x4BE0 (`dyn_land::update`).
 //!
 //! Left to the host ([`OmochaoHost`], named after their addresses): the
-//! trail effect 0x1DFE0, the message window (fn_800E00E8,
+//! message window (fn_800E00E8,
 //! fn_800E0118, fn_800E018C), the player queries (fn_80038008,
 //! GetPlayerCharacter, CCL_IsHitPlayer, fn_800063F4, fn_80006574) and the
 //! rendering calls, which are [`Event`]s with the current matrix.
@@ -85,6 +86,8 @@ pub struct StageData {
     pub speed_decay: f32,
     /// The particle descriptor 0xA67C uses (+0xDA40).
     pub particle: u32,
+    /// The trail effect 0x1DFE0's descriptor (+0x1EEE8).
+    pub trail_effect: u32,
     /// The texlist set before drawing (+0x129B4).
     pub texlist: u32,
     /// The model nodes (NJS_OBJECT) the display poses and draws.
@@ -141,6 +144,7 @@ pub const STG42D: StageData = StageData {
     stall: f32::from_bits(0x3dcc_cccd),
     speed_decay: f32::from_bits(0x3f75_c28f),
     particle: 0xda40,
+    trail_effect: 0x1eee8,
     texlist: 0x129b4,
     nodes: Nodes {
         root: 0x14a1c,
@@ -334,8 +338,6 @@ pub enum Event {
     Vanish { pos: V3, vel: V3, a: f32, b: f32 },
     /// FreeTask(task) (0x80071AE0).
     FreeTask(u32),
-    /// 0x1DFE0(pos, vel, size, b): the module's trail effect.
-    TrailEffect { pos: V3, vel: V3, size: f32, b: f32 },
     /// njDisableFog (false) / njEnableFog (true).
     Fog(bool),
     /// gjSetFog (0x8011C310).
@@ -413,7 +415,8 @@ pub trait OmochaoHost: MovableHost + TrailHost + EffectHost + PlaceHost {
     fn model_word(&mut self, off: u32) -> u32;
     fn set_model_word(&mut self, off: u32, v: u32);
     /// The particle 0x14DEC made, as it leaves it (0xA67C's result with
-    /// the colour, +0x14, written).
+    /// the colour, +0x14, written), or the one the exec's trail effect
+    /// (0x1DFE0) made.
     fn particle_done(&mut self, p: Particle);
     /// A call with no result.
     fn om_event(&mut self, e: Event);
@@ -1111,12 +1114,16 @@ fn modes(
                 rand.rand();
                 rand.rand();
                 rand.rand();
-                host.om_event(Event::TrailEffect {
+                let spawn = Spawn {
                     pos: o.twp.pos,
                     vel: [0.0, 0.1, 0.0],
                     size: f32::from_bits(0x4053_3333),
-                    b: 3.0,
-                });
+                    work: 3.0,
+                };
+                let t = Creator::X1dfe0;
+                if let Some(p) = effects::create(t, data.trail_effect, &spawn, rand, host) {
+                    host.particle_done(p);
+                }
             }
         }
         _ => {}

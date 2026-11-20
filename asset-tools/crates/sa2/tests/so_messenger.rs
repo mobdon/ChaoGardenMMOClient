@@ -10,6 +10,7 @@ use sa2_asset_tools::stage_objects::{
     messenger::{
         self,
         omochao::PlaceHost,
+        shadow::{self, Gx, Shadow, ShadowHost},
         trail::{self, Trail, TrailDesc, TrailDraw, TrailHost},
         Event, MessengerHost, MessengerTask, NewTask, SpawnArgs, Spawned, Twp, Work, STG42D,
     },
@@ -266,8 +267,6 @@ impl MessengerHost for Recorder {
     }
     fn msg_event(&mut self, e: Event) {
         let v = match e {
-            Event::ShadowInit { work, size } => json!(["shadow_init", work, size]),
-            Event::ShadowFree { work } => json!(["shadow_free", work]),
             Event::ChildInit { task, pos } => {
                 self.children.push(json!([task, bits(pos), 6]));
                 return;
@@ -278,30 +277,96 @@ impl MessengerHost for Recorder {
             Event::Fog(on) => json!(["fog", u8::from(on)]),
             Event::SetFog => json!(["setfog"]),
             Event::Blend(a, b) => json!(["blend", a, b]),
-            Event::ShadowCapture { work, pos, sin } => json!([
-                "shadow_capture",
-                work,
-                1.0f32.to_bits(),
-                bits(pos),
-                0,
-                0,
-                sin.to_bits()
-            ]),
             Event::SetTexture(t) => json!(["settexture", t]),
             Event::DrawModel { model, matrix } => {
                 let m: Vec<u32> = matrix.iter().flatten().map(|x| x.to_bits()).collect();
                 json!(["model", model, m])
             }
-            Event::ShadowEnd { work } => json!(["shadow_end", work]),
-            Event::ShadowDraw {
-                kind,
-                pos,
-                size,
-                work,
-            } => json!(["shadow_draw", kind, bits(pos), size.to_bits(), work]),
         };
         self.events.push(v);
     }
+}
+
+impl ShadowHost for Recorder {
+    fn gx(&mut self, call: Gx) {
+        let fl = |v: &[f32]| json!(v.iter().map(|x| x.to_bits()).collect::<Vec<_>>());
+        let v = match call {
+            Gx::InitTexObj {
+                owner,
+                buf,
+                width,
+                height,
+                format,
+                wrap_s,
+                wrap_t,
+                mipmap,
+            } => json!(["tex_init", owner, buf, width, height, format, wrap_s, wrap_t, mipmap]),
+            Gx::InitTexObjLod {
+                owner,
+                min_filt,
+                mag_filt,
+                lods,
+                bias_clamp,
+                edge_lod,
+                max_aniso,
+            } => json!([
+                "tex_lod",
+                owner,
+                min_filt,
+                mag_filt,
+                fl(&lods),
+                bias_clamp,
+                edge_lod,
+                max_aniso
+            ]),
+            Gx::InvalidateTexAll => json!(["tex_inval"]),
+            Gx::Viewport(v) => json!(["viewport", fl(&v)]),
+            Gx::Scissor(v) => json!(["scissor", v]),
+            Gx::Fog(on) => json!(["fog", u8::from(on)]),
+            Gx::SetFog => json!(["setfog"]),
+            Gx::Projection { m, kind } => json!(["projection", fl(m.as_flattened()), kind]),
+            Gx::TexCopySrc(v) => json!(["copy_src", v]),
+            Gx::TexCopyDst {
+                width,
+                height,
+                format,
+                mipmap,
+            } => json!(["copy_dst", width, height, format, mipmap]),
+            Gx::CopyTex { buf, clear } => json!(["copy_tex", buf, clear]),
+            Gx::PixModeSync => json!(["pix_sync"]),
+            Gx::Queue {
+                kind,
+                pos,
+                size,
+                owner,
+                buf,
+            } => json!([
+                "shadow_queue",
+                kind,
+                bits(pos),
+                size.to_bits(),
+                owner,
+                buf,
+                owner
+            ]),
+        };
+        self.events.push(v);
+    }
+}
+
+fn shadow_from(v: &Value) -> Shadow {
+    Shadow {
+        matrix: matrix(&v["matrix"]),
+        size: u(&v["size"]),
+        buf: u(&v["buf"]),
+    }
+}
+
+fn shadow_json(s: &Shadow) -> Value {
+    json!({
+        "matrix": s.matrix.as_flattened().iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        "size": s.size, "buf": s.buf,
+    })
 }
 
 fn trail_from(v: &Value) -> Option<Trail> {
@@ -450,6 +515,7 @@ fn work_from(v: &Value) -> Option<Work> {
     for (k, t) in w.trails.iter_mut().enumerate() {
         *t = trail_from(&v["trails"][k]);
     }
+    w.shadow = shadow_from(&v["shadow"]);
     Some(w)
 }
 
@@ -481,6 +547,7 @@ fn task_json(t: &MessengerTask) -> Value {
             "sub_task": w.sub_task, "home": bits(w.home), "w4c": w.w4c, "w50": w.w50,
             "player": w.player,
             "trails": w.trails.iter().map(|t| trail_json(t.as_ref())).collect::<Vec<_>>(),
+            "shadow": shadow_json(&w.shadow),
         })
     });
     json!({
@@ -615,7 +682,7 @@ fn displays_match_stg42d() {
         if u(&case["fn"]) == 0x18040 {
             messenger::display_trails(&mut task, &STG42D, &mut stack, &mut h);
         } else {
-            messenger::display_shadow(&task, &STG42D, &mut stack, &mut h);
+            messenger::display_shadow(&mut task, &STG42D, &mut stack, &mut h);
         }
         assert_eq!(*stack.current(), m);
         assert_eq!(json!(h.events), case["events"], "{case}");
@@ -625,6 +692,74 @@ fn displays_match_stg42d() {
         let mut got = task_json(&task);
         got["callbacks"] = json!([0, 0, 0, 0, 0]);
         assert_eq!(got, after, "{case}");
+    }
+}
+
+#[test]
+#[ignore = "requires SA2_MAIN_DOL, SA2_GC_REL_DIR, the Gekko tables and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+fn shadow_helpers_match_stg42d() {
+    let Some(c) = oracle("shadow") else {
+        return;
+    };
+    let cases = c["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 1000);
+    for case in cases {
+        let id = u(&case["id"]);
+        let mut h = Recorder {
+            next: id + 1,
+            ..Default::default()
+        };
+        let mut stack = MatrixStack::new();
+        if case["kind"] == "init" {
+            h.calloc_ok = deque(&case["calloc_ok"], |b| b.as_bool().unwrap());
+            let mut sh = Shadow::default();
+            shadow::init(&mut sh, id, u(&case["size"]), &mut h);
+            assert_eq!(json!(h.events), case["events"], "{case}");
+            assert_eq!(shadow_json(&sh), case["after"], "{case}");
+            h.events.clear();
+            shadow::free(&mut sh, &mut h);
+            shadow::free(&mut sh, &mut h);
+            assert_eq!(json!(h.events), case["free_events"], "{case}");
+            assert_eq!(shadow_json(&sh), case["freed"], "{case}");
+            continue;
+        }
+        let mut sh = shadow_from(&case["before"]);
+        let m = matrix(&case["matrix"]);
+        *stack.current_mut() = m;
+        let pos = v3(&case["pos"]);
+        match case["kind"].as_str().unwrap() {
+            "end" => {
+                stack.push();
+                shadow::end(&sh, &mut stack, &mut h);
+                assert_eq!(stack.depth(), 0);
+            }
+            "draw" => shadow::draw(
+                u(&case["queue_kind"]),
+                pos,
+                f(&case["size"]),
+                id,
+                &sh,
+                &mut h,
+            ),
+            kind => {
+                let a = |k: usize| case["angles"][k].as_i64().map(|x| x as i32);
+                let (hw, sin) = (f(&case["half_width"]), f(&case["sin"]));
+                if kind == "capture" {
+                    shadow::capture(&mut sh, hw, pos, a(0), a(1), sin, &mut stack, &mut h);
+                } else {
+                    let ts = f(&case["tex_scale"]);
+                    shadow::capture_ex(&mut sh, hw, ts, sin, pos, a(0), a(1), &mut stack, &mut h);
+                }
+                assert_eq!(stack.depth(), 1);
+                assert_eq!(*stack.current(), matrix(&case["current"]), "{case}");
+                assert_eq!(json!(h.events), case["capture_events"], "{case}");
+                h.events.clear();
+                shadow::end(&sh, &mut stack, &mut h);
+                assert_eq!(*stack.current(), m);
+            }
+        }
+        assert_eq!(json!(h.events), case["events"], "{case}");
+        assert_eq!(shadow_json(&sh), case["after"], "{case}");
     }
 }
 
