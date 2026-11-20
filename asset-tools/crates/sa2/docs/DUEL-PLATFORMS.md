@@ -207,6 +207,15 @@ architectural \stfs\ conversion (no rounding). The dialogue window
 (+0x22070), message effect (+0x18620) and gauge (+0x20470) are recorded as
 local calls.
 
+## Power gauge
+
+\duel_gauge\ ports the rival gauge task's creator (+0x20470) and update
+(+0x2052C); its display (+0x20700) is a renderer. The gauge waits 40 updates,
+grows by 0.8 per update to 32 x the starting gauge, then drains by 0.4 per
+update toward 32 x the current gauge; once empty it refills to the start and
+then shrinks by 1.6 per update, freeing its task below 10. It holds still
+while game byte +0x37 or +0x39 is set.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -251,6 +260,7 @@ python asset-tools/crates/sa2/tests/duel_stage_ppc.py asset-tools/crates/sa2/tar
 python asset-tools/crates/sa2/tests/duel_stage_setup_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_fog_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_director_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_gauge_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
@@ -302,5 +312,6 @@ teardown) match `duel-stage-setup` in every ordered engine call and every
 written location. \duel_fog_ppc.py\ runs 120 random fog callbacks; every engine call
 and all fog state match \duel-fog\. \duel_director_ppc.py\ runs 600 random director updates covering
 every mode; all 2,136 engine and local calls, the work area and every
-written engine global match \duel-director\.
+written engine global match \duel-director\. \duel_gauge_ppc.py\ runs a full 400-update gauge
+life and 300 random updates; every work field and removal matches.
 Nothing launches the game.

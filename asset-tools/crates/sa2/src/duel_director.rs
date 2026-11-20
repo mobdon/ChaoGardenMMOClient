@@ -217,7 +217,8 @@ impl Run<'_> {
         let (p1, p2) = (self.w.bodies[0].pos, self.w.bodies[1].pos);
         self.query(0x8011b314, json!([p1.map(bits), p2.map(bits)]))
     }
-    /// +0x168
+    /// +0x168 (fcmpo/bgt: an unordered gauge still runs the check)
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     fn h168(&mut self) -> Result<bool> {
         let a = self.w.bodies[0].action;
         let check = match a {

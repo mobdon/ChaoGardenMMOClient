@@ -23,6 +23,7 @@ pub mod duel_director;
 pub mod duel_dust;
 pub mod duel_fireball;
 pub mod duel_fog;
+pub mod duel_gauge;
 pub mod duel_platform;
 pub mod duel_platform_motion;
 pub mod duel_stage;
