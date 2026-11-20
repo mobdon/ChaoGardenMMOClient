@@ -127,6 +127,10 @@ fn follow(w: &mut MotionWork, t: &MotionTables, req: i32) {
 }
 
 fn wrap_down(w: &mut MotionWork, nf: f32, minus_one: bool) {
+    // shortcut: a 0-frame motion (main.dol reads a null NJS_MOTION there) would loop forever; leave the frame as is.
+    if nf == ZERO {
+        return;
+    }
     let top = if minus_one { nf - ONE } else { nf };
     while top <= w.frame {
         w.frame -= top;
