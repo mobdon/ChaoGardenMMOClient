@@ -35,7 +35,23 @@ pub fn set_files(files: Box<dyn GameFiles>) {
     DVD.set(Some(Dvd::new(files)));
 }
 
-fn entry(m: &Mem, path: u32) -> Option<i32> {
+/// GSNE8P's current stage number (s16; `_rename_GetStageNum` reads it).
+const STAGE_NUM: u32 = 0x803A_D820;
+
+/// SA2_FORCE_STAGE=from:to: when the game opens a file with stage `from`
+/// current, make it `to` (e.g. 13:11 turns the story's first stage, City
+/// Escape, into Iron Gate before its files and module are chosen).
+fn force_stage(m: &mut Mem) {
+    let Ok(v) = std::env::var("SA2_FORCE_STAGE") else { return };
+    let Some((from, to)) = v.split_once(':') else { return };
+    let (Ok(from), Ok(to)) = (from.trim().parse::<u16>(), to.trim().parse::<u16>()) else { return };
+    if m.r16(STAGE_NUM) == from {
+        m.w16(STAGE_NUM, to);
+    }
+}
+
+fn entry(m: &mut Mem, path: u32) -> Option<i32> {
+    force_stage(m);
     let p = cstr(m, path);
     // SA2_SKIP_FILES=a,b: files that look absent (e.g. a movie to skip).
     let skip = std::env::var("SA2_SKIP_FILES").unwrap_or_default();
