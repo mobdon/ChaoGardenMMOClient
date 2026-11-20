@@ -185,8 +185,9 @@ impl Autopilot {
             }
         }
         // Launch links: walk onto a spring, land where free flight ends.
-        for (j, (stand, pos, vel, nocon)) in s.launchers().into_iter().enumerate() {
-            let board = grid.nodes_near(stand, 6.0, 15.0);
+        for (j, sp) in s.springs.iter().enumerate() {
+            let (pos, vel, nocon) = sp.launch();
+            let board = grid.nodes_near(sp.position, 6.0, 15.0);
             let mut seen = vec![];
             for (k, stick) in POLICIES.iter().enumerate() {
                 let c = Controls {
@@ -218,7 +219,7 @@ impl Autopilot {
             .map(|&t| {
                 if t >= LAUNCH_TAG {
                     let k = (t - LAUNCH_TAG) as usize;
-                    format!("launcher {} steer {:?}", k / 16, POLICIES[k % 16])
+                    format!("spring {} steer {:?}", k / 16, POLICIES[k % 16])
                 } else {
                     format!("ride mover {}", t - RIDE_TAG)
                 }
@@ -280,21 +281,18 @@ impl Autopilot {
                 return idle;
             }
             Some(Wait::Launch { left, since, stick }) => {
-                // "left" marks that the launch fired: airborne or input locked.
-                let fired = left || !s.player.grounded || s.player.nocon > 0;
-                if fired && s.player.grounded && s.player.nocon == 0 && s.frame - since > 3
-                    || s.frame - since > 900
-                {
+                if !left && !s.player.grounded {
+                    self.wait = Some(Wait::Launch {
+                        left: true,
+                        since,
+                        stick,
+                    });
+                } else if (left && s.player.grounded) || s.frame - since > 600 {
                     self.wait = None;
                     self.plan(s);
                     return idle;
                 }
-                self.wait = Some(Wait::Launch {
-                    left: fired,
-                    since,
-                    stick,
-                });
-                return if fired {
+                return if left {
                     Controls { stick, ..idle }
                 } else {
                     idle

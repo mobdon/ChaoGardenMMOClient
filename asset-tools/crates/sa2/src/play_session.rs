@@ -35,36 +35,18 @@ pub const RING_PICKUP_DISTANCE: f32 = 14.0;
 pub const GOAL_RADIUS: f32 = 25.0;
 /// Adaptation: horizontal checkpoint contact radius.
 pub const CHECKPOINT_RADIUS: f32 = 30.0;
-/// stg11D.rel spring collision (CCL_INFO at section 5 0xA3574 and 0xA35A4):
-/// SPRA is a cylinder of radius 6 and height 10, SPRB a sphere of radius 14,
-/// both centred on the placement. The player's own CCL shape lives in the
-/// main executable; the walker's radius stands in for it.
-pub const SPRA_RADIUS: f32 = 6.0;
-pub const SPRA_HEIGHT: f32 = 10.0;
-pub const SPRB_RADIUS: f32 = 14.0;
+/// Adaptation: spring contact distance added to the player radius. The
+/// springs register native collision shape ID 4, whose size is not read here.
+pub const SPRING_CONTACT: f32 = 10.0;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
 const CONTIRON_VA: u32 = 0x6d63f0;
 const CONTCHAO_VA: u32 = 0x6de3b0;
-const KASOKU_VA: u32 = 0x6cfbf0;
-const CCUBE_VA: u32 = 0x6e54e0;
-/// stg11D.rel CCUBE (section 1 0x17140, helper 0x16F94): CCL rectangle whose
-/// a, b, c are 10 plus SET Scale x, y, z, centred on the placement; its
-/// CCL_INFO at section 5 0x5E5B0 has form 3 and push 0x77.
-pub const CCUBE_BASE: f32 = 10.0;
-/// stg11D.rel KASOKU (section 1 0x1B4C0): CCL_INFO at section 5 0x60CA0 is a
-/// capsule (form 6) of radius 10 and half length 4.44, turned 0x4000 about X.
-pub const DASH_RADIUS: f32 = 10.0;
-pub const DASH_HALF_LENGTH: f32 = 4.44;
-/// Defaults used when Scale.x or Scale.y is not positive (section 4 0x994, 0x998).
-pub const DASH_DEFAULT_SPEED: f32 = 14.0;
-pub const DASH_DEFAULT_FRAMES: f32 = 60.0;
-/// stg11D.rel CONTIRON (section 1 0x20714): CCL_INFO at section 5 0x656D8 is a
-/// rectangle with a = b = c = 10 centred 10 above the placement, i.e. a solid
-/// 20-unit cube standing on it (Iron Gate stacks them at that pitch). Wooden
-/// containers break under the walker's attacks, which live in the main
-/// executable, so they are left out rather than left blocking. The iron
-/// container's own fall and the Laser Blaster that breaks it are not run.
+/// Adaptation: containers as solid cubes with this edge, standing on their
+/// placement and centred on it. Iron Gate stacks them at exactly this pitch
+/// (for example x=2490, y -663/-643, z -1047/-1027/-1007). Wooden containers
+/// break under the walker's attacks, which are not implemented, so they are
+/// left out rather than left blocking.
 pub const CONTAINER_EDGE: f32 = 20.0;
 const GOALRING_VA: u32 = 0x6c63c0;
 const RING_VA: u32 = 0x6c0f80;
@@ -218,49 +200,6 @@ impl Spring {
     }
 }
 
-/// Twelve triangles of an axis-aligned box centred on the origin.
-fn box_tris(half: V3) -> Vec<[V3; 3]> {
-    cube_tris(2.0)
-        .into_iter()
-        .map(|t| t.map(|v| [v[0] * half[0], (v[1] - 1.0) * half[1], v[2] * half[2]]))
-        .collect()
-}
-
-/// KASOKU dash panel, read from stg11D.rel but not run. On contact with a
-/// grounded player it calls the engine with the player slot, local velocity
-/// (speed, 0, 0), the panel's rotation and the no-control frame count, then
-/// plays sound 0x1003. How the engine turns that local velocity and rotation
-/// into world motion is player code in the main executable, which is not
-/// readable here, so the session reports panels without applying them.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DashPanel {
-    pub layer: usize,
-    pub index: usize,
-    pub position: V3,
-    pub angles: [i32; 3],
-    /// Scale.x, or 14 when not positive.
-    pub speed: f32,
-    /// ceil(Scale.y), or 60 when not positive (the call before fctiwz is ceilf
-    /// in the reference symbol map once its 0x348 displacement is applied).
-    pub frames: i32,
-    pub timer: i32,
-}
-
-impl DashPanel {
-    pub fn launch(&self) -> (V3, i32) {
-        (rotate_zxy([self.speed, 0.0, 0.0], self.angles), self.frames)
-    }
-
-    /// Capsule contact against the walker's collision centre.
-    pub fn touches(&self, center: V3, radius: f32) -> bool {
-        let axis = rotate_zxy([0.0, 0.0, 1.0], [0, self.angles[1], 0]);
-        let d = sub(center, self.position);
-        let t = dot(d, axis).clamp(-DASH_HALF_LENGTH, DASH_HALF_LENGTH);
-        len(sub(d, scale(axis, t))) < DASH_RADIUS + radius
-    }
-}
-
 /// Twelve triangles of a cube standing on the origin (outward winding).
 fn cube_tris(edge: f32) -> Vec<[V3; 3]> {
     let h = edge * 0.5;
@@ -407,7 +346,6 @@ pub struct Session {
     pub checkpoints: Vec<Pickup>,
     pub goals: Vec<Goal>,
     pub springs: Vec<Spring>,
-    pub dash_panels: Vec<DashPanel>,
     /// Placements whose native behavior this session does not run.
     pub unimplemented: std::collections::BTreeMap<String, usize>,
     #[serde(skip)]
@@ -453,7 +391,6 @@ impl Session {
         let mut checkpoints = vec![];
         let mut goals = vec![];
         let mut springs = vec![];
-        let mut dash_panels = vec![];
         let mut unimplemented = std::collections::BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -555,32 +492,6 @@ impl Session {
                             solid,
                         });
                     }
-                    (CCUBE_VA, "CCUBE") => {
-                        let half = pl.parameters.map(|s| CCUBE_BASE + s);
-                        for t in box_tris(half) {
-                            if let Some(t) = make_tri(
-                                t.map(|v| place_y(v, pl.rotation[1], pl.position)),
-                                1,
-                                u32::MAX,
-                            ) {
-                                world.push(t);
-                            }
-                        }
-                    }
-                    (KASOKU_VA, "KASOKU") => {
-                        let [sx, sy, _] = pl.parameters;
-                        let speed = if sx > 0.0 { sx } else { DASH_DEFAULT_SPEED };
-                        let frames = if sy > 0.0 { sy } else { DASH_DEFAULT_FRAMES };
-                        dash_panels.push(DashPanel {
-                            layer: li,
-                            index: p.placement_index,
-                            position: pl.position,
-                            angles: pl.rotation.map(i32::from),
-                            speed,
-                            frames: frames.ceil() as i32,
-                            timer: 0,
-                        });
-                    }
                     (CONTIRON_VA, "CONTIRON") | (CONTCHAO_VA, "CONTCHAO") => {
                         for t in cube_tris(CONTAINER_EDGE) {
                             if let Some(t) = make_tri(
@@ -592,7 +503,7 @@ impl Session {
                             }
                         }
                         *unimplemented
-                            .entry(format!("{name} (solid, not breakable)"))
+                            .entry(format!("{name} (solid only)"))
                             .or_insert(0) += 1;
                     }
                     (_, "BRIDGE") => {
@@ -663,7 +574,6 @@ impl Session {
             checkpoints,
             goals,
             springs,
-            dash_panels,
             unimplemented,
             world,
             death_zones: zones,
@@ -890,7 +800,7 @@ impl Session {
         for f in 0..max_frames {
             self.control(&mut pl, controls);
             self.integrate(&mut pl);
-            if pl.grounded && f > 2 && f as i32 >= nocon {
+            if pl.grounded && f > 2 {
                 return Some(pl.position);
             }
             if pl.position[1] < self.world.min[1] - 300.0 {
@@ -1056,31 +966,13 @@ impl Session {
         pl.on_mover = if grounded { on_mover } else { None };
     }
 
-    /// Everything that throws the player: (where to stand, start, velocity,
-    /// no-control frames).
-    pub fn launchers(&self) -> Vec<(V3, V3, V3, i32)> {
-        self.springs
-            .iter()
-            .map(|sp| {
-                let (pos, vel, nocon) = sp.launch();
-                (sp.position, pos, vel, nocon)
-            })
-            .collect()
-    }
-
     fn springs(&mut self, events: &mut Vec<Event>) {
         let center = self.player_center();
         let rad = self.physics.rad;
         let pl = &mut self.player;
         let running = (pl.velocity[0] * pl.velocity[0] + pl.velocity[2] * pl.velocity[2]).sqrt();
         for (i, sp) in self.springs.iter_mut().enumerate() {
-            let d = sub(center, sp.task.position);
-            let near = match sp.task.kind {
-                SpringKind::A => {
-                    d[0].hypot(d[2]) < SPRA_RADIUS + rad && d[1] > -rad && d[1] < SPRA_HEIGHT + rad
-                }
-                SpringKind::B => len(d) < SPRB_RADIUS + rad,
-            };
+            let near = len(sub(sp.task.position, center)) < SPRING_CONTACT + rad;
             let player = SpringPlayer {
                 position: pl.position,
                 running_speed: running,
