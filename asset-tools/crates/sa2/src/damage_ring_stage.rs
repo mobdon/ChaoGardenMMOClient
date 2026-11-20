@@ -71,11 +71,18 @@ pub fn replay(stage: &stage::Stage, request: &[u8]) -> Result<Value> {
         &mut clock,
         trig,
     )?;
+    let mut models = crate::ring_models::Manager::default();
+    let handle = models.create(|| true);
+    ring.initialize_model(models.model_mut(handle).unwrap());
+    let initial_model = serde_json::to_value(models.model_mut(handle).unwrap())?;
     let initial = serde_json::to_value(&ring)?;
     let mut frames = vec![];
     for _ in 0..r.frames {
         let mut query = None;
         let mut error = None;
+        let model = models.model_mut(handle).unwrap();
+        ring.sync_model(model, false, false);
+        let model_before_update = serde_json::to_value(model)?;
         let event = ring.tick(
             gravity,
             false,
@@ -113,12 +120,16 @@ pub fn replay(stage: &stage::Stage, request: &[u8]) -> Result<Value> {
         if let Some(e) = error {
             return Err(e);
         }
-        frames.push(json!({"task":ring,"events":event,"staticProbe":query}));
+        let calls = event.pickup_and_removal_calls(ring.flight.position, |a| trig(i32::from(a)));
+        frames.push(
+            json!({"task":ring,"events":event,"staticProbe":query,"modelBeforeUpdate":model_before_update,"pickupAndRemovalCalls":calls}),
+        );
         if ring.phase == Phase::Destroyed {
+            models.retire(handle);
             break;
         }
     }
     Ok(
-        json!({"calls":calls,"initial":initial,"frames":frames,"scope":"One dropped ring. Static down-ray adapter on horizontal terrain with supplied launch position/randomness and a fresh shared probe clock. No moving surfaces, player contacts, native broad phase or save writes."}),
+        json!({"calls":calls,"initial":initial,"initialModel":initial_model,"frames":frames,"scope":"One dropped ring. Static down-ray adapter on horizontal terrain with supplied launch position/randomness and a fresh shared probe clock. No moving surfaces, player contacts, native broad phase or save writes."}),
     )
 }

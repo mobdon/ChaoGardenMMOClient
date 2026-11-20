@@ -127,6 +127,38 @@ fn angle(s: Segment<'_>) -> i32 {
         as i32
 }
 
+/// Animated channels only; MTN entries do not imply event camera attributes.
+#[derive(Debug, Serialize)]
+pub struct CameraChannels {
+    pub position: [f32; 3],
+    pub target: [f32; 3],
+    pub roll_bams: i32,
+    pub fov_bams: i32,
+}
+
+pub(crate) fn sample_channels(
+    bank: &[u8],
+    descriptor: u32,
+    frame: f32,
+    frame_count: u32,
+) -> Result<CameraChannels> {
+    if descriptor == 0
+        || !(1..=1_000_000).contains(&frame_count)
+        || !frame.is_finite()
+        || frame < 0.
+        || frame >= frame_count as f32
+    {
+        return Err(Error::invalid("invalid camera descriptor or frame"));
+    }
+    let d = span(bank, descriptor as usize, 32)?;
+    Ok(CameraChannels {
+        position: vector(segment(bank, d, 0, 16, frame, frame_count)?)?,
+        target: vector(segment(bank, d, 1, 16, frame, frame_count)?)?,
+        roll_bams: angle(segment(bank, d, 2, 8, frame, frame_count)?),
+        fov_bams: angle(segment(bank, d, 3, 8, frame, frame_count)?),
+    })
+}
+
 /// Sample one explicitly selected camera. Frame time is in the camera motion's
 /// native frames. A final fractional frame interpolates toward frame zero.
 pub fn sample(bank: &[u8], motion_index: i32, frame: f32) -> Result<CameraFrame> {
@@ -181,7 +213,7 @@ pub fn sample(bank: &[u8], motion_index: i32, frame: f32) -> Result<CameraFrame>
         direction_x: vec3(a, 40)?,
         direction_y: vec3(a, 52)?,
     };
-    let d = span(bank, word(m, 0) as usize, 32)?;
+    let channels = sample_channels(bank, word(m, 0), frame, frame_count)?;
     Ok(CameraFrame {
         motion_index,
         motion_offset,
@@ -189,10 +221,10 @@ pub fn sample(bank: &[u8], motion_index: i32, frame: f32) -> Result<CameraFrame>
         other_motion_offset,
         frame,
         frame_count,
-        position: vector(segment(bank, d, 0, 16, frame, frame_count)?)?,
-        target: vector(segment(bank, d, 1, 16, frame, frame_count)?)?,
-        roll_bams: angle(segment(bank, d, 2, 8, frame, frame_count)?),
-        fov_bams: angle(segment(bank, d, 3, 8, frame, frame_count)?),
+        position: channels.position,
+        target: channels.target,
+        roll_bams: channels.roll_bams,
+        fov_bams: channels.fov_bams,
         attributes,
     })
 }

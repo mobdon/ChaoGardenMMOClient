@@ -1316,12 +1316,11 @@ mod tests {
             );
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_puzzle_callbacks_match_ram_and_service_order() {
-        let f: Value = serde_json::from_str(include_str!(
-            "../../tests/garden-puzzle-objects-vectors.json"
-        ))
-        .unwrap();
+        let f: Value =
+            serde_json::from_str(vectors!("garden-puzzle-objects-vectors.json")).unwrap();
         let mut synthetic = vec![0; 0x40000];
         for row in f["syntheticTables"].as_array().unwrap() {
             let start = n(&row[0]) as usize;

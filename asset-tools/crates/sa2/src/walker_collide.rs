@@ -124,6 +124,8 @@ pub struct PhysicsRow {
     pub run_accel: f32,
     /// Row +0x58.
     pub f58: f32,
+    /// Row +0x74 (the small-body height limit for characters 0 and 1).
+    pub f74: f32,
     /// Row +0x78 (`weight`).
     pub weight: f32,
 }

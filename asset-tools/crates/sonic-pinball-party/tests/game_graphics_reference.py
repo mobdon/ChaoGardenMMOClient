@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import spp_vectors  # noqa: E402
 
 ROM_SHA256 = "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
 
@@ -42,7 +43,7 @@ if __name__ == "__main__":
     p.add_argument("--generate", action="store_true")
     a = p.parse_args()
     value = generate(a.rom)
-    target = Path(__file__).with_name("game-graphics-vectors.json")
+    target = spp_vectors.path("game-graphics-vectors.json")
     if a.generate:
         target.write_text(json.dumps(value, indent=2)+"\n", encoding="utf8")
     elif json.loads(target.read_text(encoding="utf8")) != value:

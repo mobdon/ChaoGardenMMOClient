@@ -10,10 +10,13 @@ instruction, with these arithmetic semantics:
   like round each lane's result once to single. The multiply-adds
   (ps_madd, ps_madds0, ...) are fused: the exact a*c+b is rounded to double
   and then to single, as QEMU does for fmadds.
-* `frsqrte` and `ps_rsqrte` return Gekko's table estimate (gekko_float.py,
-  transcribed from Dolphin). Every `frsqrte` the DOL runs natively under
-  Unicorn is patched to it too. `ps_rsqrte` rounds each lane to single.
-* `fres` and `ps_res` are still exact: 1/x rounded as QEMU rounds it.
+* When the local Gekko estimate tables are present (gekko_tables.py; they
+  are transcribed from Dolphin's GPL source and kept out of git),
+  `frsqrte`/`ps_rsqrte` and `fres` return Gekko's table estimates, in the
+  interpreter and at every site Unicorn runs natively. `ps_rsqrte` rounds
+  each lane to single. Without the tables they are exact (1/sqrt(x) and
+  1/x as QEMU rounds them), and oracles that need the estimates skip.
+* `ps_res` is exact.
 
 Apart from those estimates these are the semantics of an IEEE machine (the
 PC build and QEMU's scalar FPU), not Gekko's 25-bit multiplier operand,
@@ -35,7 +38,7 @@ from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_
 from unicorn import ppc_const as R
 
 sys.path.insert(0, str(Path(__file__).parent))
-from gekko_float import frsqrte_bits, install_frsqrte  # noqa: E402
+import gekko_tables  # noqa: E402
 
 # SHA-1 of the GSNE8P main.dol the roeming/SA2B decompilation targets.
 MAIN_DOL_SHA1 = "e4c50f32242a3cd36cdc8ae776661601a52130a2"
@@ -77,8 +80,14 @@ def div(a, b):
 
 
 def rsqrt(b):
-    """Gekko's frsqrte estimate of a double."""
-    bits = frsqrte_bits(struct.unpack('>Q', struct.pack('>d', b))[0])
+    """frsqrte: Gekko's estimate when the local tables exist, else exact."""
+    if gekko_tables.load() is None:
+        if b == 0:
+            return div(1.0, b)
+        if b < 0 or b != b:
+            return float('nan')
+        return 1.0 / b ** 0.5
+    bits = gekko_tables.frsqrte_bits(struct.unpack('>Q', struct.pack('>d', b))[0])
     return struct.unpack('>d', struct.pack('>Q', bits))[0]
 
 
@@ -158,16 +167,19 @@ class Machine:
         self.stubs = {}
         for addr in self.paired:
             u.hook_add(UC_HOOK_CODE, self._enter_paired, begin=addr, end=addr)
-        # Gekko's frsqrte estimate wherever Unicorn itself runs one.
+        # Gekko's estimates wherever Unicorn itself runs frsqrte or fres,
+        # when the local tables are present.
         self.frsqrte_sites = []
-        for a, o, z in dol.sections:
-            if a >= 0x80173140:  # text sections only
-                continue
-            for k in range(0, z, 4):
-                ins = struct.unpack_from('>I', dol.data, o + k)[0]
-                if ins >> 26 == 63 and (ins >> 1) & 0x1F == 26:
-                    install_frsqrte(u, a + k)
-                    self.frsqrte_sites.append(a + k)
+        if gekko_tables.load() is not None:
+            for a, o, z in dol.sections:
+                if a >= 0x80173140:  # text sections only
+                    continue
+                for k in range(0, z, 4):
+                    ins = struct.unpack_from('>I', dol.data, o + k)[0]
+                    if ins >> 26 == 63 and (ins >> 1) & 0x1F == 26:
+                        gekko_tables.install_frsqrte(u, a + k)
+                        self.frsqrte_sites.append(a + k)
+            gekko_tables.install(self, sys.modules[__name__])
 
     def boot(self):
         """The parts of the game's start-up the player code depends on: the

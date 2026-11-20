@@ -289,11 +289,11 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn adjacent_commands_match_384_original_instruction_cases() {
         let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/sequence-extended-vectors.json"))
-                .unwrap();
+            serde_json::from_str(vectors!("sequence-extended-vectors.json")).unwrap();
         let cases = vectors["commands"].as_array().unwrap();
         assert_eq!(cases.len(), 384);
         for (index, case) in cases.iter().enumerate() {
@@ -346,11 +346,11 @@ mod tests {
             })
             .collect()
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn unlink_and_finish_match_512_complete_original_record_snapshots() {
         let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/sequence-extended-vectors.json"))
-                .unwrap();
+            serde_json::from_str(vectors!("sequence-extended-vectors.json")).unwrap();
         let cases = vectors["graphs"].as_array().unwrap();
         assert_eq!(cases.len(), 512);
         for (index, case) in cases.iter().enumerate() {

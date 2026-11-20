@@ -174,10 +174,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_address_initial_wrapper_matches_all_original_stack_snapshots() {
-        let f: Value =
-            serde_json::from_str(include_str!("../../tests/startup-vectors.json")).unwrap();
+        let f: Value = serde_json::from_str(vectors!("startup-vectors.json")).unwrap();
         for c in f["cases"].as_array().unwrap() {
             let mut m = MemoryImage::fixture(vec![
                 reg(MAIN, words(&c["mainInitial"])),
@@ -206,10 +206,10 @@ mod tests {
             assert_eq!(json!(probe.calls), c["calls"]);
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_address_input_adapter_matches_original_operation_sequences() {
-        let f: Value =
-            serde_json::from_str(include_str!("../../tests/control-vectors.json")).unwrap();
+        let f: Value = serde_json::from_str(vectors!("control-vectors.json")).unwrap();
         for c in f["inputCases"].as_array().unwrap() {
             let mut m = MemoryImage::fixture(vec![
                 reg(INPUT, words(&c["initial"])),

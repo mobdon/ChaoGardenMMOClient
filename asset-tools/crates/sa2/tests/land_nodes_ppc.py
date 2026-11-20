@@ -23,7 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import dol_ppc  # noqa: E402
-import gekko_fres  # noqa: E402
+import gekko_tables  # noqa: E402
+
+gekko_tables.require()  # bit-exact frsqrte and fres
 from dol_ppc import DEFAULT_PAIRED, Dol  # noqa: E402
 from rel_load import load_rel  # noqa: E402
 
@@ -34,7 +36,6 @@ paired = dict(DEFAULT_PAIRED)
 paired.update({0x8011BEF0: "fn_8011BEF0", 0x8011BF0C: "njRotateXTbl", 0x8011BF64: "njRotateYTbl",
                0x8011BFE0: "njRotateZTbl", 0x8011C21C: "njUnitMatrixEx"})
 m = Dol(sys.argv[1] if len(sys.argv) > 1 else os.environ["SA2_MAIN_DOL"]).machine(paired=paired, boot=False)
-gekko_fres.install(m, dol_ppc)  # njScalor and PSMTXInverse use fres
 m.boot()
 REL_BASE = 0x80800000
 addrs = load_rel(m, rel, REL_BASE)

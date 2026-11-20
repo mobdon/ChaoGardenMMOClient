@@ -362,7 +362,7 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/garden-audio-init-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("garden-audio-init-vectors.json")).unwrap()
     }
     fn n(v: &Value, key: &str, default: u32) -> u32 {
         v.get(key)
@@ -621,6 +621,7 @@ mod tests {
             );
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_setup_vectors_without_native_files() {
         let source = fixture();
@@ -630,6 +631,7 @@ mod tests {
             }
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn local_authenticated_init_vectors_when_supplied() {
         if let Ok(path) = std::env::var("SPP_GARDEN") {
@@ -643,6 +645,7 @@ mod tests {
             }
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn strict_registers_frequency_and_typed_errors() {
         let source = fixture();

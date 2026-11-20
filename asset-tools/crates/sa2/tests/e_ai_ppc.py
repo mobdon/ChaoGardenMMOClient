@@ -17,14 +17,13 @@ import json, os, random, struct, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import dol_ppc  # noqa: E402
-import gekko_fres  # noqa: E402
+import gekko_tables  # noqa: E402
 from dol_ppc import Dol  # noqa: E402
 from stage_rel_ppc import load_rel  # noqa: E402
 
 dol = Dol(os.environ["SA2_MAIN_DOL"])
-m = dol.machine(boot=False)
-gekko_fres.install(m, dol_ppc)  # Gekko's fres estimate (njScalor, njUnitVector)
-m.boot()
+gekko_tables.require()  # bit-exact estimates need the local tables
+m = dol.machine()
 rel = load_rel(m, os.environ["SA2_STAGE_REL"])
 R1 = lambda off: rel.addr(1, off)
 fb = lambda x: struct.unpack('>I', struct.pack('>f', x))[0]

@@ -379,10 +379,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn matches_original_router_state_writes_and_calls() {
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/table_events-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("table_events-vectors.json")).unwrap();
         let cases = v["cases"].as_array().unwrap();
         assert_eq!(cases.len(), 354);
         for (i, case) in cases.iter().enumerate() {
@@ -409,8 +409,7 @@ mod tests {
     fn retail_maps_and_regions_match_native_digest() {
         use sha2::{Digest, Sha256};
         let rom = std::fs::read(std::env::var_os("A3VE_ROM").unwrap()).unwrap();
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/table_events-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("table_events-vectors.json")).unwrap();
         assert_eq!(format!("{:x}", Sha256::digest(&rom)), v["romSha256"]);
         let mut bank = Mem::default();
         for (start, len) in [

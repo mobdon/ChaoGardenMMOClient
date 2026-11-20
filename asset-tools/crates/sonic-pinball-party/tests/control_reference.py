@@ -13,9 +13,10 @@ from pathlib import Path
 import random
 import struct
 import unittest
+import spp_vectors  # noqa: E402
 
 ROM_SHA256 = "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
-FIXTURE = Path(__file__).with_name("control-vectors.json")
+FIXTURE = spp_vectors.path("control-vectors.json")
 ROM_BASE = 0x08000000
 STACK_BASE = 0x03000E00
 INPUT_BASE = 0x03000510

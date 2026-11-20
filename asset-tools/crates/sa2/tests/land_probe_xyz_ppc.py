@@ -9,12 +9,11 @@ import json, os, random, struct, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import dol_ppc  # noqa: E402
-import gekko_fres  # noqa: E402
+import gekko_tables  # noqa: E402
 from dol_ppc import Dol  # noqa: E402
 
-m = Dol(os.environ["SA2_MAIN_DOL"]).machine(boot=False)
-gekko_fres.install(m, dol_ppc)
-m.boot()
+gekko_tables.require()  # bit-exact estimates need the local tables
+m = Dol(os.environ["SA2_MAIN_DOL"]).machine()
 ACTIVE = 0x803B52C0 - 0x7738
 NODE, TRIS, BLOCK, OBJ = 0x81100000, 0x81110000, 0x81000000, 0x810F0000
 rng = random.Random(int(os.environ.get("SA2_PROBE_SEED", "3")))

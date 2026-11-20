@@ -122,7 +122,7 @@ mod tests {
             .unwrap();
         let sprite = NativeBallSprite::load(&rom).unwrap();
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../tests/game-graphics-vectors.json")).unwrap();
+            serde_json::from_str(vectors!("game-graphics-vectors.json")).unwrap();
         for y in [
             0,
             0x7ff,

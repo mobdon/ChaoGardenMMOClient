@@ -435,15 +435,60 @@ fn decode_cmpr(raw: &[u8], w: usize, h: usize, out: &mut [u8]) -> Result<()> {
 /// Base mip of legacy DDS DXT1/3/5 or 32-bit channels. Unsupported DX10 and
 /// noncontiguous masks fail explicitly; source alpha is copied unchanged.
 pub fn decode_dds(data: &[u8]) -> Result<Image> {
+    decode_dds_mip(data, 0)
+}
+
+/// Select a declared mip in a legacy 2D DDS texture.
+pub fn decode_dds_mip(data: &[u8], level: u32) -> Result<Image> {
     if span(data, 0, 4)? != b"DDS " || le32(data, 4)? != 124 || le32(data, 76)? != 32 {
         return Err(Error::invalid("invalid DDS header"));
     }
     span(data, 0, 128)?;
-    let w = le32(data, 16)? as usize;
-    let h = le32(data, 12)? as usize;
+    let mut w = le32(data, 16)? as usize;
+    let mut h = le32(data, 12)? as usize;
+    dimensions(w, h)?;
+    let mut offset = 128usize;
+    let flags = le32(data, 80)?;
+    if level > 0 {
+        let levels = le32(data, 28)?;
+        if le32(data, 8)? & 0x20000 == 0
+            || level >= levels
+            || levels > w.max(h).ilog2() + 1
+            || le32(data, 112)? != 0
+            || le32(data, 24)? > 1
+        {
+            return Err(Error::invalid(
+                "invalid mip level or unsupported DDS surface",
+            ));
+        }
+        let block_size = if flags & 4 != 0 {
+            match span(data, 84, 4)? {
+                b"DXT1" => Some(8),
+                b"DXT3" | b"DXT5" => Some(16),
+                _ => return Err(Error::invalid("unsupported DDS FourCC")),
+            }
+        } else {
+            if flags & 0x40 == 0
+                || le32(data, 88)? != 32
+                || (le32(data, 8)? & 8 != 0 && le32(data, 20)? as usize != w * 4)
+            {
+                return Err(Error::invalid("unsupported mip layout or padded DDS rows"));
+            }
+            None
+        };
+        for _ in 0..level {
+            let size = match block_size {
+                Some(size) => w.div_ceil(4) * h.div_ceil(4) * size,
+                None => w * h * 4,
+            };
+            span(data, offset, size)?;
+            offset += size;
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+        }
+    }
     let count = dimensions(w, h)?;
     let mut rgba;
-    let flags = le32(data, 80)?;
     if flags & 4 != 0 {
         let fourcc = span(data, 84, 4)?;
         let size = match fourcc {
@@ -451,9 +496,9 @@ pub fn decode_dds(data: &[u8]) -> Result<Image> {
             b"DXT3" | b"DXT5" => 16,
             _ => return Err(Error::invalid("unsupported DDS FourCC")),
         };
-        span(data, 128, w.div_ceil(4) * h.div_ceil(4) * size)?;
+        span(data, offset, w.div_ceil(4) * h.div_ceil(4) * size)?;
         rgba = vec![0; count * 4];
-        let mut at = 128;
+        let mut at = offset;
         for by in (0..h).step_by(4) {
             for bx in (0..w).step_by(4) {
                 let block = span(data, at, size)?;
@@ -532,7 +577,7 @@ pub fn decode_dds(data: &[u8]) -> Result<Image> {
                 return Err(Error::invalid("DDS requires 8-bit contiguous masks"));
             }
         }
-        let pitch = if le32(data, 8)? & 8 != 0 {
+        let pitch = if level == 0 && le32(data, 8)? & 8 != 0 {
             le32(data, 20)? as usize
         } else {
             w * 4
@@ -542,7 +587,7 @@ pub fn decode_dds(data: &[u8]) -> Result<Image> {
         }
         span(
             data,
-            128,
+            offset,
             pitch
                 .checked_mul(h)
                 .ok_or_else(|| Error::invalid("DDS pitch overflow"))?,
@@ -550,7 +595,7 @@ pub fn decode_dds(data: &[u8]) -> Result<Image> {
         rgba = vec![0; count * 4];
         for y in 0..h {
             for x in 0..w {
-                let v = le32(data, 128 + y * pitch + x * 4)?;
+                let v = le32(data, offset + y * pitch + x * 4)?;
                 for (i, m) in masks.iter().enumerate() {
                     rgba[(y * w + x) * 4 + i] = if *m == 0 {
                         255

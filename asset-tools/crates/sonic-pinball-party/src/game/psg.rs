@@ -579,7 +579,7 @@ mod tests {
             .collect()
     }
     fn vectors() -> Value {
-        serde_json::from_str(include_str!("../../tests/psg-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("psg-vectors.json")).unwrap()
     }
     fn synthetic_tables(vectors: &Value) -> Tables {
         Tables {
@@ -707,6 +707,7 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn key_off_and_gain_match_768_unhooked_original_calls() {
         let vectors = vectors();
@@ -735,6 +736,7 @@ mod tests {
             io.check(case, &format!("PSG update {index}"));
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn update_matches_1024_unhooked_original_calls_with_synthetic_lookup() {
         let vectors = vectors();
@@ -805,6 +807,7 @@ mod tests {
         assert_eq!(vectors["native"].as_array().unwrap().len(), 512);
         check_updates(&vectors["native"], &tables);
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn missing_hardware_wave_data_and_budgets_stop_without_completion() {
         let vectors = vectors();

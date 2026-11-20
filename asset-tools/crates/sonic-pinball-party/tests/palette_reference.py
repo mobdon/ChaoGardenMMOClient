@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import struct
 import sys
+import spp_vectors  # noqa: E402
 
 
 ROM_SHA256 = "5690eb0a58ac24616fd6747a8aedddc7777f28d6f3579cb4428ea8fa5d30208b"
@@ -195,7 +196,7 @@ def main():
     if rom[0x67120:0x67520] != bytes(1024) or rom[0x67520:0x67920] != packed([0x7FFF] * 512):
         raise ValueError("native default black/white palette references differ")
     vectors = generate(rom)
-    destination = Path(__file__).with_name("palette-vectors.json")
+    destination = spp_vectors.path("palette-vectors.json")
     if args.check:
         if json.loads(destination.read_text(encoding="utf-8")) != vectors:
             raise ValueError("native palette scalar vectors differ")

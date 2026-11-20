@@ -21,6 +21,8 @@ WALKER-PORT-MAP.md on #424.
 | fn_800CEE08: a moving sphere against one object's candidate triangles (with PSMTXInverse, njUnitVector, and #426's acosf) | `land_contact`, `LandNodes::collide` | same, every query's objects with candidates in both modes, over 300 hits |
 | fn_800D0904 with fn_800D13A0, fn_800D14C8, fn_800D17E0, fn_800D2298, fn_800D23A8, fn_800D24B4, fn_800D251C and Ninja's table rotations, njTranslateEx and fn_8011610C: the land collision node list and its bucketed triangles | `land_nodes::LandNodes::update` | tests/land_nodes.rs, 40 frames on stg11D.rel plus synthetic object trees, triangle, quad and flipped strip sets, flag 0x08000000 and a full triangle pool |
 | Walker collision helpers: fn_800428F8 (sphere offset), fn_800420C0 (surface physics), fn_800414F0 / fn_80041984 (floor and wall hit sorting), fn_80040ACC (wall slide), fn_80042694 (contact tilt), plane helpers 0x8011B6C8 / 0x8011B7B8 / 0x8011BDB4, sqrtf 0x8002F15C, fn_80027C2C, DiffAngle / SubAngle / AdjustAngle | `walker_collide` | tests/walker_collide.rs, 3,000 to 4,000 random cases each |
+| fn_8003EAFC (ground pass), fn_80043ED4 (floor pass), fn_80043600 (re-land), fn_800424C8 (riding dynamic land), fn_80042E0C / fn_800407A0, fn_80042B4C / fn_80040540, fn_80041C78, fn_80040F48, fn_80041814 | `walker_ground`, `walker_collide` | tests/walker_ground.rs, 400 randomized Iron Gate cases per pass |
+| 0x80045880: the collision core, with the CCL contact reactions and fn_8004614C (push-plane slide); fn_8004F11C's interaction flags and the CCL data come in as `CclView` | `walker_ground::collision_core` | same, 400 cases |
 | 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within +/-0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
 Set `SA2_MAIN_DOL` and `SA2_GSNE8P_DOL` to the extracted main.dol, and set
@@ -38,23 +40,11 @@ GetStageNum, VectorAngle and njInnerProduct. `walker_frame` inlines
 njInnerProduct only until #426 publishes it. The Prison Lane port owns trig
 (`ninja_trig`). #426 owns the matrix ops (`ninja_matrix`).
 
-## Next: the collision core under 0x80045880
+## Next: the walker exec
 
-Still to port: the bodies of fn_8003EAFC (walls) and fn_80043ED4 (floor),
-with fn_80042E0C, fn_80043600, fn_80042B4C, fn_80040F48, fn_80041C78 and
-fn_800424C8 (riding dynamic land through its callback table), then
-0x80045880 itself.
-
-
-0x80045880 sets the walker against the stage. It calls fn_8003EAFC (0xC64
-bytes) and fn_80043ED4 (0x19AC bytes), which reach the PhysicsArray readers
-fn_80040ACC, fn_80040F48, fn_80041C78 and fn_800420C0. They also reach
-fn_80042E0C, fn_80043600 and fn_800414F0/80041984/80042B4C/80042694/
-800428F8/800424C8, and the land-collision search fn_800CEE08 (0x1064) and
-fn_800D1020 (0x380). The search works on global collision lists addressed
-from r13 (for example -0x7738, -0x7754, -0x7758 and -0x77A8). Checking it
-needs the stage's land collision loaded into the emulated memory, as the
-game lays it out. The port goes bottom-up from fn_800D1020 and fn_800CEE08.
+The collision core and everything under it are ported. Next is the walker
+exec (0x800B3A8C) and its mode handlers, which call 0x80046DE4, 0x8003E668
+and 0x80045880, then plugging the native walker into #424's session.
 
 ## Land collision pipeline (found)
 
@@ -82,10 +72,12 @@ The emulator check needs the GameCube stg11D.rel loaded and relocated, with
 r13-0x7A00 pointing at its `objLandTable0011`. The installed module and the
 disc's copy are byte-identical (SHA-1 8fbe506bcbbe6f012d2bb8240edb5f6c8cb6ece0).
 
-## fres
+## Gekko estimates
 
-njScalor ends in `fres`, and PSMTXInverse starts its reciprocal with one.
-`msl_math::gekko_fres` is Gekko's table estimate (Dolphin's transcription,
-copied from #425's player_range.rs), and `tests/gekko_fres.py` installs the
-same estimate in the harness, which otherwise computes an exact reciprocal.
-Like the frsqrte table, it is GPL-derived data awaiting the owner's decision.
+`frsqrte` (everywhere) and `fres` (njScalor, PSMTXInverse) are Gekko table
+estimates. The tables are GPL-derived, so they live in a local, git-ignored
+file read by `msl_math::gekko_tables()` and `tests/gekko_tables.py`
+(`.local/research/gekko-estimate-tables.json`, or `SA2_GEKKO_TABLES`).
+Without it the port uses exact `1/sqrt(x)` and `1/x`, and the main.dol
+checks skip. Create it with
+`python asset-tools/crates/sa2/tests/gekko_tables.py --extract-from-git fc5e0a3`.

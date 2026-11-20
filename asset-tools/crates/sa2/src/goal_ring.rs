@@ -2011,18 +2011,28 @@ impl RegularMotion {
         }
     }
     pub fn cleanup_call(self, latched: bool, task_field_30_present: bool) -> Option<u32> {
-        (latched && self.timer >= 60).then_some(if task_field_30_present {
-            0x80065148
-        } else {
-            0x80071878
-        })
+        goal_cleanup_call(self.timer, latched, task_field_30_present)
     }
+}
+/// Shared tail after contact; the alternate path does not run regular motion.
+pub fn goal_cleanup_call(timer: u16, latched: bool, task_field_30_present: bool) -> Option<u32> {
+    (latched && timer >= 60).then_some(if task_field_30_present {
+        0x80065148
+    } else {
+        0x80071878
+    })
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseObservation {
     work56: u32,
     nested: u32,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AlternateLifecycle {
+    task_field_30_present: bool,
+    release: Option<ReleaseObservation>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2639,6 +2649,7 @@ struct Request {
     game_byte_23: i8,
     frames: Vec<GoalFrame>,
     lifecycle: Option<LifecycleInput>,
+    alternate_lifecycle: Option<AlternateLifecycle>,
     probe: Option<Probe>,
 }
 #[derive(Deserialize)]
@@ -2646,6 +2657,20 @@ struct Request {
 struct Probe {
     center: [f64; 3],
     radius: f64,
+}
+fn sphere_probe(probe: &Probe, center: [f32; 3], radius: f32) -> Result<Value> {
+    if !probe.radius.is_finite() || probe.radius < 0. || !probe.center.iter().all(|v| v.is_finite())
+    {
+        return Err(Error::invalid("invalid probe sphere"));
+    }
+    let d = (probe.center[0] - f64::from(center[0]))
+        .hypot(probe.center[1] - f64::from(center[1]))
+        .hypot(probe.center[2] - f64::from(center[2]));
+    let gap = d - probe.radius - f64::from(radius);
+    if !gap.is_finite() {
+        return Err(Error::invalid("unrepresentable sphere separation"));
+    }
+    Ok(json!({"signedSeparation":gap,"intersectsOrTouches":gap<=0.}))
 }
 pub fn replay(
     stage: &MountedStage<'_>,
@@ -2802,24 +2827,11 @@ pub fn replay(
     };
     let radius = p.radii[usize::from(angle_x % 3 == 1)];
     let center = row.placement.position;
-    let probe = if let Some(probe) = r.probe {
-        if !probe.radius.is_finite()
-            || probe.radius < 0.
-            || !probe.center.iter().all(|v| v.is_finite())
-        {
-            return Err(Error::invalid("invalid probe sphere"));
-        }
-        let d = (probe.center[0] - f64::from(center[0]))
-            .hypot(probe.center[1] - f64::from(center[1]))
-            .hypot(probe.center[2] - f64::from(center[2]));
-        let gap = d - probe.radius - f64::from(radius);
-        if !gap.is_finite() {
-            return Err(Error::invalid("unrepresentable sphere separation"));
-        }
-        Some(json!({"signedSeparation":gap,"intersectsOrTouches":gap<=0.}))
-    } else {
-        None
-    };
+    let probe = r
+        .probe
+        .as_ref()
+        .map(|q| sphere_probe(q, center, radius))
+        .transpose()?;
     let mut state = Contact::default();
     if r.lifecycle.is_some() && angle_x % 3 != 0 {
         return Err(Error::invalid("lifecycle requires a regular goal ring"));
@@ -2841,6 +2853,11 @@ pub fn replay(
         .frames
         .iter()
         .any(|f| matches!(f,GoalFrame::Sample(s) if s.alternate_timer.is_some()));
+    if r.alternate_lifecycle.is_some() && (!alternate || angle_x % 3 == 0) {
+        return Err(Error::invalid(
+            "alternate lifecycle requires sampled alternate goal motion",
+        ));
+    }
     let mut phase = 0f32;
     for observation in r.frames {
         let (hit, game_byte, motion_gate, entry, alt_timer) = match observation {
@@ -2922,6 +2939,11 @@ pub fn replay(
         };
         let calls = state.step(angle_x, game_byte, hit, p.local_effect)?;
         let mut frame = json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched});
+        if let (Some(q), Some(_)) = (&r.probe, &r.lifecycle) {
+            let current = [center[0], motion.y, center[2]];
+            frame["movingSphereProbe"] = sphere_probe(q, current, radius)?;
+            frame["movingSphereProbe"]["goalCenter"] = json!(current);
+        }
         if alternate {
             if !was_latched && state.latched {
                 phase = 0.;
@@ -2940,7 +2962,19 @@ pub fn replay(
         let cleanup = r
             .lifecycle
             .as_ref()
-            .and_then(|v| motion.cleanup_call(state.latched, v.task_field_30_present));
+            .and_then(|v| motion.cleanup_call(state.latched, v.task_field_30_present))
+            .or_else(|| {
+                r.alternate_lifecycle.as_ref().and_then(|v| {
+                    goal_cleanup_call(
+                        alt_timer.expect("validated sampled alternate timer"),
+                        state.latched,
+                        v.task_field_30_present,
+                    )
+                })
+            });
+        if r.alternate_lifecycle.is_some() {
+            frame["cleanupCall"] = json!(cleanup);
+        }
         if r.lifecycle.is_some() {
             frame["regularMotion"] = json!(motion);
             frame["cleanupCall"] = json!(cleanup);
@@ -2950,7 +2984,15 @@ pub fn replay(
             break;
         }
     }
-    let released = if let Some(obs) = r.lifecycle.as_ref().and_then(|l| l.release.as_ref()) {
+    let released = if let Some(obs) = r
+        .lifecycle
+        .as_ref()
+        .and_then(|l| l.release.as_ref())
+        .or_else(|| {
+            r.alternate_lifecycle
+                .as_ref()
+                .and_then(|l| l.release.as_ref())
+        }) {
         if !frames.last().is_some_and(|f| !f["cleanupCall"].is_null()) {
             return Err(Error::invalid(
                 "observed release requires a cleanup request",

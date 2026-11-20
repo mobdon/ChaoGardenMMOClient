@@ -114,3 +114,39 @@ impl Iterator for DemoCursor<'_> {
 }
 impl ExactSizeIterator for DemoCursor<'_> {}
 impl std::iter::FusedIterator for DemoCursor<'_> {}
+
+/// An explicitly selected physical window, not an attract-mode playback range.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrsWindow {
+    pub decoded_sha256: String,
+    pub decoded_bytes: usize,
+    pub trailing_bytes: usize,
+    pub first_record: usize,
+    pub records: Vec<DemoFrame>,
+}
+
+pub fn prs_window(input: &[u8], first: usize, count: usize) -> Result<PrsWindow> {
+    const BUFFER: usize = 917504;
+    if !(1..=4096).contains(&count) {
+        return Err(Error::invalid("expected 1..4096 physical demo records"));
+    }
+    let end = first
+        .checked_add(count)
+        .filter(|end| *end <= BUFFER / RECORD_BYTES)
+        .ok_or_else(|| Error::invalid("window outside complete physical demo records"))?;
+    let bytes = crate::archive::decompress_prs(input, BUFFER)?;
+    if bytes.len() != BUFFER {
+        return Err(Error::invalid("unexpected installed demo PRS buffer size"));
+    }
+    let records = read_raw(&bytes[first * RECORD_BYTES..end * RECORD_BYTES])?
+        .cursor()
+        .collect();
+    Ok(PrsWindow {
+        decoded_sha256: crate::manifest::sha256(&bytes),
+        decoded_bytes: bytes.len(),
+        trailing_bytes: bytes.len() % RECORD_BYTES,
+        first_record: first,
+        records,
+    })
+}

@@ -30,14 +30,14 @@ library and the Ninja wrappers around it) are interpreted in Python
 instruction by instruction.
 
 The arithmetic is IEEE single precision, as on the PC build and in QEMU,
-with one Gekko feature added:
+with Gekko's estimate instructions added when their tables are present:
 
 - Each result rounds once to single precision.
 - Fused multiply-adds round to double, then to single.
-- `frsqrte` and `ps_rsqrte` return Gekko's table estimate
-  (`tests/gekko_float.py`, transcribed from Dolphin by the Finalhazard work).
-  Every `frsqrte` that Unicorn runs natively is patched to it too.
-- `fres` is still exact.
+- With the local Gekko estimate tables (`tests/gekko_tables.py`,
+  `.local/research/gekko-estimate-tables.json`; transcribed from Dolphin's
+  GPL source and kept out of git), `frsqrte`, `ps_rsqrte` and `fres` return
+  Gekko's table estimates everywhere. Without them they are exact.
 - `fctiwz` gives 0x80000000 for NaN and out-of-range values.
 
 Gekko's 25-bit multiplier operand is not modeled. Rust ports follow these

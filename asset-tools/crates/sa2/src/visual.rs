@@ -77,7 +77,49 @@ fn rgba(word: u32) -> [u8; 4] {
     ]
 }
 
-fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[f64; 3]> {
+impl Material {
+    pub(crate) fn apply(&mut self, chunk: &PolygonChunk) -> Result<()> {
+        match chunk.kind {
+            8 => {
+                let words: [u16; 2] = chunk
+                    .raw_words
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::invalid("invalid texture chunk"))?;
+                self.texture_words = Some(words);
+                self.texture_id = chunk.texture_id;
+            }
+            17..=23 => {
+                let (pairs, remainder) = chunk
+                    .raw_words
+                    .get(2..)
+                    .unwrap_or_default()
+                    .as_chunks::<2>();
+                let mut colors = pairs.iter();
+                for (bit, field) in [
+                    (1, &mut self.diffuse_rgba),
+                    (2, &mut self.ambient_rgba),
+                    (4, &mut self.specular_rgbe),
+                ] {
+                    if chunk.kind & bit != 0 {
+                        let pair = colors
+                            .next()
+                            .ok_or_else(|| Error::invalid("truncated material"))?;
+                        *field = Some(rgba(u32::from(pair[0]) | (u32::from(pair[1]) << 16)));
+                    }
+                }
+                if colors.next().is_some() || !remainder.is_empty() {
+                    return Err(Error::invalid("trailing material words"));
+                }
+                self.blend_flags = Some(chunk.flags);
+            }
+            _ => return Err(Error::invalid("unexpected material command")),
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn normal_covector(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[f64; 3]> {
     // Columns of the cofactor matrix; divide by the signed determinant
     // before normalizing so reflected hierarchies retain the authored direction.
     let column = |i: usize| [matrix[0][i], matrix[1][i], matrix[2][i]];
@@ -100,6 +142,12 @@ fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[
             .sum::<f64>()
             / det
     });
+    Ok(n)
+}
+fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[f64; 3]> {
+    normalize_normal(normal_covector(matrix, normal)?)
+}
+pub(crate) fn normalize_normal(n: [f64; 3]) -> Result<[f64; 3]> {
     let length = n[0].hypot(n[1]).hypot(n[2]);
     if length == 0. || !length.is_finite() {
         return Err(Error::invalid("invalid static normal"));
@@ -107,7 +155,10 @@ fn normal_transform(matrix: &crate::pose::Matrix4, normal: [f32; 3]) -> Result<[
     Ok(n.map(|x| x / length))
 }
 
-fn read_strips(chunk: &PolygonChunk, indices: &BTreeMap<u16, usize>) -> Result<Vec<Strip>> {
+pub(crate) fn read_strips(
+    chunk: &PolygonChunk,
+    indices: &BTreeMap<u16, usize>,
+) -> Result<Vec<Strip>> {
     let words = &chunk.raw_words;
     let header = *words
         .get(2)
@@ -257,39 +308,7 @@ pub fn evaluate_static_model(model: &Model) -> Result<StaticVisual> {
                 .ok_or_else(|| Error::invalid("static visual output limit"))?;
             match chunk.kind {
                 0 => {}
-                8 => {
-                    let words: [u16; 2] = chunk
-                        .raw_words
-                        .as_slice()
-                        .try_into()
-                        .map_err(|_| Error::invalid("invalid texture chunk"))?;
-                    material.texture_words = Some(words);
-                    material.texture_id = chunk.texture_id;
-                }
-                17..=23 => {
-                    let (pairs, remainder) = chunk
-                        .raw_words
-                        .get(2..)
-                        .unwrap_or_default()
-                        .as_chunks::<2>();
-                    let mut colors = pairs.iter();
-                    for (bit, field) in [
-                        (1, &mut material.diffuse_rgba),
-                        (2, &mut material.ambient_rgba),
-                        (4, &mut material.specular_rgbe),
-                    ] {
-                        if chunk.kind & bit != 0 {
-                            let pair = colors
-                                .next()
-                                .ok_or_else(|| Error::invalid("truncated material"))?;
-                            *field = Some(rgba(u32::from(pair[0]) | (u32::from(pair[1]) << 16)));
-                        }
-                    }
-                    if colors.next().is_some() || !remainder.is_empty() {
-                        return Err(Error::invalid("trailing material words"));
-                    }
-                    material.blend_flags = Some(chunk.flags);
-                }
+                8 | 17..=23 => material.apply(chunk)?,
                 64..=66 if result.surfaces.len() >= MAX_SURFACES => {
                     return Err(Error::invalid("static visual surface limit"))
                 }

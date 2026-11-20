@@ -260,3 +260,149 @@ fn physical_board_keeps_rider_observations_separate_from_detached_motion() {
     assert!(run(json!([bind, destroy, draw])).is_err());
     assert!(run(json!([{"op":"bind","allocation_ok":false},attach])).is_err());
 }
+
+#[test]
+fn terrain_ring_follows_small_changes_and_scatters_at_eight() {
+    let (mut p, d) = ring_fixture();
+    p.parameters[0] = -1.;
+    let tick = |terrain| json!({"terrain":terrain,"range_out":false,"spin_enabled":false,"player_items":[null,null]});
+    let init = tick(json!({"timer":0,"shadow":{"height":11,"yaw_after":-1}}));
+    let probe = |h| json!({"reference_position":[0,0,0],"shadow":{"height":h,"yaw_after":2}});
+    let mut frames = vec![init, tick(probe(17))];
+    frames.extend((0..8).map(|_| tick(json!({}))));
+    let mut last = probe(9);
+    last["allocated"] = json!(true);
+    last["random"] = json!(0.25);
+    frames.extend([tick(last), tick(json!({}))]);
+    frames[11]["child"] = json!({"op":"launch","timer":0,"gravity":[0,-1,0],"pitch":0,"roll":0,"spin_random":0.5,"paused":false});
+    let mut flight = tick(json!({}));
+    flight["child"] = json!({"op":"tick","gravity":[0,-1,0],"paused":false,"range_out":false,"probe":{"surface":null}});
+    frames.push(flight.clone());
+    let mut hit = flight;
+    hit["child"].as_object_mut().unwrap().remove("probe");
+    hit["child"]["hit"] = json!([1, 0]);
+    frames.push(hit.clone());
+    hit["child"].as_object_mut().unwrap().remove("hit");
+    frames.push(hit);
+    let trace = replay(
+        &p,
+        &d,
+        &serde_json::to_vec(&json!({"frames":frames})).unwrap(),
+    )
+    .unwrap();
+    let f = &trace["frames"];
+    assert_eq!(f[1]["position"], json!([0., 6., 0.]));
+    assert_eq!(
+        f[10]["calls"][3],
+        json!(["InitTobitiri", [0., -4., 0.], 16384])
+    );
+    assert_eq!(f[11]["calls"], json!([["DeadOut"]]));
+    assert_eq!(
+        f[11]["child"]["task"]["flight"]["position"],
+        json!([0., 6., 0.])
+    );
+    assert_eq!(f[12]["child"]["task"]["age"], 1);
+    assert_eq!(f[13]["child"]["events"]["credit_slot"], 1);
+    assert_eq!(f[14]["child"]["events"]["destroy"], true);
+    assert_eq!(
+        f[13]["child"]["pickupAndRemovalCalls"],
+        json!([{"AddNumRing":[1,1]},{"SECallRing":1},{"AddMechHP":[1,0.1f32]}])
+    );
+    let teardown = f[14]["child"]["pickupAndRemovalCalls"].as_array().unwrap();
+    assert_eq!(teardown.len(), 5);
+    let y = f[13]["child"]["task"]["flight"]["position"][1]
+        .as_f64()
+        .unwrap() as f32;
+    assert_eq!(
+        teardown[0]["MakeParticle"]["position"][1],
+        json!((y + 7.2f32) - 1.5)
+    );
+    assert_eq!(teardown[4], "DestroyTask");
+}
+
+#[test]
+fn range_return_skips_ring_initialization_pickup_and_retirement() {
+    let (p, d) = ring_fixture();
+    let normal = json!({"range_out":false,"spin_enabled":true,"player_items":[0,null]});
+    let mut outside = normal.clone();
+    outside["range_out"] = json!(true);
+    outside["player_items"] = json!([2, null]);
+    let mut hit = normal.clone();
+    hit["ccl_hit_slot"] = json!(0);
+    let frames = json!([outside, normal, outside, hit, outside, normal]);
+    let result = replay(
+        &p,
+        &d,
+        &serde_json::to_vec(&json!({"frames":frames})).unwrap(),
+    )
+    .unwrap();
+    let f = &result["frames"];
+    for (i, mode) in [(0, "Init"), (2, "Active"), (4, "Collected")] {
+        assert_eq!(f[i]["mode"], mode);
+        assert_eq!(f[i]["calls"], json!([["CheckRangeOut"]]));
+    }
+    assert_eq!(f[2]["yaw"], f[1]["yaw"]);
+    assert_eq!(f[5]["calls"], json!([["DeadOut"]]));
+    outside["ccl_hit_slot"] = json!(0);
+    assert!(replay(
+        &p,
+        &d,
+        &serde_json::to_vec(&json!({"frames":[outside]})).unwrap()
+    )
+    .is_err());
+}
+
+#[test]
+fn board_route_needs_independent_rider_evidence() {
+    use sa2_asset_tools::{city_replay::board_route, city_stage::CityLayout};
+    let (mut trigger, mut td) = ring_fixture();
+    trigger.object_id = 59;
+    trigger.rotation[0] = 1;
+    td.name = "BOARDCOL".into();
+    td.function_va = 0x5ea210;
+    let (mut board, mut bd) = ring_fixture();
+    board.object_id = 77;
+    bd.name = "BOARD".into();
+    bd.function_va = 0x5ebc50;
+    let mut table: Vec<_> = (0..78).map(|_| ring_fixture().1).collect();
+    table[59] = td;
+    table[77] = bd;
+    let layout = CityLayout {
+        source_layer: "fixture",
+        source_sha256: "",
+        executable_sha256: "",
+        object_list_rva: 0,
+        two_player_layer: false,
+        object_table: table,
+        placements: vec![trigger, board],
+        callback_counts: Default::default(),
+        unsupported_placements: 0,
+    };
+    let frame = json!({"players":[{"position":[0,0,0],"mode":0},null],"range_out_slots":[],
+        "rider_motion":[{"angles":[0,0,0],"speed":[0,0,0],"action":0,"motion_mode":3,"frame":0},null]});
+    let mut req = json!({"physical_board":{"placement":1,"allocation_ok":true},
+        "two_player":false,"frames":[frame,frame]});
+    let run = |r: &serde_json::Value| board_route(&layout, &serde_json::to_vec(r).unwrap());
+    let trace = run(&req).unwrap();
+    assert_eq!(
+        trace["frames"][1]["calls"][0]["call"],
+        json!(["SetInputP", 0, 34, 0])
+    );
+    assert_eq!(
+        trace["physicalBoard"]["trace"]["frames"][2]["state"]["mode"],
+        0
+    );
+    req["frames"][1]["rider_motion"] = json!([null, null]);
+    assert!(run(&req)
+        .unwrap_err()
+        .to_string()
+        .contains("match observed player slots"));
+    req["frames"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("rider_motion");
+    assert!(run(&req)
+        .unwrap_err()
+        .to_string()
+        .contains("requires rider observations"));
+}

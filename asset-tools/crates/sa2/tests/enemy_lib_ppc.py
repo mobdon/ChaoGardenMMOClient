@@ -13,10 +13,9 @@ from stage_rel_ppc import load_rel  # noqa: E402
 
 dol = Dol(os.environ["SA2_MAIN_DOL"])
 import dol_ppc  # noqa: E402
-import gekko_fres  # noqa: E402
-m = dol.machine(boot=False)
-gekko_fres.install(m, dol_ppc)
-m.boot()
+import gekko_tables  # noqa: E402
+gekko_tables.require()  # bit-exact estimates need the local tables
+m = dol.machine()
 rel = load_rel(m, os.environ["SA2_STAGE_REL"])
 rng = random.Random(9)
 fb = lambda x: struct.unpack('>I', struct.pack('>f', x))[0]

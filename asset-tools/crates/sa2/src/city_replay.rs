@@ -37,6 +37,8 @@ fn bounded<F>(frames: Vec<F>) -> Result<Vec<F>> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RingFrame {
+    child: Option<crate::ring_terrain::ChildFrame>,
+    terrain: Option<crate::ring_terrain::Observations>,
     #[serde(default)]
     magnet_players: [Option<crate::ring_magnet::Player>; 2],
     advance_result: Option<[f32; 3]>,
@@ -47,19 +49,26 @@ struct RingFrame {
 }
 
 fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
-    if p.parameters[0] == -1.0 {
-        return Err(Error::invalid("terrain-following ring path is unsupported"));
-    }
+    let mut terrain = (p.parameters[0] == -1.0).then(crate::ring_terrain::Terrain::default);
     let request = decode::<Frames<RingFrame>>(request)?;
     let mut ring = StageRing::new(p.position, i32::from(p.rotation[1] as i16));
     let mut frames = Vec::new();
+    let mut child = None;
     let mut magnet_timer = 0u16;
     let mut magnet_angle = 0f32;
     for frame in bounded(request.frames)? {
-        if frame.range_out {
-            return Err(Error::invalid("fixed ring requires an in-range task"));
+        // Fresh SET rings clear mwp in init; this host does not schedule linked mode-2 rings.
+        if frame.range_out
+            && (frame.ccl_hit_slot.is_some()
+                || frame.advance_result.is_some()
+                || frame.magnet_players.iter().any(Option::is_some)
+                || frame.terrain.is_some())
+        {
+            return Err(Error::invalid(
+                "parent ring observations supplied after range return",
+            ));
         }
-        let magnetic = if ring.mode == RingMode::Active {
+        let magnetic = if !frame.range_out && ring.mode == RingMode::Active {
             crate::ring_magnet::select(
                 ring.position,
                 magnet_timer,
@@ -96,7 +105,12 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
             }
             None => None,
         };
-        let events = ring.step(hit, frame.spin_enabled && magnetic.is_none());
+        let previous_mode = ring.mode;
+        let events = if frame.range_out {
+            Default::default()
+        } else {
+            ring.step(hit, frame.spin_enabled && magnetic.is_none())
+        };
         let mut calls = Vec::new();
         if let Some(slot) = events.player_reward {
             calls.extend([
@@ -106,6 +120,12 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
                 json!(["SE_CallRing", slot]),
             ]);
         }
+        let pickup_particles = events.particles.then(|| {
+            crate::stage_gameplay::pickup_particles(ring.position, |angle| {
+                let (s, c) = (f64::from(angle) * std::f64::consts::TAU / 65536.0).sin_cos();
+                (s as f32, c as f32)
+            })
+        });
         if events.particles {
             calls.push(json!(["o_ring_0"]));
         }
@@ -125,10 +145,37 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
         if events.register_collision {
             calls.push(json!(["CCL_Entry"]));
         }
+        if frame.range_out {
+            if ring.mode != RingMode::Removed {
+                calls.push(json!(["CheckRangeOut"]));
+            }
+        } else if let Some(terrain) = &mut terrain {
+            terrain.tick(
+                previous_mode,
+                &mut ring,
+                p.rotation[0] == 1,
+                magnetic.is_some(),
+                frame.terrain.unwrap_or_default(),
+                &mut calls,
+            )?;
+        } else if frame.terrain.is_some() {
+            return Err(Error::invalid(
+                "unexpected terrain observations for fixed ring",
+            ));
+        }
         if events.dead_out {
             calls.push(json!(["DeadOut"]));
         }
-        frames.push(json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"position":ring.position,"magneticSlot":magnetic.map(|m|m.slot),"magneticTimer":magnet_timer,"magneticAngle":magnet_angle,"calls":calls}));
+        let mut tick = json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"position":ring.position,"magneticSlot":magnetic.map(|m|m.slot),"magneticTimer":magnet_timer,"magneticAngle":magnet_angle,"calls":calls});
+        if let Some(particles) = pickup_particles {
+            tick["pickupParticles"] = json!(particles);
+            tick["particleTrig"] = json!("host f64 sin/cos rounded to f32");
+        }
+        if let Some(schedule) = frame.child {
+            tick["child"] =
+                schedule.run(&mut child, terrain.as_mut().and_then(|t| t.spawn.take()))?;
+        }
+        frames.push(tick);
     }
     Ok(json!({"callback":"Ring","frames":frames}))
 }
@@ -498,5 +545,166 @@ fn checkpoint_frames(
     }
     Ok(
         json!({"callback":"ObjectSavePoint","scope":"Initialized checkpoint; SET query result, hit and signed speed are observations. Handoff is reported, not applied.","frames":frames}),
+    )
+}
+
+/// Run each mounted board-volume callback against the same observed player positions.
+/// Each placement has its own initialization and per-player latch.
+pub fn board_route(layout: &crate::city_stage::CityLayout, request: &[u8]) -> Result<Value> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RiderMotion {
+        angles: [i32; 3],
+        speed: [f32; 3],
+        action: i16,
+        motion_mode: i16,
+        frame: f32,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RouteFrame {
+        rider_motion: Option<[Option<RiderMotion>; 2]>,
+        players: [Option<Player>; 2],
+        range_out_slots: Vec<usize>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Route {
+        physical_board: Option<BoardBind>,
+        two_player: bool,
+        frames: Vec<RouteFrame>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct BoardBind {
+        placement: usize,
+        allocation_ok: bool,
+    }
+    let req: Route = decode(request)?;
+    let mut physical_steps = Vec::new();
+    let physical = if let Some(bind) = req.physical_board {
+        let (p, d) = layout.resolve(bind.placement)?;
+        if callback_name(p, d) != Some("ObjectBoard") {
+            return Err(Error::invalid("expected physical BOARD placement"));
+        }
+        physical_steps.push(crate::board_replay::Step::Bind {
+            allocation_ok: bind.allocation_ok,
+        });
+        Some((bind.placement, p, bind.allocation_ok))
+    } else {
+        None
+    };
+    let mut tasks = Vec::new();
+    for (slot, p) in layout.placements.iter().enumerate() {
+        if callback_name(p, layout.resolve(slot)?.1) == Some("ObjectBoardCol") {
+            tasks.push((
+                slot,
+                BoardTrigger::new(p.position, p.parameters[0], p.rotation[0]),
+            ));
+        }
+    }
+    let slots: Vec<_> = tasks.iter().map(|(slot, _)| *slot).collect();
+    let mut frames = Vec::new();
+    for f in bounded(req.frames)? {
+        if f.range_out_slots.iter().any(|s| !slots.contains(s)) {
+            return Err(Error::invalid(
+                "range observation for unknown board trigger",
+            ));
+        }
+        if f.players
+            .iter()
+            .flatten()
+            .any(|p| p.position.iter().any(|x| !x.is_finite()))
+        {
+            return Err(Error::invalid("nonfinite board player position"));
+        }
+        match (physical, f.rider_motion) {
+            (Some((_, _, true)), Some(motions)) => {
+                let mut riders = [None, None];
+                for (slot, (player, motion)) in f.players.iter().zip(motions).enumerate() {
+                    riders[slot] = match (player, motion) {
+                        (Some(p), Some(m)) => Some(crate::physical_board::BoardRider {
+                            position: p.position,
+                            angles: m.angles,
+                            speed: m.speed,
+                            action: m.action,
+                            motion_mode: m.motion_mode,
+                            frame: m.frame,
+                        }),
+                        (None, None) => None,
+                        _ => {
+                            return Err(Error::invalid(
+                                "rider motion must match observed player slots",
+                            ))
+                        }
+                    };
+                }
+                physical_steps.push(crate::board_replay::Step::Tick { players: riders });
+            }
+            (Some((_, _, true)), None) => {
+                return Err(Error::invalid("bound board requires rider observations"))
+            }
+            (_, Some(_)) => return Err(Error::invalid("rider observations require a bound board")),
+            (_, None) => {}
+        }
+        let players = f.players.map(|p| {
+            p.map(|p| BoardPlayer {
+                position: p.position,
+                mode: p.mode,
+            })
+        });
+        let mut calls = Vec::new();
+        for (slot, task) in &mut tasks {
+            for (player, code) in
+                task.tick(players, req.two_player, f.range_out_slots.contains(slot))
+            {
+                calls.push(json!({"placement":slot,"call":["SetInputP",player,code,0]}));
+            }
+        }
+        frames.push(json!({"calls":calls}));
+    }
+    let mut result = json!({"placements":slots,"frames":frames,"scope":"Independent board callbacks in SET order; player motion, range decisions and input consumption are external."});
+    if let Some((slot, p, _)) = physical {
+        result["physicalBoard"] =
+            json!({"placement":slot,"trace":crate::board_replay::replay(p,physical_steps)?});
+    }
+    Ok(result)
+}
+
+/// Evaluate fresh board callbacks at the actual Sonic single-player stage start.
+pub fn board_start(layout: &crate::city_stage::CityLayout, exe: &[u8]) -> Result<Value> {
+    use crate::stage_positions::{self, PositionKind, Variant};
+    if layout.source_layer != "set0013_s.bin" {
+        return Err(Error::invalid("expected City Escape normal story SET"));
+    }
+    let start = stage_positions::for_stage(exe, 13)?
+        .into_iter()
+        .find(|r| r.character == "Sonic" && r.kind == PositionKind::Start)
+        .ok_or_else(|| Error::invalid("missing Sonic start row"))?;
+    let pose = start
+        .poses
+        .iter()
+        .find(|p| p.variant == Variant::Single)
+        .ok_or_else(|| Error::invalid("missing single-player start"))?;
+    // The mode field is only read by the two-player re-arm branch.
+    let players = [
+        Some(BoardPlayer {
+            position: pose.position,
+            mode: 0,
+        }),
+        None,
+    ];
+    let mut triggers = Vec::new();
+    for (slot, p) in layout.placements.iter().enumerate() {
+        if callback_name(p, layout.resolve(slot)?.1) != Some("ObjectBoardCol") {
+            continue;
+        }
+        let distance = crate::board::point_distance(p.position, pose.position);
+        let mut task = BoardTrigger::new(p.position, p.parameters[0], p.rotation[0]);
+        let calls: Vec<_> = (0..3).map(|_| task.tick(players, false, false)).collect();
+        triggers.push(json!({"placement":slot,"distance":distance,"triggerRadius":p.parameters[0]+10.0,"callsByTick":calls}));
+    }
+    Ok(
+        json!({"startRowVa":start.row_va,"startPose":pose,"triggers":triggers,"scope":"Three in-range ticks at the unchanged native start; calls are [player slot, SetInputP code]. No scheduler, gravity or input consumer is simulated."}),
     )
 }

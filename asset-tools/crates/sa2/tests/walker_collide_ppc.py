@@ -12,10 +12,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import dol_ppc  # noqa: E402
-import gekko_fres  # noqa: E402
+import gekko_tables  # noqa: E402
+
+gekko_tables.require()  # bit-exact frsqrte and fres
 
 m = dol_ppc.Dol(sys.argv[1] if len(sys.argv) > 1 else os.environ["SA2_MAIN_DOL"]).machine(boot=False)
-gekko_fres.install(m, dol_ppc)
 m.boot()
 rng = random.Random(0x428F8)
 fb = lambda x: struct.unpack(">I", struct.pack(">f", x))[0]

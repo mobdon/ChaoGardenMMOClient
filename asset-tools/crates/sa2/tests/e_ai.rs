@@ -436,6 +436,10 @@ fn run(enemy: &str) {
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    if o.stdout.is_empty() {
+        eprintln!("skipped: {}", String::from_utf8_lossy(&o.stderr));
+        return;
+    }
     let c: Value = serde_json::from_slice(&o.stdout).unwrap();
     let rel = std::fs::read(std::env::var("SA2_STAGE_REL").unwrap()).unwrap();
     let table = if enemy == "gold" {

@@ -16,6 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from dol_ppc import Dol  # noqa: E402
+import gekko_tables  # noqa: E402
+
+gekko_tables.require()  # bit-exact frsqrte
 from rel_load import load_rel  # noqa: E402
 
 R13 = 0x803B52C0

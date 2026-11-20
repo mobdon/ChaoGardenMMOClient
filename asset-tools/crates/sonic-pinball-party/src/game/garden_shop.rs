@@ -626,10 +626,10 @@ mod tests {
             );
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_shop_scenarios_match_memory_and_external_calls() {
-        let v: Value =
-            serde_json::from_str(include_str!("../../tests/garden-shop-vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(vectors!("garden-shop-vectors.json")).unwrap();
         let mut data = vec![0; 0x40000];
         for region in v["syntheticTables"].as_array().unwrap() {
             let base = number(&region[0]) as usize;

@@ -1,3 +1,5 @@
+import { careItemKind, careItemLabel } from './garden-care.js';
+
 // Read-only projection of the canonical profile. A shop catalog is not an
 // inventory, and omitted quantities must never become an invented zero.
 const itemNames = {
@@ -46,7 +48,7 @@ export function tinyCareView(care, { connected = false, careMutations = false, a
   const valid = care?.rulesVersion === 'adapted-care-v1' && Number.isSafeInteger(care.revision) && care.revision >= 0;
   const inventory = care?.inventory;
   const reported = valid && inventory && typeof inventory === 'object' && !Array.isArray(inventory)
-    && Object.entries(inventory).every(([id, quantity]) => (id === 'garden-fruit' || nativeId(id)) && Number.isInteger(quantity) && quantity >= 0 && quantity <= 99);
+    && Object.entries(inventory).every(([id, quantity]) => (id === 'garden-fruit' || nativeId(id) || careItemKind(id)) && Number.isInteger(quantity) && quantity >= 0 && quantity <= 99);
   const rows = Array.isArray(care?.catalog?.items) ? care.catalog.items : [];
   const native = new Map(rows.filter(row => Number.isInteger(row?.id) && row.id >= 0 && row.id < 25).map(row => [`sa2:${row.id}`, row]));
   const readyAt = care?.eligibility?.effectReadyAt;
@@ -56,6 +58,13 @@ export function tinyCareView(care, { connected = false, careMutations = false, a
   return {
     valid, reported: !!reported, revision: valid ? care.revision : null, mayCare,
     items: reported ? Object.entries(inventory).map(([id, quantity]) => {
+      const kind = careItemKind(id);
+      if (kind === 'fruit' || kind === 'seed') {
+        const enabled = care.catalog?.fruitsEnabled === true;
+        return { id, quantity, label: careItemLabel(id, care.catalog),
+          detail: kind === 'fruit' ? 'Native fruit · adapted effects' : 'Seed · plant it in the garden on desktop',
+          mayConsume: kind === 'fruit' && mayCare && quantity > 0 && enabled };
+      }
       const source = native.get(id);
       const named = typeof source?.name === 'string' && source.name.length > 0 && source.name.length <= 200;
       const available = id === 'garden-fruit' || (care.catalog?.enabled === true && !!source);

@@ -1,7 +1,6 @@
 //! Source-local Sonic and streetboard pose pair for an explicitly observed action/frame.
 use crate::{
-    archive, board_model, board_motion, city_rel::CityRel, manifest, model, object_table, pose,
-    Error, Result,
+    archive, board_model, board_motion, city_rel::CityRel, manifest, model, pose, Error, Result,
 };
 use serde_json::{json, Value};
 const MODEL_SHA: &str = "d8f90e6c724e709b8d3431e725a5db1d1a096bdf5118d2ecca9ad356e7862d99";
@@ -10,6 +9,10 @@ pub fn rig(prs: &[u8], model_id: u16) -> Result<model::Model> {
     if manifest::sha256(prs) != MODEL_SHA {
         return Err(Error::invalid("unsupported Sonic model archive revision"));
     }
+    archive_rig(prs, model_id, "sonicmdl-rig")
+}
+
+pub(crate) fn archive_rig(prs: &[u8], model_id: u16, format: &str) -> Result<model::Model> {
     let mut data = archive::decompress_prs(prs, 2 * 1024 * 1024)?;
     // Directory offsets and all node transform fields are 32-bit big-endian words.
     // The generic node reader leaves geometry opaque; never decode mesh payloads this way.
@@ -27,11 +30,12 @@ pub fn rig(prs: &[u8], model_id: u16) -> Result<model::Model> {
             break;
         }
     }
-    let root_offset = root.ok_or_else(|| Error::invalid("missing Sonic model directory entry"))?;
+    let root_offset =
+        root.ok_or_else(|| Error::invalid("missing character model directory entry"))?;
     let nodes = model::read_nodes_at(&data, root_offset, data.len())?;
     Ok(model::Model {
         root_offset,
-        format: "sonicmdl-rig".into(),
+        format: format.into(),
         version: 0,
         nodes,
         attachments: vec![],
@@ -47,12 +51,11 @@ pub fn sample(stage: &[u8], exe: &[u8], prs: &[u8], action: u16, frame: f64) -> 
             "expected Sonic board action 121 through 144",
         ));
     }
-    let pe = object_table::verify_image(exe)?;
-    let row_va = 0xa17c18 + 16 * u32::from(action);
-    let at = pe.va_to_offset(row_va, 16)?;
-    let r = model::Reader { data: exe };
-    let motion_id = r.u16(at)?;
-    let model_id = r.u16(at + 2)?;
+    let row = crate::character_animations::row(exe, "Sonic", usize::from(action))?;
+    let motion_id =
+        u16::try_from(row.motion).map_err(|_| Error::invalid("invalid rider motion slot"))?;
+    let model_id =
+        u16::try_from(row.model).map_err(|_| Error::invalid("invalid rider model slot"))?;
     let bank = board_motion::rider_slots(stage)?;
     let rider = bank
         .get(&motion_id)
@@ -76,8 +79,8 @@ pub fn sample(stage: &[u8], exe: &[u8], prs: &[u8], action: u16, frame: f64) -> 
     let board_pose =
         pose::evaluate_model_pose(&model::read_model(&street.sa2mdl)?, Some(board), frame)?;
     Ok(
-        json!({"action":action,"frame":frame,"animationRowVa":row_va,"motionSlot":motion_id,"modelSlot":model_id,
-        "motionMode":r.u16(at+4)?,"nextAction":r.u16(at+6)?,"transitionSpeed":r.f32(at+8)?,"animationSpeed":r.f32(at+12)?,
+        json!({"action":action,"frame":frame,"animationRowVa":row.source_va,"motionSlot":motion_id,"modelSlot":model_id,
+        "motionMode":row.mode,"nextAction":row.next,"transitionSpeed":row.transition_speed,"animationSpeed":row.animation_speed,
         "motionAddressSpace":if stage.starts_with(b"MZ") {"pe_rva"} else {"rel_section_5"},"riderMotionOffset":rider.offset,"boardMotionOffset":board.offset,"boardSlot":action+24,"rider":rider_pose,"board":board_pose,"scope":"Single-player model-local stage defaults at a supplied animation frame. World movement, live overrides and transitions are external."}),
     )
 }

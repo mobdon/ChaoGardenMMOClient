@@ -314,9 +314,20 @@ pub(crate) fn read_chunk_attachment(
     let r = Reader { data };
     let at = offset as usize;
     r.span(at, 24)?;
+    read_chunk_streams(data, offset, r.u32(at)?, r.u32(at + 4)?, budget)
+}
+
+/// Stream addresses already resolved into offsets in the supplied byte image.
+pub(crate) fn read_chunk_streams(
+    data: &[u8],
+    offset: u32,
+    vertex_offset: u32,
+    polygon_offset: u32,
+    budget: &mut DecodeBudget,
+) -> Result<ChunkAttachment> {
+    let r = Reader { data };
+    let at = offset as usize;
     budget.charge(1, std::mem::size_of::<ChunkAttachment>() * 2)?;
-    let vertex_offset = r.u32(at)?;
-    let polygon_offset = r.u32(at + 4)?;
     let mut vertex_chunks = Vec::new();
     if vertex_offset != 0 {
         let mut p = vertex_offset as usize;

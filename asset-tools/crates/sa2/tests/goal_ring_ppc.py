@@ -162,6 +162,17 @@ for active,gate,timer,ptr in itertools.product((0,1),(0,1),(0,58,59,60,65535),(0
     u.emu_start(BASE+0x2dcd4,BASE+0x2dd10,count=32)
     print('M',active,gate,timer,ptr,get(WORK+6,'H'),get(WORK+12,'i'),get(WORK+24,'I'),next(iter(observed),0))
 
+# Run the actual alternate post-contact path through its shared cleanup tail.
+# For unlatched samples suppress only the separate effect (work pointer +0x30).
+for angle,active,timer,ptr in itertools.product((-2,1,2,4),(0,1),(0,59,60,65535),(0,1)):
+    observed=[];setreg(26,TASK);setreg(27,WORK)
+    put(TASK+0x38,'I',TASK+512);put(TASK+512+0x30,'I',0)
+    put(WORK+8,'i',angle);put(WORK+1,'B',active);put(WORK+6,'H',timer)
+    put(TASK+0x30,'I',ptr)
+    u.emu_start(BASE+END,BASE+0x2dd10,count=64)
+    assert len(observed)<=1 and get(WORK+6,'H')==timer
+    print('ALTEND',active,timer,ptr,next(iter(observed),0))
+
 # Execute the separate task only when observed at the word-2 dispatch.
 begin,end=0x3ba44,0x3bd8c
 map_page(BASE+begin)

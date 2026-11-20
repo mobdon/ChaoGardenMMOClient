@@ -152,7 +152,7 @@ fn geometry(buffers: &mut Buffers, visual: &StaticVisual, surface: &Surface) -> 
         ));
     }
     let env = surface.strip_flags & 64 != 0;
-    if env && normals.is_empty() || !env && uvs.is_empty() {
+    if env && normals.is_empty() || !env && surface.strip_kind != 64 && uvs.is_empty() {
         return Err(Error::invalid("missing native projection attributes"));
     }
     let mut attributes = json!({"POSITION":buffers.attribute(&positions,"VEC3",true)?});
@@ -205,8 +205,10 @@ pub fn export(visual: &StaticVisual, pngs: &BTreeMap<u16, Vec<u8>>) -> Result<Ve
     let mut samplers = Vec::new();
     for surface in &visual.surfaces {
         let mat = &surface.material;
-        if !matches!(surface.strip_flags, 0x02 | 0x0a | 0x1a | 0x58)
-            || mat.blend_flags != Some(0x25)
+        if !matches!(
+            surface.strip_flags,
+            0x02 | 0x03 | 0x0a | 0x0b | 0x12 | 0x1a | 0x58
+        ) || mat.blend_flags != Some(0x25)
         {
             return Err(Error::invalid("unsupported GLB material/strip profile"));
         }
@@ -230,7 +232,7 @@ pub fn export(visual: &StaticVisual, pngs: &BTreeMap<u16, Vec<u8>>) -> Result<Ve
             .map(|x| f64::from(x) / 255.);
         let env = surface.strip_flags & 64 != 0;
         let mut pbr = json!({"baseColorFactor":diffuse,"metallicFactor":0.0});
-        if !env {
+        if !env && surface.strip_kind != 64 {
             pbr["baseColorTexture"] = json!({"index":texture});
         }
         let material = materials.len();
@@ -238,15 +240,22 @@ pub fn export(visual: &StaticVisual, pngs: &BTreeMap<u16, Vec<u8>>) -> Result<Ve
             "pbrMetallicRoughness":pbr,"alphaMode":if surface.strip_flags&8!=0 {"BLEND"}else{"OPAQUE"},
             "doubleSided":surface.strip_flags&16!=0,
             "extras":{"sa2Chunk":{"material":mat,"stripFlags":surface.strip_flags,"texture":texture,
-                "textureCoordinates":if env {"cameraSpaceNormal.xy * 0.5 + 0.5"}else{"TEXCOORD_0"},
+                "textureCoordinates":if env {"cameraSpaceNormal.xy * 0.5 + 0.5"}else if surface.strip_kind==64 {"no authored UV"} else{"TEXCOORD_0"},
                 "requiresEnvironmentShader":env}}
         }));
+        if surface.strip_flags & 1 != 0 {
+            materials[material]["extensions"] = json!({"KHR_materials_unlit":{}});
+        }
         primitives.push(json!({"attributes":geometry(&mut buffers,visual,surface)?,"material":material,"mode":4,
             "extras":{"sa2NodeOffset":surface.node_offset,"sa2AttachmentOffset":surface.attachment_offset,"sa2PolygonOffset":surface.polygon_offset}}));
     }
-    let doc = json!({"asset":{"version":"2.0","generator":"sa2-asset-tools"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
+    let unlit = visual.surfaces.iter().any(|s| s.strip_flags & 1 != 0);
+    let mut doc = json!({"asset":{"version":"2.0","generator":"sa2-asset-tools"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
         "meshes":[{"primitives":primitives}],"materials":materials,"textures":textures,"samplers":samplers,"images":images,
         "buffers":[{"byteLength":buffers.bytes.len()}],"bufferViews":buffers.views,"accessors":buffers.accessors});
+    if unlit {
+        doc["extensionsUsed"] = json!(["KHR_materials_unlit"]);
+    }
     let mut json = serde_json::to_vec(&doc)?;
     while json.len() % 4 != 0 {
         json.push(b' ');

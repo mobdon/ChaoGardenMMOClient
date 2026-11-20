@@ -1,0 +1,998 @@
+//! Native kart controller sample/history and two button flags in CartD.
+use crate::{kart_progress, Error, Result};
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Input {
+    history: Vec<i32>,
+    cursor: usize,
+    frames: Vec<Sample>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sample {
+    drive: Option<Drive>,
+    buttons: u32,
+    stick_x: i16,
+    work_28c: i32,
+}
+#[derive(Serialize)]
+struct Values {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    motion: Option<Motion>,
+    work_110: u32,
+    work_114: u32,
+    steering_sum: i32,
+    steering_input: f32,
+}
+#[derive(Serialize)]
+pub struct Output {
+    history: Vec<i32>,
+    cursor: usize,
+    frames: Vec<Values>,
+}
+
+/// Each frame supplies the already selected 0x34-byte controller row's fields.
+pub fn replay(bytes: &[u8], mut s: Input) -> Result<Output> {
+    kart_progress::verify(bytes)?;
+    if s.history.len() != 60 || s.cursor >= 60 {
+        return Err(Error::invalid(
+            "expected 60 kart stick samples and a valid write cursor",
+        ));
+    }
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let scale = f32::from_be_bytes(rel.data(4)?[0x200..0x204].try_into().unwrap());
+    let mut frames = Vec::with_capacity(s.frames.len());
+    for f in s.frames {
+        let sum = sample_and_sum(&mut s.history, &mut s.cursor, f.stick_x);
+        let work_110 = u32::from(f.buttons & 4 != 0);
+        let work_114 = u32::from(f.buttons & 0x402 != 0 && f.work_28c <= 10);
+        let steering_input = scale * (sum as f32);
+        let motion = f
+            .drive
+            .map(|d| {
+                drive_step(
+                    d,
+                    steering_input,
+                    f.stick_x,
+                    work_110 != 0,
+                    work_114 != 0,
+                    rel.data(4)?,
+                )
+            })
+            .transpose()?;
+        frames.push(Values {
+            motion,
+            work_110,
+            work_114,
+            steering_sum: sum,
+            steering_input,
+        });
+    }
+    Ok(Output {
+        history: s.history,
+        cursor: s.cursor,
+        frames,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Drive {
+    drift: Option<DriftInput>,
+    position_step: Option<PositionInput>,
+    heading: i32,
+    work_a4: i32,
+    place: i32,
+    multiplayer: bool,
+    velocity_xz: [f32; 2],
+    magnitude_return: Option<f32>,
+    acceleration: f32,
+    brake_power: f32,
+    deceleration: f32,
+    speed_cap: f32,
+}
+#[derive(Serialize)]
+pub(crate) struct Motion {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio: Option<crate::kart_driving_audio::Output>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) contact: Option<crate::kart_contact::StoryResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drift: Option<DriftUpdate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position_step: Option<PositionStep>,
+    magnitude_source: &'static str,
+    heading: i32,
+    work_a4: i32,
+    work_68: i32,
+    local_displacement: [f32; 3],
+}
+/// Observations at entry to the normal, single-player driving branch.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryDrive {
+    drift: Option<StoryDrift>,
+    audio_work_284: Option<i32>,
+    pub(crate) contact: Option<crate::kart_contact::StoryContact>,
+    position_step: Option<StoryPosition>,
+    heading: Option<i32>,
+    work_a4: i32,
+    buttons: Option<u32>,
+    work_28c: i32,
+    stick_x: Option<i16>,
+    steering_sum: Option<i32>,
+    magnitude_return: Option<f32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoryPosition {
+    work_74: i32,
+    transformed_vector: [f32; 3],
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoryDrift {
+    motion_history: [[f32; 3]; 30],
+    local_offset: [f32; 3],
+    work_10c: Option<u32>,
+    work_a8: i32,
+}
+impl Motion {
+    pub(crate) fn windup_entry(&self) -> Option<(i32, i32, i32)> {
+        let d = self.drift.as_ref()?;
+        (d.vehicle_state == 2).then_some((self.work_68, d.work_a4, d.work_a8))
+    }
+    pub(crate) fn drift_state(&self) -> Option<i32> {
+        self.drift.as_ref().map(|d| d.vehicle_state)
+    }
+}
+impl StoryDrive {
+    pub(crate) fn bind_heading(&mut self, yaw: i32) -> Result<()> {
+        if self.heading.is_some_and(|v| v != yaw) {
+            return Err(Error::invalid(
+                "drive heading conflicts with preceding vehicle frame",
+            ));
+        }
+        self.heading = Some(yaw);
+        Ok(())
+    }
+    pub(crate) fn begin_update(&mut self) -> Result<()> {
+        if let Some(d) = &mut self.drift {
+            if d.work_10c.is_some_and(|v| v != 0) {
+                return Err(Error::invalid(
+                    "drift flags conflict with vehicle update reset",
+                ));
+            }
+            d.work_10c = Some(0);
+        }
+        Ok(())
+    }
+    pub(crate) fn bind_sample(
+        &mut self,
+        (stick, sum): (i16, i32),
+        held: Option<u32>,
+    ) -> Result<()> {
+        if self.stick_x.is_some_and(|v| v != stick) || self.steering_sum.is_some_and(|v| v != sum) {
+            return Err(Error::invalid(
+                "drive steering conflicts with sampled controller",
+            ));
+        }
+        if self.buttons.zip(held).is_some_and(|(a, b)| a != b) {
+            return Err(Error::invalid(
+                "drive buttons conflict with sampled held word",
+            ));
+        }
+        self.buttons = held.or(self.buttons);
+        self.stick_x = Some(stick);
+        self.steering_sum = Some(sum);
+        Ok(())
+    }
+    pub(crate) fn step(
+        self,
+        velocity: [f32; 3],
+        tuning: [f32; 4],
+        task_position: [f32; 3],
+        weight: f32,
+        speed_threshold: f32,
+        work_44: Option<i32>,
+        story_mode: i32,
+        vehicle_state: Option<i32>,
+        piece_id: Option<u8>,
+        rel: &crate::city_rel::CityRel,
+        bytes: &[u8],
+        exe: &[u8],
+    ) -> Result<Motion> {
+        let state = vehicle_state
+            .filter(|s| *s == 0)
+            .ok_or_else(|| Error::invalid("story drive requires normal driving state"))?;
+        let buttons = self
+            .buttons
+            .ok_or_else(|| Error::invalid("missing held buttons for story driving"))?;
+        let constants = rel.data(4)?;
+        let velocity_xz = [velocity[0], velocity[2]];
+        if velocity_xz != [0.; 2] && self.magnitude_return.is_none() {
+            return Err(Error::invalid(
+                "moving story drive requires native magnitude result",
+            ));
+        }
+        let [acceleration, brake_power, deceleration, speed_cap] = tuning;
+        let scale = f32::from_be_bytes(constants[0x200..0x204].try_into().unwrap());
+        let mut motion = drive_step(
+            Drive {
+                heading: self
+                    .heading
+                    .ok_or_else(|| Error::invalid("missing story drive heading"))?,
+                work_a4: self.work_a4,
+                place: 1,
+                multiplayer: false,
+                velocity_xz,
+                magnitude_return: self.magnitude_return,
+                acceleration,
+                brake_power,
+                deceleration,
+                speed_cap,
+                drift: self
+                    .drift
+                    .map(|d| -> Result<DriftInput> {
+                        Ok(DriftInput {
+                            motion_history: Some(d.motion_history),
+                            ring: None,
+                            local_offset: Some(d.local_offset),
+                            pitch_roll: None,
+                            speed_threshold,
+                            vehicle_state: state,
+                            work_10c: d
+                                .work_10c
+                                .ok_or_else(|| Error::invalid("missing initial drift flags"))?,
+                            work_a8: d.work_a8,
+                        })
+                    })
+                    .transpose()?,
+                position_step: self.position_step.map(|p| PositionInput {
+                    position: task_position,
+                    velocity_y: velocity[1],
+                    weight,
+                    work_74: p.work_74,
+                    transformed_vector: Some(p.transformed_vector),
+                }),
+            },
+            scale
+                * self
+                    .steering_sum
+                    .ok_or_else(|| Error::invalid("missing drive steering sum"))?
+                    as f32,
+            self.stick_x
+                .ok_or_else(|| Error::invalid("missing drive stick sample"))?,
+            buttons & 4 != 0,
+            buttons & 0x402 != 0 && self.work_28c <= 10,
+            constants,
+        )?;
+        let vehicle_state = motion.drift_state().or(vehicle_state);
+        if let Some(work_284) = self.audio_work_284 {
+            let position = motion
+                .position_step
+                .as_ref()
+                .ok_or_else(|| Error::invalid("story audio requires drive position step"))?
+                .position;
+            motion.audio = Some(crate::kart_driving_audio::tick_verified(
+                rel,
+                crate::kart_driving_audio::Input {
+                    position,
+                    velocity_xz,
+                    vehicle_state: vehicle_state
+                        .ok_or_else(|| Error::invalid("missing story vehicle state for audio"))?,
+                    work_44: work_44
+                        .ok_or_else(|| Error::invalid("missing vehicle flag for audio"))?,
+                    controls: crate::kart_driving_audio::Controls {
+                        profile: story_mode as usize,
+                        alternate: false,
+                        work_284,
+                        work_110: i32::from(buttons & 4 != 0),
+                        work_114: i32::from(buttons & 0x402 != 0 && self.work_28c <= 10),
+                        piece_id,
+                        magnitude_return: self.magnitude_return,
+                    },
+                },
+            )?);
+        }
+        if let Some(query) = self.contact {
+            let to = motion
+                .position_step
+                .as_ref()
+                .ok_or_else(|| Error::invalid("story contact requires drive position step"))?
+                .position;
+            motion.contact = Some(query.apply(
+                constants,
+                bytes,
+                exe,
+                motion.work_68,
+                vehicle_state,
+                to,
+                velocity,
+                self.work_28c,
+                work_44.ok_or_else(|| Error::invalid("missing vehicle flag for story contact"))?,
+                story_mode,
+                crate::kart_fall_recovery::ImpactCheck::Run,
+            )?);
+        }
+        Ok(motion)
+    }
+}
+/// 0x31b4..0x33a4: heading and local displacement before engine matrix calls.
+fn drive_step(
+    d: Drive,
+    steer: f32,
+    stick_x: i16,
+    accelerate: bool,
+    brake: bool,
+    constants: &[u8],
+) -> Result<Motion> {
+    let f = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());
+    let (speed, magnitude_source) = if d.velocity_xz == [0., 0.] {
+        (0., "native_zero")
+    } else if let Some(speed) = d.magnitude_return {
+        (speed, "observed")
+    } else {
+        let [x, z] = d.velocity_xz.map(f64::from);
+        (x.hypot(z) as f32, "mathematical_projection")
+    };
+    let boost = if d.multiplayer {
+        f(0x22c) + f(0x210) * (d.place.wrapping_sub(1) as f32)
+    } else {
+        f(0x22c)
+    };
+    let turn = f(0x218) * (f(0x230) * steer);
+    let (delta, work_a4) = if accelerate {
+        (
+            (d.acceleration * boost) * ((d.speed_cap - speed) / d.speed_cap),
+            d.work_a4.wrapping_sub(1),
+        )
+    } else if brake {
+        (d.brake_power * boost, 10)
+    } else {
+        (d.deceleration, 10)
+    };
+    let z = (delta + speed) * f(0x1e8);
+    if !z.is_finite() {
+        return Err(Error::invalid("nonfinite kart displacement"));
+    }
+    let heading = d.heading.wrapping_sub(turn as i32);
+    let position_step = d
+        .position_step
+        .map(|p| position(p, heading, z, f(0x234)))
+        .transpose()?;
+    let drift = d
+        .drift
+        .map(|i| drift_update(i, heading, speed, work_a4, accelerate, stick_x, constants))
+        .transpose()?;
+    Ok(Motion {
+        audio: None,
+        contact: None,
+        drift,
+        position_step,
+        magnitude_source,
+        heading,
+        work_a4,
+        work_68: 0,
+        local_displacement: [0., 0., z],
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PositionInput {
+    position: [f32; 3],
+    velocity_y: f32,
+    weight: f32,
+    work_74: i32,
+    transformed_vector: Option<[f32; 3]>,
+}
+#[derive(Serialize)]
+struct PositionStep {
+    position: [f32; 3],
+    world_displacement: [f32; 3],
+    transform_source: &'static str,
+}
+/// Original rotation work has zero X and Z. Only heading is written (0x339c).
+fn position(
+    p: PositionInput,
+    heading: i32,
+    local_z: f32,
+    rising_scale: f32,
+) -> Result<PositionStep> {
+    let (world_displacement, transform_source) = if let Some(v) = p.transformed_vector {
+        (v, "observed")
+    } else {
+        let radians = f64::from(heading as u16) * (std::f64::consts::TAU / 65536.);
+        let (sin, cos) = radians.sin_cos();
+        (
+            [
+                (sin * f64::from(local_z)) as f32,
+                0.,
+                (cos * f64::from(local_z)) as f32,
+            ],
+            "mathematical_projection",
+        )
+    };
+    let [mut x, mut y, mut z] = p.position;
+    x += world_displacement[0];
+    y += world_displacement[1];
+    z += world_displacement[2];
+    let gravity = if p.velocity_y > 0. && p.work_74 != 0 {
+        p.weight * rising_scale
+    } else {
+        p.weight
+    };
+    y += p.velocity_y - gravity;
+    if ![x, y, z].into_iter().all(f32::is_finite) {
+        return Err(Error::invalid("nonfinite kart position"));
+    }
+    Ok(PositionStep {
+        position: [x, y, z],
+        world_displacement,
+        transform_source,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DriftInput {
+    /// The 30 motion-history reads returned by 0x52b0, newest first.
+    #[serde(alias = "positions")]
+    motion_history: Option<[[f32; 3]; 30]>,
+    ring: Option<crate::kart_contact::Ring>,
+    /// Return of the rotation helper 0x5498, if observed.
+    local_offset: Option<[f32; 3]>,
+    pitch_roll: Option<[i32; 2]>,
+    speed_threshold: f32,
+    vehicle_state: i32,
+    work_10c: u32,
+    work_a8: i32,
+}
+#[derive(Serialize)]
+struct DriftUpdate {
+    history_offset: [f32; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    projected_local_offset: Option<[f32; 3]>,
+    work_f0: Option<i32>,
+    work_f8: Option<i32>,
+    vehicle_state: i32,
+    work_10c: u32,
+    work_a8: i32,
+    work_a4: i32,
+}
+fn drift_update(
+    s: DriftInput,
+    heading: i32,
+    speed: f32,
+    mut a4: i32,
+    accelerate: bool,
+    stick: i16,
+    constants: &[u8],
+) -> Result<DriftUpdate> {
+    let history = match (s.motion_history, s.ring) {
+        (Some(h), None) => h,
+        (None, Some(r)) => r.motion_history()?,
+        _ => {
+            return Err(Error::invalid(
+                "supply exactly one kart motion_history or ring",
+            ))
+        }
+    };
+    let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
+    let mut sum = [0f32; 3];
+    for pos in history {
+        for (acc, x) in sum.iter_mut().zip(pos) {
+            *acc += x;
+        }
+    }
+    let history_offset = std::array::from_fn(|i| history[0][i] - sum[i] * f(0x238));
+    if s.pitch_roll.is_some() && s.local_offset.is_some() {
+        return Err(Error::invalid(
+            "supply task angles or observed drift offset, not both",
+        ));
+    }
+    let projected_local_offset = s
+        .pitch_roll
+        .map(|[pitch, roll]| {
+            crate::kart_contact::inverse_vehicle_rotation(history_offset, [pitch, heading, roll])
+        })
+        .transpose()?;
+    let local_offset = s.local_offset.or(projected_local_offset);
+    let work_f0 = local_offset.map(|[x, _, z]| {
+        if x < f(0x23c) {
+            640
+        } else if x > f(0x240) {
+            -640
+        } else {
+            (z * f(0x244)) as i32
+        }
+    });
+    let work_f8 = local_offset.map(|v| (v[0] * f(0x248)) as i32);
+    let (mut vehicle_state, mut work_10c, mut work_a8) = (s.vehicle_state, s.work_10c, s.work_a8);
+    if speed > s.speed_threshold && a4 > 0 {
+        work_10c |= 1;
+        if accelerate && f32::from(stick).abs() > f(0x1e0) {
+            vehicle_state = 2;
+            work_a8 = i32::from(stick);
+            a4 = 0;
+        }
+    }
+    Ok(DriftUpdate {
+        projected_local_offset,
+        history_offset,
+        work_f0,
+        work_f8,
+        vehicle_state,
+        work_10c,
+        work_a8,
+        work_a4: a4,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryInput {
+    heading: i32,
+    work_68: i32,
+    work_fc: i32,
+    stick_x: i16,
+    velocity_xz: [f32; 2],
+    angle_radians: Option<f64>,
+    angle_difference: Option<i32>,
+    magnitude_return: Option<f32>,
+    ground_angle_return: Option<i32>,
+    accelerate: bool,
+    brake: bool,
+    speed_cap: f32,
+    acceleration: f32,
+    brake_power: f32,
+    deceleration: f32,
+    position_step: PositionInput,
+}
+#[derive(Serialize)]
+pub struct Recovery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio: Option<crate::kart_driving_audio::Output>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) contact: Option<crate::kart_contact::StoryResponse>,
+    vehicle_state: i32,
+    heading: i32,
+    work_68: i32,
+    work_fc: i32,
+    local_displacement: [f32; 3],
+    position_step: PositionStep,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryRecoveryDrive {
+    audio_work_284: Option<i32>,
+    pub(crate) contact: Option<crate::kart_contact::StoryContact>,
+    heading: Option<i32>,
+    work_68: i32,
+    work_fc: i32,
+    work_28c: i32,
+    position_step: StoryPosition,
+    angle_radians: Option<f64>,
+    angle_difference: Option<i32>,
+    magnitude_return: Option<f32>,
+    ground_angle_return: Option<i32>,
+}
+impl StoryRecoveryDrive {
+    pub(crate) fn bind_heading(&mut self, yaw: i32) -> Result<()> {
+        if self.heading.is_some_and(|v| v != yaw) {
+            return Err(Error::invalid(
+                "state 1 heading conflicts with preceding frame",
+            ));
+        }
+        self.heading = Some(yaw);
+        Ok(())
+    }
+    pub(crate) fn step(
+        self,
+        rel: &crate::city_rel::CityRel,
+        bytes: &[u8],
+        exe: &[u8],
+        mode: i32,
+        work_44: Option<i32>,
+        piece_id: Option<u8>,
+        sample: (i16, u32),
+        position: [f32; 3],
+        velocity: [f32; 3],
+        [acceleration, brake_power, deceleration, speed_cap, weight]: [f32; 5],
+    ) -> Result<Recovery> {
+        let (stick_x, held) = sample;
+        let data = rel.data(4)?;
+        let mut motion = recovery_with_constants(
+            data,
+            RecoveryInput {
+                heading: self
+                    .heading
+                    .ok_or_else(|| Error::invalid("missing state 1 heading"))?,
+                work_68: self.work_68,
+                work_fc: self.work_fc,
+                stick_x,
+                velocity_xz: [velocity[0], velocity[2]],
+                angle_radians: self.angle_radians,
+                angle_difference: self.angle_difference,
+                magnitude_return: self.magnitude_return,
+                ground_angle_return: self.ground_angle_return,
+                accelerate: held & 4 != 0,
+                brake: held & 0x402 != 0 && self.work_28c <= 10,
+                acceleration,
+                brake_power,
+                deceleration,
+                speed_cap,
+                position_step: PositionInput {
+                    position,
+                    velocity_y: velocity[1],
+                    weight,
+                    work_74: self.position_step.work_74,
+                    transformed_vector: Some(self.position_step.transformed_vector),
+                },
+            },
+        )?;
+        let flag = || work_44.ok_or_else(|| Error::invalid("missing state 1 vehicle flag"));
+        if let Some(work_284) = self.audio_work_284 {
+            motion.audio = Some(crate::kart_driving_audio::tick_verified(
+                rel,
+                crate::kart_driving_audio::Input {
+                    position: motion.position_step.position,
+                    velocity_xz: [velocity[0], velocity[2]],
+                    vehicle_state: motion.vehicle_state,
+                    work_44: flag()?,
+                    controls: crate::kart_driving_audio::Controls {
+                        profile: mode as usize,
+                        alternate: false,
+                        work_284,
+                        work_110: i32::from(held & 4 != 0),
+                        work_114: i32::from(held & 0x402 != 0 && self.work_28c <= 10),
+                        piece_id,
+                        magnitude_return: self.magnitude_return,
+                    },
+                },
+            )?);
+        }
+        if let Some(contact) = self.contact {
+            motion.contact = Some(contact.apply(
+                data,
+                bytes,
+                exe,
+                motion.work_68,
+                Some(motion.vehicle_state),
+                motion.position_step.position,
+                velocity,
+                self.work_28c,
+                flag()?,
+                mode,
+                crate::kart_fall_recovery::ImpactCheck::Run,
+            )?);
+        }
+        Ok(motion)
+    }
+}
+impl Recovery {
+    pub(crate) fn state(&self) -> i32 {
+        self.vehicle_state
+    }
+}
+/// CartD state 1, 0x36b4..0x3998. Horizontal motion controls the state exit.
+pub fn recovery(bytes: &[u8], s: RecoveryInput) -> Result<Recovery> {
+    kart_progress::verify(bytes)?;
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    recovery_with_constants(rel.data(4)?, s)
+}
+fn recovery_with_constants(data: &[u8], s: RecoveryInput) -> Result<Recovery> {
+    let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
+    let (mut heading, mut work_68, mut vehicle_state) = (s.heading, s.work_68, 1);
+    let speed = if s.velocity_xz == [0., 0.] {
+        0.
+    } else {
+        let radians = s
+            .angle_radians
+            .ok_or_else(|| Error::invalid("missing velocity angle return"))?;
+        let units = radians * f64::from_be_bytes(data[0x208..0x210].try_into().unwrap());
+        if !(-2147483648.0..2147483648.0).contains(&units) {
+            return Err(Error::invalid("unsupported recovery angle"));
+        }
+        heading = (units as i32).wrapping_add(0x4000).wrapping_neg();
+        if s.angle_difference
+            .ok_or_else(|| Error::invalid("missing recovery angle difference"))?
+            < 546
+        {
+            vehicle_state = 0;
+            work_68 = 0;
+        } else {
+            work_68 /= 2;
+            heading = heading.wrapping_add(work_68);
+        }
+        s.magnitude_return
+            .ok_or_else(|| Error::invalid("missing horizontal magnitude return"))?
+    };
+    heading = heading.wrapping_sub((f(0x218) * (f(0x258) * f32::from(s.stick_x))) as i32);
+    let delta = if s.accelerate {
+        s.acceleration * ((s.speed_cap - speed) / s.speed_cap)
+    } else if s.brake {
+        s.brake_power
+    } else {
+        s.deceleration
+    };
+    let z = (delta + speed) * f(0x1e8);
+    if !z.is_finite() {
+        return Err(Error::invalid("nonfinite state 1 displacement"));
+    }
+    let work_fc = if s.position_step.work_74 != 0 {
+        s.ground_angle_return
+            .ok_or_else(|| Error::invalid("missing grounded angle return"))?
+    } else {
+        s.work_fc.wrapping_add(91)
+    };
+    Ok(Recovery {
+        audio: None,
+        contact: None,
+        vehicle_state,
+        heading,
+        work_68,
+        work_fc,
+        local_displacement: [0., 0., z],
+        position_step: position(s.position_step, heading, z, f(0x234))?,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpinInput {
+    heading: i32,
+    work_68: i32,
+    work_b8: i32,
+    velocity_xz: [f32; 2],
+    angle_radians: Option<f64>,
+    magnitude_return: Option<f32>,
+    position_step: PositionInput,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StorySpin {
+    pub(crate) audio: Option<StoryVehicleAudio>,
+    pub(crate) contact: Option<crate::kart_drift::DriveContact>,
+    heading: i32,
+    velocity_xz: [f32; 2],
+    angle_radians: Option<f64>,
+    magnitude_return: Option<f32>,
+    position_step: PositionInput,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StoryVehicleAudio {
+    pub(crate) work_44: i32,
+    work_284: i32,
+    work_110: i32,
+    work_114: i32,
+    piece_id: Option<u8>,
+}
+impl StoryVehicleAudio {
+    pub(crate) fn run(
+        self,
+        rel: &crate::city_rel::CityRel,
+        mode: i32,
+        vehicle_state: i32,
+        position: [f32; 3],
+        velocity: [f32; 3],
+        magnitude_return: Option<f32>,
+    ) -> Result<crate::kart_driving_audio::Output> {
+        crate::kart_driving_audio::tick_verified(
+            rel,
+            crate::kart_driving_audio::Input {
+                work_44: self.work_44,
+                vehicle_state,
+                position,
+                velocity_xz: [velocity[0], velocity[2]],
+                controls: crate::kart_driving_audio::Controls {
+                    profile: mode as usize,
+                    alternate: false,
+                    work_284: self.work_284,
+                    work_110: self.work_110,
+                    work_114: self.work_114,
+                    piece_id: self.piece_id,
+                    magnitude_return,
+                },
+            },
+        )
+    }
+}
+impl StorySpin {
+    pub(crate) fn magnitude(&self) -> Option<f32> {
+        self.magnitude_return
+    }
+    pub(crate) fn world_velocity(&self) -> [f32; 3] {
+        [
+            self.velocity_xz[0],
+            self.position_step.velocity_y,
+            self.velocity_xz[1],
+        ]
+    }
+    pub(crate) fn advance(self, constants: &[u8], (work_68, work_b8): (i32, i32)) -> Result<Spin> {
+        spin_with_constants(
+            constants,
+            SpinInput {
+                heading: self.heading,
+                work_68,
+                work_b8,
+                velocity_xz: self.velocity_xz,
+                angle_radians: self.angle_radians,
+                magnitude_return: self.magnitude_return,
+                position_step: self.position_step,
+            },
+        )
+    }
+}
+#[derive(Serialize)]
+pub struct Spin {
+    heading: i32,
+    work_68: i32,
+    work_b8: i32,
+    vehicle_state: i32,
+    local_displacement: [f32; 3],
+    position_step: PositionStep,
+}
+impl Spin {
+    pub(crate) fn position(&self) -> [f32; 3] {
+        self.position_step.position
+    }
+    pub(crate) fn state(&self) -> i32 {
+        self.vehicle_state
+    }
+    pub(crate) fn carry(&self) -> (i32, i32) {
+        (self.work_68, self.work_b8)
+    }
+}
+/// State 4 decays the signed angular step and calls 0x30dc on crossing zero.
+pub fn spin(bytes: &[u8], s: SpinInput) -> Result<Spin> {
+    kart_progress::verify(bytes)?;
+    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    spin_with_constants(rel.data(4)?, s)
+}
+fn spin_with_constants(data: &[u8], s: SpinInput) -> Result<Spin> {
+    let f = |i: usize| f32::from_be_bytes(data[i..i + 4].try_into().unwrap());
+    let mut work_68 = s.work_68.wrapping_add(s.work_b8);
+    let work_b8 = if s.work_b8 > 0 {
+        s.work_b8 - 18
+    } else {
+        s.work_b8 + 18
+    };
+    let exit = if s.work_b8 > 0 {
+        work_b8 < 0
+    } else {
+        work_b8 > 0
+    };
+    let mut heading = s.heading;
+    if exit {
+        work_68 = 0;
+        if s.velocity_xz.iter().any(|v| v.abs() >= f(0x21c)) {
+            let radians = s
+                .angle_radians
+                .ok_or_else(|| Error::invalid("missing exit heading angle"))?;
+            let units = radians * f64::from_be_bytes(data[0x208..0x210].try_into().unwrap());
+            if !(-2147483648.0..2147483648.0).contains(&units) {
+                return Err(Error::invalid("unsupported exit angle"));
+            }
+            heading = (units as i32).wrapping_add(0x4000).wrapping_neg() & 0xffff;
+        }
+    }
+    let speed = if s.velocity_xz == [0.; 2] {
+        0.
+    } else {
+        s.magnitude_return
+            .ok_or_else(|| Error::invalid("missing horizontal magnitude"))?
+    };
+    let z = f(0x270) * -speed;
+    Ok(Spin {
+        heading,
+        work_b8,
+        work_68,
+        vehicle_state: if exit { 0 } else { 4 },
+        local_displacement: [0., 0., z],
+        position_step: position(s.position_step, heading, z, f(0x234))?,
+    })
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SteeringHistory {
+    history: Vec<i32>,
+    cursor: usize,
+}
+impl SteeringHistory {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.history.len() != 60 || self.cursor >= 60 {
+            return Err(Error::invalid("invalid primary controller history"));
+        }
+        Ok(())
+    }
+    pub(crate) fn sample(&mut self, stick: i16) -> i32 {
+        sample_and_sum(&mut self.history, &mut self.cursor, stick)
+    }
+}
+fn sample_and_sum(history: &mut [i32], cursor: &mut usize, stick: i16) -> i32 {
+    append_sample(history, cursor, stick);
+    (0..10).fold(0i32, |sum, i| {
+        sum.wrapping_add(history[(*cursor + 60 - i) % 60])
+    })
+}
+fn append_sample(history: &mut [i32], cursor: &mut usize, stick_x: i16) {
+    history[*cursor] = i32::from(stick_x);
+    *cursor = (*cursor + 1) % 60;
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateInput {
+    work_70: i32,
+    state: i32,
+    global_22494: i32,
+    global_2ec208: i32,
+    controller: Option<GateController>,
+    post_contact_fall: Option<crate::kart_fall_recovery::Input>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GateController {
+    stick_x: i16,
+    history: Vec<i32>,
+    cursor: usize,
+}
+
+#[derive(Serialize)]
+pub struct GateOutput {
+    state: i32,
+    controller: Option<GateController>,
+    callbacks: &'static [u32],
+    resume_offset: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fall: Option<crate::kart_fall_recovery::Output>,
+}
+
+/// CartD 0x2214..0x2284. Controller data belongs to the selected player slot.
+pub fn update_gate(bytes: &[u8], mut input: GateInput) -> Result<GateOutput> {
+    kart_progress::verify(bytes)?;
+    if input.work_70 >= 0 {
+        if input.work_70 > 1 {
+            return Err(Error::invalid("unsupported kart controller slot"));
+        }
+        let c = input
+            .controller
+            .as_mut()
+            .ok_or_else(|| Error::invalid("missing selected controller"))?;
+        if c.history.len() != 60 || c.cursor >= 60 {
+            return Err(Error::invalid("invalid selected kart history"));
+        }
+        append_sample(&mut c.history, &mut c.cursor, c.stick_x);
+    }
+    let (callbacks, resume_offset): (&[u32], u32) = if input.global_22494 != 0 {
+        input.state = 9;
+        (&[], 0x2284)
+    } else if input.global_2ec208 != 0 {
+        (&[0x2ca4, 0x2da8, 0x4b50, 0x3030, 0x302c], 0x287c)
+    } else {
+        (&[], 0x2284)
+    };
+    let fall = match (resume_offset, input.post_contact_fall) {
+        (0x287c, Some(s)) => Some(crate::kart_fall_recovery::tick(bytes, s)?),
+        (_, Some(_)) => {
+            return Err(Error::invalid(
+                "fall observation supplied on a path that skips the callback",
+            ))
+        }
+        (_, None) => None,
+    };
+    Ok(GateOutput {
+        fall,
+        state: input.state,
+        controller: input.controller,
+        callbacks,
+        resume_offset,
+    })
+}

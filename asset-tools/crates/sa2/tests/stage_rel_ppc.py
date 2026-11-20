@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from gekko_float import install_frsqrte  # noqa: E402
+import gekko_tables  # noqa: E402
 
 REL_BASE = 0x80C00000
 
@@ -83,10 +83,11 @@ def load_rel(m, path, base=REL_BASE):
             else:
                 raise ValueError(f'relocation type {t} at {sec}:{cur:#x}')
     # Gekko's frsqrte estimate in the REL's code too, as dol_ppc does for
-    # main.dol's.
-    off, size = struct.unpack_from('>II', d, info + 8)
-    for k in range(0, size, 4):
-        ins = struct.unpack_from('>I', d, (off & ~1) + k)[0]
-        if ins >> 26 == 63 and (ins >> 1) & 0x1F == 26:
-            install_frsqrte(m.u, bases[1] + k)
+    # main.dol's (when the local tables exist).
+    if gekko_tables.load() is not None:
+        off, size = struct.unpack_from('>II', d, info + 8)
+        for k in range(0, size, 4):
+            ins = struct.unpack_from('>I', d, (off & ~1) + k)[0]
+            if ins >> 26 == 63 and (ins >> 1) & 0x1F == 26:
+                gekko_tables.install_frsqrte(m.u, bases[1] + k)
     return LoadedRel(d, bases)

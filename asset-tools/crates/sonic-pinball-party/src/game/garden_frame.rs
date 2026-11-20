@@ -138,10 +138,10 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_garden_input_and_single_loop_match_source_mutations_and_call_order() {
-        let f: Value =
-            serde_json::from_str(include_str!("../../tests/garden-frame-vectors.json")).unwrap();
+        let f: Value = serde_json::from_str(vectors!("garden-frame-vectors.json")).unwrap();
         for c in f["cases"].as_array().unwrap() {
             let mut m = MemoryImage::fixture(vec![
                 region(INPUT, values(&c["input"])),

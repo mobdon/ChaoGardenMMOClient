@@ -16,8 +16,9 @@ import struct
 import unittest
 
 import control_reference as control
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("oam-vectors.json")
+FIXTURE = spp_vectors.path("oam-vectors.json")
 COUNT = 0x03000018
 RECORDS = 0x03001250
 ORDER = 0x03000BF0

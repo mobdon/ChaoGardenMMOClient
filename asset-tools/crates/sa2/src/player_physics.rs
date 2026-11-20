@@ -30,6 +30,8 @@ const CHARACTERS: [Option<&str>; 19] = [
 pub struct PlayerPhysics {
     pub slot: usize,
     pub character: Option<&'static str>,
+    pub executable_sha256: &'static str,
+    pub row_sha256: String,
     pub source_va: u32,
     pub parameters: PlayerParameters,
 }
@@ -121,6 +123,8 @@ pub fn read(exe: &[u8]) -> Result<Vec<PlayerPhysics>> {
             Ok(PlayerPhysics {
                 slot,
                 character,
+                executable_sha256: object_table::STEAM_EXE_SHA256,
+                row_sha256: crate::manifest::sha256(bytes),
                 source_va: TABLE_VA + (slot * STRIDE) as u32,
                 parameters,
             })

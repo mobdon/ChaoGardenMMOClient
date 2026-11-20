@@ -37,8 +37,13 @@ fn sa_tools_texture_pixel_parity() {
     let game = std::env::var("SA2_GAME_PATH").expect("SA2_GAME_PATH");
     let local = std::env::var("SA2_LOCAL_ROOT").expect("SA2_LOCAL_ROOT");
     let mut checked = 0;
-    let mut unresolved = 0;
-    let mut alpha_pixels = 0;
+    let mut unresolved = std::collections::BTreeMap::new();
+    let mut alpha_counts = [0u64; 256];
+    let mut record_alpha = |rgba: &[u8]| {
+        for pixel in rgba.chunks_exact(4) {
+            alpha_counts[usize::from(pixel[3])] += 1;
+        }
+    };
     let mut hashes = Sha256::new();
     let mut sources = Sha256::new();
     let mut corpus = vec![
@@ -72,7 +77,7 @@ fn sa_tools_texture_pixel_parity() {
         let entries = archive::read_gvm(&decoded).unwrap();
         let total = entries.len();
         let before = checked;
-        let unknown_before = unresolved;
+        let unknown_before = unresolved.len();
         for entry in entries {
             let target = Path::new(&local)
                 .join("extracted")
@@ -87,7 +92,13 @@ fn sa_tools_texture_pixel_parity() {
             );
             let header = texture::read_gvr_header(entry.data).unwrap();
             if matches!(header.data_format, 8 | 9) && header.flags & 8 == 0 {
-                unresolved += 1;
+                let identity = (archive_name.to_owned(), entry.name.clone());
+                assert!(
+                    unresolved
+                        .insert(identity, Sha256::digest(entry.data))
+                        .is_none(),
+                    "duplicate external-palette entry in {archive_name}"
+                );
                 continue;
             }
             let actual = texture::decode_gvr(entry.data, None).unwrap();
@@ -100,19 +111,13 @@ fn sa_tools_texture_pixel_parity() {
                 entry.name
             );
             assert_eq!(actual.rgba, expected, "{} {}", archive_name, entry.name);
-            alpha_pixels += actual
-                .rgba
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .filter(|p| p[3] < 255)
-                .count();
+            record_alpha(&actual.rgba);
             hashes.update(source_hash);
             hashes.update(entry.name.as_bytes());
             hashes.update(Sha256::digest(&actual.rgba));
             checked += 1;
         }
-        println!("{archive_name}: {total} entries, {} exact RGBA comparisons, {} explicit external-palette unknowns, source {source_hash:x}",checked-before,unresolved-unknown_before);
+        println!("{archive_name}: {total} entries, {} exact RGBA comparisons, {} explicit external-palette unknowns, source {source_hash:x}",checked-before,unresolved.len()-unknown_before);
         assert_eq!(
             Sha256::digest(fs::read(source).unwrap()),
             source_hash,
@@ -144,6 +149,13 @@ fn sa_tools_texture_pixel_parity() {
         );
         assert_eq!((actual.width, actual.height), (width, height));
         assert_eq!(actual.rgba, expected, "palette {name}");
+        let identity = ("al_body".to_owned(), (*name).to_owned());
+        assert_eq!(
+            unresolved.remove(&identity),
+            Some(Sha256::digest(entry.data)),
+            "verified bank must resolve the same indexed source"
+        );
+        record_alpha(&actual.rgba);
         hashes.update(palette_hash);
         hashes.update(name.as_bytes());
         hashes.update(Sha256::digest(&actual.rgba));
@@ -155,7 +167,17 @@ fn sa_tools_texture_pixel_parity() {
         "palette source changed"
     );
     assert!(checked > 200, "expected substantial verified corpus");
-    println!("verified {checked} RGBA textures including {alpha_pixels} nonopaque pixels; {} external-palette mappings remain unknown after 3 verified child banks; source corpus {:x}; pixel aggregate {:x}",unresolved-3,sources.finalize(),hashes.finalize());
+    for ((archive, name), digest) in &unresolved {
+        println!("unresolved palette {archive}/{name} GVRT sha256 {digest:x}");
+    }
+    let transparent = alpha_counts[0];
+    let partial: u64 = alpha_counts[1..255].iter().sum();
+    let opaque = alpha_counts[255];
+    assert!(
+        transparent > 0 && partial > 0 && opaque > 0,
+        "reference corpus must exercise all three alpha cases"
+    );
+    println!("verified {checked} RGBA textures including {transparent} transparent, {partial} partially transparent and {opaque} opaque pixels; {} external-palette mappings remain unknown after 3 verified child banks; source corpus {:x}; pixel aggregate {:x}",unresolved.len(),sources.finalize(),hashes.finalize());
 }
 
 #[test]
@@ -168,7 +190,8 @@ fn pak_payload_parity_and_dds_decode() {
     let original_hash = Sha256::digest(&bytes);
     let entries = archive::read_pak(&bytes).unwrap();
     let mut checked = 0;
-    let mut decoded = 0;
+    let mut pixel_records = Vec::new();
+    let mut mip_records = Vec::new();
     let mut digest = Sha256::new();
     for entry in entries {
         let relative = entry.name.replace('\\', "/");
@@ -186,12 +209,40 @@ fn pak_payload_parity_and_dds_decode() {
                 actual.rgba.len(),
                 actual.width as usize * actual.height as usize * 4
             );
-            decoded += 1;
+            let mut record = Sha256::digest(entry.data).to_vec();
+            record.extend(actual.width.to_le_bytes());
+            record.extend(actual.height.to_le_bytes());
+            record.extend(Sha256::digest(&actual.rgba));
+            pixel_records.push(record);
+            let levels = u32::from_le_bytes(entry.data[28..32].try_into().unwrap());
+            for level in 0..levels {
+                let image = texture::decode_dds_mip(entry.data, level).unwrap();
+                let mut record = Sha256::digest(entry.data).to_vec();
+                record.extend(level.to_le_bytes());
+                record.extend(image.width.to_le_bytes());
+                record.extend(image.height.to_le_bytes());
+                record.extend(Sha256::digest(&image.rgba));
+                mip_records.push(record);
+            }
         }
     }
     assert_eq!(Sha256::digest(fs::read(source).unwrap()), original_hash);
     assert_eq!(checked, 118);
+    assert_eq!(mip_records.len(), 856);
+    mip_records.sort_unstable();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(mip_records.concat())),
+        "c3caa924678a4a3b32c1d11adb421734e7a1dbf87cefe7f679e19201f2b1ba78"
+    );
+    let decoded = pixel_records.len();
     assert_eq!(decoded, 117);
+    pixel_records.sort_unstable();
+    let pixels = Sha256::digest(pixel_records.concat());
+    // Pillow 13.0.0 RGBA output from the independently supplied loose DDS files.
+    assert_eq!(
+        format!("{pixels:x}"),
+        "89c0c5fe7ecf0215d05bf31b74bf910c6d370a91fee399f7411d47974b957a49"
+    );
     println!("PAK {checked} payloads byte-identical to independently supplied loose files; {decoded} DDS base images decode; source {original_hash:x}; payload aggregate {:x}",digest.finalize());
 }
 

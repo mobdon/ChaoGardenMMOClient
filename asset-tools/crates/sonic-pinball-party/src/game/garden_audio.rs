@@ -447,7 +447,7 @@ mod tests {
     const CHANNEL: u32 = 0x0300_4000;
 
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/garden-audio-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("garden-audio-vectors.json")).unwrap()
     }
     fn n(value: &Value, key: &str, default: u32) -> u32 {
         value
@@ -648,6 +648,7 @@ mod tests {
             Ok(())
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_garden_routing_and_lifecycle_vectors() {
         let source = fixture();
@@ -681,6 +682,7 @@ mod tests {
             );
         }
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn strict_calls_and_bounded_malformed_state() {
         let source = fixture();
@@ -736,6 +738,7 @@ mod tests {
             Err(Error::BankIdentity)
         );
     }
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn optional_local_authenticated_bank() {
         if let Ok(path) = std::env::var("SPP_GARDEN") {

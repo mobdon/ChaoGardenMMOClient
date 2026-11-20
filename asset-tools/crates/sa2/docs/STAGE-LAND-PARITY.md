@@ -53,7 +53,7 @@ campaign rows. Menu, title, story events and credits are not gameplay terrain.
 
 | Direct ID without a generic landtable | Source evidence and limit |
 | --- | --- |
-| 42, Sonic vs Shadow 2 | PC_SA2/STG42.ini identifies a GC platform at RVA 0x1251C70 and its Basic collision object at 0x1251FA0. Rust duel_platform::read reads the separate collision object from the verified EXE. The standalone SA Tools SA1MDL corroborates the object's transform, 24 vertices and normals, bounds, material, and five strips including native index order and winding. Placement, repeated platforms and movement are not established by this object. |
+| 42, Sonic vs Shadow 2 | PC_SA2/STG42.ini identifies a GC platform at RVA 0x1251C70 and its Basic collision object at 0x1251FA0. Rust duel_platform::read reads the separate collision object from the verified EXE. The standalone SA Tools SA1MDL corroborates the object's transform, 24 vertices and normals, bounds, material, and five strips including native index order and winding. The installed stg42D.rel DODAIGEN object places copies of an identical template every 300 units along +X ahead of the players; [DUEL-PLATFORMS.md](DUEL-PLATFORMS.md) replays it against the native PPC code. DODAI's activation and fall are replayed the same way. |
 | 66, Finalhazard | GC_SA2B/Boss_Last2D.ini identifies the boss and character animations; PC_SA2/BOSS_LAST2.ini identifies the boss at RVA 0x13048DC and weakpoint at 0x12D36BC. Both yielded standalone Chunk models with SA Tools. No static terrain table or gameplay collision behavior was established. |
 | 70, Route 101 / Route 280 | PC_SA2/CART.ini maps two separate courses at RVAs 0xAF82BC and 0xAF82C4. SA Tools exported 321 and 369 ordered segment IDs. The Win32 Data_DLL CartCourseModels export at RVA 0x58B190 (85 entries, PC_SA2/CART_DLL.ini) split into 81 Basic collision models and 81 GC visuals using an RVA-mapped DLL image with preferred base 0x10000000. The GC CartD.rel mapping at 0x10B61C did not convert on the Steam revision. Segment assembly and driving physics are separate; the multiplayer kart menu is not a story row. |
 
@@ -79,3 +79,14 @@ Each offset correction is tied to its source hash. The Rust test independently
 decodes both sources, then uses the same Rust static geometry baker for each.
 This verifies conversion, not the baker against the retail engine, visual
 rendering, dynamic collision, stage progression or complete playable levels.
+
+For Finalhazard, `finalhazard-geometry EXE OUTPUT.json` reads the 28 native
+Chunk attachments by RVA; stream offsets within each attachment are raw file
+offsets. Against the two local SA Tools splits, all 28 bounding spheres and
+all 48 vertex chunk kinds matched. Comparing polygon words in stream order
+gave 134 exact matches across 145 chunks. The other 11 (ten boss, one weakpoint) differ only in the high byte
+of the ambient NRGB word of type 19 (NJD_CM_DA): 255 in the executable,
+zero in the split. Ninja's njcnk_material.h identifies N as NOOP. Ambient
+RGB and diffuse ARGB, including alpha, match. The Rust export keeps the
+original byte. Reproduce with tests/finalhazard_polygon_reference.py and the
+geometry JSON, rig JSON, and local split models directory as arguments. These model bounds are not hitboxes.

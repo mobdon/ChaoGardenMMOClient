@@ -65,3 +65,14 @@ cargo run --locked --manifest-path $sppManifest --bin spp-game -- board $env:SPP
 `run` executes the Rust startup wrapper and stops at its first unported dependency, currently ROM `0x6EF4`. `board` renders original background pixels; on Windows, omit `--headless` for the finite diagnostic window and manual Up/Down viewport control. These commands do not run an emulator, alter a native save, or contact the MMO service.
 
 All readers and Rust source translations were written for this work. Native ROM instructions, BIOS bytes, third-party implementation source, art and audio are not embedded. Local A3VE bytes, independent Python checks and bounded reference execution establish the evidence. Advance comparisons are research only; no Advance offset or Chao-field schema is inherited.
+
+## Test vectors
+
+The `*-vectors.json` oracle fixtures are generated from your own ROM by
+`tests/*_reference.py`, so they are not committed. Keep them in
+`.local/research/sonic-pinball-party-vectors/` at the client checkout root, or
+point `SPP_VECTORS_DIR` at them. build.rs enables `cfg(spp_vectors)` when the
+directory is present. Without it, the tests that read vectors are ignored and
+the rest still run. To write the files from the last commit that had them:
+
+    python asset-tools/crates/sonic-pinball-party/tests/spp_vectors.py --extract-from-git 3a4b416

@@ -184,10 +184,10 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn native_division_vectors_include_zero_and_wrapping_overflow() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/math-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("math-vectors.json")).unwrap();
         for row in data["nativeDivision"].as_array().unwrap() {
             assert_eq!(
                 signed_divide(
@@ -199,10 +199,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn separate_reference_bios_vectors_match_primary_numerical_reference() {
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/math-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("math-vectors.json")).unwrap();
         let mut reference = ReferenceBiosMath;
         for row in data["referenceBiosSqrt"].as_array().unwrap() {
             assert_eq!(
@@ -259,8 +259,7 @@ mod tests {
         let path = std::env::var_os("SPP_ROM").expect("SPP_ROM required");
         let rom = std::fs::read(path).unwrap();
         let table = TrigTable::from_rom(&rom).unwrap();
-        let data: Value =
-            serde_json::from_str(include_str!("../../tests/math-vectors.json")).unwrap();
+        let data: Value = serde_json::from_str(vectors!("math-vectors.json")).unwrap();
         for row in data["nativeTrig"].as_array().unwrap() {
             let angle = row[0].as_u64().unwrap() as u32;
             assert_eq!(table.sine(angle), row[1].as_i64().unwrap() as i16);

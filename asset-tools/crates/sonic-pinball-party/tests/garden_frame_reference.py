@@ -14,8 +14,9 @@ import struct
 import unittest
 import control_reference as control
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("garden-frame-vectors.json")
+FIXTURE = spp_vectors.path("garden-frame-vectors.json")
 BASE = 0x02000000
 GLOBALS = 0x03004250
 INPUT = 0x03005310

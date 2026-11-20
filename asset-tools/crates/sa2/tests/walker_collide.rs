@@ -29,6 +29,10 @@ fn matches_main_dol() {
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    if o.stdout.is_empty() {
+        eprintln!("skipped: {}", String::from_utf8_lossy(&o.stderr));
+        return;
+    }
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
     for c in v["lift"].as_array().unwrap() {
         let i = LiftInput {
@@ -60,6 +64,7 @@ fn matches_main_dol() {
         .map(|r| PhysicsRow {
             run_accel: f(&r[0]),
             f58: f(&r[1]),
+            f74: 0.0,
             weight: f(&r[2]),
         })
         .collect();

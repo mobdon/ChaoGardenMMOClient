@@ -276,6 +276,29 @@ fn palette_dependency_records_exact_bank_bytes_and_preserves_alpha() {
             .unwrap(),
     );
     let manifest = json_file(sidecar(&output));
+    let palette_variant = |palette_path: &Path, index: &str, filename: &str| {
+        let path = case.path.join(filename);
+        succeeded(
+            case.command()
+                .arg("texture")
+                .arg(&gvr)
+                .arg(&path)
+                .arg(palette_path)
+                .arg(index)
+                .output()
+                .unwrap(),
+        );
+        json_file(sidecar(&path))["assets"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let id = manifest["assets"][0]["id"].as_str().unwrap();
+    let bank_zero = palette_variant(&gvp, "0", "first-bank.png");
+    let alternate = case.file("alternate.gvp", &palette_bytes);
+    assert_ne!(id, bank_zero);
+    assert_ne!(id, palette_variant(&alternate, "1", "alternate.png"));
+    assert_eq!(id, palette_variant(&gvp, "1", "repeat.png"));
     let dependency = &manifest["assets"][0]["dependencies"][0];
     assert_eq!(dependency["sourceId"], manifest["sources"][1]["id"]);
     assert_eq!(dependency["role"], "external-palette");
@@ -372,4 +395,99 @@ fn manifest_validation_rejects_contradictory_hashes_and_opaque_parents() {
         assert!(!result.status.success(), "{name}");
         assert!(!output.exists(), "{name}");
     }
+}
+
+#[test]
+fn dds_mip_outputs_have_distinct_ids_and_reject_missing_blocks() {
+    let case = Case::new();
+    let mut dds = vec![0; 128];
+    dds[..4].copy_from_slice(b"DDS ");
+    for (offset, value) in [
+        (4, 124u32),
+        (8, 0x21007),
+        (12, 4),
+        (16, 4),
+        (28, 2),
+        (76, 32),
+        (80, 4),
+    ] {
+        dds[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    dds[84..88].copy_from_slice(b"DXT1");
+    // Both levels occupy a full block, even though the second is only 2x2.
+    dds.extend([0x00, 0xf8, 0, 0, 0, 0, 0, 0]);
+    dds.extend([0xe0, 0x07, 0, 0, 0, 0, 0, 0]);
+    let input = case.file("sample.dds", &dds);
+    for (level, size, color, suffix) in [
+        ("0", 4, [255, 0, 0, 255], ".rgba"),
+        ("1", 2, [0, 255, 0, 255], ".rgba.mip.1"),
+    ] {
+        let output = case.path.join(format!("level-{level}.png"));
+        succeeded(
+            case.command()
+                .arg("texture")
+                .arg(&input)
+                .arg(&output)
+                .args(["--mip", level])
+                .output()
+                .unwrap(),
+        );
+        let manifest = json_file(sidecar(&output));
+        assert!(manifest["assets"][0]["id"]
+            .as_str()
+            .unwrap()
+            .ends_with(suffix));
+        assert_eq!(manifest["sources"][0]["sha256"], manifest::sha256(&dds));
+        let mut reader = png::Decoder::new(Cursor::new(fs::read(output).unwrap()))
+            .read_info()
+            .unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut pixels).unwrap();
+        assert_eq!((info.width, info.height), (size, size));
+        assert!(pixels.chunks_exact(4).all(|pixel| pixel == color));
+    }
+    let truncated = case.file("short.dds", &dds[..dds.len() - 1]);
+    for (source, level) in [(&input, "2"), (&truncated, "1")] {
+        let output = case.path.join("rejected.png");
+        let result = case
+            .command()
+            .arg("texture")
+            .arg(source)
+            .arg(&output)
+            .args(["--mip", level])
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(!output.exists() && !sidecar(&output).exists());
+    }
+}
+
+#[test]
+fn adx_loop_survives_wav_export_with_pcm_written_once() {
+    let case = Case::new();
+    let mut source = adx();
+    source.splice(26..26, [0u8; 24]);
+    source[2..4].copy_from_slice(&52u16.to_be_bytes());
+    source[24..28].copy_from_slice(&1u32.to_be_bytes());
+    source[28..32].copy_from_slice(&1u32.to_be_bytes());
+    source[36..40].copy_from_slice(&3u32.to_be_bytes());
+    let input = case.file("loop.adx", &source);
+    let output = case.path.join("loop.wav");
+    succeeded(
+        case.command()
+            .arg("adx")
+            .arg(input)
+            .arg(&output)
+            .output()
+            .unwrap(),
+    );
+    let wav = fs::read(output).unwrap();
+    let word = |at| u32::from_le_bytes(wav[at..at + 4].try_into().unwrap());
+    assert_eq!(word(4) as usize + 8, wav.len());
+    assert_eq!(&wav[36..40], b"smpl");
+    assert_eq!(word(40), 60);
+    assert_eq!(word(72), 1);
+    assert_eq!((word(88), word(92)), (1, 2));
+    assert_eq!(&wav[104..108], b"data");
+    assert_eq!(&wav[112..], &[1, 0, 3, 0, 7, 0]);
 }

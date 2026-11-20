@@ -12,8 +12,9 @@ from pathlib import Path
 import unittest
 import control_reference as control
 import reference_parity as parity
+import spp_vectors  # noqa: E402
 
-FIXTURE = Path(__file__).with_name("garden-palette-vectors.json")
+FIXTURE = spp_vectors.path("garden-palette-vectors.json")
 BASE = 0x02000000
 FLAGS = 0x030015a8
 HELPERS = [0x16d8, 0x12e0, 0x1420, 0x590, 0x1374, 0xeac, 0x117c, 0x1088]

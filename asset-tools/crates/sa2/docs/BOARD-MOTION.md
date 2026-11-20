@@ -39,3 +39,12 @@ The Rust raw-key digest **preserving signed zero** and omitting offsets is
 bd41749f3c03e66b4e2533e68384be38135cb222044d1115f26db32b539f899f
 for both sources. This checks authored keys; it does not independently verify
 retail interpolation or the poses seen during live play.
+
+At rider action 121 (board slot 145), frame 3.25, the installed REL and PC
+DLL produced identical board-local pose documents (the pose field) for the
+street board. Independently combining frames 3 and 4 from city-player-keys
+with the city-board-resources rest nodes reproduced both local positions,
+rotations and scales to 1e-12. The root has no rotation keys: its 16384-unit
+rest yaw is a quarter turn using 65536 units per turn. The child's authored
+rotation uses the pose reader's SAModel motion convention of 65535 units per
+turn. This checks offline conversion, not retail interpolation or screen output.

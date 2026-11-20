@@ -787,7 +787,7 @@ mod tests {
         value.as_u64().unwrap() as u32
     }
     fn fixture() -> Value {
-        serde_json::from_str(include_str!("../../tests/title-vectors.json")).unwrap()
+        serde_json::from_str(vectors!("title-vectors.json")).unwrap()
     }
     fn pattern(seed: u32, length: usize) -> Vec<u8> {
         (0..length / 4)
@@ -1048,6 +1048,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn all_title_routines_match_native_ram_input_edges_calls_and_resource_transactions() {
         let data = fixture();
@@ -1115,6 +1116,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn malformed_states_and_strict_dependencies_preserve_real_stop_positions() {
         let data = fixture();

@@ -324,8 +324,7 @@ mod tests {
             .read_to_end(&mut rom)
             .unwrap();
         let payload = crate::catalog::extract_garden(&rom).unwrap().bytes;
-        let f: Value =
-            serde_json::from_str(include_str!("../../tests/garden-home-vectors.json")).unwrap();
+        let f: Value = serde_json::from_str(vectors!("garden-home-vectors.json")).unwrap();
         for c in f["cases"].as_array().unwrap() {
             let seed = c["seed"].as_u64().unwrap() as u8;
             let mut ew = vec![0; 0x40000];

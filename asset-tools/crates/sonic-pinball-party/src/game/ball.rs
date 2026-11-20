@@ -313,10 +313,10 @@ mod tests {
         std::array::from_fn(|index| values[index].as_u64().unwrap().try_into().unwrap())
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn integrator_matches_192_original_rom_instruction_cases() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/ball-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("ball-vectors.json")).unwrap();
         let cases = vectors["integrator"].as_array().unwrap();
         assert_eq!(cases.len(), 192);
         for (index, case) in cases.iter().enumerate() {
@@ -333,10 +333,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn initialize_and_trail_match_24_original_rom_instruction_cases() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/ball-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("ball-vectors.json")).unwrap();
         let cases = vectors["initialize"].as_array().unwrap();
         assert_eq!(cases.len(), 24);
         for (index, case) in cases.iter().enumerate() {
@@ -384,10 +384,10 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(spp_vectors), ignore = "needs local Pinball Party vectors")]
     #[test]
     fn projection_matches_96_original_rom_instruction_cases() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/ball-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("ball-vectors.json")).unwrap();
         let cases = vectors["projection"].as_array().unwrap();
         assert_eq!(cases.len(), 96);
         for (index, case) in cases.iter().enumerate() {
@@ -439,8 +439,7 @@ mod tests {
         )
         .unwrap();
         let table = TrigTable::from_rom(&rom).unwrap();
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../tests/ball-vectors.json")).unwrap();
+        let vectors: Value = serde_json::from_str(vectors!("ball-vectors.json")).unwrap();
         let cases = vectors["velocity_cap"].as_array().unwrap();
         assert_eq!(cases.len(), 32);
         for (index, case) in cases.iter().enumerate() {
