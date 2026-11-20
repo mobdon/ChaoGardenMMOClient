@@ -57,8 +57,11 @@ fn entry(m: &mut Mem, path: u32) -> Option<i32> {
         return None;
     }
     let r = DVD.with_borrow_mut(|d| d.as_mut()?.entry(&p));
+    if r.is_some() {
+        crate::pad::opened(&p);
+    }
     if std::env::var_os("SA2_TRACE_DVD").is_some() {
-        eprintln!("dvd: {p:?} -> {r:?}");
+        eprintln!("dvd: {p:?} -> {r:?} at frame {}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
     }
     r
 }
