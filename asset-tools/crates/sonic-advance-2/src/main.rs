@@ -47,6 +47,17 @@ fn materialize(rom: &VerifiedRom<'_>, item: &catalog::Resource) -> Result<Vec<u8
     })
 }
 
+fn write_map_preview(path: &Path, output: &graphics::RenderedMap) -> Result<()> {
+    local_output(path)?;
+    let mut pam = format!(
+        "P7\nWIDTH {}\nHEIGHT {}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n",
+        output.width, output.height
+    )
+    .into_bytes();
+    pam.extend_from_slice(&output.rgba);
+    write_new(path, &pam)
+}
+
 fn run(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("catalog") if (2..=3).contains(&args.len()) => {
@@ -83,11 +94,15 @@ fn run(args: &[String]) -> Result<()> {
                 width_tiles: width, height_tiles: height, depth: graphics::TileDepth::FourBpp,
                 transparent_zero: true, max_pixels: graphics::MAX_PIXELS,
             })?;
-            let mut pam = format!("P7\nWIDTH {}\nHEIGHT {}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", output.width, output.height).into_bytes();
-            pam.extend_from_slice(&output.rgba);
-            local_output(Path::new(&args[7]))?;
-            write_new(Path::new(&args[7]), &pam)?;
+            write_map_preview(Path::new(&args[7]), &output)?;
             println!("Rendered {}x{} RGBA map locally", output.width, output.height);
+        }
+        Some("garden-background") if args.len() == 4 => {
+            let alternate = match args[2].as_str() { "0" => false, "1" => true, _ => return Err("Garden map variant must be 0 or 1".into()) };
+            let bytes = read_limited(Path::new(&args[1]), sonic_advance_2_assets::ROM_LEN)?;
+            let image = sonic_advance_2_assets::native_garden_background::render(&VerifiedRom::parse(&bytes)?, alternate)?;
+            write_map_preview(Path::new(&args[3]), &image)?;
+            println!("Rendered 240x160 native Garden background locally");
         }
         Some("audio-preview") if args.len()==5 => {
             let bytes = read_limited(Path::new(&args[1]), sonic_advance_2_assets::ROM_LEN)?;
@@ -125,7 +140,7 @@ fn run(args: &[String]) -> Result<()> {
             let report = transfer::TransferPayload::parse(command, &bytes)?.report();
             println!("{}", String::from_utf8(json(&report)?)?);
         }
-        _ => return Err("Usage: a2ne-assets catalog ROM [METADATA.json] | extract ROM ID .local/OUTPUT_DIR | render-map ROM MAP_ID TILES_ID PALETTE_ID WIDTH_TILES HEIGHT_TILES .local/OUTPUT.pam | save FLASH.sav | campaign-save FLASH.sav | audio-preview ROM CUE FRAMES .local/OUTPUT.wav | transfer HEX_COMMAND PAYLOAD_FILE".into()),
+        _ => return Err("Usage: a2ne-assets catalog ROM [METADATA.json] | extract ROM ID .local/OUTPUT_DIR | render-map ROM MAP_ID TILES_ID PALETTE_ID WIDTH_TILES HEIGHT_TILES .local/OUTPUT.pam | garden-background ROM 0|1 .local/OUTPUT.pam | save FLASH.sav | campaign-save FLASH.sav | audio-preview ROM CUE FRAMES .local/OUTPUT.wav | transfer HEX_COMMAND PAYLOAD_FILE".into()),
     }
     Ok(())
 }
