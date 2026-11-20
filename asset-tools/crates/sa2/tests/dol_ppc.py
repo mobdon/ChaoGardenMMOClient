@@ -44,6 +44,7 @@ import gekko_tables  # noqa: E402
 MAIN_DOL_SHA1 = "e4c50f32242a3cd36cdc8ae776661601a52130a2"
 SDA2_BASE, SDA_BASE, STACK_TOP = 0x803B6520, 0x803B52C0, 0x803C1450
 RETURN = 0x817FFF00  # sentinel return address (mapped, holds a blr)
+RESUME = RETURN + 8  # where a plain callee of a paired function returns
 
 
 def f32(x):
@@ -142,7 +143,7 @@ class Dol:
 DEFAULT_PAIRED = {
     0x800ECFF4: 'PSMTXIdentity', 0x800ED08C: 'PSMTXCopy', 0x800ED368: 'PSMTXConcat',
     0x800ED434: 'PSMTXTranspose', 0x800ED484: 'PSMTXInverse', 0x800ED5EC: 'PSMTXRotTrig',
-    0x800ED798: 'PSMTXTrans', 0x800ED7CC: 'PSMTXScale', 0x800EDAB8: 'PSMTXMultVec',
+    0x800ED694: 'PSMTXRotAxisRad', 0x800ED798: 'PSMTXTrans', 0x800ED7CC: 'PSMTXScale', 0x800EDAB8: 'PSMTXMultVec',
     0x800EDB98: 'PSMTXMultVecSR', 0x800EDDF0: 'PSVECNormalize', 0x800EDE34: 'PSVECCrossProduct',
     0x80114EE8: 'njAddVector', 0x801153B8: '__nj_unit_matrix', 0x80115974: 'njSubVector',
     0x80115C08: '__internal_njTranslate', 0x80115DF4: 'fn_80115DF4', 0x80115F00: 'fn_80115F00',
@@ -160,6 +161,7 @@ class Machine:
         for a, o, z in dol.sections:
             u.mem_write(a, dol.data[o:o + z])
         self.put(RETURN, 'I', 0x4e800020)
+        self.put(RESUME, 'I', 0x4e800020)
         u.reg_write(R.UC_PPC_REG_MSR, u.reg_read(R.UC_PPC_REG_MSR) | 0x2000)
         self.ps1 = {}
         self.last_ps0 = {}
@@ -167,6 +169,8 @@ class Machine:
         self.stubs = {}
         for addr in self.paired:
             u.hook_add(UC_HOOK_CODE, self._enter_paired, begin=addr, end=addr)
+        self.suspended = []
+        u.hook_add(UC_HOOK_CODE, self._resume_paired, begin=RESUME, end=RESUME)
         # Gekko's estimates wherever Unicorn itself runs frsqrte or fres,
         # when the local tables are present.
         self.frsqrte_sites = []
@@ -233,8 +237,27 @@ class Machine:
     # --- paired-single interpreter ----------------------------------------
     def _enter_paired(self, uc, pc, size, _):
         lr = uc.reg_read(R.UC_PPC_REG_LR)
-        Interp(self).run(pc, lr)
-        uc.reg_write(R.UC_PPC_REG_PC, lr)
+        self._drive(Interp(self, lr), pc)
+
+    def _resume_paired(self, uc, pc, size, _):
+        it, nxt = self.suspended.pop()
+        it.load()
+        it.lr = nxt  # as after the callee's blr
+        self._drive(it, nxt)
+
+    def _drive(self, it, pc):
+        """Interpret until the paired function returns, or until it calls a
+        plain function: Unicorn runs that one and comes back via RESUME."""
+        it.run(pc)
+        u = self.u
+        if it.pending is None:
+            u.reg_write(R.UC_PPC_REG_PC, it.ret)
+            return
+        tgt, nxt = it.pending
+        it.pending = None
+        self.suspended.append((it, nxt))
+        u.reg_write(R.UC_PPC_REG_LR, RESUME)
+        u.reg_write(R.UC_PPC_REG_PC, tgt)
 
 
 def sext(v, bits):
@@ -244,8 +267,17 @@ def sext(v, bits):
 class Interp:
     """Interprets one paired-single function (and paired callees) to return."""
 
-    def __init__(self, m):
+    def __init__(self, m, ret):
         self.m = m
+        self.ret = ret
+        self.stack = [ret]
+        self.pending = None
+        self.load()
+
+    def load(self):
+        """Registers from Unicorn; a lane-1 value survives where lane 0 is
+        unchanged since it was last written out."""
+        m = self.m
         u = m.u
         self.r = [m.gpr(i) for i in range(32)]
         self.cr = u.reg_read(R.UC_PPC_REG_CR)
@@ -257,8 +289,8 @@ class Interp:
             same = i in m.last_ps0 and struct.pack('>d', m.last_ps0[i]) == struct.pack('>d', self.p0[i])
             self.p1.append(m.ps1[i] if same and i in m.ps1 else self.p0[i])
 
-    def run(self, pc, ret):
-        stack = [ret]
+    def run(self, pc):
+        stack = self.stack
         while True:
             ins = self.m.get(pc, 'I')
             nxt = self.step(pc, ins, stack)
@@ -361,7 +393,9 @@ class Interp:
             tgt = (pc + li) & 0xffffffff if not ins & 2 else li & 0xffffffff
             if ins & 1:
                 if tgt not in m.paired:
-                    raise NotImplementedError(f'paired function at {pc:#x} calls {tgt:#x}')
+                    # A plain callee (MSL sinf, say): hand it to Unicorn.
+                    self.pending = (tgt, nxt)
+                    return None
                 self.lr = nxt
                 stack.append(nxt)
             nxt = tgt
