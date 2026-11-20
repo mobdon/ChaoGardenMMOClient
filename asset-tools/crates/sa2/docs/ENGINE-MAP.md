@@ -511,6 +511,74 @@ So, from the bytes:
   char/row pairing. main.dol has no name string for those rows; the four
   walker loaders all pass "EggWalker".
 
+## 8a. Chao Walker selection path
+
+Traced with a store scan over main.dol and all 77 GC RELs that have
+reconstruction symbols, including indexed stores (`add rX, G, i` then
+`stb …, 0x55(rX)`). advertiseD.rel (SHA-1
+`1764d34512136037e914daa688b0fc2c605398fe`) and titleD.rel
+(`68ff4296329274c250e5dab409927012bbe3774b`) match the GSNE8P build list.
+REL addresses are given as section offsets (`fn_91_XXXX` is advertiseD .text,
+`fn_1_XXXX` is titleD .text).
+
+**Writers of the per-player bytes G+0x55 / G+0x56** (0x801CC1BD / 0x801CC1BE):
+none in main.dol. Only two modules write them:
+
+- advertiseD `fn_91_201D8(player r3, selection r4)` (size 0x1C8): stores
+  `selection & 0x7F` in its own table (.bss+0x63790 + 0x160 + player), then:
+  - selection 0..7: `fn_8001DDC0(player, selection)` (character word
+    0x803AD828 / 0x803AD82C) and G+0x55+player = 0; G+0x53+player = 1 when a
+    menu table entry (+0x45) is 1.
+  - selection 8..16 through the jump table at advertiseD .data+0x9C530, each
+    setting G+0x55+player = **1**:
+
+    | Selection | Character | Loader row (section 8) |
+    | ---: | ---: | --- |
+    | 8 | 0 | 0x800871C4, row 8 |
+    | 12 | 1 | 0x80086BA4, row 0xC |
+    | **13** | **6** | **0x800B58D4, row 0xD** |
+    | **14** | **7** | **0x800B56E8, row 0xE** |
+    | 15 | 4 | 0x800A1C9C, row 0xF |
+    | 16 | 5 | 0x800A1AA8, row 0x10 |
+    | 9, 10, 11 | — | no write (returns) |
+
+  Called by advertiseD `fn_91_1DFAC` (+0x1BB0, +0x1BBC) and `fn_91_203F4`
+  (+0x1C0, +0x1CC, +0x534, +0x548): two calls each, one per player.
+- titleD `fn_1_2620` (size 0x1840): the title screen's attract demos
+  ("2P 3POINTS MATCH" / "2P 1POINT MATCH" strings in titleD .data). It sets
+  G+0x1E = 1 or 2, the next sequence state G+0x84 = 4, and G+0x55/G+0x56 = 0,
+  or = 1 for both players when the chosen demo row's first word is 6, 0 or 4
+  (.data+0x1360, 16-byte rows; G+0x53 is cleared alongside).
+
+**Writers of G+0x1E** (0x801CC186): main.dol only clears it (`fn_80064988`
++0xE0, which also clears G+0x00, G+0x20 and sets G+0x80; 15 callers in
+fn_80064CD8). titleD `fn_1_2620` / `fn_1_4674` / `fn_1_4AB0` and advertiseD
+write 0, 1 or 2. Non-zero values are written in advertiseD `fn_91_0`,
+`fn_91_1DFAC` (+0x17E0 = 2, +0x19C8 = 1, +0x1D68 = 1, +0x1D7C = 2),
+`fn_91_203F4` (+0x284 = 1, +0x298 = 2, +0x588 = 2), `fn_91_24B00` (+0x1540 = 1),
+`fn_91_2D0D0` (+0x57C = 1), `fn_91_2D8D0` (+0x380 = 1), `fn_91_3024C` (+0x1B0 =
+1), `fn_91_30434` (+0xB8 = 2). The functions that call `fn_91_201D8` for both
+players are among them. (The value at each site is the `li` just before
+the store; a site reached from two branches may store either.)
+
+**What it means for a one-player Iron Gate start:**
+
+- main.dol's `fn_8001DEA8` loads player 1 whenever G+0x1E ≠ 0, and the
+  walker loaders 0x800B5AC0 / 0x800B5D2C take the alternate row only when
+  G+0x1E ≠ 0 **and** G+0x55+player ≠ 0.
+- The only code that sets G+0x55+player is the two-player character select
+  (advertiseD `fn_91_201D8`, selections 13/14) and the title-screen 2P demos.
+  Every path found that sets it also sets G+0x1E to 1 or 2.
+- So **the game never starts a one-player stage with a walker row**: with
+  G+0x1E = 0 (one player) the loader ignores G+0x55. For the game itself to
+  load row 0xD/0xE in Iron Gate it needs G+0x1E ≠ 0, which also loads a second
+  player through `fn_8001DEA8` (with 0x803AD82C as its character).
+- **Unresolved:** what G+0x1E = 1 versus 2 select (both values appear in the
+  2P menus and demos), and the menu names of the advertiseD functions above
+  (advertiseD's strings were not mapped). Whether any other module writes
+  these bytes through a pointer the scan cannot follow (a store through a
+  register loaded from memory) is not excluded.
+
 ## 9. Unresolved, for the next milestones
 
 - fn_8012297C (render-state selector in the display pass) and G+0x3D values.
@@ -521,5 +589,5 @@ So, from the bytes:
 - Which camera mode routine Iron Gate uses by default, and where the
   per-viewport camera block at `*0x803ADB04` comes from.
 - Draw callbacks behind 0x803AE048 and `[0x803AD6B0]+0xC`.
-- Where G+0x1E and the G+0x55 bytes are set (menu/2P setup was not traced).
+- What G+0x1E = 1 versus 2 means (section 8a).
 - Buffers 0x803ADA50..0x803ADA5C (fn_80071F5C, fn_80071FA8, fn_80072030).
