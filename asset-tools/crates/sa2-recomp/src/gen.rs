@@ -7,16 +7,56 @@
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
+use std::collections::BTreeMap;
+
+/// A relocation applied to one instruction (REL code). `target` is a Rust
+/// expression for the u32 address; `kind` is the R_PPC number.
+#[derive(Clone, Debug)]
+pub struct Reloc {
+    pub kind: u8,
+    pub target: String,
+}
+
 /// What the translator needs to know about the function being emitted.
+#[derive(Default)]
 pub struct Ctx {
     pub start: u32,
     pub end: u32,
+    /// Prefix of the emitted Rust name (`f_{prefix}{start:08X}`).
+    pub prefix: String,
+    /// REL code: addresses are section offsets and this expression gives the
+    /// section's runtime address. None for main.dol (absolute addresses).
+    pub base: Option<String>,
+    /// Relocations by instruction address (REL code only).
+    pub relocs: BTreeMap<u32, Reloc>,
 }
 
 impl Ctx {
     fn local(&self, t: u32) -> bool {
         (self.start..self.end).contains(&t)
     }
+    /// Runtime address of `t` in this function's address space.
+    fn abs(&self, t: u32) -> String {
+        if self.base.is_some() {
+            format!("base.wrapping_add({t:#x})")
+        } else {
+            format!("{t:#010x}")
+        }
+    }
+    pub fn ident(&self) -> String {
+        format!("f_{}{:08X}", self.prefix, self.start)
+    }
+}
+
+/// The 16-bit immediate a relocation puts in an instruction, as a u32 expression.
+fn reloc_imm(r: &Reloc) -> Option<String> {
+    let t = &r.target;
+    Some(match r.kind {
+        3 | 4 => format!("({t} & 0xFFFF)"),
+        5 => format!("({t} >> 16)"),
+        6 => format!("({t}.wrapping_add(0x8000) >> 16)"),
+        _ => return None,
+    })
 }
 
 pub struct Ins {
@@ -74,7 +114,7 @@ fn goto(ctx: &Ctx, t: u32, targets: &mut Vec<u32>) -> String {
         targets.push(t);
         format!("pc = {t:#010x}; continue;")
     } else {
-        format!("rt::call(c, m, {t:#010x}); return;")
+        format!("rt::call(c, m, {}); return;", ctx.abs(t))
     }
 }
 
@@ -100,6 +140,38 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
     let (fa, fb, fc) = (format!("c.f[{a}].ps0"), format!("c.f[{b}].ps0"), format!("c.f[{cr}].ps0"));
     let fill = |v: &str| format!("{{ let v = rs({v}); c.f[{d}] = Fpr {{ ps0: v, ps1: v }}; }}");
     let set0 = |v: &str| format!("c.f[{d}].ps0 = {v};");
+    let next_abs = ctx.abs(next);
+    let reloc = ctx.relocs.get(&pc);
+    let imm = reloc.and_then(reloc_imm);
+    let ra0 = if a == 0 { "0u32".to_string() } else { format!("c.r[{a}]") };
+    // D-form effective address, with the relocated displacement when there is one.
+    let d_ea = |disp: i32| match &imm {
+        Some(v) => format!("{ra0}.wrapping_add({v} as u16 as i16 as i32 as u32)"),
+        None => ea_d(a, disp),
+    };
+    if let Some(r) = reloc {
+        let code = match (op, r.kind, &imm) {
+            (18, 10, _) => {
+                ends = w & 1 == 0;
+                let link = if w & 1 != 0 { format!("c.lr = {next_abs}; ") } else { String::new() };
+                let ret = if ends { " return;" } else { "" };
+                // Bound first: the target may read c.rt, and rt::call borrows c mutably.
+                Some(format!("{{ let t = {}; {link}rt::call(c, m, t);{ret} }}", r.target))
+            }
+            (14, _, Some(v)) => Some(format!("c.r[{d}] = {ra0}.wrapping_add({v} as u16 as i16 as i32 as u32);")),
+            (15, _, Some(v)) => Some(format!("c.r[{d}] = {ra0}.wrapping_add({v} << 16);")),
+            (24, _, Some(v)) => Some(format!("c.r[{a}] = c.r[{d}] | {v};")),
+            (25, _, Some(v)) => Some(format!("c.r[{a}] = c.r[{d}] | ({v} << 16);")),
+            (32..=55, _, Some(_)) => None, // the D-form arms below use d_ea
+            _ => {
+                let code = format!("panic!(\"sa2-recomp: relocation type {} on {w:#010x} at {pc:#x}\");", r.kind);
+                return Ins { code, targets, ends: true, unknown: true };
+            }
+        };
+        if let Some(code) = code {
+            return Ins { code, targets, ends, unknown: false };
+        }
+    }
 
     let code: String = match op {
         3 => String::new(), // twi: conditional traps are debug checks
@@ -179,7 +251,8 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
             let t = if w & 2 != 0 { bd as u32 } else { pc.wrapping_add(bd as u32) };
             let (pre, cond) = bc_cond(d, a);
             if w & 1 != 0 {
-                format!("{pre}if {cond} {{ c.lr = {next:#010x}; rt::call(c, m, {t:#010x}); }}")
+                let ta = if w & 2 != 0 { format!("{t:#010x}") } else { ctx.abs(t) };
+                format!("{pre}if {cond} {{ c.lr = {next_abs}; rt::call(c, m, {ta}); }}")
             } else {
                 if cond == "true" {
                     ends = true;
@@ -192,7 +265,8 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
             let li = ((w & 0x03FF_FFFC) << 6) as i32 >> 6;
             let t = if w & 2 != 0 { li as u32 } else { pc.wrapping_add(li as u32) };
             if w & 1 != 0 {
-                format!("c.lr = {next:#010x}; rt::call(c, m, {t:#010x});")
+                let ta = if w & 2 != 0 { format!("{t:#010x}") } else { ctx.abs(t) };
+                format!("c.lr = {next_abs}; rt::call(c, m, {ta});")
             } else {
                 ends = true;
                 goto(ctx, t, &mut targets)
@@ -205,7 +279,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                 16 => {
                     let (pre, cond) = bc_cond(d, a);
                     if w & 1 != 0 {
-                        format!("{pre}if {cond} {{ let t = c.lr; c.lr = {next:#010x}; rt::call(c, m, t); }}")
+                        format!("{pre}if {cond} {{ let t = c.lr; c.lr = {next_abs}; rt::call(c, m, t); }}")
                     } else {
                         if cond == "true" {
                             ends = true;
@@ -230,13 +304,14 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                     let (pre, cond) = bc_cond(d | 4, a);
                     let _ = pre;
                     if w & 1 != 0 {
-                        format!("if {cond} {{ let t = c.ctr; c.lr = {next:#010x}; rt::call(c, m, t); }}")
+                        format!("if {cond} {{ let t = c.ctr; c.lr = {next_abs}; rt::call(c, m, t); }}")
                     } else {
                         if cond == "true" {
                             ends = true;
                         }
                         // Jump tables land on local blocks; anything else is a tail call.
-                        format!("if {cond} {{ pc = c.ctr; continue; }}")
+                        let off = if ctx.base.is_some() { ".wrapping_sub(base)" } else { "" };
+                        format!("if {cond} {{ pc = c.ctr{off}; continue; }}")
                     }
                 }
                 _ => {
@@ -380,7 +455,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
             }
         }
         32..=47 => {
-            let ea = ea_d(a, si);
+            let ea = d_ea(si);
             let upd = op & 1 == 1 && op != 47 && op != 46;
             let up = if upd { format!(" c.r[{a}] = ea;") } else { String::new() };
             let body = match op {
@@ -397,7 +472,7 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
             format!("{{ let ea = {ea}; {body}{up} }}")
         }
         48..=55 => {
-            let ea = ea_d(a, si);
+            let ea = d_ea(si);
             let up = if op & 1 == 1 { format!(" c.r[{a}] = ea;") } else { String::new() };
             let body = match op {
                 48 | 49 => format!("let v = m.rf32(ea); c.f[{d}] = Fpr {{ ps0: v, ps1: v }};"),
@@ -490,6 +565,69 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
     Ins { code, targets, ends, unknown }
 }
 
+/// Function ranges `(start, end, name)` from symbol starts (`addr -> (name,
+/// size)`, size 0 = up to the next start) clipped to `text` (`[lo, hi)`
+/// ranges). Every direct branch target that leaves its function, and every
+/// `bl` target, also becomes a function start: routines with several entry
+/// points (register save/restore ladders) have a symbol only for the first.
+/// `calls` adds more targets (relocated calls); `skip` marks instructions whose
+/// words are relocated (their branch offset is not meaningful).
+/// Returns the functions and how many starts were added.
+pub fn layout(
+    mut starts: BTreeMap<u32, (String, u32)>,
+    text: &[(u32, u32)],
+    word: impl Fn(u32) -> Option<u32>,
+    calls: &BTreeSet<u32>,
+    skip: impl Fn(u32) -> bool,
+) -> (Vec<(u32, u32, String)>, usize) {
+    let sec = |a: u32| text.iter().find(|(lo, hi)| (*lo..*hi).contains(&a)).copied();
+    starts.retain(|&a, _| sec(a).is_some());
+    let mut added = 0;
+    for &t in calls {
+        if sec(t).is_some() && !starts.contains_key(&t) {
+            starts.insert(t, (format!("fn_{t:08X}"), 0));
+            added += 1;
+        }
+    }
+    loop {
+        let funcs = ranges(&starts, &sec);
+        let mut new = BTreeSet::new();
+        for (a, end, _) in &funcs {
+            for pc in (*a..*end).step_by(4) {
+                let w = match word(pc) {
+                    Some(w) if w >> 26 == 18 && w & 2 == 0 && !skip(pc) => w,
+                    _ => continue,
+                };
+                let li = ((w & 0x03FF_FFFC) << 6) as i32 >> 6;
+                let t = pc.wrapping_add(li as u32);
+                let leaves = !(*a..*end).contains(&t);
+                if (w & 1 == 1 || leaves) && sec(t).is_some() && !starts.contains_key(&t) {
+                    new.insert(t);
+                }
+            }
+        }
+        if new.is_empty() {
+            return (funcs, added);
+        }
+        added += new.len();
+        for t in new {
+            starts.insert(t, (format!("fn_{t:08X}"), 0));
+        }
+    }
+}
+
+fn ranges(starts: &BTreeMap<u32, (String, u32)>, sec: &impl Fn(u32) -> Option<(u32, u32)>) -> Vec<(u32, u32, String)> {
+    let addrs: Vec<u32> = starts.keys().copied().collect();
+    let mut out = Vec::new();
+    for (i, (&a, (name, size))) in starts.iter().enumerate() {
+        let Some((_, sec_end)) = sec(a) else { continue };
+        let next = addrs.get(i + 1).copied().unwrap_or(sec_end).min(sec_end);
+        let end = if *size > 0 { a.saturating_add(*size).min(sec_end) } else { next };
+        out.push((a, end, name.clone()));
+    }
+    out
+}
+
 /// Emit one function. `words` are its instructions starting at `ctx.start`;
 /// `extra` holds more block starts (jump table entries found in data).
 pub fn function(name: &str, ctx: &Ctx, words: &[u32], extra: &BTreeSet<u32>) -> (String, usize) {
@@ -510,7 +648,10 @@ pub fn function(name: &str, ctx: &Ctx, words: &[u32], extra: &BTreeSet<u32>) -> 
     let unknown = ins.iter().filter(|x| x.unknown).count();
     let mut s = String::new();
     let _ = writeln!(s, "/// {name}");
-    let _ = writeln!(s, "pub fn f_{:08X}(c: &mut Cpu, m: &mut Mem) {{", ctx.start);
+    let _ = writeln!(s, "pub fn {}(c: &mut Cpu, m: &mut Mem) {{", ctx.ident());
+    if let Some(b) = &ctx.base {
+        let _ = writeln!(s, "    let base: u32 = {b};");
+    }
     let _ = writeln!(s, "    let mut pc: u32 = {:#010x};", ctx.start);
     let _ = writeln!(s, "    loop {{\n        match pc {{");
     let mut open = false;
@@ -535,7 +676,8 @@ pub fn function(name: &str, ctx: &Ctx, words: &[u32], extra: &BTreeSet<u32>) -> 
     if open {
         let _ = writeln!(s, "                pc = {:#010x};\n            }}", ctx.end);
     }
-    let _ = writeln!(s, "            _ => {{ rt::call(c, m, pc); return; }}");
+    let back = if ctx.base.is_some() { "base.wrapping_add(pc)" } else { "pc" };
+    let _ = writeln!(s, "            _ => {{ rt::call(c, m, {back}); return; }}");
     let _ = writeln!(s, "        }}\n    }}\n}}");
     (s, unknown)
 }

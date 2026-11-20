@@ -57,15 +57,67 @@ pub struct Runtime {
     pub generated: fn(u32) -> Option<Func>,
     /// Loaded REL modules: (runtime .text start, end, dispatch by offset).
     pub rels: Vec<(u32, u32, fn(u32) -> Option<Func>)>,
+    /// Recompiled REL code: (module id, section) -> dispatch by section offset.
+    pub modules: fn(u32, u32) -> Option<fn(u32) -> Option<Func>>,
+    /// Runtime address of each linked module's sections: (id, section) -> addr.
+    pub bases: HashMap<(u32, u32), u32>,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self { overrides: HashMap::new(), generated: |_| None, rels: Vec::new() }
+        Self {
+            overrides: HashMap::new(),
+            generated: |_| None,
+            rels: Vec::new(),
+            modules: |_, _| None,
+            bases: HashMap::new(),
+        }
     }
 }
 
 impl Runtime {
+    /// Address of a linked module's section (recompiled REL code reads its
+    /// own sections through this).
+    pub fn base(&self, id: u32, sec: u32) -> u32 {
+        match self.bases.get(&(id, sec)) {
+            Some(&a) => a,
+            None => panic!("sa2-recomp: module {id} section {sec} is not linked"),
+        }
+    }
+
+    /// Register the module whose OSModuleInfo is at `info`, after the game's
+    /// OSLink ran (section offsets are then runtime addresses, .bss included).
+    pub fn link(&mut self, m: &Mem, info: u32) {
+        let id = m.r32(info);
+        let num = m.r32(info + 0xC).min(64);
+        let table = m.r32(info + 0x10);
+        self.unlink_id(id);
+        for i in 0..num {
+            let (off, size) = (m.r32(table + 8 * i), m.r32(table + 8 * i + 4));
+            let addr = off & !1;
+            if addr == 0 {
+                continue;
+            }
+            self.bases.insert((id, i), addr);
+            if off & 1 != 0 && size > 0 {
+                if let Some(d) = (self.modules)(id, i) {
+                    self.rels.push((addr, addr.wrapping_add(size), d));
+                }
+            }
+        }
+    }
+
+    /// Forget the module at `info` (call before the game's OSUnlink).
+    pub fn unlink(&mut self, m: &Mem, info: u32) {
+        self.unlink_id(m.r32(info));
+    }
+
+    fn unlink_id(&mut self, id: u32) {
+        let gone: Vec<u32> = self.bases.iter().filter(|((i, _), _)| *i == id).map(|(_, a)| *a).collect();
+        self.rels.retain(|(s, _, _)| !gone.contains(s));
+        self.bases.retain(|(i, _), _| *i != id);
+    }
+
     pub fn set_override(&mut self, addr: u32, f: Func) {
         self.overrides.insert(addr, f);
     }
