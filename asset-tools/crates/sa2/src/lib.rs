@@ -13,6 +13,7 @@ pub mod city_replay;
 pub mod city_rider;
 pub mod city_stage;
 pub mod collision;
+pub mod color_blend;
 mod collision_record;
 pub mod damage_ring;
 pub mod damage_ring_stage;
