@@ -24,6 +24,8 @@ pub struct ActGlobals {
     /// (held).
     pub pressed: [i8; 8],
     pub held: [i8; 8],
+    /// The action button bytes at r13-0x7A3C.
+    pub action: [i8; 8],
     /// Whether the character motion table's entry 0x56 is loaded
     /// (0x801E5D28 + 0x2B4).
     pub motion_56: bool,
@@ -44,6 +46,10 @@ pub trait ActSteps {
     /// fn_800542A0(task work, motion work, player work): let go of the
     /// held object.
     fn release_hold(&mut self, t: &mut Work, m: &mut Work, p: &mut Work);
+    /// The action-button handlers not ported here (fn_80053490,
+    /// fn_800530B0, fn_80053570, fn_80053520, fn_800534F4, fn_800535C0,
+    /// fn_800AC850, fn_800AD208, fn_800ACF38, fn_800ACB9C), by address.
+    fn button_action(&mut self, addr: u32, t: &mut Work, m: &mut Work, p: &mut Work);
 }
 
 /// fn_8004691C(motion work, player work): zero both speeds.
@@ -568,5 +574,67 @@ pub fn leave_ground(
     }
     t.set_b(tw::MODE, 0xA);
     p.set_h(pw::ACTION, 0xF);
+    true
+}
+
+/// fn_800AD6E0(task work, motion work, player work): on the action button,
+/// take the queued request matching the current one (+0xD), or the first,
+/// into +0xE and run its handler. Request 0x3D starts the walker's
+/// lock-on stance (mode 0x3D, action 0x80) with a rumble and its sounds.
+/// Returns whether a request ran.
+pub fn action_button(
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    g: &ActGlobals,
+    s: &mut dyn ActSteps,
+    eng: &mut dyn Engine,
+) -> bool {
+    let pnum = p.b(pw::PNUM);
+    if g.action[pnum as usize] == 0 {
+        return false;
+    }
+    let n = p.b(0xC) as i32;
+    if n == 0 {
+        return false;
+    }
+    let want = p.b(0xD);
+    let mut i = 0;
+    if n > 0 {
+        while i < n && p.b(4 + i as usize) != want {
+            i += 1;
+        }
+    }
+    let req = if n == i { p.b(4) } else { want };
+    p.set_b(0xE, req);
+    let handler = match (req as i32).wrapping_sub(0xA) as u32 {
+        0x0 => 0x8005_3490,
+        0x20 => 0x8005_30B0,
+        0x23 => 0x8005_3570,
+        0x24 => 0x8005_3520,
+        0x26 => 0x8005_34F4,
+        0x28 => 0x8005_35C0,
+        0x33 => {
+            set_mode(t, p, 0x3D, 0x80);
+            p.set_h(0x17C, 0);
+            t.or_h(tw::FLAG, 0x400);
+            zero_speeds(m, p);
+            eng.call(EngineCall::Rumble {
+                addr: 0x8002_F9D4,
+                args: [pnum as i32, 3, 0x1E, 0x20],
+            });
+            eng.call(se_call(0x200A));
+            if p.ub(3) == 7 {
+                eng.call(se_at(0x300E, t.v3(tw::POS)));
+            }
+            return true;
+        }
+        0x34 => 0x800A_C850,
+        0x35 => 0x800A_D208,
+        0x36 => 0x800A_CF38,
+        0x37 => 0x800A_CB9C,
+        _ => return false,
+    };
+    s.button_action(handler, t, m, p);
     true
 }

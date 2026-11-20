@@ -1,6 +1,6 @@
 //! Compare `walker_act` with main.dol (tests/walker_act_ppc.py) on whole
 //! native work areas.
-use sa2_asset_tools::walker_act::{leave_ground, stop_check, walker_jump};
+use sa2_asset_tools::walker_act::{action_button, leave_ground, stop_check, walker_jump};
 use sa2_asset_tools::walker_exec::PlayerHistory;
 use sa2_asset_tools::{
     native_work::Work,
@@ -52,6 +52,9 @@ impl ActSteps for Log {
     fn release_hold(&mut self, _: &mut Work, _: &mut Work, _: &mut Work) {
         self.0.push(json!(["release"]));
     }
+    fn button_action(&mut self, addr: u32, _: &mut Work, _: &mut Work, _: &mut Work) {
+        self.0.push(json!(["btn", addr]));
+    }
 }
 
 fn globals(g: &Value) -> ActGlobals {
@@ -67,6 +70,7 @@ fn globals(g: &Value) -> ActGlobals {
         gs_b49: g["b49"].as_i64().unwrap() as i8,
         pressed: arr("pressed"),
         held: arr("held"),
+        action: arr("act"),
         motion_56: g["m56"].as_bool().unwrap(),
         gs: hex(&g["gs"]),
         gravity: if g["grav"].is_array() {
@@ -82,6 +86,7 @@ fn calls_log(calls: Vec<EngineCall>, log: &mut Vec<Value>) {
         log.push(match c {
             EngineCall::PlayVoice { id } => json!(["voice", id]),
             EngineCall::Deferred { addr, arg } => json!(["deferred", addr, arg]),
+            EngineCall::Rumble { addr, args } => json!(["rumble", addr, args]),
             EngineCall::Sound {
                 addr,
                 id,
@@ -136,6 +141,9 @@ fn walker_act_matches_main_dol() {
                 walker_jump(&mut t, &mut m, &mut p, ride, act, &mut calls);
                 None
             }
+            "action" => Some(action_button(
+                &mut t, &mut m, &mut p, &g, &mut steps, &mut calls,
+            )),
             "stop" => Some(stop_check(&mut t, &mut m, &mut p, &g, &mut steps)),
             "leave" => {
                 let h = &case["g"]["hist"];
