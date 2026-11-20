@@ -18,8 +18,13 @@ from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_WRITE
 from unicorn import ppc_const as R
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gekko_float import install_frsqrte  # noqa: E402
+# Gekko frsqrte (local only: .local/gekko holds Dolphin's table and helper, kept out of git).
+# Without it, Unicorn and the Rust port both use the exact estimate.
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / ".local" / "gekko"))
+try:
+    from gekko_float import install_frsqrte  # noqa: E402
+except (ImportError, OSError):
+    install_frsqrte = None
 
 exe, module = sys.argv[1:]
 data = Path(module).read_bytes()
@@ -237,7 +242,9 @@ def write_hook(u, access, addr, size, value, _):
                        offset=offset, size=size, value=value & ((1 << (8 * size)) - 1)))
 
 
-install_frsqrte(cpu, CODE + 0x40E4)  # Gekko estimate in the stage square root
+if install_frsqrte:  # Gekko estimate in the stage square root
+
+    install_frsqrte(cpu, CODE + 0x40E4)
 cpu.hook_add(UC_HOOK_CODE, code_hook)
 cpu.hook_add(UC_HOOK_MEM_WRITE, write_hook)
 cpu.mem_write(windows[(88, 6, 0x4A8)], struct.pack(">I", WORK))

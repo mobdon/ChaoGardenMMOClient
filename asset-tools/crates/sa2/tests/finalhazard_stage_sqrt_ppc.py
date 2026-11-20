@@ -18,10 +18,18 @@ import tempfile
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN
 from unicorn import ppc_const as R
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gekko_float import install_frsqrte  # noqa: E402
+# Gekko frsqrte (local only: .local/gekko holds Dolphin's table and helper, kept out of git).
+# Without it, Unicorn and the Rust port both use the exact estimate.
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / ".local" / "gekko"))
+try:
+    from gekko_float import install_frsqrte  # noqa: E402
+except (ImportError, OSError):
+    install_frsqrte = None
 
 exe, module = sys.argv[1:]
+if install_frsqrte is None:
+    print("skipped: the Gekko frsqrte table is not in .local/gekko")
+    sys.exit(0)
 data = Path(module).read_bytes()
 word = lambda i: struct.unpack_from(">I", data, i)[0]
 section = lambda n: (word(word(16) + 8 * n) & ~1, word(word(16) + 8 * n + 4))
@@ -62,7 +70,8 @@ def machine(gekko):
         half = ((dest + 0x8000) >> 16) if t == 6 else dest & 0xFFFF
         cpu.mem_write(CODE + at, struct.pack(">H", half & 0xFFFF))
     if gekko:
-        install_frsqrte(cpu, CODE + 0x40E4)
+        if install_frsqrte:
+            install_frsqrte(cpu, CODE + 0x40E4)
     return cpu
 
 

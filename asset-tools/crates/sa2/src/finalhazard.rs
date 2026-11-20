@@ -1161,44 +1161,43 @@ pub struct VoiceChannel {
     /// Byte 0x25.
     pub category: i8,
 }
-/// Gekko `frsqrte`: the hardware reciprocal square-root estimate, as
-/// Dolphin's hardware-verified table and bit construction compute it
-/// (Source/Core/Common/FloatUtils.cpp, ApproximateReciprocalSquareRoot).
+/// Optional Gekko `frsqrte` table: 32 lines of "base dec" (hex) read from
+/// `.local/gekko/frsqrte_table.txt` (or `SA2_FRSQRTE_TABLE`). It is the
+/// hardware-verified table from Dolphin's FloatUtils.cpp and is kept out of
+/// the repository for licensing reasons. Without it the estimate is exact.
+fn frsqrte_table() -> Option<&'static [(i64, i64); 32]> {
+    static TABLE: std::sync::OnceLock<Option<[(i64, i64); 32]>> = std::sync::OnceLock::new();
+    TABLE
+        .get_or_init(|| {
+            let path = std::env::var_os("SA2_FRSQRTE_TABLE")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| ".local/gekko/frsqrte_table.txt".into());
+            let text = std::fs::read_to_string(path).ok()?;
+            let hex = |t: &str| {
+                let (neg, t) = t.strip_prefix('-').map_or((false, t), |r| (true, r));
+                let v = i64::from_str_radix(t.trim_start_matches("0x"), 16).ok()?;
+                Some(if neg { -v } else { v })
+            };
+            let rows: Vec<(i64, i64)> = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(|l| {
+                    let mut it = l.split_whitespace();
+                    Some((hex(it.next()?)?, hex(it.next()?)?))
+                })
+                .collect::<Option<_>>()?;
+            rows.try_into().ok()
+        })
+        .as_ref()
+}
+/// Gekko `frsqrte` estimate (Dolphin's ApproximateReciprocalSquareRoot bit
+/// construction) when the table is present; otherwise the exact reciprocal
+/// square root.
 fn gekko_frsqrte(val: f64) -> f64 {
-    const TABLE: [(i64, i64); 32] = [
-        (0x1a7e800, -0x568),
-        (0x17cb800, -0x4f3),
-        (0x1552800, -0x48d),
-        (0x130c000, -0x435),
-        (0x10f2000, -0x3e7),
-        (0x0eff000, -0x3a2),
-        (0x0d2e000, -0x365),
-        (0x0b7c000, -0x32e),
-        (0x09e5000, -0x2fc),
-        (0x0867000, -0x2d0),
-        (0x06ff000, -0x2a8),
-        (0x05ab800, -0x283),
-        (0x046a000, -0x261),
-        (0x0339800, -0x243),
-        (0x0218800, -0x226),
-        (0x0105800, -0x20b),
-        (0x3ffa000, -0x7a4),
-        (0x3c29000, -0x700),
-        (0x38aa000, -0x670),
-        (0x3572000, -0x5f2),
-        (0x3279000, -0x584),
-        (0x2fb7000, -0x524),
-        (0x2d26000, -0x4cc),
-        (0x2ac0000, -0x47e),
-        (0x2881000, -0x43a),
-        (0x2665000, -0x3fa),
-        (0x2468000, -0x3c2),
-        (0x2287000, -0x38e),
-        (0x20c1000, -0x35e),
-        (0x1f12000, -0x332),
-        (0x1d79000, -0x30a),
-        (0x1bf4000, -0x2e6),
-    ];
+    let Some(table) = frsqrte_table() else {
+        return 1.0 / val.sqrt();
+    };
     let bits = val.to_bits() as i64;
     let mut mantissa = bits & ((1 << 52) - 1);
     let sign = bits & i64::MIN;
@@ -1233,7 +1232,7 @@ fn gekko_frsqrte(val: f64) -> f64 {
     let exponent_lsb = exponent & (1 << 52);
     exponent = ((0x3ff << 52) - ((exponent - (0x3fe << 52)) / 2)) & (0x7ff << 52);
     let i = ((exponent_lsb | mantissa) >> 37) as usize;
-    let (base, dec) = TABLE[i / 2048];
+    let (base, dec) = table[i / 2048];
     let integral = sign | exponent | ((base + dec * (i % 2048) as i64) << 26);
     f64::from_bits(integral as u64)
 }
