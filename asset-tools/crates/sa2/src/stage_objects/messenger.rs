@@ -17,16 +17,18 @@
 //! * 0x6F28, the depth clip both displays use ([`clip`]);
 //! * and the ribbon-trail library in [`trail`].
 //!
-//! Omochao's exec (0x156CC, 0x1D9C bytes) and main display (0x17468, 0xBD8
-//! bytes) are not ported here: [`create`] only installs them. The module's
-//! shadow-texture helpers (0x7344, 0x7400, 0x6F94, 0x72D0, 0x7440), its land
-//! collision set-up and release (0x4B44, 0x4BA8) and Omochao's placement
-//! next to the player (0x14608, 0x148A4) are not ported either: they are
-//! the [`Event`]s and [`MessengerHost`] methods named after their offsets.
+//! Omochao's exec (0x156CC) and main display (0x17468), with their helpers,
+//! are in [`omochao`]; [`create`] installs them. Here the module's
+//! shadow-texture helpers (0x7344, 0x7400, 0x6F94, 0x72D0, 0x7440), the
+//! movable set-up and release (0x4B44, 0x4BA8; native in `dyn_land`) and
+//! Omochao's placement next to the player (0x14608, 0x148A4; native in
+//! [`omochao::place_init`] and [`omochao::place`]) are still the [`Event`]s
+//! and [`MessengerHost`] methods named after their offsets.
 //! The message window itself is main.dol's (fn_800E00E8).
 //!
 //! The data the routines read from the stage REL is [`StageData`]
 //! ([`STG42D`] for the reference copy; each stage has its own copy).
+pub mod omochao;
 pub mod trail;
 
 use super::host::ObjectHost;
@@ -140,6 +142,73 @@ pub const ROUTINES: &[super::Routine] = &[
         stg42d: 0x188fc,
         len: 0x188,
         masked_sha256: "f13ac361fa2ad2589cbb12e9e8917c4f3e2a41e1200c2f48c4bc0ccd33f50080",
+    },
+    // Omochao (`omochao`).
+    super::Routine {
+        name: "Omochao holder (0x6300)",
+        stg42d: 0x6300,
+        len: 0x5c,
+        masked_sha256: "a97c0aa4fb472cb32e8050187acbc9622eb8da673c02bac4a260445cd26c35bf",
+    },
+    super::Routine {
+        name: "Omochao force query (0x7558)",
+        stg42d: 0x7558,
+        len: 0x12c,
+        masked_sha256: "6e25fb631056b6bd6f7c5089e7273cc9bf39dfc5b516c58a0e0fd4b45d6b92fa",
+    },
+    super::Routine {
+        name: "Omochao random hint (0x14344)",
+        stg42d: 0x14344,
+        len: 0x140,
+        masked_sha256: "f6178028f35f908787b9c19df52346253f16dac4ff3ee3007f8f36d8d352aa28",
+    },
+    super::Routine {
+        name: "Omochao hint (0x14484)",
+        stg42d: 0x14484,
+        len: 0x98,
+        masked_sha256: "d311986b7441f00116f026399a3a013990f84219e0fb1faf056b139591e6a06c",
+    },
+    super::Routine {
+        name: "Omochao turn limit (0x1451C)",
+        stg42d: 0x1451c,
+        len: 0xec,
+        masked_sha256: "a0118654619fe3816bbb56219e0d1cc8707322aeac0f5940935ca0bcb75281e0",
+    },
+    super::Routine {
+        name: "Omochao place init (0x14608)",
+        stg42d: 0x14608,
+        len: 0x29c,
+        masked_sha256: "2e4c0c2e4c2108442a11724f6dc643504cdf300c52d228db40526fd7825d5a7b",
+    },
+    super::Routine {
+        name: "Omochao place (0x148A4)",
+        stg42d: 0x148a4,
+        len: 0x224,
+        masked_sha256: "debffbb2792a566886c302a98197118ef8cd34f5d69e2cce9301311e1cf9e445",
+    },
+    super::Routine {
+        name: "Omochao steer (0x14AC8)",
+        stg42d: 0x14ac8,
+        len: 0x324,
+        masked_sha256: "665f7f24692b1a3a960ad572e5852b9ec9eba7270d4d83a27dd960ba7d847a6b",
+    },
+    super::Routine {
+        name: "Omochao follow (0x14DEC)",
+        stg42d: 0x14dec,
+        len: 0x8e0,
+        masked_sha256: "f33d8af9d07abc281af609c4438c333ff732ecb08ebe8f6467254ac2ee749fee",
+    },
+    super::Routine {
+        name: "Omochao exec (0x156CC)",
+        stg42d: 0x156cc,
+        len: 0x1d9c,
+        masked_sha256: "5e64e20c2219afd88973131592d05ff297296cd1d36b3a6adca0407e2a7aa66f",
+    },
+    super::Routine {
+        name: "Omochao display (0x17468)",
+        stg42d: 0x17468,
+        len: 0xbd8,
+        masked_sha256: "7d0d28f4314c71e3cb55eddabdefcd7d10e15811d5b764c44a7c81f8ee9dafef",
     },
 ];
 
