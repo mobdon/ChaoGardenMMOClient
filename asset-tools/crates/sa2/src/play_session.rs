@@ -50,8 +50,9 @@ pub struct StageRules {
     /// Objects whose solidity is CollisionData rows in the stage module's
     /// section 5: (object-list name, row offset, row count).
     pub collision_boxes: &'static [(&'static str, u32, usize)],
-    /// CCUBE's CollisionData row in section 5, if CCUBE is built.
-    pub invisible_cubes: Option<u32>,
+    /// Invisible shapes whose sizes are 10 + Scale (helper 0x11B30 /
+    /// 0x16F94): (object-list name, CollisionData row in section 5).
+    pub invisible_cubes: &'static [(&'static str, u32)],
     /// Expand RING_LINEAR placements into collectable rings.
     pub ring_lines: bool,
     /// Run enemy group counts and the cell doors (`DOOR_KINDS`, rules read
@@ -80,7 +81,7 @@ pub const IRON_GATE: StageRules = StageRules {
     ],
     // stg11D.rel 0x17140: CCUBE registers sec5+0x5E5B0 (form 3, attr 0x2000);
     // its size helper 0x16F94 adds Scale to 10 (sec4+0x7D0).
-    invisible_cubes: Some(0x5e5b0),
+    invisible_cubes: &[("CCUBE", 0x5e5b0)],
     ring_lines: false,
     prison_doors: false,
     death_zone_config: DEATH_ZONE_CONFIG,
@@ -104,6 +105,9 @@ pub const PRISON_LANE: StageRules = StageRules {
         ("FENCES", 0x3c54c, 1),
         ("FENCEL", 0x3c57c, 3),
         ("CONTIRON", 0x52a18, 1),
+        // ROLL (0x53FC): one form 2 row at sec5+0x43A84; its exec only
+        // spins the model.
+        ("ROLL", 0x43a84, 1),
         // CONTCHAO (0x18E1C): the same cube row; breaking is not run.
         ("CONTCHAO", 0x51d20, 1),
         // CONTWOOD (0x1A3A4): the same cube row; breaking is not run.
@@ -111,7 +115,9 @@ pub const PRISON_LANE: StageRules = StageRules {
         // MECHA (0x527C): exec only runs its collision (0x8000F4EC).
         ("MECHA", 0x41db4, 1),
     ],
-    invisible_cubes: Some(0x4c080),
+    // SPHERE 0x11B94 (sec5+0x4C020, form 0), CCYL 0x11C38 (+0x4C050,
+    // form 1), CCUBE 0x11CDC (+0x4C080, form 3).
+    invisible_cubes: &[("CCUBE", 0x4c080), ("SPHERE", 0x4c020), ("CCYL", 0x4c050)],
     ring_lines: true,
     prison_doors: true,
     death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
@@ -120,7 +126,6 @@ pub const PRISON_LANE: StageRules = StageRules {
 pub const RING_PICKUP_DISTANCE: f32 = 14.0;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
-const CCUBE_VA: u32 = 0x6e54e0;
 /// stg09D.rel 0x11B30 (shared by SPHERE, CCYL, CCUBE, CWALL): each of the
 /// shape's a, b, c sizes is 10 (sec4+0x6B0) plus the matching Scale
 /// component. CCUBE's CollisionData (sec5+0x4C080) is form 3, centre 0.
@@ -324,6 +329,103 @@ pub fn rotate_xyz(v: V3, angles: [i32; 3]) -> V3 {
     [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
 }
 
+/// Matrix rotate Y, Z, X (attribute 0x200 order): the point turns about X,
+/// then Z, then Y.
+fn rotate_yzx(v: V3, angles: [i32; 3]) -> V3 {
+    let (sx, cx) = nj_rotate_sin_cos(angles[0]);
+    let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
+    let (sz, cz) = nj_rotate_sin_cos(angles[2]);
+    let v = [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]];
+    let (sy, cy) = nj_rotate_sin_cos(angles[1]);
+    [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy]
+}
+
+/// World centre of a CollisionData row (GSNE8P 0x8000EAA0 / 0x8000EB90):
+/// with attribute 0x20 the row centre is a world point; otherwise it is
+/// moved by translate(position) and, unless attribute 0x8000 is set, the
+/// task rotation (rotate Y, Z, X with attribute 0x200, else Z, X, Y).
+pub fn ccl_center(position: V3, rotation: [u16; 3], row: &CollisionRow) -> V3 {
+    let angles = rotation.map(i32::from);
+    if row.attr & 0x20 != 0 {
+        row.center
+    } else if row.attr & 0x8000 != 0 {
+        add(position, row.center)
+    } else if row.attr & 0x200 != 0 {
+        add(position, rotate_yzx(row.center, angles))
+    } else {
+        add(position, rotate_zxy(row.center, angles))
+    }
+}
+
+/// Unit axis of an oriented shape (GSNE8P 0x8000E960): (0, 1, 0) through the
+/// row's own angles and then, unless attribute 0x20 or 0x8000 is set, the
+/// task rotation, both in the attribute's order (Y, Z, X with 0x200, else
+/// Z, X, Y), as a vector (0x801154EC ignores translation).
+pub fn ccl_axis(rotation: [u16; 3], row: &CollisionRow) -> V3 {
+    let task = rotation.map(i32::from);
+    let own = row.angles.map(|a| a as i32);
+    let turn = |v: V3, a: [i32; 3]| {
+        if row.attr & 0x200 != 0 {
+            rotate_yzx(v, a)
+        } else {
+            rotate_zxy(v, a)
+        }
+    };
+    let v = turn([0.0, 1.0, 0.0], own);
+    if row.attr & 0x20 != 0 || row.attr & 0x8000 != 0 {
+        v
+    } else {
+        turn(v, task)
+    }
+}
+
+/// A round collision shape, kept analytic (GSNE8P CCL pair tests).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(tag = "form", rename_all = "camelCase")]
+pub enum RoundShape {
+    /// Form 0: radius a.
+    Sphere { center: V3, radius: f32 },
+    /// Form 1 (0x8000A054): upright; radius a, half height b about the centre.
+    Cylinder {
+        center: V3,
+        radius: f32,
+        half_height: f32,
+    },
+    /// Form 2 (0x8000987C): the segment centre +/- b * axis, radius a.
+    Capsule { a: V3, b: V3, radius: f32 },
+}
+
+/// The round shape for a form 0, 1 or 2 row with sizes `size`.
+pub fn ccl_round_shape(
+    position: V3,
+    rotation: [u16; 3],
+    row: &CollisionRow,
+    size: [f32; 2],
+) -> Option<RoundShape> {
+    let center = ccl_center(position, rotation, row);
+    match row.form {
+        0 => Some(RoundShape::Sphere {
+            center,
+            radius: size[0],
+        }),
+        1 => Some(RoundShape::Cylinder {
+            center,
+            radius: size[0],
+            half_height: size[1],
+        }),
+        2 => {
+            let axis = ccl_axis(rotation, row);
+            let d = [axis[0] * size[1], axis[1] * size[1], axis[2] * size[1]];
+            Some(RoundShape::Capsule {
+                a: sub(center, d),
+                b: add(center, d),
+                radius: size[0],
+            })
+        }
+        _ => None,
+    }
+}
+
 /// World triangles of a CollisionData form 3 box, as the GameCube CCL
 /// places it (GSNE8P main.dol).
 ///
@@ -341,25 +443,7 @@ pub fn ccl_box_tris(
     half: V3,
 ) -> Vec<[V3; 3]> {
     let angles = rotation.map(i32::from);
-    let center = if row.attr & 0x20 != 0 {
-        row.center
-    } else if row.attr & 0x8000 != 0 {
-        add(position, row.center)
-    } else if row.attr & 0x200 != 0 {
-        // Matrix rotate Y, Z, X: the point turns about X, then Z, then Y.
-        let (sx, cx) = nj_rotate_sin_cos(angles[0]);
-        let v = row.center;
-        let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
-        let (sz, cz) = nj_rotate_sin_cos(angles[2]);
-        let v = [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]];
-        let (sy, cy) = nj_rotate_sin_cos(angles[1]);
-        add(
-            position,
-            [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy],
-        )
-    } else {
-        add(position, rotate_zxy(row.center, angles))
-    };
+    let center = ccl_center(position, rotation, row);
     let yaw = angles[1].wrapping_add(row.angles[1] as i32);
     let (s, c) = nj_rotate_sin_cos(yaw);
     box_tris(half, [0.0; 3])
@@ -405,6 +489,41 @@ mod ring_line_tests {
         // The arch follows njSin of i * (0x4000 / n).
         let a = ring_line([0.0; 3], [0; 3], [15.5, 4.0, 3.0]);
         assert_eq!(a[1][1], 4.0 * nj_sin(0x1555));
+    }
+
+    #[test]
+    fn round_shapes_follow_the_ccl_rules() {
+        let mut row = CollisionRow {
+            kind: 0,
+            form: 2,
+            push: 0x77,
+            damage: 0,
+            attr: 0,
+            center: [0.0, 42.0, 0.0],
+            size: [3.0, 60.0, 1.0, 0.0],
+            angles: [0x4000, 0, 0x4000],
+        };
+        // FENCEL's post: (0, 1, 0) turned by its own X then Z quarter turns.
+        let Some(RoundShape::Capsule { a, b, radius }) =
+            ccl_round_shape([0.0; 3], [0; 3], &row, [3.0, 60.0])
+        else {
+            panic!("capsule");
+        };
+        assert_eq!(radius, 3.0);
+        let axis = sub(b, a);
+        assert!((len(axis) - 120.0).abs() < 1e-3);
+        // Own X then Z quarter turns lay the rail along Z, the long side of
+        // FENCEL's box row.
+        assert!(axis[2] > 119.9, "{axis:?}");
+        row.form = 1;
+        assert_eq!(
+            ccl_round_shape([1.0, 2.0, 3.0], [0; 3], &row, [3.0, 60.0]),
+            Some(RoundShape::Cylinder {
+                center: [1.0, 44.0, 3.0],
+                radius: 3.0,
+                half_height: 60.0
+            })
+        );
     }
 
     #[test]
@@ -522,6 +641,8 @@ pub struct Session {
     #[serde(skip)]
     pub group_counts: [u8; 256],
     pub doors: Vec<PrisonDoor>,
+    /// Round collision shapes (forms 0-2), kept analytic.
+    pub shapes: Vec<RoundShape>,
     #[serde(skip)]
     door_rows: std::collections::BTreeMap<&'static str, Vec<CollisionRow>>,
     /// Placements whose native behavior this session does not run.
@@ -589,11 +710,18 @@ impl Session {
             .iter()
             .map(|&(n, rva)| Ok((n, read_object_solid(src.exe, rva)?)))
             .collect::<Result<Vec<_>>>()?;
-        let cube_row = rules
+        let sized_rows = rules
             .invisible_cubes
-            .map(|offset| collision_rows(src.stage_module, rules.movers.module_file, offset, 1))
-            .transpose()?
-            .map(|mut rows| rows.remove(0));
+            .iter()
+            .map(|&(n, offset)| {
+                Ok((
+                    n,
+                    collision_rows(src.stage_module, rules.movers.module_file, offset, 1)?
+                        .remove(0),
+                ))
+            })
+            .collect::<Result<Vec<(&str, CollisionRow)>>>()?;
+        let mut shapes = vec![];
         let mut door_rows = std::collections::BTreeMap::new();
         if rules.prison_doors {
             for k in DOOR_KINDS {
@@ -773,15 +901,21 @@ impl Session {
                             solid,
                         });
                     }
-                    (CCUBE_VA, "CCUBE") if cube_row.is_some() => {
-                        // Invisible cube collision: its CollisionData row
-                        // with half-extents CCUBE_BASE + Scale (0x11B30).
-                        let row = cube_row.as_ref().unwrap();
+                    (_, n) if sized_rows.iter().any(|(s, _)| *s == n) => {
+                        // Invisible collision: the CollisionData row with
+                        // sizes CCUBE_BASE + Scale (0x11B30).
+                        let (_, row) = sized_rows.iter().find(|(s, _)| *s == n).unwrap();
                         let h = pl.parameters.map(|s| s + CCUBE_BASE);
-                        for t in ccl_box_tris(pl.position, pl.rotation, row, h) {
-                            if let Some(t) = make_tri(t, 1, u32::MAX) {
-                                world.push(t);
+                        if row.form == 3 {
+                            for t in ccl_box_tris(pl.position, pl.rotation, row, h) {
+                                if let Some(t) = make_tri(t, 1, u32::MAX) {
+                                    world.push(t);
+                                }
                             }
+                        } else if let Some(s) =
+                            ccl_round_shape(pl.position, pl.rotation, row, [h[0], h[1]])
+                        {
+                            shapes.push(s);
                         }
                         *unimplemented
                             .entry(format!("{name} (solid only)"))
@@ -812,12 +946,30 @@ impl Session {
                     (_, n) if collision_boxes.iter().any(|(s, _)| *s == n) => {
                         let (_, rows) = collision_boxes.iter().find(|(s, _)| *s == n).unwrap();
                         for row in rows {
-                            // Form 3 boxes follow `ccl_box_tris`; other forms
-                            // are not built.
+                            // Form 3 boxes follow `ccl_box_tris`; forms 0-2
+                            // are kept as round shapes.
                             if row.form != 3 {
-                                *unimplemented
-                                    .entry(format!("{name} row (form {}): rule not read", row.form))
-                                    .or_insert(0) += 1;
+                                match ccl_round_shape(
+                                    pl.position,
+                                    pl.rotation,
+                                    row,
+                                    [row.size[0], row.size[1]],
+                                ) {
+                                    Some(s) => {
+                                        shapes.push(s);
+                                        *unimplemented
+                                            .entry(format!("{name} row (solid only)"))
+                                            .or_insert(0) += 1;
+                                    }
+                                    None => {
+                                        *unimplemented
+                                            .entry(format!(
+                                                "{name} row (form {}): rule not read",
+                                                row.form
+                                            ))
+                                            .or_insert(0) += 1;
+                                    }
+                                }
                                 continue;
                             }
                             let h = [row.size[0], row.size[1], row.size[2]];
@@ -879,6 +1031,7 @@ impl Session {
             enemies,
             doors,
             door_rows,
+            shapes,
         })
     }
 

@@ -108,8 +108,10 @@ fn installed_mover_rules_and_session_inventory() {
         // CollisionData boxes placed by the CCL box rule.
         for (name, n) in [
             ("FENCES row (solid only)", 39),
-            ("FENCEL row (solid only)", 4),
-            ("FENCEL row (form 2): rule not read", 8),
+            ("FENCEL row (solid only)", 12),
+            ("ROLL row (solid only)", 4),
+            ("SPHERE (solid only)", 4),
+            ("CCYL (solid only)", 1),
             ("CONTIRON row (solid only)", 18),
             ("CONTCHAO row (solid only)", 3),
             ("CONTWOOD row (solid only)", 17),
@@ -118,6 +120,8 @@ fn installed_mover_rules_and_session_inventory() {
         ] {
             assert_eq!(s.unimplemented.get(name), Some(&n), "{name}");
         }
+        // 8 fence posts, 4 gears, 4 spheres and 1 cylinder.
+        assert_eq!(s.shapes.len(), 17);
         assert!(s.death_zone_count() > 0);
         assert_eq!((s.level, s.character, s.physics.slot), (9, 6, 6));
     });
@@ -208,7 +212,11 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         // 11 CAGED, 14 CAGE, 2 CAGEB, 3 CAGEC.
         assert_eq!(s.doors.len(), 30);
         for (k, n) in [("CAGED", 11), ("CAGE", 14), ("CAGEB", 2), ("CAGEC", 3)] {
-            assert_eq!(s.doors.iter().filter(|d| d.kind.name == k).count(), n, "{k}");
+            assert_eq!(
+                s.doors.iter().filter(|d| d.kind.name == k).count(),
+                n,
+                "{k}"
+            );
         }
         // The cell door on the route near (-3329, 730, 130): group 10.
         let d = s
