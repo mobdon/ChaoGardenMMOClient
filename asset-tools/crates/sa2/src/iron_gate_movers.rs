@@ -1,5 +1,6 @@
-//! Iron Gate lift (MLIFT) and elevator (ELV) motion, from the installed
-//! stg11D.rel PowerPC callbacks.
+//! Lift (MLIFT), elevator (ELV) and bridge (BRIDGE) motion for Iron Gate
+//! and Prison Lane, from the installed stg11D.rel / stg09D.rel PowerPC
+//! callbacks.
 //!
 //! The Steam executable's own x86 text is encrypted on disk, so the stage
 //! module shipped beside it is the readable source. `verify` checks the
@@ -33,8 +34,14 @@ pub struct MoverProgram {
     pub elevator_speed: f32,
     /// Door closing step per frame (sec5+0x4C4C8).
     pub elevator_door_step: f32,
-    /// Open door value used by the elevator's door code (sec4+0xB0).
+    /// Open value of the inner door (task work 0x44); it starts open.
     pub elevator_door_open: f32,
+    /// The outer door (0x48): initial value, open value and per-frame
+    /// closing step. It opens at `elevator_door_step` and is the only door
+    /// that reopens while the car rests at its far end.
+    pub elevator_door_b_initial: f32,
+    pub elevator_door_b_open: f32,
+    pub elevator_door_b_close_step: f32,
     /// Initial and required unoccupied frames before the elevator starts.
     pub elevator_ready_frames: u8,
     pub bridge_exec: u32,
@@ -49,29 +56,93 @@ pub struct MoverProgram {
     pub bridge_ready_frames: u8,
 }
 
-const LIFT_ROW: u32 = 0x5d358;
-const ELV_ROW: u32 = 0x5d2c8;
-const BRIDGE_ROW: u32 = 0x5d318;
+/// Where one stage module keeps the shared lift/elevator/bridge code, and
+/// the values the verified module must yield. Iron Gate (stg11D.rel) and
+/// Prison Lane (stg09D.rel) build the same object family from the same
+/// source with different offsets and a few different constants.
+pub struct MoverLayout {
+    pub level: u16,
+    pub module_file: &'static str,
+    /// Section-5 object rows (name pointer; the callback pointer precedes it).
+    rows: [u32; 3],
+    /// Expected (lift, elevator, bridge) init callbacks in section 1.
+    inits: [u32; 3],
+    /// (section-1 offset, expected big-endian word with relocation fields zeroed)
+    words: &'static [(u32, u32)],
+    /// `lis` offsets of the exec pointers: lift, elevator, bridge.
+    exec_lis: [u32; 3],
+    /// `lis` offsets of: lift rise base, lift speed, elevator speed, door A
+    /// step, door A open, door B initial, door B open, door B closing step,
+    /// bridge extend X, bridge speed, bridge elevator range.
+    const_lis: [u32; 11],
+    /// Values the constants above must read as, in the same order.
+    expect: [f32; 11],
+    expect_exec: [u32; 3],
+}
 
-/// (section-1 offset, expected big-endian word with relocation fields zeroed)
-const LIFT_WORDS: &[(u32, u32)] = &[
-    (0x3a38, 0x2c00_001e), // cmpwi r0,0x1e  (rise after 30 standing frames)
-    (0x3a1c, 0x2800_005a), // cmplwi r0,0x5a (return after 90 idle frames)
-    (0x32a8, 0x3800_005a), // li r0,0x5a     (initial idle counter)
-    (0x3974, 0x2c03_2710), // cmpwi r3,0x2710 (standing counter clamp)
-];
-const ELV_WORDS: &[(u32, u32)] = &[
-    (0x1b18, 0x3800_0078), // li r0,0x78     (initial ready counter)
-    (0x26f4, 0x2800_0078), // cmplwi r0,0x78 (start requires 120)
-    (0x27d0, 0x2803_0078), // cmplwi r3,0x78 (counter saturates at 120)
-    (0x21bc, 0x801f_0008), // lwz r0,8(r31)  (Rotation.x bit 0: one-way)
-];
-const BRIDGE_WORDS: &[(u32, u32)] = &[
-    (0x038c, 0x3800_0078), // li r0,0x78     (initial cooldown)
-    (0x0b84, 0x2800_0078), // cmplwi r0,0x78 (motion requires 120)
-    (0x0b3c, 0x2c18_0005), // cmpwi r24,5    (five registered elevator slots)
-    (0x0aec, 0x2c00_0001), // cmpwi r0,1     (moving elevators are skipped)
-];
+/// stg11D.rel (Iron Gate). Both elevator doors share one constant set.
+pub const IRON_GATE: MoverLayout = MoverLayout {
+    level: 11,
+    module_file: "stg11D.rel",
+    rows: [0x5d358, 0x5d2c8, 0x5d318],
+    inits: [0x3214, 0x1a84, 0x2f8],
+    words: &[
+        (0x3a38, 0x2c00_001e), // cmpwi r0,0x1e  (rise after 30 standing frames)
+        (0x3a1c, 0x2800_005a), // cmplwi r0,0x5a (return after 90 idle frames)
+        (0x32a8, 0x3800_005a), // li r0,0x5a     (initial idle counter)
+        (0x3974, 0x2c03_2710), // cmpwi r3,0x2710 (standing counter clamp)
+        (0x1b18, 0x3800_0078), // li r0,0x78     (initial ready counter)
+        (0x26f4, 0x2800_0078), // cmplwi r0,0x78 (start requires 120)
+        (0x27d0, 0x2803_0078), // cmplwi r3,0x78 (counter saturates at 120)
+        (0x21bc, 0x801f_0008), // lwz r0,8(r31)  (Rotation.x bit 0: one-way)
+        (0x038c, 0x3800_0078), // li r0,0x78     (initial bridge cooldown)
+        (0x0b84, 0x2800_0078), // cmplwi r0,0x78 (motion requires 120)
+        (0x0b3c, 0x2c18_0005), // cmpwi r24,5    (five registered elevator slots)
+        (0x0aec, 0x2c00_0001), // cmpwi r0,1     (moving elevators are skipped)
+    ],
+    exec_lis: [0x326c, 0x1adc, 0x350],
+    const_lis: [
+        0x32cc, 0x369c, 0x2118, 0x2000, 0x1cf4, 0x1cf4, 0x25d8, 0x2000, 0x394, 0x74c, 0xac0,
+    ],
+    expect: [
+        20.0, 0.5, 0.3, 0.2, -9.5, -9.5, -9.5, 0.2, -140.0, 8.0, 450.0,
+    ],
+    expect_exec: [0x35dc, 0x1f7c, 0x688],
+};
+
+/// stg09D.rel (Prison Lane). The lift is identical; the elevator travels at
+/// 0.6, starts with its outer door (0x48) shut, opens it to -36.3 and closes
+/// it at 0.32; the bridge moves at 1.5.
+pub const PRISON_LANE: MoverLayout = MoverLayout {
+    level: 9,
+    module_file: "stg09D.rel",
+    rows: [0x4ac5c, 0x4abec, 0x4ac1c],
+    inits: [0x4704, 0x2f18, 0x2ec],
+    words: &[
+        (0x4efc, 0x2c00_001e),
+        (0x4ee0, 0x2800_005a),
+        (0x4798, 0x3800_005a),
+        (0x4e38, 0x2c03_2710),
+        (0x2fac, 0x3800_0078),
+        (0x3bcc, 0x2800_0078),
+        (0x3ca8, 0x2803_0078),
+        (0x3660, 0x801f_0008),
+        (0x0380, 0x3800_0078),
+        (0x0b5c, 0x2800_0078),
+        (0x0b14, 0x2c18_0005),
+        (0x0ac4, 0x2c00_0001),
+    ],
+    exec_lis: [0x475c, 0x2f70, 0x344],
+    const_lis: [
+        0x47bc, 0x4b60, 0x35bc, 0x349c, 0x3188, 0x319c, 0x3a1c, 0x34b8, 0x388, 0x740, 0xa98,
+    ],
+    expect: [
+        20.0, 0.5, 0.6, 0.2, -9.5, 0.0, -36.3, 0.32, -140.0, 1.5, 450.0,
+    ],
+    expect_exec: [0x4aa0, 0x3438, 0x67c],
+};
+
+pub const LAYOUTS: [&MoverLayout; 2] = [&IRON_GATE, &PRISON_LANE];
 
 fn be(bytes: &[u8], at: u32) -> Result<u32> {
     bytes
@@ -81,16 +152,19 @@ fn be(bytes: &[u8], at: u32) -> Result<u32> {
 }
 
 impl MoverProgram {
+    /// Verify Iron Gate's stg11D.rel.
     pub fn verify(rel_bytes: &[u8]) -> Result<Self> {
+        Self::verify_layout(&IRON_GATE, rel_bytes)
+    }
+
+    pub fn verify_layout(layout: &MoverLayout, rel_bytes: &[u8]) -> Result<Self> {
         let info = stage_land::catalog()
             .iter()
-            .find(|i| i.filename == MODULE_FILE)
-            .ok_or_else(|| Error::invalid("Iron Gate module is not catalogued"))?;
+            .find(|i| i.filename == layout.module_file)
+            .ok_or_else(|| Error::invalid("stage module is not catalogued"))?;
         let sha = manifest::sha256(rel_bytes);
         if rel_bytes.len() != info.size || sha != info.sha256 {
-            return Err(Error::invalid(
-                "unsupported Iron Gate stage module revision",
-            ));
+            return Err(Error::invalid("unsupported stage module revision"));
         }
         let rel = CityRel::read_identified(rel_bytes, info.module)?;
         let name = |row: u32, expect: &[u8]| -> Result<u32> {
@@ -105,77 +179,86 @@ impl MoverProgram {
                 _ => Err(Error::invalid("object row callback is not in section 1")),
             }
         };
-        let lift_init = name(LIFT_ROW, b"MLIFT\0")?;
-        let elv_init = name(ELV_ROW, b"ELV\0")?;
-        let bridge_init = name(BRIDGE_ROW, b"BRIDGE\0")?;
-        if (lift_init, elv_init, bridge_init) != (0x3214, 0x1a84, 0x2f8) {
+        let inits = [
+            name(layout.rows[0], b"MLIFT\0")?,
+            name(layout.rows[1], b"ELV\0")?,
+            name(layout.rows[2], b"BRIDGE\0")?,
+        ];
+        if inits != layout.inits {
             return Err(Error::invalid("unexpected mover callbacks"));
         }
         let code = rel.data(1)?;
-        for &(at, word) in LIFT_WORDS.iter().chain(ELV_WORDS).chain(BRIDGE_WORDS) {
+        for &(at, word) in layout.words {
             if be(code, at)? != word {
                 return Err(Error::invalid(
                     "mover instruction differs from verified module",
                 ));
             }
         }
-        // Each constant is addressed by an ADDR16_HA/LO pair at `lis`.
-        let constant = |lis: u32, section: u8, addend: u32| -> Result<f32> {
+        // Each constant is addressed by an ADDR16_HA/LO pair at `lis` into
+        // the module's own data (section 4 or 5).
+        let constant = |lis: u32| -> Result<f32> {
             let hi = rel.reference(1, lis + 2);
             let lo = rel.reference(1, lis + 6);
             match (hi, lo) {
                 (Some(h), Some(l))
-                    if (h.kind, l.kind, h.section, l.section, h.addend, l.addend)
-                        == (6, 4, section, section, addend, addend) =>
+                    if (h.kind, l.kind) == (6, 4)
+                        && h.section == l.section
+                        && h.addend == l.addend
+                        && matches!(h.section, 4 | 5) =>
                 {
-                    let d = rel.data(section)?;
-                    Ok(f32::from_bits(be(d, addend)?))
+                    let d = rel.data(h.section)?;
+                    Ok(f32::from_bits(be(d, h.addend)?))
                 }
                 _ => Err(Error::invalid("mover constant relocation differs")),
             }
         };
-        let exec = |init: u32, lis: u32| -> Result<u32> {
+        let exec = |lis: u32| -> Result<u32> {
             match (rel.reference(1, lis + 2), rel.reference(1, lis + 6)) {
                 (Some(h), Some(l)) if h.section == 1 && l.section == 1 && h.addend == l.addend => {
-                    let _ = init;
                     Ok(h.addend)
                 }
                 _ => Err(Error::invalid("mover exec relocation differs")),
             }
         };
-        let p = Self {
+        let execs = [
+            exec(layout.exec_lis[0])?,
+            exec(layout.exec_lis[1])?,
+            exec(layout.exec_lis[2])?,
+        ];
+        if execs != layout.expect_exec {
+            return Err(Error::invalid("unexpected mover exec callbacks"));
+        }
+        let mut c = [0f32; 11];
+        for (i, &lis) in layout.const_lis.iter().enumerate() {
+            c[i] = constant(lis)?;
+            if c[i] != layout.expect[i] {
+                return Err(Error::invalid(
+                    "mover constants differ from the verified module",
+                ));
+            }
+        }
+        Ok(Self {
             module_sha256: sha,
-            lift_exec: exec(lift_init, 0x326c)?,
-            elevator_exec: exec(elv_init, 0x1adc)?,
-            lift_rise_base: constant(0x32cc, 4, 0x120)?,
-            lift_speed: constant(0x369c, 5, 0x4e4bc)?,
+            lift_exec: execs[0],
+            elevator_exec: execs[1],
+            lift_rise_base: c[0],
+            lift_speed: c[1],
             lift_stand_frames: 0x1e,
             lift_return_frames: 0x5a,
-            elevator_speed: constant(0x2118, 5, 0x4c4c4)?,
-            elevator_door_step: constant(0x2000, 5, 0x4c4c8)?,
-            elevator_door_open: constant(0x1cf4, 4, 0xb0)?,
+            elevator_speed: c[2],
+            elevator_door_step: c[3],
+            elevator_door_open: c[4],
+            elevator_door_b_initial: c[5],
+            elevator_door_b_open: c[6],
+            elevator_door_b_close_step: c[7],
             elevator_ready_frames: 0x78,
-            bridge_exec: exec(bridge_init, 0x350)?,
-            bridge_extend_x: constant(0x394, 4, 0x1c)?,
-            bridge_speed: constant(0x74c, 5, 0x466a4)?,
-            bridge_elevator_range: constant(0xac0, 4, 0x54)?,
+            bridge_exec: execs[2],
+            bridge_extend_x: c[8],
+            bridge_speed: c[9],
+            bridge_elevator_range: c[10],
             bridge_ready_frames: 0x78,
-        };
-        if (p.lift_exec, p.elevator_exec) != (0x35dc, 0x1f7c)
-            || (p.lift_rise_base, p.lift_speed, p.elevator_speed) != (20.0, 0.5, 0.3)
-            || (p.elevator_door_step, p.elevator_door_open) != (0.2, -9.5)
-            || (
-                p.bridge_exec,
-                p.bridge_extend_x,
-                p.bridge_speed,
-                p.bridge_elevator_range,
-            ) != (0x688, -140.0, 8.0, 450.0)
-        {
-            return Err(Error::invalid(
-                "mover constants differ from the verified module",
-            ));
-        }
-        Ok(p)
+        })
     }
 }
 
@@ -266,7 +349,10 @@ pub struct Elevator {
     pub at_target: bool,
     /// 0 idle, 1 moving, 2 stopped for good.
     pub mode: u8,
+    /// Inner door (task work 0x44).
     pub door: f32,
+    /// Outer door (task work 0x48).
+    pub door_b: f32,
     pub ready: u8,
     pub one_way: bool,
 }
@@ -280,19 +366,34 @@ impl Elevator {
             at_target: false,
             mode: 0,
             door: p.elevator_door_open,
+            door_b: p.elevator_door_b_initial,
             ready: p.elevator_ready_frames,
             one_way: rotation_x & 1 != 0,
         }
+    }
+
+    /// Native idle door code: at the placement both doors open; at the far
+    /// end only the outer one does. True when the tested doors were already
+    /// open at the start of the frame.
+    fn doors_open(&mut self, p: &MoverProgram) -> bool {
+        let both = !self.at_target;
+        if self.door_b <= p.elevator_door_b_open && (!both || self.door <= p.elevator_door_open) {
+            return true;
+        }
+        if both {
+            self.door = (self.door - p.elevator_door_step).max(p.elevator_door_open);
+        }
+        self.door_b = (self.door_b - p.elevator_door_step).max(p.elevator_door_b_open);
+        false
     }
 
     pub fn step(&mut self, p: &MoverProgram, stood: bool) -> bool {
         match self.mode {
             1 => {
                 // Both doors close first; travel begins on the frame they reach 0.
-                if self.door < 0.0 {
-                    self.door = (self.door + p.elevator_door_step).min(0.0);
-                }
-                if self.door < 0.0 {
+                self.door = (self.door + p.elevator_door_step).min(0.0);
+                self.door_b = (self.door_b + p.elevator_door_b_close_step).min(0.0);
+                if self.door < 0.0 || self.door_b < 0.0 {
                     return false;
                 }
                 let target = if self.at_target {
@@ -308,8 +409,7 @@ impl Elevator {
             }
             0 => {
                 // Doors reopen while idle; occupancy is only tested once open.
-                if self.door > p.elevator_door_open {
-                    self.door = (self.door - p.elevator_door_step).max(p.elevator_door_open);
+                if !self.doors_open(p) {
                     return false;
                 }
                 if stood {
@@ -325,9 +425,7 @@ impl Elevator {
                 false
             }
             _ => {
-                if self.door > p.elevator_door_open {
-                    self.door = (self.door - p.elevator_door_step).max(p.elevator_door_open);
-                }
+                self.doors_open(p);
                 false
             }
         }
@@ -416,6 +514,9 @@ mod tests {
             elevator_speed: 0.3,
             elevator_door_step: 0.2,
             elevator_door_open: -9.5,
+            elevator_door_b_initial: -9.5,
+            elevator_door_b_open: -9.5,
+            elevator_door_b_close_step: 0.2,
             elevator_ready_frames: 120,
             bridge_exec: 0x688,
             bridge_extend_x: -140.0,
@@ -485,5 +586,34 @@ mod tests {
         assert_eq!(e.position, [0.0, -3.0, 0.0]);
         assert_eq!(e.mode, 2);
         assert!(!e.step(&p, true));
+    }
+
+    #[test]
+    fn prison_lane_elevator_opens_its_outer_door_before_it_can_start() {
+        let p = MoverProgram {
+            elevator_speed: 0.6,
+            elevator_door_b_initial: 0.0,
+            elevator_door_b_open: -36.3,
+            elevator_door_b_close_step: 0.32,
+            bridge_speed: 1.5,
+            ..program()
+        };
+        let mut e = Elevator::new(&p, [0.0, 0.0, 0.0], [0.0, 6.0, 0.0], 1);
+        // The outer door opens from shut at 0.2 per frame (182 frames).
+        let mut frames = 0;
+        while !e.step(&p, true) {
+            frames += 1;
+            assert!(frames < 400);
+        }
+        assert_eq!(frames, 182);
+        let mut frames = 0;
+        while e.mode == 1 {
+            e.step(&p, true);
+            frames += 1;
+        }
+        // The outer door closes last: 36.3 / 0.32 rounds up to 114 frames,
+        // then 10 frames of travel at 0.6.
+        assert!((123..=125).contains(&frames), "{frames}");
+        assert_eq!(e.position, [0.0, 6.0, 0.0]);
     }
 }

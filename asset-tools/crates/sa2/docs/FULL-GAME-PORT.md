@@ -98,4 +98,6 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 
 [Playable Iron Gate](PLAYABLE-IRON-GATE.md) runs the first Dark stage live: walker movement, collision, lifts, elevators, bridges, springs, rings, checkpoints, death zones and the goal ring. Two of its three segments clear offline; the controller is an adaptation.
 
+[Playable Prison Lane](PLAYABLE-PRISON-LANE.md) runs Tails' walker stage on the same session with its own stg09D.rel mover rules, PANEL floors and CCUBE solids. The offline autopilot clears it from the spawn with no deaths.
+
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.

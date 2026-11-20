@@ -195,7 +195,9 @@ impl NavGrid {
                 if ok {
                     out.push((
                         n,
-                        h + dy.abs() * 0.25 + if dy > body.step { 30.0 } else { 0.0 },
+                        h + dy.abs() * 0.25
+                            + if dy > body.step { 30.0 } else { 0.0 }
+                            + near_limit(body, dy),
                     ));
                 }
             }
@@ -237,7 +239,7 @@ impl NavGrid {
                     if clear {
                         let h = self.spacing * ((dx * dx + dz * dz) as f32).sqrt();
                         let jump = if dy > -body.step { 40.0 } else { 0.0 };
-                        out.push((n, h + jump + dy.abs() * 0.25));
+                        out.push((n, h + jump + dy.abs() * 0.25 + near_limit(body, dy)));
                     }
                 }
             }
@@ -326,6 +328,16 @@ impl NavGrid {
             r.tags = tags;
         }
         r
+    }
+}
+
+/// Extra cost for a climb close to the jump limit, so a ride that reaches
+/// the same place is preferred over a jump that leaves little margin.
+fn near_limit(body: Body, dy: f32) -> f32 {
+    if dy > body.jump * 0.8 {
+        400.0
+    } else {
+        0.0
     }
 }
 

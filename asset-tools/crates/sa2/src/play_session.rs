@@ -1,20 +1,22 @@
-//! A playable single-player stage session for Iron Gate (Dark story, level 11).
+//! A playable single-player walker stage session: Iron Gate (Dark story,
+//! level 11) and Prison Lane (Hero story, level 9).
 //!
 //! Native inputs: the mounted landtable, SET placements, object-list names,
 //! the PhysicsArray row of the dispatched character, object collision models
-//! and death zones from the Steam executable, Iron Gate's lift/elevator rules
-//! from stg11D.rel, the shared ring pickup contract, and the goal-ring
-//! initialization and contact branch.
+//! and death zones from the Steam executable, each stage's lift/elevator/
+//! bridge rules from its stage module (`StageRules`), the shared ring pickup
+//! contract, and the goal-ring initialization and contact branch.
 //!
 //! Adaptations (no build-matched reference exists for them; see
-//! docs/PLAYABLE-IRON-GATE.md): the walker controller's integration order and
+//! docs/PLAYABLE-IRON-GATE.md and docs/PLAYABLE-PRISON-LANE.md): the walker
+//! controller's integration order and
 //! collision response, checkpoint contact radius, the camera, and treating
 //! goal contact plus the stage-module slot word as the mission clear.
 use crate::{
     death_zones,
     fan_stage::MountedStage,
     goal_ring,
-    iron_gate_movers::{Bridge, Elevator, Lift, MoverProgram},
+    iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
     play_objects::{death_zone_triangles, inside_volume, place_y, read_object_solid},
     play_world::{add, len, make_tri, scale, sub, Ground, PlayWorld, V3},
     player_physics::PlayerParameters,
@@ -29,6 +31,47 @@ pub const BRIDGE_COLLISION_RVA: u32 = 0x7f58a8;
 pub const ELEVATOR_COLLISION_RVA: u32 = 0x7fed08;
 /// PC_SA2/STG11.ini [Iron Gate Death Zones].
 pub const DEATH_ZONE_CONFIG: &str = "[Iron Gate Death Zones]\ntype=deathzone\naddress=8040D0\n";
+
+/// Per-stage native inputs a walker session is built from.
+pub struct StageRules {
+    pub name: &'static str,
+    pub movers: &'static MoverLayout,
+    /// Basic collision model addresses (SA Tools PC_SA2/STGnn.ini).
+    pub lift_collision: u32,
+    pub bridge_collision: u32,
+    pub elevator_collision: u32,
+    /// Other solid stage objects: (object-list name, Basic model address).
+    pub static_solids: &'static [(&'static str, u32)],
+    /// Build CCUBE placements as solid boxes (rule read from this stage's module).
+    pub invisible_cubes: bool,
+    pub death_zone_config: &'static str,
+}
+
+pub const IRON_GATE: StageRules = StageRules {
+    name: "Iron Gate",
+    movers: &movers::IRON_GATE,
+    lift_collision: LIFT_COLLISION_RVA,
+    bridge_collision: BRIDGE_COLLISION_RVA,
+    elevator_collision: ELEVATOR_COLLISION_RVA,
+    static_solids: &[],
+    invisible_cubes: false,
+    death_zone_config: DEATH_ZONE_CONFIG,
+};
+
+/// PC_SA2/STG09.ini (Prison Lane, Hero story, Tails' walker).
+pub const PRISON_LANE: StageRules = StageRules {
+    name: "Prison Lane",
+    movers: &movers::PRISON_LANE,
+    lift_collision: 0xc3c538,
+    bridge_collision: 0xc42ea0,
+    elevator_collision: 0xc39660,
+    // stg09D.rel 0x2A4C: PANEL hands its Basic model to the shared
+    // static-collision helper at 0x9A4C with flags 6 (bit 0 clear: the
+    // placement's X and Z rotations are dropped, Y is kept).
+    static_solids: &[("PANEL", 0xc40390)],
+    invisible_cubes: true,
+    death_zone_config: "[Prison Lane Death Zones]\ntype=deathzone\naddress=C4C6E4\n",
+};
 /// o_ring_M1: pickup when a player collision center is strictly within 14.
 pub const RING_PICKUP_DISTANCE: f32 = 14.0;
 /// GOALRING regular shape radius (two centered spheres, 25 and 8).
@@ -48,6 +91,12 @@ const CONTCHAO_VA: u32 = 0x6de3b0;
 /// break under the walker's attacks, which are not implemented, so they are
 /// left out rather than left blocking.
 pub const CONTAINER_EDGE: f32 = 20.0;
+const CCUBE_VA: u32 = 0x6e54e0;
+/// stg09D.rel 0x11B30 (shared by SPHERE, CCYL, CCUBE, CWALL): each of the
+/// shape's a, b, c sizes is 10 (sec4+0x6B0) plus the matching Scale
+/// component. CCUBE's CollisionData (sec5+0x4C080) is form 3, centre 0.
+/// Adaptation: only the placement's Y rotation is applied to the box.
+pub const CCUBE_BASE: f32 = 10.0;
 const GOALRING_VA: u32 = 0x6c63c0;
 const RING_VA: u32 = 0x6c0f80;
 const SAVEPOINT_VA: u32 = 0x6d99a0;
@@ -203,7 +252,12 @@ impl Spring {
 /// Twelve triangles of a cube standing on the origin (outward winding).
 fn cube_tris(edge: f32) -> Vec<[V3; 3]> {
     let h = edge * 0.5;
-    let p = |x: f32, y: f32, z: f32| [x * h, (y + 1.0) * h, z * h];
+    box_tris([h, h, h], [0.0, h, 0.0])
+}
+
+/// Twelve triangles of a box with half-extents `h` centred on `c`.
+fn box_tris(h: V3, c: V3) -> Vec<[V3; 3]> {
+    let p = |x: f32, y: f32, z: f32| [c[0] + x * h[0], c[1] + y * h[1], c[2] + z * h[2]];
     let quads = [
         [
             p(-1., 1., -1.),
@@ -355,21 +409,43 @@ pub struct Session {
 impl Session {
     /// Build Iron Gate from a mounted Dark story dispatch.
     pub fn iron_gate(stage: &MountedStage<'_>, src: Sources<'_>) -> Result<Self> {
-        if stage.dispatch.level != crate::iron_gate_movers::LEVEL {
-            return Err(Error::invalid(
-                "the playable session currently supports Iron Gate only",
-            ));
+        Self::walker_stage(stage, src, &IRON_GATE)
+    }
+
+    /// Build Prison Lane from a mounted Hero story dispatch.
+    pub fn prison_lane(stage: &MountedStage<'_>, src: Sources<'_>) -> Result<Self> {
+        Self::walker_stage(stage, src, &PRISON_LANE)
+    }
+
+    /// The rules for a mounted level, if it is a supported walker stage.
+    pub fn rules_for(level: u16) -> Option<&'static StageRules> {
+        [&IRON_GATE, &PRISON_LANE]
+            .into_iter()
+            .find(|r| r.movers.level == level)
+    }
+
+    /// Build a supported walker stage from its mounted dispatch.
+    pub fn walker_stage(
+        stage: &MountedStage<'_>,
+        src: Sources<'_>,
+        rules: &StageRules,
+    ) -> Result<Self> {
+        if stage.dispatch.level != rules.movers.level {
+            return Err(Error::invalid(format!(
+                "level {} is not {}",
+                stage.dispatch.level, rules.name
+            )));
         }
         let entry = stage
             .entry_pose
             .as_ref()
-            .ok_or_else(|| Error::invalid("Iron Gate has no start row"))?;
+            .ok_or_else(|| Error::invalid("stage has no start row"))?;
         let collision = stage
             .collision_world()?
-            .ok_or_else(|| Error::invalid("Iron Gate terrain is unavailable"))?;
+            .ok_or_else(|| Error::invalid("stage terrain is unavailable"))?;
         let objects = stage
             .object_table
-            .ok_or_else(|| Error::invalid("Iron Gate object list is unavailable"))?;
+            .ok_or_else(|| Error::invalid("stage object list is unavailable"))?;
         let slot = match stage.dispatch.character {
             7 => 7usize,
             6 => 6,
@@ -377,11 +453,16 @@ impl Session {
         };
         let rows = crate::player_physics::read(src.exe)?;
         let physics = Physics::from_row(slot, &rows[slot].parameters);
-        let movers_program = MoverProgram::verify(src.stage_module)?;
+        let movers_program = MoverProgram::verify_layout(rules.movers, src.stage_module)?;
         let goal_program = goal_ring::Program::read(stage.dispatch.level, src.stage_module)?;
-        let lift_solid = read_object_solid(src.exe, LIFT_COLLISION_RVA)?;
-        let bridge_solid = read_object_solid(src.exe, BRIDGE_COLLISION_RVA)?;
-        let elevator_solid = read_object_solid(src.exe, ELEVATOR_COLLISION_RVA)?;
+        let lift_solid = read_object_solid(src.exe, rules.lift_collision)?;
+        let bridge_solid = read_object_solid(src.exe, rules.bridge_collision)?;
+        let elevator_solid = read_object_solid(src.exe, rules.elevator_collision)?;
+        let static_solids = rules
+            .static_solids
+            .iter()
+            .map(|&(n, rva)| Ok((n, read_object_solid(src.exe, rva)?)))
+            .collect::<Result<Vec<_>>>()?;
 
         let mut world = PlayWorld::from_collision(&collision);
         let mut movers = vec![];
@@ -490,6 +571,24 @@ impl Session {
                             solid,
                         });
                     }
+                    (CCUBE_VA, "CCUBE") if rules.invisible_cubes => {
+                        // Invisible cube collision: CollisionData form 3
+                        // centred on the placement; the shared helper sets
+                        // its half-extents to CCUBE_BASE + Scale.
+                        let h = pl.parameters.map(|s| s + CCUBE_BASE);
+                        for t in box_tris(h, [0.0; 3]) {
+                            if let Some(t) = make_tri(
+                                t.map(|v| place_y(v, pl.rotation[1], pl.position)),
+                                1,
+                                u32::MAX,
+                            ) {
+                                world.push(t);
+                            }
+                        }
+                        *unimplemented
+                            .entry(format!("{name} (solid only)"))
+                            .or_insert(0) += 1;
+                    }
                     (CONTIRON_VA, "CONTIRON") | (CONTCHAO_VA, "CONTCHAO") => {
                         for t in cube_tris(CONTAINER_EDGE) {
                             if let Some(t) = make_tri(
@@ -523,6 +622,17 @@ impl Session {
                             solid,
                         });
                     }
+                    (_, n) if static_solids.iter().any(|(s, _)| *s == n) => {
+                        let (_, tris) = static_solids.iter().find(|(s, _)| *s == n).unwrap();
+                        for t in place(tris) {
+                            if let Some(t) = make_tri(t, 1, u32::MAX) {
+                                world.push(t);
+                            }
+                        }
+                        *unimplemented
+                            .entry(format!("{name} (solid only)"))
+                            .or_insert(0) += 1;
+                    }
                     _ => *unimplemented.entry(name.to_string()).or_insert(0) += 1,
                 }
             }
@@ -534,7 +644,7 @@ impl Session {
                 "no regular goal ring reaches its contact route",
             ));
         }
-        let tables = death_zones::read(src.exe, DEATH_ZONE_CONFIG)?;
+        let tables = death_zones::read(src.exe, rules.death_zone_config)?;
         let mut zones = vec![];
         for table in tables.values() {
             for z in &table.zones {
@@ -642,6 +752,11 @@ impl Session {
             self.player.ground_normal = g.normal;
             self.player.on_mover = m;
         }
+    }
+
+    /// Height of the terrain or mover surface within `depth` below `p`.
+    pub fn floor_below(&self, p: V3, depth: f32) -> Option<f32> {
+        self.ground(p, depth).map(|(g, _)| g.y)
     }
 
     fn ground(&self, p: V3, depth: f32) -> Option<(Ground, Option<usize>)> {

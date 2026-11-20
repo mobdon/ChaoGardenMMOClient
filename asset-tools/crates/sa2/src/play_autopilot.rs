@@ -12,6 +12,8 @@ use serde::Serialize;
 
 const SPACING: f32 = 8.0;
 const STEP: f32 = 12.0;
+/// Largest rise the autopilot walks up without jumping.
+const WALK_RISE: f32 = 6.0;
 const RIDE_TAG: u32 = 1;
 const LAUNCH_TAG: u32 = 10_000;
 
@@ -41,6 +43,36 @@ enum Wait {
         left: bool,
         since: u32,
     },
+}
+
+fn record(s: &Session, from: V3, r: &crate::play_nav::Route) -> PlanRecord {
+    PlanRecord {
+        frame: s.frame,
+        from,
+        reached: r.reached,
+        waypoints: r.waypoints.len(),
+        links: r
+            .tags
+            .iter()
+            .filter(|&&t| t != 0)
+            .map(|&t| {
+                if t >= LAUNCH_TAG {
+                    format!("spring {}", t - LAUNCH_TAG)
+                } else {
+                    format!("ride mover {}", t - RIDE_TAG)
+                }
+            })
+            .collect(),
+        closest: r.closest,
+        explored: r.nodes_explored,
+        climbs: r
+            .waypoints
+            .windows(2)
+            .zip(r.tags.iter().skip(1))
+            .filter(|(w, &t)| t == 0 && w[1][1] - w[0][1] > STEP)
+            .map(|(w, _)| (w[0], w[1]))
+            .collect(),
+    }
 }
 
 pub struct Autopilot {
@@ -76,7 +108,15 @@ impl Autopilot {
         }
     }
 
-    fn plan(&mut self, s: &Session) {
+    /// Plan from `from` to `to` over the session as it is now, without
+    /// driving. A diagnostic for finding where a stage's route breaks.
+    pub fn probe(&self, s: &Session, from: V3, to: V3, radius: f32) -> PlanRecord {
+        let grid = self.grid(s);
+        let r = grid.route(self.body, from, to, radius, 40.0);
+        record(s, from, &r)
+    }
+
+    fn grid(&self, s: &Session) -> NavGrid {
         let mut world = s.snapshot_world();
         // A bridge extends once an elevator comes to rest near it, so plan
         // with it extended wherever an elevator can arrive in range.
@@ -182,36 +222,14 @@ impl Autopilot {
                 grid.add_link(b, to, 80.0, LAUNCH_TAG + j as u32);
             }
         }
+        grid
+    }
+
+    fn plan(&mut self, s: &Session) {
+        let grid = self.grid(s);
         let from = s.player.position;
         let r = grid.route(self.body, from, s.goals[0].position, GOAL_RADIUS, 40.0);
-        let links = r
-            .tags
-            .iter()
-            .filter(|&&t| t != 0)
-            .map(|&t| {
-                if t >= LAUNCH_TAG {
-                    format!("spring {}", t - LAUNCH_TAG)
-                } else {
-                    format!("ride mover {}", t - RIDE_TAG)
-                }
-            })
-            .collect();
-        self.plans.push(PlanRecord {
-            frame: s.frame,
-            from,
-            reached: r.reached,
-            waypoints: r.waypoints.len(),
-            links,
-            closest: r.closest,
-            explored: r.nodes_explored,
-            climbs: r
-                .waypoints
-                .windows(2)
-                .zip(r.tags.iter().skip(1))
-                .filter(|(w, &t)| t == 0 && w[1][1] - w[0][1] > STEP)
-                .map(|(w, _)| (w[0], w[1]))
-                .collect(),
-        });
+        self.plans.push(record(s, from, &r));
         self.gave_up = !r.reached;
         self.route = r.waypoints;
         self.tags = r.tags;
@@ -275,7 +293,12 @@ impl Autopilot {
             let h = (w[0] - p[0]).hypot(w[2] - p[2]);
             if h < 5.0 && (w[1] - p[1]).abs() < STEP + 2.0 {
                 let next = self.tags.get(self.index + 1).copied().unwrap_or(0);
-                if next != 0 && s.player.grounded {
+                if next != 0 && !s.player.grounded {
+                    // Over the boarding point mid-jump: land on it rather
+                    // than skipping the ride.
+                    break;
+                }
+                if next != 0 {
                     self.wait = Some(if next >= LAUNCH_TAG {
                         Wait::Launch {
                             left: false,
@@ -312,10 +335,26 @@ impl Autopilot {
         }
         let next = self.route[self.index];
         let boarding = self.tags.get(self.index + 1).is_some_and(|&t| t != 0);
-        let target = if boarding {
+        let ahead = self.route[(self.index + 1).min(self.route.len() - 1)];
+        // Look one waypoint ahead to smooth the path, unless the shortcut
+        // leaves the floor (cutting a ledge corner).
+        let floor = |q: V3| {
+            s.floor_below([q[0], q[1] + STEP, q[2]], STEP * 3.0)
+                .is_some_and(|y| y > q[1] - STEP)
+        };
+        let shortcut_ok = (1..=4).all(|k| {
+            let t = k as f32 / 4.0;
+            let q = [
+                p[0] + (ahead[0] - p[0]) * t,
+                p[1].min(ahead[1]),
+                p[2] + (ahead[2] - p[2]) * t,
+            ];
+            floor(q)
+        });
+        let target = if boarding || !shortcut_ok {
             next
         } else {
-            self.route[(self.index + 1).min(self.route.len() - 1)]
+            ahead
         };
         let dx = target[0] - p[0];
         let dz = target[2] - p[2];
@@ -326,7 +365,9 @@ impl Autopilot {
         } else {
             1.0
         };
-        let climb = next[1] - p[1] > STEP - 1.0 || target[1] - p[1] > STEP - 1.0;
+        // The session's wall sphere starts half a step above the feet, so a
+        // rise taller than that stops a walking body: jump it.
+        let climb = next[1] - p[1] > WALK_RISE || target[1] - p[1] > WALK_RISE;
         // A long level link spans a gap: jump it.
         let prev = if self.index > 0 {
             self.route[self.index - 1]
@@ -334,12 +375,32 @@ impl Autopilot {
             p
         };
         let span = (next[0] - prev[0]).hypot(next[2] - prev[2]);
-        let leap = span > SPACING * 1.6 && next[1] - prev[1] > -STEP;
+        // Only take off on the near side: once past the gap (an overshoot
+        // that has to walk back to the waypoint) there is nothing to clear.
+        let near_side =
+            (p[0] - prev[0]).hypot(p[2] - prev[2]) < (p[0] - next[0]).hypot(p[2] - next[2]);
+        // A long link only needs a jump where the floor actually breaks.
+        let gap = (1..4).any(|k| {
+            let t = k as f32 / 4.0;
+            !floor([
+                prev[0] + (next[0] - prev[0]) * t,
+                prev[1].min(next[1]),
+                prev[2] + (next[2] - prev[2]) * t,
+            ])
+        });
+        let leap = span > SPACING * 1.6 && next[1] - prev[1] > -STEP && near_side && gap;
+        // Take off only once turned toward the target: the walker turns at
+        // a limited rate and a jump keeps its ground velocity.
+        let facing = [-s.player.yaw.sin(), -s.player.yaw.cos()];
+        let aligned = facing[0] * dx / l + facing[1] * dz / l > 0.8;
         Controls {
             // Camera yaw 0: right = +X, forward = -Z.
             stick: [dx / l * mag, -dz / l * mag],
             camera_yaw: 0.0,
-            jump: (climb || leap) && (s.player.grounded || s.player.velocity[1] > 0.0),
+            // A level gap only needs a tap (holding adds height and so
+            // range, which overshoots small decks); a climb holds the jump.
+            jump: ((climb || leap) && s.player.grounded && aligned)
+                || (climb && !s.player.grounded && s.player.velocity[1] > 0.0),
         }
     }
 }

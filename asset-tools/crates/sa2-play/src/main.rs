@@ -1,19 +1,23 @@
-//! Play Iron Gate (Dark story, first stage) on the Rust stage session.
+//! Play a walker stage (Iron Gate by default, or Prison Lane) on the Rust
+//! stage session.
 //!
-//!     sa2-play GAME_DIR PC_SA2_CONFIG                    # window (feature native-window)
-//!     sa2-play GAME_DIR PC_SA2_CONFIG --headless OUT.json [MAX_FRAMES [CHECKPOINT]]
+//!     sa2-play GAME_DIR PC_SA2_CONFIG [--stage iron-gate|prison-lane]          # window
+//!     sa2-play GAME_DIR PC_SA2_CONFIG [--stage S] --headless OUT.json [MAX_FRAMES [CHECKPOINT]]
 //!
 //! GAME_DIR is the Steam "Sonic Adventure 2" folder; PC_SA2_CONFIG is SA Tools
 //! 786's GameConfig/PC_SA2 directory. Nothing is written except OUT.json.
 use sa2_asset_tools::{
     fan_stage::Campaign,
     play_autopilot::Autopilot,
-    play_session::{Outcome, Session, Sources},
+    play_session::{Outcome, Session, Sources, StageRules, IRON_GATE, PRISON_LANE},
 };
 use std::{fs, path::PathBuf, process::ExitCode};
 
-const SEQUENCE: &str = "Dark Story Sequence";
-const ACTION: usize = 1;
+/// (option name, story sequence, action index, rules)
+const STAGES: [(&str, &str, usize, &StageRules); 2] = [
+    ("iron-gate", "Dark Story Sequence", 1, &IRON_GATE),
+    ("prison-lane", "Hero Story Sequence", 9, &PRISON_LANE),
+];
 
 fn main() -> ExitCode {
     match run() {
@@ -26,11 +30,22 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: sa2-play GAME_DIR PC_SA2_CONFIG [--headless OUT.json [MAX_FRAMES]]");
+        eprintln!(
+            "usage: sa2-play GAME_DIR PC_SA2_CONFIG [--stage iron-gate|prison-lane] [--headless OUT.json [MAX_FRAMES [CHECKPOINT]]]"
+        );
         return Ok(ExitCode::from(2));
     }
+    let mut stage_name = "iron-gate".to_string();
+    if let Some(i) = args.iter().position(|a| a == "--stage") {
+        stage_name = args.get(i + 1).ok_or("--stage needs a name")?.clone();
+        args.drain(i..i + 2);
+    }
+    let &(_, sequence, action, rules) = STAGES
+        .iter()
+        .find(|s| s.0 == stage_name)
+        .ok_or_else(|| format!("unknown stage {stage_name}"))?;
     let game = PathBuf::from(&args[1]);
     let cfg = PathBuf::from(&args[2]);
     let gd = game.join("resource").join("gd_PC");
@@ -50,14 +65,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             None
         })
     };
-    let stage = campaign.mount(SEQUENCE, ACTION, load)?;
-    let module = fs::read(gd.join(sa2_asset_tools::iron_gate_movers::MODULE_FILE))?;
-    let session = Session::iron_gate(
+    let stage = campaign.mount(sequence, action, load)?;
+    let module = fs::read(gd.join(rules.movers.module_file))?;
+    let session = Session::walker_stage(
         &stage,
         Sources {
             exe: &exe,
             stage_module: &module,
         },
+        rules,
     )?;
     match args.get(3).map(String::as_str) {
         Some("--headless") => {
@@ -73,7 +89,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             headless(session, PathBuf::from(out), max)
         }
-        None => window(session),
+        None => window(session, rules.name),
         Some(other) => Err(format!("unknown option {other}").into()),
     }
 }
@@ -86,13 +102,19 @@ fn headless(
     let mut pilot = Autopilot::new(&s);
     let mut events = vec![];
     let mut track = vec![];
+    // Track sampling interval in frames (default once a second).
+    let every: u32 = std::env::var("SA2_PLAY_TRACK_EVERY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60)
+        .max(1);
     while s.frame < max && s.outcome == Outcome::Playing && !pilot.gave_up {
         let c = pilot.controls(&s);
         for e in s.step(c) {
             events.push(serde_json::json!({"frame": s.frame, "event": e}));
         }
-        if s.frame.is_multiple_of(60) {
-            track.push(serde_json::json!({"frame": s.frame, "position": s.player.position, "grounded": s.player.grounded}));
+        if s.frame.is_multiple_of(every) {
+            track.push(serde_json::json!({"frame": s.frame, "position": s.player.position, "grounded": s.player.grounded, "onMover": s.player.on_mover, "stick": c.stick, "jump": c.jump}));
         }
     }
     let cleared = s.outcome == Outcome::Cleared;
@@ -141,13 +163,13 @@ fn headless(
 }
 
 #[cfg(not(feature = "native-window"))]
-fn window(_: Session) -> Result<ExitCode, Box<dyn std::error::Error>> {
+fn window(_: Session, _: &str) -> Result<ExitCode, Box<dyn std::error::Error>> {
     Err("this build has no window; rebuild with the default native-window feature or use --headless".into())
 }
 
 #[cfg(feature = "native-window")]
-fn window(s: Session) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    view::run(s)
+fn window(s: Session, name: &str) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    view::run(s, name)
 }
 
 #[cfg(feature = "native-window")]
@@ -303,9 +325,9 @@ mod view {
         }
     }
 
-    pub fn run(mut s: Session) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    pub fn run(mut s: Session, name: &str) -> Result<ExitCode, Box<dyn std::error::Error>> {
         let mut window = Window::new(
-            "Iron Gate (Rust stage session)",
+            &format!("{name} (Rust stage session)"),
             W,
             H,
             WindowOptions::default(),
@@ -405,7 +427,7 @@ mod view {
             frame.marker(&cam, s.player_center(), s.physics.rad, 0x00e0_3030);
             let t = s.elapsed_seconds();
             window.set_title(&format!(
-                "Iron Gate | {:02}:{:05.2} | rings {} | score {} | {}{}",
+                "{name} | {:02}:{:05.2} | rings {} | score {} | {}{}",
                 (t / 60.0) as u32,
                 t % 60.0,
                 s.rings,
