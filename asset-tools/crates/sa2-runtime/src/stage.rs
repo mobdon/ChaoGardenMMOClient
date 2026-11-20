@@ -15,6 +15,8 @@
 use crate::camera::camera_init;
 use crate::player::{load_players, Ptr};
 use crate::session::{Session, SessionHost};
+pub use crate::set::SetTable;
+use crate::set::{clear_entries, ring_total, setup_entries, ObjectDef, SetRow};
 use crate::task::{Event, Natives, Runtime, Slot, TaskId};
 
 /// Where stg11D's sections sit (the port's choice of base; main.dol's REL
@@ -32,6 +34,15 @@ pub trait StageHost: SessionHost {
     /// stg11D's object-list entries at .data+0x5B344: (index, value, pointer),
     /// up to the -1 terminator.
     fn object_list(&mut self) -> Vec<(i16, i16, u32)>;
+    /// The SET rows `fn_80065048` loads (set0011_s.bin then _u.bin, joined
+    /// by [`crate::set::join_files`]); read when it returns a non-null file.
+    fn set_rows(&mut self) -> Vec<SetRow> {
+        Vec::new()
+    }
+    /// The stage's object list (on PC, the Steam exe's list for the stage).
+    fn object_defs(&mut self) -> Vec<ObjectDef> {
+        Vec::new()
+    }
 }
 
 /// SET globals `fn_8006638C` sets (0x803ADA08..0x803ADA2C, 0x803AD468).
@@ -56,6 +67,10 @@ pub struct SetState {
     pub object_list: u32,
     /// The 0x600-entry table at 0x801F5968: entries 0..0x5FE cleared.
     pub entries_cleared: bool,
+    /// The SET rows, object list and entries the spawner reads.
+    pub table: SetTable,
+    /// 0x803AD860's +0x10: the ring total `fn_80064F08` writes.
+    pub hud_rings: i16,
 }
 
 /// The stage globals the load writes.
@@ -170,7 +185,7 @@ pub fn stage_load(
     rt.engine(0x8006_7FF4, vec![]);
     rt.engine(0x8001_A3BC, vec![]);
     if stage == 11 {
-        stg11_init(rt, n, st, &mut s.players.allocs, host);
+        stg11_init(rt, n, st, &mut s.players.allocs, &mut s.players.g, host);
     } else {
         rt.engine(0x8001_9E18, vec![]);
     }
@@ -190,6 +205,7 @@ pub fn stg11_init(
     n: &mut dyn Natives,
     st: &mut StageState,
     allocs: &mut Vec<u32>,
+    g: &mut [u8],
     host: &mut dyn StageHost,
 ) {
     let l = st.layout;
@@ -203,7 +219,11 @@ pub fn stg11_init(
     rt.engine(0x8007_2218, vec![d + 0x5CBC0, d + 0x5CAD4]);
     rt.engine(0x8006_5048, vec![0, 0x800]);
     st.bss24 = host.value(0x8006_5048, &[0, 0x800]);
-    set_task(rt, st, d + 0x5D4FC, st.bss24);
+    if st.bss24 != 0 {
+        st.set.table.rows = host.set_rows();
+        st.set.table.defs = host.object_defs();
+    }
+    set_task(rt, st, g, d + 0x5D4FC, st.bss24);
     rt.engine(0x8001_A8A8, vec![]);
     rt.engine(0x8003_3710, vec![]);
     for a in [0x800C_3CD8, 0x8011_E154, 0x8011_E150] {
@@ -275,7 +295,7 @@ pub fn death_zones(rt: &mut Runtime, st: &mut StageState, allocs: &mut Vec<u32>,
 }
 
 /// `fn_8006638C(object_list, set_file)`: the SET task.
-pub fn set_task(rt: &mut Runtime, st: &mut StageState, object_list: u32, file: u32) {
+pub fn set_task(rt: &mut Runtime, st: &mut StageState, g: &mut [u8], object_list: u32, file: u32) {
     let s = &mut st.set;
     s.ada08 = 0;
     s.ad468 = 1;
@@ -305,11 +325,22 @@ pub fn set_task(rt: &mut Runtime, st: &mut StageState, object_list: u32, file: u
     } else {
         st.set.file = file;
         st.set.rows = file + 0x20;
-        rt.events.push(Event::Anomaly(
-            "SET rows present: the SET spawner is not ported yet",
-        ));
+        // shortcut: the entry flags are cleared (fn_80065AE4) only with a SET
+        // file, so the task oracle's fixture flags survive a null file; the
+        // clear is unobservable until rows exist.
+        clear_entries(rt, &mut st.set.table, &mut st.set.ada14);
+        setup_entries(rt, &mut st.set.table, &mut st.set.ada14);
     }
+    // fn_80064F08 starts with fn_80064258 (G+0x6E = G+0x70, also into
+    // 0x803AD860's +0x10, which is not modelled).
     rt.engine(0x8006_4258, vec![]);
+    if file != 0 {
+        st.set.hud_rings = ring_total(&st.set.table, g);
+    } else if let (Some(&a), Some(&b)) = (g.get(0x70), g.get(0x71)) {
+        if let Some(d) = g.get_mut(0x6E..0x70) {
+            d.copy_from_slice(&[a, b]);
+        }
+    }
     if let Some(twp) = rt.task_mut(t).and_then(|x| x.twp.as_mut()) {
         twp[0] = 1;
     }

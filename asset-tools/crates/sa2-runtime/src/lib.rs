@@ -12,6 +12,7 @@ pub mod frame;
 pub mod input;
 pub mod player;
 pub mod session;
+pub mod set;
 pub mod stage;
 pub mod task;
 
