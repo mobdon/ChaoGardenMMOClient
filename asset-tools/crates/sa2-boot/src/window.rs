@@ -139,6 +139,8 @@ pub fn pad() -> PadStatus {
 }
 
 struct Gpu {
+    /// Whether a timer holds presents to the chosen rate (below the display's).
+    pace: bool,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -198,9 +200,22 @@ fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
         .ok_or("surface not supported")?;
     // The game's colours are already gamma-encoded: use a non-sRGB format.
     config.format = config.format.remove_srgb_suffix();
+    // At or above the display's rate, vsync paces the window. Below it (120
+    // on a 165 Hz screen), presenting waits for nothing and a timer paces it:
+    // with both, a picture that just missed a refresh waited for the next and
+    // 165 a second came out as 100.
+    let refresh = window
+        .current_monitor()
+        .and_then(|m| m.refresh_rate_millihertz())
+        .map_or(60.0, |mhz| f64::from(mhz) / 1000.0);
+    let pace = f64::from(target_fps()) < refresh - 1.0;
+    if pace {
+        config.present_mode = wgpu::PresentMode::AutoNoVsync;
+    }
     surface.configure(&device, &config);
     let renderer = GxRenderer::new(device.clone(), queue.clone(), config.format);
     Ok(Gpu {
+        pace,
         window,
         surface,
         device,
@@ -290,12 +305,14 @@ impl ApplicationHandler for App {
                 crate::prof::add(&crate::prof::RENDER, t);
                 // Hold presents to the chosen rate (the display may refresh
                 // faster than it).
-                let period = std::time::Duration::from_secs_f64(1.0 / f64::from(target_fps()));
-                let now = std::time::Instant::now();
-                if self.next_present > now {
-                    std::thread::sleep(self.next_present - now);
+                if g.pace {
+                    let period = std::time::Duration::from_secs_f64(1.0 / f64::from(target_fps()));
+                    let now = std::time::Instant::now();
+                    if self.next_present > now {
+                        std::thread::sleep(self.next_present - now);
+                    }
+                    self.next_present = (self.next_present + period).max(now);
                 }
-                self.next_present = (self.next_present + period).max(now);
                 g.window.request_redraw();
             }
             _ => {}
