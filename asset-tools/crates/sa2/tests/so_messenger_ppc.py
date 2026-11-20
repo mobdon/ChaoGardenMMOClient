@@ -2,10 +2,13 @@
 library) under the main.dol harness and print JSON (every float as its bit
 pattern). tests/so_messenger.rs replays each case with
 `stage_objects::messenger` and compares. Usage: python so_messenger_ppc.py
-<trail|messenger|display>
-Engine routines and the module helpers the port leaves out are stubbed and
-recorded as events; the REL code and main.dol's math (njCalcPoint, njSin,
-njScalor, the colour blend, the Ninja matrix routines) run as compiled.
+<trail|messenger|display|shadow>
+Engine routines are stubbed and recorded as events (the GX calls of the
+shadow helpers among them); the REL code, the shadow helpers included, and
+main.dol's math (njCalcPoint, njSin, njScalor, the colour blend, the Ninja
+matrix routines, C_MTXLookAt / C_MTXFrustum / C_MTXLightFrustum /
+C_MTXConcat, PSVECNormalize / PSVECCrossProduct, GXGetTexBufferSize) run
+as compiled.
 Allocations, tasks and windows are numbered in the order they appear.
 """
 import json, struct, sys
@@ -14,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from so_harness import *  # noqa: E402,F401,F403
 import gekko_tables  # noqa: E402
 from so_dynland_ppc import get_words  # noqa: E402
+from unicorn import UC_HOOK_CODE  # noqa: E402
 
 if gekko_tables.load() is None:
     sys.stderr.write('needs the local Gekko estimate tables (njScalor)\n')
@@ -183,18 +187,39 @@ m.stub(0x8011C310, lambda mm: ev('setfog'))
 m.stub(0x801179F8, lambda mm: ev('blend', mm.gpr(3), mm.gpr(4)))
 m.stub(0x80116E18, lambda mm: ev('settexture', mm.gpr(3) - S5(0)))
 m.stub(0x80121BDC, lambda mm: ev('model', mm.gpr(3) - S5(0), get_matrix()))
-# Module helpers the port leaves out (the shadow texture).
-m.stub(S1(0x7344), lambda mm: ev('shadow_init', idof(mm.gpr(3) - 0x84), mm.gpr(4)))
-m.stub(S1(0x7400), lambda mm: ev('shadow_free', idof(mm.gpr(3) - 0x84)))
+
+
+# The shadow helpers' GX calls; a block (at work +0x84) is named by the work.
+def own(a):
+    return idof(a - 0x84)
+
+
+def fbits(mm, *k):
+    return [fb(f32(mm.fpr(i))) for i in k]
+
+
+m.stub(0x8010334C, lambda mm: ev('tex_init', own(mm.gpr(3) - 0x30), idof(mm.gpr(4)), mm.gpr(5) & 0xffff,
+                                 mm.gpr(6) & 0xffff, mm.gpr(7), mm.gpr(8), mm.gpr(9), mm.gpr(10) & 0xff))
+m.stub(0x80103608, lambda mm: ev('tex_lod', own(mm.gpr(3) - 0x30), mm.gpr(4), mm.gpr(5), fbits(mm, 1, 2, 3),
+                                 mm.gpr(6) & 0xff, mm.gpr(7) & 0xff, mm.gpr(8)))
+m.stub(0x80103BEC, lambda mm: ev('tex_inval'))
+m.stub(0x80105AA8, lambda mm: ev('viewport', fbits(mm, 1, 2, 3, 4, 5, 6)))
+m.stub(0x80105B18, lambda mm: ev('scissor', [mm.gpr(k) for k in (3, 4, 5, 6)]))
+m.stub(0x80105678, lambda mm: ev('projection', [m.get(mm.gpr(3) + 4 * k, 'I') for k in range(16)], mm.gpr(4)))
+m.stub(0x80101E54, lambda mm: ev('copy_src', [mm.gpr(k) & 0xffff for k in (3, 4, 5, 6)]))
+m.stub(0x80101F58, lambda mm: ev('copy_dst', mm.gpr(3) & 0xffff, mm.gpr(4) & 0xffff, mm.gpr(5), mm.gpr(6) & 0xff))
+m.stub(0x80102648, lambda mm: ev('copy_tex', idof(mm.gpr(3)), mm.gpr(4) & 0xff))
+m.stub(0x801015CC, lambda mm: ev('pix_sync'))
+# fn_8011C21C (njUnitMatrix on the current matrix) uses paired singles too.
+m.paired[0x8011C21C] = 'njUnitMatrix'
+m.u.hook_add(UC_HOOK_CODE, m._enter_paired, begin=0x8011C21C, end=0x8011C21C)
+m.stub(0x80066AC8, lambda mm: ev('shadow_queue', mm.gpr(3), vec(mm.gpr(4)), fb(f32(mm.fpr(1))), own(mm.gpr(5) - 0x30),
+                                 idof(mm.gpr(6)), own(mm.gpr(7))))
 # The movable set-up / release 0x4B44 / 0x4BA8 (ObjectMovableInitialize
 # included) and the placement 0x14608 / 0x148A4 run as compiled; the body
 # comes from the syCalloc stub above. The player queries they make:
 m.stub(0x80038008, bone)
 m.stub(0x80038108, chara)
-m.stub(S1(0x6F94), lambda mm: ev('shadow_capture', idof(mm.gpr(3) - 0x84), fb(f32(mm.fpr(1))), vec(mm.gpr(4)),
-                                   mm.gpr(5), mm.gpr(6), fb(f32(mm.fpr(2)))))
-m.stub(S1(0x72D0), lambda mm: ev('shadow_end', idof(mm.gpr(3) - 0x84)))
-m.stub(S1(0x7440), lambda mm: ev('shadow_draw', mm.gpr(3), vec(mm.gpr(4)), fb(f32(mm.fpr(1))), idof(mm.gpr(5) - 0x84)))
 
 
 # --- trails ------------------------------------------------------------------
@@ -348,10 +373,28 @@ def task_state(t):
         s['work'] = {'id': idof(awp), 'pos': vec(awp), 'anchor': vec(awp + 0x10), 'bob': m.get(awp + 0x24, 'i'), 'f30': m.get(awp + 0x30, 'I'),
                      'sub_task': idof(m.get(awp + 0x3C, 'I')), 'home': vec(awp + 0x40), 'w4c': m.get(awp + 0x4C, 'i'),
                      'w50': m.get(awp + 0x50, 'I'), 'player': m.get(awp + 0x54, 'i'),
-                     'trails': [trail_state(m.get(awp + 0x74 + 4 * k, 'I')) for k in range(4)]}
+                     'trails': [trail_state(m.get(awp + 0x74 + 4 * k, 'I')) for k in range(4)],
+                     'shadow': shadow_state(awp + 0x84)}
     else:
         s['work'] = None
     return s
+
+
+def shadow_state(b):
+    return {'matrix': [m.get(b + 4 * k, 'I') for k in range(12)], 'size': m.get(b + 0x50, 'I'),
+            'buf': idof(m.get(b + 0x54, 'I'))}
+
+
+def rnd_shadow(b):
+    """A shadow block as 0x7344 and 0x6FC4 may have left it."""
+    for k in range(12):
+        m.put(b + 4 * k, 'I', rnd_bits(-2, 2))
+    m.put(b + 0x50, 'I', rng.choice([0x20, 0x20, 0x20, 1, 0x40, 1024, 0, rng.randrange(1 << 16), rng.randrange(1 << 32)]))
+    buf = 0
+    if rng.random() < 0.85:
+        buf = bump(4)
+        newid(buf)
+    m.put(b + 0x54, 'I', buf)
 
 
 def plans(n_calloc=8):
@@ -485,6 +528,7 @@ def display():
         m.put(t + 0x40, 'I', awp)
         newid(awp)
         put_vec(awp, [rnd_bits() for _ in range(3)])
+        rnd_shadow(awp + 0x84)
         m.put(awp + 0x24, 'i', rng.choice([0, 0x4000, rng.randrange(-(1 << 31), 1 << 31)]))
         player = rng.choice([0, 1])
         m.put(awp + 0x54, 'i', player)
@@ -520,5 +564,77 @@ def display():
                              'after': task_state(t)})
 
 
-{'trail': trail, 'messenger': messenger, 'display': display}[which]()
+def shadow():
+    """The shadow helpers called directly, on a block at a work's +0x84:
+    0x7344 then 0x7400 (twice), 0x6F94 / 0x6FC4 with and without angles
+    (then 0x72D0), 0x72D0 alone and 0x7440."""
+    A, P = SCRATCH + 0x100, SCRATCH + 0x140
+    for c in range(1000):
+        reset_case()
+        w = bump(0xDC)
+        wid = newid(w)
+        b = w + 0x84
+        kind = ('init', 'capture', 'capture_ex', 'end', 'draw')[c % 5]
+        case = {'kind': kind, 'id': wid}
+        if kind == 'init':
+            size = rng.choice([0x20, 1, 2, 7, 8, 9, 0x40, 1024, 1025, 0, 0xffff, rng.randrange(1 << 16),
+                               rng.randrange(1 << 32)])
+            ctx['calloc_ok'] = [rng.random() > 0.2]
+            case.update(size=size, calloc_ok=list(ctx['calloc_ok']))
+            m.call(S1(0x7344), r3=b, r4=size)
+            case['events'] = list(events)
+            case['after'] = shadow_state(b)
+            events.clear()
+            for _ in range(2):
+                m.call(S1(0x7400), r3=b)
+            case['free_events'] = list(events)
+            case['freed'] = shadow_state(b)
+        else:
+            rnd_shadow(b)
+            case['before'] = shadow_state(b)
+            mat = rnd_matrix()
+            put_matrix(mat)
+            case['matrix'] = mat
+            pos = [rnd_bits(-5000, 5000) for _ in range(3)]
+            put_vec(P, pos)
+            case['pos'] = pos
+            if kind in ('capture', 'capture_ex'):
+                # A half width of zero divides by zero: the NaN it makes
+                # differs in sign between the PowerPC and x86 only.
+                hw = rng.choice([1.0, 1.0, 0.5, 2.0, 82.0, -3.0, f32(rng.uniform(0.01, 200))])
+                sin = rng.choice([0.0, 1.0, -1.0, fin(-1, 1)])
+                ts = rng.choice([1.0, 0.5, 2.0, fin(-4, 4)])
+                ang = [rng.choice([None, 0, 0x4000, rng.randrange(-(1 << 31), 1 << 31)]) for _ in range(2)]
+                for k, a in enumerate(ang):
+                    if a is not None:
+                        m.put(A + 4 * k, 'i', a)
+                rx, ry = [0 if a is None else A + 4 * k for k, a in enumerate(ang)]
+                case.update(half_width=fb(f32(hw)), sin=fb(f32(sin)), tex_scale=fb(f32(ts)), angles=ang)
+                if kind == 'capture':
+                    case['tex_scale'] = fb(1.0)
+                    m.call(S1(0x6F94), r3=b, f1=f32(hw), r4=P, r5=rx, r6=ry, f2=f32(sin))
+                else:
+                    m.call(S1(0x6FC4), r3=b, f1=f32(hw), f2=f32(ts), f3=f32(sin), r4=P, r5=rx, r6=ry)
+                # The helper leaves its camera pushed for 0x72D0 to pop.
+                case['current'] = get_matrix()
+                case['capture_events'] = list(events)
+                events.clear()
+                m.call(S1(0x72D0), r3=b)
+                assert get_matrix() == mat
+            elif kind == 'end':
+                stack = m.get(CUR, 'I')
+                m.put(CUR, 'I', stack + 0x30)
+                m.call(S1(0x72D0), r3=b)
+                assert m.get(CUR, 'I') == stack
+            else:
+                kd = rng.choice([0, 1, 2, rng.randrange(1 << 32)])
+                size = fin(-100, 200)
+                case.update(queue_kind=kd, size=fb(f32(size)))
+                m.call(S1(0x7440), r3=kd, r4=P, f1=f32(size), r5=b)
+            case['events'] = list(events)
+            case['after'] = shadow_state(b)
+        out['cases'].append(case)
+
+
+{'trail': trail, 'messenger': messenger, 'display': display, 'shadow': shadow}[which]()
 print(json.dumps(out))
