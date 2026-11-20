@@ -108,4 +108,41 @@ for _ in range(4000):
     run.append({"flag": flag, "ang": ang, "global": [fb(x) for x in glob], "spd": [fb(x) for x in spd],
                 "mwacc": [fb(x) for x in mwacc], "f": {hex(o): fb(x) for o, x in f.items()},
                 "acc_after": get3(PW + 0x58)})
-print(json.dumps({"level": level, "acc": acc, "run": run}))
+# fn_8004B330: fn_8004E560 is stubbed to the case's stick.
+stick = [0, 0, 0.0]
+
+
+def analog_stub(mm):
+    mm.gpr(3, stick[0])
+    if mm.gpr(5):
+        mm.put(mm.gpr(5), "i", stick[1])
+    if mm.gpr(6):
+        mm.put(mm.gpr(6), "f", stick[2])
+
+
+m.stub(0x8004E560, analog_stub)
+air = []
+for _ in range(4000):
+    ang = [rng.choice([0, rng.randrange(-0x2000, 0x2000)]), rng.randrange(0, 0x10000), rng.choice([0, rng.randrange(-0x2000, 0x2000)])]
+    glob = [0.0, -1.0, 0.0] if rng.random() < 0.8 else [f32(rng.uniform(-1, 1)) for _ in range(3)]
+    spd = [rf(6) for _ in range(3)]
+    mwacc, mwspd_y = [rf(1) for _ in range(3)], rf(3)
+    f = {o: f32(rng.uniform(lo, hi)) for o, lo, hi in ((0x100, 0, 0.2), (0x10C, 0, 1), (0x110, -0.1, 0), (0x118, -0.1, 0),
+                                                       (0x11C, -0.1, 0), (0x138, 0.05, 0.12), (0xE8, 1, 5))}
+    stick[0] = rng.choice([0, 1, 1])
+    stick[1] = rng.choice([ang[1], (ang[1] + rng.randrange(-0x1800, 0x1800)) & 0xFFFF, rng.randrange(0, 0x10000)])
+    stick[2] = f32(rng.uniform(0, 1))
+    aim = rng.randrange(0, 0x10000)
+    m.u.mem_write(TASK + 8, struct.pack(">3i", *ang))
+    put3(GLOBAL, glob)
+    put3(PW + 0x64, spd)
+    for o, x in f.items():
+        m.put(PW + o, "f", x)
+    put3(MW + 0xC, mwacc)
+    m.put(MW + 4, "f", mwspd_y)
+    m.put(MW + 0x1C, "i", aim)
+    m.call(0x8004B330, r3=TASK, r4=MW, r5=PW)
+    air.append({"ang": ang, "global": [fb(x) for x in glob], "spd": [fb(x) for x in spd], "mwacc": [fb(x) for x in mwacc],
+                "mwspd_y": fb(mwspd_y), "f": {hex(o): fb(x) for o, x in f.items()}, "stick": [stick[0], stick[1], fb(stick[2])],
+                "aim": aim, "acc_after": get3(PW + 0x58), "aim_after": m.get(MW + 0x1C, "i")})
+print(json.dumps({"level": level, "acc": acc, "run": run, "air": air}))

@@ -7,7 +7,7 @@
 use crate::{
     ninja_matrix::{rotate_by_angles, unrotate_by_angles, MatrixStack, Vec3},
     ninja_trig::{fmadds, fnmsubs},
-    walker_collide::adjust_angle,
+    walker_collide::{adjust_angle, diff_angle},
 };
 
 const ZERO: f32 = 0.0; // r2-0x75F8
@@ -250,4 +250,67 @@ pub fn accel_run(
     }
     turn();
     Some(a)
+}
+
+const TWICE: f32 = 2.0; // r2-0x75FC
+
+/// fn_8004B330: the airborne acceleration. As `accel_run` but with the air
+/// resistance at +0x110 for x, no ground braking, and the stick: `analog`
+/// is fn_8004E560(task, player, &angle, &magnitude), returning the stick
+/// angle and magnitude when it is held. Without it the motion work's aim
+/// takes the task's yaw. With it the magnitude is scaled by +0x10C when
+/// turning back hard above `run_speed`, dropped when the stick is more than
+/// 0x1000 off the yaw (aiming there), else scaled by +0x100 (doubled while
+/// falling) with the aim set; then `turn` (fn_80047714) runs. The magnitude
+/// adds to x.
+#[allow(clippy::too_many_arguments)]
+pub fn accel_air(
+    stack: &mut MatrixStack,
+    angles: [i32; 3],
+    w: &AccelWork,
+    air_x: f32,
+    run_speed: f32,
+    f_100: f32,
+    f_10c: f32,
+    mw_acc: Vec3,
+    mw_spd_y: f32,
+    aim: &mut i32,
+    global: Vec3,
+    analog: &mut dyn FnMut() -> Option<(i32, f32)>,
+    turn: &mut dyn FnMut(i32),
+) -> Vec3 {
+    let mut a = mw_acc;
+    for j in 0..3 {
+        a[j] = fmadds(global[j], w.weight, a[j]);
+    }
+    a = unrotate_by_angles(stack, angles, a);
+    a[0] = fmadds(air_x, w.spd[0], a[0]);
+    a[1] = fmadds(w.air_resist[1], w.spd[1], a[1]);
+    a[2] = fmadds(w.air_resist[2], w.spd[2], a[2]);
+    let mag = match analog() {
+        None => {
+            *aim = angles[1];
+            ZERO
+        }
+        Some((ang, mag)) => {
+            let d = diff_angle(angles[1], ang);
+            let mag = if w.spd[0] > run_speed && d > 0x6000 {
+                f_10c * mag
+            } else if d > 0x1000 {
+                *aim = ang;
+                ZERO
+            } else {
+                *aim = ang;
+                if mw_spd_y < ZERO {
+                    TWICE * (f_100 * mag)
+                } else {
+                    f_100 * mag
+                }
+            };
+            turn(*aim);
+            mag
+        }
+    };
+    a[0] += mag;
+    a
 }

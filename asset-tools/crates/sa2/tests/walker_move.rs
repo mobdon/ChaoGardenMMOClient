@@ -1,7 +1,7 @@
 //! Compare `walker_move` with main.dol (tests/walker_move_ppc.py).
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_move::{accel, accel_run, air_level, AccelWork},
+    walker_move::{accel, accel_air, accel_run, air_level, AccelWork},
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -113,5 +113,39 @@ fn matches_main_dol() {
             Some(a) => assert_eq!(bits(a), bits(want), "{c}"),
             None => assert_eq!(bits(want), bits([1.5, 2.5, 3.5]), "{c}"),
         }
+    }
+    for c in v["air"].as_array().unwrap() {
+        let g = |k: &str| f(&c["f"][k]);
+        let w = AccelWork {
+            spd: v3(&c["spd"]),
+            f40: 0.0,
+            f_d0: 0.0,
+            air_resist: [0.0, g("0x118"), g("0x11c")],
+            decel_x: 0.0,
+            decel_z: 0.0,
+            stop_share: 0.0,
+            weight: g("0x138"),
+        };
+        let st = &c["stick"];
+        let held = st[0].as_u64().unwrap() != 0;
+        let stick = (st[1].as_i64().unwrap() as i32, f(&st[2]));
+        let mut aim = c["aim"].as_i64().unwrap() as i32;
+        let a = accel_air(
+            &mut stack,
+            i3(&c["ang"]),
+            &w,
+            g("0x110"),
+            g("0xe8"),
+            g("0x100"),
+            g("0x10c"),
+            v3(&c["mwacc"]),
+            f(&c["mwspd_y"]),
+            &mut aim,
+            v3(&c["global"]),
+            &mut || held.then_some(stick),
+            &mut |_| {},
+        );
+        assert_eq!(bits(a), bits(v3(&c["acc_after"])), "{c}");
+        assert_eq!(aim as i64, c["aim_after"].as_i64().unwrap(), "{c}");
     }
 }
