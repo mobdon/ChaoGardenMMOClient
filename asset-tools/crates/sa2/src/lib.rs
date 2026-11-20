@@ -53,6 +53,7 @@ pub mod play_session;
 pub mod play_world;
 pub mod pose;
 pub mod ring_magnet;
+pub mod rocket;
 pub mod set;
 pub mod spring;
 pub mod solid_box;

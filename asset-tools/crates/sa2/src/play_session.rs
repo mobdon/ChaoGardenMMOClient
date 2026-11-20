@@ -31,6 +31,7 @@ use crate::{
     chao_pipe::{ChaoPipe, PipeEvent},
     effect_emitter::{EffectEmitter, Emission},
     ori::{Ori, OriEvent},
+    rocket::{Rocket, RocketEvent, RocketInputs},
     solid_box::{collapse_above, SolidBox, SolidBoxEvent, NO_GROUND},
     prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
     prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
@@ -162,6 +163,9 @@ pub struct PlayerSample {
     pub position: V3,
     /// The player task's Action byte (twp +0), which CHAOPIPE reads.
     pub action: u8,
+    /// The player task's Status has bit 0 or 1 (on the ground), which the
+    /// rocket's stand test reads.
+    pub grounded: bool,
     /// The engine's "player standing on this object" answer, as an index
     /// into `Session::movers`.
     pub standing_on: Option<usize>,
@@ -216,6 +220,11 @@ pub enum Event {
     Pipe {
         pipe: usize,
         event: PipeEvent,
+    },
+    /// A ROCKETMISSSILE armed, puffed, flew, linked or exploded.
+    Rocket {
+        rocket: usize,
+        event: RocketEvent,
     },
     /// An ORI cage block was hit, collapsed its stack, threw debris or went.
     Ori {
@@ -699,6 +708,13 @@ pub struct Session {
     pub pipes: Vec<ChaoPipe>,
     pub solid_boxes: Vec<SolidBox>,
     pub oris: Vec<Ori>,
+    pub rockets: Vec<Rocket>,
+    /// The switch bytes (PC 0x802B95E0 + id): bit 0 on, bit 1 changed.
+    #[serde(skip)]
+    pub switches: [u8; 256],
+    /// Host-reported: the rocket child's collision hit this frame.
+    #[serde(skip)]
+    pub rocket_child_hits: Vec<usize>,
     /// sec6+0xD34: ORI breaks so far (picks the 0x1011 sound variant).
     pub ori_breaks: u32,
     /// Host-reported hits for next frame: the attack query 0x800060EC(task,
@@ -851,6 +867,7 @@ impl Session {
         let mut pipes = vec![];
         let mut solid_boxes = vec![];
         let mut oris = vec![];
+        let mut rockets = vec![];
         // stg09D.rel sec5+0x8E484: SOLIDBOX's cube row.
         let solid_box_row = if rules.prison_doors {
             Some(collision_rows(src.stage_module, rules.movers.module_file, 0x8e484, 1)?.remove(0))
@@ -967,6 +984,13 @@ impl Session {
                             radius: CAM_RADIUS,
                         });
                     }
+                    (_, "ROCKETMISSSILE") if rules.prison_doors => rockets.push(Rocket::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters,
+                    )),
                     (_, "ORI") if rules.prison_doors => {
                         oris.push(Ori::new(li, p.placement_index, pl.position, pl.rotation))
                     }
@@ -1231,6 +1255,9 @@ impl Session {
             pipes,
             solid_boxes,
             oris,
+            rockets,
+            switches: [0; 256],
+            rocket_child_hits: vec![],
             ori_breaks: 0,
             ori_attacks: vec![],
             ori_rockets: vec![],
@@ -1421,6 +1448,47 @@ impl Session {
         for (i, b) in self.solid_boxes.iter_mut().enumerate() {
             if let Some(event) = b.step(&mut ground) {
                 events.push(Event::SolidBox { solid_box: i, event });
+            }
+        }
+        let child_hits = std::mem::take(&mut self.rocket_child_hits);
+        for i in 0..self.rockets.len() {
+            let switches = self.switches;
+            let counts = self.group_counts;
+            let listed: Vec<u32> = self
+                .oris
+                .iter()
+                .filter(|o| o.listed)
+                .map(|o| o.rocket_id())
+                .collect();
+            let switch_on = |id: u32| switches[id as usize] & 1 != 0;
+            let group_clear = |id: u32| counts[id as usize] == 0;
+            let ori_listed = |id: u32| listed.contains(&id);
+            let input = RocketInputs {
+                players: [player.map(|p| (p.position, p.grounded)), None],
+                centres,
+                suppressed: self.effects_suppressed,
+                switch_on: &switch_on,
+                group_clear: &group_clear,
+                ori_listed: &ori_listed,
+                child_hit: child_hits.contains(&i),
+            };
+            for event in self.rockets[i].step(&input, &mut self.rand) {
+                match event {
+                    RocketEvent::Linked { id } => {
+                        let at = self.rockets[i].position;
+                        for (o, ori) in self.oris.iter().enumerate() {
+                            if ori.listed && ori.rocket_id() == id {
+                                self.ori_rockets.push((o, at));
+                            }
+                        }
+                    }
+                    RocketEvent::SwitchOff { id } => {
+                        let s = &mut self.switches[id as usize];
+                        *s = (*s & !1) | 2;
+                    }
+                    _ => {}
+                }
+                events.push(Event::Rocket { rocket: i, event });
             }
         }
         let attacks = std::mem::take(&mut self.ori_attacks);

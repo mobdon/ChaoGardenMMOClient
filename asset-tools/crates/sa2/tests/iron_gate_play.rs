@@ -122,6 +122,7 @@ fn standing_on_a_lift_raises_it_by_its_native_rule() {
             center: s.movers[i].position(),
             position: s.movers[i].position(),
             action: 0,
+            grounded: false,
             standing_on: Some(i),
             touching_goal: None,
             hit_cam_lens: None,
@@ -153,6 +154,7 @@ fn goal_contact_writes_the_slot_word() {
             center: goal,
             position: goal,
             action: 0,
+            grounded: false,
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),

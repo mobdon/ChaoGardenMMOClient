@@ -77,19 +77,14 @@ outer door (114 frames) gates travel.
 | CHAOPIPE (3) | `chao_pipe` (0x18A68 set-up, 0x18B18 exec) | Ported: the range test radius is 25 for the walkers (player 0's character 6 or 7, 0x80038108) and 13 otherwise. A player in range whose task Action (`PlayerSample::action`) is 0x2A starts a 300-frame timer and the squash spring (speed 0.08; each frame squash += speed, speed = 0.95 * speed - 0.15 * squash); a player in range without it gets the action requested (byte +0xD of its 0x801E7728 entry, `PipeEvent::RequestAction`). At 270 a chao of kind (u32)Scale.x % 3 is released at (0, 3, 2) through njTranslate, njRotateZ, X, Y and njCalcPoint (matches main.dol on 1,500 samples) with sound 0x100A, and the pipe is used up. The chao (0x800260FC) is not run, and the form-6 collision row (sec5+0x51574) is not built |
 | SOLIDBOX (6) | `solid_box` (0x3AD5C set-up, 0x3AE5C exec); stack registry 0x8F04/0x9154, collapse 0x92C4 | Ported: a 20-unit cube (sec5+0x8E484) placed by the CCL box rule (`Session::solid_box_solid`). `Session::collapse_stack` is 0x92C4, which a breaking container or ORI runs at its position: each box higher than that point plus 11 and within 8 horizontally gets 20 more to fall. A falling box steps by its speed (or the rest of the fall), speed = 0.99 * speed - 0.08, and when it stops within 5 of its ground it raises dust (`Event::SolidBox`). The ground height is fn_80067AF0 (`land_probe::ground_height`; its ray test fn_800D05D0 matches main.dol on 1,500 node sets), which the host supplies as `Session::ground_probe` from its land collision. Containers register in the same stack, but their own fall and their breaking (walker attacks) are not ported |
 | ORI cage block (1) | `ori` (0x31058 set-up, 0x311D4 exec) | Ported: the same 20-unit cube and fall as SOLIDBOX, in the same stack (`Session::ori_solid`). A hit (host-reported: `Session::ori_attacks` for the attack query 0x800060EC(task, 0x13), `Session::ori_rockets` when a rocket links to it) waits trunc(max(distance - 18, 0)) frames for a rocket (0x8011B65C, matched against main.dol on 4,000 samples) or 1, plays sound 0x1011 (variant = break count mod 5) and 0x14, collapses the stack above on its second frame, and from its fourth throws 16 + 4 + 4 debris pieces (unless (Rotation.x & 0xF) % 3 is 2) and 14 sparks drawn from MSL rand, then goes. The debris and spark tasks themselves are not run |
+| ROCKETMISSSILE (1) | `rocket` (0x35AC8 set-up, 0x35E10 exec) | Ported: arms (sound 0x1005) when its mode allows (Rotation.x & 3: 2 waits for its switch, 3 for a player within 100 and a clear enemy group) and an ORI with its id is listed; opens its hatch, rises 9 and lifts; once a grounded player stands within 6.5 of its stand point (`PlayerSample::grounded`) it aims at its Scale target at 0x140 BAMS a frame with smoke and wobble, closes, builds thrust, rumbles the rider, flies 5.1 a frame with exhaust and on arrival links the ORI (which breaks) and explodes; then re-arms, stops or stays by mode. The particles, explosion, rumble, its dynamic land model and its child's damage byte are reported or not run; the switch bytes are `Session::switches` |
 | BIG THE CAT | 0x33E3C | The GameCube module's callback does nothing |
 
 Everything else is listed by name in `Session::unimplemented`: item boxes,
-enemies, KNUDAI, ROCKETMISSSILE and MINIMAL. The colour blend those objects
+enemies, KNUDAI and MINIMAL. The colour blend those objects
 share (GSNE8P 0x800334B0) is ported as `color_blend::blend_argb`. What holds
 the rest back, as read from the code:
 
-* ROCKETMISSSILE (0x35AC8, a rocket the player rides, registered as a
-  dynamic land object) stays in its waiting state until an ORI with its id
-  (Rotation.z & 0x1F) is in the table at sec5+0x88204 (ORI adds itself
-  through 0x35A1C), or until its enemy group is clear (0x80018E30) with a
-  player within 100, depending on Rotation.x & 3. Its exec (about 1,400
-  instructions) is not ported yet.
 * MINIMAL's callback is in the main program (GSNE8P 0x80025C7C): it spawns
   the small animals, which walk with ground physics.
 * KNUDAI (0x2979C) is the Mystic Melody shrine: a dynamic land model
