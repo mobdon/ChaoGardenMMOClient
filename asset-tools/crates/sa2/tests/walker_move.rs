@@ -1,7 +1,7 @@
 //! Compare `walker_move` with main.dol (tests/walker_move_ppc.py).
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_move::{accel, air_level, AccelWork},
+    walker_move::{accel, accel_run, air_level, AccelWork},
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -85,5 +85,33 @@ fn matches_main_dol() {
             None => assert_eq!(bits(want), bits([1.5, 2.5, 3.5]), "{c}"),
         }
         assert_eq!(bits(across), bits(v3(&c["across_after"])), "{c}");
+    }
+    for c in v["run"].as_array().unwrap() {
+        let g = |k: &str| f(&c["f"][k]);
+        let w = AccelWork {
+            spd: v3(&c["spd"]),
+            f40: g("0x40"),
+            f_d0: 0.0,
+            air_resist: [g("0x114"), g("0x118"), g("0x11c")],
+            decel_x: g("0x120"),
+            decel_z: g("0x124"),
+            stop_share: g("0x128"),
+            weight: g("0x138"),
+        };
+        let got = accel_run(
+            &mut stack,
+            c["flag"].as_u64().unwrap() as i16,
+            i3(&c["ang"]),
+            &w,
+            g("0x108"),
+            v3(&c["mwacc"]),
+            v3(&c["global"]),
+            &mut || {},
+        );
+        let want = v3(&c["acc_after"]);
+        match got {
+            Some(a) => assert_eq!(bits(a), bits(want), "{c}"),
+            None => assert_eq!(bits(want), bits([1.5, 2.5, 3.5]), "{c}"),
+        }
     }
 }

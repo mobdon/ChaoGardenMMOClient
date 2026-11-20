@@ -6,7 +6,7 @@
 
 use crate::{
     ninja_matrix::{rotate_by_angles, unrotate_by_angles, MatrixStack, Vec3},
-    ninja_trig::fmadds,
+    ninja_trig::{fmadds, fnmsubs},
     walker_collide::adjust_angle,
 };
 
@@ -147,5 +147,107 @@ pub fn accel(
             a[j] = -s;
         }
     }
+    Some(a)
+}
+
+/// fn_80048EC4: the running acceleration, like `accel` without the
+/// across-plane term but with the run brake (+0x108, scaled by `f40`)
+/// pushing x and z against their speed. On the ground x is braked toward
+/// zero without crossing it, then kept from reversing the speed; z brakes
+/// as in `accel`. `turn` is fn_80047714(task, motion, player, aim), which
+/// the routine calls before storing the result (also when airborne).
+#[allow(clippy::too_many_arguments)]
+pub fn accel_run(
+    stack: &mut MatrixStack,
+    task_flag: i16,
+    angles: [i32; 3],
+    w: &AccelWork,
+    run_break: f32,
+    mw_acc: Vec3,
+    global: Vec3,
+    turn: &mut dyn FnMut(),
+) -> Option<Vec3> {
+    if task_flag & 0x4000 != 0 {
+        return None;
+    }
+    let mut a = mw_acc;
+    for j in 0..3 {
+        a[j] = fmadds(global[j], w.weight, a[j]);
+    }
+    a = unrotate_by_angles(stack, angles, a);
+    for j in 0..3 {
+        a[j] = fmadds(w.air_resist[j], w.spd[j], a[j]);
+    }
+    let push = |s: f32| {
+        if s > ZERO {
+            fmadds(run_break, w.f40, ZERO)
+        } else if s < ZERO {
+            fnmsubs(run_break, w.f40, ZERO)
+        } else {
+            ZERO
+        }
+    };
+    let px = push(w.spd[0]);
+    let mut pz = push(w.spd[2]);
+    if task_flag & 3 != 0 {
+        let s = w.spd[0];
+        if s == ZERO {
+            let lim = w.f40 * (a[1] * w.stop_share);
+            if a[0] < lim && a[0] > -lim {
+                a[0] = ZERO;
+            }
+        } else {
+            let mut brake = ZERO;
+            if a[1] < ZERO {
+                brake = w.f40 * (a[1] * w.decel_x);
+            }
+            let mut x = a[0] + px;
+            if x > ZERO {
+                x -= brake;
+                if x < ZERO {
+                    x = ZERO;
+                }
+            } else if x < ZERO {
+                x += brake;
+                if x > ZERO {
+                    x = ZERO;
+                }
+            }
+            a[0] = x;
+            if s > ZERO {
+                if s < -a[0] {
+                    a[0] = -s;
+                }
+            } else if s < ZERO && s > -a[0] {
+                a[0] = -s;
+            }
+        }
+        let s = w.spd[2];
+        if s == ZERO {
+            let lim = w.f40 * (a[1] * w.stop_share);
+            if a[2] < lim && a[2] > -lim {
+                a[2] = ZERO;
+            }
+        } else {
+            let mut brake = ZERO;
+            if a[1] < ZERO {
+                brake = w.f40 * (a[1] * w.decel_z);
+            }
+            if a[2] > ZERO {
+                pz -= brake;
+            } else if a[2] < ZERO {
+                pz += brake;
+            }
+            a[2] += pz;
+            if s > ZERO {
+                if s < -a[2] {
+                    a[2] = -s;
+                }
+            } else if s < ZERO && s > -a[2] {
+                a[2] = -s;
+            }
+        }
+    }
+    turn();
     Some(a)
 }
