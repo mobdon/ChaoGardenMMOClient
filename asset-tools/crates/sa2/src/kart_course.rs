@@ -1007,7 +1007,13 @@ pub fn course_materials(
                 height: image.height,
                 dds_sha256: sha256(entry.data),
                 rgba_sha256: sha256(&image.rgba),
-                translucent_texels: image.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] < 255).count(),
+                translucent_texels: image
+                    .rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|p| p[3] < 255)
+                    .count(),
             })
         })
         .collect::<Result<Vec<_>>>()?;
