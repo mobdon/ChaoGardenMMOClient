@@ -53,7 +53,7 @@ rules, so the check is "the same instructions, on this machine model".
 | Ninja matrix stack | fn_80119C74 (0xE0000000, 0x30 bytes each), njPush/PopMatrix, njRotateX/Y/Z (PSMTXRotRad + PSMTXConcat), njCalcVector (PSMTXMultVecSR), njCalcPoint (PSMTXMultVec) | **Ported** (`ninja_matrix`) |
 | Player-frame vectors | fn_8003E9E0 (rotate by Z, X, -Y), fn_8003EA6C (rotate by Y, -X, -Z) | **Ported** (`ninja_matrix::rotate_by_angles`, `unrotate_by_angles`) |
 | Analog input | fn_8004E560 (`GetAnalog` on PC): stick angle and strength, confusion remap, steering on kind-0x11 collision objects; with njInnerProduct, njOuterProduct, MSL acosf and VectorAngle (0x8002B7C4) | **Ported** (`player_analog`, `ninja_vector`) |
-| Turning | SubAngle 0x8002B904, DiffAngle 0x8002B8E0, AdjustAngle 0x8002B918; fn_800473B4 (turn toward a yaw, faster turns slow down above dash_speed, velocity carried round) | **Ported** (`player_turn`) |
+| Turning | SubAngle 0x8002B904, DiffAngle 0x8002B8E0, AdjustAngle 0x8002B918; fn_800473B4 (turn toward a yaw, faster turns slow down above dash_speed, velocity carried round); fn_80047714 (smoothed turn with stick-dependent velocity blend) | **Ported** (`player_turn`) |
 | Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
@@ -101,4 +101,8 @@ rules, so the check is "the same instructions, on this machine model".
   frsqrte-and-Newton square root. It then rotates back and blends the result
   into the velocity (0.99/0.01 when the player work's +0x34 exceeds 0.4,
   otherwise half and half). `tests/player_turn_dol.rs` matches 3,000
-  angle-helper cases and 1,500 turns against main.dol.
+  angle-helper cases and 1,500 turns against main.dol. fn_80047714
+  (`turn_smoothly`) steps by 0x800 beyond 0x2000 away and otherwise by a quarter
+  or an eighth of the gap. It keeps 10% of the old velocity off the ground,
+  and on the ground 5% without stick input or 99%/50% with it, scaled by
+  the player work's +0x40 below 1. It is checked on 1,500 more turns.

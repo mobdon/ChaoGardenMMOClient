@@ -1,5 +1,9 @@
 //! `player_turn` against main.dol (tests/dol_ppc.py).
-use sa2_asset_tools::{ninja_matrix::MatrixStack, player_turn};
+use sa2_asset_tools::{
+    ninja_matrix::MatrixStack,
+    player_analog::AnalogContext,
+    player_turn::{self, TurnPlayer},
+};
 use serde_json::Value;
 use std::{env, path::PathBuf, process::Command};
 
@@ -57,5 +61,41 @@ fn matches_main_dol() {
         );
         assert_eq!(stack.depth(), 0);
     }
-    eprintln!("3,000 angle-helper cases and 1,500 fn_800473B4 turns matched main.dol");
+    for (n, c) in doc["smooth"].as_array().unwrap().iter().enumerate() {
+        let mut angles = [0, 1, 2].map(|k| i(&c["angles"][k]));
+        let mut speed = [0, 1, 2].map(|k| f(&c["speed"][k]));
+        let player = TurnPlayer {
+            status: i(&c["status"]) as i16,
+            nocon: i(&c["nocon"]) as i16,
+            confuse: i(&c["confuse"]) as i16,
+            up: f(&c["up"]),
+            scale: f(&c["scale"]),
+        };
+        let analog = AnalogContext {
+            magnitude: f(&c["magnitude"]),
+            ..Default::default()
+        };
+        player_turn::turn_smoothly(
+            &mut stack,
+            &mut angles,
+            &mut speed,
+            player,
+            analog,
+            i(&c["target"]),
+        );
+        assert_eq!(
+            angles,
+            [0, 1, 2].map(|k| i(&c["outAngles"][k])),
+            "smooth {n}: {c}"
+        );
+        assert_eq!(
+            speed.map(f32::to_bits),
+            [0, 1, 2].map(|k| c["outSpeed"][k].as_u64().unwrap() as u32),
+            "smooth {n}: {c}"
+        );
+        assert_eq!(stack.depth(), 0);
+    }
+    eprintln!(
+        "3,000 angle-helper cases, 1,500 fn_800473B4 turns and 1,500 fn_80047714 turns matched main.dol"
+    );
 }

@@ -96,3 +96,80 @@ pub fn turn_toward(
         speed[k] = fmadds(speed[k], keep, local[k] * take);
     }
 }
+
+/// r2 - 0x7548, r2 - 0x75A8, r2 - 0x74EC, r2 - 0x75C8.
+const AIR_TAKE: f32 = f32::from_bits(0x3f66_6666); // 0.9
+const AIR_KEEP: f32 = f32::from_bits(0x3dcc_cccd); // 0.1
+const IDLE_KEEP: f32 = f32::from_bits(0x3d4c_cccd); // 0.05
+const ONE: f32 = 1.0;
+
+/// What fn_80047714 reads from the player work besides the velocity.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnPlayer {
+    /// Task work status halfword (+4); bits 0-1 mean grounded.
+    pub status: i16,
+    /// Player work +0x14 (no-control timer) and +0x1A (confusion timer).
+    pub nocon: i16,
+    pub confuse: i16,
+    /// Player work +0x34 and +0x40.
+    pub up: f32,
+    pub scale: f32,
+}
+
+/// fn_80047714(task work, -, player work, target yaw): turn the yaw toward
+/// `target` (0x800 per frame beyond 0x2000 away, else a quarter or an eighth
+/// of the difference) and blend the velocity toward the turned one. In the
+/// air it keeps 10%; on the ground it keeps 5% without stick input, or 99%
+/// (if +0x34 exceeds 0.4) or 50% with it, scaled down by +0x40 below 1.
+pub fn turn_smoothly(
+    stack: &mut MatrixStack,
+    angles: &mut [i32; 3],
+    speed: &mut [f32; 3],
+    player: TurnPlayer,
+    analog: crate::player_analog::AnalogContext,
+    target: i32,
+) {
+    let world = rotate_by_angles(stack, *angles, *speed);
+    let d = diff_angle(angles[1], target);
+    let step = if d > 0x2000 {
+        0x800
+    } else if d > 0x1000 {
+        d >> 2
+    } else {
+        d >> 3
+    };
+    angles[1] = adjust_angle(angles[1], target, step);
+    let local = unrotate_by_angles(stack, *angles, world);
+    if player.status & 3 == 0 {
+        for k in 0..3 {
+            speed[k] = fmadds(AIR_KEEP, speed[k], AIR_TAKE * local[k]);
+        }
+        return;
+    }
+    let input = crate::player_analog::get_analog(
+        stack,
+        crate::player_analog::AnalogPlayer {
+            status: player.status,
+            angles: *angles,
+            nocon: player.nocon,
+            confuse: player.confuse,
+        },
+        analog,
+        false,
+        false,
+    );
+    let mut keep = if !input.active {
+        IDLE_KEEP
+    } else if player.up > UP_THRESHOLD {
+        KEEP_UPRIGHT
+    } else {
+        HALF
+    };
+    if player.scale < ONE {
+        keep *= player.scale;
+    }
+    let take = ONE - keep;
+    for k in 0..3 {
+        speed[k] = fmadds(speed[k], keep, local[k] * take);
+    }
+}
