@@ -1,7 +1,9 @@
 //! Compare `walker_move` with main.dol (tests/walker_move_ppc.py).
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_move::{accel, accel_air, accel_run, air_level, AccelWork},
+    walker_move::{
+        accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, AccelWork,
+    },
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -147,5 +149,51 @@ fn matches_main_dol() {
         );
         assert_eq!(bits(a), bits(v3(&c["acc_after"])), "{c}");
         assert_eq!(aim as i64, c["aim_after"].as_i64().unwrap(), "{c}");
+    }
+    for c in v["grav"].as_array().unwrap() {
+        let got = accel_gravity(
+            &mut stack,
+            c["flag"].as_u64().unwrap() as i16,
+            i3(&c["ang"]),
+            f(&c["f"]["0x138"]),
+            v3(&c["mwacc"]),
+            v3(&c["global"]),
+        );
+        let want = v3(&c["acc_after"]);
+        match got {
+            Some(a) => assert_eq!(bits(a), bits(want), "{c}"),
+            None => assert_eq!(bits(want), bits([1.5, 2.5, 3.5]), "{c}"),
+        }
+    }
+    for c in v["m43"].as_array().unwrap() {
+        let g = |k: &str| f(&c["f"][k]);
+        let w = AccelWork {
+            spd: v3(&c["spd"]),
+            f40: 0.0,
+            f_d0: g("0xd0"),
+            air_resist: [g("0x114"), g("0x118"), g("0x11c")],
+            decel_x: 0.0,
+            decel_z: 0.0,
+            stop_share: 0.0,
+            weight: g("0x138"),
+        };
+        let mut across = v3(&c["across"]);
+        let got = accel_mode43(
+            &mut stack,
+            c["flag"].as_u64().unwrap() as i16,
+            i3(&c["ang"]),
+            &w,
+            g("0x34"),
+            g("0xe8"),
+            v3(&c["mwacc"]),
+            v3(&c["global"]),
+            &mut across,
+        );
+        let want = v3(&c["acc_after"]);
+        match got {
+            Some(a) => assert_eq!(bits(a), bits(want), "{c}"),
+            None => assert_eq!(bits(want), bits([1.5, 2.5, 3.5]), "{c}"),
+        }
+        assert_eq!(bits(across), bits(v3(&c["across_after"])), "{c}");
     }
 }

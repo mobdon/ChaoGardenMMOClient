@@ -1,6 +1,7 @@
 """Local PowerPC oracle for the shared player movement steps (GSNE8P main.dol).
 
-Runs fn_80047A1C and fn_80048ACC on random player states and prints JSON for
+Runs fn_80047A1C, fn_80048ACC, fn_80048EC4, fn_8004B330, fn_80048724 and
+fn_80048834 on random player states and prints JSON for
 tests/walker_move.rs. Needs SA2_MAIN_DOL and the local Gekko tables.
 """
 import json
@@ -145,4 +146,31 @@ for _ in range(4000):
     air.append({"ang": ang, "global": [fb(x) for x in glob], "spd": [fb(x) for x in spd], "mwacc": [fb(x) for x in mwacc],
                 "mwspd_y": fb(mwspd_y), "f": {hex(o): fb(x) for o, x in f.items()}, "stick": [stick[0], stick[1], fb(stick[2])],
                 "aim": aim, "acc_after": get3(PW + 0x58), "aim_after": m.get(MW + 0x1C, "i")})
-print(json.dumps({"level": level, "acc": acc, "run": run, "air": air}))
+# fn_80048724 and fn_80048834.
+grav, m43 = [], []
+for k in range(8000):
+    full = k >= 4000
+    flag = rng.choice([0, 1, 2, 3, 0x100, 0x101, 0x4000])
+    ang = [rng.choice([0, rng.randrange(-0x2000, 0x2000)]), rng.randrange(0, 0x10000), rng.choice([0, rng.randrange(-0x2000, 0x2000)])]
+    glob = [0.0, -1.0, 0.0] if rng.random() < 0.8 else [f32(rng.uniform(-1, 1)) for _ in range(3)]
+    spd = [rf(6) for _ in range(3)]
+    mwacc, across = [rf(1) for _ in range(3)], [rf(3) for _ in range(3)]
+    f = {o: f32(rng.uniform(lo, hi)) for o, lo, hi in ((0xD0, 0.5, 2), (0x114, -0.1, 0), (0x118, -0.1, 0),
+                                                       (0x11C, -0.1, 0), (0x138, 0.05, 0.12), (0xE8, 0, 4))}
+    f[0x34] = f32(rng.choice([0.0, -0.0, 0.98, 1.0, rng.uniform(-1, 1), rng.uniform(0.9, 1)]))
+    m.put(TASK + 4, "H", flag)
+    m.u.mem_write(TASK + 8, struct.pack(">3i", *ang))
+    put3(GLOBAL, glob)
+    put3(PW + 0x64, spd)
+    for o, x in f.items():
+        m.put(PW + o, "f", x)
+    put3(MW + 0xC, mwacc)
+    m.put(PW + 0x90, "I", Q)
+    put3(Q + 0x78, across)
+    put3(PW + 0x58, [1.5, 2.5, 3.5])
+    m.call(0x80048834 if full else 0x80048724, r3=TASK, r4=MW, r5=PW)
+    (m43 if full else grav).append({"flag": flag, "ang": ang, "global": [fb(x) for x in glob], "spd": [fb(x) for x in spd],
+                "mwacc": [fb(x) for x in mwacc], "across": [fb(x) for x in across],
+                "f": {hex(o): fb(x) for o, x in f.items()},
+                "acc_after": get3(PW + 0x58), "across_after": get3(Q + 0x78)})
+print(json.dumps({"level": level, "acc": acc, "run": run, "air": air, "grav": grav, "m43": m43}))
