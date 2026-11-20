@@ -906,6 +906,8 @@ pub enum PlacementClock {
     SuperDraw(Box<SuperDrawFrame>),
     /// Section 1 + 0xd60c: super-form effects draw (spin, aura, fade, trail).
     SuperEffects(Box<SuperEffectsFrame>),
+    /// Section 1 + 0x19470: the stage's ring drop when a player is hit.
+    RingDrop(Box<RingDropFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2681,6 +2683,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperChargeDraw(frame) => return super_charge_draw(&rel, &frame),
         PlacementClock::SuperDraw(frame) => return super_draw(&rel, &frame),
         PlacementClock::SuperEffects(frame) => return super_effects(&rel, &frame),
+        PlacementClock::RingDrop(frame) => return ring_drop(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -4652,4 +4655,76 @@ fn super_effects(
 /// times and runs seven times, so sites repeat every seven materials.
 fn fade_site(i: u32) -> u32 {
     [0xd988, 0xd9a8, 0xd9cc, 0xd9f0, 0xda14, 0xda38, 0xda5c][(i % 7) as usize]
+}
+
+/// Inputs to section 1 + 0x19470, which stage setup installs as the hit
+/// ring-drop handler. `rings` is what the engine ring count 0x80062a24
+/// returns, `character` is byte 1 of the slot's 0x801e7328 entry,
+/// `position` is floats 0x14..0x1c of its 0x801e7368 entry, `random` is the
+/// 0x8010d940 result, and `allocated` says, per dropped ring, whether the
+/// engine task allocation 0x80071ba4 succeeded.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RingDropFrame {
+    pub slot: i8,
+    pub rings: i32,
+    pub character: i8,
+    pub position: [f32; 3],
+    pub random: i32,
+    #[serde(default)]
+    pub allocated: Vec<bool>,
+}
+/// Section 1 + 0x19470: a hit with no rings defeats the player (except
+/// characters 6 and 7). Otherwise all rings are taken and up to 20 ring
+/// objects (update 0x196f0) are spawned at the player, spread evenly
+/// around a random start angle.
+fn ring_drop(rel: &crate::city_rel::CityRel<'_>, f: &RingDropFrame) -> Result<serde_json::Value> {
+    let k = |site: usize| stage_f32(rel, site, 4, 0);
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let slot = f.slot as i32 as u32;
+    let mut ev = vec![call(0x1948c, serde_json::json!([]))?];
+    let start = k(0x194c6)? * (k(0x194b6)? * (f.random as f64 as f32));
+    ev.push(call(0x194d8, serde_json::json!([slot]))?);
+    let count = f.rings as i16 as i32;
+    let mut angles = Vec::new();
+    if count == 0 {
+        if f.character != 7 && f.character != 6 {
+            ev.push(call(0x19528, serde_json::json!([slot]))?);
+            ev.push(call(0x1952c, serde_json::json!([]))?);
+        }
+    } else {
+        let n = count.min(20);
+        ev.push(call(0x19538, serde_json::json!([slot]))?);
+        ev.push(call(
+            0x19544,
+            serde_json::json!([slot, f.rings.wrapping_neg() as u32]),
+        )?);
+        for i in 0..n.max(0) {
+            ev.push(call(
+                0x19598,
+                serde_json::json!([10, 2, "88:1+0x196f0", "88:5+0x4780c"]),
+            )?);
+            if !f.allocated.get(i as usize).copied().unwrap_or(false) {
+                continue;
+            }
+            for (j, site) in [0x195b4u32, 0x195b8, 0x195c0].into_iter().enumerate() {
+                ev.push(
+                    serde_json::json!({"site":site,"store":"ring","index":i,"offset":0x14 + 4 * j,
+                    "size":4,"value":f.position[j].to_bits()}),
+                );
+            }
+            let step = (i * 360) / n;
+            // Degrees to the engine's 65536-unit circle (0x88c = 65536 / 360).
+            let angle = (k(0x19576)? * (start + step as f64 as f32)) as f64 as i32;
+            angles.push(angle);
+            ev.push(
+                serde_json::json!({"site":0x19600,"store":"ring","index":i,"offset":0xc,
+                "size":4,"value":angle as u32}),
+            );
+        }
+        ev.push(call(0x19628, serde_json::json!([0x8014, 0, 0, 0]))?);
+    }
+    Ok(serde_json::json!({"events":ev,"start_angle":start,"ring_angles":angles}))
 }
