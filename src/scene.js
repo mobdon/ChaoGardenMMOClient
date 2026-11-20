@@ -12,6 +12,8 @@ import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, creat
 import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
 import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
+import { attachChaoBody, bodyAssetFor } from './chao-body.js';
+import { loadChaoFaceManifest, resetChaoFace } from './chao-face.js';
 import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
 import './chao-locomotion.css';
 
@@ -209,6 +211,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     }
     const entries = new Set(descendants.map(node => node.metadata?.importedEntries).filter(Boolean));
     root.metadata?.steadyHead?.dispose();
+    root.metadata?.chaoBodyDispose?.();
     root.metadata?.shadowSkate?.dispose();
     for (const imported of entries) imported.dispose();
     for (const node of descendants) for (const mat of node.metadata?.ownedMaterials || []) mat.dispose(false, false);
@@ -223,6 +226,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       if (form.includes('dark') || data.alignment <= -60) return 'dark-chaos';
       return 'neutral-chaos';
     }
+    // Server-owned native body family (child or adult morphs); falls back to
+    // the original child model when the family has not been converted locally.
+    const body = bodyAssetFor(data);
+    if (body) return body;
     return form === 'normal' || form === 'neutral' ? 'chao' : null;
   }
 
@@ -263,7 +270,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           knuckles: ['al_knuckles.sa2mdl_3', 'al_knuckles.sa2mdl_5', 'al_knuckles.sa2mdl_6', 'al_knuckles.sa2mdl_7'],
           amy: ['al_amy.sa2mdl_2', 'al_amy.sa2mdl_4', 'al_amy.sa2mdl_5', 'al_amy.sa2mdl_6'],
         };
-        const isCharacter = Object.hasOwn(faceMaterials, key);
+        const isFamilyBody = key.startsWith('chao-body-');
+        const isCharacter = isFamilyBody || Object.hasOwn(faceMaterials, key);
         const isCinematicEmerald = /^emerald-(red|blue|green|cyan|purple|yellow|white)$/.test(key);
         const isNativeWalker = key === 'dark-chao-walker';
         const isNativeGear = /^(shadow-air-shoes|knuckles-hammer-gloves)-(left|right)$/.test(key);
@@ -321,7 +329,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
             // browser cutout geometry. Only actual facial overlays may mask.
             mat.unlit = true;
             mat.alpha = 1;
-            const solidCharacterPart = isCharacter && !faceMaterials[key].includes(mat.name);
+            // Family bodies keep the original eye and mouth overlays; only those mask.
+            const facePart = isFamilyBody ? /al_eye|al_mouth/i.test(mat.albedoTexture?.name || '') : faceMaterials[key]?.includes(mat.name);
+            const solidCharacterPart = isCharacter && !facePart;
             mat.transparencyMode = solidCharacterPart ? 0 : mat.transparencyMode === 2 || mat.transparencyMode === 3 ? 1 : mat.transparencyMode ?? 0;
             mat.alphaCutOff = 0.45;
             mat.useAlphaFromAlbedoTexture = mat.transparencyMode === 1;
@@ -383,7 +393,11 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
 
   async function attachLocalAsset(item, key) {
     if (!key) return;
-    const container = await loadLocalAsset(key);
+    let container = await loadLocalAsset(key);
+    if (!container && key.startsWith('chao-body-')) {
+      key = 'chao';
+      container = await loadLocalAsset(key);
+    }
     if (!container || disposed || item.root.isDisposed()) return;
     const entries = container.instantiateModelsToScene(name => `${item.root.name}-${name}`, false, { doNotInstantiate: true });
     const visual = new TransformNode(`${item.root.name}-local-model`, scene);
@@ -440,6 +454,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (item.accessory) item.accessory.position.y = height * 0.78;
     canvas.dataset.localAssets = [...assetContainers.keys()].join(',');
     canvas.dataset.chaoAsset = 'loaded';
+    if (key.startsWith('chao-body-')) {
+      // Morph weights and node offsets follow the server body each frame.
+      item.root.metadata.chaoBodyDispose = attachChaoBody(visual, entries.animationGroups, () => item.bodyState);
+      await loadChaoFaceManifest();
+      if (!item.root.isDisposed()) resetChaoFace(visual);
+      item.faceRoot = visual;
+    }
     if (key === 'dark-chaos') attachNativeFlame(item);
     if (item.admin) { attachNativeEmeralds(item); attachNativeChestEmerald(item); }
     if (item.vehicleKey) attachNativeWalker(item);
@@ -1188,7 +1209,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     nameplate.metadata.baseWidth = plateWidth;
     for (const mesh of root.getChildMeshes()) if (!mesh.metadata?.labelTexture) shadows.addShadowCaster(mesh, false);
     const item = { root, body, head, limbs, emotion, emotionBase: 2.98 * proxyScale, nameplate, proxyMeshes, proxyScale, admin: !!data.admin, gear: gearFor(data), vehicleKey: vehicleFor(data), appearance: appearanceFor(data), name, target: new Vector3(data.x || 0, data.y || 0, data.z || 0), lastPosition: new Vector3(), moving: false, npc };
-    if (['chao', 'neutral-chaos', 'hero-chaos', 'dark-chaos'].includes(assetFor(data))) {
+    item.bodyState = data.body;
+    if (['chao', 'neutral-chaos', 'hero-chaos', 'dark-chaos'].includes(assetFor(data)) || assetFor(data)?.startsWith('chao-body-')) {
       item.nativeShadow = createNativeChaoShadow(scene, { textureUrl: '/api/assets/chao-shadow.png', terrainIndex: nativeShadowTerrain });
       root.metadata = { ...root.metadata, nativeContactShadow: item.nativeShadow };
       nativeChaoShadows.add(item.nativeShadow);
@@ -1419,6 +1441,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         playerMeshes.set(data.id, replacement);
         item = replacement;
       }
+      item.bodyState = data.body;
       item.target.set(data.x || 0, data.y || 0, data.z || 0);
       if (item.root.position.lengthSquared() === 0) item.root.position.copyFrom(item.target);
       item.self = data.id === next.selfId;
