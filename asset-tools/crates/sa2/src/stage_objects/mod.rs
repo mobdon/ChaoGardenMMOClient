@@ -11,6 +11,7 @@
 pub mod big_the_cat;
 pub mod colli_prim;
 pub mod containers;
+pub mod dyn_land;
 pub mod effects;
 pub mod hintbox;
 pub mod host;
@@ -54,6 +55,7 @@ pub const MODULES: &[(&str, &[Routine])] = &[
         udreel_stoplsd::BL_MASKED_ROUTINES,
     ),
     ("light_modmod", light_modmod::ROUTINES),
+    ("dyn_land", dyn_land::ROUTINES),
 ];
 
 /// Every ported routine.
