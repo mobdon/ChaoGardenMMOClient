@@ -593,6 +593,225 @@ pub fn spawn(mh: &MetalHarbor<'_>, i: &SpawnInput) -> Result<Value> {
     Ok(json!({ "calls": c, "state": { "ret": "task", "task": task, "work": work } }))
 }
 
+// ---- MSBRILONG, MSBRISHORT, MSBRIMINI, MSBRISLOPE (object list rows at
+// .data+0x156540..0x156570): four loaders around one constructor +0x85C4.
+
+/// The four bridge loaders, in object-list order.
+pub const BRIDGE_LOADERS: [u32; 4] = [0x8464, 0x84bc, 0x8514, 0x856c];
+
+impl MetalHarbor<'_> {
+    /// A data word as the oracle names it: a module address when the word
+    /// carries an ADDR32 relocation to this module, else its value.
+    fn data_value(&self, section: u8, at: u32) -> Result<Value> {
+        Ok(match self.rel.reference(section, at) {
+            Some(Reference {
+                module,
+                kind: 1,
+                section: s2,
+                addend,
+            }) if module == self.rel.module_id() => s(s2, addend),
+            Some(_) => return Err(invalid()),
+            None => json!(self.word(section, at)?),
+        })
+    }
+    /// The loader's constructor arguments: model, .bss word holding the
+    /// texture list, the texture argument, the NJS_OBJECT template, the
+    /// collision info and its count.
+    fn bridge(&self, bridge: usize) -> Result<(u32, u32, u32, u32, u32, i16)> {
+        let l = *BRIDGE_LOADERS
+            .get(bridge)
+            .ok_or_else(|| Error::invalid("bridge index"))?;
+        if self.local(l + 0x44)? != 0x85c4 {
+            return Err(invalid());
+        }
+        let count = self.word(1, l + 0x40)?;
+        if count >> 16 != 0x3920 {
+            return Err(invalid()); // li r9,count
+        }
+        Ok((
+            self.at(l + 0x18, 5)?,
+            self.at(l + 0x20, 6)?,
+            self.at(l + 0x2c, 5)?,
+            self.at(l + 0x34, 5)?,
+            self.at(l + 0x3c, 5)?,
+            count as u16 as i16,
+        ))
+    }
+    /// The model the template object points at (its +4), with its centre
+    /// (+0x18) and radius (+0x24).
+    fn bridge_model(&self, template: u32) -> Result<(u32, [u32; 3], f32)> {
+        let model = match self.rel.local_pointer(5, template + 4)? {
+            Some((5, off)) => off,
+            _ => return Err(invalid()),
+        };
+        let w = |k| self.word(5, model + k);
+        Ok((
+            model,
+            [w(0x18)?, w(0x1c)?, w(0x20)?],
+            f32::from_bits(w(0x24)?),
+        ))
+    }
+}
+/// Mode 3 or 4 of the frame task (.bss+0xB8) after 44 frames hides the
+/// bridges and drops their collision flag.
+fn bridges_hidden(frame: Option<Frame>) -> bool {
+    frame.is_some_and(|f| (f.mode == 3 || f.mode == 4) && f.timer > 44)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BridgeLoadInput {
+    pub bridge: usize,
+    /// CheckRangeOut's answer.
+    pub range_out: bool,
+    /// syCalloc returned memory.
+    pub alloc: bool,
+    /// The .bss word the loader passes (the bridge's texture list).
+    pub texlist: u32,
+    /// Work +0xC (Y angle) and +0x14 position (bit patterns).
+    pub rot: u32,
+    pub pos: [u32; 3],
+    /// Work +0 before the loader (kept when it stops early).
+    pub mode: i8,
+}
+
+/// A bridge loader and the constructor +0x85C4: allocate the 84-byte
+/// dynamic collision block (`dyn`), copy the template object into it at the
+/// task's place, register it (fn_800232A4) with a size class from the model
+/// radius, transform the model centre into `dyn+0x38`, and set up collision.
+pub fn bridge_load(mh: &MetalHarbor<'_>, i: &BridgeLoadInput) -> Result<Value> {
+    let (model_arg, _texlist, texture, template, colli, count) = mh.bridge(i.bridge)?;
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    if i.range_out {
+        return Ok(json!({ "calls": c, "state": {
+            "task": [0, 0, 0, 0, 0], "mode": i.mode, "dyn": Value::Null } }));
+    }
+    c.push(engine(0x801197fc, json!([1, 84])));
+    if !i.alloc {
+        return Ok(json!({ "calls": c, "state": {
+            "task": [0, 0, 0, 0, 0], "mode": i.mode, "dyn": Value::Null } }));
+    }
+    let mut d: Vec<Value> = (0..14)
+        .map(|k| mh.data_value(5, template + 4 * k))
+        .collect::<Result<_>>()?;
+    let first = d[0].as_u64().ok_or_else(invalid)? as u32;
+    d[0] = json!(first & !3);
+    d.splice(2..5, i.pos.map(|v| json!(v)));
+    d[5] = json!(0);
+    d[6] = json!(i.rot);
+    d[7] = json!(0);
+    d.extend((14..21).map(|_| json!(0)));
+    d[17] = s(5, texture);
+    d[20] = json!(i.texlist);
+    let (_, centre, radius) = mh.bridge_model(template)?;
+    let r = mh.f(0x8730)? + radius;
+    let size = if r > mh.f(0x8748)? {
+        0
+    } else if r > mh.f(0x8760)? {
+        0x2000_0000
+    } else if r > mh.f(0x877c)? {
+        0x4000_0000
+    } else {
+        0x6000_0000
+    };
+    c.extend([
+        engine(0x800232a4, json!([0x801 | size, "task", "dyn"])),
+        engine(0x80116098, json!([])),
+        engine(0x801153e4, json!([0])),
+        engine(0x8011616c, json!([i.pos])),
+        engine(0x80115828, json!([0, i.rot])),
+        engine(0x80114f0c, json!([0, centre, "dyn+0x38"])),
+        engine(0x801160e4, json!([])),
+    ]);
+    if colli != 0 {
+        c.push(engine(0x8000f8b8, json!(["task", s(5, colli), count, 4])));
+    }
+    Ok(json!({ "calls": c, "state": {
+        "task": [mh.ptr(0x8658, 1)?, mh.ptr(0x864c, 1)?, mh.ptr(0x8664, 1)?, "dyn", s(5, model_arg)],
+        "mode": 0, "dyn": d } }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BridgeExecInput {
+    pub bridge: usize,
+    pub range_out: bool,
+    /// `dyn`+4 (the registered model) is set.
+    pub obj: bool,
+    /// _rename_EitherPlayerWithinSphere's answer.
+    pub within: bool,
+    pub frame: Option<Frame>,
+    /// Work +4.
+    pub flags: i16,
+    /// Work +0x2C (collision) is set.
+    pub colli: bool,
+}
+
+/// +0x8880: while a player is near and the bridge is not hidden, set flag
+/// 0x100 of work +4 (else clear it); then feed collision.
+pub fn bridge_exec(mh: &MetalHarbor<'_>, i: &BridgeExecInput) -> Result<Value> {
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let mut flags = i.flags;
+    if i.range_out {
+        return Ok(json!({ "calls": c, "state": { "flags": flags } }));
+    }
+    if i.obj {
+        let (.., template, _, _) = mh.bridge(i.bridge)?;
+        let (_, _, radius) = mh.bridge_model(template)?;
+        let r = mh.f(0x88c8)? + radius;
+        c.push(engine(0x800398d8, json!(["dyn+0x38", r.to_bits()])));
+        mh.at(0x88f0, 6)?;
+        if i.within && !bridges_hidden(i.frame) {
+            flags |= 0x100;
+        } else {
+            flags &= !0x100;
+        }
+    }
+    if i.colli {
+        c.push(engine(0x8000f4ec, json!(["task"])));
+    }
+    Ok(json!({ "calls": c, "state": { "flags": flags } }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BridgeDisplayInput {
+    pub frame: Option<Frame>,
+    pub rot: u32,
+    pub pos: [u32; 3],
+    /// `dyn`+0x44 and task +0x40.
+    pub texture: u32,
+    pub model: u32,
+}
+
+/// +0x89A4: draw the bridge model unless hidden.
+pub fn bridge_display(mh: &MetalHarbor<'_>, i: &BridgeDisplayInput) -> Result<Value> {
+    mh.at(0x89d0, 6)?;
+    let mut c = vec![engine(0x80116e18, json!([i.texture]))];
+    if !bridges_hidden(i.frame) {
+        c.extend([
+            engine(0x80116098, json!([])),
+            engine(0x8011616c, json!([i.pos])),
+            engine(0x80115828, json!([0, i.rot])),
+            engine(0x8002b2e8, json!([0x2400])),
+            engine(0x80031a28, json!([i.model])),
+            engine(0x8002b2d8, json!([0x2400])),
+            engine(0x801160e4, json!([])),
+        ]);
+    }
+    Ok(json!({ "calls": c, "state": {} }))
+}
+
+/// +0x881C: unregister the collision piece if it was registered, free it.
+pub fn bridge_dest(obj: bool) -> Value {
+    let mut c = Vec::new();
+    if obj {
+        c.push(engine(0x800231cc, json!(["task", "dyn"])));
+    }
+    c.push(engine(0x80119828, json!(["dyn"])));
+    json!({ "calls": c, "state": { "task": [0, 0] } })
+}
+
 /// Run one routine by name on a JSON input (the oracle's case format).
 pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
     let mh = MetalHarbor::read(rel_bytes)?;
@@ -610,6 +829,10 @@ pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
         "install" => install(&mh, &parse(input)?),
         "restore" => restore(&mh, &parse(input)?),
         "spawn" => spawn(&mh, &parse(input)?),
+        "bridge_load" => bridge_load(&mh, &parse(input)?),
+        "bridge_exec" => bridge_exec(&mh, &parse(input)?),
+        "bridge_display" => bridge_display(&mh, &parse(input)?),
+        "bridge_dest" => Ok(bridge_dest(parse::<BridgeDestInput>(input)?.obj)),
         _ => Err(Error::invalid(format!(
             "unknown stage 10 routine {routine}"
         ))),
@@ -619,4 +842,9 @@ pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
 #[serde(deny_unknown_fields)]
 struct ExecInput {
     mode: i8,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BridgeDestInput {
+    obj: bool,
 }

@@ -39,7 +39,8 @@ PWP, TWP, MWP = [SCR + 0x1000, SCR + 0x1400], [SCR + 0x1800, SCR + 0x1900], [SCR
 SLOTS, TRAIL, G = 0x801A2A18, 0x801E77D8, 0x801CC168
 TEXOV, CAM_INDEX, CAM_TABLE = 0x801E5D28, 0x803ADAD0, 0x80175378
 PLAYERPWP, PLAYERMWP, PLAYERTWP = 0x801E7728, 0x801E7748, 0x801E7768
-NAMES = {TASK: 'task', WORK: 'work', PARENT: 'parent'}
+DYN = SCR + 0x600
+NAMES = {TASK: 'task', WORK: 'work', PARENT: 'parent', DYN: 'dyn', DYN + 0x38: 'dyn+0x38'}
 for k in range(2):
     NAMES.update({PWP[k]: f'pwp{k}', PWP[k] + 0x174: f'pwp{k}+0x174', TWP[k]: f'twp{k}', MWP[k]: f'mwp{k}'})
 SECTIONS = {}
@@ -70,6 +71,10 @@ ENGINE = {
     0x80072118: 'r3 r4', 0x80066364: '', 0x8001A2B0: 'r3', 0x800245B8: '', 0x80012218: 'r3',
     0x80116098: '', 0x8011538C: 'r3 v4', 0x80116E18: 'r3', 0x8011DF44: 'r3', 0x80115DC8: 'r3',
     0x8011C2B0: '', 0x8003D7D4: 'r3', 0x8005523C: 'r3 r4 r5', 0x800709F8: 'r3 r4 r5',
+    0x800655F4: 'r3', 0x801197FC: 'r3 r4', 0x80119828: 'r3', 0x800232A4: 'r3 r4 r5', 0x801153E4: 'r3',
+    0x8011616C: 'v3', 0x80115828: 'r3 r4', 0x80114F0C: 'r3 v4 r5', 0x801160E4: '', 0x8000F8B8: 'r3 r4 r5 r6',
+    0x8000F4EC: 'r3', 0x800231CC: 'r3 r4', 0x800398D8: 'r3 f1', 0x8002B2E8: 'r3', 0x8002B2D8: 'r3',
+    0x80031A28: 'r3',
 }
 MODULE = {0xB500: 'r3', 0xA3B0: '', 0x106A8: 'r3 r4 r5 r6', 0x10C98: '', 0x15298: 'r3 r4', 0x326A0: 'r3',
           0x3261C: '', 0x1582C: '', 0x10D34: '', 0xA490: '', 0x158E0: '', 0xAB7C: 'r3', 0x13DC: 'f1 f2',
@@ -84,8 +89,8 @@ def args(spec):
             out.append(name(m.gpr(int(a[1:]))))
         elif a[0] == 'f':
             out.append(fb(m.fpr(int(a[1:]))))
-        else:  # v4: the three floats r4 points at
-            out.append([m.get(m.gpr(4) + 4 * k, 'I') for k in range(3)])
+        else:  # v3 / v4: the three floats r3 / r4 points at
+            out.append([m.get(m.gpr(int(a[1:])) + 4 * k, 'I') for k in range(3)])
     return out
 
 
@@ -364,5 +369,97 @@ if which in ('all', 'spawn'):
             'ret': name(m.gpr(3)),
             'task': [name(m.get(TASK + o, 'I')) for o in (0x10, 0x14, 0x18)],
             'work': [m.get(WORK + 4 * k, 'I') for k in range(11)]}})
+
+# --- MSBRILONG/SHORT/MINI/SLOPE bridges ----------------------------------------
+# Loaders +0x8464/+0x84BC/+0x8514/+0x856C (each calls the constructor
+# +0x85C4), exec +0x8880, display +0x89A4, destructor +0x881C.
+if which in ('all', 'bridges'):
+    LOADERS = (0x8464, 0x84BC, 0x8514, 0x856C)
+    TEXLIST = (0xC8, 0xCC, 0xD4, 0xD0)  # .bss word each loader passes
+
+    def frame_put(frame):
+        if frame is None:
+            m.put(S(6, 0xB8), 'I', 0)
+        else:
+            m.put(S(6, 0xB8), 'I', FRAME_TASK)
+            m.put(FRAME_TASK + 0x34, 'I', FRAME_WORK)
+            m.put(FRAME_WORK, 'b', frame['mode'])
+            m.put(FRAME_WORK + 6, 'H', frame['timer'])
+
+    def rnd_frame():
+        return None if rng.random() < 0.2 else {
+            'mode': rng.choice([0, 1, 3, 3, 4, 4, 5, rng.randrange(-128, 128)]),
+            'timer': rng.choice([0, 43, 44, 45, 0xFFFF, rng.randrange(1 << 16)])}
+
+    def task_put(rot, pos):
+        clear(TASK, 0x50)
+        clear(WORK, 0x40)
+        m.put(TASK + 0x34, 'I', WORK)
+        m.put(WORK + 0xC, 'I', rot)
+        for k in range(3):
+            m.put(WORK + 0x14 + 4 * k, 'I', pos[k])
+
+    models = [None] * 4
+    for i in range(160):
+        b = i % 4
+        range_out = rng.random() < 0.1
+        alloc = rng.random() > 0.1
+        tex = rnd_word()
+        rot = rng.randrange(0, 0x10000)
+        pos = [rnd_f() for _ in range(3)]
+        task_put(rot, pos)
+        mode = rng.choice([1, 2, -1])
+        m.put(WORK, 'b', mode)
+        clear(DYN, 0x60)
+        m.put(S(6, TEXLIST[b]), 'I', tex)
+        returns.clear()
+        returns.update({0x800655F4: int(range_out), 0x801197FC: DYN if alloc else 0})
+        c = run(LOADERS[b], set(), r3=TASK)
+        made = not range_out and alloc
+        cases.append({'fn': 'bridge_load', 'input': {'bridge': b, 'rangeOut': range_out, 'alloc': alloc,
+                                                     'texlist': tex, 'rot': rot, 'pos': pos, 'mode': mode}, 'calls': c,
+                      'state': {'task': [name(m.get(TASK + o, 'I')) for o in (0x10, 0x14, 0x18, 0x38, 0x40)],
+                                'mode': m.get(WORK, 'b'),
+                                'dyn': [name(m.get(DYN + 4 * k, 'I')) for k in range(21)] if made else None}})
+        if made:
+            models[b] = m.get(DYN + 4, 'I')
+    assert all(models)
+    for i in range(200):
+        b = i % 4
+        frame = rnd_frame()
+        frame_put(frame)
+        inp = {'bridge': b, 'rangeOut': rng.random() < 0.1, 'obj': rng.random() > 0.15,
+               'within': rng.random() < 0.6, 'frame': frame, 'flags': rng.randrange(-0x8000, 0x8000),
+               'colli': rng.random() < 0.7}
+        task_put(0, [0, 0, 0])
+        m.put(TASK + 0x38, 'I', DYN)
+        clear(DYN, 0x60)
+        m.put(DYN + 4, 'I', models[b] if inp['obj'] else 0)
+        m.put(WORK + 4, 'h', inp['flags'])
+        m.put(WORK + 0x2C, 'I', (rnd_word() | 1) if inp['colli'] else 0)
+        returns.clear()
+        returns.update({0x800655F4: int(inp['rangeOut']), 0x800398D8: int(inp['within'])})
+        c = run(0x8880, set(), r3=TASK)
+        cases.append({'fn': 'bridge_exec', 'input': inp, 'calls': c, 'state': {'flags': m.get(WORK + 4, 'h')}})
+    for i in range(120):
+        frame = rnd_frame()
+        frame_put(frame)
+        rot, pos, tex, model = rng.randrange(0, 0x10000), [rnd_f() for _ in range(3)], rnd_word(), rnd_word()
+        task_put(rot, pos)
+        m.put(TASK + 0x38, 'I', DYN)
+        m.put(TASK + 0x40, 'I', model)
+        m.put(DYN + 0x44, 'I', tex)
+        c = run(0x89A4, set(), r3=TASK)
+        cases.append({'fn': 'bridge_display', 'input': {'frame': frame, 'rot': rot, 'pos': pos, 'texture': tex,
+                                                        'model': model}, 'calls': c, 'state': {}})
+    for i in range(20):
+        obj = i % 3 != 0
+        task_put(0, [0, 0, 0])
+        m.put(TASK + 0x38, 'I', DYN)
+        m.put(TASK + 0x40, 'I', rnd_word())
+        m.put(DYN + 4, 'I', (rnd_word() | 1) if obj else 0)
+        c = run(0x881C, set(), r3=TASK)
+        cases.append({'fn': 'bridge_dest', 'input': {'obj': obj}, 'calls': c, 'state': {
+            'task': [name(m.get(TASK + o, 'I')) for o in (0x38, 0x40)]}})
 
 print(json.dumps({'cases': cases}))

@@ -33,7 +33,7 @@ fn stage_program_and_task_match_stg10d() {
         rels.push(std::fs::read(PathBuf::from(game).join("resource/gd_PC/stg10D.rel")).unwrap());
     }
     let cases = c["cases"].as_array().unwrap();
-    assert_eq!(cases.len(), 965);
+    assert_eq!(cases.len(), 1465);
     for rel in &rels {
         for case in cases {
             let routine = case["fn"].as_str().unwrap();
