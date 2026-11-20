@@ -10,7 +10,7 @@ const care = () => ({
   eligibility: { canCare: true, effectReadyAt: null },
   animalParts: { shown: { ears: 0, tail: 0, antlers: 3, wings: 99 } },
   shop: [{ itemId: 'garden-fruit', price: 3, enabled: true }],
-  market: { rules: 'native-gc-black-market-v1', stock: [{ itemId: 'seed:strong', price: 500, sell: 150 }, { itemId: 'sa2-fruit:5', price: 120, sell: 40 }, { itemId: 'sa2:3', price: 9, sell: 1 }] },
+  market: { rules: 'native-gc-black-market-v2', stock: [{ itemId: 'seed:strong', price: 500, sell: 150 }, { itemId: 'sa2-fruit:5', price: 120, sell: 40 }, { itemId: 'sa2:3', price: 9, sell: 1 }], sellPrices: { 'sa2-fruit:5': 40 } },
   garden: {
     plots: [
       { id: 'garden-1', zone: 'garden', x: 10, z: 2, tree: null },
@@ -132,4 +132,30 @@ test('entering the Black Market asks the server to restock once per visit', () =
   const buy = root.all().find(node => node.tagName === 'button' && node.textContent === 'Buy');
   buy.listeners.click();
   assert.deepEqual(sent[1].intent, { kind: 'purchase', itemId: 'seed:strong' });
+});
+
+test('Black Market eggs, hats and themes use native names and the right intents', () => {
+  assert.equal(careItemKind('egg:2'), 'egg');
+  assert.equal(careItemKind('egg:27'), null);
+  assert.equal(careItemLabel('egg:2'), 'White egg');
+  assert.equal(careItemLabel('egg:36'), 'Shiny red egg');
+  assert.equal(careItemLabel('hat:12'), 'Red wool hat');
+  assert.equal(careItemLabel('theme:amy'), 'Amy menu theme');
+  const withItems = { ...care(), inventory: { 'egg:2': 1, 'hat:3': 1 }, hat: 9, emblems: { count: 12 },
+    market: { stock: [{ itemId: 'theme:omochao', price: 10000, sell: 0 }, { itemId: 'egg:5', price: 600, sell: 0 }], sellPrices: { 'hat:3': 500 } } };
+  const garden = gardenCareView(withItems, { zone: 'garden', x: 0, z: 0, rings: 0 }, { connected: true });
+  assert.equal(garden.items.find(i => i.id === 'egg:2').mayUse, true, 'eggs go down in a garden');
+  assert.equal(gardenCareView(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true }).items.find(i => i.id === 'egg:2').mayUse, false);
+  assert.equal(garden.hat, 'Pan');
+  assert.equal(garden.emblems, 12);
+  const shop = gardenCareView(withItems, { zone: 'hub', x: -4, z: 8, rings: 20000 }, { connected: true });
+  assert.deepEqual(shop.offers.map(o => o.itemId), ['theme:omochao', 'egg:5']);
+  assert.deepEqual(shop.sales.map(o => [o.itemId, o.price]), [['hat:3', 500]]);
+  const document = { createElement: tag => new Node(tag, document) };
+  const root = new Node('aside', document);
+  const sent = [];
+  const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg' });
+  panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true });
+  root.all().find(n => n.tagName === 'button' && n.textContent === 'Put down').listeners.click();
+  assert.deepEqual(sent[0].intent, { kind: 'place-egg', itemId: 'egg:2' });
 });
