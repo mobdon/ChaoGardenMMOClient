@@ -12,8 +12,13 @@
 //! counting set-up unless its kind, Scale.x truncated (0x80111FD8 is
 //! truncation, 0x80111240 floorf on |x|) and forced to 0 outside 0..=4, is
 //! 4; E EMI (0x4E900) always counts (kinds 9 and others take the two
-//! counting entries); E AI (0x513D4), E NAMIE (0x54080) and E GOLD
-//! (0x4A3D4) always count. The `_F` and `_N` variants share these callbacks.
+//! counting entries); E AI (0x513D4) and E NAMIE (0x54080) always count.
+//! E GOLD never counts: its set-up (0x494AC, called from 0x4A09C) takes an
+//! enemy block through 0x80018D28 directly (group 0xFF, no count); the
+//! counting call at 0x4A3D4 sits in 0x4A3A8, which only E KUMI (0x4C484)
+//! calls. 0x80018C88 counts every group, 0xFF included (only its
+//! 0x8008CEB0 call is skipped for 0xFF). The `_F` and `_N` variants share
+//! these callbacks.
 use crate::play_world::V3;
 use serde::Serialize;
 
@@ -43,7 +48,9 @@ pub fn enemy_counts(name: &str, scale: V3) -> Option<bool> {
             let kind = if (0..5).contains(&kind) { kind } else { 0 };
             Some(kind != 4)
         }
-        "E EMI" | "E AI" | "E NAMIE" | "E GOLD" => Some(true),
+        "E EMI" | "E AI" | "E NAMIE" => Some(true),
+        // 0x494AC: 0x80018D28 only, never counted.
+        "E GOLD" => Some(false),
         _ => None,
     }
 }
