@@ -1400,3 +1400,20 @@ pub fn settle_ground_contact(
     q.motion = q.along;
     ret
 }
+
+/// fn_80041814: whether any hit is a wall the motion runs into (not floor,
+/// within 0x7000 of the up vector, facing against the motion).
+pub fn any_wall_ahead(i: &SlideInput, hits: &[ContactHit], motion: Vec3) -> bool {
+    hits.iter().any(|h| {
+        let (floor, ang) = is_floor(i, h);
+        if floor {
+            return false;
+        }
+        let t = if nj_scalor(motion) == ZERO {
+            motion
+        } else {
+            unit_vector(motion)
+        };
+        ang < WALL_ANGLE && inner_product(t, h.facing) < ZERO
+    })
+}

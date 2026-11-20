@@ -3,7 +3,7 @@ use sa2_asset_tools::land_contact::ContactHit;
 use sa2_asset_tools::land_nodes::Candidate;
 use sa2_asset_tools::ninja_matrix::MatrixStack;
 use sa2_asset_tools::walker_collide::{
-    adjust_angle, apply_surface, diff_angle, plane_intersection, settle_contact,
+    adjust_angle, any_wall_ahead, apply_surface, diff_angle, plane_intersection, settle_contact,
     settle_ground_contact, slide_airborne, slide_grounded, sphere_lift, sub_angle, tilt_to_contact,
     wall_push, wall_slide, wall_slide_turn, LiftInput, Line, MotionWork, PhysicsRow, Plane,
     PushSpeeds, SettleInput, SettleTask, SettleWork, SlideInput, SlideQuery, SurfaceWork,
@@ -498,5 +498,40 @@ fn matches_main_dol() {
         assert_eq!(bits3(q.along), bits3(v3(&c["along_after"])), "along {c}");
         assert_eq!(bits3(mw.spd), bits3(v3(&c["mw_after"])), "mw {c}");
         assert_eq!(mw.ang_aim, g(&c["aim_after"]), "aim {c}");
+    }
+    for c in v["ahead"].as_array().unwrap() {
+        let i = SlideInput {
+            task_mode: 0,
+            character: 2,
+            f134: 0.0,
+            row0_74: 0.0,
+            row1_74: 0.0,
+            entry_has_task: false,
+            center: [0.0; 3],
+            up: v3(&c["up"]),
+            global: v3(&c["global"]),
+        };
+        let hits: Vec<ContactHit> = c["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| ContactHit {
+                candidate: Candidate { node: 0, tri: 0 },
+                angles: (0, 0),
+                normal: [0.0; 3],
+                facing: v3(h),
+                foot: [0.0; 3],
+                head: [0.0; 3],
+                along: [0.0; 3],
+                across: [0.0; 3],
+                start_height: 0.0,
+                end_height: 0.0,
+            })
+            .collect();
+        assert_eq!(
+            any_wall_ahead(&i, &hits, v3(&c["motion"])),
+            u(&c["ret"]) != 0,
+            "{c}"
+        );
     }
 }

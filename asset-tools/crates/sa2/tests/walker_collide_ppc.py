@@ -454,7 +454,23 @@ for _ in range(5000):
                 "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)], "mw_after": [W(MW + 4 * j) for j in range(3)],
                 "aim_after": m.get(MW + 0x1C, "i")})
     gsettle.append(rec)
-print(json.dumps({"gsettle": gsettle, "lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
+# fn_80041814: any wall ahead.
+ahead = []
+for _ in range(3000):
+    n = rng.choice([0, 1, 2, 3, 5])
+    up = [0.0, 1.0, 0.0] if rng.random() < 0.6 else unit()
+    glob = [0.0, -1.0, 0.0] if rng.random() < 0.7 else unit()
+    motion = [rf(10) for _ in range(3)]
+    hits = [unit() for _ in range(n)]
+    for k, facing in enumerate(hits):
+        put3(TAILS + 0x58 * k + 0x14, facing)
+        put3(TAILS + 0x58 * k + 0x2C, [rf(30) for _ in range(3)])
+    m.put(Q + 0x28, "H", n)
+    put3(Q + 4, [rf(30) for _ in range(3)]); put3(Q + 0x10, motion); put3(Q + 0x1C, up); put3(GLOBAL, glob)
+    m.call(0x80041814, r3=TASK, r4=VEL, r5=PW, r6=Q)
+    ahead.append({"up": [fb(x) for x in up], "global": [fb(x) for x in glob], "motion": [fb(x) for x in motion],
+                  "hits": [[fb(x) for x in f] for f in hits], "ret": m.gpr(3)})
+print(json.dumps({"ahead": ahead, "gsettle": gsettle, "lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
                   "wturn": wturn,
                   "push": push,
                   "settle": settle,
