@@ -1001,6 +1001,11 @@ pub enum PlacementClock {
     /// Section 1 + 0x6d64..0x7154: spark spawn, texture load and release,
     /// vector scaling, reseed and aim angles.
     BossUtility(Box<BossUtilityFrame>),
+    /// Section 1 + 0x6a54, 0x6b48 and 0x6c28: the glow spark object.
+    Glow(Box<GlowFrame>),
+    /// Section 1 + 0x6508..0x6a50: the trail object, the glow chain update
+    /// and the glow draw.
+    Trail(Box<TrailFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2810,6 +2815,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::PieceHoming(frame) => return piece_homing(&rel, &frame),
         PlacementClock::PieceLaunch(frame) => return piece_launch(&rel, &frame),
         PlacementClock::BossUtility(frame) => return boss_utility(&rel, &frame),
+        PlacementClock::Glow(frame) => return glow(&rel, &frame),
+        PlacementClock::Trail(frame) => return trail(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -10026,4 +10033,530 @@ fn boss_utility(
         out["returned"] = serde_json::json!(r);
     }
     Ok(out)
+}
+
+/// One call of the glow spark object; values are as the code reads them.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum GlowFrame {
+    /// 0x6a54: spawn a glow of `kind` that lives `frames` for `parent`;
+    /// `task` is the engine task, `owner` its word 8.
+    Spawn {
+        parent: u32,
+        frames: i8,
+        kind: i8,
+        task: u32,
+        entity: u32,
+        owner: u32,
+    },
+    /// 0x6b48: update. `pause` / `freeze` are global bytes 0x801cbd88 +
+    /// 0x37 / + 9, `owner` task word 8, `kind` entity byte 3, `fade` entity
+    /// float 0x28, `timer` entity half-word 6.
+    Update {
+        task: u32,
+        entity: u32,
+        owner: u32,
+        pause: i8,
+        freeze: i8,
+        kind: u8,
+        fade: f32,
+        timer: u16,
+    },
+    /// 0x6c28: draw (blinking by the kind's period). `byte` is the engine
+    /// byte at 0x803ad526.
+    Draw {
+        entity: u32,
+        kind: u8,
+        timer: u16,
+        fade: f32,
+        byte: i8,
+    },
+}
+/// Unsigned word to single through the 0x43300000 bias and the magic
+/// double the code loads at `site`.
+fn unsigned_float(rel: &crate::city_rel::CityRel<'_>, site: u32, value: u32) -> Result<f32> {
+    let r = rel
+        .reference(1, site)
+        .filter(|r| r.module == 88 && r.section == 4)
+        .ok_or_else(|| Error::invalid("missing conversion constant"))?;
+    let at = r.addend as usize;
+    let b = rel
+        .data(4)?
+        .get(at..at + 8)
+        .ok_or_else(|| Error::invalid("conversion constant out of range"))?;
+    let magic = f64::from_bits(u64::from_be_bytes(b.try_into().unwrap()));
+    Ok((f64::from_bits(0x4330_0000_0000_0000 | u64::from(value)) - magic) as f32)
+}
+/// Sections 1 + 0x6a54 (spawn: update 0x6894, draw 0x6968, table
+/// 5:0x40f4), 0x6b48 and 0x6c28.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn glow(rel: &crate::city_rel::CityRel<'_>, f: &GlowFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let fcall = |site: u32, floats: Vec<f64>| -> Result<serde_json::Value> {
+        let mut e = call(site, serde_json::json!([]))?;
+        e["floats"] = serde_json::json!(floats);
+        Ok(e)
+    };
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: serde_json::Value| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let n = |v: u32| serde_json::json!(v);
+    let k = |site: u32| boss_constant(rel, site);
+    let table = |site: u32, kind: i32, offset: usize, len: usize| -> Result<Vec<u8>> {
+        let base = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 5)
+            .ok_or_else(|| Error::invalid("missing spark table"))?
+            .addend
+            .wrapping_add((28 * kind) as u32) as usize
+            + offset;
+        rel.data(5)?
+            .get(base..base + len)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| Error::invalid("spark table out of range"))
+    };
+    let float_at = |site: u32, kind: i32, offset: usize| -> Result<f32> {
+        Ok(f32::from_be_bytes(
+            table(site, kind, offset, 4)?.try_into().unwrap(),
+        ))
+    };
+    let mut ev = Vec::new();
+    let mut returned = None;
+    match f {
+        GlowFrame::Spawn {
+            parent,
+            frames,
+            kind,
+            task,
+            entity,
+            owner,
+        } => {
+            returned = Some(0);
+            if *frames > 0 && *parent != 0 {
+                ev.push(call(
+                    0x6ab0,
+                    serde_json::json!([2, module_ref(rel, 0x6aa6, 0)?, parent]),
+                )?);
+                if *task != 0 {
+                    ev.extend([
+                        st(0x6ad0, "task", 0x14, 4, serde_json::json!(module_ref(rel, 0x6aca, 0)?)),
+                        st(0x6adc, "task", 0x18, 4, serde_json::json!(module_ref(rel, 0x6ad6, 0)?)),
+                        serde_json::json!({"site":0x6aec,"local":0x5888,"args":[owner, entity + 0x14]}),
+                        st(0x6b08, "entity", 0x20, 4, n(float_at(0x6af2, i32::from(*kind), 8)?.to_bits())),
+                        st(0x6b18, "entity", 0x28, 4, n(k(0x6b0e)?.to_bits())),
+                        st(0x6b1c, "entity", 1, 1, n(*frames as u8 as u32)),
+                        st(0x6b20, "entity", 3, 1, n(*kind as u8 as u32)),
+                    ]);
+                    returned = Some(*task);
+                }
+            }
+        }
+        GlowFrame::Update {
+            task,
+            entity,
+            owner,
+            pause,
+            freeze,
+            kind,
+            fade,
+            timer,
+        } => {
+            if *pause == 0 && *freeze == 0 {
+                ev.push(
+                    serde_json::json!({"site":0x6b94,"local":0x5888,"args":[owner, entity + 0x14]}),
+                );
+                let left = fade - float_at(0x6b9e, i32::from(*kind), 0x18)?;
+                ev.push(st(0x6bb8, "entity", 0x28, 4, n(left.to_bits())));
+                if f64::from(left) <= f64::from(k(0x6bc2)?) {
+                    ev.push(call(0x6bdc, serde_json::json!([task]))?);
+                } else if *timer < 0xffff {
+                    let t = timer - 1;
+                    ev.push(st(0x6bf4, "entity", 6, 2, n(t.into())));
+                    if t == 0 {
+                        ev.push(call(0x6c08, serde_json::json!([task]))?);
+                    }
+                }
+            }
+        }
+        GlowFrame::Draw {
+            entity,
+            kind,
+            timer,
+            fade,
+            byte,
+        } => {
+            let period =
+                u16::from_be_bytes(table(0x6c3e, i32::from(*kind), 2, 2)?.try_into().unwrap());
+            if period == 0 {
+                return Err(Error::invalid(
+                    "a zero blink period divides by zero in the native code",
+                ));
+            }
+            let phase = i32::from(*timer) % i32::from(period);
+            let shown = biased_float(rel, 0x6c66, phase)?;
+            let limit = k(0x6c8a)? * unsigned_float(rel, 0x6c96, u32::from(period))?;
+            if !(f64::from(shown) >= f64::from(limit)) {
+                let a = f64::from(*fade);
+                let w = f64::from(k(0x6d2a)?);
+                ev.extend([
+                    call(0x6cc0, serde_json::json!([]))?,
+                    call(0x6cc4, serde_json::json!([]))?,
+                    call(0x6ccc, serde_json::json!([0x820]))?,
+                    call(0x6cd8, serde_json::json!([0, 0x800]))?,
+                    call(0x6ce0, serde_json::json!([9]))?,
+                    call(0x6ce4, serde_json::json!([]))?,
+                    call(0x6cec, serde_json::json!([entity + 0x14]))?,
+                    fcall(0x6d00, vec![a; 4])?,
+                    call(0x6d0c, serde_json::json!([module_ref(rel, 0x6d06, 0)?]))?,
+                    call(0x6d10, serde_json::json!([]))?,
+                    call(0x6d24, serde_json::json!([*byte as i32 as u32]))?,
+                    fcall(0x6d40, vec![w; 4])?,
+                    call(0x6d44, serde_json::json!([]))?,
+                    call(0x6d48, serde_json::json!([]))?,
+                ]);
+            }
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
+}
+
+/// One call of the trail and glow chain routines; values are as the code
+/// reads them, engine float results in single precision unless noted.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum TrailFrame {
+    /// 0x6508: direction `vector` to rotation angles at `out`. `length` is
+    /// the 0x80114eac result, `yaw` / `pitch` the 0x80110e20 and
+    /// 0x80110d10 results (double), `roots` the two local 0x40cc results.
+    Angles {
+        vector: [f32; 3],
+        out: u32,
+        length: f32,
+        yaw: f64,
+        roots: [f32; 2],
+        pitch: f64,
+    },
+    /// 0x6604: trail draw. `player` is the word at 0x80174f98, `distance`
+    /// the 0x800279c4 result, `frame` entity half-word 6, `rotation` entity
+    /// words 8 and 0xc, `length` entity float 0x20.
+    Draw {
+        player: u32,
+        entity: u32,
+        distance: f32,
+        frame: u16,
+        rotation: [u32; 2],
+        length: f32,
+    },
+    /// 0x6728: trail update (frees itself after 12 frames).
+    Update {
+        task: u32,
+        pause: i8,
+        freeze: i8,
+        frame: u16,
+    },
+    /// 0x6794: spawn a trail for `parent` from the point `from` points at
+    /// (`from_words`) toward `toward`; `task` / `entity` are the engine task
+    /// and entity, `length` the 0x80114eac result.
+    Spawn {
+        parent: u32,
+        from: u32,
+        from_words: [u32; 3],
+        toward: [u32; 3],
+        task: u32,
+        entity: u32,
+        length: f32,
+    },
+    /// 0x6894: glow chain update. `kind` / `count` are entity bytes 3 and
+    /// 1, `size` / `fade` entity floats 0x20 / 0x28, `owner` task word 8,
+    /// `anchor` entity word 8.
+    Chain {
+        task: u32,
+        pause: i8,
+        freeze: i8,
+        kind: u8,
+        count: u8,
+        size: f32,
+        fade: f32,
+        owner: u32,
+        anchor: u32,
+    },
+    /// 0x6968: glow draw. `fade` / `size` are entity floats 0x28 / 0x20,
+    /// `position` entity words 0x14..0x1c.
+    GlowDraw {
+        fade: f32,
+        size: f32,
+        position: [u32; 3],
+    },
+}
+/// Sections 1 + 0x6508, 0x6604, 0x6728, 0x6794 (update 0x6728, draw
+/// 0x6604, deleter 0x6790), 0x6894 and 0x6968.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn trail(rel: &crate::city_rel::CityRel<'_>, f: &TrailFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let fcall =
+        |site: u32, args: serde_json::Value, floats: Vec<f64>| -> Result<serde_json::Value> {
+            let mut e = call(site, args)?;
+            e["floats"] = serde_json::json!(floats);
+            Ok(e)
+        };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32,
+              region: &str,
+              offset: serde_json::Value,
+              size: u32,
+              value: serde_json::Value| {
+        serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value})
+    };
+    let n = |v: u32| serde_json::json!(v);
+    let m = |site: u32, o: u32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!(module_ref(rel, site, o)?))
+    };
+    let k = |site: u32| boss_constant(rel, site);
+    let kd = |site: u32| -> Result<f64> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 4)
+            .ok_or_else(|| Error::invalid("missing angle scale"))?;
+        let at = r.addend as usize;
+        let b = rel
+            .data(4)?
+            .get(at..at + 8)
+            .ok_or_else(|| Error::invalid("angle scale out of range"))?;
+        Ok(f64::from_bits(u64::from_be_bytes(b.try_into().unwrap())))
+    };
+    let mut ev = Vec::new();
+    match f {
+        TrailFrame::Angles {
+            vector,
+            out,
+            length,
+            yaw,
+            roots,
+            pitch,
+        } => {
+            ev.push(call(0x6538, serde_json::json!([*out]))?);
+            if f64::from(*length) != f64::from(k(0x6542)?) {
+                let scale = kd(0x6562)?;
+                let one = k(0x658a)?;
+                let sine = -vector[1] * ((one / roots[1]) * (one / roots[0]));
+                ev.extend([
+                    fcall(0x655c, serde_json::json!([]), vec![f64::from(vector[0]), f64::from(vector[2])])?,
+                    st(0x657c, "out", n(4), 4, n(fctiwz(scale * yaw) as u32)),
+                    serde_json::json!({"site":0x6584,"local":0x40cc,"args":[],"floats":[f64::from(*length)]}),
+                    serde_json::json!({"site":0x659c,"local":0x40cc,"args":[],"floats":[f64::from(*length)]}),
+                    fcall(0x65b8, serde_json::json!([]), vec![f64::from(sine)])?,
+                    st(0x65d0, "out", n(0), 4, n(fctiwz(scale * pitch) as u32)),
+                    st(0x65d8, "out", n(8), 4, n(0)),
+                ]);
+            }
+        }
+        TrailFrame::Draw {
+            player,
+            entity,
+            distance,
+            frame,
+            rotation,
+            length,
+        } => {
+            ev.push(call(0x662c, serde_json::json!([player, entity + 0x14]))?);
+            if !(f64::from(*distance) > f64::from(k(0x6632)?)) {
+                let index = i32::from(*frame as u8 as i8);
+                let table = rel
+                    .reference(1, 0x6652)
+                    .filter(|r| r.module == 88 && r.section == 5)
+                    .ok_or_else(|| Error::invalid("missing trail colour table"))?
+                    .addend
+                    .wrapping_add((4 * index) as u32) as usize;
+                let d = rel.data(5)?;
+                let w = |o: usize| -> Result<u32> {
+                    d.get(table + o..table + o + 4)
+                        .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+                        .ok_or_else(|| Error::invalid("trail colour table out of range"))
+                };
+                let (a, b) = (w(0)?, w(4)?);
+                for (site, o, v) in [
+                    (0x6668u32, 0x6c, a),
+                    (0x666c, 0x4c, a),
+                    (0x6670, 0x2c, a),
+                    (0x6674, 0xc, a),
+                    (0x667c, 0x7c, b),
+                    (0x6680, 0x5c, b),
+                    (0x6684, 0x3c, b),
+                    (0x6688, 0x1c, b),
+                ] {
+                    ev.push(st(site, "module", m(0x6662, o)?, 4, n(v)));
+                }
+                let w21c = f64::from(k(0x66ce)?);
+                ev.extend([
+                    call(0x6694, serde_json::json!([0, 8]))?,
+                    call(0x66a0, serde_json::json!([1, 0xa]))?,
+                    call(0x66a4, serde_json::json!([]))?,
+                    call(0x66ac, serde_json::json!([entity + 0x14]))?,
+                    call(0x66b8, serde_json::json!([0, rotation[1]]))?,
+                    call(0x66c4, serde_json::json!([0, rotation[0]]))?,
+                    fcall(
+                        0x66e0,
+                        serde_json::json!([0]),
+                        vec![w21c, w21c, f64::from(*length)],
+                    )?,
+                    call(
+                        0x66f0,
+                        serde_json::json!([module_ref(rel, 0x6662, 0)?, 8, 1]),
+                    )?,
+                    call(0x66f4, serde_json::json!([]))?,
+                    call(0x6700, serde_json::json!([0, 8]))?,
+                    call(0x670c, serde_json::json!([1, 6]))?,
+                ]);
+            }
+        }
+        TrailFrame::Update {
+            task,
+            pause,
+            freeze,
+            frame,
+        } => {
+            if *pause == 0 && *freeze == 0 {
+                let t = frame.wrapping_add(1);
+                ev.push(st(0x6768, "entity", n(6), 2, n(t.into())));
+                if t >= 12 {
+                    ev.push(call(0x6778, serde_json::json!([task]))?);
+                }
+            }
+        }
+        TrailFrame::Spawn {
+            parent,
+            from,
+            from_words,
+            toward,
+            task,
+            entity,
+            length,
+        } => {
+            if *parent == 0 {
+                ev.push(call(
+                    0x67d8,
+                    serde_json::json!([
+                        2,
+                        2,
+                        module_ref(rel, 0x67ca, 0)?,
+                        module_ref(rel, 0x67d2, 0)?
+                    ]),
+                )?);
+            } else {
+                ev.push(call(
+                    0x67f0,
+                    serde_json::json!([2, module_ref(rel, 0x67e6, 0)?, parent]),
+                )?);
+            }
+            if *task != 0 {
+                ev.extend([
+                    st(0x6804, "task", n(0x18), 4, m(0x67fe, 0)?),
+                    st(0x6810, "task", n(0x14), 4, m(0x680a, 0)?),
+                    st(0x681c, "entity", n(6), 2, n(0)),
+                    st(0x6820, "entity", n(0), 1, n(0)),
+                    st(0x682c, "entity", n(0x14), 4, n(from_words[0])),
+                    st(0x6830, "entity", n(0x18), 4, n(from_words[1])),
+                    st(0x6838, "entity", n(0x1c), 4, n(from_words[2])),
+                ]);
+                let mut sub = call(0x685c, serde_json::json!(["stack", from]))?;
+                sub["vectors"] =
+                    serde_json::json!({"0": toward.map(|w| f64::from(f32::from_bits(w)))});
+                ev.extend([
+                    sub,
+                    local(0x6868, 0x6508, serde_json::json!(["stack", entity + 8])),
+                    call(0x6870, serde_json::json!(["stack"]))?,
+                    st(0x6874, "entity", n(0x20), 4, n(length.to_bits())),
+                ]);
+            }
+        }
+        TrailFrame::Chain {
+            task,
+            pause,
+            freeze,
+            kind,
+            count,
+            size,
+            fade,
+            owner,
+            anchor,
+        } => {
+            if *pause == 0 && *freeze == 0 {
+                let base = rel
+                    .reference(1, 0x68b6)
+                    .filter(|r| r.module == 88 && r.section == 5)
+                    .ok_or_else(|| Error::invalid("missing spark table"))?
+                    .addend as usize
+                    + 28 * usize::from(*kind);
+                let d = rel.data(5)?;
+                let tf = |o: usize| -> Result<f32> {
+                    d.get(base + o..base + o + 4)
+                        .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
+                        .ok_or_else(|| Error::invalid("spark table out of range"))
+                };
+                let mut fade = *fade;
+                if f64::from(*size) < f64::from(tf(0xc)?) {
+                    ev.push(st(
+                        0x6900,
+                        "entity",
+                        n(0x20),
+                        4,
+                        n((size + tf(0x10)?).to_bits()),
+                    ));
+                } else {
+                    fade -= tf(0x14)?;
+                    ev.push(st(0x6914, "entity", n(0x28), 4, n(fade.to_bits())));
+                }
+                if f64::from(fade) < f64::from(k(0x691e)?) {
+                    ev.push(local(
+                        0x6944,
+                        0x6a54,
+                        serde_json::json!([
+                            owner,
+                            anchor,
+                            u32::from(*count).wrapping_sub(1),
+                            u32::from(*kind)
+                        ]),
+                    ));
+                    ev.push(call(0x694c, serde_json::json!([task]))?);
+                }
+            }
+        }
+        TrailFrame::GlowDraw {
+            fade,
+            size,
+            position,
+        } => {
+            let a = f64::from(*fade);
+            let w = f64::from(k(0x69fe)?);
+            ev.extend([
+                call(0x6984, serde_json::json!([]))?,
+                call(0x6988, serde_json::json!([]))?,
+                call(0x6994, serde_json::json!([0, 8]))?,
+                call(0x69a0, serde_json::json!([1, 0xa]))?,
+                fcall(0x69b4, serde_json::json!([]), vec![a; 4])?,
+                call(0x69c0, serde_json::json!([module_ref(rel, 0x69ba, 0)?]))?,
+                st(0x69d0, "module", m(0x69ca, 0x10)?, 4, n(size.to_bits())),
+                st(0x69d4, "module", m(0x69ca, 0xc)?, 4, n(size.to_bits())),
+                st(0x69e0, "module", m(0x69ca, 0)?, 4, n(position[0])),
+                st(0x69e4, "module", m(0x69ca, 4)?, 4, n(position[1])),
+                st(0x69ec, "module", m(0x69ca, 8)?, 4, n(position[2])),
+                call(
+                    0x69f8,
+                    serde_json::json!([module_ref(rel, 0x69ca, 0)?, 0, 0x32]),
+                )?,
+                fcall(0x6a14, serde_json::json!([]), vec![w; 4])?,
+                call(0x6a20, serde_json::json!([0, 8]))?,
+                call(0x6a2c, serde_json::json!([1, 6]))?,
+                call(0x6a30, serde_json::json!([]))?,
+                call(0x6a34, serde_json::json!([]))?,
+            ]);
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
 }
