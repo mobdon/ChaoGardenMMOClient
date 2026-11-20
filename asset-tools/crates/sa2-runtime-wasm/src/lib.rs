@@ -249,6 +249,12 @@ impl App {
         )
     }
 
+    /// Sound commands the game made since the last call, as JSON for
+    /// `sa2-audio.js` (call once a frame, after `frame`).
+    pub fn sounds(&mut self) -> String {
+        self.game.sound.drain_json()
+    }
+
     /// Resize the drawing surface to the canvas's new size.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);

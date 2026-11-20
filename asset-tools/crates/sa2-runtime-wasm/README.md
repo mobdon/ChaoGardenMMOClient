@@ -17,3 +17,9 @@ python -I serve.py "C:/Program Files (x86)/Steam/steamapps/common/Sonic Adventur
 Open http://127.0.0.1:8411/ and pick the game folder, or open
 `?from=/game/` to load the same files from `serve.py` (development).
 Arrows or WASD move the stick, Space is A.
+
+Sound: the game's `sa2_runtime::sound` queue is drained every frame
+(`App.sounds()`) and played by `asset-tools/vgmstream-wasm/web/sa2-audio.js`,
+which `serve.py` serves at `/sound/` (copy that folder to `www/sound/` for any
+other host). Music, effect banks and voice archives are read from the picked
+game folder on demand. Audio starts after the first key or click.
