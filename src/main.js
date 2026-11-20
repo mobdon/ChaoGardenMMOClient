@@ -289,7 +289,6 @@ function render(next) {
   const goals = $('#quest-goals');
   const goalData = [
     [`Complete a mission (${Math.min(3, player.missionsCompleted)}/3)`, player.missionsCompleted >= 3],
-    [`Finish your first race (${Math.min(1, player.racesCompleted)}/1)`, player.racesCompleted >= 1],
     ['Reach Run, Swim & Power Lv.10', ['run', 'swim', 'power'].every((s) => player.stats[s].level >= 10)],
   ];
   const goalKey = JSON.stringify(goalData);
