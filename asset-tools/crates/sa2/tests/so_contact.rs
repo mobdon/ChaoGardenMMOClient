@@ -5,7 +5,9 @@
 //! in every address the routine wrote, and writes nowhere else.
 //! Also checks that the bytes of every routine in `DOL_ROUTINES` hash as
 //! recorded.
-use sa2_asset_tools::stage_objects::player_contact::{self as pc, ContactHost, Ram};
+use sa2_asset_tools::stage_objects::player_contact::{
+    self as pc, effects as fx, effects::EffectDraw, rank, ContactHost, Ram,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
@@ -98,15 +100,6 @@ impl ContactHost for Host {
     fn jingle_play(&mut self, name: u32) {
         self.next("jingle", &[name]);
     }
-    fn fn_800be308(&mut self, p: i32) -> u32 {
-        self.next("be308", &[p as u32])
-    }
-    fn fn_800be374(&mut self, p: i32) -> u32 {
-        self.next("be374", &[p as u32])
-    }
-    fn fn_800be408(&mut self, p: i32) -> u32 {
-        self.next("be408", &[p as u32])
-    }
     fn create_elemental_task(&mut self, flags: u32, level: u32, exec: u32, name: u32) -> u32 {
         self.next("cet", &[flags, level, exec, name])
     }
@@ -116,8 +109,54 @@ impl ContactHost for Host {
     fn destroy_task(&mut self, task: u32) {
         self.next("destroy", &[task]);
     }
-    fn fn_80063e34(&mut self, p: i32) -> i32 {
-        self.next("rank", &[p as u32]) as i32
+    fn free_task(&mut self, task: u32) {
+        self.next("free", &[task]);
+    }
+    fn create_child_task(&mut self, flags: u32, exec: u32, parent: u32) -> u32 {
+        self.next("cct", &[flags, exec, parent])
+    }
+}
+
+impl EffectDraw for Host {
+    fn nj_disable_fog(&mut self) {
+        self.next("nofog", &[]);
+    }
+    fn nj_enable_fog(&mut self) {
+        self.next("fog", &[]);
+    }
+    fn gj_set_fog(&mut self) {
+        self.next("setfog", &[]);
+    }
+    fn nj_push_matrix_ex(&mut self) {
+        self.next("push", &[]);
+    }
+    fn nj_pop_matrix_ex(&mut self) {
+        self.next("pop", &[]);
+    }
+    fn nj_pop_matrix(&mut self, n: u32) {
+        self.next("popn", &[n]);
+    }
+    fn nj_set_texture(&mut self, t: u32) {
+        self.next("tex", &[t]);
+    }
+    fn nj_translate_ex(&mut self, v: u32) {
+        self.next("trans", &[v]);
+    }
+    fn nj_rotate_y(&mut self, m: u32, a: u32) {
+        self.next("roty", &[m, a]);
+    }
+    fn nj_rotate_x(&mut self, m: u32, a: u32) {
+        self.next("rotx", &[m, a]);
+    }
+    fn nj_scale(&mut self, m: u32, x: f32, y: f32, z: f32) {
+        let b = |v: f32| if v.is_nan() { 0x7fc0_0000 } else { v.to_bits() };
+        self.next("scale", &[m, b(x), b(y), b(z)]);
+    }
+    fn nj_cnk_cache_draw_model(&mut self, model: u32) {
+        self.next("cnk", &[model]);
+    }
+    fn fn_8011e158(&mut self, model: u32) {
+        self.next("model", &[model]);
     }
 }
 
@@ -144,6 +183,14 @@ fn run(name: &str, a: &[Value], ram: &mut Mem, h: &mut Host) -> Option<u32> {
         "fn_8003699c" => u32::from(pc::fn_8003699c(ram, u(&a[0]), u(&a[1]))),
         "fn_800368a0" => u32::from(pc::fn_800368a0(ram, u(&a[0]), u(&a[1]))),
         "get_stage_num" => pc::get_stage_num(ram) as u32,
+        "get_player_character" => rank::get_player_character(ram, i(&a[0])) as u32,
+        "fn_8001dda8" => rank::fn_8001dda8(ram, i(&a[0])),
+        "fn_8001db4c" => rank::fn_8001db4c(ram, i(&a[0]), u(&a[1]), u(&a[2])),
+        "fn_80063e34" => rank::fn_80063e34(ram, i(&a[0])) as u32,
+        "rand" => fx::rand(ram),
+        "fn_800be308" => fx::fn_800be308(ram, h, i(&a[0])),
+        "fn_800be374" => fx::fn_800be374(ram, h, i(&a[0])),
+        "fn_800be408" => fx::fn_800be408(ram, h, i(&a[0])),
         _ => {
             match name {
                 "set_velocity_p" => pc::set_velocity_p(ram, i(&a[0]), v3(&a[1])),
@@ -168,6 +215,18 @@ fn run(name: &str, a: &[Value], ram: &mut Mem, h: &mut Host) -> Option<u32> {
                 "fn_800375fc" => pc::fn_800375fc(ram, h, i(&a[0])),
                 "fn_80037718" => pc::fn_80037718(ram, h, i(&a[0])),
                 "fn_8002fb2c" => pc::fn_8002fb2c(ram, h, i(&a[0]), i(&a[1]), i(&a[2]), i(&a[3])),
+                "fn_800736f0" => rank::fn_800736f0(ram, u(&a[0])),
+                "fn_800bd2f0" => fx::fn_800bd2f0(ram, h, u(&a[0])),
+                "fn_800bd6e8" => fx::fn_800bd6e8(ram, h, u(&a[0])),
+                "fn_800be0bc" => fx::fn_800be0bc(ram, h, u(&a[0])),
+                "fn_800bd2b4" => fx::fn_800bd2b4(ram, h, u(&a[0])),
+                "fn_800bd6ac" => fx::fn_800bd6ac(ram, h, u(&a[0])),
+                "fn_800bdfbc" => fx::fn_800bdfbc(ram, h, u(&a[0])),
+                "fn_800bd858" => fx::fn_800bd858(ram, u(&a[0])),
+                "fn_800be234" => fx::fn_800be234(ram, u(&a[0])),
+                "fn_800bd478" => fx::fn_800bd478(ram, h, u(&a[0])),
+                "fn_800bd120" => fx::fn_800bd120(ram, h, u(&a[0])),
+                "fn_800bd5c0" => fx::fn_800bd5c0(ram, h, u(&a[0])),
                 other => panic!("unknown routine {other}"),
             }
             return None;
@@ -238,13 +297,20 @@ fn player_contact_matches_main_dol() {
             why.push(format!("writes differ: {diff:?}"));
         }
         if !why.is_empty() {
-            fails.push(format!("case {k} {name} {}: {why:?}", c["args"]));
+            fails.push((name, format!("case {k} {name} {}: {why:?}", c["args"])));
         }
     }
     eprintln!("cases: {counts:?}, skipped: {}", out["skipped"]);
-    for f in fails.iter().take(30) {
-        eprintln!("{f}");
+    // A few failures of each routine, then how many each has.
+    let mut shown: BTreeMap<&str, usize> = BTreeMap::new();
+    for (name, f) in &fails {
+        let n = shown.entry(name).or_default();
+        *n += 1;
+        if *n <= 3 {
+            eprintln!("{f}");
+        }
     }
+    eprintln!("failing: {shown:?}");
     assert!(fails.is_empty(), "{} of the cases differ", fails.len());
 }
 

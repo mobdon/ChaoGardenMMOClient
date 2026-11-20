@@ -22,8 +22,9 @@
 //! with their addresses.
 //!
 //! **Hooks.** Calls into engine code that is not ported here (sound, voice,
-//! music, the barrier/invincibility task creators, task creation, MAlloc,
-//! the 2P ring rank) go to [`ContactHost`], named after their routine.
+//! music, task creation and freeing, MAlloc) go to [`ContactHost`], named
+//! after their routine. The 2P ring rank is ported in [`rank`], the
+//! barrier and invincibility tasks in [`effects`].
 //!
 //! **Matrix work.** SetVelocityP and fn_80039EB0 run on the shared native
 //! Ninja matrix port (`ninja_matrix`, checked against main.dol by
@@ -35,6 +36,9 @@
 //! ports; the module docs of each name which method they replace.
 use super::host::V3;
 use crate::ninja_matrix::{rotate_by_angles, unrotate_by_angles, MatrixStack};
+
+pub mod effects;
+pub mod rank;
 
 /// No stage-REL routines: everything here is main.dol code.
 pub const ROUTINES: &[super::Routine] = &[];
@@ -242,6 +246,126 @@ pub const DOL_ROUTINES: &[DolRoutine] = &[
         0xa0,
         "55865fa1a5ce2f4d52c83631fffdad04cd20b7410a99d4a7e9b6284ac406b21c"
     ),
+    dol!(
+        "_rename_GetPlayerCharacter",
+        0x80038108,
+        0x30,
+        "3a04997d2244e3e5fae01a6dcdbc7132af60c4396362411ab13ef639b67647c1"
+    ),
+    dol!(
+        "fn_8001DB4C",
+        0x8001db4c,
+        0x204,
+        "713caaa26e3e0010a9b4790f674cabc0945281f717f7049504d4fbda0491d3b2"
+    ),
+    dol!(
+        "fn_8001DDA8",
+        0x8001dda8,
+        0x18,
+        "057392fb9dc8764ad9f133d924684789f8c7e3002d9f1adcb106a264257342b2"
+    ),
+    dol!(
+        "fn_800736F0",
+        0x800736f0,
+        0xa8,
+        "0f7580dcbe85a49d4dbab1ce9a09485f4d7fa0593e1992f277ea40a519b18658"
+    ),
+    dol!(
+        "fn_80063E34",
+        0x80063e34,
+        0x384,
+        "91c7b2a4fcb44f87431ef7e912ae6f74e813748b229821a0d9a8c6a6c98d61c8"
+    ),
+    dol!(
+        "rand",
+        0x8010dc88,
+        0x24,
+        "ee48e546ba6aa2c26e1fe3a97770aae35496dea89ada09f4b32858fca7cb4644"
+    ),
+    dol!(
+        "fn_800BE308",
+        0x800be308,
+        0x6c,
+        "621a4d0922351fca1c4702294f04583d1f75ea4a605183edfb24e04e09db2f28"
+    ),
+    dol!(
+        "fn_800BE374",
+        0x800be374,
+        0x94,
+        "36c5c153b5957d899e3d9b1863aeac40dfb6e28e6171bc144e84d63a8c9f6e91"
+    ),
+    dol!(
+        "fn_800BE408",
+        0x800be408,
+        0x94,
+        "3ba0e542588a843b66de2f527d1ec817b7e4663ec4565947439b760af63e167c"
+    ),
+    dol!(
+        "fn_800BD2F0",
+        0x800bd2f0,
+        0x188,
+        "c9f331d6bd3abe7c9b037618ea4d746e51561ba4a14fd29f04c5eec27859f1a0"
+    ),
+    dol!(
+        "fn_800BD6E8",
+        0x800bd6e8,
+        0x170,
+        "879b662ddbd0e7490244a3e93cbf2e05035d4c0ac8f4a93ea6b26852792823e2"
+    ),
+    dol!(
+        "fn_800BE0BC",
+        0x800be0bc,
+        0x178,
+        "a8a064c9841199792980133ef5fe1e0e29be5ec94ebfdc10c2ff100d4f075c05"
+    ),
+    dol!(
+        "fn_800BD2B4",
+        0x800bd2b4,
+        0x3c,
+        "1c801ed715bf9523813937eccd9d6819afab31576da23bc0aeb2786d1a9364ab"
+    ),
+    dol!(
+        "fn_800BD6AC",
+        0x800bd6ac,
+        0x3c,
+        "e6534ac8fb9e1f82cab0bfbcf74c1ee4631feb67408a4789ab0b52d00741a2bd"
+    ),
+    dol!(
+        "fn_800BDFBC",
+        0x800bdfbc,
+        0x100,
+        "7706cfae069607bc97af0cc8937949ea5f23b286579ced9f814f56112f19c0f0"
+    ),
+    dol!(
+        "fn_800BD858",
+        0x800bd858,
+        0xd4,
+        "2702a6ecc74b1d7d34e3a9354155d4de022b3e89b12caf7330bf3e139d900fa6"
+    ),
+    dol!(
+        "fn_800BE234",
+        0x800be234,
+        0xd4,
+        "2702a6ecc74b1d7d34e3a9354155d4de022b3e89b12caf7330bf3e139d900fa6"
+    ),
+    dol!(
+        "fn_800BD478",
+        0x800bd478,
+        0x144,
+        "f3a2a74d15917cb29ac5450c3b2e55b901263973c1c0c8901b7e26b302babb65"
+    ),
+    dol!(
+        "fn_800BD120",
+        0x800bd120,
+        0x194,
+        "9327aef1325a0f58d9470c18d3fa1e1062859db467624fe71365088fa00d0346"
+    ),
+    dol!(
+        "fn_800BD5C0",
+        0x800bd5c0,
+        0xec,
+        "1669a31a723df7174c0e0120614b62ed1846285dc8c0ef918d6f5102c7a26dca"
+    ),
 ];
 
 // --- memory --------------------------------------------------------------
@@ -333,13 +457,6 @@ pub trait ContactHost {
     /// Jingle_Play(name) (0x800110A4); `name` is a main.dol address
     /// ("invncibl.adx" at 0x80174388).
     fn jingle_play(&mut self, name: u32);
-    /// fn_800BE308(player): the invincibility effect; 0 when it could not
-    /// start.
-    fn fn_800be308(&mut self, player: i32) -> u32;
-    /// fn_800BE374(player): the magnetic barrier; 0 when it could not start.
-    fn fn_800be374(&mut self, player: i32) -> u32;
-    /// fn_800BE408(player): the barrier; 0 when it could not start.
-    fn fn_800be408(&mut self, player: i32) -> u32;
     /// CreateElementalTask(flags, level, exec, name) (0x80071E0C), with
     /// main.dol addresses; the new task, or 0.
     fn create_elemental_task(&mut self, flags: u32, level: u32, exec: u32, name: u32) -> u32;
@@ -347,9 +464,11 @@ pub trait ContactHost {
     fn malloc(&mut self, size: u32) -> u32;
     /// DestroyTask(task) (0x80071AF0).
     fn destroy_task(&mut self, task: u32);
-    /// fn_80063E34(player): the 2P ring rank the ring bonus uses (it reads
-    /// both players' standing; not ported).
-    fn fn_80063e34(&mut self, player: i32) -> i32;
+    /// FreeTask(task) (0x80071AE0).
+    fn free_task(&mut self, task: u32);
+    /// CreateChildTask(flags, exec, parent) (0x800709F8); the new task, or
+    /// 0.
+    fn create_child_task(&mut self, flags: u32, exec: u32, parent: u32) -> u32;
 }
 
 fn slot(table: u32, n: i32) -> u32 {
@@ -998,7 +1117,7 @@ fn ring_shift(bits: u32) -> u32 {
 /// Outside 2P (GAME +0x1E == 0) each new hundred is an extra life (SE
 /// 0x1008). In 2P (with the player's twp, and not on stages 0x46/0x47) the
 /// rings may pass one of three thresholds (by character and the 2P rank,
-/// fn_80063E34); the bonus box (bit 1, 2 or 4, adjusted by the player's
+/// [`rank::fn_80063e34`]); the bonus box (bit 1, 2 or 4, adjusted by the player's
 /// pwp +1 and rank) is marked at GAME +0x2D + 3p, a character voice plays
 /// (jump table 0x801B59BC), and GAME +0x33 + p becomes 0x3C.
 pub fn add_num_ring(ram: &mut impl Ram, host: &mut impl ContactHost, player: i32, count: i32) {
@@ -1037,7 +1156,7 @@ pub fn add_num_ring(ram: &mut impl Ram, host: &mut impl ContactHost, player: i32
     let pwp = ram.r32(pslot);
     let chr = ram.rs8(pwp + 3);
     let kind = ram.rs8(pwp + 2);
-    let rank = host.fn_80063e34(p as i32);
+    let rank = rank::fn_80063e34(ram, p as i32);
     let (s1, s2, s3) = ring_steps(chr, kind, rank);
     let m = i32::from((old - old / s3 * s3) as i16);
     let reach = i32::from((ram.rs16(ring) - old + m) as i16);
@@ -1185,7 +1304,7 @@ pub fn fn_800373b8(ram: &mut impl Ram, host: &mut impl ContactHost, player: i32)
     if pwp == 0 || ram.rs16(pwp + 0x10) & 0x8000 != 0 {
         return;
     }
-    if host.fn_800be308(n) == 0 {
+    if effects::fn_800be308(ram, host, n) == 0 {
         return;
     }
     or16(ram, pwp + 0x10, 0x8000);
@@ -1202,9 +1321,9 @@ fn barrier(ram: &mut impl Ram, host: &mut impl ContactHost, player: i32, bit: u3
         return;
     }
     let started = if bit == 1 {
-        host.fn_800be408(n)
+        effects::fn_800be408(ram, host, n)
     } else {
-        host.fn_800be374(n)
+        effects::fn_800be374(ram, host, n)
     };
     if started == 0 {
         return;
