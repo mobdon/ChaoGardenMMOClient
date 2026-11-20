@@ -78,7 +78,7 @@ ENGINE = {
 }
 MODULE = {0xB500: 'r3', 0xA3B0: '', 0x106A8: 'r3 r4 r5 r6', 0x10C98: '', 0x15298: 'r3 r4', 0x326A0: 'r3',
           0x3261C: '', 0x1582C: '', 0x10D34: '', 0xA490: '', 0x158E0: '', 0xAB7C: 'r3', 0x13DC: 'f1 f2',
-          0x158B4: 'r3', 0x1594: ''}
+          0x158B4: 'r3', 0x1594: '', 0xDC24: 'r3 r4 r5 r6 r7 r8', 0xE020: 'r3 r4 r5 r6 r7 r8 r9'}
 calls, returns, stubbed = [], {}, set()
 
 
@@ -461,5 +461,14 @@ if which in ('all', 'bridges'):
         c = run(0x881C, set(), r3=TASK)
         cases.append({'fn': 'bridge_dest', 'input': {'obj': obj}, 'calls': c, 'state': {
             'task': [name(m.get(TASK + o, 'I')) for o in (0x38, 0x40)]}})
+
+# --- thin loaders: COVER +0x5278, DAMMY +0x52C8, CBRI +0x5314, NET +0x5360,
+# ISLAND +0x53A8 only pass their data to the shared constructors +0xE020 and
+# +0xDC24 (stubbed here, owned by the shared stage objects).
+if which in ('all', 'thin'):
+    for L in (0x5278, 0x52C8, 0x5314, 0x5360, 0x53A8):
+        clear(TASK, 0x50)
+        c = run(L, {0xDC24, 0xE020}, r3=TASK)
+        cases.append({'fn': 'thin_load', 'input': {'loader': L}, 'calls': c, 'state': {}})
 
 print(json.dumps({'cases': cases}))

@@ -812,6 +812,68 @@ pub fn bridge_dest(obj: bool) -> Value {
     json!({ "calls": c, "state": { "task": [0, 0] } })
 }
 
+/// Loaders that only pass module data to a shared constructor (owned by the
+/// shared stage objects and reported as a `module` call): COVER, DAMMY,
+/// CBRI, NET, ISLAND.
+pub const THIN_LOADERS: [u32; 5] = [0x5278, 0x52c8, 0x5314, 0x5360, 0x53a8];
+
+/// The shared constructors and how many arguments after the task they take.
+const THIN_TARGETS: [(u32, usize); 2] = [(0xdc24, 5), (0xe020, 6)];
+
+/// A thin loader, decoded from its own code: each of r4..r9 is an
+/// immediate (`li`), a module address (`lis`/`addi` with relocation) or the
+/// word such an address points at (`lwz rX,d(rX)`).
+pub fn thin_load(mh: &MetalHarbor<'_>, loader: u32) -> Result<Value> {
+    if !THIN_LOADERS.contains(&loader) {
+        return Err(Error::invalid("not a thin stage 10 loader"));
+    }
+    let mut regs: [Option<Value>; 10] = Default::default();
+    let mut loc: [Option<(u8, u32)>; 10] = [None; 10];
+    for pc in (loader..loader + 0x60).step_by(4) {
+        let ins = mh.word(1, pc)?;
+        let (op, d, a) = (
+            ins >> 26,
+            (ins >> 21 & 31) as usize,
+            (ins >> 16 & 31) as usize,
+        );
+        let imm = ins as u16 as i16;
+        if op == 18 {
+            let target = mh.local(pc)?;
+            let (_, n) = THIN_TARGETS
+                .iter()
+                .find(|(t, _)| *t == target)
+                .ok_or_else(invalid)?;
+            let mut args = vec![json!("task")];
+            for r in regs.iter().skip(4).take(*n) {
+                args.push(r.clone().ok_or_else(invalid)?);
+            }
+            return Ok(json!({ "calls": [module_call(target, json!(args))], "state": {} }));
+        }
+        if !(4..=9).contains(&d) {
+            continue; // prologue: mflr/stw/stwu/lwz r3
+        }
+        match op {
+            14 if a == 0 => regs[d] = Some(json!(imm)),
+            14 if a == d => {
+                let r = mh.rel.reference(1, pc + 2).ok_or_else(invalid)?;
+                if r.module != mh.rel.module_id() || r.kind != 4 || imm != 0 {
+                    return Err(invalid());
+                }
+                loc[d] = Some((r.section, r.addend));
+                regs[d] = Some(s(r.section, r.addend));
+            }
+            15 => {}
+            32 if a == d => {
+                let (sec, off) = loc[d].take().ok_or_else(invalid)?;
+                let at = off.checked_add_signed(imm.into()).ok_or_else(invalid)?;
+                regs[d] = Some(mh.data_value(sec, at)?);
+            }
+            _ => return Err(invalid()),
+        }
+    }
+    Err(invalid())
+}
+
 /// Run one routine by name on a JSON input (the oracle's case format).
 pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
     let mh = MetalHarbor::read(rel_bytes)?;
@@ -830,6 +892,7 @@ pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
         "restore" => restore(&mh, &parse(input)?),
         "spawn" => spawn(&mh, &parse(input)?),
         "bridge_load" => bridge_load(&mh, &parse(input)?),
+        "thin_load" => thin_load(&mh, parse::<ThinInput>(input)?.loader),
         "bridge_exec" => bridge_exec(&mh, &parse(input)?),
         "bridge_display" => bridge_display(&mh, &parse(input)?),
         "bridge_dest" => Ok(bridge_dest(parse::<BridgeDestInput>(input)?.obj)),
@@ -847,4 +910,9 @@ struct ExecInput {
 #[serde(deny_unknown_fields)]
 struct BridgeDestInput {
     obj: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ThinInput {
+    loader: u32,
 }
