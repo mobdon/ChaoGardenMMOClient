@@ -22,6 +22,7 @@ impl BoardMotionBank {
 
 // Offsets are relative to .data for REL and to the image base (RVA) for PE.
 enum Image<'a, 'b> {
+    Bank(&'a [u8]),
     Rel(&'a CityRel<'b>),
     Pc(&'a [u8], pe::PeImage),
 }
@@ -29,6 +30,7 @@ enum Image<'a, 'b> {
 impl Image<'_, '_> {
     fn span(&self, at: u32, size: usize) -> Result<&[u8]> {
         let (bytes, offset) = match self {
+            Self::Bank(bytes) => (*bytes, at as usize),
             Self::Rel(rel) => (rel.data(SECTION)?, at as usize),
             Self::Pc(bytes, image) => {
                 // Windows maps the virtual tail of .data as zeroes. Some native
@@ -55,19 +57,23 @@ impl Image<'_, '_> {
     fn u32(&self, bytes: &[u8], at: usize) -> u32 {
         let word = bytes[at..at + 4].try_into().unwrap();
         match self {
-            Self::Rel(_) => u32::from_be_bytes(word),
+            Self::Bank(_) | Self::Rel(_) => u32::from_be_bytes(word),
             Self::Pc(..) => u32::from_le_bytes(word),
         }
     }
     fn u16(&self, bytes: &[u8], at: usize) -> u16 {
         let word = bytes[at..at + 2].try_into().unwrap();
         match self {
-            Self::Rel(_) => u16::from_be_bytes(word),
+            Self::Bank(_) | Self::Rel(_) => u16::from_be_bytes(word),
             Self::Pc(..) => u16::from_le_bytes(word),
         }
     }
     fn pointer(&self, at: u32) -> Result<Option<u32>> {
         match self {
+            Self::Bank(_) => {
+                let ptr = self.u32(self.span(at, 4)?, 0);
+                Ok((ptr != 0).then_some(ptr))
+            }
             Self::Rel(rel) => match rel.local_pointer(SECTION, at)? {
                 Some((SECTION, ptr)) => Ok(Some(ptr)),
                 None => Ok(None),
@@ -186,6 +192,21 @@ fn motion(image: &Image<'_, '_>, header: u32, part_count: u32) -> Result<Motion>
         parts,
         unknowns: Vec::new(),
     })
+}
+
+/// The character MTN directory stores file-relative, big-endian Ninja pointers.
+pub(crate) fn bank_motion(bytes: &[u8], header: u32, parts: u16) -> Result<Motion> {
+    let image = Image::Bank(bytes);
+    let desc = image.required_pointer(header)?;
+    let descriptors = image.span(desc, usize::from(parts) * 16)?;
+    let keys: u64 = descriptors
+        .chunks_exact(16)
+        .map(|d| u64::from(image.u32(d, 8)) + u64::from(image.u32(d, 12)))
+        .sum();
+    if keys > 65536 {
+        return Err(Error::invalid("character motion exceeds key budget"));
+    }
+    motion(&image, header, u32::from(parts))
 }
 
 pub fn read(rel: &CityRel<'_>) -> Result<BoardMotionBank> {

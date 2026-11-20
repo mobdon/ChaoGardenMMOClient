@@ -1,19 +1,21 @@
 //! Replay a fixed SET spring with explicitly supplied CCL, player and matrix observations.
 use crate::set::Placement;
 use crate::spring::{SpringCall, SpringKind, SpringMode, SpringPlayer, StageSpring};
+use crate::spring_draw::{self, Draw, Format};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
-    out_point: [f32; 3],
+    out_point: Option<[f32; 3]>,
     frames: Vec<Frame>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Frame {
+    display_after_update: Option<Format>,
     hit: Option<u8>,
     player: Option<Player>,
     #[serde(default)]
@@ -30,6 +32,8 @@ struct Player {
 
 #[derive(Serialize)]
 struct Tick {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display: Option<Vec<Draw>>,
     mode: SpringMode,
     selected_slot: u8,
     contact_timer: u8,
@@ -43,7 +47,8 @@ struct Replay<'a> {
     kind: SpringKind,
     placement: &'a Placement,
     signed_angles: [i32; 3],
-    supplied_out_point: [f32; 3],
+    supplied_out_point: Option<[f32; 3]>,
+    effective_out_point: [f32; 3],
     trig: &'static str,
     frames: Vec<Tick>,
 }
@@ -60,8 +65,19 @@ pub fn replay<'a>(
     if !(1..=2048).contains(&request.frames.len()) {
         return Err(Error::invalid("spring replay requires 1 to 2048 frames"));
     }
-    if !request
-        .out_point
+    // VacumePlayer rotates a vertical vector; yaw alone preserves that axis.
+    let effective_out_point = match request.out_point {
+        Some(point) => point,
+        None if placement.rotation[0] == 0 && placement.rotation[2] == 0 => {
+            [0.0, 5.0 + placement.parameters[1], 0.0]
+        }
+        None => {
+            return Err(Error::invalid(
+                "tilted spring requires an observed out_point",
+            ))
+        }
+    };
+    if !effective_out_point
         .iter()
         .chain(&placement.position)
         .chain(&placement.parameters)
@@ -103,7 +119,7 @@ pub fn replay<'a>(
         let calls = if frame.range_out {
             Vec::new()
         } else {
-            spring.step(frame.hit, player, request.out_point, |a| {
+            spring.step(frame.hit, player, effective_out_point, |a| {
                 let radians = f64::from(a as u16) * std::f64::consts::TAU / 65536.0;
                 let (sin, cos) = radians.sin_cos();
                 (sin as f32, cos as f32)
@@ -118,7 +134,21 @@ pub fn replay<'a>(
         }) {
             return Err(Error::invalid("spring update overflowed"));
         }
+        let display = match frame.display_after_update {
+            Some(_) if matches!(spring.mode, SpringMode::Init | SpringMode::Removed) => {
+                return Err(Error::invalid(
+                    "spring display requires an initialized live task",
+                ));
+            }
+            Some(format) => {
+                let mut commands = Vec::new();
+                spring_draw::display(&spring, format, |command| commands.push(command));
+                Some(commands)
+            }
+            None => None,
+        };
         frames.push(Tick {
+            display,
             mode: spring.mode,
             selected_slot: spring.slot,
             contact_timer: spring.contact_timer,
@@ -132,6 +162,7 @@ pub fn replay<'a>(
         placement,
         signed_angles,
         supplied_out_point: request.out_point,
+        effective_out_point,
         trig: "host f64 sin/cos rounded to f32; retail lookup table not supplied",
         frames,
     })

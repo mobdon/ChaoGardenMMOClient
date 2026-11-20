@@ -109,3 +109,30 @@ impl StageRing {
         events
     }
 }
+
+/// Arguments to the original MakeParticle service; rendering remains with the host.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub struct PickupParticle {
+    pub position: [f32; 3],
+    pub velocity: [f32; 3],
+    pub scale: f32,
+}
+
+/// GSNE8P o_ring_0, in native submission order. The angle service is injectable.
+pub fn pickup_particles(
+    position: [f32; 3],
+    mut sin_cos: impl FnMut(u16) -> (f32, f32),
+) -> [PickupParticle; 4] {
+    std::array::from_fn(|n| {
+        let (s, c) = sin_cos((n as u16) * 0x4000);
+        PickupParticle {
+            position: [
+                position[0] + 4.0 * s,
+                (position[1] + 1.8 * (4 - n) as f32) - 1.5,
+                position[2] + 4.0 * c,
+            ],
+            velocity: [0.0, 0.02, 0.0],
+            scale: 2.5,
+        }
+    })
+}
