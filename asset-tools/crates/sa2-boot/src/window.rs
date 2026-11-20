@@ -1,7 +1,7 @@
 //! A window for the recompiled game: GX frames from the game thread are drawn
 //! with sa2-gx's renderer, and the keyboard is controller port 0.
 //!
-//! Keys: arrows = stick (and D-pad), X/Space = A, Z = B, C = X, V = Y,
+//! Keys: W/A/S/D = stick (and D-pad), Space/X = A, Z = B, C = X, V = Y,
 //! Enter = Start, Q/E = L/R triggers.
 use sa2_asset_tools::input::PadStatus;
 use sa2_gx::api::Frame;
@@ -23,10 +23,10 @@ const QUEUED_FRAMES: usize = 2;
 static TX: Mutex<Option<SyncSender<Frame>>> = Mutex::new(None);
 
 const KEYS: [KeyCode; 12] = [
-    KeyCode::ArrowLeft,
-    KeyCode::ArrowRight,
-    KeyCode::ArrowDown,
-    KeyCode::ArrowUp,
+    KeyCode::KeyA,
+    KeyCode::KeyD,
+    KeyCode::KeyS,
+    KeyCode::KeyW,
     KeyCode::KeyX,
     KeyCode::Space,
     KeyCode::KeyZ,
