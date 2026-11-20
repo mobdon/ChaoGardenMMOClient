@@ -9,7 +9,7 @@ use sa2_asset_tools::{
         queue_event_requests, queue_ground_request, queue_stand_requests, reset_f48,
         walker_command, ActGlobals, ActSteps, LockTarget, LockWorld,
     },
-    walker_exec::EngineCall,
+    walker_exec::{Engine, EngineCall},
 };
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Command};
@@ -24,6 +24,17 @@ fn hex(v: &Value) -> Work {
 }
 
 struct Log(Vec<Value>);
+
+struct Calls(Vec<EngineCall>);
+
+impl Engine for Calls {
+    fn call(&mut self, c: EngineCall) {
+        self.0.push(c);
+    }
+    fn rand(&mut self) -> i32 {
+        panic!("rand")
+    }
+}
 
 impl ActSteps for Log {
     fn stand(&mut self, _: &mut Work, _: &mut Work, _: &mut Work) {
@@ -83,7 +94,7 @@ fn walker_act_matches_main_dol() {
         let g = globals(&case["g"]);
         let (mut t, mut m, mut p) = (hex(&case["t"]), hex(&case["m"]), hex(&case["p"]));
         let mut steps = Log(vec![]);
-        let mut calls = vec![];
+        let mut calls = Calls(vec![]);
         let ret: Option<bool> = match case["fn"].as_str().unwrap() {
             "command" => Some(walker_command(
                 &mut t, &mut m, &mut p, &g, &mut steps, &mut calls,
@@ -111,7 +122,7 @@ fn walker_act_matches_main_dol() {
             f => panic!("{f}"),
         };
         let mut log = steps.0;
-        calls_log(calls, &mut log);
+        calls_log(calls.0, &mut log);
         if let Some(r) = ret {
             assert_eq!(
                 r as u64,

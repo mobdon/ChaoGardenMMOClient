@@ -8,7 +8,7 @@ use crate::{
     land_nodes::nj_scalor,
     native_work::{pw, tw, Work},
     ninja_matrix::{rotate_by_angles, MatrixStack, Vec3},
-    walker_exec::EngineCall,
+    walker_exec::{Engine, EngineCall},
 };
 
 /// Engine state the action step reads.
@@ -133,7 +133,7 @@ pub fn walker_command(
     p: &mut Work,
     g: &ActGlobals,
     s: &mut dyn ActSteps,
-    calls: &mut Vec<EngineCall>,
+    eng: &mut dyn Engine,
 ) -> bool {
     if t.h(tw::FLAG) & 0x1000 == 0 {
         return false;
@@ -175,7 +175,7 @@ pub fn walker_command(
         }
         0x18 => {
             set_mode(t, p, 0x10, 0x18);
-            calls.push(EngineCall::Deferred {
+            eng.call(EngineCall::Deferred {
                 addr: 0x800B_CF50,
                 arg: p.b(pw::PNUM) as i32,
             });
@@ -209,8 +209,8 @@ pub fn walker_command(
             set_mode(t, p, 0x39, 0x3B);
             t.clear_h(tw::FLAG, 0x2500);
             match p.b(3) {
-                7 => calls.push(EngineCall::PlayVoice { id: 0x68C }),
-                6 => calls.push(EngineCall::PlayVoice { id: 0x68D }),
+                7 => eng.call(EngineCall::PlayVoice { id: 0x68C }),
+                6 => eng.call(EngineCall::PlayVoice { id: 0x68D }),
                 _ => {}
             }
             return true;
@@ -389,7 +389,7 @@ pub fn se_at(id: i32, pos: Vec3) -> EngineCall {
 }
 
 /// The walkers' jump sounds by voice character (player byte +3).
-fn jump_sounds(t: &Work, p: &Work, calls: &mut Vec<EngineCall>) {
+fn jump_sounds(t: &Work, p: &Work, eng: &mut dyn Engine) {
     let (a, b) = match p.b(3) {
         0xD => (0x2019, 0x3012),
         0xE => (0x201C, 0x3018),
@@ -397,8 +397,8 @@ fn jump_sounds(t: &Work, p: &Work, calls: &mut Vec<EngineCall>) {
         7 => (0x2001, 0x300A),
         _ => return,
     };
-    calls.push(se_call(a));
-    calls.push(se_at(b, t.v3(tw::POS)));
+    eng.call(se_call(a));
+    eng.call(se_at(b, t.v3(tw::POS)));
 }
 
 /// fn_800ADD34 (`action` None: 0x79 for character 7, else 0xAD) and
@@ -411,7 +411,7 @@ pub fn walker_jump(
     p: &mut Work,
     ride_acc: Option<Vec3>,
     action: Option<i16>,
-    calls: &mut Vec<EngineCall>,
+    eng: &mut dyn Engine,
 ) {
     if let Some(a) = ride_acc {
         m.set_v3(0xC, a);
@@ -423,5 +423,5 @@ pub fn walker_jump(
     t.clear_h(tw::FLAG, 0x2500);
     t.clear_h(tw::FLAG, 2);
     p.set_h(0x12, 0);
-    jump_sounds(t, p, calls);
+    jump_sounds(t, p, eng);
 }

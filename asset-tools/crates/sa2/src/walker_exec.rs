@@ -28,6 +28,17 @@ pub enum EngineCall {
     /// the walker's debris burst), with its argument. It only feeds what
     /// is drawn.
     Deferred { addr: u32, arg: i32 },
+    /// A visual-effect routine not ported yet that takes the player number
+    /// and two points (for example fn_800B9020, the walker's jet effect,
+    /// with player +0x3F4/+0x40C or +0x400/+0x418). It uses the engine's
+    /// `rand`.
+    DeferredAt {
+        addr: u32,
+        arg: i32,
+        points: [crate::ninja_matrix::Vec3; 2],
+    },
+    /// fn_8002FB2C(pnum, a, b, c): controller rumble.
+    Rumble { args: [i32; 4] },
     /// A sound engine call: SE_Call (0x8006B978)(id, a, b, c) or
     /// fn_8006B7EC(id, a, b, volume, position).
     Sound {
@@ -36,6 +47,15 @@ pub enum EngineCall {
         args: [i32; 3],
         pos: Option<crate::ninja_matrix::Vec3>,
     },
+}
+
+/// The engine as the ported routines call it: engine-owned calls run at
+/// once, in the order the routine makes them, so that calls which use
+/// the engine's `rand` (the deferred effects) keep its sequence.
+pub trait Engine {
+    fn call(&mut self, c: EngineCall);
+    /// MSL `rand` (0x8010DC88).
+    fn rand(&mut self) -> i32;
 }
 
 /// The per-player history the engine keeps at r13-0x7910 (ring indices),
