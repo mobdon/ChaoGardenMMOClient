@@ -175,7 +175,7 @@ pub fn motion_step(w: &mut MotionWork, t: &MotionTables) -> Vec<BlendEvent> {
             let nr = t.nf(req);
             let f = (nr * (nc - w.frame)) / nc;
             w.start_frame = fmadds(TENTH, nr, f);
-            if w.start_frame > nr || w.start_frame == nr {
+            if w.start_frame >= nr {
                 w.start_frame -= nr;
             }
         }

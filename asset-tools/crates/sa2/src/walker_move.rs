@@ -556,7 +556,7 @@ pub fn jump_assist(
         let a = atan2f(e.pos[2] - p[2], e.pos[0] - p[0]);
         let dir = fctiwz_f64(BAMS_PER_RAD * f64::from(a));
         let d = sub_angle(*task_yaw, dir);
-        if d > 0x1800 || d < -0x1800 {
+        if !(-0x1800..=0x1800).contains(&d) {
             let h = hdist(e.pos[0] - p[0], e.pos[2] - p[2]);
             if h > e.reach {
                 continue;
@@ -702,6 +702,7 @@ pub fn turn_carry(
 }
 
 /// fn_80048370: as `aim_toward`, ending in `turn_carry` (fn_80047220).
+#[allow(clippy::too_many_arguments)]
 pub fn aim_carry(
     stack: &mut MatrixStack,
     task_flag: i16,

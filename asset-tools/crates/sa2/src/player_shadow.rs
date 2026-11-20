@@ -124,7 +124,7 @@ pub fn shadow_probe(
             out.ceiling_flags = e.flags;
         }
         if let Some(h) = probe.below {
-            if (pt[1] > probe.below_y || pt[1] == probe.below_y) && probe.below_y > out.floor_y {
+            if pt[1] >= probe.below_y && probe.below_y > out.floor_y {
                 out.floor_y = probe.below_y;
                 out.floor_flags = e.flags;
                 out.angle_x = h.angle_x;

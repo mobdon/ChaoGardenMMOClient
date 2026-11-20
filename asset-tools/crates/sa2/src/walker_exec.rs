@@ -125,7 +125,7 @@ pub fn end_frame(
     } else {
         let head = rotate_by_angles(stack, w.angles, [0.0, w.head, 0.0]);
         let head_y = head[1] + w.pos[1];
-        if w.water > head_y || w.water == head_y {
+        if w.water >= head_y {
             w.air_timer = w.air_timer.wrapping_add(1);
             if w.air_timer == AIR_LIMIT {
                 out.push(EngineCall::CreateElementalTask {
