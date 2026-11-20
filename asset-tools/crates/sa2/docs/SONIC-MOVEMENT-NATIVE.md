@@ -53,6 +53,7 @@ rules, so the check is "the same instructions, on this machine model".
 | Ninja matrix stack | fn_80119C74 (0xE0000000, 0x30 bytes each), njPush/PopMatrix, njRotateX/Y/Z (PSMTXRotRad + PSMTXConcat), njCalcVector (PSMTXMultVecSR), njCalcPoint (PSMTXMultVec) | **Ported** (`ninja_matrix`) |
 | Player-frame vectors | fn_8003E9E0 (rotate by Z, X, -Y), fn_8003EA6C (rotate by Y, -X, -Z) | **Ported** (`ninja_matrix::rotate_by_angles`, `unrotate_by_angles`) |
 | Analog input | fn_8004E560 (`GetAnalog` on PC): stick angle and strength, confusion remap, steering on kind-0x11 collision objects; with njInnerProduct, njOuterProduct, MSL acosf and VectorAngle (0x8002B7C4) | **Ported** (`player_analog`, `ninja_vector`) |
+| Turning | SubAngle 0x8002B904, DiffAngle 0x8002B8E0, AdjustAngle 0x8002B918; fn_800473B4 (turn toward a yaw, faster turns slow down above dash_speed, velocity carried round) | **Ported** (`player_turn`) |
 | Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
@@ -92,3 +93,12 @@ rules, so the check is "the same instructions, on this machine model".
   `tests/player_analog_dol.rs` matches 1,500 vector-product and `acosf`
   cases, 600 `VectorAngle` cases and 1,500 fn_8004E560 cases against
   main.dol bit for bit.
+
+- **Turning** (`player_turn`): the 16-bit angle helpers and fn_800473B4.
+  fn_800473B4 rotates the local velocity into world space, turns the yaw
+  toward the target by 0x100 per frame. Above `dash_speed` the step is
+  `256 - 256 * sqrt((speed - dash) / 16)`, with the compiler's inline
+  frsqrte-and-Newton square root. It then rotates back and blends the result
+  into the velocity (0.99/0.01 when the player work's +0x34 exceeds 0.4,
+  otherwise half and half). `tests/player_turn_dol.rs` matches 3,000
+  angle-helper cases and 1,500 turns against main.dol.

@@ -59,6 +59,7 @@ pub mod ninja_matrix;
 pub mod ninja_vector;
 pub mod ninja_trig;
 pub mod player_analog;
+pub mod player_turn;
 pub mod prison_visuals;
 pub mod prison_doors;
 pub mod prison_cam;
