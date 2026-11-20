@@ -9,7 +9,7 @@ import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
-import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
+import { CHAO_GEAR_JOINTS, animalPartAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
 import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
@@ -385,6 +385,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (!key) return;
     const container = await loadLocalAsset(key);
     if (!container || disposed || item.root.isDisposed()) return;
+    item.assetKey = key;
     const entries = container.instantiateModelsToScene(name => `${item.root.name}-${name}`, false, { doNotInstantiate: true });
     const visual = new TransformNode(`${item.root.name}-local-model`, scene);
     visual.parent = item.root;
@@ -444,6 +445,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (item.admin) { attachNativeEmeralds(item); attachNativeChestEmerald(item); }
     if (item.vehicleKey) attachNativeWalker(item);
     setOwnerGear(item, item.gear, true);
+    setAnimalParts(item, item.animalParts, true);
     canvas.dispatchEvent(new CustomEvent('chao-assets', { detail: { key, loaded: true } }));
   }
 
@@ -646,6 +648,37 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       imported.footwearMeshes = attachments.flatMap(entry => entry.meshes);
     }
     canvas.dataset.ownerGear = Object.entries(item.ownerGear).filter(([, entries]) => entries.length).map(([key]) => key).join(',');
+  }
+
+  // Animal parts the server reports. Each native part model is parented to its
+  // traced Chao node at identity, as the native setter stores it on that node.
+  // Only the normal child body is supported until adult bodies are converted.
+  function setAnimalParts(item, parts, force = false) {
+    const key = JSON.stringify(parts || {});
+    if (!force && key === item.animalPartsKey) return;
+    item.animalPartsKey = key;
+    item.partsVersion = (item.partsVersion || 0) + 1;
+    for (const root of item.animalPartRoots || []) destroyGroup(root);
+    item.animalPartRoots = [];
+    if (!item.imported || item.assetKey !== 'chao') return;
+    const version = item.partsVersion;
+    const nodes = item.imported.visual.getDescendants();
+    for (const part of animalPartAssets(parts, 'child')) {
+      const socket = nodes.find(node => new RegExp(`(?:^|-)${part.node}_object_`).test(node.name));
+      if (!socket) continue;
+      void loadLocalAsset(part.key).then(container => {
+        if (!container || disposed || item.root.isDisposed() || version !== item.partsVersion) return;
+        const entries = container.instantiateModelsToScene(name => `${item.root.name}-${part.socket}-${name}`, false, { doNotInstantiate: true });
+        const holder = new TransformNode(`${item.root.name}-part-${part.socket}`, scene);
+        // Skip the glTF handedness root: the Chao hierarchy already carries it.
+        for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
+        for (const entryRoot of entries.rootNodes) entryRoot.dispose();
+        holder.parent = socket;
+        for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
+        item.animalPartRoots.push(holder);
+        canvas.dataset.animalParts = String(item.animalPartRoots.length);
+      });
+    }
   }
 
   function setOwnerGear(item, next, force = false) {
@@ -1431,6 +1464,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item.motionSample = observeSkateMotion(previous, data, next.serverTime, performance.now());
       }
       setOwnerGear(item, data.gear);
+      item.animalParts = data.animalParts;
+      setAnimalParts(item, data.animalParts);
       setEquipment(item, data.equipped);
       item.root.setEnabled(data.zone === zone || !data.zone);
     });

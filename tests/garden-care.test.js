@@ -101,3 +101,12 @@ test('panel submits one request, retries it unchanged after reconnect and report
   assert.equal(panel.handleEvent({ type: 'event', kind: 'care-result', rulesVersion: 'adapted-care-v1', requestId: 'req-1', accepted: false, revision: 7, code: 'no-fruit' }), true);
   assert.ok(root.all().some(n => n.textContent === 'No fruit is ready yet.'));
 });
+
+test('animal parts map to the traced native Chao nodes and exact model names', async () => {
+  const { animalPartAssets, CHAO_PART_NODES } = await import('../src/chao-attachments.js');
+  assert.deepEqual(animalPartAssets({ ears: 3, tail: 0, antlers: 1, wings: 21 }),
+    [{ socket: 'leftEar', node: '024', key: 'animal-part-rabbit-child-leftEar' }, { socket: 'rightEar', node: '026', key: 'animal-part-rabbit-child-rightEar' },
+      { socket: 'tail', node: '008', key: 'animal-part-penguin-child-tail' }]);
+  assert.equal(CHAO_PART_NODES.leftWing, '037');
+  assert.deepEqual(animalPartAssets({ ears: 3 }, 'teen'), []);
+});
