@@ -69,8 +69,9 @@ when the task is grounded (`flag & 3`) and `attr` bit 0x100 is set. It then
 does the following:
 
 - zeroes the vertical component when grounded;
-- zeroes horizontal components below 0.01 (or 0.9 * `run_accel` when
-  grounded), or below 0.001 when airborne;
+- when grounded and `last_attr` bits 0xC are clear, zeroes x if |x| < 0.01
+  and z if |z| <= 0.9 * `run_accel`; when airborne, zeroes x and z at or
+  below 0.001;
 - stores the result in `spd`, and masks all six angles to 16 bits;
 - sets `dotp` to -dot(global vector at 0x801D5624, `floor_normal`) when
   grounded, otherwise 1.0.
