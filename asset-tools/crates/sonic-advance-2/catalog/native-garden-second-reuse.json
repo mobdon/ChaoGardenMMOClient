@@ -1,0 +1,21 @@
+{
+  "origin": "Existing user-local Rust tiny-garden-core; copied for standalone cartridge tooling with payload gate/import/view-serialization adaptations only. No server dependency or edits.",
+  "sources": {
+    "src/native_bounce.rs": {
+      "sha256": "920298ed25244a55f302b7453c69ff6e5196826d103b6e97101dad668b1ef795",
+      "bytes": 65782
+    },
+    "src/native_bios_math.rs": {
+      "sha256": "d560298fcd2ce0a9b14591d42e53a71c9ad527d28065df36c4def244b2fc954a",
+      "bytes": 4180
+    },
+    "tools/verify_native_bounce.py": {
+      "sha256": "9c06863251ac65c34cf40bd78d8368453b563d9a29f99ebc8f55e71ae051ace1",
+      "bytes": 18945
+    },
+    "tools/native_bounce_probe.rs": {
+      "sha256": "65ddf0bdc51ca11cbea8e1b18a4cde5c15cffdecad7ef95a7968a2118a0ae996",
+      "bytes": 7285
+    }
+  }
+}

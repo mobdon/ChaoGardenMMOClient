@@ -89,12 +89,15 @@ table returns 0.
 Unless the switch state is 4, the arena routine pulls a player whose engine-reported XZ distance
 exceeds 1500 back to radius 1499 around the stage center. It then caps X at 250 and Y to −500..300
 and submits the position through 0x80039754. The constants are read from the module's relocated
-data. The stage square root at 0x40cc is ported with the Gekko hardware `frsqrte` estimate.
-The estimate uses Dolphin's hardware-verified table (Source/Core/Common/FloatUtils.cpp,
-ApproximateReciprocalSquareRoot), followed by the stage's three double-precision Newton steps.
-Unicorn computes `frsqrte` exactly. The tests therefore replace that instruction with the same
-estimate (`tests/gekko_float.py`). Across 40,009 inputs the routine matches the Rust port bit for
-bit, and an exact estimate would have changed none of the results.
+data. The stage square root at 0x40cc is ported with the stage's three double-precision Newton steps.
+Its starting estimate comes from the shared `msl_math::gekko_frsqrte`. That uses the Gekko
+hardware `frsqrte` table when the git-ignored file `.local/research/gekko-estimate-tables.json`
+is present (override `SA2_GEKKO_TABLES`), and the exact reciprocal square root otherwise. The
+table comes from Dolphin's GPL source and is not in the repository. Unicorn computes `frsqrte`
+exactly, so with the file present the tests replace that instruction through `tests/gekko_tables.py`.
+Across 40,009 inputs the routine then matches the Rust port bit for bit, and the exact estimate
+would have changed none of the results. Without the file, `finalhazard_stage_sqrt_ppc.py` skips,
+and the other comparisons use the exact estimate on both sides.
 
 When global byte 0x42 or 0x43 is 1, the voice-line routine releases the stage task's held object
 instead. Otherwise, with no countdown and on every fourth frame, line index 0–9 selects a
@@ -233,7 +236,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_super_draw_ppc.py` | 800 draws: active and inactive players, both characters, effect swap, action 54, pose modes |
 | `tests/finalhazard_super_effects_ppc.py` | 1,500 effect draws across spin, aura, fade (frame boundaries) and trail poses |
 | `tests/finalhazard_ring_drop_ppc.py` | 1,500 ring drops: zero, capped and negative counts, characters 6/7, failed allocations |
-| `tests/finalhazard_stage_sqrt_ppc.py` | 40,009 stage square roots on the Gekko estimate, bit for bit |
+| `tests/finalhazard_stage_sqrt_ppc.py` | 40,009 stage square roots on the Gekko estimate, bit for bit (skips without the local table file) |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 

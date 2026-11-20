@@ -18,11 +18,20 @@
           <button class="nav-button" data-panel="character">My Chao <span class="key-hint">C</span></button>
           <button class="nav-button" data-panel="journal">Journal <span class="key-hint">J</span></button>
           <button class="nav-button" id="shop-open">Chao shop <span class="key-hint">B</span></button>
+          <button class="nav-button" id="care-open" aria-pressed="false">Garden care <span class="key-hint">G</span></button>
           <button class="nav-button" id="stages-open">Stage select</button>
+          <button class="nav-button" id="watch-toggle" type="button" aria-pressed="false" disabled>Watch off</button>
           <button class="nav-button" id="tiny-open">Tiny Garden</button>
           <button class="nav-button" id="save-title">Save &amp; title</button>
-          <button class="nav-button sound-button" id="audio-toggle" aria-pressed="false" aria-label="Enable music and NPC voices">♪ Sound off</button>
         </nav>
+        <div class="audio-controls" role="group" aria-label="Audio controls">
+          <span class="audio-caption" aria-hidden="true">SOUND</span>
+          <div class="audio-buttons">
+            <button id="audio-toggle" type="button" aria-pressed="false" aria-label="Enable music">♪ Music off</button>
+            <button id="voices-toggle" type="button" aria-pressed="false" aria-label="Enable NPC voices">Voices off</button>
+          </div>
+          <label class="music-volume-control" for="music-volume"><span>Volume</span><input id="music-volume" type="range" min="0" max="100" step="1" value="22" aria-label="Music volume"/><output id="music-volume-value" for="music-volume">22%</output></label>
+        </div>
         <div class="top-status"><span id="connection-dot" class="status-dot"></span><span id="connection-text">Local garden</span><button id="setup-open" class="icon-button" aria-label="View installed game files">⌘</button></div>
       </header>
 
@@ -115,6 +124,7 @@
         <div id="setup-content" class="setup-content">Checking the installation…</div>
         <p class="fine-print">File discovery identifies content, and does not authenticate Steam ownership. BATTLE entitlement must be checked in Steam.</p>
       </dialog>
+      <aside id="garden-care-panel" class="garden-care-panel" aria-label="Garden care" hidden></aside>
       <dialog id="shop-dialog" class="shop-dialog">
         <div class="panel-heading"><span class="eyebrow">AMY CHAO’S BLACK MARKET</span><button class="close-button" id="shop-close" aria-label="Close Chao shop">×</button></div>
         <div class="shop-heading"><div><small>WELCOME, LITTLE ADVENTURER</small><h2>CHAO SHOP<span>★</span></h2></div><div class="shop-wallet"><span class="ring-icon"></span><strong id="shop-balance">0</strong><span>RINGS</span></div></div>

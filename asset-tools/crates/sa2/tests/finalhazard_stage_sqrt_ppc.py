@@ -18,18 +18,16 @@ import tempfile
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN
 from unicorn import ppc_const as R
 
-# Gekko frsqrte (local only: .local/gekko holds Dolphin's table and helper, kept out of git).
-# Without it, Unicorn and the Rust port both use the exact estimate.
-sys.path.insert(0, str(Path(__file__).resolve().parents[4] / ".local" / "gekko"))
-try:
-    from gekko_float import install_frsqrte  # noqa: E402
-except (ImportError, OSError):
-    install_frsqrte = None
+# Gekko frsqrte from the shared local tables (tests/gekko_tables.py). Without the table file,
+# Unicorn and the Rust port both use the exact estimate.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gekko_tables  # noqa: E402
+
+install_frsqrte = gekko_tables.install_frsqrte if gekko_tables.load() else None
 
 exe, module = sys.argv[1:]
 if install_frsqrte is None:
-    print("skipped: the Gekko frsqrte table is not in .local/gekko")
-    sys.exit(0)
+    gekko_tables.require()  # skips (exit 0) without the table file
 data = Path(module).read_bytes()
 word = lambda i: struct.unpack_from(">I", data, i)[0]
 section = lambda n: (word(word(16) + 8 * n) & ~1, word(word(16) + 8 * n + 4))

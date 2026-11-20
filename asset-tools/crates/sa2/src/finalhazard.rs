@@ -1161,81 +1161,6 @@ pub struct VoiceChannel {
     /// Byte 0x25.
     pub category: i8,
 }
-/// Optional Gekko `frsqrte` table: 32 lines of "base dec" (hex) read from
-/// `.local/gekko/frsqrte_table.txt` (or `SA2_FRSQRTE_TABLE`). It is the
-/// hardware-verified table from Dolphin's FloatUtils.cpp and is kept out of
-/// the repository for licensing reasons. Without it the estimate is exact.
-fn frsqrte_table() -> Option<&'static [(i64, i64); 32]> {
-    static TABLE: std::sync::OnceLock<Option<[(i64, i64); 32]>> = std::sync::OnceLock::new();
-    TABLE
-        .get_or_init(|| {
-            let path = std::env::var_os("SA2_FRSQRTE_TABLE")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| ".local/gekko/frsqrte_table.txt".into());
-            let text = std::fs::read_to_string(path).ok()?;
-            let hex = |t: &str| {
-                let (neg, t) = t.strip_prefix('-').map_or((false, t), |r| (true, r));
-                let v = i64::from_str_radix(t.trim_start_matches("0x"), 16).ok()?;
-                Some(if neg { -v } else { v })
-            };
-            let rows: Vec<(i64, i64)> = text
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                .map(|l| {
-                    let mut it = l.split_whitespace();
-                    Some((hex(it.next()?)?, hex(it.next()?)?))
-                })
-                .collect::<Option<_>>()?;
-            rows.try_into().ok()
-        })
-        .as_ref()
-}
-/// Gekko `frsqrte` estimate (Dolphin's ApproximateReciprocalSquareRoot bit
-/// construction) when the table is present; otherwise the exact reciprocal
-/// square root.
-fn gekko_frsqrte(val: f64) -> f64 {
-    let Some(table) = frsqrte_table() else {
-        return 1.0 / val.sqrt();
-    };
-    let bits = val.to_bits() as i64;
-    let mut mantissa = bits & ((1 << 52) - 1);
-    let sign = bits & i64::MIN;
-    let mut exponent = bits & (0x7ff << 52);
-    if mantissa == 0 && exponent == 0 {
-        return if sign != 0 {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        };
-    }
-    if exponent == 0x7ff << 52 {
-        if mantissa == 0 {
-            return if sign != 0 { f64::NAN } else { 0.0 };
-        }
-        return f64::from_bits(val.to_bits() | 0x0008_0000_0000_0000);
-    }
-    if sign != 0 {
-        return f64::NAN;
-    }
-    if exponent == 0 {
-        loop {
-            exponent -= 1 << 52;
-            mantissa <<= 1;
-            if mantissa & (1 << 52) != 0 {
-                break;
-            }
-        }
-        mantissa &= (1 << 52) - 1;
-        exponent += 1 << 52;
-    }
-    let exponent_lsb = exponent & (1 << 52);
-    exponent = ((0x3ff << 52) - ((exponent - (0x3fe << 52)) / 2)) & (0x7ff << 52);
-    let i = ((exponent_lsb | mantissa) >> 37) as usize;
-    let (base, dec) = table[i / 2048];
-    let integral = sign | exponent | ((base + dec * (i % 2048) as i64) << 26);
-    f64::from_bits(integral as u64)
-}
 /// Section 1 + 0x40cc: frsqrte, three double-precision Newton steps, x*y,
 /// frsp. Nonpositive and NaN inputs return unchanged.
 fn stage_sqrt(x: f32) -> f32 {
@@ -1243,7 +1168,8 @@ fn stage_sqrt(x: f32) -> f32 {
         return x;
     }
     let x = x as f64;
-    let mut y = gekko_frsqrte(x);
+    // Gekko estimate from the shared local tables (msl_math), else exact.
+    let mut y = crate::msl_math::gekko_frsqrte(x);
     for _ in 0..3 {
         y = 0.5 * y * (3.0 - x * (y * y));
     }

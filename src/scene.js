@@ -6,8 +6,17 @@ import {
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF/index.js';
 import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
+import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
-import { attachNativeRun, captureChaoPose, chooseNativeGait, createGaitControls, nativeGaitRate, stepInputPace } from './chao-locomotion.js';
+import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
+import { CHAO_GEAR_JOINTS, animalPartAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
+import { restoreNativeChaosSampling } from './chao-materials.js';
+import { createSteadyHead } from './chao-head.js';
+import { attachChaoBody, bodyAssetFor } from './chao-body.js';
+import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
+import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
+import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
+import { attachNativeBehaviours, readBehaviour, updateNativeBehaviour } from './chao-behaviour.js';
 import './chao-locomotion.css';
 
 class NativeEmeraldEnvironment extends MaterialPluginBase {
@@ -59,6 +68,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   camera.attachControl(canvas, true);
   camera.inputs.attached.keyboard?.detachControl();
   if (camera.inputs.attached.pointers) camera.inputs.attached.pointers.buttons = [2];
+  // Babylon maps right drag to pan; remap it because garden panning is disabled.
+  camera.movement.input.setInteractions('pointer', { button: 2 }, 'rotate');
   const hemi = new HemisphericLight('sky-light', new Vector3(0, 1, 0), scene);
   hemi.intensity = 0.6;
   hemi.groundColor = Color3.FromHexString('#496b68');
@@ -99,6 +110,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   let worldVersion = 0;
   const floorCache = new Map();
   const groundAnchors = [];
+  const nativeChaoShadows = new Set();
+  let nativeShadowTerrain = null;
   let activeZone = '';
   let snapshot = null;
   let paused = false;
@@ -106,6 +119,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   let time = 0;
   let inputTimer = 0;
   let inputPace = 0;
+  let renderDelta = 0;
   const gaitControls = createGaitControls(canvas);
   let flameTexture = null;
   let flameMaterialPromise = null;
@@ -193,7 +207,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     // Entries own cloned skeletons and animation groups. Mesh disposal alone
     // leaves those alive; materials remain shared with the source container.
     const descendants = [root, ...root.getDescendants()];
+    for (const node of descendants) if (node.metadata?.nativeContactShadow) {
+      nativeChaoShadows.delete(node.metadata.nativeContactShadow);
+      node.metadata.nativeContactShadow.dispose();
+    }
     const entries = new Set(descendants.map(node => node.metadata?.importedEntries).filter(Boolean));
+    root.metadata?.steadyHead?.dispose();
+    root.metadata?.chaoBodyDispose?.();
     root.metadata?.shadowSkate?.dispose();
     for (const imported of entries) imported.dispose();
     for (const node of descendants) for (const mat of node.metadata?.ownedMaterials || []) mat.dispose(false, false);
@@ -208,6 +228,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       if (form.includes('dark') || data.alignment <= -60) return 'dark-chaos';
       return 'neutral-chaos';
     }
+    // Server-owned native body family (child or adult morphs); falls back to
+    // the original child model when the family has not been converted locally.
+    const body = bodyAssetFor(data);
+    if (body) return body;
     return form === 'normal' || form === 'neutral' ? 'chao' : null;
   }
 
@@ -223,7 +247,18 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   }
 
   function appearanceFor(data) {
-    return `${String(data.form || 'normal').toLowerCase()}:${!!data.admin}:${assetFor(data)}:${vehicleFor(data) || ''}`;
+    return `${String(data.form || 'normal').toLowerCase()}:${!!data.admin}:${assetFor(data)}:${vehicleFor(data) || ''}:${data.body?.look?.color ?? 0}`;
+  }
+
+  // Babylon does not expose top-level glTF asset extras; read them from the
+  // GLB JSON chunk so tooling provenance (e.g. native clip tables) is available.
+  function readGlbAssetExtras(bytes) {
+    try {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (view.getUint32(16, true) !== 0x4e4f534a) return null;
+      const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + view.getUint32(12, true))));
+      return json.asset?.extras ?? null;
+    } catch { return null; }
   }
 
   function loadLocalAsset(key) {
@@ -238,6 +273,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         if (bytes.byteLength < 12 || new DataView(bytes.buffer).getUint32(0, true) !== 0x46546c67 || disposed) return null;
         const container = await LoadAssetContainerAsync(bytes, scene, { pluginExtension: '.glb', name: `${key}.glb` });
         if (disposed) { container.dispose(); return null; }
+        container.gltfAssetExtras = readGlbAssetExtras(bytes);
         for (const group of container.animationGroups) group.stop();
         const faceMaterials = {
           chao: ['al_ncz.sa2mdl_3', 'al_ncz.sa2mdl_4', 'al_ncz.sa2mdl_5'],
@@ -248,7 +284,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           knuckles: ['al_knuckles.sa2mdl_3', 'al_knuckles.sa2mdl_5', 'al_knuckles.sa2mdl_6', 'al_knuckles.sa2mdl_7'],
           amy: ['al_amy.sa2mdl_2', 'al_amy.sa2mdl_4', 'al_amy.sa2mdl_5', 'al_amy.sa2mdl_6'],
         };
-        const isCharacter = Object.hasOwn(faceMaterials, key);
+        const isFamilyBody = key.startsWith('chao-body-');
+        const isCharacter = isFamilyBody || Object.hasOwn(faceMaterials, key);
         const isCinematicEmerald = /^emerald-(red|blue|green|cyan|purple|yellow|white)$/.test(key);
         const isNativeWalker = key === 'dark-chao-walker';
         const isNativeGear = /^(shadow-air-shoes|knuckles-hammer-gloves)-(left|right)$/.test(key);
@@ -306,7 +343,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
             // browser cutout geometry. Only actual facial overlays may mask.
             mat.unlit = true;
             mat.alpha = 1;
-            const solidCharacterPart = isCharacter && !faceMaterials[key].includes(mat.name);
+            // Family bodies keep the original eye and mouth overlays; only those mask.
+            const facePart = isFamilyBody ? /al_eye|al_mouth/i.test(mat.albedoTexture?.name || '') : faceMaterials[key]?.includes(mat.name);
+            const solidCharacterPart = isCharacter && !facePart;
             mat.transparencyMode = solidCharacterPart ? 0 : mat.transparencyMode === 2 || mat.transparencyMode === 3 ? 1 : mat.transparencyMode ?? 0;
             mat.alphaCutOff = 0.45;
             mat.useAlphaFromAlbedoTexture = mat.transparencyMode === 1;
@@ -317,6 +356,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
               mat.backFaceCulling = false;
               mat.twoSidedLighting = true;
             }
+            restoreNativeChaosSampling(key, mat);
           }
         }
         return container;
@@ -367,8 +407,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
 
   async function attachLocalAsset(item, key) {
     if (!key) return;
-    const container = await loadLocalAsset(key);
+    let container = await loadLocalAsset(key);
+    if (!container && key.startsWith('chao-body-')) {
+      key = 'chao';
+      container = await loadLocalAsset(key);
+    }
     if (!container || disposed || item.root.isDisposed()) return;
+    item.assetKey = key;
     const entries = container.instantiateModelsToScene(name => `${item.root.name}-${name}`, false, { doNotInstantiate: true });
     const visual = new TransformNode(`${item.root.name}-local-model`, scene);
     visual.parent = item.root;
@@ -406,24 +451,57 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       idle: entries.animationGroups.find(group => /idle/i.test(group.name)),
       walk: entries.animationGroups.find(group => /walk/i.test(group.name)),
       current: null,
+      motionState: createNativeMotionState(),
     };
     item.imported.gearSockets = captureGearSockets(item);
     const locomotionPose = captureChaoPose(item.imported);
     void loadLocalAsset('chao-locomotion').then(source => {
       if (source && !disposed && !item.root.isDisposed()) {
-        attachNativeRun(item.imported, source, locomotionPose);
+        attachNativeLocomotion(item.imported, source, locomotionPose);
         canvas.dataset.nativeRun = item.imported.run ? 'native119-loaded' : 'unavailable';
+        canvas.dataset.nativeAir = item.imported.jumpUp && item.imported.jumpDown ? 'native132-137-loaded' : 'unavailable';
+      }
+    });
+    // Native motion states for the server's ChaoMain behaviour port are an
+    // optional local import; without them residents use locomotion.
+    void loadLocalAsset('chao-behaviour').then(source => {
+      if (source && !disposed && !item.root.isDisposed()) {
+        attachNativeBehaviours(item.imported, source, locomotionPose);
+        canvas.dataset.nativeBehaviour = item.imported.behaviourCatalog.size ? `${item.imported.behaviourCatalog.size}-loaded` : 'unavailable';
       }
     });
     item.imported.skate = createShadowSkate(item.imported);
     item.root.metadata.shadowSkate = item.imported.skate;
+    item.imported.steadyHead = createSteadyHead(item.imported);
+    item.root.metadata.steadyHead = item.imported.steadyHead;
     if (item.accessory) item.accessory.position.y = height * 0.78;
     canvas.dataset.localAssets = [...assetContainers.keys()].join(',');
     canvas.dataset.chaoAsset = 'loaded';
+    if (key.startsWith('chao-body-')) {
+      // Morph weights and node offsets follow the server body each frame.
+      item.root.metadata.chaoBodyDispose = attachChaoBody(visual, entries.animationGroups, () => item.bodyState);
+      await loadChaoFaceManifest();
+      if (!item.root.isDisposed()) {
+        await loadChaoLookManifest();
+        applyChaoLook(visual, item.bodyState);
+        configureChaoFace(visual, item.bodyState?.typeName);
+        resetChaoFace(visual);
+        item.faceRoot = visual;
+        // Native lid/blink logic runs per 60 Hz frame.
+        let frames = 0;
+        const faceObserver = scene.onBeforeRenderObservable.add(() => {
+          frames += Math.min(scene.getEngine().getDeltaTime(), 100) * 0.06;
+          for (; frames >= 1; frames -= 1) stepChaoFace(visual);
+        });
+        const disposeBody = item.root.metadata.chaoBodyDispose;
+        item.root.metadata.chaoBodyDispose = () => { disposeBody?.(); scene.onBeforeRenderObservable.remove(faceObserver); };
+      }
+    }
     if (key === 'dark-chaos') attachNativeFlame(item);
     if (item.admin) { attachNativeEmeralds(item); attachNativeChestEmerald(item); }
     if (item.vehicleKey) attachNativeWalker(item);
     setOwnerGear(item, item.gear, true);
+    setAnimalParts(item, item.animalParts, true);
     canvas.dispatchEvent(new CustomEvent('chao-assets', { detail: { key, loaded: true } }));
   }
 
@@ -528,19 +606,22 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     item.root.computeWorldMatrix(true);
     const toRoot = Matrix.Invert(item.root.getWorldMatrix());
     const result = { footwear: [], hands: [] };
-    for (const [side, armIndex, handIndex, footIndex, footMeshIndex] of [
-      ['right', '003', '004', '005', '006'], ['left', '010', '011', '012', '013'],
-    ]) {
+    for (const [side, armIndex, handIndex, footIndex, footMeshIndex] of CHAO_GEAR_JOINTS) {
       for (const [slot, socket, meshNode] of [
-        ['footwear', find(footIndex), find(footMeshIndex)], ['hands', find(handIndex), find(armIndex)],
+        // The visible palm follows the arm frame, while its distal marker
+        // twists independently in the native skating overlay.
+        ['footwear', find(footIndex), find(footMeshIndex)], ['hands', find(armIndex), find(armIndex)],
       ]) {
         if (!socket || !meshNode) continue;
         socket.computeWorldMatrix(true); meshNode.computeWorldMatrix(true);
         const meshes = meshNode.getChildMeshes().filter(mesh => mesh.getTotalVertices());
         let points = geometryPoints(meshes, toRoot);
         if (slot === 'hands' && points.length) {
+          const distalMarker = find(handIndex);
+          if (!distalMarker) continue;
+          distalMarker.computeWorldMatrix(true);
           const shoulder = Vector3.TransformCoordinates(meshNode.getAbsolutePosition(), toRoot);
-          const hand = Vector3.TransformCoordinates(socket.getAbsolutePosition(), toRoot);
+          const hand = Vector3.TransformCoordinates(distalMarker.getAbsolutePosition(), toRoot);
           const axis = hand.subtract(shoulder).normalize();
           const reach = Math.max(...points.map(point => Vector3.Dot(point.subtract(shoulder), axis)));
           // Match the native distal palm, keeping the original forearm and
@@ -557,20 +638,14 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       const bodyMeshes = torso.getChildren().filter(node => /(?:^|-)attach_/.test(node.name))
         .flatMap(node => [node, ...node.getChildMeshes()]).filter(mesh => mesh.getTotalVertices?.());
       const bounds = boundsFor(geometryPoints(bodyMeshes, toRoot));
-      if (bounds) result.torso = { socket: torso, bounds, restToRoot: torso.getWorldMatrix().multiply(toRoot) };
+      if (bounds) result.torso = { socket: torso, bounds, surface: chestSurfacePoint(bodyMeshes, toRoot, bounds), restToRoot: torso.getWorldMatrix().multiply(toRoot) };
     }
     return result;
   }
 
   function gearMountRotation(itemId, side) {
-    // Exact export-local reference axes are recorded with native heel13/23
-    // matrices in upgrade-conversion-report.json. Babylon's glTF root maps
-    // source X to -X; restore native standing-up and toe-forward directions.
+    if (itemId === 'shadow-air-shoes') return shadowShoeMountRotation();
     const references = {
-      'shadow-air-shoes': {
-        left: { up: [-0.8377403, -0.5430225, 0.0575994], forward: [0.5294526, -0.8335401, -0.1577685] },
-        right: { up: [-0.8025777, -0.5964206, 0.0123086], forward: [0.5854268, -0.7834830, 0.2083981] },
-      },
       // Original Knuckles142 wrist/hand rest matrices041/042 and060/061
       // provide the glove's source orientation. Fitting that rigid shell
       // around a Chao palm is a deliberate attachment adaptation.
@@ -593,42 +668,73 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     const imported = item.imported;
     const sockets = imported?.gearSockets[slot];
     if (!sockets || sockets.length !== 2) return;
-    const containers = await Promise.all(sockets.map(({ side }) => loadLocalAsset(`${itemId}-${side}`)));
+    const mirroredShoes = slot === 'footwear' && itemId === 'shadow-air-shoes';
+    const containers = await Promise.all(sockets.map(({ side }) => loadLocalAsset(`${itemId}-${mirroredShoes ? CHAO_SHOE_REFERENCE_SIDE : side}`)));
     if (containers.some(container => !container) || disposed || item.root.isDisposed() || item.imported !== imported || version !== item.gearVersion) return;
     const attachments = [];
     for (let i = 0; i < sockets.length; i++) {
       const fit = sockets[i];
       const root = nativeEffect(containers[i], `${item.root.name}-${itemId}-${fit.side}`);
       root.rotationQuaternion = gearMountRotation(itemId, fit.side);
-      const meshes = root.getChildMeshes().filter(mesh => mesh.getTotalVertices());
+      const { meshes, effects } = collectNativeShoeParts(root);
       const source = boundsFor(geometryPoints(meshes));
       if (!source) { destroyGroup(root); continue; }
-      const scale = slot === 'footwear' ? fit.bounds.size.z * 1.06 / source.size.z
+      const scale = slot === 'footwear' ? fit.bounds.size.z * CHAO_SHOE_LENGTH_RATIO / source.size.z
         : Math.max(fit.bounds.size.x, fit.bounds.size.y, fit.bounds.size.z) * 1.12 / Math.max(source.size.x, source.size.y, source.size.z);
       const position = fit.bounds.center.subtract(source.center.scale(scale));
       if (slot === 'footwear') position.y = fit.bounds.min.y - source.min.y * scale;
-      // The only size adaptation is uniform prop scale. Convert its desired
-      // rest placement into the original socket's local coordinates, then
-      // let the untouched native joint carry it through every animation.
       const desired = Matrix.Compose(new Vector3(scale, scale, scale), root.rotationQuaternion, position);
-      const local = desired.multiply(Matrix.Invert(fit.restToRoot));
-      local.decompose(root.scaling, root.rotationQuaternion, root.position);
-      // Native imported joints contain tiny floating-point scale drift.
-      // Keep the prop's local magnitude uniform, preserving only the signs
-      // required by glTF's handedness conversion; never rescale any joint.
-      const uniformScale = (Math.abs(root.scaling.x) + Math.abs(root.scaling.y) + Math.abs(root.scaling.z)) / 3;
-      root.scaling.set(Math.sign(root.scaling.x) * uniformScale, Math.sign(root.scaling.y) * uniformScale, Math.sign(root.scaling.z) * uniformScale);
-      root.parent = fit.socket;
+      if (!mirroredShoes) attachRigidGearAtRest(root, fit, desired);
       for (const mesh of meshes) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
-      attachments.push({ root, meshes, fit });
+      attachments.push({ root, meshes, fit, source, nativeEffects: effects });
     }
     if (attachments.length !== 2) { for (const entry of attachments) destroyGroup(entry.root); return; }
+    if (mirroredShoes) {
+      const reference = attachments.find(entry => entry.fit.side === CHAO_SHOE_REFERENCE_SIDE);
+      const rest = mirroredShadowShoeRest(reference.source, reference.fit.bounds);
+      for (const entry of attachments) {
+        attachRigidGearAtRest(entry.root, entry.fit, rest[entry.fit.side]);
+        entry.root.metadata.nativeShoeAttachment = { sourceSide: CHAO_SHOE_REFERENCE_SIDE, mirrored: entry.fit.side !== CHAO_SHOE_REFERENCE_SIDE };
+      }
+      canvas.dataset.footwearSymmetry = 'native-right-mirrored-at-rest';
+    }
     item.ownerGear[slot] = attachments;
     if (slot === 'footwear') {
       for (const { fit } of attachments) for (const mesh of fit.meshes) mesh.setEnabled(false);
       imported.footwearMeshes = attachments.flatMap(entry => entry.meshes);
     }
     canvas.dataset.ownerGear = Object.entries(item.ownerGear).filter(([, entries]) => entries.length).map(([key]) => key).join(',');
+  }
+
+  // Animal parts the server reports. Each native part model is parented to its
+  // traced Chao node at identity, as the native setter stores it on that node.
+  // Only the normal child body is supported until adult bodies are converted.
+  function setAnimalParts(item, parts, force = false) {
+    const key = JSON.stringify(parts || {});
+    if (!force && key === item.animalPartsKey) return;
+    item.animalPartsKey = key;
+    item.partsVersion = (item.partsVersion || 0) + 1;
+    for (const root of item.animalPartRoots || []) destroyGroup(root);
+    item.animalPartRoots = [];
+    if (!item.imported || item.assetKey !== 'chao') return;
+    const version = item.partsVersion;
+    const nodes = item.imported.visual.getDescendants();
+    for (const part of animalPartAssets(parts, 'child')) {
+      const socket = nodes.find(node => new RegExp(`(?:^|-)${part.node}_object_`).test(node.name));
+      if (!socket) continue;
+      void loadLocalAsset(part.key).then(container => {
+        if (!container || disposed || item.root.isDisposed() || version !== item.partsVersion) return;
+        const entries = container.instantiateModelsToScene(name => `${item.root.name}-${part.socket}-${name}`, false, { doNotInstantiate: true });
+        const holder = new TransformNode(`${item.root.name}-part-${part.socket}`, scene);
+        // Skip the glTF handedness root: the Chao hierarchy already carries it.
+        for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
+        for (const entryRoot of entries.rootNodes) entryRoot.dispose();
+        holder.parent = socket;
+        for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
+        item.animalPartRoots.push(holder);
+        canvas.dataset.animalParts = String(item.animalPartRoots.length);
+      });
+    }
   }
 
   function setOwnerGear(item, next, force = false) {
@@ -726,7 +832,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     vehicle.wasGrounded = !!state.grounded;
   }
 
-  async function attachNativeFlame(item) {
+  function nativeFlameMaterial() {
     if (!flameMaterialPromise) flameMaterialPromise = (async () => {
       try {
         const response = await fetch('/api/assets/chao-flame.png', { cache: 'no-store' });
@@ -758,8 +864,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         return mat;
       } catch { return null; }
     })();
-    const mat = await flameMaterialPromise;
-    if (!mat || disposed || item.root.isDisposed() || !item.imported) return;
+    return flameMaterialPromise;
+  }
+
+  async function attachNativeFlame(item) {
+    const imported = item.imported;
+    const mat = await nativeFlameMaterial();
+    if (!mat || disposed || item.root.isDisposed() || item.imported !== imported) return;
     const sprite = MeshBuilder.CreatePlane('original-dark-chaos-flame', { size: 0.18 }, scene);
     sprite.material = mat;
     sprite.parent = item.root;
@@ -835,7 +946,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     const scale = 0.09 / source.size.y;
     visual.scaling.setAll(scale);
     visual.position.copyFrom(source.center.scale(-scale));
-    const position = new Vector3(fit.bounds.center.x, fit.bounds.min.y + fit.bounds.size.y * 0.62, fit.bounds.max.z + 0.018);
+    // The center was on the skin; tuck another quarter-depth inside so only
+    // a small facet cap projects from the chest instead of a pendant shape.
+    const position = fit.surface.subtract(new Vector3(0, 0, source.size.z * scale * .25));
     const local = Matrix.Translation(position.x, position.y, position.z).multiply(Matrix.Invert(fit.restToRoot));
     chest.rotationQuaternion = Quaternion.Identity();
     local.decompose(chest.scaling, chest.rotationQuaternion, chest.position);
@@ -867,6 +980,21 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (floorCache.size > 6000) floorCache.clear();
     floorCache.set(key, height);
     return height;
+  }
+
+  function setNativeShadowTerrain(meshes) {
+    nativeShadowTerrain = createNativeShadowTerrainIndex(meshes);
+    for (const shadow of nativeChaoShadows) shadow.setTerrainIndex(nativeShadowTerrain);
+  }
+
+  function updateChaoShadow(item) {
+    if (!item.nativeShadow) return;
+    item.root.computeWorldMatrix(true);
+    const center = item.root.getAbsolutePosition();
+    const groundY = floorAt(center.x, center.z);
+    const scale = Math.abs(item.root.scaling.x);
+    item.nativeShadow.update({ center, width: .35 * scale, depth: .28 * scale,
+      groundY, enabled: groundY !== null && item.root.isEnabled() && !item.vehicleKey });
   }
 
   async function loadNativeGarden(zone, version, parent, proxyScenery) {
@@ -917,8 +1045,17 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       return;
     }
     proxyScenery.setEnabled(false);
+    setNativeShadowTerrain(meshes);
+    const nativeExit = attachNativeGardenExit(zone, meshes);
+    canvas.dataset.nativeGardenExit = nativeExit.ready ? nativeExit.trigger : 'fallback';
+    canvas.dataset.nativeGardenExitMeshes = nativeExit.meshes.join(',');
+    canvas.dataset.nativeGardenExitReachable = String(nativeExit.ready && nativeExit.reachable);
     const nativePortals = { mission: [0, -8], hero: [-7, 2], dark: [7, 2], race: [6, 9] };
     for (const anchor of groundAnchors) {
+      if (nativeExit.ready && anchor.node.metadata?.portalAction === 'hub') {
+        anchor.node.setEnabled(false);
+        continue;
+      }
       const portalPosition = nativePortals[anchor.node.metadata?.portalAction];
       if (portalPosition) { anchor.node.position.x = portalPosition[0]; anchor.node.position.z = portalPosition[1]; }
       if (anchor.node.name === 'chao-race-guide') anchor.node.position.set(7, 0, 6);
@@ -1140,6 +1277,13 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     nameplate.metadata.baseWidth = plateWidth;
     for (const mesh of root.getChildMeshes()) if (!mesh.metadata?.labelTexture) shadows.addShadowCaster(mesh, false);
     const item = { root, body, head, limbs, emotion, emotionBase: 2.98 * proxyScale, nameplate, proxyMeshes, proxyScale, admin: !!data.admin, gear: gearFor(data), vehicleKey: vehicleFor(data), appearance: appearanceFor(data), name, target: new Vector3(data.x || 0, data.y || 0, data.z || 0), lastPosition: new Vector3(), moving: false, npc };
+    item.bodyState = data.body;
+    if (['chao', 'neutral-chaos', 'hero-chaos', 'dark-chaos'].includes(assetFor(data)) || assetFor(data)?.startsWith('chao-body-')) {
+      item.nativeShadow = createNativeChaoShadow(scene, { textureUrl: '/api/assets/chao-shadow.png', terrainIndex: nativeShadowTerrain });
+      root.metadata = { ...root.metadata, nativeContactShadow: item.nativeShadow };
+      nativeChaoShadows.add(item.nativeShadow);
+      glow.addExcludedMesh(item.nativeShadow.mesh);
+    }
     attachLocalAsset(item, assetFor(data));
     return item;
   }
@@ -1161,10 +1305,15 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (world) destroyGroup(world);
     worldVersion++;
     terrain = null;
+    nativeShadowTerrain = null;
     floorCache.clear();
     groundAnchors.length = 0;
     animatedDecor.length = 0;
     canvas.dataset.nativeTrees = '0';
+    canvas.dataset.nativeGarden = 'fallback';
+    canvas.dataset.nativeGardenExit = 'fallback';
+    canvas.dataset.nativeGardenExitMeshes = '';
+    canvas.dataset.nativeGardenExitReachable = 'false';
     world = new TransformNode(`world-${zone}`, scene);
     scenery = new TransformNode('procedural-scenery', scene);
     scenery.parent = world;
@@ -1182,6 +1331,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     island.receiveShadows = true;
     const ground = cylinder('garden-ground', [0, -0.225, 0], { height: 0.45, diameter: 65, tessellation: 64 }, grass);
     ground.receiveShadows = true;
+    setNativeShadowTerrain([ground]);
     if (zone === 'hub') applyOriginalGrass(ground);
     for (let i = 0; i < 9; i++) {
       const a = i * Math.PI * 2 / 9;
@@ -1283,7 +1433,16 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       }
       label('GARDEN CIRCUIT', [0, 4, 0], '#fff0bc', 4.5);
     }
-    if (zone === 'garden' || zone === 'hero' || zone === 'dark') loadNativeGarden(zone, worldVersion, world, scenery).catch(() => { canvas.dataset.nativeGarden = 'fallback'; });
+    if (zone === 'garden' || zone === 'hero' || zone === 'dark') {
+      const version = worldVersion;
+      loadNativeGarden(zone, version, world, scenery).catch(() => {
+        if (disposed || version !== worldVersion) return;
+        canvas.dataset.nativeGarden = 'fallback';
+        canvas.dataset.nativeGardenExit = 'fallback';
+        canvas.dataset.nativeGardenExitMeshes = '';
+        canvas.dataset.nativeGardenExitReachable = 'false';
+      });
+    }
   }
 
   function makeRing(data) {
@@ -1350,6 +1509,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         playerMeshes.set(data.id, replacement);
         item = replacement;
       }
+      item.bodyState = data.body;
+      // Native look and blended material diffuse follow the server body.
+      if (item.faceRoot && !item.faceRoot.isDisposed()) applyChaoLook(item.faceRoot, item.bodyState);
       item.target.set(data.x || 0, data.y || 0, data.z || 0);
       if (item.root.position.lengthSquared() === 0) item.root.position.copyFrom(item.target);
       item.self = data.id === next.selfId;
@@ -1357,8 +1519,16 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       item.absoluteY = Number.isFinite(data.groundY);
       item.heading = Number.isFinite(data.facing) ? data.facing : null;
       item.mech = data.mech || null;
-      item.motionSample = observeSkateMotion(item.motionSample, data, next.serverTime, performance.now());
+      // Server-run native behaviour: motion state, frame and face as of this
+      // snapshot, extrapolated locally until the next one (presentation only).
+      item.behaviour = readBehaviour(data.watch, performance.now());
+      const previous = item.motionSample;
+      if (!Number.isFinite(previous?.serverTime) || previous.zone !== data.zone || next.serverTime > previous.serverTime) {
+        item.motionSample = observeSkateMotion(previous, data, next.serverTime, performance.now());
+      }
       setOwnerGear(item, data.gear);
+      item.animalParts = data.animalParts;
+      setAnimalParts(item, data.animalParts);
       setEquipment(item, data.equipped);
       item.root.setEnabled(data.zone === zone || !data.zone);
     });
@@ -1389,7 +1559,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   function pointerDown(event) {
     if (paused || event.button !== 0) return;
     const pick = scene.pick(scene.pointerX, scene.pointerY);
-    if (pick?.hit && pick.pickedMesh?.metadata?.action) onAction(pick.pickedMesh.metadata.action);
+    if (!pick?.hit) return;
+    const action = pick.pickedMesh?.metadata?.nativeGardenExit
+      ? nativeGardenExitAction(activeZone, pick) : pick.pickedMesh?.metadata?.action;
+    if (action) onAction(action);
   }
   window.addEventListener('keydown', keyDown);
   window.addEventListener('keyup', keyUp);
@@ -1404,11 +1577,20 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   buildWorld('hub');
   activeZone = 'hub';
   scene.onBeforeAnimationsObservable.add(() => {
+    for (const item of playerMeshes.values()) item.imported?.steadyHead?.restoreBase();
     for (const item of playerMeshes.values()) item.imported?.skate?.restoreBase();
   });
   scene.onAfterAnimationsObservable.add(() => {
-    for (const item of playerMeshes.values()) item.imported?.skate?.apply();
+    for (const item of playerMeshes.values()) {
+      if (!item.nativeMotion?.available || !Number.isFinite(item.nativeMotion.frame)) item.imported?.skate?.apply();
+    }
     for (const item of playerMeshes.values()) groundImportedFeet(item);
+    for (const item of playerMeshes.values()) {
+      const skate = item.imported?.skate?.diagnostics;
+      item.imported?.steadyHead?.update(renderDelta, { mounted: !!item.vehicleKey,
+        gait: item.nativeGait || 'Idle', skateBlend: item.nativeMotion?.available && Number.isFinite(item.nativeMotion.frame) ? 0 : skate?.blend || 0, skatePhase: skate?.phase || 0 });
+      item.imported?.steadyHead?.apply();
+    }
     for (const item of animatedDecor) if (item.kind === 'npc') groundImportedFeet(item.chao);
   });
   scene.onBeforeRenderObservable.add(() => {
@@ -1428,6 +1610,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   engine.runRenderLoop(() => {
     if (disposed) return;
     const dt = Math.min(0.05, engine.getDeltaTime() / 1000);
+    renderDelta = dt;
     time += dt;
     if (flameTexture) flameTexture.uOffset = (Math.floor(time * 18) % 16) / 16;
     inputTimer += dt;
@@ -1472,28 +1655,45 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       const swimming = !terrain && activeZone !== 'mission' && activeZone !== 'race' && (item.root.position.x + 8) ** 2 + item.root.position.z ** 2 < 25;
       const phase = time * (item.moving ? 12 : 2.3);
       item.body.position.y = (0.8 + Math.sin(phase) * (item.moving ? 0.07 : 0.025)) * item.proxyScale;
-      item.head.position.y = (1.72 + Math.sin(phase) * 0.025) * item.proxyScale;
+      item.head.position.y = 1.72 * item.proxyScale;
       item.emotion.position.y = item.emotionBase + Math.sin(time * 2.8) * 0.02;
       if (item.imported) {
         const motion = item.motionSample;
         const fresh = !!motion?.valid && performance.now() - motion.observedAt < 350;
-        item.imported.skate?.update(dt, {
-          speed: fresh ? motion.speed : 0,
-          grounded: motion?.grounded || false,
-          swimming: motion?.swimming || false,
+        const imported = item.imported;
+        const skate = imported.skate;
+        skate?.restoreBase();
+
+        const grounded = !!motion?.grounded;
+        const speed = fresh ? motion.speed : 0;
+        const swimming = !!motion?.swimming;
+        const mounted = !!item.vehicleKey;
+        const movingPose = fresh && !swimming && !mounted && (grounded || skate?.diagnostics.blend > 0);
+        item.nativeVisualSpeed = movingPose ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
+        const kinematics = { speed, visualSpeed: item.nativeVisualSpeed, grounded,
+          jumpOffset: motion?.jumpOffset, verticalVelocity: motion?.verticalVelocity, fresh, swimming, mounted };
+        const behaviourMotion = item.behaviour && grounded && imported.behaviourCatalog?.size
+          ? updateNativeBehaviour(imported, item.root, item.behaviour, { now: performance.now(), fresh, mounted, swimming })
+          : null;
+        const groundMotion = grounded && !behaviourMotion
+          ? updateNativeLocomotion(imported, imported.motionState, dt, kinematics) : null;
+
+        skate?.update(dt, {
+          speed, grounded: grounded && groundMotion?.mode !== 'Land',
+          airGap: motion?.airGap, descending: motion?.descending, descendingGround: motion?.descendingGround,
+          serverTime: motion?.serverTime, swimming, mounted, fresh,
           footwear: item.gear?.footwear === 'shadow-air-shoes' && !!item.ownerGear?.footwear?.length,
-          mounted: !!item.vehicleKey,
-          fresh,
         });
-        const speed = fresh && motion?.grounded && !item.vehicleKey ? motion.speed : 0;
-        item.nativeGait = chooseNativeGait(speed, item.nativeGait);
-        const animation = item.nativeGait === 'Run' ? item.imported.run || item.imported.walk || item.imported.idle : item.nativeGait === 'Walk' ? item.imported.walk || item.imported.idle : item.imported.idle;
-        if (animation && item.imported.current !== animation) {
-          item.imported.current?.stop();
-          animation.start(true, 1);
-          item.imported.current = animation;
+        const skating = skate?.diagnostics;
+        item.nativeMotion = behaviourMotion ? { mode: 'Behaviour', nativeState: behaviourMotion.nativeState, behaviour: behaviourMotion.fn }
+          : groundMotion ?? updateNativeLocomotion(imported, imported.motionState, dt, {
+            ...kinematics, grounded: !!skating?.coasting,
+          });
+        item.nativeGait = item.nativeMotion.mode;
+        const groundJets = fresh && grounded && !swimming && !mounted && item.nativeMotion.mode !== 'Land';
+        for (const entry of item.ownerGear?.footwear || []) {
+          updateNativeShoeEffects(entry.nativeEffects, groundJets ? skating?.blend || 0 : 0, motion?.speed);
         }
-        if (animation) animation.speedRatio = nativeGaitRate(animation === item.imported.run ? 'Run' : animation === item.imported.walk ? 'Walk' : 'Idle', speed);
       }
       if (item.vehicle) animateWalker(item, dt);
       for (const emerald of item.emeralds || []) {
@@ -1524,7 +1724,11 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         // Preserve the player's orbit when translating its focus. The target
         // property setter otherwise rebuilds alpha/beta/radius from the old
         // camera position, immediately undoing the mounted fit and zoom.
-        camera.setTarget(Vector3.Lerp(camera.target, target, Math.min(1, dt * 8)), false, false, true);
+        // The actor already interpolates all three authoritative coordinates.
+        // Damping its camera a second time makes the fixed head drift on
+        // slopes and during acceleration. Track that rendered actor exactly;
+        // the player's orbit, zoom and collision controls remain independent.
+        camera.setTarget(target, false, false, true);
       }
     }
     for (let index = nativeShots.length - 1; index >= 0; index--) {
@@ -1561,31 +1765,125 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item.node.rotation.y = Math.sin(time * 0.4 + item.phase) * 0.15;
       }
     }
+    for (const item of playerMeshes.values()) updateChaoShadow(item);
+    for (const item of animatedDecor) if (item.kind === 'npc') updateChaoShadow(item.chao);
     scene.render();
     // Read-only QA measurements of the rendered view, including the actual
     // camera position after Babylon has applied its orbit/collision logic.
     const self = playerMeshes.get(snapshot?.selfId);
+    canvas.dataset.nativeChaoShadow = self?.nativeShadow?.ready ? self.nativeShadow.mesh.isEnabled() ? 'visible' : 'no-floor' : 'unavailable';
+    canvas.dataset.nativeChaoShadowTriangles = String((self?.nativeShadow?.mesh.getTotalIndices() || 0) / 3);
     canvas.dataset.cameraRadius = camera.radius.toFixed(3);
     canvas.dataset.cameraDistance = Vector3.Distance(camera.position, camera.target).toFixed(3);
     canvas.dataset.cameraCollisions = String(camera.checkCollisions);
     canvas.dataset.cameraTargetY = camera.target.y.toFixed(3);
+    canvas.dataset.renderActorY = (self?.root.position.y || 0).toFixed(6);
+    canvas.dataset.cameraFocusErrorY = (camera.target.y - (self?.root.position.y || 0) - (self?.vehicle ? self.vehicle.height * .55 : .28)).toFixed(6);
+    canvas.dataset.observedGrounded = String(self?.motionSample?.grounded || false);
+    canvas.dataset.observedAirGap = (self?.motionSample?.airGap ?? Infinity).toFixed(6);
     canvas.dataset.mechHeight = (self?.vehicle?.height || 0).toFixed(3);
     canvas.dataset.mechRadius = (self?.vehicle?.radius || 0).toFixed(3);
     const skate = self?.imported?.skate?.diagnostics;
-    canvas.dataset.skateActive = String(skate?.active || false);
+    const head = self?.imported?.steadyHead?.diagnostics;
+    const drawnHead = self?.imported?.steadyHead?.renderedCenter();
+    const headScreen = drawnHead && Vector3.Project(drawnHead, Matrix.Identity(), scene.getTransformMatrix(), camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight()));
+    canvas.dataset.headScreenPosition = headScreen ? `${headScreen.x.toFixed(4)},${headScreen.y.toFixed(4)}` : '';
+    canvas.dataset.headStabilized = String(head?.active || false);
+    canvas.dataset.headStabilityBlend = (head?.blend || 0).toFixed(3);
+    canvas.dataset.headMotionMode = head?.mode || 'native';
+    canvas.dataset.headStrokeBob = (head?.bobOffsetY || 0).toFixed(6);
+    canvas.dataset.headActorPosition = head?.position?.map(value => value.toFixed(6)).join(',') || '';
+    const playingNativeAir = self?.nativeMotion?.available && Number.isFinite(self.nativeMotion.frame);
+    const playingSkate = !playingNativeAir && !!skate?.active;
+    canvas.dataset.skateActive = String(playingSkate);
     canvas.dataset.skateState = skate?.state || 'unavailable';
     canvas.dataset.skateSpeed = (skate?.speed || 0).toFixed(3);
     canvas.dataset.skateRate = (skate?.rate || 0).toFixed(3);
-    canvas.dataset.skateBlend = (skate?.blend || 0).toFixed(3);
+    canvas.dataset.skateBlend = (playingNativeAir ? 0 : skate?.blend || 0).toFixed(3);
+    canvas.dataset.footwearSockets = (self?.ownerGear?.footwear || []).map(entry => entry.fit.socket.name.match(/(\d{3})_object_/)?.[1] || '').join(',');
+    canvas.dataset.shoeExhaust = String((self?.ownerGear?.footwear || []).filter(entry => entry.nativeEffects?.some(effect => effect.mesh.isEnabled())).length);
+    canvas.dataset.nativeShoeEffects = (self?.ownerGear?.footwear || []).flatMap(entry => entry.nativeEffects || []).filter(effect => effect.mesh.isEnabled()).map(effect => effect.modelId).join(',');
     canvas.dataset.skateClip = skate?.clip || '';
-    canvas.dataset.chaoMotion = skate?.active ? `ShadowSkate${skate.clip}` : self?.imported?.run && self.imported.current === self.imported.run ? 'NativeRun119' : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
-    canvas.dataset.chaoMotionRate = (self?.imported?.current?.speedRatio || 1).toFixed(3);
+    canvas.dataset.skatePhase = (skate?.phase || 0).toFixed(6);
+    canvas.dataset.chaoMotion = playingSkate ? `ShadowSkate${skate.clip}` : self?.nativeMotion?.available && self.nativeMotion.nativeState ? `Native${self.nativeMotion.mode}${self.nativeMotion.nativeState}` : self?.imported?.walk && self.imported.current === self.imported.walk ? 'Walk' : 'Idle';
+    canvas.dataset.chaoMotionState = self?.nativeMotion?.mode || 'Idle';
+    canvas.dataset.chaoMotionAvailable = String(!!self?.nativeMotion?.available);
+    canvas.dataset.chaoMotionFrame = Number.isFinite(self?.nativeMotion?.frame) ? self.nativeMotion.frame.toFixed(3) : '';
+    canvas.dataset.chaoMotionRate = (self?.nativeMotion?.rate ?? 1).toFixed(3);
   });
   onReady();
 
+  // Server-owned garden plots and groves. Native family/stage models load from
+  // the local bridge (`tree-<family>-<stage>.glb`) when converted; until then a
+  // labelled procedural stand-in shows stage and hanging fruit only.
+  const plotVisuals = new Map();
+  let plotZone = null;
+  const PLOT_STAGE_SCALE = { seed: 0.12, young: 0.45, mature: 0.8, dying: 0.7, dead: 0.5 };
+  function clearPlots() {
+    for (const visual of plotVisuals.values()) visual.root.dispose();
+    plotVisuals.clear();
+  }
+  async function attachNativePlotTree(visual, key) {
+    const container = await loadLocalAsset(key);
+    if (!container || disposed || visual.root.isDisposed() || visual.key !== key) return;
+    const holder = new TransformNode(`${key}-native`, scene);
+    const entries = container.instantiateModelsToScene(name => `${visual.root.uniqueId}-${name}`, false, { doNotInstantiate: true });
+    for (const entryRoot of entries.rootNodes) entryRoot.parent = holder;
+    holder.scaling.setAll(0.1);
+    holder.parent = visual.root;
+    for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
+    for (const mesh of visual.proxy) mesh.setEnabled(false);
+    canvas.dataset.nativePlotTrees = String(Number(canvas.dataset.nativePlotTrees || 0) + 1);
+  }
+  function plotVisual(place, zone) {
+    const tree = place.tree;
+    const stage = tree?.stage || 'empty';
+    const family = typeof tree?.family === 'string' ? tree.family : null;
+    const fruit = Number.isInteger(tree?.fruitReady) ? Math.min(3, tree.fruitReady) : 0;
+    const signature = `${stage}:${family}:${fruit}`;
+    const existing = plotVisuals.get(place.id);
+    if (existing?.signature === signature && !existing.root.isDisposed()) return;
+    existing?.root.dispose();
+    const root = new TransformNode(`plot-${place.id}`, scene);
+    root.position.copyFromFloats(place.x, 0, place.z);
+    root.parent = scenery || world;
+    const proxy = [];
+    const soil = cylinder('plot-soil', [0, 0.03, 0], { height: 0.06, diameter: 1.6, tessellation: 24 }, '#8a6a48', root);
+    soil.metadata = { careTarget: place.id };
+    if (stage !== 'empty' && place.grove !== true) {
+      const s = PLOT_STAGE_SCALE[stage] ?? 0.5;
+      const crown = stage === 'dying' || stage === 'dead' ? '#b49a62' : zone === 'dark' ? '#705a9d' : '#62b46b';
+      proxy.push(cylinder('plot-trunk', [0, 1.8 * s, 0], { height: 3.6 * s, diameterBottom: 0.6 * s, diameterTop: 0.35 * s }, '#94724c', root));
+      if (stage !== 'dead') proxy.push(sphere('plot-crown', [0, 4.4 * s, 0], [3.4 * s, 3 * s, 3.4 * s], crown, root, 6));
+      for (let i = 0; i < fruit; i++) {
+        const a = i * Math.PI * 2 / 3;
+        proxy.push(sphere('plot-fruit', [Math.cos(a) * 1.1 * s, 3.4 * s, Math.sin(a) * 1.1 * s], [0.5, 0.58, 0.5], '#f6bc64', root));
+      }
+    }
+    for (const mesh of root.getChildMeshes()) { mesh.isPickable = false; shadows.addShadowCaster(mesh, false); }
+    const visual = { root, proxy, signature, key: family && ['young', 'mature', 'dying'].includes(stage) ? `tree-${family}-${stage}` : null };
+    plotVisuals.set(place.id, visual);
+    if (visual.key) void attachNativePlotTree(visual, visual.key);
+  }
+  function setCare(care, self) {
+    const zone = self?.zone;
+    if (zone !== plotZone) { clearPlots(); plotZone = zone; }
+    const plots = Array.isArray(care?.garden?.plots) ? care.garden.plots : [];
+    const seen = new Set();
+    for (const plot of plots) {
+      if (plot?.zone !== zone || typeof plot.id !== 'string' || !Number.isFinite(plot.x) || !Number.isFinite(plot.z)) continue;
+      seen.add(plot.id);
+      plotVisual(plot, zone);
+    }
+    for (const [id, visual] of plotVisuals) if (!seen.has(id)) { visual.root.dispose(); plotVisuals.delete(id); }
+    canvas.dataset.gardenPlots = String(plotVisuals.size);
+  }
+
   return {
     setSnapshot,
+    setCare,
     handleEvent,
+    clearInput: blur,
     setPaused(value) { paused = !!value; gaitControls.setPaused(paused); if (paused) blur(); },
     setTouchInput(dx, dz) { touch.dx = Math.max(-1, Math.min(1, dx)); touch.dz = Math.max(-1, Math.min(1, dz)); },
     dispose() {
