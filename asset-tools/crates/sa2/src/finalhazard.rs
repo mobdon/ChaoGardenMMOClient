@@ -894,6 +894,8 @@ pub enum PlacementClock {
     SuperFlight(Box<SuperFlightFrame>),
     /// Section 1 + 0xc598: per-frame collision placement of a super form.
     SuperCollision(Box<SuperCollisionFrame>),
+    /// Section 1 + 0xe9f0: super-form hover (no stick steering).
+    SuperHover(Box<SuperHoverFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2663,6 +2665,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperPlayer(frame) => return super_player(&rel, &frame),
         PlacementClock::SuperFlight(frame) => return super_flight(&rel, &frame),
         PlacementClock::SuperCollision(frame) => return super_collision(&rel, &frame),
+        PlacementClock::SuperHover(frame) => return super_hover(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -3630,4 +3633,58 @@ fn super_collision(
         ));
     }
     Ok(serde_json::json!({"events":ev,"center":center}))
+}
+
+/// Inputs to section 1 + 0xe9f0.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperHoverFrame {
+    pub entity: u32,
+    /// Data2 floats 0xc..0x14 and player floats 0x64, 0x68, 0x6c, 0xe8,
+    /// 0x104, 0x114, 0x118, 0x11c.
+    pub acceleration: [f32; 3],
+    pub speed: f32,
+    pub f68: f32,
+    pub f6c: f32,
+    pub fe8: f32,
+    pub f104: f32,
+    pub f114: f32,
+    pub f118: f32,
+    pub f11c: f32,
+}
+/// Section 1 + 0xe9f0: the released-stick part of flight. Forward thrust
+/// above speed 0xe8 and drag below 0, vertical and side thrust, a fixed
+/// coast value, and zero magnitude at player float 0x3c.
+fn super_hover(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperHoverFrame,
+) -> Result<serde_json::Value> {
+    let zero = stage_f32(rel, 0xea22, 4, 0)?;
+    let store = |site: u32, offset: u32, value: u32| serde_json::json!({"site":site,"store":"player","offset":offset,"size":4,"value":value});
+    let mut ev = vec![
+        serde_json::json!({"site":0xea3c,"call":engine_import(rel, 0xea3c)?,
+        "args":[f.entity]}),
+    ];
+    let mut acc = f.acceleration;
+    let spd = f.speed;
+    if spd > f.fe8 || spd < zero {
+        acc[0] += f.f114 * spd;
+    }
+    acc[1] += f.f118 * f.f68;
+    acc[2] += f.f11c * f.f6c;
+    let mut out = [zero; 3];
+    if spd > stage_f32(rel, 0xeabe, 4, 0)? {
+        out[0] = f.f104;
+    } else if spd < stage_f32(rel, 0xeabe, 4, 0)? {
+        out[0] = -f.f104;
+    }
+    ev.push(store(0xeaf8, 0x3c, stage_f32(rel, 0xeaee, 4, 0)?.to_bits()));
+    ev.push(
+        serde_json::json!({"site":0xeb04,"call":engine_import(rel, 0xeb04)?,
+        "vectors":{"3":acc,"4":out}}),
+    );
+    for (i, site) in [0xeb10u32, 0xeb14, 0xeb1c].into_iter().enumerate() {
+        ev.push(store(site, 0x58 + 4 * i as u32, acc[i].to_bits()));
+    }
+    Ok(serde_json::json!({"events":ev,"acceleration":acc,"thrust":out}))
 }
