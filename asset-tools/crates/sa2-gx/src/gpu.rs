@@ -7,12 +7,12 @@
 //! with their mip chains, GX samplers, and the draw of a list of
 //! [`GpuDraw`]s. Runs on WebGPU, on WebGL2 through wgpu's fallback, and on
 //! native backends for tests.
+use crate::api::FastMap;
 use crate::enums::*;
 use crate::material::GxMaterial;
 use crate::params::{self, MaterialParams, SamplerDesc, SceneParams, TextureId};
 use crate::shader::{self, MaterialHacks};
 use crate::vtx::{InputFormat, LoadedVertexLayout};
-use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -179,6 +179,25 @@ struct GpuTexture {
     view: wgpu::TextureView,
 }
 
+/// A draw ready to record: everything but its position matrices.
+struct Prepared {
+    /// Index into the pass's draws (for its matrices).
+    draw: usize,
+    pipeline: wgpu::RenderPipeline,
+    textures: wgpu::BindGroup,
+    material_offset: u32,
+    vertex_offset: u64,
+    first_index: u32,
+    index_count: u32,
+}
+
+/// One prepared pass: its draws, and the uniform bind group, vertex, index
+/// and draw-matrix buffers.
+struct Pass {
+    prepared: Vec<Prepared>,
+    buffers: Option<(wgpu::BindGroup, wgpu::Buffer, wgpu::Buffer, wgpu::Buffer)>,
+}
+
 pub struct GxRenderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -187,11 +206,11 @@ pub struct GxRenderer {
     uniform_layout: wgpu::BindGroupLayout,
     texture_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
-    pipelines: HashMap<Arc<PipelineKey>, wgpu::RenderPipeline>,
-    textures: HashMap<TextureId, GpuTexture>,
+    pipelines: FastMap<Arc<PipelineKey>, wgpu::RenderPipeline>,
+    textures: FastMap<TextureId, GpuTexture>,
     next_texture: TextureId,
-    samplers: HashMap<SamplerDesc, wgpu::Sampler>,
-    texture_binds: HashMap<[(Option<TextureId>, SamplerDesc); 8], wgpu::BindGroup>,
+    samplers: FastMap<SamplerDesc, wgpu::Sampler>,
+    texture_binds: FastMap<[(Option<TextureId>, SamplerDesc); 8], wgpu::BindGroup>,
     white: wgpu::TextureView,
     depth: Option<(wgpu::TextureView, [u32; 2])>,
     /// Offscreen EFB for render-to-texture passes.
@@ -199,6 +218,12 @@ pub struct GxRenderer {
     /// Viewport for the next [`Self::render`] (x, y, w, h, near, far in
     /// target pixels); `None` covers the target.
     pub viewport: Option<[f32; 6]>,
+    /// Passes of the frame drawn last (by its serial and draw range: an empty
+    /// clear-only pass starts where the next real one does).
+    passes: FastMap<(u64, usize, usize), Pass>,
+    passes_of: u64,
+    /// Textures made by EFB copies, by id (reused by the next copy).
+    efb_copies: FastMap<TextureId, wgpu::Texture>,
 }
 
 impl GxRenderer {
@@ -278,22 +303,30 @@ impl GxRenderer {
             uniform_layout,
             texture_layout,
             pipeline_layout,
-            pipelines: HashMap::new(),
-            textures: HashMap::new(),
+            pipelines: FastMap::default(),
+            textures: FastMap::default(),
             next_texture: 0,
-            samplers: HashMap::new(),
-            texture_binds: HashMap::new(),
+            samplers: FastMap::default(),
+            texture_binds: FastMap::default(),
             white,
             depth: None,
             efb: None,
             viewport: None,
+            passes: FastMap::default(),
+            passes_of: 0,
+            efb_copies: FastMap::default(),
         }
     }
 
     /// Cache sizes (pipelines, textures, samplers, texture bind groups), for
     /// finding what a long run keeps.
     pub fn cache_counts(&self) -> [usize; 4] {
-        [self.pipelines.len(), self.textures.len(), self.samplers.len(), self.texture_binds.len()]
+        [
+            self.pipelines.len(),
+            self.textures.len(),
+            self.samplers.len(),
+            self.texture_binds.len(),
+        ]
     }
 
     /// Upload a decoded texture: RGBA8 levels, largest first. GX textures
@@ -308,6 +341,8 @@ impl GxRenderer {
 
     /// Replace the contents of texture `id` (or create it under that id).
     pub fn replace_texture(&mut self, id: TextureId, levels: &[(u32, u32, Vec<u8>)]) {
+        // An upload under this id replaces any EFB copy made there.
+        self.efb_copies.remove(&id);
         let (w, h) = levels.first().map_or((1, 1), |l| (l.0.max(1), l.1.max(1)));
         // Keep only levels that halve properly, as wgpu requires.
         let mut data = Vec::new();
@@ -546,33 +581,46 @@ impl GxRenderer {
         scene: &SceneParams,
         draws: &[GpuDraw<'_>],
     ) {
-        // Pack every draw's uniforms, vertices and indices.
+        self.render_pass(None, target, size, clear, scene, draws);
+    }
+
+    /// Everything a pass needs except the draws' position matrices.
+    fn prepare(&mut self, scene: &SceneParams, draws: &[GpuDraw<'_>]) -> Pass {
         let mut uniforms = params::fill_scene_params(scene);
         uniforms.resize(SCENE_SLOT, 0);
         let mut vertices: Vec<u8> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
-        struct Prepared {
-            pipeline: wgpu::RenderPipeline,
-            textures: wgpu::BindGroup,
-            material_offset: u32,
-            draw_offset: u32,
-            vertex_offset: u64,
-            first_index: u32,
-            index_count: u32,
-        }
         let mut prepared = Vec::new();
-        for d in draws {
+        let mut last_material: Option<(&MaterialParams, u32)> = None;
+        let mut last_pipeline: Option<(&GxMaterial, &LoadedVertexLayout, wgpu::RenderPipeline)> =
+            None;
+        for (k, d) in draws.iter().enumerate() {
             if !d.material.is_valid() || d.indices.is_empty() || d.vertices.is_empty() {
                 continue;
             }
-            let pipeline = self.pipeline(d.material, d.layout);
+            // The same material and layout as the draw before (shared through
+            // the GX state's caches): its pipeline, without hashing both again.
+            let pipeline = match &last_pipeline {
+                Some((m, l, p)) if std::ptr::eq(*m, d.material) && std::ptr::eq(*l, d.layout) => {
+                    p.clone()
+                }
+                _ => {
+                    let p = self.pipeline(d.material, d.layout);
+                    last_pipeline = Some((d.material, d.layout, p.clone()));
+                    p
+                }
+            };
             let textures = self.texture_bind(d.material_params);
-            let material_offset = uniforms.len() as u32;
-            uniforms.extend(params::fill_material_params(d.material_params));
-            uniforms.resize(material_offset as usize + MATERIAL_SLOT, 0);
-            let draw_offset = uniforms.len() as u32;
-            uniforms.extend(params::fill_draw_params(d.draw_params));
-            uniforms.resize(draw_offset as usize + DRAW_SLOT, 0);
+            let material_offset = match last_material {
+                Some((p, o)) if p == d.material_params => o,
+                _ => {
+                    let o = uniforms.len() as u32;
+                    uniforms.extend(params::fill_material_params(d.material_params));
+                    uniforms.resize(o as usize + MATERIAL_SLOT, 0);
+                    last_material = Some((d.material_params, o));
+                    o
+                }
+            };
             // Vertex buffers start on a stride-aligned offset per draw.
             let vertex_offset = vertices.len().div_ceil(4) * 4;
             vertices.resize(vertex_offset, 0);
@@ -580,62 +628,98 @@ impl GxRenderer {
             let first_index = indices.len() as u32;
             indices.extend_from_slice(d.indices);
             prepared.push(Prepared {
+                draw: k,
                 pipeline,
                 textures,
                 material_offset,
-                draw_offset,
                 vertex_offset: vertex_offset as u64,
                 first_index,
                 index_count: d.indices.len() as u32,
             });
         }
+        if prepared.is_empty() {
+            return Pass {
+                prepared,
+                buffers: None,
+            };
+        }
+        let mk = |label, contents: &[u8], usage| {
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(label),
+                    contents,
+                    usage,
+                })
+        };
+        let u = mk("gx uniforms", &uniforms, wgpu::BufferUsages::UNIFORM);
+        let v = mk("gx vertices", &vertices, wgpu::BufferUsages::VERTEX);
+        let i = mk(
+            "gx indices",
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        );
+        let m = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gx draw matrices"),
+            size: (prepared.len() * DRAW_SLOT) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gx uniforms"),
+            layout: &self.uniform_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: binding(&u, params::SCENE_PARAMS_SIZE),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: binding(&u, params::MATERIAL_PARAMS_SIZE),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: binding(&m, params::DRAW_PARAMS_SIZE),
+                },
+            ],
+        });
+        Pass {
+            prepared,
+            buffers: Some((bind, v, i, m)),
+        }
+    }
+
+    /// Draw a pass. With `key` (a recorded frame's serial and the pass's
+    /// draw range), a pass drawn before is drawn again from what it prepared
+    /// then, with only the position matrices written anew: pictures between
+    /// game frames move matrices and nothing else.
+    fn render_pass(
+        &mut self,
+        key: Option<(u64, usize, usize)>,
+        target: &wgpu::TextureView,
+        size: [u32; 2],
+        clear: Option<[f64; 4]>,
+        scene: &SceneParams,
+        draws: &[GpuDraw<'_>],
+    ) {
+        let pass = match key.and_then(|k| self.passes.remove(&k)) {
+            Some(p) => p,
+            None => self.prepare(scene, draws),
+        };
+        if let Some((_, _, _, m)) = &pass.buffers {
+            let mut mats = Vec::with_capacity(pass.prepared.len() * DRAW_SLOT);
+            for p in &pass.prepared {
+                let at = mats.len();
+                if let Some(d) = draws.get(p.draw) {
+                    mats.extend(params::fill_draw_params(d.draw_params));
+                }
+                mats.resize(at + DRAW_SLOT, 0);
+            }
+            self.queue.write_buffer(m, 0, &mats);
+        }
         let depth = self.depth_view(size);
         let mut enc = self.device.create_command_encoder(&Default::default());
-        let buffers = (!prepared.is_empty()).then(|| {
-            let mk = |label, contents: &[u8], usage| {
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(label),
-                        contents,
-                        usage,
-                    })
-            };
-            let u = mk("gx uniforms", &uniforms, wgpu::BufferUsages::UNIFORM);
-            let v = mk("gx vertices", &vertices, wgpu::BufferUsages::VERTEX);
-            let i = mk(
-                "gx indices",
-                bytemuck::cast_slice(&indices),
-                wgpu::BufferUsages::INDEX,
-            );
-            let binding = |offset_size: usize| {
-                wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &u,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(offset_size as u64),
-                })
-            };
-            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("gx uniforms"),
-                layout: &self.uniform_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: binding(params::SCENE_PARAMS_SIZE),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: binding(params::MATERIAL_PARAMS_SIZE),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: binding(params::DRAW_PARAMS_SIZE),
-                    },
-                ],
-            });
-            (bind, v, i)
-        });
         {
-            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("gx"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
@@ -678,21 +762,25 @@ impl GxRenderer {
                 let vw = v[2].clamp(1.0, w - x).max(1.0);
                 let vh = v[3].clamp(1.0, h - y).max(1.0);
                 if x < w && y < h {
-                    pass.set_viewport(x, y, vw, vh, v[4].min(v[5]), v[5].max(v[4]));
+                    rp.set_viewport(x, y, vw, vh, v[4].min(v[5]), v[5].max(v[4]));
                 }
             }
-            if let Some((bind, v, i)) = &buffers {
-                pass.set_index_buffer(i.slice(..), wgpu::IndexFormat::Uint32);
-                for p in &prepared {
-                    pass.set_pipeline(&p.pipeline);
-                    pass.set_bind_group(0, bind, &[0, p.material_offset, p.draw_offset]);
-                    pass.set_bind_group(1, &p.textures, &[]);
-                    pass.set_vertex_buffer(0, v.slice(p.vertex_offset..));
-                    pass.draw_indexed(p.first_index..p.first_index + p.index_count, 0, 0..1);
+            if let Some((bind, v, i, _)) = &pass.buffers {
+                rp.set_index_buffer(i.slice(..), wgpu::IndexFormat::Uint32);
+                for (n, p) in pass.prepared.iter().enumerate() {
+                    rp.set_pipeline(&p.pipeline);
+                    let draw_offset = (n * DRAW_SLOT) as u32;
+                    rp.set_bind_group(0, bind, &[0, p.material_offset, draw_offset]);
+                    rp.set_bind_group(1, &p.textures, &[]);
+                    rp.set_vertex_buffer(0, v.slice(p.vertex_offset..));
+                    rp.draw_indexed(p.first_index..p.first_index + p.index_count, 0, 0..1);
                 }
             }
         }
         self.queue.submit([enc.finish()]);
+        if let Some(k) = key {
+            self.passes.insert(k, pass);
+        }
     }
 
     /// Apply a recorded frame's texture uploads and draw it into `target`.
@@ -707,6 +795,10 @@ impl GxRenderer {
     ) {
         for u in &frame.uploads {
             self.replace_texture(u.id, &u.levels);
+        }
+        if frame.serial != self.passes_of || !frame.uploads.is_empty() {
+            self.passes.clear();
+            self.passes_of = frame.serial;
         }
         let c = frame.clear_color;
         let clear_color = [c[0] as f64, c[1] as f64, c[2] as f64, c[3] as f64];
@@ -724,7 +816,13 @@ impl GxRenderer {
             }
             start = end;
         }
-        self.draw_range(frame, start..frame.draws.len(), target, size, Some(clear_color));
+        self.draw_range(
+            frame,
+            start..frame.draws.len(),
+            target,
+            size,
+            Some(clear_color),
+        );
     }
 
     /// The offscreen EFB for render-to-texture passes.
@@ -736,7 +834,11 @@ impl GxRenderer {
         }
         let t = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gx efb"),
-            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -757,15 +859,30 @@ impl GxRenderer {
         let y = y.min(efb.height().saturating_sub(1));
         let w = w.min(efb.width() - x).max(1);
         let h = h.min(efb.height() - y).max(1);
-        let t = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("gx efb copy"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
+        // The same copy again (the picture drawn again between game frames,
+        // or the next frame's shadow): into the texture it made before, so
+        // bind groups that sample it see the new copy.
+        let reuse = self
+            .efb_copies
+            .get(&copy.id)
+            .filter(|t| t.width() == w && t.height() == h)
+            .cloned();
+        let fresh = reuse.is_none();
+        let t = reuse.unwrap_or_else(|| {
+            self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("gx efb copy"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
         });
         let mut enc = self.device.create_command_encoder(&Default::default());
         enc.copy_texture_to_texture(
@@ -776,13 +893,27 @@ impl GxRenderer {
                 aspect: wgpu::TextureAspect::All,
             },
             t.as_image_copy(),
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         self.queue.submit([enc.finish()]);
         let id = copy.id;
-        self.textures.insert(id, GpuTexture { view: t.create_view(&Default::default()) });
+        if !fresh {
+            return;
+        }
+        self.efb_copies.insert(id, t.clone());
+        self.textures.insert(
+            id,
+            GpuTexture {
+                view: t.create_view(&Default::default()),
+            },
+        );
         self.next_texture = self.next_texture.max(id + 1);
-        self.texture_binds.retain(|k, _| !k.iter().any(|(t, _)| *t == Some(id)));
+        self.texture_binds
+            .retain(|k, _| !k.iter().any(|(t, _)| *t == Some(id)));
     }
 
     /// Draw `frame.draws[range]` into `target`. Runs of draws with the same
@@ -835,7 +966,8 @@ impl GxRenderer {
                     v[5].clamp(0.0, 1.0),
                 ]
             });
-            self.render(target, size, clear.take(), &scene, &draws);
+            let key = (frame.serial != 0).then_some((frame.serial, start, end));
+            self.render_pass(key, target, size, clear.take(), &scene, &draws);
             if end == start {
                 break;
             }
@@ -843,4 +975,12 @@ impl GxRenderer {
         }
         self.viewport = None;
     }
+}
+
+fn binding(buffer: &wgpu::Buffer, size: usize) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        buffer,
+        offset: 0,
+        size: wgpu::BufferSize::new(size as u64),
+    })
 }

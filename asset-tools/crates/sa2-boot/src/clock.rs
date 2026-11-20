@@ -1,5 +1,5 @@
 //! OSGetTime/OSGetTick from `Cpu.tb`. The time base moves one frame at each
-//! retrace ([`advance_frame`]) and a microsecond per read, so code that polls
+//! frame (`sa2_recomp::os::pump`) and a microsecond per read, so code that polls
 //! the clock inside a frame still sees it move. Runs are repeatable.
 use sa2_recomp::rt::{Cpu, Mem};
 
@@ -33,11 +33,6 @@ fn get_system_time(c: &mut Cpu, m: &mut Mem) {
     let t = read(c).wrapping_add(m.r64(SYSTEM_TIME_ADJUST));
     c.r[3] = (t >> 32) as u32;
     c.r[4] = t as u32;
-}
-
-/// Move the time base to the next frame.
-pub fn advance_frame(c: &mut Cpu) {
-    c.tb += TB_PER_FRAME;
 }
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {

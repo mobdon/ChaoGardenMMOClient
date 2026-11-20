@@ -27,6 +27,45 @@ use crate::vtx::{
     self, GxArray, LoadedVertexLayout, VatFormat, Vcd, VtxAttrFmt, VtxDesc, VtxLoader, ATTR_COUNT,
 };
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// A map with a multiply-rotate hash: the GX lookups (vertex loaders,
+/// textures, palettes) run thousands of times a frame on small keys, where
+/// the standard SipHash was most of their cost. The keys come from the game's
+/// own GX state, not from anyone who could pick colliding ones.
+pub type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHasher>>;
+
+#[derive(Default)]
+pub struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+    fn write_u8(&mut self, v: u8) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u16(&mut self, v: u16) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(u64::from(v));
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+}
+
+/// Textures resolved since the last texture change kept for the next draws.
+const RECENT_TEXTURES: usize = 32;
 use std::sync::Arc;
 
 /// Read access to the game's memory (GameCube addresses).
@@ -200,6 +239,9 @@ pub struct Frame {
     /// picture copied to the screen.
     pub tex_copies: Vec<TexCopy>,
     pub uploads: Vec<TextureUpload>,
+    /// Which recorded frame this is (from 1; 0 for frames built by hand),
+    /// so a renderer drawing it again can reuse what it prepared.
+    pub serial: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -226,11 +268,14 @@ pub struct Gx {
     vcd: Vcd,
     vat: [VatFormat; 8],
     arrays: [(u32, usize); 16],
-    loaders: HashMap<(Vcd, [VatFormat; 8]), Arc<VtxLoader>>,
+    loaders: FastMap<(Vcd, [VatFormat; 8]), Arc<VtxLoader>>,
     // Transform unit.
     xf_matrices: Vec<f32>,
     post_tex_mtx: [Mtx34; 20],
     current_mtx: u32,
+    /// Each texgen's matrix (GXTexMtx: TEXMTX0 30 ... IDENTITY 60), from
+    /// XF_MATRIXINDEX0/1 beside the position matrix index.
+    tex_mtx_idx: [u32; 8],
     projection: [[f32; 4]; 4],
     viewport: [f32; 6],
     scissor: [u32; 4],
@@ -246,15 +291,23 @@ pub struct Gx {
     dst_alpha: Option<u8>,
     // Textures.
     tex_maps: [Option<TexObj>; 8],
-    tluts: HashMap<u32, TlutObj>,
+    tluts: FastMap<u32, TlutObj>,
     /// Decoded textures: key -> (id, invalidate generation). An invalidate
     /// makes them stale; the next use decodes again under the same id, so the
     /// renderer replaces the texture instead of keeping a new one each frame.
-    tex_cache: HashMap<TexKey, (TextureId, u64)>,
+    /// Texture id, the invalidation generation it was checked in, and a hash
+    /// of its bytes (so an invalidation re-decodes only what changed).
+    tex_cache: FastMap<TexKey, (TextureId, u64, u64)>,
     tex_gen: u64,
+    /// Bumped whenever what a texture object resolves to may change (texture
+    /// invalidation, an EFB copy to a new address, a different palette).
+    tex_epoch: u64,
+    /// Texture objects resolved this epoch, most recent first: a draw's
+    /// textures are nearly always the last draw's.
+    tex_recent: [Option<(TexObj, TextureMapping)>; RECENT_TEXTURES],
     /// Textures made by EFB copies, by destination (physical) address: a
     /// texture loaded from there is the copy, not the bytes in RAM.
-    efb_copies: HashMap<u32, TextureId>,
+    efb_copies: FastMap<u32, TextureId>,
     next_texture: TextureId,
     // Register mirrors for display-list loads.
     regs: crate::vtx::DisplayListRegisters,
@@ -264,7 +317,7 @@ pub struct Gx {
     proj_regs: [f32; 7],
     vp_regs: [f32; 6],
     /// Palettes loaded into TMEM through BP 0x64/0x65: offset -> (address, entries).
-    tlut_loads: HashMap<u32, (u32, u32)>,
+    tlut_loads: FastMap<u32, (u32, u32)>,
     /// Inside a `GXCallDisplayList` (lists can't call lists).
     in_call: bool,
     // Output.
@@ -272,7 +325,14 @@ pub struct Gx {
     frame: Frame,
     /// What this state machine ignored, with counts: unknown FIFO opcodes
     /// and BP/CP/XF registers it doesn't model ("BP 0x45", ...).
-    pub unhandled: std::collections::BTreeMap<String, u64>,
+    /// Counted by kind and register (see [`Gx::unhandled`]); a string per
+    /// write cost more than the rest of the register handling.
+    unhandled: FastMap<(u8, u32), u64>,
+    /// The last vertex loader and its key (consecutive draws share one).
+    last_loader: Option<(LoaderKey, Arc<VtxLoader>, Arc<LoadedVertexLayout>)>,
+    /// The last draw's material and what it was built from: consecutive draws
+    /// mostly share one, and building it cost more than the rest of a draw.
+    last_material: Option<(GxMaterialBuilder, MatKey, Arc<GxMaterial>)>,
 }
 
 impl Default for Gx {
@@ -308,10 +368,11 @@ impl Gx {
             vcd: [VtxDesc::default(); ATTR_COUNT],
             vat: [[VtxAttrFmt::default(); ATTR_COUNT]; 8],
             arrays: [(0, 0); 16],
-            loaders: HashMap::new(),
+            loaders: FastMap::default(),
             xf_matrices: xf,
             post_tex_mtx: [IDENTITY34; 20],
             current_mtx: 0,
+            tex_mtx_idx: [tex_gen_matrix::IDENTITY; 8],
             projection: [
                 [1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0],
@@ -330,11 +391,13 @@ impl Gx {
             num_chans: 1,
             dst_alpha: None,
             tex_maps: [None; 8],
-            tluts: HashMap::new(),
-            tex_cache: HashMap::new(),
+            tluts: FastMap::default(),
+            tex_cache: FastMap::default(),
             tex_gen: 0,
+            tex_epoch: 0,
+            tex_recent: [None; RECENT_TEXTURES],
             next_texture: 0,
-            efb_copies: HashMap::new(),
+            efb_copies: FastMap::default(),
             regs: {
                 let mut r = crate::vtx::DisplayListRegisters::default();
                 r.init_gx();
@@ -344,11 +407,13 @@ impl Gx {
             chan_regs: [0; 4],
             proj_regs: [1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
             vp_regs: [320.0, -240.0, 16_777_215.0, 662.0, 582.0, 16_777_215.0],
-            tlut_loads: HashMap::new(),
+            tlut_loads: FastMap::default(),
             in_call: false,
             immediate: None,
             frame: Frame::default(),
-            unhandled: Default::default(),
+            unhandled: FastMap::default(),
+            last_loader: None,
+            last_material: None,
         };
         gx.mat.set_num_chans(1);
         gx.mat.set_tex_coord_gen(
@@ -366,8 +431,10 @@ impl Gx {
     /// Hand over the frame recorded so far and start a new one.
     pub fn take_frame(&mut self) -> Frame {
         let clear = self.frame.clear_color;
-        let f = std::mem::take(&mut self.frame);
+        let mut f = std::mem::take(&mut self.frame);
         self.frame.clear_color = clear;
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        f.serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         f
     }
 
@@ -427,8 +494,37 @@ impl Gx {
 
     pub fn invalidate_vtx_cache(&mut self) {}
 
-    fn loader(&mut self) -> Arc<VtxLoader> {
+    /// What this state machine ignored, with counts: unknown FIFO opcodes
+    /// and BP/CP/XF registers it doesn't model ("BP 0x45", ...).
+    pub fn unhandled(&self) -> std::collections::BTreeMap<String, u64> {
+        self.unhandled
+            .iter()
+            .map(|(&(k, a), &n)| {
+                let name = match k {
+                    b'o' => format!("opcode {a:#04x}"),
+                    b'C' => format!("CP {a:#04x}"),
+                    b'B' => format!("BP {a:#04x}"),
+                    _ => format!("XF {a:#06x}"),
+                };
+                (name, n)
+            })
+            .collect()
+    }
+
+    fn loader(&mut self) -> (Arc<VtxLoader>, Arc<LoadedVertexLayout>) {
         let key = (self.vcd, self.vat);
+        if let Some((k, l, layout)) = &self.last_loader {
+            if *k == key {
+                return (l.clone(), layout.clone());
+            }
+        }
+        let l = self.loader_for(key);
+        let layout = Arc::new(l.layout.clone());
+        self.last_loader = Some((key, l.clone(), layout.clone()));
+        (l, layout)
+    }
+
+    fn loader_for(&mut self, key: (Vcd, [VatFormat; 8])) -> Arc<VtxLoader> {
         self.loaders
             .entry(key)
             .or_insert_with(|| {
@@ -706,7 +802,7 @@ impl Gx {
                 }
                 command::INVAL_VTX_CACHE => i += 1,
                 _ => {
-                    *self.unhandled.entry(format!("opcode {cmd:#04x}")).or_default() += 1;
+                    *self.unhandled.entry((b'o', cmd)).or_default() += 1;
                     break;
                 }
             }
@@ -714,7 +810,7 @@ impl Gx {
     }
 
     fn run_draws(&mut self, dl: &[u8], mem: &dyn GxMemory) {
-        let loader = self.loader();
+        let (loader, layout) = self.loader();
         let arrays = self.array_views(mem);
         let mut data = loader.parse_display_list(dl, 0);
         if data.indices.is_empty() {
@@ -723,8 +819,8 @@ impl Gx {
         loader.load_vertex_data(&mut data, dl, &arrays);
         let (material, params, draw_params) = self.snapshot(mem);
         self.frame.draws.push(DrawCmd {
-            material: Arc::new(material),
-            layout: Arc::new(loader.layout.clone()),
+            material,
+            layout,
             vertices: data.vertices,
             indices: data.indices,
             material_params: params,
@@ -735,10 +831,38 @@ impl Gx {
         });
     }
 
-    fn snapshot(&mut self, mem: &dyn GxMemory) -> (GxMaterial, MaterialParams, DrawParams) {
+    fn material(&mut self) -> Arc<GxMaterial> {
+        let key = MatKey {
+            counts: [
+                self.num_tev_stages,
+                self.num_tex_gens,
+                self.num_ind_stages,
+                self.num_chans,
+            ],
+            swap_sel: self.swap_sel,
+            swap_tables: self.swap_tables,
+            dst_alpha: self.dst_alpha,
+            tex_mtx_idx: self.tex_mtx_idx,
+            pn: self.vcd[attr::PNMTXIDX as usize].ty,
+            tex_mtx: std::array::from_fn(|t| self.vcd[attr::TEX0MTXIDX as usize + t].ty),
+        };
+        if let Some((b, k, m)) = &self.last_material {
+            if *k == key && *b == self.mat {
+                return m.clone();
+            }
+        }
+        let m = Arc::new(self.build_material());
+        self.last_material = Some((self.mat.clone(), key, m.clone()));
+        m
+    }
+
+    fn build_material(&self) -> GxMaterial {
         let mut b = self.mat.clone();
         b.set_num_tev_stages(self.num_tev_stages.max(1));
         b.set_num_tex_gens(self.num_tex_gens);
+        for (i, &m) in self.tex_mtx_idx.iter().enumerate() {
+            b.set_tex_gen_matrix(i, m);
+        }
         b.set_num_ind_stages(self.num_ind_stages);
         b.set_num_chans(self.num_chans);
         for s in 0..self.num_tev_stages.max(1) {
@@ -758,15 +882,28 @@ impl Gx {
                 self.vcd[(attr::TEX0MTXIDX + t as u32) as usize].ty != attr_type::NONE,
             );
         }
-        let material = b.finish();
+        b.finish()
+    }
 
+    fn snapshot(&mut self, mem: &dyn GxMemory) -> (Arc<GxMaterial>, MaterialParams, DrawParams) {
+        let material = self.material();
+        let use_pn = self.vcd[attr::PNMTXIDX as usize].ty != attr_type::NONE;
         let mut params = self.params.clone();
         for i in 0..10 {
             params.tex_mtx[i] = mtx_from(&self.xf_matrices[(30 + 3 * i) * 4..]);
         }
         params.post_tex_mtx = self.post_tex_mtx;
+        // Only the maps this draw samples: the others hold whatever an
+        // earlier draw loaded, and resolving all eight cost a third of a draw.
+        let mut used = [false; 8];
+        let maps = material.tev_stages.iter().map(|s| s.tex_map);
+        for m in maps.chain(material.ind_tex_stages.iter().map(|s| s.texture)) {
+            if let Some(u) = used.get_mut(m as usize) {
+                *u = true;
+            }
+        }
         for map in 0..8 {
-            params.texture_mappings[map] = match self.tex_maps[map] {
+            params.texture_mappings[map] = match self.tex_maps[map].filter(|_| used[map]) {
                 Some(obj) => self.texture_mapping(&obj, mem),
                 None => TextureMapping::default(),
             };
@@ -782,6 +919,19 @@ impl Gx {
     }
 
     fn texture_mapping(&mut self, obj: &TexObj, mem: &dyn GxMemory) -> TextureMapping {
+        if let Some(m) = self.tex_recent.iter().flatten().find(|(o, _)| o == obj) {
+            return m.1;
+        }
+        let epoch = self.tex_epoch;
+        let m = self.resolve_texture(obj, mem);
+        if self.tex_epoch == epoch {
+            self.tex_recent.rotate_right(1);
+            self.tex_recent[0] = Some((*obj, m));
+        }
+        m
+    }
+
+    fn resolve_texture(&mut self, obj: &TexObj, mem: &dyn GxMemory) -> TextureMapping {
         let levels = if obj.mipmap {
             (obj.max_lod.max(0.0) as u32 + 1).min(11)
         } else {
@@ -803,7 +953,7 @@ impl Gx {
         let cached = self.tex_cache.get(&key).copied();
         let id = match (copied, cached) {
             (Some(id), _) => id,
-            (None, Some((id, generation))) if generation == self.tex_gen => id,
+            (None, Some((id, generation, _))) if generation == self.tex_gen => id,
             (None, stale) => {
                 let id = stale.map_or_else(
                     || {
@@ -823,6 +973,13 @@ impl Gx {
                 let palette = tlut
                     .and_then(|(a, _, n)| mem.read(a, n as usize * 2))
                     .unwrap_or(&[]);
+                // The game invalidates texture memory every frame; the bytes
+                // behind most textures stay the same.
+                let hash = hash_bytes(data) ^ hash_bytes(palette).rotate_left(1);
+                if stale.is_some_and(|s| s.2 == hash) {
+                    self.tex_cache.insert(key, (id, self.tex_gen, hash));
+                    return self.mapping(obj, id);
+                }
                 let input = TextureInput {
                     format: obj.format,
                     width: obj.width,
@@ -836,10 +993,14 @@ impl Gx {
                     id,
                     levels: texture::decode_mip_chain(&input),
                 });
-                self.tex_cache.insert(key, (id, self.tex_gen));
+                self.tex_cache.insert(key, (id, self.tex_gen, hash));
                 id
             }
         };
+        self.mapping(obj, id)
+    }
+
+    fn mapping(&self, obj: &TexObj, id: TextureId) -> TextureMapping {
         TextureMapping {
             texture: Some(id),
             sampler: SamplerDesc {
@@ -892,7 +1053,17 @@ impl Gx {
                     _ => {}
                 }
             }
-            a if a == xf_register::XF_MATRIXINDEX0_ID => self.current_mtx = v & 0x3F,
+            a if a == xf_register::XF_MATRIXINDEX0_ID => {
+                self.current_mtx = v & 0x3F;
+                for (t, m) in self.tex_mtx_idx[..4].iter_mut().enumerate() {
+                    *m = (v >> (6 + 6 * t)) & 0x3F;
+                }
+            }
+            a if a == xf_register::XF_MATRIXINDEX1_ID => {
+                for (t, m) in self.tex_mtx_idx[4..].iter_mut().enumerate() {
+                    *m = (v >> (6 * t)) & 0x3F;
+                }
+            }
             a if (xf_register::XF_VPSCALEX_ID..=xf_register::XF_VPOFFSETZ_ID).contains(&a) => {
                 self.vp_regs[(a - xf_register::XF_VPSCALEX_ID) as usize] = f;
                 // Undo GXSetViewport: scale (w/2, -h/2, (far-near)*zmax),
@@ -974,7 +1145,7 @@ impl Gx {
                     self.mat.set_color_channel_from_registers(&r, i);
                 }
             }
-            _ => *self.unhandled.entry(format!("XF {addr:#06x}")).or_default() += 1,
+            _ => *self.unhandled.entry((b'X', addr)).or_default() += 1,
         }
     }
 
@@ -1035,14 +1206,14 @@ impl Gx {
             }
             0xA0 => self.arrays[(addr & 0xF) as usize].0 = v,
             0xB0 => self.arrays[(addr & 0xF) as usize].1 = (v & 0xFF) as usize,
-            _ => *self.unhandled.entry(format!("CP {addr:#04x}")).or_default() += 1,
+            _ => *self.unhandled.entry((b'C', addr)).or_default() += 1,
         }
     }
 
     fn bp_write(&mut self, bag: u32) {
         self.regs.bp_set(bag);
         let addr = bag >> 24;
-        let r = self.regs.clone();
+        let r = &self.regs;
         let v = r.bp[addr as usize] & 0x00FF_FFFF;
         use bp_register as bp;
         match addr {
@@ -1065,7 +1236,7 @@ impl Gx {
                     self.swap_sel[i as usize] = (v & 3, (v >> 2) & 3);
                 }
                 // Decode the whole stage (order, ksel and indirect included).
-                self.mat.set_tev_stage_from_registers(&r, i);
+                self.mat.set_tev_stage_from_registers(r, i);
             }
             0x28..=0x2F | 0x10..=0x1F => {
                 let stages: Vec<u32> = if addr >= 0x28 {
@@ -1074,7 +1245,7 @@ impl Gx {
                     vec![addr - 0x10]
                 };
                 for i in stages {
-                    self.mat.set_tev_stage_from_registers(&r, i);
+                    self.mat.set_tev_stage_from_registers(r, i);
                 }
             }
             0xF6..=0xFD => {
@@ -1098,7 +1269,7 @@ impl Gx {
             }
             bp::RAS1_IREF_ID | 0x25 | 0x26 => {
                 for i in 0..4 {
-                    self.mat.set_ind_tex_stage_from_registers(&r, i);
+                    self.mat.set_ind_tex_stage_from_registers(r, i);
                 }
             }
             0x06..=0x0E => {
@@ -1158,13 +1329,13 @@ impl Gx {
                 self.tlut_loads
                     .insert(v & 0x3FF, (addr, ((v >> 10) & 0x7FF) * 16));
             }
-            0x66 => self.tex_gen += 1,
+            0x66 => self.invalidate_tex_all(),
             0x80..=0x9B | 0xA0..=0xBB => {
                 let i = ((addr & 3) + if addr >= 0xA0 { 4 } else { 0 }) as usize;
                 self.tex_map_from_regs(i);
             }
             bp::PE_ZMODE_ID | bp::PE_CMODE0_ID | bp::TEV_ALPHAFUNC_ID => {
-                self.mat.set_rop_state_from_registers(&r)
+                self.mat.set_rop_state_from_registers(r)
             }
             0x42 => {
                 self.dst_alpha = if (v >> 8) & 1 != 0 {
@@ -1177,7 +1348,12 @@ impl Gx {
             // clear copies to a texture.
             0x52 if v & 0x4000 == 0 => {
                 let (tl, wh) = (r.bp[0x49], r.bp[0x4A]);
-                let src = [tl & 0x3FF, (tl >> 10) & 0x3FF, (wh & 0x3FF) + 1, ((wh >> 10) & 0x3FF) + 1];
+                let src = [
+                    tl & 0x3FF,
+                    (tl >> 10) & 0x3FF,
+                    (wh & 0x3FF) + 1,
+                    ((wh >> 10) & 0x3FF) + 1,
+                ];
                 let addr = (r.bp[0x4B] & 0x1F_FFFF) << 5;
                 let id = match self.efb_copies.get(&addr) {
                     Some(id) => *id,
@@ -1185,13 +1361,19 @@ impl Gx {
                         let id = self.next_texture;
                         self.next_texture += 1;
                         self.efb_copies.insert(addr, id);
+                        self.tex_changed();
                         id
                     }
                 };
                 let draw = self.frame.draws.len();
-                self.frame.tex_copies.push(TexCopy { draw, src, id, clear: v & 0x800 != 0 });
+                self.frame.tex_copies.push(TexCopy {
+                    draw,
+                    src,
+                    id,
+                    clear: v & 0x800 != 0,
+                });
             }
-            _ => *self.unhandled.entry(format!("BP {addr:#04x}")).or_default() += 1,
+            _ => *self.unhandled.entry((b'B', addr)).or_default() += 1,
         }
     }
 
@@ -1218,13 +1400,13 @@ impl Gx {
                 let tmem = tl & 0x3FF;
                 let name = 0x1_0000 | tmem;
                 if let Some(&(addr, entries)) = self.tlut_loads.get(&tmem) {
-                    self.tluts.insert(
-                        name,
+                    self.load_tlut(
                         TlutObj {
                             addr,
                             format: (tl >> 10) & 3,
                             entries,
                         },
+                        name,
                     );
                 }
                 name
@@ -1377,6 +1559,9 @@ impl Gx {
     ) {
         self.mat
             .set_tex_coord_gen(dst, ty, src, mtx, normalize, post_mtx);
+        if let Some(m) = self.tex_mtx_idx.get_mut(dst as usize) {
+            *m = mtx;
+        }
     }
 
     /// `GXSetTexCoordGen`.
@@ -1395,12 +1580,20 @@ impl Gx {
 
     /// `GXInitTlutObj` + `GXLoadTlut`.
     pub fn load_tlut(&mut self, obj: TlutObj, name: u32) {
-        self.tluts.insert(name, obj);
+        if self.tluts.insert(name, obj) != Some(obj) {
+            self.tex_changed();
+        }
     }
 
     /// `GXInvalidateTexAll`: decode textures again on next use.
     pub fn invalidate_tex_all(&mut self) {
         self.tex_gen += 1;
+        self.tex_changed();
+    }
+
+    fn tex_changed(&mut self) {
+        self.tex_epoch += 1;
+        self.tex_recent = [None; RECENT_TEXTURES];
     }
 
     // ---- TEV -------------------------------------------------------------
@@ -1647,6 +1840,32 @@ impl Gx {
 
     /// The material the current state draws with (for tests and tools).
     pub fn current_material(&mut self) -> GxMaterial {
-        self.snapshot(&Ram(&[])).0
+        (*self.snapshot(&Ram(&[])).0).clone()
     }
+}
+
+type LoaderKey = (Vcd, [VatFormat; 8]);
+
+/// The state besides the material builder that a draw's material is built from.
+#[derive(PartialEq)]
+struct MatKey {
+    counts: [usize; 4],
+    swap_sel: [(u32, u32); 16],
+    swap_tables: [crate::material::SwapTable; 4],
+    dst_alpha: Option<u8>,
+    tex_mtx_idx: [u32; 8],
+    pn: u32,
+    tex_mtx: [u32; 8],
+}
+
+/// Hash of texture bytes, eight at a time.
+fn hash_bytes(b: &[u8]) -> u64 {
+    let mut h = FastHasher::default();
+    let (words, rest) = b.as_chunks::<8>();
+    for w in words {
+        h.write_u64(u64::from_le_bytes(*w));
+    }
+    h.write(rest);
+    h.write_usize(b.len());
+    h.finish()
 }

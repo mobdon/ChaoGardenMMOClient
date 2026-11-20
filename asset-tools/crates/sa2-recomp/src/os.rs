@@ -396,8 +396,12 @@ fn in_idle(m: &Mem) -> bool {
 fn preempt_soon(c: &mut Cpu, m: &Mem) {
     if in_idle(m) {
         c.rt.ticks |= rt::PREEMPT_EVERY - 1;
+        ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
+
+/// Set while an early preempt is meant for the idle spin only.
+static ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // SelectThread's idle loop enables interrupts, then spins until a thread is
 // ready: that is when the next interrupt comes.
@@ -414,6 +418,13 @@ fn enable_interrupts(c: &mut Cpu, m: &mut Mem) {
 /// Every `rt::PREEMPT_EVERY` loop iterations: an interrupt (a frame), after
 /// which a higher-priority thread it readied runs.
 fn preempt(c: &mut Cpu, m: &mut Mem) {
+    // An early preempt armed for the idle spin, reached by a thread the last
+    // frame woke instead: no frame has passed for it. Firing it ran a second
+    // frame right after each idle one (two retraces per game frame, so 30
+    // frames a second in the window).
+    if ARMED.swap(false, std::sync::atomic::Ordering::Relaxed) && !in_idle(m) {
+        return;
+    }
     pump(c, m);
     preempt_soon(c, m);
 }

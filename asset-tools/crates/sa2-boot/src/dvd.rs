@@ -4,8 +4,8 @@
 //! shortcut: DVDFastOpen has no symbol in symbols.txt and DVDChangeDir is ignored (paths resolve from the root); add both if the boot uses them.
 use crate::{cstr, guest_call};
 use sa2_recomp::rt::{Cpu, Mem};
-use sa2_runtime::dvd::{Dvd, GameFiles};
 use sa2_recomp::{global, global::Global};
+use sa2_runtime::dvd::{Dvd, GameFiles};
 
 pub const DVD_CONVERT_PATH_TO_ENTRYNUM: u32 = 0x800E_ECFC;
 pub const DVD_OPEN: u32 = 0x800E_EFF0;
@@ -40,9 +40,15 @@ const STAGE_NUM: u32 = 0x803A_D820;
 /// current, make it `to` (e.g. 13:11 turns the story's first stage, City
 /// Escape, into Iron Gate before its files and module are chosen).
 fn force_stage(m: &mut Mem) {
-    let Ok(v) = std::env::var("SA2_FORCE_STAGE") else { return };
-    let Some((from, to)) = v.split_once(':') else { return };
-    let (Ok(from), Ok(to)) = (from.trim().parse::<u16>(), to.trim().parse::<u16>()) else { return };
+    let Ok(v) = std::env::var("SA2_FORCE_STAGE") else {
+        return;
+    };
+    let Some((from, to)) = v.split_once(':') else {
+        return;
+    };
+    let (Ok(from), Ok(to)) = (from.trim().parse::<u16>(), to.trim().parse::<u16>()) else {
+        return;
+    };
     if m.r16(STAGE_NUM) == from {
         m.w16(STAGE_NUM, to);
     }
@@ -53,7 +59,10 @@ fn entry(m: &mut Mem, path: u32) -> Option<i32> {
     let p = cstr(m, path);
     // SA2_SKIP_FILES=a,b: files that look absent (e.g. a movie to skip).
     let skip = std::env::var("SA2_SKIP_FILES").unwrap_or_default();
-    if skip.split(',').any(|s| !s.is_empty() && p.eq_ignore_ascii_case(s.trim())) {
+    if skip
+        .split(',')
+        .any(|s| !s.is_empty() && p.eq_ignore_ascii_case(s.trim()))
+    {
         return None;
     }
     let r = DVD.with_borrow_mut(|d| d.as_mut()?.entry(&p));
@@ -61,7 +70,10 @@ fn entry(m: &mut Mem, path: u32) -> Option<i32> {
         crate::pad::opened(&p);
     }
     if std::env::var_os("SA2_TRACE_DVD").is_some() {
-        eprintln!("dvd: {p:?} -> {r:?} at frame {}", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
+        eprintln!(
+            "dvd: {p:?} -> {r:?} at frame {}",
+            sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
     r
 }

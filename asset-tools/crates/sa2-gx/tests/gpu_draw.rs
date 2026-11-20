@@ -1,6 +1,6 @@
 //! Draw a recorded GX frame with wgpu and read the pixels back. Skips when
 //! the machine has no adapter (headless CI without a software Vulkan).
-use sa2_gx::api::{tev_mode, Gx, Ram, TexObj};
+use sa2_gx::api::{tev_mode, Gx, Ram, TexCopy, TexObj};
 use sa2_gx::enums::*;
 use sa2_gx::gpu::GxRenderer;
 
@@ -96,36 +96,53 @@ fn red_textured_quad_over_blue_clear() {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    r.render_frame(&frame, &target.create_view(&Default::default()), size);
-
-    let buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: 256 * 64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
+    // The same draws again after an EFB copy at draw 0: that copy's empty
+    // clear-only pass starts where the picture's pass does, and once stood in
+    // for it (the picture came out as the clear colour alone).
+    let mut early = frame.clone();
+    early.tex_copies.push(TexCopy {
+        draw: 0,
+        src: [0, 0, 8, 8],
+        id: 900,
+        clear: true,
     });
-    let mut enc = device.create_command_encoder(&Default::default());
-    enc.copy_texture_to_buffer(
-        target.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buf,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(256),
-                rows_per_image: None,
+    early.serial += 1;
+    for (n, f) in [&frame, &early].into_iter().enumerate() {
+        r.render_frame(f, &target.create_view(&Default::default()), size);
+
+        let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256 * 64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(256),
+                    rows_per_image: None,
+                },
             },
-        },
-        wgpu::Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit([enc.finish()]);
-    buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let px = buf.slice(..).get_mapped_range().unwrap().to_vec();
-    let at = |x: usize, y: usize| &px[y * 256 + x * 4..y * 256 + x * 4 + 4];
-    assert_eq!(at(32, 32), &[255, 0, 0, 255], "center is the red texture");
-    assert_eq!(at(2, 2), &[0, 0, 255, 255], "corner is the clear color");
+            wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([enc.finish()]);
+        buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let px = buf.slice(..).get_mapped_range().unwrap().to_vec();
+        let at = |x: usize, y: usize| &px[y * 256 + x * 4..y * 256 + x * 4 + 4];
+        assert_eq!(
+            at(32, 32),
+            &[255, 0, 0, 255],
+            "center is the red texture (frame {n})"
+        );
+        assert_eq!(at(2, 2), &[0, 0, 255, 255], "corner is the clear color");
+    }
 }

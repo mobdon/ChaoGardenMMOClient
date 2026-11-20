@@ -65,6 +65,16 @@ fn from_guest(m: &Mem, a: u32) -> PadStatus {
 
 fn read(c: &mut Cpu, m: &mut Mem) {
     let base = c.r[3];
+    if std::env::var_os("SA2_TRACE_PAD").is_some() {
+        let b = PADS.get()[0].button;
+        if b != 0 {
+            eprintln!(
+                "padread: {b:#06x} at frame {} lr {:#x}",
+                sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed),
+                c.lr
+            );
+        }
+    }
     for (i, p) in PADS.get().iter().enumerate() {
         to_guest(m, base + 12 * i as u32, p);
     }
@@ -113,6 +123,7 @@ pub fn autopress(frame: u64) {
 /// - `frame:buttons` presses at a fixed frame (warning and title screens).
 /// - `FILE+delay:buttons` presses `delay` frames after each time the game
 ///   opens FILE (a screen's own file, so the timing follows the screen).
+///
 /// Fixed-frame presses stop once the first FILE-anchored entry's file has
 /// opened, so they cannot land on the screens the anchored steps handle.
 /// Returns false when SA2_INPUT is unset.
@@ -129,34 +140,79 @@ pub fn scripted(frame: u64) -> bool {
 /// Port 0 as SA2_INPUT has it this frame (None when SA2_INPUT is unset).
 /// Values are hex: PAD button bits, plus 0x10000 / 0x20000 / 0x40000 /
 /// 0x80000 for the stick held up / down / left / right. `*N` holds a press N
-/// frames instead of 3 (e.g. `stg11D.REL+500:10000*300`).
+/// frames instead of 3 (e.g. `stg11D.REL+500:10000*300`). `~N` after an
+/// anchored delay repeats the press every N frames until a file named by a
+/// later entry (on another file) opens (e.g. `title.adx+60~60:1000` presses Start until the
+/// next screen's file loads), for screens that ignore an early press.
 pub fn script(frame: u64) -> Option<PadStatus> {
     let script = std::env::var("SA2_INPUT").ok()?;
     let opens = OPENS.lock().unwrap_or_else(|e| e.into_inner());
-    let anchor = script
-        .split(',')
-        .find_map(|i| i.rsplit_once(':')?.0.split_once('+').map(|(f, _)| f.trim().to_lowercase()));
-    let anchored = anchor.is_some_and(|a| opens.iter().any(|(n, _)| *n == a));
+    Some(script_at(&script, &opens, frame))
+}
+
+/// [`script`] for a given script and list of opened files.
+fn script_at(script: &str, opens: &[(String, u64)], frame: u64) -> PadStatus {
+    let file_of = |item: &str| {
+        item.rsplit_once(':')?
+            .0
+            .split_once('+')
+            .map(|(f, _)| f.trim().to_lowercase())
+    };
+    let items: Vec<&str> = script.split(',').collect();
+    let anchored = items
+        .iter()
+        .find_map(|i| file_of(i))
+        .is_some_and(|a| opens.iter().any(|(n, _)| *n == a));
     let mut p = PadStatus::default();
-    for item in script.split(',') {
-        let Some((at, v)) = item.rsplit_once(':') else { continue };
+    for (k, item) in items.iter().enumerate() {
+        let Some((at, v)) = item.rsplit_once(':') else {
+            continue;
+        };
         let (v, hold) = match v.split_once('*') {
             Some((v, n)) => (v, n.trim().parse::<u64>().unwrap_or(3)),
             None => (v, 3),
         };
-        let Ok(v) = u32::from_str_radix(v.trim().trim_start_matches("0x"), 16) else { continue };
-        let starts: Vec<u64> = match at.trim().split_once('+') {
+        let Ok(v) = u32::from_str_radix(v.trim().trim_start_matches("0x"), 16) else {
+            continue;
+        };
+        let pressed = match at.trim().split_once('+') {
             Some((file, d)) => {
-                let Ok(d) = d.trim().parse::<u64>() else { continue };
+                let (d, every) = match d.split_once('~') {
+                    Some((d, n)) => (d, n.trim().parse::<u64>().ok().filter(|&n| n > 0)),
+                    None => (d, None),
+                };
+                let Ok(d) = d.trim().parse::<u64>() else {
+                    continue;
+                };
                 let file = file.trim().to_lowercase();
-                opens.iter().filter(|(n, _)| *n == file).map(|(_, f)| f + d).collect()
+                let later: Vec<String> = items[k + 1..]
+                    .iter()
+                    .filter_map(|i| file_of(i))
+                    .filter(|f| *f != file)
+                    .collect();
+                opens
+                    .iter()
+                    .filter(|(n, _)| *n == file)
+                    .any(|&(_, opened)| {
+                        let start = opened + d;
+                        let Some(every) = every else {
+                            return (start..start + hold).contains(&frame);
+                        };
+                        let stop = opens
+                            .iter()
+                            .filter(|(n, f)| *f >= opened && later.contains(n))
+                            .map(|(_, f)| *f)
+                            .min()
+                            .unwrap_or(u64::MAX);
+                        frame >= start && frame < stop && (frame - start) % every < hold
+                    })
             }
             None => match at.trim().parse::<u64>() {
-                Ok(f) if !anchored => vec![f],
-                _ => continue,
+                Ok(f) if !anchored => (f..f + hold).contains(&frame),
+                _ => false,
             },
         };
-        if starts.iter().any(|s| (*s..*s + hold).contains(&frame)) {
+        if pressed {
             p.button |= v as u16;
             let on = |bit: u32| v & bit != 0;
             if on(0x10000) {
@@ -173,7 +229,7 @@ pub fn script(frame: u64) -> Option<PadStatus> {
             }
         }
     }
-    Some(p)
+    p
 }
 
 /// Files the game opened, with the frame of each open (SA2_INPUT anchors).
@@ -182,7 +238,10 @@ static OPENS: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::
 /// Note that the game opened `name` (called by the DVD hook).
 pub fn opened(name: &str) {
     let frame = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    OPENS.lock().unwrap_or_else(|e| e.into_inner()).push((name.to_lowercase(), frame));
+    OPENS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((name.to_lowercase(), frame));
 }
 
 /// Controller port 0 only (the others stay disconnected).
@@ -190,4 +249,32 @@ pub fn set_port0(p: PadStatus) {
     let mut pads = default_pads();
     pads[0] = p;
     set(pads);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::script_at;
+
+    #[test]
+    fn repeat_presses_until_the_next_screen_loads() {
+        let script = "movie.m1v+60~60:1000,title.adx+30:0100";
+        let mut opens = vec![("movie.m1v".to_string(), 100)];
+        let at = |opens: &[(String, u64)], f| script_at(script, opens, f).button;
+        assert_eq!(at(&opens, 159), 0);
+        assert_eq!(at(&opens, 160), 0x1000);
+        assert_eq!(at(&opens, 163), 0, "held 3 frames");
+        assert_eq!(at(&opens, 400), 0x1000, "repeats every 60");
+        opens.push(("title.adx".to_string(), 450));
+        assert_eq!(at(&opens, 460), 0, "stopped once the title loaded");
+        assert_eq!(at(&opens, 480), 0x0100, "the title's own press");
+    }
+
+    #[test]
+    fn fixed_frames_stop_once_an_anchor_opens() {
+        let script = "0:1100,500:1100,a.prs+10:0002";
+        assert_eq!(script_at(script, &[], 0).button, 0x1100);
+        let opens = [("a.prs".to_string(), 100)];
+        assert_eq!(script_at(script, &opens, 500).button, 0);
+        assert_eq!(script_at(script, &opens, 111).button, 0x0002);
+    }
 }

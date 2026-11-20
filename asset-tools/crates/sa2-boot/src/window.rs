@@ -10,6 +10,7 @@
 use sa2_asset_tools::input::PadStatus;
 use sa2_gx::api::Frame;
 use sa2_gx::gpu::GxRenderer;
+use sa2_gx::interp::Tween;
 use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -71,14 +72,14 @@ pub fn submit(f: Frame) {
 /// The keyboard stick as (angle in radians, magnitude 0..=1).
 static EASED: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
 
-/// Stick from W/A/S/D like a real stick moves: from rest the deflection
-/// ramps to full over 3 frames; while any direction is held it stays full and
-/// only the angle turns (about 34° a frame) toward the keys, so turning never
+/// Stick from W/A/S/D: full deflection as soon as a key is down and back to
+/// centre as soon as all are up; while any is held it stays full and
+/// only the angle turns (about 46° a frame, 90° in two) toward the keys, so turning never
 /// dips through the centre (SA2 reads a dip as stopping); diagonals are as
 /// long as straights.
 pub fn key_stick(left: bool, right: bool, down: bool, up: bool) -> [i8; 2] {
-    const TURN: f32 = 0.6;
-    const RAMP: f32 = 0.34;
+    const TURN: f32 = 0.8;
+    const RAMP: f32 = 1.0;
     let dx = f32::from(i8::from(right) - i8::from(left));
     let dy = f32::from(i8::from(up) - i8::from(down));
     let mut e = EASED.lock().unwrap_or_else(|e| e.into_inner());
@@ -96,7 +97,10 @@ pub fn key_stick(left: bool, right: bool, down: bool, up: bool) -> [i8; 2] {
     } else {
         *mag = (*mag - RAMP).max(0.0);
     }
-    [(angle.cos() * *mag * 100.0).round() as i8, (angle.sin() * *mag * 100.0).round() as i8]
+    [
+        (angle.cos() * *mag * 100.0).round() as i8,
+        (angle.sin() * *mag * 100.0).round() as i8,
+    ]
 }
 
 /// This frame's controller 1: the gamepad and the keyboard/mouse together
@@ -126,12 +130,17 @@ pub fn pad() -> PadStatus {
             p.stick = g.stick;
         }
         p.substick = g.substick;
-        p.triggers = [p.triggers[0].max(g.triggers[0]), p.triggers[1].max(g.triggers[1])];
+        p.triggers = [
+            p.triggers[0].max(g.triggers[0]),
+            p.triggers[1].max(g.triggers[1]),
+        ];
     }
     p
 }
 
 struct Gpu {
+    /// Whether a timer holds presents to the chosen rate (below the display's).
+    pace: bool,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -144,23 +153,44 @@ struct App {
     rx: Receiver<Frame>,
     gpu: Option<Gpu>,
     last: Option<Frame>,
+    /// How to draw between the frame before `last` and `last`, and when
+    /// `last` arrived: the window refreshes faster than the game's 60.
+    tween: Option<Tween>,
+    arrived: std::time::Instant,
+    next_present: std::time::Instant,
     error: Option<String>,
+}
+
+/// A game frame (NTSC).
+const GAME_FRAME: f32 = 1001.0 / 60_000.0;
+
+/// Pictures a second the window shows (SA2_FPS: 60, 120, 144, 165...;
+/// default 60). Above 60 it blends between game frames; the game itself
+/// always runs at 60.
+pub fn target_fps() -> u32 {
+    std::env::var("SA2_FPS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map_or(60, |f| f.clamp(30, 360))
 }
 
 fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
     let attrs = Window::default_attributes()
         .with_title("SA2 (recompiled)")
-        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 960.0));
+        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
     let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
+    let surface = instance
+        .create_surface(window.clone())
+        .map_err(|e| e.to_string())?;
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         compatible_surface: Some(&surface),
         ..Default::default()
     }))
     .map_err(|e| format!("no wgpu adapter: {e}"))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+        required_limits:
+            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
         ..Default::default()
     }))
     .map_err(|e| format!("no wgpu device: {e}"))?;
@@ -170,9 +200,29 @@ fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
         .ok_or("surface not supported")?;
     // The game's colours are already gamma-encoded: use a non-sRGB format.
     config.format = config.format.remove_srgb_suffix();
+    // At or above the display's rate, vsync paces the window. Below it (120
+    // on a 165 Hz screen), presenting waits for nothing and a timer paces it:
+    // with both, a picture that just missed a refresh waited for the next and
+    // 165 a second came out as 100.
+    let refresh = window
+        .current_monitor()
+        .and_then(|m| m.refresh_rate_millihertz())
+        .map_or(60.0, |mhz| f64::from(mhz) / 1000.0);
+    let pace = f64::from(target_fps()) < refresh - 1.0;
+    if pace {
+        config.present_mode = wgpu::PresentMode::AutoNoVsync;
+    }
     surface.configure(&device, &config);
     let renderer = GxRenderer::new(device.clone(), queue.clone(), config.format);
-    Ok(Gpu { window, surface, device, queue, config, renderer })
+    Ok(Gpu {
+        pace,
+        window,
+        surface,
+        device,
+        queue,
+        config,
+        renderer,
+    })
 }
 
 impl ApplicationHandler for App {
@@ -216,23 +266,43 @@ impl ApplicationHandler for App {
             WindowEvent::Focused(false) => HELD.store(0, Relaxed),
             WindowEvent::RedrawRequested => {
                 let t = std::time::Instant::now();
-                // Every frame's texture uploads must reach the renderer;
-                // only the newest is drawn.
-                for f in self.rx.try_iter() {
-                    if let Some(old) = self.last.replace(f) {
-                        for u in &old.uploads {
-                            g.renderer.replace_texture(u.id, &u.levels);
-                        }
+                // Every frame's texture uploads reach the renderer once; the
+                // newest frame is drawn, blended from the one before it
+                // (at SA2_FPS above 60; at 60 game frames show as they are).
+                for mut f in self.rx.try_iter() {
+                    for u in f.uploads.drain(..) {
+                        g.renderer.replace_texture(u.id, &u.levels);
                     }
+                    sa2_gx::widescreen::clamp_hud_textures(&mut f);
+                    // A window wider than 4:3 sees more of the 3D view, with
+                    // the HUD at its edges (SA2_ASPECT=4:3 keeps the original).
+                    if std::env::var("SA2_ASPECT").map_or(true, |a| a.trim() != "4:3") {
+                        let aspect = g.config.width as f32 / g.config.height.max(1) as f32;
+                        sa2_gx::widescreen::widen(&mut f, aspect);
+                    }
+                    let prev = self.last.take();
+                    self.tween = prev
+                        .filter(|_| target_fps() > 60)
+                        .map(|p| Tween::new(&p, &f));
+                    self.last = Some(f);
+                    self.arrived = std::time::Instant::now();
                 }
-                if let Some(f) = &self.last {
+                if let Some(f) = &mut self.last {
+                    if let Some(tw) = &self.tween {
+                        tw.apply(f, self.arrived.elapsed().as_secs_f32() / GAME_FRAME);
+                    }
                     match g.surface.get_current_texture() {
-                        wgpu::CurrentSurfaceTexture::Success(tex) | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => {
+                        wgpu::CurrentSurfaceTexture::Success(tex)
+                        | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => {
                             let view = tex.texture.create_view(&Default::default());
-                            g.renderer.render_frame(f, &view, [g.config.width, g.config.height]);
+                            g.renderer
+                                .render_frame(f, &view, [g.config.width, g.config.height]);
                             g.queue.present(tex);
+                            crate::prof::PRESENTS.fetch_add(1, Relaxed);
                         }
-                        wgpu::CurrentSurfaceTexture::Outdated => g.surface.configure(&g.device, &g.config),
+                        wgpu::CurrentSurfaceTexture::Outdated => {
+                            g.surface.configure(&g.device, &g.config)
+                        }
                         _ => {}
                     }
                 }
@@ -240,6 +310,16 @@ impl ApplicationHandler for App {
                 // buffers); without this wgpu kept them all.
                 let _ = g.device.poll(wgpu::PollType::Poll);
                 crate::prof::add(&crate::prof::RENDER, t);
+                // Hold presents to the chosen rate (the display may refresh
+                // faster than it).
+                if g.pace {
+                    let period = std::time::Duration::from_secs_f64(1.0 / f64::from(target_fps()));
+                    let now = std::time::Instant::now();
+                    if self.next_present > now {
+                        std::thread::sleep(self.next_present - now);
+                    }
+                    self.next_present = (self.next_present + period).max(now);
+                }
                 g.window.request_redraw();
             }
             _ => {}
@@ -255,7 +335,15 @@ fn run(rx: Receiver<Frame>) -> Result<(), String> {
         builder.with_any_thread(true);
     }
     let event_loop = builder.build().map_err(|e| e.to_string())?;
-    let mut app = App { rx, gpu: None, last: None, error: None };
+    let mut app = App {
+        rx,
+        gpu: None,
+        last: None,
+        tween: None,
+        arrived: std::time::Instant::now(),
+        next_present: std::time::Instant::now(),
+        error: None,
+    };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     app.error.map_or(Ok(()), Err)
 }
@@ -289,24 +377,15 @@ mod tests {
     #[test]
     fn turning_keeps_full_deflection() {
         let mag = |s: [i8; 2]| (f32::from(s[0]).hypot(f32::from(s[1]))).round();
-        for _ in 0..5 {
-            key_stick(false, false, false, true); // W
-        }
-        assert_eq!(key_stick(false, false, false, true), [0, 100]);
-        // W -> D: rotate at full length, never through the centre.
-        for _ in 0..4 {
-            assert!(mag(key_stick(false, true, false, false)) >= 99.0);
-        }
+        // Full the first frame a key is down.
+        key_stick(false, false, false, false);
+        assert_eq!(key_stick(false, false, false, true), [0, 100]); // W
+                                                                    // W -> D: 90 degrees in two frames at full length, never through the centre.
+        assert!(mag(key_stick(false, true, false, false)) >= 99.0);
         assert_eq!(key_stick(false, true, false, false), [100, 0]);
         // Diagonal W+D is as long as a straight.
-        for _ in 0..3 {
-            key_stick(false, true, false, true);
-        }
         assert_eq!(key_stick(false, true, false, true), [71, 71]);
-        // Released: back to centre within 3 frames.
-        for _ in 0..3 {
-            key_stick(false, false, false, false);
-        }
+        // Released: centre the next frame.
         assert_eq!(key_stick(false, false, false, false), [0, 0]);
     }
 }
