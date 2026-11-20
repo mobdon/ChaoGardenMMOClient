@@ -403,3 +403,88 @@ fn arena_edge_and_distance_match_the_gamecube_powerpc() {
         assert_eq!(u64::from(d.to_bits()), u(&c["d"]), "distance {c}");
     }
 }
+
+#[test]
+#[ignore = "requires the user's GameCube main.dol, ChaoMain.rel and ChaoStgKarate.rel and Python with Unicorn"]
+fn approach_handler_matches_the_gamecube_powerpc() {
+    let python = env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
+    let o = Command::new(python)
+        .arg("-I")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/chao_karate_approach_ppc.py"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    if o.stdout.is_empty() {
+        return;
+    }
+    let doc: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let rows =
+        k::read_motion_table(&std::fs::read(env::var_os("SA2_CHAO_KARATE_REL").unwrap()).unwrap())
+            .unwrap();
+    for c in doc.as_array().unwrap() {
+        let mut aux = k::MotionAux {
+            motion: 3,
+            ..Default::default()
+        };
+        let mut rec = StateRecord::default();
+        let mut first = true;
+        for fr in c["frames"].as_array().unwrap() {
+            let inp: Vec<f32> = fr["in"].as_array().unwrap().iter().map(f).collect();
+            if first {
+                rec.flags = 0;
+                first = false;
+            }
+            let (mut vel, mut acc) = ([inp[0], inp[1], inp[2]], [inp[3], inp[4], inp[5]]);
+            let mut calls = vec![];
+            let input = k::MotionInput {
+                frame: 0.0,
+                linking: fr["linking"].as_bool().unwrap(),
+                stopped: false,
+            };
+            k::approach(
+                &mut aux,
+                &mut rec,
+                &rows,
+                input,
+                &mut vel,
+                &mut acc,
+                || (f(&fr["sin"]), f(&fr["cos"])),
+                || f(&fr["dist"]),
+                &mut calls,
+            );
+            let got: Vec<Value> = calls
+                .iter()
+                .map(|call| match *call {
+                    k::MotionCall::Link { motion, link_step } => {
+                        serde_json::json!(["link", motion, link_step])
+                    }
+                    k::MotionCall::Sound(s) => serde_json::json!(["sound", s]),
+                    _ => unreachable!(),
+                })
+                .collect();
+            assert_eq!(Value::Array(got), fr["calls"], "calls {fr}");
+            let a = &fr["aux"];
+            assert_eq!(
+                [
+                    i64::from(aux.step),
+                    i64::from(aux.timer),
+                    i64::from(aux.row)
+                ],
+                [i(&a[0]), i(&a[1]), i(&a[2])],
+                "aux {fr}"
+            );
+            assert_eq!(
+                u64::from(rec.flags & 0x8000),
+                u(&fr["twp"]) & 0x8000,
+                "end {fr}"
+            );
+            let out: Vec<u64> = vel
+                .iter()
+                .chain(acc.iter())
+                .map(|x| u64::from(x.to_bits()))
+                .collect();
+            let want: Vec<u64> = fr["out"].as_array().unwrap().iter().map(u).collect();
+            assert_eq!(out, want, "movement {fr}");
+        }
+    }
+}

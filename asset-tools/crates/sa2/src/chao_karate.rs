@@ -679,6 +679,8 @@ pub struct MotionAux {
     pub event: i8,
     pub bits: u8,
     pub row: i32,
+    /// +8: frame countdown some handlers use.
+    pub timer: u16,
 }
 
 /// aux +5 event bits.
@@ -920,4 +922,71 @@ pub fn arena_edge(
 /// position difference, Gekko estimates); 0 when either is missing.
 pub fn fighter_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     crate::land_nodes::nj_scalor([b[0] - a[0], b[1] - a[1], b[2] - a[2]])
+}
+
+/// fn_72_D110 (motion 3, the approach): after the link, walk along the yaw
+/// (acceleration 0.05, horizontal velocity x0.95, turning toward the opponent
+/// by 0x100 a frame via main fn_8002F1C0) until the fighters are under 3.5
+/// apart, then hold for the rest of a 20-frame count and end the motion.
+/// `turn` runs fn_8002F1C0 and returns njSin/njCos of the new yaw; `distance`
+/// is fn_72_13258 after the step. Velocity/acceleration are the movement block.
+#[allow(clippy::too_many_arguments)]
+pub fn approach(
+    aux: &mut MotionAux,
+    rec: &mut StateRecord,
+    rows: &[MotionRow],
+    input: MotionInput,
+    velocity: &mut [f32; 3],
+    accel: &mut [f32; 3],
+    turn: impl FnOnce() -> (f32, f32),
+    distance: impl FnOnce() -> f32,
+    calls: &mut Vec<MotionCall>,
+) {
+    match aux.step {
+        0 => {
+            aux.row = i32::from(aux.motion);
+            let r = &rows[aux.row as usize];
+            calls.push(MotionCall::Link {
+                motion: r.motion,
+                link_step: r.link_step,
+            });
+            rec.flags &= !state_flag::MOTION_END;
+            aux.step = 1;
+        }
+        1 => {
+            calls.push(MotionCall::Sound(0x6082));
+            if !input.linking {
+                aux.timer = 0x14;
+                aux.step = 2;
+            }
+        }
+        2 => {
+            calls.push(MotionCall::Sound(0x6082));
+            let (sin, cos) = turn();
+            accel[0] += 0.05f32 * sin;
+            accel[2] += 0.05f32 * cos;
+            velocity[0] *= 0.95f32;
+            velocity[2] *= 0.95f32;
+            if distance() < 3.5 {
+                accel[0] = 0.0;
+                accel[2] = 0.0;
+                velocity[0] = 0.0;
+                velocity[2] = 0.0;
+                aux.step = 3;
+            }
+            if aux.timer != 0 {
+                aux.timer -= 1;
+            }
+        }
+        3 => {
+            calls.push(MotionCall::Sound(0x6082));
+            if aux.timer == 0 {
+                rec.flags |= state_flag::MOTION_END;
+                aux.step = 4;
+            } else {
+                aux.timer -= 1;
+            }
+        }
+        _ => {}
+    }
 }
