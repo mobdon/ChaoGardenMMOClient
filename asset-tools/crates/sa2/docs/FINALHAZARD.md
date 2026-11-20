@@ -100,6 +100,21 @@ instructions with relocated data and compare them against the Rust output:
 Deliberate one-line faults were caught by each test. These are offline comparisons with the
 installed instructions. The game was not run.
 
+## Module map (unported parts)
+
+These links were found from relocations and direct calls in section 1. They show where code is
+reached from, not what each object does.
+
+| Section 1 offset | Reached from | Notes |
+| --- | --- | --- |
+| 0xa04c, 0xa074 | REL prolog and epilog | Module entry points |
+| 0xa078, 0xa2a0 | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
+| 0xa87c, 0xab04 | 0xa078 | Each installs the stage player task (0xff7c → 0xf3f8, now replayed) and object 0xd2dc, with routines 0xad8c and 0xd60c |
+| 0x18b5c | The voice-task helper 0x18ed0 | Allocates 0xdc bytes and installs 0x15f7c (about 7.5 KB), 0x17d18, 0x188f0, 0x18dbc and 0x191ac. It is created alongside each stage voice line |
+| 0x1844, 0x7f58 | 0x1bb8, 0x8328 | Encounter phase code covered by earlier request paths |
+
+About 15% of section 1 is referenced by the Rust ports.
+
 ## Open
 
 The fight is not playable. Engine distance, position setting, voice-task creation, camera and
