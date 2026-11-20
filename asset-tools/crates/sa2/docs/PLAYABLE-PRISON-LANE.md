@@ -76,20 +76,20 @@ outer door (114 frames) gates travel.
 | EFFOBJ0 effect emitters (10) | `effect_emitter` (0x1CF60 set-up, 0x1CFB4 exec) | Ported: unless the host sets `Session::effects_suppressed` (the byte at GSNE8P 0x801CC168 + 0x37), each frame emits with probability ((Rotation.x >> 8) & 0xFF) / 255 by MSL rand. The velocity (Scale.y * (u - 0.5), Scale.x + Scale.y * (u - 0.5), Scale.y * (u - 0.5)) is turned by njRotateY(Rotation.y) then njRotateZ(Rotation.z) through njCalcVector (`ninja_matrix`, copied unchanged from #426, which matches main.dol on 1,500 samples), and the size is min(0.05 + Scale.z, 20) times 0.9 to 1.1. Rotation.x's low byte picks one of 18 spawners (jump table sec5+0x54B1C), reported in `Event::Effect`; the spawned effects are not run |
 | CHAOPIPE (3) | `chao_pipe` (0x18A68 set-up, 0x18B18 exec) | Ported: the range test radius is 25 for the walkers (player 0's character 6 or 7, 0x80038108) and 13 otherwise. A player in range whose task Action (`PlayerSample::action`) is 0x2A starts a 300-frame timer and the squash spring (speed 0.08; each frame squash += speed, speed = 0.95 * speed - 0.15 * squash); a player in range without it gets the action requested (byte +0xD of its 0x801E7728 entry, `PipeEvent::RequestAction`). At 270 a chao of kind (u32)Scale.x % 3 is released at (0, 3, 2) through njTranslate, njRotateZ, X, Y and njCalcPoint (matches main.dol on 1,500 samples) with sound 0x100A, and the pipe is used up. The chao (0x800260FC) is not run, and the form-6 collision row (sec5+0x51574) is not built |
 | SOLIDBOX (6) | `solid_box` (0x3AD5C set-up, 0x3AE5C exec); stack registry 0x8F04/0x9154, collapse 0x92C4 | Ported: a 20-unit cube (sec5+0x8E484) placed by the CCL box rule (`Session::solid_box_solid`). `Session::collapse_stack` is 0x92C4, which a breaking container or ORI runs at its position: each box higher than that point plus 11 and within 8 horizontally gets 20 more to fall. A falling box steps by its speed (or the rest of the fall), speed = 0.99 * speed - 0.08, and when it stops within 5 of its ground it raises dust (`Event::SolidBox`). The ground height is fn_80067AF0 (`land_probe::ground_height`; its ray test fn_800D05D0 matches main.dol on 1,500 node sets), which the host supplies as `Session::ground_probe` from its land collision. Containers register in the same stack, but their own fall and their breaking (walker attacks) are not ported |
+| ORI cage block (1) | `ori` (0x31058 set-up, 0x311D4 exec) | Ported: the same 20-unit cube and fall as SOLIDBOX, in the same stack (`Session::ori_solid`). A hit (host-reported: `Session::ori_attacks` for the attack query 0x800060EC(task, 0x13), `Session::ori_rockets` when a rocket links to it) waits trunc(max(distance - 18, 0)) frames for a rocket (0x8011B65C, matched against main.dol on 4,000 samples) or 1, plays sound 0x1011 (variant = break count mod 5) and 0x14, collapses the stack above on its second frame, and from its fourth throws 16 + 4 + 4 debris pieces (unless (Rotation.x & 0xF) % 3 is 2) and 14 sparks drawn from MSL rand, then goes. The debris and spark tasks themselves are not run |
 | BIG THE CAT | 0x33E3C | The GameCube module's callback does nothing |
 
 Everything else is listed by name in `Session::unimplemented`: item boxes,
-enemies, KNUDAI, ORI, ROCKETMISSSILE and MINIMAL. The colour blend those objects
+enemies, KNUDAI, ROCKETMISSSILE and MINIMAL. The colour blend those objects
 share (GSNE8P 0x800334B0) is ported as `color_blend::blend_argb`. What holds
 the rest back, as read from the code:
 
-* ORI (0x31058) is a stackable object like SOLIDBOX (same registry and
-  0x96B0 child) with its own exec, not ported yet.
 * ROCKETMISSSILE (0x35AC8, a rocket the player rides, registered as a
   dynamic land object) stays in its waiting state until an ORI with its id
   (Rotation.z & 0x1F) is in the table at sec5+0x88204 (ORI adds itself
   through 0x35A1C), or until its enemy group is clear (0x80018E30) with a
-  player within 100, depending on Rotation.x & 3.
+  player within 100, depending on Rotation.x & 3. Its exec (about 1,400
+  instructions) is not ported yet.
 * MINIMAL's callback is in the main program (GSNE8P 0x80025C7C): it spawns
   the small animals, which walk with ground physics.
 * KNUDAI (0x2979C) is the Mystic Melody shrine: a dynamic land model

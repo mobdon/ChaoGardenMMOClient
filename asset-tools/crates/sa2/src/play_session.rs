@@ -30,6 +30,7 @@ use crate::{
     },
     chao_pipe::{ChaoPipe, PipeEvent},
     effect_emitter::{EffectEmitter, Emission},
+    ori::{Ori, OriEvent},
     solid_box::{collapse_above, SolidBox, SolidBoxEvent, NO_GROUND},
     prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
     prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
@@ -215,6 +216,11 @@ pub enum Event {
     Pipe {
         pipe: usize,
         event: PipeEvent,
+    },
+    /// An ORI cage block was hit, collapsed its stack, threw debris or went.
+    Ori {
+        ori: usize,
+        event: OriEvent,
     },
     /// A SOLIDBOX landed near its ground and raised dust.
     SolidBox {
@@ -692,6 +698,15 @@ pub struct Session {
     pub emitters: Vec<EffectEmitter>,
     pub pipes: Vec<ChaoPipe>,
     pub solid_boxes: Vec<SolidBox>,
+    pub oris: Vec<Ori>,
+    /// sec6+0xD34: ORI breaks so far (picks the 0x1011 sound variant).
+    pub ori_breaks: u32,
+    /// Host-reported hits for next frame: the attack query 0x800060EC(task,
+    /// 0x13) per ORI, and a rocket's position when it links to an ORI.
+    #[serde(skip)]
+    pub ori_attacks: Vec<usize>,
+    #[serde(skip)]
+    pub ori_rockets: Vec<(usize, V3)>,
     #[serde(skip)]
     solid_box_row: Option<CollisionRow>,
     /// fn_80067AF0 (`land_probe::ground_height`) at a point, for SOLIDBOX.
@@ -835,6 +850,7 @@ impl Session {
         let mut emitters = vec![];
         let mut pipes = vec![];
         let mut solid_boxes = vec![];
+        let mut oris = vec![];
         // stg09D.rel sec5+0x8E484: SOLIDBOX's cube row.
         let solid_box_row = if rules.prison_doors {
             Some(collision_rows(src.stage_module, rules.movers.module_file, 0x8e484, 1)?.remove(0))
@@ -950,6 +966,9 @@ impl Session {
                             center: pl.position,
                             radius: CAM_RADIUS,
                         });
+                    }
+                    (_, "ORI") if rules.prison_doors => {
+                        oris.push(Ori::new(li, p.placement_index, pl.position, pl.rotation))
                     }
                     (_, "SOLIDBOX") if rules.prison_doors => solid_boxes.push(SolidBox::new(
                         li,
@@ -1211,6 +1230,10 @@ impl Session {
             emitters,
             pipes,
             solid_boxes,
+            oris,
+            ori_breaks: 0,
+            ori_attacks: vec![],
+            ori_rockets: vec![],
             solid_box_row,
             ground_probe: None,
             effects_suppressed: false,
@@ -1271,8 +1294,20 @@ impl Session {
         ccl_box_tris(b.position, [0, b.yaw, 0], r, [r.size[0], r.size[1], r.size[2]])
     }
 
+    /// An ORI's cube (sec5+0x7FDF0, the same 20-unit cube) while it stands.
+    pub fn ori_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let (Some(o), Some(r)) = (self.oris.get(i), self.solid_box_row.as_ref()) else {
+            return vec![];
+        };
+        if o.state >= 2 {
+            return vec![];
+        }
+        ccl_box_tris(o.position, [0, o.rotation[1] as u16, 0], r, [r.size[0], r.size[1], r.size[2]])
+    }
+
     /// 0x92C4, the stack collapse a breaking container or ORI runs at its
-    /// position: every SOLIDBOX above it within reach gets 20 more to fall.
+    /// position: every SOLIDBOX and ORI above it within reach gets 20 more to
+    /// fall.
     /// (Breaking is driven by the walker's attacks, main-program code; the
     /// containers' own fall is not ported.)
     pub fn collapse_stack(&mut self, at: V3) -> usize {
@@ -1280,6 +1315,12 @@ impl Session {
             .solid_boxes
             .iter_mut()
             .map(|b| (&mut b.position, &mut b.fall, &mut b.drops))
+            .chain(
+                self.oris
+                    .iter_mut()
+                    .filter(|o| o.state < 3)
+                    .map(|o| (&mut o.position, &mut o.fall, &mut o.drops)),
+            )
             .collect();
         collapse_above(&mut stack, at)
     }
@@ -1381,6 +1422,28 @@ impl Session {
             if let Some(event) = b.step(&mut ground) {
                 events.push(Event::SolidBox { solid_box: i, event });
             }
+        }
+        let attacks = std::mem::take(&mut self.ori_attacks);
+        let rockets = std::mem::take(&mut self.ori_rockets);
+        let mut collapses = vec![];
+        for i in 0..self.oris.len() {
+            let rocket = rockets.iter().find(|(o, _)| *o == i).map(|&(_, p)| p);
+            let o = &mut self.oris[i];
+            for event in o.step(
+                rocket,
+                attacks.contains(&i),
+                &mut self.ori_breaks,
+                &mut self.rand,
+                &mut ground,
+            ) {
+                if let OriEvent::Collapse { at } = event {
+                    collapses.push(at);
+                }
+                events.push(Event::Ori { ori: i, event });
+            }
+        }
+        for at in collapses {
+            self.collapse_stack(at);
         }
         let actions = [player.map(|p| p.action), None];
         for (i, pipe) in self.pipes.iter_mut().enumerate() {

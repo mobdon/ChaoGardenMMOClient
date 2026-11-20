@@ -37,6 +37,7 @@ pub mod model;
 pub mod msl_math;
 pub mod motion;
 pub mod object_table;
+pub mod ori;
 pub mod pe;
 pub mod physical_board;
 pub mod player_physics;

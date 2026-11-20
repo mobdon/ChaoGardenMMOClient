@@ -68,6 +68,16 @@ pub struct SolidBox {
     pub drops: u8,
 }
 
+/// One frame of a stacked object's fall (SOLIDBOX 0x3AEA0, ORI 0x31230):
+/// move by the speed, or by the rest of the fall when that is less, then
+/// `speed = 0.99 * speed - 0.08`.
+pub fn fall_step(y: &mut f32, fall: &mut f32, speed: &mut f32) {
+    let step = if *fall < -*speed { -*fall } else { *speed };
+    *y += step;
+    *fall += step;
+    *speed = KEEP * *speed - GRAVITY;
+}
+
 impl SolidBox {
     pub fn new(layer: usize, index: usize, position: V3, yaw: u16) -> Self {
         Self {
@@ -89,14 +99,7 @@ impl SolidBox {
     pub fn step(&mut self, ground: &mut dyn FnMut(V3) -> f32) -> Option<SolidBoxEvent> {
         let mut out = None;
         if self.fall > 0.0 {
-            let step = if self.fall < -self.speed {
-                -self.fall
-            } else {
-                self.speed
-            };
-            self.position[1] += step;
-            self.fall += step;
-            self.speed = KEEP * self.speed - GRAVITY;
+            fall_step(&mut self.position[1], &mut self.fall, &mut self.speed);
             let [x, y, z] = self.position;
             self.landing = Some([x, y - self.fall, z]);
         } else {
