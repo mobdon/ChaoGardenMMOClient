@@ -8,11 +8,12 @@
 //! keeps only its high byte as the yaw, and increments the count; the
 //! destroy paths (0x80018B88, 0x80016598) decrement it.
 //!
-//! Which Prison Lane enemies count (stg09D.rel): E KUMI (0x4C848) calls the
-//! counting set-up unless its kind, Scale.x truncated (0x80111FD8 is
-//! truncation, 0x80111240 floorf on |x|) and forced to 0 outside 0..=4, is
-//! 4; E EMI (0x4E900) always counts (kinds 9 and others take the two
-//! counting entries); E AI (0x513D4) and E NAMIE (0x54080) always count.
+//! Which Prison Lane enemies count (stg09D.rel): E EMI's callback 0x4E4C4
+//! calls 0x4C848 (at 0x4E5BC), which uses the counting set-up unless its
+//! kind, Scale.x truncated (0x80111FD8 is truncation, 0x80111240 floorf on
+//! |x|) and forced to 0 outside 0..=4, is 4 (then 0x80018D28, no count).
+//! E KUMI's callback 0x4C408 runs 0x4A3A8, which always counts (0x4A3D4).
+//! E AI (0x513D4) and E NAMIE (0x54080) always count.
 //! E GOLD never counts: its set-up (0x494AC, called from 0x4A09C) takes an
 //! enemy block through 0x80018D28 directly (group 0xFF, no count); the
 //! counting call at 0x4A3D4 sits in 0x4A3A8, which only E KUMI (0x4C484)
@@ -43,12 +44,14 @@ pub fn enemy_counts(name: &str, scale: V3) -> Option<bool> {
         .or_else(|| name.strip_suffix("_N"))
         .unwrap_or(name);
     match base {
-        "E KUMI" => {
+        // 0x4C848, called only from E EMI's 0x4E4C4 (at 0x4E5BC).
+        "E EMI" => {
             let kind = scale[0] as i32;
             let kind = if (0..5).contains(&kind) { kind } else { 0 };
             Some(kind != 4)
         }
-        "E EMI" | "E AI" | "E NAMIE" => Some(true),
+        // E KUMI's 0x4C408 runs 0x4A3A8, which always counts (0x4A3D4).
+        "E KUMI" | "E AI" | "E NAMIE" => Some(true),
         // 0x494AC: 0x80018D28 only, never counted.
         "E GOLD" => Some(false),
         _ => None,
@@ -283,10 +286,12 @@ mod tests {
     }
 
     #[test]
-    fn kumi_kind_four_does_not_count() {
-        assert_eq!(enemy_counts("E KUMI", [4.0, 0.0, 0.0]), Some(false));
-        assert_eq!(enemy_counts("E KUMI_F", [4.9, 0.0, 0.0]), Some(false));
-        assert_eq!(enemy_counts("E KUMI", [7.0, 0.0, 0.0]), Some(true));
+    fn emi_kind_four_does_not_count() {
+        assert_eq!(enemy_counts("E EMI", [4.0, 0.0, 0.0]), Some(false));
+        assert_eq!(enemy_counts("E EMI_F", [4.9, 0.0, 0.0]), Some(false));
+        assert_eq!(enemy_counts("E EMI", [7.0, 0.0, 0.0]), Some(true));
+        assert_eq!(enemy_counts("E KUMI", [4.0, 0.0, 0.0]), Some(true));
+        assert_eq!(enemy_counts("E GOLD", [0.0; 3]), Some(false));
         assert_eq!(enemy_counts("E AI_N", [0.0; 3]), Some(true));
         assert_eq!(enemy_counts("E KYOKO", [0.0; 3]), None);
     }
