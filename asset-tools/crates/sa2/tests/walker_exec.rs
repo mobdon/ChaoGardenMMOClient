@@ -85,7 +85,11 @@ fn matches_main_dol() {
         assert_eq!(Value::from(pf), c["pf_after"], "{c}");
         let h = [w.p_h14, w.air_timer, w.p_h1a, w.p_h1e].map(|x| x as i64);
         assert_eq!(Value::from(h.to_vec()), c["h_after"], "{c}");
-        assert_eq!((w.p_wa8 as u64, w.p_wac as u64), (u(&c["wa8"]), u(&c["wac"])), "{c}");
+        assert_eq!(
+            (w.p_wa8 as u64, w.p_wac as u64),
+            (u(&c["wa8"]), u(&c["wac"])),
+            "{c}"
+        );
         assert_eq!(w.p_bd as u64, u(&c["bd_after"]), "{c}");
         assert_eq!(w.ccl_b2 as u64, u(&c["info_b2"]), "{c}");
         assert_eq!(r13 as u64, u(&c["r13_7900"]), "{c}");
