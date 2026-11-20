@@ -270,7 +270,11 @@ fn start_thread(c: &Cpu, m: &Mem, ctx: u32) -> usize {
         sc.inbox.len() - 1
     });
     if std::env::var_os("SA2_TRACE_THREADS").is_some() {
-        eprintln!("thread: start {i} at {:#010x} (context {ctx:#010x})", s.pc);
+        let live = LIVE.load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!(
+            "thread: start {i} at {:#010x} (context {ctx:#010x}, {live} host threads live)",
+            s.pc
+        );
     }
     let spawned = std::thread::Builder::new()
         .name(format!("game thread {i}"))
@@ -282,7 +286,19 @@ fn start_thread(c: &Cpu, m: &Mem, ctx: u32) -> usize {
     i
 }
 
+/// Game host threads alive now (besides the first).
+pub static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct Alive;
+impl Drop for Alive {
+    fn drop(&mut self) {
+        LIVE.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 fn thread_main(i: usize, rx: Receiver<Msg>, s: Start) {
+    LIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _alive = Alive;
     let b = match rx.recv() {
         Ok(Msg::Run(b)) => b,
         _ => return,
@@ -362,7 +378,8 @@ fn handoff(c: &mut Cpu, m: &mut Mem, to: usize) {
             c.tb = b.tb;
             std::panic::resume_unwind(p);
         }
-        _ => std::panic::panic_any(ThreadGone),
+        // A normal end: unwind without a panic message.
+        _ => std::panic::resume_unwind(Box::new(ThreadGone)),
     }
 }
 

@@ -233,7 +233,11 @@ pub struct Gx {
     // Textures.
     tex_maps: [Option<TexObj>; 8],
     tluts: HashMap<u32, TlutObj>,
-    tex_cache: HashMap<TexKey, TextureId>,
+    /// Decoded textures: key -> (id, invalidate generation). An invalidate
+    /// makes them stale; the next use decodes again under the same id, so the
+    /// renderer replaces the texture instead of keeping a new one each frame.
+    tex_cache: HashMap<TexKey, (TextureId, u64)>,
+    tex_gen: u64,
     next_texture: TextureId,
     // Register mirrors for display-list loads.
     regs: crate::vtx::DisplayListRegisters,
@@ -311,6 +315,7 @@ impl Gx {
             tex_maps: [None; 8],
             tluts: HashMap::new(),
             tex_cache: HashMap::new(),
+            tex_gen: 0,
             next_texture: 0,
             regs: {
                 let mut r = crate::vtx::DisplayListRegisters::default();
@@ -776,11 +781,16 @@ impl Gx {
             levels,
             tlut,
         };
-        let id = match self.tex_cache.get(&key) {
-            Some(id) => *id,
-            None => {
-                let id = self.next_texture;
-                self.next_texture += 1;
+        let id = match self.tex_cache.get(&key).copied() {
+            Some((id, generation)) if generation == self.tex_gen => id,
+            stale => {
+                let id = stale.map_or_else(
+                    || {
+                        self.next_texture += 1;
+                        self.next_texture - 1
+                    },
+                    |s| s.0,
+                );
                 let mut size = 0usize;
                 let (mut w, mut h) = (obj.width, obj.height);
                 for _ in 0..levels {
@@ -805,7 +815,7 @@ impl Gx {
                     id,
                     levels: texture::decode_mip_chain(&input),
                 });
-                self.tex_cache.insert(key, id);
+                self.tex_cache.insert(key, (id, self.tex_gen));
                 id
             }
         };
@@ -1127,7 +1137,7 @@ impl Gx {
                 self.tlut_loads
                     .insert(v & 0x3FF, (addr, ((v >> 10) & 0x7FF) * 16));
             }
-            0x66 => self.tex_cache.clear(),
+            0x66 => self.tex_gen += 1,
             0x80..=0x9B | 0xA0..=0xBB => {
                 let i = ((addr & 3) + if addr >= 0xA0 { 4 } else { 0 }) as usize;
                 self.tex_map_from_regs(i);
@@ -1351,7 +1361,7 @@ impl Gx {
 
     /// `GXInvalidateTexAll`: decode textures again on next use.
     pub fn invalidate_tex_all(&mut self) {
-        self.tex_cache.clear();
+        self.tex_gen += 1;
     }
 
     // ---- TEV -------------------------------------------------------------

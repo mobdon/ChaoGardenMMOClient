@@ -64,6 +64,11 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
             for u in &f.uploads {
                 s.renderer.replace_texture(u.id, &u.levels);
             }
+            // Flush the uploads and free what they replaced: queued texture
+            // writes wait for a submit, and only every `every`-th frame
+            // submits, so they piled up (gigabytes within a minute).
+            s.queue.submit([]);
+            let _ = s.device.poll(wgpu::PollType::Poll);
             return Ok(None);
         }
         if std::env::var_os("SA2_SNAP_INFO").is_some() {

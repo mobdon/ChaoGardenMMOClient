@@ -7,7 +7,7 @@ use sa2_asset_tools::input::PadStatus;
 use sa2_gx::api::Frame;
 use sa2_gx::gpu::GxRenderer;
 use std::sync::atomic::{AtomicU16, Ordering::Relaxed};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -17,7 +17,10 @@ use winit::window::{Window, WindowId};
 
 /// Keys held, as bits of `KEYS` below.
 static HELD: AtomicU16 = AtomicU16::new(0);
-static TX: Mutex<Option<Sender<Frame>>> = Mutex::new(None);
+/// Bounded: when the window is this many frames behind, the game waits (no
+/// frame or texture upload is dropped, and memory stays flat).
+const QUEUED_FRAMES: usize = 2;
+static TX: Mutex<Option<SyncSender<Frame>>> = Mutex::new(None);
 
 const KEYS: [KeyCode; 12] = [
     KeyCode::ArrowLeft,
@@ -36,7 +39,7 @@ const KEYS: [KeyCode; 12] = [
 
 /// Open the window on its own thread; frames given to [`submit`] show there.
 pub fn start() {
-    let (tx, rx) = channel();
+    let (tx, rx) = sync_channel(QUEUED_FRAMES);
     if let Ok(mut t) = TX.lock() {
         *t = Some(tx);
     }
@@ -192,6 +195,9 @@ impl ApplicationHandler for App {
                         _ => {}
                     }
                 }
+                // Free what finished frames used (each frame makes its own
+                // buffers); without this wgpu kept them all.
+                let _ = g.device.poll(wgpu::PollType::Poll);
                 g.window.request_redraw();
             }
             _ => {}
