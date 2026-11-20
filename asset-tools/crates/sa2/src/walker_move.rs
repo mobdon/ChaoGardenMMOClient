@@ -763,3 +763,64 @@ pub fn accel_hover(
     a[0] += mag;
     a
 }
+
+const SLOPE_UPHILL: f64 = -0.86; // r2-0x7488 (double)
+const SLOPE_STEEP: f32 = f32::from_bits(0xbf5e_b852); // r2-0x7480, -0.87
+const SLOPE_TURN_FAST: f32 = 3072.0; // r2-0x7474
+const SLOPE_TURN: f32 = 1536.0; // r2-0x7470
+
+/// fn_80047F14(task, motion, player): turn the aim down the slope. Not
+/// with the timer +0x14 running, on `attr` 0x100 ground, or when moving
+/// faster than +0xE4 against gravity (cosine below -0.86). With gravity in
+/// the task frame pointing down but not steeper than -0.87, the aim turns
+/// toward the downhill yaw by 3072 (task flag 0x100) or 1536 times its z
+/// share; otherwise it takes the yaw. `turn_smoothly` (fn_80047714) then
+/// runs. Returns the cosine of the downhill angle (0 when skipped or not
+/// on a slope).
+#[allow(clippy::too_many_arguments)]
+pub fn slope_aim(
+    stack: &mut MatrixStack,
+    task_flag: i16,
+    angles: [i32; 3],
+    mw_spd: Vec3,
+    aim: &mut i32,
+    timer14: i16,
+    attr: u32,
+    f_e4: f32,
+    gravity: Vec3,
+    calls: &mut dyn SteerCalls,
+) -> f32 {
+    if timer14 != 0 || attr & 0x100 != 0 {
+        return ZERO;
+    }
+    if crate::land_nodes::nj_scalor(mw_spd) > f_e4 {
+        let u = crate::land_contact::unit_vector(mw_spd);
+        if f64::from(crate::ninja_vector::inner_product(gravity, u)) < SLOPE_UPHILL {
+            return ZERO;
+        }
+    }
+    let mut gl = unrotate_by_angles(stack, angles, gravity);
+    let mut c = ZERO;
+    if gl[1] < ZERO && gl[1] > SLOPE_STEEP {
+        let mut a = fctiwz_f64(BAMS_PER_RAD * f64::from(atan2f(gl[2], gl[0])));
+        c = nj_cos(a);
+        if c < ZERO {
+            a = a.wrapping_add(0x8000);
+        }
+        a = a.wrapping_add(angles[1]);
+        if gl[2] < ZERO {
+            gl[2] = -gl[2];
+        }
+        let k = if task_flag & 0x100 != 0 {
+            SLOPE_TURN_FAST
+        } else {
+            SLOPE_TURN
+        };
+        let step = crate::ninja_trig::fctiwz(k * gl[2]);
+        *aim = adjust_angle(*aim, a, step);
+    } else {
+        *aim = angles[1];
+    }
+    calls.turn_smoothly(aim);
+    c
+}

@@ -3,8 +3,8 @@ use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
     walker_move::{
         accel, accel_air, accel_gravity, accel_hover, accel_mode43, accel_run, aim_carry,
-        aim_toward, air_level, jump_assist, steer, turn_back, AccelWork, JumpTarget, JumpWork,
-        SteerCalls, SteerInput,
+        aim_toward, air_level, jump_assist, slope_aim, steer, turn_back, AccelWork, JumpTarget,
+        JumpWork, SteerCalls, SteerInput,
     },
 };
 use serde_json::{json, Value};
@@ -377,6 +377,30 @@ fn matches_main_dol() {
         assert_eq!(ang, i3(&c["ang_after"]), "{c}");
         assert_eq!(bits(spd), bits(v3(&c["spd_after"])), "{c}");
         assert_eq!(bits(acc), bits(v3(&c["acc_after"])), "{c}");
+        assert_eq!(aim, i(&c["aim_after"]), "{c}");
+        assert_eq!(Value::from(log.calls), c["log"], "{c}");
+    }
+    for c in v["slope"].as_array().unwrap() {
+        let i = |x: &Value| x.as_i64().unwrap() as i32;
+        let mut aim = i(&c["aim"]);
+        let mut log = Log {
+            stick: None,
+            mag: 0.0,
+            calls: vec![],
+        };
+        let r = slope_aim(
+            &mut stack,
+            c["flag"].as_u64().unwrap() as i16,
+            i3(&c["ang"]),
+            v3(&c["spd"]),
+            &mut aim,
+            i(&c["t14"]) as i16,
+            c["attr"].as_u64().unwrap() as u32,
+            f(&c["fe4"]),
+            v3(&c["global"]),
+            &mut log,
+        );
+        assert_eq!(r.to_bits() as u64, c["ret"].as_u64().unwrap(), "{c}");
         assert_eq!(aim, i(&c["aim_after"]), "{c}");
         assert_eq!(Value::from(log.calls), c["log"], "{c}");
     }
