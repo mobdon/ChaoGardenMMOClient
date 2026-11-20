@@ -984,3 +984,131 @@ pub fn wall_push(
     }
     (code, stuck)
 }
+
+/// fn_80040F48 (the airborne wall slide that also turns the task). Like
+/// `wall_slide`, with these differences: flag 0x100 makes every hit a floor;
+/// there is no 0x7000 limit; the along-plane motion is scaled to the
+/// nearest wall's distance instead of gaining +0x78; a head-on approach
+/// (within 0x1000 of the wall) stops the slide (2 when `spd.x` reaches
+/// +0xF0) or caps `vel` at 0.2 * `jog_speed` (1); otherwise after sliding
+/// the task's Y angle points along the slide (flipped by 0x8000 when more
+/// than 0x6000 from the aim, which then takes it) and the return value is
+/// DiffAngle's result.
+#[allow(clippy::too_many_arguments)]
+pub fn wall_slide_turn(
+    i: &WallSlideInput,
+    flags: u32,
+    speeds: &PushSpeeds,
+    hits: &[ContactHit],
+    along: &mut Vec3,
+    vel: &mut Vec3,
+    aim: &mut i32,
+    task_ang_y: &mut i32,
+    wall: &mut Vec3,
+) -> i32 {
+    let s = &i.slide;
+    let mut near = NEAR_LIMIT;
+    let mut walls = 0;
+    let mut at: Option<usize> = None;
+    let mut dists = vec![];
+    for (k, h) in hits.iter().enumerate() {
+        let d = point_distance(h.head, s.center);
+        dists.push(d);
+        if is_floor(s, h).0 || flags & 0x100 != 0 {
+            continue;
+        }
+        let t = if nj_scalor(i.motion) == ZERO {
+            i.motion
+        } else {
+            unit_vector(i.motion)
+        };
+        let into = inner_product(t, h.facing);
+        if !(into < ZERO) {
+            continue;
+        }
+        let raw = inner_product(i.motion, h.facing);
+        if into < -nj_cos(0x600) || raw < WALL_PUSH {
+            walls += 1;
+            if near > d {
+                near = d;
+                at = Some(k);
+            }
+        }
+    }
+    if walls == 0 {
+        return 0;
+    }
+    let len = nj_scalor(i.motion);
+    if small_body(s.character, s.f134, s.row0_74, s.row1_74) && flags & 0x0800_0000 == 0 {
+        *along = [ZERO; 3];
+        *vel = [ZERO; 3];
+        return 0;
+    }
+    let Some(k) = at else {
+        return 0;
+    };
+    if !(dists[k] < len) || i.last_attr & 0x100 != 0 {
+        return 0;
+    }
+    if nj_scalor(*along) == ZERO {
+        *along = [ZERO; 3];
+        return 0;
+    }
+    *along = unit_vector(*along).map(|c| c * dists[k]);
+    let h = &hits[k];
+    *wall = h.facing;
+    let back = vel.map(|c| -c);
+    if nj_scalor(back) == ZERO {
+        return 0;
+    }
+    if vector_angle(unit_vector(back), *wall, None) <= 0x1000 {
+        if speeds.spd_x >= speeds.f_f0 {
+            *along = [ZERO; 3];
+            return 2;
+        }
+        if speeds.spd_x > speeds.jog {
+            let cap = LIFT_RISING * speeds.jog;
+            *vel = unit_vector(*vel).map(|c| c * cap);
+        }
+        return 1;
+    }
+    let cross = outer_product(*along, *wall);
+    let cross = if nj_scalor(cross) == ZERO {
+        s.up
+    } else {
+        unit_vector(cross)
+    };
+    let mut line = Line {
+        point: [ZERO; 3],
+        dir: [ZERO; 3],
+    };
+    plane_intersection(
+        &Plane {
+            point: h.foot,
+            normal: *wall,
+        },
+        &Plane {
+            point: i.head,
+            normal: cross,
+        },
+        Some(&mut line),
+    );
+    let u = if nj_scalor(*along) == ZERO {
+        *along
+    } else {
+        unit_vector(*along)
+    };
+    if inner_product(line.dir, u) < ZERO {
+        line.dir = line.dir.map(|c| -c);
+    }
+    let speed = nj_scalor(*vel);
+    *vel = line.dir.map(|c| c * speed);
+    *along = *vel;
+    *task_ang_y = ((BAMS_PER_RAD * atan2f(line.dir[2], line.dir[0]) as f64) as i32) & 0xffff;
+    let r = diff_angle(*aim, *task_ang_y);
+    if r > 0x6000 {
+        *task_ang_y = task_ang_y.wrapping_add(0x8000);
+    }
+    *aim = *task_ang_y;
+    r
+}

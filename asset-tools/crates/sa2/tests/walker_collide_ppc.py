@@ -336,7 +336,59 @@ for _ in range(4000):
                  "hits": [[[fb(x) for x in f], [fb(x) for x in h]] for f, h in hits],
                  "ret": m.gpr(3), "stuck": W(R13 - 0x78F4),
                  "motion_after": [W(Q + 0x10 + 4 * j) for j in range(3)], "vel_after": [W(VEL + 4 * j) for j in range(3)]})
+# fn_80040F48: airborne wall slide that turns the task.
+wturn = []
+for _ in range(4000):
+    n = rng.choice([0, 1, 1, 2, 3, 5])
+    up = [0.0, 1.0, 0.0] if rng.random() < 0.6 else unit()
+    glob = [0.0, -1.0, 0.0] if rng.random() < 0.7 else unit()
+    center = [rf(50) for _ in range(3)]
+    motion = [rf(12) for _ in range(3)]
+    vel = [rf(8) for _ in range(3)]
+    along, head = [rf(8) for _ in range(3)], [rf(50) for _ in range(3)]
+    if rng.random() < 0.1:
+        along = [0.0, 0.0, 0.0]
+    hits = []
+    for _ in range(n):
+        mm = sum(x * x for x in motion) ** 0.5 or 1.0
+        facing = rng.choice([unit(), [f32(-x / mm + rng.uniform(-0.3, 0.3)) for x in motion], up])
+        nn = sum(x * x for x in facing) ** 0.5 or 1.0
+        facing = [f32(x / nn) for x in facing]
+        hits.append((facing, [f32(center[j] + rng.uniform(-20, 20)) for j in range(3)],
+                     [f32(center[j] + rng.uniform(-8, 8)) for j in range(3)]))
+    if hits and rng.random() < 0.3:
+        vel = [f32(-x * 3) for x in hits[0][0]]
+    for k, (facing, foot, hd) in enumerate(hits):
+        put3(TAILS + 0x58 * k + 0x14, facing)
+        put3(TAILS + 0x58 * k + 0x20, foot)
+        put3(TAILS + 0x58 * k + 0x2C, hd)
+    m.put(Q + 0x28, "H", n)
+    put3(Q + 4, center); put3(Q + 0x10, motion); put3(Q + 0x1C, up)
+    put3(Q + 0x60, head); put3(Q + 0x6C, along); put3(GLOBAL, glob)
+    put3(MW, vel)
+    aim, ang_y = rng.randrange(-0x20000, 0x20000), rng.randrange(-0x20000, 0x20000)
+    m.put(MW + 0x1C, "i", aim)
+    m.put(TASK + 0xC, "i", ang_y)
+    ch = rng.choice([0, 1, 2, 6])
+    f134 = f32(rng.uniform(0, 20))
+    last = rng.choice([0, 0, 0x100])
+    flags = rng.choice([0, 0, 0x100, 0x08000000])
+    sp = [rf(10), f32(rng.uniform(2, 8)), f32(rng.uniform(0.5, 4))]
+    m.put(PW + 1, "b", ch); m.put(PW + 0x134, "f", f134); m.put(PW + 0x8C, "I", last)
+    for o, x in zip((0x64, 0xF0, 0xE4), sp):
+        m.put(PW + o, "f", x)
+    put3(PW + 0x70, [1.5, 2.5, 3.5])
+    m.call(0x80040F48, r3=TASK, r4=MW, r5=PW, r6=Q, r7=flags)
+    wturn.append({"ch": ch, "f134": fb(f134), "last": last, "flags": flags, "speeds": [fb(x) for x in sp],
+                  "center": [fb(x) for x in center], "up": [fb(x) for x in up], "global": [fb(x) for x in glob],
+                  "motion": [fb(x) for x in motion], "vel": [fb(x) for x in vel], "along": [fb(x) for x in along],
+                  "head": [fb(x) for x in head], "aim": aim, "ang_y": ang_y,
+                  "hits": [[[fb(x) for x in v] for v in h] for h in hits],
+                  "ret": m.gpr(3), "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)],
+                  "vel_after": [W(MW + 4 * j) for j in range(3)], "wall_after": [W(PW + 0x70 + 4 * j) for j in range(3)],
+                  "aim_after": m.get(MW + 0x1C, "i"), "ang_y_after": m.get(TASK + 0xC, "i")})
 print(json.dumps({"lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
+                  "wturn": wturn,
                   "push": push,
                   "settle": settle,
                   "tilt": tilt, "angles": angles,

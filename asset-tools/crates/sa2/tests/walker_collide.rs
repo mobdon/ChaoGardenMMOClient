@@ -4,9 +4,9 @@ use sa2_asset_tools::land_nodes::Candidate;
 use sa2_asset_tools::ninja_matrix::MatrixStack;
 use sa2_asset_tools::walker_collide::{
     adjust_angle, apply_surface, diff_angle, plane_intersection, settle_contact, slide_airborne,
-    slide_grounded, sphere_lift, sub_angle, tilt_to_contact, wall_push, wall_slide, LiftInput,
-    Line, MotionWork, PhysicsRow, Plane, PushSpeeds, SlideInput, SlideQuery, SurfaceWork,
-    TiltSpeeds, TurnWork, WallSlideInput,
+    slide_grounded, sphere_lift, sub_angle, tilt_to_contact, wall_push, wall_slide,
+    wall_slide_turn, LiftInput, Line, MotionWork, PhysicsRow, Plane, PushSpeeds, SlideInput,
+    SlideQuery, SurfaceWork, TiltSpeeds, TurnWork, WallSlideInput,
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -349,5 +349,75 @@ fn matches_main_dol() {
         );
         assert_eq!(bits3(motion), bits3(v3(&c["motion_after"])), "motion {c}");
         assert_eq!(bits3(vel), bits3(v3(&c["vel_after"])), "vel {c}");
+    }
+    for c in v["wturn"].as_array().unwrap() {
+        let g = |x: &Value| x.as_i64().unwrap() as i32;
+        let i = WallSlideInput {
+            slide: SlideInput {
+                task_mode: 0,
+                character: c["ch"].as_i64().unwrap() as i8,
+                f134: f(&c["f134"]),
+                row0_74: f(&r74[0]),
+                row1_74: f(&r74[1]),
+                entry_has_task: false,
+                center: v3(&c["center"]),
+                up: v3(&c["up"]),
+                global: v3(&c["global"]),
+            },
+            entry_flags: 0,
+            last_attr: u(&c["last"]),
+            motion: v3(&c["motion"]),
+            head: v3(&c["head"]),
+            across: [0.0; 3],
+        };
+        let sp = &c["speeds"];
+        let speeds = PushSpeeds {
+            spd_x: f(&sp[0]),
+            f_f0: f(&sp[1]),
+            jog: f(&sp[2]),
+            run: 0.0,
+        };
+        let hits: Vec<ContactHit> = c["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| ContactHit {
+                candidate: Candidate { node: 0, tri: 0 },
+                angles: (0, 0),
+                normal: [0.0; 3],
+                facing: v3(&h[0]),
+                foot: v3(&h[1]),
+                head: v3(&h[2]),
+                along: [0.0; 3],
+                across: [0.0; 3],
+                start_height: 0.0,
+                end_height: 0.0,
+            })
+            .collect();
+        let mut along = v3(&c["along"]);
+        let mut vel = v3(&c["vel"]);
+        let mut aim = g(&c["aim"]);
+        let mut ang_y = g(&c["ang_y"]);
+        let mut wall = [1.5, 2.5, 3.5];
+        let r = wall_slide_turn(
+            &i,
+            u(&c["flags"]),
+            &speeds,
+            &hits,
+            &mut along,
+            &mut vel,
+            &mut aim,
+            &mut ang_y,
+            &mut wall,
+        );
+        assert_eq!(r as u32, u(&c["ret"]), "{c}");
+        assert_eq!(bits3(along), bits3(v3(&c["along_after"])), "along {c}");
+        assert_eq!(bits3(vel), bits3(v3(&c["vel_after"])), "vel {c}");
+        assert_eq!(bits3(wall), bits3(v3(&c["wall_after"])), "wall {c}");
+        assert_eq!(
+            (aim, ang_y),
+            (g(&c["aim_after"]), g(&c["ang_y_after"])),
+            "angles {c}"
+        );
     }
 }
