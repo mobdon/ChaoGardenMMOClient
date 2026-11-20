@@ -55,6 +55,15 @@ impl ActSteps for Log {
     fn button_action(&mut self, addr: u32, _: &mut Work, _: &mut Work, _: &mut Work) {
         self.0.push(json!(["btn", addr]));
     }
+    fn damage(&mut self, _: &mut Work, _: &mut Work) -> bool {
+        false
+    }
+    fn touching(&mut self, _: i32) -> bool {
+        false
+    }
+    fn ride_acc(&mut self, _: &Work) -> Option<[f32; 3]> {
+        None
+    }
 }
 
 fn globals(g: &Value) -> ActGlobals {
@@ -71,6 +80,10 @@ fn globals(g: &Value) -> ActGlobals {
         pressed: arr("pressed"),
         held: arr("held"),
         action: arr("act"),
+        button_4c: [0; 8],
+        pad_10: [0; 8],
+        query_20: 0.0,
+        motion_82_frames: 0,
         motion_56: g["m56"].as_bool().unwrap(),
         gs: hex(&g["gs"]),
         gravity: if g["grav"].is_array() {

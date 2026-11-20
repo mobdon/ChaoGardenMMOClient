@@ -8,7 +8,10 @@ use crate::{
     land_nodes::nj_scalor,
     native_work::{pw, tw, Work},
     ninja_matrix::{rotate_by_angles, MatrixStack, Vec3},
-    walker_exec::{Engine, EngineCall},
+    ninja_trig::fmadds,
+    ninja_vector::inner_product,
+    walker_exec::{Engine, EngineCall, PlayerHistory},
+    walker_move::{slope_aim, turn_back, SteerCalls},
 };
 
 /// Engine state the action step reads.
@@ -24,8 +27,15 @@ pub struct ActGlobals {
     /// (held).
     pub pressed: [i8; 8],
     pub held: [i8; 8],
-    /// The action button bytes at r13-0x7A3C.
+    /// The action button bytes at r13-0x7A3C and r13-0x7A4C.
     pub action: [i8; 8],
+    pub button_4c: [i8; 8],
+    /// Each player's pad word +0x10 (0x801E5438 + 0x34 * pnum).
+    pub pad_10: [u32; 8],
+    /// The collision query's +0x20 (player +0x90).
+    pub query_20: f32,
+    /// The frame count of the character motion table's entry 0x82.
+    pub motion_82_frames: u32,
     /// Whether the character motion table's entry 0x56 is loaded
     /// (0x801E5D28 + 0x2B4).
     pub motion_56: bool,
@@ -50,6 +60,14 @@ pub trait ActSteps {
     /// fn_800530B0, fn_80053570, fn_80053520, fn_800534F4, fn_800535C0,
     /// fn_800AC850, fn_800AD208, fn_800ACF38, fn_800ACB9C), by address.
     fn button_action(&mut self, addr: u32, t: &mut Work, m: &mut Work, p: &mut Work);
+    /// fn_80055734(task work, player work): the damage step. Returns
+    /// whether the player was hurt.
+    fn damage(&mut self, t: &mut Work, p: &mut Work) -> bool;
+    /// fn_800060EC(task, kind) found a contact (for fn_8004E490).
+    fn touching(&mut self, kind: i32) -> bool;
+    /// The acceleration of the ride at player +0xA0 (its task's +0x3C
+    /// block, +0x10), when there is one.
+    fn ride_acc(&mut self, p: &Work) -> Option<Vec3>;
 }
 
 /// fn_8004691C(motion work, player work): zero both speeds.
@@ -637,4 +655,443 @@ pub fn action_button(
     };
     s.button_action(handler, t, m, p);
     true
+}
+
+const HOVER_LIFT: f32 = f32::from_bits(0x3f4c_cccd); // r2-0x6900, 0.8
+const HOVER_PULL: f32 = f32::from_bits(0x3f59_999a); // r2-0x68F8, 0.85
+const SLOPE_FLAT: f32 = f32::from_bits(0x3f45_1eb8); // r2-0x6904, 0.77
+const SLOPE_FLAT_11: f32 = f32::from_bits(0x3f46_6666); // r2-0x68F4
+const LAND_SOFT: f32 = 3.0; // r2-0x6970
+const NO_HOVER_Y: f32 = -1_000_000.0; // r2-0x68FC
+
+/// The landing shared by modes 6, 0xA and 0x3C of the action step.
+#[allow(clippy::too_many_arguments)]
+fn land(
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    g: &ActGlobals,
+    s: &mut dyn ActSteps,
+    sc: &mut dyn SteerCalls,
+    eng: &mut dyn Engine,
+    clear500: bool,
+) {
+    let back = turn_back(t.h(tw::FLAG), t.i(tw::ANG + 4), sc, &mut |k| s.touching(k));
+    if back && p.f(pw::SPD) > 0.0 {
+        set_mode(t, p, 0xC, 0x12);
+        p.set_h(0x17C, 6);
+    } else if stop_check(t, m, p, g, s) {
+        take_mw_tilt(t, m);
+        let len = nj_scalor(m.v3(0));
+        if len < LAND_SOFT || (p.ub(0x35C) == 1 && p.ub(3) != 0xE) {
+            p.set_h(pw::ACTION, 0x10);
+        } else {
+            p.set_h(pw::ACTION, 0x11);
+            eng.call(EngineCall::Rumble {
+                addr: 0x8002_FB2C,
+                args: [p.b(pw::PNUM) as i32, 6, 0xF, 0],
+            });
+        }
+        p.set_h(0x17C, 0);
+    } else {
+        take_mw_tilt(t, m);
+        set_mode(t, p, 1, 6);
+    }
+    if clear500 {
+        t.clear_h(tw::FLAG, 0x500);
+    }
+    let pn = p.b(pw::PNUM) as i32;
+    eng.call(EngineCall::DeferredAt {
+        addr: 0x800B_9020,
+        arg: pn,
+        points: [p.v3(0x3F4), p.v3(0x40C)],
+    });
+    eng.call(EngineCall::DeferredAt {
+        addr: 0x800B_9020,
+        arg: pn,
+        points: [p.v3(0x400), p.v3(0x418)],
+    });
+    eng.call(se_call(0x2003));
+}
+
+fn take_mw_tilt(t: &mut Work, m: &Work) {
+    t.set_i(tw::ANG, m.i(0x18));
+    t.set_i(tw::ANG + 8, m.i(0x20));
+}
+
+fn hover_start(t: &mut Work, p: &mut Work) {
+    if p.ub(pw::CHAR) == 7 && p.w(0x24) & 0x10_0000 != 0 {
+        set_mode(t, p, 0x3C, 0x7F);
+        t.clear_h(tw::FLAG, 0x500);
+    }
+    if p.ub(pw::CHAR) == 6 && p.w(0x24) & 0x40 != 0 {
+        set_mode(t, p, 0x3C, 0xB3);
+        t.clear_h(tw::FLAG, 0x500);
+    }
+}
+
+/// The jump check the modes share: with the button pressed, fn_800ADD34
+/// at or above +0xE8, else fn_800ADED0.
+fn try_jump(
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    g: &ActGlobals,
+    s: &mut dyn ActSteps,
+    eng: &mut dyn Engine,
+) -> bool {
+    if !button_pressed(t, p, g) {
+        return false;
+    }
+    let ride = s.ride_acc(p);
+    if p.f(pw::SPD) >= p.f(0xE8) {
+        walker_jump(t, m, p, ride, None, eng);
+    } else {
+        walker_jump(t, m, p, ride, Some(0x41), eng);
+    }
+    true
+}
+
+/// fn_800B24F4(task work, motion work, player work): the walker's action
+/// step, run before its mode handlers.
+#[allow(clippy::too_many_arguments)]
+pub fn action_step(
+    stack: &mut MatrixStack,
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    g: &ActGlobals,
+    hist: &PlayerHistory,
+    s: &mut dyn ActSteps,
+    sc: &mut dyn SteerCalls,
+    world: &mut dyn LockWorld,
+    eng: &mut dyn Engine,
+) {
+    if p.h(pw::STATUS) as u16 & 0x8000 != 0 {
+        t.or_h(tw::FLAG, 0x8000);
+        t.set_h(tw::WTIMER, 0);
+    } else if t.h(tw::WTIMER) == 0 {
+        if s.damage(t, p) {
+            t.or_h(tw::FLAG, 0x8000);
+            t.clear_h(tw::FLAG, 0x3900);
+            if p.h(pw::STATUS) & 3 != 0 {
+                p.clear_h(pw::STATUS, 3);
+            }
+        } else {
+            t.clear_h(tw::FLAG, 0x8000);
+        }
+    } else {
+        if g.gs_b49 == 0 {
+            t.set_h(tw::WTIMER, t.h(tw::WTIMER).wrapping_sub(1));
+        }
+        t.clear_h(tw::FLAG, 4);
+    }
+    queue_event_requests(t, p, g);
+    queue_button_requests(t, p);
+    queue_ground_request(t, p);
+    if p.h(0x368) > 0 {
+        push_request(p, 0x42);
+    }
+    if lock_in_range(stack, t, p, world) {
+        let r = if p.ub(3) == 0xE {
+            0x3E
+        } else if p.ub(pw::CHAR) == 7 {
+            0x3D
+        } else {
+            0x3E
+        };
+        push_request(p, r);
+    }
+    queue_stand_requests(t, p);
+    let pnum = p.b(pw::PNUM) as usize;
+    let mode = t.b(tw::MODE) as i32;
+    macro_rules! cmd {
+        () => {
+            if walker_command(t, m, p, g, s, eng) {
+                return;
+            }
+        };
+    }
+    match mode {
+        0 | 0x11 => {
+            cmd!();
+            if action_button(t, m, p, g, s, eng)
+                || leave_ground(t, m, p, g, hist, s, eng)
+                || try_jump(t, m, p, g, s, eng)
+            {
+                return;
+            }
+            if s.analog(t, p) {
+                set_mode(t, p, 1, 6);
+                return;
+            }
+            if mode == 0x11 {
+                if nj_scalor(m.v3(0)) < p.f(0xE0) || g.query_20 > SLOPE_FLAT_11 {
+                    t.set_b(tw::MODE, 0);
+                    p.set_h(0x18, 0);
+                    p.set_h(pw::ACTION, 1);
+                }
+                return;
+            }
+            if g.query_20 < SLOPE_FLAT && nj_scalor(p.v3(pw::SPD)) > p.f(0xE0) {
+                t.set_b(tw::MODE, 0x11);
+                let mut aim = m.i(0x1C);
+                let c = slope_aim(
+                    stack,
+                    t.h(tw::FLAG),
+                    t.ang3(tw::ANG),
+                    m.v3(0),
+                    &mut aim,
+                    p.h(0x14),
+                    p.w(0x88),
+                    p.f(0xE4),
+                    g.gravity,
+                    sc,
+                );
+                m.set_i(0x1C, aim);
+                p.set_h(pw::ACTION, if c < 0.0 { 0x1D } else { 0x1C });
+            }
+        }
+        1 => {
+            cmd!();
+            if action_button(t, m, p, g, s, eng)
+                || leave_ground(t, m, p, g, hist, s, eng)
+                || try_jump(t, m, p, g, s, eng)
+                || stop_check(t, m, p, g, s)
+            {
+                return;
+            }
+            let back = turn_back(t.h(tw::FLAG), t.i(tw::ANG + 4), sc, &mut |k| s.touching(k));
+            if back && p.f(pw::SPD) >= p.f(0xE4) {
+                set_mode(t, p, 0xC, 0x12);
+                p.set_h(0x17C, 6);
+                eng.call(se_call(match p.ub(3) {
+                    0xD => 0x201A,
+                    0xE => 0x201D,
+                    _ => 0x2002,
+                }));
+            }
+        }
+        2 => {
+            cmd!();
+            if leave_ground(t, m, p, g, hist, s, eng) || try_jump(t, m, p, g, s, eng) {
+                t.clear_h(tw::FLAG, 0x2000);
+                return;
+            }
+            if p.f(pw::SPD) < p.f(0xE4) {
+                set_mode(t, p, 1, 6);
+                t.clear_h(tw::FLAG, 0x2000);
+                return;
+            }
+            if stop_check(t, m, p, g, s) {
+                t.clear_h(tw::FLAG, 0x2000);
+            }
+        }
+        6 | 0xA | 0x3C => {
+            if walker_command(t, m, p, g, s, eng) {
+                if mode == 0x3C {
+                    eng.call(EngineCall::StopSound { id: 0x2009 });
+                }
+                return;
+            }
+            if t.h(tw::FLAG) & 3 != 0 {
+                land(t, m, p, g, s, sc, eng, mode == 6);
+                if mode == 0x3C {
+                    eng.call(EngineCall::StopSound { id: 0x2009 });
+                }
+                return;
+            }
+            match mode {
+                6 => {
+                    if p.h(pw::STATUS) & 0x4000 == 0 && button_pressed(t, p, g) {
+                        hover_start(t, p);
+                        p.set_f(0x37C, t.f(tw::POS + 4));
+                        return;
+                    }
+                    if button_held(t, p, g) {
+                        p.set_f(0x68, fmadds(HOVER_LIFT, p.f(0xF8), p.f(0x68)));
+                    }
+                    let a = p.h(pw::ACTION) as i32;
+                    if (a == 0x41
+                        || a == 0x42
+                        || ((a - 0x79) & 0xFFFF) <= 1
+                        || ((a - 0xAD) & 0xFFFF) <= 1)
+                        && p.f(0x68) <= 0.0
+                    {
+                        p.set_h(pw::ACTION, 0x43);
+                    }
+                }
+                0xA => {
+                    if p.h(pw::STATUS) & 0x4000 == 0 && button_pressed(t, p, g) {
+                        hover_start(t, p);
+                        p.set_f(0x37C, NO_HOVER_Y);
+                    }
+                }
+                _ => {
+                    if g.held[pnum] == 0 || p.h(pw::STATUS) & 0x4000 != 0 {
+                        set_mode(t, p, 0xA, 0xF);
+                        eng.call(EngineCall::StopSound { id: 0x2009 });
+                    } else {
+                        m.set_f(0x10, fmadds(HOVER_PULL, p.f(0x138), m.f(0x10)));
+                    }
+                }
+            }
+        }
+        7 | 8 => {
+            cmd!();
+            if inner_product(m.v3(0), g.gravity) >= 0.0 {
+                set_mode(t, p, 0xA, 0xE);
+            }
+        }
+        0xC => {
+            cmd!();
+            if leave_ground(t, m, p, g, hist, s, eng) || try_jump(t, m, p, g, s, eng) {
+                return;
+            }
+            if p.h(pw::ACTION) != 0x12 {
+                go_stand(t, m, p, g, s);
+            }
+        }
+        0xB => {
+            cmd!();
+            let n = p.h(0x18);
+            p.set_h(0x18, n.wrapping_add(1));
+            if n <= 0xB4 && g.button_4c[pnum] == 0 && g.pressed[pnum] == 0 && g.action[pnum] == 0 {
+                return;
+            }
+            if t.h(tw::FLAG) & 3 != 0 {
+                take_mw_tilt(t, m);
+                go_stand(t, m, p, g, s);
+            } else {
+                set_mode(t, p, 0xA, 0xF);
+            }
+        }
+        0xF => {
+            cmd!();
+            let h6 = t.h(tw::WTIMER) as u16;
+            let landing = if t.ub(2) == 3 && h6 != 0x78 {
+                true
+            } else if !(h6 > 0x5A || g.stage == 0x1D) {
+                true
+            } else {
+                h6 <= 0x41 && g.stage == 0x1D
+            };
+            if landing && t.h(tw::FLAG) & 3 != 0 {
+                take_mw_tilt(t, m);
+                if stop_check(t, m, p, g, s) {
+                    p.set_h(pw::ACTION, 0x16);
+                } else {
+                    set_mode(t, p, 1, 6);
+                }
+                return;
+            }
+            if h6 > 0x5A
+                || t.h(tw::FLAG) & 3 != 0
+                || t.h(tw::FLAG) & 0x4000 != 0
+                || p.h(pw::STATUS) & 0x4000 != 0
+                || g.held[pnum] == 0
+            {
+                return;
+            }
+            hover_start(t, p);
+            p.set_f(0x37C, NO_HOVER_Y);
+        }
+        0x33 => {
+            cmd!();
+            try_jump(t, m, p, g, s, eng);
+        }
+        0x12 | 0x38 => {
+            walker_command(t, m, p, g, s, eng);
+        }
+        0x10 => {
+            cmd!();
+            if p.h(pw::ACTION) == 0x18
+                || leave_ground(t, m, p, g, hist, s, eng)
+                || p.h(pw::ACTION) == 0x19
+            {
+                return;
+            }
+            go_stand(t, m, p, g, s);
+        }
+        0x43 => {
+            let a = p.h(pw::ACTION);
+            if a != 0x18 && a != 0x19 {
+                go_stand(t, m, p, g, s);
+            }
+        }
+        0x26 => {
+            cmd!();
+            if g.button_4c[pnum] != 0 || g.pad_10[pnum] & 0x3_06FE != 0 {
+                p.set_h(0x362, p.h(0x362).wrapping_sub(0x14));
+            }
+            if p.h(0x362) <= 0 {
+                go_stand(t, m, p, g, s);
+            }
+        }
+        0x2A | 0x35 => {
+            cmd!();
+            if p.h(0x180) & 1 != 0 {
+                go_stand(t, m, p, g, s);
+            }
+        }
+        0x32 => {
+            cmd!();
+            go_stand(t, m, p, g, s);
+        }
+        0x2D | 0x30 => {
+            cmd!();
+            if p.h(0x180) & 1 != 0 {
+                go_stand(t, m, p, g, s);
+            } else {
+                t.set_b(tw::MODE, 0x35);
+            }
+        }
+        0x2E | 0x2F => {
+            cmd!();
+            let a = p.h(0x178);
+            if a == 0x52 || a == 0x53 {
+                t.set_b(tw::MODE, 0x2F);
+            } else {
+                go_stand(t, m, p, g, s);
+            }
+        }
+        0x3D | 0x3E => {
+            cmd!();
+            let keep = if mode == 0x3D { 0x80 } else { 0xB4 };
+            if p.h(pw::ACTION) != keep {
+                go_stand(t, m, p, g, s);
+                t.clear_h(tw::FLAG, 0x400);
+            }
+        }
+        0x3F | 0x40 => {
+            cmd!();
+            let want = if mode == 0x3F { 0x83 } else { 0x84 };
+            if p.h(0x17A) == want {
+                go_stand(t, m, p, g, s);
+            }
+        }
+        0x41 => {
+            cmd!();
+            let lim = if p.ub(3) == 0xE { 0xDC } else { 0xA0 };
+            let n = p.h(0x362);
+            p.set_h(0x362, n.wrapping_add(1));
+            if n as i32 > lim {
+                go_stand(t, m, p, g, s);
+            } else if p.ub(3) == 7 {
+                p.set_f(0x378, g.motion_82_frames.wrapping_add(2) as f32);
+            }
+        }
+        0x36 => {
+            if t.ub(tw::SMODE) == 0xF {
+                go_stand(t, m, p, g, s);
+                t.clear_h(tw::FLAG, 0x2500);
+            }
+        }
+        0x3A => {
+            if g.pad_10[pnum] & 4 != 0 {
+                set_mode(t, p, 1, 6);
+            }
+        }
+        _ => {}
+    }
 }

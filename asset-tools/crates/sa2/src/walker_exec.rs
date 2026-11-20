@@ -37,6 +37,8 @@ pub enum EngineCall {
         arg: i32,
         points: [crate::ninja_matrix::Vec3; 2],
     },
+    /// fn_80069C58(id, task work): stop this task's sound `id`.
+    StopSound { id: i32 },
     /// Controller rumble: fn_8002FB2C or fn_8002F9D4 (pnum, a, b, c).
     Rumble { addr: u32, args: [i32; 4] },
     /// A sound engine call: SE_Call (0x8006B978)(id, a, b, c) or
