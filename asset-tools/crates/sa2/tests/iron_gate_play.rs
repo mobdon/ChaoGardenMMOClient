@@ -105,6 +105,7 @@ fn installed_mover_rules_and_session_inventory() {
             (5, 3, 2)
         );
         assert_eq!(s.springs.len(), 6);
+        assert_eq!(s.dash_panels.len(), 12);
         assert_eq!(s.checkpoints.len(), 3);
         assert_eq!(s.rings_placed.len(), 10);
         // Only the regular goal reaches its contact route for Mission 1.

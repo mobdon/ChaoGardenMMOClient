@@ -113,6 +113,7 @@ fn headless(
         "goals": s.goals,
         "checkpoints": s.checkpoints,
         "springs": s.springs,
+        "dashPanels": s.dash_panels,
         "movers": s.movers,
         "deathZones": s.death_zone_count(),
         "unimplementedPlacements": s.unimplemented,
