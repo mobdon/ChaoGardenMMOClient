@@ -96,4 +96,6 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 
 [Goal-ring contact](GOAL-RING.md) covers native initialization decisions and activation calls across the 28 mapped story levels. The mission controller and automatic story advancement remain unimplemented.
 
+[Iron Gate native rules](PLAYABLE-IRON-GATE.md) runs the first Dark stage's lifts, elevators, bridges, rings and goal ring from the game files. It is not playable: the walker's movement code is not readable on the Steam build.
+
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.
