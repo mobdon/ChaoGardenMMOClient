@@ -38,8 +38,11 @@ import importlib.util
 import json
 import math
 from pathlib import Path
+import os
 import re
+import shutil
 import struct
+import subprocess
 import sys
 
 import bpy
@@ -145,6 +148,12 @@ def export_native_nodes(objects, path):
     document, _ = read_glb(path)
     path.unlink()
     return gltf_bone_nodes(document)
+
+
+def mesh_diffuse(mesh):
+    """Native material diffuse per material slot, in plist order (SAIO keeps it per material)."""
+    return [[round(c, 5) for c in slot.material.saio_material.diffuse]
+            for slot in mesh.material_slots if slot.material]
 
 
 def select_only(objects):
@@ -257,7 +266,7 @@ def node_offsets(z_nodes, target_nodes):
 # --- conversion -------------------------------------------------------------------------------------
 
 def add_targets(z_armature, z_meshes, base, targets):
-    report = {'targets': {}, 'gltfTargetNodes': {}, 'poseBasis': {}}
+    report = {'targets': {}, 'gltfTargetNodes': {}, 'poseBasis': {}, 'diffuse': {}}
     z_bones = bones_by_index(z_armature)
     # Every rig here carries only SAIO's import pose (motions are loaded after this), so
     # vertices are measured in each model's native node frame.
@@ -267,6 +276,7 @@ def add_targets(z_armature, z_meshes, base, targets):
             raise RuntimeError(f'{name}: attach nodes {sorted(meshes)} differ from {base} {sorted(z_meshes)}')
         t_bones = bones_by_index(armature)
         bpy.context.view_layer.update()
+        report['diffuse'][suffix] = {index: mesh_diffuse(meshes[index]) for index in meshes}
         if set(t_bones) != set(z_bones):
             raise RuntimeError(f'{name}: node indices differ from {base}')
         maximum = 0.0
@@ -427,6 +437,7 @@ def convert_family(base, targets, preview):
     source, armature, z_meshes, z_objects = import_model(base, with_motions=False)
     z_pose = initial_pose(armature)
     z_native = export_native_nodes(z_objects, OUTPUT / f'chao-body-{base}.nodes.glb')
+    base_diffuse = {index: mesh_diffuse(mesh) for index, mesh in z_meshes.items()}
     morph = add_targets(armature, z_meshes, base, targets)
     load_motions(armature)
     # Export from SAIO's import pose (the native rest); the actions are exported as clips.
@@ -455,8 +466,14 @@ def convert_family(base, targets, preview):
     root = next((node for node in document['nodes'] if node.get('name') == armature.name), None)
     if root is None:
         raise RuntimeError(f'{name}: armature node {armature.name} not in GLB')
+    # AL_DeformObject also blends the first material chunk's diffuse RGB per node with the
+    # clamped H/V/growth weights; record the native diffuse of every node that differs.
+    diffuse = {index: {'base': base_diffuse[index], **{suffix: morph['diffuse'][suffix][index] for suffix in names}}
+               for index in sorted(base_diffuse)
+               if any(morph['diffuse'][suffix][index] != base_diffuse[index] for suffix in names)}
     root.setdefault('extras', {})['chaoMorph'] = {'family': base, 'targets': names,
-                                                  'nodeOffsets': offsets, 'space': 'gltf-node-local'}
+                                                  'nodeOffsets': offsets, 'space': 'gltf-node-local',
+                                                  'materialDiffuse': {'nodes': diffuse, 'order': 'material slots in plist order, RGBA 0..1'}}
     write_glb(temporary, document, rest)
     shared.replace_asset(temporary, target)
     checked, _ = read_glb(target)
@@ -485,6 +502,27 @@ def export_face_textures():
     return eyes
 
 
+def export_mouth_textures():
+    """al_mouth.prs (al_mouth01..19) is the texlist the node-027 mouth pairs index.
+
+    ArchiveTool writes beside its input, so it runs on a working copy under .local.
+    """
+    folder = EXTRACTED / 'textures/al_mouth'
+    if not (folder / 'index.txt').exists():
+        working = EXTRACTED / 'textures/al_mouth.prs'
+        shutil.copyfile(shared.GAME_PATH / 'resource/gd_PC/al_mouth.prs', working)
+        tool = ROOT / '.local/tools/sa-tools-786/bin/lib/ArchiveTool.dll'
+        subprocess.run(['dotnet', str(tool), '-png', str(working)], check=True, timeout=60, stdin=subprocess.DEVNULL,
+                       capture_output=True, env={**os.environ, 'DOTNET_ROLL_FORWARD': 'Major'})
+    names = [row.split(',')[1] for row in (folder / 'index.txt').read_text().splitlines() if ',' in row]
+    files = []
+    for filename in names:
+        out = OUTPUT / f'chao-mouth-{Path(filename).stem.lower()}.png'
+        out.write_bytes((folder / filename).read_bytes())
+        files.append(out.name)
+    return files
+
+
 def main():
     options = args_after_dashes()
     only = options[options.index('--only') + 1] if '--only' in options else None
@@ -495,16 +533,22 @@ def main():
             continue
         reports.append(convert_family(base, targets, preview))
     eye_files = export_face_textures()
+    mouth_files = export_mouth_textures()
     # eyeFiles follows the al_eye archive order (index 0..12), which the native eye tables index.
     # eyelid: the exported eyelid mesh nodes' local frames equal the native node-local frames
     # (glTF vertices == native vertices), so native njRotateZ(+SlopeAng)·njRotateX(CloseAng) on
     # node 019 are node-space z then x with positive sign (node 022 negates the slope). Checked by
     # render: CloseAng 0 is the modelled half lid, +0x4000 fully closed, eye 10 (75 deg, slope 20)
-    # gives the angled lids. Mouth texture mappings stay unresolved.
+    # gives the angled lids. mouthFiles is the al_mouth.prs archive order (texlist data 0x97C34);
+    # fn_60_17964 writes pair[0] into the first texture chunk of node 027 (the al_mouth03 part)
+    # and pair[1] into the second (al_mouth02). Mouth 0 is al_mouth01 twice, an 8x8 texture
+    # with zero alpha, so it hides the mouth.
     face_manifest = {'eyeFiles': eye_files,
                      'eyelid': {'closeAxis': 'x', 'closeSign': 1, 'slopeAxis': 'z', 'slopeSign': 1,
                                 'space': 'eyelid mesh node local (native node local)'},
-                     'source': 'al_eye.prs archive order; al_draw_B 0x8CD4-0x8EA8'}
+                     'mouthFiles': mouth_files,
+                     'mouthParts': {'al_mouth03': 0, 'al_mouth02': 1},
+                     'source': 'al_eye.prs / al_mouth.prs archive order; al_draw_B 0x8CD4-0x8EA8; fn_60_17964'}
     (OUTPUT / 'chao-face.json').write_text(json.dumps(face_manifest, indent=2) + '\n')
     (OUTPUT / 'chao-evolution-report.json').write_text(json.dumps(reports, indent=2) + '\n')
     print('SA2_CHAO_EVOLUTION=' + json.dumps([
