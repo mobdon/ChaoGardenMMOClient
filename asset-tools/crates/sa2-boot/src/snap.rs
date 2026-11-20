@@ -3,7 +3,7 @@
 //! drawn at 640x480 and written as a PNG.
 use sa2_gx::api::Frame;
 use sa2_gx::gpu::GxRenderer;
-use std::cell::RefCell;
+use sa2_recomp::{global, global::Global};
 use std::path::{Path, PathBuf};
 
 const W: u32 = 640;
@@ -18,9 +18,7 @@ struct Snap {
     buf: wgpu::Buffer,
 }
 
-thread_local! {
-    static SNAP: RefCell<Option<Snap>> = const { RefCell::new(None) };
-}
+static SNAP: Global<Option<Snap>> = global!(None);
 
 fn open() -> Result<Snap, String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());

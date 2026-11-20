@@ -6,7 +6,7 @@ use crate::{io, original};
 use sa2_gx::api::{Frame, Ram};
 use sa2_gx::fifo::GxFifo;
 use sa2_recomp::rt::{Cpu, Mem};
-use std::cell::RefCell;
+use sa2_recomp::{global, global::Global};
 
 pub const GX_FLUSH: u32 = 0x8010_14F0;
 pub const GX_DRAW_DONE: u32 = 0x8010_154C;
@@ -21,9 +21,7 @@ struct State {
     frames: Vec<(u32, Frame)>,
 }
 
-thread_local! {
-    static GX: RefCell<State> = RefCell::new(State::default());
-}
+static GX: Global<State> = global!(State::default());
 
 fn pipe_write(_a: u32, size: u32, v: u32) {
     GX.with_borrow_mut(|s| s.queued.extend(io::bytes(size, v)));
@@ -68,9 +66,7 @@ pub fn unhandled() -> std::collections::BTreeMap<String, u64> {
     GX.with_borrow(|s| s.fifo.gx.unhandled.clone())
 }
 
-thread_local! {
-    static REPORTED: RefCell<std::collections::BTreeSet<String>> = RefCell::new(Default::default());
-}
+static REPORTED: Global<std::collections::BTreeSet<String>> = global!(Default::default());
 
 /// Unhandled GX entries not returned by an earlier call (for logging).
 pub fn unhandled_new() -> Vec<String> {

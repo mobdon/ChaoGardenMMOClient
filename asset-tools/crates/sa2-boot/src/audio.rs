@@ -4,7 +4,7 @@
 //! run their callbacks at once. No sound is mixed yet.
 use crate::{guest_call, io};
 use sa2_recomp::rt::{Cpu, Mem};
-use std::cell::{Cell, RefCell};
+use sa2_recomp::{global, global::Global};
 
 pub const AI_REGISTER_DMA_CALLBACK: u32 = 0x800F_56E4;
 pub const AI_INIT_DMA: u32 = 0x800F_5728;
@@ -29,10 +29,8 @@ pub const AI_REGS: u32 = 0xCC00_6C00;
 const ARAM_SIZE: usize = 16 << 20;
 const ARAM_USER_BASE: u32 = 0x4000;
 
-thread_local! {
-    static ARAM: RefCell<Vec<u8>> = RefCell::new(vec![0; ARAM_SIZE]);
-    static AR_NEXT: Cell<u32> = const { Cell::new(ARAM_USER_BASE) };
-}
+static ARAM: Global<Vec<u8>> = global!(vec![0; ARAM_SIZE]);
+static AR_NEXT: Global<u32> = global!(ARAM_USER_BASE);
 
 fn nothing(_c: &mut Cpu, _m: &mut Mem) {}
 fn zero(c: &mut Cpu, _m: &mut Mem) {

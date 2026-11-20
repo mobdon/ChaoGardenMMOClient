@@ -2,7 +2,7 @@
 //! ranges to the modules that claimed them and the rest to whatever the
 //! host had installed before.
 use sa2_recomp::rt::Mem;
-use std::cell::RefCell;
+use sa2_recomp::{global, global::Global};
 
 pub type Read = fn(u32, u32) -> u32;
 pub type Write = fn(u32, u32, u32);
@@ -14,14 +14,12 @@ struct Routes {
     write_rest: Write,
 }
 
-thread_local! {
-    static ROUTES: RefCell<Routes> = RefCell::new(Routes {
-        reads: Vec::new(),
-        writes: Vec::new(),
-        read_rest: |_, _| 0,
-        write_rest: |_, _, _| {},
-    });
-}
+static ROUTES: Global<Routes> = global!(Routes {
+    reads: Vec::new(),
+    writes: Vec::new(),
+    read_rest: |_, _| 0,
+    write_rest: |_, _, _| {},
+});
 
 fn dispatch_read(a: u32, size: u32) -> u32 {
     let f = ROUTES.with_borrow(|r| {
