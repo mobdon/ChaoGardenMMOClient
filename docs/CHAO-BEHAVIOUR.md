@@ -42,5 +42,5 @@ that lists any state without a clip. The server serves it at
 - Movement speed while walking is the server's existing resident pace, because
   native Chao acceleration is not traced; the walk clip plays at its native
   speed.
-- Mouth textures are not drawn yet (appearance work).
+- Mouths draw once the appearance work (client PR #431) merges.
 - The steady-head policy (VIS-14) still applies during behaviour clips.
