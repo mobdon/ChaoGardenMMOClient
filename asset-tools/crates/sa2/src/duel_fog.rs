@@ -97,7 +97,7 @@ fn call(calls: &mut Vec<Value>, a: u32, args: Value) {
     calls.push(json!({ "engine": format!("0x{a:08x}"), "args": args }));
 }
 fn rgba(c: u32) -> u32 {
-    (c << 8) | (c >> 24)
+    c.rotate_left(8)
 }
 
 pub struct Fog<'a> {

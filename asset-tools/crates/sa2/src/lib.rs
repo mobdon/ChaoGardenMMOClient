@@ -19,6 +19,7 @@ pub mod damage_ring_stage;
 pub mod death_zones;
 pub mod demo;
 pub mod duel_debris;
+pub mod duel_director;
 pub mod duel_dust;
 pub mod duel_fireball;
 pub mod duel_fog;

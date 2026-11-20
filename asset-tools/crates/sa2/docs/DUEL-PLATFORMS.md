@@ -186,6 +186,27 @@ near, and no flag 2 means type 5 with near -10 (-50 when blending). Colours
 go to the engine as RGBA. Deleting the manager frees the worker and, if it
 owns the engine fog, resets it.
 
+## Duel director
+
+\duel_director\ ports the \ControlShadow\ task update (+0x3CC) with its
+helpers: the lane clamp (+0x0, keeps the rival within |Z| < 50), the camera
+target (+0x8C, smoothed toward 80 ahead of player 1 when they are more than
+80 apart), and the three facing tests (+0x168, +0x280, +0x334) built on the
+engine atan2 and angle difference (< 0x5000 BAMS) and distance (< 19). Each
+update first handles a fall below Y -50 or falling 150 behind (mode 9, the
+lose sequence and voice line), then dispatches 13 modes: 0 wait for game
+mode 0x10 and open the dialogue; 1 intro camera and the rival's first line;
+2/12 and 5 race pacing, which scales the rival's speed by 1.005-1.007 when
+behind and by 0.999/0.985/0.972/0.96 (by gauge) when ahead and moves to the
+turn (3), knock-back (6) or win (10, reached 90 + 250 - 20 x gauge ahead)
+modes; 3, 4, 6 and 7 the jump and landing checks; 8 and 10 the win camera;
+9 the lose staging at 60, 300 and 330 updates. The tail runs the lane clamp
+and camera target, resets on game mode 7 or a cleared game word, advances
+the timer and keeps the gauge task alive. Stores of engine doubles use the
+architectural \stfs\ conversion (no rounding). The dialogue window
+(+0x22070), message effect (+0x18620) and gauge (+0x20470) are recorded as
+local calls.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -229,6 +250,7 @@ python asset-tools/crates/sa2/tests/duel_dust_ppc.py asset-tools/crates/sa2/targ
 python asset-tools/crates/sa2/tests/duel_stage_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_stage_setup_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_fog_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_director_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
@@ -278,5 +300,7 @@ scenarios (solo; rival Sonic with a light override and a language fallback;
 rival Shadow with failed allocations and existing state; full and empty
 teardown) match `duel-stage-setup` in every ordered engine call and every
 written location. \duel_fog_ppc.py\ runs 120 random fog callbacks; every engine call
-and all fog state match \duel-fog\.
+and all fog state match \duel-fog\. \duel_director_ppc.py\ runs 600 random director updates covering
+every mode; all 2,136 engine and local calls, the work area and every
+written engine global match \duel-director\.
 Nothing launches the game.

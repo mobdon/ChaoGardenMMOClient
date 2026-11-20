@@ -6,7 +6,7 @@ use sa2_asset_tools::{
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="fan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nduel-generator stg42D.rel OUTPUT.json REQUEST.json\nduel-platform-update stg42D.rel OUTPUT.json REQUEST.json\nduel-meteor stg42D.rel OUTPUT.json REQUEST.json\nduel-debris stg42D.rel OUTPUT.json REQUEST.json\nduel-dust stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-frame stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-setup stg42D.rel OUTPUT.json REQUEST.json\nduel-fog stg42D.rel OUTPUT.json REQUEST.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-stage-reuse EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
+pub(super) const USAGE:&str="fan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nduel-generator stg42D.rel OUTPUT.json REQUEST.json\nduel-platform-update stg42D.rel OUTPUT.json REQUEST.json\nduel-meteor stg42D.rel OUTPUT.json REQUEST.json\nduel-debris stg42D.rel OUTPUT.json REQUEST.json\nduel-dust stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-frame stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-setup stg42D.rel OUTPUT.json REQUEST.json\nduel-fog stg42D.rel OUTPUT.json REQUEST.json\nduel-director stg42D.rel OUTPUT.json REQUEST.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-stage-reuse EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
         "duel-platform"
@@ -36,7 +36,8 @@ pub(super) fn arity(cmd: &str) -> Option<usize> {
         | "duel-dust"
         | "duel-stage-frame"
         | "duel-stage-setup"
-        | "duel-fog" => Some(4),
+        | "duel-fog"
+        | "duel-director" => Some(4),
         "stage-positions" | "death-zones" | "stage-paths" | "story" | "event-frame"
         | "demo-frame" | "fan-stage-reuse" | "fan-levels" | "fan-tasks" | "stage20-splash"
         | "stage20-entry" => Some(4),
@@ -218,6 +219,18 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 "generator-frames",
             )?;
             let result = sa2_asset_tools::duel_platform::replay(&bytes, &req.bytes)?;
+            extras.push(req);
+            result
+        }
+        "duel-director" => {
+            let path = Path::new(&args[3]);
+            let req = Extra::read(
+                path,
+                basename(path)?.to_owned(),
+                1024 * 1024,
+                "director-frame",
+            )?;
+            let result = sa2_asset_tools::duel_director::replay(&bytes, &req.bytes)?;
             extras.push(req);
             result
         }
