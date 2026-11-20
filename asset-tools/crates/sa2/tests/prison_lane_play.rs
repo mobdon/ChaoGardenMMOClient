@@ -4,7 +4,7 @@
 use sa2_asset_tools::{
     fan_stage::Campaign,
     iron_gate_movers::{MoverProgram, PRISON_LANE as LAYOUT},
-    play_session::{Event, MoverState, Outcome, PlayerSample, Session, Sources},
+    play_session::{Event, MoverState, PlayerSample, Session, Sources},
 };
 use std::{fs, path::PathBuf};
 
@@ -144,6 +144,7 @@ fn standing_on_the_one_way_elevator_carries_it_to_its_target() {
         let stand = PlayerSample {
             center: s.movers[i].position(),
             standing_on: Some(i),
+            touching_goal: None,
         };
         let mut started = None;
         let mut bridge = None;
@@ -182,6 +183,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let events = s.step(Some(PlayerSample {
             center: ring,
             standing_on: None,
+            touching_goal: None,
         }));
         // Strictly within 14 of the centre; two lines overlap here, 10 apart.
         let taken = events
@@ -194,11 +196,12 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let events = s.step(Some(PlayerSample {
             center: goal,
             standing_on: None,
+            // The engine reports the contact; its test is main-program code.
+            touching_goal: Some(0),
         }));
         assert!(events
             .iter()
             .any(|e| matches!(e, Event::GoalContact { sound: 0x1013, .. })));
         assert_eq!(s.slot_words[0], 2);
-        assert_eq!(s.outcome, Outcome::Cleared);
     });
 }

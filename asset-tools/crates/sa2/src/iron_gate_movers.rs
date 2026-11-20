@@ -42,6 +42,9 @@ pub struct MoverProgram {
     pub elevator_door_b_initial: f32,
     pub elevator_door_b_open: f32,
     pub elevator_door_b_close_step: f32,
+    /// The elevator registers its dynamic collision object this far below
+    /// its placement (`fsubs` from Position.y before 0x8002305C).
+    pub elevator_collision_drop: f32,
     /// Initial and required unoccupied frames before the elevator starts.
     pub elevator_ready_frames: u8,
     pub bridge_exec: u32,
@@ -73,10 +76,11 @@ pub struct MoverLayout {
     exec_lis: [u32; 3],
     /// `lis` offsets of: lift rise base, lift speed, elevator speed, door A
     /// step, door A open, door B initial, door B open, door B closing step,
-    /// bridge extend X, bridge speed, bridge elevator range.
-    const_lis: [u32; 11],
+    /// bridge extend X, bridge speed, bridge elevator range, and the drop
+    /// of the elevator's dynamic collision object below its placement.
+    const_lis: [u32; 12],
     /// Values the constants above must read as, in the same order.
-    expect: [f32; 11],
+    expect: [f32; 12],
     expect_exec: [u32; 3],
 }
 
@@ -102,10 +106,10 @@ pub const IRON_GATE: MoverLayout = MoverLayout {
     ],
     exec_lis: [0x326c, 0x1adc, 0x350],
     const_lis: [
-        0x32cc, 0x369c, 0x2118, 0x2000, 0x1cf4, 0x1cf4, 0x25d8, 0x2000, 0x394, 0x74c, 0xac0,
+        0x32cc, 0x369c, 0x2118, 0x2000, 0x1cf4, 0x1cf4, 0x25d8, 0x2000, 0x394, 0x74c, 0xac0, 0x1c60,
     ],
     expect: [
-        20.0, 0.5, 0.3, 0.2, -9.5, -9.5, -9.5, 0.2, -140.0, 8.0, 450.0,
+        20.0, 0.5, 0.3, 0.2, -9.5, -9.5, -9.5, 0.2, -140.0, 8.0, 450.0, 40.0,
     ],
     expect_exec: [0x35dc, 0x1f7c, 0x688],
 };
@@ -134,10 +138,10 @@ pub const PRISON_LANE: MoverLayout = MoverLayout {
     ],
     exec_lis: [0x475c, 0x2f70, 0x344],
     const_lis: [
-        0x47bc, 0x4b60, 0x35bc, 0x349c, 0x3188, 0x319c, 0x3a1c, 0x34b8, 0x388, 0x740, 0xa98,
+        0x47bc, 0x4b60, 0x35bc, 0x349c, 0x3188, 0x319c, 0x3a1c, 0x34b8, 0x388, 0x740, 0xa98, 0x30f4,
     ],
     expect: [
-        20.0, 0.5, 0.6, 0.2, -9.5, 0.0, -36.3, 0.32, -140.0, 1.5, 450.0,
+        20.0, 0.5, 0.6, 0.2, -9.5, 0.0, -36.3, 0.32, -140.0, 1.5, 450.0, 40.0,
     ],
     expect_exec: [0x4aa0, 0x3438, 0x67c],
 };
@@ -229,7 +233,7 @@ impl MoverProgram {
         if execs != layout.expect_exec {
             return Err(Error::invalid("unexpected mover exec callbacks"));
         }
-        let mut c = [0f32; 11];
+        let mut c = [0f32; 12];
         for (i, &lis) in layout.const_lis.iter().enumerate() {
             c[i] = constant(lis)?;
             if c[i] != layout.expect[i] {
@@ -257,6 +261,7 @@ impl MoverProgram {
             bridge_extend_x: c[8],
             bridge_speed: c[9],
             bridge_elevator_range: c[10],
+            elevator_collision_drop: c[11],
             bridge_ready_frames: 0x78,
         })
     }
@@ -271,6 +276,19 @@ fn step_toward(pos: &mut [f32; 3], target: [f32; 3], speed: f32) -> bool {
         pos[i] += d[i] * f;
     }
     f == 1.0
+}
+
+/// Sine and cosine of a BAMS angle, only for whole quarter turns: the
+/// engine's trig table is main-program data that is not read here, and
+/// these are the only angles whose values are exact (0 and +/-1).
+pub fn exact_sin_cos(bams: u16) -> Option<(f32, f32)> {
+    match bams {
+        0 => Some((0.0, 1.0)),
+        0x4000 => Some((1.0, 0.0)),
+        0x8000 => Some((0.0, -1.0)),
+        0xc000 => Some((-1.0, 0.0)),
+        _ => None,
+    }
 }
 
 /// MLIFT: rises by `20 + Scale.x` after the player stands on it for 30
@@ -447,18 +465,19 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    pub fn new(p: &MoverProgram, position: [f32; 3], yaw_bams: u16) -> Self {
-        let a = yaw_bams as f32 * std::f32::consts::TAU / 65536.0;
-        let (s, c) = a.sin_cos();
+    /// None unless the yaw is a whole quarter turn, the only angles whose
+    /// sine and cosine are known exactly without the engine's trig table.
+    pub fn new(p: &MoverProgram, position: [f32; 3], yaw_bams: u16) -> Option<Self> {
+        let (s, c) = exact_sin_cos(yaw_bams)?;
         let x = p.bridge_extend_x;
-        Self {
+        Some(Self {
             retracted: position,
             extended: [position[0] + x * c, position[1], position[2] - x * s],
             position,
             is_extended: false,
             moving: false,
             ready: p.bridge_ready_frames,
-        }
+        })
     }
 
     /// `elevators` gives each registered elevator's position and whether it is moving.
@@ -522,6 +541,7 @@ mod tests {
             bridge_extend_x: -140.0,
             bridge_speed: 8.0,
             bridge_elevator_range: 450.0,
+            elevator_collision_drop: 40.0,
             bridge_ready_frames: 120,
         }
     }
@@ -529,7 +549,8 @@ mod tests {
     #[test]
     fn bridge_extends_toward_a_resting_elevator() {
         let p = program();
-        let mut b = Bridge::new(&p, [2127.0, -669.5, -1027.0], 0);
+        assert!(Bridge::new(&p, [0.0; 3], 0x1000).is_none());
+        let mut b = Bridge::new(&p, [2127.0, -669.5, -1027.0], 0).unwrap();
         assert_eq!(b.extended, [1987.0, -669.5, -1027.0]);
         let top = ([1576.0, -270.0, -1027.5], false);
         let bottom = ([1803.5, -663.0, -1027.5], false);

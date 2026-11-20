@@ -17,7 +17,9 @@ use crate::{
     death_zones,
     fan_stage::MountedStage,
     goal_ring,
-    iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
+    iron_gate_movers::{
+        self as movers, exact_sin_cos, Bridge, Elevator, Lift, MoverLayout, MoverProgram,
+    },
     play_objects::{collision_rows, death_zone_triangles, place_y, read_object_solid},
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
@@ -107,8 +109,6 @@ pub const PRISON_LANE: StageRules = StageRules {
 };
 /// o_ring_M1: pickup when a player collision center is strictly within 14.
 pub const RING_PICKUP_DISTANCE: f32 = 14.0;
-/// GOALRING regular shape radius (two centered spheres, 25 and 8).
-pub const GOAL_RADIUS: f32 = 25.0;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
 const CCUBE_VA: u32 = 0x6e54e0;
@@ -134,6 +134,10 @@ pub struct PlayerSample {
     /// The engine's "player standing on this object" answer, as an index
     /// into `Session::movers`.
     pub standing_on: Option<usize>,
+    /// The engine's collision contact between the player and a goal ring
+    /// (an index into `Session::goals`); the player's own collision shape
+    /// and the CCL test are main-program code.
+    pub touching_goal: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -157,16 +161,6 @@ pub enum Event {
         index: usize,
         sound: u16,
     },
-    Cleared {
-        frame: u32,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Outcome {
-    Playing,
-    Cleared,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -225,9 +219,9 @@ pub struct Spring {
 
 impl Spring {
     /// Launch position and velocity this spring gives a slow player standing on it.
-    pub fn launch(&self) -> (V3, V3, i32) {
+    pub fn launch(&self) -> Option<(V3, V3, i32)> {
         let t = &self.task;
-        match t.kind {
+        Some(match t.kind {
             SpringKind::A => (t.position, self.out, 0),
             SpringKind::B => (
                 [
@@ -235,10 +229,10 @@ impl Spring {
                     t.position[1] + self.out[1] * 0.8,
                     t.position[2] + self.out[2],
                 ],
-                rotate_zxy([0.0, t.scale[1] + 5.0, 0.0], t.angles),
+                rotate_zxy([0.0, t.scale[1] + 5.0, 0.0], t.angles)?,
                 (t.scale[0] as i32).max(0),
             ),
-        }
+        })
     }
 }
 
@@ -289,19 +283,17 @@ fn box_tris(h: V3, c: V3) -> Vec<[V3; 3]> {
         .collect()
 }
 
-pub fn bams_sin_cos(a: i32) -> (f32, f32) {
-    (a as f32 * std::f32::consts::TAU / 65536.0).sin_cos()
-}
-
 /// Ninja order used by the spring tasks: unit, rotate Z, rotate X, rotate Y,
-/// calculate point. The point is rotated by Y first, then X, then Z.
-pub fn rotate_zxy(v: V3, angles: [i32; 3]) -> V3 {
-    let (sy, cy) = bams_sin_cos(angles[1]);
+/// calculate point. The point is rotated by Y first, then X, then Z. None
+/// unless every angle is a whole quarter turn (`exact_sin_cos`).
+pub fn rotate_zxy(v: V3, angles: [i32; 3]) -> Option<V3> {
+    let sc = |a: i32| exact_sin_cos(u16::try_from(a & 0xffff).ok()?);
+    let (sy, cy) = sc(angles[1])?;
     let v = [v[0] * cy + v[2] * sy, v[1], -v[0] * sy + v[2] * cy];
-    let (sx, cx) = bams_sin_cos(angles[0]);
+    let (sx, cx) = sc(angles[0])?;
     let v = [v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx];
-    let (sz, cz) = bams_sin_cos(angles[2]);
-    [v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]]
+    let (sz, cz) = sc(angles[2])?;
+    Some([v[0] * cz - v[1] * sz, v[0] * sz + v[1] * cz, v[2]])
 }
 
 /// Whether a CCUBE's box is the same however its rotation is applied:
@@ -317,19 +309,23 @@ pub fn cube_rotation_is_exact(rotation: [u16; 3]) -> bool {
 /// no X/Z rotation only rotate Y (0x801154E0, the goal ring's spin call)
 /// is applied.
 pub fn ring_line_is_exact(rotation: [u16; 3], scale: V3) -> bool {
-    rotation[0] == 0 && rotation[2] == 0 && scale[1] == 0.0
+    rotation[0] == 0 && rotation[2] == 0 && scale[1] == 0.0 && exact_sin_cos(rotation[1]).is_some()
 }
 
 /// RING_LINEAR (stg09D.rel 0x1B448 with helpers 0x1B1E8 and 0x1B21C) for a
 /// line that `ring_line_is_exact` accepts: the ring count is Scale.z
 /// truncated and clamped to 1..=8, and ring i sits at local
 /// (0, 0, -i * (10 + Scale.x)) turned by the placement's Y rotation.
-pub fn ring_line(position: V3, yaw_bams: u16, scale: V3) -> Vec<V3> {
+/// None unless the yaw is a whole quarter turn.
+pub fn ring_line(position: V3, yaw_bams: u16, scale: V3) -> Option<Vec<V3>> {
     let n = (scale[2] as i32).clamp(1, 8);
     (0..n)
         .map(|i| {
             let local = [0.0, 0.0, -(i as f32) * (RING_LINE_BASE + scale[0])];
-            add(position, rotate_zxy(local, [0, i32::from(yaw_bams), 0]))
+            Some(add(
+                position,
+                rotate_zxy(local, [0, i32::from(yaw_bams), 0])?,
+            ))
         })
         .collect()
 }
@@ -340,16 +336,18 @@ mod ring_line_tests {
 
     #[test]
     fn ring_line_spacing_count_and_yaw() {
-        let r = ring_line([0.0, 0.0, 0.0], 0x4000, [15.0, 0.0, 3.0]);
+        let r = ring_line([0.0, 0.0, 0.0], 0x4000, [15.0, 0.0, 3.0]).unwrap();
         assert_eq!(r.len(), 3);
         // Local -Z turned a quarter about Y points along -X; spacing 25.
         assert!((r[1][0] + 25.0).abs() < 1e-3 && r[1][2].abs() < 1e-3);
         assert!((r[2][0] + 50.0).abs() < 1e-3 && r[2][1] == 0.0);
-        assert_eq!(ring_line([0.0; 3], 0, [20.0, 0.0, 0.2]).len(), 1);
-        assert_eq!(ring_line([0.0; 3], 0, [20.0, 0.0, 12.0]).len(), 8);
+        assert_eq!(ring_line([0.0; 3], 0, [20.0, 0.0, 0.2]).unwrap().len(), 1);
+        assert_eq!(ring_line([0.0; 3], 0, [20.0, 0.0, 12.0]).unwrap().len(), 8);
         // Lines needing the unread trig or X/Z axis calls are not built.
         assert!(!ring_line_is_exact([0, 0x4000, 0], [15.5, 4.0, 3.0]));
         assert!(!ring_line_is_exact([1, 0, 192], [20.0, 0.0, 5.0]));
+        assert!(!ring_line_is_exact([0, 0x2000, 0], [20.0, 0.0, 5.0]));
+        assert!(ring_line([0.0; 3], 0x2000, [20.0, 0.0, 3.0]).is_none());
         assert!(cube_rotation_is_exact([0, 0x8000, 0]));
         assert!(!cube_rotation_is_exact([0, 0x4000, 0]));
     }
@@ -424,7 +422,6 @@ pub struct Session {
     pub frame: u32,
     pub rings: u32,
     pub score: u32,
-    pub outcome: Outcome,
     /// Single-player start row (feet position and BAMS yaw).
     pub start: V3,
     pub start_yaw: u16,
@@ -524,11 +521,29 @@ impl Session {
                 };
                 let pl = &p.placement;
                 let name = def.name.trim_end();
-                let place = |tris: &[[V3; 3]]| -> Vec<[V3; 3]> {
+                // Collision objects keep the placement's Y rotation only
+                // (stg09D.rel 0x4930, 0x30CC, 0x510 and helper 0x9A4C zero
+                // X and Z); None unless the yaw is a whole quarter turn.
+                let place_at = |tris: &[[V3; 3]], at: V3| -> Option<Vec<[V3; 3]>> {
                     tris.iter()
-                        .map(|t| t.map(|v| place_y(v, pl.rotation[1], pl.position)))
+                        .map(|t| {
+                            Some([
+                                place_y(t[0], pl.rotation[1], at)?,
+                                place_y(t[1], pl.rotation[1], at)?,
+                                place_y(t[2], pl.rotation[1], at)?,
+                            ])
+                        })
                         .collect()
                 };
+                let place = |tris: &[[V3; 3]]| place_at(tris, pl.position);
+                let solid = |tris: Vec<[V3; 3]>| {
+                    PlayWorld::from_tris(
+                        tris.into_iter()
+                            .filter_map(|v| make_tri(v, 1, u32::MAX))
+                            .collect(),
+                    )
+                };
+                let inexact = format!("{name} (rotation not a quarter turn)");
                 match (def.function_va, name) {
                     (RING_VA, "RING") => rings_placed.push(Pickup {
                         layer: li,
@@ -539,7 +554,9 @@ impl Session {
                     (RING_LINEAR_VA, "RING_LINEAR")
                         if rules.ring_lines && ring_line_is_exact(pl.rotation, pl.parameters) =>
                     {
-                        for position in ring_line(pl.position, pl.rotation[1], pl.parameters) {
+                        let line = ring_line(pl.position, pl.rotation[1], pl.parameters)
+                            .expect("exact lines have quarter-turn yaws");
+                        for position in line {
                             rings_placed.push(Pickup {
                                 layer: li,
                                 index: p.placement_index,
@@ -581,7 +598,11 @@ impl Session {
                         };
                         let angles = pl.rotation.map(i32::from);
                         let task = StageSpring::new(kind, pl.position, angles, pl.parameters);
-                        let out = rotate_zxy([0.0, 5.0 + pl.parameters[1], 0.0], angles);
+                        let Some(out) = rotate_zxy([0.0, 5.0 + pl.parameters[1], 0.0], angles)
+                        else {
+                            *unimplemented.entry(inexact).or_insert(0) += 1;
+                            continue;
+                        };
                         springs.push(Spring {
                             layer: li,
                             index: p.placement_index,
@@ -591,12 +612,11 @@ impl Session {
                         });
                     }
                     (_, "MLIFT") => {
-                        let solid = PlayWorld::from_tris(
-                            place(&lift_solid)
-                                .into_iter()
-                                .filter_map(|v| make_tri(v, 1, u32::MAX))
-                                .collect(),
-                        );
+                        let Some(tris) = place(&lift_solid) else {
+                            *unimplemented.entry(inexact).or_insert(0) += 1;
+                            continue;
+                        };
+                        let solid = solid(tris);
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
@@ -610,12 +630,18 @@ impl Session {
                         });
                     }
                     (_, "ELV") => {
-                        let solid = PlayWorld::from_tris(
-                            place(&elevator_solid)
-                                .into_iter()
-                                .filter_map(|v| make_tri(v, 1, u32::MAX))
-                                .collect(),
-                        );
+                        // The dynamic collision object sits
+                        // `elevator_collision_drop` below the placement.
+                        let at = [
+                            pl.position[0],
+                            pl.position[1] - movers_program.elevator_collision_drop,
+                            pl.position[2],
+                        ];
+                        let Some(tris) = place_at(&elevator_solid, at) else {
+                            *unimplemented.entry(inexact).or_insert(0) += 1;
+                            continue;
+                        };
+                        let solid = solid(tris);
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
@@ -648,27 +674,29 @@ impl Session {
                             .or_insert(0) += 1;
                     }
                     (_, "BRIDGE") => {
-                        let solid = PlayWorld::from_tris(
-                            place(&bridge_solid)
-                                .into_iter()
-                                .filter_map(|v| make_tri(v, 1, u32::MAX))
-                                .collect(),
-                        );
+                        let (Some(tris), Some(bridge)) = (
+                            place(&bridge_solid),
+                            Bridge::new(&movers_program, pl.position, pl.rotation[1]),
+                        ) else {
+                            *unimplemented.entry(inexact).or_insert(0) += 1;
+                            continue;
+                        };
+                        let solid = solid(tris);
                         movers.push(Mover {
                             layer: li,
                             index: p.placement_index,
-                            state: MoverState::Bridge(Bridge::new(
-                                &movers_program,
-                                pl.position,
-                                pl.rotation[1],
-                            )),
+                            state: MoverState::Bridge(bridge),
                             origin: pl.position,
                             solid,
                         });
                     }
                     (_, n) if static_solids.iter().any(|(s, _)| *s == n) => {
                         let (_, tris) = static_solids.iter().find(|(s, _)| *s == n).unwrap();
-                        for t in place(tris) {
+                        let Some(tris) = place(tris) else {
+                            *unimplemented.entry(inexact).or_insert(0) += 1;
+                            continue;
+                        };
+                        for t in tris {
                             if let Some(t) = make_tri(t, 1, u32::MAX) {
                                 world.push(t);
                             }
@@ -754,7 +782,6 @@ impl Session {
             frame: 0,
             rings: 0,
             score: 0,
-            outcome: Outcome::Playing,
             start: entry.position,
             start_yaw: entry.yaw,
             slot_words: goal_program.initial_slot_words,
@@ -795,9 +822,6 @@ impl Session {
     /// Advance one 60 Hz frame of the native object rules.
     pub fn step(&mut self, player: Option<PlayerSample>) -> Vec<Event> {
         let mut events = vec![];
-        if self.outcome == Outcome::Cleared {
-            return events;
-        }
         self.frame += 1;
         let standing = player.and_then(|p| p.standing_on);
         let elevators: Vec<(V3, bool)> = self
@@ -824,12 +848,13 @@ impl Session {
             events.extend(started);
         }
         if let Some(p) = player {
-            self.objects(p.center, &mut events);
+            self.objects(p, &mut events);
         }
         events
     }
 
-    fn objects(&mut self, center: V3, events: &mut Vec<Event>) {
+    fn objects(&mut self, player: PlayerSample, events: &mut Vec<Event>) {
+        let center = player.center;
         for r in self.rings_placed.iter_mut().filter(|r| !r.taken) {
             if len(sub(r.position, center)) < RING_PICKUP_DISTANCE {
                 r.taken = true;
@@ -842,10 +867,9 @@ impl Session {
                 });
             }
         }
-        let rad = self.physics.rad;
         let local = self.goal_program_local_effect;
-        for g in &mut self.goals {
-            if len(sub(g.position, center)) >= GOAL_RADIUS + rad {
+        for (i, g) in self.goals.iter_mut().enumerate() {
+            if player.touching_goal != Some(i) {
                 continue;
             }
             let Ok(calls) = g
@@ -866,11 +890,6 @@ impl Session {
                     sound,
                 });
             }
-        }
-        // The stage task consumes slot word 2 as the goal handoff.
-        if self.slot_words[0] == 2 {
-            self.outcome = Outcome::Cleared;
-            events.push(Event::Cleared { frame: self.frame });
         }
     }
 
