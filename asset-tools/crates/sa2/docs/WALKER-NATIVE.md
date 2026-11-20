@@ -15,6 +15,9 @@ WALKER-PORT-MAP.md on #424.
 | fn_8003E668: world velocity into the player frame, `spd` and `dotp` | `walker_frame::player_speed_from_world` | tests/walker_frame.rs, 1,500 cases |
 | fn_80046950: speed clamp to `lim_h_spd` / `lim_v_spd` | `walker_frame::clamp_speed` | same, 600 cases |
 | fn_8002334C static pass: land-table entries near the players | `land_select::select_static` | tests/land_select.rs, 300 cases on the relocated GC stg11D.rel |
+| fn_8002334C in full, with the dynamic land objects movers register | `land_select::select_frame` | tests/land_nodes.rs, 40 frames with synthetic movers and tasks |
+| fn_80023808: each query's re-pick from the frame's dynamic and static subsets | `land_select::Selection::reselect` | same, 160 queries |
+| fn_800D1020: the broadphase, candidate triangles near a moving sphere (njScalor 0x801151F4 included) | `land_nodes::LandNodes::query` | same, 160 queries including a full 0xC0 candidate list |
 | fn_800D0904 with fn_800D13A0, fn_800D14C8, fn_800D17E0, fn_800D2298, fn_800D23A8, fn_800D24B4, fn_800D251C and Ninja's table rotations, njTranslateEx and fn_8011610C: the land collision node list and its bucketed triangles | `land_nodes::LandNodes::update` | tests/land_nodes.rs, 40 frames on stg11D.rel plus synthetic object trees, triangle, quad and flipped strip sets, flag 0x08000000 and a full triangle pool |
 | 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within +/-0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
@@ -58,7 +61,9 @@ game lays it out. The port goes bottom-up from fn_800D1020 and fn_800CEE08.
    r13-0x773C, active list at r13-0x7738). Each node keeps its object's
    transform and bounding sphere. A removed entry goes back through
    fn_800D24B4.
-3. fn_800D1020 is the broadphase. It walks the sorted lists for a query
+3. fn_800D1020 is the broadphase (ported). It first calls fn_80023808,
+   which rewrites the selection list for the query's sphere, then searches
+   the listed nodes. It walks the sorted lists for a query
    sphere and fills a candidate list of up to 0xC0 entries (count at
    r13-0x7758).
 4. fn_800CEE08 (0x1064) tests the candidates' triangles.
@@ -66,3 +71,11 @@ game lays it out. The port goes bottom-up from fn_800D1020 and fn_800CEE08.
 The emulator check needs the GameCube stg11D.rel loaded and relocated, with
 r13-0x7A00 pointing at its `objLandTable0011`. The installed module and the
 disc's copy are byte-identical (SHA-1 8fbe506bcbbe6f012d2bb8240edb5f6c8cb6ece0).
+
+## Known difference: fres
+
+njScalor ends in `fres`, which Gekko answers from a 12-bit estimate table.
+The emulator (and so this port, to stay checkable) uses the reciprocal
+rounded to single. Matching the hardware needs Dolphin's fres table, the
+same GPL-derived kind of data as the frsqrte table, which waits on the
+owner's decision.

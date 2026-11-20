@@ -6,7 +6,10 @@ moves one or two player tasks and calls fn_800D0904, which selects the nearby
 land entries (fn_8002334C), drops the nodes whose entries left the list and
 builds nodes (transformed triangles, sorted into 128 depth buckets) for the
 new ones. Prints JSON: the object trees and models the land table reaches,
-and per frame the selection list and every active node with its triangles.
+and per frame the dynamic register, the selection list and its dynamic and
+static subsets, every active node with its triangles, and four collision
+queries (fn_800D1020): the re-filtered list, the candidates and each node's
+candidate range.
 Needs SA2_MAIN_DOL and SA2_STG11_REL.
 """
 import hashlib
@@ -156,6 +159,7 @@ def dump_model(a):
         "sets": sets,
         "attrs": None if mats == 0 else [W(mats + 0x14 * i + 0x10) for i in range(max(used, nb_mat))],
         "center": [W(a + 0x18 + 4 * j) for j in range(3)],
+        "radius": W(a + 0x24),
     }
 
 
@@ -165,6 +169,7 @@ def dump_object(a):
         assert model, f"object {a:#x} has no model"
         dump_model(model)
         objects[a] = {
+            "evalflags": W(a),
             "model": model,
             "pos": [W(a + 8 + 4 * j) for j in range(3)],
             "ang": [m.get(a + 0x14 + 4 * j, "i") for j in range(3)],
@@ -183,9 +188,34 @@ for k in range(count):
     if W(e + 0x1C) & 0x2003:
         dump_object(W(e + 0x10))
 
+# Synthetic dynamic land objects (the register movers fill), each with a
+# task whose executor, parent and twp flag decide whether it counts.
+DEAD_EXEC = 0x80071AF0
+dyn_objs = []
+for k in range(14):
+    o = make_object(syn.choice(models_syn))
+    m.put(o, "I", syn.choice([0, 0x4, 0x20, 0x24]))
+    dyn_objs.append(o)
+    dump_object(o)
+tasks = []
+for k in range(len(dyn_objs)):
+    t = alloc(0x40)
+    parent = alloc(0x40)
+    twp = alloc(0x40)
+    m.u.mem_write(t + 8, struct.pack(">I", parent if k % 3 else 0))
+    m.u.mem_write(t + 0x34, struct.pack(">I", twp))
+    tasks.append((t, parent, twp))
+dyn_flags = [syn.choice([0x1, 0x10000001, 0x2001, 0x2002, 0x10002001, 0x40000001]) for _ in dyn_objs]
+
 OUT, DYN, STATIC, DYNLIST, DEFAULT = 0x81100000, 0x81110000, 0x81120000, 0x81130000, 0x81140000
 TASK1, TASK2 = 0x81150000, 0x81150100
+QUERY = 0x81160000
 PLAYERTWP = 0x801E7768
+CANDS = 0x8028F998
+try:
+    m.u.mem_map(0, 0x1000)  # an empty node's list head is read through NULL
+except Exception:
+    pass
 m.put(R13 - 0x79F4, "I", OUT)
 m.put(R13 - 0x7A00, "I", DYN)
 m.put(R13 - 0x79FC, "I", STATIC)
@@ -194,7 +224,6 @@ m.put(R13 - 0x79E4, "h", 0)
 m.put(R13 - 0x79F0, "I", TABLE)
 m.put(R13 - 0x7F28, "i", 1)
 m.put(0x80175378, "I", DEFAULT)
-m.u.mem_write(DEFAULT, struct.pack(">3f", 0.0, 0.0, 0.0))
 unit = [W(0x80357880 + 4 * i) for i in range(12)]
 m.call(0x800D0F3C)
 
@@ -205,8 +234,19 @@ centers = [[struct.unpack(">f", struct.pack(">I", c[j]))[0] for j in range(3)] f
 frames = []
 centers += syn_centers * 6
 pos = [list(rng.choice(centers)), list(rng.choice(centers))]
+default = [f32(rng.uniform(-500, 500)) for _ in range(3)]
+m.u.mem_write(DEFAULT, struct.pack(">3f", *default))
+col_index = {}
+for k, c in enumerate(cols):
+    col_index.setdefault(c[4], k)
+
+
+def read_list(at, total):
+    return [[W(at + 12 * k), W(at + 12 * k + 4), W(at + 12 * k + 8)] for k in range(total)]
+
+
 for frame in range(int(os.environ.get("LAND_NODES_FRAMES", "40"))):
-    n = rng.choice([1, 1, 2])
+    n = rng.choice([1, 1, 2, 2, 0])
     for p in pos:
         if rng.random() < 0.3:
             p[:] = rng.choice(centers)
@@ -215,21 +255,53 @@ for frame in range(int(os.environ.get("LAND_NODES_FRAMES", "40"))):
     rng_range = f32(rng.choice([400.0, 400.0, rng.uniform(100, 800)]))
     refresh = 0
     m.put(R13 - 0x7F30, "f", rng_range)
-    m.put(PLAYERTWP, "I", TASK1)
+    m.put(PLAYERTWP, "I", TASK1 if n else 0)
     m.put(PLAYERTWP + 4, "I", TASK2 if n == 2 else 0)
     m.u.mem_write(TASK1 + 0x14, struct.pack(">3f", *pos[0]))
     m.u.mem_write(TASK2 + 0x14, struct.pack(">3f", *pos[1]))
+    # Move the dynamic objects near the players and register some of them.
+    register = []
+    near = pos[: max(n, 1)] if n else [default]
+    for k, o in enumerate(dyn_objs):
+        if rng.random() < 0.3:
+            c = rng.choice(near)
+            put_f(o + 8, *[f32(c[j] + rng.uniform(-250, 250)) for j in range(3)])
+        t, parent, twp = tasks[k]
+        m.u.mem_write(t + 0x10, struct.pack(">I", DEAD_EXEC if rng.random() < 0.1 else 0x80001234))
+        m.u.mem_write(parent + 0x10, struct.pack(">I", DEAD_EXEC if rng.random() < 0.1 else 0x80001234))
+        m.put(twp + 4, "H", rng.choice([0x100, 0x100, 0x100, 0x0, 0x1100]))
+        if rng.random() < 0.8:
+            register.append(k)
+    for i, k in enumerate(register):
+        m.u.mem_write(DYNLIST + 12 * i, struct.pack(">III", dyn_flags[k], dyn_objs[k], tasks[k][0]))
+    m.put(R13 - 0x79E4, "h", len(register))
+    reg_out = []
+    for k in register:
+        t, parent, twp = tasks[k]
+        par = W(t + 8)
+        active = W(t + 0x10) != DEAD_EXEC and not (par and W(par + 0x10) == DEAD_EXEC) \
+            and m.get(W(t + 0x34) + 4, "H") & 0x100 != 0
+        reg_out.append([dyn_flags[k], dyn_objs[k], t, active])
     if frames and rng.random() < 0.2 and frames[-1]["nodes"]:
         refresh = rng.choice(frames[-1]["nodes"])["obj"]
         m.put(R13 - 0x7750, "I", refresh)
     m.call(0x800D0904, count=400_000_000)
     total = m.get(R13 - 0x79A4, "h")
-    entries = [[W(OUT + 12 * k), W(OUT + 12 * k + 4)] for k in range(total)]
-    nodes = []
+    entries = read_list(OUT, total)
+    dyn_sub = read_list(DYN, W(R13 - 0x7A08))
+    statics = []
+    for k in range(W(R13 - 0x7A04)):
+        e = STATIC + 0x20 * k
+        idx = col_index[W(e + 0x10)]
+        assert [W(e + 4 * j) for j in range(4)] + [W(e + 0x10), W(e + 0x1C)] == cols[idx]
+        statics.append(idx)
+    nodes, tri_at = [], {}
     node = W(R13 - 0x7738)
+    node_addrs = []
     while node:
         tris, t = [], W(node + 0x10)
         while t:
+            tri_at[t] = (len(nodes), len(tris))
             tris.append([W(t + 8 + 4 * j) for j in range(14)])
             last = t
             t = W(t)
@@ -239,9 +311,37 @@ for frame in range(int(os.environ.get("LAND_NODES_FRAMES", "40"))):
             "dz": W(node + 0x28), "w2c": W(node + 0x2C),
             "center": [W(node + 0x30 + 4 * j) for j in range(3)], "tris": tris,
         })
+        node_addrs.append(node)
         node = W(node)
+    queries = []
+    for _ in range(4):
+        with_tris = [x for x in nodes if x["tris"]]
+        if with_tris and rng.random() < 0.75:
+            t = rng.choice(rng.choice(with_tris)["tris"])
+            c = [struct.unpack(">f", struct.pack(">I", t[j]))[0] for j in range(3)]
+            spread = rng.choice([5, 30, 120])
+        else:
+            c, spread = rng.choice(near), 120
+        center = [f32(c[j] + rng.uniform(-spread, spread)) for j in range(3)]
+        radius = f32(rng.choice([5.0, 10.0, rng.uniform(1, 60), rng.uniform(60, 400)]))
+        motion = [0.0, 0.0, 0.0] if rng.random() < 0.3 else [f32(rng.uniform(-30, 30)) for _ in range(3)]
+        put_f(QUERY, radius, *center, *motion)
+        m.call(0x800D1020, r3=QUERY, count=100_000_000)
+        got = m.gpr(3)
+        assert got == W(R13 - 0x7758)
+        lst = read_list(OUT, m.get(R13 - 0x79A4, "h"))
+        cands = [list(tri_at[W(CANDS + 4 * k)]) for k in range(got)]
+        per_node = []
+        for a in node_addrs:
+            first = W(a + 0x1C)
+            per_node.append([None if first == 0 else (first - CANDS) // 4, W(a + 0x24)])
+        queries.append({"radius": fb(radius), "center": [fb(x) for x in center],
+                        "motion": [fb(x) for x in motion], "list": lst, "count": got,
+                        "candidates": cands, "nodes": per_node})
     frames.append({"positions": [[fb(x) for x in p] for p in pos[:n]], "range": fb(rng_range),
-                   "refresh": refresh, "entries": entries, "nodes": nodes,
-                   "refresh_after": W(R13 - 0x7750)})
+                   "refresh": refresh, "register": reg_out,
+                   "moved": [[o, [W(o + 8 + 4 * j) for j in range(3)]] for o in dyn_objs], "entries": entries,
+                   "dynamic": dyn_sub, "statics": statics, "nodes": nodes,
+                   "refresh_after": W(R13 - 0x7750), "queries": queries})
 print(json.dumps({"unit": unit, "head": [count, start], "cols": cols, "objects": objects,
-                  "models": models, "frames": frames}))
+                  "models": models, "default": [fb(x) for x in default], "frames": frames}))

@@ -33,6 +33,7 @@
 //! allocators refuse the last free entry. The game does not check the node
 //! allocation; this port stops building when it would fail.
 use crate::{
+    msl_math::gekko_frsqrte,
     ninja_matrix::{mult_vec, MatrixStack, Mtx, Vec3, IDENTITY},
     ninja_trig::{fmadds, nj_cos, nj_sin},
 };
@@ -68,11 +69,15 @@ pub struct NjModel {
     pub attrs: Option<Vec<u32>>,
     /// +0x18.
     pub center: Vec3,
+    /// +0x24: bounding radius.
+    pub radius: f32,
 }
 
 /// The NJS_OBJECT fields the collision reads.
 #[derive(Debug, Clone)]
 pub struct NjObject {
+    /// +0: NJD_EVAL flags (0x4 unit scale, 0x20 ZXY rotation order).
+    pub evalflags: u32,
     pub model: usize,
     pub pos: Vec3,
     pub ang: [i32; 3],
@@ -104,14 +109,40 @@ pub struct Node {
     pub center: Vec3,
     /// +0x10 onwards: the triangle list in bucket order.
     pub tris: Vec<Tri>,
+    /// +0x1C: where this node's candidates start in the last query's list
+    /// (fn_800D1020), or `None`.
+    pub cand_first: Option<usize>,
+    /// +0x24: how many candidates it added.
+    pub cand_count: u32,
 }
 
-/// A selection record (12 bytes at r13-0x79F4: flags, object).
+/// A selection record (12 bytes at r13-0x79F4: flags, object, and the
+/// registering task for dynamic land objects).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Entry {
     pub flags: u32,
     pub obj: usize,
+    pub task: Option<usize>,
 }
+
+/// A candidate triangle from fn_800D1020: the node's position in the active
+/// list at query time and the triangle's position in the node's list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Candidate {
+    pub node: usize,
+    pub tri: usize,
+}
+
+/// The query fn_800D1020 reads: radius +0, center +4, motion +0x10.
+#[derive(Debug, Clone, Copy)]
+pub struct Query {
+    pub radius: f32,
+    pub center: Vec3,
+    pub motion: Vec3,
+}
+
+/// The candidate list's size (0x8028F998, count at r13-0x7758).
+pub const CANDIDATE_LIMIT: usize = 0xC0;
 
 /// The land collision state fn_800D0904 keeps.
 #[derive(Debug, Clone)]
@@ -122,6 +153,10 @@ pub struct LandNodes {
     pub free_tris: usize,
     /// r13-0x7750: an object whose node is rebuilt on its next listing.
     pub rebuild: Option<usize>,
+    /// The candidate list. Entries past the last query's count keep older
+    /// queries' contents, as the game's array does. (A node freed since then
+    /// is not reproduced: the game would read whatever reused its memory.)
+    pub candidates: Vec<Candidate>,
 }
 
 impl Default for LandNodes {
@@ -195,7 +230,7 @@ fn sq_mag(x: f32, y: f32, z: f32) -> f32 {
 }
 
 /// Per-node build state (the r13-0x7744/-0x7748 globals and the bucket
-/// table at 0x802A8910).
+/// table at 0x80298910).
 struct Build<'a> {
     objects: &'a [NjObject],
     models: &'a [NjModel],
@@ -334,6 +369,7 @@ impl LandNodes {
             nodes: vec![],
             free_tris: TRI_POOL,
             rebuild: None,
+            candidates: vec![],
         }
     }
 
@@ -411,8 +447,96 @@ impl LandNodes {
                     max_dz,
                     center,
                     tris,
+                    cand_first: None,
+                    cand_count: 0,
                 },
             );
         }
+    }
+}
+
+/// njScalor (0x801151F4): `fres(frsqrte(x*x + y*y + z*z))`. `fres` here is
+/// the reciprocal rounded to single, as the emulator computes it; Gekko's own
+/// estimate is a 12-bit table lookup (see docs/WALKER-NATIVE.md).
+pub fn nj_scalor(v: Vec3) -> f32 {
+    let d = fmadds(v[2], v[2], fmadds(v[1], v[1], v[0] * v[0]));
+    (1.0 / gekko_frsqrte(d as f64)) as f32
+}
+
+impl LandNodes {
+    /// fn_800D1020 after its fn_80023808 call (`land_select::reselect`,
+    /// which rewrote `list`): collect the triangles whose bounding spheres
+    /// come within `radius + |motion|` of the query center. Each listed
+    /// node's triangle list is searched from the end nearer the query's
+    /// depth band, `z +/- (max_dz + reach)`. Returns the count (r13-0x7758).
+    /// At 0xC0 candidates it stops at once and later nodes keep their
+    /// previous `cand_first`/`cand_count`.
+    // The negated comparisons keep the branches' NaN behaviour.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    pub fn query(&mut self, q: &Query, list: &[Entry]) -> usize {
+        let reach = q.radius + nj_scalor(q.motion);
+        let reach_sq = reach * reach;
+        let mut count = 0usize;
+        for ni in 0..self.nodes.len() {
+            let node = &mut self.nodes[ni];
+            node.cand_first = None;
+            node.cand_count = 0;
+            if !list.iter().any(|e| e.obj == node.obj) {
+                continue;
+            }
+            let tris = &node.tris;
+            let Some(last) = tris.len().checked_sub(1) else {
+                // The game would read the empty list's head through NULL.
+                continue;
+            };
+            let z = q.center[2];
+            let lo = (z - node.max_dz) - reach;
+            let hi = reach + (z + node.max_dz);
+            let mut at = Some(0);
+            if tris[0].center[2] < lo && tris[last].center[2] > hi {
+                at = (0..tris.len()).find(|&i| !(tris[i].center[2] <= lo));
+            }
+            let hit = |t: &Tri| {
+                let lim = reach_sq + t.radius_sq;
+                let dx = t.center[0] - q.center[0];
+                let mut d = dx * dx;
+                if d > lim {
+                    return false;
+                }
+                let dy = t.center[1] - q.center[1];
+                d = fmadds(dy, dy, d);
+                if d > lim {
+                    return false;
+                }
+                let dz = t.center[2] - q.center[2];
+                d = fmadds(dz, dz, d);
+                !(d > lim)
+            };
+            let order: Box<dyn Iterator<Item = usize>> = match at {
+                Some(i) if tris[i].center[2] > lo => {
+                    Box::new((i..tris.len()).take_while(|&k| tris[k].center[2] < hi))
+                }
+                _ => Box::new((0..=last).rev().take_while(|&k| tris[k].center[2] > lo)),
+            };
+            let picks: Vec<usize> = order.filter(|&k| hit(&tris[k])).collect();
+            for tri in picks {
+                let node = &mut self.nodes[ni];
+                if node.cand_first.is_none() {
+                    node.cand_first = Some(count);
+                }
+                node.cand_count += 1;
+                let c = Candidate { node: ni, tri };
+                if count < self.candidates.len() {
+                    self.candidates[count] = c;
+                } else {
+                    self.candidates.push(c);
+                }
+                count += 1;
+                if count == CANDIDATE_LIMIT {
+                    return count;
+                }
+            }
+        }
+        count
     }
 }
