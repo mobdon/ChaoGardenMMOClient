@@ -194,6 +194,22 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   (ENGINE-MAP.md 4.2), with players loaded first by fn_8001DEA8 as the session
   init does, exactly as the one-player story: character 7, loader
   **0x800B5D2C** (Mech Eggman, row 7), G+0x1E = 0 (no player 2, one viewport).
+- **Part 1 done** (`sa2-runtime/src/player.rs`, `camera.rs`): `fn_8001DEA8`
+  (players by character), the Mech Eggman loader `fn_800B5D2C`, `fn_8004F838`
+  (player work, PhysicsArray row copy, special-stage values, upgrade bits,
+  player tables), `fn_800B5630`, and the camera task creation `fn_800C4458`
+  (im 2, level 0). Matches main.dol on 24 ops (tests/load_ppc.py), every word
+  of the 0x454-byte player work included. Fail closed (logged, not run): the
+  other characters' loaders and 0x800B56E8, `fn_8001D74C` (start position),
+  `CCL_Init`, the motion/model loaders 0x80072548 / 0x80050210 / 0x80050094,
+  `fn_800645F8`, `fn_8003D8D0`, `fn_80010CC4`, the GX texture setup, and the
+  camera mode routines. The PhysicsArray row and upgrade bytes come from the
+  host (Steam: `sonic2app.exe`'s PhysicsArray through the `sa2` readers; not
+  wired yet).
+- **Part 2 (next):** the session init `fn_80021828` around these, the stage
+  module load `fn_8001EB80` and stg11D's init fn_11_A434 (landtable and
+  lights, SET files, the SET task and spawner, death zones, stage callbacks)
+  from Steam data, and the unload `fn_11_A76C` / `fn_8002176C`.
 - SET rows whose task is not ported are listed by name and not spawned.
 - Unload frees every task and returns the runtime to its empty state.
 - `play_session::Session` stops taking a host `PlayerSample`: the walker task

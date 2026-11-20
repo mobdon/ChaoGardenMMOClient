@@ -7,8 +7,10 @@
 //! `sa2` crate and are registered into the runtime by their native address.
 #![forbid(unsafe_code)]
 
+pub mod camera;
 pub mod frame;
 pub mod input;
+pub mod player;
 pub mod task;
 
 pub use frame::{FrameHost, GameState};

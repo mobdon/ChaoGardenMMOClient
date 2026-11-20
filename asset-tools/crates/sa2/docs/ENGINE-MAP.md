@@ -409,7 +409,8 @@ fn_8001E45C reads word +0x10 (pressed) of `*0x801E55D8[i]`.
 ## 6. Camera
 
 - `fn_800C4458` 0x800C4458: if 0x803ADAF8 is empty,
-  `CreateElementalTask(0, 2, fn_800C3CF0, …)` → 0x803ADAF8, destructor
+  `CreateElementalTask(2, 0, fn_800C3CF0, …)` (im 2, level 0; corrected in E4)
+  → 0x803ADAF8, destructor
   fn_800C3D90; then fn_800C34C4, fn_800C5914, fn_800C6F70, fn_800C91C4;
   0x803ADAD4 = viewport count argument; 0x803ADAD0 = 0; camera work at
   0x801FF424 initialised (0x31C7, 0x31C7, 0x4000); fn_800C36A4, fn_800C3A94,
