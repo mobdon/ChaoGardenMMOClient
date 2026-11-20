@@ -171,7 +171,7 @@ pub fn stand_check(
             plane_distance(gravity, &floor, Some(&mut g));
             let g = unit_vector(g);
             let d = vector_angle(f, g, Some(w.normal));
-            w.action = if d > 0xC000 || d < 0x4000 { 5 } else { 4 };
+            w.action = if !(0x4000..=0xC000).contains(&d) { 5 } else { 4 };
         }
     }
     if in_idle(c, w.action) {
