@@ -54,7 +54,8 @@ fn installed_city_escape_inputs() {
 
     assert_eq!(c.springs.len(), 10);
     assert_eq!(c.rows["SAVEPOINT"].len(), 3);
-    assert_eq!(c.rows["KASOKU"].len(), 82);
+    assert_eq!(c.dash_panels.len(), 82);
+    assert_eq!(c.dash_panel_program.update, 0x22c8c);
     assert_eq!(c.rows["GREEN_B"].len(), 18);
     assert!(!c.bush_solids.is_empty());
     assert!(!c.death_zones.is_empty());

@@ -3,14 +3,16 @@
 //!
 //! This is everything a Sonic speed-stage session needs that the install
 //! provides as data: Sonic's PhysicsArray row, the start row, terrain, the
-//! grind-rail paths, death zones, spring tasks, bush-block collision and the
-//! goal-ring program, plus the raw SET rows of every other placement.
+//! grind-rail paths, death zones, spring tasks, dash-panel tasks (ported from
+//! stg13D.rel), bush-block collision and the goal-ring program, plus the raw
+//! SET rows of every other placement.
 //!
 //! The player controller is deliberately absent. Its code is not readable
 //! from the install (docs/CITY-ESCAPE-NATIVE.md), and this module adds no
 //! substitute: nothing here moves a player.
 use crate::{
     collision::CollisionWorld,
+    dash_panel::{self, DashPanel},
     death_zones,
     fan_stage::MountedStage,
     goal_ring,
@@ -37,6 +39,7 @@ const GREEN_B_VA: u32 = 0x5e2b40;
 const SPRA_VA: u32 = 0x6c4480;
 const SPRB_VA: u32 = 0x6c4e90;
 const GOALRING_VA: u32 = 0x6c63c0;
+const KASOKU_VA: u32 = 0x6cfbf0;
 
 /// One SET row bound to its object-list entry, unchanged.
 #[derive(Debug, Clone, Serialize)]
@@ -79,6 +82,12 @@ pub struct Spring {
 }
 
 #[derive(Debug, Serialize)]
+pub struct Panel {
+    pub row: Row,
+    pub task: DashPanel,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CityEscape {
     pub character: i8,
@@ -91,6 +100,9 @@ pub struct CityEscape {
     pub initial_slot_words: [u32; 2],
     pub goals: Vec<Goal>,
     pub springs: Vec<Spring>,
+    /// The verified KASOKU callback of stg13D.rel and one task per panel.
+    pub dash_panel_program: dash_panel::Program,
+    pub dash_panels: Vec<Panel>,
     pub rails: Vec<RailPath>,
     pub death_zones: Vec<Vec<[V3; 3]>>,
     /// GREEN_B Basic collision placed by SET position and Y angle.
@@ -127,9 +139,11 @@ impl CityEscape {
             .parameters;
         let goal_program = goal_ring::Program::read(LEVEL, stage_module)?;
         let bush = read_object_solid(exe, GREEN_B_COLLISION_RVA)?;
+        let dash_panel_program = dash_panel::Program::read(MODULE_FILE, stage_module)?;
 
         let mut goals = vec![];
         let mut springs = vec![];
+        let mut dash_panels = vec![];
         let mut bush_solids = vec![];
         let mut rows: BTreeMap<String, Vec<Row>> = BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
@@ -178,6 +192,10 @@ impl CityEscape {
                         );
                         springs.push(Spring { row, task });
                     }
+                    (KASOKU_VA, "KASOKU") => dash_panels.push(Panel {
+                        task: DashPanel::new(pl.rotation.map(i32::from), pl.parameters),
+                        row,
+                    }),
                     (GREEN_B_VA, "GREEN_B") => {
                         bush_solids.extend(
                             bush.iter()
@@ -219,6 +237,8 @@ impl CityEscape {
             initial_slot_words: goal_program.initial_slot_words,
             goals,
             springs,
+            dash_panel_program,
+            dash_panels,
             rails,
             death_zones,
             bush_solids,

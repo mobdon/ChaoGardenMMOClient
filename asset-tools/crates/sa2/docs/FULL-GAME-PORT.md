@@ -98,6 +98,6 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 
 [Playable Iron Gate](PLAYABLE-IRON-GATE.md) runs the first Dark stage live: walker movement, collision, lifts, elevators, bridges, springs, rings, checkpoints, death zones and the goal ring. Two of its three segments clear offline; the controller is an adaptation.
 
-[City Escape native inputs](CITY-ESCAPE-NATIVE.md) reads Sonic's physics row, the start, terrain, rails, death zones, springs and goal program with no adapted rules. It also records why no Sonic controller can be ported from the Steam install.
+[City Escape native inputs](CITY-ESCAPE-NATIVE.md) reads Sonic's physics row, the start, terrain, rails, death zones, springs and goal program with no adapted rules. The dash-panel callback is ported from stg13D.rel and matches the installed PowerPC. The doc also records why no Sonic controller can be ported from the Steam install.
 
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.
