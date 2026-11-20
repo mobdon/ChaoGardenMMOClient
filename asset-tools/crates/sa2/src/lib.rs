@@ -21,6 +21,7 @@ pub mod demo;
 pub mod duel_debris;
 pub mod duel_dust;
 pub mod duel_fireball;
+pub mod duel_fog;
 pub mod duel_platform;
 pub mod duel_platform_motion;
 pub mod duel_stage;

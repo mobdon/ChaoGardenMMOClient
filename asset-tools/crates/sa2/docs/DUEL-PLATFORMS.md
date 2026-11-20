@@ -173,6 +173,19 @@ state, releases the texture sets and SET data, and sets the draw range
 (-3, -3000). The tasks created are recorded with their callbacks; their own
 update and display code is not part of this port.
 
+## Fog tasks
+
+\duel_fog\ ports the fog manager \FogtaskManExec\ (update +0xAE04, delete
++0xAE94) and the worker \FogTaskExec\ it spawns (update +0xAD48, delete
++0xADE4) with the apply (+0xAA50) and blend (+0xAB5C) helpers. The manager
+respawns a missing worker; the worker applies the current fog block or blends
+it toward a target block by the factor at s6+0x64C (clamped to 0..1). A far
+plane of 100000 or more disables fog (type 0, near -10); otherwise flag 2
+selects the type from the module table by flags bits 16..19 with the block's
+near, and no flag 2 means type 5 with near -10 (-50 when blending). Colours
+go to the engine as RGBA. Deleting the manager frees the worker and, if it
+owns the engine fog, resets it.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -215,6 +228,7 @@ python asset-tools/crates/sa2/tests/duel_debris_ppc.py asset-tools/crates/sa2/ta
 python asset-tools/crates/sa2/tests/duel_dust_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_stage_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_stage_setup_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_fog_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
@@ -263,5 +277,6 @@ scenario) and a write hook on every location the module can change. Five
 scenarios (solo; rival Sonic with a light override and a language fallback;
 rival Shadow with failed allocations and existing state; full and empty
 teardown) match `duel-stage-setup` in every ordered engine call and every
-written location.
+written location. \duel_fog_ppc.py\ runs 120 random fog callbacks; every engine call
+and all fog state match \duel-fog\.
 Nothing launches the game.
