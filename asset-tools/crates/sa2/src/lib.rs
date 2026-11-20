@@ -104,6 +104,7 @@ pub mod three_spring;
 pub mod visual;
 pub mod visual_glb;
 pub mod walker_act;
+pub mod walker_adapter;
 pub mod walker_collide;
 pub mod walker_exec;
 pub mod walker_frame;
