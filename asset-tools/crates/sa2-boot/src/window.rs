@@ -72,14 +72,14 @@ pub fn submit(f: Frame) {
 /// The keyboard stick as (angle in radians, magnitude 0..=1).
 static EASED: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
 
-/// Stick from W/A/S/D like a real stick moves: from rest the deflection
-/// ramps to full over 3 frames; while any direction is held it stays full and
-/// only the angle turns (about 34° a frame) toward the keys, so turning never
+/// Stick from W/A/S/D: full deflection as soon as a key is down and back to
+/// centre as soon as all are up; while any is held it stays full and
+/// only the angle turns (about 46° a frame, 90° in two) toward the keys, so turning never
 /// dips through the centre (SA2 reads a dip as stopping); diagonals are as
 /// long as straights.
 pub fn key_stick(left: bool, right: bool, down: bool, up: bool) -> [i8; 2] {
-    const TURN: f32 = 0.6;
-    const RAMP: f32 = 0.34;
+    const TURN: f32 = 0.8;
+    const RAMP: f32 = 1.0;
     let dx = f32::from(i8::from(right) - i8::from(left));
     let dy = f32::from(i8::from(up) - i8::from(down));
     let mut e = EASED.lock().unwrap_or_else(|e| e.into_inner());
@@ -353,24 +353,15 @@ mod tests {
     #[test]
     fn turning_keeps_full_deflection() {
         let mag = |s: [i8; 2]| (f32::from(s[0]).hypot(f32::from(s[1]))).round();
-        for _ in 0..5 {
-            key_stick(false, false, false, true); // W
-        }
-        assert_eq!(key_stick(false, false, false, true), [0, 100]);
-        // W -> D: rotate at full length, never through the centre.
-        for _ in 0..4 {
-            assert!(mag(key_stick(false, true, false, false)) >= 99.0);
-        }
+        // Full the first frame a key is down.
+        key_stick(false, false, false, false);
+        assert_eq!(key_stick(false, false, false, true), [0, 100]); // W
+                                                                    // W -> D: 90 degrees in two frames at full length, never through the centre.
+        assert!(mag(key_stick(false, true, false, false)) >= 99.0);
         assert_eq!(key_stick(false, true, false, false), [100, 0]);
         // Diagonal W+D is as long as a straight.
-        for _ in 0..3 {
-            key_stick(false, true, false, true);
-        }
         assert_eq!(key_stick(false, true, false, true), [71, 71]);
-        // Released: back to centre within 3 frames.
-        for _ in 0..3 {
-            key_stick(false, false, false, false);
-        }
+        // Released: centre the next frame.
         assert_eq!(key_stick(false, false, false, false), [0, 0]);
     }
 }
