@@ -16,6 +16,7 @@ pub mod city_replay;
 pub mod city_rider;
 pub mod city_stage;
 pub mod collision;
+pub mod crazy_gadget;
 pub mod csb;
 mod collision_record;
 pub mod color_blend;
