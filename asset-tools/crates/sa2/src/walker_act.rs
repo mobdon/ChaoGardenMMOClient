@@ -660,7 +660,7 @@ pub fn action_button(
 const HOVER_LIFT: f32 = f32::from_bits(0x3f4c_cccd); // r2-0x6900, 0.8
 const HOVER_PULL: f32 = f32::from_bits(0x3f59_999a); // r2-0x68F8, 0.85
 const SLOPE_FLAT: f32 = f32::from_bits(0x3f45_1eb8); // r2-0x6904, 0.77
-const SLOPE_FLAT_11: f32 = f32::from_bits(0x3f46_6666); // r2-0x68F4
+const SLOPE_FLAT_11: f32 = f32::from_bits(0x3f7a_e148); // r2-0x68F4, 0.98
 const LAND_SOFT: f32 = 3.0; // r2-0x6970
 const NO_HOVER_Y: f32 = -1_000_000.0; // r2-0x68FC
 
