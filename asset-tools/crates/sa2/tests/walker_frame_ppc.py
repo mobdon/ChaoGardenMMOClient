@@ -84,4 +84,52 @@ for i in range(600):
     m.u.mem_write(PWP + 0xC8, struct.pack(">2f", *lim))
     m.call(0x80046950, r3=TASK, r4=VEC, r5=PWP)
     clamps.append([[fb(x) for x in v], [fb(x) for x in lim], [m.get(VEC + 4 * k, "I") for k in range(3)]])
-print(json.dumps({"frame": out, "clamp": clamps}))
+active = [0]
+calls = [0]
+def fake_analog(mm):
+    calls[0] += 1
+    mm.gpr(3, active[0])
+m.stub(0x8004E560, fake_analog)
+speeds = []
+for i in range(1500):
+    jog = f32(rng.choice([0.46, rng.uniform(0, 2)]))
+    run = f32(rng.choice([1.39, rng.uniform(0, 3)]))
+    brk = f32(rng.choice([-0.18, rng.uniform(-1, 0)]))
+    spd = [f32(rng.choice([0.0, -0.0, rng.uniform(-3, 3), jog * 0.87, -jog * 0.87])) for _ in range(3)]
+    acc = [f32(rng.choice([0.0, rng.uniform(-0.5, 0.5)])) for _ in range(3)]
+    dotp = f32(rng.choice([1.0, 0.5, rng.uniform(0, 1)]))
+    attr = rng.choice([0, 0x100, rng.randrange(1 << 32)])
+    normal = rng.choice([[0.0, 1.0, 0.0], unit([rng.uniform(-1, 1) for _ in range(3)])])
+    lim = [f32(rng.choice([16.0, 1.0, rng.uniform(0, 4)])) for _ in range(2)]
+    flags = rng.choice([0, 0x2000, 0x2, 0x2002, rng.randrange(1 << 32)])
+    h = f32(rng.uniform(-50, 80))
+    mode = rng.choice([0, 6, 6, 1])
+    angles = [rng.choice([0, rng.randrange(-0x10000, 0x10000), rng.randrange(-(1 << 31), 1 << 31)]) for _ in range(3)]
+    pos_y = f32(rng.uniform(-50, 50))
+    world_y = f32(rng.choice([1.0, -1.0, 0.0]))
+    active[0] = rng.choice([0, 1])
+    calls[0] = 0
+    m.u.mem_write(PWP + 0x64, struct.pack(">3f", *spd))
+    m.u.mem_write(PWP + 0x58, struct.pack(">3f", *acc))
+    m.u.mem_write(PWP + 0x34, struct.pack(">f", dotp))
+    m.put(PWP + 0x88, "I", attr)
+    m.u.mem_write(PWP + 0x7C, struct.pack(">3f", *normal))
+    m.u.mem_write(PWP + 0xE4, struct.pack(">2f", jog, run))
+    m.u.mem_write(PWP + 0x108, struct.pack(">f", brk))
+    m.u.mem_write(PWP + 0xC8, struct.pack(">2f", *lim))
+    m.put(PWP + 0x1A8, "I", flags)
+    m.u.mem_write(PWP + 0x1B0, struct.pack(">f", h))
+    m.put(TASK, "B", mode)
+    for k, a in enumerate(angles):
+        m.put(TASK + 8 + 4 * k, "i", a)
+    m.u.mem_write(TASK + 0x18, struct.pack(">f", pos_y))
+    m.u.mem_write(VEC, struct.pack(">3f", 0.0, world_y, 0.0))
+    m.call(0x80046DE4, r3=TASK, r4=VEC, r5=PWP)
+    speeds.append({
+        "in": [[fb(x) for x in spd], [fb(x) for x in acc], fb(dotp), attr, [fb(x) for x in normal],
+               fb(jog), fb(run), fb(brk), [fb(x) for x in lim], flags, fb(h), mode, angles, fb(pos_y), fb(world_y), active[0]],
+        "spd": [m.get(PWP + 0x64 + 4 * k, "I") for k in range(3)],
+        "world": [m.get(VEC + 4 * k, "I") for k in range(3)],
+        "calls": calls[0],
+    })
+print(json.dumps({"frame": out, "clamp": clamps, "speed": speeds}))

@@ -2,7 +2,9 @@
 //! fn_8003E668 run under the Unicorn DOL harness.
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_frame::{clamp_speed, player_speed_from_world, FrameInput},
+    walker_frame::{
+        clamp_speed, player_speed_from_world, player_world_speed, FrameInput, SpeedTask, SpeedWork,
+    },
 };
 use std::{path::PathBuf, process::Command};
 
@@ -20,6 +22,54 @@ fn matches_main_dol_bit_for_bit() {
     let v3 = |v: &serde_json::Value| [f(&v[0]), f(&v[1]), f(&v[2])];
     let i3 = |v: &serde_json::Value| std::array::from_fn(|k| v[k].as_i64().unwrap() as i32);
     let mut stack = MatrixStack::new();
+    for c in cases["speed"].as_array().unwrap() {
+        let i = &c["in"];
+        let mut w = SpeedWork {
+            spd: v3(&i[0]),
+            acc: v3(&i[1]),
+            dotp: f(&i[2]),
+            attr: i[3].as_u64().unwrap() as u32,
+            floor_normal: v3(&i[4]),
+            jog_speed: f(&i[5]),
+            run_speed: f(&i[6]),
+            run_break: f(&i[7]),
+            lim_h_spd: f(&i[8][0]),
+            lim_v_spd: f(&i[8][1]),
+            flags_1a8: i[9].as_u64().unwrap() as u32,
+            height_1b0: f(&i[10]),
+        };
+        let task = SpeedTask {
+            mode: i[11].as_u64().unwrap() as u8,
+            angles: i3(&i[12]),
+            pos_y: f(&i[13]),
+        };
+        let mut world = [0.0, f(&i[14]), 0.0];
+        let active = i[15].as_u64().unwrap() != 0;
+        let mut calls = 0;
+        let mut stack = MatrixStack::new();
+        player_world_speed(&mut stack, &mut w, &task, &mut world, |_| {
+            calls += 1;
+            active
+        });
+        let bits = |v: &serde_json::Value| -> Vec<u32> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_u64().unwrap() as u32)
+                .collect()
+        };
+        assert_eq!(w.spd.map(f32::to_bits).to_vec(), bits(&c["spd"]), "spd {c}");
+        assert_eq!(
+            world.map(f32::to_bits).to_vec(),
+            bits(&c["world"]),
+            "world {c}"
+        );
+        assert_eq!(
+            calls,
+            c["calls"].as_u64().unwrap() as i32,
+            "analog calls {c}"
+        );
+    }
     let clamps = cases["clamp"].as_array().unwrap();
     for c in clamps {
         let got = clamp_speed(v3(&c[0]), f(&c[1][0]), f(&c[1][1]));
