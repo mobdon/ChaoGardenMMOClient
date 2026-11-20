@@ -26,6 +26,8 @@ native object rules against it. See
 | Bridges (BRIDGE, 2) | stg11D.rel 0x2F8/0x688: extend -140 along local X at 8 per frame while a resting elevator is within 450 of the extended point, 120-frame cooldown |
 | Object collision models | PC_SA2/STG11.ini RVAs 0x7F0A68 (lift), 0x7F58A8 (bridge), 0x7FED08 (elevator) |
 | Iron containers (CONTIRON, 7) | stg11D.rel 0x20714 registers CollisionData sec5+0x656D8 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10, a 20-unit cube; all 7 placements are built |
+| Chao and wooden containers (CONTCHAO 3, CONTWOOD 27) | 0x1FDA4 and 0x2132C register the same cube rows (sec5+0x649E0, +0x666C8); all built as solids, breaking (player attacks) not run |
+| Fuse boxes (MECHA, 13) | 0x53E4 registers sec5+0x51198: form 3, centre (0, 20, 2), half-extents (10, 20, 5); its exec only runs that collision. The 4 placed at yaw 0 are built; the centre is off the Y axis, so the others wait on the rotation rule |
 | Springs (SPRA, SPRB) | `spring::StageSpring` tasks and native launch vectors; contact is not run |
 | Rings | o_ring_M1: pickup strictly within 14 of the collision centre, AddScore(10), AddNumRing(1) |
 | Goal ring | `goal_ring` initialization and Contact branch; 25-unit sphere against the collision centre plus radius; contact writes slot word 2, treated as the clear |

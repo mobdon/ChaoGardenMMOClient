@@ -100,6 +100,9 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.goals[0].position, [6231.24, -1488.0, -1229.35]);
         // CONTIRON CollisionData (stg11D.rel sec5+0x656D8): a 20-unit cube.
         assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&7));
+        assert_eq!(s.unimplemented.get("CONTCHAO row (solid only)"), Some(&3));
+        assert_eq!(s.unimplemented.get("CONTWOOD row (solid only)"), Some(&27));
+        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&4));
         assert!(s.death_zone_count() > 0);
         assert_eq!(s.physics.slot, 7);
     });

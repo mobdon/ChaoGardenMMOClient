@@ -108,6 +108,10 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.unimplemented.get("FENCEL row (solid only)"), Some(&1));
         // CONTIRON: a 20-unit cube row, unchanged by quarter turns.
         assert_eq!(s.unimplemented.get("CONTIRON row (solid only)"), Some(&11));
+        assert_eq!(s.unimplemented.get("CONTCHAO row (solid only)"), Some(&3));
+        assert_eq!(s.unimplemented.get("CONTWOOD row (solid only)"), Some(&14));
+        // MECHA's box is off the Y axis, so only yaw-0 placements are exact.
+        assert_eq!(s.unimplemented.get("MECHA row (solid only)"), Some(&2));
         assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&9));
         assert_eq!(
             s.unimplemented

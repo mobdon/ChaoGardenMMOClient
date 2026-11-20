@@ -61,7 +61,16 @@ pub const IRON_GATE: StageRules = StageRules {
     elevator_collision: ELEVATOR_COLLISION_RVA,
     static_solids: &[],
     // stg11D.rel 0x20714 (CONTIRON) registers this row through 0x8000F7D8.
-    collision_boxes: &[("CONTIRON", 0x656d8, 1)],
+    // CONTCHAO (0x1FDA4) registers the same cube row at sec5+0x649E0
+    // through 0x8000F8B8; its breaking is player-attack driven and not run.
+    // CONTWOOD (0x2132C) the same cube at sec5+0x666C8 (breaking not run);
+    // MECHA (0x53E4) a box at sec5+0x51198 whose exec only runs collision.
+    collision_boxes: &[
+        ("CONTIRON", 0x656d8, 1),
+        ("CONTCHAO", 0x649e0, 1),
+        ("CONTWOOD", 0x666c8, 1),
+        ("MECHA", 0x51198, 1),
+    ],
     invisible_cubes: false,
     ring_lines: false,
     death_zone_config: DEATH_ZONE_CONFIG,
@@ -85,6 +94,12 @@ pub const PRISON_LANE: StageRules = StageRules {
         ("FENCES", 0x3c54c, 1),
         ("FENCEL", 0x3c57c, 3),
         ("CONTIRON", 0x52a18, 1),
+        // CONTCHAO (0x18E1C): the same cube row; breaking is not run.
+        ("CONTCHAO", 0x51d20, 1),
+        // CONTWOOD (0x1A3A4): the same cube row; breaking is not run.
+        ("CONTWOOD", 0x53a08, 1),
+        // MECHA (0x527C): exec only runs its collision (0x8000F4EC).
+        ("MECHA", 0x41db4, 1),
     ],
     invisible_cubes: true,
     ring_lines: true,
