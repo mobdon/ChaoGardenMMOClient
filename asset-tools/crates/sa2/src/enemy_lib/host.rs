@@ -73,6 +73,9 @@ pub enum Event {
     /// _rename_SetFlag0x20(task): the SET entry is marked so the enemy is
     /// not placed again (kind 9 when it dies).
     SetEntryDead,
+    /// SetBroken(task): the SET entry is marked broken (E NAMIE releases
+    /// its segments once).
+    SetEntryBroken,
 }
 
 pub trait EnemyHost {
@@ -111,6 +114,11 @@ pub trait EnemyHost {
     fn range_out(&mut self) -> bool;
     /// _rename_CheckFlag0x20(task): the task's set entry is marked dead.
     fn set_entry_dead(&self) -> bool;
+    /// CheckBroken(task): the task's set entry is marked broken.
+    fn set_entry_broken(&self) -> bool;
+    /// fn_80006574(task) after CCL_ClearSearch: the hitting task's byte 2
+    /// is 6 (a held object).
+    fn hit_by_held_object(&mut self) -> bool;
     /// CCL_IsHitPlayer(task) != 0: the enemy's collision touches a player.
     fn hit_player(&self) -> bool;
     /// The enemy's first collision entry hit something with a hit-info

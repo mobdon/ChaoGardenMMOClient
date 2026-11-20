@@ -13,6 +13,7 @@
 pub mod e_ai;
 pub mod e_gold;
 pub mod e_kumi;
+pub mod e_namie;
 pub mod engine;
 pub mod host;
 pub mod motion;
@@ -147,6 +148,7 @@ pub enum StageEnemy {
     Ai(e_ai::EAi),
     Gold(e_gold::EGold),
     Kumi(e_kumi::EKumi),
+    Namie(e_namie::ENamie),
 }
 
 impl StageEnemy {
@@ -155,6 +157,7 @@ impl StageEnemy {
             StageEnemy::Ai(e) => &e.task,
             StageEnemy::Gold(e) => &e.task,
             StageEnemy::Kumi(e) => &e.task,
+            StageEnemy::Namie(e) => &e.task,
         }
     }
 
@@ -163,6 +166,7 @@ impl StageEnemy {
             StageEnemy::Ai(e) => &mut e.task,
             StageEnemy::Gold(e) => &mut e.task,
             StageEnemy::Kumi(e) => &mut e.task,
+            StageEnemy::Namie(e) => &mut e.task,
         }
     }
 
@@ -171,6 +175,7 @@ impl StageEnemy {
             StageEnemy::Ai(e) => &e.work,
             StageEnemy::Gold(e) => &e.work,
             StageEnemy::Kumi(e) => &e.work,
+            StageEnemy::Namie(e) => &e.work,
         }
     }
 
@@ -181,6 +186,7 @@ impl StageEnemy {
             StageEnemy::Ai(_) => m >= 10,
             StageEnemy::Gold(_) => m >= 5,
             StageEnemy::Kumi(_) => m >= 8,
+            StageEnemy::Namie(_) => m >= 3,
         }
     }
 
@@ -196,6 +202,7 @@ impl StageEnemy {
             StageEnemy::Ai(e) => e.exec(host, stack, rand, counts),
             StageEnemy::Gold(e) => e.exec(host, stack, rand, counts),
             StageEnemy::Kumi(e) => e.exec(host, stack, rand, counts),
+            StageEnemy::Namie(e) => e.exec(host, stack, rand, counts),
         }
     }
 }

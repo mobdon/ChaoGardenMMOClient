@@ -98,7 +98,10 @@ def is_hit_player(mm):
 
 
 m.stub(0x800066F4, is_hit_player)
-m.stub(0x80006574, ret(0))
+PARTNER_TWP = 0x81000480
+m.stub(0x80006574, ret(lambda: PARTNER if frame_in['held_hit'] else 0))
+m.stub(0x8006544C, ret(lambda: frame_in['broken']))   # CheckBroken
+m.stub(0x80065484, lambda mm: ev('set_broken'))     # SetBroken
 m.stub(0x800168C8, lambda mm: None)
 m.stub(0x8003679C, ret(0))
 m.stub(0x80037EDC, ret(lambda: frame_in['hit_index'] & 0xffffffff))   # IsThisTaskPlayer
@@ -134,6 +137,8 @@ m.stub(0x8011F50C, ret(0x10))
 for a in (0x80116E18, 0x80024CB8, 0x8011C2B0, 0x8011C310, 0x8011F520, 0x8011F504):
     m.stub(a, lambda mm: None)
 m.stub(R1(0x427EC), lambda mm: ev('child', 0x427EC))
+m.stub(R1(0x47468), lambda mm: ev('child', 0x47468))
+m.stub(R1(0x53F0C), lambda mm: ev('child', 0x53F0C, {0: 3, 1: 6, 2: 9, 3: 3}[mm.get(mm.get(mm.gpr(3) + 0x34, 'I') + 1, 'b')]))
 m.stub(R1(0x4286C), lambda mm: ev('child', 0x4286C, vec(mm, 6), mm.gpr(3), mm.gpr(4), mm.gpr(5)))
 m.stub(0x8000F748, lambda mm: ev('clear'))       # CCL_ClearInfo
 
@@ -168,8 +173,8 @@ m.stub(R1(0x45638), lambda mm: ev('child', 0x45638, vec(mm, 4), vec(mm, 5), fbit
 m.stub(R1(0x4358C), lambda mm: ev('child', 0x4358C, vec(mm, 4), vec(mm, 5)))
 m.stub(R1(0x3D71C), lambda mm: ev('child', 0x3D71C, vec(mm, 3), mm.gpr(4), fbits(mm, 1), fbits(mm, 2)))
 ENEMY = os.environ.get("SA2_ENEMY", "ai")
-CALLBACK = {'ai': 0x51034, 'gold': 0x4A024, 'kumi': 0x4C408}[ENEMY]
-if ENEMY in ('gold', 'kumi'):
+CALLBACK = {'ai': 0x51034, 'gold': 0x4A024, 'kumi': 0x4C408, 'namie': 0x52A1C}[ENEMY]
+if ENEMY in ('gold', 'kumi', 'namie'):
     m.stub(R1(0x45F3C), lambda mm: ev('child', 0x45F3C, vec(mm, 5), mm.gpr(4)))
 else:
     m.stub(R1(0x45F3C), lambda mm: ev('child', 0x45F3C, mm.gpr(4)))
@@ -215,6 +220,19 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
         for i, x in enumerate([(rng.randrange(256) << 8) | rng.randrange(0, 50), ang[1], rng.randrange(0, 0x10000)]):
             m.put(TWP + 8 + 4 * i, 'i', x)
             ang[i] = x
+    m.u.mem_write(PARTNER, bytes(0x40))
+    m.put(PARTNER + 0x34, 'I', PARTNER_TWP)
+    m.u.mem_write(PARTNER_TWP, bytes(0x10))
+    m.put(PARTNER_TWP + 2, 'B', 6)
+    if ENEMY == 'namie':
+        kind = run % 4 if run < 40 else rng.randrange(-1, 6)
+        scl[0] = f32(kind + rng.choice([0.0, rf(0, 0.99)]))
+        m.u.mem_write(TWP + 0x20, struct.pack('>3f', *scl))
+        a0 = rng.choice([0, rng.randrange(0, 0x10000)])
+        a2 = rng.choice([0, rng.randrange(0, 0x10000), rng.randrange(0, 300)])
+        m.put(TWP + 8, 'i', a0)
+        m.put(TWP + 0x10, 'i', a2)
+        ang[0], ang[2] = a0, a2
     if ENEMY == 'kumi':
         kind = run % 8 if run < 48 else rng.randrange(-1, 10)
         scl[0] = f32(kind + rf(0, 0.99))
@@ -267,6 +285,7 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
             'hit_index': rng.choice([0, 1, -1]), 'score_doubled': int(rng.random() < 0.5),
             'probe_y': fb(rf(-50, 50)), 'shadow_y': fb(rf(-50, 50)), 'landed': int(rng.random() < 0.3),
             'flag4': int(hit), 'spring': int(rng.random() < 0.02),
+            'held_hit': int(rng.random() < 0.01), 'broken': int(rng.random() < 0.05),
             'shadow_pos': fb(rng.choice([-1e6, rf(-300, 300)])), 'cwp_bit': int(cwp_bit), 'a4': a4,
             'players': [[fb(x) for x in p] if p else None for p in pls],
             'modes': [m.get(PLAYERS[i], 'b') for i in range(2)],
@@ -315,6 +334,7 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
             'events': events,
             'rand': m.get(NEXT, 'I'),
             'counts': m.u.mem_read(COUNTS, 0x100).hex(),
+            'area': m.u.mem_read(m.get(TASK + 0x40, 'I'), 0x1C).hex() if ENEMY == 'namie' and m.get(TASK + 0x40, 'I') else None,
         })
         if any(e[0] == 'free' for e in events):
             break

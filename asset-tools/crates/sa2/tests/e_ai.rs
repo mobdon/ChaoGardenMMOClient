@@ -7,6 +7,7 @@ use sa2_asset_tools::{
         e_ai::{rows, EAi},
         e_gold::{rows as gold_rows, EGold},
         e_kumi::{rows as kumi_rows, EKumi},
+        e_namie::{ENamie, NamieArea},
         engine::GroupCounts,
         host::{EnemyHost, Event},
         motion::{read_table, Motion},
@@ -204,6 +205,12 @@ impl EnemyHost for Host<'_> {
     fn set_entry_dead(&self) -> bool {
         self.b("set_dead")
     }
+    fn set_entry_broken(&self) -> bool {
+        self.b("broken")
+    }
+    fn hit_by_held_object(&mut self) -> bool {
+        self.b("held_hit")
+    }
     fn hit_player(&self) -> bool {
         self.b("hit_player")
     }
@@ -211,7 +218,8 @@ impl EnemyHost for Host<'_> {
         self.b("cwp_bit") && self.b("a4")
     }
     fn hit_by_player(&mut self) -> bool {
-        self.b("hit_by_player")
+        // fn_80006574 answers too when a held object hit it.
+        self.b("hit_by_player") || self.b("held_hit")
     }
     fn damage_hook(&mut self, _pos: V3) -> bool {
         false
@@ -320,6 +328,7 @@ impl EnemyHost for Host<'_> {
             }
             Event::Free => json!(["free"]),
             Event::SetEntryDead => json!(["set_dead"]),
+            Event::SetEntryBroken => json!(["set_broken"]),
         };
         self.events.push(v);
     }
@@ -329,6 +338,7 @@ enum Enemy {
     Ai(EAi),
     Gold(EGold),
     Kumi(EKumi),
+    Namie(ENamie),
 }
 
 impl Enemy {
@@ -337,6 +347,7 @@ impl Enemy {
             Enemy::Ai(e) => &e.task,
             Enemy::Gold(e) => &e.task,
             Enemy::Kumi(e) => &e.task,
+            Enemy::Namie(e) => &e.task,
         }
     }
     fn task_mut(&mut self) -> &mut EnemyTask {
@@ -344,6 +355,7 @@ impl Enemy {
             Enemy::Ai(e) => &mut e.task,
             Enemy::Gold(e) => &mut e.task,
             Enemy::Kumi(e) => &mut e.task,
+            Enemy::Namie(e) => &mut e.task,
         }
     }
     fn work(&self) -> &EnemyWork {
@@ -351,6 +363,7 @@ impl Enemy {
             Enemy::Ai(e) => &e.work,
             Enemy::Gold(e) => &e.work,
             Enemy::Kumi(e) => &e.work,
+            Enemy::Namie(e) => &e.work,
         }
     }
     fn work_mut(&mut self) -> &mut EnemyWork {
@@ -358,6 +371,7 @@ impl Enemy {
             Enemy::Ai(e) => &mut e.work,
             Enemy::Gold(e) => &mut e.work,
             Enemy::Kumi(e) => &mut e.work,
+            Enemy::Namie(e) => &mut e.work,
         }
     }
 }
@@ -378,6 +392,12 @@ fn e_gold_matches_stg09d() {
 #[ignore = "requires SA2_MAIN_DOL, SA2_STAGE_REL (GC stg09D.rel) and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
 fn e_kumi_matches_stg09d() {
     run("kumi");
+}
+
+#[test]
+#[ignore = "requires SA2_MAIN_DOL, SA2_STAGE_REL (GC stg09D.rel) and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+fn e_namie_matches_stg09d() {
+    run("namie");
 }
 
 fn run(enemy: &str) {
@@ -421,6 +441,8 @@ fn run(enemy: &str) {
             Enemy::Gold(EGold::new(task, table.clone()))
         } else if enemy == "kumi" {
             Enemy::Kumi(EKumi::new(task, table.clone()))
+        } else if enemy == "namie" {
+            Enemy::Namie(ENamie::new(task))
         } else {
             Enemy::Ai(EAi::new(task, table.clone()))
         };
@@ -457,6 +479,7 @@ fn run(enemy: &str) {
                 Enemy::Ai(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
                 Enemy::Gold(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
                 Enemy::Kumi(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
+                Enemy::Namie(e) => e.exec(&mut host, &mut stack, &mut rand, &mut counts),
             }
             let mut got = host.events.clone();
             got.extend(host.tail.clone());
@@ -497,6 +520,17 @@ fn run(enemy: &str) {
                 }
             }
             assert_eq!(rand.0, u(&fr["rand"]), "rand, {at}");
+            if let (Enemy::Namie(n), false) = (&e, fr["area"].is_null()) {
+                let b = hex(&fr["area"]);
+                let b = Bytes(&b);
+                let want = NamieArea {
+                    set: b.0[0],
+                    x: [b.f(4), b.f(8)],
+                    y: [b.f(0xC), b.f(0x10)],
+                    z: [b.f(0x14), b.f(0x18)],
+                };
+                assert_eq!(n.area, want, "area, {at}");
+            }
             assert_eq!(counts.to_vec(), hex(&fr["counts"]), "group counts, {at}");
             frames_checked += 1;
         }

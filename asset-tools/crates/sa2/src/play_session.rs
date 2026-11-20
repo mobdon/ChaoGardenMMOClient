@@ -40,6 +40,7 @@ use crate::{
         e_ai::{rows as e_ai_rows, EAi},
         e_gold::{rows as e_gold_rows, EGold},
         e_kumi::{rows as e_kumi_rows, EKumi},
+        e_namie::ENamie,
         host::{EnemyHost, Event as EnemyEvent},
         motion::read_table,
         EnemyTask, EnemyWork, PlayerView, Rand, StageEnemy,
@@ -1088,6 +1089,7 @@ impl Session {
                             Some("E KUMI") => {
                                 Some(StageEnemy::Kumi(EKumi::new(task, e_kumi_table.clone())))
                             }
+                            Some("E NAMIE") => Some(StageEnemy::Namie(ENamie::new(task))),
                             _ => None,
                         };
                         if let Some(e) = native {
@@ -1521,8 +1523,8 @@ impl Session {
         }
     }
 
-    /// One frame of every live enemy that runs natively (E AI, E GOLD and
-    /// E KUMI).
+    /// One frame of every live enemy that runs natively (E AI, E GOLD,
+    /// E KUMI and E NAMIE).
     fn step_enemies(&mut self, player: Option<PlayerSample>, events: &mut Vec<Event>) {
         for (i, ai) in self.enemy_ai.iter_mut() {
             if !self.enemies[*i].alive {
@@ -1536,6 +1538,7 @@ impl Session {
                 game_37: self.effects_suppressed,
                 game_7c: self.game_frames,
                 hit: ai.enemy.task().flags & 4 != 0,
+                broken: ai.broken,
                 row_radius: ai.row_radius,
                 radius: &mut ai.radius,
                 events: vec![],
@@ -1556,6 +1559,7 @@ impl Session {
                         events.push(Event::EnemyDestroyed { enemy: *i, points });
                     }
                     EnemyEvent::Free => self.enemies[*i].alive = false,
+                    EnemyEvent::SetEntryBroken => ai.broken = true,
                     _ => {}
                 }
             }
@@ -1574,7 +1578,7 @@ fn runs_natively(name: &str) -> Option<&'static str> {
         .strip_suffix("_F")
         .or_else(|| name.strip_suffix("_N"))
         .unwrap_or(name);
-    ["E AI", "E GOLD", "E KUMI"]
+    ["E AI", "E GOLD", "E KUMI", "E NAMIE"]
         .into_iter()
         .find(|&n| n == base)
 }
@@ -1589,6 +1593,8 @@ pub struct EnemyAi {
     /// +0xC3DC8 and, for kind 5, +0xC3E28), read from the REL.
     row_radius: [f32; 2],
     hit: bool,
+    /// Its SET entry's broken mark (SetBroken / CheckBroken).
+    broken: bool,
 }
 
 impl EnemyAi {
@@ -1598,6 +1604,7 @@ impl EnemyAi {
             radius: 0.0,
             row_radius,
             hit: false,
+            broken: false,
         }
     }
 }
@@ -1614,6 +1621,7 @@ struct EnemyWorld<'a> {
     game_37: bool,
     game_7c: i32,
     hit: bool,
+    broken: bool,
     row_radius: [f32; 2],
     radius: &'a mut f32,
     events: Vec<EnemyEvent>,
@@ -1660,6 +1668,12 @@ impl EnemyHost for EnemyWorld<'_> {
         false
     }
     fn set_entry_dead(&self) -> bool {
+        false
+    }
+    fn set_entry_broken(&self) -> bool {
+        self.broken
+    }
+    fn hit_by_held_object(&mut self) -> bool {
         false
     }
     fn hit_player(&self) -> bool {

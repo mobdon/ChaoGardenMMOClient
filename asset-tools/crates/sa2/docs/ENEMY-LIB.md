@@ -15,6 +15,7 @@ relocations name main.dol addresses directly.
 | `e_ai` | stg09D.rel E AI: row callback 0x51034 and the E EMI-family routines 0x4E8EC..0x51034 |
 | `e_gold` | stg09D.rel E GOLD: row callback 0x4A024 and 0x494AC..0x49DB4, plus main.dol's view test fn_80018A4C (`engine::player_in_view`) |
 | `e_kumi` | stg09D.rel E KUMI: row callback 0x4C408 and 0x4A3A8..0x4C01C, its eight kinds |
+| `e_namie` | stg09D.rel E NAMIE: row callback 0x52A1C and 0x51398..0x52980 (its child segments, 0x53F0C, are not run) |
 | `host` | `EnemyHost`, the calls the enemy code makes to code not ported here |
 
 ## What the host stands for
@@ -26,7 +27,7 @@ collision (fn_80017C00, land collision), sounds, score, debris
 effect child tasks. `Event::Child` records the creator's REL offset and the
 vectors it is given, so each child can be ported later on its own.
 
-`Session` (play_session) runs every Prison Lane E AI, E GOLD and E KUMI each
+`Session` (play_session) runs every Prison Lane E AI, E GOLD, E KUMI and E NAMIE each
 frame, before the doors read the group counts; each joins its group (or not)
 in its own set-up. Its host does not have the player's collision,
 culling or land collision, so enemies are never touched by or bump into the
@@ -51,7 +52,8 @@ Both tests are `#[ignore]`d and need `SA2_MAIN_DOL` (GSNE8P main.dol),
 * `tests/enemy_lib.rs` / `enemy_lib_ppc.py`: every `engine` helper on random
   inputs and 12,000 motion steps over E AI's table, bit for bit.
 * `tests/e_ai.rs` / `e_ai_ppc.py`: stg09D.rel's own 0x51034 (and, with
-  `SA2_ENEMY=gold` / `kumi`, E GOLD's 0x4A024 and E KUMI's 0x4C408) run frame
+  `SA2_ENEMY=gold` / `kumi` / `namie`, E GOLD's 0x4A024, E KUMI's 0x4C408
+  and E NAMIE's 0x52A1C) run frame
   by frame
   under the `dol_ppc` harness with the game around it scripted (80 runs over
   all kinds, `SA2_E_AI_SEED` / `SA2_E_AI_RUNS`). The task, the enemy work,
@@ -63,7 +65,8 @@ relocations and Gekko's `frsqrte`.
 
 ## Not ported yet
 
-E NAMIE (0x52A1C); the REL child tasks
+E NAMIE's child segments (0x53F0C / 0x53BB8: until they run, kinds 0 to 2
+wait in state 2 for the flag a segment sets); the other REL child tasks
 (shots 0x44BA0, beams 0x45638, kind 4 shots 0x4358C, jets 0x43ED0, effects);
 fn_80017C00's ground response (it needs the land collision search); debris
 and drops.
