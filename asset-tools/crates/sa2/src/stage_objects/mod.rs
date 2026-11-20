@@ -47,7 +47,12 @@ pub const MODULES: &[(&str, &[Routine])] = &[
     ("ring", ring::ROUTINES),
     ("schbox", schbox::ROUTINES),
     ("skull", skull::ROUTINES),
+    ("skull (local calls)", skull::BL_MASKED_ROUTINES),
     ("udreel_stoplsd", udreel_stoplsd::ROUTINES),
+    (
+        "udreel_stoplsd (local calls)",
+        udreel_stoplsd::BL_MASKED_ROUTINES,
+    ),
     ("light_modmod", light_modmod::ROUTINES),
 ];
 
@@ -117,6 +122,25 @@ pub fn masked_text(rel: &[u8]) -> Result<Vec<u8>> {
             } else if let Some(b) = text.get_mut(from..from + mask.len()) {
                 b.copy_from_slice(mask);
             }
+        }
+    }
+    Ok(text)
+}
+
+/// [`masked_text`] with the displacement of every `b`/`bl` (primary opcode
+/// 18) zeroed as well. A REL resolves its calls within section 1 when it is
+/// linked, without a relocation, so a routine that calls a module-local
+/// helper (fabsf at +0x84, sqrtf at +0x74CC, the stage's land and effect
+/// helpers) has a different displacement in every stage whose code before
+/// the helper differs. With those masked, the shared test finds the same
+/// routine across the stage RELs. The recorded hashes stay over
+/// [`masked_text`].
+pub fn branch_masked_text(rel: &[u8]) -> Result<Vec<u8>> {
+    let mut text = masked_text(rel)?;
+    for w in text.as_chunks_mut::<4>().0 {
+        let ins = u32::from_be_bytes(*w);
+        if ins >> 26 == 18 {
+            *w = (ins & 0xfc00_0003).to_be_bytes();
         }
     }
     Ok(text)
