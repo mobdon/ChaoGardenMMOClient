@@ -769,8 +769,8 @@ pub fn walker_exec(
             }
         }
         2 => {
-            s.call(0x8003_9484, t, m, p);
-            s.call(0x8003_8DD4, t, m, p);
+            path_accel(stack, t, p, g, s);
+            path_speed(stack, t, m, p, s);
             s.call(0x8003_8A70, t, m, p);
         }
         6 => {
@@ -919,4 +919,73 @@ pub fn walker_exec(
         eng.call(EngineCall::CclEntry);
     }
     s.call(0x8004_F4D0, t, m, p);
+}
+
+const PATH_STOP: f32 = f32::from_bits(0x3dcc_cccd); // r2-0x75A8, 0.1
+const PATH_STOP_NEG: f32 = f32::from_bits(0xbdcc_cccd); // r2-0x75A0, -0.1
+
+/// fn_80039484(task work, motion work, player work): the path mode's
+/// acceleration: gravity times `weight` in the task frame, air resistance
+/// +0x114 on x, and the stick's push (+0xFC times its magnitude, or +0x104
+/// without it); a stopped player without the stick stays put while the
+/// push is within the stop share +0x128 of the y term.
+fn path_accel(
+    stack: &mut MatrixStack,
+    t: &Work,
+    p: &mut Work,
+    g: &ExecGlobals,
+    s: &mut dyn ExecSteps,
+) {
+    if t.h(tw::FLAG) & 0x4000 != 0 {
+        return;
+    }
+    let w = p.f(0x138);
+    let gv = g.act.gravity;
+    let mut a = [0.0f32; 3];
+    for j in 0..3 {
+        a[j] = fmadds(gv[j], w, a[j]);
+    }
+    let mut a = crate::ninja_matrix::unrotate_by_angles(stack, t.ang3(tw::ANG), a);
+    a[0] = fmadds(p.f(0x114), p.f(pw::SPD), a[0]);
+    let stick = s.analog(t, p);
+    let push = match stick {
+        None => p.f(0x104),
+        Some((_, mag)) => p.f(0xFC) * mag,
+    };
+    a[0] += push;
+    if 0.0 == p.f(pw::SPD) {
+        let lim = a[1] * p.f(0x128);
+        if stick.is_none() && a[0] < lim && a[0] > -lim {
+            a[0] = 0.0;
+        }
+    }
+    p.set_v3(0x58, a);
+}
+
+/// fn_80038DD4(task work, motion work, player work): the path mode's speed:
+/// x takes the acceleration, stopping at zero crossings and below 0.1;
+/// y and z are dropped, and the world speed (fn_80046950 clamps it) goes to
+/// the motion work.
+fn path_speed(
+    stack: &mut MatrixStack,
+    t: &mut Work,
+    m: &mut Work,
+    p: &mut Work,
+    s: &mut dyn ExecSteps,
+) {
+    let x0 = p.f(pw::SPD);
+    let x = x0 + p.f(0x58);
+    p.set_f(pw::SPD, x);
+    if x0 > 0.0 {
+        if x < 0.0 || (x0 >= PATH_STOP && x < PATH_STOP) {
+            p.set_f(pw::SPD, 0.0);
+        }
+    } else if x0 < 0.0 && (x > -0.0 || (x0 <= PATH_STOP_NEG && x > PATH_STOP_NEG)) {
+        p.set_f(pw::SPD, 0.0);
+    }
+    p.set_f(0x68, 0.0);
+    p.set_f(0x6C, 0.0);
+    let v = rotate_by_angles(stack, t.ang3(tw::ANG), p.v3(pw::SPD));
+    m.set_v3(0, v);
+    s.call(0x8004_6950, t, m, p);
 }
