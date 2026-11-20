@@ -50,6 +50,10 @@ be at stg42D's offsets.
 | - | effects | `effects` | 10 particle creators, their execs, SpSparkExec manager |
 | - | Omochao (MSGER mode 2) | `messenger::omochao` | exec 0x156CC, display 0x17468 (logic; draws are events), follow 0x14DEC, steer 0x14AC8, turn limit 0x1451C, placement 0x14608/0x148A4, hints 0x14344/0x14484, holder 0x6300, force query 0x7558 |
 | - | movable objects (moving floors) | `dyn_land` | probe 0x378C, ceiling 0x38AC, ground 0x3924, walls 0x3B68, physics step 0x491C, free/create 0x49D0/0x49F8, set-up 0x4B44, release 0x4BA8, update 0x4BE0; main.dol fn_80012EA4 and ObjectMovableInitialize 0x800DE884 |
+| - | 2P ring rank (main.dol) | `player_contact::rank` | fn_80063E34 with fn_8001DDA8, fn_800736F0, fn_8001DB4C, GetPlayerCharacter 0x80038108 (AddNumRing's 2P path calls it) |
+| - | barrier / invincibility tasks (main.dol) | `player_contact::effects` | creators fn_800BE308/fn_800BE374/fn_800BE408, execs fn_800BD2F0/fn_800BE0BC/fn_800BD6E8, sparkle execs, displays fn_800BD478/fn_800BE234 (= fn_800BD858), sparkle displays fn_800BD120/fn_800BD5C0, rand 0x8010DC88 |
+| - | MSGER shadow texture | `messenger::shadow` | init 0x7344, free 0x7400, capture 0x6F94/0x6FC4, end 0x72D0, draw 0x7440; main.dol C_MTXLookAt, C_MTXFrustum, C_MTXLightFrustum, C_MTXConcat, PSVECCrossProduct |
+| - | trail particle effects | `effects` | creators 0x1DFE0 and 0x1E194 (exec 0x1E6BC); Omochao calls 0x1DFE0. `duel_debris` inlines the same logic against another main.dol's addresses |
 | - | player contact (main.dol) | `player_contact` | 30 routines: CCL hit searches and hit lists, IsThisTaskPlayer, the container attack checks fn_800368A0/fn_8003699C, SetVelocityP, SetInputP, fn_80039EB0, fn_800399BC, fn_8003A54C, On/OffControl3D, AddScore, AddNumRing, AddMechHP, 1-up fn_800641B8, the item effects fn_800373B8/fn_800374E0/fn_800375FC/fn_80037718, the vibration request fn_8002FB2C |
 
 Rows 7 (ORI) and 16 (EFFOBJ0) are ported by the Prison Lane work
@@ -108,12 +112,14 @@ replay every case and compare events and state bit for bit.
   the explosion sphere 0x7684. They are hooks.
 * ORI's helpers 0x193EC/0x1949C and its rocket table 0x1B824/0x1B878.
 * Engine calls the contact routines make that are not player contact: sound,
-  voice and jingles, the barrier and invincibility effect tasks
-  (fn_800BE308/fn_800BE374/fn_800BE408), task creation and freeing, and the
-  2P ring rank fn_80063E34 (needs the unported fn_800736F0/fn_8001DDA8).
+  voice and jingles, task creation, allocation and freeing, and the effect
+  tasks' draw calls (`player_contact::effects::EffectDraw`).
+* The magnetic barrier's sparkle display fn_800BDD88 (0x234): pure drawing
+  (sprite vertex buffer and texture draws); its exec installs the address.
 * Omochao's message window (fn_800E00E8/fn_800E018C/fn_800E0118), player
-  bone position fn_80038008, the 0x1DFE0 trail effect (the only existing
-  port, `duel_debris`, targets another main.dol) and its draw calls.
+  bone position fn_80038008 and its draw calls; MSGER's GX state calls
+  (texture objects, viewport, scissor, projection, texture copy, fog) and the
+  shadow list push fn_80066AC8.
 * The walls routine's fallbacks for a zero unit-vector estimate (0x3DD4..,
   0x40C0.., 0x43AC.., 0x4694.., 0x47B4..0x4854) are ported but no oracle
   case reaches them; they appear unreachable.
