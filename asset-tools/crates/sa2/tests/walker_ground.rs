@@ -7,8 +7,8 @@ use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
     walker_collide::{MotionWork, PhysicsRow},
     walker_ground::{
-        ground_pass, CollisionQuery, GroundEnv, LandContext, MoveVector, PlayerTask, PlayerWork,
-        RideRecord,
+        floor_pass, ground_pass, CollisionQuery, FloorExtras, GroundEnv, LandContext, MoveVector,
+        PlayerTask, PlayerWork, RideRecord,
     },
 };
 use serde_json::Value;
@@ -40,10 +40,21 @@ fn bits(v: [f32; 3]) -> [u32; 3] {
 
 #[test]
 #[ignore = "requires SA2_MAIN_DOL, SA2_STG11_REL and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
-fn matches_main_dol_on_iron_gate() {
+fn ground_pass_matches_main_dol_on_iron_gate() {
+    run("ground");
+}
+
+#[test]
+#[ignore = "requires SA2_MAIN_DOL, SA2_STG11_REL and a Python with Unicorn PPC (SA2_PPC_PYTHON)"]
+fn floor_pass_matches_main_dol_on_iron_gate() {
+    run("floor");
+}
+
+fn run(pass: &str) {
     let python = std::env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
     let o = Command::new(python)
         .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/walker_ground_ppc.py"))
+        .env("WALKER_PASS", pass)
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -282,18 +293,37 @@ fn matches_main_dol_on_iron_gate() {
             stats: &mut stats,
             hits: std::mem::take(&mut hits),
         };
-        let ret = ground_pass(
-            &mut stack,
-            &mut land,
-            &mut task,
-            &mut vel,
-            &mut w,
-            &mut q,
-            &mut env,
-            &mut analog,
-            &mut ride_cb,
-            f(&c["f26"]),
-        );
+        let ret = if pass == "ground" {
+            ground_pass(
+                &mut stack,
+                &mut land,
+                &mut task,
+                &mut vel,
+                &mut w,
+                &mut q,
+                &mut env,
+                &mut analog,
+                &mut ride_cb,
+                f(&c["f26"]),
+            )
+        } else {
+            let mut x = FloorExtras {
+                probe: u(&c["probe"]) != 0,
+                analog: &mut analog,
+            };
+            floor_pass(
+                &mut stack,
+                &mut land,
+                &mut task,
+                &mut vel,
+                &mut w,
+                &mut q,
+                &mut env,
+                &mut x,
+                &mut ride_cb,
+                f(&c["f26"]),
+            )
+        };
         hits = std::mem::take(&mut land.hits);
         let a = &c["after"];
         let ctx = format!("case {n}");

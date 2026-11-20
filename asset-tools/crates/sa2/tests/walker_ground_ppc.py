@@ -287,6 +287,8 @@ m.stub(0x8004E560, analog_stub)
 stage = [11]
 m.stub(0x8001DD78, lambda mm: mm.gpr(3, stage[0]))
 
+# WALKER_PASS picks fn_8003EAFC (ground) or fn_80043ED4 (floor).
+PASS = {"ground": 0x8003EAFC, "floor": 0x80043ED4}[os.environ.get("WALKER_PASS", "ground")]
 TASK, VEL, PW, Q, MW = TASK1, 0x81180000, 0x81181000, 0x81182000, 0x81183000
 PHYS = 0x80196578
 GLOBAL = 0x801E5624
@@ -317,6 +319,10 @@ def floor_tris():
 
 
 cases = []
+# WG_TRACE lists hex addresses whose execution is logged per case.
+trace = []
+for a in filter(None, os.environ.get("WG_TRACE", "").split(",")):
+    m.u.hook_add(dol_ppc.UC_HOOK_CODE, lambda uc, pc, size, _: trace.append(pc), begin=int(a, 16), end=int(a, 16))
 pos = list(rng.choice(centers))
 for case in range(int(os.environ.get("WALKER_GROUND_CASES", "400"))):
     # Pick a spot near land, then build this frame's nodes around it.
@@ -400,9 +406,13 @@ for case in range(int(os.environ.get("WALKER_GROUND_CASES", "400"))):
     m.put(Q + 0x28, "H", 0); m.put(Q + 0x2A, "H", 0)
     m.u.mem_write(Q + 0x34, bytes(0x50))
     m.put(0x801E7748 + 4 * pnum, "I", MW)
+    m.put(0x801E7728 + 4 * pnum, "I", PW)
     put_f(MW, *mw["spd"]); m.put(MW + 0x1C, "i", mw["aim"])
     m.put(R13 - 0x78F4, "I", stuck)
-    m.call(0x8003EAFC, r3=TASK, r4=VEL, r5=PW, f26=f26, count=400_000_000)
+    probe = rng.choice([0, 0, 0, 1])
+    m.put(R13 - 0x7900, "I", probe)
+    trace.clear()
+    m.call(PASS, r3=TASK, r4=VEL, r5=PW, f26=f26, count=400_000_000)
     ret = m.gpr(3)
     after = {
         "ret": 3 if ret == VEL else ret,
@@ -430,6 +440,6 @@ for case in range(int(os.environ.get("WALKER_GROUND_CASES", "400"))):
                   "task": {**task, "pos": fl(task["pos"])}, "vel": {"v": fl(vel["v"]), "angles": vel["angles"]},
                   "pw": {k: (fl(v) if isinstance(v, list) else (fb(v) if isinstance(v, float) else v)) for k, v in pw.items()},
                   "mw": {"spd": fl(mw["spd"]), "aim": mw["aim"]}, "stuck": stuck, "analog": [analog[0], fb(analog[1])],
-                  "f26": fb(f26), "after": after})
+                  "f26": fb(f26), "probe": probe, "after": after, "trace": [hex(x) for x in trace]})
 print(json.dumps({"head": [count, start], "cols": cols, "objects": objects, "models": models, "rows": rows,
                   "tasks": [[t, rec_out(records[k])] for k, (t, _, _) in enumerate(tasks)], "cases": cases}))
