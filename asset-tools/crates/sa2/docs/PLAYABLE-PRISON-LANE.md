@@ -49,8 +49,8 @@ Iron Gate, whose doors share one constant set, the timing is unchanged.
 | Terrain | `objLandTable0009`, `collision::bake_stage` | Native geometry, same queries as Iron Gate |
 | Object models | PC_SA2/STG09.ini: lift 0xC3C538, bridge 0xC42EA0, elevator 0xC39660, panel 0xC40390 | Native Basic models |
 | PANEL (17) | stg09D.rel 0x2A4C passes its model to the static-collision helper 0x9A4C with flags 6 (Y rotation kept, X and Z dropped) | Ported as static solids. They floor the gap past the first lift room. |
-| CCUBE (17) | stg09D.rel 0x11CDC: CollisionData form 3 (sec5+0x4C080), sizes set by 0x11B30 to 10 + Scale per axis | Ported as solid boxes with half-extents 10 + Scale, centred on the placement. Adaptation: only Y rotation is applied. The box beside lift 16 tops out at exactly the lift's raised height (838). Not enabled for Iron Gate, whose module was not checked. |
-| RING_LINEAR (17 lines, 64 rings) | stg09D.rel 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | Ported: Scale.z truncated and clamped to 1..=8 rings; ring i at local (0, Scale.y · sin(i · (0x4000 / n)), -i · (10 + Scale.x)) under translate, rotate Z, Y, X. The trig call 0x80112050 is taken as sine; only one line has a non-zero Scale.y (4), so this moves no ring more than 4 units. Each ring uses the o_ring pickup. Not enabled for Iron Gate. |
+| CCUBE (17) | stg09D.rel 0x11CDC: CollisionData form 3 (sec5+0x4C080), sizes set by 0x11B30 to 10 + Scale per axis | Ported as solid boxes with half-extents 10 + Scale, centred on the placement. Whether form 3 applies the task rotation is not read, so only the 9 boxes whose shape does not depend on it (no X/Z rotation, yaw 0 or a half turn) are built; the 8 others are listed as unimplemented. Not enabled for Iron Gate, whose module was not checked. |
+| RING_LINEAR (15 of 17 lines, 56 rings) | stg09D.rel 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | Ported for lines placed by read rules alone: Scale.z truncated and clamped to 1..=8 rings, spaced 10 + Scale.x along local -Z, turned by the Y rotation (0x801154E0, the goal ring spin call). The arch term multiplies Scale.y by an unidentified trig call (0x80112050), and X/Z use two unidentified rotate calls, so the one arched line and the one tilted line are not built. Each ring uses the o_ring pickup. Not enabled for Iron Gate. |
 | Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Native volumes |
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact; slot word 2 is the clear |
 | Checkpoints, springs, containers | as Iron Gate | as Iron Gate |
@@ -75,8 +75,8 @@ unhandled placement by name.
 
 | Check | Result on the pinned Steam build |
 | --- | --- |
-| Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL and 17 CCUBE solids; stg11D.rel is rejected for this layout |
-| Spawn to goal | Checkpoint (-1235, 237, 40) at frame 3,107; the one-way diagonal elevator at 4,442; checkpoints (-2476, 630, -615) at 5,514 and (-3910, 870, -240) at 8,009; goal contact with sound 0x1013 and slot word 2 at 9,071 (151.2 s). No deaths; 14 of the 64 rings collected on the way (score 140). |
+| Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL and 9 CCUBE solids, 56 rings; stg11D.rel is rejected for this layout |
+| Spawn to goal | Checkpoint (-1235, 237, 40) at frame 2,694; the one-way diagonal elevator at 3,863; checkpoints (-2476, 630, -615) at 4,936 and (-3910, 870, -240) at 7,431; goal contact with sound 0x1013 and slot word 2 at 8,493 (141.6 s). No deaths; 15 of the 56 rings collected on the way (score 150). |
 
 `examples/walker_probe.rs` (static reachability from the start and each
 checkpoint to every checkpoint, mover and the goal) and

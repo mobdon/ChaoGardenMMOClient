@@ -1,4 +1,4 @@
-//! Prison Lane (Hero story, Tails' walker) played by the headless autopilot
+﻿//! Prison Lane (Hero story, Tails' walker) played by the headless autopilot
 //! on the installed Steam data. The autopilot only produces stick/jump
 //! input; the session moves the body.
 use sa2_asset_tools::{
@@ -112,12 +112,24 @@ fn installed_mover_rules_and_session_inventory() {
             (15, 2, 2)
         );
         assert_eq!(s.checkpoints.len(), 3);
-        // 17 RING_LINEAR lines, 3 to 6 rings each.
-        assert_eq!(s.rings_placed.len(), 64);
+        // 15 of the 17 RING_LINEAR lines are exact (flat, Y rotation only).
+        assert_eq!(s.rings_placed.len(), 56);
         assert_eq!(s.goals.len(), 1);
         assert_eq!(s.goals[0].position, [-4439.9966, 967.0, -1133.4259]);
         assert_eq!(s.unimplemented.get("PANEL (solid only)"), Some(&17));
-        assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&17));
+        // Only unrotated or half-turned CCUBEs are built; the rest wait on
+        // the unread form-3 rotation rule.
+        assert_eq!(s.unimplemented.get("CCUBE (solid only)"), Some(&9));
+        assert_eq!(
+            s.unimplemented
+                .get("CCUBE (rotated: rotation rule not read)"),
+            Some(&8)
+        );
+        assert_eq!(
+            s.unimplemented
+                .get("RING_LINEAR (arched or tilted: trig/axis calls not read)"),
+            Some(&2)
+        );
         assert!(s.death_zone_count() > 0);
         assert_eq!((s.level, s.character, s.physics.slot), (9, 6, 6));
     });
