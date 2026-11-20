@@ -59,3 +59,32 @@ fn blends_matched_draws_and_snaps_jumps() {
     tw.apply(&mut cur, 0.0);
     assert_eq!(tx(&cur, 1), 0.0);
 }
+
+#[test]
+fn a_vanished_copy_does_not_shift_the_others() {
+    // Three copies; the first is gone in the next frame (a ring collected).
+    let prev = frame(&[0.0, 100.0, 200.0], false);
+    let mut cur = frame(&[104.0, 204.0], false);
+    let tw = Tween::new(&prev, &cur);
+    tw.apply(&mut cur, 0.5);
+    assert_eq!(
+        (tx(&cur, 0), tx(&cur, 1)),
+        (102.0, 202.0),
+        "each from its own copy"
+    );
+}
+
+#[test]
+fn a_camera_turn_cut_snaps() {
+    let turned = |a: f32| {
+        let mut f = frame(&[0.0], false);
+        let (s, c) = a.sin_cos();
+        f.draws[0].draw_params.pos_mtx[0] =
+            [[c, 0.0, s, 0.0], [0.0, 1.0, 0.0, 0.0], [-s, 0.0, c, 0.0]];
+        f
+    };
+    let prev = turned(0.0);
+    // A small turn blends; a cut to look the other way doesn't.
+    assert_eq!(Tween::new(&prev, &turned(0.1)).matched(), 1);
+    assert_eq!(Tween::new(&prev, &turned(2.5)).matched(), 0);
+}

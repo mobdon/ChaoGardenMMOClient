@@ -23,6 +23,8 @@ struct Snap {
     buf: wgpu::Buffer,
     /// Uploads since the last snapshot, newest per id.
     pending: HashMap<TextureId, Levels>,
+    /// The frame before a snapshot frame (SA2_SNAP_TWEEN).
+    before: Option<Frame>,
 }
 
 /// Keep the newest data for each uploaded texture. The game re-uploads every
@@ -77,6 +79,7 @@ fn open() -> Result<Snap, String> {
         target,
         buf,
         pending: HashMap::new(),
+        before: None,
     })
 }
 
@@ -89,7 +92,11 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         }
         let Some(s) = s.as_mut() else { return Ok(None) };
         note_uploads(&mut s.pending, &f.uploads);
+        let tween = std::env::var_os("SA2_SNAP_TWEEN").is_some();
         if every == 0 || !n.is_multiple_of(every) {
+            if tween && every != 0 && (n + 1).is_multiple_of(every) {
+                s.before = Some(f.clone());
+            }
             return Ok(None);
         }
         for (id, levels) in s.pending.drain() {
@@ -145,16 +152,38 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let path = dir.join(format!("frame_{n:06}.png"));
-        let file = std::io::BufWriter::new(std::fs::File::create(&path).map_err(|e| e.to_string())?);
-        let mut enc = png::Encoder::new(file, W, H);
-        // RGB: the EFB has no alpha the game cares about (it writes 0).
-        enc.set_color(png::ColorType::Rgb);
-        enc.set_depth(png::BitDepth::Eight);
-        let mut w = enc.write_header().map_err(|e| e.to_string())?;
-        let rgb: Vec<u8> = px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
-        w.write_image_data(&rgb).map_err(|e| e.to_string())?;
+        save_png(&path, &px)?;
+        // SA2_SNAP_TWEEN: also the picture halfway from the frame before, as
+        // the window blends it above 60 a second.
+        if let Some(before) = s.before.take().filter(|_| tween) {
+            let tw = sa2_gx::interp::Tween::new(&before, f);
+            let mut mid = f.clone();
+            mid.serial = 0;
+            tw.apply(&mut mid, 0.5);
+            eprintln!("tween frame {n}: {} of {} draws blended", tw.matched(), f.draws.len());
+            let px = shoot(s, &mid)?;
+            save_png(&dir.join(format!("frame_{n:06}_half.png")), &px)?;
+            let px = shoot(s, &before)?;
+            save_png(&dir.join(format!("frame_{n:06}_before.png")), &px)?;
+        }
         Ok(Some(path))
     })
+}
+
+fn save_png(path: &Path, px: &[u8]) -> Result<(), String> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path).map_err(|e| e.to_string())?);
+    let mut enc = png::Encoder::new(file, W, H);
+    // RGB: the EFB has no alpha the game cares about (it writes 0).
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().map_err(|e| e.to_string())?;
+    let rgb: Vec<u8> = px
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect();
+    w.write_image_data(&rgb).map_err(|e| e.to_string())
 }
 
 /// Draw `f` into the snapshot target and read the pixels back.
