@@ -743,6 +743,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "png"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
+dependencies = [
+ "bitflags 2.13.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide 0.8.9",
+]
+
+[[package]]
+name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -843,7 +862,7 @@ name = "sa2-asset-tools"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
- "png",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "sha2",
@@ -855,10 +874,13 @@ dependencies = [
 name = "sa2-boot"
 version = "0.1.0"
 dependencies = [
+ "png 0.18.1",
+ "pollster",
  "sa2-asset-tools",
  "sa2-gx",
  "sa2-recomp",
  "sa2-runtime",
+ "wgpu",
 ]
 
 [[package]]
@@ -871,6 +893,13 @@ dependencies = [
 
 [[package]]
 name = "sa2-recomp"
+version = "0.1.0"
+dependencies = [
+ "sa2-recomp-rt",
+]
+
+[[package]]
+name = "sa2-recomp-rt"
 version = "0.1.0"
 
 [[package]]

@@ -62,3 +62,8 @@ pub fn install(c: &mut Cpu, m: &mut Mem) {
     c.rt.set_override(GX_DRAW_DONE, flush);
     c.rt.set_override(GX_COPY_DISP, copy_disp);
 }
+
+/// GX commands and registers the state machine ignored so far, with counts.
+pub fn unhandled() -> std::collections::BTreeMap<String, u64> {
+    GX.with_borrow(|s| s.fifo.gx.unhandled.clone())
+}

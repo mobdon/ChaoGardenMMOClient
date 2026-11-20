@@ -249,6 +249,9 @@ pub struct Gx {
     // Output.
     immediate: Option<Immediate>,
     frame: Frame,
+    /// What this state machine ignored, with counts: unknown FIFO opcodes
+    /// and BP/CP/XF registers it doesn't model ("BP 0x45", ...).
+    pub unhandled: std::collections::BTreeMap<String, u64>,
 }
 
 impl Default for Gx {
@@ -322,6 +325,7 @@ impl Gx {
             in_call: false,
             immediate: None,
             frame: Frame::default(),
+            unhandled: Default::default(),
         };
         gx.mat.set_num_chans(1);
         gx.mat.set_tex_coord_gen(
@@ -678,7 +682,10 @@ impl Gx {
                     i += 9;
                 }
                 command::INVAL_VTX_CACHE => i += 1,
-                _ => break,
+                _ => {
+                    *self.unhandled.entry(format!("opcode {cmd:#04x}")).or_default() += 1;
+                    break;
+                }
             }
         }
     }
@@ -936,7 +943,7 @@ impl Gx {
                     self.mat.set_color_channel_from_registers(&r, i);
                 }
             }
-            _ => {}
+            _ => *self.unhandled.entry(format!("XF {addr:#06x}")).or_default() += 1,
         }
     }
 
@@ -997,7 +1004,7 @@ impl Gx {
             }
             0xA0 => self.arrays[(addr & 0xF) as usize].0 = v,
             0xB0 => self.arrays[(addr & 0xF) as usize].1 = (v & 0xFF) as usize,
-            _ => {}
+            _ => *self.unhandled.entry(format!("CP {addr:#04x}")).or_default() += 1,
         }
     }
 
@@ -1135,7 +1142,7 @@ impl Gx {
                     None
                 }
             }
-            _ => {}
+            _ => *self.unhandled.entry(format!("BP {addr:#04x}")).or_default() += 1,
         }
     }
 

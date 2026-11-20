@@ -14,3 +14,6 @@ sa2-recomp = { path = "../sa2-recomp" }
 sa2-gx = { path = "../sa2-gx" }
 sa2-runtime = { path = "../sa2-runtime" }
 sa2-asset-tools = { path = "../sa2" }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan"] }
+pollster = "0.4.0"
+png = "0.18.1"
