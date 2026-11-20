@@ -1441,6 +1441,10 @@ pub struct HandoffFrame {
     pub stage: Option<StageFrame>,
     #[serde(default)]
     pub debris: Option<DebrisFrame>,
+    /// Result of the engine call 0x8001ccbc at the top of the task; 7 resets
+    /// the work block.
+    #[serde(default)]
+    pub game_state: i32,
     pub poll: i32,
     /// Byte 1 of each 0x801e7328 entry and word 0xc of each 0x801e7368 entry.
     pub characters: [i8; 2],
@@ -2220,6 +2224,32 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                 };
             let mut out = Vec::new();
             for (n, f) in frames.iter().enumerate() {
+                let mut ev = vec![call(0xf41c, &[])?];
+                // Engine state 7 (0x8001ccbc) resets the task work.
+                if f.game_state == 7 {
+                    player = 0;
+                    switch_state = 0;
+                    timer = 0;
+                    pool = 50;
+                    switch_count = 0;
+                    reason = 0;
+                    visits = [0, 0];
+                    line = 0;
+                    for (site, offset, size, value) in [
+                        (0xf42c, 0, 1, 0),
+                        (0xf430, 1, 1, 0),
+                        (0xf434, 8, 2, 0),
+                        (0xf43c, 0xc, 2, 50),
+                        (0xf440, 5, 1, 0),
+                        (0xf444, 4, 1, 0),
+                        (0xf448, 2, 1, 0),
+                        (0xf44c, 3, 1, 0),
+                        (0xf450, 6, 1, 0),
+                    ] {
+                        ev.push(store(site, "task", None, offset, size, value));
+                    }
+                }
+                ev.push(call(0xf454, &[])?);
                 if switch_state == 0 && f.stage.is_none() {
                     return Err(Error::invalid(format!(
                         "frame {n} is in state 0 and needs a stage block"
@@ -2230,7 +2260,6 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
                         "frame {n} spawns state 4 debris and needs a debris block"
                     )));
                 }
-                let mut ev = Vec::new();
                 // r31 keeps the slot that was active when the frame began.
                 let r31 = player;
                 ev.push(store(

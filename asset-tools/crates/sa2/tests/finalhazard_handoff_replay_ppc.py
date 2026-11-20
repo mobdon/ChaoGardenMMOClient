@@ -23,7 +23,7 @@ data = Path(module).read_bytes()
 word = lambda i: struct.unpack_from(">I", data, i)[0]
 section = lambda n: (word(word(16) + 8 * n) & ~1, word(word(16) + 8 * n + 4))
 code = section(1)[0]
-FIRST, STOP = 0xf458, 0xff38
+FIRST, STOP = 0xf414, 0xff38  # after the prologue's register save
 
 relocs, data_relocs = {}, {}
 imp_off, imp_size = struct.unpack_from(">II", data, 0x28)
@@ -183,6 +183,8 @@ def code_hook(u, pc, size, _):
                 rings[r3] = (rings[r3] + struct.unpack(">i", struct.pack(">I", r4))[0])
             elif target == 0x80022BC4:
                 ret = stage["sound_queries"][r3]
+            elif target == 0x8001CCBC:  # engine game state; 7 resets the work block
+                ret = frame.get("game_state", 0)
             elif target == 0x8010D940:  # engine random
                 ret = frame["debris"]["randoms"][counters["rand"]]
                 counters["rand"] += 1
@@ -282,8 +284,8 @@ def run(start):
                 cpu.mem_write(player2[s] + 0x176, struct.pack(">2h", *stage["actions"][s]))
             cpu.mem_write(HOLD, struct.pack(">I", stage["global_664"]))
         cpu.reg_write(R.UC_PPC_REG_1, STACK)
-        cpu.reg_write(R.UC_PPC_REG_29, TASK)
-        cpu.reg_write(R.UC_PPC_REG_30, WORK)
+        cpu.reg_write(R.UC_PPC_REG_3, TASK)
+        cpu.mem_write(TASK + 0x40, struct.pack(">I", WORK))
         cpu.emu_start(CODE + FIRST, CODE + STOP + 4, count=20000)
         assert not saved, saved
         p, st = struct.unpack(">bb", cpu.mem_read(WORK, 2))
@@ -375,6 +377,7 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
                 cue_result=rng.choice((-1, 0, 5)),
                 global_7c=(clock + k) if with_stage else rng.choice((0, 14399, 14400, 14401)))
             if with_stage:
+                fr["game_state"] = rng.choice((0,) * 60 + (7, 3))
                 fr["stage"] = stage_frame(rng)
                 fr["debris"] = dict(
                     randoms=[rng.choice((0, 1, 16384, 32767, rng.randrange(32768), -5, 40000))
@@ -421,7 +424,7 @@ with tempfile.TemporaryDirectory(dir=".local") as directory:
         frames_total += len(native)
         seen.update(e["site"] for events, _ in native for e in events)
 # Every handoff branch and every stage-local call site must have been exercised.
-required = {0xF47C, 0xF498, 0xF4C4, 0xF4D8, 0xF52C, 0xF55C, 0xF564, 0xF5C8, 0xF690, 0xF69C,
+required = {0xF41C, 0xF42C, 0xF43C, 0xF450, 0xF454, 0xF47C, 0xF498, 0xF4C4, 0xF4D8, 0xF52C, 0xF55C, 0xF564, 0xF5C8, 0xF690, 0xF69C,
             0xF6A8, 0xF6C0, 0xF718, 0xF7E4, 0xF7F0, 0xF7FC, 0xF800, 0xF838, 0xF848, 0xF86C,
             0xF87C, 0xF884, 0xF8BC, 0xF8C4, 0xFF34, 0xEBC0, 0xEF74, 0xF038, 0xF0E8, 0xF380,
             0xF3A4, 0xF3DC, 0xFC28, 0xFC54, 0xFC68, 0xFC8C, 0xFC9C, 0xFCC0, 0xFD18, 0xFD7C,

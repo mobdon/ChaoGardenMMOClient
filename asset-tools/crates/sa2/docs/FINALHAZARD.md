@@ -11,7 +11,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | Path | Section 1 code | What it reproduces |
 | --- | --- | --- |
 | `switch_camera` | 0xf5cc–0xf6a8, 0xf724–0xf7fc | Six-word camera request when the handoff enters state 2 or 3 |
-| `switch_replay` | 0xf458–0xff34 per frame | Stage player task: states 0 (ring drain, handoff trigger), 1–3 (handoff) and 4 (ring-out debris) |
+| `switch_replay` | 0xf414–0xff34 per frame | Stage player task: states 0 (ring drain, handoff trigger), 1–3 (handoff) and 4 (ring-out debris) |
 | `voice_gate` | 0xeb38 | Whether a stage voice may play |
 | `arena_clamp` | 0xee8c, 0x40cc | Per-frame arena bounds for both players |
 | `timed_voice` | 0xf070 | Timed boss voice lines |
@@ -38,6 +38,8 @@ state 3 writes action 0x42, 0x176 = 0x64 and 0x17c = 0x57 to the incoming player
 always targets the incoming player. After the state 3 camera, the voice gate decides the cue
 (0x871–0x874 by player and visit count) and the 20-frame countdown. State 3 returns to normal
 dispatch after 180 frames; a frame after that is rejected.
+
+Each frame begins with the engine call 0x8001ccbc, given as `game_state`. When it returns 7, the work block is reset: player, state, timer, reason, switch count, visits and voice line go to 0 and the ring pool to 50. Then 0x80021a14 runs.
 
 State 0 is the normal fight, and its frames need `stage`. With no hold active (module word
 section 6 + 0x664, globals 0x42/0x43), the ring clock (work + 0xa) counts up. Every 61st frame it
@@ -92,7 +94,7 @@ instructions with relocated data and compare them against the Rust output:
 | Test | Cases |
 | --- | --- |
 | `tests/finalhazard_switch_camera_ppc.py` | 336 camera packets: both states, both slots, characters 9/10/−1, yaw wraparound, modes −1/13/14/20 |
-| `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 32,992 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
+| `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 39,182 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
 Deliberate one-line faults were caught by each test. These are offline comparisons with the
