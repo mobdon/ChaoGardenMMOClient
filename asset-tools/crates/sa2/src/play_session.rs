@@ -16,7 +16,7 @@ use crate::{
     goal_ring,
     iron_gate_movers::{Bridge, Elevator, Lift, MoverProgram},
     play_objects::{death_zone_triangles, inside_volume, place_y, read_object_solid},
-    play_world::{add, len, make_tri, scale, sub, Ground, PlayWorld, V3},
+    play_world::{add, dot, len, make_tri, scale, sub, Ground, PlayWorld, V3},
     player_physics::PlayerParameters,
     spring::{SpringCall, SpringKind, SpringPlayer, StageSpring},
     Error, Result,
@@ -288,6 +288,7 @@ pub struct Physics {
     pub jump2_timer: i32,
     pub gravity: f32,
     pub lim_v_spd: f32,
+    pub air_break: f32,
 
     pub rad: f32,
     pub height: f32,
@@ -307,6 +308,7 @@ impl Physics {
             jump2_timer: p.jump2_timer,
             gravity: p.weight,
             lim_v_spd: p.lim_v_spd,
+            air_break: p.air_break.abs(),
 
             rad: p.rad,
             height: p.height,
@@ -748,6 +750,46 @@ impl Session {
         nocon: i32,
         max_frames: u32,
     ) -> Option<V3> {
+        self.predict_flight(position, velocity, nocon, Controls::default(), max_frames)
+    }
+
+    /// Feet positions of a free flight, one per frame, until landing.
+    pub fn flight_path(
+        &self,
+        position: V3,
+        velocity: V3,
+        nocon: i32,
+        controls: Controls,
+        max_frames: u32,
+    ) -> Vec<V3> {
+        let mut pl = self.player.clone();
+        pl.position = position;
+        pl.velocity = velocity;
+        pl.grounded = false;
+        pl.on_mover = None;
+        pl.nocon = nocon;
+        pl.jump_hold = 0;
+        let mut out = vec![];
+        for f in 0..max_frames {
+            self.control(&mut pl, controls);
+            self.integrate(&mut pl);
+            out.push(pl.position);
+            if (pl.grounded && f > 2) || pl.position[1] < self.world.min[1] - 300.0 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// As `predict_landing`, holding `controls` every frame once input is allowed.
+    pub fn predict_flight(
+        &self,
+        position: V3,
+        velocity: V3,
+        nocon: i32,
+        controls: Controls,
+        max_frames: u32,
+    ) -> Option<V3> {
         let mut pl = self.player.clone();
         pl.position = position;
         pl.velocity = velocity;
@@ -756,7 +798,7 @@ impl Session {
         pl.nocon = nocon;
         pl.jump_hold = 0;
         for f in 0..max_frames {
-            self.control(&mut pl, Controls::default());
+            self.control(&mut pl, controls);
             self.integrate(&mut pl);
             if pl.grounded && f > 2 {
                 return Some(pl.position);
@@ -819,16 +861,24 @@ impl Session {
             } else {
                 speed
             };
-            // Ground velocity follows the facing; air keeps momentum and steers.
+            // Ground velocity follows the facing. In the air the stick pushes
+            // by air_accel, and the part of the velocity opposing it is
+            // braked by air_break; speed never grows past max(current, target).
             h = if pl.grounded {
                 scale(facing, new_speed)
             } else {
-                let blend = add(scale(h, 0.95), scale(facing, new_speed * 0.05));
-                let bl = len(blend);
-                if bl > 1e-4 {
-                    scale(blend, new_speed / bl)
+                let along = dot(h, dir);
+                let mut v = add(h, scale(dir, ph.air_accel));
+                if along < 0.0 {
+                    let brake = (-along).min(ph.air_break);
+                    v = add(v, scale(dir, brake));
+                }
+                let cap = speed.max(target);
+                let vl = len(v);
+                if vl > cap && vl > 1e-4 {
+                    scale(v, cap / vl)
                 } else {
-                    blend
+                    v
                 }
             };
         } else if pl.grounded {

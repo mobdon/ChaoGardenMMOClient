@@ -45,7 +45,8 @@ goal state). It never opens a window.
 The controller is the main adaptation. It accelerates toward `rush_speed`
 times stick magnitude by `run_accel`, slows by `slow_down`, jumps with
 `jmp_y_spd`, adds `jmp_addit` for up to `jump2_timer` frames while the button
-is held and rising, and applies `weight` as gravity. That gives a held-jump
+is held and rising, and applies `weight` as gravity. In the air the stick adds
+`air_accel` and brakes velocity that opposes it by up to `air_break`. That gives a held-jump
 peak of 56.52 units. Collision steps up 12 units, snaps to ground within 12
 units while walking and stops at ceilings. No build-matched reference for
 the walker controller exists here: the Steam executable's x86 text is
@@ -69,10 +70,21 @@ stick and jump input; the session moves the walker.
 | Last checkpoint to the goal | From the SAVEPOINT at (3691, -903, -685): elevator 4, bridge, goal contact with sound 0x1013, slot word 2, clear after 3,630 frames (60.5 s), no deaths |
 
 **Not verified: the middle third** (from the SAVEPOINT at x 2241 to the one at
-x 3691). Static reachability says it needs climbs of 52 to 59 units over
-round pipes above a death-zone pit near (2727, -663, -428); the autopilot
-attempts them and falls. The stage's own route there most likely depends on
-systems not ported yet (spring flights with native air physics, walker
-hover, wooden containers, the invisible CCUBE solids). A person can try it in
-the window; a capture of the retail route through that room is the next
-useful reference.
+x 3691). The SET layout shows the authored route:
+
+1. Drop from the -663 corridor onto the large pipe in the room at x 2780-2950
+   (its top is at -694.5).
+2. Spring #303 on the pipe lifts the walker toward the -601 ledge.
+3. The three SPRB springs on that ledge (Rotation.x 42 degrees, Scale.y 3.9,
+   73 no-control frames) throw it north under the roof slab. Their ring line
+   runs at y -538.
+4. It lands on a -763 floor at about (2910, -763, -60..-100), which carries two
+   dash panels (KASOKU).
+5. From there the route drops east to -803, -853 and -903.
+
+The planner now reaches the pipe and the springs. Every spring flight it can
+simulate misses the -763 floor, though, overshooting north by 40 to 90 units
+with or without air braking. The dash-panel floor is also a dead end without
+a dash panel port. Both need the player's air and boost physics, for which no
+reference exists here. The pipe climbs near (2727, -663, -428) that static
+reachability also offers sit above a death pit and are not the authored route.

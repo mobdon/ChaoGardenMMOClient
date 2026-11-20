@@ -40,8 +40,23 @@ enum Wait {
     Launch {
         left: bool,
         since: u32,
+        stick: [f32; 2],
     },
 }
+
+/// Stick held during a spring flight once input is allowed: none, then the
+/// eight compass directions (camera yaw 0, so +y is -Z).
+const POLICIES: [[f32; 2]; 9] = [
+    [0.0, 0.0],
+    [1.0, 0.0],
+    [-1.0, 0.0],
+    [0.0, 1.0],
+    [0.0, -1.0],
+    [0.707, 0.707],
+    [0.707, -0.707],
+    [-0.707, 0.707],
+    [-0.707, -0.707],
+];
 
 pub struct Autopilot {
     pub body: Body,
@@ -172,14 +187,27 @@ impl Autopilot {
         // Launch links: walk onto a spring, land where free flight ends.
         for (j, sp) in s.springs.iter().enumerate() {
             let (pos, vel, nocon) = sp.launch();
-            let Some(landing) = s.predict_landing(pos, vel, nocon, 900) else {
-                continue;
-            };
-            let Some(to) = grid.nearest(landing) else {
-                continue;
-            };
-            for b in grid.nodes_near(sp.position, 6.0, 15.0) {
-                grid.add_link(b, to, 80.0, LAUNCH_TAG + j as u32);
+            let board = grid.nodes_near(sp.position, 6.0, 15.0);
+            let mut seen = vec![];
+            for (k, stick) in POLICIES.iter().enumerate() {
+                let c = Controls {
+                    stick: *stick,
+                    camera_yaw: 0.0,
+                    jump: false,
+                };
+                let Some(landing) = s.predict_flight(pos, vel, nocon, c, 900) else {
+                    continue;
+                };
+                let Some(to) = grid.nearest(landing) else {
+                    continue;
+                };
+                if seen.contains(&to) {
+                    continue;
+                }
+                seen.push(to);
+                for &b in &board {
+                    grid.add_link(b, to, 80.0, LAUNCH_TAG + (j * 16 + k) as u32);
+                }
             }
         }
         let from = s.player.position;
@@ -190,7 +218,8 @@ impl Autopilot {
             .filter(|&&t| t != 0)
             .map(|&t| {
                 if t >= LAUNCH_TAG {
-                    format!("spring {}", t - LAUNCH_TAG)
+                    let k = (t - LAUNCH_TAG) as usize;
+                    format!("spring {} steer {:?}", k / 16, POLICIES[k % 16])
                 } else {
                     format!("ride mover {}", t - RIDE_TAG)
                 }
@@ -251,14 +280,23 @@ impl Autopilot {
                 self.plan(s);
                 return idle;
             }
-            Some(Wait::Launch { left, since }) => {
+            Some(Wait::Launch { left, since, stick }) => {
                 if !left && !s.player.grounded {
-                    self.wait = Some(Wait::Launch { left: true, since });
-                } else if (left && s.player.grounded) || s.frame - since > 300 {
+                    self.wait = Some(Wait::Launch {
+                        left: true,
+                        since,
+                        stick,
+                    });
+                } else if (left && s.player.grounded) || s.frame - since > 600 {
                     self.wait = None;
                     self.plan(s);
+                    return idle;
                 }
-                return idle;
+                return if left {
+                    Controls { stick, ..idle }
+                } else {
+                    idle
+                };
             }
             None => {}
         }
@@ -280,6 +318,7 @@ impl Autopilot {
                         Wait::Launch {
                             left: false,
                             since: s.frame,
+                            stick: POLICIES[((next - LAUNCH_TAG) % 16) as usize],
                         }
                     } else {
                         Wait::Ride {
