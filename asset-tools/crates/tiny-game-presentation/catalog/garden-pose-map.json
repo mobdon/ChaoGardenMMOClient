@@ -1,0 +1,474 @@
+{
+  "source": "A2NE body tile 0x1a4 + 9 * id; ids are pose addresses, not activity names. SA2 samples are presentation adaptations.",
+  "poses": [
+    {
+      "id": 0,
+      "group": "walk-front",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0,
+      "yaw": 0
+    },
+    {
+      "id": 1,
+      "group": "walk-front",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0.25,
+      "yaw": 0
+    },
+    {
+      "id": 2,
+      "group": "walk-front",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0.75,
+      "yaw": 0
+    },
+    {
+      "id": 3,
+      "group": "walk-side",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0,
+      "yaw": -90
+    },
+    {
+      "id": 4,
+      "group": "walk-side",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0.25,
+      "yaw": -90
+    },
+    {
+      "id": 5,
+      "group": "walk-side",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0.75,
+      "yaw": -90
+    },
+    {
+      "id": 6,
+      "group": "walk-back",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0,
+      "yaw": 180
+    },
+    {
+      "id": 7,
+      "group": "walk-back",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0.25,
+      "yaw": 180
+    },
+    {
+      "id": 8,
+      "group": "walk-back",
+      "motion": "alm_aruki_ncz.saanim",
+      "phase": 0.75,
+      "yaw": 180
+    },
+    {
+      "id": 9,
+      "group": "crawl-front",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0,
+      "yaw": 0
+    },
+    {
+      "id": 10,
+      "group": "crawl-front",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0.25,
+      "yaw": 0
+    },
+    {
+      "id": 11,
+      "group": "crawl-front",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0.75,
+      "yaw": 0
+    },
+    {
+      "id": 12,
+      "group": "crawl-side",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0,
+      "yaw": -90
+    },
+    {
+      "id": 13,
+      "group": "crawl-side",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0.25,
+      "yaw": -90
+    },
+    {
+      "id": 14,
+      "group": "crawl-side",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0.75,
+      "yaw": -90
+    },
+    {
+      "id": 15,
+      "group": "crawl-back",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0,
+      "yaw": 180
+    },
+    {
+      "id": 16,
+      "group": "crawl-back",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0.25,
+      "yaw": 180
+    },
+    {
+      "id": 17,
+      "group": "crawl-back",
+      "motion": "alm_haihai_ncz.saanim",
+      "phase": 0.75,
+      "yaw": 180
+    },
+    {
+      "id": 18,
+      "group": "tumble-front",
+      "motion": "alm_koke.saanim",
+      "phase": 0,
+      "yaw": 0
+    },
+    {
+      "id": 19,
+      "group": "tumble-front",
+      "motion": "alm_koke.saanim",
+      "phase": 0.25,
+      "yaw": 0
+    },
+    {
+      "id": 20,
+      "group": "tumble-front",
+      "motion": "alm_koke.saanim",
+      "phase": 0.75,
+      "yaw": 0
+    },
+    {
+      "id": 21,
+      "group": "tumble-side",
+      "motion": "alm_koke.saanim",
+      "phase": 0,
+      "yaw": -90
+    },
+    {
+      "id": 22,
+      "group": "tumble-side",
+      "motion": "alm_koke.saanim",
+      "phase": 0.25,
+      "yaw": -90
+    },
+    {
+      "id": 23,
+      "group": "tumble-side",
+      "motion": "alm_koke.saanim",
+      "phase": 0.75,
+      "yaw": -90
+    },
+    {
+      "id": 24,
+      "group": "tumble-back",
+      "motion": "alm_koke.saanim",
+      "phase": 0,
+      "yaw": 180
+    },
+    {
+      "id": 25,
+      "group": "tumble-back",
+      "motion": "alm_koke.saanim",
+      "phase": 0.25,
+      "yaw": 180
+    },
+    {
+      "id": 26,
+      "group": "tumble-back",
+      "motion": "alm_koke.saanim",
+      "phase": 0.75,
+      "yaw": 180
+    },
+    {
+      "id": 27,
+      "group": "sit-front",
+      "motion": "alm_suwaru_taiki_ncz.saanim",
+      "phase": 0.2,
+      "yaw": 0
+    },
+    {
+      "id": 28,
+      "group": "sit-side",
+      "motion": "alm_suwaru_taiki_ncz.saanim",
+      "phase": 0.2,
+      "yaw": -90
+    },
+    {
+      "id": 29,
+      "group": "raise-hands",
+      "motion": "alm_tati_hakusyu.saanim",
+      "phase": 0,
+      "yaw": 0
+    },
+    {
+      "id": 30,
+      "group": "raise-hands",
+      "motion": "alm_tati_hakusyu.saanim",
+      "phase": 0.3,
+      "yaw": 0
+    },
+    {
+      "id": 31,
+      "group": "raise-hands",
+      "motion": "alm_tati_hakusyu.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    },
+    {
+      "id": 32,
+      "group": "hand-to-face",
+      "motion": "alm_kunkun_tati.saanim",
+      "phase": 0.2,
+      "yaw": 0
+    },
+    {
+      "id": 33,
+      "group": "hand-to-face",
+      "motion": "alm_kunkun_tati.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    },
+    {
+      "id": 34,
+      "group": "lie-side",
+      "motion": "alm_hima_neru.saanim",
+      "phase": 0.2,
+      "yaw": -90
+    },
+    {
+      "id": 35,
+      "group": "lie-side",
+      "motion": "alm_hima_neru.saanim",
+      "phase": 0.7,
+      "yaw": -90
+    },
+    {
+      "id": 36,
+      "group": "hold-side",
+      "motion": "alm_tati_motu.saanim",
+      "phase": 0,
+      "yaw": -90
+    },
+    {
+      "id": 37,
+      "group": "hold-side",
+      "motion": "alm_tati_motu.saanim",
+      "phase": 0.3,
+      "yaw": -90
+    },
+    {
+      "id": 38,
+      "group": "hold-side",
+      "motion": "alm_tati_motu.saanim",
+      "phase": 0.65,
+      "yaw": -90
+    },
+    {
+      "id": 39,
+      "group": "delighted",
+      "motion": "alm_glad_tati_ncz.saanim",
+      "phase": 0.3,
+      "yaw": 0
+    },
+    {
+      "id": 40,
+      "group": "delighted",
+      "motion": "alm_glad_tati_ncz.saanim",
+      "phase": 0.65,
+      "yaw": 0
+    },
+    {
+      "id": 41,
+      "group": "gesture",
+      "motion": "alm_music_tati.saanim",
+      "phase": 0.2,
+      "yaw": 0
+    },
+    {
+      "id": 42,
+      "group": "gesture",
+      "motion": "alm_music_tati.saanim",
+      "phase": 0.65,
+      "yaw": 0
+    },
+    {
+      "id": 43,
+      "group": "bow",
+      "motion": "alm_gakkari.saanim",
+      "phase": 0.2,
+      "yaw": 0
+    },
+    {
+      "id": 44,
+      "group": "bow",
+      "motion": "alm_gakkari.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    },
+    {
+      "id": 45,
+      "group": "drowsy",
+      "motion": "alm_neru_utouto.saanim",
+      "phase": 0.05,
+      "yaw": 0
+    },
+    {
+      "id": 46,
+      "group": "drowsy",
+      "motion": "alm_neru_utouto.saanim",
+      "phase": 0.45,
+      "yaw": 0
+    },
+    {
+      "id": 47,
+      "group": "drowsy",
+      "motion": "alm_neru_utouto.saanim",
+      "phase": 0.8,
+      "yaw": 0
+    },
+    {
+      "id": 48,
+      "group": "hold-front",
+      "motion": "alm_tati_motu.saanim",
+      "phase": 0.3,
+      "yaw": 0
+    },
+    {
+      "id": 49,
+      "group": "sway",
+      "motion": "alm_odoru.saanim",
+      "phase": 0,
+      "yaw": 0
+    },
+    {
+      "id": 50,
+      "group": "sway",
+      "motion": "alm_odoru.saanim",
+      "phase": 0.3,
+      "yaw": 0
+    },
+    {
+      "id": 51,
+      "group": "sway",
+      "motion": "alm_odoru.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    },
+    {
+      "id": 52,
+      "group": "smile",
+      "motion": "alm_glad_tati.saanim",
+      "phase": 0.4,
+      "yaw": 0
+    },
+    {
+      "id": 53,
+      "group": "sleep",
+      "motion": "alm_sleep.saanim",
+      "phase": 0.15,
+      "yaw": -90
+    },
+    {
+      "id": 54,
+      "group": "sleep",
+      "motion": "alm_sleep.saanim",
+      "phase": 0.65,
+      "yaw": -90
+    },
+    {
+      "id": 55,
+      "group": "low-side",
+      "motion": "alm_utubuse.saanim",
+      "phase": 0.1,
+      "yaw": -90
+    },
+    {
+      "id": 56,
+      "group": "low-side",
+      "motion": "alm_utubuse.saanim",
+      "phase": 0.4,
+      "yaw": -90
+    },
+    {
+      "id": 57,
+      "group": "low-side",
+      "motion": "alm_utubuse.saanim",
+      "phase": 0.8,
+      "yaw": -90
+    },
+    {
+      "id": 58,
+      "group": "trumpet",
+      "motion": "alm_rappa.saanim",
+      "phase": 0.25,
+      "yaw": -90
+    },
+    {
+      "id": 59,
+      "group": "trumpet",
+      "motion": "alm_rappa.saanim",
+      "phase": 0.7,
+      "yaw": -90
+    },
+    {
+      "id": 60,
+      "group": "taste",
+      "motion": "alm_taberu.saanim",
+      "phase": 0.3,
+      "yaw": 0
+    },
+    {
+      "id": 61,
+      "group": "taste",
+      "motion": "alm_taberu.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    },
+    {
+      "id": 62,
+      "group": "cheer",
+      "motion": "alm_laugh_tati.saanim",
+      "phase": 0.3,
+      "yaw": 0
+    },
+    {
+      "id": 63,
+      "group": "cheer",
+      "motion": "alm_laugh_tati.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    },
+    {
+      "id": 64,
+      "group": "cry",
+      "motion": "alm_cry_tati.saanim",
+      "phase": 0.3,
+      "yaw": 0
+    },
+    {
+      "id": 65,
+      "group": "cry",
+      "motion": "alm_cry_tati.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    },
+    {
+      "id": 66,
+      "group": "hold-front",
+      "motion": "alm_tati_motu.saanim",
+      "phase": 0.7,
+      "yaw": 0
+    }
+  ]
+}

@@ -107,3 +107,5 @@ Work in ChaoGardenMMOServer on measured capacity and deployment for 100–500 to
 ```text
 Act as integration/release lead for ChaoGardenMMOClient and ChaoGardenMMOServer. Keep TASKS.md, design/request docs and WORKSTREAMS.md current. Review the other workstreams' protocol and shared-file changes, integrate compatible PRs in order, run appropriate client/server and cross-device tests, preserve the canonical owner and durable saves, and maintain one healthy playable preview. Verify original-vs-adapted claims, asset provenance/private boundaries, Android widget status and exact outstanding work. Coordinate release snapshots in both independent source repositories. Never claim an asset conversion, mocked UI, Rust core test or web widget preview is a complete native game/app. Keep this chat focused on integration rather than taking over every implementation lane.
 ```
+
+Tiny phone workstream: local QA integrates the original A2NE menu panel, original price digits and Rust shop stock. Only the garden port is on the critical path; defer social visits and the mobile Game Boy shelf. See TASKS.md and TINY-CHAO-SHOP-SCOPE.md for evidence and remaining gaps.

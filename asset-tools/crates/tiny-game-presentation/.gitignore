@@ -1,0 +1,8 @@
+/target/
+/.local/
+*.gba
+*.sav
+*.srm
+*.bin
+*.rgba
+*.png

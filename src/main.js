@@ -88,6 +88,7 @@ function action(name) {
   if (!player) { toast('Enter the garden to start your adventure.'); return; }
   if (name.startsWith('train-') && nearNPC(INTERACTION_ANCHORS.trainer)) audio.speak('knuckles');
   if (name === 'race' && nearNPC({ zone: 'hub', x: 12, z: 6, radius: 2 })) audio.speak('tails');
+  if (name === 'school') { openSchool(); return; }
   if (name === 'shop') { openShop(); return; }
   send({ type: 'action', action: name });
 }
@@ -114,7 +115,7 @@ try {
   toast('The 3D renderer could not start. Enable browser hardware acceleration and reload.', 'error');
 }
 
-function updatePaused() { garden?.setPaused(saving || welcome.open || setupDialog.open || shopDialog.open || stagesDialog.open || !player); updateWatchButton(); }
+function updatePaused() { garden?.setPaused(saving || $('#school-dialog').open || welcome.open || setupDialog.open || shopDialog.open || stagesDialog.open || !player); updateWatchButton(); }
 
 function rememberChao(savedAt) {
   if (!player || !sessionToken) return;
@@ -168,8 +169,9 @@ document.querySelectorAll('[data-close-panel]').forEach((button) => button.addEv
 document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => action(button.dataset.action)));
 window.addEventListener('keydown', (event) => {
   if (saving || welcome.open || setupDialog.open || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
+  if ($('#school-dialog').open) return;
   if (event.code === 'KeyB') { if (shopDialog.open) shopDialog.close(); else openShop(); return; }
-  if (shopDialog.open || stagesDialog.open) return;
+  if (shopDialog.open || stagesDialog.open || $('#school-dialog').open) return;
   if (event.code === 'KeyC') panel(currentPanel === 'character' ? 'world' : 'character');
   if (event.code === 'KeyJ') panel(currentPanel === 'journal' ? 'world' : 'journal');
   if (event.code === 'KeyG') toggleCare();
@@ -242,6 +244,8 @@ function render(next) {
     attackButton.querySelector('small').textContent = mounted ? 'Fire' : 'Fight';
     attackButton.title = mounted ? 'Fire the Dark Chao Walker cannon (F)' : 'Attack a nearby robot (F)';
   }
+  $('#school-open').hidden=player.zone!=='hub';
+  if ($('#school-dialog').open) renderSchool();
   garden?.setSnapshot(next);
   garden?.setCare?.(next.care, player);
   audio.setZone(player.zone);
@@ -438,7 +442,24 @@ $('#setup-open').addEventListener('click', () => { setupDialog.showModal(); upda
 $('#setup-close').addEventListener('click', () => setupDialog.close());
 setupDialog.addEventListener('close', updatePaused);
 
+function renderSchool(){
+  $('#school-report').textContent=player.name+' · Health '+player.hp+'/'+player.maxHp+' · Energy '+player.energy+' · Happiness '+player.happiness;
+}
+function openSchool(){
+  if(!player || $('#school-dialog').open)return;
+  renderSchool();$('#school-name').value=player.name;
+  $('#school-dialog').showModal();updatePaused();
+}
+$('#school-open').addEventListener('click',openSchool);
+$('#school-close').addEventListener('click',()=>$('#school-dialog').close());
+$('#school-dialog').addEventListener('close',updatePaused);
+$('#school-name-form').addEventListener('submit',event=>{
+  event.preventDefault();const name=$('#school-name').value.trim();
+  if(name && player && name!==player.name)send({type:'action',action:'rename',name});
+});
+$('#school-market').addEventListener('click',()=>{$('#school-dialog').close();openShop();});
 function openShop() {
+  if(shopDialog.open)return;
   if (!player) { toast('Enter the garden first.'); return; }
   if (nearNPC(INTERACTION_ANCHORS.shop)) audio.speak('amy');
   renderShop();
