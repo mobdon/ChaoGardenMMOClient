@@ -949,6 +949,9 @@ pub enum PlacementClock {
     BossPoints(Box<BossPointsFrame>),
     /// Section 1 + 0xaf0: boss voice roll.
     BossVoice(Box<BossVoiceFrame>),
+    /// Section 1 + 0x1e04, 0x1ed8, 0x1f94, 0x1fc8, 0x2078 and 0x210c: the boss
+    /// draw handler and its small engine wrappers.
+    BossSupport(Box<BossSupportFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2736,6 +2739,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossHit(frame) => return boss_hit(&rel, &frame),
         PlacementClock::BossPoints(frame) => return boss_points(&rel, &frame),
         PlacementClock::BossVoice(frame) => return boss_voice(&rel, &frame),
+        PlacementClock::BossSupport(frame) => return boss_support(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -6591,5 +6595,160 @@ fn boss_voice(rel: &crate::city_rel::CityRel<'_>, f: &BossVoiceFrame) -> Result<
         0xc3c,
         serde_json::json!([f.task, 0x11, volume as u32]),
     )?);
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of a boss support routine, by its section 1 offset.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum BossSupportFrame {
+    /// 0x1e04: the boss draw handler. Entity words 8 / 0xc / 0x10 are the
+    /// rotation, `motion` is data word 0xc, `byte` the engine byte at
+    /// 0x803ad526.
+    Draw {
+        entity: u32,
+        rotation: [u32; 3],
+        motion: u32,
+        byte: i8,
+    },
+    /// 0x1ed8: screen effect `index` (0..2) with `flag` and `f1`; `count` and
+    /// `clock` are the two 0x800c3974 results.
+    ScreenEffect {
+        index: i8,
+        flag: i8,
+        f1: f32,
+        count: i32,
+        clock: u32,
+    },
+    /// 0x1f94: `clock` is the 0x800c3974 result.
+    ScreenReset { clock: u32 },
+    /// 0x1fc8: copy `source` to `target`, mirrored in z and pushed off the
+    /// plane by 4:0x118 / 4:0x11c.
+    Follow { source: [f32; 3], flag: i8 },
+    /// 0x2078: effect block from 5:0x2de0 with its first word set.
+    EffectBlock { first: u32 },
+    /// 0x210c: effect kind as a signed byte.
+    EffectKind { kind: i8 },
+}
+/// The boss draw handler (0x1e04) and its engine wrappers: the screen
+/// effect 0x1ed8 (parameter block on the stack, the clock reset after 13),
+/// 0x1f94, the mirrored follow point 0x1fc8, the effect block 0x2078 and
+/// 0x210c.
+fn boss_support(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossSupportFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let mut ev = Vec::new();
+    match f {
+        BossSupportFrame::Draw {
+            entity,
+            rotation,
+            motion,
+            byte,
+        } => {
+            ev.extend([
+                call(0x1e24, serde_json::json!([0x2400]))?,
+                call(0x1e28, serde_json::json!([]))?,
+                serde_json::json!({"site":0x1e2c,"local":0x4304,"args":[]}),
+                call(0x1e34, serde_json::json!([entity + 0x14]))?,
+                call(0x1e40, serde_json::json!([0, rotation[2]]))?,
+                call(0x1e4c, serde_json::json!([0, rotation[0]]))?,
+                call(0x1e58, serde_json::json!([0, rotation[1]]))?,
+                call(0x1e64, serde_json::json!([0, 0x4000]))?,
+                call(0x1e6c, serde_json::json!([entity + 0x20]))?,
+                call(0x1e7c, serde_json::json!([module_ref(rel, 0x1e72, 0)?]))?,
+                call(0x1e84, serde_json::json!([8]))?,
+                call(
+                    0x1e94,
+                    serde_json::json!([module_ref(rel, 0x1e8e, 0)?, motion]),
+                )?,
+                call(0x1ea8, serde_json::json!([*byte as i32 as u32]))?,
+                call(0x1eb0, serde_json::json!([0]))?,
+                call(0x1eb4, serde_json::json!([]))?,
+                call(0x1ebc, serde_json::json!([0x2400]))?,
+            ]);
+        }
+        BossSupportFrame::ScreenEffect {
+            index,
+            flag,
+            f1,
+            count,
+            clock,
+        } => {
+            let table = rel
+                .reference(1, 0x1f3e)
+                .filter(|r| r.module == 88 && r.section == 5)
+                .ok_or_else(|| Error::invalid("missing screen effect table"))?
+                .addend;
+            let entry = rel
+                .reference(5, table.wrapping_add((*index as i32 as u32) << 2))
+                .filter(|r| r.module == 88)
+                .ok_or_else(|| Error::invalid("screen effect index has no table entry"))?;
+            let bits = if flag & 1 != 0 { 0x41 } else { 0x48 };
+            ev.push(call(0x1f58, serde_json::json!([0]))?);
+            if *count > 13 {
+                ev.push(call(0x1f68, serde_json::json!([0]))?);
+                ev.push(call(0x1f74, serde_json::json!([0, clock]))?);
+            }
+            let mut last = call(0x1f80, serde_json::json!([0, "stack"]))?;
+            last["block"] = serde_json::json!([
+                f1.to_bits(),
+                0,
+                format!("88:{}+{:#x}", entry.section, entry.addend),
+                module_ref(rel, 0x1ee6, 0)?,
+                bits,
+                0
+            ]);
+            ev.push(last);
+        }
+        BossSupportFrame::ScreenReset { clock } => {
+            ev.push(call(0x1fa4, serde_json::json!([0]))?);
+            ev.push(call(0x1fb4, serde_json::json!([0, clock, 9]))?);
+        }
+        BossSupportFrame::Follow { source, flag } => {
+            let mut z = -source[2];
+            let near = boss_constant(rel, 0x2012)?;
+            if f64::from(z.abs()) < f64::from(near) {
+                z = if *flag == 0 {
+                    boss_constant(rel, 0x2032)?
+                } else {
+                    near
+                };
+            }
+            let st = |site: u32, offset: u32, value: u32| serde_json::json!({"site":site,"store":"target","offset":offset,"size":4,"value":value});
+            ev.push(serde_json::json!({"site":0x200c,"local":0x2130,"args":[],"floats":[f64::from(-source[2])]}));
+            ev.extend([
+                st(0x2050, 0, source[0].to_bits()),
+                st(0x2054, 4, source[1].to_bits()),
+                st(0x205c, 8, z.to_bits()),
+            ]);
+        }
+        BossSupportFrame::EffectBlock { first } => {
+            let base = rel
+                .reference(1, 0x2086)
+                .filter(|r| r.module == 88 && r.section == 5)
+                .ok_or_else(|| Error::invalid("missing effect block template"))?
+                .addend as usize;
+            let data = rel.data(5)?;
+            let mut block = Vec::new();
+            for i in 0..12 {
+                let at = base + 4 * i;
+                let w = data
+                    .get(at..at + 4)
+                    .ok_or_else(|| Error::invalid("effect block template out of range"))?;
+                block.push(u32::from_be_bytes(w.try_into().unwrap()));
+            }
+            block[0] = *first;
+            let mut last = call(0x20f8, serde_json::json!([0, "stack"]))?;
+            last["block"] = serde_json::json!(block);
+            ev.push(last);
+        }
+        BossSupportFrame::EffectKind { kind } => {
+            ev.push(call(0x211c, serde_json::json!([*kind as i32 as u32]))?);
+        }
+    }
     Ok(serde_json::json!({"events":ev}))
 }
