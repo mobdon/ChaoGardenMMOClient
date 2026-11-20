@@ -978,6 +978,8 @@ pub enum PlacementClock {
     /// Section 1 + 0x5f34..0x629c: the attack object update, its actions
     /// and its deleter.
     AttackUpdate(Box<AttackUpdateFrame>),
+    /// Section 1 + 0x5808..0x59ac: attack piece helpers.
+    AttackPiece(Box<AttackPieceFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2777,6 +2779,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::CoreDraw(frame) => return core_draw(&rel, &frame),
         PlacementClock::AttackObject(frame) => return attack_object(&rel, &frame),
         PlacementClock::AttackUpdate(frame) => return attack_update(&rel, &frame),
+        PlacementClock::AttackPiece(frame) => return attack_piece(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -8492,4 +8495,109 @@ fn attack_update(
         }
     }
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of the attack piece helpers; values are as read.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum AttackPieceFrame {
+    /// 0x5808: park the piece (action 4).
+    Park,
+    /// 0x5820: send the piece to action 5 and clear its slot (block byte
+    /// 1) in the table at 6:0x274.
+    Spend { slot: u8 },
+    /// 0x5854: the same with action 6.
+    Sweep { slot: u8 },
+    /// 0x5888: copy block words 0x98..0xa0 to the output.
+    Position { words: [u32; 3] },
+    /// 0x58a8: pick a live slot. `count` is block half-word 0 at entry and
+    /// `count_after` after the calls, `random` the 0x8010d940 result,
+    /// `slots` the table words from 6:0x274.
+    Pick {
+        task: u32,
+        count: i16,
+        count_after: i16,
+        random: i32,
+        slots: Vec<u32>,
+    },
+}
+/// Sections 1 + 0x5808 / 0x5820 / 0x5854 / 0x5888 / 0x58a8.
+fn attack_piece(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &AttackPieceFrame,
+) -> Result<serde_json::Value> {
+    let st = |site: u32, region: &str, offset: serde_json::Value, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let n = |v: u32| serde_json::json!(v);
+    let mut ev = Vec::new();
+    let mut returned = None;
+    match f {
+        AttackPieceFrame::Park => {
+            ev.push(st(0x5810, "entity", n(0), 1, 4));
+            ev.push(st(0x5818, "entity", n(1), 1, 0));
+        }
+        AttackPieceFrame::Spend { slot } | AttackPieceFrame::Sweep { slot } => {
+            let (action, d) = if matches!(f, AttackPieceFrame::Spend { .. }) {
+                (5, 0)
+            } else {
+                (6, 0x34)
+            };
+            ev.extend([
+                st(0x582c + d, "entity", n(0), 1, action),
+                st(0x5834 + d, "entity", n(1), 1, 0),
+                st(
+                    0x584c + d,
+                    "module",
+                    serde_json::json!(module_ref(rel, 0x5842 + d, 4 * u32::from(*slot))?),
+                    4,
+                    0,
+                ),
+            ]);
+        }
+        AttackPieceFrame::Position { words } => {
+            for (i, site) in [0x5894u32, 0x5898, 0x58a0].into_iter().enumerate() {
+                ev.push(st(site, "out", n(4 * i as u32), 4, words[i]));
+            }
+        }
+        AttackPieceFrame::Pick {
+            task,
+            count,
+            count_after,
+            random,
+            slots,
+        } => {
+            ev.push(serde_json::json!({"site":0x58c4,"local":0x7008,"args":[task]}));
+            ev.push(
+                serde_json::json!({"site":0x58c8,"call":engine_import(rel, 0x58c8)?,"args":[]}),
+            );
+            let unit = boss_constant(rel, 0x58f2)? * biased_float(rel, 0x58ce, *random)?;
+            let start = fctiwz(f64::from(
+                biased_float(rel, 0x5906, i32::from(*count_after))? * unit,
+            ));
+            let mut index = start;
+            let mut left = *count;
+            let mut found = 0u32;
+            while left > 0 {
+                let i = index as i16 as i32;
+                let w = *usize::try_from(i)
+                    .ok()
+                    .and_then(|i| slots.get(i))
+                    .ok_or_else(|| Error::invalid("slot pick reads past the given table"))?;
+                if w != 0 {
+                    found = w;
+                    break;
+                }
+                index = index.wrapping_add(1);
+                left = left.wrapping_sub(1);
+                if index as i16 as i32 == i32::from(*count_after) {
+                    index = 0;
+                }
+            }
+            returned = Some(found);
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
 }
