@@ -890,6 +890,8 @@ pub enum PlacementClock {
     InitialHealth,
     /// Section 1 + 0xad8c: one update of a super-form player object.
     SuperPlayer(Box<SuperPlayerFrame>),
+    /// Section 1 + 0xe370: super-form flight movement for one frame.
+    SuperFlight(Box<SuperFlightFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2662,6 +2664,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
             );
         }
         PlacementClock::SuperPlayer(frame) => return super_player(&rel, &frame),
+        PlacementClock::SuperFlight(frame) => return super_flight(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -3327,5 +3330,253 @@ fn super_player(
         "counter_35c":counter,"timer_35e":timer,"f68":f68,"anim_176":anim_176,"f18c":f18c,
         "v360":v360,"fx":fx.map(|(a, b)| serde_json::json!({"f04":a,"i0c":b})),
         "scope":"Control flow of 0xad8c. Engine services and the local movement handlers 0xbad0, 0xc598, 0xe370, 0xe9f0, 0xe1ac, 0xc67c and 0xdc90 are reported, not run."}),
+    )
+}
+
+/// Inputs to section 1 + 0xe370. Engine outputs are inputs here: the stick
+/// query 0x8004e2f8 (`held`, its angle and magnitude outputs), the 0x70
+/// vector length (0x80114eac), the rotated axis (0x801151a4 output), the
+/// two dot products (0x80114c88), the six-float 0x8011b470 output, and the
+/// two angle results (0x8002b55c, 0x8002b678).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperFlightFrame {
+    pub entity: u32,
+    pub data2: u32,
+    pub player: u32,
+    /// Entity words 8, 0xc and 0x10 (rotation).
+    pub rotation: [i32; 3],
+    /// Data2 floats 0xc..0x14 (acceleration in).
+    pub acceleration: [f32; 3],
+    /// Player floats: 0x34, 0x64, 0x68, 0x6c, 0xd0, 0xe4, 0xe8, 0xec, 0xfc,
+    /// 0x104, 0x114, 0x118, 0x11c, and vectors 0x70 and 0x7c.
+    pub f34: f32,
+    pub speed: f32,
+    pub f68: f32,
+    pub f6c: f32,
+    pub fd0: f32,
+    pub fe4: f32,
+    pub fe8: f32,
+    pub fec: f32,
+    pub ffc: f32,
+    pub f104: f32,
+    pub f114: f32,
+    pub f118: f32,
+    pub f11c: f32,
+    pub v70: [f32; 3],
+    pub v7c: [f32; 3],
+    pub held: i32,
+    pub stick_angle: i32,
+    pub stick_magnitude: f32,
+    #[serde(default)]
+    pub v70_length: f32,
+    #[serde(default)]
+    pub rotated: [f32; 3],
+    #[serde(default)]
+    pub dots: [f32; 2],
+    #[serde(default)]
+    pub cross: [f32; 6],
+    #[serde(default)]
+    pub turn: i32,
+    #[serde(default)]
+    pub angle_delta: i32,
+}
+/// Section 1 + 0xe370: flight thrust, speed limits and turning, with the
+/// engine's vector services taken from the request.
+fn super_flight(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperFlightFrame,
+) -> Result<serde_json::Value> {
+    let k = |site: usize| stage_f32(rel, site, 4, 0);
+    let call = |site: u32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?}))
+    };
+    let with = |mut v: serde_json::Value, key: &str, val: serde_json::Value| {
+        v[key] = val;
+        v
+    };
+    let store = |site: u32, region: &str, offset: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":4,"value":value});
+    let zero = k(0xe3aa)?;
+    let mut ev = Vec::new();
+    let mut acc = f.acceleration;
+    let mut out = [zero, zero, zero];
+    ev.push(with(call(0xe3c8)?, "args", serde_json::json!([f.entity])));
+    ev.push(with(
+        call(0xe3dc)?,
+        "args",
+        serde_json::json!([f.entity, f.player]),
+    ));
+    let held = f.held != 0;
+    let spd = f.speed;
+    // Thrust along the forward axis from the current speed.
+    if !held && spd > f.fe8 {
+        acc[0] += f.f114 * spd;
+    } else if held && spd > f.fd0 {
+        acc[0] += k(0xe42e)? * f.f114 * (spd - f.fd0);
+    } else if spd > f.fd0 {
+        acc[0] += f.f114 * (spd - f.fd0);
+    } else if spd < k(0xe482)? {
+        acc[0] += f.f114 * spd;
+    }
+    acc[1] += f.f118 * f.f68;
+    acc[2] += f.f11c * f.f6c;
+    let mut angle = f.stick_angle;
+    let f3c;
+    if !held {
+        if spd > k(0xe4e6)? {
+            out[0] = f.f104;
+        } else if spd < k(0xe4e6)? {
+            out[0] = -f.f104;
+        }
+        f3c = Some((0xe520, k(0xe516)?));
+    } else {
+        // Stick magnitude shaped by the speed bands 0xd0/0xe4/0xe8/0xec.
+        let mut mag = f.stick_magnitude;
+        let fc = f.ffc;
+        if spd < f.fd0 {
+            if spd < f.fe4 {
+                if mag > k(0xe54a)? {
+                    mag *= fc;
+                } else if spd < k(0xe56e)? * f.fe4 {
+                    let floor = k(0xe586)?;
+                    if mag < floor {
+                        mag = floor;
+                    }
+                    mag *= fc;
+                } else {
+                    mag = k(0xe5b2)?;
+                }
+            } else if spd < f.fe8 {
+                if mag > k(0xe5d6)? {
+                    mag *= fc;
+                } else if spd < k(0xe5fa)? * (f.fe8 + f.fe8) {
+                    mag *= fc;
+                } else {
+                    mag = k(0xe626)?;
+                }
+            } else if spd < f.fec {
+                if mag > k(0xe64a)? {
+                    mag *= fc;
+                } else {
+                    mag *= k(0xe66e)? * fc;
+                }
+            } else {
+                mag *= fc;
+            }
+        } else if spd >= f.fd0 && f.f34 < k(0xe6ae)? {
+            mag *= fc;
+        } else {
+            mag *= k(0xe6da)? * fc;
+        }
+        // Turn toward the stick, corrected by the travel direction.
+        ev.push(with(
+            call(0xe6f8)?,
+            "args",
+            serde_json::json!([f.player + 0x70]),
+        ));
+        if f.v70_length > k(0xe6fe)? {
+            let one = k(0xe712)?;
+            ev.push(call(0xe72c)?);
+            ev.push(with(
+                call(0xe738)?,
+                "args",
+                serde_json::json!([0, f.rotation[2] as u32]),
+            ));
+            ev.push(with(
+                call(0xe744)?,
+                "args",
+                serde_json::json!([0, f.rotation[0] as u32]),
+            ));
+            ev.push(with(
+                call(0xe754)?,
+                "args",
+                serde_json::json!([0, angle.wrapping_neg() as u32]),
+            ));
+            ev.push(with(
+                with(call(0xe764)?, "args", serde_json::json!([0])),
+                "vectors",
+                serde_json::json!({"4":[one, zero, zero]}),
+            ));
+            ev.push(call(0xe768)?);
+            ev.push(with(
+                call(0xe774)?,
+                "vectors",
+                serde_json::json!({"3":f.rotated,"4":f.v70}),
+            ));
+            if f.dots[0] < zero {
+                let mut b3 = [zero; 6];
+                b3[3..].copy_from_slice(&f.v70);
+                let mut b4 = [zero; 6];
+                b4[3..].copy_from_slice(&f.v7c);
+                ev.push(with(
+                    call(0xe7ec)?,
+                    "blocks",
+                    serde_json::json!({"3":b3,"4":b4}),
+                ));
+                let mut axis = [f.cross[3], f.cross[4], f.cross[5]];
+                ev.push(with(
+                    call(0xe7fc)?,
+                    "vectors",
+                    serde_json::json!({"3":axis,"4":f.rotated}),
+                ));
+                if f.dots[1] < zero {
+                    axis = axis.map(|x| -x);
+                }
+                ev.push(with(
+                    call(0xe83c)?,
+                    "vectors",
+                    serde_json::json!({"3":f.rotated,"4":axis,"5":f.v7c}),
+                ));
+                angle = angle.wrapping_sub(f.turn);
+            }
+        }
+        ev.push(with(
+            call(0xe854)?,
+            "args",
+            serde_json::json!([f.rotation[1] as u32, angle as u32]),
+        ));
+        let d = f.angle_delta;
+        let half = k(0xe8a2)?;
+        let turn =
+            |ev: &mut Vec<serde_json::Value>, store_site: u32, site: u32| -> Result<()> {
+                ev.push(store(store_site, "data2", 0x1c, angle as u32));
+                ev.push(with(
+                    call(site)?,
+                    "args",
+                    serde_json::json!([f.entity, f.data2, f.player, angle as u32]),
+                ));
+                Ok(())
+            };
+        if k(0xe85a)? == spd && d > 4096 {
+            mag = k(0xe85a)?;
+            turn(&mut ev, 0xe87c, 0xe898)?;
+        } else if spd >= half * (f.fe4 + f.fe8) && d > 4096 {
+            mag = f.f104;
+            turn(&mut ev, 0xe8d4, 0xe8f0)?;
+        } else if spd >= f.fe4 && d < 4096 {
+            turn(&mut ev, 0xe910, 0xe924)?;
+        } else if spd >= f.fe4 && spd <= f.fec && d > 8192 {
+            mag *= k(0xe95e)?;
+            turn(&mut ev, 0xe954, 0xe980)?;
+        } else {
+            turn(&mut ev, 0xe98c, 0xe9a0)?;
+        }
+        f3c = Some((0xe9a8, mag));
+        out[0] = mag;
+    }
+    if let Some((site, v)) = f3c {
+        ev.push(store(site, "player", 0x3c, v.to_bits()));
+    }
+    ev.push(with(
+        call(0xe9bc)?,
+        "vectors",
+        serde_json::json!({"3":acc,"4":out}),
+    ));
+    for (i, site) in [0xe9c8u32, 0xe9cc, 0xe9d4].into_iter().enumerate() {
+        ev.push(store(site, "player", 0x58 + 4 * i as u32, acc[i].to_bits()));
+    }
+    Ok(
+        serde_json::json!({"events":ev,"acceleration":acc,"thrust":out,"angle":angle,
+        "scope":"Stage-side flight math of 0xe370. The engine stick query, vector and matrix services and the turn routines are observed; their effects are not modeled."}),
     )
 }

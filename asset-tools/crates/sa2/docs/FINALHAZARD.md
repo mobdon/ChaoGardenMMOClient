@@ -16,6 +16,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `arena_clamp` | 0xee8c, 0x40cc | Per-frame arena bounds for both players |
 | `timed_voice` | 0xf070 | Timed boss voice lines |
 | `super_player` | 0xad8c | One update of a super-form player (control flow) |
+| `super_flight` | 0xe370 | Super-form flight thrust, speed bands and turning |
 
 ## Handoff camera
 
@@ -114,8 +115,27 @@ runs the engine follow and tail calls only. Otherwise it counts the 6-frame cycl
 Every dispatch case ends with three engine calls: 0x80046b7c, 0x80045618 and 0x8003e400. The
 effect block then follows the travel since the last frame. For character 9 the scale is 0.25,
 with thresholds 0.8 and 0.4; for character 10 it is 0.2, with 0.64 and 0.4. When 0x8004fda0
-reports a defeat, the action becomes 58. The local movement handlers 0xbad0, 0xc598, 0xe370,
-0xe9f0, 0xe1ac, 0xc67c and 0xdc90 are reported with their arguments, but not yet ported.
+reports a defeat, the action becomes 58. The local handlers 0xbad0, 0xc598, 0xe9f0, 0xe1ac,
+0xc67c and 0xdc90 are reported with their arguments, but not yet ported; 0xe370 is ported below.
+
+## Flight movement
+
+`super_flight` reproduces 0xe370, the movement handler that flight (59), action 60 and the boosts
+call. It starts from the acceleration in data2 words 0xc..0x14. While the stick is released it
+adds forward thrust from the speed (player float 0x64) beyond threshold 0xe8, and applies drag
+below 0. While the stick is held the thrust above 0xd0 is scaled by 1.7. Player floats 0x68 and
+0x6c add vertical and side thrust.
+
+With the stick held, the stick magnitude is shaped by four speed bands (player floats 0xd0, 0xe4,
+0xe8, 0xec): a floor of 0.5, cut-offs at 0.4 × 0xe4 and 0.5 × (2 × 0xe8), and scales 0.6, 0.7, 0.9,
+0.3 and 0.4. The result is multiplied by player float 0xfc. When the 0x70 velocity is non-zero,
+the stick angle is corrected toward the travel direction. Engine angle checks above 4096 and 8192
+then select one of three engine turn routines, which get the angle in data2 word 0x1c. The
+magnitude is stored to player float 0x3c, and the acceleration goes to player words 0x58..0x60.
+
+The stick query, vector and matrix services and the turn routines are engine code. Their results
+are request inputs: `held`, `stick_angle`, `stick_magnitude`, `v70_length`, `rotated`, `dots`,
+`cross`, `turn` and `angle_delta`.
 
 ## Verification
 
@@ -127,6 +147,7 @@ instructions with relocated data and compare them against the Rust output:
 | --- | --- |
 | `tests/finalhazard_switch_camera_ppc.py` | 336 camera packets: both states, both slots, characters 9/10/−1, yaw wraparound, modes −1/13/14/20 |
 | `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 39,182 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
+| `tests/finalhazard_super_flight_ppc.py` | 3,000 flight updates across all speed bands, both stick states, every turn routine; engine pointer outputs written into emulated memory |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
