@@ -48,25 +48,27 @@ rules, so the check is "the same instructions, on this machine model".
 | Area | main.dol | Status |
 | --- | --- | --- |
 | Physics parameters | PhysicsArray 0x80196578, stride 0x84, copied into player work at +0xC0 (layout matches the PC `playerwk`) | Read (`player_physics`) |
-| MSL `sinf`/`cosf` | 0x801115A8 / 0x80111414, with `__sinit_trigf_c` | **Ported** (`ninja::sinf`, `ninja::cosf`) |
-| Ninja sine table | njSinCosTbl 0x802D7758, built by fn_801181A0 | **Ported** (`ninja::SinCos`) |
+| MSL `sinf`/`cosf` | 0x801115A8 / 0x80111414, with `__sinit_trigf_c` | **Ported** (`ninja_trig::msl_sinf`, `msl_cosf`, from Prison Lane's #425) |
+| Ninja sine table | njSinCosTbl 0x802D7758, built by fn_801181A0 | **Ported** (`ninja_trig::nj_sin`, `nj_cos`, `table_be_bytes`) |
 | Ninja matrix stack | fn_80119C74 (0xE0000000, 0x30 bytes each), njPush/PopMatrix, njRotateX/Y/Z (PSMTXRotRad + PSMTXConcat), njCalcVector (PSMTXMultVecSR), njCalcPoint (PSMTXMultVec) | **Ported** (`ninja_matrix`) |
 | Player-frame vectors | fn_8003E9E0 (rotate by Z, X, -Y), fn_8003EA6C (rotate by Y, -X, -Z) | **Ported** (`ninja_matrix::rotate_by_angles`, `unrotate_by_angles`) |
+| Analog input | fn_8004E560 (`GetAnalog` on PC): stick angle and strength, confusion remap, steering on kind-0x11 collision objects; with njInnerProduct, njOuterProduct, MSL acosf and VectorAngle (0x8002B7C4) | **Ported** (`player_analog`, `ninja_vector`) |
 | Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
 ## Ported so far
 
-- **Ninja trigonometry.** `ninja::sinf` and `ninja::cosf` follow MSL's
-  compiled `sinf`/`cosf`, including its four-term reduction constants, which
-  a static constructor fills at start-up. `ninja::SinCos` builds the
-  65,536-entry njSinCosTbl from
-  `sinf/cosf(pi_f32 * 2k / 65536)` (pi_f32 = 0x40490FD8, as stored), the way
-  fn_801181A0 does. MSL's sine is not correctly rounded, so a libm-based
-  table would differ in about half its entries. `tests/ninja.rs` (ignored;
-  needs `SA2_MAIN_DOL` and `SA2_PPC_PYTHON`) checks the whole table
-  byte-for-byte against the one the game builds. It also checks 3,014
-  sinf/cosf inputs, including zeros, infinities, NaN and huge values.
+- **Ninja trigonometry** lives in `ninja_trig` (from the Prison Lane work,
+  #425). `msl_sinf` and `msl_cosf` follow MSL's compiled `sinf`/`cosf`,
+  including its four-term reduction constants, which a static constructor
+  fills at start-up. `nj_sin`/`nj_cos` read the 65,536-entry njSinCosTbl,
+  which is built from `sinf/cosf(pi_f32 * 2k / 65536)` (pi_f32 = 0x40490FD8,
+  as stored), the way fn_801181A0 does. MSL's sine is not correctly rounded,
+  so a libm-based table would differ in about half its entries.
+  `tests/ninja_trig_dol.rs` (ignored; needs `SA2_MAIN_DOL` and
+  `SA2_PPC_PYTHON`) checks the whole table byte-for-byte against the one
+  the game builds. It also checks 3,014 sinf/cosf inputs, including zeros,
+  infinities, NaN and huge values.
 
 - **Ninja matrices** (`ninja_matrix`): `PSMTXConcat`, `PSMTXMultVecSR`
   (`njCalcVector`), `PSMTXMultVec` (`njCalcPoint`), `PSMTXRotTrig` and
@@ -78,3 +80,15 @@ rules, so the check is "the same instructions, on this machine model".
   vector/point transforms, 600 rotations (random angles, including
   out-of-range ones) and 600 player-frame round trips against main.dol.
   All of them match bit for bit.
+
+- **Analog input** (`player_analog::get_analog`, fn_8004E560) and the
+  vector helpers it uses (`ninja_vector`: njInnerProduct, njOuterProduct,
+  MSL `acosf` and `VectorAngle`). `acosf` builds on Iron Gate's `msl_math`
+  (`atanf`, `_inv_sqrtf`). This branch carries a byte-identical copy of
+  that module, so the two branches merge cleanly. The routine's engine
+  inputs (per-player stick table, frame counter, stage number, raw stick Y,
+  gravity) are parameters. The collision lookup fn_800060EC(player, 0x11)
+  is a boundary: the caller passes the touched object's angles.
+  `tests/player_analog_dol.rs` matches 1,500 vector-product and `acosf`
+  cases, 600 `VectorAngle` cases and 1,500 fn_8004E560 cases against
+  main.dol bit for bit.
