@@ -70,6 +70,34 @@ pub struct Runtime {
     /// game may call a module's epilog after OSUnlink took it off the list;
     /// its code is still in memory until another module is linked there.
     pub seen: std::cell::RefCell<Vec<(u32, u32, u32, u32, u32)>>,
+    /// main.dol calls by `(addr - 0x80000000) / 4`, filled on first use
+    /// (overrides included): one index instead of a hash and a big match.
+    table: std::cell::RefCell<Vec<Option<Func>>>,
+    /// Calls into REL modules by address; cleared when modules change
+    /// ([`Runtime::modules_changed`], from OSLink/OSUnlink).
+    rel_cache: std::cell::RefCell<HashMap<u32, Func, std::hash::BuildHasherDefault<AddrHasher>>>,
+}
+
+/// Main RAM's code range the call table covers.
+const TABLE_BASE: u32 = 0x8000_0000;
+const TABLE_LEN: usize = 0x0040_0000 / 4;
+
+/// Hashes a code address as itself (they are already well spread).
+#[derive(Default)]
+pub struct AddrHasher(u64);
+
+impl std::hash::Hasher for AddrHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(*b);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.0 = u64::from(v).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
 }
 
 /// Calls made so far and the most recent targets (ring, newest at
@@ -87,13 +115,61 @@ pub fn trace() -> Vec<u32> {
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new(), budget: 0, ticks: 0, preempt: None, seen: Default::default() }
+        Self {
+            overrides: HashMap::new(),
+            generated: |_| None,
+            rels: HashMap::new(),
+            budget: 0,
+            ticks: 0,
+            preempt: None,
+            seen: Default::default(),
+            table: Default::default(),
+            rel_cache: Default::default(),
+        }
     }
 }
 
 impl Runtime {
     pub fn set_override(&mut self, addr: u32, f: Func) {
         self.overrides.insert(addr, f);
+        if let Some(slot) = Self::slot(addr).and_then(|i| self.table.get_mut().get_mut(i)) {
+            *slot = Some(f);
+        }
+        self.rel_cache.get_mut().remove(&addr);
+    }
+
+    /// A REL module was linked or unlinked: cached REL calls may be stale.
+    pub fn modules_changed(&self) {
+        self.rel_cache.borrow_mut().clear();
+    }
+
+    fn slot(addr: u32) -> Option<usize> {
+        let i = (addr.checked_sub(TABLE_BASE)? / 4) as usize;
+        (i < TABLE_LEN && addr % 4 == 0).then_some(i)
+    }
+
+    /// [`Self::resolve`] through the call table (main.dol) or the REL cache.
+    pub fn lookup(&self, m: &Mem, addr: u32) -> Option<Func> {
+        if let Some(i) = Self::slot(addr) {
+            if let Some(Some(f)) = self.table.borrow().get(i) {
+                return Some(*f);
+            }
+            if (self.generated)(addr).is_some() || self.overrides.contains_key(&addr) {
+                let f = self.resolve(m, addr)?;
+                let mut t = self.table.borrow_mut();
+                if t.is_empty() {
+                    t.resize(TABLE_LEN, None);
+                }
+                t[i] = Some(f);
+                return Some(f);
+            }
+        }
+        if let Some(f) = self.rel_cache.borrow().get(&addr) {
+            return Some(*f);
+        }
+        let f = self.resolve(m, addr)?;
+        self.rel_cache.borrow_mut().insert(addr, f);
+        Some(f)
     }
     pub fn resolve(&self, m: &Mem, addr: u32) -> Option<Func> {
         if let Some(f) = self.overrides.get(&addr) {
@@ -148,7 +224,7 @@ pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if c.rt.budget != 0 && n >= c.rt.budget {
         panic!("sa2-recomp: call budget of {} reached at {addr:#010x}", c.rt.budget);
     }
-    match c.rt.resolve(m, addr) {
+    match c.rt.lookup(m, addr) {
         Some(f) => f(c, m),
         None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x})", c.lr),
     }

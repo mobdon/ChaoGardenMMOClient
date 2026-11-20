@@ -1,8 +1,12 @@
 //! A window for the recompiled game: GX frames from the game thread are drawn
-//! with sa2-gx's renderer, and the keyboard is controller port 0.
+//! with sa2-gx's renderer; a gamepad and the keyboard/mouse are controller 1.
 //!
-//! Keys: W/A/S/D = stick (and D-pad), Space/X = A, Z = B, C = X, V = Y,
-//! Enter = Start, Q/E = L/R triggers.
+//! Keyboard: W/A/S/D = stick (ramps to full over 3 frames), Space = A (jump),
+//! E or Left Shift = B (action), Q = X, R = Y, Enter or Esc = Start, 1/3 = L/R.
+//! Mouse: left button = B, right button = A.
+//! Gamepad (gilrs: XInput, PlayStation, ...): left stick = stick, South
+//! (A/Cross) = A, West (X/Square) = B, East (B/Circle) = X, North
+//! (Y/Triangle) = Y, Start, LT/RT = L/R, RB = Z, D-pad = D-pad.
 use sa2_asset_tools::input::PadStatus;
 use sa2_gx::api::Frame;
 use sa2_gx::gpu::GxRenderer;
@@ -15,27 +19,32 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-/// Keys held, as bits of `KEYS` below.
+/// Inputs held, as bits of `KEYS` below (then the two mouse buttons).
 static HELD: AtomicU16 = AtomicU16::new(0);
 /// Bounded: when the window is this many frames behind, the game waits (no
 /// frame or texture upload is dropped, and memory stays flat).
 const QUEUED_FRAMES: usize = 2;
 static TX: Mutex<Option<SyncSender<Frame>>> = Mutex::new(None);
 
-const KEYS: [KeyCode; 12] = [
-    KeyCode::KeyA,
-    KeyCode::KeyD,
-    KeyCode::KeyS,
-    KeyCode::KeyW,
-    KeyCode::KeyX,
-    KeyCode::Space,
-    KeyCode::KeyZ,
-    KeyCode::KeyC,
-    KeyCode::KeyV,
-    KeyCode::Enter,
-    KeyCode::KeyQ,
-    KeyCode::KeyE,
+/// What each input bit is: (key, GC button bits; 0 = a stick direction).
+const KEYS: [(KeyCode, u16); 12] = [
+    (KeyCode::KeyA, 0),
+    (KeyCode::KeyD, 0),
+    (KeyCode::KeyS, 0),
+    (KeyCode::KeyW, 0),
+    (KeyCode::Space, 0x0100),     // A
+    (KeyCode::KeyE, 0x0200),      // B
+    (KeyCode::ShiftLeft, 0x0200), // B
+    (KeyCode::KeyQ, 0x0400),      // X
+    (KeyCode::KeyR, 0x0800),      // Y
+    (KeyCode::Enter, 0x1000),     // Start
+    (KeyCode::Escape, 0x1000),    // Start
+    (KeyCode::Digit1, 0x0040),    // L
 ];
+/// Bits after `KEYS`: Digit3 (R), then the left and right mouse buttons.
+const KEY_R: u16 = 1 << 12;
+const MOUSE_LEFT: u16 = 1 << 13; // B
+const MOUSE_RIGHT: u16 = 1 << 14; // A
 
 /// Open the window on its own thread; frames given to [`submit`] show there.
 pub fn start() {
@@ -59,41 +68,66 @@ pub fn submit(f: Frame) {
     }
 }
 
-/// This frame's controller 0 from the keys held.
+/// The keyboard stick as (angle in radians, magnitude 0..=1).
+static EASED: Mutex<(f32, f32)> = Mutex::new((0.0, 0.0));
+
+/// Stick from W/A/S/D like a real stick moves: from rest the deflection
+/// ramps to full over 3 frames; while any direction is held it stays full and
+/// only the angle turns (about 34° a frame) toward the keys, so turning never
+/// dips through the centre (SA2 reads a dip as stopping); diagonals are as
+/// long as straights.
+pub fn key_stick(left: bool, right: bool, down: bool, up: bool) -> [i8; 2] {
+    const TURN: f32 = 0.6;
+    const RAMP: f32 = 0.34;
+    let dx = f32::from(i8::from(right) - i8::from(left));
+    let dy = f32::from(i8::from(up) - i8::from(down));
+    let mut e = EASED.lock().unwrap_or_else(|e| e.into_inner());
+    let (angle, mag) = &mut *e;
+    if dx != 0.0 || dy != 0.0 {
+        let want = dy.atan2(dx);
+        if *mag == 0.0 {
+            *angle = want;
+        } else {
+            let pi = std::f32::consts::PI;
+            let diff = (want - *angle + 3.0 * pi).rem_euclid(2.0 * pi) - pi;
+            *angle += diff.clamp(-TURN, TURN);
+        }
+        *mag = (*mag + RAMP).min(1.0);
+    } else {
+        *mag = (*mag - RAMP).max(0.0);
+    }
+    [(angle.cos() * *mag * 100.0).round() as i8, (angle.sin() * *mag * 100.0).round() as i8]
+}
+
+/// This frame's controller 1: the gamepad and the keyboard/mouse together
+/// (buttons from both; the pad's stick when it is pushed, else the keys').
 pub fn pad() -> PadStatus {
     let h = HELD.load(Relaxed);
     let on = |i: usize| h >> i & 1 != 0;
     let mut p = PadStatus::default();
-    let mut b = 0u16;
-    for (i, bit) in [(0, 0x0001), (1, 0x0002), (2, 0x0004), (3, 0x0008)] {
-        if on(i) {
-            b |= bit;
+    for (i, (_, bit)) in KEYS.iter().enumerate() {
+        if *bit != 0 && on(i) {
+            p.button |= bit;
         }
     }
-    if on(4) || on(5) {
-        b |= 0x0100; // A
+    if h & KEY_R != 0 {
+        p.button |= 0x0020; // R
     }
-    if on(6) {
-        b |= 0x0200; // B
+    if h & MOUSE_LEFT != 0 {
+        p.button |= 0x0200; // B
     }
-    if on(7) {
-        b |= 0x0400; // X
+    if h & MOUSE_RIGHT != 0 {
+        p.button |= 0x0100; // A
     }
-    if on(8) {
-        b |= 0x0800; // Y
+    p.stick = key_stick(on(0), on(1), on(2), on(3));
+    if let Some(g) = crate::gamepad::state() {
+        p.button |= g.button;
+        if g.stick[0].unsigned_abs() > 12 || g.stick[1].unsigned_abs() > 12 {
+            p.stick = g.stick;
+        }
+        p.substick = g.substick;
+        p.triggers = [p.triggers[0].max(g.triggers[0]), p.triggers[1].max(g.triggers[1])];
     }
-    if on(9) {
-        b |= 0x1000; // Start
-    }
-    if on(10) {
-        b |= 0x0040; // L
-    }
-    if on(11) {
-        b |= 0x0020; // R
-    }
-    p.button = b;
-    let axis = |neg: bool, pos: bool| if neg == pos { 0 } else if pos { 100 } else { -100 };
-    p.stick = [axis(on(0), on(1)), axis(on(2), on(3))];
     p
 }
 
@@ -165,16 +199,23 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    if let Some(i) = KEYS.iter().position(|k| *k == code) {
-                        let bit = 1u16 << i;
-                        match event.state {
-                            ElementState::Pressed => HELD.fetch_or(bit, Relaxed),
-                            ElementState::Released => HELD.fetch_and(!bit, Relaxed),
-                        };
-                    }
+                    let bit = match KEYS.iter().position(|(k, _)| *k == code) {
+                        Some(i) => 1u16 << i,
+                        None if code == KeyCode::Digit3 => KEY_R,
+                        None => 0,
+                    };
+                    hold(bit, event.state);
                 }
             }
+            WindowEvent::MouseInput { state, button, .. } => match button {
+                winit::event::MouseButton::Left => hold(MOUSE_LEFT, state),
+                winit::event::MouseButton::Right => hold(MOUSE_RIGHT, state),
+                _ => {}
+            },
+            // Losing focus releases everything (no key stuck down).
+            WindowEvent::Focused(false) => HELD.store(0, Relaxed),
             WindowEvent::RedrawRequested => {
+                let t = std::time::Instant::now();
                 // Every frame's texture uploads must reach the renderer;
                 // only the newest is drawn.
                 for f in self.rx.try_iter() {
@@ -198,6 +239,7 @@ impl ApplicationHandler for App {
                 // Free what finished frames used (each frame makes its own
                 // buffers); without this wgpu kept them all.
                 let _ = g.device.poll(wgpu::PollType::Poll);
+                crate::prof::add(&crate::prof::RENDER, t);
                 g.window.request_redraw();
             }
             _ => {}
@@ -231,4 +273,40 @@ pub fn pace() {
         std::thread::sleep(due - now);
     }
     *next = Some(due + frame);
+}
+
+fn hold(bit: u16, state: ElementState) {
+    match state {
+        ElementState::Pressed => HELD.fetch_or(bit, Relaxed),
+        ElementState::Released => HELD.fetch_and(!bit, Relaxed),
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_stick;
+
+    #[test]
+    fn turning_keeps_full_deflection() {
+        let mag = |s: [i8; 2]| (f32::from(s[0]).hypot(f32::from(s[1]))).round();
+        for _ in 0..5 {
+            key_stick(false, false, false, true); // W
+        }
+        assert_eq!(key_stick(false, false, false, true), [0, 100]);
+        // W -> D: rotate at full length, never through the centre.
+        for _ in 0..4 {
+            assert!(mag(key_stick(false, true, false, false)) >= 99.0);
+        }
+        assert_eq!(key_stick(false, true, false, false), [100, 0]);
+        // Diagonal W+D is as long as a straight.
+        for _ in 0..3 {
+            key_stick(false, true, false, true);
+        }
+        assert_eq!(key_stick(false, true, false, true), [71, 71]);
+        // Released: back to centre within 3 frames.
+        for _ in 0..3 {
+            key_stick(false, false, false, false);
+        }
+        assert_eq!(key_stick(false, false, false, false), [0, 0]);
+    }
 }

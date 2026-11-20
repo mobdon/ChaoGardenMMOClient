@@ -132,6 +132,8 @@ pub fn pumps() -> u64 {
 
 /// Install on the host thread that will run the game's entry point.
 pub fn install(c: &mut Cpu) {
+    c.rt.set_override(OS_LINK, |c, m| relinked(c, m, OS_LINK));
+    c.rt.set_override(OS_UNLINK, |c, m| relinked(c, m, OS_UNLINK));
     S.set(State::default());
     let (tx, rx) = channel();
     SCHED.set(Sched {
@@ -538,4 +540,16 @@ pub fn pump(c: &mut Cpu, m: &mut Mem) {
     S.with_borrow_mut(|s| s.pumping = false);
     guest(c, m, OS_RESCHEDULE, 0);
     (c.r, c.f, c.lr, c.ctr, c.cr) = saved;
+}
+
+/// GSNE8P OSLink / OSUnlink (decomp symbols.txt).
+pub const OS_LINK: u32 = 0x800E_839C;
+pub const OS_UNLINK: u32 = 0x800E_87F8;
+
+/// The game's own OSLink/OSUnlink, then forget cached calls into modules.
+fn relinked(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    if let Some(f) = (c.rt.generated)(addr) {
+        f(c, m);
+    }
+    c.rt.modules_changed();
 }

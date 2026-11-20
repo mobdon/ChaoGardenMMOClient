@@ -10,9 +10,11 @@
 pub mod audio;
 pub mod clock;
 pub mod dvd;
+pub mod gamepad;
 pub mod gx;
 pub mod io;
 pub mod pad;
+pub mod prof;
 pub mod snap;
 pub mod window;
 pub mod vi;

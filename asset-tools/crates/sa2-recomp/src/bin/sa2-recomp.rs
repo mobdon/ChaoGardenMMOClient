@@ -91,6 +91,7 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20       sa2_boot::window::start();\n\
         \x20   }\n\
         \x20   sa2_recomp::os::add_frame_hook(|_, _| {\n\
+        \x20       let hook_start = std::time::Instant::now();\n\
         \x20       let frames = sa2_boot::gx::take_frames();\n\
         \x20       let n = frames.len() as u64;\n\
         \x20       let f = sa2_recomp::host::FRAMES.fetch_add(n, std::sync::atomic::Ordering::Relaxed);\n\
@@ -129,7 +130,16 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20           for (_, fr) in frames {\n\
         \x20               sa2_boot::window::submit(fr);\n\
         \x20           }\n\
+        \x20       }\n\
+        \x20       sa2_boot::prof::add(&sa2_boot::prof::HOOK, hook_start);\n\
+        \x20       if window {\n\
+        \x20           let t = std::time::Instant::now();\n\
         \x20           sa2_boot::window::pace();\n\
+        \x20           sa2_boot::prof::add(&sa2_boot::prof::SLEEP, t);\n\
+        \x20       }\n\
+        \x20       // SA2_PROFILE: fps and where each frame's time went, every second.\n\
+        \x20       if sa2_boot::prof::on() {\n\
+        \x20           sa2_boot::prof::frames(n);\n\
         \x20       }\n\
         \x20   });\n\
         }\n";

@@ -29,10 +29,12 @@ fn pipe_write(_a: u32, size: u32, v: u32) {
 
 /// Run the queued pipe bytes against memory.
 pub fn drain(m: &Mem) {
+    let t = std::time::Instant::now();
     GX.with_borrow_mut(|s| {
         let q = std::mem::take(&mut s.queued);
         s.fifo.write(&q, &Ram(&m.ram));
     });
+    crate::prof::add(&crate::prof::GX, t);
 }
 
 fn flush(_c: &mut Cpu, m: &mut Mem) {
