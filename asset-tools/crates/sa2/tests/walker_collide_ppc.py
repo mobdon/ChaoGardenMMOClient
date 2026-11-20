@@ -65,4 +65,33 @@ for _ in range(3000):
                  "height": fb(height), "last": last, "spd": [fb(x) for x in spd], "status": status,
                  "run": fb(run), "f4": fb(f4), "out_y": fb(out_y),
                  "out": [m.get(OUT + 4 * j, "I") for j in range(3)]})
-print(json.dumps({"lift": lift}))
+# fn_800420C0: surface physics. GetStageNum is stubbed to the case's stage.
+TASK = 0x81104000
+PHYS = 0x80196578
+stage = [0]
+m.stub(0x8001DD78, lambda mm: mm.gpr(3, stage[0]))
+rows = [[m.get(PHYS + 0x84 * k + o, "I") for o in (0x3C, 0x58, 0x78)] for k in range(16)]
+surface = []
+for _ in range(3000):
+    stage[0] = rng.choice([30, 32, 40, 43, 44, 50, 53, 31, 13, 11, 0, 70, rng.randrange(-5, 80)])
+    ch, b3 = rng.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]), rng.randrange(0, 14)
+    attr = rng.choice([0, 0x8, 0x4, 0x10, 0x200000, rng.randrange(1 << 32)])
+    flags = rng.choice([0, 2, 0x2000, 0x2002, rng.randrange(1 << 32)])
+    pos_y, f134, h1b0 = rf(100), f32(rng.uniform(0, 20)), rf(100)
+    before = [rng.randrange(1 << 32), fb(rf(2)), fb(rf(2)), fb(rf(2)), fb(rf(2))]
+    m.put(PW + 1, "b", ch)
+    m.put(PW + 3, "b", b3)
+    m.put(PW + 0x88, "I", before[0])
+    m.put(PW + 0x40, "I", before[1])
+    m.put(PW + 0xFC, "I", before[2])
+    m.put(PW + 0x118, "I", before[3])
+    m.put(PW + 0x138, "I", before[4])
+    m.put(PW + 0x134, "f", f134)
+    m.put(PW + 0x1A8, "I", flags)
+    m.put(PW + 0x1B0, "f", h1b0)
+    m.put(TASK + 0x18, "f", pos_y)
+    m.call(0x800420C0, r3=TASK, r4=VEL, r5=PW, r6=attr)
+    surface.append({"stage": stage[0], "ch": ch, "b3": b3, "attr": attr, "flags": flags,
+                    "pos_y": fb(pos_y), "f134": fb(f134), "h1b0": fb(h1b0), "before": before,
+                    "after": [m.get(PW + o, "I") for o in (0x88, 0x40, 0xFC, 0x118, 0x138)]})
+print(json.dumps({"lift": lift, "rows": rows, "surface": surface}))
