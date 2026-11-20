@@ -45,6 +45,7 @@ pub mod input;
 pub mod iron_gate_movers;
 mod key_pickup;
 pub mod knudai;
+pub mod king_boom_boo;
 pub mod land_contact;
 pub mod land_nodes;
 pub mod land_probe;
