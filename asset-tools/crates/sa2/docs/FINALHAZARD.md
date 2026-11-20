@@ -59,6 +59,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `attack_piece` | 0x5808, 0x5820, 0x5854, 0x5888, 0x58a8 | Attack piece helpers: park (action 4), spend and sweep (actions 5 and 6, slot cleared in 6:0x274), position copy (block words 0x98..0xa0), random live-slot pick that wraps at the slot count |
 | `attack_formation` | 0x59b0 | Attack formation spawn: floor(sqrt(count)) rows (stage_sqrt 0x40cc, floor 0x80111fd8) with the extra columns, rows and columns swept in 0x6000 steps around the radius 5:0x3ff8 from the stage side, pieces (0x55d8) stored in 6:0x274; a failed spawn trims the count; then action 1 with a 60-frame hold when flag 0x100 is set |
 | `attack_hold` | 0x5c04 | Attack hold: while entity flag 0x100 is set, count down and relaunch (30 frames, action 2) |
+| `attack_volley` | 0x5c4c | Attack volley: with no child it parks (action 4) or waits 120 frames in action 8; every 30 frames it fires one piece (two unless the count is the kind-0 count 5:0x3f90): rolls a slot (0x8010abf4 conversion), walks to the next live one, releases it (0x57f0), clears it and decrements block half-word 2; a walk that runs out releases the last slot it fired |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -300,6 +301,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_attack_update_ppc.py` | 1184 calls: every gate and action, frame counters on and off the period, spawn failures, sweeps with negative counts, deleter link checks |
 | `tests/finalhazard_attack_piece_ppc.py` | 629 calls: park, spend and sweep slots, position copies, slot picks over counts, random words and sparse tables |
 | `tests/finalhazard_attack_formation_ppc.py` | 412 calls with stack vectors: counts 1..30, both stage sides, spawn failures, flag states, hold timers |
+| `tests/finalhazard_attack_volley_ppc.py` | 1500 seeded frames: sparse and dense tables, the kind-0 count, rolls past the count (real table words behind it), parking and waiting |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 

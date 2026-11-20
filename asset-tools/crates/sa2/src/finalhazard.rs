@@ -984,6 +984,8 @@ pub enum PlacementClock {
     AttackFormation(Box<AttackFormationFrame>),
     /// Section 1 + 0x5c04: attack hold timer.
     AttackHold(Box<AttackHoldFrame>),
+    /// Section 1 + 0x5c4c: attack volley release.
+    AttackVolley(Box<AttackVolleyFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2786,6 +2788,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::AttackPiece(frame) => return attack_piece(&rel, &frame),
         PlacementClock::AttackFormation(frame) => return attack_formation(&rel, &frame),
         PlacementClock::AttackHold(frame) => return attack_hold(&rel, &frame),
+        PlacementClock::AttackVolley(frame) => return attack_volley(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -8771,5 +8774,147 @@ fn attack_hold(
             ]);
         }
     }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What the volley release reads: task word 0xc (the child), entity flags
+/// half-word 4 and half-word 6 (the timer), block half-words 0 (the piece
+/// count) and 2 (pieces left), the table words at 6:0x274, and in call
+/// order the 0x8010d940 random words and the 0x8010abf4 integer results.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttackVolleyFrame {
+    pub child: u32,
+    pub flags: i16,
+    pub timer: u16,
+    pub count: i16,
+    pub remaining: i16,
+    pub slots: Vec<u32>,
+    pub randoms: Vec<i32>,
+    pub indices: Vec<i32>,
+}
+/// Section 1 + 0x5c4c: with no child left the attack parks (action 4) or,
+/// with flag 0x100, waits 120 frames in action 8. Every 30 frames it fires
+/// one piece, or two when the count is not the kind-0 count 5:0x3f90: it
+/// rolls a slot, walks to the next live one, releases it (0x57f0) and
+/// clears it, then rolls again; a walk that runs out of pieces releases the
+/// last slot it fired.
+fn attack_volley(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &AttackVolleyFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32, region: &str, offset: serde_json::Value, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let n = |v: u32| serde_json::json!(v);
+    let k = |site: u32| boss_constant(rel, site);
+    let slot_ref = |i: i32| -> Result<serde_json::Value> {
+        Ok(serde_json::json!(module_ref(rel, 0x5d2e, (4 * i) as u32)?))
+    };
+    let mut ev = Vec::new();
+    let mut timer = f.timer;
+    if f.child == 0 {
+        if f.flags & 0x100 == 0 {
+            ev.push(st(0x5c8c, "entity", n(0), 1, 4));
+            ev.push(st(0x5c94, "entity", n(1), 1, 0));
+        } else {
+            ev.push(st(0x5ca0, "entity", n(6), 2, 0x78));
+            ev.push(st(0x5ca8, "entity", n(0), 1, 8));
+            ev.push(st(0x5cb0, "entity", n(1), 1, 0));
+            timer = 0x78;
+        }
+    }
+    if timer != 0 {
+        ev.push(st(0x5f18, "entity", n(6), 2, u32::from(timer - 1)));
+        return Ok(serde_json::json!({"events":ev}));
+    }
+    let mut randoms = f.randoms.iter().copied();
+    let mut indices = f.indices.iter().copied();
+    let mut slots = f.slots.clone();
+    let count = i32::from(f.count);
+    let unit = k(0x5cee)?;
+    let mut roll = |ev: &mut Vec<serde_json::Value>,
+                    rand_site: u32,
+                    magic: u32,
+                    count_magic: u32,
+                    cvt: u32|
+     -> Result<i32> {
+        ev.push(call(rand_site, serde_json::json!([]))?);
+        let r = randoms
+            .next()
+            .ok_or_else(|| Error::invalid("missing random word"))?;
+        let scaled = biased_float(rel, count_magic, count)? * (unit * biased_float(rel, magic, r)?);
+        let mut e = call(cvt, serde_json::json!([]))?;
+        e["floats"] = serde_json::json!([f64::from(scaled)]);
+        ev.push(e);
+        indices
+            .next()
+            .ok_or_else(|| Error::invalid("missing converted index"))
+    };
+    let table_count = {
+        let r = rel
+            .reference(1, 0x5d3a)
+            .filter(|r| r.module == 88 && r.section == 5)
+            .ok_or_else(|| Error::invalid("missing kind count"))?;
+        let at = r.addend as usize;
+        let b = rel
+            .data(5)?
+            .get(at..at + 2)
+            .ok_or_else(|| Error::invalid("kind count out of range"))?;
+        i32::from(i16::from_be_bytes([b[0], b[1]]))
+    };
+    let mut r3 = roll(&mut ev, 0x5cc4, 0x5cca, 0x5d02, 0x5d24)?;
+    let mut p = r3;
+    let mut shots: i32 = if count == table_count { 1 } else { 2 };
+    let mut left = count;
+    let mut last: i32 = -1;
+    let mut remaining = f.remaining;
+    let read = |slots: &Vec<u32>, i: i32| -> Result<u32> {
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| slots.get(i).copied())
+            .ok_or_else(|| Error::invalid("volley reads past the given table"))
+    };
+    while (shots as i8) > 0 && (left as i16) > 0 {
+        let w = read(&slots, p)?;
+        let mut advance = true;
+        if w != 0 {
+            last = r3 as i16 as i32;
+            ev.push(serde_json::json!({"site":0x5d8c,"local":0x57f0,"args":[w]}));
+            ev.push(st(0x5d94, "module", slot_ref(p)?, 4, 0));
+            slots[p as usize] = 0;
+            r3 = roll(&mut ev, 0x5d98, 0x5d9e, 0x5dca, 0x5dec)?;
+            remaining = remaining.wrapping_sub(1);
+            ev.push(st(0x5df8, "block", n(2), 2, (remaining as u16).into()));
+            shots -= 1;
+            if (shots as i8) > 0 {
+                left = count;
+                r3 = roll(&mut ev, 0x5e10, 0x5e16, 0x5e42, 0x5e64)?;
+                p = r3;
+                advance = false;
+            }
+        }
+        if advance {
+            r3 = r3.wrapping_add(1);
+            left -= 1;
+            if r3 as u32 == count as u32 {
+                r3 = 0;
+                p = 0;
+            } else {
+                p += 1;
+            }
+        }
+    }
+    if (shots as i8) > 0 && (left as i16) == 0 && last != -1 {
+        let w = read(&slots, last)?;
+        if w != 0 {
+            ev.push(serde_json::json!({"site":0x5ef0,"local":0x57f0,"args":[w]}));
+            ev.push(st(0x5ef8, "module", slot_ref(last)?, 4, 0));
+            remaining = remaining.wrapping_sub(1);
+            ev.push(st(0x5f04, "block", n(2), 2, (remaining as u16).into()));
+        }
+    }
+    ev.push(st(0x5f0c, "entity", n(6), 2, 0x1e));
     Ok(serde_json::json!({"events":ev}))
 }
