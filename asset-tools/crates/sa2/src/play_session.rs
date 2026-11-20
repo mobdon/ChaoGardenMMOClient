@@ -21,6 +21,7 @@ use crate::{
     goal_ring,
     iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
     ninja_trig::{nj_rotate_sin_cos, nj_sin},
+    ori::{Ori, OriEvent},
     play_objects::{
         collision_rows, death_zone_triangles, place_y, read_object_solid, CollisionRow,
     },
@@ -32,6 +33,8 @@ use crate::{
         WALL_ROW_COUNT,
     },
     prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
+    rocket::{Rocket, RocketEvent, RocketInputs},
+    solid_box::{collapse_above, SolidBox, SolidBoxEvent, NO_GROUND},
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -172,6 +175,9 @@ pub struct PlayerSample {
     pub position: V3,
     /// The player task's Action byte (twp +0), which CHAOPIPE reads.
     pub action: u8,
+    /// The player task's Status has bit 0 or 1 (on the ground), which the
+    /// rocket's stand test reads.
+    pub grounded: bool,
     /// The engine's "player standing on this object" answer, as an index
     /// into `Session::movers`.
     pub standing_on: Option<usize>,
@@ -232,6 +238,21 @@ pub enum Event {
     Pipe {
         pipe: usize,
         event: PipeEvent,
+    },
+    /// A ROCKETMISSSILE armed, puffed, flew, linked or exploded.
+    Rocket {
+        rocket: usize,
+        event: RocketEvent,
+    },
+    /// An ORI cage block was hit, collapsed its stack, threw debris or went.
+    Ori {
+        ori: usize,
+        event: OriEvent,
+    },
+    /// A SOLIDBOX landed near its ground and raised dust.
+    SolidBox {
+        solid_box: usize,
+        event: SolidBoxEvent,
     },
     GoalContact {
         layer: usize,
@@ -714,6 +735,30 @@ pub struct Session {
     pub cams: Vec<SecurityCamera>,
     pub emitters: Vec<EffectEmitter>,
     pub pipes: Vec<ChaoPipe>,
+    pub solid_boxes: Vec<SolidBox>,
+    pub oris: Vec<Ori>,
+    pub rockets: Vec<Rocket>,
+    /// The switch bytes (PC 0x802B95E0 + id): bit 0 on, bit 1 changed.
+    #[serde(skip)]
+    pub switches: [u8; 256],
+    /// Host-reported: the rocket child's collision hit this frame.
+    #[serde(skip)]
+    pub rocket_child_hits: Vec<usize>,
+    /// sec6+0xD34: ORI breaks so far (picks the 0x1011 sound variant).
+    pub ori_breaks: u32,
+    /// Host-reported hits for next frame: the attack query 0x800060EC(task,
+    /// 0x13) per ORI, and a rocket's position when it links to an ORI.
+    #[serde(skip)]
+    pub ori_attacks: Vec<usize>,
+    #[serde(skip)]
+    pub ori_rockets: Vec<(usize, V3)>,
+    #[serde(skip)]
+    solid_box_row: Option<CollisionRow>,
+    /// fn_80067AF0 (`land_probe::ground_height`) at a point, for SOLIDBOX.
+    /// The host supplies it from its land collision; without it the boxes
+    /// see no ground.
+    #[serde(skip)]
+    pub ground_probe: Option<Box<dyn Fn(V3) -> f32>>,
     /// The byte at GSNE8P 0x801CC168 + 0x37 that stops EFFOBJ0 emitting;
     /// the host sets it.
     pub effects_suppressed: bool,
@@ -893,6 +938,15 @@ impl Session {
         let mut cams = vec![];
         let mut emitters = vec![];
         let mut pipes = vec![];
+        let mut solid_boxes = vec![];
+        let mut oris = vec![];
+        let mut rockets = vec![];
+        // stg09D.rel sec5+0x8E484: SOLIDBOX's cube row.
+        let solid_box_row = if rules.prison_doors {
+            Some(collision_rows(src.stage_module, rules.movers.module_file, 0x8e484, 1)?.remove(0))
+        } else {
+            None
+        };
         let mut fluos = vec![];
         let mut searchlights = vec![];
         let mut sound_emitters = vec![];
@@ -1003,6 +1057,22 @@ impl Session {
                             radius: CAM_RADIUS,
                         });
                     }
+                    (_, "ROCKETMISSSILE") if rules.prison_doors => rockets.push(Rocket::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters,
+                    )),
+                    (_, "ORI") if rules.prison_doors => {
+                        oris.push(Ori::new(li, p.placement_index, pl.position, pl.rotation))
+                    }
+                    (_, "SOLIDBOX") if rules.prison_doors => solid_boxes.push(SolidBox::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation[1],
+                    )),
                     (_, "CHAOPIPE") if rules.prison_doors => {
                         pipes.push(ChaoPipe::new(
                             li,
@@ -1290,6 +1360,16 @@ impl Session {
             cams,
             emitters,
             pipes,
+            solid_boxes,
+            oris,
+            rockets,
+            switches: [0; 256],
+            rocket_child_hits: vec![],
+            ori_breaks: 0,
+            ori_attacks: vec![],
+            ori_rockets: vec![],
+            solid_box_row,
+            ground_probe: None,
             effects_suppressed: false,
             fluos,
             searchlights,
@@ -1347,6 +1427,55 @@ impl Session {
                 ccl_box_tris(d.position, d.rotation, r, [r.size[0], r.size[1], r.size[2]])
             })
             .collect()
+    }
+
+    /// A SOLIDBOX's cube at its current position (CCL box rule, yaw only).
+    pub fn solid_box_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let (Some(b), Some(r)) = (self.solid_boxes.get(i), self.solid_box_row.as_ref()) else {
+            return vec![];
+        };
+        ccl_box_tris(
+            b.position,
+            [0, b.yaw, 0],
+            r,
+            [r.size[0], r.size[1], r.size[2]],
+        )
+    }
+
+    /// An ORI's cube (sec5+0x7FDF0, the same 20-unit cube) while it stands.
+    pub fn ori_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let (Some(o), Some(r)) = (self.oris.get(i), self.solid_box_row.as_ref()) else {
+            return vec![];
+        };
+        if o.state >= 2 {
+            return vec![];
+        }
+        ccl_box_tris(
+            o.position,
+            [0, o.rotation[1] as u16, 0],
+            r,
+            [r.size[0], r.size[1], r.size[2]],
+        )
+    }
+
+    /// 0x92C4, the stack collapse a breaking container or ORI runs at its
+    /// position: every SOLIDBOX and ORI above it within reach gets 20 more to
+    /// fall.
+    /// (Breaking is driven by the walker's attacks, main-program code; the
+    /// containers' own fall is not ported.)
+    pub fn collapse_stack(&mut self, at: V3) -> usize {
+        let mut stack: Vec<_> = self
+            .solid_boxes
+            .iter_mut()
+            .map(|b| (&mut b.position, &mut b.fall, &mut b.drops))
+            .chain(
+                self.oris
+                    .iter_mut()
+                    .filter(|o| o.state < 3)
+                    .map(|o| (&mut o.position, &mut o.fall, &mut o.drops)),
+            )
+            .collect();
+        collapse_above(&mut stack, at)
     }
 
     /// A WALL gate's collision boxes with its slide applied to row 1.
@@ -1439,6 +1568,79 @@ impl Session {
                     emission,
                 });
             }
+        }
+        let probe = self.ground_probe.as_deref();
+        let mut ground = |p: V3| probe.map_or(NO_GROUND, |g| g(p));
+        for (i, b) in self.solid_boxes.iter_mut().enumerate() {
+            if let Some(event) = b.step(&mut ground) {
+                events.push(Event::SolidBox {
+                    solid_box: i,
+                    event,
+                });
+            }
+        }
+        let child_hits = std::mem::take(&mut self.rocket_child_hits);
+        for i in 0..self.rockets.len() {
+            let switches = self.switches;
+            let counts = self.group_counts;
+            let listed: Vec<u32> = self
+                .oris
+                .iter()
+                .filter(|o| o.listed)
+                .map(|o| o.rocket_id())
+                .collect();
+            let switch_on = |id: u32| switches[id as usize] & 1 != 0;
+            let group_clear = |id: u32| counts[id as usize] == 0;
+            let ori_listed = |id: u32| listed.contains(&id);
+            let input = RocketInputs {
+                players: [player.map(|p| (p.position, p.grounded)), None],
+                centres,
+                suppressed: self.effects_suppressed,
+                switch_on: &switch_on,
+                group_clear: &group_clear,
+                ori_listed: &ori_listed,
+                child_hit: child_hits.contains(&i),
+            };
+            for event in self.rockets[i].step(&input, &mut self.rand) {
+                match event {
+                    RocketEvent::Linked { id } => {
+                        let at = self.rockets[i].position;
+                        for (o, ori) in self.oris.iter().enumerate() {
+                            if ori.listed && ori.rocket_id() == id {
+                                self.ori_rockets.push((o, at));
+                            }
+                        }
+                    }
+                    RocketEvent::SwitchOff { id } => {
+                        let s = &mut self.switches[id as usize];
+                        *s = (*s & !1) | 2;
+                    }
+                    _ => {}
+                }
+                events.push(Event::Rocket { rocket: i, event });
+            }
+        }
+        let attacks = std::mem::take(&mut self.ori_attacks);
+        let rockets = std::mem::take(&mut self.ori_rockets);
+        let mut collapses = vec![];
+        for i in 0..self.oris.len() {
+            let rocket = rockets.iter().find(|(o, _)| *o == i).map(|&(_, p)| p);
+            let o = &mut self.oris[i];
+            for event in o.step(
+                rocket,
+                attacks.contains(&i),
+                &mut self.ori_breaks,
+                &mut self.rand,
+                &mut ground,
+            ) {
+                if let OriEvent::Collapse { at } = event {
+                    collapses.push(at);
+                }
+                events.push(Event::Ori { ori: i, event });
+            }
+        }
+        for at in collapses {
+            self.collapse_stack(at);
         }
         let actions = [player.map(|p| p.action), None];
         for (i, pipe) in self.pipes.iter_mut().enumerate() {

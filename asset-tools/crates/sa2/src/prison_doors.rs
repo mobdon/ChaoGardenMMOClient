@@ -8,12 +8,18 @@
 //! keeps only its high byte as the yaw, and increments the count; the
 //! destroy paths (0x80018B88, 0x80016598) decrement it.
 //!
-//! Which Prison Lane enemies count (stg09D.rel): E KUMI (0x4C848) calls the
-//! counting set-up unless its kind, Scale.x truncated (0x80111FD8 is
-//! truncation, 0x80111240 floorf on |x|) and forced to 0 outside 0..=4, is
-//! 4; E EMI (0x4E900) always counts (kinds 9 and others take the two
-//! counting entries); E AI (0x513D4), E NAMIE (0x54080) and E GOLD
-//! (0x4A3D4) always count. The `_F` and `_N` variants share these callbacks.
+//! Which Prison Lane enemies count (stg09D.rel): E EMI's callback 0x4E4C4
+//! calls 0x4C848 (at 0x4E5BC), which uses the counting set-up unless its
+//! kind, Scale.x truncated (0x80111FD8 is truncation, 0x80111240 floorf on
+//! |x|) and forced to 0 outside 0..=4, is 4 (then 0x80018D28, no count).
+//! E KUMI's callback 0x4C408 runs 0x4A3A8, which always counts (0x4A3D4).
+//! E AI (0x513D4) and E NAMIE (0x54080) always count.
+//! E GOLD never counts: its set-up (0x494AC, called from 0x4A09C) takes an
+//! enemy block through 0x80018D28 directly (group 0xFF, no count); the
+//! counting call at 0x4A3D4 sits in 0x4A3A8, which only E KUMI (0x4C484)
+//! calls. 0x80018C88 counts every group, 0xFF included (only its
+//! 0x8008CEB0 call is skipped for 0xFF). The `_F` and `_N` variants share
+//! these callbacks.
 use crate::play_world::V3;
 use serde::Serialize;
 
@@ -38,12 +44,16 @@ pub fn enemy_counts(name: &str, scale: V3) -> Option<bool> {
         .or_else(|| name.strip_suffix("_N"))
         .unwrap_or(name);
     match base {
-        "E KUMI" => {
+        // 0x4C848, called only from E EMI's 0x4E4C4 (at 0x4E5BC).
+        "E EMI" => {
             let kind = scale[0] as i32;
             let kind = if (0..5).contains(&kind) { kind } else { 0 };
             Some(kind != 4)
         }
-        "E EMI" | "E AI" | "E NAMIE" | "E GOLD" => Some(true),
+        // E KUMI's 0x4C408 runs 0x4A3A8, which always counts (0x4A3D4).
+        "E KUMI" | "E AI" | "E NAMIE" => Some(true),
+        // 0x494AC: 0x80018D28 only, never counted.
+        "E GOLD" => Some(false),
         _ => None,
     }
 }
@@ -276,10 +286,12 @@ mod tests {
     }
 
     #[test]
-    fn kumi_kind_four_does_not_count() {
-        assert_eq!(enemy_counts("E KUMI", [4.0, 0.0, 0.0]), Some(false));
-        assert_eq!(enemy_counts("E KUMI_F", [4.9, 0.0, 0.0]), Some(false));
-        assert_eq!(enemy_counts("E KUMI", [7.0, 0.0, 0.0]), Some(true));
+    fn emi_kind_four_does_not_count() {
+        assert_eq!(enemy_counts("E EMI", [4.0, 0.0, 0.0]), Some(false));
+        assert_eq!(enemy_counts("E EMI_F", [4.9, 0.0, 0.0]), Some(false));
+        assert_eq!(enemy_counts("E EMI", [7.0, 0.0, 0.0]), Some(true));
+        assert_eq!(enemy_counts("E KUMI", [4.0, 0.0, 0.0]), Some(true));
+        assert_eq!(enemy_counts("E GOLD", [0.0; 3]), Some(false));
         assert_eq!(enemy_counts("E AI_N", [0.0; 3]), Some(true));
         assert_eq!(enemy_counts("E KYOKO", [0.0; 3]), None);
     }
@@ -335,13 +347,8 @@ impl ElevatorWall {
         match self.state {
             0 => {
                 let near = elevators.iter().take(5).any(|&(e, moving)| {
-                    let d = [
-                        self.position[0] - e[0],
-                        self.position[1] - e[1],
-                        self.position[2] - e[2],
-                    ];
-                    let dist = (d[2] * d[2] + (d[0] * d[0] + d[1] * d[1])).sqrt();
-                    !moving && dist < WALL_ELEVATOR_RANGE
+                    // 0x8011B65C: the engine's distance and sqrt.
+                    !moving && crate::player_range::distance(self.position, e) < WALL_ELEVATOR_RANGE
                 });
                 if !near {
                     self.state = 1;

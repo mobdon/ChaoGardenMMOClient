@@ -1,6 +1,8 @@
 //! Prison Lane's native stage rules on the installed Steam data. The
 //! session runs only rules read from the game files; these tests supply the
 //! player sample the engine would report and check the native responses.
+use sa2_asset_tools::ori::OriEvent;
+use sa2_asset_tools::rocket::RocketEvent;
 use sa2_asset_tools::{
     fan_stage::Campaign,
     iron_gate_movers::{MoverProgram, PRISON_LANE as LAYOUT},
@@ -128,6 +130,12 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.cams.len(), 24);
         assert_eq!(s.emitters.len(), 10);
         assert_eq!(s.pipes.len(), 3);
+        assert_eq!(s.solid_boxes.len(), 6);
+        assert_eq!(s.oris.len(), 1);
+        assert_eq!(s.rockets.len(), 1);
+        assert!(!s.unimplemented.contains_key("ROCKETMISSSILE"));
+        assert!(!s.unimplemented.contains_key("ORI"));
+        assert!(!s.unimplemented.contains_key("SOLIDBOX"));
         assert_eq!(s.unimplemented.get("CHAOPIPE collision (form 6)"), Some(&3));
         assert!(!s.unimplemented.contains_key("EFFOBJ0"));
         assert!(!s.unimplemented.contains_key("CAM"));
@@ -158,6 +166,7 @@ fn standing_on_the_one_way_elevator_carries_it_to_its_target() {
             center: s.movers[i].position(),
             position: s.movers[i].position(),
             action: 0,
+            grounded: false,
             standing_on: Some(i),
             touching_goal: None,
             hit_cam_lens: None,
@@ -200,6 +209,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
             center: ring,
             position: ring,
             action: 0,
+            grounded: false,
             standing_on: None,
             touching_goal: None,
             hit_cam_lens: None,
@@ -216,6 +226,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
             center: goal,
             position: goal,
             action: 0,
+            grounded: false,
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),
@@ -402,6 +413,7 @@ fn security_camera_tracks_the_player_and_breaks_when_its_lens_is_hit() {
             center: at,
             position: at,
             action: 0,
+            grounded: false,
             standing_on: None,
             touching_goal: None,
             hit_cam_lens: hit,
@@ -412,7 +424,9 @@ fn security_camera_tracks_the_player_and_breaks_when_its_lens_is_hit() {
         // The lens task sets the parent's NextAction; the parent explodes
         // on its next exec.
         let events = s.step(Some(sample(Some(0))));
-        assert!(!events.iter().any(|e| matches!(e, Event::CamDestroyed { .. })));
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, Event::CamDestroyed { .. })));
         let events = s.step(Some(sample(None)));
         let Some(Event::CamDestroyed { cam: 0, explosion }) = events
             .iter()
@@ -425,5 +439,110 @@ fn security_camera_tracks_the_player_and_breaks_when_its_lens_is_hit() {
         let head = s.cams[0].head;
         s.step(Some(sample(None)));
         assert_eq!(s.cams[0].head, head);
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn stacked_solid_box_drops_one_box_when_the_one_below_goes() {
+    with_session(|mut s| {
+        // Placements 427 and 428 are stacked 20 apart at (-310, y, -60).
+        let top = s.solid_boxes.iter().position(|b| b.index == 427).unwrap();
+        let below = s
+            .solid_boxes
+            .iter()
+            .find(|b| b.index == 428)
+            .unwrap()
+            .position;
+        assert_eq!(s.solid_box_solid(top).len(), 12);
+        let y0 = s.solid_boxes[top].position[1];
+        assert_eq!(s.collapse_stack(below), 1);
+        let mut landed = false;
+        for _ in 0..120 {
+            let events = s.step(None);
+            landed |= events
+                .iter()
+                .any(|e| matches!(e, Event::SolidBox { solid_box, .. } if *solid_box == top));
+        }
+        // No ground probe from the host: no dust, but the full 20 drop.
+        assert!(!landed);
+        // y and the fall step separately in single precision (a few ulps).
+        assert!((s.solid_boxes[top].position[1] - (y0 - 20.0)).abs() < 1e-4);
+        assert_eq!(s.solid_boxes[top].fall, 0.0);
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn attacked_ori_breaks_into_debris_and_goes() {
+    with_session(|mut s| {
+        s.ori_attacks.push(0);
+        let mut kinds = vec![];
+        for _ in 0..8 {
+            for e in s.step(None) {
+                if let Event::Ori { ori: 0, event } = e {
+                    kinds.push(match event {
+                        OriEvent::Hit { .. } => "hit",
+                        OriEvent::Collapse { .. } => "collapse",
+                        OriEvent::Piece { .. } => "piece",
+                        OriEvent::Spark { .. } => "spark",
+                        OriEvent::Gone => "gone",
+                        OriEvent::Landed { .. } => "landed",
+                    });
+                }
+            }
+        }
+        let count = |k: &str| kinds.iter().filter(|x| **x == k).count();
+        assert_eq!(kinds[0], "hit");
+        assert_eq!(
+            (count("collapse"), count("spark"), count("gone")),
+            (1, 14, 1)
+        );
+        // Rotation.x & 0xF picks the debris: 24 pieces unless its kind is 2.
+        assert!(count("piece") == 24 || count("piece") == 0);
+        assert!(s.ori_solid(0).is_empty());
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn riding_the_rocket_breaks_the_ori_it_aims_at() {
+    with_session(|mut s| {
+        let at = s.rockets[0].stand_point();
+        let rider = PlayerSample {
+            center: at,
+            position: at,
+            standing_on: None,
+            touching_goal: None,
+            hit_cam_lens: None,
+            action: 0,
+            grounded: true,
+        };
+        let (mut armed, mut linked, mut hit) = (false, false, false);
+        for _ in 0..3000 {
+            for e in s.step(Some(rider)) {
+                match e {
+                    Event::Rocket {
+                        event: RocketEvent::Armed,
+                        ..
+                    } => armed = true,
+                    Event::Rocket {
+                        event: RocketEvent::Linked { id: 1 },
+                        ..
+                    } => linked = true,
+                    Event::Ori {
+                        event: OriEvent::Hit { .. },
+                        ..
+                    } => hit = true,
+                    _ => {}
+                }
+            }
+            if hit {
+                break;
+            }
+        }
+        assert!(armed && linked && hit, "{armed} {linked} {hit}");
+        // The ORI waits by the rocket's distance, then breaks and goes.
+        assert_eq!(s.oris[0].state, 1);
     });
 }
