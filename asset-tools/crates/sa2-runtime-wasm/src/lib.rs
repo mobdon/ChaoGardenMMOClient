@@ -10,6 +10,7 @@ use sa2_render::gc::GcSource;
 use sa2_render::gpu::{look_at, Renderer};
 use sa2_render::land::{land_mesh, Mesh, Vertex};
 use sa2_runtime::game::{Game, SteamData};
+use sa2_runtime::walker_slot;
 use wasm_bindgen::prelude::*;
 
 fn err(e: impl std::fmt::Display) -> JsValue {
@@ -66,6 +67,7 @@ impl App {
         stg11: Vec<u8>,
         set_s: Option<Vec<u8>>,
         set_u: Option<Vec<u8>>,
+        motions: Option<Vec<u8>>,
     ) -> Result<App, JsValue> {
         let data = SteamData {
             exe,
@@ -73,7 +75,7 @@ impl App {
             set_s,
             set_u,
         };
-        let game = Game::iron_gate(&data).map_err(err)?;
+        let mut game = Game::iron_gate(&data).map_err(err)?;
         let stage = stage_land::read(&data.stg11).map_err(err)?;
         let row = stage_land::catalog()
             .iter()
@@ -85,6 +87,16 @@ impl App {
             section: row.section,
         };
         let (land, _) = land_mesh(&stage, Some(&gc));
+        // The walker thread's adapter in the exec slot (with Iron Gate's
+        // collision land, the Steam physics rows and action table).
+        let rows = sa2_runtime::player::steam_physics_rows(&data.exe).map_err(err)?;
+        let actions = walker_slot::mech_eggman_actions(&data.exe).map_err(err)?;
+        game.walker = Some(Box::new(walker_slot::AdapterWalker::new(
+            walker_slot::Land::from_stage(&stage),
+            walker_slot::physics_rows(&rows),
+            actions,
+            motions.as_deref().unwrap_or(&[]),
+        )));
 
         let (w, h) = (canvas.width().max(1), canvas.height().max(1));
         let instance = wgpu::util::new_instance_with_webgpu_detection(
