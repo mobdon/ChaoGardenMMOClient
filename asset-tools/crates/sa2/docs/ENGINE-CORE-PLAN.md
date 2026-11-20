@@ -178,6 +178,13 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   documented, never a gameplay rule.
 - **Verification:** the native fill routine under Unicorn on recorded pad
   states, bit for bit.
+- **Done** (`sa2-runtime/src/input.rs`): `fn_80119A04` (with the `sa2` crate's
+  `pad_clamp`, now checked against main.dol's PADClamp), `fn_80119B84`,
+  `fn_80119BD8`, `fn_80119C4C`, `fn_800226E0`, `fn_80022048`. Matches main.dol
+  bit for bit on 55 recorded ops (tests/input_ppc.py). Not ported yet:
+  `PADReset` (logged), and `fn_80022BC4`, `fn_80021E68` (demo record/playback),
+  `fn_80021D0C`, `fn_80022A94` (logged). The frame step still takes pad words
+  from its host; wiring `PadSystem` into it is part of E5.
 
 ### E4. Stage load and unload: Iron Gate
 

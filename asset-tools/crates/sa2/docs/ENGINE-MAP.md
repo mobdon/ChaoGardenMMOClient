@@ -386,11 +386,21 @@ VI post-retrace: fn_80022F5C → fn_80119A04
 Per tick: fn_800226E0 (and fn_8002239C)
   0x801E55D8[i] = fn_80119B84(port map) → &0x80357E60[port], or the
                   idle record 0x801950E8 when disconnected
-  copy the record into 0x801E5438 + 0x34·i (G+0x3E/+0x3F/+0x40 select
-                  replay/demo cases, not traced further)
-  fn_80022048 → per player: 0x801E53F8 + 8·i = { angle s32 (atan2f), magnitude f32 };
-                  0x801E53B8 + 8·i second pair
-  fn_80021E68 → also writes 0x801E53F8 (override path, **unresolved**)
+  G+0x3E == 1 (input on): copy record 0 to 0x801E5438 when G+0x3F == 1 and
+                  record 1 to 0x801E546C when G+0x40 == 1; every other of
+                  the 8 copies is neutralised (+0x2C = old held, held 0,
+                  +0xC = ~0, pressed/released 0, sticks and triggers 0).
+                  G+0x3E != 1: all 8 are neutralised.
+  fn_80022048 → for i in 0..8 (sticks only for i < 2): dead zone ±14,
+                  angle = BAMS(atan2f(y, x)) (axis cases 0/0x4000/0x8000/
+                  0xC000) minus the camera angle [*(0x80175378 + 4i) + 0x10]
+                  when *0x803ADB04 is set, magnitude = min(|v|³ / 125000, 1)
+                  (|v| by frsqrte + 3 Newton steps); 0x801E53B8 + 8·i always,
+                  0x801E53F8 + 8·i only when G+0x3E == 1 and G+0x3F+i == 1;
+                  0x803AD874[i] = 1 when the magnitude crosses 0.5 upward
+  then fn_80022BC4, fn_80021E68 (demo record/playback when G+0x00 is 1/2,
+                  writes the copies and 0x801E53F8), fn_80021D0C,
+                  fn_80022A94(0..3): not ported yet
 ```
 
 `GetAnalog` 0x8004E560 reads 0x801E53F8 (92 callers). The pause check in
