@@ -52,6 +52,15 @@ be at stg42D's offsets.
 Rows 7 (ORI) and 16 (EFFOBJ0) are ported by the Prison Lane work
 (`ori.rs`, `effect_emitter.rs`) and are not repeated here.
 
+The stage setup (stg42D +0x2E84..+0x2F1C) only stores addresses into
+main.dol's hook slots, each when it is still empty: the Tobitiri setup
+0x19D70 at 0x801A2A18, the item callback 0x9FB8 at 0x801A2A20, and the
+trail routines into the table at 0x801E77D8 (+4 alloc, +8 step, +0xC free).
+These are the GSNE8P values from the disc REL's own relocations. The Steam
+install's `resource/gd_PC/*.rel` are a different build linked against
+another main.dol (its main.dol data imports sit about 0x400 lower, e.g.
+0x801A2638, 0x801A2640, 0x801E73D8) and must not be paired with GSNE8P's.
+
 ## Engine boundary
 
 main.dol routines the objects call are hooks on each module's host trait,

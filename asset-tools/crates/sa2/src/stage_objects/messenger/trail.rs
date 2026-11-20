@@ -5,8 +5,10 @@
 //!
 //! The stage's setup (stg42D +0x2EC8..+0x2F1C) registers three of these
 //! routines in main.dol's stage callback table (GSNE8P bss 0x801E77D8, 0x48
-//! bytes; the Steam build's REL writes the same table at 0x801E73D8, see
-//! `duel_stage_setup`): +4 = alloc (0x635C), +8 = step (0x6E50), +0xC = free
+//! bytes, by the disc REL's own relocation at +0x2ED0/+0x2ED4; the Steam
+//! install's resource/gd_PC copy of stg42D.rel is linked against another
+//! main.dol and names 0x801E73D8 there, so it must not be paired with the
+//! GSNE8P main.dol): +4 = alloc (0x635C), +8 = step (0x6E50), +0xC = free
 //! (0x6EA4). main.dol's own users call them through that table (for example
 //! fn_800139EC allocates two buffers through +4 and fn_80013B04 frees them
 //! through +0xC); stage code such as Omochao calls them directly.
