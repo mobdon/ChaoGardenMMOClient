@@ -9,7 +9,8 @@ new ones. Prints JSON: the object trees and models the land table reaches,
 and per frame the dynamic register, the selection list and its dynamic and
 static subsets, every active node with its triangles, and four collision
 queries (fn_800D1020): the re-filtered list, the candidates and each node's
-candidate range.
+candidate range, and fn_800CEE08's contacts with the
+objects that have candidates.
 Needs SA2_MAIN_DOL and SA2_STG11_REL.
 """
 import hashlib
@@ -212,6 +213,7 @@ TASK1, TASK2 = 0x81150000, 0x81150100
 QUERY = 0x81160000
 PLAYERTWP = 0x801E7768
 CANDS = 0x8028F998
+HITS = 0x8028FC98
 try:
     m.u.mem_map(0, 0x1000)  # an empty node's list head is read through NULL
 except Exception:
@@ -335,9 +337,32 @@ for frame in range(int(os.environ.get("LAND_NODES_FRAMES", "40"))):
         for a in node_addrs:
             first = W(a + 0x1C)
             per_node.append([None if first == 0 else (first - CANDS) // 4, W(a + 0x24)])
+        # fn_800CEE08 for the listed objects that have candidates, plus a
+        # couple without, in both modes.
+        objs = []
+        for a, (first, cnt) in zip(node_addrs, per_node):
+            if cnt and W(a + 8) not in objs:
+                objs.append(W(a + 8))
+        objs += [e[1] for e in rng.sample(lst, min(2, len(lst)))]
+        contacts = []
+        for obj in objs:
+            mode = rng.choice([0, 1])
+            m.u.mem_write(QUERY + 0x28, bytes([0xFF]) * 0x5C)
+            m.call(0x800CEE08, r3=QUERY, r4=obj, r6=mode, count=100_000_000)
+            ret = m.gpr(3)
+            out = {"obj": obj, "mode": mode, "ret": ret,
+                   "stats": [W(R13 - 0x77A8), W(R13 - 0x77AC), W(R13 - 0x77B0)]}
+            if ret:
+                hits = []
+                for k in range(W(R13 - 0x7754)):
+                    r = HITS + 0x9C * k
+                    hits.append([W(r + 0xC + 4 * j) for j in range(14)] + [W(r + 0x44 + 4 * j) for j in range(22)])
+                out.update({"count": m.get(QUERY + 0x28, "H"), "best": m.get(QUERY + 0x2A, "H"),
+                            "out": [W(QUERY + 0x34 + 4 * j) for j in range(20)], "hits": hits})
+            contacts.append(out)
         queries.append({"radius": fb(radius), "center": [fb(x) for x in center],
                         "motion": [fb(x) for x in motion], "list": lst, "count": got,
-                        "candidates": cands, "nodes": per_node})
+                        "candidates": cands, "nodes": per_node, "contacts": contacts})
     frames.append({"positions": [[fb(x) for x in p] for p in pos[:n]], "range": fb(rng_range),
                    "refresh": refresh, "register": reg_out,
                    "moved": [[o, [W(o + 8 + 4 * j) for j in range(3)]] for o in dyn_objs], "entries": entries,

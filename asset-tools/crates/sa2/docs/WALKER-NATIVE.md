@@ -18,6 +18,7 @@ WALKER-PORT-MAP.md on #424.
 | fn_8002334C in full, with the dynamic land objects movers register | `land_select::select_frame` | tests/land_nodes.rs, 40 frames with synthetic movers and tasks |
 | fn_80023808: each query's re-pick from the frame's dynamic and static subsets | `land_select::Selection::reselect` | same, 160 queries |
 | fn_800D1020: the broadphase, candidate triangles near a moving sphere (njScalor 0x801151F4 included) | `land_nodes::LandNodes::query` | same, 160 queries including a full 0xC0 candidate list |
+| fn_800CEE08: a moving sphere against one object's candidate triangles (with PSMTXInverse, njUnitVector and MSL acosf 0x80111124) | `land_contact`, `LandNodes::collide` | same, every query's objects with candidates in both modes, over 300 hits |
 | fn_800D0904 with fn_800D13A0, fn_800D14C8, fn_800D17E0, fn_800D2298, fn_800D23A8, fn_800D24B4, fn_800D251C and Ninja's table rotations, njTranslateEx and fn_8011610C: the land collision node list and its bucketed triangles | `land_nodes::LandNodes::update` | tests/land_nodes.rs, 40 frames on stg11D.rel plus synthetic object trees, triangle, quad and flipped strip sets, flag 0x08000000 and a full triangle pool |
 | 0x80046DE4: add `acc` to `spd` with the stop and brake rules, rotate back to world space, clamp, drop components within +/-0.02 without stick input | `walker_frame::player_world_speed` | same, 1,500 cases (fn_8004E560 stubbed) |
 
@@ -66,7 +67,9 @@ game lays it out. The port goes bottom-up from fn_800D1020 and fn_800CEE08.
    the listed nodes. It walks the sorted lists for a query
    sphere and fills a candidate list of up to 0xC0 entries (count at
    r13-0x7758).
-4. fn_800CEE08 (0x1064) tests the candidates' triangles.
+4. fn_800CEE08 (0x1064) tests the candidates' triangles (ported, see
+   `land_contact`). Its callers run fn_800D1020 once and then this routine
+   for each listed object.
 
 The emulator check needs the GameCube stg11D.rel loaded and relocated, with
 r13-0x7A00 pointing at its `objLandTable0011`. The installed module and the
@@ -74,7 +77,8 @@ disc's copy are byte-identical (SHA-1 8fbe506bcbbe6f012d2bb8240edb5f6c8cb6ece0).
 
 ## Known difference: fres
 
-njScalor ends in `fres`, which Gekko answers from a 12-bit estimate table.
+njScalor ends in `fres`, and PSMTXInverse starts its reciprocal with one.
+Gekko answers `fres` from a 12-bit estimate table.
 The emulator (and so this port, to stay checkable) uses the reciprocal
 rounded to single. Matching the hardware needs Dolphin's fres table, the
 same GPL-derived kind of data as the frsqrte table, which waits on the

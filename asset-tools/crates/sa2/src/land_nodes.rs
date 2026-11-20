@@ -187,7 +187,7 @@ fn scale(m: &mut Mtx, v: Vec3) {
 
 /// fn_8011BF0C / fn_8011BFE0: rotate about X (columns 1, 2) or Z (columns
 /// 0, 1) with the table's sine and cosine.
-fn rotate_pair(m: &mut Mtx, angle: i32, a: usize, b: usize) {
+pub(crate) fn rotate_pair(m: &mut Mtx, angle: i32, a: usize, b: usize) {
     let (s, c) = (nj_sin(angle), nj_cos(angle));
     for row in m.iter_mut() {
         let (ma, mb) = (row[a], row[b]);
@@ -197,7 +197,7 @@ fn rotate_pair(m: &mut Mtx, angle: i32, a: usize, b: usize) {
 }
 
 /// fn_8011BF64: rotate about Y (columns 0, 2).
-fn rotate_y(m: &mut Mtx, angle: i32) {
+pub(crate) fn rotate_y(m: &mut Mtx, angle: i32) {
     let (s, c) = (nj_sin(angle), nj_cos(angle));
     for row in m.iter_mut() {
         let (m0, m2) = (row[0], row[2]);

@@ -2,8 +2,10 @@
 //! relocated GameCube stg11D.rel (Iron Gate) plus synthetic land objects:
 //! fn_8002334C (`land_select::select_frame`), fn_800D0904
 //! (`LandNodes::update`), and per frame four collision queries through
-//! fn_800D1020 (`Selection::reselect` then `LandNodes::query`).
+//! fn_800D1020 (`Selection::reselect` then `LandNodes::query`) and
+//! fn_800CEE08 (`LandNodes::collide`) for the objects with candidates.
 use sa2_asset_tools::{
+    land_contact::ContactStats,
     land_nodes::{Candidate, Entry, LandNodes, MeshSet, NjModel, NjObject, Query},
     land_select::{player_positions, select_frame, DynEntry, LandCol, LandTableHead},
 };
@@ -139,7 +141,8 @@ fn matches_main_dol_on_iron_gate() {
     };
 
     let mut state = LandNodes::new();
-    let (mut tris_seen, mut cands_seen) = (0, 0);
+    let (mut tris_seen, mut cands_seen, mut hits_seen) = (0, 0, 0);
+    let mut stats = ContactStats::default();
     for (i, fr) in v["frames"].as_array().unwrap().iter().enumerate() {
         for d in fr["moved"].as_array().unwrap() {
             objects[obj_at[&u(&d[0])]].pos = v3(&d[1]);
@@ -259,6 +262,54 @@ fn matches_main_dol_on_iron_gate() {
                 );
             }
             cands_seen += count;
+            for c in q["contacts"].as_array().unwrap() {
+                let obj = obj_at[&u(&c["obj"])];
+                let got = state.collide(&query, obj, u(&c["mode"]) != 0, &mut stats);
+                let s = c["stats"].as_array().unwrap();
+                assert_eq!(
+                    [stats.tested, stats.swept_to_end, stats.hits].map(u64::from),
+                    [u(&s[0]), u(&s[1]), u(&s[2])],
+                    "frame {i} query {k} stats"
+                );
+                let Some(got) = got else {
+                    assert_eq!(u(&c["ret"]), 0, "frame {i} query {k} {c}");
+                    continue;
+                };
+                assert_eq!(u(&c["ret"]), 1, "frame {i} query {k}");
+                let want = c["hits"].as_array().unwrap();
+                assert_eq!(got.hits.len(), want.len(), "frame {i} query {k}");
+                assert_eq!(got.hits.len() as u64, u(&c["count"]));
+                assert_eq!(got.best as u64, u(&c["best"]), "frame {i} query {k}");
+                for (h, w) in got.hits.iter().zip(want) {
+                    let t = &state.nodes[h.candidate.node].tris[h.candidate.tri];
+                    let mut words: Vec<u32> = bits(t.center)
+                        .into_iter()
+                        .chain([t.radius_sq.to_bits()])
+                        .chain(t.v.iter().flat_map(|p| bits(*p)))
+                        .chain([t.attr, h.angles.0 as u32, h.angles.1 as u32])
+                        .collect();
+                    for v in [h.normal, h.facing, h.foot, h.head, h.along, h.across] {
+                        words.extend(bits(v));
+                    }
+                    words.extend([h.start_height.to_bits(), h.end_height.to_bits()]);
+                    let want: Vec<u32> =
+                        w.as_array().unwrap().iter().map(|x| u(x) as u32).collect();
+                    assert_eq!(words, want, "frame {i} query {k} hit");
+                    hits_seen += 1;
+                }
+                let b = &got.hits[got.best];
+                let mut out: Vec<u32> = vec![b.angles.0 as u32, b.angles.1 as u32];
+                for v in [b.normal, b.facing, got.foot, got.head, b.along, b.across] {
+                    out.extend(bits(v));
+                }
+                let want: Vec<u32> = c["out"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|x| u(x) as u32)
+                    .collect();
+                assert_eq!(out, want, "frame {i} query {k} outputs");
+            }
         }
     }
     assert!(
@@ -269,4 +320,5 @@ fn matches_main_dol_on_iron_gate() {
         cands_seen > 300,
         "too few candidates exercised: {cands_seen}"
     );
+    assert!(hits_seen > 300, "too few contacts exercised: {hits_seen}");
 }
