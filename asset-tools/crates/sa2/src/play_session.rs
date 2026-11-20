@@ -28,6 +28,7 @@ use crate::{
         enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
         WALL_ROW_COUNT,
     },
+    prison_visuals::{MslRand, Searchlight, Siren, SoundEmitter, SIREN_RADIUS},
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -654,6 +655,11 @@ pub struct Session {
     pub walls: Vec<ElevatorWall>,
     #[serde(skip)]
     wall_rows: Vec<CollisionRow>,
+    pub sirens: Vec<Siren>,
+    pub searchlights: Vec<Searchlight>,
+    pub sound_emitters: Vec<SoundEmitter>,
+    /// MSL rand state the visual objects draw from (seed 1).
+    pub rand: MslRand,
     /// Round collision shapes (forms 0-2), kept analytic.
     pub shapes: Vec<RoundShape>,
     #[serde(skip)]
@@ -777,6 +783,10 @@ impl Session {
         let mut enemies: Vec<Enemy> = vec![];
         let mut doors = vec![];
         let mut walls = vec![];
+        let mut sirens = vec![];
+        let mut searchlights = vec![];
+        let mut sound_emitters = vec![];
+        let mut rand = MslRand::default();
         let mut unimplemented = std::collections::BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -860,6 +870,31 @@ impl Session {
                             task,
                             out,
                         });
+                    }
+                    (_, "SIREN") if rules.prison_doors => {
+                        // stg09D.rel 0x5A30: radius-5 sphere at sec5+0x45858.
+                        sirens.push(Siren::new(li, p.placement_index, pl.position, &mut rand));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: SIREN_RADIUS,
+                        });
+                    }
+                    (_, "SEARCHLIGHT") if rules.prison_doors => searchlights.push(Searchlight {
+                        layer: li,
+                        index: p.placement_index,
+                        position: pl.position,
+                        yaw: pl.rotation[1],
+                        speed: u32::from(pl.rotation[0]),
+                        phase: 0,
+                    }),
+                    (_, "SE") if rules.prison_doors => sound_emitters.push(SoundEmitter::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation[0],
+                    )),
+                    (_, "SIGNA") if rules.prison_doors => {
+                        // stg09D.rel 0x58D8: draw only, no state.
                     }
                     (_, "WALL") if rules.prison_doors => walls.push(ElevatorWall::new(
                         li,
@@ -1064,6 +1099,10 @@ impl Session {
             door_rows,
             walls,
             wall_rows,
+            sirens,
+            searchlights,
+            sound_emitters,
+            rand,
             shapes,
         })
     }
@@ -1186,6 +1225,12 @@ impl Session {
                     .then_some(Event::BridgeStarted { mover: i }),
             };
             events.extend(started);
+        }
+        for s in &mut self.sirens {
+            s.step();
+        }
+        for s in &mut self.searchlights {
+            s.step();
         }
         for (i, w) in self.walls.iter_mut().enumerate() {
             if w.step(&elevators) {

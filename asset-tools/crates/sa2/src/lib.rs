@@ -33,6 +33,7 @@ pub mod pe;
 pub mod physical_board;
 pub mod player_physics;
 pub mod ninja_trig;
+pub mod prison_visuals;
 pub mod prison_doors;
 pub mod play_objects;
 pub mod play_session;
