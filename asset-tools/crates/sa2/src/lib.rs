@@ -27,6 +27,7 @@ pub mod iron_gate_movers;
 mod key_pickup;
 pub mod manifest;
 pub mod model;
+pub mod msl_math;
 pub mod motion;
 pub mod object_table;
 pub mod pe;
