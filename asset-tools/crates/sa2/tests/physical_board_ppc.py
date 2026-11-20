@@ -15,9 +15,9 @@ TEXT = 0x81000000
 START, END = 0x3B4, 0x4F0
 RETURN = TEXT + 0x800
 TASK, WORK, MOTION = 0x100000, 0x100100, 0x100200
-PLAYER_TABLES = (0x801E7368, 0x801E7348, 0x801E7328)
-DETACH, CHECK_RANGE = 0x800DE11C, 0x8006538C
-SHA = "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b"
+PLAYER_TABLES = (0x801E7768, 0x801E7748, 0x801E7728)
+DETACH, CHECK_RANGE = 0x800DE3F8, 0x800655F4
+SHA = "f5a986c2be0c7f8577538202cca0f714299617203a8cb1d7ef37d4d11f827423"
 
 
 def code_from_rel(rel):
@@ -107,4 +107,4 @@ def run(code):
 
 
 if __name__ == "__main__":
-    run(code_from_rel((Path(os.environ["SA2_SET_DIR"])/"stg13D.rel").read_bytes()))
+    run(code_from_rel((Path(os.environ["SA2_GC_REL_DIR"])/"stg13D.rel").read_bytes()))

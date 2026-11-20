@@ -20,7 +20,7 @@ for mod,at in struct.iter_unpack(">II",data[o:o+n]):
         if k==202:t=s;l=0;continue
         l+=delta
         if t==1 and k in (4,6) and (0x2284<=l<0x23b4 or 0x2a2c<=l<0x2b14 or 0x5b90<=l<0x5c38 or 0x979c<=l<0x9814 or 0x4eb4<=l<0x5090):
-            if mod!=80 and a!=0x801e51d8:continue
+            if mod!=80 and a!=0x801e55d8:continue
             p=base[s]+a if mod==80 else 0x85004000
             u.mem_write(base[1]+l,struct.pack(">H",(p if k==4 else (p+32768)>>16)&65535))
 ram=0x85000000;u.mem_map(ram,65536)

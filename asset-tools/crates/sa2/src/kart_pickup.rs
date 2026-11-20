@@ -55,7 +55,7 @@ enum Call {
 }
 pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let c = rel.data(4)?;
     let f = |at: usize| f32::from_be_bytes(c[at..at + 4].try_into().unwrap());
     let outside = crate::kart_object_range::ObjectRange {
@@ -233,7 +233,7 @@ pub struct ParticleUpdate {
 /// Update referenced by the native ring effect descriptor at +0x2ee6d0.
 pub fn particle_tick(bytes: &[u8], s: ParticleInput) -> Result<ParticleUpdate> {
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     if rel.local_pointer(5, 0x2ee6f0)? != Some((1, 0xf784)) {
         return Err(Error::invalid("unexpected kart ring effect update"));
     }
@@ -281,7 +281,7 @@ pub struct DisplayInput {
 pub fn display(bytes: &[u8], pak: &[u8], s: DisplayInput) -> Result<serde_json::Value> {
     use serde_json::json;
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let threshold = f32::from_be_bytes(rel.data(4)?[0x1c0..0x1c4].try_into().unwrap());
     if s.current_view_metric >= threshold || s.mode != 2 {
         return Ok(json!({"draw":null}));

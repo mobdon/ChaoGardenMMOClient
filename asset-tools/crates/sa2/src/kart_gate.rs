@@ -90,7 +90,7 @@ fn verified_module(bytes: &[u8]) -> Result<CityRel<'_>> {
     {
         return Err(Error::invalid("unsupported CartD.rel revision"));
     }
-    CityRel::read_identified(bytes, 80)
+    CityRel::read_stage(bytes, "CartD.rel")
 }
 pub fn tick(bytes: &[u8], s: GateTick) -> Result<GateResult> {
     let rel = verified_module(bytes)?;

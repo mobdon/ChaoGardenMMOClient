@@ -83,6 +83,20 @@ The display callback draws a piece, and its shown slots, only when the squared d
 
 `tests/kart_billboards_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs the original instructions under Unicorn with a fixed rand() sequence and compares every occurrence's four picture words with the Rust result. With that sequence, Route 101 makes 345 rand() calls and shows 123 billboards; Route 280 makes 284 calls and shows 96. The camera position, the engine's rand() generator and the billboard model geometry stay outside this port. Driving physics, timing and completion remain unverified.
 
+## CartD revisions
+
+The kart ports read the Steam CartD.rel (module 80) and keep its REL offsets.
+Engine imports are reported at their GSNE8P main.dol addresses
+(`CityRel::read_stage`). The disc copy (module 81, SHA-256
+16277210…3a1bfa) is not a relocation-only variant. Like the boss RELs, it adds
+a 0x2F4-byte routine at 1:0xF5F0 (Steam offset) and extra constants, but it
+also differs in content. Unported differences:
+
+- The routine whose HA/LO pair sits at 1:0x9372/0x9376 loads section-4 0x334
+  (100.0) in the Steam copy and 0x348 (150.0) on the disc.
+- Section 5 0x44EF4–0x4C960 (Steam offsets) holds different data, and the
+  pointer table at 5:0x4C7E0–0x4C960 points into it.
+
 ## Rust interface and checks
 
 Campaign::new takes the EXE bytes and the literal contents of ADVERTISE.ini, sa2lvl.ini and ObjectLists.ini. All four revisions are checked. Campaign::levels returns authored level dispatches. Campaign::mount takes a sequence, action ordinal and a caller-supplied resolver for installed resource basenames under resource/gd_PC. Returning None records a missing file; supplying unrelated bytes under a requested SET or landtable name fails. The loader reads normal layers in original placement order and matches LevelGeometry by configured relative path to the specific stage_land symbol, never by picking a nearby stage ID.

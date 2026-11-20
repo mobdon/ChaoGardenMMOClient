@@ -14,7 +14,7 @@ def verify(d,sec,refs,constructor):
     _,s,a,k=refs[1,run+0x4e];assert struct.unpack_from('>fff',d,sec(s)+a)==(-43.,30.,-100.)
 
 def observe(d,sec,refs,steps,world,existing=False,allocation_ok=True):
-    B,D,T,W,G=0x81000000,0x82000000,0x100000,0x100100,0x801cbd88
+    B,D,T,W,G=0x81000000,0x82000000,0x100000,0x100100,0x801cc168
     start,end=0x24c24,0x24fc0
     u=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
     mapped=set()

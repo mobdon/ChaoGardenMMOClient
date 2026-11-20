@@ -1,5 +1,5 @@
 //! GOALRING's verified collision setup and contact branch, not the mission result handler.
-use crate::{city_rel::CityRel, fan_stage::MountedStage, manifest, stage_land, Error, Result};
+use crate::{city_rel::CityRel, fan_stage::MountedStage, manifest, Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 const ROWS: &[(u16, u32)] = include!("goal_ring_rows.rs");
@@ -131,11 +131,11 @@ impl PositionModel {
     fn trace(&self, radius: f32, ratio: f32, color: Option<u32>) -> Value {
         let scale = (radius / self.base).to_bits();
         let mut result = json!({"model":self.model,"field20During":(self.bias+radius).to_bits(),"calls":[
-        ["engine",0x80116ad0u32,self.texture],["engine",0x80115d50u32],["engine",0x80114e30u32,0,scale,scale,scale],
-        ["engine",0x80033248u32,self.colors[0],self.colors[1],ratio.to_bits()],
+        ["engine",0x80116e18u32,self.texture],["engine",0x80116098u32],["engine",0x80115178u32,0,scale,scale,scale],
+        ["engine",0x800334b0u32,self.colors[0],self.colors[1],ratio.to_bits()],
         ["local",self.submit,self.model,"previousReturn"],
         ["local",self.prepare,0x80fffe60u32,self.source,"previousReturn",65535],
-        ["engine",0x8011de10u32,self.model,{"modelPointerDuring":0x80fffe60u32}],["engine",0x80115d9cu32]],"modelPointerRestored":self.source,"field20Restored":self.base.to_bits()});
+        ["engine",0x8011e158u32,self.model,{"modelPointerDuring":0x80fffe60u32}],["engine",0x801160e4u32]],"modelPointerRestored":self.source,"field20Restored":self.base.to_bits()});
         if let Some(color) = color {
             let count = self.positions.len();
             let header = (((4 * (count as u32) + 1) << 16) | 0x23).to_be_bytes();
@@ -196,10 +196,10 @@ impl PositionRoutine {
         }
         let mut calls = Vec::new();
         if p.manager == 0 {
-            calls.push(json!([0x80071ba4u32, 2, 3, self.task_entry, self.label]));
+            calls.push(json!([0x80071e0cu32, 2, 3, self.task_entry, self.label]));
         }
         if manager != 0 {
-            calls.push(json!([0x801194b4u32, 1, 24]));
+            calls.push(json!([0x801197fcu32, 1, 24]));
         }
         let mut result = json!({"calls":calls,"manager":manager,"callbackWrites":p.created.filter(|v|*v!=0).map(|_|self.callbacks),
             "hookWrite":p.hook.filter(|v|*v==0).map(|_|self.hook),"node":node,
@@ -274,16 +274,16 @@ impl PositionRoutine {
                     }
                     let mut display = Vec::new();
                     for &(addr, radius, limit, center) in &list {
-                        display.push(json!(["engine", 0x80115d50u32]));
+                        display.push(json!(["engine", 0x80116098u32]));
                         display.push(json!([
                             "engine",
-                            0x80115e24u32,
+                            0x8011616cu32,
                             addr,
                             center.ok_or_else(bad)?.map(f32::to_bits)
                         ]));
                         display.push(json!([
                             "engine",
-                            0x801154e0u32,
+                            0x80115828u32,
                             0,
                             word.wrapping_mul(0x120)
                         ]));
@@ -304,7 +304,7 @@ impl PositionRoutine {
                                     .transpose()?
                             )
                         ]));
-                        display.push(json!(["engine", 0x80115d9cu32]));
+                        display.push(json!(["engine", 0x801160e4u32]));
                     }
                     frames.last_mut().unwrap()["display"] = json!(display);
                 }
@@ -392,14 +392,8 @@ impl Program {
             .find(|(id, _)| *id == level)
             .ok_or_else(invalid)?;
         let name = format!("stg{level:02}D.rel");
-        let info = stage_land::catalog()
-            .iter()
-            .find(|i| i.filename == name)
-            .ok_or_else(invalid)?;
-        if bytes.len() != info.size || manifest::sha256(bytes) != info.sha256 {
-            return Err(invalid());
-        }
-        let rel = CityRel::read_identified(bytes, info.module)?;
+        let rel = CityRel::read_stage(bytes, &name).map_err(|_| invalid())?;
+        let module = rel.module_id();
         let (s, n) = rel.local_pointer(5, row)?.ok_or_else(invalid)?;
         if rel.data(s)?.get(n as usize..n as usize + 9) != Some(b"GOALRING\0") {
             return Err(invalid());
@@ -436,7 +430,7 @@ impl Program {
         let lo = rel.reference(1, target + 0x1a).ok_or_else(invalid)?;
         if (
             hi.module, hi.kind, hi.section, lo.module, lo.kind, lo.section, lo.addend,
-        ) != (info.module, 6, 5, info.module, 4, 5, hi.addend)
+        ) != (module, 6, 5, module, 4, 5, hi.addend)
         {
             return Err(invalid());
         }
@@ -452,9 +446,9 @@ impl Program {
                 off >= 0x50
                     && rel
                         .reference(1, off)
-                        .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x8001dcf4)
+                        .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x8001dd78)
                     && rel.reference(1, off - 0x4e).is_some_and(|r| {
-                        r.module == info.module
+                        r.module == module
                             && r.section == 5
                             && r.kind == 4
                             && r.addend == slot_words_offset
@@ -463,7 +457,7 @@ impl Program {
             .ok_or_else(invalid)?;
         let table = rel
             .reference(1, switch + 0x16)
-            .filter(|r| r.module == info.module && r.kind == 4 && r.section == 5)
+            .filter(|r| r.module == module && r.kind == 4 && r.section == 5)
             .ok_or_else(invalid)?;
         let tail = switch + 0x2ec;
         if manifest::sha256(
@@ -475,9 +469,9 @@ impl Program {
             return Err(invalid());
         }
         for (off, kind, addr) in [
-            (2, 6, 0x801cbd88),
-            (6, 4, 0x801cbd88),
-            (0x10, 10, 0x80112050),
+            (2, 6, 0x801cc168),
+            (6, 4, 0x801cc168),
+            (0x10, 10, 0x80112398),
         ] {
             let r = rel.reference(1, tail + off).ok_or_else(invalid)?;
             if (r.module, r.kind, r.addend) != (0, kind, addr) {
@@ -487,8 +481,8 @@ impl Program {
         let scalar = |off| -> Result<f32> {
             let hi = rel.reference(1, tail + off).ok_or_else(invalid)?;
             let lo = rel.reference(1, tail + off + 4).ok_or_else(invalid)?;
-            if (hi.module, hi.section, hi.kind) != (info.module, 4, 6)
-                || (lo.module, lo.section, lo.kind, lo.addend) != (info.module, 4, 4, hi.addend)
+            if (hi.module, hi.section, hi.kind) != (module, 4, 6)
+                || (lo.module, lo.section, lo.kind, lo.addend) != (module, 4, 4, hi.addend)
             {
                 return Err(invalid());
             }
@@ -533,18 +527,18 @@ impl Program {
         let constant = |off| -> Result<f32> {
             let h = rel.reference(1, helper + off).ok_or_else(invalid)?;
             let l = rel.reference(1, helper + off + 4).ok_or_else(invalid)?;
-            if (h.module, h.kind, h.section) != (info.module, 6, 4)
-                || (l.module, l.kind, l.section, l.addend) != (info.module, 4, 4, h.addend)
+            if (h.module, h.kind, h.section) != (module, 6, 4)
+                || (l.module, l.kind, l.section, l.addend) != (module, 4, 4, h.addend)
             {
                 return Err(invalid());
             }
             Ok(f32::from_bits(word(rel.data(4)?, h.addend as usize)?))
         };
         for (off, kind, addr) in [
-            (0x34, 10, 0x80037da0),
-            (0x50, 10, 0x80037da0),
-            (0x1f2, 6, 0x801e7368),
-            (0x1f6, 4, 0x801e7368),
+            (0x34, 10, 0x80038008),
+            (0x50, 10, 0x80038008),
+            (0x1f2, 6, 0x801e7768),
+            (0x1f6, 4, 0x801e7768),
         ] {
             let r = rel.reference(1, helper + off).ok_or_else(invalid)?;
             if (r.module, r.kind, r.addend) != (0, kind, addr) {
@@ -574,7 +568,7 @@ impl Program {
         {
             return Err(invalid());
         }
-        for (off, addr) in [(0x1c, 0x8010d940), (0x6c, 0x80114eac)] {
+        for (off, addr) in [(0x1c, 0x8010dc88), (0x6c, 0x801151f4)] {
             let r = rel.reference(1, gate + off).ok_or_else(invalid)?;
             if (r.module, r.kind, r.addend) != (0, 10, addr) {
                 return Err(invalid());
@@ -607,7 +601,7 @@ impl Program {
         }
         for off in [0x18, 0x80, 0xd4, 0x13c, 0x188, 0x1e0, 0x228, 0x288] {
             let r = rel.reference(1, body + off).ok_or_else(invalid)?;
-            if (r.module, r.kind, r.addend) != (0, 10, 0x8010d940) {
+            if (r.module, r.kind, r.addend) != (0, 10, 0x8010dc88) {
                 return Err(invalid());
             }
         }
@@ -643,14 +637,14 @@ impl Program {
             let l = rel
                 .reference(1, spawn_helper + off + 4)
                 .ok_or_else(invalid)?;
-            if (h.module, h.kind, h.section) != (info.module, 6, section)
-                || (l.module, l.kind, l.section, l.addend) != (info.module, 4, section, h.addend)
+            if (h.module, h.kind, h.section) != (module, 6, section)
+                || (l.module, l.kind, l.section, l.addend) != (module, 4, section, h.addend)
             {
                 return Err(invalid());
             }
             Ok(h.addend)
         };
-        for (off, addr) in [(0x34, 0x80032910), (0x78, 0x8010d940), (0xf0, 0x8010d940)] {
+        for (off, addr) in [(0x34, 0x80032b78), (0x78, 0x8010dc88), (0xf0, 0x8010dc88)] {
             let r = rel.reference(1, spawn_helper + off).ok_or_else(invalid)?;
             if (r.module, r.kind, r.addend) != (0, 10, addr) {
                 return Err(invalid());
@@ -691,14 +685,14 @@ impl Program {
             return Err(invalid());
         }
         let call = rel.reference(1, update + 0xb8).ok_or_else(invalid)?;
-        if (call.module, call.kind, call.addend) != (0, 10, 0x80112050) {
+        if (call.module, call.kind, call.addend) != (0, 10, 0x80112398) {
             return Err(invalid());
         }
         let uref = |off| -> Result<usize> {
             let h = rel.reference(1, update + off).ok_or_else(invalid)?;
             let l = rel.reference(1, update + off + 4).ok_or_else(invalid)?;
-            if (h.module, h.section, h.kind) != (info.module, 4, 6)
-                || (l.module, l.section, l.kind, l.addend) != (info.module, 4, 4, h.addend)
+            if (h.module, h.section, h.kind) != (module, 4, 6)
+                || (l.module, l.section, l.kind, l.addend) != (module, 4, 4, h.addend)
             {
                 return Err(invalid());
             }
@@ -790,7 +784,7 @@ impl Program {
         {
             return Err(invalid());
         }
-        for (off, engine) in [(0x60, 0x800dfe0c), (0x84, 0x800dfe3c)] {
+        for (off, engine) in [(0x60, 0x800e00e8), (0x84, 0x800e0118)] {
             if !rel
                 .reference(1, h + off)
                 .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == engine)
@@ -800,7 +794,7 @@ impl Program {
         }
         let fallback_message_offset = rel
             .reference(1, h + 0x7a)
-            .filter(|r| r.module == info.module && r.kind == 4 && r.section == 5)
+            .filter(|r| r.module == module && r.kind == 4 && r.section == 5)
             .ok_or_else(invalid)?
             .addend;
         let child = init + 0x110;
@@ -811,13 +805,13 @@ impl Program {
         ) != "d9442669cc51ee371849de8fec3f5e240622c0f4d1a34f9af172ea963f7881ca"
             || !rel
                 .reference(1, child + 0x1c)
-                .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x80070790)
+                .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x800709f8)
         {
             return Err(invalid());
         }
         let child_ref = |off, section| {
             rel.reference(1, child + off)
-                .filter(|r| r.module == info.module && r.section == section && r.kind == 4)
+                .filter(|r| r.module == module && r.section == section && r.kind == 4)
                 .map(|r| r.addend)
                 .ok_or_else(invalid)
         };
@@ -833,7 +827,7 @@ impl Program {
         {
             return Err(invalid());
         }
-        for (off, engine) in [(0x30, 0x8006538c), (0x10c, 0x8000f4ec)] {
+        for (off, engine) in [(0x30, 0x800655f4), (0x10c, 0x8000f4ec)] {
             if !rel
                 .reference(1, child_entry + off)
                 .is_some_and(|r| r.kind == 10 && r.module == 0 && r.addend == engine)
@@ -843,7 +837,7 @@ impl Program {
         }
         let callback = |off| {
             rel.reference(1, child_entry + off)
-                .filter(|r| r.kind == 4 && r.section == 1 && r.module == info.module)
+                .filter(|r| r.kind == 4 && r.section == 1 && r.module == module)
                 .map(|r| r.addend)
                 .ok_or_else(invalid)
         };
@@ -876,7 +870,7 @@ impl Program {
         for (offset, addr) in [
             (0x50, 0x800066f4),
             (0x60, 0x80006574),
-            (0x74, 0x80037c74),
+            (0x74, 0x80037edc),
             (0x1e4, 0x8000f4ec),
         ] {
             if !rel
@@ -888,12 +882,12 @@ impl Program {
         }
         let idle_constant = rel
             .reference(1, two + 0x20a)
-            .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
+            .filter(|r| r.module == module && r.section == 4 && r.kind == 4)
             .ok_or_else(invalid)?;
         let child_idle_step = f32::from_bits(word(rel.data(4)?, idle_constant.addend as usize)?);
         let local_ref = |off, section| {
             rel.reference(1, two + off)
-                .filter(|r| r.kind == 4 && r.module == info.module && r.section == section)
+                .filter(|r| r.kind == 4 && r.module == module && r.section == section)
                 .map(|r| r.addend)
                 .ok_or_else(invalid)
         };
@@ -917,8 +911,8 @@ impl Program {
                 };
                 let short = i == 7;
                 for (off, address) in [
-                    (0x18, 0x80063524),
-                    (if short { 0x2c } else { 0x38 }, 0x80035a88),
+                    (0x18, 0x8006378c),
+                    (if short { 0x2c } else { 0x38 }, 0x80035cf0),
                 ] {
                     if !rel
                         .reference(1, func + off)
@@ -930,13 +924,13 @@ impl Program {
                 if !short
                     && !rel
                         .reference(1, func + 0x24)
-                        .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x80063584)
+                        .is_some_and(|r| r.module == 0 && r.kind == 10 && r.addend == 0x800637ec)
                 {
                     return Err(invalid());
                 }
                 let r = rel
                     .reference(1, func + if short { 0x26 } else { 0x32 })
-                    .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
+                    .filter(|r| r.module == module && r.section == 4 && r.kind == 4)
                     .ok_or_else(invalid)?;
                 ActionRoutine::Scaled(ActionServices {
                     first: imm(0x14)?,
@@ -951,7 +945,7 @@ impl Program {
                         .ok_or_else(invalid)
                 };
                 if i != 9
-                    && (engine(if i == 2 { 0x20 } else { 0x18 })? != 0x80063524
+                    && (engine(if i == 2 { 0x20 } else { 0x18 })? != 0x8006378c
                         || word(
                             instructions,
                             (func + if i == 2 { 0x1c } else { 0x14 }) as usize,
@@ -962,9 +956,9 @@ impl Program {
                 match i {
                     0 | 5 | 8 | 10 => ActionRoutine::Player(engine(0x20)?),
                     2 => {
-                        if engine(0x2c)? != 0x80063f50
-                            || engine(0x54)? != 0x800651ac
-                            || engine(0x6c)? != 0x800651ac
+                        if engine(0x2c)? != 0x800641b8
+                            || engine(0x54)? != 0x80065414
+                            || engine(0x6c)? != 0x80065414
                         {
                             return Err(invalid());
                         }
@@ -982,12 +976,12 @@ impl Program {
                         let data = |off, section| {
                             rel.reference(1, entry + off)
                                 .filter(|r| {
-                                    r.module == info.module && r.kind == 4 && r.section == section
+                                    r.module == module && r.kind == 4 && r.section == section
                                 })
                                 .map(|r| r.addend)
                                 .ok_or_else(invalid)
                         };
-                        for (offset, target) in [(0x4c, 0x80071ba4), (0x98, 0x801194b4)] {
+                        for (offset, target) in [(0x4c, 0x80071e0c), (0x98, 0x801197fc)] {
                             if !rel.reference(1, entry + offset).is_some_and(|r| {
                                 r.module == 0 && r.kind == 10 && r.addend == target
                             }) {
@@ -997,10 +991,10 @@ impl Program {
                         let constant = |off| word(rel.data(4)?, data(off, 4)? as usize);
                         let draw = data(0x66, 1)?;
                         for (off, target) in [
-                            (0x3c, 0x80115d50),
-                            (0x44, 0x80115e24),
-                            (0x54, 0x801154e0),
-                            (0x64, 0x80115d9c),
+                            (0x3c, 0x80116098),
+                            (0x44, 0x8011616c),
+                            (0x54, 0x80115828),
+                            (0x64, 0x801160e4),
                         ] {
                             if !rel.reference(1, draw + off).is_some_and(|r| {
                                 r.module == 0 && r.kind == 10 && r.addend == target
@@ -1020,17 +1014,17 @@ impl Program {
                         let field = |off, section| {
                             rel.reference(1, h + off)
                                 .filter(|r| {
-                                    r.module == info.module && r.section == section && r.kind == 4
+                                    r.module == module && r.section == section && r.kind == 4
                                 })
                                 .map(|r| r.addend)
                                 .ok_or_else(invalid)
                         };
                         for (off, dest) in [
-                            (0x54, 0x80116ad0),
-                            (0x58, 0x80115d50),
-                            (0x6c, 0x80114e30),
-                            (0x8c, 0x80033248),
-                            (0x9c, 0x80115d9c),
+                            (0x54, 0x80116e18),
+                            (0x58, 0x80116098),
+                            (0x6c, 0x80115178),
+                            (0x8c, 0x800334b0),
+                            (0x9c, 0x801160e4),
                         ] {
                             if !rel
                                 .reference(1, h + off)
@@ -1060,7 +1054,7 @@ impl Program {
                         if manifest::sha256(&signature)
                             != "5efdaa2e2578ff6ed7a5847f8147275ae761b99f85a685fa708d51f19f3ce012"
                             || !rel.reference(1, submit + 0x48).is_some_and(|r| {
-                                r.module == 0 && r.kind == 10 && r.addend == 0x8011de10
+                                r.module == 0 && r.kind == 10 && r.addend == 0x8011e158
                             })
                         {
                             return Err(invalid());
@@ -1116,16 +1110,16 @@ impl Program {
                                 .ok_or_else(invalid)?,
                         ) != "f5f9cd8d2ee5822a0cda8f90c980b8e2eb7eb917852b4c32722d9a8875f89585"
                             || !rel.reference(1, hook + 0x44).is_some_and(|r| {
-                                r.module == 0 && r.kind == 10 && r.addend == 0x8011b314
+                                r.module == 0 && r.kind == 10 && r.addend == 0x8011b65c
                             })
                         {
                             return Err(invalid());
                         }
                         let cleanup = data(0x72, 1)?;
                         for (site, target) in [
-                            (tick + 0x80, 0x801194e0),
-                            (tick + 0xac, 0x80071888),
-                            (cleanup + 0x28, 0x801194e0),
+                            (tick + 0x80, 0x80119828),
+                            (tick + 0xac, 0x80071af0),
+                            (cleanup + 0x28, 0x80119828),
                         ] {
                             if !rel.reference(1, site).is_some_and(|r| {
                                 r.kind == 10 && r.module == 0 && r.addend == target
@@ -1135,7 +1129,7 @@ impl Program {
                         }
                         let step = rel
                             .reference(1, tick + 0x32)
-                            .filter(|r| r.kind == 4 && r.module == info.module && r.section == 4)
+                            .filter(|r| r.kind == 4 && r.module == module && r.section == 4)
                             .ok_or_else(invalid)?;
                         let step = f32::from_bits(word(rel.data(4)?, step.addend as usize)?);
                         ActionRoutine::Position(PositionRoutine {
@@ -1190,7 +1184,7 @@ impl Program {
         }
         let reference = |off, section| {
             rel.reference(1, zero + off)
-                .filter(|r| r.module == info.module && r.section == section && r.kind == 4)
+                .filter(|r| r.module == module && r.section == section && r.kind == 4)
                 .map(|r| r.addend)
                 .ok_or_else(invalid)
         };
@@ -1235,12 +1229,12 @@ impl Program {
             shape_pair(child_start_data[2])?,
         ];
         for (off, addr) in [
-            (0x88, 0x800651e4),
-            (0x98, 0x8006519c),
-            (0xc4, 0x800651e4),
-            (0xd4, 0x8006519c),
-            (0x148, 0x800651e4),
-            (0x174, 0x800651e4),
+            (0x88, 0x8006544c),
+            (0x98, 0x80065404),
+            (0xc4, 0x8006544c),
+            (0xd4, 0x80065404),
+            (0x148, 0x8006544c),
+            (0x174, 0x8006544c),
             (0x194, 0x8000f7d8),
             (0x1b8, 0x8000f7d8),
             (0x1c0, 0x80018d28),
@@ -1260,14 +1254,14 @@ impl Program {
         ) != "8afd654d6ffeeaf1a180f9411e6677dcce45c9cdf6746541f33d44bb4ae3f102"
             || !rel
                 .reference(1, one + 0xa)
-                .is_some_and(|r| r.module == 0 && r.kind == 4 && r.addend == 0x801cbd88)
+                .is_some_and(|r| r.module == 0 && r.kind == 4 && r.addend == 0x801cc168)
         {
             return Err(invalid());
         }
         let constant = |off| -> Result<f32> {
             let r = rel
                 .reference(1, one + off)
-                .filter(|r| r.module == info.module && r.section == 4 && r.kind == 4)
+                .filter(|r| r.module == module && r.section == 4 && r.kind == 4)
                 .ok_or_else(invalid)?;
             Ok(f32::from_bits(word(rel.data(4)?, r.addend as usize)?))
         };
@@ -1315,7 +1309,7 @@ impl Program {
         }
         let child_collision_descriptor = rel
             .reference(1, setup + 0x2e)
-            .filter(|r| r.kind == 4 && r.module == info.module && r.section == 5)
+            .filter(|r| r.kind == 4 && r.module == module && r.section == 5)
             .ok_or_else(invalid)?
             .addend;
         let child_parent_callback = child_ref(0x2e, 1)?;
@@ -1323,11 +1317,11 @@ impl Program {
         // Verify the actual callees even though the code hashes cover unrelocated branches.
         for (off, addr) in [
             (0x14, 0x800066f4),
-            (0x20, 0x80037c74),
-            (0x7c, 0x8001c78c),
-            (0xa0, 0x8006ad94),
-            (0xcc, 0x8006ad94),
-            (0xd4, 0x8001baa4),
+            (0x20, 0x80037edc),
+            (0x7c, 0x8001c810),
+            (0xa0, 0x8006affc),
+            (0xcc, 0x8006affc),
+            (0xd4, 0x8001bb28),
             (0xf8, 0x8000f4ec),
         ] {
             let r = rel.reference(1, start + off).ok_or_else(invalid)?;
@@ -1336,7 +1330,7 @@ impl Program {
             }
         }
         let r = rel.reference(1, init + 0x28a).ok_or_else(invalid)?;
-        if (r.module, r.kind) != (info.module, 6) {
+        if (r.module, r.kind) != (module, 6) {
             return Err(invalid());
         }
         if r.section != 5 {
@@ -1359,9 +1353,8 @@ impl Program {
         let paired = |off, section| -> Result<u32> {
             let hi = rel.reference(1, init + off).ok_or_else(invalid)?;
             let lo = rel.reference(1, init + off + 4).ok_or_else(invalid)?;
-            if (hi.module, hi.section, hi.kind) != (info.module, section, 6)
-                || (lo.module, lo.section, lo.kind, lo.addend)
-                    != (info.module, section, 4, hi.addend)
+            if (hi.module, hi.section, hi.kind) != (module, section, 6)
+                || (lo.module, lo.section, lo.kind, lo.addend) != (module, section, 4, hi.addend)
             {
                 return Err(invalid());
             }
@@ -1399,7 +1392,7 @@ impl Program {
         }
         for site in [release + 0x24, helper + 0x20] {
             let call = rel.reference(1, site).ok_or_else(invalid)?;
-            if (call.module, call.kind, call.addend) != (0, 10, 0x801194e0) {
+            if (call.module, call.kind, call.addend) != (0, 10, 0x80119828) {
                 return Err(invalid());
             }
         }
@@ -1425,10 +1418,10 @@ impl Program {
             return Err(invalid());
         }
         for (off, target) in [
-            (0x30, 0x80102de0),
-            (0x3c, 0x801194b4),
-            (0x68, 0x80103004),
-            (0xa0, 0x801032c0),
+            (0x30, 0x80103128),
+            (0x3c, 0x801197fc),
+            (0x68, 0x8010334c),
+            (0xa0, 0x80103608),
         ] {
             let call = rel.reference(1, texture + off).ok_or_else(invalid)?;
             if (call.module, call.kind, call.addend) != (0, 10, target) {
@@ -1438,8 +1431,8 @@ impl Program {
         let lod = |off| -> Result<u32> {
             let hi = rel.reference(1, texture + off).ok_or_else(invalid)?;
             let lo = rel.reference(1, texture + off + 4).ok_or_else(invalid)?;
-            if (hi.module, hi.section, hi.kind) != (info.module, 4, 6)
-                || (lo.module, lo.section, lo.kind, lo.addend) != (info.module, 4, 4, hi.addend)
+            if (hi.module, hi.section, hi.kind) != (module, 4, 6)
+                || (lo.module, lo.section, lo.kind, lo.addend) != (module, 4, 4, hi.addend)
             {
                 return Err(invalid());
             }
@@ -1449,7 +1442,7 @@ impl Program {
         let regular_work40 = word(rel.data(4)?, paired(0x2c6, 4)? as usize)?;
         for off in [0x230, 0x23c] {
             let call = rel.reference(1, init + off).ok_or_else(invalid)?;
-            if (call.module, call.kind, call.addend) != (0, 10, 0x8001dcf4) {
+            if (call.module, call.kind, call.addend) != (0, 10, 0x8001dd78) {
                 return Err(invalid());
             }
         }
@@ -1510,7 +1503,7 @@ impl Program {
             let b = rel.reference(1, init + lo).ok_or_else(invalid)?;
             if (
                 a.module, a.section, a.kind, b.module, b.section, b.kind, b.addend,
-            ) != (info.module, section, 6, info.module, section, 4, a.addend)
+            ) != (module, section, 6, module, section, 4, a.addend)
             {
                 return Err(invalid());
             }
@@ -1537,7 +1530,7 @@ impl Program {
         let update_period = constant(0x396, 0x39a)?;
         let update_window = constant(0x3ae, 0x3b2)?;
         let range = rel.reference(1, init + 0x378).ok_or_else(invalid)?;
-        if update_period == 0 || (range.module, range.kind, range.addend) != (0, 10, 0x8006538c) {
+        if update_period == 0 || (range.module, range.kind, range.addend) != (0, 10, 0x800655f4) {
             return Err(invalid());
         }
         let spin = [
@@ -1546,12 +1539,12 @@ impl Program {
         ];
         let rise = f32::from_bits(constant(0x632, 0x636)?);
         for (offset, addr) in [
-            (0x538, 0x8006ad94),
-            (0x5c4, 0x8006ad94),
-            (0x5f0, 0x8006ad94),
-            (0x458, 0x80067888),
-            (0xaf8, 0x80065148),
-            (0xb04, 0x80071878),
+            (0x538, 0x8006affc),
+            (0x5c4, 0x8006affc),
+            (0x5f0, 0x8006affc),
+            (0x458, 0x80067af0),
+            (0xaf8, 0x800653b0),
+            (0xb04, 0x80071ae0),
         ] {
             let r = rel.reference(1, init + offset).ok_or_else(invalid)?;
             if (r.module, r.kind, r.addend) != (0, 10, addr) {
@@ -1560,7 +1553,7 @@ impl Program {
         }
         Ok(Self {
             level,
-            module: info.module,
+            module,
             object_init: init,
             contact_offset: start,
             local_effect: target,
@@ -1671,12 +1664,12 @@ impl Contact {
                 duration: 180,
             });
             out.push(Call::Main {
-                address: 0x8001baa4,
+                address: 0x8001bb28,
                 slot,
             });
         } else {
             out.push(Call::Main {
-                address: 0x8001c78c,
+                address: 0x8001c810,
                 slot,
             });
             out.push(Call::Sound {
@@ -1863,7 +1856,7 @@ impl Program {
             } else {
                 None
             };
-            out["record"] = json!({"request":[0x80032910u32,self.record_pool],"returned":r.address,"writes":fields});
+            out["record"] = json!({"request":[0x80032b78u32,self.record_pool],"returned":r.address,"writes":fields});
             if let Some(frames) = frames {
                 out["record"]["updates"] = json!(frames);
             }
@@ -1885,9 +1878,9 @@ impl Program {
         if second != g.work36.is_some() {
             return Err(Error::invalid("work36 required only after vector gate"));
         }
-        let mut calls = vec![0x8010d940u32];
+        let mut calls = vec![0x8010dc88u32];
         if first {
-            calls.push(0x80114eac);
+            calls.push(0x801151f4);
         }
         Ok(
             json!({"flags96":g.flags96 & !0x8000,"byte1":byte1 & !1,"calls":calls,"continueEffect":g.work36.is_some_and(|v|v<w_limit)}),
@@ -1911,7 +1904,7 @@ impl Program {
             ));
         }
         Ok(
-            json!({"call":[0x80112050u32,frame.wrapping_mul(0x380)],"work44":scaled as i32,
+            json!({"call":[0x80112398u32,frame.wrapping_mul(0x380)],"work44":scaled as i32,
                   "work112":if counter<1000 {counter+1} else {counter}}),
         )
     }
@@ -2017,9 +2010,9 @@ impl RegularMotion {
 /// Shared tail after contact; the alternate path does not run regular motion.
 pub fn goal_cleanup_call(timer: u16, latched: bool, task_field_30_present: bool) -> Option<u32> {
     (latched && timer >= 60).then_some(if task_field_30_present {
-        0x80065148
+        0x800653b0
     } else {
-        0x80071878
+        0x80071ae0
     })
 }
 #[derive(Deserialize)]
@@ -2065,7 +2058,7 @@ impl Program {
                 .indexed
                 .ok_or_else(|| Error::invalid("missing indexed goal message"))?;
             Ok(
-                json!({"engine":0x800dfe0cu32,"args":[m.handle,entry.pointer,120,entry.game_byte_17,work,0]}),
+                json!({"engine":0x800e00e8u32,"args":[m.handle,entry.pointer,120,entry.game_byte_17,work,0]}),
             )
         } else {
             if m.indexed.is_some() {
@@ -2074,7 +2067,7 @@ impl Program {
                 ));
             }
             Ok(
-                json!({"engine":0x800dfe3cu32,"args":[m.handle,m.section5_address.wrapping_add(self.fallback_message_offset),120,0,work]}),
+                json!({"engine":0x800e0118u32,"args":[m.handle,m.section5_address.wrapping_add(self.fallback_message_offset),120,0,work]}),
             )
         }
     }
@@ -2195,14 +2188,14 @@ impl Program {
         if a.action_links.is_some() && !matches!(routine, ActionRoutine::Linked) {
             return Err(invalid());
         }
-        let mut calls = vec![json!(["engine", 0x80063524u32, 200])];
+        let mut calls = vec![json!(["engine", 0x8006378cu32, 200])];
         match routine {
             ActionRoutine::Scaled(s) => {
-                calls[0] = json!(["engine", 0x80063524u32, s.first]);
+                calls[0] = json!(["engine", 0x8006378cu32, s.first]);
                 if let Some(v) = s.second {
-                    calls.push(json!(["engine", 0x80063584u32, slot, v]));
+                    calls.push(json!(["engine", 0x800637ecu32, slot, v]));
                 }
-                calls.push(json!(["engine",0x80035a88u32,slot,{"f1Bits":s.scalar}]));
+                calls.push(json!(["engine",0x80035cf0u32,slot,{"f1Bits":s.scalar}]));
             }
             ActionRoutine::Empty => calls.clear(),
             ActionRoutine::Player(addr) => calls.push(json!(["engine", addr, slot])),
@@ -2213,7 +2206,7 @@ impl Program {
                 }
             }
             ActionRoutine::Linked => {
-                calls.push(json!(["engine", 0x80063f50u32, slot, 1]));
+                calls.push(json!(["engine", 0x800641b8u32, slot, 1]));
                 let l = a
                     .action_links
                     .as_ref()
@@ -2224,9 +2217,9 @@ impl Program {
                     return Err(invalid());
                 }
                 if l.parent_link == Some(true) {
-                    calls.push(json!(["engine", 0x800651acu32, "parent"]));
+                    calls.push(json!(["engine", 0x80065414u32, "parent"]));
                 } else if l.task_link == Some(true) {
-                    calls.push(json!(["engine", 0x800651acu32, "task"]));
+                    calls.push(json!(["engine", 0x80065414u32, "task"]));
                 }
             }
         }
@@ -2254,7 +2247,7 @@ impl Program {
                 c.secondary.ok_or_else(bad)?
             };
             if hit {
-                calls.push(0x80037c74);
+                calls.push(0x80037edc);
                 let id = c.identified.ok_or_else(bad)?;
                 if id >= 0 {
                     slot = id;
@@ -2307,12 +2300,12 @@ impl Program {
                     [xz, y, xz],
                     strength
                 ]));
-                events.push(json!(["engine", 0x8006b710u32, 0x800d, 0, 0, 0]));
-                events.push(json!(["engine", 0x8002f8c4u32, slot, 1, 0x30, 0]));
+                events.push(json!(["engine", 0x8006b978u32, 0x800d, 0, 0, 0]));
+                events.push(json!(["engine", 0x8002fb2cu32, slot, 1, 0x30, 0]));
                 if a.linked_task {
-                    events.push(json!(["engine", 0x8006521cu32, "task"]));
+                    events.push(json!(["engine", 0x80065484u32, "task"]));
                 } else if a.parent_linked == Some(true) {
-                    events.push(json!(["engine", 0x8006521cu32, "parent"]));
+                    events.push(json!(["engine", 0x80065484u32, "parent"]));
                 }
                 if a.parent_linked.is_some() != (!a.linked_task && a.byte1 != 0) {
                     return Err(bad());
@@ -2383,8 +2376,8 @@ impl Program {
         let obj = work56.wrapping_add(0x6c);
         let [min, max] = self.texture_lod_bits;
         Ok(
-            json!({"calls":[[0x80102de0u32,64,64,2,0,0],[0x801194b4u32,1,size_return],
-            [0x80103004u32,obj,allocation_return,64,64,2,0,0,0],[0x801032c0u32,obj,1,1,0,0,0]],
+            json!({"calls":[[0x80103128u32,64,64,2,0,0],[0x801197fcu32,1,size_return],
+            [0x8010334cu32,obj,allocation_return,64,64,2,0,0,0],[0x80103608u32,obj,1,1,0,0,0]],
             "lodFloatBits":[min,max,min],"work140":64,"work144":allocation_return}),
         )
     }
@@ -2394,10 +2387,10 @@ impl Program {
         }
         let mut events = Vec::new();
         if nested != 0 {
-            events.push(json!(["free", 0x801194e0u32, nested]));
+            events.push(json!(["free", 0x80119828u32, nested]));
             events.push(json!(["clearNested", work56.wrapping_add(0x90)]));
         }
-        events.push(json!(["free", 0x801194e0u32, work56]));
+        events.push(json!(["free", 0x80119828u32, work56]));
         events.push(json!(["clearTask56"]));
         Ok(json!({"callback":self.regular_callbacks[2],"events":events}))
     }
@@ -2440,15 +2433,15 @@ impl Program {
         let mut index = (input.work32 as i32).clamp(0, 10) as usize;
         let parent = byte1 != 0 && input.parent_link;
         let special =
-            (input.task_link && !query(0x800651e4, "task")? && query(0x8006519c, "task")?)
-                || (parent && !query(0x800651e4, "parent")? && query(0x8006519c, "parent")?);
+            (input.task_link && !query(0x8006544c, "task")? && query(0x80065404, "task")?)
+                || (parent && !query(0x8006544c, "parent")? && query(0x80065404, "parent")?);
         if special && self.child_actions[index].0 == 10 {
             if let Some(i) = self.child_actions.iter().position(|a| a.0 == 7) {
                 index = i;
             }
         }
-        let alt = (input.task_link && query(0x800651e4, "task")?)
-            || (parent && query(0x800651e4, "parent")?);
+        let alt = (input.task_link && query(0x8006544c, "task")?)
+            || (parent && query(0x8006544c, "parent")?);
         if answers.next().is_some() {
             return Err(Error::invalid("unused child initialization query returns"));
         }
@@ -2509,7 +2502,7 @@ impl Program {
                 "inconsistent goal child allocation observations",
             ));
         }
-        let create=v.allocation.map(|_|json!({"engine":0x80070790u32,"priority":2,"entry":self.child_entry,"parent":"goalTask"}));
+        let create=v.allocation.map(|_|json!({"engine":0x800709f8u32,"priority":2,"entry":self.child_entry,"parent":"goalTask"}));
         let initialized = if v.allocation == Some(true) {
             Some(
                 json!({"parentCallback32":self.child_parent_callback,"childWork32Bits":self.child_scale_bits,"childWorkByte1":1}),
@@ -2912,7 +2905,7 @@ pub fn replay(
                 let mut call = None;
                 if let Some(bits) = input.shadow_return_bits {
                     call = Some(
-                        json!({"target":0x80067888u32,"positionBits":[center[0].to_bits(),(motion.y+p.shadow_lift).to_bits(),center[2].to_bits()],"rotation":[0,motion.yaw,0]}),
+                        json!({"target":0x80067af0u32,"positionBits":[center[0].to_bits(),(motion.y+p.shadow_lift).to_bits(),center[2].to_bits()],"rotation":[0,motion.yaw,0]}),
                     );
                     shadow_bits = bits;
                 }
@@ -2933,7 +2926,7 @@ pub fn replay(
             );
         }
         let alt_sound = if let Some(timer) = alt_timer {
-            p.alternate_motion(angle_x,was_latched,motion_gate.unwrap(),timer,&mut phase)?.map(|(code,r6,task)|json!({"target":0x8006ad94u32,"code":code,"owner":if task {"task"}else{"work"},"r5":1,"r6":r6,"r7":30,"position":center}))
+            p.alternate_motion(angle_x,was_latched,motion_gate.unwrap(),timer,&mut phase)?.map(|(code,r6,task)|json!({"target":0x8006affcu32,"code":code,"owner":if task {"task"}else{"work"},"r5":1,"r6":r6,"r7":30,"position":center}))
         } else {
             None
         };

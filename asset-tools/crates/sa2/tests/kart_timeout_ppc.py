@@ -22,7 +22,7 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         l+=delta
         if t!=1 or not (0x2648<=l<0x287c or 0x2b14<=l<0x2ca4 or 0xd968<=l<0xda80 or 0x9814<=l<0x9948) or k not in (4,6):continue
         if mod==80:p=base[s]+a
-        elif a==0x801cbd88:p=engine
+        elif a==0x801cc168:p=engine
         else:continue
         u.mem_write(base[1]+l,struct.pack(">H",(p if k==4 else (p+32768)>>16)&65535))
 def put(p,fmt,v):u.mem_write(p,struct.pack(">"+fmt,v))

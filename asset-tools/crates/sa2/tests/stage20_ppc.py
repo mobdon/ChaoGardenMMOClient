@@ -3,7 +3,7 @@ import os,json,struct,tempfile,sys,subprocess
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_BIG_ENDIAN,UC_MODE_PPC32,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);path=game/"resource/gd_PC/stg20D.rel";d=path.read_bytes()
+game=Path(os.environ["SA2_GAME_PATH"]);path=Path(os.environ["SA2_GC_REL_DIR"])/"stg20D.rel";d=path.read_bytes()
 w=lambda off:struct.unpack_from(">I",d,off)[0]
 u=Uc(UC_ARCH_PPC,UC_MODE_BIG_ENDIAN|UC_MODE_PPC32);base={1:0x81200000,4:0x81800000,5:0x81a00000}
 for s,b in base.items():
@@ -19,7 +19,7 @@ for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==202:t=s;off=0;continue
         off+=n
         if t not in base:continue
-        if mod==19 and s in base:v+=base[s]
+        if mod==20 and s in base:v+=base[s]
         elif mod!=0:continue
         if mod==0 and t==1 and k==10:engines[off]=v
         if k==1:put(base[t]+off,"I",v)
@@ -42,15 +42,15 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         put(task+0x34,"I",work);put(work,"b",mode);put(work+20,"fff",*position)
         frames=[]
         for value in observed:
-            calls=[];put(0x801e736c,"I",target if value else 0)
+            calls=[];put(0x801e776c,"I",target if value else 0)
             if value:put(target+20,"fff",*value)
             u.reg_write(R.UC_PPC_REG_1,0x100f00);u.reg_write(R.UC_PPC_REG_3,task);u.reg_write(R.UC_PPC_REG_LR,stop)
             u.emu_start(entry,stop,count=100);assert u.reg_read(R.UC_PPC_REG_PC)==stop and len(calls)<=1
             frames.append(dict(mode=get(work,"b")[0],position=list(get(work+20,"fff")),call=next(iter(calls),None)))
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=mode,position=position,targets=observed)))
         out=Path(tmp)/f"{mode}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
-        assert json.loads(out.read_text())==dict(module=19,entry=entry-base[1],frames=frames)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
+        assert json.loads(out.read_text())==dict(module=20,entry=entry-base[1],frames=frames)
 print("24 consecutive stage 20 task frame observations matched")
 
 startup=get(base[5]+88932+12,"I")[0]
@@ -72,12 +72,12 @@ for site in (0x16e8,0x16f8,0x1704,0x1714,0x1730,0x1744,0x174c,0x1750,0x175c,0x17
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for idx,queries in enumerate(([7],[6,6],[6,7],[0,6],[0,0],[-1,-1])):
         for present in (False,True):
-            ops=[];answers=iter(queries);put(0x801e738c,"I",task if present else 0);put(0x801e736c,"I",target);put(target+2,"B",0xdd)
+            ops=[];answers=iter(queries);put(0x801e778c,"I",task if present else 0);put(0x801e776c,"I",target);put(target+2,"B",0xdd)
             u.reg_write(R.UC_PPC_REG_1,0x100f00);u.emu_start(startup,base[1]+0x176c,count=100)
             assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x176c and get(target+2,"B")[0]==(3 if present else 0xdd)
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],startup=dict(character_queries=queries,slot_one_present=present))))
             out=Path(tmp)/f"{idx}-{present}.json"
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
             assert json.loads(out.read_text())["startup"]==dict(entry=startup-base[1],continueAt=0x176c,operations=ops)
 print("12 stage 20 opponent startup paths matched")
 
@@ -103,7 +103,7 @@ for site in (0x15b4,0x15cc,0x15e0,0x161c,0x1628,0x164c,0x1678):
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for idx,(alloc,mem,ch,v) in enumerate(((False,None,None,None),(True,False,None,None),
             (True,True,6,17.5),(True,True,7,-3.75),(True,True,-1,0.))):
-        ops=[];put(0x801e732c,"I",target);put(task+24,"I",0);put(task+64,"I",0);put(work,"B",99)
+        ops=[];put(0x801e772c,"I",target);put(task+24,"I",0);put(task+64,"I",0);put(work,"B",99)
         if mem:put(target+3,"b",ch);put(target+72,"f",v)
         u.reg_write(R.UC_PPC_REG_1,0x100f00);u.reg_write(R.UC_PPC_REG_LR,stop)
         u.emu_start(base[1]+0x1584,stop,count=180);assert u.reg_read(R.UC_PPC_REG_PC)==stop
@@ -112,14 +112,14 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
             startup=dict(character_queries=[7],slot_one_present=True,walker=dict(task_allocated=alloc,work_allocated=mem,character=ch,slot_value=v)))))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["startup"]["walker"]==ops
 print("5 walker controller initialization paths matched")
 
 # Run the controller through dispatch and, for state zero, through its opening block.
 u.mem_map(0x801cb000,8192)
 player0,player1,pose0,pose1=(0x100500,0x100600,0x100700,0x100800)
-put(0x801e7328,"II",player0,player1);put(0x801e7368,"II",pose0,pose1)
+put(0x801e7728,"II",player0,player1);put(0x801e7768,"II",pose0,pose1)
 branches={get(base[5]+0x298+i*4,"I")[0]-base[1] for i in range(11)}
 running_eight=False
 def opening_call(cpu,pc,*_):
@@ -149,7 +149,7 @@ cases+=[(0,b,f,q,ch) for b,f,q,ch in (([1,0,0],[0,0],16,7),([0,-2,0],[0,0],16,7)
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for idx,(mode,b,f,query,ch) in enumerate(cases):
         ops=[];dispatched=None;yaw=4;pos=[5.,91.,-3.]
-        for off,v in zip((0x39,0x37,0x42),b):put(0x801cbd88+off,"b",v)
+        for off,v in zip((0x39,0x37,0x42),b):put(0x801cc168+off,"b",v)
         put(player0+16,"H",f[0]);put(player1+16,"H",f[1]);put(player1+3,"b",ch)
         put(pose1+12,"I",yaw);put(pose1+20,"fff",*pos)
         put(task+64,"I",work);put(work,"b",mode);put(work+4,"h",-12)
@@ -159,7 +159,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         if dispatched==0x828:c["opening"]=dict(query=query,character=ch,yaw=yaw,position=pos)
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         timer=get(work+4,"h")[0]
         assert json.loads(out.read_text())["controller"]==dict(dispatch=dispatched,continueAt=end,mode=get(work,"b")[0],timerWrite=None if timer==-12 else timer,operations=ops)
 print(len(cases),"walker dispatch and opening observations matched")
@@ -180,16 +180,16 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for flag,queries,word in [(0x4000,[],1),(0,[9],1),(0,[0,12],1),(0,[0,0,13],1),(0,[0,0,0],0),(0,[0,0,0],1)]:
         for value,cooldown,child,remains in [(0.,0,False,False),(-1.,-3,True,True),(7.,3,False,False),(11.,5,True,False)]:
             calls=[];returns=iter(queries)
-            put(task+12,"I",target if child else 0);put(player0+16,"H",flag);put(0x801cbd88+124,"I",word)
+            put(task+12,"I",target if child else 0);put(player0+16,"H",flag);put(0x801cc168+124,"I",word)
             put(work,"bbh",4,3,32767);put(work+6,"h",cooldown);put(player1+72,"f",value)
-            for r,v in [(3,work),(25,task),(26,player1),(27,pose1),(29,work),(30,0x801e732c),(31,player0)]:
+            for r,v in [(3,work),(25,task),(26,player1),(27,pose1),(29,work),(30,0x801e772c),(31,player0)]:
                 u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
             u.emu_start(base[1]+0x1428,base[1]+0x1518,count=100);assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1518
             t=dict(mode=4,submode=3,counter=32767,cooldown=cooldown,slot0_flags=flag,queries=queries,engine_word=word,
                    slot1_value=value,child=child,child_after_remove=remains if 0x1494 in calls else None)
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],tail=t)))
             out=Path(tmp)/f"{idx}.json";idx+=1
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
             m,s,c=get(work,"bbh")
             assert json.loads(out.read_text())["tail"]==dict(mode=m,submode=s,counter=c,cooldown=get(work+6,"h")[0],
                          slot1Value=get(player1+72,"f")[0],scaled=get(work+8,"f")[0],calls=calls)
@@ -208,9 +208,9 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
     for slot,word,flag in [(6,None,0),(6,None,-1),(6,0,0),(6,0,1),(6,1,0),(6,0x80000000,-128),(7,None,0),(-1,None,0)]:
         for counter in (-1,120,121):
             for draw in (0,16383,32767):
-                calls=[];put(0x801e738c,"I",task);put(task+64,"I",0 if word is None else 0x100900)
+                calls=[];put(0x801e778c,"I",task);put(task+64,"I",0 if word is None else 0x100900)
                 if word is not None:put(0x100c8c,"I",word)
-                put(0x803ad494,"b",flag);put(player1+1,"b",slot);put(work,"bbhh",7,0,counter,-1)
+                put(0x803ad894,"b",flag);put(player1+1,"b",slot);put(work,"bbhh",7,0,counter,-1)
                 for r,v in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(0,slot&255)]:
                     u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
                 # Prior dispatch coverage checks the first instruction loads slot-one byte 1.
@@ -221,7 +221,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                        state_seven=dict(slot_byte=slot,counter=counter,decision=dict(work_word=word,engine_byte=flag) if slot==6 else None,draw=draw if m!=7 else None))
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0x1328,continueAt=0x1424,
                            mode=m,timerWrite=timer if m!=7 else None,counter=ctr,operations=calls)
 print(idx,"state seven transitions matched")
@@ -245,7 +245,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             ops=[];args=[];p0=[4.,11.,-31.];p1=[20.,-12.,41.]
             put(work,"bbhh",8,0,counter,-1);put(pose0+20,"fff",*p0);put(pose1+20,"fff",*p1)
             put(pose1+6,"H",pose);put(player1+1,"b",slot)
-            pulse_bytes=[0x803ad485,0x803ad495]
+            pulse_bytes=[0x803ad885,0x803ad895]
             for addr in pulse_bytes:put(addr,"B",0)
             for r,v in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work)]:
                 u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),v)
@@ -255,8 +255,8 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                    angle_return=angle,pose_word=pose,slot_byte=slot,counter=counter,draw=draw))
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
             out=Path(tmp)/f"{idx}.json";idx+=1
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
-            yaw,scalar=get(0x801e5000,"if")
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
+            yaw,scalar=get(0x801e5400,"if")
             assert json.loads(out.read_text())["controller"]==dict(dispatch=0x137c,continueAt=0x1424,mode=m,counter=ctr,
                 timerWrite=timer if m==4 else None,operations=ops,angleArgs=args,yaw=yaw,scalar=scalar,
                 byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
@@ -287,7 +287,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                submode=sub,character=ch,slot0_byte=b,query=query,draw=draw))
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["controller"]==dict(dispatch=0x924,continueAt=0x1424,mode=m,submode=s,counter=ctr,
                    timerWrite=t if m==7 else None,cooldownWrite=None if cool==-1 else cool,operations=ops)
 print(len(cases),"state one timing and transition paths matched")
@@ -328,7 +328,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                     character=6,slot0_byte=b,query=query,draw=draw,messenger_allocated=messenger_case))
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["controller"]["messenger"]==messenger
 print(idx,"opening messenger creations matched")
 
@@ -365,8 +365,8 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
-                yaw,scalar=get(0x801e5000,"if")
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
+                yaw,scalar=get(0x801e5400,"if")
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=0xbd0,mode=mode,
                     angleArgs=args,turnArgs=turn_args or None,yaw=yaw,scalar=scalar)
 print(idx,"state 2/10 steering paths matched")
@@ -409,8 +409,8 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 c=dict(mode=2,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
-                yaw,scalar=get(0x801e5000,"if")
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
+                yaw,scalar=get(0x801e5400,"if")
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=0xbd0,mode=2,
                     angleArgs=args,turnArgs=turn_args or None,yaw=yaw,scalar=scalar,decision=trace)
 print(idx,"integrated walker steering decisions matched")
@@ -455,8 +455,8 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
-        yaw,scalar_out=get(0x801e5000,"if")
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
+        yaw,scalar_out=get(0x801e5400,"if")
         assert json.loads(out.read_text())["controller"]==dict(dispatch=0xad4,continueAt=dest,mode=get(work,"b")[0],
             angleArgs=args,turnArgs=None,yaw=yaw,scalar=scalar_out,counter=get(work+2,"h")[0],
             byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
@@ -488,7 +488,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
             out=Path(tmp)/f"{idx}.json";idx+=1
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
             report=json.loads(out.read_text())["controller"]
             assert (report["mode"],report["counter"],report["continueAt"])==(get(work,"b")[0],get(work+2,"h")[0],0x1424)
             assert report["closeRange"]==dict(cooldown=get(work+6,"h")[0],calls=calls)
@@ -514,15 +514,15 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             for dist,flag in [(70.,1),(100.,0),(101.,1)]:
                 word=idx%4;angle=-0.71;draw=21000;args=[];calls=[];ops=[];observed={}
                 put(work,"bbhh",5,0,ctr,-1);put(player0+28,"h",word);put(player0+1,"b",7)
-                put(player1+1,"b",slot);put(0x801e738c,"I",task);put(task+64,"I",0)
-                put(0x803ad494,"b",flag);put(0x801e5000,"if",-999,-999.)
+                put(player1+1,"b",slot);put(0x801e778c,"I",task);put(task+64,"I",0)
+                put(0x803ad894,"b",flag);put(0x801e5400,"if",-999,-999.)
                 for addr in pulse_bytes:put(addr,"B",0)
                 for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
                     u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
                 u.emu_start(base[1]+0xfe4,base[1]+0x1424,count=320)
                 assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
                 m,_,counter,timer=get(work,"bbhh")
-                yaw,scalar=get(0x801e5000,"if")
+                yaw,scalar=get(0x801e5400,"if")
                 v=dict(player_word=word,slot0=p0,slot1=p1,range=dict(slot0_byte=7,distance_return=dist),slot_byte=slot,counter=ctr)
                 if "angle" in observed:v["angle_return"]=angle
                 else:assert (yaw,scalar)==(-999,-999.)
@@ -532,14 +532,14 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 c=dict(mode=5,engine_bytes=[0,0,0],player_flags=[0,0],state_five=v)
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0xfe4,continueAt=0x1424,mode=m,counter=counter,
                     timerWrite=timer if m!=5 else None,steering=dict(angleArgs=observed["angle"],yaw=yaw,scalar=scalar) if word else None,
                     byteWrites=[addr for addr in pulse_bytes if get(addr,"B")== (1,)])
 print(idx,"state-five updates matched")
 
 # The two axis calls independently sample the same engine word.
-phase_addr=0x801cbd88+0x7c
+phase_addr=0x801cc168+0x7c
 reg_float=lambda cpu,r:struct.unpack(">d",cpu.reg_read(r).to_bytes(8,"big"))[0]
 def four_service(cpu,pc,*_):
     site=pc-base[1]
@@ -565,12 +565,12 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 phase_words=[0xfabc0123,0x80000000];axis_returns=[-0.3125,0.8125]
                 put(phase_addr,"I",phase_words[0]);put(work,"bbhhh",4,0,ctr,limit,5)
                 put(player0+1,"b",7);put(player1+1,"b",slot);put(player1+72,"f",scalar)
-                put(0x801e5000,"if",-777,-777.)
+                put(0x801e5400,"if",-777,-777.)
                 for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
                     u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
                 u.emu_start(base[1]+0xe9c,base[1]+0x1424,count=300)
                 assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
-                m,_,counter,timer,cool=get(work,"bbhhh");yaw,out_scalar=get(0x801e5000,"if")
+                m,_,counter,timer,cool=get(work,"bbhhh");yaw,out_scalar=get(0x801e5400,"if")
                 v=dict(range=dict(slot0_byte=7,distance_return=dist),slot_byte=slot,scalar=scalar,counter=ctr,limit=limit)
                 if m==5:v["close_range"]=dict(cooldown=5)
                 if m==2:v["draw"]=draw
@@ -579,7 +579,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 c=dict(mode=4,engine_bytes=[0,0,0],player_flags=[0,0],state_four=v)
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0xe9c,continueAt=0x1424,mode=m,counter=counter,
                     timerWrite=timer if m==2 else None,closeRange=dict(cooldown=cool,calls=calls) if m==5 else None,
                     steering=dict(axisArgs=axis_args,angleArgs=angle_args,yaw=yaw,scalar=out_scalar) if axis_args else None)
@@ -613,12 +613,12 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             for final_slot in (6,7):
                 observed={};seen={};calls=[];draw=21234;phase=0xffaabbcc;wave=-0.3125;angle=1.45;end_vector=[1.5,-2.25,6.]
                 put(phase_addr,"I",phase);put(work,"bbhh",6,0,ctr,limit);put(player0+1,"b",7)
-                put(player1+1,"b",slot);put(player1+72,"f",scalar);put(0x801e5000,"if",-999,-999.)
+                put(player1+1,"b",slot);put(player1+72,"f",scalar);put(0x801e5400,"if",-999,-999.)
                 for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
                     u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
                 u.emu_start(base[1]+0x11a8,base[1]+0x1424,count=220)
                 assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x1424
-                m,_,counter,timer=get(work,"bbhh");yaw,scalar_out=get(0x801e5000,"if")
+                m,_,counter,timer=get(work,"bbhh");yaw,scalar_out=get(0x801e5400,"if")
                 v=dict(counter=ctr,limit=limit,slot_byte=slot,scalar=scalar)
                 if "distance" in observed:v["range"]=dict(slot0_byte=7,distance_return=dist)
                 if m==2:v["timer"]=dict(slot_byte=slot,draw=draw)
@@ -630,7 +630,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 c=dict(mode=6,engine_bytes=[0,0,0],player_flags=[0,0],state_six=v)
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
                 if m==6:seen.update(yaw=yaw,scalar=scalar_out);seen.setdefault("waveArg",None)
                 assert json.loads(out.read_text())["controller"]==dict(dispatch=0x11a8,continueAt=0x1424,mode=m,counter=counter,
                     timerWrite=timer if m==2 else None,steering=seen if m==6 else None)
@@ -653,7 +653,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             mode=(2,10)[idx%2];decision=1;dist=150.;angle=0.3;draw=18921
             calls=[];ops=[];observed={};args=[];draws=[];bytes_read=[]
             put(work,"bbhhh",mode,0,5,4,13);put(player0+1,"b",6);put(player1+1,"b",slot)
-            put(pose1+6,"H",0);put(0x801e738c,"I",task);put(task+64,"I",0);put(0x803ad494,"b",flag)
+            put(pose1+6,"H",0);put(0x801e778c,"I",task);put(task+64,"I",0);put(0x803ad894,"b",flag)
             for r,val in [(1,0x100e00),(26,player1),(27,pose1),(28,pose0),(29,work),(31,player0)]:
                 u.reg_write(getattr(R,"UC_PPC_REG_"+str(r)),val)
             u.emu_start(base[1]+0xad4,base[1]+0x1424,count=480)
@@ -667,7 +667,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             c=dict(mode=mode,engine_bytes=[0,0,0],player_flags=[0,0],state_two=v)
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],controller=c)))
             out=Path(tmp)/f"{idx}.json";idx+=1
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
             rep=json.loads(out.read_text())["controller"]
             assert (rep["mode"],rep["counter"],rep["timerWrite"],rep["continueAt"])==(m,counter,timer if m in (4,6) else None,0x1424)
             if m==5:assert rep["closeRange"]==dict(cooldown=cool,calls=calls)
@@ -692,7 +692,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                   engine_word=1,slot1_value=0.,child=False,slot1_position=pos)
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],tail=tail)))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["tail"]["arenaBounds"]==dict(result=result,call=next(iter(corrections),None))
 print(idx+1,"arena boundary positions matched")
 
@@ -721,7 +721,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
             startup=dict(character_queries=[7],slot_one_present=False,layout_handle=handle))))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         result=json.loads(out.read_text())["startup"]
         assert result["continueAt"]==0x1800 and result["layoutSetup"]==dict(operations=layout_calls,
             storedHandle=dict(section=6,offset=0,value=get(layout_bss,"I")[0]))
@@ -755,7 +755,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
             startup=dict(character_queries=[7],slot_one_present=False,layout_handle=handle,background_allocated=allocated))))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         result=json.loads(out.read_text())["startup"]
         callbacks=[[off,get(msg+off,"I")[0]-base[1]] for off in (20,32,24) if get(msg+off,"I")[0]]
         assert result["continueAt"]==0x1900 and result["sceneSetup"]==dict(operations=scene_calls,callbacks=callbacks)
@@ -767,7 +767,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
     assert len(sources)==52
     for light in sources:
         raw=light.read_bytes();assert len(raw)==384
-        src,dst=0x801e5470,0x801e5230
+        src,dst=0x801e5870,0x801e5630
         u.mem_write(src,raw);u.mem_write(dst,b"\xa5"*576)
         u.reg_write(R.UC_PPC_REG_3,src);u.reg_write(R.UC_PPC_REG_30,dst)
         u.emu_start(base[1]+0x7c18,base[1]+0x7d64,count=500)
@@ -821,7 +821,7 @@ for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==203:break
         if k==202:t=s;off=0;continue
         off+=n
-        if mod==19 and t==1 and s==6 and 0x1e08<=off<0x1efc and k in (4,6):
+        if mod==20 and t==1 and s==6 and 0x1e08<=off<0x1efc and k in (4,6):
             address=layout_bss+v
             put(base[1]+off,"H",(address if k==4 else (address+32768)>>16)&65535)
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
@@ -837,7 +837,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 assert u.reg_read(R.UC_PPC_REG_PC)==stop
             out=Path(tmp)/f"{idx}.json";idx+=1
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],background=dict(records=rows,frames=frames))))
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
             assert json.loads(out.read_text())["background"]==dict(activeCount=get(layout_bss+0x290,"I")[0],
                 storage=[list(get(layout_bss+0x218+24*j,"6I")) for j in range(len(rows))])
 print(idx,"multi-frame background updates matched")
@@ -855,12 +855,12 @@ def draw_service(cpu,pc,*_):
 for site in (0x1d10,0x1d14,0x1d18,0x1d24,0x1d30,0x1d44,0x1d48,0x1d50,0x1d54,0x1d58,
              0x1db8,0x1dbc,0x1dc0,0x1dcc,0x1dd8,0x1de4,0x1dec,0x1df0,0x1df4):
     u.hook_add(UC_HOOK_CODE,draw_service,begin=base[1]+site,end=base[1]+site)
-u.mem_map(0x80174000,4096)
+u.mem_map(0x80175000,4096)
 with tempfile.TemporaryDirectory(dir=".local") as tmp:
     idx=0
     for field,entry_offset in [(20,0x1d6c),(32,0x1cc4)]:
         for selected,pos in [(0,[1.,2.,3.]),(1,[-4.,-5.,-6.])]:
-            draw_calls=[];put(0x803ad6d0,"I",selected);put(0x80174f98,"II",pose0,pose1)
+            draw_calls=[];put(0x803adad0,"I",selected);put(0x80175378,"II",pose0,pose1)
             put((pose0,pose1)[selected],"fff",*pos)
             u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_LR,stop)
             u.emu_start(base[1]+entry_offset,stop,count=100)
@@ -868,12 +868,12 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],
                 background_draw=dict(callback_offset=field,selected_position=pos))))
             out=Path(tmp)/f"{idx}.json";idx+=1
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
             assert json.loads(out.read_text())["backgroundDraw"]==dict(entry=entry_offset,calls=draw_calls)
 print(idx,"background draw callback traces matched")
 
 # Run the final startup block to its actual return with engine calls captured.
-hook_table=0x801a2638;dispatch_table=0x801e73d8
+hook_table=0x801a2a18;dispatch_table=0x801e77d8
 u.mem_map(hook_table&~4095,4096)
 put(base[1]+0x19a6,"H",(layout_bss+4+32768)>>16);put(base[1]+0x19aa,"H",(layout_bss+4)&65535)
 def final_service(cpu,pc,*_):
@@ -910,7 +910,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],startup=dict(
             character_queries=[7],slot_one_present=False,layout_handle=0,background_allocated=False,callback_slots_occupied=occupied))))
         out=Path(tmp)/f"{mask}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         report=json.loads(out.read_text())["startup"]
         assert report["continueAt"] is None and report["finalSetup"]==final_ops
 print("16 startup finalization paths matched")
@@ -922,7 +922,7 @@ for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==203:break
         if k==202:t=s;off=0;continue
         off+=n
-        if mod==19 and t==1 and s==6 and 0x11c78<=off<0x11d38 and k in (4,6):
+        if mod==20 and t==1 and s==6 and 0x11c78<=off<0x11d38 and k in (4,6):
             addr=layout_bss+v
             put(base[1]+off,"H",(addr if k==4 else (addr+32768)>>16)&65535)
 fog_dst=layout_bss+4
@@ -960,7 +960,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],startup=dict(
             character_queries=[7],slot_one_present=False,layout_handle=0,background_allocated=False,callback_slots_occupied=[False]*4,fog_load=obs))))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["startup"]["fogLoad"]==fog_report
 print(len(cases),"fog manager and file-service paths matched")
 
@@ -985,7 +985,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         u.emu_start(base[1]+0x116dc,stop,count=100);assert u.reg_read(R.UC_PPC_REG_PC)==stop
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],fog_header=struct.unpack(">4I",h))))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["fogApply"]==calls
 print(len(headers),"single-buffer fog submissions matched")
 
@@ -1018,7 +1018,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                 if len(calls)>4:obs["service_returns"]=[color,distance]
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],fog_blend=obs)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["fogBlend"]==calls
 print(idx,"two-buffer fog submissions matched")
 
@@ -1051,7 +1051,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],exit=dict(
                 code_base=base[1],slots=slots,layout_handle=handle))))
             out=Path(tmp)/f"{idx}.json";idx+=1
-            subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+            subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
             assert json.loads(out.read_text())["exit"]==dict(slots=[get(hook_table+o,"I")[0] for o in offsets],
                 layoutHandle=get(layout_bss,"I")[0],operations=ops)
 print(idx,"registered stage exit paths matched")
@@ -1063,7 +1063,7 @@ for mod,i in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         if k==203:break
         if k==202:t=s;off=0;continue
         off+=n
-        if mod==19 and t==1 and s==6 and (0x21bcc<=off<0x21c50 or 0x11bf0<=off<0x11c78) and k in (4,6):
+        if mod==20 and t==1 and s==6 and (0x21bcc<=off<0x21c50 or 0x11bf0<=off<0x11c78) and k in (4,6):
             addr=layout_bss+v;put(base[1]+off,"H",(addr if k==4 else (addr+32768)>>16)&65535)
 def release_call(cpu,pc,*_):
     site=pc-base[1]
@@ -1080,7 +1080,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         release_msg=[];release_fog=[];ops=[]
         handles=[0x1020 if mask&1 else 0,0x88880000 if mask&2 else 0];manager=msg if mask&4 else 0
         put(layout_bss+0xd80,"II",*handles);put(base[5]+0x4749c,"ii",6,123)
-        put(layout_bss+0x6d4,"I",manager);put(0x803ad7c8,"I",0xdeadcafe)
+        put(layout_bss+0x6d4,"I",manager);put(0x803adbc8,"I",0xdeadcafe)
         for off in (0,8,36,40):put(hook_table+off,"I",0)
         put(layout_bss,"I",0);u.reg_write(R.UC_PPC_REG_1,0x100e00);u.reg_write(R.UC_PPC_REG_LR,stop)
         u.emu_start(get(base[5]+88932+16,"I")[0],stop,count=300);assert u.reg_read(R.UC_PPC_REG_PC)==stop
@@ -1088,10 +1088,10 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             message_counts=[6,123],fog_manager=manager,fog_link=0xdeadcafe))
         req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],exit=obs)))
         out=Path(tmp)/f"{mask}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         operations=json.loads(out.read_text())["exit"]["operations"]
         assert operations[0]["cleanup"]==dict(calls=release_msg,handles=list(get(layout_bss+0xd80,"II")),counts=list(get(base[5]+0x4749c,"ii")))
-        assert operations[1]["cleanup"]==dict(calls=release_fog,manager=get(layout_bss+0x6d4,"I")[0],link=get(0x803ad7c8,"I")[0])
+        assert operations[1]["cleanup"]==dict(calls=release_fog,manager=get(layout_bss+0x6d4,"I")[0],link=get(0x803adbc8,"I")[0])
 print("8 integrated message and fog cleanup paths matched")
 
 def splash_service(cpu,pc,*_):
@@ -1116,7 +1116,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             character_queries=[7],slot_one_present=False,layout_handle=0,background_allocated=False,callback_slots_occupied=[False]*4,splash_query=query),
             exit=dict(code_base=base[1],slots=[0]*4,layout_handle=0,resources=dict(message_handles=[0,0],message_counts=[0,0],fog_manager=0,fog_link=0)))))
         out=Path(tmp)/f"{idx}.json"
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         rep=json.loads(out.read_text())
         assert next(o for o in rep["startup"]["finalSetup"] if o.get("local")==0xca28)["calls"]==splash_calls
         assert next(o for o in rep["exit"]["operations"] if o.get("local")==0xcac4)["release"]==release
@@ -1156,13 +1156,13 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
                         task76=get(msg+76,"f")[0],callback28=get(msg+28,"I")[0]-base[1],callback24=get(msg+24,"I")[0]-base[1])
                 req=Path(tmp)/"request.json";req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_spawn=obs)))
                 out=Path(tmp)/f"{idx}.json";idx+=1
-                subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+                subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
                 assert json.loads(out.read_text())["splashSpawn"]==dict(create=create or None,writes=writes,continueAt=dest)
 print(idx,"splash creation and placement paths matched")
 
 # Compare every work-field write across calls to the installed update callback.
 def request_removal(cpu, pc, *_):
-    assert cpu.reg_read(R.UC_PPC_REG_3) == msg and engines[pc-base[1]] == 0x80071888
+    assert cpu.reg_read(R.UC_PPC_REG_3) == msg and engines[pc-base[1]] == 0x80071af0
     removals.append(pc-base[1])
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for site in (0xd074,0xd128):
@@ -1180,7 +1180,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             if removals:break
         req=Path(tmp)/"request.json";out=Path(tmp)/f"{idx}.json"
         req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_update=dict(phase=phase,work36=value,counter=counter,frames=100))))
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         actual=json.loads(out.read_text())["splashUpdate"]
         assert actual==expected,(idx,next(((a,b) for a,b in zip(actual,expected) if a!=b),None))
 print(idx+1,"splash update sequences matched through removal")
@@ -1215,7 +1215,7 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
             u.emu_start(base[1]+entry,stop,count=160);assert u.reg_read(R.UC_PPC_REG_PC)==stop
         req=Path(tmp)/"request.json";out=Path(tmp)/f"{idx}.json"
         req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_display=dict(position=pos,rotation=rot,work32=2.5,task76=.625,work36=.375,phase=4.125,counter=counter,material_word=material))))
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["splashDisplay"]==dict(calls=draw_calls,materialOffset=0x34b8e,materialWord=get(base[5]+0x34b8e,"H")[0])
 print(idx+1,"splash display call streams and shared material writes matched")
 
@@ -1262,6 +1262,6 @@ with tempfile.TemporaryDirectory(dir=".local") as tmp:
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0xcfd8 and next(samples,None) is None
         req=Path(tmp)/"request.json";out=Path(tmp)/f"{idx}.json"
         req.write_text(json.dumps(dict(mode=0,position=[0,0,0],targets=[],splash_secondary=dict(position=pos,first=first,second=second,hook_slot=slot,random=random,allocations=allocations))))
-        subprocess.run([sys.argv[1],"--source-root",str(game),"stage20-entry",str(path),str(out),str(req)],check=True)
+        subprocess.run([sys.argv[1],"--source-root",str(path.parent),"stage20-entry",str(path),str(out),str(req)],check=True)
         assert json.loads(out.read_text())["splashSecondary"]==submissions
 print(idx+1,"secondary splash submission paths matched")

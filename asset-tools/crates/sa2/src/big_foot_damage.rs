@@ -188,5 +188,5 @@ fn defeat_clock(low: bool) -> Value {
         }
     }
     json!({"handoffUpdate":frames.len(),"frames":frames,"callsOnHandoff":[
-        {"address":"8001c78c","argument":0},{"address":"80022bdc","argument":0}]})
+        {"address":"8001c810","argument":0},{"address":"80022e24","argument":0}]})
 }

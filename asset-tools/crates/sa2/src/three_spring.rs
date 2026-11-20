@@ -18,7 +18,7 @@
 //! Engine services are boundaries the caller provides: the clip gate,
 //! allocation, the hit test and the hit player's slot, the player's
 //! position, and the Ninja matrix calls (`calc_point`).
-use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+use crate::{city_rel::CityRel, manifest, Error, Result};
 use serde::Serialize;
 
 pub const CODE_START: u32 = 0x225cc;
@@ -28,30 +28,30 @@ pub const CODE_HASH: &str = "73126151e17f68fa727278a40f1d7174e1a778108d7db1196b0
 
 /// Engine imports at offsets from `CODE_START`: (offset, address).
 const IMPORTS: &[(u32, u32)] = &[
-    (0x4c, 0x8003_7da0),  // player position
-    (0x50, 0x8011_5d50),  // push matrix
-    (0x58, 0x8011_509c),  // unit matrix
-    (0x60, 0x8011_5e24),  // translate
-    (0x6c, 0x8011_5560),  // rotate (angle Z)
-    (0x78, 0x8011_5918),  // rotate (angle X)
-    (0x84, 0x8011_54e0),  // rotate (angle Y)
-    (0x88, 0x8011_5d50),  // push matrix
-    (0x90, 0x8011_4cb0),  // invert matrix
-    (0xa0, 0x8011_4bc4),  // calc point
-    (0xe8, 0x8011_5d9c),  // pop matrix
-    (0xf8, 0x8011_4bc4),  // calc point
-    (0xfc, 0x8011_5d9c),  // pop matrix
-    (0x110, 0x8003_9754), // set player position
-    (0x154, 0x8003_9ab8), // set player velocity, angles and no-control frames
-    (0x168, 0x8006_b710), // sound
-    (0x17c, 0x8002_f8c4), // rumble
-    (0x1b8, 0x8006_538c), // init: clip gate
-    (0x1cc, 0x8011_94b4), // init: allocate
+    (0x4c, 0x8003_8008),  // player position
+    (0x50, 0x8011_6098),  // push matrix
+    (0x58, 0x8011_53e4),  // unit matrix
+    (0x60, 0x8011_616c),  // translate
+    (0x6c, 0x8011_58a8),  // rotate (angle Z)
+    (0x78, 0x8011_5c60),  // rotate (angle X)
+    (0x84, 0x8011_5828),  // rotate (angle Y)
+    (0x88, 0x8011_6098),  // push matrix
+    (0x90, 0x8011_4ff8),  // invert matrix
+    (0xa0, 0x8011_4f0c),  // calc point
+    (0xe8, 0x8011_60e4),  // pop matrix
+    (0xf8, 0x8011_4f0c),  // calc point
+    (0xfc, 0x8011_60e4),  // pop matrix
+    (0x110, 0x8003_99bc), // set player position
+    (0x154, 0x8003_9d20), // set player velocity, angles and no-control frames
+    (0x168, 0x8006_b978), // sound
+    (0x17c, 0x8002_fb2c), // rumble
+    (0x1b8, 0x8006_55f4), // init: clip gate
+    (0x1cc, 0x8011_97fc), // init: allocate
     (0x220, 0x8000_f8b8), // init: register collision
-    (0x284, 0x8011_94e0), // destructor: free work
-    (0x2c0, 0x8006_538c), // update: clip gate
+    (0x284, 0x8011_9828), // destructor: free work
+    (0x2c0, 0x8006_55f4), // update: clip gate
     (0x2d0, 0x8000_66f4), // update: CCL_IsHitPlayer
-    (0x2dc, 0x8003_7c74), // update: hit player's slot
+    (0x2dc, 0x8003_7edc), // update: hit player's slot
     (0x384, 0x8000_f4ec), // update: CCL_Entry
 ];
 
@@ -94,14 +94,8 @@ pub struct Program {
 
 impl Program {
     pub fn read(filename: &str, bytes: &[u8]) -> Result<Self> {
-        let info = stage_land::catalog()
-            .iter()
-            .find(|i| i.filename == filename)
-            .ok_or_else(invalid)?;
-        if bytes.len() != info.size || manifest::sha256(bytes) != info.sha256 {
-            return Err(invalid());
-        }
-        let rel = CityRel::read_identified(bytes, info.module)?;
+        let rel = CityRel::read_stage(bytes, &filename).map_err(|_| invalid())?;
+        let module = rel.module_id();
         let d5 = rel.data(5)?;
         let mut init = None;
         for row in (4..d5.len() as u32).step_by(4) {
@@ -145,8 +139,8 @@ impl Program {
         let target = |at: u32| -> Result<(u8, u32)> {
             let hi = rel.reference(1, CODE_START + at + 2).ok_or_else(invalid)?;
             let lo = rel.reference(1, CODE_START + at + 6).ok_or_else(invalid)?;
-            if hi.module != info.module
-                || lo.module != info.module
+            if hi.module != module
+                || lo.module != module
                 || (hi.kind, lo.kind) != (6, 4)
                 || hi.section != lo.section
                 || !(4..=5).contains(&hi.section)
@@ -165,7 +159,7 @@ impl Program {
             return Err(invalid());
         }
         Ok(Self {
-            module: info.module,
+            module,
             init,
             velocity: [f(0x18, 0)?, f(0x18, 1)?, f(0x18, 2)?],
             z_target: f(0xa4, 0)?,
@@ -325,15 +319,15 @@ impl ThreeSpring {
                 position: self.position,
             },
             Call::Rotate {
-                import: 0x8011_5560,
+                import: 0x8011_58a8,
                 angle: self.angles[2],
             },
             Call::Rotate {
-                import: 0x8011_5918,
+                import: 0x8011_5c60,
                 angle: self.angles[0],
             },
             Call::Rotate {
-                import: 0x8011_54e0,
+                import: 0x8011_5828,
                 angle: self.angles[1],
             },
             Call::PushMatrix,

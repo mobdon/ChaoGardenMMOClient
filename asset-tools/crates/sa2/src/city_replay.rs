@@ -498,7 +498,7 @@ fn checkpoint_frames(
     // Mode 0 checks the signed byte before allocating work or querying SET.
     if req.init_byte_23 == Some(3) {
         return Ok(json!({"callback":"ObjectSavePoint","frames":[],
-            "initExitCall":0x80065148u32,
+            "initExitCall":0x800653b0u32,
             "scope":"Mode 0 called the external exit helper before checkpoint setup."}));
     }
     let byte = placement.work_byte(req.engine_result, req.stage_byte);

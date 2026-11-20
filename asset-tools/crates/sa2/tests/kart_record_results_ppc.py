@@ -23,20 +23,20 @@ for mod,at in struct.iter_unpack(">II",d[off:off+n]):
         l+=delta
         if t!=1 or not 0x832c<=l<0x861c or k not in (4,6):continue
         if mod==80:p=base[s]+a
-        elif a==0x801cbd88:p=engine
-        elif a==0x801f1284:p=index_word
-        elif a==0x801f1f40:p=record
+        elif a==0x801cc168:p=engine
+        elif a==0x801f1684:p=index_word
+        elif a==0x801f2340:p=record
         else:continue
         u.mem_write(base[1]+l,struct.pack(">H",(p if k==4 else (p+32768)>>16)&65535))
 def put(p,fmt,v):u.mem_write(p,struct.pack(">"+fmt,v))
 def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt)))[0]
-services={0x83bc:(0x800629e4,0),0x840c:(0x8001ef18,1),0x8540:(0x8005aacc,1),
-          0x8554:(0x8005ba74,0),0x85ac:(0x8005a8fc,4),0x85b4:(0x8005aacc,1),0x85c8:(0x8005ba74,0)}
+services={0x83bc:(0x80062c4c,0),0x840c:(0x8001ef9c,1),0x8540:(0x8005ad34,1),
+          0x8554:(0x8005bcdc,0),0x85ac:(0x8005ab64,4),0x85b4:(0x8005ad34,1),0x85c8:(0x8005bcdc,0)}
 def intercept(m,addr,*_):
     target,argc=services[addr-base[1]]
     vals=[m.reg_read(getattr(R,f"UC_PPC_REG_{i+3}")) for i in range(argc)]
     calls.append([f"engine_{target:x}",[v if v<2**31 else v-2**32 for v in vals]])
-    if target==0x8005aacc:m.reg_write(R.UC_PPC_REG_3,ret)
+    if target==0x8005ad34:m.reg_write(R.UC_PPC_REG_3,ret)
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
 for pc in services:u.hook_add(UC_HOOK_CODE,intercept,begin=base[1]+pc,end=base[1]+pc)
 with tempfile.TemporaryDirectory(dir=tmp) as td:

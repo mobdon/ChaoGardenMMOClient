@@ -17,7 +17,7 @@
 //!   panel's three angles to the engine with the converted Scale.y as the
 //!   timer, plays sound 0x1003 and rumbles the slot (4, 15, 0).
 //! - Every update of mode 1 ends by entering collision.
-use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+use crate::{city_rel::CityRel, manifest, Error, Result};
 use serde::Serialize;
 
 /// SHA-256 of the 0x264-byte update callback with relocated words zeroed.
@@ -26,13 +26,13 @@ pub const CODE_LEN: u32 = 0x264;
 
 /// Engine imports at offsets from the callback start: (offset, address).
 const IMPORTS: [(u32, u32); 8] = [
-    (0x24, 0x8006_538c),  // clip gate
+    (0x24, 0x8006_55f4),  // clip gate
     (0xc0, 0x8000_f7d8),  // CCL_InitShare
     (0x138, 0x8000_66f4), // CCL_IsHitPlayer
-    (0x1ec, 0x8011_0fa0), // timer conversion
-    (0x210, 0x8003_9c48), // player velocity, angles and timer
-    (0x224, 0x8006_b710), // sound
-    (0x238, 0x8002_f8c4), // rumble
+    (0x1ec, 0x8011_12e8), // timer conversion
+    (0x210, 0x8003_9eb0), // player velocity, angles and timer
+    (0x224, 0x8006_b978), // sound
+    (0x238, 0x8002_fb2c), // rumble
     (0x244, 0x8000_f4ec), // CCL_Entry
 ];
 
@@ -70,14 +70,8 @@ pub struct Program {
 impl Program {
     /// Read and verify the KASOKU callback of an installed stage REL.
     pub fn read(filename: &str, bytes: &[u8]) -> Result<Self> {
-        let info = stage_land::catalog()
-            .iter()
-            .find(|i| i.filename == filename)
-            .ok_or_else(invalid)?;
-        if bytes.len() != info.size || manifest::sha256(bytes) != info.sha256 {
-            return Err(invalid());
-        }
-        let rel = CityRel::read_identified(bytes, info.module)?;
+        let rel = CityRel::read_stage(bytes, &filename).map_err(|_| invalid())?;
+        let module = rel.module_id();
         let d5 = rel.data(5)?;
         let mut update = None;
         for row in (4..d5.len() as u32).step_by(4) {
@@ -122,7 +116,7 @@ impl Program {
             let lo = rel.reference(1, update + at + 6).ok_or_else(invalid)?;
             if (
                 hi.module, hi.kind, hi.section, lo.module, lo.kind, lo.section,
-            ) != (info.module, 6, 4, info.module, 4, 4)
+            ) != (module, 6, 4, module, 4, 4)
                 || hi.addend != lo.addend
             {
                 return Err(invalid());
@@ -138,7 +132,7 @@ impl Program {
         let velocity = constant(0x1a8)?;
         let c = code;
         Ok(Self {
-            module: info.module,
+            module,
             update,
             default_speed: f(constant(0xe0)?)?,
             default_frames: f(constant(0x10c)?)?,

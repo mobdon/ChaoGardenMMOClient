@@ -1,15 +1,16 @@
 """Execute the installed goal-ring branches off-line. Imported routines are observed, not executed."""
 import hashlib,itertools,json,os,struct
 from pathlib import Path
+from gsne8p import IMPORTS
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
 BASE, DATA, TASK,WORK = 0x81000000,0x82000000,0x100000,0x100100
 FIRST,END=0x2d208,0x2db48
-GLOBAL=0x801cbd88
-CHECK,IDENT,REGISTER,MAIN1,MAIN2,SOUND,LOCAL=(0x800066f4,0x80037c74,0x8000f4ec,0x8001c78c,0x8001baa4,0x8006ad94,BASE+0x390dc)
-RANGE,ALLOC=0x8006538c,0x801194b4
-d=(Path(os.environ['SA2_SET_DIR'])/'stg13D.rel').read_bytes()
-assert hashlib.sha256(d).hexdigest()=='bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b'
+GLOBAL=0x801cc168
+CHECK,IDENT,REGISTER,MAIN1,MAIN2,SOUND,LOCAL=(0x800066f4,0x80037edc,0x8000f4ec,0x8001c810,0x8001bb28,0x8006affc,BASE+0x390dc)
+RANGE,ALLOC=0x800655f4,0x801197fc
+d=(Path(os.environ['SA2_GC_REL_DIR'])/'stg13D.rel').read_bytes()
+assert hashlib.sha256(d).hexdigest()=='f5a986c2be0c7f8577538202cca0f714299617203a8cb1d7ef37d4d11f827423'
 def w(i):return struct.unpack_from('>I',d,i)[0]
 ss=[(w(w(16)+i*8)&~1,w(w(16)+i*8+4)) for i in range(w(12))]
 code=bytearray(d[ss[1][0]+FIRST:ss[1][0]+0x2dd10])
@@ -21,7 +22,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind==202:section=s;off=0;continue
         off+=delta
         if section!=1 or not FIRST<=off<0x2dd10:continue
-        if module==12:val+=(BASE if s==1 else DATA+s*0x100000)
+        if module==13:val+=(BASE if s==1 else DATA+s*0x100000)
         else:assert module==0
         loc=off-FIRST
         if kind in (4,6):struct.pack_into('>H',code,loc,(val if kind==4 else (val+0x8000)>>16)&0xffff)
@@ -32,7 +33,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         else:raise RuntimeError(kind)
 u=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
 def map_page(p):u.mem_map(p&~0xfff,0x1000)
-for p in {i&~0xfff for i in (BASE+FIRST,BASE+END,DATA+4*0x100000+3136,TASK,GLOBAL,0x801e7368,CHECK,IDENT,REGISTER,MAIN1,MAIN2,SOUND,LOCAL,RANGE,ALLOC)}:map_page(p)
+for p in {i&~0xfff for i in (BASE+FIRST,BASE+END,DATA+4*0x100000+3136,TASK,GLOBAL,0x801e7768,CHECK,IDENT,REGISTER,MAIN1,MAIN2,SOUND,LOCAL,RANGE,ALLOC)}:map_page(p)
 u.mem_write(BASE+FIRST,bytes(code));u.mem_write(DATA+4*0x100000+3136,d[ss[4][0]+3136:ss[4][0]+3140])
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
 def put(p,fmt,*x):u.mem_write(p,struct.pack('>'+fmt,*x))
@@ -69,7 +70,7 @@ put(LOCAL+0x16,'H',(slot_base+0x8000)>>16);put(LOCAL+0x1a,'H',slot_base&0xffff)
 mode='init'
 for x,ch,byte,timer,out,alloc in itertools.product((-1,0,1,2,4),(0,4,5,6),(0,1,2),(-1,119,120),(0,1),(0,1)):
     observed=[];put(WORK,'BB',0,0);put(WORK+8,'i',x);put(GLOBAL+0x23,'b',byte)
-    put(0x801e7368,'I',TASK+768 if timer>=0 else 0);put(TASK+774,'H',max(timer,0))
+    put(0x801e7768,'I',TASK+768 if timer>=0 else 0);put(TASK+774,'H',max(timer,0))
     setreg(3,ch);setreg(30,TASK);setreg(31,WORK)
     u.emu_start(BASE+0x2d24c,BASE+END,count=110)
     assert len(observed)==1
@@ -80,7 +81,7 @@ for ch in (4,5):
     put(WORK,'BB',0,0);put(WORK+8,'i',1)
     for byte,timer,alloc,expected in [(1,119,1,'return'),(0,120,1,'return'),(1,120,0,'return'),(1,120,1,'contact')]:
         out=1;observed=[]
-        put(GLOBAL+0x23,'b',byte);put(0x801e7368,'I',TASK+768);put(TASK+774,'H',timer)
+        put(GLOBAL+0x23,'b',byte);put(0x801e7768,'I',TASK+768);put(TASK+774,'H',timer)
         setreg(3,ch);setreg(30,TASK);setreg(31,WORK)
         u.emu_start(BASE+0x2d24c,BASE+END,count=110)
         assert (observed,get(WORK,'B'),get(WORK+8,'i'))==([expected],1,2)
@@ -94,7 +95,7 @@ for x,byte,latched,hit in itertools.product((-3,-2,-1,0,1,2,3),(-1,0,1,2,3),(0,1
     print('C',x,byte,latched,hit,get(WORK+1,'B'),get(WORK+0x24,'f'),','.join(observed),get(slot_base,'I'),get(slot_base+4,'I'))
 
 # Run the native regular motion block, then the end-of-frame cleanup dispatch.
-cleanup_targets=(0x80065148,0x80071878)
+cleanup_targets=(0x800653b0,0x80071ae0)
 for pc in cleanup_targets:
     if pc & ~0xfff != RANGE & ~0xfff:map_page(pc)
     def cleanup_hook(uc,pc,size,_):
@@ -116,7 +117,7 @@ for latch,task_mode,out,tick,byte in itertools.product((0,1),(0,1),(0,1),(24,25,
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+end
     print('ENTRY',latch,task_mode,out,tick,byte,get(WORK+3,'B'))
 # Follow the native height-query call and cache across frame boundaries.
-shadow_helper=0x80067888
+shadow_helper=0x80067af0
 map_page(shadow_helper);put(shadow_helper,'I',0x4e800020)
 u.mem_write(DATA+4*0x100000+0xc48,d[ss[4][0]+0xc48:ss[4][0]+0xc50])
 shadow_calls=[]
@@ -184,7 +185,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind==203:break
         if kind==202:section=s;off=0;continue
         off+=delta
-        if module!=12:continue
+        if module!=13:continue
         address=(BASE if s==1 else DATA+s*0x100000)+val
         if section==5 and 0x2403b4<=off<0x2403b4+93*4:
             assert kind==1 and s==1
@@ -220,13 +221,13 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind==202:section=s;off=0;continue
         off+=delta
         if section!=1 or not h<=off<h+0x98 or kind not in (4,6):continue
-        addr=val+(DATA+s*0x100000 if module==12 else 0)
+        addr=val+(DATA+s*0x100000 if module==13 else 0)
         put(BASE+off,'H',(addr if kind==4 else (addr+0x8000)>>16)&65535)
 def message_service(cpu,pc,*_):
     normal=pc==BASE+0x392a4
     args=[reg(i) for i in range(3,9 if normal else 8)]
     if normal:args[3]=struct.unpack('>i',struct.pack('>I',args[3]))[0]
-    observed.append([0x800dfe0c if normal else 0x800dfe3c,*args])
+    observed.append([0x800e00e8 if normal else 0x800e0118,*args])
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for off in (0x392a4,0x392c8):
     u.hook_add(UC_HOOK_CODE,message_service,begin=BASE+off,end=BASE+off)
@@ -241,7 +242,7 @@ for code,count,gamebyte in itertools.product((5,90,109),(-1,5,90,109,110),(-128,
     print('T',code,count,gamebyte,*observed[0])
 
 # Child selection and creation are separate from following the parent's link.
-create_child=0x80070790;map_page(create_child)
+create_child=0x800709f8;map_page(create_child)
 def create_hook(cpu,pc,*_):
     assert reg(3)==2 and reg(5)==TASK
     created.append(reg(4)-BASE)
@@ -276,7 +277,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         off+=delta
         if section!=1 or not ce<=off<ce+0x13c:continue
         if kind in (4,6):
-            assert module==12 and s==1
+            assert module==13 and s==1
             val+=BASE;put(BASE+off,'H',(val if kind==4 else (val+0x8000)>>16)&65535)
 run_nested=False
 def child_call(cpu,pc,*_):
@@ -316,7 +317,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if section!=1 or not (0x300b8<=off<0x30114 or 0x30388<=off<0x303c0):continue
         if kind==10 and module==0:imports[BASE+off]=val
         elif kind in (4,6):
-            assert module==12 and s==5
+            assert module==13 and s==5
             val+=const_base;put(BASE+off,'H',(val if kind==4 else (val+0x8000)>>16)&65535)
 def child_engine(cpu,pc,*_):
     assert reg(3)==TASK
@@ -335,7 +336,9 @@ for m,(flag,out) in itertools.product((3,6),((0,1),(0,0),(1,0))):
 
 # Run the original mode-1 handler at each distinct verified layout.
 for level,entry in ((13,0x2fde8),(16,0x25c74),(18,0x2aacc)):
-    image=(Path(os.environ['SA2_SET_DIR'])/f'stg{level:02}D.rel').read_bytes()
+    # Disc copies for 13 and 16; stage 18's Steam imports move to GSNE8P addresses.
+    steam=level==18
+    image=(Path(os.environ['SA2_SET_DIR' if steam else 'SA2_GC_REL_DIR'])/f'stg{level:02}D.rel').read_bytes()
     word=lambda at:struct.unpack_from('>I',image,at)[0]
     section4=word(word(16)+32)&~1
     start=(word(word(16)+8)&~1)+entry
@@ -353,6 +356,7 @@ for level,entry in ((13,0x2fde8),(16,0x25c74),(18,0x2aacc)):
             if module:
                 assert s==4 and val+4<=4096
                 cpu.mem_write(DATA+val,image[section4+val:section4+val+4]);val+=DATA
+            elif steam:val=IMPORTS[val]
             assert kind in (4,6)
             struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
     cpu.mem_write(BASE,bytes(block));cpu.reg_write(R.UC_PPC_REG_MSR,8192)
@@ -391,7 +395,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
 def contact_query(cpu,pc,*_):
     target=imports[pc];calls.append(target)
     arg=cpu.reg_read(R.UC_PPC_REG_3)
-    if target==0x80037c74:
+    if target==0x80037edc:
         assert arg==TASK+0x400
         obs['identified']=identified;cpu.reg_write(R.UC_PPC_REG_3,identified&0xffffffff)
     else:
@@ -421,7 +425,7 @@ for flags,cached,(first,second),identified,gate in itertools.product((0,4),(-2,-
 
 # Run past the player lookup, observing the engine and nested stage services.
 cpu.hook_del(contact_stop)
-players=0x801e7328;cpu.mem_map(players&~4095,4096)
+players=0x801e7728;cpu.mem_map(players&~4095,4096)
 table_addr=DATA+0x2216e8;cpu.mem_map(table_addr&~4095,4096)
 cpu.mem_write(table_addr,d[ss[5][0]+0x2216e8:ss[5][0]+0x2216e8+88])
 for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
@@ -431,7 +435,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind==203:break
         if kind==202:section=s;off=0;continue
         off+=delta
-        if module==12 and section==5 and 0x2216e8<=off<0x2216e8+88 and kind==1:
+        if module==13 and section==5 and 0x2216e8<=off<0x2216e8+88 and kind==1:
             assert s==1
             cpu.mem_write(DATA+off,struct.pack('>I',BASE+val))
         if section!=1 or not entry+0x94<=off<entry+0x1e0 or kind not in (4,6):continue
@@ -486,26 +490,26 @@ for index,length in enumerate((0x38,0x50,0x88,0x50,0x50,0x38,0x3c,0x44,0x38,4,0x
             if section!=1 or not start<=off<start+length:continue
             if module==0 and kind==10:action_imports[BASE+off]=val
             elif kind in (4,6):
-                assert module==12 and s==4
+                assert module==13 and s==4
                 cpu.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4]);val+=DATA
                 struct.pack_into('>H',code,off-start,(val if kind==4 else (val+0x8000)>>16)&65535)
     cpu.mem_write(dest,bytes(code));action_entries.add(dest)
 def action_engine(cpu,pc,*_):
     dst=action_imports[pc];args=[cpu.reg_read(R.UC_PPC_REG_3)]
-    if dst==0x80063584:args.append(cpu.reg_read(R.UC_PPC_REG_4))
-    elif dst==0x80035a88:
+    if dst==0x800637ec:args.append(cpu.reg_read(R.UC_PPC_REG_4))
+    elif dst==0x80035cf0:
         f=struct.unpack('>d',cpu.reg_read(R.UC_PPC_REG_FPR1).to_bytes(8,'big'))[0]
         args.append(dict(f1Bits=struct.unpack('>I',struct.pack('>f',f))[0]))
-    elif dst==0x80063f50:args.append(cpu.reg_read(R.UC_PPC_REG_4))
-    elif dst==0x800651ac:
+    elif dst==0x800641b8:args.append(cpu.reg_read(R.UC_PPC_REG_4))
+    elif dst==0x80065414:
         assert args[0] in (TASK,TASK+0x600)
         args=["parent" if args[0]!=TASK else "task"]
-    else:assert dst in (0x80063524,0x800374b0,0x80037278,0x80037394,0x80037150)
+    else:assert dst in (0x8006378c,0x80037718,0x800374e0,0x800375fc,0x800373b8)
     events.append(['engine',dst,*args])
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in action_imports:cpu.hook_add(UC_HOOK_CODE,action_engine,begin=pc,end=pc)
 # Replay the nested position-list routine with the engine allocator observed.
-helper=0x30764;manager_slot=DATA+0x400000+0xd98;global_hook=0x803ad3e8
+helper=0x30764;manager_slot=DATA+0x400000+0xd98;global_hook=0x803ad7e8
 for addr in (manager_slot,global_hook):cpu.mem_map(addr&~4095,4096)
 code=bytearray(d[ss[1][0]+helper:ss[1][0]+helper+0x138])
 alloc_sites={}
@@ -533,7 +537,7 @@ def position_helper(cpu,pc,*_):
 def position_alloc(cpu,pc,*_):
     reg=lambda i:cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i)))
     addr=alloc_sites[pc]
-    if addr==0x80071ba4:args=[reg(3),reg(4),reg(5)-BASE,reg(6)-DATA];ret=list_input['created']
+    if addr==0x80071e0c:args=[reg(3),reg(4),reg(5)-BASE,reg(6)-DATA];ret=list_input['created']
     else:args=[reg(3),reg(4)];ret=list_input['node']
     allocations.append([addr,*args])
     cpu.reg_write(R.UC_PPC_REG_3,ret);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
@@ -572,13 +576,13 @@ def manager_service(cpu,pc,*_):
     arg=cpu.reg_read(R.UC_PPC_REG_3)
     if BASE+0x30aa4<=pc<BASE+0x30b34:
         target=manager_services[pc];args=[]
-        if target==0x80115e24:args=[arg,list(struct.unpack(">III",cpu.mem_read(arg,12)))]
-        elif target==0x801154e0:args=[arg,cpu.reg_read(R.UC_PPC_REG_4)]
-        else:assert target in (0x80115d50,0x80115d9c)
+        if target==0x8011616c:args=[arg,list(struct.unpack(">III",cpu.mem_read(arg,12)))]
+        elif target==0x80115828:args=[arg,cpu.reg_read(R.UC_PPC_REG_4)]
+        else:assert target in (0x80116098,0x801160e4)
         display.append(["engine",target,*args])
         cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
         return
-    if manager_services[pc]==0x8011b314:
+    if manager_services[pc]==0x8011b65c:
         assert cpu.reg_read(R.UC_PPC_REG_4)==TASK+0xc00
         point=lambda a:struct.unpack(">fff",cpu.mem_read(a,12))
         f32=lambda x:struct.unpack(">f",struct.pack(">f",x))[0]
@@ -588,9 +592,9 @@ def manager_service(cpu,pc,*_):
         cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack(">d",dist),"big"))
         cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
         return
-    if manager_services[pc]==0x801194e0:released.append([arg,read32(arg+12)])
+    if manager_services[pc]==0x80119828:released.append([arg,read32(arg+12)])
     else:
-        assert manager_services[pc]==0x80071888 and arg==manager
+        assert manager_services[pc]==0x80071af0 and arg==manager
         removals.append(arg)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in manager_services:cpu.hook_add(UC_HOOK_CODE,manager_service,begin=pc,end=pc)
@@ -614,7 +618,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if section!=1 or not mh<=off<mh+len(mc):continue
         if kind==10 and module==0:model_imports[BASE+off]=val
         elif kind in (4,6):
-            assert module==12
+            assert module==13
             if s==4 or (s==5 and val in (0x20e324,0x20e328)):
                 cpu.mem_write(DATA+val,d[ss[s][0]+val:ss[s][0]+val+4])
             val+=DATA;struct.pack_into('>H',mc,off-mh,(val if kind==4 else (val+0x8000)>>16)&65535)
@@ -631,11 +635,11 @@ def model_service(cpu,pc,*_):
         return  # let the native branch enter the submission wrapper
     else:
         dst=model_imports[pc];args=[]
-        if dst==0x80116ad0:
+        if dst==0x80116e18:
             display.append(["modelDraw",dict(model=model,field20During=read32(model_mem+20),calls=[])])
             args=[reg(3)-DATA]
-        elif dst==0x80114e30:args=[reg(3),bits(1),bits(2),bits(3)]
-        elif dst==0x80033248:
+        elif dst==0x80115178:args=[reg(3),bits(1),bits(2),bits(3)]
+        elif dst==0x800334b0:
             args=[reg(3),reg(4),bits(1)];color=(0x12345678 ^ bits(1))&0xffffffff;draw_colors.append(color);cpu.reg_write(R.UC_PPC_REG_3,color)
         call=["engine",dst,*args]
     display[-1][1]["calls"].append(call)
@@ -653,7 +657,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind==202:section=s;off=0;continue
         off+=delta
         if section==5 and off==model and kind==1:
-            assert module==12 and s==5
+            assert module==13 and s==5
             write32(model_mem,DATA+val)
         if section==1 and off==sub+0x48 and kind==10:
             assert module==0
@@ -779,7 +783,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
             assert kind==10
             imports[BASE+off-entry]=val
         else:
-            assert module==12 and kind in (4,6)
+            assert module==13 and kind in (4,6)
             val+=bases[s]
             struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
 for s,off,size in [(4,0xcf0,4),(5,0x2216e8,88)]:
@@ -792,7 +796,7 @@ def start_service(cpu,pc,*_):
     args=[cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i))) for i in range(3,7)]
     target={TASK:'task',TASK+0x600:'parent'}[args[0]]
     event=[addr,target]
-    if addr in (0x800651e4,0x8006519c):
+    if addr in (0x8006544c,0x80065404):
         answer=(mask>>len(answers))&1
         answers.append(answer);cpu.reg_write(R.UC_PPC_REG_3,answer)
     elif addr==0x8000f7d8:
@@ -870,7 +874,7 @@ for start,size in [(0x2d4f4,0x44),(0x18aa8,0x40)]:
     release_cpu.mem_map((BASE+start)&~4095,4096)
     release_cpu.mem_write(BASE+start,d[ss[1][0]+start:ss[1][0]+start+size])
 def release_free(cpu,pc,*_):
-    events.append(['free',0x801194e0,cpu.reg_read(R.UC_PPC_REG_3)])
+    events.append(['free',0x80119828,cpu.reg_read(R.UC_PPC_REG_3)])
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 def release_store(cpu,access,address,size,value,_):
     assert size==4 and value==0
@@ -909,19 +913,19 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
             assert kind==10
             sites[BASE+off]=val
         else:
-            assert module==12 and s==4 and kind in (4,6)
+            assert module==13 and s==4 and kind in (4,6)
             tex.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4])
             struct.pack_into('>H',block,off-entry,((DATA+val) if kind==4 else (DATA+val+0x8000)>>16)&65535)
 tex.mem_write(BASE+entry,bytes(block))
 def tex_service(cpu,pc,*_):
     target=sites[pc]
-    argc={0x80102de0:5,0x801194b4:2,0x80103004:8,0x801032c0:6}[target]
+    argc={0x80103128:5,0x801197fc:2,0x8010334c:8,0x80103608:6}[target]
     calls.append([target,*[cpu.reg_read(getattr(R,'UC_PPC_REG_'+str(i))) for i in range(3,3+argc)]])
-    if target==0x801032c0:
+    if target==0x80103608:
         for i in range(1,4):
             bits=cpu.reg_read(getattr(R,'UC_PPC_REG_FPR'+str(i)))
             lod.append(struct.unpack('>I',struct.pack('>f',struct.unpack('>d',bits.to_bytes(8,'big'))[0]))[0])
-    cpu.reg_write(R.UC_PPC_REG_3,size if target==0x80102de0 else alloc)
+    cpu.reg_write(R.UC_PPC_REG_3,size if target==0x80103128 else alloc)
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in sites:tex.hook_add(UC_HOOK_CODE,tex_service,begin=pc,end=pc)
 for work,size,alloc in [(WORK,2048,TASK+0x600),(WORK+0x200,4096,0)]:
@@ -948,7 +952,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
             service=val
             continue
         if module:
-            assert module==12 and s==4
+            assert module==13 and s==4
             addr=DATA+4*0x100000+val
             u.mem_write(addr,d[ss[4][0]+val:ss[4][0]+val+4])
         else:addr=val
@@ -982,7 +986,7 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         if kind==202:section=s;off=0;continue
         off+=delta
         if section!=1 or not common<=off<common+len(block):continue
-        assert module==12 and s==4 and kind in (4,6)
+        assert module==13 and s==4 and kind in (4,6)
         cc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4])
         struct.pack_into('>H',block,off-common,((DATA+val) if kind==4 else (DATA+val+0x8000)>>16)&65535)
 cc.mem_write(BASE,bytes(block))
@@ -1018,10 +1022,10 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         off+=delta
         if section!=1 or not entry<=off<entry+len(block):continue
         if kind==10:
-            assert module==0 and val==0x80037da0
+            assert module==0 and val==0x80038008
             sites.append(BASE+off-entry);continue
         if module:
-            assert s==4 and module==12
+            assert s==4 and module==13
             cpu.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+4]);val+=DATA
         assert kind in (4,6)
         struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
@@ -1037,7 +1041,7 @@ for slot,(first,second,fallback) in itertools.product([0,1],[
         (None,None,None),(None,None,[1.,-2.,3.]),([2.,3.,4.],None,None),
         ([0.,1.,3.],None,[-8.,4.,.25]),([-.3,.7,12.],[.01,-2.,.125],None)]):
     calls=[]
-    cpu.mem_write(0x801e7368+slot*4,struct.pack('>I',TASK+0x200 if fallback else 0))
+    cpu.mem_write(0x801e7768+slot*4,struct.pack('>I',TASK+0x200 if fallback else 0))
     if fallback:cpu.mem_write(TASK+0x214,struct.pack('>fff',*fallback))
     cpu.mem_write(TASK+0x400,b'\xdd'*32)
     for regid,val in [(1,TASK+0xf00),(3,slot),(4,TASK+0x400),(5,TASK+0x410)]:
@@ -1068,15 +1072,15 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
             assert module==0
             services[BASE+off-entry]=val
             continue
-        assert module==12 and s==4 and kind in (4,6)
+        assert module==13 and s==4 and kind in (4,6)
         gc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8]);val+=DATA
         struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
 gc.mem_write(BASE,bytes(block))
 def gate_service(cpu,pc,*_):
     addr=services[pc];calls.append(addr)
-    if addr==0x8010d940:cpu.reg_write(R.UC_PPC_REG_3,rnd&0xffffffff)
+    if addr==0x8010dc88:cpu.reg_write(R.UC_PPC_REG_3,rnd&0xffffffff)
     else:
-        assert addr==0x80114eac and cpu.reg_read(R.UC_PPC_REG_3)==WORK+0x400
+        assert addr==0x801151f4 and cpu.reg_read(R.UC_PPC_REG_3)==WORK+0x400
         cpu.reg_write(R.UC_PPC_REG_FPR1,int.from_bytes(struct.pack('>d',vector),'big'))
     cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for pc in services:gc.hook_add(UC_HOOK_CODE,gate_service,begin=pc,end=pc)
@@ -1111,9 +1115,9 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         off+=delta
         if section!=1 or not entry<=off<entry+len(block):continue
         if kind==10:
-            assert module==0 and val==0x8010d940
+            assert module==0 and val==0x8010dc88
             draw_sites.append(BASE+off-entry);continue
-        assert module==12 and s==4 and kind in (4,6)
+        assert module==13 and s==4 and kind in (4,6)
         sc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8]);val+=DATA
         struct.pack_into('>H',block,off-entry,(val if kind==4 else (val+0x8000)>>16)&65535)
 sc.mem_write(BASE,bytes(block));sc.mem_write(DATA+0xf34,d[ss[4][0]+0xf34:ss[4][0]+0xf38])
@@ -1124,7 +1128,7 @@ hblock=bytearray(d[ss[1][0]+helper:ss[1][0]+helper+0x174])
 hbase=BASE+0x1000
 sc.mem_map(hbase,4096)
 def allocate_record(cpu,pc,*_):
-    record["request"]=[0x80032910,cpu.reg_read(R.UC_PPC_REG_3)-DATA]
+    record["request"]=[0x80032b78,cpu.reg_read(R.UC_PPC_REG_3)-DATA]
     cpu.reg_write(R.UC_PPC_REG_3,address);cpu.reg_write(R.UC_PPC_REG_PC,pc+4)
 for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
     section=off=0
@@ -1135,11 +1139,11 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
         off+=delta
         if section!=1 or not helper<=off<helper+len(hblock):continue
         if kind==10:
-            assert module==0 and val in (0x80032910,0x8010d940)
+            assert module==0 and val in (0x80032b78,0x8010dc88)
             pc=hbase+off-helper
-            sc.hook_add(UC_HOOK_CODE,allocate_record if val==0x80032910 else spawn_draw,begin=pc,end=pc)
+            sc.hook_add(UC_HOOK_CODE,allocate_record if val==0x80032b78 else spawn_draw,begin=pc,end=pc)
         else:
-            assert module==12 and s in (4,5) and kind in (4,6)
+            assert module==13 and s in (4,5) and kind in (4,6)
             if s==4:sc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8])
             val+=DATA
             struct.pack_into('>H',hblock,off-helper,(val if kind==4 else (val+0x8000)>>16)&65535)
@@ -1175,10 +1179,10 @@ for module,at in struct.iter_unpack('>II',d[w(40):w(40)+w(44)]):
             assert (kind,s,val)==(1,1,update)
         if section!=1 or not update<=off<update+len(ublock):continue
         if kind==10:
-            assert module==0 and val==0x80112050
+            assert module==0 and val==0x80112398
             pc=ubase+off-update;sc.hook_add(UC_HOOK_CODE,phase_query,begin=pc,end=pc)
         else:
-            assert module==12 and s==4 and kind in (4,6)
+            assert module==13 and s==4 and kind in (4,6)
             sc.mem_write(DATA+val,d[ss[4][0]+val:ss[4][0]+val+8]);val+=DATA
             struct.pack_into('>H',ublock,off-update,(val if kind==4 else (val+0x8000)>>16)&65535)
 sc.mem_write(ubase,bytes(ublock))

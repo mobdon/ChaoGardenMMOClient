@@ -32,7 +32,7 @@ def get(p,fmt):return struct.unpack(">"+fmt,u.mem_read(p,struct.calcsize(">"+fmt
 def hook(u,addr,size,_):
     off=addr-base[1]
     if off in (0xb14c,0xb164):
-        assert callsites[off]==0x8006b710
+        assert callsites[off]==0x8006b978
         calls.append([u.reg_read(getattr(R,f"UC_PPC_REG_{n}")) for n in (3,4,5,6)])
         u.reg_write(R.UC_PPC_REG_PC,addr+4)
 u.hook_add(UC_HOOK_CODE,hook);u.reg_write(R.UC_PPC_REG_MSR,8192)

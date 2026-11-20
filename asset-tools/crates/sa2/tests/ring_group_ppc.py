@@ -11,7 +11,7 @@ from pathlib import Path
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
 
-rel = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(os.environ["SA2_GAME_PATH"]) / "resource/gd_PC/stg13D.rel"
+rel = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(os.environ["SA2_GC_REL_DIR"]) / "stg13D.rel"
 d = rel.read_bytes()
 w = lambda a: struct.unpack_from('>I', d, a)[0]
 sec = lambda i: w(w(16) + 8 * i) & ~1
@@ -61,7 +61,7 @@ END = B + 0x285f8; put(END, 'I', 0x4e800020)
 for a in (T, W, WORK, STACK - 0x1000, STACK): page(a, 0x400)
 page(CHILD, 0x4000)
 # MWCC register save/restore helpers (_savegpr_14.. / _restgpr_14..).
-SAVE, REST = 0x8010ac50, 0x8010ac9c
+SAVE, REST = 0x8010af98, 0x8010afe4
 page(SAVE, 0x100)
 for n in range(14, 32):
     put(SAVE + 4 * (n - 14), 'I', (36 << 26) | (n << 21) | (11 << 16) | ((-(32 - n) * 4) & 0xffff))
@@ -88,7 +88,7 @@ def hook(uc, pc, sz, name):
     elif name == 'unit': assert reg(3) == 0; calls.append({'call': 'unitMatrix'})
     elif name == 'translate': calls.append({'call': 'translate', 'position': [get(reg(3) + 4 * i, 'I') for i in range(3)]})
     elif name in ('rz', 'ry', 'rx'):
-        assert reg(3) == 0; calls.append({'call': 'rotate', 'import': {'rz': 0x80115560, 'ry': 0x801154e0, 'rx': 0x80115918}[name], 'angle': s32(reg(4))})
+        assert reg(3) == 0; calls.append({'call': 'rotate', 'import': {'rz': 0x801158a8, 'ry': 0x80115828, 'rx': 0x80115c60}[name], 'angle': s32(reg(4))})
     elif name == 'sin': calls.append({'call': 'sine', 'angle': s32(reg(3))}); fpr1(sine(s32(reg(3))))
     elif name == 'cos': calls.append({'call': 'cosine', 'angle': s32(reg(3))}); fpr1(cosine(s32(reg(3))))
     elif name == 'calc':
@@ -109,11 +109,11 @@ def hook(uc, pc, sz, name):
     elif name == 'free': calls.append({'call': 'freeTask', 'self': reg(3) == T})
     elif name == 'save': calls.append({'call': 'saveSetState', 'mask': s32(reg(4))})
     elif name == 'freework': assert reg(3) == WORK; calls.append({'call': 'freeWork'})
-for addr, name in [(0x8006538c, 'gate'), (0x801194b4, 'alloc'), (0x80065120, 'setread'), (0x80115d50, 'push'),
-                   (0x8011509c, 'unit'), (0x80115e24, 'translate'), (0x80115560, 'rz'), (0x801154e0, 'ry'),
-                   (0x80115918, 'rx'), (0x80112050, 'sin'), (0x80112068, 'cos'), (0x80114bc4, 'calc'),
-                   (0x80115d9c, 'pop'), (0x80071ba4, 'spawn'), (0x80065148, 'mark'), (0x80071878, 'free'),
-                   (0x80065134, 'save'), (0x801194e0, 'freework')]:
+for addr, name in [(0x800655f4, 'gate'), (0x801197fc, 'alloc'), (0x80065388, 'setread'), (0x80116098, 'push'),
+                   (0x801153e4, 'unit'), (0x8011616c, 'translate'), (0x801158a8, 'rz'), (0x80115828, 'ry'),
+                   (0x80115c60, 'rx'), (0x80112398, 'sin'), (0x801123b0, 'cos'), (0x80114f0c, 'calc'),
+                   (0x801160e4, 'pop'), (0x80071e0c, 'spawn'), (0x800653b0, 'mark'), (0x80071ae0, 'free'),
+                   (0x8006539c, 'save'), (0x80119828, 'freework')]:
     page(addr); put(addr, 'I', 0x4e800020); u.hook_add(UC_HOOK_CODE, hook, begin=addr, end=addr, user_data=name)
 def run(pc):
     setreg(1, STACK); setreg(3, T); u.reg_write(R.UC_PPC_REG_LR, END)

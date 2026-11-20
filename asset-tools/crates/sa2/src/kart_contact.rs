@@ -260,7 +260,7 @@ impl StoryContact {
 }
 pub fn step(bytes: &[u8], s: Input) -> Result<Update> {
     kart_progress::verify(bytes)?;
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     step_with_constants(rel.data(4)?, s)
 }
 fn step_with_constants(data: &[u8], s: Input) -> Result<Update> {

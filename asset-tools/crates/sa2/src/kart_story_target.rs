@@ -37,7 +37,7 @@ pub struct Output {
 
 pub fn step(bytes: &[u8], input: Input) -> Result<Output> {
     kart_progress::verify(bytes)?;
-    let constants = crate::city_rel::CityRel::read_identified(bytes, 80)?.data(4)?;
+    let constants = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?.data(4)?;
     step_constants(constants, input)
 }
 pub(crate) fn step_constants(constants: &[u8], input: Input) -> Result<Output> {
@@ -363,7 +363,7 @@ pub fn presentation(bytes: &[u8], input: PresentationInput) -> Result<Presentati
             mode,
             shared_frame,
         } => {
-            let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+            let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
             let data = rel.data(5)?;
             let constants = rel.data(4)?;
             let f = |at: usize| f32::from_be_bytes(constants[at..at + 4].try_into().unwrap());
@@ -423,7 +423,10 @@ fn bank(rel: &crate::city_rel::CityRel<'_>, mode: i32) -> Result<(String, usize,
 
 pub fn texture_resource(bytes: &[u8], mode: i32) -> Result<(String, usize, &'static str)> {
     kart_progress::verify(bytes)?;
-    let (name, _, count) = bank(&crate::city_rel::CityRel::read_identified(bytes, 80)?, mode)?;
+    let (name, _, count) = bank(
+        &crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?,
+        mode,
+    )?;
     let hash = if mode == 0 {
         "5578ba03cce6eb265ecf2374b178749c56d94358e877fbb8eae382b752c2dea8"
     } else {
@@ -436,7 +439,7 @@ pub fn texture_resource(bytes: &[u8], mode: i32) -> Result<(String, usize, &'sta
 pub fn model(bytes: &[u8], mode: i32) -> Result<serde_json::Value> {
     use crate::Error;
     kart_progress::verify(bytes)?;
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     let site = if mode == 0 { 0xdc3a } else { 0xdc66 };
     let root = rel
         .reference(1, site)

@@ -279,7 +279,7 @@ pub(crate) fn step_with_course(
             mode,
             mut frame,
         } => {
-            let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+            let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
             let constants = rel.data(4)?;
             let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());
             let missing = || crate::Error::invalid("missing vehicle pose before post-move");

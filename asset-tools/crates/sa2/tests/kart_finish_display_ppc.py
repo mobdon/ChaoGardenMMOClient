@@ -24,7 +24,7 @@ for mod,at in struct.iter_unpack(">II",data[o:o+n]):
         l+=delta
         if t!=1 or k not in (4,6) or not 0xd2dc<=l<0xd954:continue
         if mod==80:p=base[s]+a
-        elif a==0x801cbd88:p=ram
+        elif a==0x801cc168:p=ram
         else:continue
         u.mem_write(base[1]+l,struct.pack(">H",(p if k==4 else (p+32768)>>16)&65535))
 def put(addr,fmt,*v):u.mem_write(addr,struct.pack(">"+fmt,*v))

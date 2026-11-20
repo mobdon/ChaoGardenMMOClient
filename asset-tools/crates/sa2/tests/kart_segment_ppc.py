@@ -26,8 +26,8 @@ for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
             val=base[s]+a
             u.mem_write(base[1]+loc,struct.pack(">H",(val if k==4 else (val+32768)>>16)&65535))
             if loc==0x9252:table=val
-assert calls=={0x93ac:(0,2,0x8011b8e8),0x93bc:(0,2,0x8011b098),
-              0x93c4:(0,2,0x801159dc),0x93d4:(0,2,0x800c2178)}
+assert calls=={0x93ac:(0,2,0x8011bc30),0x93bc:(0,2,0x8011b3e0),
+              0x93c4:(0,2,0x80115d24),0x93d4:(0,2,0x800c23e0)}
 ram=0x85000000;u.mem_map(ram,65536);tw=ram+256;wk=ram+512;sp=ram+0x8000
 def put(p,fmt,*v):u.mem_write(p,struct.pack(">"+fmt,*v))
 with tempfile.TemporaryDirectory(dir=tmp) as root:

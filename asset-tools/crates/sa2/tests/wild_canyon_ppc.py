@@ -5,8 +5,8 @@ from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
 
 game=Path(os.environ["SA2_GAME_PATH"])
-d=(game/"resource/gd_PC/stg16D.rel").read_bytes()
-assert hashlib.sha256(d).hexdigest()=="5078ec861c527beaee651cc0272fbfba36793b0afb8f6c132c12718ffdf9282d"
+d=(Path(os.environ["SA2_GC_REL_DIR"])/"stg16D.rel").read_bytes()
+assert hashlib.sha256(d).hexdigest()=="2bb313a3578036a98ebfa76351cdc5da8adb09f450fe62f37dc321a331a250c0"
 w=lambda i:struct.unpack_from(">I",d,i)[0]
 u=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
 base={s:0x81000000+s*0x200000 for s in (1,4,5,6)}
@@ -26,7 +26,7 @@ for mod,at in struct.iter_unpack(">II",d[w(40):w(40)+w(44)]):
         off+=inc
         if mod==0 and target==1 and k==10:engines[off]=a
         if mod==0 and target==1 and k in (4,6) and (0xac90<=off<=0xaeec or 0x8c68<=off<0x8cb0 or 0x20a68<=off<0x20a70 or 0x1fae8<=off<0x1faf0):v=a
-        elif mod==15 and s in base and target in base:v=base[s]+a
+        elif mod==16 and s in base and target in base:v=base[s]+a
         else:continue
         if k==1:put(base[target]+off,"I",v)
         if k in (4,6):put(base[target]+off,"H",(v if k==4 else (v+32768)>>16)&65535)
@@ -89,7 +89,7 @@ def startup(entry):
     return dict(calls=calls,groups=groups)
 def lighting(flag):
     gd=game/"resource/gd_PC"
-    src,dst=2149471344,2149470768
+    src,dst=2149472368,2149471792
     state={};music={};rows={}
     def watch(uc,pc,size,_):
         site=pc-base[1];r3,r4,r5=map(reg,(3,4,5))
@@ -109,14 +109,14 @@ def lighting(flag):
     sites=(0xacb4,0xacc0,0xaccc,0xacec,0xad04,0xad44,0xad14,0xaeac,0xad2c,0xaec8,0x8c78,0x8c9c,0x8cac)
     hooks=[u.hook_add(UC_HOOK_CODE,watch,begin=base[1]+s,end=base[1]+s) for s in sites]
     try:
-        put(2149367176,"B",flag);u.reg_write(R.UC_PPC_REG_1,stage+4000)
+        put(2149368168,"B",flag);u.reg_write(R.UC_PPC_REG_1,stage+4000)
         u.emu_start(base[1]+0x8c68,base[1]+0x8cb0,count=1000)
         assert u.reg_read(R.UC_PPC_REG_PC)==base[1]+0x8cb0
         rows["activeWords"]=[list(get(dst+j*48,"12I")) for j in range(12)]
     finally:
         for h in hooks:u.hook_del(h)
     return state,music,rows
-for pg in {v&~4095 for v in (2149479272,2149471344,2149471344+383,2149470768,2149470768+575,2150329376,2149367176,0x80fffe60,0x80fffe60+575)}:u.mem_map(pg,4096)
+for pg in {v&~4095 for v in (2149480296,2149472368,2149472368+383,2149471792,2149471792+575,2150330400,2149368168,0x80fffe60,0x80fffe60+575)}:u.mem_map(pg,4096)
 def emerald_paths():
     u.reg_write(R.UC_PPC_REG_1,stage+4000)
     u.emu_start(base[1]+0x8e54,base[1]+0x8e64,count=30)
@@ -319,12 +319,12 @@ def contact_cases(tasks,tmp):
                 case.update(player_actions=actions,position=pos,has_set_entry=parent)
                 answers.update({0x20b38:n%2,0x20b94:1-n%2,0x1fb28:[8,16,18,41,46,0][n%6]})
                 for j,action in enumerate(actions):
-                    a=stage+1900+j*32;put(2149479272+4*j,"I",a if action is not None else 0)
+                    a=stage+1900+j*32;put(2149480296+4*j,"I",a if action is not None else 0)
                     if action is not None:put(a,"b",action)
                 put(child+0x30,"I",stage if parent else 0);put(work+20,"fff",*pos)
                 put(child+0x34,"I",work);put(work,"bb",mode,sm);put(work+8,"I",rx);put(work+0x2c,"I",ccl)
                 put(ccl+4,"H",flags);put(ccl+0x9c,"I",child);put(ccl+0xa2,"h",hn);put(ccl+0xa4,"I",other)
-                put(other,"H",owner);put(2149367176+0x1e,"b",gb)
+                put(other,"H",owner);put(2149368168+0x1e,"b",gb)
                 row={"calls":[]};u.reg_write(R.UC_PPC_REG_1,stage+4000);u.reg_write(R.UC_PPC_REG_3,child)
                 u.reg_write(R.UC_PPC_REG_LR,stop);u.emu_start(base[1]+0x20940,stop,count=400)
                 assert u.reg_read(R.UC_PPC_REG_PC)==stop and "outcome" in row

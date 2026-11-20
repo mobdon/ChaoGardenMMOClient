@@ -619,14 +619,14 @@ pub struct CourseMaterials {
 
 const CART_D_SHA256: &str = "71826645bae2a4064cd5ad4402facaf4da6c5caee0be7e19894ed7ceb2c2ee6c";
 /// CartD +0x684c loads section 5 +0xf9c34 at +0x6860 and passes it to the
-/// imported routine 0x80116ad0 at +0x6868 before drawing course pieces.
+/// imported routine 0x80116e18 at +0x6868 before drawing course pieces.
 const CART_COURSE_LIST: u32 = 0xf9c34;
 
 fn cart_display_names(cart: &[u8]) -> Result<Vec<String>> {
     if sha256(cart) != CART_D_SHA256 {
         return Err(Error::invalid("unsupported CartD.rel revision"));
     }
-    let rel = crate::city_rel::CityRel::read_identified(cart, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(cart, "CartD.rel")?;
     let invalid = || Error::invalid("unexpected CartD course display binding");
     let list = rel
         .reference(1, 0x6866)
@@ -634,7 +634,7 @@ fn cart_display_names(cart: &[u8]) -> Result<Vec<String>> {
         .map(|r| r.addend)
         .ok_or_else(invalid)?;
     let call = rel.reference(1, 0x6868).ok_or_else(invalid)?;
-    if list != CART_COURSE_LIST || (call.module, call.kind, call.addend) != (0, 10, 0x8011_6ad0) {
+    if list != CART_COURSE_LIST || (call.module, call.kind, call.addend) != (0, 10, 0x8011_6e18) {
         return Err(invalid());
     }
     let data = rel.data(5)?;
@@ -891,7 +891,7 @@ pub struct CourseBillboards {
     /// +0x2edbf8), with its name from the course list.
     pub picture_textures: Vec<(u16, String)>,
     /// Squared distance from the active camera position below which the course display draws a
-    /// piece and its shown slots: [engine byte 0x801cbd88+0x20 set, clear].
+    /// piece and its shown slots: [engine byte 0x801cc168+0x20 set, clear].
     pub draw_distance_squared: [f32; 2],
     pub rand_calls: usize,
     pub occurrences: Vec<BillboardOccurrence>,
@@ -958,7 +958,7 @@ pub fn course_billboards(
         .find(|c| c.name == name)
         .ok_or_else(|| Error::invalid("unknown kart course"))?;
     let texture_names = cart_display_names(cart)?;
-    let rel = crate::city_rel::CityRel::read_identified(cart, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(cart, "CartD.rel")?;
     let invalid = || Error::invalid("unexpected CartD billboard code");
     let target = |site, section| {
         rel.reference(1, site)
@@ -1378,7 +1378,7 @@ fn background_module(cart: &[u8]) -> Result<(crate::city_rel::CityRel<'_>, [u32;
     if sha256(cart) != CART_D_SHA256 {
         return Err(Error::invalid("unsupported CartD.rel revision"));
     }
-    let rel = crate::city_rel::CityRel::read_identified(cart, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(cart, "CartD.rel")?;
     let invalid = || Error::invalid("unexpected CartD background code");
     // (LO relocation site, section) for each value the background code uses.
     let mut v = [0u32; 8];
