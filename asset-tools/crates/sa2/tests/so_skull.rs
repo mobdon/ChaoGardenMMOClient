@@ -456,7 +456,7 @@ impl ReelHost for ReelRec {
             ReelEvent::Sound(at) => json!(["sound", reel::REEL_SOUND, 1, 0, 10, bits(at)]),
             ReelEvent::Velocity { slot, v } => json!(["velocity", slot, bits(v)]),
             ReelEvent::Input { slot, a, b } => json!(["input", slot, a, b]),
-            ReelEvent::Action { slot, a, b } => json!(["action", slot, a, b, 0]),
+            ReelEvent::Vibrate { slot, a, b } => json!(["action", slot, a, b, 0]),
             ReelEvent::PlayerPosition { slot, at } => json!(["set_pos", slot, bits(at)]),
             ReelEvent::Draw(_) => unreachable!(),
         });
