@@ -61,7 +61,15 @@ Nothing is derived for the entries. The course rows carry no landtable surface f
 | Route 101 | 3,981 | 45 | 42 | 0 |
 | Route 280 | 4,853 | 128 | 45 | 0 |
 
-`kart_course::materials_reference` (ignored) compares every piece's mesh list, texture words and blend words against SA Tools 786 GC models split from the same DLL. Draw culling by segment (the loop after +0x6868), lighting and the background are separate. Driving physics, timing and completion remain unverified.
+`kart_course::materials_reference` (ignored) compares every piece's mesh list, texture words and blend words against SA Tools 786 GC models split from the same DLL. Lighting and the background are separate.
+
+### Course billboards and draw distance
+
+`kart-course-billboards EXE OUTPUT.json DATA_DLL CartD.rel COURSE RANDS.json` ports the rest of the native course display. Each course row lists roadside slots (row +0x64, count +0x68): a piece-local position and a BAMS yaw. The PC Data_DLL rows and the GameCube CartD rows hold the same slots for all 85 pieces. During course setup (CartD +0x71b8..+0x72a0), each of the first four slots of every occurrence except the last 20 calls the engine rand(). With u = rand / 32768 in binary32, a slot shows a picture only when u is strictly above 0.5. The picture is then trunc(rand2 / 32768 × 4 + 1). The last 20 occurrences are left unwritten. RANDS.json lists the rand() returns in call order, and missing or unused values are rejected.
+
+The display callback draws a piece, and its shown slots, only when the squared view-space distance of its origin is below a threshold. The threshold is 9,000,000 (3000²) when engine byte 0x801CBD88+0x20 is set and 25,000,000 (5000²) otherwise (CartD section 4 +0x2AC / +0x2B0, chosen at +0x69e0). Every shown slot uses the single model at CartD section 5 +0x7E6C, translated and turned by the slot. Its texture is patched to course slot 12, 39, 67 or 68 (`chao_p`, `poster1`, `sonic`, `sonicspin`) for pictures 1 to 4.
+
+`tests/kart_billboards_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs the original instructions under Unicorn with a fixed rand() sequence and compares every occurrence's four picture words with the Rust result. With that sequence, Route 101 makes 345 rand() calls and shows 123 billboards; Route 280 makes 284 calls and shows 96. The view transform, the engine's rand() generator and the billboard model geometry stay outside this port. Driving physics, timing and completion remain unverified.
 
 ## Rust interface and checks
 

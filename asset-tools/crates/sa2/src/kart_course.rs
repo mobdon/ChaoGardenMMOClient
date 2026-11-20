@@ -1087,3 +1087,193 @@ mod materials_reference {
         }
     }
 }
+
+/// One roadside slot of a course row (row +0x64, 16 bytes each): a
+/// piece-local position and a signed BAMS yaw for the shared billboard model.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BillboardSlot {
+    pub position: [f32; 3],
+    pub yaw: i32,
+}
+
+/// One placed occurrence after CartD course setup (+0x71b8..+0x72a0).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BillboardOccurrence {
+    pub occurrence: usize,
+    pub piece_id: u8,
+    /// Row slot count (row +0x68); only the first four can ever be shown.
+    pub slot_count: u32,
+    /// Live entry words +0x20..+0x2c: 0 hides the slot, n selects picture
+    /// n - 1. None means setup leaves the words unwritten (the last 20
+    /// occurrences); their contents come from earlier memory, not this data.
+    pub pictures: Option<[i32; 4]>,
+    pub slots: Vec<BillboardSlot>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseBillboards {
+    pub course: &'static str,
+    /// CartD section 5 model drawn for every shown slot (helper +0xc2f8).
+    pub model: u32,
+    /// Course texture slot written into the model per picture (section 5
+    /// +0x2edbf8), with its name from the course list.
+    pub picture_textures: Vec<(u16, String)>,
+    /// Squared view-space distance below which the course display draws a
+    /// piece and its shown slots: [engine byte 0x801cbd88+0x20 set, clear].
+    pub draw_distance_squared: [f32; 2],
+    pub rand_calls: usize,
+    pub occurrences: Vec<BillboardOccurrence>,
+}
+
+fn row_slots(dll: &[u8], pe: &crate::pe::PeImage, id: u8) -> Result<(u32, Vec<BillboardSlot>)> {
+    let export = pe
+        .exports
+        .iter()
+        .find(|e| e.name == "CartCourseModels" && e.forwarded_to.is_none())
+        .ok_or_else(|| Error::invalid("missing CartCourseModels data export"))?;
+    let r = crate::model::Reader { data: dll };
+    let row = pe.rva_to_offset(export.rva, 85 * 108)? + 108 * usize::from(id);
+    let count = r.u32(row + 0x68)?;
+    if count > 64 {
+        return Err(Error::invalid("kart billboard slot count exceeds limit"));
+    }
+    if count == 0 {
+        return Ok((0, vec![]));
+    }
+    let at = pe.va_to_offset(r.u32(row + 0x64)?, 16 * count as usize)?;
+    let slots = (0..count as usize)
+        .map(|k| {
+            Ok(BillboardSlot {
+                position: r.vec3(at + 16 * k)?,
+                yaw: r.u32(at + 16 * k + 12)? as i32,
+            })
+        })
+        .collect::<Result<_>>()?;
+    Ok((count, slots))
+}
+
+/// CartD course setup's picture choice for one slot, from two engine rand()
+/// results: u = (float)rand * (1/32768); a slot shows only when u > 0.5, and
+/// then picture = trunc((float)rand2 * (1/32768) * 4 + 1), all in binary32.
+fn picture(rand: &mut impl Iterator<Item = i32>) -> Result<i32> {
+    let mut next = || {
+        rand.next()
+            .map(|v| v as f32 * (1. / 32768.))
+            .ok_or_else(|| Error::invalid("missing kart rand result"))
+    };
+    if next()? > 0.5 {
+        Ok((next()? * 4. + 1.) as i32)
+    } else {
+        Ok(0)
+    }
+}
+
+/// Billboard pictures, slots and draw rule for a course, from the Steam
+/// Data_DLL rows and CartD. `rand` supplies the engine rand() returns in
+/// native call order; missing or unused results are rejected.
+pub fn course_billboards(
+    exe: &[u8],
+    dll: &[u8],
+    cart: &[u8],
+    name: &str,
+    rand: &[i32],
+) -> Result<CourseBillboards> {
+    if sha256(dll) != crate::board_motion::PC_DLL_SHA256 {
+        return Err(Error::invalid("unsupported kart DLL revision"));
+    }
+    let course = courses(exe)?
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| Error::invalid("unknown kart course"))?;
+    let texture_names = cart_display_names(cart)?;
+    let rel = crate::city_rel::CityRel::read_identified(cart, 80)?;
+    let invalid = || Error::invalid("unexpected CartD billboard code");
+    let target = |site, section| {
+        rel.reference(1, site)
+            .filter(|r| (r.module, r.section, r.kind) == (80, section, 4))
+            .map(|r| r.addend)
+            .ok_or_else(invalid)
+    };
+    let model = target(0xc322, 5)?;
+    let variants = target(0xc336, 5)?;
+    let near = [target(0x69fe, 4)?, target(0x6a1a, 4)?];
+    if (model, variants, target(0xc366, 5)?) != (0x7e6c, 0x2edbf8, CART_COURSE_LIST)
+        || near != [0x2ac, 0x2b0]
+    {
+        return Err(invalid());
+    }
+    let word = |section, at: u32| -> Result<u32> {
+        rel.data(section)?
+            .get(at as usize..at as usize + 4)
+            .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+            .ok_or_else(invalid)
+    };
+    let picture_textures = (0..4)
+        .map(|k| {
+            let slot = word(5, variants + 4 * k)?;
+            let name = texture_names.get(slot as usize).ok_or_else(invalid)?;
+            Ok((slot as u16, name.clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let draw_distance_squared = [
+        f32::from_bits(word(4, near[0])?),
+        f32::from_bits(word(4, near[1])?),
+    ];
+    let pe = read_pe(dll)?;
+    let ids = course.piece_ids;
+    let mut values = rand.iter().copied();
+    let mut occurrences = Vec::with_capacity(ids.len());
+    for (occurrence, &piece_id) in ids.iter().enumerate() {
+        let (slot_count, slots) = row_slots(dll, &pe, piece_id)?;
+        let pictures = if occurrence + 20 < ids.len() {
+            let mut p = [0; 4];
+            for (k, value) in p.iter_mut().enumerate() {
+                if (k as u32) < slot_count {
+                    *value = picture(&mut values)?;
+                }
+            }
+            Some(p)
+        } else {
+            None
+        };
+        occurrences.push(BillboardOccurrence {
+            occurrence,
+            piece_id,
+            slot_count,
+            pictures,
+            slots,
+        });
+    }
+    let rand_calls = rand.len() - values.len();
+    if values.next().is_some() {
+        return Err(Error::invalid("unused kart rand results"));
+    }
+    Ok(CourseBillboards {
+        course: course.name,
+        model,
+        picture_textures,
+        draw_distance_squared,
+        rand_calls,
+        occurrences,
+    })
+}
+
+#[cfg(test)]
+mod billboard_choice {
+    use super::picture;
+
+    #[test]
+    fn native_threshold_and_truncation() {
+        let pick = |v: &[i32]| picture(&mut v.iter().copied()).unwrap();
+        // u must be strictly above 0.5; 16384/32768 is exactly 0.5.
+        assert_eq!(pick(&[16384]), 0);
+        assert_eq!(pick(&[16385, 0]), 1);
+        assert_eq!(pick(&[32767, 8191]), 1);
+        assert_eq!(pick(&[32767, 8192]), 2);
+        assert_eq!(pick(&[32767, 32767]), 4);
+        assert!(picture(&mut [20000].into_iter()).is_err());
+    }
+}
