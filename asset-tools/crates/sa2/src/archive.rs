@@ -164,7 +164,12 @@ pub fn read_gvm(data: &[u8]) -> Result<Vec<GvmEntry<'_>>> {
         let name = if flags & 1 != 0 {
             let b = span(data, row + 2, 28)?;
             let n = b.iter().position(|b| *b == 0).unwrap_or(b.len());
-            String::from_utf8(b[..n].to_vec()).map_err(|_| Error::invalid("non-UTF8 GVM name"))?
+            // Names are Shift-JIS on both GameCube and Steam (one Chao race bank uses full-width letters).
+            let (name, _, malformed) = encoding_rs::SHIFT_JIS.decode(&b[..n]);
+            if malformed {
+                return Err(Error::invalid("malformed Shift-JIS GVM name"));
+            }
+            name.into_owned()
         } else {
             format!("{i:03}")
         };
@@ -268,6 +273,32 @@ mod tests {
             assert!(read_gvm(&vec![0; n]).is_err());
             assert!(read_pak(&vec![0; n]).is_err());
         }
+    }
+    fn one_texture_gvm(name: &[u8]) -> Vec<u8> {
+        let mut b = b"GVMH".to_vec();
+        b.extend(34u32.to_le_bytes());
+        b.extend(1u16.to_be_bytes()); // names only
+        b.extend(1u16.to_be_bytes());
+        b.extend(0u16.to_be_bytes());
+        let mut field = [0u8; 28];
+        field[..name.len()].copy_from_slice(name);
+        b.extend(field);
+        b.extend(b"GVRT");
+        b.extend(8u32.to_le_bytes());
+        b.extend([0; 8]);
+        b
+    }
+    #[test]
+    fn gvm_names_are_shift_jis() {
+        // Synthetic name with full-width letters, as in a retail Chao race texture bank.
+        let entries_data = one_texture_gvm(b"tex_\x82\x83\x82\x92");
+        let entries = read_gvm(&entries_data).unwrap();
+        assert_eq!(entries[0].name, "tex_\u{ff43}\u{ff52}");
+        assert_eq!(
+            read_gvm(&one_texture_gvm(b"plain")).unwrap()[0].name,
+            "plain"
+        );
+        assert!(read_gvm(&one_texture_gvm(b"bad\x82")).is_err());
     }
     #[test]
     fn pak_preserves_hostile_names_as_metadata_only() {
