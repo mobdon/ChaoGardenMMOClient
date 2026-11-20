@@ -1,4 +1,4 @@
-import { Texture } from '@babylonjs/core';
+import { Quaternion, Texture, Vector3 } from '@babylonjs/core';
 
 // Native Chao face presentation, ported from SA2B GC ChaoMain.rel (GSNE8P):
 // AL_FaceSetEye (0xAAC0) and the AL_FACE_CTRL eyelid/blink state machine.
@@ -113,7 +113,7 @@ function faceParts(root) {
     const kind = node.metadata?.gltf?.extras?.chaoFace;
     const meshes = node.getChildMeshes ? [node, ...node.getChildMeshes(false)].filter(mesh => mesh.material) : [];
     if (kind === 'eye') parts.eyes.push(...meshes);
-    else if (kind === 'eyelid') parts.eyelids.push({ node, rest: node.rotationQuaternion?.clone() || null });
+    else if (kind === 'eyelid') parts.eyelids.push({ node });
     else if (kind === 'mouth') parts.mouths.push(node);
   }
   root.metadata = { ...(root.metadata || {}), chaoFaceParts: parts };
@@ -131,20 +131,34 @@ function eyeTexture(scene, index) {
   return textureCache.get(file);
 }
 
-// The lid rotation mapping (axis/sign per side) comes from the trace via the
-// manifest. Without it the lids stay hidden, as in the existing presentation.
+// al_draw_B (0x8CD4-0x8EA8): after the node's animated transform the lids get
+// node 19: Rz(+SlopeAng)·Rx(CloseAng), node 22: Rz(-SlopeAng)·Rx(CloseAng),
+// post-multiplied in node space. Lids are not drawn when CloseAng == -0x4000.
+// The converter records which glTF node-space axes carry native X and Z for
+// these nodes (manifest.eyelid); without it the lids stay hidden.
+const AXES = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+function axisRotation(axis, sign, bams) {
+  return Quaternion.RotationAxis(Vector3.FromArray(AXES[axis] || AXES.x), sign * (bams / BAMS) * 2 * Math.PI);
+}
+
 function applyLids(parts, lids) {
   const mapping = manifest?.eyelid;
-  for (const { node, rest } of parts.eyelids) {
-    if (!mapping || !rest) { node.setEnabled(false); continue; }
-    const side = mapping.sides?.[node.metadata?.gltf?.extras?.side] ?? 1;
-    const { close, slope } = lidAngles(lids);
-    const euler = [0, 0, 0];
-    euler[mapping.closeAxis] += side * (close / BAMS) * 2 * Math.PI;
-    euler[mapping.slopeAxis] += side * (slope / BAMS) * 2 * Math.PI;
+  const { close, slope } = lidAngles(lids);
+  for (const part of parts.eyelids) {
+    const { node } = part;
+    const extras = node.metadata?.gltf?.extras || {};
+    if (!mapping || close === -LID_HALF || !node.rotationQuaternion) { node.setEnabled(false); continue; }
+    // Animation rewrites the node each frame; a paused animation leaves our last value.
+    const base = part.written && node.rotationQuaternion.equals(part.written) ? part.base : node.rotationQuaternion.clone();
+    const slopeSign = (extras.lidSide === 'right' ? -1 : 1) * (mapping.slopeSign ?? 1);
+    const rotation = base
+      .multiply(axisRotation(mapping.slopeAxis, slopeSign, slope))
+      .multiply(axisRotation(mapping.closeAxis, mapping.closeSign ?? 1, close));
+    node.rotationQuaternion = rotation;
+    part.base = base;
+    part.written = rotation.clone();
     node.setEnabled(true);
-    node.rotationQuaternion = rest.multiply(
-      rest.constructor.RotationYawPitchRoll(euler[1], euler[0], euler[2]));
   }
 }
 
