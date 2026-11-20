@@ -14,6 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import gekko_tables  # noqa: E402
+
+fb = lambda x: struct.unpack(">I", struct.pack(">f", x))[0]
+f32 = lambda x: struct.unpack(">f", struct.pack(">f", x))[0]
 from dol_ppc import Dol  # noqa: E402
 
 gekko_tables.require()
@@ -98,4 +101,64 @@ for k in range(int(os.environ.get("SA2_ACT_CASES", "6000"))):
     cases.append({"fn": name, "g": g.copy(), "t": t.hex(), "m": mw.hex(), "p": p.hex(), "ret": m.gpr(3),
                   "t_after": bytes(m.u.mem_read(TW, TWN)).hex(), "m_after": bytes(m.u.mem_read(MW, MWN)).hex(),
                   "p_after": bytes(m.u.mem_read(PW, PWN)).hex(), "log": log[:]})
-print(json.dumps({"cases": cases}))
+# fn_800AC950 with fn_80037AB8, fn_80005510 and fn_8000EDD0 stubbed.
+lk = {}
+centers = {}
+
+
+def edd0(mm):
+    c = centers[mm.gpr(3)]
+    m.u.mem_write(mm.gpr(5), struct.pack(">3f", *c))
+    log.append(["edd0"])
+
+
+m.stub(0x80037AB8, lambda mm: mm.gpr(3, lk["partner"] & 0xFFFFFFFF))
+m.stub(0x80005510, lambda mm: mm.gpr(3, lk["counts"][mm.gpr(3)]))
+m.stub(0x8000EDD0, edd0)
+LISTS = (0x801E31B0, 0x801E2FB0)
+OBJ = 0x81200000
+lock = []
+for _ in range(3000):
+    t = bytearray(floats(TWN))
+    p = bytearray(floats(PWN))
+    t[0] = rng.choice([0, 1, 0x11, 2])
+    struct.pack_into(">3i", t, 8, rng.randrange(-0x2000, 0x2000), rng.randrange(0, 0x10000), rng.randrange(-0x2000, 0x2000))
+    base = [rng.uniform(-50, 50) for _ in range(3)]
+    struct.pack_into(">3f", p, 0x218, *base)
+    p[0] = rng.choice([0, 1])
+    near = lambda r: [base[j] + rng.uniform(-r, r) for j in range(3)]
+    lk.clear()
+    lk["partner"] = rng.choice([-1, 1, 0])
+    lk["counts"] = [rng.randrange(0, 4), rng.randrange(0, 4)]
+    pq = near(rng.choice([25, 40, 80]))
+    m.put(0x801E7728 + 4 * (lk["partner"] & 3), "I", OBJ + 0x8000)
+    m.u.mem_write(OBJ + 0x8000 + 0x218, struct.pack(">3f", *pq))
+    centers.clear()
+    lists = []
+    k = 0
+    for li in range(2):
+        ents = []
+        for j in range(lk["counts"][li]):
+            task = OBJ + 0x400 * k
+            k += 1
+            tw_, cwp, tgt, ttw, info = task + 0x100, task + 0x180, task + 0x200, task + 0x280, task + 0x300
+            valid = rng.choice(["ok", "ok", "ok", "nocwp", "notgt", "notw"])
+            kind = rng.choice([0, 0xC, 3])
+            c = [f32(x) for x in near(rng.choice([25, 40, 80]))]
+            m.put(LISTS[li] + 4 * j, "I", task)
+            m.put(task + 0x34, "I", tw_)
+            m.put(tw_ + 0x2C, "I", 0 if valid == "nocwp" else cwp)
+            m.put(cwp + 0x9C, "I", 0 if valid == "notgt" else tgt)
+            m.put(tgt + 0x34, "I", 0 if valid == "notw" else ttw)
+            m.put(cwp + 0xC, "I", info)
+            m.put(info, "B", kind)
+            centers[ttw] = c
+            ents.append({"valid": valid == "ok", "kind": kind, "c": [fb(x) for x in c]})
+        lists.append(ents)
+    m.u.mem_write(TW, bytes(t))
+    m.u.mem_write(PW, bytes(p))
+    log.clear()
+    m.call(0x800AC950, r3=TW, r4=PW)
+    lock.append({"t": t.hex(), "p": p.hex(), "partner": lk["partner"], "pq": [fb(f32(x)) for x in pq], "lists": lists,
+                 "ret": m.gpr(3), "log": log[:]})
+print(json.dumps({"cases": cases, "lock": lock}))

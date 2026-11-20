@@ -5,7 +5,9 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 use crate::{
+    land_nodes::nj_scalor,
     native_work::{pw, tw, Work},
+    ninja_matrix::{rotate_by_angles, MatrixStack, Vec3},
     walker_exec::EngineCall,
 };
 
@@ -299,4 +301,69 @@ pub fn queue_ground_request(t: &Work, p: &mut Work) -> bool {
     }
     push_request(p, 0x32);
     true
+}
+
+/// A lock-on candidate from the engine's two collision target lists
+/// (0x801E31B0 counted by fn_80005510(0), then 0x801E2FB0 counted by
+/// fn_80005510(1)): entries whose collision has a target task work
+/// (+0x9C, then +0x34). `kind` is the first info entry's kind byte and
+/// `center` what fn_8000EDD0 gives for it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LockTarget {
+    pub kind: u8,
+    pub center: Vec3,
+}
+
+/// The engine data fn_800AC950 reads.
+pub trait LockWorld {
+    /// fn_80037AB8(pnum) and the other player's +0x218 point.
+    fn partner(&mut self, pnum: i8) -> Option<Vec3>;
+    /// The candidates of list 0 (0x801E31B0) or 1 (0x801E2FB0).
+    fn targets(&mut self, list: usize) -> Vec<LockTarget>;
+}
+
+const LOCK_PARTNER_AHEAD: f32 = 20.0; // r2-0x6950
+const LOCK_TARGET_AHEAD: f32 = 30.0; // r2-0x69CC
+const LOCK_RANGE: f32 = 15.0; // r2-0x6990
+
+/// fn_800AC950(task work, player work): whether something to lock onto is
+/// within 15 of the point 20 (the other player) or 30 (a target) ahead of
+/// the walker's +0x218, while standing, running or in mode 0x11.
+pub fn lock_in_range(
+    stack: &mut MatrixStack,
+    t: &Work,
+    p: &Work,
+    world: &mut dyn LockWorld,
+) -> bool {
+    let mode = t.b(tw::MODE);
+    if mode != 0 && mode != 1 && mode != 0x11 {
+        return false;
+    }
+    let base = p.v3(0x218);
+    let angles = t.ang3(tw::ANG);
+    let near = |stack: &mut MatrixStack, q: Vec3, ahead: f32| {
+        let v = rotate_by_angles(stack, angles, [1.0, 0.0, 0.0]).map(|x| x * ahead);
+        let d = [
+            q[0] - base[0] - v[0],
+            q[1] - base[1] - v[1],
+            q[2] - base[2] - v[2],
+        ];
+        nj_scalor(d) < LOCK_RANGE
+    };
+    if let Some(q) = world.partner(p.b(pw::PNUM)) {
+        if near(stack, q, LOCK_PARTNER_AHEAD) {
+            return true;
+        }
+    }
+    for list in [0, 1] {
+        for e in world.targets(list) {
+            if e.kind == 0xC {
+                continue;
+            }
+            if near(stack, e.center, LOCK_TARGET_AHEAD) {
+                return true;
+            }
+        }
+    }
+    false
 }

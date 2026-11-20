@@ -2,10 +2,11 @@
 //! native work areas.
 use sa2_asset_tools::{
     native_work::Work,
+    ninja_matrix::MatrixStack,
     walker_act::{
-        button_held, button_pressed, go_stand, queue_button_requests, queue_event_requests,
-        queue_ground_request, queue_stand_requests, reset_f48, walker_command, ActGlobals,
-        ActSteps,
+        button_held, button_pressed, go_stand, lock_in_range, queue_button_requests,
+        queue_event_requests, queue_ground_request, queue_stand_requests, reset_f48,
+        walker_command, ActGlobals, ActSteps, LockTarget, LockWorld,
     },
     walker_exec::EngineCall,
 };
@@ -126,4 +127,40 @@ fn walker_act_matches_main_dol() {
         );
         assert_eq!(Value::from(log), case["log"], "case {ci}: {}", case["fn"]);
     }
+    struct World<'a>(&'a Value, Vec<Value>);
+    impl LockWorld for World<'_> {
+        fn partner(&mut self, _: i8) -> Option<[f32; 3]> {
+            (self.0["partner"].as_i64().unwrap() != -1).then(|| v3(&self.0["pq"]))
+        }
+        fn targets(&mut self, list: usize) -> Vec<LockTarget> {
+            self.0["lists"][list]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["valid"].as_bool().unwrap())
+                .map(|e| LockTarget {
+                    kind: e["kind"].as_u64().unwrap() as u8,
+                    center: v3(&e["c"]),
+                })
+                .collect()
+        }
+    }
+    let mut stack = MatrixStack::new();
+    let mut hits = 0;
+    for (ci, case) in c["lock"].as_array().unwrap().iter().enumerate() {
+        let (t, p) = (hex(&case["t"]), hex(&case["p"]));
+        let mut w = World(case, vec![]);
+        let r = lock_in_range(&mut stack, &t, &p, &mut w);
+        hits += r as u32;
+        assert_eq!(
+            r as u64,
+            case["ret"].as_u64().unwrap(),
+            "lock case {ci}: {case}"
+        );
+    }
+    assert!(hits > 80, "{hits}");
+}
+
+fn v3(v: &Value) -> [f32; 3] {
+    [0, 1, 2].map(|k| f32::from_bits(v[k].as_u64().unwrap() as u32))
 }
