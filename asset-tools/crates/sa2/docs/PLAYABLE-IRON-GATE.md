@@ -14,6 +14,15 @@ and the mover the engine says it stands on), and `Session::step` runs the
 native object rules against it. See
 [PLAYABLE-PRISON-LANE.md](PLAYABLE-PRISON-LANE.md) for the shared design.
 
+Rotations are evaluated only at whole quarter turns, where sine and cosine
+are exactly 0 or +/-1; the engine's trig table is main-program data, so
+placements at other angles are listed as unimplemented. Lift, elevator and
+bridge collision objects keep the placement's Y rotation only (stg09D.rel
+0x4930, 0x30CC, 0x510; stg11D.rel likewise), and the elevator's object sits
+40 below its placement (checked constant in both modules). Goal contact is
+reported by the host (`PlayerSample::touching_goal`), and the slot word the
+goal ring writes is exposed as is rather than interpreted as a clear.
+
 ## Native rules
 
 | System | Source |
@@ -28,9 +37,9 @@ native object rules against it. See
 | Iron containers (CONTIRON, 7) | stg11D.rel 0x20714 registers CollisionData sec5+0x656D8 through 0x8000F7D8: form 3, centre (0, 10, 0), half-extents 10, a 20-unit cube; all 7 placements are built |
 | Chao and wooden containers (CONTCHAO 3, CONTWOOD 27) | 0x1FDA4 and 0x2132C register the same cube rows (sec5+0x649E0, +0x666C8); all built as solids, breaking (player attacks) not run |
 | Fuse boxes (MECHA, 13) | 0x53E4 registers sec5+0x51198: form 3, centre (0, 20, 2), half-extents (10, 20, 5); its exec only runs that collision. The 4 placed at yaw 0 are built; the centre is off the Y axis, so the others wait on the rotation rule |
-| Springs (SPRA, SPRB) | `spring::StageSpring` tasks and native launch vectors; contact is not run |
+| Springs (SPRA, SPRB) | All 6 are tilted at X/Z angles that are not quarter turns, so their launch vectors would need the unread trig table; listed as unimplemented |
 | Rings | o_ring_M1: pickup strictly within 14 of the collision centre, AddScore(10), AddNumRing(1) |
-| Goal ring | `goal_ring` initialization and Contact branch; 25-unit sphere against the collision centre plus radius; contact writes slot word 2, treated as the clear |
+| Goal ring | `goal_ring` initialization and Contact branch, run on a host-reported touch; contact writes slot word 2 |
 | Death zones | PC_SA2/STG11.ini RVA 0x8040D0 (volumes only; entering one is not run) |
 | Checkpoints | Placement positions only |
 
@@ -43,4 +52,4 @@ boxes and everything else are listed by name in `Session::unimplemented`.
 `cargo test --release --test iron_gate_play -- --ignored` with
 `SA2_GAME_PATH` and `SA2_PC_CONFIG` set: the installed mover rules and
 inventory, a lift raised by standing on it (starts on frame 31 and ends at
-its native top), and goal contact (sound 0x1013, slot word 2, clear).
+its native top), and a host-reported goal touch (sound 0x1013, slot word 2).

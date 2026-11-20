@@ -19,6 +19,15 @@ engine says it stands on) and `Session::step` runs the native object rules.
 cargo run --release -- $game $pcSa2Config --stage prison-lane out.json
 ```
 
+Rotations are evaluated only at whole quarter turns, where sine and cosine
+are exactly 0 or +/-1; the engine's trig table is main-program data, so
+placements at other angles are listed as unimplemented. Lift, elevator and
+bridge collision objects keep the placement's Y rotation only (stg09D.rel
+0x4930, 0x30CC, 0x510; stg11D.rel likewise), and the elevator's object sits
+40 below its placement (checked constant in both modules). Goal contact is
+reported by the host (`PlayerSample::touching_goal`), and the slot word the
+goal ring writes is exposed as is rather than interpreted as a clear.
+
 ## Mover rules
 
 Both stage modules build the MLIFT/ELV/BRIDGE family from the same source.
@@ -55,9 +64,9 @@ outer door (114 frames) gates travel.
 | MECHA (12) | 0x527C registers sec5+0x41DB4: form 3, centre (0, 0, 2), half-extents (10, 10, 5); its exec only runs that collision | The 2 at yaw 0 (the centre is off the Y axis) |
 | RING_LINEAR (17 lines) | 0x1B448, count helper 0x1B1E8, placement helper 0x1B21C | The 15 flat lines turned only about Y (0x801154E0, the goal ring spin call): 56 rings, Scale.z clamped to 1..=8, spaced 10 + Scale.x along local -Z |
 | Rings | o_ring_M1 | Pickup strictly within 14 of the collision centre |
-| Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact; slot word 2 is the clear |
+| Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact branch on a host-reported touch; writes slot word 2 |
 | Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Volumes only |
-| Checkpoints, springs | placements; `spring::StageSpring` launch vectors | Data only; contact is not run |
+| Checkpoints, springs | placements; `spring::StageSpring` | Checkpoint positions only; the one spring is tilted at a non-quarter angle and is listed as unimplemented |
 
 Everything else is listed by name in `Session::unimplemented`, including
 the rotated CCUBE and fence placements, the angled fence rows (form 2), the
@@ -74,4 +83,4 @@ spinning model), TANK, SPHERE, CCYL, item boxes and enemies.
 | --- | --- |
 | Installed mover rules and inventory | All constants above verified; 15 lifts, 2 elevators, 2 bridges, 3 checkpoints, 1 live goal, 17 PANEL, 9 CCUBE, 21 fence boxes, 56 rings; stg11D.rel is rejected for this layout |
 | Standing on the one-way diagonal elevator | Starts on frame 183, arrives at its Scale target and stops for good; the bridge that extended toward it on frame 1 stays out (its 120-frame cooldown was not met) |
-| Ring and goal contact | Rings within 14 of the centre are taken for 10 points each; goal contact plays sound 0x1013, writes slot word 2 and clears |
+| Ring and goal contact | Rings within 14 of the centre are taken for 10 points each; a host-reported goal touch plays sound 0x1013 and writes slot word 2 |
