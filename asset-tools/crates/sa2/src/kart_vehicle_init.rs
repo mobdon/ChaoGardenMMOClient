@@ -453,7 +453,7 @@ struct Boost {
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum BoostCall {
-    Effect800bf43c {
+    Effect800bf6a4 {
         slot: i32,
         kind: i32,
         position: [f32; 3],
@@ -507,7 +507,7 @@ fn boost_step(
             .position
             .ok_or_else(|| crate::Error::invalid("missing boost effect position"))?;
         position[1] -= f(0x29c);
-        b.calls.push(BoostCall::Effect800bf43c {
+        b.calls.push(BoostCall::Effect800bf6a4 {
             slot: s.work_70,
             kind: 5,
             position,

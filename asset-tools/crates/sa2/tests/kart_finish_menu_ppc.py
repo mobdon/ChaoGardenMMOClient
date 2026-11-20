@@ -1,5 +1,6 @@
 """Compare restricted finish input and timeouts with the installed PPC task."""
 import json, struct, subprocess, sys, tempfile
+from gsne8p import steam_rel
 from pathlib import Path
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_BIG_ENDIAN, UC_MODE_PPC32, UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -18,7 +19,7 @@ callsites = {}
 off,n = struct.unpack_from(">II",data,40)
 for mod,at in struct.iter_unpack(">II",data[off:off+n]):
     while True:
-        delta,kind,sec,add = struct.unpack_from(">HBBI",data,at);at += 8
+        delta,kind,sec,add = steam_rel(struct.unpack_from(">HBBI", data, at), mod);at += 8
         if kind == 203: break
         if kind == 202: target,loc = sec,0;continue
         loc += delta

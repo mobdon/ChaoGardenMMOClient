@@ -1,5 +1,6 @@
 """Compare active profile loading and pre-dispatch velocity limiting with CartD."""
 from pathlib import Path
+from gsne8p import steam_rel
 import json,struct,subprocess,sys,tempfile
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -15,7 +16,7 @@ for s,addr in base.items():
 o,n=struct.unpack_from(">II",data,40)
 for mod,at in struct.iter_unpack(">II",data[o:o+n]):
     while True:
-        delta,k,s,a=struct.unpack_from(">HBBI",data,at);at+=8
+        delta,k,s,a=steam_rel(struct.unpack_from(">HBBI", data, at), mod);at+=8
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
@@ -53,7 +54,7 @@ def boost_hook(m,addr,*_):
     if addr==base[1]+0x501c:
         assert a==wk+0x7c and list(get(a,"3f"))==got["velocity"]
         put(a,"3f",*boost["normalized_velocity"])
-    elif addr==base[1]+0x4fb4:calls.append(dict(effect800bf43c=dict(slot=a,kind=b,position=list(get(c,"3f")),velocity=list(get(d,"3f")))))
+    elif addr==base[1]+0x4fb4:calls.append(dict(effect800bf6a4=dict(slot=a,kind=b,position=list(get(c,"3f")),velocity=list(get(d,"3f")))))
     else:calls.append(dict(engine8002f76c=[a,b,c,d]))
     m.reg_write(R.UC_PPC_REG_PC,addr+4)
 for pc in (0x501c,0x4fb4,0x5074):u.hook_add(UC_HOOK_CODE,boost_hook,begin=base[1]+pc,end=base[1]+pc)

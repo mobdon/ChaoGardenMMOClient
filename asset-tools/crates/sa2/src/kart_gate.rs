@@ -120,7 +120,7 @@ fn tick_registered(rel: &CityRel<'_>, s: GateTick) -> Result<GateResult> {
                 ));
             }
             r.latch = 1;
-            r.calls.push("main:8006b710(25,0,0,0)");
+            r.calls.push("main:8006b978(25,0,0,0)");
             r.timer_word = r
                 .timer_word
                 .wrapping_add((ticks as i32 as u32).wrapping_mul(60));

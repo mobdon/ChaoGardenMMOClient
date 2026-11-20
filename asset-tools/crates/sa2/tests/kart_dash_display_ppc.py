@@ -1,5 +1,6 @@
 """Compare kart dash display commands, local geometry and decoded texture with CartD."""
 from pathlib import Path
+from gsne8p import steam_rel
 import json,struct,subprocess,sys,tempfile
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
@@ -15,7 +16,7 @@ for s,addr in base.items():
 o,n=struct.unpack_from(">II",data,40)
 for mod,at in struct.iter_unpack(">II",data[o:o+n]):
     while True:
-        delta,k,s,a=struct.unpack_from(">HBBI",data,at);at+=8
+        delta,k,s,a=steam_rel(struct.unpack_from(">HBBI", data, at), mod);at+=8
         if k==203:break
         if k==202:t=s;l=0;continue
         l+=delta
