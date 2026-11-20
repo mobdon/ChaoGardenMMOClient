@@ -28,7 +28,7 @@ use crate::{
         enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
         WALL_ROW_COUNT,
     },
-    prison_visuals::{MslRand, Searchlight, Siren, SoundEmitter, SIREN_RADIUS},
+    prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -656,6 +656,7 @@ pub struct Session {
     #[serde(skip)]
     wall_rows: Vec<CollisionRow>,
     pub sirens: Vec<Siren>,
+    pub fluos: Vec<Fluo>,
     pub searchlights: Vec<Searchlight>,
     pub sound_emitters: Vec<SoundEmitter>,
     /// MSL rand state the visual objects draw from (seed 1).
@@ -784,6 +785,7 @@ impl Session {
         let mut doors = vec![];
         let mut walls = vec![];
         let mut sirens = vec![];
+        let mut fluos = vec![];
         let mut searchlights = vec![];
         let mut sound_emitters = vec![];
         let mut rand = MslRand::default();
@@ -893,6 +895,14 @@ impl Session {
                         pl.position,
                         pl.rotation[0],
                     )),
+                    (_, "FLUO") if rules.prison_doors => {
+                        // stg09D.rel 0x418C: radius-5 sphere at sec5+0x40504.
+                        fluos.push(Fluo::new(li, p.placement_index, pl.position));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: FLUO_RADIUS,
+                        });
+                    }
                     (_, "SIGNA") if rules.prison_doors => {
                         // stg09D.rel 0x58D8: draw only, no state.
                     }
@@ -1100,6 +1110,7 @@ impl Session {
             walls,
             wall_rows,
             sirens,
+            fluos,
             searchlights,
             sound_emitters,
             rand,
@@ -1228,6 +1239,9 @@ impl Session {
         }
         for s in &mut self.sirens {
             s.step();
+        }
+        for f in &mut self.fluos {
+            f.step(&mut self.rand);
         }
         for s in &mut self.searchlights {
             s.step();

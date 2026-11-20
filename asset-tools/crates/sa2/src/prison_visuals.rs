@@ -160,3 +160,84 @@ mod tests {
         assert_eq!(s.angle, a.wrapping_add(1120));
     }
 }
+
+/// FLUO (stg09D.rel 0x418C set-up, 0x4260 exec): a flickering fluorescent
+/// light with a radius-5 sphere (sec5+0x40504). Brightness (work +0x28)
+/// starts at 1 and the timer (work +6) at `trunc(1 + 0.5 * 100)`. On
+/// (state 0): brightness rises 0.25 per frame to at most 1; when the timer
+/// was already 0 it reloads with `trunc(1 + 2 * (rand() * 2^-15))` and the
+/// light goes off. Off (state 1): brightness falls 0.25 to at least 0; when
+/// the timer was 0 it reloads with `trunc(1 + 100 * (rand() * 2^-15))` and
+/// the light comes on. The draw tints by 255 * (0.8 + 0.2 * brightness).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fluo {
+    pub layer: usize,
+    pub index: usize,
+    pub position: V3,
+    pub off: bool,
+    pub brightness: f32,
+    pub timer: u16,
+}
+
+pub const FLUO_RADIUS: f32 = 5.0;
+
+impl Fluo {
+    pub fn new(layer: usize, index: usize, position: V3) -> Self {
+        Self {
+            layer,
+            index,
+            position,
+            off: false,
+            brightness: 1.0,
+            timer: (1.0f32 + 0.5 * 100.0) as i32 as u16,
+        }
+    }
+
+    pub fn step(&mut self, rand: &mut MslRand) {
+        let unit = |rand: &mut MslRand| f32::from_bits(0x3800_0000) * (rand.rand() as i32 as f32);
+        let old = self.timer;
+        if !self.off {
+            self.brightness += 0.25;
+            if self.brightness > 1.0 {
+                self.brightness = 1.0;
+            }
+            self.timer = old.wrapping_sub(1);
+            if old == 0 {
+                self.timer = (1.0 + 2.0 * unit(rand)) as i32 as u16;
+                self.off = true;
+            }
+        } else {
+            self.brightness -= 0.25;
+            if self.brightness < 0.0 {
+                self.brightness = 0.0;
+            }
+            self.timer = old.wrapping_sub(1);
+            if old == 0 {
+                self.timer = (1.0 + 100.0 * unit(rand)) as i32 as u16;
+                self.off = false;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod fluo_tests {
+    use super::*;
+
+    #[test]
+    fn fluo_stays_on_51_frames_then_flickers() {
+        let mut r = MslRand::default();
+        let mut f = Fluo::new(0, 0, [0.0; 3]);
+        assert_eq!(f.timer, 51);
+        let mut frames = 0;
+        while !f.off {
+            f.step(&mut r);
+            frames += 1;
+        }
+        // 51 counts down, then the reload frame.
+        assert_eq!(frames, 52);
+        // rand 16838: 1 + 2 * 0.5138 = 2 frames off.
+        assert_eq!(f.timer, 2);
+    }
+}

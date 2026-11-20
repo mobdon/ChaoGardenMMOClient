@@ -122,8 +122,9 @@ fn installed_mover_rules_and_session_inventory() {
             assert_eq!(s.unimplemented.get(name), Some(&n), "{name}");
         }
         // 8 fence rails, 4 gears, 4 spheres, 1 cylinder, the tank and the
-        // 7 sirens' radius-5 spheres.
-        assert_eq!(s.shapes.len(), 25);
+        // 7 sirens' and 34 fluorescent lights' radius-5 spheres.
+        assert_eq!(s.shapes.len(), 59);
+        assert_eq!(s.fluos.len(), 34);
         assert_eq!(
             (s.sirens.len(), s.searchlights.len(), s.sound_emitters.len()),
             (7, 12, 0)
