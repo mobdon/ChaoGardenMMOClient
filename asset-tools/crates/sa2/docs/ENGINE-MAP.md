@@ -579,6 +579,71 @@ the store; a site reached from two branches may store either.)
   these bytes through a pointer the scan cannot follow (a store through a
   register loaded from memory) is not excluded.
 
+## 8b. One-player via the native select route
+
+Question: can the game's own values (only what advertiseD/titleD write) give
+player 1 = selection 13 or 14 (row 0xD / 0xE walker) with **no** player 2 in
+stage 11?
+
+**1. What decides whether player 2 is loaded** (`fn_8001DEA8`, loop over
+player r31 = 0, 1):
+
+| Address | Condition |
+| --- | --- |
+| 0x8001DF7C | player index == 1 (player 0 is always loaded) |
+| 0x8001DF84 | G+0x1E (0x801CC186) ≠ 0, tested as a signed byte against zero only |
+| 0x8001DF90–0x8001E02C | dispatch on the character word 0x803AD82C: each of 0, 1, 4, 5, 2, 3, 7, 6 calls its loader; any other value calls no loader |
+| 0x8001E034 | `fn_8001D74C(1)` (start position) runs whenever the first two pass, whether or not a loader ran |
+
+Nothing else is read: no player-count byte, no "none" character value,
+G+0x55+1 is not tested here (only inside the char-6/7 loaders).
+0x803AD82C lies in .sbss (zero-initialised, so character 0 until written).
+Every constant written to it is 0 or 1 (titleD `fn_8001DDC0(1, 0/1)`). The
+other writes go through `fn_8001DDC0(1, rX)` with a register value (advertiseD
+7 sites, titleD 2 sites); the select writer `fn_91_201D8` only produces 0..7
+or leaves the word unchanged (selections 9–11). No write of a value outside
+0..7 was found; the register-valued sites are **not bounded statically**
+(unresolved).
+
+**2. Other readers of G+0x1E.** In main.dol, 163 reads: 156 are zero tests,
+3 use the byte as a value (fn_800101E0 +0x58, fn_800107EC +0x7C, fn_80069118
++0x3C) and 4 compare it with 2 (fn_8001C810 +0xC0, fn_8001EFA8 +0x48,
+fn_8005F230 +0x104, fn_80061EF4 +0x2C). What 1 versus 2 selects is
+**unresolved**. The walker loaders read it only as zero/non-zero:
+0x800B5AC0 / 0x800B5D2C at entry (alternate-row gate) and again at
+0x800B5BC0 / 0x800B5E2C, where G+0x1E ≠ 0 and G+0x53+player == 1 pick a
+different pair of model/motion tables and set player-work byte +0x2 = 1.
+0x800B58D4 / 0x800B56E8 do not read G+0x1E.
+
+Session init `fn_80021828` (0x800218AC–0x80021980): with G+0x1E ≠ 0 it sets
+G+0x23 = 0 and **G+0x20 = 1 (split screen) when either player's character is 6
+or 7**, or when G+0x1F is 1 or 4. Otherwise G+0x20 = 0 (stage 0x47 is left
+as it is). With G+0x1E == 0, G+0x20 = 0. G+0x20 then selects the
+multi-viewport display (`fn_80070BA8`) and the camera task's viewport count
+(`fn_800C4458(4/2/1)` at 0x80021AF0–0x80021B0C). So a native two-player walker
+game runs split screen.
+
+**3. Stage 11 under G+0x1E ≠ 0.** The init fn_11_A434 does not read G+0x1E,
+so nothing refuses to load. 13 zero tests exist in stg11D's object and display
+code: fn_11_14D28 (4, around fn_800148FC / fn_80014CD8 / fn_8001475C),
+fn_11_2497C, fn_11_2549C, fn_11_2633C (each next to a stage-number check and
+`IsThisTaskPlayer`), fn_11_3DCFC (before `SetNoRevive`), fn_11_3DF60 (2,
+around fog and fn_800618B4), fn_11_3E0F0, fn_11_47040 (2). What each branch
+changes is **unresolved**.
+
+**4. Conclusion.** No natively reachable state was found that gives player 1
+the row-0xD/0xE walker with no player 2:
+- the alternate row needs G+0x1E ≠ 0 (0x800B5AC0 / 0x800B5D2C);
+- G+0x1E ≠ 0 always runs player 2's dispatch, and player 2's character word
+  is 0 by default with every write found in 0..7, so a player-2 task is
+  loaded;
+- with a walker character it also switches to split screen (G+0x20 = 1).
+
+A one-player Iron Gate as the walker therefore needs a port-side choice
+(calling 0x800B58D4 or 0x800B56E8 for player 0 with G+0x1E = 0). Main.dol
+never does this. The one gap is the register-valued writes to 0x803AD82C,
+which this static pass does not bound.
+
 ## 9. Unresolved, for the next milestones
 
 - fn_8012297C (render-state selector in the display pass) and G+0x3D values.
