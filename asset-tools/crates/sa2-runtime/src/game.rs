@@ -42,6 +42,10 @@ pub struct WalkerWork<'a> {
     pub pwp: &'a mut Vec<u8>,
     /// G 0x801CC168.
     pub g: &'a [u8],
+    /// 0x801E53F8: this player's stick angle (BAMS) and magnitude.
+    pub stick: (u32, f32),
+    /// The pad copy's scaled stick X and Y (+0x1C, +0x1E).
+    pub raw_stick: [i16; 2],
 }
 
 /// The engine as the walker sees it: calls run at once on the runtime (in
@@ -201,6 +205,8 @@ struct GameNatives<'a> {
     g: &'a [u8],
     playertwp: [Option<TaskId>; 2],
     rand_next: &'a mut u32,
+    sticks: [(u32, f32); 2],
+    raw_sticks: [[i16; 2]; 2],
 }
 
 impl Natives for GameNatives<'_> {
@@ -225,6 +231,7 @@ impl Natives for GameNatives<'_> {
                 let (g, rand_next) = (self.g, &mut *self.rand_next);
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut eng = RuntimeEngine { rt, rand_next };
+                    let (stick, raw_stick) = (self.sticks[player & 1], self.raw_sticks[player & 1]);
                     let w = WalkerWork {
                         task,
                         player,
@@ -232,6 +239,8 @@ impl Natives for GameNatives<'_> {
                         mwp,
                         pwp,
                         g,
+                        stick,
+                        raw_stick,
                     };
                     walker.exec(w, &mut eng);
                 }))
@@ -340,6 +349,11 @@ impl Game {
             g: &g,
             playertwp: self.stage.set.table.playertwp,
             rand_next: &mut self.session.rand_next,
+            sticks: [self.host.pads.sticks[0], self.host.pads.sticks[1]],
+            raw_sticks: [0, 1].map(|i| {
+                let c = &self.host.pads.copies[i];
+                [0x1C, 0x1E].map(|o| i16::from_be_bytes([c[o], c[o + 1]]))
+            }),
         };
         let mut with_set = WithSet {
             inner: &mut natives,
