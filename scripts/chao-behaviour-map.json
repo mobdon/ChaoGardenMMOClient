@@ -1,5 +1,135 @@
 {
   "version": 1,
   "rules": "Behaviour kinds and timing are server placeholder-tuning until native controller values are decoded. Each nativeState below is a native Chao motion state chosen to present that behaviour; the native controller that would select it is not ported.",
-  "clips": []
+  "clips": [
+    {
+      "kind": "idle",
+      "phase": "loop",
+      "variant": 0,
+      "nativeState": 0,
+      "nativeName": "alm_tati",
+      "evidence": "Chao Stand; LoopProperty 1"
+    },
+    {
+      "kind": "idle",
+      "phase": "loop",
+      "variant": 1,
+      "nativeState": 6,
+      "nativeName": "alm_tati_hima",
+      "evidence": "Chao Stand (Kicking, Then Arms Behind Back)"
+    },
+    {
+      "kind": "idle",
+      "phase": "loop",
+      "variant": 2,
+      "nativeState": 84,
+      "nativeName": "alm_nobi_tati",
+      "evidence": "Chao Stretching"
+    },
+    {
+      "kind": "sit",
+      "phase": "enter",
+      "variant": 0,
+      "nativeState": 80,
+      "nativeName": "alm_sit_down",
+      "evidence": "Chao Sitting Down (Jump B)"
+    },
+    {
+      "kind": "sit",
+      "phase": "loop",
+      "variant": 0,
+      "nativeState": 94,
+      "nativeName": "alm_suwari_guta",
+      "evidence": "Chao Sitting Down (Bored)"
+    },
+    {
+      "kind": "sit",
+      "phase": "loop",
+      "variant": 1,
+      "nativeState": 573,
+      "nativeName": "alm_suwari_hakusyu",
+      "evidence": "Chao Sitting Down (Entertained)"
+    },
+    {
+      "kind": "sit",
+      "phase": "exit",
+      "variant": 0,
+      "nativeState": 82,
+      "nativeName": "alm_stand_up",
+      "evidence": "Chao Standing Up From Sitting Down"
+    },
+    {
+      "kind": "sleep",
+      "phase": "enter",
+      "variant": 0,
+      "nativeState": 18,
+      "nativeName": "alm_sleep",
+      "evidence": "Chao Sleeping (Face-Up B); native NextAnimation 19"
+    },
+    {
+      "kind": "sleep",
+      "phase": "loop",
+      "variant": 0,
+      "nativeState": 19,
+      "nativeName": "alm_sleep",
+      "evidence": "Chao Sleeping (Face-Up B); continuation of state 18"
+    },
+    {
+      "kind": "sleep",
+      "phase": "exit",
+      "variant": 0,
+      "nativeState": 39,
+      "nativeName": "alm_akubi",
+      "evidence": "Chao Big Yawn"
+    },
+    {
+      "kind": "play",
+      "phase": "loop",
+      "variant": 0,
+      "nativeState": 387,
+      "nativeName": "alm_box_dance",
+      "evidence": "Chao Dancing (Box); LoopProperty 1"
+    },
+    {
+      "kind": "play",
+      "phase": "loop",
+      "variant": 1,
+      "nativeState": 391,
+      "nativeName": "alm_hip",
+      "evidence": "Chao Sways Hips; LoopProperty 1"
+    },
+    {
+      "kind": "play",
+      "phase": "loop",
+      "variant": 2,
+      "nativeState": 330,
+      "nativeName": "alm_garagara",
+      "evidence": "Chao Clapping; LoopProperty 1"
+    },
+    {
+      "kind": "play",
+      "phase": "loop",
+      "variant": 3,
+      "nativeState": 309,
+      "nativeName": "alm_pyon",
+      "evidence": "Chao Hopping in Place"
+    },
+    {
+      "kind": "happy",
+      "phase": "loop",
+      "variant": 0,
+      "nativeState": 250,
+      "nativeName": "alm_nade_glad",
+      "evidence": "Chao During Petting (Happy)"
+    },
+    {
+      "kind": "startled",
+      "phase": "loop",
+      "variant": 0,
+      "nativeState": 42,
+      "nativeName": "alm_okiru",
+      "evidence": "Chao Forced Awakening From Sleep"
+    }
+  ],
+  "source": "States and labels from the local al_motion_table manifest (PC_SA2/Chao_DLL.ini, 622 states), read 2026-11-20 at client checkout de23ecd. Each row is a presentation choice by native label; the native behaviour controller that selects these states is not yet decoded."
 }

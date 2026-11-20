@@ -242,6 +242,17 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     return `${String(data.form || 'normal').toLowerCase()}:${!!data.admin}:${assetFor(data)}:${vehicleFor(data) || ''}`;
   }
 
+  // Babylon does not expose top-level glTF asset extras; read them from the
+  // GLB JSON chunk so tooling provenance (e.g. native clip tables) is available.
+  function readGlbAssetExtras(bytes) {
+    try {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (view.getUint32(16, true) !== 0x4e4f534a) return null;
+      const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + view.getUint32(12, true))));
+      return json.asset?.extras ?? null;
+    } catch { return null; }
+  }
+
   function loadLocalAsset(key) {
     if (assetContainers.has(key)) return assetContainers.get(key);
     const task = (async () => {
@@ -254,6 +265,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         if (bytes.byteLength < 12 || new DataView(bytes.buffer).getUint32(0, true) !== 0x46546c67 || disposed) return null;
         const container = await LoadAssetContainerAsync(bytes, scene, { pluginExtension: '.glb', name: `${key}.glb` });
         if (disposed) { container.dispose(); return null; }
+        container.gltfAssetExtras = readGlbAssetExtras(bytes);
         for (const group of container.animationGroups) group.stop();
         const faceMaterials = {
           chao: ['al_ncz.sa2mdl_3', 'al_ncz.sa2mdl_4', 'al_ncz.sa2mdl_5'],

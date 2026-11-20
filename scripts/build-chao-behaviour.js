@@ -35,6 +35,17 @@ const manifest = JSON.parse(await readFile(resolve(assetRoot, '.local/extracted/
 const library = JSON.parse(await readFile(resolve(assetRoot, '.local/imports/activity-motions/conversion-report.json'), 'utf8'))
   .libraries.find(row => row.name === 'chao-actions');
 
+// Manifest table values are strings. Frames and speeds are decimal; the
+// transition speed is a signed 32-bit hex value. Absent StartFrame is 0 and
+// absent EndFrame is the clip end.
+function numericTable(raw = {}, frameRange = [0, 0]) {
+  const number = value => value === undefined ? undefined : Number.parseFloat(value);
+  const table = { StartFrame: number(raw.StartFrame) ?? 0, EndFrame: number(raw.EndFrame) ?? frameRange[1],
+    PlaySpeed: number(raw.PlaySpeed), LoopProperty: number(raw.LoopProperty), NextAnimation: number(raw.NextAnimation),
+    Pose: number(raw.Pose), TransitionSpeed: raw.TransitionSpeed === undefined ? undefined : (Number.parseInt(raw.TransitionSpeed, 16) | 0) };
+  for (const [key, value] of Object.entries(table)) if (value !== undefined) assert.ok(Number.isFinite(value), `${key} is not numeric.`);
+  return table;
+}
 const clips = [];
 for (const row of rows) {
   const state = manifest.commonStates.find(entry => entry.index === row.nativeState);
@@ -47,7 +58,8 @@ for (const row of rows) {
   clips.push({ kind: row.kind, phase: row.phase, loop: row.loop !== false, nativeState: row.nativeState,
     nativeName: state.nativeName, nativeMotionLabel: state.nativeMotionLabel, nativeFile,
     sourceSha256: evidence.sourceSha256, frameRange: evidence.frameRange,
-    tableProperties: row.tableProperties ?? state.tableProperties, mapping: row.evidence ?? null });
+    nativeTableProperties: state.tableProperties, tableProperties: numericTable(state.tableProperties, evidence.frameRange),
+    mapping: row.evidence ?? null });
 }
 
 const names = [...new Set(clips.map(clip => clip.nativeName))];

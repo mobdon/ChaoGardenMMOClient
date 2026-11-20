@@ -66,3 +66,20 @@ test('update drives a paused native group and the face API once per change', () 
   assert.deepEqual(calls.at(-1), ['reset']);
   registerChaoFaceApi(null);
 });
+
+test('recorded native state map is complete and well formed', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const map = JSON.parse(await readFile(new URL('../scripts/chao-behaviour-map.json', import.meta.url), 'utf8'));
+  const keys = new Set();
+  for (const row of map.clips) {
+    assert.ok(['idle', 'sit', 'sleep', 'play', 'happy', 'startled'].includes(row.kind));
+    assert.ok(['enter', 'loop', 'exit'].includes(row.phase));
+    assert.ok(Number.isInteger(row.nativeState) && row.nativeState >= 0 && row.nativeState < 622);
+    assert.match(row.nativeName, /^alm_[a-z_]+$/);
+    assert.ok(row.evidence, 'every mapping records its evidence');
+    const key = `${row.kind}:${row.phase}:${row.variant}`; assert.ok(!keys.has(key), key); keys.add(key);
+  }
+  for (const kind of ['idle', 'sit', 'sleep', 'play', 'happy', 'startled']) assert.ok(keys.has(`${kind}:loop:0`), `${kind} needs a loop clip`);
+  // Server variant counts (src/behaviour.rs Kind::variants) are covered.
+  for (const [kind, count] of [['idle', 3], ['play', 4], ['sit', 2]]) assert.ok(keys.has(`${kind}:loop:${count - 1}`));
+});

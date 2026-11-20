@@ -47,8 +47,7 @@ export function readBehaviour(watch) {
 
 /** Read the clip catalog from a loaded behaviour GLB container. */
 export function readCatalog(source) {
-  const rows = source?.metadata?.gltf?.asset?.extras?.chaoBehaviour?.clips
-    ?? source?.chaoBehaviour?.clips ?? [];
+  const rows = source?.gltfAssetExtras?.chaoBehaviour?.clips ?? source?.chaoBehaviour?.clips ?? [];
   return rows.filter(row => BEHAVIOUR_KINDS.includes(row?.kind) && typeof row.nativeName === 'string'
     && ['enter', 'loop', 'exit'].includes(row.phase));
 }
