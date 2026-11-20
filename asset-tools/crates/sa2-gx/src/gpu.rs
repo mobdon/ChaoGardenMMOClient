@@ -194,6 +194,8 @@ pub struct GxRenderer {
     texture_binds: HashMap<[(Option<TextureId>, SamplerDesc); 8], wgpu::BindGroup>,
     white: wgpu::TextureView,
     depth: Option<(wgpu::TextureView, [u32; 2])>,
+    /// Offscreen EFB for render-to-texture passes.
+    efb: Option<wgpu::Texture>,
     /// Viewport for the next [`Self::render`] (x, y, w, h, near, far in
     /// target pixels); `None` covers the target.
     pub viewport: Option<[f32; 6]>,
@@ -283,6 +285,7 @@ impl GxRenderer {
             texture_binds: HashMap::new(),
             white,
             depth: None,
+            efb: None,
             viewport: None,
         }
     }
@@ -686,9 +689,10 @@ impl GxRenderer {
         self.queue.submit([enc.finish()]);
     }
 
-    /// Apply a recorded frame's texture uploads and draw its draws, in
-    /// order, into `target`. Runs of draws with the same projection and
-    /// viewport share one pass; the first clears to the frame's clear color.
+    /// Apply a recorded frame's texture uploads and draw it into `target`.
+    /// Render-to-texture passes (each ending in an EFB copy to a texture)
+    /// draw into an offscreen EFB first, and the copied rectangle becomes the
+    /// texture later draws sample; what follows the last copy is the picture.
     pub fn render_frame(
         &mut self,
         frame: &crate::api::Frame,
@@ -698,14 +702,99 @@ impl GxRenderer {
         for u in &frame.uploads {
             self.replace_texture(u.id, &u.levels);
         }
-        let lod_bias = params::calc_lod_bias(size[0] as f32, size[1] as f32);
         let c = frame.clear_color;
-        let mut clear = Some([c[0] as f64, c[1] as f64, c[2] as f64, c[3] as f64]);
+        let clear_color = [c[0] as f64, c[1] as f64, c[2] as f64, c[3] as f64];
+        let mut clear = Some(clear_color);
         let mut start = 0;
-        while start < frame.draws.len() || clear.is_some() {
-            let first = frame.draws.get(start);
+        let efb_size = [params::EFB_WIDTH as u32, 480];
+        for copy in &frame.tex_copies {
+            let end = copy.draw.min(frame.draws.len());
+            let efb = self.efb_target(efb_size);
+            let view = efb.create_view(&Default::default());
+            self.draw_range(frame, start..end, &view, efb_size, clear.take());
+            self.copy_to_texture(&efb, copy);
+            if copy.clear {
+                clear = Some(clear_color);
+            }
+            start = end;
+        }
+        self.draw_range(frame, start..frame.draws.len(), target, size, Some(clear_color));
+    }
+
+    /// The offscreen EFB for render-to-texture passes.
+    fn efb_target(&mut self, size: [u32; 2]) -> wgpu::Texture {
+        if let Some(t) = &self.efb {
+            if t.width() == size[0] && t.height() == size[1] {
+                return t.clone();
+            }
+        }
+        let t = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gx efb"),
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        self.efb = Some(t.clone());
+        t
+    }
+
+    /// GXCopyTex: the EFB rectangle becomes texture `copy.id`.
+    /// shortcut: the copy's own scale and texture format are not applied
+    /// (full resolution, the target's colour format).
+    fn copy_to_texture(&mut self, efb: &wgpu::Texture, copy: &crate::api::TexCopy) {
+        let [x, y, w, h] = copy.src;
+        let x = x.min(efb.width().saturating_sub(1));
+        let y = y.min(efb.height().saturating_sub(1));
+        let w = w.min(efb.width() - x).max(1);
+        let h = h.min(efb.height() - y).max(1);
+        let t = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gx efb copy"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: efb,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            t.as_image_copy(),
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([enc.finish()]);
+        let id = copy.id;
+        self.textures.insert(id, GpuTexture { view: t.create_view(&Default::default()) });
+        self.next_texture = self.next_texture.max(id + 1);
+        self.texture_binds.retain(|k, _| !k.iter().any(|(t, _)| *t == Some(id)));
+    }
+
+    /// Draw `frame.draws[range]` into `target`. Runs of draws with the same
+    /// projection and viewport share one pass; `clear` clears the first.
+    fn draw_range(
+        &mut self,
+        frame: &crate::api::Frame,
+        range: std::ops::Range<usize>,
+        target: &wgpu::TextureView,
+        size: [u32; 2],
+        mut clear: Option<[f64; 4]>,
+    ) {
+        let lod_bias = params::calc_lod_bias(size[0] as f32, size[1] as f32);
+        let mut start = range.start;
+        while start < range.end || clear.is_some() {
+            let first = frame.draws.get(start).filter(|_| start < range.end);
             let mut end = start;
-            while end < frame.draws.len()
+            while end < range.end
                 && first.is_some_and(|f| {
                     f.projection == frame.draws[end].projection
                         && f.viewport == frame.draws[end].viewport

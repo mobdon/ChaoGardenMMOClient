@@ -180,11 +180,25 @@ pub struct TextureUpload {
     pub levels: Vec<(u32, u32, Vec<u8>)>,
 }
 
+/// One GXCopyTex: after `draw` draws, the EFB rectangle `src` (x, y, width,
+/// height in EFB pixels) becomes texture `id`; `clear` clears the EFB after.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TexCopy {
+    pub draw: usize,
+    pub src: [u32; 4],
+    pub id: TextureId,
+    pub clear: bool,
+}
+
 /// What a frame drew.
 #[derive(Debug, Clone, Default)]
 pub struct Frame {
     pub clear_color: [f32; 4],
     pub draws: Vec<DrawCmd>,
+    /// EFB copies to a texture (GXCopyTex: render to texture, e.g. shadows),
+    /// in order. Draws before the last one belong to those passes, not to the
+    /// picture copied to the screen.
+    pub tex_copies: Vec<TexCopy>,
     pub uploads: Vec<TextureUpload>,
 }
 
@@ -238,6 +252,9 @@ pub struct Gx {
     /// renderer replaces the texture instead of keeping a new one each frame.
     tex_cache: HashMap<TexKey, (TextureId, u64)>,
     tex_gen: u64,
+    /// Textures made by EFB copies, by destination (physical) address: a
+    /// texture loaded from there is the copy, not the bytes in RAM.
+    efb_copies: HashMap<u32, TextureId>,
     next_texture: TextureId,
     // Register mirrors for display-list loads.
     regs: crate::vtx::DisplayListRegisters,
@@ -317,6 +334,7 @@ impl Gx {
             tex_cache: HashMap::new(),
             tex_gen: 0,
             next_texture: 0,
+            efb_copies: HashMap::new(),
             regs: {
                 let mut r = crate::vtx::DisplayListRegisters::default();
                 r.init_gx();
@@ -781,9 +799,12 @@ impl Gx {
             levels,
             tlut,
         };
-        let id = match self.tex_cache.get(&key).copied() {
-            Some((id, generation)) if generation == self.tex_gen => id,
-            stale => {
+        let copied = self.efb_copies.get(&obj.image_addr).copied();
+        let cached = self.tex_cache.get(&key).copied();
+        let id = match (copied, cached) {
+            (Some(id), _) => id,
+            (None, Some((id, generation))) if generation == self.tex_gen => id,
+            (None, stale) => {
                 let id = stale.map_or_else(
                     || {
                         self.next_texture += 1;
@@ -1151,6 +1172,24 @@ impl Gx {
                 } else {
                     None
                 }
+            }
+            // PE copy execute: bit 14 set copies to the XFB (the screen),
+            // clear copies to a texture.
+            0x52 if v & 0x4000 == 0 => {
+                let (tl, wh) = (r.bp[0x49], r.bp[0x4A]);
+                let src = [tl & 0x3FF, (tl >> 10) & 0x3FF, (wh & 0x3FF) + 1, ((wh >> 10) & 0x3FF) + 1];
+                let addr = (r.bp[0x4B] & 0x1F_FFFF) << 5;
+                let id = match self.efb_copies.get(&addr) {
+                    Some(id) => *id,
+                    None => {
+                        let id = self.next_texture;
+                        self.next_texture += 1;
+                        self.efb_copies.insert(addr, id);
+                        id
+                    }
+                };
+                let draw = self.frame.draws.len();
+                self.frame.tex_copies.push(TexCopy { draw, src, id, clear: v & 0x800 != 0 });
             }
             _ => *self.unhandled.entry(format!("BP {addr:#04x}")).or_default() += 1,
         }
