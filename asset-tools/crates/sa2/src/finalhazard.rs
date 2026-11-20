@@ -900,6 +900,8 @@ pub enum PlacementClock {
     SuperFreeMove(Box<SuperFreeMoveFrame>),
     /// Section 1 + 0xbad0: super-form hit handling and action selection.
     SuperControl(Box<SuperControlFrame>),
+    /// Section 1 + 0xc67c: the action-67 charge effect draw.
+    SuperChargeDraw(Box<SuperChargeDrawFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2672,6 +2674,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperHover(frame) => return super_hover(&rel, &frame),
         PlacementClock::SuperFreeMove(frame) => return super_free_move(&rel, &frame),
         PlacementClock::SuperControl(frame) => return super_control(&rel, &frame),
+        PlacementClock::SuperChargeDraw(frame) => return super_charge_draw(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -4277,4 +4280,61 @@ fn super_control(
         "hit_timer":c.hit_timer,"flags_10":c.flags_10,
         "scope":"0xbad0 with its local checks; engine queries and vector services are request inputs."}),
     )
+}
+
+/// Inputs to section 1 + 0xc67c. `pose` is the player's animation table
+/// entry for halfword 0x178 (its halfwords 0 and 2) and `base_pose` is
+/// halfword 0 of the entry that halfword 0 names. `motion` and `model` are
+/// word 4 of the selected 8-byte entries of the engine tables 0x801e6288
+/// and 0x801e5928.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperChargeDrawFrame {
+    pub entity: u32,
+    /// Engine global 0x801cbd88 word 0x7c.
+    pub frame: u32,
+    pub rotation: [i32; 3],
+    pub slot: i8,
+    pub pose: [i16; 2],
+    pub base_pose: i16,
+    pub motion: u32,
+    pub model: u32,
+    /// Player word 0x370 and float 0x184.
+    pub word_370: u32,
+    pub f184: f32,
+}
+/// Section 1 + 0xc67c: on even frames, draws the player's charge effect at
+/// its position and rotation (Y as 0x8000 minus the entity's yaw). Returns
+/// the table slots it selects and the draw call's arguments.
+fn super_charge_draw(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperChargeDrawFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let mut ev = Vec::new();
+    if f.frame & 1 == 0 {
+        let stack = rel
+            .reference(1, 0xc6de)
+            .filter(|r| r.module == 0 && r.kind == 6)
+            .ok_or_else(|| Error::invalid("missing matrix stack reference"))?
+            .addend;
+        ev.push(call(0xc6e4, serde_json::json!([stack]))?);
+        ev.push(call(0xc6ec, serde_json::json!([f.entity + 0x14]))?);
+        ev.push(call(0xc6f8, serde_json::json!([0, f.rotation[2] as u32]))?);
+        ev.push(call(0xc704, serde_json::json!([0, f.rotation[0] as u32]))?);
+        ev.push(call(
+            0xc71c,
+            serde_json::json!([0, 0x8000i32.wrapping_sub(f.rotation[1]) as u32]),
+        )?);
+        let mut draw = call(
+            0xc75c,
+            serde_json::json!([f.motion, f.model, f.word_370, 0, f.slot as i32 as u32]),
+        )?;
+        draw["floats"] = serde_json::json!([f.f184]);
+        ev.push(draw);
+        ev.push(call(0xc760, serde_json::json!([]))?);
+    }
+    Ok(serde_json::json!({"events":ev,"motion_slot":f.pose[1],"model_slot":f.base_pose}))
 }
