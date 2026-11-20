@@ -9,7 +9,6 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-const MAX_FRAMES: usize = 1 << 20;
 const PIECES: usize = 20;
 
 /// Every constant, read through the instruction that loads it.
@@ -101,13 +100,10 @@ pub fn constants(rel_bytes: &[u8]) -> Result<FireballConstants> {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FireballWork {
     /// Work +1 (set when the meteor explodes).
-    #[serde(default)]
     pub exploded: u8,
     /// Work +6: 0 until first seen, then frames since.
-    #[serde(default)]
     pub timer: u16,
     /// Work +8 and +0xC (BAMS).
-    #[serde(default)]
     pub angles: [i32; 2],
     /// Work +0x14.
     pub position: [f32; 3],
@@ -304,9 +300,6 @@ pub fn replay(rel_bytes: &[u8], request: &[u8]) -> Result<Value> {
     let constants = constants(rel_bytes)?;
     let req: Request = serde_json::from_slice(request)
         .map_err(|e| Error::invalid(format!("meteor request: {e}")))?;
-    if req.frames.len() > MAX_FRAMES || req.rand.len() > MAX_FRAMES {
-        return Err(Error::invalid("meteor frame limit"));
-    }
     let m = Fireball {
         constants: &constants,
         collision_radius: req.collision_radius,

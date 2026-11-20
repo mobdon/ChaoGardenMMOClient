@@ -98,7 +98,8 @@ for a in imports|{B+DEBRIS}:u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 def run(case):
     task=alloc(0x60);work=alloc(0x40);info=alloc(0x20);ctx.update(task=task,light=case['lightHandle'])
     put(task+0x34,'I',work);put(work+0x2c,'I',info);put(info+0xc,'I',S5+0x1e48)
-    wk=case['work'];put(work+0x20,'f',wk['scaleX'])
+    wk=case['work'];put(work+0x20,'f',wk['scaleX']);put(work+1,'B',wk['exploded']);put(work+6,'H',wk['timer'])
+    put(work+8,'i',wk['angles'][0]);put(work+0xc,'i',wk['angles'][1])
     for i,v in enumerate(wk['position']):put(work+0x14+4*i,'f',v)
     rands[:]=list(case['rand']);out=[]
     for f in case['frames']:
@@ -143,10 +144,10 @@ timeout=[{'call':'init'}]+[{'visible':i>=5,'smokeAllocated':i%2==0} for i in ran
 touched=[{'call':'init','taskCheck':True},{'call':'init'},{'visible':True},{'taskCheck':True},{'hit':True,'transforms':pieces()}]
 deleted=[{'call':'init'}]+[{'visible':i==2,'smokeAllocated':True} for i in range(8)]+[{'taskCheck':True},{'call':'delete'}]
 cases={
- 'timeout':{'work':{'position':[17623.539,-71.0,-153.31],'scaleX':30.0},'collisionRadius':32.0,'lightHandle':0x91000040,'frames':timeout},
- 'touched':{'work':{'position':[16808.695,40.0,-66.414],'scaleX':7.0},'collisionRadius':32.0,'lightHandle':0x91000080,'frames':touched},
- 'deleted':{'work':{'position':[17484.891,41.0,56.262],'scaleX':0.0},'collisionRadius':32.0,'lightHandle':0x910000c0,'frames':deleted},
- 'no-light':{'work':{'position':[0.0,0.0,0.0],'scaleX':0.0},'collisionRadius':32.0,'lightHandle':0,'frames':[{'call':'init'},{'call':'delete'}]},
+ 'timeout':{'work':{'exploded':0,'timer':0,'angles':[0,0],'position':[17623.539,-71.0,-153.31],'scaleX':30.0},'collisionRadius':32.0,'lightHandle':0x91000040,'frames':timeout},
+ 'touched':{'work':{'exploded':0,'timer':0,'angles':[0x4000,-5],'position':[16808.695,40.0,-66.414],'scaleX':7.0},'collisionRadius':32.0,'lightHandle':0x91000080,'frames':touched},
+ 'deleted':{'work':{'exploded':0,'timer':0,'angles':[0,0],'position':[17484.891,41.0,56.262],'scaleX':0.0},'collisionRadius':32.0,'lightHandle':0x910000c0,'frames':deleted},
+ 'no-light':{'work':{'exploded':0,'timer':0,'angles':[0,0],'position':[0.0,0.0,0.0],'scaleX':0.0},'collisionRadius':32.0,'lightHandle':0,'frames':[{'call':'init'},{'call':'delete'}]},
 }
 for c in cases.values():c['rand']=[rng.randrange(32768) for _ in range(800)]
 with tempfile.TemporaryDirectory(dir=Path.cwd()/'.local') as tmp:

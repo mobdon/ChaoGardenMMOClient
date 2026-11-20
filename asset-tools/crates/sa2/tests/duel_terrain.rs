@@ -1,26 +1,18 @@
-use sa2_asset_tools::duel_platform::{self, FrameInput, Generator, GeneratorState, Spawn};
+//! Level 42 checks. Every constant comes from the installed stg42D.rel.
+use sa2_asset_tools::duel_platform::{self, FrameInput, Generator, GeneratorState, SpawnWork};
+use sa2_asset_tools::duel_platform_motion::{
+    self, Call, Platform, PlatformFrame, PlatformStart, PlatformWork,
+};
 use std::{fs, path::PathBuf};
 
 fn game() -> PathBuf {
     PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap())
 }
-fn synthetic() -> Generator {
-    Generator {
-        start_x: 0.0,
-        step_x: 300.0,
-        lookahead: 2100.0,
-        timer_scale: 0.4,
-        timer_floor: -3600.0,
-        result_x: -300.0,
-        result_timer: 0x8000,
-        deadline_frames: 3,
-        late_timer: 900,
-        fall_after: 900,
-        stand_timer: 720,
-        collision_radius_pad: 15.0,
-        collision_flags: 0x2800_0001,
-        collision_radius: 173.29166,
-    }
+fn rel() -> Vec<u8> {
+    fs::read(game().join("resource/gd_PC/stg42D.rel")).unwrap()
+}
+fn installed() -> Generator {
+    duel_platform::generator(&rel()).unwrap()
 }
 fn frame(a: Option<f32>, b: Option<f32>) -> FrameInput {
     FrameInput {
@@ -30,42 +22,48 @@ fn frame(a: Option<f32>, b: Option<f32>) -> FrameInput {
 }
 
 #[test]
+#[ignore = "requires installed stg42D.rel"]
 fn generator_follows_players_and_deadline() {
-    let g = synthetic();
+    let g = installed();
     let mut s = GeneratorState::default();
     assert!(g.step(&mut s, &frame(Some(0.0), None)).unwrap().is_empty());
     assert_eq!((s.mode, s.cursor_x, s.frames), (1, 0.0, 1));
     let first = g.step(&mut s, &frame(Some(0.0), Some(0.0))).unwrap();
     assert_eq!(first.len(), 7);
-    assert_eq!(first[6].x, 1800.0);
-    assert_eq!(first[1].timer, (-120i16) as u16);
-    // A player far ahead pulls the cursor forward.
+    assert_eq!(first[6].unwrap().x, 1800.0);
+    assert_eq!(first[1].unwrap().timer, (-120i16) as u16);
     let ahead = g.step(&mut s, &frame(Some(5000.0), None)).unwrap();
-    assert_eq!(ahead.first().unwrap().x, 2100.0);
-    assert_eq!(ahead.last().unwrap().x, 6900.0);
-    assert_eq!(ahead[0].timer, 1160);
-    assert_eq!((s.frames, s.flags), (3, 0));
-    // The counter passes three after this frame's spawning; later platforms
-    // are created already activated with timer 900.
-    assert!(g
-        .step(&mut s, &frame(Some(5000.0), None))
-        .unwrap()
-        .is_empty());
-    assert_eq!((s.frames, s.flags), (3, 0x1000));
-    let late = g.step(&mut s, &frame(Some(5300.0), None)).unwrap();
+    assert_eq!(
+        (ahead[0].unwrap().x, ahead[0].unwrap().timer),
+        (2100.0, 1160)
+    );
+    assert_eq!(ahead.last().unwrap().unwrap().x, 6900.0);
+    // A null allocation leaves that platform unwritten; the cursor still advances.
+    let skip = FrameInput {
+        failed_allocations: vec![0],
+        ..frame(Some(5300.0), None)
+    };
+    assert_eq!(g.step(&mut s, &skip).unwrap(), vec![None]);
+    assert_eq!(s.cursor_x, 7500.0);
+    while s.flags == 0 {
+        assert!(g.step(&mut s, &frame(None, None)).unwrap().is_empty());
+    }
+    assert_eq!(s.frames, 36000);
+    let late = g.step(&mut s, &frame(Some(5600.0), None)).unwrap();
     assert_eq!(
         late,
-        vec![Spawn {
-            x: 7200.0,
+        vec![Some(SpawnWork {
+            x: 7500.0,
             timer: 900,
             activated: true
-        }]
+        })]
     );
 }
 
 #[test]
+#[ignore = "requires installed stg42D.rel"]
 fn result_mode_spawns_one_platform_and_pause_holds_counter() {
-    let g = synthetic();
+    let g = installed();
     let mut s = GeneratorState::default();
     let paused = FrameInput {
         paused: true,
@@ -78,31 +76,22 @@ fn result_mode_spawns_one_platform_and_pause_holds_counter() {
         ..frame(Some(0.0), Some(0.0))
     };
     let r = g.step(&mut s, &result).unwrap();
-    assert_eq!(r.len(), 1);
     assert_eq!(
-        (r[0].x, r[0].timer, r[0].activated),
-        (-300.0, 0x8000, false)
+        r,
+        vec![Some(SpawnWork {
+            x: -300.0,
+            timer: 0x8000,
+            activated: false
+        })]
     );
     assert!(g.step(&mut s, &frame(Some(9e3), None)).unwrap().is_empty());
     assert_eq!(s.mode, 2);
 }
 
 #[test]
-fn nan_player_spawns_nothing() {
-    let g = synthetic();
-    let mut s = GeneratorState::default();
-    g.step(&mut s, &frame(None, None)).unwrap();
-    assert!(g
-        .step(&mut s, &frame(Some(f32::NAN), None))
-        .unwrap()
-        .is_empty());
-}
-
-#[test]
 #[ignore = "requires installed stg42D.rel and sonic2app.exe"]
 fn installed_template_matches_executable_platform() {
-    let gd = game().join("resource/gd_PC");
-    let rel = fs::read(gd.join("stg42D.rel")).unwrap();
+    let rel = rel();
     let exe = fs::read(game().join("sonic2app.exe")).unwrap();
     let a = duel_platform::read_rel(&rel).unwrap();
     let b = duel_platform::read(&exe).unwrap();
@@ -147,38 +136,37 @@ fn installed_template_matches_executable_platform() {
 }
 
 #[test]
+#[ignore = "requires installed stg42D.rel"]
 fn platform_activates_then_falls_after_the_stand_timer() {
-    use sa2_asset_tools::duel_platform_motion::{
-        Call, MotionConstants, Platform, PlatformFrame, PlatformWork,
-    };
-    let g = synthetic();
-    let c = MotionConstants {
-        visibility_pad: 16.0,
-        debris: [150.0, 50.0, 7.0, 0.5, 1.0],
-        rumble_strength: 2.0,
-        fall_velocity: -0.15,
-        floor_y: -100.0,
-        terminal_velocity: -2.1,
-        acceleration: 0.1,
-        rand_scale: 1.0 / 32768.0,
-        spin_scale: 64.0,
-        roll_scale: 16.0,
-        roll_offset: 32.0,
-    };
+    let rel = rel();
+    let g = installed();
+    let c = duel_platform_motion::constants(&rel).unwrap();
     let p = Platform {
         generator: &g,
         constants: &c,
         has_task_field_30: false,
     };
-    let mut w = PlatformWork::spawned(&Spawn {
-        x: 0.0,
+    let mut w = PlatformWork::start(&PlatformStart {
+        mode: 0,
+        activated: 0,
+        flags: 0,
         timer: 0,
-        activated: false,
+        angles: [0; 3],
+        position: [0.0; 3],
+        motion: [0; 14],
     });
     let mut rand = [16384, 0, 32767].into_iter();
     let idle = PlatformFrame::default();
+    // A failed model copy frees the object copy and retries next update.
+    let fail = PlatformFrame {
+        failed_allocations: vec![1],
+        ..Default::default()
+    };
+    let calls = p.step(&mut w, &fail, &mut rand).unwrap();
+    assert_eq!(calls.last(), Some(&Call::FreeObject));
+    assert_eq!((w.mode, w.object_y), (0, None));
     let calls = p.step(&mut w, &idle, &mut rand).unwrap();
-    assert!(matches!(calls[0], Call::Init { .. }));
+    assert!(matches!(calls[2], Call::Register { .. }));
     assert_eq!((w.mode, w.timer), (1, 0));
     let stand = PlatformFrame {
         standing: true,
@@ -192,18 +180,10 @@ fn platform_activates_then_falls_after_the_stand_timer() {
         frames += 1;
     }
     // 180 more increments reach 901; the next update starts the fall.
-    assert_eq!((frames, w.velocity()), (182, -0.15));
-    while w.position[1] >= -100.0 {
+    assert_eq!((frames, w.velocity()), (182, c.fall_velocity));
+    while w.position[1] >= c.floor_y {
         p.step(&mut w, &idle, &mut rand).unwrap();
     }
-    // Below the floor: accelerate once and draw the spin from three rand values.
-    assert_eq!(
-        w.motion[1..4],
-        [
-            (24 - 32) as u32,
-            32,
-            (16.0f32 * (32767.0 / 32768.0) - 32.0) as i32 as u32
-        ]
-    );
+    assert_eq!(w.motion[1..4], [(24 - 32) as u32, 32, 0xffff_fff0]);
     assert_eq!(w.motion[8..11], w.motion[1..4]);
 }

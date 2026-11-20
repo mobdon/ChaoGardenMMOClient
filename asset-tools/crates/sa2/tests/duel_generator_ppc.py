@@ -46,12 +46,14 @@ page(B+FIRST,END-FIRST);u.mem_write(B+FIRST,bytes(code))
 for a in imports:put(a,'I',0x4e800020)
 page(STOP);put(STOP,'I',0x4e800020);page(G,0x100);page(PLAYERS,8);page(T,0x200000)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
-heap=[T+0x1000];spawned=[]
+heap=[T+0x1000];spawned=[];failing=set()
 def alloc(n):
     a=heap[0];heap[0]+=(n+15)&~15;u.mem_write(a,bytes(n));return a
 def hook(uc,pc,size,_):
     if pc!=SPAWN:return
     assert (reg(3),reg(4),reg(5),reg(6))==(6,2,D+0x400000+0x1d68,D+5*0x400000+0x1408)
+    if len(spawned) in failing:
+        spawned.append(None);u.reg_write(R.UC_PPC_REG_3,0);return
     task=alloc(0x60);work=alloc(0x40);put(task+0x34,'I',work);spawned.append(work)
     u.reg_write(R.UC_PPC_REG_3,task)
 u.hook_add(UC_HOOK_CODE,hook,begin=SPAWN,end=SPAWN)
@@ -63,11 +65,11 @@ def run(frames):
         for i,x in enumerate(f['players']):
             put(PLAYERS+4*i,'I',slots[i] if x is not None else 0)
             if x is not None:put(slots[i]+0x14,'f',x)
-        spawned.clear();u.reg_write(R.UC_PPC_REG_1,T+0x1f0000);u.reg_write(R.UC_PPC_REG_3,task)
+        spawned.clear();failing.clear();failing.update(f.get('failedAllocations',[]));u.reg_write(R.UC_PPC_REG_1,T+0x1f0000);u.reg_write(R.UC_PPC_REG_3,task)
         u.reg_write(R.UC_PPC_REG_LR,STOP);u.emu_start(B+FIRST,STOP,count=1<<22)
         assert reg('PC')==STOP
         out.append(((get(gen,'b'),get(gen+0x14,'I'),get(gen+4,'H'),get(gen+6,'H')),
-                    [(get(s+0x14,'I'),get(s+6,'H'),get(s+3,'B'),get(s+0x18,'I'),get(s+0x1c,'I')) for s in spawned]))
+                    [None if s is None else (get(s+0x14,'I'),get(s+6,'H'),get(s+3,'B'),get(s+0x18,'I'),get(s+0x1c,'I')) for s in spawned]))
     return out
 # Two runners: player 1 accelerates, player 2 lags, leaves and returns; a
 # paused stretch; the 36000-frame deadline; and a far jump past the timer clamp.
@@ -77,8 +79,10 @@ for i in range(36800):
     f={'players':[a,None if 900<=i<1500 else b]}
     if 2000<=i<2600:f['paused']=True
     if i==20000:f['players']=[a+12000.25,b]
+    if i in (3000,20000):f['failedAllocations']=[0,2]
     frames.append(f)
 cases={'race':frames,'result':[{'players':[0.0,0.0]},{'players':[0.0,0.0],'resultMode':True},{'players':[5e3,None]}],
+       'result-null':[{'players':[0.0,0.0]},{'players':[0.0,0.0],'resultMode':True,'failedAllocations':[0]},{'players':[5e3,None]}],
        'wrap':[{'players':[None,None]},{'players':[-1e5,1.5e5]}]}
 with tempfile.TemporaryDirectory(dir=Path.cwd()/'.local') as tmp:
     total=0
@@ -89,14 +93,11 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/'.local') as tmp:
         doc=json.loads(out.read_text(encoding='utf-8-sig'));doc=doc.get('document',doc)
         for i,(v,(state,sp)) in enumerate(zip(doc['frames'],native,strict=True)):
             s=v['state'];assert (s['mode'],bits(s['cursorX']),s['flags'],s['frames'])==state,(name,i,s,state)
-            assert [(bits(p['x']),p['timer'],int(p['activated']),0,0) for p in v['spawns']]==sp,(name,i,v['spawns'],sp)
+            assert [None if p is None else (bits(p['x']),p['timer'],int(p['activated']),0,0) for p in v['spawns']]==sp,(name,i,v['spawns'],sp)
             total+=len(sp)
-        flat=[p for _,sp in native for p in sp]
+        nulls=sum(p is None for _,sp in native for p in sp);flat=[p for _,sp in native for p in sp if p is not None]
         if name=='race':assert any(p[2] for p in flat) and any(not p[2] and (p[1]^0x8000)-0x8000>900 for p in flat) and native[-1][0][2]==0x1000
         if name=='wrap':assert any(p[1]>0x7fff and p[1]!=0xf1f0 for p in flat)
+        if name in ('race','result-null'):assert nulls>0
         print(name,len(fr),'frames,',len(flat),'spawns,',sum(p[2] for p in flat),'activated: matched installed PPC')
-    # At X=2^33 a 300-unit f32 step never leaves the lookahead loop (the native
-    # update would not return); the Rust replay must refuse instead of hanging.
-    req=Path(tmp)/'hang.json';req.write_text(json.dumps({'frames':[{'players':[None,None]},{'players':[float(2**33),None]}]}))
-    assert subprocess.run([sys.argv[1],'duel-generator',str(rel),str(Path(tmp)/'hang-out.json'),str(req)],stderr=subprocess.DEVNULL).returncode!=0
     print(total,'native platform spawns matched')

@@ -4,11 +4,9 @@
 //! creation, activation by a standing player, the timed fall, the random
 //! spin once below the floor, and removal. Rendering, collision response and
 //! the debris effect body are not executed.
-use crate::duel_platform::{self, Generator, Spawn};
+use crate::duel_platform::{self, Generator};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-
-const MAX_FRAMES: usize = 1 << 20;
 
 /// fcmpo/bge skips only when y >= floor; an unordered compare falls through.
 fn below(y: f32, floor: f32) -> bool {
@@ -71,26 +69,40 @@ pub struct PlatformWork {
     /// Work +0x14..+0x1C.
     pub position: [f32; 3],
     /// Collision object copy +0xC (Y) after the last write.
-    pub object_y: f32,
+    pub object_y: Option<f32>,
     /// Collision object copy +0x14..+0x1C.
-    pub object_angles: [i32; 3],
+    pub object_angles: Option<[i32; 3]>,
     /// Task +0x3C motion block, 14 raw words: +4/+8/+0xC spin, +0x14 Y
     /// velocity, and a copy of +0..+0x18 at +0x1C once spinning.
     pub motion: [u32; 14],
 }
+/// Work as the engine hands it to DODAI's first update. The generator
+/// writes only X, the timer and the activation byte; every other field is the
+/// engine allocator's and must be supplied.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PlatformStart {
+    pub mode: i8,
+    pub activated: u8,
+    pub flags: u16,
+    pub timer: u16,
+    pub angles: [i32; 3],
+    pub position: [f32; 3],
+    pub motion: [u32; 14],
+}
 impl PlatformWork {
-    /// A freshly spawned DODAI before its first update (mode 0).
-    pub fn spawned(s: &Spawn) -> Self {
+    /// The object copy does not exist until the constructor succeeds.
+    pub fn start(s: &PlatformStart) -> Self {
         Self {
-            mode: 0,
-            activated: s.activated as u8,
-            flags: 0,
+            mode: s.mode,
+            activated: s.activated,
+            flags: s.flags,
             timer: s.timer,
-            angles: [0; 3],
-            position: [s.x, 0.0, 0.0],
-            object_y: 0.0,
-            object_angles: [0; 3],
-            motion: [0; 14],
+            angles: s.angles,
+            position: s.position,
+            object_y: None,
+            object_angles: None,
+            motion: s.motion,
         }
     }
     pub fn velocity(&self) -> f32 {
@@ -120,14 +132,24 @@ pub struct PlatformFrame {
     /// Game byte +0x42.
     #[serde(default)]
     pub game_byte_42: i8,
+    /// Zero-based indices of this update's allocator calls that return null.
+    #[serde(default)]
+    pub failed_allocations: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "call", rename_all = "camelCase")]
 pub enum Call {
-    /// Two allocations, then dynamic-collision registration.
+    /// Engine allocator (0x80119488) and its result.
+    Alloc {
+        size: u32,
+        ok: bool,
+    },
+    /// Engine free (0x801194E0) of the object copy after a failed model copy.
+    FreeObject,
+    /// Dynamic-collision registration (0x8002305C).
     #[serde(rename_all = "camelCase")]
-    Init {
+    Register {
         collision_flags: u32,
         model_radius: f32,
     },
@@ -190,13 +212,29 @@ impl Platform<'_> {
             }
         };
         match w.mode {
-            0 => {
-                calls.push(Call::Init {
+            0 => 'init: {
+                let ok = |n: u32| !f.failed_allocations.contains(&n);
+                calls.push(Call::Alloc {
+                    size: 0x38,
+                    ok: ok(0),
+                });
+                if !ok(0) {
+                    break 'init;
+                }
+                calls.push(Call::Alloc {
+                    size: 0x28,
+                    ok: ok(1),
+                });
+                if !ok(1) {
+                    calls.push(Call::FreeObject);
+                    break 'init;
+                }
+                calls.push(Call::Register {
                     collision_flags: self.generator.collision_flags,
                     model_radius: radius,
                 });
-                w.object_y = w.position[1];
-                w.object_angles = w.angles;
+                w.object_y = Some(w.position[1]);
+                w.object_angles = Some(w.angles);
                 w.mode = 1;
             }
             1 => {
@@ -226,8 +264,8 @@ impl Platform<'_> {
                 for i in 0..3 {
                     w.angles[i] = w.angles[i].wrapping_add(w.motion[1 + i] as i32);
                 }
-                w.object_y = w.position[1];
-                w.object_angles = w.angles;
+                w.object_y = Some(w.position[1]);
+                w.object_angles = Some(w.angles);
                 if below(w.position[1], c.floor_y) {
                     calls.push(Call::TaskCheck);
                     if f.task_check {
@@ -284,16 +322,8 @@ impl Platform<'_> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct SpawnRequest {
-    x: f32,
-    timer: u16,
-    activated: bool,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Request {
-    spawn: SpawnRequest,
-    #[serde(default)]
+    work: PlatformStart,
     task_field_30: bool,
     #[serde(default)]
     rand: Vec<i32>,
@@ -311,19 +341,12 @@ pub fn replay(rel_bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
     let constants = constants(rel_bytes)?;
     let req: Request = serde_json::from_slice(request)
         .map_err(|e| Error::invalid(format!("duel platform request: {e}")))?;
-    if req.frames.len() > MAX_FRAMES || req.rand.len() > MAX_FRAMES {
-        return Err(Error::invalid("duel platform frame limit"));
-    }
     let p = Platform {
         generator: &generator,
         constants: &constants,
         has_task_field_30: req.task_field_30,
     };
-    let mut w = PlatformWork::spawned(&Spawn {
-        x: req.spawn.x,
-        timer: req.spawn.timer,
-        activated: req.spawn.activated,
-    });
+    let mut w = PlatformWork::start(&req.work);
     let mut rand = req.rand.into_iter();
     let mut frames = Vec::with_capacity(req.frames.len());
     for f in &req.frames {

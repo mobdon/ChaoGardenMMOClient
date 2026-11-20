@@ -53,8 +53,10 @@ so it falls 181 updates after activation. Meteor objects are not ported here.
 `duel_platform_motion` ports DODAI's update (code +0x1D68) as a state machine
 whose engine queries are inputs and whose engine calls are recorded:
 
-- Mode 0 (first update): two allocations, a copy of the template object and
-  model, and registration with flags `0x28000001`; the update tail then runs.
+- Mode 0 (first update): allocate 0x38 bytes (null: stop) and 0x28 bytes
+  (null: free the first and stop), copy the template object and model, and
+  register with flags `0x28000001`. A failed constructor leaves mode 0, so the
+  next update retries. The update tail runs either way.
 - Mode 1: a visibility query with radius `16 + 173.29` sets or clears flag
   0x100. With a signed timer above 900 the platform enters mode 2, calls the
   local debris helper (+0x1E8DC) with 150, 50, 7, 0.5 and 1, requests a
@@ -110,17 +112,26 @@ destructor (+0x2590); the display callback (+0x25BC) is not executed.
 
 The engine results (task check, hit, visibility, allocations, rand, matrix
 transforms and the collision radius at work +0x2C) are request inputs.
+
+## Inputs, not assumptions
+
+Nothing in these replays is filled in by the port. Engine results are request
+inputs: allocator results (`failedAllocations`, per call in update order),
+task checks, hits, visibility, `rand()` values and matrix results. The work an
+engine allocates is supplied whole (`work`); the generator's own spawns report
+only the three fields it writes, or `null` for a null allocation. Like the
+native loop, a generator update with a player far enough ahead that the f32
+cursor stops advancing does not return.
+
 ## Rust interface
 
 - `duel_platform::read_rel(rel)` reads the template from the fingerprinted REL.
 - `duel_platform::generator(rel)` reads every generator and DODAI constant
   through the relocation or instruction that consumes it.
-- `Generator::step(state, frame)` replays one DODAIGEN update. It refuses an
-  update that would spawn more than 4096 platforms; at very large X the native
-  loop would never end.
+- `Generator::step(state, frame)` replays one DODAIGEN update.
 - `duel_fireball::Fireball::{init, update, delete}` replay the meteor callbacks.
 - `duel_platform_motion::Platform::step(work, frame, rand)` replays one DODAI
-  update from a spawn.
+  update from the supplied work.
 
 ```powershell
 sa2-assets duel-generator <game>\resource\gd_PC\stg42D.rel .local\out\gen.json REQUEST.json
@@ -128,8 +139,9 @@ sa2-assets duel-platform-update <game>\resource\gd_PC\stg42D.rel .local\out\plat
 sa2-assets duel-meteor <game>\resource\gd_PC\stg42D.rel .local\out\meteor.json METEOR.json
 ```
 
-`REQUEST.json` is `{"frames":[{"players":[x|null,x|null],"resultMode":false,"paused":false}, ...]}`.
-`PLATFORM.json` is `{"spawn":{"x":0,"timer":0,"activated":false},"taskField30":false,"rand":[...],"frames":[{"taskCheck":false,"visible":true,"standing":false,"playerFlag":false,"paused":false,"gameByte42":0}, ...]}`.
+`REQUEST.json` is `{"frames":[{"players":[x|null,x|null],"resultMode":false,"paused":false,"failedAllocations":[]}, ...]}`.
+`PLATFORM.json` is `{"work":{"mode":0,"activated":0,"flags":0,"timer":0,"angles":[0,0,0],"position":[x,y,z],"motion":[14 words]},"taskField30":false,"rand":[...],"frames":[{"taskCheck":false,"visible":true,"standing":false,"playerFlag":false,"paused":false,"gameByte42":0,"failedAllocations":[]}, ...]}`.
+`METEOR.json` is `{"work":{"exploded":0,"timer":0,"angles":[0,0],"position":[x,y,z],"scaleX":0},"collisionRadius":32,"lightHandle":1,"rand":[...],"frames":[{"call":"init"},{"visible":true,"hit":false,"smokeAllocated":true,"transforms":[20 × {"point":[…],"vector":[…]}]}, ...]}`.
 
 ## Verification
 
@@ -145,18 +157,19 @@ The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
 repository root (it writes temporary requests under the ignored `.local`).
 It relocates DODAIGEN's own code and runs it under Unicorn with stub
 allocator and register-save imports. Over a 36,800-update race (pause,
-missing player slot, a 12,000-unit jump, the deadline), the result-platform
-path and a timer-wraparound case, every update's mode, cursor bits, flags and
-counter and all 3,259 spawned X bits, timers and activation bytes match
+missing player slot, a 12,000-unit jump, null allocations, the deadline), the
+result-platform path with and without a null allocation, and a
+timer-wraparound case, every update's mode, cursor bits, flags and counter and
+all 3,260 allocator results (X bits, timer and activation byte, or null) match
 `duel-generator`. The stubs show the generator never writes a spawned
-platform's Y or Z. Allocation failure and the engine allocator itself are not
-executed.
+platform's Y or Z. The engine allocator itself is not executed.
 
 `duel_platform_ppc.py` runs DODAI's constructor, update and collision
 transform helper (+0x1AD0..+0x2278) with sections 4 and 5 relocated and every
-engine import stubbed. Across three platforms (stand, activate, pause, game
-byte 0x42, rumble, fall and removal; spawned behind the players with task
-+0x30 set; spawned after the deadline), all 2,456 updates match
+engine import stubbed. Across three platforms (both constructor allocation
+failures, stand, activate, pause, game byte 0x42, rumble, fall and removal;
+nonzero starting Y, Z, angles and flags with task +0x30 set; spawned after
+the deadline), all 2,458 updates match
 `duel-platform-update` in every work field, the collision object's Y and
 angles, all 14 motion words, and the ordered engine calls with their
 arguments. Mode 3 is not reached by these inputs.

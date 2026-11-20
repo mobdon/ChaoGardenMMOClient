@@ -23,9 +23,6 @@ const MODULE: u32 = 41;
 const TEMPLATE: u32 = 0x13c8;
 /// Engine object allocator imported by both DODAIGEN spawn sites.
 const SPAWN_IMPORT: u32 = 0x8007_1ba4;
-/// Upper bound on platforms one generator update may create.
-const MAX_SPAWNS_PER_FRAME: usize = 4096;
-const MAX_FRAMES: usize = 1 << 20;
 
 #[derive(Debug, Serialize)]
 pub struct Platform {
@@ -222,10 +219,15 @@ pub struct FrameInput {
     /// Game byte +0x37 (nonzero stops the deadline counter).
     #[serde(default)]
     pub paused: bool,
+    /// Zero-based indices of this update's allocator calls that return null.
+    #[serde(default)]
+    pub failed_allocations: Vec<u32>,
 }
-#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Spawn {
+/// One allocator call: the fields DODAIGEN writes, or `None` when it returned null.
+pub type Spawn = Option<SpawnWork>;
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SpawnWork {
     /// DODAI work +0x14. Y, Z and angles are not written by the generator.
     pub x: f32,
     /// DODAI work +6.
@@ -234,35 +236,34 @@ pub struct Spawn {
     pub activated: bool,
 }
 impl Generator {
-    /// One DODAIGEN update. Allocation is assumed to succeed.
+    /// One DODAIGEN update. Like the native loop, a player far enough ahead
+    /// that the f32 cursor stops advancing never ends the update.
     pub fn step(&self, s: &mut GeneratorState, input: &FrameInput) -> Result<Vec<Spawn>> {
-        let mut out = Vec::new();
+        let mut out: Vec<Spawn> = Vec::new();
+        let allocated = |n: usize| !input.failed_allocations.contains(&(n as u32));
         match s.mode {
             0 => {
                 s.cursor_x = self.start_x;
                 s.mode = 1;
             }
             1 if input.result_mode => {
-                out.push(Spawn {
+                out.push(allocated(0).then_some(SpawnWork {
                     x: self.result_x,
                     timer: self.result_timer,
                     activated: false,
-                });
+                }));
                 s.mode = 2;
             }
             1 => {
                 for px in input.players.iter().flatten() {
                     while s.cursor_x - px < self.lookahead {
-                        if out.len() == MAX_SPAWNS_PER_FRAME {
-                            return Err(Error::invalid("platform spawn limit"));
-                        }
                         let mut t = self.timer_scale * (px - s.cursor_x);
                         // fcmpo/bge: keep t only when t >= floor (NaN selects the floor).
                         if t.partial_cmp(&self.timer_floor).is_none_or(|o| o.is_lt()) {
                             t = self.timer_floor;
                         }
                         let late = s.flags & 0x1000 != 0;
-                        out.push(Spawn {
+                        out.push(allocated(out.len()).then_some(SpawnWork {
                             x: s.cursor_x,
                             timer: if late {
                                 self.late_timer
@@ -270,7 +271,7 @@ impl Generator {
                                 t as i32 as u16
                             },
                             activated: late,
-                        });
+                        }));
                         s.cursor_x += self.step_x;
                     }
                 }
@@ -304,9 +305,6 @@ pub fn replay(rel_bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
     let g = generator(rel_bytes)?;
     let req: Request = serde_json::from_slice(request)
         .map_err(|e| Error::invalid(format!("duel generator request: {e}")))?;
-    if req.frames.len() > MAX_FRAMES {
-        return Err(Error::invalid("duel generator frame limit"));
-    }
     let mut state = GeneratorState::default();
     let mut frames = Vec::with_capacity(req.frames.len());
     for f in &req.frames {
