@@ -126,6 +126,8 @@ fn installed_mover_rules_and_session_inventory() {
         // security cameras' radius-8.5 bodies.
         assert_eq!(s.shapes.len(), 83);
         assert_eq!(s.cams.len(), 24);
+        assert_eq!(s.emitters.len(), 10);
+        assert!(!s.unimplemented.contains_key("EFFOBJ0"));
         assert!(!s.unimplemented.contains_key("CAM"));
         assert_eq!(s.fluos.len(), 34);
         assert_eq!(

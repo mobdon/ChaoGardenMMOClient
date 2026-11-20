@@ -49,8 +49,9 @@ fn p(i: usize) -> f32 {
     f32::from_bits(POLY[i])
 }
 
-/// `fmadds d, a, c, b`: a * c + b.
-fn fmadds(a: f32, c: f32, b: f32) -> f32 {
+/// `fmadds d, a, c, b`: a * c + b. The product of two singles is exact in
+/// double, so this is the fused result rounded to double, then to single.
+pub fn fmadds(a: f32, c: f32, b: f32) -> f32 {
     (a as f64 * c as f64 + b as f64) as f32
 }
 

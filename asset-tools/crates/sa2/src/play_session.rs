@@ -28,6 +28,7 @@ use crate::{
         enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
         WALL_ROW_COUNT,
     },
+    effect_emitter::{EffectEmitter, Emission},
     prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
     prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
     spring::{SpringKind, StageSpring},
@@ -200,6 +201,11 @@ pub enum Event {
     CamDestroyed {
         cam: usize,
         explosion: CamExplosion,
+    },
+    /// An EFFOBJ0 emitter spawned an effect.
+    Effect {
+        emitter: usize,
+        emission: Emission,
     },
     GoalContact {
         layer: usize,
@@ -669,6 +675,10 @@ pub struct Session {
     wall_rows: Vec<CollisionRow>,
     pub sirens: Vec<Siren>,
     pub cams: Vec<SecurityCamera>,
+    pub emitters: Vec<EffectEmitter>,
+    /// The byte at GSNE8P 0x801CC168 + 0x37 that stops EFFOBJ0 emitting;
+    /// the host sets it.
+    pub effects_suppressed: bool,
     pub fluos: Vec<Fluo>,
     pub searchlights: Vec<Searchlight>,
     pub sound_emitters: Vec<SoundEmitter>,
@@ -799,6 +809,7 @@ impl Session {
         let mut walls = vec![];
         let mut sirens = vec![];
         let mut cams = vec![];
+        let mut emitters = vec![];
         let mut fluos = vec![];
         let mut searchlights = vec![];
         let mut sound_emitters = vec![];
@@ -909,6 +920,13 @@ impl Session {
                             radius: CAM_RADIUS,
                         });
                     }
+                    (_, "EFFOBJ0") if rules.prison_doors => emitters.push(EffectEmitter::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters,
+                    )),
                     (_, "SEARCHLIGHT") if rules.prison_doors => searchlights.push(Searchlight {
                         layer: li,
                         index: p.placement_index,
@@ -1139,6 +1157,8 @@ impl Session {
             wall_rows,
             sirens,
             cams,
+            emitters,
+            effects_suppressed: false,
             fluos,
             searchlights,
             sound_emitters,
@@ -1271,6 +1291,14 @@ impl Session {
         }
         let centres = [player.map(|p| p.center), None];
         let positions = [player.map(|p| p.position), None];
+        for (i, e) in self.emitters.iter().enumerate() {
+            if let Some(emission) = e.step(self.effects_suppressed, &mut self.rand) {
+                events.push(Event::Effect {
+                    emitter: i,
+                    emission,
+                });
+            }
+        }
         for (i, c) in self.cams.iter_mut().enumerate() {
             let hit = player.and_then(|p| p.hit_cam_lens) == Some(i);
             if let Some(explosion) = c.step(&centres, &positions, hit) {
