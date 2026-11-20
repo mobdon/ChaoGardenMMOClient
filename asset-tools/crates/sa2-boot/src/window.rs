@@ -96,7 +96,10 @@ pub fn key_stick(left: bool, right: bool, down: bool, up: bool) -> [i8; 2] {
     } else {
         *mag = (*mag - RAMP).max(0.0);
     }
-    [(angle.cos() * *mag * 100.0).round() as i8, (angle.sin() * *mag * 100.0).round() as i8]
+    [
+        (angle.cos() * *mag * 100.0).round() as i8,
+        (angle.sin() * *mag * 100.0).round() as i8,
+    ]
 }
 
 /// This frame's controller 1: the gamepad and the keyboard/mouse together
@@ -126,7 +129,10 @@ pub fn pad() -> PadStatus {
             p.stick = g.stick;
         }
         p.substick = g.substick;
-        p.triggers = [p.triggers[0].max(g.triggers[0]), p.triggers[1].max(g.triggers[1])];
+        p.triggers = [
+            p.triggers[0].max(g.triggers[0]),
+            p.triggers[1].max(g.triggers[1]),
+        ];
     }
     p
 }
@@ -153,14 +159,17 @@ fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
         .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 960.0));
     let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
+    let surface = instance
+        .create_surface(window.clone())
+        .map_err(|e| e.to_string())?;
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         compatible_surface: Some(&surface),
         ..Default::default()
     }))
     .map_err(|e| format!("no wgpu adapter: {e}"))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+        required_limits:
+            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
         ..Default::default()
     }))
     .map_err(|e| format!("no wgpu device: {e}"))?;
@@ -172,7 +181,14 @@ fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
     config.format = config.format.remove_srgb_suffix();
     surface.configure(&device, &config);
     let renderer = GxRenderer::new(device.clone(), queue.clone(), config.format);
-    Ok(Gpu { window, surface, device, queue, config, renderer })
+    Ok(Gpu {
+        window,
+        surface,
+        device,
+        queue,
+        config,
+        renderer,
+    })
 }
 
 impl ApplicationHandler for App {
@@ -227,12 +243,16 @@ impl ApplicationHandler for App {
                 }
                 if let Some(f) = &self.last {
                     match g.surface.get_current_texture() {
-                        wgpu::CurrentSurfaceTexture::Success(tex) | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => {
+                        wgpu::CurrentSurfaceTexture::Success(tex)
+                        | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => {
                             let view = tex.texture.create_view(&Default::default());
-                            g.renderer.render_frame(f, &view, [g.config.width, g.config.height]);
+                            g.renderer
+                                .render_frame(f, &view, [g.config.width, g.config.height]);
                             g.queue.present(tex);
                         }
-                        wgpu::CurrentSurfaceTexture::Outdated => g.surface.configure(&g.device, &g.config),
+                        wgpu::CurrentSurfaceTexture::Outdated => {
+                            g.surface.configure(&g.device, &g.config)
+                        }
                         _ => {}
                     }
                 }
@@ -255,7 +275,12 @@ fn run(rx: Receiver<Frame>) -> Result<(), String> {
         builder.with_any_thread(true);
     }
     let event_loop = builder.build().map_err(|e| e.to_string())?;
-    let mut app = App { rx, gpu: None, last: None, error: None };
+    let mut app = App {
+        rx,
+        gpu: None,
+        last: None,
+        error: None,
+    };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     app.error.map_or(Ok(()), Err)
 }

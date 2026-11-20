@@ -36,9 +36,9 @@ pub fn frames(n: u64) {
     let (gx, hook, render, sleep) = (ms(&GX), ms(&HOOK), ms(&RENDER), ms(&SLEEP));
     let total = secs * 1000.0 / f;
     eprintln!(
-        "prof: {:.1} fps | {total:.1} ms/frame: game {:.1}, gx decode {gx:.1}, frame hook {hook:.1}, limiter sleep {sleep:.1} | window render {render:.1} (own thread)",
+        "prof: {:.1} fps | {total:.1} ms/frame: game {:.1}, gx decode {gx:.1} (own thread), frame hook {hook:.1}, limiter sleep {sleep:.1} | window render {render:.1} (own thread)",
         f / secs,
-        (total - gx - hook - sleep).max(0.0)
+        (total - hook - sleep).max(0.0)
     );
     *since = Some(Instant::now());
 }

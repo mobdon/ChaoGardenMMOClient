@@ -233,7 +233,7 @@ pub fn ras_color_channel_id(v: u32) -> u32 {
 }
 
 /// Builds a [`GxMaterial`] with GX's call shapes (GXMaterialBuilder).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GxMaterialBuilder {
     cull_mode: u32,
     light_channels: Vec<LightChannelControl>,

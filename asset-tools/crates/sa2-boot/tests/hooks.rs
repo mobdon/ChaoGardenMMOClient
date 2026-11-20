@@ -4,6 +4,14 @@ use sa2_boot::*;
 use sa2_recomp::rt::{call, Cpu, Mem};
 use sa2_runtime::dvd::MemFiles;
 
+/// The hooks keep process-wide state (Global, since game threads share it):
+/// one test at a time, or one test's deferred callback runs in another.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn setup() -> (Cpu, Mem) {
     let mut c = Cpu::default();
     let mut m = Mem::default();
@@ -23,6 +31,7 @@ fn put_str(m: &mut Mem, a: u32, s: &str) {
 
 #[test]
 fn dvd_open_and_read() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     put_str(&mut m, 0x8000_1000, "/STG11D.rel");
     c.r[3] = 0x8000_1000;
@@ -51,6 +60,7 @@ fn mark_callback(c: &mut Cpu, m: &mut Mem) {
 
 #[test]
 fn dvd_async_read_runs_callback_and_keeps_registers() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     c.rt.set_override(0x8000_5000, mark_callback);
     put_str(&mut m, 0x8000_1000, "stg11d.rel");
@@ -65,10 +75,13 @@ fn dvd_async_read_runs_callback_and_keeps_registers() {
     assert_eq!(m.r32(0x8000_4000), 4);
     assert_eq!(m.r32(0x8000_4004), 0x8000_2000);
     assert_eq!(m.r32(0x8000_2000 + 0x0C), 0);
+    // Anything it left for the next frame runs here, not in another test.
+    call(&mut c, &mut m, vi::VI_WAIT_FOR_RETRACE);
 }
 
 #[test]
 fn fifo_stores_draw_at_copy_disp() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     // VCD POS direct, VAT0 POS XYZ F32, one triangle, stored word by word.
     let mut s = vec![0x08, 0x50, 0, 0, 2, 0, 0x08, 0x70, 0, 0, 0, 9];
@@ -82,7 +95,15 @@ fn fifo_stores_draw_at_copy_disp() {
     assert!(gx::take_frames().is_empty());
     c.r[3] = 0x8010_0000;
     call(&mut c, &mut m, gx::GX_COPY_DISP);
-    let f = gx::take_frames();
+    // The GX thread decodes it, a frame behind the game.
+    let mut f = Vec::new();
+    for _ in 0..200 {
+        f.extend(gx::take_frames());
+        if !f.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     assert_eq!(f.len(), 1);
     assert_eq!(f[0].0, 0x8010_0000);
     assert_eq!(f[0].1.draws.len(), 1);
@@ -90,12 +111,16 @@ fn fifo_stores_draw_at_copy_disp() {
 
 #[test]
 fn retrace_moves_clock_and_count() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
+    // The count is process-wide: measure the step, not the value.
+    call(&mut c, &mut m, vi::VI_GET_RETRACE_COUNT);
+    let before = c.r[3];
     call(&mut c, &mut m, clock::OS_GET_TIME);
     let t0 = (u64::from(c.r[3]) << 32) | u64::from(c.r[4]);
     call(&mut c, &mut m, vi::VI_WAIT_FOR_RETRACE);
     call(&mut c, &mut m, vi::VI_GET_RETRACE_COUNT);
-    assert_eq!(c.r[3], 1);
+    assert_eq!(c.r[3], before + 1);
     call(&mut c, &mut m, clock::OS_GET_TIME);
     let t1 = (u64::from(c.r[3]) << 32) | u64::from(c.r[4]);
     assert!(t1 - t0 > clock::TB_PER_FRAME);
@@ -106,6 +131,7 @@ fn retrace_moves_clock_and_count() {
 
 #[test]
 fn pad_read_and_clamp() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     let mut p = [PadStatus::default(); 4];
     p[0].button = 0x0100;
@@ -128,6 +154,7 @@ fn pad_read_and_clamp() {
 
 #[test]
 fn audio_aram_round_trip_and_idle_regs() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     call(&mut c, &mut m, audio::AR_INIT);
     assert_eq!(c.r[3], 0x4000);
@@ -169,6 +196,7 @@ fn to_aram(c: &mut Cpu, m: &mut Mem, at: u32, bytes: &[u8]) {
 
 #[test]
 fn ax_pcm16_voice_mixes_then_stops() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     // Four samples at ARAM 0x10000 (sample address 0x8000).
     to_aram(
@@ -193,6 +221,7 @@ fn ax_pcm16_voice_mixes_then_stops() {
 
 #[test]
 fn ax_adpcm_voice_decodes_and_loops() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     // One frame: predictor 0 / scale 0 with zero coefficients, so each sample
     // is its nibble: 1, 2, -1, 7, ...
@@ -211,6 +240,7 @@ fn ax_adpcm_voice_decodes_and_loops() {
 
 #[test]
 fn arq_moves_bytes_now_and_calls_back_later() {
+    let _serial = serial();
     let (mut c, mut m) = setup();
     c.rt.set_override(0x8000_5000, mark_callback);
     m.w32(0x8000_4000, 0);

@@ -16,8 +16,8 @@ pub mod io;
 pub mod pad;
 pub mod prof;
 pub mod snap;
-pub mod window;
 pub mod vi;
+pub mod window;
 
 use sa2_recomp::rt::{call, Cpu, Mem};
 

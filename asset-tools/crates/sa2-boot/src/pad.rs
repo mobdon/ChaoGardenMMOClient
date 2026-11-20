@@ -113,6 +113,7 @@ pub fn autopress(frame: u64) {
 /// - `frame:buttons` presses at a fixed frame (warning and title screens).
 /// - `FILE+delay:buttons` presses `delay` frames after each time the game
 ///   opens FILE (a screen's own file, so the timing follows the screen).
+///
 /// Fixed-frame presses stop once the first FILE-anchored entry's file has
 /// opened, so they cannot land on the screens the anchored steps handle.
 /// Returns false when SA2_INPUT is unset.
@@ -133,23 +134,36 @@ pub fn scripted(frame: u64) -> bool {
 pub fn script(frame: u64) -> Option<PadStatus> {
     let script = std::env::var("SA2_INPUT").ok()?;
     let opens = OPENS.lock().unwrap_or_else(|e| e.into_inner());
-    let anchor = script
-        .split(',')
-        .find_map(|i| i.rsplit_once(':')?.0.split_once('+').map(|(f, _)| f.trim().to_lowercase()));
+    let anchor = script.split(',').find_map(|i| {
+        i.rsplit_once(':')?
+            .0
+            .split_once('+')
+            .map(|(f, _)| f.trim().to_lowercase())
+    });
     let anchored = anchor.is_some_and(|a| opens.iter().any(|(n, _)| *n == a));
     let mut p = PadStatus::default();
     for item in script.split(',') {
-        let Some((at, v)) = item.rsplit_once(':') else { continue };
+        let Some((at, v)) = item.rsplit_once(':') else {
+            continue;
+        };
         let (v, hold) = match v.split_once('*') {
             Some((v, n)) => (v, n.trim().parse::<u64>().unwrap_or(3)),
             None => (v, 3),
         };
-        let Ok(v) = u32::from_str_radix(v.trim().trim_start_matches("0x"), 16) else { continue };
+        let Ok(v) = u32::from_str_radix(v.trim().trim_start_matches("0x"), 16) else {
+            continue;
+        };
         let starts: Vec<u64> = match at.trim().split_once('+') {
             Some((file, d)) => {
-                let Ok(d) = d.trim().parse::<u64>() else { continue };
+                let Ok(d) = d.trim().parse::<u64>() else {
+                    continue;
+                };
                 let file = file.trim().to_lowercase();
-                opens.iter().filter(|(n, _)| *n == file).map(|(_, f)| f + d).collect()
+                opens
+                    .iter()
+                    .filter(|(n, _)| *n == file)
+                    .map(|(_, f)| f + d)
+                    .collect()
             }
             None => match at.trim().parse::<u64>() {
                 Ok(f) if !anchored => vec![f],
@@ -182,7 +196,10 @@ static OPENS: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::
 /// Note that the game opened `name` (called by the DVD hook).
 pub fn opened(name: &str) {
     let frame = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    OPENS.lock().unwrap_or_else(|e| e.into_inner()).push((name.to_lowercase(), frame));
+    OPENS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((name.to_lowercase(), frame));
 }
 
 /// Controller port 0 only (the others stay disconnected).

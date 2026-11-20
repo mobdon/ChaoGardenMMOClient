@@ -12,7 +12,9 @@ static STARTED: std::sync::Once = std::sync::Once::new();
 /// The connected gamepad as a controller (None when there is none).
 pub fn state() -> Option<PadStatus> {
     STARTED.call_once(|| {
-        let _ = std::thread::Builder::new().name("gamepad".into()).spawn(poll);
+        let _ = std::thread::Builder::new()
+            .name("gamepad".into())
+            .spawn(poll);
     });
     *STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -31,7 +33,10 @@ fn poll() {
             s.stick = [stick(Axis::LeftStickX), stick(Axis::LeftStickY)];
             s.substick = [stick(Axis::RightStickX), stick(Axis::RightStickY)];
             let trig = |b: Button| p.button_data(b).map_or(0.0, |d| d.value()).clamp(0.0, 1.0);
-            s.triggers = [(trig(Button::LeftTrigger2) * 255.0) as u8, (trig(Button::RightTrigger2) * 255.0) as u8];
+            s.triggers = [
+                (trig(Button::LeftTrigger2) * 255.0) as u8,
+                (trig(Button::RightTrigger2) * 255.0) as u8,
+            ];
             for (b, bit) in [
                 (Button::South, 0x0100),
                 (Button::West, 0x0200),

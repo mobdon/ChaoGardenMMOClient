@@ -272,7 +272,14 @@ pub struct Gx {
     frame: Frame,
     /// What this state machine ignored, with counts: unknown FIFO opcodes
     /// and BP/CP/XF registers it doesn't model ("BP 0x45", ...).
-    pub unhandled: std::collections::BTreeMap<String, u64>,
+    /// Counted by kind and register (see [`Gx::unhandled`]); a string per
+    /// write cost more than the rest of the register handling.
+    unhandled: HashMap<(u8, u32), u64>,
+    /// The last vertex loader and its key (consecutive draws share one).
+    last_loader: Option<(LoaderKey, Arc<VtxLoader>, Arc<LoadedVertexLayout>)>,
+    /// The last draw's material and what it was built from: consecutive draws
+    /// mostly share one, and building it cost more than the rest of a draw.
+    last_material: Option<(GxMaterialBuilder, MatKey, Arc<GxMaterial>)>,
 }
 
 impl Default for Gx {
@@ -348,7 +355,9 @@ impl Gx {
             in_call: false,
             immediate: None,
             frame: Frame::default(),
-            unhandled: Default::default(),
+            unhandled: HashMap::new(),
+            last_loader: None,
+            last_material: None,
         };
         gx.mat.set_num_chans(1);
         gx.mat.set_tex_coord_gen(
@@ -427,8 +436,37 @@ impl Gx {
 
     pub fn invalidate_vtx_cache(&mut self) {}
 
-    fn loader(&mut self) -> Arc<VtxLoader> {
+    /// What this state machine ignored, with counts: unknown FIFO opcodes
+    /// and BP/CP/XF registers it doesn't model ("BP 0x45", ...).
+    pub fn unhandled(&self) -> std::collections::BTreeMap<String, u64> {
+        self.unhandled
+            .iter()
+            .map(|(&(k, a), &n)| {
+                let name = match k {
+                    b'o' => format!("opcode {a:#04x}"),
+                    b'C' => format!("CP {a:#04x}"),
+                    b'B' => format!("BP {a:#04x}"),
+                    _ => format!("XF {a:#06x}"),
+                };
+                (name, n)
+            })
+            .collect()
+    }
+
+    fn loader(&mut self) -> (Arc<VtxLoader>, Arc<LoadedVertexLayout>) {
         let key = (self.vcd, self.vat);
+        if let Some((k, l, layout)) = &self.last_loader {
+            if *k == key {
+                return (l.clone(), layout.clone());
+            }
+        }
+        let l = self.loader_for(key);
+        let layout = Arc::new(l.layout.clone());
+        self.last_loader = Some((key, l.clone(), layout.clone()));
+        (l, layout)
+    }
+
+    fn loader_for(&mut self, key: (Vcd, [VatFormat; 8])) -> Arc<VtxLoader> {
         self.loaders
             .entry(key)
             .or_insert_with(|| {
@@ -706,7 +744,7 @@ impl Gx {
                 }
                 command::INVAL_VTX_CACHE => i += 1,
                 _ => {
-                    *self.unhandled.entry(format!("opcode {cmd:#04x}")).or_default() += 1;
+                    *self.unhandled.entry((b'o', cmd)).or_default() += 1;
                     break;
                 }
             }
@@ -714,7 +752,7 @@ impl Gx {
     }
 
     fn run_draws(&mut self, dl: &[u8], mem: &dyn GxMemory) {
-        let loader = self.loader();
+        let (loader, layout) = self.loader();
         let arrays = self.array_views(mem);
         let mut data = loader.parse_display_list(dl, 0);
         if data.indices.is_empty() {
@@ -723,8 +761,8 @@ impl Gx {
         loader.load_vertex_data(&mut data, dl, &arrays);
         let (material, params, draw_params) = self.snapshot(mem);
         self.frame.draws.push(DrawCmd {
-            material: Arc::new(material),
-            layout: Arc::new(loader.layout.clone()),
+            material,
+            layout,
             vertices: data.vertices,
             indices: data.indices,
             material_params: params,
@@ -735,7 +773,31 @@ impl Gx {
         });
     }
 
-    fn snapshot(&mut self, mem: &dyn GxMemory) -> (GxMaterial, MaterialParams, DrawParams) {
+    fn material(&mut self) -> Arc<GxMaterial> {
+        let key = MatKey {
+            counts: [
+                self.num_tev_stages,
+                self.num_tex_gens,
+                self.num_ind_stages,
+                self.num_chans,
+            ],
+            swap_sel: self.swap_sel,
+            swap_tables: self.swap_tables,
+            dst_alpha: self.dst_alpha,
+            pn: self.vcd[attr::PNMTXIDX as usize].ty,
+            tex_mtx: std::array::from_fn(|t| self.vcd[attr::TEX0MTXIDX as usize + t].ty),
+        };
+        if let Some((b, k, m)) = &self.last_material {
+            if *k == key && *b == self.mat {
+                return m.clone();
+            }
+        }
+        let m = Arc::new(self.build_material());
+        self.last_material = Some((self.mat.clone(), key, m.clone()));
+        m
+    }
+
+    fn build_material(&self) -> GxMaterial {
         let mut b = self.mat.clone();
         b.set_num_tev_stages(self.num_tev_stages.max(1));
         b.set_num_tex_gens(self.num_tex_gens);
@@ -758,8 +820,12 @@ impl Gx {
                 self.vcd[(attr::TEX0MTXIDX + t as u32) as usize].ty != attr_type::NONE,
             );
         }
-        let material = b.finish();
+        b.finish()
+    }
 
+    fn snapshot(&mut self, mem: &dyn GxMemory) -> (Arc<GxMaterial>, MaterialParams, DrawParams) {
+        let material = self.material();
+        let use_pn = self.vcd[attr::PNMTXIDX as usize].ty != attr_type::NONE;
         let mut params = self.params.clone();
         for i in 0..10 {
             params.tex_mtx[i] = mtx_from(&self.xf_matrices[(30 + 3 * i) * 4..]);
@@ -974,7 +1040,7 @@ impl Gx {
                     self.mat.set_color_channel_from_registers(&r, i);
                 }
             }
-            _ => *self.unhandled.entry(format!("XF {addr:#06x}")).or_default() += 1,
+            _ => *self.unhandled.entry((b'X', addr)).or_default() += 1,
         }
     }
 
@@ -1035,14 +1101,14 @@ impl Gx {
             }
             0xA0 => self.arrays[(addr & 0xF) as usize].0 = v,
             0xB0 => self.arrays[(addr & 0xF) as usize].1 = (v & 0xFF) as usize,
-            _ => *self.unhandled.entry(format!("CP {addr:#04x}")).or_default() += 1,
+            _ => *self.unhandled.entry((b'C', addr)).or_default() += 1,
         }
     }
 
     fn bp_write(&mut self, bag: u32) {
         self.regs.bp_set(bag);
         let addr = bag >> 24;
-        let r = self.regs.clone();
+        let r = &self.regs;
         let v = r.bp[addr as usize] & 0x00FF_FFFF;
         use bp_register as bp;
         match addr {
@@ -1065,7 +1131,7 @@ impl Gx {
                     self.swap_sel[i as usize] = (v & 3, (v >> 2) & 3);
                 }
                 // Decode the whole stage (order, ksel and indirect included).
-                self.mat.set_tev_stage_from_registers(&r, i);
+                self.mat.set_tev_stage_from_registers(r, i);
             }
             0x28..=0x2F | 0x10..=0x1F => {
                 let stages: Vec<u32> = if addr >= 0x28 {
@@ -1074,7 +1140,7 @@ impl Gx {
                     vec![addr - 0x10]
                 };
                 for i in stages {
-                    self.mat.set_tev_stage_from_registers(&r, i);
+                    self.mat.set_tev_stage_from_registers(r, i);
                 }
             }
             0xF6..=0xFD => {
@@ -1098,7 +1164,7 @@ impl Gx {
             }
             bp::RAS1_IREF_ID | 0x25 | 0x26 => {
                 for i in 0..4 {
-                    self.mat.set_ind_tex_stage_from_registers(&r, i);
+                    self.mat.set_ind_tex_stage_from_registers(r, i);
                 }
             }
             0x06..=0x0E => {
@@ -1164,7 +1230,7 @@ impl Gx {
                 self.tex_map_from_regs(i);
             }
             bp::PE_ZMODE_ID | bp::PE_CMODE0_ID | bp::TEV_ALPHAFUNC_ID => {
-                self.mat.set_rop_state_from_registers(&r)
+                self.mat.set_rop_state_from_registers(r)
             }
             0x42 => {
                 self.dst_alpha = if (v >> 8) & 1 != 0 {
@@ -1177,7 +1243,12 @@ impl Gx {
             // clear copies to a texture.
             0x52 if v & 0x4000 == 0 => {
                 let (tl, wh) = (r.bp[0x49], r.bp[0x4A]);
-                let src = [tl & 0x3FF, (tl >> 10) & 0x3FF, (wh & 0x3FF) + 1, ((wh >> 10) & 0x3FF) + 1];
+                let src = [
+                    tl & 0x3FF,
+                    (tl >> 10) & 0x3FF,
+                    (wh & 0x3FF) + 1,
+                    ((wh >> 10) & 0x3FF) + 1,
+                ];
                 let addr = (r.bp[0x4B] & 0x1F_FFFF) << 5;
                 let id = match self.efb_copies.get(&addr) {
                     Some(id) => *id,
@@ -1189,9 +1260,14 @@ impl Gx {
                     }
                 };
                 let draw = self.frame.draws.len();
-                self.frame.tex_copies.push(TexCopy { draw, src, id, clear: v & 0x800 != 0 });
+                self.frame.tex_copies.push(TexCopy {
+                    draw,
+                    src,
+                    id,
+                    clear: v & 0x800 != 0,
+                });
             }
-            _ => *self.unhandled.entry(format!("BP {addr:#04x}")).or_default() += 1,
+            _ => *self.unhandled.entry((b'B', addr)).or_default() += 1,
         }
     }
 
@@ -1647,6 +1723,19 @@ impl Gx {
 
     /// The material the current state draws with (for tests and tools).
     pub fn current_material(&mut self) -> GxMaterial {
-        self.snapshot(&Ram(&[])).0
+        (*self.snapshot(&Ram(&[])).0).clone()
     }
+}
+
+type LoaderKey = (Vcd, [VatFormat; 8]);
+
+/// The state besides the material builder that a draw's material is built from.
+#[derive(PartialEq)]
+struct MatKey {
+    counts: [usize; 4],
+    swap_sel: [(u32, u32); 16],
+    swap_tables: [crate::material::SwapTable; 4],
+    dst_alpha: Option<u8>,
+    pn: u32,
+    tex_mtx: [u32; 8],
 }

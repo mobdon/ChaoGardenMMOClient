@@ -293,7 +293,12 @@ impl GxRenderer {
     /// Cache sizes (pipelines, textures, samplers, texture bind groups), for
     /// finding what a long run keeps.
     pub fn cache_counts(&self) -> [usize; 4] {
-        [self.pipelines.len(), self.textures.len(), self.samplers.len(), self.texture_binds.len()]
+        [
+            self.pipelines.len(),
+            self.textures.len(),
+            self.samplers.len(),
+            self.texture_binds.len(),
+        ]
     }
 
     /// Upload a decoded texture: RGBA8 levels, largest first. GX textures
@@ -724,7 +729,13 @@ impl GxRenderer {
             }
             start = end;
         }
-        self.draw_range(frame, start..frame.draws.len(), target, size, Some(clear_color));
+        self.draw_range(
+            frame,
+            start..frame.draws.len(),
+            target,
+            size,
+            Some(clear_color),
+        );
     }
 
     /// The offscreen EFB for render-to-texture passes.
@@ -736,7 +747,11 @@ impl GxRenderer {
         }
         let t = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gx efb"),
-            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -759,7 +774,11 @@ impl GxRenderer {
         let h = h.min(efb.height() - y).max(1);
         let t = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gx efb copy"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -776,13 +795,23 @@ impl GxRenderer {
                 aspect: wgpu::TextureAspect::All,
             },
             t.as_image_copy(),
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         self.queue.submit([enc.finish()]);
         let id = copy.id;
-        self.textures.insert(id, GpuTexture { view: t.create_view(&Default::default()) });
+        self.textures.insert(
+            id,
+            GpuTexture {
+                view: t.create_view(&Default::default()),
+            },
+        );
         self.next_texture = self.next_texture.max(id + 1);
-        self.texture_binds.retain(|k, _| !k.iter().any(|(t, _)| *t == Some(id)));
+        self.texture_binds
+            .retain(|k, _| !k.iter().any(|(t, _)| *t == Some(id)));
     }
 
     /// Draw `frame.draws[range]` into `target`. Runs of draws with the same

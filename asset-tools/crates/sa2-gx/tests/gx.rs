@@ -272,3 +272,22 @@ fn display_list_with_register_loads() {
     assert!(f.draws[0].material.rop.depth_test);
     validate(&f.draws[0].material);
 }
+
+#[test]
+fn material_cache_follows_state_changes() {
+    let mut gx = base();
+    gx.set_tev_op(0, tev_mode::MODULATE);
+    let a = gx.current_material();
+    gx.set_num_tev_stages(2);
+    let b = gx.current_material();
+    assert_ne!(
+        a.tev_stages.len(),
+        b.tev_stages.len(),
+        "stage count change seen"
+    );
+    gx.set_tev_op(0, tev_mode::REPLACE);
+    assert_ne!(b, gx.current_material(), "TEV change seen");
+    gx.set_num_tev_stages(1);
+    gx.set_tev_op(0, tev_mode::MODULATE);
+    assert_eq!(a, gx.current_material(), "same state, same material");
+}

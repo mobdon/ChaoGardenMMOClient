@@ -44,13 +44,18 @@ fn open() -> Result<Snap, String> {
     }))
     .map_err(|e| format!("no wgpu adapter: {e}"))?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_limits: wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+        required_limits:
+            wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
         ..Default::default()
     }))
     .map_err(|e| format!("no wgpu device: {e}"))?;
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("snapshot"),
-        size: wgpu::Extent3d { width: W, height: H, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -65,7 +70,14 @@ fn open() -> Result<Snap, String> {
         mapped_at_creation: false,
     });
     let renderer = GxRenderer::new(device.clone(), queue.clone(), FORMAT);
-    Ok(Snap { device, queue, renderer, target, buf, pending: HashMap::new() })
+    Ok(Snap {
+        device,
+        queue,
+        renderer,
+        target,
+        buf,
+        pending: HashMap::new(),
+    })
 }
 
 /// Feed frame number `n`; on every `every`-th frame write `dir/frame_NNNNNN.png`
@@ -77,7 +89,7 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         }
         let Some(s) = s.as_mut() else { return Ok(None) };
         note_uploads(&mut s.pending, &f.uploads);
-        if every == 0 || n % every != 0 {
+        if every == 0 || !n.is_multiple_of(every) {
             return Ok(None);
         }
         for (id, levels) in s.pending.drain() {
@@ -127,7 +139,7 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         enc.set_color(png::ColorType::Rgb);
         enc.set_depth(png::BitDepth::Eight);
         let mut w = enc.write_header().map_err(|e| e.to_string())?;
-        let rgb: Vec<u8> = px.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        let rgb: Vec<u8> = px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
         w.write_image_data(&rgb).map_err(|e| e.to_string())?;
         Ok(Some(path))
     })
@@ -138,7 +150,10 @@ mod tests {
     use super::*;
 
     fn upload(id: TextureId, v: u8) -> TextureUpload {
-        TextureUpload { id, levels: vec![(1, 1, vec![v; 4])] }
+        TextureUpload {
+            id,
+            levels: vec![(1, 1, vec![v; 4])],
+        }
     }
 
     #[test]
@@ -150,6 +165,10 @@ mod tests {
             note_uploads(&mut pending, &[upload(1, v), upload(2, v), upload(7, v)]);
         }
         assert_eq!(pending.len(), 3);
-        assert_eq!(pending[&7][0].2, vec![(999 % 256) as u8; 4], "the newest data wins");
+        assert_eq!(
+            pending[&7][0].2,
+            vec![(999 % 256) as u8; 4],
+            "the newest data wins"
+        );
     }
 }
