@@ -973,6 +973,8 @@ pub enum PlacementClock {
     /// Section 1 + 0x83dc, 0x88c0 and 0x89e8: core draw, drifting spark
     /// update and spark draw.
     CoreDraw(Box<CoreDrawFrame>),
+    /// Section 1 + 0x62a0..0x6504: the boss attack object interface.
+    AttackObject(Box<AttackFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2770,6 +2772,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::CoreShrink(frame) => return core_shrink(&rel, &frame),
         PlacementClock::CoreStun(frame) => return core_stun(&rel, &frame),
         PlacementClock::CoreDraw(frame) => return core_draw(&rel, &frame),
+        PlacementClock::AttackObject(frame) => return attack_object(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -8120,4 +8123,187 @@ fn core_draw(rel: &crate::city_rel::CityRel<'_>, f: &CoreDrawFrame) -> Result<se
         }
     }
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// One call of the attack object interface; `task` is the attack task,
+/// its entity is task word 0x34 and its block task word 0x40.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "routine", rename_all = "snake_case")]
+pub enum AttackFrame {
+    /// 0x62a0: create an attack for `parent` aimed at `target` with
+    /// `count` and `kind` (0..2). `task` / `block` are the allocation
+    /// results; `block_initial` is the block's half-word 0 as allocated,
+    /// which the code copies when the kind is out of range.
+    Create {
+        parent: u32,
+        target: u32,
+        count: u32,
+        kind: i8,
+        task: u32,
+        block: u32,
+        block_initial: i16,
+    },
+    /// 0x63e8: launch.
+    Launch { task: u32 },
+    /// 0x6410: finished? `action` is the entity action.
+    Finished { task: u32, action: i8 },
+    /// 0x6460: hand over (entity flag 0x100).
+    Release { task: u32, flags: i16 },
+    /// 0x6488: block word 0x10.
+    Target { block_word: u32 },
+    /// 0x6494: count down block half-word 2.
+    Tick { timer: i16 },
+    /// 0x64b0: clear the 512-byte table at 6:0x274.
+    Clear,
+}
+/// Section 1 + 0x62a0 (create), 0x63e8 (launch), 0x6410 (finished),
+/// 0x6460 (release), 0x6488, 0x6494 and 0x64b0 (table clear).
+fn attack_object(rel: &crate::city_rel::CityRel<'_>, f: &AttackFrame) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32,
+              region: &str,
+              offset: serde_json::Value,
+              size: u32,
+              value: serde_json::Value| {
+        serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value})
+    };
+    let n = |v: u32| serde_json::json!(v);
+    let mut ev = Vec::new();
+    let mut returned: Option<u32> = None;
+    match f {
+        AttackFrame::Create {
+            parent,
+            target,
+            count,
+            kind,
+            task,
+            block,
+            block_initial,
+        } => {
+            returned = Some(0);
+            if *parent != 0 {
+                ev.push(call(
+                    0x62e4,
+                    serde_json::json!([2, module_ref(rel, 0x62da, 0)?, parent]),
+                )?);
+                if *task != 0 {
+                    ev.push(st(
+                        0x6304,
+                        "task",
+                        n(0x18),
+                        4,
+                        serde_json::json!(module_ref(rel, 0x62fe, 0)?),
+                    ));
+                    ev.push(call(0x6310, serde_json::json!([1, 0x14]))?);
+                    if *block == 0 {
+                        ev.push(call(0x6320, serde_json::json!([task]))?);
+                    } else {
+                        ev.push(st(0x632c, "task", n(0x40), 4, n(*block)));
+                        let pick = match kind {
+                            0 => Some((0x6364u32, 0x635au32)),
+                            1 => Some((0x6378, 0x636e)),
+                            2 => Some((0x638c, 0x6382)),
+                            _ => None,
+                        };
+                        let mut first = *block_initial as u16;
+                        if let Some((site, reloc)) = pick {
+                            let r = rel
+                                .reference(1, reloc)
+                                .filter(|r| r.module == 88 && r.section == 5)
+                                .ok_or_else(|| Error::invalid("missing attack timer table"))?;
+                            let at = r.addend as usize;
+                            let b = rel
+                                .data(5)?
+                                .get(at..at + 2)
+                                .ok_or_else(|| Error::invalid("attack timer table out of range"))?;
+                            first = u16::from_be_bytes([b[0], b[1]]);
+                            ev.push(st(site, "block", n(0), 2, n(first.into())));
+                        }
+                        ev.push(st(0x6394, "block", n(2), 2, n(first.into())));
+                        ev.push(st(0x639c, "block", n(0x10), 4, n(0)));
+                        if count & 0xffff != 0 {
+                            ev.push(st(0x63ac, "block", n(8), 4, n(*target)));
+                            ev.push(st(0x63b0, "block", n(4), 2, n(count & 0xffff)));
+                        } else {
+                            ev.push(st(0x63b8, "block", n(8), 4, n(0)));
+                            ev.push(st(0x63bc, "block", n(4), 2, n(0)));
+                        }
+                        ev.push(serde_json::json!({"site":0x63c0,"local":0x64b0,"args":[]}));
+                        returned = Some(*task);
+                    }
+                }
+            }
+        }
+        AttackFrame::Launch { task } => {
+            if *task != 0 {
+                ev.extend([
+                    st(0x63f8, "entity", n(6), 2, n(0x1e)),
+                    st(0x6400, "entity", n(0), 1, n(2)),
+                    st(0x6408, "entity", n(1), 1, n(0)),
+                ]);
+            }
+        }
+        AttackFrame::Finished { task, action } => {
+            returned = Some(1);
+            if *task != 0 {
+                if *action == 4 {
+                    ev.push(call(0x6440, serde_json::json!([task]))?);
+                } else {
+                    returned = Some(0);
+                }
+            }
+        }
+        AttackFrame::Release { task, flags } => {
+            returned = Some(u32::MAX);
+            if *task != 0 {
+                ev.push(st(
+                    0x647c,
+                    "entity",
+                    n(4),
+                    2,
+                    n(u32::from(*flags as u16 | 0x100)),
+                ));
+                returned = Some(1);
+            }
+        }
+        AttackFrame::Target { block_word } => {
+            returned = Some(*block_word);
+        }
+        AttackFrame::Tick { timer } => {
+            if *timer > 0 {
+                ev.push(st(
+                    0x64a8,
+                    "block",
+                    n(2),
+                    2,
+                    n(u32::from((*timer - 1) as u16)),
+                ));
+            }
+        }
+        AttackFrame::Clear => {
+            for row in 0..16u32 {
+                for (i, site) in [
+                    0x64d0u32, 0x64d4, 0x64d8, 0x64dc, 0x64e0, 0x64e4, 0x64e8, 0x64ec,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    ev.push(st(
+                        site,
+                        "module",
+                        serde_json::json!(module_ref(rel, 0x64b2, 0x20 * row + 4 * i as u32)?),
+                        4,
+                        n(0),
+                    ));
+                }
+            }
+        }
+    }
+    let mut out = serde_json::json!({"events":ev});
+    if let Some(r) = returned {
+        out["returned"] = serde_json::json!(r);
+    }
+    Ok(out)
 }
