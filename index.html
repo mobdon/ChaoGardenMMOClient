@@ -17,6 +17,7 @@
           <button class="nav-button active" data-panel="world">The world</button>
           <button class="nav-button" data-panel="character">My Chao <span class="key-hint">C</span></button>
           <button class="nav-button" data-panel="journal">Journal <span class="key-hint">J</span></button>
+          <button id="school-open" hidden>Kindergarten</button>
           <button class="nav-button" id="shop-open">Chao shop <span class="key-hint">B</span></button>
           <button class="nav-button" id="care-open" aria-pressed="false">Garden care <span class="key-hint">G</span></button>
           <button class="nav-button" id="stages-open">Stage select</button>
@@ -126,6 +127,13 @@
       </dialog>
       <aside id="garden-care-panel" class="garden-care-panel" aria-label="Garden care" hidden></aside>
       <dialog id="shop-dialog" class="shop-dialog">
+      <dialog id="school-dialog" class="shop-dialog">
+      <div class="panel-heading"><span class="eyebrow">CHAO KINDERGARTEN</span><button class="close-button" id="school-close" aria-label="Leave Kindergarten">×</button></div>
+      <h2>Health Center</h2><p id="school-report"></p>
+      <h3>Name your Chao</h3><form id="school-name-form"><label>Chao name <input id="school-name" maxlength="18" required></label> <button class="soft-button">Save name</button></form>
+      <hr><button class="soft-button" id="school-market">Visit the Black Market ↗</button>
+    </dialog>
+    <dialog id="shop-dialog" class="shop-dialog">
         <div class="panel-heading"><span class="eyebrow">AMY CHAO’S BLACK MARKET</span><button class="close-button" id="shop-close" aria-label="Close Chao shop">×</button></div>
         <div class="shop-heading"><div><small>WELCOME, LITTLE ADVENTURER</small><h2>CHAO SHOP<span>★</span></h2></div><div class="shop-wallet"><span class="ring-icon"></span><strong id="shop-balance">0</strong><span>RINGS</span></div></div>
         <p>Bring your rings. Build your legend.</p>

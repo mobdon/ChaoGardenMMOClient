@@ -113,3 +113,134 @@ impl<'a> StageSpecialRings<'a> {
         self.cream_targets.iter().copied()
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn special_ring_source_collision_and_cull() {
+        let mut data = Vec::new();
+        let (sx, sy) = (48000, 42000);
+        for mode in 0..8 {
+            for y in -48..=48 {
+                for x in -32..=32 {
+                    let mut p = PlayerState::new_at(
+                        Character::Sonic,
+                        (sx + x) * 256 + 127,
+                        (sy + y) * 256 + 225,
+                    );
+                    p.move_state = if mode & 1 != 0 { 128 } else { 0 };
+                    p.sprite_offset_x = 6;
+                    p.sprite_offset_y = 14;
+                    let h = Hitbox {
+                        index: if mode & 2 != 0 { -1 } else { 0 },
+                        rectangle: [-16, -28, 16, 4],
+                    };
+                    let cheese = [
+                        (sx + if mode & 4 != 0 { x } else { 200 }) * 256,
+                        (sy + y) * 256,
+                    ];
+                    data.extend([
+                        u8::from(touching(sx, sy, h, &p, Some(cheese))),
+                        u8::from(outside(sx, sy, sx - x * 16, sy - y * 12)),
+                    ]);
+                }
+            }
+        }
+        assert_eq!(
+            crate::gba::sha256(&data),
+            "bdd417444275ceeaea2bf5667dd90c5dd7a9d7d9ae15c05fa135d7254a20d8bd"
+        );
+    }
+    #[test]
+    #[ignore = "requires local A2NE_ROM"]
+    fn special_ring_course_lifecycle() {
+        let bytes = std::fs::read(std::env::var_os("A2NE_ROM").unwrap()).unwrap();
+        let rom = VerifiedRom::parse(&bytes).unwrap();
+        for id in (0..26).filter(|id| id % 4 < 2) {
+            let mut e = StageEntities::load(&rom, id).unwrap();
+            let places: Vec<_> = e
+                .placements()
+                .iter()
+                .filter(|e| e.kind == 103)
+                .copied()
+                .collect();
+            assert_eq!(places.len(), 7, "course {id}");
+            let mut route = StageSpecialRings::new(&rom);
+            for (n, pos) in places.iter().enumerate() {
+                let mut p = PlayerState::new_at(Character::Sonic, pos.x * 256, pos.y * 256);
+                let mut cues = Vec::new();
+                for _ in 0..2 {
+                    e.update_layers(&mut p, pos.x, pos.y);
+                    cues.extend(route.tick(&mut e, &p, pos.x, pos.y, None).unwrap());
+                }
+                assert_eq!(cues, [298]);
+                assert_eq!(usize::from(route.count), n + 1);
+            }
+            for pos in places {
+                let (x, y) = (pos.x, pos.y);
+                let mut rings = StageSpecialRings::new(&rom);
+                let mut p = PlayerState::new_at(Character::Cream, x * 256, y * 256);
+                // Fresh independent management state before each targeted approach.
+                e = StageEntities::load(&rom, id).unwrap();
+                let mut run = |rings: &mut StageSpecialRings, p: &mut PlayerState, cx, cy| {
+                    e.update_layers(p, cx, cy);
+                    rings.tick(&mut e, p, cx, cy, None).unwrap()
+                };
+                assert!(run(&mut rings, &mut p, x, y).is_empty());
+                assert!(
+                    rings.sprites().any(|(a, b, s)| (a, b) == (x, y)
+                        && s.hitboxes()[0].rectangle == [-16, -28, 16, 4])
+                );
+                p.move_state |= 128;
+                run(&mut rings, &mut p, x + 800, y);
+                assert!(!rings.sprites().any(|(a, b, _)| (a, b) == (x, y)));
+                run(&mut rings, &mut p, x, y);
+                assert!(rings.sprites().any(|(a, b, _)| (a, b) == (x, y)));
+                p.move_state &= !128;
+                assert_eq!(run(&mut rings, &mut p, x, y), [298]);
+                assert_eq!(rings.count, 1);
+                assert!(rings.cream_targets().any(|v| v == (x, y)));
+                assert!(!rings.sprites().any(|(a, b, _)| (a, b) == (x, y)));
+                for i in 0..18 {
+                    assert!(run(&mut rings, &mut p, x, y).is_empty());
+                    let s = rings.sprites().find(|(a, b, _)| (*a, *b) == (x, y));
+                    if i < 17 {
+                        assert_eq!(
+                            s.unwrap().2.render().unwrap().frame_index,
+                            Some(8 + (i / 4).min(3))
+                        );
+                    } else {
+                        assert!(s.is_none());
+                    }
+                }
+                run(&mut rings, &mut p, x + 800, y);
+                run(&mut rings, &mut p, x, y);
+                assert!(!rings.sprites().any(|(a, b, _)| (a, b) == (x, y)));
+                assert_eq!(rings.count, 1);
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires local A2NE_ROM"]
+    fn special_ring_hud_two_full_cycles() {
+        let bytes = std::fs::read(std::env::var_os("A2NE_ROM").unwrap()).unwrap();
+        let rom = VerifiedRom::parse(&bytes).unwrap();
+        let mut hud = crate::native_hud::StageHud::new(&rom).unwrap();
+        let mut data = Vec::new();
+        for t in 0..508 {
+            hud.tick(0, 0, t);
+            hud.set_special_count((t % 8) as u8);
+            hud.draw(0, t, 1, 3, 0, |f, x, y| {
+                if y - i32::from(f.origin_y) == 31 {
+                    data.extend((x - i32::from(f.origin_x)).to_le_bytes());
+                    data.extend(31_i32.to_le_bytes());
+                    data.extend(&f.rgba);
+                }
+            });
+        }
+        assert_eq!(
+            crate::gba::sha256(&data),
+            "c1c8334e1005785b6e69ab6f96b5edcf28602af5721e24834d16f690a728c32a"
+        );
+    }
+}

@@ -8,6 +8,8 @@ pub mod gba;
 pub mod graphics;
 pub mod native_animation;
 pub mod native_audio;
+pub mod native_boss1;
+pub mod native_bouncy_bar;
 pub mod native_camera;
 pub mod native_campaign_save;
 pub mod native_checkpoints;
@@ -27,6 +29,7 @@ pub mod native_runtime;
 pub mod native_scatter;
 pub mod native_sonic;
 pub mod native_special_rings;
+pub mod native_spin;
 pub mod native_springs;
 pub mod native_stage;
 

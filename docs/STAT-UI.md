@@ -88,6 +88,15 @@ responsive layout and accessible text are browser enhancements. Native label
 images should have corresponding accessible text, and dynamic values must not
 be baked into a static screenshot.
 
+All seven shared desktop/Tiny stat names now use the same original common
+bitmap glyphs, including Luck and the full Intelligence label. Glyph cells are
+displayed at 16px, with proportional advances measured from the original letter
+foreground and three native pixels of shadow spacing; the 112px label column
+fits Intelligence without clipping. This spacing/layout is a browser adaptation,
+not an asserted port of the retail font renderer. Real text remains available
+to assistive technology and is shown while loading or if the atlas is missing.
+Levels, grades, points and their authoritative values are unchanged.
+
 This work ports original graphical pieces into a functional browser menu. It
 does not port the original menu engine, animation scripts, input dispatcher,
 or grade/stat calculation routines.

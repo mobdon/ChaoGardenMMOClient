@@ -26,6 +26,8 @@ MIDIS = {
     25: ("mus_egg_utopia__act_1.mid", "3820476caa438ee69b1d6dc682a4073021bf8243"),
     26: ("mus_egg_utopia__act_2.mid", "5871665f049e3b365497fc8b6722359523a69573"),
     102: ("se_ring.mid", "441990298f231c354777f5ba7df7cc599e04de3e"),
+    109: ("se_spin_attack.mid", "9342981d743cbec8c760dcb757477ece68f76958"),
+    110: ("se_spin_dash_release.mid", "c354c4fb82884fd21c340f0febf3730a65218497"),
     112: ("se_sonic_midair_somersault.mid", "d6c45f517e8cb59ec7c42e908fa5e4396f6f8eff"),
     113: ("se_sonic_insta_shield.mid", "3ade524f6033825f4a43b09fcb04ab153204d812"),
     115: ("se_brake.mid", "70e201090fa12a4caaeeaf5c51fef7824528aa66"),
@@ -43,6 +45,8 @@ MIDIS = {
     157: ("se_157.mid", "4dfca4ef3cfdf1e3b2159799fb2d1a307323fc39"),
     221: ("se_221.mid", "60fc015209ce6dfec4371a72330ae0a7588c7153"),
     232: ("se_long_brake.mid", "e95e2f8987fa33a5a928aa8f4eb4dd3c8bf09980"),
+    279: ("se_279.mid", "073a754ad7eb7510ae0ba8706939f945c42c2cf2"),
+    298: ("se_special_ring.mid", "0ad741f7dc96f32d656fcbb6dc343fdda9ce40a0"),
     401: ("mus_act_clear.mid", "a5a0c3ae101b3ae19a4e499155b0eb3195f8a53d"),
     407: ("mus_1_up.mid", "127b115fa52876d0d6add2036d0a3a8a61a3543e"),
 }
@@ -160,7 +164,7 @@ def main():
               "rom_sha256": hashlib.sha256(rom).hexdigest(),
               "song_table_offset": 0xAD4F4C, "song_table_rows": 507,
               "sample_rate": 10512, "samples_per_driver_frame": 176,
-              "scope": "Original MIDI note tick/key/velocity/gate/voice fingerprints agree with actual-ROM Rust MP2K traces for all 34 cues; complete stage introduction/first loop, SFX/jingles through completion. Actual ring PCM bytes/header verified. PCM output hashes are deterministic preview evidence, not independent retail waveform parity.",
+              "scope": "Original MIDI note tick/key/velocity/gate/voice fingerprints agree with actual-ROM Rust MP2K traces for all supported cues; complete stage introduction/first loop, SFX/jingles through completion. Actual ring PCM bytes/header verified. PCM output hashes are deterministic preview evidence, not independent retail waveform parity.",
               "cues": verified}
     args.report.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({"cues": len(verified), "notes": sum(row["scoreNotes"] for row in verified), "pcm_bytes": sum(row["pcmBytes"] for row in verified)}))

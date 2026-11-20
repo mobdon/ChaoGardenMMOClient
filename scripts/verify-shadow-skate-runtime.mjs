@@ -74,6 +74,7 @@ try {
     for (let frame = 0; frame < 40; frame++) {
       controller.restoreBase(); controller.update(1 / 60, skateState); controller.apply();
     }
+    assert.ok(controller.clearanceRatio>0 && controller.clearanceRatio<1,'original sprint toes clear the standing plane');
     const coastPhases = new Set();
     for (let frame = 0; frame < 90; frame++) {
       controller.restoreBase();
@@ -95,7 +96,7 @@ try {
       controller.update(.1, { speed: 1.994, grounded: true, footwear: true, mounted: false, fresh: true });
       controller.apply(); controller.restoreBase();
       controller.update(.01, { speed: 1.994, grounded: true, footwear: true, mounted: false, fresh: true, ...block });
-      controller.apply(); assert.equal(controller.diagnostics.active, false);
+      controller.apply(); assert.equal(controller.diagnostics.active, false);assert.equal(controller.clearanceRatio,0);
     }
     controller.dispose();
     forms.push({ name, sourceSha256: createHash('sha256').update(source).digest('hex'),
