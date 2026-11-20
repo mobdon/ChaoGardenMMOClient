@@ -231,10 +231,18 @@ reached from, not what each object does.
 | 0xa04c, 0xa074 | REL prolog and epilog | Module entry points |
 | 0xa078, 0xa2a0 | Stage setup | Call 0xa87c and 0xab04 and install 0x19470 (exec 0x196f0, about 3.8 KB) |
 | 0xa87c, 0xab04 | 0xa078 | Super-form player constructors (characters 9 and 10). Each installs the update 0xad8c and its handlers (ported), the draw routine 0xd2dc (ported), 0xd60c, and the stage player task (0xff7c → 0xf3f8, replayed) |
-| 0x18b5c | The voice-task helper 0x18ed0 | Allocates 0xdc bytes and installs 0x15f7c (about 7.5 KB), 0x17d18, 0x188f0, 0x18dbc and 0x191ac. It is created alongside each stage voice line |
+| 0x18b5c | Mode 2 of the helper 0x18ed0 | Allocates 0xdc bytes and installs 0x15f7c (about 7.5 KB), 0x17d18, 0x188f0, 0x18dbc and 0x191ac. Not reached in this module (see below) |
 | 0x1844, 0x7f58 | 0x1bb8, 0x8328 | Encounter phase code covered by earlier request paths |
 
-About 15% of section 1 is referenced by the Rust ports.
+The helper 0x18ed0 switches on its seventh argument: mode 0 at 0x18f1c, mode 1 at 0x18fc8, mode 2
+at 0x1907c, nothing for 3 and above. Only mode 2 creates the 0x18b5c object. Its only two callers
+(0xf90 and 0xf3dc) both pass mode 1. A reachability pass over section 1 starts from the REL prolog
+and epilog and the code pointers in module data that name function starts (jump-table entries
+excluded). It follows direct calls and code relocations, leaving out the unused modes of 0x18ed0.
+That pass finds 28 functions (20,604 bytes, 17% of section 1) unreachable, including 0x18b5c,
+0x15f7c, 0x17d18 and 0x1569c. Of the 98,532 reachable bytes, the Rust ports reference functions
+covering about 36%. The largest reachable unported routines are 0x196f0 (installed by stage setup
+through 0x19470), 0x1105c, 0x120d4 and 0x1b384.
 
 ## Open
 
