@@ -1,9 +1,12 @@
 //! Compare `walker_move` with main.dol (tests/walker_move_ppc.py).
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_move::{accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, AccelWork},
+    walker_move::{
+        accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, steer, AccelWork,
+        SteerCalls, SteerInput,
+    },
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{path::PathBuf, process::Command};
 
 fn f(x: &Value) -> f32 {
@@ -20,6 +23,29 @@ fn i3(x: &Value) -> [i32; 3] {
 
 fn bits(v: [f32; 3]) -> [u32; 3] {
     v.map(f32::to_bits)
+}
+
+struct Log {
+    stick: Option<i32>,
+    calls: Vec<Value>,
+}
+
+impl SteerCalls for Log {
+    fn flagged_turn(&mut self) {
+        self.calls.push(json!(["flagged", 0]));
+    }
+    fn analog(&mut self) -> Option<i32> {
+        self.stick
+    }
+    fn slope_turn(&mut self) {
+        self.calls.push(json!(["slope", 0]));
+    }
+    fn turn_toward(&mut self, aim: &mut i32) {
+        self.calls.push(json!(["toward", *aim as u32]));
+    }
+    fn turn_smoothly(&mut self, aim: &mut i32) {
+        self.calls.push(json!(["smooth", *aim as u32]));
+    }
 }
 
 #[test]
@@ -193,5 +219,24 @@ fn matches_main_dol() {
             None => assert_eq!(bits(want), bits([1.5, 2.5, 3.5]), "{c}"),
         }
         assert_eq!(bits(across), bits(v3(&c["across_after"])), "{c}");
+    }
+    for c in v["steer"].as_array().unwrap() {
+        let i = |x: &Value| x.as_i64().unwrap() as i32;
+        let inp = SteerInput {
+            task_flag: c["flag"].as_u64().unwrap() as i16,
+            angles: i3(&c["ang"]),
+            attr: c["attr"].as_u64().unwrap() as u32,
+            normal: v3(&c["n"]),
+            stick: (i(&c["stk"][0]) as i16, i(&c["stk"][1]) as i16),
+            camera: (i(&c["cam"][0]), i(&c["cam"][1])),
+        };
+        let mut log = Log {
+            stick: (c["stick"][0].as_u64().unwrap() != 0).then(|| i(&c["stick"][1])),
+            calls: vec![],
+        };
+        let mut aim = i(&c["aim"]);
+        steer(&mut stack, &inp, &mut aim, &mut log);
+        assert_eq!(aim, i(&c["aim_after"]), "{c}");
+        assert_eq!(Value::from(log.calls), c["log"], "{c}");
     }
 }

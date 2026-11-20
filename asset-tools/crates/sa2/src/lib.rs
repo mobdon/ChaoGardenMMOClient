@@ -56,6 +56,7 @@ pub mod pe;
 pub mod physical_board;
 pub mod player_physics;
 pub mod player_range;
+pub mod ninja_axis;
 pub mod ninja_matrix;
 pub mod ninja_vector;
 pub mod ninja_trig;

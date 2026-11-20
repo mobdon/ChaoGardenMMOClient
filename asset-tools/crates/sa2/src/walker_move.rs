@@ -5,8 +5,11 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 use crate::{
-    ninja_matrix::{rotate_by_angles, unrotate_by_angles, MatrixStack, Vec3},
+    msl_math::atan2f,
+    ninja_axis::rotate_axis,
+    ninja_matrix::{rotate_by_angles, unrotate_by_angles, Axis, MatrixStack, Vec3},
     ninja_trig::{fmadds, fnmsubs},
+    ninja_vector::vector_angle,
     walker_collide::{adjust_angle, diff_angle},
 };
 
@@ -379,4 +382,95 @@ pub fn accel_mode43(
     a[1] = fmadds(w.air_resist[1], w.spd[1], a[1]);
     a[2] = fmadds(w.air_resist[2], w.spd[2], a[2]);
     Some(a)
+}
+
+/// The routines fn_80048490 hands over to (the Sonic thread's
+/// `player_turn` / `player_slope`, and `player_analog`).
+pub trait SteerCalls {
+    /// fn_80038F40(task, motion, player), with task flag 0x2000.
+    fn flagged_turn(&mut self);
+    /// fn_8004E560(task, player, &angle, NULL): the stick angle when held.
+    fn analog(&mut self) -> Option<i32>;
+    /// fn_80048150(task, motion, player).
+    fn slope_turn(&mut self);
+    /// fn_800473B4(task, motion, player, aim).
+    fn turn_toward(&mut self, aim: &mut i32);
+    /// fn_80047714(task, motion, player, aim).
+    fn turn_smoothly(&mut self, aim: &mut i32);
+}
+
+/// What fn_80048490 reads besides its callees.
+#[derive(Debug, Clone, Copy)]
+pub struct SteerInput {
+    pub task_flag: i16,
+    /// Task angles (+8, +0xC, +0x10).
+    pub angles: [i32; 3],
+    /// `attr` (+0x88).
+    pub attr: u32,
+    /// `floor_normal` (+0x7C).
+    pub normal: Vec3,
+    /// The player's stick halfwords at 0x801E5438 + 0x34 * pnum, +0x1C and
+    /// +0x1E.
+    pub stick: (i16, i16),
+    /// The X (+0xC) and Y (+0x10) angles of the camera the player's entry
+    /// in 0x80175378 points at.
+    pub camera: (i32, i32),
+}
+
+const BAMS_PER_RAD: f64 = f64::from_bits(0x40c4_5f30_b217_88bb); // r2-0x75E8
+const ONE: f32 = 1.0; // r2-0x75C8
+const MINUS_ONE: f32 = -1.0; // r2-0x75B0
+
+fn fctiwz_f64(x: f64) -> i32 {
+    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 {
+        i32::MIN
+    } else {
+        x as i32
+    }
+}
+
+/// fn_80048490: the walker's steering. With task flag 0x4000 nothing
+/// happens; with 0x2000 `flagged_turn` runs. Without the stick a grounded
+/// player turns down slopes (`slope_turn`) and an airborne one aims at its
+/// yaw. With the stick on a surface with `attr` bit 0x100000 the stick's
+/// direction is taken from the camera onto the floor plane, and the aim is
+/// the yaw plus the angle from the task's forward to it (`turn_toward`
+/// first); otherwise the aim is the stick angle. Both then end in
+/// `turn_smoothly`. `aim` is the motion work's +0x1C.
+pub fn steer(stack: &mut MatrixStack, inp: &SteerInput, aim: &mut i32, calls: &mut dyn SteerCalls) {
+    if inp.task_flag & 0x4000 != 0 {
+        return;
+    }
+    if inp.task_flag & 0x2000 != 0 {
+        calls.flagged_turn();
+        return;
+    }
+    match calls.analog() {
+        None => {
+            if inp.task_flag & 3 != 0 {
+                calls.slope_turn();
+                return;
+            }
+            *aim = inp.angles[1];
+        }
+        Some(_) if inp.attr & 0x10_0000 != 0 => {
+            let a = atan2f(f32::from(inp.stick.0), f32::from(inp.stick.1));
+            let turn = fctiwz_f64(BAMS_PER_RAD * f64::from(a));
+            stack.push_unit();
+            stack.rotate(Axis::Y, inp.camera.1);
+            stack.rotate(Axis::X, inp.camera.0);
+            let view = stack.calc_vector([ZERO, ZERO, MINUS_ONE]);
+            stack.pop();
+            stack.push_unit();
+            rotate_axis(stack.current_mut(), inp.normal, turn);
+            let dir = stack.calc_vector(view);
+            stack.pop();
+            let fwd = rotate_by_angles(stack, inp.angles, [ONE, ZERO, ZERO]);
+            let d = vector_angle(fwd, dir, Some(inp.normal));
+            *aim = (inp.angles[1].wrapping_add(d)) & 0xFFFF;
+            calls.turn_toward(aim);
+        }
+        Some(ang) => *aim = ang,
+    }
+    calls.turn_smoothly(aim);
 }

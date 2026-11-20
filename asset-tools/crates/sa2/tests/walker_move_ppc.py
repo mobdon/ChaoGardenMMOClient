@@ -1,7 +1,7 @@
 """Local PowerPC oracle for the shared player movement steps (GSNE8P main.dol).
 
 Runs fn_80047A1C, fn_80048ACC, fn_80048EC4, fn_8004B330, fn_80048724 and
-fn_80048834 on random player states and prints JSON for
+fn_80048834, fn_80048490 on random player states and prints JSON for
 tests/walker_move.rs. Needs SA2_MAIN_DOL and the local Gekko tables.
 """
 import json
@@ -16,7 +16,26 @@ import dol_ppc  # noqa: E402
 import gekko_tables  # noqa: E402
 
 gekko_tables.require()
-m = dol_ppc.Dol(sys.argv[1] if len(sys.argv) > 1 else os.environ["SA2_MAIN_DOL"]).machine()
+dol = dol_ppc.Dol(sys.argv[1] if len(sys.argv) > 1 else os.environ["SA2_MAIN_DOL"])
+# njRotate's PSMTXRotAxisRad is paired-single code; the interpreter runs its
+# MSL sinf/cosf calls on a second machine.
+m = dol.machine(paired={**dol_ppc.DEFAULT_PAIRED, 0x800ED694: "PSMTXRotAxisRad"})
+helper = dol.machine(boot=False)
+helper.call(0x800ECE94)
+_step = dol_ppc.Interp.step
+
+
+def _step_msl(self, pc, ins, stack):
+    if ins >> 26 == 18 and ins & 3 == 1:
+        tgt = (pc + dol_ppc.sext(ins & 0x3FFFFFC, 26)) & 0xFFFFFFFF
+        if tgt in (0x801115A8, 0x80111414):
+            helper.call(tgt, f1=self.p0[1])
+            self.p0[1] = self.p1[1] = helper.fpr(1)
+            return pc + 4
+    return _step(self, pc, ins, stack)
+
+
+dol_ppc.Interp.step = _step_msl
 rng = random.Random(0x47A1C)
 R13 = 0x803B52C0
 f32 = lambda x: struct.unpack(">f", struct.pack(">f", x))[0]
@@ -173,4 +192,38 @@ for k in range(8000):
                 "mwacc": [fb(x) for x in mwacc], "across": [fb(x) for x in across],
                 "f": {hex(o): fb(x) for o, x in f.items()},
                 "acc_after": get3(PW + 0x58), "across_after": get3(Q + 0x78)})
-print(json.dumps({"level": level, "acc": acc, "run": run, "air": air, "grav": grav, "m43": m43}))
+# fn_80048490 with its callees stubbed and logged.
+log = []
+m.stub(0x80038F40, lambda mm: log.append(["flagged", 0]))
+m.stub(0x80048150, lambda mm: log.append(["slope", 0]))
+m.stub(0x800473B4, lambda mm: log.append(["toward", mm.gpr(6)]))
+m.stub(0x80047714, lambda mm: log.append(["smooth", mm.gpr(6)]))
+CAM = 0x81104000
+m.put(0x80175378, "I", CAM)
+steer = []
+for _ in range(3000):
+    flag = rng.choice([0, 1, 2, 0x2000, 0x4000, 0, 1])
+    ang = [rng.choice([0, rng.randrange(-0x2000, 0x2000)]), rng.randrange(0, 0x10000), rng.choice([0, rng.randrange(-0x2000, 0x2000)])]
+    attr = rng.choice([0, 0x100000, 0x100000, 0x100100])
+    n = [f32(rng.uniform(-0.6, 0.6)), f32(rng.uniform(0.5, 1)), f32(rng.uniform(-0.6, 0.6))]
+    stk = [rng.randrange(-128, 128), rng.randrange(-128, 128)]
+    cam = [rng.randrange(-0x2000, 0x2000), rng.randrange(0, 0x10000)]
+    stick[0] = rng.choice([0, 1, 1])
+    stick[1] = rng.randrange(0, 0x10000)
+    stick[2] = 1.0
+    aim = rng.randrange(0, 0x10000)
+    m.put(TASK + 4, "H", flag)
+    m.u.mem_write(TASK + 8, struct.pack(">3i", *ang))
+    m.put(PW, "B", 0)
+    m.put(PW + 0x88, "I", attr)
+    put3(PW + 0x7C, n)
+    m.put(0x801E5438 + 0x1C, "h", stk[0])
+    m.put(0x801E5438 + 0x1E, "h", stk[1])
+    m.put(CAM + 0xC, "i", cam[0])
+    m.put(CAM + 0x10, "i", cam[1])
+    m.put(MW + 0x1C, "i", aim)
+    log.clear()
+    m.call(0x80048490, r3=TASK, r4=MW, r5=PW)
+    steer.append({"flag": flag, "ang": ang, "attr": attr, "n": [fb(x) for x in n], "stk": stk, "cam": cam,
+                  "stick": [stick[0], stick[1]], "aim": aim, "aim_after": m.get(MW + 0x1C, "i"), "log": list(log)})
+print(json.dumps({"level": level, "acc": acc, "run": run, "air": air, "grav": grav, "m43": m43, "steer": steer}))
