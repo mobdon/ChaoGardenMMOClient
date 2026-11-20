@@ -3,8 +3,8 @@
 //! child task (create +0x217A8, update +0x211FC), the optional window child
 //! (create +0x21C60, update +0x218AC) and the layout helpers (+0x21D48 line
 //! copy, +0x20FB4 line width, +0x20E54 glyph scale built on the inline
-//! square root at +0x74CC). Displays (+0x2140C, +0x21A00) are renderers and
-//! are not part of this port. Engine results and the work words the engine
+//! square root at +0x74CC). Its displays (+0x2140C, +0x21A00) are in
+//! `duel_display`. Engine results and the work words the engine
 //! owns are inputs.
 use crate::{duel_platform, Error, Result};
 use serde::{Deserialize, Serialize};
