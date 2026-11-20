@@ -104,3 +104,14 @@ child 0, hero normal 9, swim 15, fly 21, run 27, power 33. Other types keep
 their texture's own bank (alpalSetBank, jumptable 0x43D84). Hero adults blend
 slots base+0..5 (z, n, s, f, r, p) with the diffuse weights.
 
+## Unresolved (left out, not approximated)
+
+- Palette drawing: which al_body CI textures read which bank (TexBankList is
+  0..17), and the child per-entry formula combining NC00/NC01, the hero child
+  set and DC by growth and |APos|. Until both are traced the palettes are not
+  applied.
+- TEXMTX9 orientation is not yet compared with a GameCube render.
+- Eye position offsets (face work +20/+24).
+- The garden-stage APos drift sign, the capture APos sign (per-character table),
+  the species 12–20 random pick, and the AddUserLike APos shift sign.
+- AL_SucceedGeneParam carry-over of the Aim* values on reincarnation.
