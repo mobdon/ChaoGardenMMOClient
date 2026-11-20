@@ -66,6 +66,12 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
             for u in &f.uploads {
                 s.renderer.replace_texture(u.id, &u.levels);
             }
+            // Texture uploads stage their bytes until a submission; submit
+            // (nothing) and poll so wgpu frees them and the textures they
+            // replaced. Snapshots, every few hundred frames, are the only
+            // blocking polls.
+            s.queue.submit([]);
+            let _ = s.device.poll(wgpu::PollType::Poll);
             return Ok(None);
         }
         if std::env::var_os("SA2_SNAP_INFO").is_some() {
