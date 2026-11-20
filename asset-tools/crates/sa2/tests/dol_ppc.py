@@ -55,7 +55,15 @@ def fma(a, c, b):
     """a*c+b computed exactly and rounded once to double."""
     if any(map(lambda v: v != v or v in (float('inf'), float('-inf')), (a, c, b))):
         return a * c + b
-    return float(Fraction(a) * Fraction(c) + Fraction(b))
+    exact = Fraction(a) * Fraction(c) + Fraction(b)
+    if exact == 0:
+        # IEEE signed zero: -0 only when the (zero) product and b are both -0.
+        neg = lambda v: struct.pack('>d', v)[0] >> 7 == 1
+        p_neg = neg(a) != neg(c)
+        if a * c == 0 and b == 0 and p_neg and neg(b):
+            return -0.0
+        return 0.0
+    return float(exact)
 
 
 def div(a, b):

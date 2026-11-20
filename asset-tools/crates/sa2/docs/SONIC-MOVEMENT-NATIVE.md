@@ -50,9 +50,9 @@ rules, so the check is "the same instructions, on this machine model".
 | Physics parameters | PhysicsArray 0x80196578, stride 0x84, copied into player work at +0xC0 (layout matches the PC `playerwk`) | Read (`player_physics`) |
 | MSL `sinf`/`cosf` | 0x801115A8 / 0x80111414, with `__sinit_trigf_c` | **Ported** (`ninja::sinf`, `ninja::cosf`) |
 | Ninja sine table | njSinCosTbl 0x802D7758, built by fn_801181A0 | **Ported** (`ninja::SinCos`) |
-| Ninja matrix stack | fn_80119C74 (0xE0000000, 0x30 bytes each), njPush/PopMatrix, njRotateX/Y/Z (PSMTXRotRad + PSMTXConcat), njCalcVector (PSMTXMultVecSR) | Next |
-| Player-frame vectors | fn_8003E9E0 (into the player's frame), fn_8003EA6C (back out) | Next |
-| Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Planned |
+| Ninja matrix stack | fn_80119C74 (0xE0000000, 0x30 bytes each), njPush/PopMatrix, njRotateX/Y/Z (PSMTXRotRad + PSMTXConcat), njCalcVector (PSMTXMultVecSR), njCalcPoint (PSMTXMultVec) | **Ported** (`ninja_matrix`) |
+| Player-frame vectors | fn_8003E9E0 (rotate by Z, X, -Y), fn_8003EA6C (rotate by Y, -X, -Z) | **Ported** (`ninja_matrix::rotate_by_angles`, `unrotate_by_angles`) |
+| Shared ground movement | fn_8004C734 (0xF9C), called by 7 character mains; callees fn_8004BA74, fn_8004B568, fn_80038F40, fn_80047714, fn_800473B4, fn_80047CBC, fn_80048150, fn_8004E560 | Next |
 | Sonic | main fn_80083E44, action state machine fn_8007E89C; loaders fn_80086BA4, fn_80086E3C, fn_800871C4, fn_800874C0 | Planned |
 
 ## Ported so far
@@ -67,3 +67,14 @@ rules, so the check is "the same instructions, on this machine model".
   needs `SA2_MAIN_DOL` and `SA2_PPC_PYTHON`) checks the whole table
   byte-for-byte against the one the game builds. It also checks 3,014
   sinf/cosf inputs, including zeros, infinities, NaN and huge values.
+
+- **Ninja matrices** (`ninja_matrix`): `PSMTXConcat`, `PSMTXMultVecSR`
+  (`njCalcVector`), `PSMTXMultVec` (`njCalcPoint`), `PSMTXRotTrig` and
+  `njRotateX/Y/Z`, the matrix stack (`njPushMatrixEx`, `njPopMatrixEx`,
+  `njUnitMatrix`, the push-unit helper) and the two player-frame helpers
+  fn_8003E9E0 and fn_8003EA6C. The paired-single lanes and fused
+  multiply-adds follow the compiled order, down to the signs of zeros.
+  `tests/ninja_matrix_dol.rs` compares 400 random concatenations, 400
+  vector/point transforms, 600 rotations (random angles, including
+  out-of-range ones) and 600 player-frame round trips against main.dol.
+  All of them match bit for bit.
