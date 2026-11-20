@@ -59,7 +59,7 @@ fn walker_body_draws() {
     let mut r = Renderer::new(device, queue, format);
     r.set_meshes(&[&mesh]);
     r.set_textures(&tex);
-    let target = r.device.create_texture(&wgpu::TextureDescriptor {
+    let target = r.gx.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
             width: SIZE[0],
@@ -80,13 +80,13 @@ fn walker_body_draws() {
         look_at([18.0, 14.0, 22.0], [0.0, 4.0, 0.0], 1.0, 1.0, 0.5, 500.0),
     );
     let row = SIZE[0] * 4;
-    let buf = r.device.create_buffer(&wgpu::BufferDescriptor {
+    let buf = r.gx.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: u64::from(row * SIZE[1]),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut enc = r.device.create_command_encoder(&Default::default());
+    let mut enc = r.gx.device.create_command_encoder(&Default::default());
     enc.copy_texture_to_buffer(
         target.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
@@ -103,10 +103,12 @@ fn walker_body_draws() {
             depth_or_array_layers: 1,
         },
     );
-    r.queue.submit([enc.finish()]);
+    r.gx.queue.submit([enc.finish()]);
     buf.slice(..)
         .map_async(wgpu::MapMode::Read, |res| res.unwrap());
-    r.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    r.gx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
     let pixels = buf.slice(..).get_mapped_range().unwrap().to_vec();
     let bg = [pixels[0], pixels[1], pixels[2]];
     let drawn = pixels

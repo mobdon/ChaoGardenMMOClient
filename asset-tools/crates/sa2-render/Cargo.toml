@@ -11,6 +11,7 @@ description = "Draw path for sa2-runtime: Ninja chunk geometry to wgpu (WebGPU, 
 
 [dependencies]
 sa2-asset-tools = { path = "../sa2" }
+sa2-gx = { path = "../sa2-gx" }
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal", "gles", "webgpu", "webgl"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 

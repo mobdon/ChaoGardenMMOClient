@@ -43,7 +43,9 @@ fn iron_gate_land_draws() {
         mesh.indices.len() / 3,
         mesh.draws.len()
     );
-    assert!(mesh.indices.len() > 3000);
+    let gx: usize = mesh.parts.iter().map(|p| p.indices.len()).sum();
+    eprintln!("gc parts {} triangles {}", mesh.parts.len(), gx / 3);
+    assert!(mesh.indices.len() + gx > 3000);
 
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle().with_env());
@@ -58,7 +60,7 @@ fn iron_gate_land_draws() {
     .unwrap();
     eprintln!("textures {}", tex.len());
     r.set_textures(&tex);
-    let target = r.device.create_texture(&wgpu::TextureDescriptor {
+    let target = r.gx.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("target"),
         size: wgpu::Extent3d {
             width: SIZE[0],
@@ -85,13 +87,13 @@ fn iron_gate_land_draws() {
     r.render(&view, SIZE, vp);
 
     let row = SIZE[0] * 4;
-    let buf = r.device.create_buffer(&wgpu::BufferDescriptor {
+    let buf = r.gx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
         size: u64::from(row * SIZE[1]),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut enc = r.device.create_command_encoder(&Default::default());
+    let mut enc = r.gx.device.create_command_encoder(&Default::default());
     enc.copy_texture_to_buffer(
         target.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
@@ -108,10 +110,12 @@ fn iron_gate_land_draws() {
             depth_or_array_layers: 1,
         },
     );
-    r.queue.submit([enc.finish()]);
+    r.gx.queue.submit([enc.finish()]);
     buf.slice(..)
         .map_async(wgpu::MapMode::Read, |res| res.unwrap());
-    r.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    r.gx.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
     let pixels = buf.slice(..).get_mapped_range().unwrap().to_vec();
     let bg = [pixels[0], pixels[1], pixels[2]]; // a corner shows the clear color
     let drawn = pixels

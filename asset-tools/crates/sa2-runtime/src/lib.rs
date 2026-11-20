@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod camera;
+pub mod follow;
 pub mod frame;
 pub mod game;
 pub mod host_pad;

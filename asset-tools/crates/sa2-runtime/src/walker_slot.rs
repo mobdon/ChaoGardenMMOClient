@@ -377,6 +377,10 @@ fn gs8(g: &[u8], o: usize) -> i8 {
 }
 
 impl WalkerExec for AdapterWalker {
+    fn history(&self) -> Option<&PlayerHistory> {
+        Some(&self.hist)
+    }
+
     fn exec(&mut self, w: WalkerWork<'_>, eng: &mut RuntimeEngine<'_>) {
         let pos = {
             let f = |o: usize| {

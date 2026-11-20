@@ -3,6 +3,7 @@
 //! viewport count and resets the per-viewport camera blocks. The camera mode
 //! routines it calls are not ported yet: they are logged as [`Event::Engine`]
 //! and not run.
+use crate::follow::{Follow, FollowHost, Inputs, Player};
 use crate::task::{Runtime, TaskId};
 
 /// The camera task's first exec.
@@ -117,22 +118,54 @@ pub fn init_view(pos: [f32; 3], ang: [i32; 3], height: f32) -> View {
 pub struct DefaultCamera {
     /// Slot 0xE's frame counter (+0x260), counted after each call.
     frames: u32,
+    /// INIT dropped its slot (fn_800C3780).
+    dropped: bool,
+    /// CARMEL in slot 0 and the exec state it reads back.
+    pub follow: Follow,
 }
 
 impl DefaultCamera {
-    /// One camera exec for the player at `pos`/`ang` with `height`.
-    /// shortcut: CARMEL is not ported yet, so after INIT hands over the
-    /// INIT placement keeps running; replace with CARMEL when it lands.
-    pub fn step(&mut self, pos: [f32; 3], ang: [i32; 3], height: f32) -> View {
-        let v = init_view(pos, ang, height);
-        self.frames = self.frames.saturating_add(1);
-        v
+    /// One camera exec (fn_800C3DA0, viewport 0): load last frame's view
+    /// from the block, run the top slot (INIT, then CARMEL), derive the
+    /// angles (fn_800C7590), keep the view (fn_800C7464) and the trail
+    /// (fn_800C6B38).
+    pub fn step(&mut self, host: &mut dyn FollowHost, p: &Player, inp: &Inputs<'_>) -> View {
+        let f = &mut self.follow;
+        f.unported.clear();
+        let (kind, w4, w8) = (f.view.kind, f.view.w4, f.view.w8);
+        f.view = f.block.view;
+        (f.view.kind, f.view.w4, f.view.w8) = (kind, w4, w8);
+        if self.dropped {
+            f.carmel(host, p, inp);
+            f.frames = f.frames.wrapping_add(1);
+        } else {
+            let v = init_view(p.pos, p.ang, p.height);
+            f.view.pos = v.pos;
+            f.view.target = v.target;
+            if self.frames > INIT_FRAMES {
+                f.reset_trail(inp.stage, p);
+                self.dropped = true;
+            }
+            f.view.kind = 0;
+            f.view.ang[2] = 0;
+            f.view.w4 = 0;
+            f.view.w8 = 0;
+            self.frames = self.frames.saturating_add(1);
+        }
+        f.derive();
+        f.keep();
+        f.record(p, inp);
+        f.execs = f.execs.wrapping_add(1);
+        View {
+            pos: f.view.pos,
+            target: f.view.target,
+        }
     }
 
     /// INIT has handed over to slot 0 (it drops itself on the frame its
     /// counter is past `INIT_FRAMES`).
     pub fn handed_over(&self) -> bool {
-        self.frames > INIT_FRAMES + 1
+        self.dropped
     }
 }
 
@@ -151,15 +184,57 @@ mod tests {
         assert!(q.pos[0].abs() < 1e-3 && (q.pos[2].abs() - 60.0).abs() < 1e-3);
     }
 
+    struct Open;
+    impl FollowHost for Open {
+        fn line(&mut self, _: [f32; 3], _: [f32; 3]) -> i32 {
+            0
+        }
+        fn search_angles(&mut self, _: i32) -> Option<[i32; 2]> {
+            None
+        }
+    }
+
     #[test]
-    fn init_hands_over_after_its_frames() {
+    fn init_hands_over_to_carmel() {
+        let (g, pad, hist) = (
+            vec![0u8; 0xF0],
+            vec![0u8; 0x34],
+            vec![[10.0, 0.0, 5.0]; 0x100],
+        );
+        let inp = Inputs {
+            stage: 11,
+            g: &g,
+            pad: &pad,
+            second_player: false,
+            history_index: 0,
+            history_pos: &hist,
+        };
+        let p = Player {
+            pos: [10.0, 0.0, 5.0],
+            height: 12.0,
+            character: 7,
+            ..Player::default()
+        };
         let mut c = DefaultCamera::default();
+        // INIT runs while its counter is 0..=5 and drops itself on the 7th
+        // call (counter 6).
         for _ in 0..=INIT_FRAMES {
-            c.step([0.0; 3], [0; 3], 0.0);
+            assert_eq!(c.step(&mut Open, &p, &inp).pos, [-50.0, 30.0, 5.0]);
             assert!(!c.handed_over());
         }
-        c.step([0.0; 3], [0; 3], 0.0);
-        c.step([0.0; 3], [0; 3], 0.0);
+        c.step(&mut Open, &p, &inp);
         assert!(c.handed_over());
+        // fn_800C6CDC fills the trail with the player; fn_800C6B38 then
+        // adds the raised position (12 up is more than one unit away).
+        assert_eq!(c.follow.trail[1..], [p.pos; 49]);
+        assert_eq!(c.follow.trail[0], [10.0, 12.0, 5.0]);
+        // CARMEL's first frame: state 2, the follow routine eases the
+        // target from INIT's and keeps the camera within 30..70.
+        let v = c.step(&mut Open, &p, &inp);
+        assert_eq!(c.follow.work.state, 2);
+        assert!(c.follow.unported.is_empty());
+        let r = ((v.pos[0] - 10.0).powi(2) + (v.pos[2] - 5.0).powi(2)).sqrt();
+        assert!((30.0..=70.0).contains(&r), "{r}");
+        assert_eq!(v.target, [10.0, 12.0, 5.0]);
     }
 }

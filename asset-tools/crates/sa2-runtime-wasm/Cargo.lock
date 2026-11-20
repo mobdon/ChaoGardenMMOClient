@@ -852,11 +852,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sa2-gx"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "wgpu",
+]
+
+[[package]]
 name = "sa2-render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "sa2-asset-tools",
+ "sa2-gx",
  "wgpu",
 ]
 
