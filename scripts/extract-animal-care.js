@@ -47,7 +47,9 @@ const animalSections = chao.filter(item => item.fields.filename?.startsWith('Cha
 const partSections = chao.filter(item => item.fields.filename?.startsWith('Chao/models/AnimalParts/'));
 const statsSections = chao.filter(item => ['Chao Animal and Chaos Drive Stats Array', 'Chao Fruit Stats Array'].includes(item.name));
 const driveSections = common.filter(item => /^(?:Chaos Drive Texlist|(?:Green|Purple|Red|Yellow) Chaos Drive)$/.test(item.name));
-const selected = [...animalSections, ...partSections, ...statsSections, ...driveSections];
+const gardenSections = chao.filter(item => /^Chao\/(?:Trees|Seeds)\//.test(item.fields.filename || '')
+  || /^Chao\/common\/models\/(?:\w*Fruit\w*|Mushroom|MintCandy|FruitCore)\.sa2mdl$/.test(item.fields.filename || ''));
+const selected = [...animalSections, ...partSections, ...statsSections, ...driveSections, ...gardenSections];
 // SA Tools786 maps this export 0x10 bytes past its wrapper object (into the
 // wrapper's position.z). Every other child part's wrapper sits 0x38 bytes after
 // the object its part list points to; the corrected wrapper's child pointer is
@@ -64,7 +66,7 @@ await writeFile(mapping, `game=SA2B\ndatafile=sonic2app.exe\n\n${selected.map(it
 const options = { windowsHide: true, timeout: 120_000, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, DOTNET_ROLL_FORWARD: 'Major' } };
 const result = await run('dotnet', [path.join(tools, 'bin/lib/split.dll'), 'binary', path.join(game.gamePath, 'sonic2app.exe'), mapping, output], options);
 await writeFile(path.join(output, 'extraction.log'), result.stdout + result.stderr);
-for (const name of ['al_minimal_tex', 'al_mini_parts_tex', 'chaosdrive_tex']) {
+for (const name of ['al_minimal_tex', 'al_mini_parts_tex', 'chaosdrive_tex', 'al_object']) {
   const relativePath = `resource/gd_PC/${name}.prs`; await original(relativePath);
   const copy = path.join(textures, `${name}.prs`); await copyFile(path.join(game.gamePath, relativePath), copy);
   await run('dotnet', [path.join(tools, 'bin/lib/ArchiveTool.dll'), '-png', copy], options);
@@ -151,11 +153,30 @@ const drives = driveDefs.map(([color, skill], index) => {
     model: { path: `.local/extracted/care/${model.fields.filename}`, textureArchive: 'resource/gd_PC/chaosdrive_tex.prs', texlist: '.local/extracted/care/OBJECT/tls/ChaosDrive.satex' },
     grantsAnimalHistoryBit: false, animalParts: false, nativeEffectStatus: 'Independent native drive rows; not an animal species or automatic animal-history/part unlock.' };
 });
+// Fruit kind -> model: 24 loose-fruit pointers at 0x013340c8, then on-tree models
+// for kinds 0-9 (GameCube ChaoMain .data 0xA4470 has the same layout, read by
+// ALO_FruitDisplayer). Tree kind 1-7 -> {young, mature, dying} at 0x01329148,
+// stride 12 (GameCube .data 0xB6358 + kind*12, ALO_GrowTreeExecutor).
+const gardenByPointer = new Map(gardenSections.map(item => [Number.parseInt(item.fields.address, 16) + imageBase, item]));
+const gardenModel = pointer => {
+  const section = gardenByPointer.get(pointer);
+  if (!section) throw new Error(`Garden model pointer does not match a mapped model:${hex(pointer)}`);
+  return { name: section.name, path: `.local/extracted/care/${section.fields.filename}`, texture: section.fields.texture, address: hex(pointer) };
+};
+const fruitKeys = ['chao-garden','hero-garden','dark-garden','strong','tasty','hero','dark','round','triangle','square','heart','chao','smart','orange','blue','pink','green','purple','yellow','red','mushroom','mushroom-alt','mint-candy','grapes'];
+const fruitModels = fruitKeys.map((key, id) => {
+  const record = { id, key, stats: fruitStats[id].address, model: gardenModel(exe.readUInt32LE(atVA(0x013340c8 + id * 4))) };
+  if (id < 10) record.onTreeModel = gardenModel(exe.readUInt32LE(atVA(0x013340c8 + (24 + id) * 4)));
+  return record;
+});
+const treeKeys = ['strong','tasty','hero','dark','round','triangle','square'];
+const treeModels = treeKeys.map((key, index) => ({ kind: index + 1, key, fruitId: index + 3,
+  stages: Object.fromEntries(['young','mature','dying'].map((stage, i) => [stage, gardenModel(exe.readUInt32LE(atVA(0x01329148 + index * 12 + i * 4)))])) }));
 for (const source of sources) {
   source.unchanged = digest(await readFile(path.join(game.gamePath,source.relativePath))) === source.sha256;
   if (!source.unchanged) throw new Error(`Installed source changed:${source.relativePath}`);
 }
-const catalog = { version: 1, addressCorrections, animals, drives, reservedStatRows: [stats[25]], fruitStats, partHierarchyGaps,
+const catalog = { version: 1, addressCorrections, animals, drives, reservedStatRows: [stats[25]], fruitStats, fruitModels, treeModels, partHierarchyGaps,
   units: 'Original signed-short ChaoItemStats fields. Do not equate them to character levels, S grades or skill points without validating the native application path.',
   sourceSchema: { itemStats: { address:hex(0x008a6240), stride:20, count:26, fields:statFields }, fruitStats:{ address:hex(0x008a6448), stride:20, count:24 },
     history: 'AL_PARTS.MinimalFlag species bitmask is separate from eight MinimalParts appearance slots; grade, experience, skill, mood and personality fields are separate.' },
