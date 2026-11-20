@@ -51,3 +51,29 @@ fn mov_control_matches_the_gamecube_powerpc() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires the user's GameCube main.dol and Python with Unicorn"]
+fn turn_toward_matches_the_gamecube_powerpc() {
+    let python = env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
+    let o = Command::new(python)
+        .arg("-I")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/turn_toward_ppc.py"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    if o.stdout.is_empty() {
+        return;
+    }
+    let doc: Value = serde_json::from_slice(&o.stdout).unwrap();
+    for c in doc.as_array().unwrap() {
+        let (aim, yaw) = sa2_asset_tools::mov_control::turn_toward(
+            v3(&c["p"]),
+            v3(&c["t"]),
+            c["yaw"].as_i64().unwrap() as i32,
+            c["step"].as_i64().unwrap() as i32,
+        );
+        assert_eq!(i64::from(aim), c["aim"].as_i64().unwrap(), "aim {c}");
+        assert_eq!(i64::from(yaw), c["yawOut"].as_i64().unwrap(), "yaw {c}");
+    }
+}

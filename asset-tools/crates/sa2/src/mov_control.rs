@@ -40,3 +40,13 @@ pub fn mov_control(m: &mut Mover, position: &mut Vec3, pushed: bool) {
         position[k] += m.velocity[k];
     }
 }
+
+/// main.dol fn_8002F1C0(task, step): aim at the movement block's target
+/// (+0x54, +0x5C) from the position, store the aim angle at +0x1C and turn the
+/// yaw (task+0x34 +0xC) toward it by at most `step` (AdjustAngle 0x8002B918).
+/// Returns (aim, new yaw).
+pub fn turn_toward(position: Vec3, target: Vec3, yaw: i32, step: i32) -> (i32, i32) {
+    let a = crate::msl_math::atan2f(target[0] - position[0], target[2] - position[2]);
+    let aim = (10430.38043493439f64 * f64::from(a)) as i32;
+    (aim, crate::walker_collide::adjust_angle(yaw, aim, step))
+}
