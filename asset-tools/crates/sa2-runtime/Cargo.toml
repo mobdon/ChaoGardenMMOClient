@@ -1,0 +1,13 @@
+[package]
+name = "sa2-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "Native SA2B engine core (task system first), ported from main.dol GSNE8P"
+
+# Kept out of the sa2 crate so its manifest and lockfile stay unchanged.
+[workspace]
+
+[dev-dependencies]
+serde_json = "1.0.154"

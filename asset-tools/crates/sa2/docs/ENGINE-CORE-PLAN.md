@@ -118,21 +118,21 @@ kept local. Output: `ENGINE-MAP.md` with addresses, sizes, callers and callees.
   and priorities, allocation, child tasks, the destroy path and destructors.
 - The exec pass and display pass in native order.
 - **Start here (from ENGINE-MAP.md):**
-  1. [ ] Crate skeleton `sa2-runtime` with an arena of `Task` slots and the 8
+  1. [x] Crate skeleton `sa2-runtime` with an arena of `Task` slots and the 8
      `btp` list heads (0x801FCEB8), `clearBtp` 0x80071F2C.
-  2. [ ] `GetTask` 0x80071D04 / `CreateElementalTask` 0x80071E0C (im bits
+  2. [x] `GetTask` 0x80071D04 / `CreateElementalTask` 0x80071E0C (im bits
      0x2→+0x34 0x30 B, 0x4→+0x3C 2×0x1C, 0x1→+0x38 0x40 B, 0x8→+0x40 0x10 B,
      tail insert, level 7 unlinked, `no_op` default exec).
-  3. [ ] `CreateChildTask` 0x800709F8 (child ring, parent link, twp
+  3. [x] `CreateChildTask` 0x800709F8 (child ring, parent link, twp
      +0x08..+0x1C copy), `FreeTask` 0x80071AE0, `FreeTaskC` 0x8007098C,
      `DestroyTask` 0x80071AF0 in its exact order (destructor first, children,
      unlink, list or parent head fix-up, work frees, SET bit clear).
-  4. [ ] Exec pass `fn_80071214` (levels 0–5; head re-read after each task,
+  4. [x] Exec pass `fn_80071214` (levels 0–5; head re-read after each task,
      children through `LoopTaskC`), and `fn_80071A40(0)` alone for the
      G+0x49 path.
-  5. [ ] Display pass `fn_80070C54` order (+0x14, +0x20 sorted, +0x1C, +0x24,
+  5. [x] Display pass `fn_80070C54` order (+0x14, +0x20 sorted, +0x1C, +0x24,
      +0x28) with the levels 2–5 viewport gate, and the +0x2C pre-pass.
-  6. [ ] Unicorn oracle `tests/task_system_ppc.py` with stub callbacks that log
+  6. [x] Unicorn oracle `tests/task_system_ppc.py` with stub callbacks that log
      order; Rust loop compared tick by tick.
   7. [ ] Steam-REL alias table (above) so existing recorded calls map to the
      runtime.
