@@ -102,3 +102,5 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 [Sonic movement from main.dol](SONIC-MOVEMENT-NATIVE.md) ports the player controller from the GameCube main.dol of the user's own disc, under a Unicorn harness that interprets paired-single code. Ninja trigonometry, the matrix stack, the player-frame helpers and the analog input (fn_8004E560) match main.dol bit for bit; the shared ground-movement routine is next.
 
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.
+
+[Finalhazard handoff](FINALHAZARD.md) covers the timed player handoff with its camera request, the stage voice gate and timed voice lines, and the per-frame arena bounds. The fight is not playable.
