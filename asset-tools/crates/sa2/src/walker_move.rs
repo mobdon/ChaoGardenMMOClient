@@ -342,24 +342,24 @@ const SOFT_RESIST: f32 = f32::from_bits(0xb951_b717); // r2-0x7458, -0.0002
 const SOFT_LIMIT: f64 = 0.98; // r2-0x7460 (double)
 
 /// fn_80048834, mode 0x43's acceleration: `accel_gravity`, then when faster
-/// than `f_e8` (+0xE8) with +0x34 below zero the y term is multiplied by
+/// than `f_e8` (+0xE8) with `dotp` (+0x34) below zero the y term is multiplied by
 /// -8; on the ground the across-plane push adds as in `accel` (and is
 /// cleared). Air resistance follows, except that with task flag 0x100 x
-/// uses -0.0002 unless +0x34 is above 0.98.
+/// uses -0.0002 unless `dotp` is above 0.98.
 #[allow(clippy::too_many_arguments)]
 pub fn accel_mode43(
     stack: &mut MatrixStack,
     task_flag: i16,
     angles: [i32; 3],
     w: &AccelWork,
-    f34: f32,
+    dotp: f32,
     f_e8: f32,
     mw_acc: Vec3,
     global: Vec3,
     across: &mut Vec3,
 ) -> Option<Vec3> {
     let mut a = accel_gravity(stack, task_flag, angles, w.weight, mw_acc, global)?;
-    if w.spd[0] > f_e8 && f34 < NEG_ZERO {
+    if w.spd[0] > f_e8 && dotp < NEG_ZERO {
         a[1] *= LIFT_FLIP;
     }
     if task_flag & 3 != 0 {
@@ -370,7 +370,7 @@ pub fn accel_mode43(
         a[1] += c[1];
         a[2] += c[2];
     }
-    let rx = if task_flag & 0x100 != 0 && !(f64::from(f34) > SOFT_LIMIT) {
+    let rx = if task_flag & 0x100 != 0 && !(f64::from(dotp) > SOFT_LIMIT) {
         SOFT_RESIST
     } else {
         w.air_resist[0]

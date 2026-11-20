@@ -1,9 +1,7 @@
 //! Compare `walker_move` with main.dol (tests/walker_move_ppc.py).
 use sa2_asset_tools::{
     ninja_matrix::MatrixStack,
-    walker_move::{
-        accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, AccelWork,
-    },
+    walker_move::{accel, accel_air, accel_gravity, accel_mode43, accel_run, air_level, AccelWork},
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
