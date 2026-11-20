@@ -2,7 +2,7 @@
 //! off (Ninja strips carry their own winding), lambert from a fixed light.
 //! Runs on WebGPU in the browser (WebGL2 through wgpu's fallback) and on
 //! native backends for tests.
-use crate::land::{Mesh, Vertex};
+use crate::land::{Draw, Mesh, Vertex};
 use wgpu::util::DeviceExt;
 
 pub const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -17,7 +17,14 @@ struct Uniforms {
 struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    count: u32,
+    draws: Vec<Draw>,
+}
+
+/// An RGBA8 image for [`Renderer::set_textures`].
+pub struct Rgba {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
 }
 
 pub struct Renderer {
@@ -29,6 +36,11 @@ pub struct Renderer {
     bind: wgpu::BindGroup,
     depth: Option<(wgpu::TextureView, [u32; 2])>,
     meshes: Vec<GpuMesh>,
+    tex_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    /// Bind groups by texture id; `white` for untextured draws.
+    textures: Vec<wgpu::BindGroup>,
+    white: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -64,9 +76,40 @@ impl Renderer {
                 resource: uniforms.as_entire_binding(),
             }],
         });
+        let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("texture"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        // GX wrap mode REPEAT for both axes (per-texture clamp/mirror comes
+        // with the material's tile flags).
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("repeat"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("land"),
-            bind_group_layouts: &[Some(&layout)],
+            bind_group_layouts: &[Some(&layout), Some(&tex_layout)],
             immediate_size: 0,
         });
         let attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
@@ -101,6 +144,17 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let white = texture_bind(
+            &device,
+            &queue,
+            &tex_layout,
+            &sampler,
+            &Rgba {
+                width: 1,
+                height: 1,
+                pixels: vec![255; 4],
+            },
+        );
         Self {
             device,
             queue,
@@ -110,7 +164,27 @@ impl Renderer {
             bind,
             depth: None,
             meshes: Vec::new(),
+            tex_layout,
+            sampler,
+            textures: Vec::new(),
+            white,
         }
+    }
+
+    /// The stage's textures, in texture-id order.
+    pub fn set_textures(&mut self, images: &[Rgba]) {
+        self.textures = images
+            .iter()
+            .map(|i| {
+                texture_bind(
+                    &self.device,
+                    &self.queue,
+                    &self.tex_layout,
+                    &self.sampler,
+                    i,
+                )
+            })
+            .collect();
     }
 
     /// Replace the drawn meshes.
@@ -133,7 +207,15 @@ impl Renderer {
                         contents: bytemuck::cast_slice(&m.indices),
                         usage: wgpu::BufferUsages::INDEX,
                     }),
-                count: m.indices.len() as u32,
+                draws: if m.draws.is_empty() {
+                    vec![Draw {
+                        texture: None,
+                        first: 0,
+                        count: m.indices.len() as u32,
+                    }]
+                } else {
+                    m.draws.clone()
+                },
             })
             .collect();
     }
@@ -217,7 +299,14 @@ impl Renderer {
             for m in &self.meshes {
                 pass.set_vertex_buffer(0, m.vertices.slice(..));
                 pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..m.count, 0, 0..1);
+                for d in &m.draws {
+                    let t = d
+                        .texture
+                        .and_then(|i| self.textures.get(usize::from(i)))
+                        .unwrap_or(&self.white);
+                    pass.set_bind_group(1, t, &[]);
+                    pass.draw_indexed(d.first..d.first + d.count, 0, 0..1);
+                }
             }
         }
         self.queue.submit([enc.finish()]);
@@ -272,4 +361,48 @@ pub fn look_at(
         }
     }
     std::array::from_fn(|c| std::array::from_fn(|r| m[r][c]))
+}
+
+fn texture_bind(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    img: &Rgba,
+) -> wgpu::BindGroup {
+    let size = wgpu::Extent3d {
+        width: img.width.max(1),
+        height: img.height.max(1),
+        depth_or_array_layers: 1,
+    };
+    let t = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &img.pixels,
+    );
+    let view = t.create_view(&Default::default());
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("texture"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
 }

@@ -7,3 +7,4 @@
 pub mod gc;
 pub mod gpu;
 pub mod land;
+pub mod textures;

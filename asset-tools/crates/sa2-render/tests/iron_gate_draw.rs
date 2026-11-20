@@ -52,6 +52,12 @@ fn iron_gate_land_draws() {
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let mut r = Renderer::new(device, queue, format);
     r.set_meshes(&[&mesh]);
+    let tex = sa2_render::textures::gvm_textures(
+        &fs::read(game.join("resource/gd_PC/landtx11.prs")).unwrap(),
+    )
+    .unwrap();
+    eprintln!("textures {}", tex.len());
+    r.set_textures(&tex);
     let target = r.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("target"),
         size: wgpu::Extent3d {
