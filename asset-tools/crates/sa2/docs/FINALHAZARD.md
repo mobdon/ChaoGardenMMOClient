@@ -28,6 +28,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `super_construct` | 0xa87c, 0xab04 | Super-form constructors (characters 9 and 10): task and player block, engine set-up calls, effect block, task handlers, timer object; reports the engine table words read |
 | `stage_teardown` | 0xa2a0 | Stage teardown: timer and stage objects, ring drop hit handler, light lists, both player tasks |
 | `stage_object` | 0xa390 | Stage object set-up: boss set-up 0x414 when module word 5:0x382b8 is set, handlers 0xa3f4, 0xa560, 0xa758 |
+| `boss_construct` | 0x414 | Boss object construction: task (update 0x1bb8, handlers 0x1e04 and 0x638), work block, entity start and scale, collision flag, child object 0x8528; returns the task or 0 |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -244,6 +245,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_stage_setup_ppc.py` | 24 stage setups: hit handler present or not, either player task present, module word 0x484 |
 | `tests/finalhazard_super_construct_ppc.py` | 72 constructions: both constructors, both slots, task or player allocation failing, global byte 0x801cbd88, module word 0x4ac |
 | `tests/finalhazard_stage_teardown_ppc.py` | 64 teardowns (module words 0x484 and 0x480, hit handler absent, foreign, ring drop or another module address, either player task) and 4 object set-ups |
+| `tests/finalhazard_boss_construct_ppc.py` | 240 constructions: each allocation failing, module byte 5:0x50c (signed extremes), collision flags, stage byte |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 

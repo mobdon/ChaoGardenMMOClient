@@ -919,6 +919,8 @@ pub enum PlacementClock {
     /// Section 1 + 0xa390: stage object set-up (handlers 0xa3f4, 0xa560,
     /// 0xa758).
     StageObject(Box<StageObjectFrame>),
+    /// Section 1 + 0x414: boss object construction.
+    BossConstruct(Box<BossConstructFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2691,6 +2693,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::SuperConstruct(frame) => return super_construct(&rel, &frame),
         PlacementClock::StageTeardown(frame) => return stage_teardown(&rel, &frame),
         PlacementClock::StageObject(frame) => return stage_object(&rel, &frame),
+        PlacementClock::BossConstruct(frame) => return boss_construct(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -5117,4 +5120,146 @@ fn stage_object(
         ev.push(serde_json::json!({"site":site,"store":"object","offset":offset,"size":4,"value":code(reloc)?}));
     }
     Ok(serde_json::json!({"events":ev}))
+}
+
+/// Engine and local results and the state the boss constructor reads: the
+/// task allocation and its entity (word 0x34), the results of locals
+/// 0x1afe8 and 0x1b018, the 0x40-byte allocation, module words 5:0x510
+/// and byte 5:0x50c, the entity's collision object (word 0x2c) and its
+/// flags half-word 4, the work block's word 0xc, the entity position after
+/// local 0x328, the byte module word 6:0x4a8 points to, and the result of
+/// local 0x8528.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossConstructFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub work: u32,
+    pub block: u32,
+    pub allocation: u32,
+    pub module_510: u32,
+    pub module_50c: i8,
+    pub collision: u32,
+    pub collision_flags: u16,
+    pub work_0c: u32,
+    pub position: [f32; 3],
+    pub stage_byte: u8,
+    pub object: u32,
+}
+/// Section 1 + 0x414: build the boss task (update 0x1bb8, handlers 0x1e04
+/// and 0x638), its work block and entity, and its child object 0x8528.
+/// Returns the task, or 0 when an allocation fails.
+fn boss_construct(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossConstructFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let sym = |site: u32| -> Result<serde_json::Value> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88)
+            .ok_or_else(|| Error::invalid("missing boss constructor reference"))?;
+        Ok(serde_json::json!(format!(
+            "88:{}+{:#x}",
+            r.section, r.addend
+        )))
+    };
+    let rodata = |site: u32, offset: usize, len: usize| -> Result<&[u8]> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 4)
+            .ok_or_else(|| Error::invalid("missing boss constant"))?;
+        let at = r.addend as usize + offset;
+        rel.data(4)?
+            .get(at..at + len)
+            .ok_or_else(|| Error::invalid("boss constant out of range"))
+    };
+    let be = |b: &[u8]| u32::from_be_bytes(b.try_into().unwrap());
+    let st = |site: u32,
+              region: &str,
+              offset: serde_json::Value,
+              size: u32,
+              value: serde_json::Value| {
+        serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value})
+    };
+    let n = |v: u32| serde_json::json!(v);
+    let mut ev = vec![call(
+        0x448,
+        serde_json::json!([2, 2, sym(0x43a)?, sym(0x442)?]),
+    )?];
+    if f.task == 0 {
+        return Ok(serde_json::json!({"events":ev,"returned":0}));
+    }
+    ev.extend([
+        st(0x46c, "task", n(0x14), 4, sym(0x466)?),
+        st(0x478, "task", n(0x18), 4, sym(0x472)?),
+        local(0x488, 0x1afe8, serde_json::json!([f.task, 0, 1])),
+        local(0x498, 0x1b018, serde_json::json!([f.work, 0x1c])),
+    ]);
+    if f.block == 0 {
+        ev.push(call(0x4ac, serde_json::json!([f.task]))?);
+        return Ok(serde_json::json!({"events":ev,"returned":0}));
+    }
+    ev.push(call(0x4c0, serde_json::json!([0x40, 1]))?);
+    if f.allocation == 0 {
+        ev.push(call(0x4d0, serde_json::json!([f.task]))?);
+        return Ok(serde_json::json!({"events":ev,"returned":0}));
+    }
+    ev.push(st(0x4dc, "task", n(0x38), 4, n(f.allocation)));
+    let start = rodata(0x4e2, 0, 12)?;
+    for (i, site) in [0x4f0u32, 0x4f4, 0x4fc].into_iter().enumerate() {
+        ev.push(st(
+            site,
+            "entity",
+            n(0x14 + 4 * i as u32),
+            4,
+            n(be(&start[4 * i..4 * i + 4])),
+        ));
+    }
+    ev.push(st(0x50c, "entity", n(0xc), 4, n(f.module_510)));
+    let scale = be(rodata(0x512, 0, 4)?);
+    for (site, offset) in [(0x51cu32, 0x28u32), (0x520, 0x24), (0x524, 0x20)] {
+        ev.push(st(site, "entity", n(offset), 4, n(scale)));
+    }
+    let magic = f64::from_bits(u64::from_be_bytes(rodata(0x53a, 0, 8)?.try_into().unwrap()));
+    let biased =
+        f64::from_bits(0x4330_0000_0000_0000 | u64::from(f.module_50c as i32 as u32 ^ 0x8000_0000));
+    let byte_float = (biased - magic) as f32;
+    ev.extend([
+        st(0x55c, "work", n(0x28), 4, n(byte_float.to_bits())),
+        call(0x574, serde_json::json!([f.task, sym(0x566)?, 0x22, 3]))?,
+        st(
+            0x588,
+            "collision",
+            n(4),
+            2,
+            n(u32::from(f.collision_flags & !0x40)),
+        ),
+    ]);
+    let radius = f32::from_bits(be(rodata(0x592, 0, 4)?));
+    ev.push(serde_json::json!({"site":0x59c,"call":engine_import(rel, 0x59c)?,"args":[f.task],"floats":[f64::from(radius)]}));
+    ev.extend([
+        call(0x5ac, serde_json::json!([f.work_0c, sym(0x5a6)?]))?,
+        serde_json::json!({"site":0x5b8,"store":"module","offset":sym(0x5b2)?,"size":4,"value":f.task}),
+        local(0x5c4, 0x328, serde_json::json!([f.task, 0])),
+        serde_json::json!({"site":0x5d4,"store":"module","offset":sym(0x5ce)?,"size":1,"value":0}),
+    ]);
+    for (i, site) in [0x5e0u32, 0x5e4, 0x5ec].into_iter().enumerate() {
+        ev.push(st(
+            site,
+            "work",
+            n(0x1c + 4 * i as u32),
+            4,
+            n(f.position[i].to_bits()),
+        ));
+    }
+    ev.extend([
+        local(0x5f4, 0x2078, serde_json::json!([f.work + 0x1c])),
+        local(0x60c, 0x8528, serde_json::json!([f.task, f.stage_byte])),
+        st(0x610, "block", n(0x10), 4, n(f.object)),
+    ]);
+    Ok(serde_json::json!({"events":ev,"returned":f.task}))
 }
