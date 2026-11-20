@@ -139,6 +139,18 @@ edge; each engine-transformed point gets a particle whose outward velocity is
 normalised to the given speed, with two random angles, a random size field
 and a random addition to field +0x18.
 
+## Per-frame routine and SET wrap
+
+The stage's registered per-frame routine (+0x3078) asks the engine to handle a
+fall-out (0x8003B694 with 0) when the game pointer at 0x803AD5D0 is set with a
+zero +0xC word, both player slots are filled without player-data bit 0x4000,
+and player 1 is below Y -100. It then always runs the SET wrap (+0x2B8C):
+once player 1 has passed X 300, every SET entry whose object-list flags lack
+bit 2 and whose status lacks bits 9 is moved by 2400 along X until it lies
+within (X - 1200, X + 1200] of player 1, then marked for respawn (status
+0x8000, bytes 0). The platform objects carry list flag 2 and never wrap; the
+rings and meteors do, so they keep reappearing ahead of the runners.
+
 ## Inputs, not assumptions
 
 Nothing in these replays is filled in by the port. Engine results are request
@@ -179,6 +191,7 @@ python asset-tools/crates/sa2/tests/duel_platform_ppc.py asset-tools/crates/sa2/
 python asset-tools/crates/sa2/tests/duel_meteor_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_debris_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 python asset-tools/crates/sa2/tests/duel_dust_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
+python asset-tools/crates/sa2/tests/duel_stage_ppc.py asset-tools/crates/sa2/target/debug/sa2-assets.exe
 ```
 
 The Python commands need Unicorn 2.1 on `PYTHONPATH` and must run from the
@@ -217,5 +230,7 @@ sliding, kill-on-landing, resting and a piece spawned while paused. All 533
 callbacks match `duel-debris` in every piece field and ordered engine call.
 `duel_dust_ppc.py` runs the dust helper with DODAI's arguments (40 points)
 and with odd arguments and failed allocations; all 398 calls match
-`duel-dust`.
+`duel-dust`. `duel_stage_ppc.py` runs the per-frame routine on 400 random
+frames; every fall-out call and all SET entry bytes, statuses and X bits
+match `duel-stage-frame`.
 Nothing launches the game.

@@ -84,9 +84,10 @@ pub struct StageFrame {
 pub fn step(c: &StageConstants, flags: &[i16], f: &mut StageFrame) -> Result<Vec<Value>> {
     let mut calls = Vec::new();
     let [p1, p2] = f.players;
-    if f.game_ready && p1.is_some() && !f.player_flags[0] && p2.is_some() && !f.player_flags[1] {
-        let y = p1.unwrap()[1];
-        // fcmpo/bge: kill only when y < -100.
+    if let (true, Some([_, y]), false, Some(_), false) =
+        (f.game_ready, p1, f.player_flags[0], p2, f.player_flags[1])
+    {
+        // fcmpo/bge: request the fall-out only when y < -100.
         if y < c.fall_y {
             calls.push(json!({ "engine": "0x8003b694", "args": [0] }));
         }
