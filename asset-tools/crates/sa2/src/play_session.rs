@@ -24,7 +24,10 @@ use crate::{
     },
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
-    prison_doors::{enemy_counts, DoorSound, Enemy, PrisonDoor, DOOR_KINDS},
+    prison_doors::{
+        enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
+        WALL_ROW_COUNT,
+    },
     spring::{SpringKind, StageSpring},
     Error, Result,
 };
@@ -177,6 +180,10 @@ pub enum Event {
     /// A CAGED door reached its open stop (sound 0x1021).
     DoorOpened {
         door: usize,
+    },
+    /// A WALL gate started to drop (no resting elevator near).
+    WallDropping {
+        wall: usize,
     },
     GoalContact {
         layer: usize,
@@ -641,6 +648,9 @@ pub struct Session {
     #[serde(skip)]
     pub group_counts: [u8; 256],
     pub doors: Vec<PrisonDoor>,
+    pub walls: Vec<ElevatorWall>,
+    #[serde(skip)]
+    wall_rows: Vec<CollisionRow>,
     /// Round collision shapes (forms 0-2), kept analytic.
     pub shapes: Vec<RoundShape>,
     #[serde(skip)]
@@ -723,6 +733,16 @@ impl Session {
             .collect::<Result<Vec<(&str, CollisionRow)>>>()?;
         let mut shapes = vec![];
         let mut door_rows = std::collections::BTreeMap::new();
+        let wall_rows = if rules.prison_doors {
+            collision_rows(
+                src.stage_module,
+                rules.movers.module_file,
+                WALL_ROWS,
+                WALL_ROW_COUNT,
+            )?
+        } else {
+            vec![]
+        };
         if rules.prison_doors {
             for k in DOOR_KINDS {
                 let rows = collision_rows(
@@ -753,6 +773,7 @@ impl Session {
         let mut springs = vec![];
         let mut enemies: Vec<Enemy> = vec![];
         let mut doors = vec![];
+        let mut walls = vec![];
         let mut unimplemented = std::collections::BTreeMap::new();
         for (li, layer) in stage.layers.iter().enumerate() {
             for p in &layer.placements {
@@ -837,6 +858,13 @@ impl Session {
                             out,
                         });
                     }
+                    (_, "WALL") if rules.prison_doors => walls.push(ElevatorWall::new(
+                        li,
+                        p.placement_index,
+                        pl.position,
+                        pl.rotation,
+                        pl.parameters[0],
+                    )),
                     (_, n) if rules.prison_doors && DOOR_KINDS.iter().any(|k| k.name == n) => doors
                         .push(PrisonDoor {
                             kind: *DOOR_KINDS.iter().find(|k| k.name == n).unwrap(),
@@ -1031,6 +1059,8 @@ impl Session {
             enemies,
             doors,
             door_rows,
+            walls,
+            wall_rows,
             shapes,
         })
     }
@@ -1076,8 +1106,29 @@ impl Session {
             .collect()
     }
 
+    /// A WALL gate's collision boxes with its slide applied to row 1.
+    pub fn wall_solid(&self, i: usize) -> Vec<[V3; 3]> {
+        let Some(w) = self.walls.get(i) else {
+            return vec![];
+        };
+        w.live_rows(&self.wall_rows)
+            .iter()
+            .filter(|r| r.form == 3)
+            .flat_map(|r| {
+                ccl_box_tris(w.position, w.rotation, r, [r.size[0], r.size[1], r.size[2]])
+            })
+            .collect()
+    }
+
     pub fn snapshot_world(&self) -> PlayWorld {
         let mut w = self.world.clone();
+        for i in 0..self.walls.len() {
+            for t in self.wall_solid(i) {
+                if let Some(t) = make_tri(t, 1, u32::MAX) {
+                    w.push(t);
+                }
+            }
+        }
         for i in 0..self.doors.len() {
             for t in self.door_solid(i) {
                 if let Some(t) = make_tri(t, 1, u32::MAX) {
@@ -1132,6 +1183,11 @@ impl Session {
                     .then_some(Event::BridgeStarted { mover: i }),
             };
             events.extend(started);
+        }
+        for (i, w) in self.walls.iter_mut().enumerate() {
+            if w.step(&elevators) {
+                events.push(Event::WallDropping { wall: i });
+            }
         }
         for (i, d) in self.doors.iter_mut().enumerate() {
             let was = d.state;

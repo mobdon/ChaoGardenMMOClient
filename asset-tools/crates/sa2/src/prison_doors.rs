@@ -284,3 +284,125 @@ mod tests {
         assert_eq!(enemy_counts("E KYOKO", [0.0; 3]), None);
     }
 }
+
+/// WALL (stg09D.rel 0x66B0 set-up, 0x6800 exec): a barred gate that starts
+/// raised and drops for good once no resting elevator is near.
+///
+/// Set-up: slide 50 (sec4+0x2A8), five CollisionData rows at sec5+0x48158.
+/// Exec state 0 looks through the five registered elevator slots (the
+/// array at sec5+0x3F514 the elevators fill and the bridges read) for one
+/// that is not moving (byte 1 != 1) and is closer than 450 (sec4+0x2B4;
+/// 3-D distance, GSNE8P 0x8011B65C); with none, state 1 lowers the slide
+/// by Scale.x per frame to 0, then state 2 settles (kick 0.5, pull 0.4
+/// toward 0, keep 0.96, bounce at 0). Row 1's centre Y is its row value
+/// plus the slide.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElevatorWall {
+    pub layer: usize,
+    pub index: usize,
+    pub position: V3,
+    pub rotation: [u16; 3],
+    pub speed: f32,
+    pub state: u8,
+    pub slide: f32,
+    pub velocity: f32,
+}
+
+pub const WALL_ROWS: u32 = 0x48158;
+pub const WALL_ROW_COUNT: usize = 5;
+pub const WALL_RAISED: f32 = 50.0;
+pub const WALL_ELEVATOR_RANGE: f32 = 450.0;
+
+impl ElevatorWall {
+    pub fn new(layer: usize, index: usize, position: V3, rotation: [u16; 3], speed: f32) -> Self {
+        Self {
+            layer,
+            index,
+            position,
+            rotation,
+            speed,
+            state: 0,
+            slide: WALL_RAISED,
+            velocity: 0.0,
+        }
+    }
+
+    /// One exec frame. `elevators` are the registered elevator slots in
+    /// order: position and whether the car is moving. True when it starts
+    /// to drop.
+    pub fn step(&mut self, elevators: &[(V3, bool)]) -> bool {
+        match self.state {
+            0 => {
+                let near = elevators.iter().take(5).any(|&(e, moving)| {
+                    let d = [
+                        self.position[0] - e[0],
+                        self.position[1] - e[1],
+                        self.position[2] - e[2],
+                    ];
+                    let dist = (d[2] * d[2] + (d[0] * d[0] + d[1] * d[1])).sqrt();
+                    !moving && dist < WALL_ELEVATOR_RANGE
+                });
+                if !near {
+                    self.state = 1;
+                    return true;
+                }
+            }
+            1 => {
+                self.slide -= self.speed;
+                if self.slide <= 0.0 {
+                    self.state = 2;
+                    self.velocity += SETTLE_KICK;
+                }
+            }
+            2 => {
+                self.slide += self.velocity;
+                let pull = SETTLE_PULL * -self.slide;
+                self.velocity = pull + SETTLE_KEEP * self.velocity;
+                if self.slide <= 0.0 {
+                    self.slide = 0.0;
+                    self.velocity = self.velocity.abs();
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+
+    pub fn live_rows(
+        &self,
+        rows: &[crate::play_objects::CollisionRow],
+    ) -> Vec<crate::play_objects::CollisionRow> {
+        let mut rows = rows.to_vec();
+        if let Some(r) = rows.get_mut(1) {
+            r.center[1] += self.slide;
+        }
+        rows
+    }
+}
+
+#[cfg(test)]
+mod wall_tests {
+    use super::*;
+
+    #[test]
+    fn wall_drops_once_no_resting_elevator_is_near() {
+        let mut w = ElevatorWall::new(0, 0, [0.0; 3], [0; 3], 1.0);
+        let near = [([100.0, 0.0, 0.0], false)];
+        let moving = [([100.0, 0.0, 0.0], true)];
+        assert!(!w.step(&near));
+        assert_eq!((w.state, w.slide), (0, 50.0));
+        assert!(w.step(&moving));
+        let mut frames = 0;
+        while w.state == 1 {
+            w.step(&moving);
+            frames += 1;
+        }
+        assert_eq!(frames, 50);
+        for _ in 0..600 {
+            w.step(&near);
+        }
+        // It never rises again.
+        assert!(w.state == 2 && w.slide.abs() < 1.0, "{}", w.slide);
+    }
+}

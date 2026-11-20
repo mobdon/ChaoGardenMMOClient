@@ -307,3 +307,43 @@ fn a_wide_cage_drops_its_bars_and_its_collision_when_open() {
         assert!(s.door_solid(d).is_empty());
     });
 }
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn wall_gates_drop_when_no_resting_elevator_is_near() {
+    with_session(|mut s| {
+        assert_eq!(s.walls.len(), 2);
+        let elevators: Vec<[f32; 3]> = s
+            .movers
+            .iter()
+            .filter_map(|m| match &m.state {
+                MoverState::Elevator(e) => Some(e.position),
+                _ => None,
+            })
+            .collect();
+        let near: Vec<bool> = s
+            .walls
+            .iter()
+            .map(|w| {
+                elevators.iter().any(|e| {
+                    let d = [
+                        w.position[0] - e[0],
+                        w.position[1] - e[1],
+                        w.position[2] - e[2],
+                    ];
+                    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() < 450.0
+                })
+            })
+            .collect();
+        assert!(s.walls.iter().all(|w| w.slide == 50.0 && w.state == 0));
+        let events = s.step(None);
+        for (i, &n) in near.iter().enumerate() {
+            let dropping = events
+                .iter()
+                .any(|e| matches!(e, Event::WallDropping { wall } if *wall == i));
+            assert_eq!(dropping, !n, "wall {i}");
+        }
+        // Five boxes each.
+        assert_eq!(s.wall_solid(0).len(), 5 * 12);
+    });
+}
