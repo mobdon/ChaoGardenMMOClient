@@ -290,6 +290,12 @@ impl GxRenderer {
         }
     }
 
+    /// Cache sizes (pipelines, textures, samplers, texture bind groups), for
+    /// finding what a long run keeps.
+    pub fn cache_counts(&self) -> [usize; 4] {
+        [self.pipelines.len(), self.textures.len(), self.samplers.len(), self.texture_binds.len()]
+    }
+
     /// Upload a decoded texture: RGBA8 levels, largest first. GX textures
     /// are stored as linear RGBA (Rgba8Unorm), like noclip; the output view
     /// decides sRGB encoding.

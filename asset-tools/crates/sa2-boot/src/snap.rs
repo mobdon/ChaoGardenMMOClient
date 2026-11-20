@@ -1,14 +1,19 @@
 //! Offscreen snapshots of the game's GX frames for headless runs: every
-//! frame's texture uploads reach the renderer, and every `every`-th frame is
-//! drawn at 640x480 and written as a PNG.
-use sa2_gx::api::Frame;
+//! `every`-th frame is drawn at 640x480 and written as a PNG. Texture uploads
+//! between snapshots are kept as the latest data per texture id and reach
+//! the GPU only when a snapshot is drawn.
+use sa2_gx::api::{Frame, TextureUpload};
 use sa2_gx::gpu::GxRenderer;
+use sa2_gx::params::TextureId;
 use sa2_recomp::{global, global::Global};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const W: u32 = 640;
 const H: u32 = 480;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+type Levels = Vec<(u32, u32, Vec<u8>)>;
 
 struct Snap {
     device: wgpu::Device,
@@ -16,6 +21,17 @@ struct Snap {
     renderer: GxRenderer,
     target: wgpu::Texture,
     buf: wgpu::Buffer,
+    /// Uploads since the last snapshot, newest per id.
+    pending: HashMap<TextureId, Levels>,
+}
+
+/// Keep the newest data for each uploaded texture. The game re-uploads every
+/// texture every frame; making a GPU texture for each (about 160 a frame) grew
+/// the process by ~8 MB every 10 s in the driver, outside wgpu's own memory.
+fn note_uploads(pending: &mut HashMap<TextureId, Levels>, uploads: &[TextureUpload]) {
+    for u in uploads {
+        pending.insert(u.id, u.levels.clone());
+    }
 }
 
 static SNAP: Global<Option<Snap>> = global!(None);
@@ -49,7 +65,7 @@ fn open() -> Result<Snap, String> {
         mapped_at_creation: false,
     });
     let renderer = GxRenderer::new(device.clone(), queue.clone(), FORMAT);
-    Ok(Snap { device, queue, renderer, target, buf })
+    Ok(Snap { device, queue, renderer, target, buf, pending: HashMap::new() })
 }
 
 /// Feed frame number `n`; on every `every`-th frame write `dir/frame_NNNNNN.png`
@@ -60,16 +76,12 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
             *s = Some(open()?);
         }
         let Some(s) = s.as_mut() else { return Ok(None) };
+        note_uploads(&mut s.pending, &f.uploads);
         if every == 0 || n % every != 0 {
-            for u in &f.uploads {
-                s.renderer.replace_texture(u.id, &u.levels);
-            }
-            // Flush the uploads and free what they replaced: queued texture
-            // writes wait for a submit, and only every `every`-th frame
-            // submits, so they piled up (gigabytes within a minute).
-            s.queue.submit([]);
-            let _ = s.device.poll(wgpu::PollType::Poll);
             return Ok(None);
+        }
+        for (id, levels) in s.pending.drain() {
+            s.renderer.replace_texture(id, &levels);
         }
         if std::env::var_os("SA2_SNAP_INFO").is_some() {
             eprintln!("frame {n}: clear {:?}, {} draws, {} uploads", f.clear_color, f.draws.len(), f.uploads.len());
@@ -98,6 +110,15 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         s.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         let px = s.buf.slice(..).get_mapped_range().map_err(|e| format!("{e:?}"))?.to_vec();
         s.buf.unmap();
+        // SA2_GPU_REPORT: what the snapshot device holds (finding leaks).
+        if std::env::var_os("SA2_GPU_REPORT").is_some() {
+            let [p, t, sm, b] = s.renderer.cache_counts();
+            let a = s.device.generate_allocator_report();
+            let (alloc, reserved, blocks, count) = a.map_or((0, 0, 0, 0), |a| {
+                (a.total_allocated_bytes >> 20, a.total_reserved_bytes >> 20, a.blocks.len(), a.allocations.len())
+            });
+            eprintln!("gpu: frame {n} pipelines {p} textures {t} samplers {sm} binds {b} | allocated {alloc} MB reserved {reserved} MB in {blocks} blocks, {count} allocations");
+        }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let path = dir.join(format!("frame_{n:06}.png"));
         let file = std::io::BufWriter::new(std::fs::File::create(&path).map_err(|e| e.to_string())?);
@@ -110,4 +131,25 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         w.write_image_data(&rgb).map_err(|e| e.to_string())?;
         Ok(Some(path))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn upload(id: TextureId, v: u8) -> TextureUpload {
+        TextureUpload { id, levels: vec![(1, 1, vec![v; 4])] }
+    }
+
+    #[test]
+    fn pending_uploads_stay_one_per_texture() {
+        // 1000 frames re-uploading the same 3 textures, as the game does.
+        let mut pending = HashMap::new();
+        for frame in 0..1000u32 {
+            let v = (frame % 256) as u8;
+            note_uploads(&mut pending, &[upload(1, v), upload(2, v), upload(7, v)]);
+        }
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[&7][0].2, vec![(999 % 256) as u8; 4], "the newest data wins");
+    }
 }
