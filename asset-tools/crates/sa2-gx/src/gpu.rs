@@ -7,12 +7,12 @@
 //! with their mip chains, GX samplers, and the draw of a list of
 //! [`GpuDraw`]s. Runs on WebGPU, on WebGL2 through wgpu's fallback, and on
 //! native backends for tests.
+use crate::api::FastMap;
 use crate::enums::*;
 use crate::material::GxMaterial;
 use crate::params::{self, MaterialParams, SamplerDesc, SceneParams, TextureId};
 use crate::shader::{self, MaterialHacks};
 use crate::vtx::{InputFormat, LoadedVertexLayout};
-use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -187,11 +187,11 @@ pub struct GxRenderer {
     uniform_layout: wgpu::BindGroupLayout,
     texture_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
-    pipelines: HashMap<Arc<PipelineKey>, wgpu::RenderPipeline>,
-    textures: HashMap<TextureId, GpuTexture>,
+    pipelines: FastMap<Arc<PipelineKey>, wgpu::RenderPipeline>,
+    textures: FastMap<TextureId, GpuTexture>,
     next_texture: TextureId,
-    samplers: HashMap<SamplerDesc, wgpu::Sampler>,
-    texture_binds: HashMap<[(Option<TextureId>, SamplerDesc); 8], wgpu::BindGroup>,
+    samplers: FastMap<SamplerDesc, wgpu::Sampler>,
+    texture_binds: FastMap<[(Option<TextureId>, SamplerDesc); 8], wgpu::BindGroup>,
     white: wgpu::TextureView,
     depth: Option<(wgpu::TextureView, [u32; 2])>,
     /// Offscreen EFB for render-to-texture passes.
@@ -278,11 +278,11 @@ impl GxRenderer {
             uniform_layout,
             texture_layout,
             pipeline_layout,
-            pipelines: HashMap::new(),
-            textures: HashMap::new(),
+            pipelines: FastMap::default(),
+            textures: FastMap::default(),
             next_texture: 0,
-            samplers: HashMap::new(),
-            texture_binds: HashMap::new(),
+            samplers: FastMap::default(),
+            texture_binds: FastMap::default(),
             white,
             depth: None,
             efb: None,
