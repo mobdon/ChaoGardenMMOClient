@@ -11,7 +11,7 @@ Both springs initialize their collision shape with ID 4 and set collision-work f
 | ObjectSpring (A) | Calls SetSpringVelocityP with the transformed local vector. | Sound precedes the player update. Recovery step changes to 18 degrees at phase 290. |
 | ObjectSpringB (B) | Calls SetVelocityYAndRotationAndNoconTimeP with scale.y + 5, native angles, and truncated nonnegative scale.x. | Sound follows the player update. Recovery step changes to 15 degrees. The slow movement branch also places the player at spring position plus the rotated vector, with the vector's Y scaled by 0.8. |
 
-The stage host supplies player collision, matrix and trigonometric services, player-motion callees and rendering. The implementation returns sound and motion calls without playing audio, inventing collision results or moving a controller after launch. The A and B render callbacks and their original art are outside this port.
+The stage host supplies player collision, matrix and trigonometric services, player-motion callees and rendering. The implementation returns sound and motion calls without playing audio, inventing collision results or moving a controller after launch. The display command sequences are implemented separately below; the renderer must bind their original art.
 
 ## Reproduce the C comparison
 
@@ -22,3 +22,5 @@ cargo test --test spring_trace -- --include-ignored
 ```
 
 The test extracts both complete task bodies and the shared player launch body from the pinned upstream file, compiles them with a host C shim and compares 16 scenarios over 75 ticks each. The C and Rust traces matched in all 1,200 updates. Each row compares modes, player slot, timers, recovery phase, player position, and the observed order of engine calls. Fixture assertions also compare launch arguments. Floating fields are compared to the nearest 0.001. The shim injects the same transformed vector and host trigonometry on both sides. This verifies the callback logic separately from retail matrix, trigonometry, collision and player implementation.
+
+The Rust spring_draw::display function emits the matrix and model calls of DrawSpring, DrawSpringGC, DrawSpringB and DrawSpringBGC from the same pinned source. Type A draws the head under the compressed coil transform; type B draws the head on a separate matrix before scaling the coil. The caller supplies the native asset format and resolves the original model, node offset and texture references. This is a display callback interface; renderer scheduling, asset binding and final pixels are unverified. The launch callees are also separate: the GSNE8P symbol map locates SetSpringVelocityP at 0x8003A2B8 and SetVelocityYAndRotationAndNoconTimeP at 0x8003A180; the spring source calls them but does not implement them.

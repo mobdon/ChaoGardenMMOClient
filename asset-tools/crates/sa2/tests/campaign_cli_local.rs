@@ -367,6 +367,10 @@ fn story_run_stops_before_gameplay() {
             .collect();
         let mut deps = vec![("native-table-mapping", ini.as_path())];
         deps.extend(files.iter().map(|p| ("story-event-image", p.as_path())));
+        let movie = game.join("resource/gd_PC/event/e0602_m.sfd");
+        if route == "Last" {
+            deps.push(("story-event-movie", movie.as_path()));
+        }
         let v = case.good(
             "story-run",
             &exe,
@@ -382,11 +386,144 @@ fn story_run_stops_before_gameplay() {
             assert_eq!(event["lastFrame"]["global_frame"], n - 1);
         }
         let (reason, field) = if route == "Last" {
-            ("missingMainEvent", "event")
+            assert_eq!(v["stop"]["movie"]["packCount"], 14099);
+            assert_eq!(v["stop"]["movie"]["videoPackets"], 12632);
+            assert_eq!(v["stop"]["movie"]["audioPackets"]["c1"], 732);
+            let timing = v["stop"]["movie"]["timedPackets"].as_array().unwrap();
+            let mut reference_bytes = Vec::new();
+            for pkt in timing {
+                reference_bytes.push(pkt["stream"].as_u64().unwrap() as u8);
+                for key in ["packetOffset", "streamOffset", "pts", "dts"] {
+                    let n = pkt[key]
+                        .as_u64()
+                        .unwrap_or_else(|| pkt["pts"].as_u64().unwrap());
+                    reference_bytes.extend(n.to_be_bytes());
+                }
+            }
+            assert_eq!(timing.len(), 2356);
+            assert_eq!(
+                sa2_asset_tools::manifest::sha256(&reference_bytes),
+                "955fb973f28976ee043d8aa825c21d057fb37c099ef4f6feb7899b85cef9a0e8"
+            );
+            let mut order = Vec::new();
+            for picture in v["stop"]["movie"]["presentationOrder"].as_array().unwrap() {
+                order.extend(picture["pts"].as_u64().unwrap().to_be_bytes());
+                order.extend(picture["packetOffset"].as_u64().unwrap().to_be_bytes());
+                order.extend(picture["coding"].as_str().unwrap().bytes());
+            }
+            assert_eq!(
+                sa2_asset_tools::manifest::sha256(&order),
+                "45ada4b137cc428f6f3c5930cd4297c2d36d12678c99fd335561ba94520abe55"
+            );
+            let video = &v["stop"]["movie"]["videoStream"];
+            assert_eq!(
+                video["sha256"],
+                "6e3edbdfdd019dbab1ce70be78b751c076891b704895bbc7dbb3d9c51d577640"
+            );
+            assert_eq!(
+                (
+                    video["width"].as_u64(),
+                    video["height"].as_u64(),
+                    video["pictures"].as_u64()
+                ),
+                (Some(640), Some(480), Some(891))
+            );
+            let tracks = &v["stop"]["movie"]["audioTracks"];
+            for (key, adx, pcm) in [
+                (
+                    "c0",
+                    "cb102a3396f2e3eba63146e93f3373d5ca082f38cba8f9c8240e0ad5d8c9cbae",
+                    "c52ab2a4f956d2b77428c8b95d2b0ddb306e807c99a10ca471f0e46faccccd07",
+                ),
+                (
+                    "c1",
+                    "66cdcb63ed7463912e5e646804444c030916054ce30ed556343af7966e2b31b2",
+                    "cbb1cc93c3778b215b92d05fd499cf9ba7ed78c339e1d42b08d9bb03dcc59f87",
+                ),
+            ] {
+                assert_eq!(tracks[key]["adxSha256"], adx);
+                assert_eq!(tracks[key]["pcmS16leSha256"], pcm);
+            }
+            ("awaitingMoviePlayback", "event")
         } else {
+            let name = if route == "Hero" {
+                "Sonic"
+            } else {
+                "MechEggman"
+            };
+            assert_eq!(v["stop"]["entryPose"]["character"], name);
+            assert_eq!(v["stop"]["playerDefaults"]["character"], name);
+            assert!(v["stop"]["entryPose"]["rowVa"].is_u64());
             ("awaitingLevelRuntime", "level")
         };
         assert_eq!(v["stop"]["kind"], reason);
         assert_eq!(v["stop"]["action"][field], pending);
+    }
+}
+
+#[test]
+#[ignore = "requires installed Last Story movie and PC mapping"]
+fn seek_last_story_movie() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
+    let movie = game.join("resource/gd_PC/event/e0602_m.sfd");
+    let exe = game.join("sonic2app.exe");
+    let case = local_case(game);
+    let args = [ini.to_str().unwrap(), "Last Story Sequence", "2", "1"];
+    let result = case.good(
+        "campaign-frame",
+        &exe,
+        "movie-picture",
+        &args,
+        &[
+            ("native-table-mapping", &ini),
+            ("story-event-movie", &movie),
+        ],
+    );
+    let p = &result["content"]["picture"];
+    assert_eq!(p["pts"], 3006);
+    assert_eq!(p["packetOffset"], 165900);
+    assert_eq!(p["coding"], "B");
+    case.bad(
+        "campaign-frame",
+        &exe,
+        "past-end",
+        &[args[0], args[1], "2", "891"],
+        "outside movie presentation order",
+    );
+    case.bad(
+        "campaign-camera",
+        &exe,
+        "movie-camera",
+        &[args[0], args[1], "2", "1", "0"],
+        "no event camera slot",
+    );
+}
+
+#[test]
+#[ignore = "requires installed PC story and position tables"]
+fn shared_level_uses_opposing_campaign_spawn_rows() {
+    let game = PathBuf::from(std::env::var_os("SA2_GAME_PATH").unwrap());
+    let ini = PathBuf::from(std::env::var_os("SA2_PC_CONFIG").unwrap()).join("ADVERTISE.ini");
+    let exe = game.join("sonic2app.exe");
+    let case = local_case(game);
+    for (route, index, name, row, x, yaw) in [
+        ("Hero Story Sequence", "12", "Sonic", 24408192, -60., 0),
+        ("Dark Story Sequence", "27", "Shadow", 24409120, 60., 32768),
+    ] {
+        let r = case.good(
+            "campaign-frame",
+            &exe,
+            name,
+            &[ini.to_str().unwrap(), route, index, "0"],
+            &[("native-table-mapping", &ini)],
+        );
+        assert_eq!(r["action"]["level"], 19);
+        let p = &r["content"]["entryPose"];
+        assert_eq!(p["character"], name);
+        assert_eq!(p["rowVa"], row);
+        assert_eq!(p["position"], serde_json::json!([x, 64., 0.]));
+        assert_eq!(p["yaw"], yaw);
+        assert_eq!(r["content"]["playerDefaults"]["character"], name);
     }
 }

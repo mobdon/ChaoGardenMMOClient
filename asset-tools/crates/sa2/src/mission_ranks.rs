@@ -17,6 +17,28 @@ pub struct RankRow {
     pub course: Option<&'static str>,
     pub thresholds: Thresholds,
 }
+/// Compare in the table's own units. Equality is reported exactly; this does
+/// not assume how the results handler rounds a timer or awards a letter.
+#[derive(Debug, Clone, Copy)]
+pub enum Observation {
+    StoredScore(i32),
+    Seconds(u32),
+}
+impl RankRow {
+    pub fn differences(&self, observed: Observation) -> Result<[i64; 4]> {
+        match (&self.thresholds, observed) {
+            (Thresholds::StoredScore(v), Observation::StoredScore(score)) => {
+                Ok(v.map(|cut| i64::from(score) - i64::from(cut)))
+            }
+            (Thresholds::Seconds(v), Observation::Seconds(seconds)) => {
+                Ok(v.map(|cut| i64::from(seconds) - i64::from(cut)))
+            }
+            _ => Err(Error::invalid(
+                "observation unit differs from authored rank row",
+            )),
+        }
+    }
+}
 pub fn read(exe: &[u8]) -> Result<Vec<RankRow>> {
     let pe = object_table::verify_image(exe)?;
     let mut rows = vec![];

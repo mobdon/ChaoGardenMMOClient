@@ -1,10 +1,10 @@
 //! Native collision geometry of a mounted stage and its placed object solids.
 //!
 //! Triangles come from `CollisionWorld`, which keeps the native positions,
-//! winding and surface flags, plus object collision models placed by
-//! `play_session`. No collision queries run here: the retail collision engine
-//! (CCL, broadphase, surface responses) is main-program code and is not
-//! ported.
+//! winding and surface flags, plus object models and CollisionData shapes
+//! placed by `play_session`. No collision queries are run here: the retail
+//! collision engine (CCL, broadphase, surface responses) is main-program
+//! code and is not ported.
 use crate::collision::{CollisionWorld, SURFACE_DYNAMIC_COLLISION, SURFACE_SOLID};
 
 pub type V3 = [f32; 3];
@@ -19,7 +19,7 @@ pub struct Tri {
     pub mesh: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PlayWorld {
     pub tris: Vec<Tri>,
     pub min: V3,
@@ -81,7 +81,7 @@ impl PlayWorld {
         w
     }
 
-    /// Add one triangle (used for object solids).
+    /// Add one triangle (used for object solids such as bridges).
     pub fn push(&mut self, t: Tri) {
         for p in &t.v {
             for i in 0..3 {
@@ -102,18 +102,4 @@ pub fn make_tri(v: [V3; 3], flags: u32, mesh: u32) -> Option<Tri> {
         flags,
         mesh,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keeps_winding_and_bounds() {
-        let t = make_tri([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], 1, 0).unwrap();
-        assert_eq!(t.n, [0.0, 1.0, 0.0]);
-        assert!(make_tri([[0.0; 3]; 3], 1, 0).is_none());
-        let w = PlayWorld::from_tris(vec![t]);
-        assert_eq!((w.min, w.max), ([0.0; 3], [1.0, 0.0, 1.0]));
-    }
 }

@@ -96,6 +96,9 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 
 [Goal-ring contact](GOAL-RING.md) covers native initialization decisions and activation calls across the 28 mapped story levels. The mission controller and automatic story advancement remain unimplemented.
 
-[Iron Gate native rules](PLAYABLE-IRON-GATE.md) runs the first Dark stage's lifts, elevators, bridges, rings and goal ring from the game files. It is not playable: the walker's movement code is not readable on the Steam build.
+[Iron Gate native stage rules](PLAYABLE-IRON-GATE.md) and [Prison Lane native stage rules](PLAYABLE-PRISON-LANE.md) build both walker stages from their game files and run only rules read there: lifts, two-door elevators, bridges, object solids, ring pickup and goal contact, driven by a host-supplied player sample. Neither is playable: the walker's movement, lock-on and laser are encrypted main-program code.
+[City Escape native inputs](CITY-ESCAPE-NATIVE.md) reads Sonic's physics row, the start, terrain, rails, death zones, springs and goal program with no adapted rules. The dash-panel callback is ported from stg13D.rel and matches the installed PowerPC. The doc also records why no Sonic controller can be ported from the Steam install.
+
+[Sonic movement from main.dol](SONIC-MOVEMENT-NATIVE.md) ports the player controller from the GameCube main.dol of the user's own disc, under a Unicorn harness that interprets paired-single code. Ninja trigonometry, the matrix stack, the player-frame helpers and the analog input (fn_8004E560) match main.dol bit for bit; the shared ground-movement routine is next.
 
 [Big Foot opening](BIG-FOOT.md) covers boss startup and the arena boundary in the second Hero encounter; its combat loop and stage clear remain open.

@@ -77,6 +77,73 @@ fn mounted_campaign_routes() {
             Ok(None)
         }
     };
+    let demo_routes = [
+        ("Sonic SA2 The Trial Demo Sequence", 1, 0, 13),
+        ("Sonic Demo Sequence", 0, 0, 13),
+        ("Mech Tails Demo Sequence", 0, 6, 9),
+        ("Knuckles Demo Sequence", 1, 4, 16),
+        ("Shadow Demo Sequence", 0, 1, 14),
+        ("Mech Eggman Demo Sequence", 0, 7, 21),
+        ("Rouge Demo Sequence", 1, 5, 18),
+    ];
+    assert_eq!(campaign.demos().len(), demo_routes.len());
+    for (name, ordinal, character, level) in demo_routes {
+        let stage = campaign.mount(name, ordinal, installed).unwrap();
+        assert_eq!(
+            stage.character_defaults.source_va,
+            0x017391e8 + character as u32 * 132
+        );
+        assert_eq!(
+            (stage.dispatch.character, stage.dispatch.level),
+            (character, level)
+        );
+        assert!(stage.layers.iter().any(|l| !l.placements.is_empty()));
+    }
+    let hero_bosses = [
+        (0, 60),
+        (6, 20),
+        (0, 19),
+        (4, 63),
+        (0, 64),
+        (4, 33),
+        (6, 29),
+        (0, 42),
+    ];
+    let dark_bosses = [
+        (1, 61),
+        (7, 20),
+        (5, 62),
+        (1, 19),
+        (7, 67),
+        (5, 33),
+        (7, 29),
+        (1, 42),
+    ];
+    let all_bosses = [
+        hero_bosses.as_slice(),
+        dark_bosses.as_slice(),
+        &[(1, 65), (0, 66)],
+    ]
+    .concat();
+    assert_eq!(campaign.boss_rushes().len(), 34);
+    for (name, expected) in [
+        ("Hero Boss Rush Story Sequence", hero_bosses.as_slice()),
+        ("Dark Boss Rush Story Sequence", dark_bosses.as_slice()),
+        ("All Boss Rush Story Sequence", all_bosses.as_slice()),
+    ] {
+        for (ordinal, &(character, level)) in expected.iter().enumerate() {
+            let stage = campaign.mount(name, ordinal, installed).unwrap();
+            assert_eq!(
+                stage.character_defaults.source_va,
+                0x017391e8 + character as u32 * 132
+            );
+            assert_eq!(
+                (stage.dispatch.character, stage.dispatch.level),
+                (character, level)
+            );
+        }
+        assert!(campaign.dispatch(name, expected.len()).is_none());
+    }
     let mut unique = BTreeSet::new();
     let (mut mounts, mut placements, mut unresolved, mut starts, mut grounds) = (0, 0, 0, 0, 0);
     let mut terrain_ids = BTreeSet::new();
@@ -95,9 +162,37 @@ fn mounted_campaign_routes() {
             .map(|d| (d.action_index, d.character, d.level))
             .collect();
         assert_eq!(seen, expected);
-        for &(ordinal, _, level) in expected {
+        for &(ordinal, character, level) in expected {
             let stage = campaign.mount(sequence, ordinal, installed).unwrap();
+            assert_eq!(
+                stage.character_defaults.source_va,
+                0x017391e8 + character as u32 * 132
+            );
             assert_eq!(stage.dispatch.level, level);
+            use sa2_asset_tools::mission_ranks::Observation;
+            if level == 70 || level == 13 {
+                assert_eq!(stage.mission_ranks.len(), 5);
+                let row = stage.mission_ranks.iter().find(|r| r.mission == 1).unwrap();
+                if level == 70 {
+                    let expected = if stage.dispatch.character == 6 {
+                        [210, 195, 170, 165]
+                    } else {
+                        [230, 220, 210, 200]
+                    };
+                    assert_eq!(
+                        row.differences(Observation::Seconds(200)).unwrap(),
+                        expected.map(|cut| 200 - cut)
+                    );
+                    assert!(row.differences(Observation::StoredScore(200)).is_err());
+                } else {
+                    assert_eq!(
+                        row.differences(Observation::StoredScore(140)).unwrap(),
+                        [50, 30, 0, -40]
+                    );
+                }
+            } else if level == 60 {
+                assert!(stage.mission_ranks.is_empty());
+            }
             for (layer_idx, layer) in stage.layers.iter().enumerate() {
                 for place in &layer.placements {
                     if !stage
@@ -236,7 +331,25 @@ fn mounted_campaign_routes() {
             match level {
                 70 => {
                     let route = stage.kart_route.unwrap();
-                    assert!(stage.level_section.is_none() && stage.terrain.is_none());
+                    assert!(stage.level_section.is_none());
+                    // One native posed collision object per tasked piece.
+                    let t = stage.terrain.as_ref().unwrap();
+                    let pieces = route.course_parts.len();
+                    assert_eq!((t.entries, t.stage.visual_count), (pieces, 0));
+                    assert_eq!(t.geometry_path, format!("CartCourseModels/{}", route.name));
+                    assert!(t
+                        .stage
+                        .entries
+                        .iter()
+                        .all(|e| e.surface_flags & 0x2000_0001 == 0x2000_0001));
+                    let world = stage.collision_world().unwrap().unwrap();
+                    let triangles: usize = world.meshes.iter().map(|m| m.triangles.len()).sum();
+                    assert_eq!(triangles, if pieces == 321 { 13643 } else { 18439 });
+                    let ground = world
+                        .raycast([0., 200., -200.], [0., -1., 0.], 1000.)
+                        .unwrap()
+                        .expect("course start has ground below");
+                    assert_eq!(world.meshes[ground.mesh_index].entry_index, 0);
                     assert_eq!(stage.object_table.unwrap().entries.len(), 13);
                     let (n, h) = if sequence == "Hero Story Sequence" {
                         (
@@ -390,7 +503,7 @@ fn mounted_campaign_routes() {
     assert_eq!(mounts, 94);
     assert_eq!(
         (placements, unresolved, starts, grounds, terrain_ids.len()),
-        (24162, 0, 43, 44, 40)
+        (24162, 0, 43, 46, 41)
     );
     assert!(campaign
         .mount("Hero Story Sequence", 0, |_| panic!(
@@ -497,6 +610,13 @@ fn green_forest_shared_tasks() {
     assert_eq!(ring["frames"][1]["magneticTimer"], 1);
     assert_eq!(ring["frames"][1]["yaw"], ring["frames"][0]["yaw"]);
     assert_eq!(ring["frames"][2]["calls"][0], json!(["AddScore", 10]));
+    let particles = ring["frames"][2]["pickupParticles"].as_array().unwrap();
+    assert_eq!(particles.len(), 4);
+    assert_eq!(
+        particles[0]["position"],
+        json!([pos[0], (pos[1] + 7.2) - 1.5, pos[2] + 4.0])
+    );
+    assert!(ring["frames"][1].get("pickupParticles").is_none());
     assert_eq!(ring["frames"][3]["calls"], json!([["DeadOut"]]));
     let mut missing = advance;
     missing.as_object_mut().unwrap().remove("advance_result");
@@ -594,6 +714,44 @@ fn mounted_story_goal_samples_live_game_bytes() {
                 replay["frames"][0]["alternateMotion"]["soundBeforeContact"]["code"],
                 0x1012
             );
+            let sample = |hit, timer, gate| serde_json::json!({"hit":hit,"game_byte_23":1,"game_byte_37":gate,"alternate_timer":timer});
+            let none = serde_json::json!({"kind":"none"});
+            let player = serde_json::json!({"kind":"player","slot":0});
+            for field_present in [true, false] {
+                request["alternate_lifecycle"] = serde_json::json!({"task_field_30_present":field_present,"release":{"work56":4096,"nested":8192}});
+                request["frames"] = serde_json::json!([
+                    sample(&none, 65535, 0),
+                    sample(&player, 59, 0),
+                    sample(&none, 60, 1),
+                    sample(&none, 61, 0)
+                ]);
+                let life = sa2_asset_tools::goal_ring::replay(
+                    &stage,
+                    layer,
+                    row,
+                    &module,
+                    &exe,
+                    &effects,
+                    &serde_json::to_vec(&request).unwrap(),
+                )
+                .unwrap();
+                let frames = life["frames"].as_array().unwrap();
+                assert_eq!(frames.len(), 3);
+                assert!(frames[0]["cleanupCall"].is_null() && frames[1]["cleanupCall"].is_null());
+                assert_eq!(
+                    frames[2]["cleanupCall"],
+                    if field_present {
+                        0x80065148u32
+                    } else {
+                        0x80071878u32
+                    }
+                );
+                assert!(frames[2]["alternateMotion"]["soundBeforeContact"].is_null());
+                assert_eq!(
+                    life["observedRelease"]["events"][0],
+                    serde_json::json!(["free", 0x801194e0u32, 8192])
+                );
+            }
             hunters.insert(dispatch.character);
             continue;
         }

@@ -37,6 +37,8 @@ fn bounded<F>(frames: Vec<F>) -> Result<Vec<F>> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RingFrame {
+    child: Option<crate::ring_terrain::ChildFrame>,
+    terrain: Option<crate::ring_terrain::Observations>,
     #[serde(default)]
     magnet_players: [Option<crate::ring_magnet::Player>; 2],
     advance_result: Option<[f32; 3]>,
@@ -47,19 +49,26 @@ struct RingFrame {
 }
 
 fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
-    if p.parameters[0] == -1.0 {
-        return Err(Error::invalid("terrain-following ring path is unsupported"));
-    }
+    let mut terrain = (p.parameters[0] == -1.0).then(crate::ring_terrain::Terrain::default);
     let request = decode::<Frames<RingFrame>>(request)?;
     let mut ring = StageRing::new(p.position, i32::from(p.rotation[1] as i16));
     let mut frames = Vec::new();
+    let mut child = None;
     let mut magnet_timer = 0u16;
     let mut magnet_angle = 0f32;
     for frame in bounded(request.frames)? {
-        if frame.range_out {
-            return Err(Error::invalid("fixed ring requires an in-range task"));
+        // Fresh SET rings clear mwp in init; this host does not schedule linked mode-2 rings.
+        if frame.range_out
+            && (frame.ccl_hit_slot.is_some()
+                || frame.advance_result.is_some()
+                || frame.magnet_players.iter().any(Option::is_some)
+                || frame.terrain.is_some())
+        {
+            return Err(Error::invalid(
+                "parent ring observations supplied after range return",
+            ));
         }
-        let magnetic = if ring.mode == RingMode::Active {
+        let magnetic = if !frame.range_out && ring.mode == RingMode::Active {
             crate::ring_magnet::select(
                 ring.position,
                 magnet_timer,
@@ -96,7 +105,12 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
             }
             None => None,
         };
-        let events = ring.step(hit, frame.spin_enabled && magnetic.is_none());
+        let previous_mode = ring.mode;
+        let events = if frame.range_out {
+            Default::default()
+        } else {
+            ring.step(hit, frame.spin_enabled && magnetic.is_none())
+        };
         let mut calls = Vec::new();
         if let Some(slot) = events.player_reward {
             calls.extend([
@@ -106,6 +120,12 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
                 json!(["SE_CallRing", slot]),
             ]);
         }
+        let pickup_particles = events.particles.then(|| {
+            crate::stage_gameplay::pickup_particles(ring.position, |angle| {
+                let (s, c) = (f64::from(angle) * std::f64::consts::TAU / 65536.0).sin_cos();
+                (s as f32, c as f32)
+            })
+        });
         if events.particles {
             calls.push(json!(["o_ring_0"]));
         }
@@ -125,10 +145,37 @@ fn ring(p: &Placement, request: &[u8]) -> Result<Value> {
         if events.register_collision {
             calls.push(json!(["CCL_Entry"]));
         }
+        if frame.range_out {
+            if ring.mode != RingMode::Removed {
+                calls.push(json!(["CheckRangeOut"]));
+            }
+        } else if let Some(terrain) = &mut terrain {
+            terrain.tick(
+                previous_mode,
+                &mut ring,
+                p.rotation[0] == 1,
+                magnetic.is_some(),
+                frame.terrain.unwrap_or_default(),
+                &mut calls,
+            )?;
+        } else if frame.terrain.is_some() {
+            return Err(Error::invalid(
+                "unexpected terrain observations for fixed ring",
+            ));
+        }
         if events.dead_out {
             calls.push(json!(["DeadOut"]));
         }
-        frames.push(json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"position":ring.position,"magneticSlot":magnetic.map(|m|m.slot),"magneticTimer":magnet_timer,"magneticAngle":magnet_angle,"calls":calls}));
+        let mut tick = json!({"mode":format!("{:?}",ring.mode),"yaw":ring.yaw,"position":ring.position,"magneticSlot":magnetic.map(|m|m.slot),"magneticTimer":magnet_timer,"magneticAngle":magnet_angle,"calls":calls});
+        if let Some(particles) = pickup_particles {
+            tick["pickupParticles"] = json!(particles);
+            tick["particleTrig"] = json!("host f64 sin/cos rounded to f32");
+        }
+        if let Some(schedule) = frame.child {
+            tick["child"] =
+                schedule.run(&mut child, terrain.as_mut().and_then(|t| t.spawn.take()))?;
+        }
+        frames.push(tick);
     }
     Ok(json!({"callback":"Ring","frames":frames}))
 }

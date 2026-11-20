@@ -127,3 +127,5 @@ Coverage, parity and limitations are recorded in [native formats](docs/native-fo
 and [delivery evidence](docs/VERIFICATION.md). Finding BATTLE resources does not
 verify entitlement. Models/textures decoded successfully do not establish native
 gameplay parity.
+
+For `kart-contact-step`, optional `tail` (requires `result` and `wall`) continues CartD through return at 0x3020. Supply `post_alignment_angles`, `observed_local_velocity` from 0x5498, `observed_raw_magnitude` from the engine, and signed `work_d4`. For work_70 slots 0 and 1, supply `ring` with the matching slot, cursor (0–59), and 60 triples each of velocities and rotations; omit it for negative slots. Reuse the returned ring on the next tick. Copy response.tail.motion_history into drift.motion_history for kart-drive-input: these are the newest 30 raw velocity samples, after the write, not transformed velocities. The engine query, alignment and matrix math are not implemented by this callback comparison.

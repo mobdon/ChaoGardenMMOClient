@@ -147,6 +147,66 @@ pub fn read(exe: &[u8], config: &str) -> Result<BTreeMap<String, Sequence>> {
     Ok(result)
 }
 
+/// Inspect physical sections in a saved sequence without acknowledging a
+/// dispatch. SEQ_DATA has no verified event-slot cursor for a multi-event row.
+pub fn saved_sections(exe: &[u8], snapshot: &[u8]) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let (number, current, next) = crate::stage_result::story_progress(snapshot)?.section_numbers();
+    // SAMT seqctrl.h: ucCurSequence values and physical SEQ_SECTION arrays, including their end row.
+    let (name, rva, rows) = match number {
+        1 => ("Hero", 0x133a148, 46),
+        2 => ("Dark", 0x133a370, 44),
+        3 => ("Last", 0x133a580, 8),
+        4 => ("Intro", 0x133a5e0, 2),
+        5 => ("Sonic Trial Demo", 0x1330074, 3),
+        6 => ("Sonic Demo", 0x133089c, 3),
+        7 => ("Tails Demo", 0x133a5f8, 2),
+        8 => ("Knuckles Demo", 0x1330ac4, 3),
+        9 => ("Shadow Demo", 0x13312ec, 3),
+        10 => ("Eggman Demo", 0x133a610, 2),
+        11 => ("Rouge Demo", 0x13318cc, 3),
+        15 => ("Dreamcast Intro", 0x133a7ec, 2),
+        12 => ("Hero Boss Rush", 0x133a628, 9),
+        13 => ("Dark Boss Rush", 0x133a698, 9),
+        14 => ("All Boss Rush", 0x133a708, 19),
+        _ => {
+            return Err(Error::invalid(
+                "saved sequence number has no verified native table",
+            ))
+        }
+    };
+    let image = verify_image(exe)?;
+    let mut budget = rows;
+    let sequence = sequence(exe, &image, rva, name.into(), &mut budget)?;
+    if budget != 0 {
+        return Err(Error::invalid("unexpected native campaign sequence length"));
+    }
+    let mut actions = vec![Vec::new(); sequence.entries.len()];
+    let mut cursor = Cursor::new(&sequence);
+    let mut ordinal = 0;
+    while let Some(d) = cursor.dispatch() {
+        actions[d.token.entry_index].push(json!({"actionIndex":ordinal,"action":d.action}));
+        cursor.acknowledge(&d.token)?;
+        ordinal += 1;
+    }
+    let section = |index: u8| {
+        let idx = usize::from(index);
+        let Some(entry) = sequence.entries.get(idx) else {
+            return if idx == sequence.entries.len() {
+                json!({"index":index,"status":"terminator","rva":sequence.terminator.rva})
+            } else {
+                json!({"index":index,"status":"outsideTable"})
+            };
+        };
+        json!({"index":index,"status":"section","rva":entry.rva,"actions":actions[idx]})
+    };
+    Ok(
+        json!({"sequenceNumber":number,"sequence":name,"tableRva":rva,
+        "current":section(current),"nextInSameTable":section(next),
+        "scope":"Physical section lookup only; pending event slot and actual next dispatch are unknown."}),
+    )
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Token {

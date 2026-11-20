@@ -1,0 +1,14 @@
+[package]
+name = "sa2-play"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "Report the native stage-rule state of a Rust SA2 walker stage"
+
+# Kept out of the sa2 crate so its manifest and lockfile stay unchanged.
+[workspace]
+
+[dependencies]
+sa2-asset-tools = { path = "../sa2" }
+serde_json = "1.0.154"

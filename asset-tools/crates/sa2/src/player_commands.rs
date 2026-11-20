@@ -6,11 +6,19 @@ use sa2_asset_tools::{
 };
 use std::ffi::{OsStr, OsString};
 
-pub(super) const USAGE:&str="fan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nduel-generator stg42D.rel OUTPUT.json REQUEST.json\nduel-platform-update stg42D.rel OUTPUT.json REQUEST.json\nduel-meteor stg42D.rel OUTPUT.json REQUEST.json\nduel-debris stg42D.rel OUTPUT.json REQUEST.json\nduel-dust stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-frame stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-setup stg42D.rel OUTPUT.json REQUEST.json\nduel-fog stg42D.rel OUTPUT.json REQUEST.json\nduel-director stg42D.rel OUTPUT.json REQUEST.json\nduel-gauge stg42D.rel OUTPUT.json REQUEST.json\nduel-title stg42D.rel OUTPUT.json REQUEST.json\nduel-display stg42D.rel OUTPUT.json REQUEST.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-stage-reuse EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
+pub(super) const USAGE:&str="demo-prs-window DEMO.prs OUTPUT.json FIRST_RECORD COUNT\nfan-demos EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-boss-rushes EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstory-sections EXE OUTPUT.json SAVE_DATA_IMAGE\nstory-progress SAVE_DATA_IMAGE OUTPUT.json\nstage-result SAVE_DATA_IMAGE OUTPUT.json SLOT MISSION\nfan-rank EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX MISSION storedScore|seconds VALUE\nfan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-starts EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nkart-finish-display CartD.rel OUTPUT.json resultCart.prs INPUT.json\nkart-drift-step CartD.rel OUTPUT.json INPUT.json\nkart-drift-windup CartD.rel OUTPUT.json INPUT.json\nkart-scripted-motion CartD.rel OUTPUT.json INPUT.json\nkart-active-profile CartD.rel OUTPUT.json INPUT.json\nkart-vehicle-init CartD.rel OUTPUT.json INPUT.json\nkart-spin-drive CartD.rel OUTPUT.json INPUT.json\nkart-recovery-drive CartD.rel OUTPUT.json INPUT.json\nkart-buffer-tuning CartD.rel OUTPUT.json PRE_RELOCATION_BUFFER.bin ENGINE_WORD_B4\nkart-race-tuning CartD.rel OUTPUT.json INPUT.json\nkart-guided-drive CartD.rel OUTPUT.json INPUT.json\nkart-contact-step CartD.rel OUTPUT.json INPUT.json\nkart-normal-contact CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-contact-recovery CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-course-recovery CartD.rel OUTPUT.json EXE COURSE INPUT.json\nkart-fall-recovery CartD.rel OUTPUT.json INPUT.json\nkart-ring-particle CartD.rel OUTPUT.json INPUT.json\nkart-balloon-display CartD.rel OUTPUT.json INPUT.json\nkart-dash-display CartD.rel OUTPUT.json INPUT.json\nkart-ring-display CartD.rel OUTPUT.json INPUT.json\nkart-ring-pickup CartD.rel OUTPUT.json INPUT.json\nkart-driving-audio CartD.rel OUTPUT.json INPUT.json\nkart-update-gate CartD.rel OUTPUT.json INPUT.json\nkart-drive-input CartD.rel OUTPUT.json INPUT.json\nkart-timeout CartD.rel OUTPUT.json INPUT.json\nkart-pursuit-clock CartD.rel OUTPUT.json INPUT.json\nkart-target-model CartD.rel OUTPUT.json MODE\nkart-target-textures CartD.rel OUTPUT.json MODE\nkart-target-display CartD.rel OUTPUT.json INPUT.json\nkart-story-target CartD.rel OUTPUT.json INPUT.json\nkart-finish-menu CartD.rel OUTPUT.json INPUT.json\nkart-field-update CartD.rel OUTPUT.json FIELD.json\nkart-standings CartD.rel OUTPUT.json OCCUPIED_SLOTS.json\nkart-crossing-directory CartD.rel OUTPUT.json EXE\nkart-segment-geometry CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-progress-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-race-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-time-extension CartD.rel OUTPUT.json\nkart-story-gate-display CartD.rel OUTPUT.json INPUT.json\nkart-gate-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-ramp-response CartD.rel OUTPUT.json RESPONSE_INPUT.json\nkart-dash-panel CartD.rel OUTPUT.json INPUT.json\nkart-ramp-tick CartD.rel OUTPUT.json OBSERVATIONS.json\nkart-ramp-init CartD.rel OUTPUT.json TASK_POSE.json\nkart-story-gate-sequence CartD.rel OUTPUT.json EXE SET CONTACTS.json\nkart-story-gates CartD.rel OUTPUT.json EXE SET\nkart-balloon-layout CartD.rel OUTPUT.json EXE SET\nkart-ring-groups CartD.rel OUTPUT.json EXE SET\nkart-objects SET OUTPUT.json EXE\nkart-vehicles EXE OUTPUT.json\nkart-courses EXE OUTPUT.json\nkart-piece-collision EXE OUTPUT.json DATA_DLL COURSE CASES.json\nkart-native-layout EXE OUTPUT.json DATA_DLL COURSE\nkart-course-billboards EXE OUTPUT.json DATA_DLL CartD.rel COURSE RANDS.json\nkart-course-background EXE OUTPUT.json DATA_DLL CartD.rel COURSE FRAMES.json\nkart-course-materials EXE OUTPUT.json DATA_DLL CartD.rel course.pak COURSE
+kart-raycast EXE OUTPUT.json DATA_DLL COURSE(101|280|beginner|standard|expert) REQUEST.json\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\ncharacter-state-pose MTN.prs OUTPUT.json EXE MDL.prs STATE FRAME\nsonic-state-pose MTN.prs OUTPUT.json EXE SONICMDL.prs STATE FRAME\ncharacter-camera MTN.prs OUTPUT.json SLOT FRAME\ncharacter-motion MTN.prs OUTPUT.json SLOT\ncharacter-motion-bank MTN.prs OUTPUT.json\ncharacter-animations EXE OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT
+fan-emerald-contact EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-wild-canyon EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX BG_TASK_ALLOCATED(true|false)\nfan-big-foot EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX REQUEST.json\nfan-goal EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\ndamage-ring MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nfan-replay EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX LAYER PLACEMENT REQUEST.json\nduel-platform EXE OUTPUT.json\nduel-generator stg42D.rel OUTPUT.json REQUEST.json\nduel-platform-update stg42D.rel OUTPUT.json REQUEST.json\nduel-meteor stg42D.rel OUTPUT.json REQUEST.json\nduel-debris stg42D.rel OUTPUT.json REQUEST.json\nduel-dust stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-frame stg42D.rel OUTPUT.json REQUEST.json\nduel-stage-setup stg42D.rel OUTPUT.json REQUEST.json\nduel-fog stg42D.rel OUTPUT.json REQUEST.json\nduel-director stg42D.rel OUTPUT.json REQUEST.json\nduel-gauge stg42D.rel OUTPUT.json REQUEST.json\nduel-title stg42D.rel OUTPUT.json REQUEST.json\nduel-display stg42D.rel OUTPUT.json REQUEST.json\nfan-tasks EXE OUTPUT.json PC_SA2_CONFIG_DIR\nmission-ranks EXE OUTPUT.json\nfan-stage EXE OUTPUT.json PC_SA2_CONFIG_DIR SEQUENCE ACTION_INDEX\nfan-stage-reuse EXE OUTPUT.json PC_SA2_CONFIG_DIR\nfan-levels EXE OUTPUT.json PC_SA2_CONFIG_DIR\nstage-raycast MODULE OUTPUT.json LAND_SYMBOL REQUEST.json\nstory-run EXE OUTPUT.json ADVERTISE.ini SEQUENCE\ncity-rider-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE SONICMDL.prs ACTION FRAME\ncity-board-glb EXE OUTPUT.glb VARIANT OBJTEX_STG13.prs\ncity-board-model EXE OUTPUT.sa2mdl VARIANT\ncity-board-pose STAGE_REL_OR_DATA_DLL OUTPUT.json EXE VARIANT ACTION FRAME\ncity-collision STAGE_REL_OR_DATA_DLL OUTPUT.json [UNIFORM_SCALE]\ncity-raycast STAGE_REL_OR_DATA_DLL OUTPUT.json REQUEST.json\ncity-spawn-ground STAGE_REL_OR_DATA_DLL OUTPUT.json EXE MAX_DISTANCE\nstage20-splash stg20D.rel OUTPUT.json QUERY\nstage20-entry stg20D.rel OUTPUT.json REQUEST.json\nstage-fog FOG.bin OUTPUT.json\nstage-light-table STAGE_light.bin OUTPUT.json\nstage-light-base STAGE_light.bin OUTPUT.json\nmessage-bank MESSAGE.prs OUTPUT.json\nstage-registration STAGE.rel OUTPUT.json\ncity-board-resources stg13D.rel OUTPUT.json\nplayer-physics EXE OUTPUT.json\nstage-bind SET OUTPUT.json EXE sa2lvl.ini ObjectLists.ini LEVEL_SECTION\nstage-positions EXE OUTPUT.json STAGE_ID\ndeath-zones EXE OUTPUT.json STAGE.ini\nstage-paths EXE OUTPUT.json STAGE.ini\nstory EXE OUTPUT.json ADVERTISE.ini\nevent-frame EVENT.prs OUTPUT.json FRAME\ndemo-frame RAW_DEMO.bin OUTPUT.json FRAME\ncampaign-frame EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME\ncampaign-camera EXE OUTPUT.json ADVERTISE.ini SEQUENCE ACTION_INDEX FRAME CAMERA_SLOT\nevent-camera EVENT.prs OUTPUT.json FRAME MOTION.bin CAMERA_SLOT";
 pub(super) fn arity(cmd: &str) -> Option<usize> {
     match cmd {
-        "duel-platform"
+        "kart-time-extension"
+        | "duel-platform"
+        | "story-progress"
         | "mission-ranks"
+        | "character-motion-bank"
+        | "character-animations"
+        | "kart-vehicles"
+        | "kart-courses"
         | "player-physics"
         | "stage-fog"
         | "stage-light-table"
@@ -18,17 +26,41 @@ pub(super) fn arity(cmd: &str) -> Option<usize> {
         | "message-bank"
         | "stage-registration"
         | "city-board-resources" => Some(3),
-        "fan-goal" | "fan-replay" => Some(9),
+        "fan-goal" | "fan-replay" | "fan-rank" => Some(9),
         "campaign-camera" => Some(8),
-        "event-camera" | "fan-stage" => Some(6),
+        "kart-story-gate-sequence"
+        | "kart-normal-contact"
+        | "kart-contact-recovery"
+        | "kart-course-recovery"
+        | "kart-raycast"
+        | "kart-piece-collision"
+        | "event-camera"
+        | "fan-stage" => Some(6),
         "fan-emerald-contact"
+        | "kart-course-materials"
+        | "kart-course-background"
+        | "kart-course-billboards"
         | "fan-wild-canyon"
         | "fan-big-foot"
+        | "character-state-pose"
+        | "sonic-state-pose"
         | "city-rider-pose"
         | "city-board-pose"
         | "stage-bind"
         | "campaign-frame" => Some(7),
-        "damage-ring" | "stage-raycast" | "story-run" | "city-spawn-ground" => Some(5),
+        "kart-story-gates"
+        | "kart-native-layout"
+        | "kart-balloon-layout"
+        | "kart-ring-groups"
+        | "kart-buffer-tuning"
+        | "kart-finish-display"
+        | "demo-prs-window"
+        | "stage-result"
+        | "damage-ring"
+        | "stage-raycast"
+        | "story-run"
+        | "character-camera"
+        | "city-spawn-ground" => Some(5),
         "duel-generator"
         | "duel-platform-update"
         | "duel-meteor"
@@ -41,8 +73,60 @@ pub(super) fn arity(cmd: &str) -> Option<usize> {
         | "duel-gauge"
         | "duel-title"
         | "duel-display" => Some(4),
-        "stage-positions" | "death-zones" | "stage-paths" | "story" | "event-frame"
-        | "demo-frame" | "fan-stage-reuse" | "fan-levels" | "fan-tasks" | "stage20-splash"
+        "story-sections"
+        | "stage-positions"
+        | "death-zones"
+        | "stage-paths"
+        | "story"
+        | "event-frame"
+        | "demo-frame"
+        | "fan-demos"
+        | "fan-boss-rushes"
+        | "fan-starts"
+        | "fan-levels"
+        | "kart-drift-step"
+        | "kart-drift-windup"
+        | "kart-scripted-motion"
+        | "kart-active-profile"
+        | "kart-vehicle-init"
+        | "kart-spin-drive"
+        | "kart-recovery-drive"
+        | "kart-race-tuning"
+        | "kart-guided-drive"
+        | "kart-contact-step"
+        | "kart-fall-recovery"
+        | "kart-ring-particle"
+        | "kart-balloon-display"
+        | "kart-dash-display"
+        | "kart-ring-display"
+        | "kart-ring-pickup"
+        | "kart-driving-audio"
+        | "kart-update-gate"
+        | "kart-drive-input"
+        | "kart-timeout"
+        | "kart-pursuit-clock"
+        | "kart-target-model"
+        | "kart-target-textures"
+        | "kart-target-display"
+        | "kart-story-target"
+        | "kart-finish-menu"
+        | "kart-field-update"
+        | "kart-standings"
+        | "kart-crossing-directory"
+        | "kart-segment-geometry"
+        | "kart-progress-tick"
+        | "kart-race-gate-tick"
+        | "kart-story-gate-display"
+        | "kart-gate-tick"
+        | "kart-ramp-response"
+        | "kart-dash-panel"
+        | "kart-ramp-tick"
+        | "kart-ramp-init"
+        | "kart-objects"
+        | "character-motion"
+        | "fan-tasks"
+        | "stage20-splash"
+        | "fan-stage-reuse"
         | "stage20-entry" => Some(4),
         _ => None,
     }
@@ -150,11 +234,29 @@ fn campaign(
                 } else {
                     scene_packet(&clip, frame)?
                 }
+            } else if sa2_asset_tools::story_movie::supported(id)
+                && install
+                    .join(format!("resource/gd_PC/event/e{id:04}_m.sfd"))
+                    .try_exists()?
+            {
+                if args.get(7).is_some() {
+                    return Err(Error::invalid("movie pictures have no event camera slot"));
+                }
+                let name = format!("resource/gd_PC/event/e{id:04}_m.sfd");
+                let movie = Extra::read(
+                    &install.join(&name),
+                    name,
+                    80 * 1024 * 1024,
+                    "story-event-movie",
+                )?;
+                let i = extras.len();
+                extras.push(movie);
+                sa2_asset_tools::story_movie::movie_picture(id, &extras[i].bytes, frame)?
             } else {
                 json!({"available":false,"missingMainEvent":logical,"reason":"No matching main event PRS; movie or special-event dispatch is not implemented."})
             }
         }
-        story::Action::Level { level, .. } => {
+        story::Action::Level { level, character } => {
             if args.len() == 8 {
                 return Err(Error::invalid(
                     "selected story action is a level, not an event camera",
@@ -175,7 +277,9 @@ fn campaign(
                     layers.push(json!({"source":layout.source_layer,"placements":layout.placements.len(),"partialCallbacks":layout.callback_counts,"unsupportedPlacements":layout.unsupported_placements}));
                 }
             }
-            json!({"entryPoses":stage_positions::for_stage(exe,level as u16)?,"normalCityLayers":layers,
+            let rows = stage_positions::for_stage(exe, level as u16)?;
+            let (pose, defaults) = story_run::level_player(exe, character, level, &rows)?;
+            json!({"entryPose":pose,"playerDefaults":defaults,"entryPoses":rows,"normalCityLayers":layers,
                 "scope":"Authored character poses and available layer bindings. No character dynamics, mission execution or stage-clear transition."})
         }
         story::Action::Credits => {
@@ -213,6 +317,26 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
             result
         }
         "duel-platform" => serde_json::to_value(sa2_asset_tools::duel_platform::read(&bytes)?)?,
+        "story-sections" => {
+            let p = Path::new(&args[3]);
+            let snapshot = Extra::read(
+                p,
+                format!("snapshots/{}", basename(p)?),
+                128 * 1024 * 1024,
+                "offline-save-data-image",
+            )?;
+            let result = story::saved_sections(&bytes, &snapshot.bytes)?;
+            extras.push(snapshot);
+            result
+        }
+        "story-progress" => {
+            serde_json::to_value(sa2_asset_tools::stage_result::story_progress(&bytes)?)?
+        }
+        "stage-result" => serde_json::to_value(sa2_asset_tools::stage_result::read(
+            &bytes,
+            number(&args[3])?,
+            number(&args[4])?,
+        )?)?,
         "duel-generator" => {
             let path = Path::new(&args[3]);
             let req = Extra::read(
@@ -361,7 +485,11 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
         "fan-emerald-contact"
         | "fan-wild-canyon"
         | "fan-big-foot"
+        | "fan-rank"
         | "fan-stage"
+        | "fan-demos"
+        | "fan-boss-rushes"
+        | "fan-starts"
         | "fan-stage-reuse"
         | "fan-levels"
         | "fan-tasks"
@@ -407,6 +535,33 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                     Ok(Some(data))
                 })?;
                 serde_json::to_value(coverage)?
+            } else if command == "fan-rank" {
+                use sa2_asset_tools::mission_ranks::Observation;
+                let mission: u8 = number(&args[6])?;
+                let sequence = text_arg(&args[4])?;
+                let ordinal: usize = number(&args[5])?;
+                let dispatch = catalog
+                    .dispatch(sequence, ordinal)
+                    .ok_or_else(|| Error::invalid("not an authored campaign dispatch"))?;
+                let row = catalog
+                    .rank_rows(dispatch)
+                    .into_iter()
+                    .find(|r| r.mission == mission)
+                    .ok_or_else(|| {
+                        Error::invalid("no authored rank row for this dispatch and mission")
+                    })?;
+                let observation = match text_arg(&args[7])? {
+                    "storedScore" => Observation::StoredScore(number(&args[8])?),
+                    "seconds" => Observation::Seconds(number(&args[8])?),
+                    _ => return Err(Error::invalid("expected storedScore or seconds")),
+                };
+                json!({"dispatch":dispatch,"row":row,"observedMinusThresholdDThroughA":row.differences(observation)?,"scope":"Comparison in authored units; does not award a rank or commit a clear."})
+            } else if command == "fan-demos" {
+                serde_json::to_value(catalog.demos())?
+            } else if command == "fan-boss-rushes" {
+                serde_json::to_value(catalog.boss_rushes())?
+            } else if command == "fan-starts" {
+                serde_json::to_value(catalog.story_starts()?)?
             } else if command == "fan-stage-reuse" {
                 catalog.stage_reuse()?
             } else if command == "fan-levels" {
@@ -559,6 +714,779 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
             extras.push(src);
             doc
         }
+        "kart-finish-display" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                source_label(path, root)?,
+                4 * 1024 * 1024,
+                "kart-result-atlas",
+            )?);
+            let path = Path::new(&args[4]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-result-display",
+            )?);
+            sa2_asset_tools::kart_finish_menu::display(
+                &bytes,
+                &extras[0].bytes,
+                serde_json::from_slice(&extras[1].bytes)?,
+            )?
+        }
+        "kart-drift-step" | "kart-drift-windup" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-drift-windup",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_drift::tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-scripted-motion" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-scripted-motion",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_scripted_motion::step(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-active-profile" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-active-profile",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_vehicle_init::profile(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-vehicle-init" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-vehicle-init",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_vehicle_init::init(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-spin-drive" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-spin-drive",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_drive_input::spin(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-recovery-drive" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-recovery-drive",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_drive_input::recovery(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-buffer-tuning" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("buffers/{}", basename(path)?),
+                32 * 1024 * 1024,
+                "kart-setup-buffer",
+            )?);
+            sa2_asset_tools::kart_guided_drive::buffer_tuning(
+                &bytes,
+                &extras[0].bytes,
+                number(&args[4])?,
+            )?
+        }
+        cmd @ ("kart-normal-contact" | "kart-contact-recovery" | "kart-course-recovery") => {
+            let exe = Path::new(&args[3]);
+            let request = Path::new(&args[5]);
+            extras.push(Extra::read(
+                exe,
+                source_label(exe, root)?,
+                128 * 1024 * 1024,
+                "pc-executable",
+            )?);
+            extras.push(Extra::read(
+                request,
+                format!("requests/{}", basename(request)?),
+                64 * 1024,
+                "kart-recovery-request",
+            )?);
+            if cmd == "kart-normal-contact" {
+                serde_json::to_value(sa2_asset_tools::kart_fall_recovery::normal_contact_tick(
+                    &bytes,
+                    &extras[0].bytes,
+                    text_arg(&args[4])?,
+                    serde_json::from_slice(&extras[1].bytes)?,
+                )?)?
+            } else if cmd == "kart-contact-recovery" {
+                serde_json::to_value(sa2_asset_tools::kart_fall_recovery::contact_course_tick(
+                    &bytes,
+                    &extras[0].bytes,
+                    text_arg(&args[4])?,
+                    serde_json::from_slice(&extras[1].bytes)?,
+                )?)?
+            } else {
+                serde_json::to_value(sa2_asset_tools::kart_fall_recovery::course_tick(
+                    &bytes,
+                    &extras[0].bytes,
+                    text_arg(&args[4])?,
+                    serde_json::from_slice(&extras[1].bytes)?,
+                )?)?
+            }
+        }
+        "kart-fall-recovery" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-fall-recovery",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_fall_recovery::tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-ring-particle" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-ring-particle",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_pickup::particle_tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-balloon-display" | "kart-dash-display" => {
+            let req = Path::new(&args[3]);
+            extras.push(Extra::read(
+                req,
+                format!("requests/{}", basename(req)?),
+                4096,
+                if command == "kart-balloon-display" {
+                    "kart-balloon-display"
+                } else {
+                    "kart-dash-display"
+                },
+            )?);
+            let pak = input
+                .with_file_name("PRS")
+                .join(if command == "kart-balloon-display" {
+                    "objtex_common.pak"
+                } else {
+                    "course.pak"
+                });
+            extras.push(Extra::read(
+                &pak,
+                source_label(&pak, root)?,
+                16 * 1024 * 1024,
+                if command == "kart-balloon-display" {
+                    "kart-common-texture-bank"
+                } else {
+                    "kart-course-texture-bank"
+                },
+            )?);
+            if command == "kart-balloon-display" {
+                sa2_asset_tools::kart_balloon::display(
+                    &bytes,
+                    &extras[1].bytes,
+                    serde_json::from_slice(&extras[0].bytes)?,
+                )?
+            } else {
+                sa2_asset_tools::kart_ramp::display(
+                    &bytes,
+                    &extras[1].bytes,
+                    serde_json::from_slice(&extras[0].bytes)?,
+                )?
+            }
+        }
+        "kart-ring-display" => {
+            let req = Path::new(&args[3]);
+            extras.push(Extra::read(
+                req,
+                format!("requests/{}", basename(req)?),
+                4096,
+                "kart-ring-display",
+            )?);
+            let pak = input.with_file_name("PRS").join("objtex_common.pak");
+            extras.push(Extra::read(
+                &pak,
+                source_label(&pak, root)?,
+                16 * 1024 * 1024,
+                "kart-ring-texture-bank",
+            )?);
+            sa2_asset_tools::kart_pickup::display(
+                &bytes,
+                &extras[1].bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?
+        }
+        "kart-ring-pickup" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-ring-pickup",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_pickup::tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-driving-audio" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-driving-audio",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_driving_audio::tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-update-gate" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-update-gate",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_drive_input::update_gate(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-race-tuning" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-race-tuning",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_guided_drive::setup(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-guided-drive" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-guided-drive",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_guided_drive::tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-contact-step" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                64 * 1024,
+                "kart-movement-contact",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_contact::step(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-drive-input" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                1024 * 1024,
+                "kart-drive-input",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_drive_input::replay(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-timeout" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-timeout",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_timeout::step(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-pursuit-clock" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-pursuit-clock",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_story_target::controller(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-target-display" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-target-display",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_story_target::presentation(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-story-target" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-story-target",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_story_target::step(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-finish-menu" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-finish-menu",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_finish_menu::tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-field-update" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                8192,
+                "kart-field",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_progress::field_update(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-standings" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-standing-slots",
+            )?);
+            let slots: Vec<sa2_asset_tools::kart_progress::StandingSlot> =
+                serde_json::from_slice(&extras[0].bytes)?;
+            serde_json::to_value(sa2_asset_tools::kart_progress::standings(&bytes, &slots)?)?
+        }
+        "kart-crossing-directory" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                source_label(path, root)?,
+                128 * 1024 * 1024,
+                "pc-executable",
+            )?);
+            sa2_asset_tools::kart_progress::crossing_directory(&bytes, &extras[0].bytes)?
+        }
+        "kart-segment-geometry" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-segment-geometry",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_progress::segment_geometry(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-progress-tick" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-segment-observations",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_progress::update(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-time-extension" => {
+            let path = input.with_file_name("PRS").join("course.pak");
+            extras.push(Extra::read(
+                &path,
+                source_label(&path, root)?,
+                16 * 1024 * 1024,
+                "kart-course-texture-bank",
+            )?);
+            sa2_asset_tools::kart_gate::time_extension(&bytes, &extras[0].bytes)?
+        }
+        "kart-story-gate-display" | "kart-gate-tick" | "kart-race-gate-tick" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-gate-observations",
+            )?);
+            if command == "kart-story-gate-display" {
+                let mut report = sa2_asset_tools::kart_gate::presentation(
+                    &bytes,
+                    serde_json::from_slice(&extras[0].bytes)?,
+                )?;
+                if report["draw"].is_object() {
+                    let path = input.with_file_name("PRS").join("course.pak");
+                    extras.push(Extra::read(
+                        &path,
+                        source_label(&path, root)?,
+                        16 * 1024 * 1024,
+                        "kart-course-texture-bank",
+                    )?);
+                    sa2_asset_tools::kart_gate::bind_draw_textures(
+                        &bytes,
+                        &extras[1].bytes,
+                        &mut report,
+                    )?;
+                }
+                report
+            } else if command == "kart-race-gate-tick" {
+                serde_json::to_value(sa2_asset_tools::kart_gate::racing_tick(
+                    &bytes,
+                    serde_json::from_slice(&extras[0].bytes)?,
+                )?)?
+            } else {
+                serde_json::to_value(sa2_asset_tools::kart_gate::tick(
+                    &bytes,
+                    serde_json::from_slice(&extras[0].bytes)?,
+                )?)?
+            }
+        }
+        "kart-ramp-response" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "kart-response-observations",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_ramp::response(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-dash-panel" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                1024 * 1024,
+                "ramp-contact-observations",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_ramp::dash(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-ramp-tick" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                1024 * 1024,
+                "ramp-contact-observations",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_ramp::tick(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-ramp-init" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                format!("requests/{}", basename(path)?),
+                4096,
+                "task-pose",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_ramp::initialize(
+                &bytes,
+                serde_json::from_slice(&extras[0].bytes)?,
+            )?)?
+        }
+        "kart-story-gate-sequence"
+        | "kart-story-gates"
+        | "kart-balloon-layout"
+        | "kart-ring-groups" => {
+            for (arg, limit, role) in [
+                (3, 128 * 1024 * 1024, "pc-executable"),
+                (4, 1024 * 1024, "kart-set"),
+            ] {
+                let path = Path::new(&args[arg]);
+                extras.push(Extra::read(path, source_label(path, root)?, limit, role)?);
+            }
+            if command == "kart-story-gate-sequence" {
+                let path = Path::new(&args[5]);
+                extras.push(Extra::read(
+                    path,
+                    format!("requests/{}", basename(path)?),
+                    1024 * 1024,
+                    "kart-gate-contact-sequence",
+                )?);
+                sa2_asset_tools::kart_gate::story_sequence(
+                    &bytes,
+                    &extras[0].bytes,
+                    &extras[1].bytes,
+                    serde_json::from_slice(&extras[2].bytes)?,
+                )?
+            } else if command == "kart-story-gates" {
+                sa2_asset_tools::kart_gate::story_layout(
+                    &bytes,
+                    &extras[0].bytes,
+                    &extras[1].bytes,
+                )?
+            } else if command == "kart-balloon-layout" {
+                sa2_asset_tools::kart_objects::balloon_layout(
+                    &bytes,
+                    &extras[0].bytes,
+                    &extras[1].bytes,
+                )?
+            } else {
+                sa2_asset_tools::kart_objects::ring_groups(
+                    &bytes,
+                    &extras[0].bytes,
+                    &extras[1].bytes,
+                )?
+            }
+        }
+        "kart-objects" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                source_label(path, root)?,
+                128 * 1024 * 1024,
+                "pc-executable",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_objects::read(
+                &extras[0].bytes,
+                &bytes,
+            )?)?
+        }
+        "kart-vehicles" => {
+            serde_json::to_value(sa2_asset_tools::fan_stage::kart_profiles(&bytes)?)?
+        }
+        "kart-courses" => serde_json::to_value(sa2_asset_tools::kart_course::courses(&bytes)?)?,
+        "kart-raycast" => {
+            let dll = Path::new(&args[3]);
+            extras.push(Extra::read(
+                dll,
+                source_label(dll, root)?,
+                128 * 1024 * 1024,
+                "kart-course-models",
+            )?);
+            let p = Path::new(&args[5]);
+            extras.push(Extra::read(
+                p,
+                format!("requests/{}", basename(p)?),
+                64 * 1024,
+                "ray-request",
+            )?);
+            let req: RayRequest = serde_json::from_slice(&extras[1].bytes)?;
+            if req.uniform_scale != 1.0 {
+                return Err(Error::invalid("kart ray requires native units"));
+            }
+            let route = text_arg(&args[4])?;
+            let query = sa2_asset_tools::kart_course::course_raycast(
+                &bytes,
+                &extras[0].bytes,
+                route,
+                req.origin,
+                req.direction,
+                req.max_distance,
+            )?;
+            let route = route
+                .parse::<u16>()
+                .map_or_else(|_| json!(route), |n| json!(n));
+            json!({"route":route,"request":req,"hit":query.hit,"occurrencesWithoutCollision":query.without_collision,"scope":"static course geometry in native units"})
+        }
+        "kart-piece-collision" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128 * 1024 * 1024),
+                (5, "activation-cases", 1024 * 1024),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(path, source_label(path, root)?, limit, kind)?);
+            }
+            let cases: Vec<serde_json::Value> = serde_json::from_slice(&extras[1].bytes)?;
+            let invalid =
+                || Error::invalid("expected occurrence, count, raceMode and six kartOwners");
+            let activation = cases
+                .iter()
+                .map(|c| {
+                    let n = |k: &str| c[k].as_i64().ok_or_else(invalid);
+                    let owners = c["kartOwners"]
+                        .as_array()
+                        .filter(|a| a.len() == 6)
+                        .ok_or_else(invalid)?;
+                    let mut slots = [None; 6];
+                    for (slot, v) in slots.iter_mut().zip(owners) {
+                        *slot = if v.is_null() {
+                            None
+                        } else {
+                            Some(v.as_i64().ok_or_else(invalid)? as i32)
+                        };
+                    }
+                    Ok(sa2_asset_tools::kart_course::piece_collision_active(
+                        u16::try_from(n("occurrence")?).map_err(|_| invalid())?,
+                        n("count")? as i32,
+                        n("raceMode")? as i32,
+                        &slots,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            json!({"pieces": sa2_asset_tools::kart_course::piece_collision_tasks(
+                &bytes,
+                &extras[0].bytes,
+                text_arg(&args[4])?,
+            )?, "activation": activation})
+        }
+        "kart-native-layout" => {
+            let path = Path::new(&args[3]);
+            extras.push(Extra::read(
+                path,
+                source_label(path, root)?,
+                128 * 1024 * 1024,
+                "kart-course-models",
+            )?);
+            serde_json::to_value(sa2_asset_tools::kart_course::native_course_placements(
+                &bytes,
+                &extras[0].bytes,
+                text_arg(&args[4])?,
+            )?)?
+        }
+        "kart-course-billboards" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128 * 1024 * 1024),
+                (4, "kart-module", 16 * 1024 * 1024),
+                (6, "rand-observations", 4 * 1024 * 1024),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(path, source_label(path, root)?, limit, kind)?);
+            }
+            let rand: Vec<i32> = serde_json::from_slice(&extras[2].bytes)?;
+            serde_json::to_value(sa2_asset_tools::kart_course::course_billboards(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                text_arg(&args[5])?,
+                &rand,
+            )?)?
+        }
+        "kart-course-background" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128 * 1024 * 1024),
+                (4, "kart-module", 16 * 1024 * 1024),
+                (6, "frame-list", 1024 * 1024),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(path, source_label(path, root)?, limit, kind)?);
+            }
+            let frames: Vec<u32> = serde_json::from_slice(&extras[2].bytes)?;
+            let sea = frames
+                .iter()
+                .map(|&frame| {
+                    Ok(json!({"frame": frame, "colors": sa2_asset_tools::kart_course::sea_colors(&extras[1].bytes, frame)?}))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            json!({"background": sa2_asset_tools::kart_course::course_background(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                text_arg(&args[5])?,
+            )?, "sea": sea})
+        }
+        "kart-course-materials" => {
+            for (i, kind, limit) in [
+                (3, "kart-course-models", 128),
+                (4, "kart-module", 16),
+                (5, "kart-course-textures", 64),
+            ] {
+                let path = Path::new(&args[i]);
+                extras.push(Extra::read(
+                    path,
+                    source_label(path, root)?,
+                    limit * 1024 * 1024,
+                    kind,
+                )?);
+            }
+            serde_json::to_value(sa2_asset_tools::kart_course::course_materials(
+                &bytes,
+                &extras[0].bytes,
+                &extras[1].bytes,
+                &extras[2].bytes,
+                text_arg(&args[6])?,
+            )?)?
+        }
         "stage-raycast" => {
             let p = Path::new(&args[4]);
             let src = Extra::read(
@@ -586,8 +1514,18 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 text_arg(&args[4])?,
             )?
         }
-        "city-rider-pose" => {
-            for (arg, role) in [(3, "pc-executable"), (4, "sonic-rider-model")] {
+        "character-state-pose" | "sonic-state-pose" | "city-rider-pose" => {
+            for (arg, role) in [
+                (3, "pc-executable"),
+                (
+                    4,
+                    if command == "character-state-pose" {
+                        "character-model"
+                    } else {
+                        "sonic-rider-model"
+                    },
+                ),
+            ] {
                 let path = Path::new(&args[arg]);
                 extras.push(Extra::read(
                     path,
@@ -596,13 +1534,29 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                     role,
                 )?);
             }
-            sa2_asset_tools::city_rider::sample(
-                &bytes,
-                &extras[0].bytes,
-                &extras[1].bytes,
-                number(&args[5])?,
-                finite_argument(&args[6])?,
-            )?
+            let frame = finite_argument(&args[6])?;
+            if command != "city-rider-pose" {
+                let sample = if command == "sonic-state-pose" {
+                    sa2_asset_tools::character_motions::sonic_pose
+                } else {
+                    sa2_asset_tools::character_motions::character_pose
+                };
+                sample(
+                    &bytes,
+                    &extras[0].bytes,
+                    &extras[1].bytes,
+                    number(&args[5])?,
+                    frame,
+                )?
+            } else {
+                sa2_asset_tools::city_rider::sample(
+                    &bytes,
+                    &extras[0].bytes,
+                    &extras[1].bytes,
+                    number(&args[5])?,
+                    frame,
+                )?
+            }
         }
         "city-board-pose" | "city-spawn-ground" => {
             let exe = Path::new(&args[3]);
@@ -652,6 +1606,28 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                     "scope":"Downward rays from the three authored PC start variants against the supplied module's static collision; these are not observed player contacts."})
             }
         }
+        "kart-target-model" => {
+            sa2_asset_tools::kart_story_target::model(&bytes, number(&args[3])?)?
+        }
+        "kart-target-textures" => {
+            let (name, count, expected_hash) =
+                sa2_asset_tools::kart_story_target::texture_resource(&bytes, number(&args[3])?)?;
+            let path = input.with_file_name(&name);
+            let archive = Extra::read(
+                &path,
+                source_label(&path, root)?,
+                16 * 1024 * 1024,
+                "kart-pursuit-textures",
+            )?;
+            if sa2_asset_tools::manifest::sha256(&archive.bytes) != expected_hash {
+                return Err(Error::invalid(
+                    "unexpected kart pursuit texture archive revision",
+                ));
+            }
+            let report = sa2_asset_tools::archive::texture_bank_report(&archive.bytes, count)?;
+            extras.push(archive);
+            report
+        }
         "stage20-splash" => {
             let (name, count) =
                 sa2_asset_tools::stage20::splash_resource(&bytes, number(&args[3])?)?;
@@ -662,7 +1638,7 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 16 * 1024 * 1024,
                 "splash-textures",
             )?;
-            let report = sa2_asset_tools::stage20::splash_textures(&archive.bytes, count)?;
+            let report = sa2_asset_tools::archive::texture_bank_report(&archive.bytes, count)?;
             extras.push(archive);
             report
         }
@@ -699,6 +1675,22 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
             let rel = sa2_asset_tools::city_rel::CityRel::read(&bytes)?;
             json!({"dataSection":5,"resources":rel.board_resources()?})
         }
+        "character-motion-bank" => {
+            serde_json::to_value(sa2_asset_tools::character_motions::Bank::read(&bytes)?.rows)?
+        }
+        "character-camera" => {
+            let slot: u16 = number(&args[3])?;
+            let frame: f32 = number(&args[4])?;
+            let bank = sa2_asset_tools::character_motions::Bank::read(&bytes)?;
+            let channels = bank.camera(slot, frame)?;
+            json!({"slot":slot,"frame":frame,"channels":channels})
+        }
+        "character-motion" => serde_json::to_value(
+            sa2_asset_tools::character_motions::Bank::read(&bytes)?.motion(number(&args[3])?)?,
+        )?,
+        "character-animations" => {
+            serde_json::to_value(sa2_asset_tools::character_animations::read(&bytes)?)?
+        }
         "player-physics" => serde_json::to_value(sa2_asset_tools::player_physics::read(&bytes)?)?,
         "stage-bind" => {
             let exe = Path::new(&args[3]);
@@ -734,6 +1726,11 @@ pub(super) fn run(command: &str, args: &[OsString], root: Option<&Path>) -> Resu
                 _ => campaign(&bytes, input, &mut extras, args)?,
             }
         }
+        "demo-prs-window" => serde_json::to_value(demo::prs_window(
+            &bytes,
+            number(&args[3])?,
+            number(&args[4])?,
+        )?)?,
         "demo-frame" => {
             let demo = demo::read_raw(&bytes)?;
             let index: usize = number(&args[3])?;

@@ -9,7 +9,7 @@ import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
-import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
+import { CHAO_GEAR_JOINTS, animalPartAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
 import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
@@ -413,6 +413,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       container = await loadLocalAsset(key);
     }
     if (!container || disposed || item.root.isDisposed()) return;
+    item.assetKey = key;
     const entries = container.instantiateModelsToScene(name => `${item.root.name}-${name}`, false, { doNotInstantiate: true });
     const visual = new TransformNode(`${item.root.name}-local-model`, scene);
     visual.parent = item.root;
@@ -500,6 +501,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (item.admin) { attachNativeEmeralds(item); attachNativeChestEmerald(item); }
     if (item.vehicleKey) attachNativeWalker(item);
     setOwnerGear(item, item.gear, true);
+    setAnimalParts(item, item.animalParts, true);
     canvas.dispatchEvent(new CustomEvent('chao-assets', { detail: { key, loaded: true } }));
   }
 
@@ -702,6 +704,37 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       imported.footwearMeshes = attachments.flatMap(entry => entry.meshes);
     }
     canvas.dataset.ownerGear = Object.entries(item.ownerGear).filter(([, entries]) => entries.length).map(([key]) => key).join(',');
+  }
+
+  // Animal parts the server reports. Each native part model is parented to its
+  // traced Chao node at identity, as the native setter stores it on that node.
+  // Only the normal child body is supported until adult bodies are converted.
+  function setAnimalParts(item, parts, force = false) {
+    const key = JSON.stringify(parts || {});
+    if (!force && key === item.animalPartsKey) return;
+    item.animalPartsKey = key;
+    item.partsVersion = (item.partsVersion || 0) + 1;
+    for (const root of item.animalPartRoots || []) destroyGroup(root);
+    item.animalPartRoots = [];
+    if (!item.imported || item.assetKey !== 'chao') return;
+    const version = item.partsVersion;
+    const nodes = item.imported.visual.getDescendants();
+    for (const part of animalPartAssets(parts, 'child')) {
+      const socket = nodes.find(node => new RegExp(`(?:^|-)${part.node}_object_`).test(node.name));
+      if (!socket) continue;
+      void loadLocalAsset(part.key).then(container => {
+        if (!container || disposed || item.root.isDisposed() || version !== item.partsVersion) return;
+        const entries = container.instantiateModelsToScene(name => `${item.root.name}-${part.socket}-${name}`, false, { doNotInstantiate: true });
+        const holder = new TransformNode(`${item.root.name}-part-${part.socket}`, scene);
+        // Skip the glTF handedness root: the Chao hierarchy already carries it.
+        for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
+        for (const entryRoot of entries.rootNodes) entryRoot.dispose();
+        holder.parent = socket;
+        for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
+        item.animalPartRoots.push(holder);
+        canvas.dataset.animalParts = String(item.animalPartRoots.length);
+      });
+    }
   }
 
   function setOwnerGear(item, next, force = false) {
@@ -1494,6 +1527,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item.motionSample = observeSkateMotion(previous, data, next.serverTime, performance.now());
       }
       setOwnerGear(item, data.gear);
+      item.animalParts = data.animalParts;
+      setAnimalParts(item, data.animalParts);
       setEquipment(item, data.equipped);
       item.root.setEnabled(data.zone === zone || !data.zone);
     });
@@ -1778,8 +1813,75 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   });
   onReady();
 
+  // Server-owned garden plots and groves. Native family/stage models load from
+  // the local bridge (`tree-<family>-<stage>.glb`) when converted; until then a
+  // labelled procedural stand-in shows stage and hanging fruit only.
+  const plotVisuals = new Map();
+  let plotZone = null;
+  const PLOT_STAGE_SCALE = { seed: 0.12, young: 0.45, mature: 0.8, dying: 0.7, dead: 0.5 };
+  function clearPlots() {
+    for (const visual of plotVisuals.values()) visual.root.dispose();
+    plotVisuals.clear();
+  }
+  async function attachNativePlotTree(visual, key) {
+    const container = await loadLocalAsset(key);
+    if (!container || disposed || visual.root.isDisposed() || visual.key !== key) return;
+    const holder = new TransformNode(`${key}-native`, scene);
+    const entries = container.instantiateModelsToScene(name => `${visual.root.uniqueId}-${name}`, false, { doNotInstantiate: true });
+    for (const entryRoot of entries.rootNodes) entryRoot.parent = holder;
+    holder.scaling.setAll(0.1);
+    holder.parent = visual.root;
+    for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
+    for (const mesh of visual.proxy) mesh.setEnabled(false);
+    canvas.dataset.nativePlotTrees = String(Number(canvas.dataset.nativePlotTrees || 0) + 1);
+  }
+  function plotVisual(place, zone) {
+    const tree = place.tree;
+    const stage = tree?.stage || 'empty';
+    const family = typeof tree?.family === 'string' ? tree.family : null;
+    const fruit = Number.isInteger(tree?.fruitReady) ? Math.min(3, tree.fruitReady) : 0;
+    const signature = `${stage}:${family}:${fruit}`;
+    const existing = plotVisuals.get(place.id);
+    if (existing?.signature === signature && !existing.root.isDisposed()) return;
+    existing?.root.dispose();
+    const root = new TransformNode(`plot-${place.id}`, scene);
+    root.position.copyFromFloats(place.x, 0, place.z);
+    root.parent = scenery || world;
+    const proxy = [];
+    const soil = cylinder('plot-soil', [0, 0.03, 0], { height: 0.06, diameter: 1.6, tessellation: 24 }, '#8a6a48', root);
+    soil.metadata = { careTarget: place.id };
+    if (stage !== 'empty' && place.grove !== true) {
+      const s = PLOT_STAGE_SCALE[stage] ?? 0.5;
+      const crown = stage === 'dying' || stage === 'dead' ? '#b49a62' : zone === 'dark' ? '#705a9d' : '#62b46b';
+      proxy.push(cylinder('plot-trunk', [0, 1.8 * s, 0], { height: 3.6 * s, diameterBottom: 0.6 * s, diameterTop: 0.35 * s }, '#94724c', root));
+      if (stage !== 'dead') proxy.push(sphere('plot-crown', [0, 4.4 * s, 0], [3.4 * s, 3 * s, 3.4 * s], crown, root, 6));
+      for (let i = 0; i < fruit; i++) {
+        const a = i * Math.PI * 2 / 3;
+        proxy.push(sphere('plot-fruit', [Math.cos(a) * 1.1 * s, 3.4 * s, Math.sin(a) * 1.1 * s], [0.5, 0.58, 0.5], '#f6bc64', root));
+      }
+    }
+    for (const mesh of root.getChildMeshes()) { mesh.isPickable = false; shadows.addShadowCaster(mesh, false); }
+    const visual = { root, proxy, signature, key: family && ['young', 'mature', 'dying'].includes(stage) ? `tree-${family}-${stage}` : null };
+    plotVisuals.set(place.id, visual);
+    if (visual.key) void attachNativePlotTree(visual, visual.key);
+  }
+  function setCare(care, self) {
+    const zone = self?.zone;
+    if (zone !== plotZone) { clearPlots(); plotZone = zone; }
+    const plots = Array.isArray(care?.garden?.plots) ? care.garden.plots : [];
+    const seen = new Set();
+    for (const plot of plots) {
+      if (plot?.zone !== zone || typeof plot.id !== 'string' || !Number.isFinite(plot.x) || !Number.isFinite(plot.z)) continue;
+      seen.add(plot.id);
+      plotVisual(plot, zone);
+    }
+    for (const [id, visual] of plotVisuals) if (!seen.has(id)) { visual.root.dispose(); plotVisuals.delete(id); }
+    canvas.dataset.gardenPlots = String(plotVisuals.size);
+  }
+
   return {
     setSnapshot,
+    setCare,
     handleEvent,
     clearInput: blur,
     setPaused(value) { paused = !!value; gaitControls.setPaused(paused); if (paused) blur(); },

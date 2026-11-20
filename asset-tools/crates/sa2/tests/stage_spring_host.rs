@@ -41,3 +41,48 @@ fn replay_rejects_unbounded_and_ambiguous_inputs() {
     ));
     assert!(replay(&p, SpringKind::A, &vec![b' '; 1_048_577]).is_err());
 }
+
+#[test]
+fn upright_vector_matches_explicit_observation_and_tilt_requires_one() {
+    let mut p = placement();
+    let frames = json!([{}, {}, {}, {"hit":0}, {"player":{"position":[10,20,30],"running_speed":1,"item":0}}]);
+    let omitted = serde_json::to_vec(&json!({"frames":frames})).unwrap();
+    for kind in [SpringKind::A, SpringKind::B] {
+        for yaw in [0, 0x8000, 0xffff] {
+            p.rotation = [0, yaw, 0];
+            let run =
+                |bytes: &[u8]| serde_json::to_value(replay(&p, kind, bytes).unwrap()).unwrap();
+            let inferred = run(&omitted);
+            let explicit =
+                run(&serde_json::to_vec(&json!({"out_point":[0,7,0],"frames":frames})).unwrap());
+            assert!(inferred["supplied_out_point"].is_null());
+            assert_eq!(inferred["effective_out_point"], json!([0.0, 7.0, 0.0]));
+            assert_eq!(inferred["frames"], explicit["frames"]);
+        }
+        for tilt in [[1, 0, 0], [0, 0, 1]] {
+            p.rotation = tilt;
+            assert!(replay(&p, kind, &omitted).is_err());
+        }
+    }
+}
+
+#[test]
+fn explicitly_scheduled_display_uses_updated_compression() {
+    let mut p = placement();
+    p.rotation = [0; 3];
+    let req = br#"{"frames":[{},{},{},{"hit":0,"display_after_update":"gc"}]}"#;
+    let result = serde_json::to_value(replay(&p, SpringKind::B, req).unwrap()).unwrap();
+    let frames = result["frames"].as_array().unwrap();
+    assert!(frames[0].get("display").is_none());
+    let ops = frames[3]["display"].as_array().unwrap();
+    assert!(ops.contains(&json!({"GcBaseModel":2})));
+    let compression = frames[3]["compression"].as_f64().unwrap();
+    assert!(compression > 0.0);
+    assert!(ops.contains(&json!({"Translate":[0.0,4.0*compression,0.0]})));
+    assert!(replay(
+        &p,
+        SpringKind::B,
+        br#"{"frames":[{"range_out":true,"display_after_update":"chunk"}]}"#
+    )
+    .is_err());
+}
