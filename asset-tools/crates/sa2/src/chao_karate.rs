@@ -672,7 +672,7 @@ pub fn read_motion_table(rel: &[u8]) -> crate::Result<Vec<MotionRow>> {
 
 /// The karate motion record (work +0xC, "aux"): +0 motion id, +1 step, +2
 /// event index, +5 event bits, +0xC table row, +0x14 motion frame.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MotionAux {
     pub motion: i8,
     pub step: i8,
@@ -681,6 +681,8 @@ pub struct MotionAux {
     pub row: i32,
     /// +8: frame countdown some handlers use.
     pub timer: u16,
+    /// +0x18: knock-back direction (fn_72_1010C via fn_72_131EC).
+    pub knock: [f32; 3],
 }
 
 /// aux +5 event bits.
@@ -725,6 +727,8 @@ pub struct MotionInput {
     pub frame: f32,
     pub linking: bool,
     pub stopped: bool,
+    /// IsMotionEnd.
+    pub ended: bool,
 }
 
 fn reached(rows: &[MotionRow], aux: &MotionAux, frame: f32) -> bool {
@@ -1016,6 +1020,115 @@ pub fn idle(
                 aux.bits |= motion_bit::IMPACT;
             }
             aux.step = 2;
+        }
+        _ => {}
+    }
+}
+
+/// fn_72_C7A8 (hurt motions 9-11 and 29-31): five frames of knock-back along
+/// aux +0x18 scaled by timer / 5 (light 0.2/0.16, medium 0.35/0.2, heavy
+/// 0.55/0.2 up), horizontal velocity damped by 0.85 then 0.75 (zeroed under
+/// 0.05), then at the motion's end either stay down (knocked out), switch to
+/// motion 0x28 (work flag 1) or link into the recovery row (1, 0x13, 0x22,
+/// 0x23) and end when that finishes. `velocity`/`accel` are the movement block.
+#[allow(clippy::too_many_arguments)]
+pub fn hurt_motion(
+    aux: &mut MotionAux,
+    rec: &mut StateRecord,
+    rows: &[MotionRow],
+    input: MotionInput,
+    work_flags: u16,
+    velocity: &mut [f32; 3],
+    accel: &mut [f32; 3],
+    calls: &mut Vec<MotionCall>,
+) {
+    let damp = |v: &mut f32, k: f32| {
+        if *v != 0.0 {
+            *v *= k;
+            if v.abs() < 0.05 {
+                *v = 0.0;
+            }
+        }
+    };
+    if aux.step == 0 {
+        aux.row = i32::from(aux.motion);
+        let r = &rows[aux.row as usize];
+        calls.push(MotionCall::Link {
+            motion: r.motion,
+            link_step: r.link_step,
+        });
+        rec.flags &= !state_flag::MOTION_END;
+        *velocity = [0.0; 3];
+        aux.timer = 5;
+        aux.step = 1;
+    }
+    match aux.step {
+        1 if !input.linking => aux.step = 2,
+        2 => {
+            let k = aux.timer as f32 / 5.0f32;
+            let (h, v, sound) = match aux.motion {
+                9 | 29 => (0.2f32 * k, 0.16f32 * k, 0x6023),
+                10 | 30 => (0.35f32 * k, 0.2f32 * k, 0x602A),
+                11 | 31 => (0.55f32 * k, 0.2f32 * k, 0x606D),
+                _ => (0.0, 0.0, 0),
+            };
+            if sound != 0 {
+                calls.push(MotionCall::Sound(sound));
+            }
+            accel[0] += aux.knock[0] * h;
+            accel[1] += v;
+            accel[2] += aux.knock[2] * h;
+            damp(&mut velocity[0], 0.85);
+            damp(&mut velocity[2], 0.85);
+            let old = aux.timer;
+            aux.timer = aux.timer.wrapping_sub(1);
+            if old == 0 {
+                aux.timer = 0x78;
+                aux.step = 3;
+            }
+        }
+        3 => {
+            damp(&mut velocity[0], 0.75);
+            damp(&mut velocity[2], 0.75);
+            if input.ended {
+                velocity[0] = 0.0;
+                velocity[2] = 0.0;
+                if rec.flags & state_flag::KNOCKED_OUT != 0 {
+                    aux.step += 2;
+                } else if work_flags & flag::SLOW_CHILD != 0 {
+                    aux.motion = 0x28;
+                    aux.step = 0;
+                    aux.event = 0;
+                } else {
+                    aux.row = match aux.motion {
+                        9 => 1,
+                        29 => 0x13,
+                        10 | 30 => 0x22,
+                        11 | 31 => 0x23,
+                        _ => aux.row,
+                    };
+                    let step = if work_flags & flag::SLOW_CHILD != 0 {
+                        0x28
+                    } else {
+                        0x14
+                    };
+                    calls.push(MotionCall::Link {
+                        motion: rows[aux.row as usize].motion,
+                        link_step: step,
+                    });
+                    aux.step = 4;
+                }
+            }
+        }
+        4 if rec.flags & state_flag::MOTION_END == 0 && !input.linking => {
+            let done = match aux.row {
+                1 | 0x13 => input.ended,
+                0x22 | 0x23 => input.stopped,
+                _ => false,
+            };
+            if done {
+                rec.flags |= state_flag::MOTION_END;
+            }
         }
         _ => {}
     }

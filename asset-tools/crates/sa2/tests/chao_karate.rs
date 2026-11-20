@@ -315,6 +315,7 @@ fn attack_motion_handlers_match_the_gamecube_powerpc() {
                 frame: f(&fr["frame"]),
                 linking: fr["linking"].as_bool().unwrap(),
                 stopped: fr["stopped"].as_bool().unwrap(),
+                ended: false,
             };
             let mut calls = vec![];
             if matches!(motion, 4 | 7) {
@@ -434,6 +435,7 @@ fn approach_handler_matches_the_gamecube_powerpc() {
                 frame: 0.0,
                 linking: fr["linking"].as_bool().unwrap(),
                 stopped: false,
+                ended: false,
             };
             k::idle(&mut aux, &mut rec, &rows, input, &mut calls);
             let got: Vec<Value> = calls
@@ -477,6 +479,7 @@ fn approach_handler_matches_the_gamecube_powerpc() {
                 frame: 0.0,
                 linking: fr["linking"].as_bool().unwrap(),
                 stopped: false,
+                ended: false,
             };
             k::approach(
                 &mut aux,
@@ -522,6 +525,86 @@ fn approach_handler_matches_the_gamecube_powerpc() {
                 .collect();
             let want: Vec<u64> = fr["out"].as_array().unwrap().iter().map(u).collect();
             assert_eq!(out, want, "movement {fr}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the user's GameCube main.dol, ChaoMain.rel and ChaoStgKarate.rel and Python with Unicorn"]
+fn hurt_motion_handler_matches_the_gamecube_powerpc() {
+    let python = env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
+    let o = Command::new(python)
+        .arg("-I")
+        .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/chao_karate_hurt_ppc.py"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    if o.stdout.is_empty() {
+        return;
+    }
+    let doc: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let rows =
+        k::read_motion_table(&std::fs::read(env::var_os("SA2_CHAO_KARATE_REL").unwrap()).unwrap())
+            .unwrap();
+    for c in doc.as_array().unwrap() {
+        let kn = &c["knock"];
+        let mut aux = k::MotionAux {
+            motion: i(&c["motion"]) as i8,
+            knock: [f(&kn[0]), f(&kn[1]), f(&kn[2])],
+            ..Default::default()
+        };
+        let mut rec = StateRecord {
+            flags: u(&c["twp0"]) as u16,
+            ..Default::default()
+        };
+        let work = u(&c["work"]) as u16;
+        for fr in c["frames"].as_array().unwrap() {
+            let inp: Vec<f32> = fr["in"].as_array().unwrap().iter().map(f).collect();
+            let (mut vel, mut acc) = ([inp[0], inp[1], inp[2]], [inp[3], inp[4], inp[5]]);
+            let input = k::MotionInput {
+                frame: 0.0,
+                linking: fr["linking"].as_bool().unwrap(),
+                stopped: fr["stopped"].as_bool().unwrap(),
+                ended: fr["ended"].as_bool().unwrap(),
+            };
+            let mut calls = vec![];
+            k::hurt_motion(
+                &mut aux, &mut rec, &rows, input, work, &mut vel, &mut acc, &mut calls,
+            );
+            let got: Vec<Value> = calls
+                .iter()
+                .map(|call| match *call {
+                    k::MotionCall::Link { motion, link_step } => {
+                        serde_json::json!(["link", motion, link_step])
+                    }
+                    k::MotionCall::Sound(s) => serde_json::json!(["sound", s]),
+                    _ => unreachable!(),
+                })
+                .collect();
+            assert_eq!(Value::Array(got), fr["calls"], "calls {fr}");
+            let a = &fr["aux"];
+            assert_eq!(
+                [
+                    i64::from(aux.motion),
+                    i64::from(aux.step),
+                    i64::from(aux.event),
+                    i64::from(aux.timer),
+                    i64::from(aux.row)
+                ],
+                [i(&a[0]), i(&a[1]), i(&a[2]), i(&a[3]), i(&a[4])],
+                "aux {fr}"
+            );
+            assert_eq!(u64::from(rec.flags), u(&fr["twp"]), "twp {fr}");
+            let out: Vec<u64> = vel
+                .iter()
+                .chain(acc.iter())
+                .map(|x| u64::from(x.to_bits()))
+                .collect();
+            let want: Vec<u64> = fr["out"].as_array().unwrap().iter().map(u).collect();
+            assert_eq!(out, want, "movement {fr}");
+            if aux.motion == 0x28 {
+                break;
+            }
         }
     }
 }
