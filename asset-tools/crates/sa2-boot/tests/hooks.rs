@@ -254,4 +254,6 @@ fn arq_moves_bytes_now_and_calls_back_later() {
     c.r[3..7].copy_from_slice(&[1, 0x8000_8000, 0x3_0000, 4]);
     call(&mut c, &mut m, audio::AR_START_DMA);
     assert_eq!(m.r32(0x8000_8000), 0x0908_0706);
+    // The callback comes at the next frame: here, not in another test.
+    call(&mut c, &mut m, vi::VI_WAIT_FOR_RETRACE);
 }

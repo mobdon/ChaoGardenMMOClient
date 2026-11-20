@@ -125,22 +125,15 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
                 eprintln!("    proj {:?} viewport {:?}", d.projection, d.viewport);
             }
         }
-        let view = s.target.create_view(&Default::default());
-        s.renderer.render_frame(f, &view, [W, H]);
-        let mut enc = s.device.create_command_encoder(&Default::default());
-        enc.copy_texture_to_buffer(
-            s.target.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &s.buf,
-                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(W * 4), rows_per_image: None },
-            },
-            wgpu::Extent3d { width: W, height: H, depth_or_array_layers: 1 },
-        );
-        s.queue.submit([enc.finish()]);
-        s.buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        s.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
-        let px = s.buf.slice(..).get_mapped_range().map_err(|e| format!("{e:?}"))?.to_vec();
-        s.buf.unmap();
+        let px = shoot(s, f)?;
+        // SA2_SNAP_CHECK: draw the frame again (from the renderer's pass
+        // cache, as the window does between game frames) and count pixels
+        // that differ from the first drawing.
+        if std::env::var_os("SA2_SNAP_CHECK").is_some() {
+            let again = shoot(s, f)?;
+            let diff = px.chunks(4).zip(again.chunks(4)).filter(|(a, b)| a != b).count();
+            eprintln!("snapcheck frame {n}: {diff} pixels differ when drawn again");
+        }
         // SA2_GPU_REPORT: what the snapshot device holds (finding leaks).
         if std::env::var_os("SA2_GPU_REPORT").is_some() {
             let [p, t, sm, b] = s.renderer.cache_counts();
@@ -162,6 +155,42 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         w.write_image_data(&rgb).map_err(|e| e.to_string())?;
         Ok(Some(path))
     })
+}
+
+/// Draw `f` into the snapshot target and read the pixels back.
+fn shoot(s: &mut Snap, f: &Frame) -> Result<Vec<u8>, String> {
+    let view = s.target.create_view(&Default::default());
+    s.renderer.render_frame(f, &view, [W, H]);
+    let mut enc = s.device.create_command_encoder(&Default::default());
+    enc.copy_texture_to_buffer(
+        s.target.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &s.buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(W * 4),
+                rows_per_image: None,
+            },
+        },
+        wgpu::Extent3d {
+            width: W,
+            height: H,
+            depth_or_array_layers: 1,
+        },
+    );
+    s.queue.submit([enc.finish()]);
+    s.buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    s.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| e.to_string())?;
+    let px = s
+        .buf
+        .slice(..)
+        .get_mapped_range()
+        .map_err(|e| format!("{e:?}"))?
+        .to_vec();
+    s.buf.unmap();
+    Ok(px)
 }
 
 #[cfg(test)]

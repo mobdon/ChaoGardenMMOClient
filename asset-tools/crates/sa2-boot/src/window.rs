@@ -155,11 +155,22 @@ struct App {
     /// `last` arrived: the window refreshes faster than the game's 60.
     tween: Option<Tween>,
     arrived: std::time::Instant,
+    next_present: std::time::Instant,
     error: Option<String>,
 }
 
 /// A game frame (NTSC).
 const GAME_FRAME: f32 = 1001.0 / 60_000.0;
+
+/// Pictures a second the window shows (SA2_FPS: 60, 120, 144, 165...;
+/// default 60). Above 60 it blends between game frames; the game itself
+/// always runs at 60.
+pub fn target_fps() -> u32 {
+    std::env::var("SA2_FPS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map_or(60, |f| f.clamp(30, 360))
+}
 
 fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
     let attrs = Window::default_attributes()
@@ -242,14 +253,14 @@ impl ApplicationHandler for App {
                 let t = std::time::Instant::now();
                 // Every frame's texture uploads reach the renderer once; the
                 // newest frame is drawn, blended from the one before it
-                // (SA2_NO_TWEEN=1 shows game frames as they are).
+                // (at SA2_FPS above 60; at 60 game frames show as they are).
                 for mut f in self.rx.try_iter() {
                     for u in f.uploads.drain(..) {
                         g.renderer.replace_texture(u.id, &u.levels);
                     }
                     let prev = self.last.take();
                     self.tween = prev
-                        .filter(|_| std::env::var_os("SA2_NO_TWEEN").is_none())
+                        .filter(|_| target_fps() > 60)
                         .map(|p| Tween::new(&p, &f));
                     self.last = Some(f);
                     self.arrived = std::time::Instant::now();
@@ -277,6 +288,14 @@ impl ApplicationHandler for App {
                 // buffers); without this wgpu kept them all.
                 let _ = g.device.poll(wgpu::PollType::Poll);
                 crate::prof::add(&crate::prof::RENDER, t);
+                // Hold presents to the chosen rate (the display may refresh
+                // faster than it).
+                let period = std::time::Duration::from_secs_f64(1.0 / f64::from(target_fps()));
+                let now = std::time::Instant::now();
+                if self.next_present > now {
+                    std::thread::sleep(self.next_present - now);
+                }
+                self.next_present = (self.next_present + period).max(now);
                 g.window.request_redraw();
             }
             _ => {}
@@ -298,6 +317,7 @@ fn run(rx: Receiver<Frame>) -> Result<(), String> {
         last: None,
         tween: None,
         arrived: std::time::Instant::now(),
+        next_present: std::time::Instant::now(),
         error: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
