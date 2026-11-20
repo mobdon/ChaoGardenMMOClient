@@ -59,3 +59,15 @@ test('native lid motion and blink timing', () => {
   const frozen = stepLids({ eye: 4, defaultEye: 0, lid: 0, slope: 0, blink: 0, blinkPhase: 'wait', blinkTimer: 1 });
   assert.equal(frozen.blinkTimer, 1);
 });
+
+import { chaoColour, nodeIndexOf } from '../src/chao-look.js';
+
+test('native colour applies only for ColorNum != 0 from the local table', () => {
+  const table = [[1, 1, 1, 255], [255, 0, 51, 255]];
+  assert.equal(chaoColour({ color: 0 }, table), null);
+  assert.deepEqual(chaoColour({ color: 1 }, table), [1, 0, 0.2, 1]);
+  assert.equal(chaoColour({ color: 5 }, table), null);
+  assert.equal(chaoColour({ color: 1 }, undefined), null);
+  assert.equal(nodeIndexOf({ name: 'p-016_object_0001BA34', parent: null }), 16);
+  assert.equal(nodeIndexOf({ name: 'mesh', parent: { name: 'x-023_object_1', parent: null } }), 23);
+});

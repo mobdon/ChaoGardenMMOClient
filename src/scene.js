@@ -13,6 +13,7 @@ import { CHAO_GEAR_JOINTS, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, att
 import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
+import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
 import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
 import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
 import './chao-locomotion.css';
@@ -245,7 +246,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   }
 
   function appearanceFor(data) {
-    return `${String(data.form || 'normal').toLowerCase()}:${!!data.admin}:${assetFor(data)}:${vehicleFor(data) || ''}`;
+    return `${String(data.form || 'normal').toLowerCase()}:${!!data.admin}:${assetFor(data)}:${vehicleFor(data) || ''}:${data.body?.look?.color ?? 0}`;
   }
 
   function loadLocalAsset(key) {
@@ -459,6 +460,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       item.root.metadata.chaoBodyDispose = attachChaoBody(visual, entries.animationGroups, () => item.bodyState);
       await loadChaoFaceManifest();
       if (!item.root.isDisposed()) {
+        await loadChaoLookManifest();
+        applyChaoLook(visual, item.bodyState?.look);
         configureChaoFace(visual, item.bodyState?.typeName);
         resetChaoFace(visual);
         item.faceRoot = visual;
