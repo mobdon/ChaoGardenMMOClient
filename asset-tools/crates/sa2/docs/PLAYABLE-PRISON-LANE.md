@@ -71,9 +71,13 @@ outer door (114 frames) gates travel.
 | Goal | regular goal at (-4440, 967, -1133.4); the Rotation.x 1 goal is the child-task route | Native contact branch on a host-reported touch; writes slot word 2 |
 | Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Volumes only |
 | Checkpoints, springs | placements; `spring::StageSpring` | Checkpoint positions; spring launch vectors (njRotate); contact is not run |
+| SIREN (7), FLUO (34), SEARCHLIGHT (12), SE, SIGNA | `prison_visuals` (SIREN 0x5A30/0x5B20, FLUO 0x418C/0x4260, SEARCHLIGHT 0x5708/0x57A0, SE 0x560C, SIGNA 0x58D8) | Per-frame state ported: siren spin (random start, +1120), fluorescent flicker (0.25 steps, rand timers), searchlight tilt (njSin sweep 0-45 degrees), emitter sound (9 or 0xD); sirens and lights keep their radius-5 spheres. SIGNA only draws. Random draws use MSL rand (GSNE8P 0x8010DC88, seed 1) in this session's call order, which differs from the game's global order |
+| BIG THE CAT | 0x33E3C | The GameCube module's callback does nothing |
 
-Everything else is listed by name in `Session::unimplemented`, including
-WALL (player-distance logic), TANK, item boxes and enemies.
+Everything else is listed by name in `Session::unimplemented`: item boxes,
+enemies, and CAM, CHAOPIPE, EFFOBJ0, KNUDAI, ORI and ROCKETMISSSILE, which
+need main-program routines not yet ported (motion 0x800334B0, the player
+range test 0x800398D8, atan2f).
 
 ## Offline verification
 
