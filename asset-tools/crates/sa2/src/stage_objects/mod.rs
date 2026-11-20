@@ -17,6 +17,7 @@ pub mod host;
 pub mod itembox;
 pub mod light_modmod;
 pub mod messenger;
+pub mod player_contact;
 pub mod ring;
 pub mod schbox;
 pub mod skull;
@@ -54,6 +55,7 @@ pub const MODULES: &[(&str, &[Routine])] = &[
         udreel_stoplsd::BL_MASKED_ROUTINES,
     ),
     ("light_modmod", light_modmod::ROUTINES),
+    ("player_contact", player_contact::ROUTINES),
 ];
 
 /// Every ported routine.
