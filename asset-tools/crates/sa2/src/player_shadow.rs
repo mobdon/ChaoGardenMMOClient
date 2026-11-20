@@ -134,3 +134,67 @@ pub fn shadow_probe(
     }
     Ok(())
 }
+
+/// The land a probe sees: the selection fn_80023808 leaves and what the
+/// selected entries point at.
+pub struct ProbeLand<'a> {
+    pub nodes: &'a LandNodes,
+    pub objects: &'a [NjObject],
+    pub models: &'a [NjModel],
+    pub task_flag: &'a dyn Fn(usize) -> Option<i16>,
+    pub task_offset: &'a dyn Fn(usize) -> Option<f32>,
+    pub stage: i32,
+}
+
+const RESELECT_RADIUS: f32 = 200.0; // r2-0x7178
+const AHEAD_PAD: f32 = 2.0; // r2-0x7174
+
+/// fn_80067600(task work, player work): the player's two land probes.
+/// Under water (ceiling flags 0x2002 at +0x1A8) the splash routines
+/// fn_8005237C and fn_8005222C run first; they are not ported and fail
+/// closed. `reselect` is fn_80023808 with the task's position and 200;
+/// it returns the new selection list. The first probe fills `here`
+/// (+0x1A0) at the position, the second fills `ahead` (+0x1C4) at the
+/// position plus (2 + +0x130, 2 + +0x134, 0) turned by the task's angles,
+/// with the stick's angle (fn_8004E560, `stick`) as the yaw when held.
+#[allow(clippy::too_many_arguments)]
+pub fn shadow_update(
+    stack: &mut MatrixStack,
+    reselect: &mut dyn FnMut(Vec3, f32) -> Vec<Entry>,
+    land: &ProbeLand,
+    angles: [i32; 3],
+    pos: Vec3,
+    f130: f32,
+    f134: f32,
+    stick: Option<i32>,
+    here: &mut ShadowBlock,
+    ahead: &mut ShadowBlock,
+) -> Result<(), Unported> {
+    if here.ceiling_flags & 0x2002 != 0 {
+        return Err(Unported(0x8005_237C));
+    }
+    let list = reselect(pos, RESELECT_RADIUS);
+    let probe = |stack: &mut MatrixStack, p: Vec3, out: &mut ShadowBlock| {
+        shadow_probe(
+            stack,
+            land.nodes,
+            land.objects,
+            land.models,
+            &list,
+            land.task_flag,
+            land.task_offset,
+            land.stage,
+            p,
+            out,
+        )
+    };
+    probe(stack, pos, here)?;
+    let mut a = angles;
+    if let Some(yaw) = stick {
+        a[1] = yaw;
+    }
+    let off = [AHEAD_PAD + f130, AHEAD_PAD + f134, 0.0];
+    let v = crate::ninja_matrix::rotate_by_angles(stack, a, off);
+    let p2 = [pos[0] + v[0], pos[1] + v[1], pos[2] + v[2]];
+    probe(stack, p2, ahead)
+}

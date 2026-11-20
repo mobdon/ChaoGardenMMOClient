@@ -31,8 +31,7 @@ def rf(lo, hi):
     return f32(rng.uniform(lo, hi))
 
 
-cases = []
-for _ in range(1500):
+def gen():
     p = [rf(-200, 200), rf(-200, 200), rf(-200, 200)]
     nobj = rng.randint(1, 5)
     objs, nodes, ents = [], [], []
@@ -100,13 +99,59 @@ for _ in range(1500):
                                                    0 if e["task"] is None else TASKS + 0x100 * e["task"]))
     m.put(R13 - 0x79F4, "I", LIST)
     m.put(R13 - 0x79A4, "h", len(ents))
+    return p, objs, nodes, ents, tasks, prev_blk
+
+
+def dump(p, objs, nodes, ents, tasks, prev_blk):
+    return {"p": [fb(x) for x in p], "stage": stage[0], "prev": prev_blk,
+            "objs": [{**o, "pos": [fb(x) for x in o["pos"]], "scl": [fb(x) for x in o["scl"]],
+                      "center": [fb(x) for x in o["center"]], "radius": fb(o["radius"])} for o in objs],
+            "nodes": [{**n, "tris": [[[fb(x) for x in v] for v in q] for q in n["tris"]]} for n in nodes],
+            "ents": ents, "tasks": [{**tk, "off": fb(tk["off"])} for tk in tasks]}
+
+
+cases = []
+for _ in range(1500):
+    p, objs, nodes, ents, tasks, prev_blk = gen()
     m.u.mem_write(BLOCK, struct.pack(">8I", *prev_blk))
     m.u.mem_write(PT, struct.pack(">3f", *p))
     m.call(0x8006779C, r3=PT, r4=BLOCK)
-    cases.append({"p": [fb(x) for x in p], "stage": stage[0], "prev": prev_blk,
-                  "objs": [{**o, "pos": [fb(x) for x in o["pos"]], "scl": [fb(x) for x in o["scl"]],
-                            "center": [fb(x) for x in o["center"]], "radius": fb(o["radius"])} for o in objs],
-                  "nodes": [{**n, "tris": [[[fb(x) for x in v] for v in q] for q in n["tris"]]} for n in nodes],
-                  "ents": ents, "tasks": [{**tk, "off": fb(tk["off"])} for tk in tasks],
-                  "block": [m.get(BLOCK + 4 * k, "I") for k in range(8)]})
-print(json.dumps({"cases": cases}))
+    cases.append({**dump(p, objs, nodes, ents, tasks, prev_blk), "block": [m.get(BLOCK + 4 * k, "I") for k in range(8)]})
+# fn_80067600 with fn_80023808 and fn_8004E560 stubbed and logged.
+TW, PW = 0x81050000, 0x81051000
+calls = []
+stick = [0, 0]
+
+
+def analog(mm):
+    if stick[0] and mm.gpr(5):
+        mm.put(mm.gpr(5), "i", stick[1])
+    mm.gpr(3, stick[0])
+
+
+m.stub(0x80023808, lambda mm: calls.append([fb(mm.fpr(k)) for k in (1, 2, 3, 4)]))
+m.stub(0x8004E560, analog)
+upd = []
+for _ in range(1500):
+    p, objs, nodes, ents, tasks, prev_blk = gen()
+    ang = [rng.randrange(-0x3000, 0x3000), rng.randrange(0, 0x10000), rng.randrange(-0x3000, 0x3000)]
+    prev2 = [rng.randrange(0, 1 << 32) for _ in range(8)]
+    prev_blk[2] &= ~0x2002 if rng.random() < 0.9 else 0xFFFFFFFF
+    f130, f134 = rf(0, 20), rf(0, 20)
+    stick[0] = rng.choice([0, 1])
+    stick[1] = rng.randrange(0, 0x10000)
+    m.u.mem_write(TW + 8, struct.pack(">3i3f", *ang, *p))
+    m.put(PW + 0x130, "f", f130)
+    m.put(PW + 0x134, "f", f134)
+    m.u.mem_write(PW + 0x1A0, struct.pack(">8I", *prev_blk))
+    m.u.mem_write(PW + 0x1C4, struct.pack(">8I", *prev2))
+    calls.clear()
+    if prev_blk[2] & 0x2002:
+        upd.append({**dump(p, objs, nodes, ents, tasks, prev_blk), "water": True})
+        continue
+    m.call(0x80067600, r3=TW, r4=PW)
+    upd.append({**dump(p, objs, nodes, ents, tasks, prev_blk), "water": False, "ang": ang, "prev2": prev2,
+                "f130": fb(f130), "f134": fb(f134), "stick": stick[:], "calls": calls[:],
+                "here": [m.get(PW + 0x1A0 + 4 * k, "I") for k in range(8)],
+                "ahead": [m.get(PW + 0x1C4 + 4 * k, "I") for k in range(8)]})
+print(json.dumps({"cases": cases, "upd": upd}))
