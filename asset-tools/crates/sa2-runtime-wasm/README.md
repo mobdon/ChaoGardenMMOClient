@@ -22,3 +22,9 @@ reads the first one in the browser's standard Gamepad layout and turns it
 into the raw GameCube pad (`sa2_runtime::host_pad`), so the game's own
 `PADClamp` and button table handle it. A, B, X, Y by name, right bumper is
 Z, triggers are analog L/R, d-pad and Start as labelled.
+
+Sound: the game's `sa2_runtime::sound` queue is drained every frame
+(`App.sounds()`) and played by `asset-tools/vgmstream-wasm/web/sa2-audio.js`,
+which `serve.py` serves at `/sound/` (copy that folder to `www/sound/` for any
+other host). Music, effect banks and voice archives are read from the picked
+game folder on demand. Audio starts after the first key or click.

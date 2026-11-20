@@ -7,12 +7,16 @@
 //
 // Browsers start audio only after a user gesture: call audio.resume() from a click/key handler.
 import { Vgmstream } from './vgmstream.js';
+import { Ahx } from './ahx.js';
 
 const GD = 'resource/gd_PC/';
 
 export class Sa2Audio {
-  static async create({ wasm = new URL('./vgmstream.wasm', import.meta.url), readFile, context } = {}) {
-    return new Sa2Audio(await Vgmstream.load(wasm), readFile, context ?? new AudioContext());
+  static async create({ wasm = new URL('./vgmstream.wasm', import.meta.url), ahxWasm, readFile, context } = {}) {
+    const [vgm, ahx] = await Promise.all([Vgmstream.load(wasm), Ahx.load(ahxWasm)]);
+    const audio = new Sa2Audio(vgm, readFile, context ?? new AudioContext());
+    audio.decodeVoice = bytes => ahx.decode(bytes); // AHX: vgmstream needs LGPL mpg123, so ours
+    return audio;
   }
 
   constructor(vgm, readFile, ctx) {
@@ -82,18 +86,22 @@ export class Sa2Audio {
     this.#once(s.buffer, this.bus.se);
   }
 
-  // shortcut: event voices are AHX (MPEG layer II), which vgmstream decodes only with
-  // libmpg123 (LGPL) — not in this core build. Pass `decodeVoice(bytes) -> {rate, samples}` to enable.
   async playVoice(index, english = true) {
-    if (!this.decodeVoice) throw new Error('voice lines (AHX) need a decodeVoice hook; not built in');
+    if (!this.decodeVoice) throw new Error('no voice decoder');
     const key = `voice:${english}:${index}`;
     let s = this.cache.get(key);
     if (!s) {
-      const afs = await this.#read(`${GD}event_adx${english ? '_e' : ''}.afs`);
+      const path = `${GD}event_adx${english ? "_e" : ""}.afs`;
+      // The archive is ~75 MB: read it once, keep the bytes (voices are decoded on demand).
+      this.afs ??= new Map();
+      if (!this.afs.has(path)) this.afs.set(path, this.#read(path).catch(e => { this.afs.delete(path); throw e; }));
+      const afs = await this.afs.get(path);
       const v = new DataView(afs.buffer, afs.byteOffset, afs.byteLength);
       if (index >= v.getUint32(4, true)) throw new Error(`no voice ${index}`);
       const off = v.getUint32(8 + index * 8, true), len = v.getUint32(12 + index * 8, true);
-      s = this.#toBuffer(await this.decodeVoice(afs.subarray(off, off + len)));
+      const d = await this.decodeVoice(afs.subarray(off, off + len));
+      if (!d) throw new Error(`cannot decode voice ${index}`);
+      s = this.#toBuffer(d);
       this.cache.set(key, s);
     }
     this.#once(s.buffer, this.bus.voice);

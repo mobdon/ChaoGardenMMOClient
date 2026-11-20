@@ -22,6 +22,8 @@
 <canvas id="view"></canvas>
 <script type="module">
 import init, { App, browser_pad } from './pkg/sa2_runtime_wasm.js';
+// The sound player (asset-tools/vgmstream-wasm/web; serve.py maps it to /sound/).
+import { Sa2Audio } from './sound/sa2-audio.js';
 
 const status = document.getElementById('status');
 const canvas = document.getElementById('view');
@@ -67,12 +69,19 @@ function gamepad() {
   return [new Float32Array(), new Float32Array()];
 }
 
-async function run(files) {
+// readFile(path under the game folder) -> Uint8Array | null, for sound files read on demand.
+async function run(files, readFile) {
   fit();
   status.textContent = 'Loading Iron Gate…';
   await init();
   const app = await App.start(canvas, files.exe, files.stg11, files.set_s ?? undefined, files.set_u ?? undefined, files.motions ?? undefined, files.landtx ?? undefined, files.walker_mdl ?? undefined, files.walker_tex ?? undefined);
   status.textContent = `Iron Gate · ${app.triangles} land triangles`;
+  // Sound is optional: the game runs silent if the player cannot load.
+  const audio = await Sa2Audio.create({ readFile }).catch(e => { console.warn('no sound:', e); return null; });
+  // Browsers start audio only after the player presses something.
+  const wake = () => audio?.resume();
+  addEventListener('keydown', wake);
+  addEventListener('pointerdown', wake);
   addEventListener('resize', () => { fit(); app.resize(canvas.width, canvas.height); });
   // The game runs at 60 frames a second whatever the display's rate.
   const tick = 1000 / 60;
@@ -85,6 +94,7 @@ async function run(files) {
       const [axes, buttons] = gamepad();
       const p = browser_pad(axes, buttons, ...pad());
       status.textContent = app.frame_pad(...p);
+      for (const cmd of JSON.parse(app.sounds())) audio?.run(cmd);
     }
     requestAnimationFrame(step);
   };
@@ -105,19 +115,24 @@ document.getElementById('folder').addEventListener('change', async e => {
     if (!f && (k === 'exe' || k === 'stg11')) return fail(`missing ${p}`);
     files[k] = f ? new Uint8Array(await f.arrayBuffer()) : null;
   }
-  run(files).catch(fail);
+  const readFile = async p => {
+    const f = byPath.get(p.toLowerCase());
+    return f ? new Uint8Array(await f.arrayBuffer()) : null;
+  };
+  run(files, readFile).catch(fail);
 });
 
 // Development: ?from=<url prefix> fetches the same files from a local server.
 const from = new URLSearchParams(location.search).get('from');
 if (from) {
   (async () => {
-    const files = {};
-    for (const [k, p] of Object.entries(want)) {
+    const readFile = async p => {
       const r = await fetch(from + p);
-      files[k] = r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
-    }
-    await run(files);
+      return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+    };
+    const files = {};
+    for (const [k, p] of Object.entries(want)) files[k] = await readFile(p);
+    await run(files, readFile);
   })().catch(fail);
 }
 </script>

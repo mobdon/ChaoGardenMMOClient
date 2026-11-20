@@ -263,6 +263,8 @@ pub struct Game {
     pub stage: StageState,
     pub frame: GameState,
     pub walker: Option<Box<dyn WalkerExec>>,
+    /// Sound requests for the frontend to drain each frame.
+    pub sound: crate::sound::Sound,
     host: Host,
     pub frames: u32,
 }
@@ -317,6 +319,9 @@ impl Game {
         for i in 0..2 {
             stage.set.table.playertwp[i] = task_of(session.players.twp[i]);
         }
+        let mut sound = crate::sound::Sound::default();
+        // shortcut: Iron Gate's track named directly; take it from the stage music table once that is ported.
+        sound.play_bgm("i_gate.adx");
         Ok(Self {
             rt,
             reg,
@@ -324,6 +329,7 @@ impl Game {
             stage,
             frame,
             walker: None,
+            sound,
             host,
             frames: 0,
         })

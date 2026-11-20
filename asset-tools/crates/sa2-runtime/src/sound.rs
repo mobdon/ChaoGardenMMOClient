@@ -77,6 +77,50 @@ impl Sound {
     pub fn drain(&mut self) -> Vec<SoundCmd> {
         std::mem::take(&mut self.queue)
     }
+
+    /// [`Sound::drain`] as a JSON array in serde's externally tagged shape,
+    /// what `sa2-audio.js`'s `run` takes (no serde dependency in the runtime).
+    pub fn drain_json(&mut self) -> String {
+        let cmds: Vec<String> = self.drain().iter().map(SoundCmd::to_json).collect();
+        format!("[{}]", cmds.join(","))
+    }
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+impl SoundCmd {
+    pub fn to_json(&self) -> String {
+        match self {
+            Self::PlayBgm { file } => format!(r#"{{"PlayBgm":{{"file":{}}}}}"#, json_str(file)),
+            Self::StopBgm => r#""StopBgm""#.to_owned(),
+            Self::PlaySe {
+                bank,
+                part,
+                subsong,
+            } => format!(
+                r#"{{"PlaySe":{{"bank":{},"part":{part},"subsong":{subsong}}}}}"#,
+                json_str(bank)
+            ),
+            Self::PlayVoice { index, english } => {
+                format!(r#"{{"PlayVoice":{{"index":{index},"english":{english}}}}}"#)
+            }
+            Self::SetVolume { bus, volume } => {
+                format!(r#"{{"SetVolume":{{"bus":"{bus:?}","volume":{volume}}}}}"#)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -120,5 +164,28 @@ mod tests {
             }
         );
         assert!(s.drain().is_empty());
+    }
+
+    #[test]
+    fn json_matches_the_js_backend_shape() {
+        let mut s = Sound::default();
+        s.play_bgm("a\"b.adx");
+        s.stop_bgm();
+        s.play_se("MLT/se_kart", 0, 3);
+        s.play_voice(2654, true);
+        s.set_volume(Bus::Voice, 0.5);
+        let json = s.drain_json();
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(
+            v,
+            serde_json::json!([
+                {"PlayBgm": {"file": "a\"b.adx"}},
+                "StopBgm",
+                {"PlaySe": {"bank": "MLT/se_kart", "part": 0, "subsong": 3}},
+                {"PlayVoice": {"index": 2654, "english": true}},
+                {"SetVolume": {"bus": "Voice", "volume": 0.5}}
+            ])
+        );
+        assert_eq!(s.drain_json(), "[]");
     }
 }
