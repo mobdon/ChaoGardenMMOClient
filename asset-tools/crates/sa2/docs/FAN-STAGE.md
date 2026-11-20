@@ -52,13 +52,19 @@ For an independent reference, split the two kartcourse sections of CART.ini with
 
 Lighting and the background are separate.
 
+### Native course placement
+
+`kart-native-layout EXE OUTPUT.json DATA_DLL COURSE` places every occurrence the way CartD course setup does (+0x72a4..+0x7368), using the GameCube main program routines its imports resolve to (GSNE8P main.dol; import 0x8011xxxx maps to +0x348 and 0x80027xxx to +0x268 there). The first occurrence sits at section 4 +0x2E4 (0.0) with yaw 0. Each later one uses the previous occurrence's row. CartD builds a unit matrix (njUnitMatrix) and rotates it by the previous yaw word (njRotateY, with MSL `sinf`/`cosf` from `ninja_trig`, shared with the walker port). It transforms the row displacement with njCalcVector (PSMTXMultVecSR: two single products summed, then one fused add of the third), adds the result to the previous origin with single-precision adds (njAddVector), and adds the row's turn to the yaw word. Positions are single precision and the yaw is the full 32-bit word.
+
+`tests/kart_layout_dol.py CLI EXE DATA_DLL PRIVATE_DIR` (needs `SA2_MAIN_DOL` and the shared `tests/dol_ppc.py` harness) runs those main.dol routines in CartD's order for every occurrence of all five courses. All 1,013 origins match the Rust result bit for bit.
+
 ### Course billboards and draw distance
 
 `kart-course-billboards EXE OUTPUT.json DATA_DLL CartD.rel COURSE RANDS.json` ports the rest of the native course display. Each course row lists roadside slots (row +0x64, count +0x68): a piece-local position and a BAMS yaw. The PC Data_DLL rows and the GameCube CartD rows hold the same slots for all 85 pieces. During course setup (CartD +0x71b8..+0x72a0), each of the first four slots of every occurrence except the last 20 calls the engine rand(). With u = rand / 32768 in binary32, a slot shows a picture only when u is strictly above 0.5. The picture is then trunc(rand2 / 32768 × 4 + 1). The last 20 occurrences are left unwritten. RANDS.json lists the rand() returns in call order, and missing or unused values are rejected.
 
-The display callback draws a piece, and its shown slots, only when the squared view-space distance of its origin is below a threshold. The threshold is 9,000,000 (3000²) when engine byte 0x801CBD88+0x20 is set and 25,000,000 (5000²) otherwise (CartD section 4 +0x2AC / +0x2B0, chosen at +0x69e0). Every shown slot uses the single model at CartD section 5 +0x7E6C, translated and turned by the slot. Its texture is patched to course slot 12, 39, 67 or 68 (`chao_p`, `poster1`, `sonic`, `sonicspin`) for pictures 1 to 4.
+The display callback draws a piece, and its shown slots, only when the squared distance between its origin and the active camera position (njSubVector, then njScalor2) is below a threshold. The threshold is 9,000,000 (3000²) when engine byte 0x801CBD88+0x20 is set and 25,000,000 (5000²) otherwise (CartD section 4 +0x2AC / +0x2B0, chosen at +0x69e0). Every shown slot uses the single model at CartD section 5 +0x7E6C, translated and turned by the slot. Its texture is patched to course slot 12, 39, 67 or 68 (`chao_p`, `poster1`, `sonic`, `sonicspin`) for pictures 1 to 4.
 
-`tests/kart_billboards_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs the original instructions under Unicorn with a fixed rand() sequence and compares every occurrence's four picture words with the Rust result. With that sequence, Route 101 makes 345 rand() calls and shows 123 billboards; Route 280 makes 284 calls and shows 96. The view transform, the engine's rand() generator and the billboard model geometry stay outside this port. Driving physics, timing and completion remain unverified.
+`tests/kart_billboards_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR` runs the original instructions under Unicorn with a fixed rand() sequence and compares every occurrence's four picture words with the Rust result. With that sequence, Route 101 makes 345 rand() calls and shows 123 billboards; Route 280 makes 284 calls and shows 96. The camera position, the engine's rand() generator and the billboard model geometry stay outside this port. Driving physics, timing and completion remain unverified.
 
 ## Rust interface and checks
 

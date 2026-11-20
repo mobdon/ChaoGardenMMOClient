@@ -892,7 +892,7 @@ pub struct CourseBillboards {
     /// Course texture slot written into the model per picture (section 5
     /// +0x2edbf8), with its name from the course list.
     pub picture_textures: Vec<(u16, String)>,
-    /// Squared view-space distance below which the course display draws a
+    /// Squared distance from the active camera position below which the course display draws a
     /// piece and its shown slots: [engine byte 0x801cbd88+0x20 set, clear].
     pub draw_distance_squared: [f32; 2],
     pub rand_calls: usize,
@@ -1046,5 +1046,102 @@ mod billboard_choice {
         assert_eq!(pick(&[32767, 8192]), 2);
         assert_eq!(pick(&[32767, 32767]), 4);
         assert!(picture(&mut [20000].into_iter()).is_err());
+    }
+}
+
+/// One live course entry after CartD course setup: the occurrence's piece,
+/// its origin and its accumulated yaw word (entry +0, +4, +0x18).
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePlacement {
+    pub piece_id: u8,
+    pub position: [f32; 3],
+    pub yaw: i32,
+}
+
+/// `a * c + b` rounded once to double and then to single, as the paired
+/// multiply-add is evaluated.
+fn madd(a: f32, c: f32, b: f32) -> f32 {
+    (a as f64 * c as f64 + b as f64) as f32
+}
+
+/// CartD course setup (+0x72a4..+0x7368), using the GSNE8P main.dol
+/// routines its imports resolve to. The first occurrence sits at section 4
+/// +0x2e4 (0.0) with yaw 0. Each later one takes the previous occurrence's
+/// row: njUnitMatrix, njRotateY(previous yaw) (MSL sinf/cosf through
+/// `ninja_trig::nj_rotate_sin_cos`), njCalcVector of the row displacement
+/// (PSMTXMultVecSR: two single products summed, then one fused add of the
+/// third), njAddVector onto the previous origin (single adds), and the row's
+/// turn added to the yaw word.
+pub fn native_course_layout(table: &CourseTable, ids: &[u8]) -> Result<Vec<NativePlacement>> {
+    let mut out: Vec<NativePlacement> = Vec::with_capacity(ids.len());
+    for &piece_id in ids {
+        if usize::from(piece_id) >= table.pieces.len() {
+            return Err(Error::invalid("unknown kart piece ID"));
+        }
+        let placement = match out.last() {
+            None => NativePlacement {
+                piece_id,
+                position: [0.0; 3],
+                yaw: 0,
+            },
+            Some(prev) => {
+                let row = &table.pieces[usize::from(prev.piece_id)];
+                let (s, c) = crate::ninja_trig::nj_rotate_sin_cos(prev.yaw);
+                let [x, y, z] = row.move_offset;
+                // njRotateY on a unit matrix: rows [c 0 s] [0 1 0] [-s 0 c].
+                let m = [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]];
+                let v = m.map(|r| madd(r[2], z, r[0] * x + r[1] * y));
+                NativePlacement {
+                    piece_id,
+                    position: std::array::from_fn(|k| prev.position[k] + v[k]),
+                    yaw: prev.yaw.wrapping_add(row.move_angle),
+                }
+            }
+        };
+        out.push(placement);
+    }
+    Ok(out)
+}
+
+/// Native placements for one of the five installed courses.
+pub fn native_course_placements(
+    exe: &[u8],
+    dll: &[u8],
+    name: &str,
+) -> Result<Vec<NativePlacement>> {
+    if sha256(dll) != crate::board_motion::PC_DLL_SHA256 {
+        return Err(Error::invalid("unsupported kart DLL revision"));
+    }
+    let course = courses(exe)?
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| Error::invalid("unknown kart course"))?;
+    native_course_layout(&read_course_table(dll)?, course.piece_ids)
+}
+
+#[cfg(test)]
+mod native_layout {
+    use super::*;
+
+    #[test]
+    fn straight_piece_moves_exactly_and_turn_accumulates() {
+        let piece = |offset: [f32; 3], angle: i32| CoursePiece {
+            display: None,
+            collision: None,
+            move_offset: offset,
+            move_angle: angle,
+        };
+        let table = CourseTable {
+            source_offset: 0,
+            source_sha256: String::new(),
+            pieces: vec![piece([0., 0., -400.], 0), piece([100., 0., -300.], 0x4000)],
+        };
+        let p = native_course_layout(&table, &[0, 1, 0]).unwrap();
+        assert_eq!((p[0].position, p[0].yaw), ([0.; 3], 0));
+        assert_eq!((p[1].position, p[1].yaw), ([0., 0., -400.], 0));
+        assert_eq!(p[2].position, [100., 0., -700.]);
+        assert_eq!(p[2].yaw, 0x4000);
+        assert!(native_course_layout(&table, &[2]).is_err());
     }
 }
