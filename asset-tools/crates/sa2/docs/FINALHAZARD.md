@@ -32,6 +32,9 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `boss_update` | 0x1bb8 | Boss task update: action mirror, pause gates (0x801cbd88 + 0x37 / + 0x39), stage change handling, action routine from the jump table at 5:0xfdc (actions 0..13), child follow 0x1fc8, then 0x744 and 0x920 |
 | `boss_helper` | 0x9d4, 0x9f4, 0xa40, 0xa88, 0xc60, 0xc98, 0xd04, 0xd40, 0xdc4 | Boss state helpers: boss task (6:0x0), child, state, stunned check, state timer start and clear, pattern table 5:0x514 step, action set |
 | `boss_action_zero` | 0xe2c | Boss action 0: motion start (step 0), sound and voice inside the motion window 4:0xe0..4:0xe8, then ring burst 0x18ed0 (players capped at 3), action 2 and the next sound when the motion ends; clears stage half-word 0xa |
+| (action 1) | 0x10a8 | Boss action 1 is an empty routine (a lone `blr`) |
+| `boss_action_two` | 0xff4 | Boss action 2: 60-frame wait (entity half-word 6), child 0x86b8, then the next pattern entry (0xd40) as the action |
+| `boss_action_three` | 0x10ac | Boss action 3: frees the stage handles and starts motion 2; resets lights, child (0x866c), camera and both players; in the window 4:0xc4..4:0xf4 plays sound and voice; at the motion end clears entity flag 4, child 0x8818, motion 1, action 1, stage byte 4 and the handoff start 0xec04 |
 | `ring_drop` | 0x19470 | Hit ring drop: defeat at zero rings, else scatter up to 20 rings |
 
 ## Handoff camera
@@ -252,6 +255,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_boss_update_ppc.py` | 600 seeded updates; memory read again after a call is changed at that point, so each request value is checked at its own read |
 | `tests/finalhazard_boss_helper_ppc.py` | 4160 helper calls with the nested helpers run natively: boss, data and state present or not, action, flags, state word 0xc, pattern rows and columns |
 | `tests/finalhazard_boss_action_zero_ppc.py` | 525 frames: steps 0, 1 and out of range, motion frames around both window edges, motion end, player counts |
+| `tests/finalhazard_boss_actions_ppc.py` | 120 action 2 frames and 2160 action 3 frames: steps, timers, patterns, stage handles, motion flags and window edges, motion end, entity flags |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 

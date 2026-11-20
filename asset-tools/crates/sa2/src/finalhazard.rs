@@ -927,6 +927,10 @@ pub enum PlacementClock {
     BossHelper(Box<BossHelperFrame>),
     /// Section 1 + 0xe2c: boss action 0.
     BossActionZero(Box<BossActionZeroFrame>),
+    /// Section 1 + 0xff4: boss action 2 (wait, then the next pattern entry).
+    BossActionTwo(Box<BossActionTwoFrame>),
+    /// Section 1 + 0x10ac: boss action 3.
+    BossActionThree(Box<BossActionThreeFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2703,6 +2707,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossUpdate(frame) => return boss_update(&rel, &frame),
         PlacementClock::BossHelper(frame) => return boss_helper(&rel, &frame),
         PlacementClock::BossActionZero(frame) => return boss_action_zero(&rel, &frame),
+        PlacementClock::BossActionTwo(frame) => return boss_action_two(&rel, &frame),
+        PlacementClock::BossActionThree(frame) => return boss_action_three(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -5635,5 +5641,160 @@ fn boss_action_zero(
         }
     }
     ev.push(serde_json::json!({"site":0xfd8,"store":"stage","offset":0xa,"size":2,"value":0}));
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What boss action 2 reads: entity byte 1 at entry and after local
+/// 0x86b8, state word 0x10 (the child), stage byte 0 (through module word
+/// 6:0x4a8), entity half-word 6 (the wait timer) and the result of local
+/// 0xd40.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossActionTwoFrame {
+    pub task: u32,
+    pub step: i8,
+    pub step_after: u8,
+    pub child: u32,
+    pub stage_id: u8,
+    pub timer: u16,
+    pub pattern: i8,
+}
+/// Section 1 + 0xff4: boss action 2. Step 0 sets a 60-frame wait and runs
+/// 0x86b8 on the child; when the wait runs out the next pattern entry
+/// (0xd40) becomes the action (0xdc4).
+fn boss_action_two(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossActionTwoFrame,
+) -> Result<serde_json::Value> {
+    let _ = rel;
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":"entity","offset":offset,"size":size,"value":value});
+    let mut ev = Vec::new();
+    if (0..=1).contains(&f.step) {
+        if f.step == 0 {
+            ev.extend([
+                st(0x103c, 6, 2, 0x3c),
+                local(0x1054, 0x86b8, serde_json::json!([f.child, f.stage_id])),
+                st(0x1060, 1, 1, f.step_after.wrapping_add(1).into()),
+            ]);
+        }
+        let left = f.timer.wrapping_sub(1);
+        ev.push(st(0x106c, 6, 2, left.into()));
+        if left == 0 {
+            ev.push(local(0x1080, 0xd40, serde_json::json!([f.task])));
+            ev.push(local(
+                0x108c,
+                0xdc4,
+                serde_json::json!([f.task, f.pattern as i32 as u32]),
+            ));
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// What boss action 3 reads: entity byte 1 at entry and after the step's
+/// calls, state words 0x14 / 0x18 (the stage handles) and 0x10 (the
+/// child), motion half-word 0 and float 0x1c, the player task and object
+/// words at 0x801e7348 / 0x801e7328, the result of 0x8002cb2c and the
+/// entity flags half-word 4 as read before it is cleared.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossActionThreeFrame {
+    pub task: u32,
+    pub motion: u32,
+    pub step: i8,
+    pub step_after: u8,
+    pub handles: [u32; 2],
+    pub child: u32,
+    pub motion_flags: u16,
+    pub player_tasks: [u32; 2],
+    pub player_objects: [u32; 2],
+    pub motion_frame: f32,
+    pub motion_done: i32,
+    pub entity_flags: i16,
+}
+/// Section 1 + 0x10ac: boss action 3. Step 0 frees the stage handles and
+/// starts motion 2; step 1 waits for motion flag 2 to clear, then resets the
+/// lights, the child (0x866c), the camera and both players; step 2 plays the
+/// sound and voice inside the motion window 4:0xc4..4:0xf4 and, when the
+/// motion ends, clears entity flag 4, runs 0x8818 on the child, starts
+/// motion 1, sets action 1, raises stage byte 4 and starts the handoff
+/// (0xec04). The stage half-word 0xa is cleared every frame.
+fn boss_action_three(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossActionThreeFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let st = |site: u32, region: &str, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let single = |site: u32, offset: usize| -> Result<f64> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 4)
+            .ok_or_else(|| Error::invalid("missing boss action constant"))?;
+        let at = r.addend as usize + offset;
+        let b = rel
+            .data(4)?
+            .get(at..at + 4)
+            .ok_or_else(|| Error::invalid("boss action constant out of range"))?;
+        Ok(f64::from(f32::from_be_bytes(b.try_into().unwrap())))
+    };
+    let mut ev = Vec::new();
+    match f.step {
+        0 => {
+            for (i, (free, clear)) in [(0x1114u32, 0x111cu32), (0x112c, 0x1134)]
+                .into_iter()
+                .enumerate()
+            {
+                if f.handles[i] != 0 {
+                    ev.push(call(free, serde_json::json!([f.handles[i]]))?);
+                    ev.push(st(clear, "state", 0x14 + 4 * i as u32, 4, 0));
+                }
+            }
+            ev.extend([
+                call(0x1144, serde_json::json!([f.motion, 2, 0x5a]))?,
+                call(0x1158, serde_json::json!([0, 3, 0x18, 2]))?,
+                st(0x1164, "entity", 1, 1, f.step_after.wrapping_add(1).into()),
+            ]);
+        }
+        1 if f.motion_flags & 2 == 0 => {
+            ev.extend([
+                serde_json::json!({"site":0x1190,"local":0x1ed8,"args":[1, 0],"floats":[single(0x1182, 0x50)?]}),
+                local(0x1198, 0x866c, serde_json::json!([f.child])),
+                call(0x11ac, serde_json::json!([0, 3, 0x18, 4]))?,
+                call(0x11b4, serde_json::json!([3]))?,
+                call(0x11d0, serde_json::json!([f.player_tasks[0], f.player_objects[0]]))?,
+                call(0x11d8, serde_json::json!([0]))?,
+                call(0x11e4, serde_json::json!([f.player_tasks[1], f.player_objects[1]]))?,
+                call(0x11ec, serde_json::json!([1]))?,
+                st(0x11f8, "entity", 1, 1, f.step_after.wrapping_add(1).into()),
+            ]);
+        }
+        2 => {
+            let frame = f64::from(f.motion_frame);
+            if frame > single(0x1206, 0)? && frame < single(0x121a, 0)? {
+                ev.extend([
+                    call(0x1240, serde_json::json!([0x10, f.task, 1, 0, 0xb4]))?,
+                    call(0x1250, serde_json::json!([f.task, 0x10, 0x7f]))?,
+                ]);
+            }
+            ev.push(call(0x1258, serde_json::json!([f.motion]))?);
+            if f.motion_done != 0 {
+                ev.extend([
+                    st(0x126c, "entity", 4, 2, (f.entity_flags as u16 & !4).into()),
+                    local(0x1274, 0x8818, serde_json::json!([f.child])),
+                    st(0x127c, "state", 4, 1, 0xff),
+                    call(0x128c, serde_json::json!([f.motion, 1, 0x3c]))?,
+                    local(0x1298, 0xdc4, serde_json::json!([f.task, 1])),
+                    st(0x12ac, "stage", 4, 1, 1),
+                    local(0x12b0, 0xec04, serde_json::json!([])),
+                ]);
+            }
+        }
+        _ => {}
+    }
+    ev.push(st(0x12c4, "stage", 0xa, 2, 0));
     Ok(serde_json::json!({"events":ev}))
 }
