@@ -108,3 +108,23 @@ pub fn autopress(frame: u64) {
     }
     set(pads);
 }
+
+/// Scripted input from SA2_INPUT: `frame:buttons` pairs, comma separated
+/// (buttons as hex PAD bits: 0x0001 left, 0x0002 right, 0x0004 down,
+/// 0x0008 up, 0x0100 A, 0x0200 B, 0x1000 Start). Each press holds 3 frames.
+/// Returns false when SA2_INPUT is unset.
+pub fn scripted(frame: u64) -> bool {
+    let Ok(script) = std::env::var("SA2_INPUT") else { return false };
+    let mut pads = default_pads();
+    for item in script.split(',') {
+        let Some((f, b)) = item.split_once(':') else { continue };
+        let (Ok(f), Ok(b)) = (f.trim().parse::<u64>(), u16::from_str_radix(b.trim().trim_start_matches("0x"), 16)) else {
+            continue;
+        };
+        if (f..f + 3).contains(&frame) {
+            pads[0].button |= b;
+        }
+    }
+    set(pads);
+    true
+}

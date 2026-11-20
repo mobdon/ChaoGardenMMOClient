@@ -87,17 +87,18 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         \x20       let n = frames.len() as u64;\n\
         \x20       let f = sa2_recomp::host::FRAMES.fetch_add(n, std::sync::atomic::Ordering::Relaxed);\n\
         \x20       // SA2_FRAMES=dir: a PNG of every 300th frame; new unhandled GX logged.\n\
+        \x20       let every = std::env::var(\"SA2_FRAMES_EVERY\").ok().and_then(|s| s.parse().ok()).unwrap_or(300);\n\
         \x20       if let Some(dir) = std::env::var_os(\"SA2_FRAMES\") {\n\
         \x20           for (k, (_, fr)) in frames.iter().enumerate() {\n\
-        \x20               match sa2_boot::snap::frame(fr, f + k as u64, 300, std::path::Path::new(&dir)) {\n\
-        \x20                   Ok(Some(p)) => eprintln!(\"snap: {} ({} draws) unhandled GX {:?}\", p.display(), fr.draws.len(), sa2_boot::gx::unhandled()),\n\
+        \x20               match sa2_boot::snap::frame(fr, f + k as u64, every, std::path::Path::new(&dir)) {\n\
+        \x20                   Ok(Some(p)) => eprintln!(\"snap: {} ({} draws) newly unhandled GX {:?}\", p.display(), fr.draws.len(), sa2_boot::gx::unhandled_new()),\n\
         \x20                   Ok(None) => {}\n\
         \x20                   Err(e) => eprintln!(\"snap: {e}\"),\n\
         \x20               }\n\
         \x20           }\n\
         \x20       }\n\
-        \x20       // SA2_AUTOPRESS: press A+Start now and then to get through menus.\n\
-        \x20       if std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
+        \x20       // SA2_INPUT=frame:buttons,... scripted presses; else SA2_AUTOPRESS.\n\
+        \x20       if !sa2_boot::pad::scripted(f) && std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
         \x20           sa2_boot::pad::autopress(f);\n\
         \x20       }\n\
         \x20   });\n\

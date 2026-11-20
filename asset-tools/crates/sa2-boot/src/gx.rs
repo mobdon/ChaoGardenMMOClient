@@ -67,3 +67,13 @@ pub fn install(c: &mut Cpu, m: &mut Mem) {
 pub fn unhandled() -> std::collections::BTreeMap<String, u64> {
     GX.with_borrow(|s| s.fifo.gx.unhandled.clone())
 }
+
+thread_local! {
+    static REPORTED: RefCell<std::collections::BTreeSet<String>> = RefCell::new(Default::default());
+}
+
+/// Unhandled GX entries not returned by an earlier call (for logging).
+pub fn unhandled_new() -> Vec<String> {
+    let all = unhandled();
+    REPORTED.with_borrow_mut(|r| all.into_keys().filter(|k| r.insert(k.clone())).collect())
+}
