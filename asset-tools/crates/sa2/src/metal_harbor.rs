@@ -874,6 +874,550 @@ pub fn thin_load(mh: &MetalHarbor<'_>, loader: u32) -> Result<Value> {
     Err(invalid())
 }
 
+// ---- Ported straight from the disc code without an oracle (mob's rule for
+// the remaining objects). Calls name a pointer argument by the field it
+// addresses ("work+0x14": the task work at +0x34 plus 0x14; "dyn": the
+// block at task +0x38; "colli": the collision info at task +0x3C; "child":
+// the task at task +0xC) and pass loaded values from the input.
+
+impl MetalHarbor<'_> {
+    /// The single-precision constant every `addi` in `pcs` addresses; they
+    /// must all name the same .rodata word.
+    fn fs(&self, pcs: &[u32]) -> Result<f32> {
+        let first = self.at(*pcs.first().ok_or_else(invalid)?, 4)?;
+        for &pc in pcs {
+            if self.at(pc, 4)? != first {
+                return Err(Error::invalid(format!(
+                    "stage 10 constant differs at +0x{pc:x}"
+                )));
+            }
+        }
+        Ok(f32::from_bits(self.word(4, first)?))
+    }
+    /// The immediate of the `li rD,imm` (`addi rD,0,imm`) at `pc`.
+    fn li(&self, pc: u32, reg: u32) -> Result<i16> {
+        let ins = self.word(1, pc)?;
+        if ins >> 16 != 0x3800 | reg << 5 {
+            return Err(Error::invalid(format!("no li r{reg} at +0x{pc:x}")));
+        }
+        Ok(ins as u16 as i16)
+    }
+    /// The displacement of the load/store at `pc` (its low halfword).
+    fn disp(&self, pc: u32) -> Result<i16> {
+        Ok(self.word(1, pc)? as u16 as i16)
+    }
+    /// A data word (`lwz rX,d(rX)` after a relocated `addi`): the module
+    /// address it holds, or its value.
+    fn loaded(&self, pc: u32, d: u32) -> Result<Value> {
+        self.data_value(5, self.at(pc, 5)? + d)
+    }
+    /// The model a template object (section 5) points at, with its centre
+    /// (+0x18) and radius (+0x24).
+    fn template_model(&self, template: u32) -> Result<(u32, f32)> {
+        let (model, _, r) = self.bridge_model(template)?;
+        Ok((model, r))
+    }
+}
+
+/// The 0x801 size class fn_800232A4 takes for a collision model, from its
+/// radius plus the routine's pad (the three thresholds follow it in
+/// .rodata order, each read through its own `addi`).
+fn size_class(r: f32, t: [f32; 3]) -> u32 {
+    if r > t[0] {
+        0
+    } else if r > t[1] {
+        0x2000_0000
+    } else if r > t[2] {
+        0x4000_0000
+    } else {
+        0x6000_0000
+    }
+}
+
+// ---- MHCONT, MHCONT0, MHCONTB and TRUCK: four loaders of one shape
+// (+0x2414, +0x2D4C, +0x36AC, +0x9A00), each with its own exec, display and
+// a shared destructor shape.
+
+/// Loader, exec, display, destructor of MHCONT, MHCONT0, MHCONTB, TRUCK.
+pub const CONTAINERS: [[u32; 4]; 4] = [
+    [0x2414, 0x26d4, 0x2cb8, 0x2670],
+    [0x2d4c, 0x300c, 0x35f0, 0x2fa8],
+    [0x36ac, 0x396c, 0x3df4, 0x3908],
+    [0x9a00, 0x9cc0, 0xa250, 0x9c5c],
+];
+fn container(exec_or_loader: u32) -> Result<[u32; 4]> {
+    CONTAINERS
+        .into_iter()
+        .find(|c| c.contains(&exec_or_loader))
+        .ok_or_else(|| Error::invalid("not a stage 10 container routine"))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ContainerLoadInput {
+    pub loader: u32,
+    pub range_out: bool,
+    pub alloc: bool,
+    /// Work +8, +0xC, +0x10 (angles) and +0x14 position.
+    pub rot: [u32; 3],
+    pub pos: [u32; 3],
+    /// Task +0xC (the child fn_10_D9C0 attaches) is set afterwards.
+    pub child: bool,
+}
+
+/// A container loader: allocate the block (`dyn`, 68 or 72 bytes), copy the
+/// 14-word template object into it at the task's place, register it with
+/// fn_800232A4, attach the child (module +0xD9C0, shared), copy the place
+/// to the child's work and set task +0x40 to the start speed.
+pub fn container_load(mh: &MetalHarbor<'_>, i: &ContainerLoadInput) -> Result<Value> {
+    let [l, exec, display, dest] = container(i.loader)?;
+    if l != i.loader {
+        return Err(Error::invalid("not a stage 10 container loader"));
+    }
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let none =
+        |c: Vec<Value>| json!({ "calls": c, "state": { "task": Value::Null, "dyn": Value::Null } });
+    if i.range_out {
+        return Ok(none(c));
+    }
+    let size = mh.li(l + 0x3c, 4)?; // li r4,68 / 72
+    c.push(engine(0x801197fc, json!([1, size])));
+    if !i.alloc {
+        return Ok(none(c));
+    }
+    let template = mh.at(l + 0x88, 5)?;
+    let mut d: Vec<Value> = (0..14)
+        .map(|k| mh.data_value(5, template + 4 * k))
+        .collect::<Result<_>>()?;
+    let first = d[0].as_u64().ok_or_else(invalid)? as u32;
+    d[0] = json!(first & !3);
+    d[2..5].clone_from_slice(&i.pos.map(|v| json!(v)));
+    d[5] = json!(0);
+    d[6] = json!(i.rot[1]);
+    d[7] = json!(0);
+    d.resize(size as usize / 4, json!(0));
+    let (_, radius) = mh.template_model(template)?;
+    let r = mh.f(l + 0x144)? + radius;
+    let class = size_class(r, [mh.f(l + 0x15c)?, mh.f(l + 0x174)?, mh.f(l + 0x190)?]);
+    c.push(engine(
+        0x800232a4,
+        json!([0x0800_0001 | class, "task", "dyn"]),
+    ));
+    c.push(mh.local_call(
+        l + 0x1d8,
+        json!(["task", 0, 0, mh.ptr(l + 0x1cc, 5)?, 1, 0]),
+    )?);
+    let child = i
+        .child
+        .then(|| json!({ "work+0x14": i.pos, "work+0x8": [i.rot[0], i.rot[1], i.rot[2]] }));
+    Ok(json!({ "calls": c, "state": {
+        "task": [mh.ptr(l + 0x64, 1)?, mh.ptr(l + 0x58, 1)?, mh.ptr(l + 0x70, 1)?],
+        "mode": 0, "speed": mh.f(l + 0x22c)?.to_bits(), "dyn": d, "child": child } }))
+    .and_then(|v| {
+        // The callbacks the loader installs are the container's own.
+        let t = &v["state"]["task"];
+        if t != &json!([s(1, exec), s(1, display), s(1, dest)]) {
+            return Err(invalid());
+        }
+        Ok(v)
+    })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ContainerExecInput {
+    pub exec: u32,
+    pub range_out: bool,
+    /// Work +0, +4, +6.
+    pub mode: i8,
+    pub flags: i16,
+    pub timer: u16,
+    /// Work +0xC (Y angle).
+    pub rot: u32,
+    /// Work +0x20 (travel) and +0x24 (acceleration), bit patterns.
+    pub range: u32,
+    pub accel: u32,
+    /// Task +0x40, `dyn`+0x38..+0x44 offset, `dyn`+0x44 (TRUCK wheel angle).
+    pub speed: u32,
+    pub off: [u32; 3],
+    #[serde(default)]
+    pub wheel: i32,
+    /// Task +0xC is set; `dyn`+4 (the registered model) is set.
+    pub child: bool,
+    pub obj: bool,
+    /// _rename_EitherPlayerWithinSphere's answer.
+    pub within: bool,
+}
+
+/// Where each container exec keeps its constants (the `addi` of every use).
+struct Slide {
+    axis: u32,
+    /// Spring (bounce) factor, damping, acceleration pad, rest speed, the
+    /// travel above which a sound plays, the sphere pad.
+    spring: &'static [u32],
+    damp: &'static [u32],
+    pad: &'static [u32],
+    rest: &'static [u32],
+    sound: &'static [u32],
+    sphere: u32,
+    /// TRUCK's wheel: scale pcs and data factor pcs.
+    wheel: Option<(&'static [u32], &'static [u32])>,
+}
+const SLIDE_26D4: Slide = Slide {
+    axis: 0x2740,
+    spring: &[0x2774, 0x27a8, 0x2960, 0x2994],
+    damp: &[0x2794, 0x2980],
+    pad: &[
+        0x2840, 0x284c, 0x2870, 0x288c, 0x2a2c, 0x2a38, 0x2a5c, 0x2a78,
+    ],
+    rest: &[0x27f8, 0x29e4],
+    sound: &[0x280c, 0x28e8, 0x29f8, 0x2adc],
+    sphere: 0x2c64,
+    wheel: None,
+};
+const SLIDE_300C: Slide = Slide {
+    axis: 0x3078,
+    spring: &[0x30ac, 0x30e0, 0x3298, 0x32cc],
+    damp: &[0x30cc, 0x32b8],
+    pad: &[
+        0x3178, 0x3184, 0x31a8, 0x31c4, 0x3364, 0x3370, 0x3394, 0x33b0,
+    ],
+    rest: &[0x3130, 0x331c],
+    sound: &[0x3144, 0x3220, 0x3330, 0x3414],
+    sphere: 0x359c,
+    wheel: None,
+};
+const SLIDE_9CC0: Slide = Slide {
+    axis: 0x9d2c,
+    spring: &[0x9d60, 0x9d94, 0x9f2c, 0x9f60],
+    damp: &[0x9d80, 0x9f4c],
+    pad: &[
+        0x9dfc, 0x9e08, 0x9e2c, 0x9e48, 0x9fc8, 0x9fd4, 0x9ff8, 0xa014,
+    ],
+    rest: &[0x9de4, 0x9fb0],
+    sound: &[],
+    sphere: 0xa1fc,
+    wheel: Some((&[0x9ea8, 0xa02c], &[0x9eb8, 0xa03c])),
+};
+
+/// The sliding offset's axis: the displacement of the `lfs` reading
+/// `dyn`+0x38 (x) or +0x40 (z).
+fn slide_axis(mh: &MetalHarbor<'_>, pc: u32) -> Result<usize> {
+    match mh.disp(pc)? {
+        56 => Ok(0),
+        64 => Ok(2),
+        _ => Err(invalid()),
+    }
+}
+
+/// +0x26D4 (MHCONT, along z), +0x300C (MHCONT0, along x), +0x9CC0 (TRUCK):
+/// slide out to the travel and spring back after 30 frames, then the other
+/// way; +0x396C (MHCONTB) moves end to end with a 30-frame rest. Then the
+/// child follows the offset point and the collision piece is moved.
+pub fn container_exec(mh: &MetalHarbor<'_>, i: &ContainerExecInput) -> Result<Value> {
+    let [loader, ..] = container(i.exec)?;
+    let mut c = vec![engine(0x800655f4, json!(["task"]))];
+    let (mut mode, mut timer, mut flags, mut wheel) = (i.mode, i.timer, i.flags, i.wheel);
+    let mut speed = f32::from_bits(i.speed);
+    let mut off = i.off.map(f32::from_bits);
+    if i.range_out {
+        return Ok(json!({ "calls": c, "state": { "mode": mode, "timer": timer,
+            "flags": flags, "speed": i.speed, "off": i.off, "wheel": wheel } }));
+    }
+    let old = off;
+    let range = f32::from_bits(i.range);
+    let accel = f32::from_bits(i.accel);
+    let (ex, sphere) = if i.exec == 0x396c {
+        // MHCONTB: accelerate to the cap, stop at the end, rest 30 frames.
+        let ax = slide_axis(mh, 0x3a34)?;
+        let pad = mh.fs(&[
+            0x39d0, 0x39dc, 0x3a00, 0x3a1c, 0x3b14, 0x3b20, 0x3b44, 0x3b60,
+        ])?;
+        let rest = mh.fs(&[0x3a68, 0x3bb4])?;
+        let sound = mh.fs(&[0x3a88, 0x3ae0, 0x3bd4, 0x3c2c])?;
+        let top = pad + accel;
+        speed += pad * top;
+        if speed > top {
+            speed = top;
+        }
+        let dir = if mode != 2 { 1.0 } else { -1.0 };
+        if mode != 2 {
+            off[ax] += speed;
+        } else {
+            off[ax] -= speed;
+        }
+        let end = if mode != 2 {
+            off[ax] > range
+        } else {
+            off[ax] < -range
+        };
+        if end {
+            off[ax] = dir * range;
+            speed = rest;
+            if timer == 0 && range > sound {
+                c.push(engine(0x8006b7ec, json!([2, 0, 0, 0, "work+0x14"])));
+            }
+            let t = timer;
+            timer = timer.wrapping_add(1);
+            if t > 30 {
+                mode = if mode != 2 { 2 } else { 1 };
+                timer = 0;
+                if range > sound {
+                    let n = if mode == 2 { 1 } else { 0 };
+                    c.push(engine(0x8006b7ec, json!([n, 0, 0, 0, "work+0x14"])));
+                }
+            }
+        }
+        (true, mh.f(0x3da0)?)
+    } else {
+        let k = match i.exec {
+            0x26d4 => &SLIDE_26D4,
+            0x300c => &SLIDE_300C,
+            0x9cc0 => &SLIDE_9CC0,
+            _ => return Err(invalid()),
+        };
+        let ax = slide_axis(mh, k.axis)?;
+        let spring = mh.fs(k.spring)?;
+        let damp = mh.fs(k.damp)?;
+        let pad = mh.fs(k.pad)?;
+        let rest = mh.fs(k.rest)?;
+        let sound = if k.sound.is_empty() {
+            None
+        } else {
+            Some(mh.fs(k.sound)?)
+        };
+        let se = |c: &mut Vec<Value>, n: i32| {
+            if sound.is_some_and(|s| range > s) {
+                c.push(engine(0x8006b7ec, json!([n, 0, 0, 0, "work+0x14"])));
+            }
+        };
+        let fwd = mode != 2;
+        if timer != 0 {
+            // Spring back toward the far end for 30 frames.
+            if fwd {
+                off[ax] += speed;
+                if off[ax] > range {
+                    off[ax] = range;
+                    speed = spring * -speed;
+                } else {
+                    speed = damp * speed + spring * (range - off[ax]);
+                }
+            } else {
+                off[ax] -= speed;
+                if off[ax] < -range {
+                    off[ax] = -range;
+                    speed = spring * -speed;
+                } else {
+                    speed = damp * speed + spring * (range + off[ax]);
+                }
+            }
+            let t = timer;
+            timer = timer.wrapping_add(1);
+            if t > 30 {
+                mode = if fwd { 2 } else { 1 };
+                timer = 0;
+                speed = rest;
+                se(&mut c, if fwd { 1 } else { 0 });
+            }
+        } else {
+            let top = pad + accel;
+            speed += pad * top;
+            if speed > top {
+                speed = top;
+            }
+            if let Some((scale, factor)) = k.wheel {
+                // dyn+0x44 turns by fctiwz(scale * (speed * factor)); going
+                // back it turns before the move (+0xA028), forward after.
+                let at = mh.at(factor[0], 5)?;
+                for &pc in factor {
+                    if mh.at(pc, 5)? != at {
+                        return Err(invalid());
+                    }
+                }
+                let turn = fctiwz(mh.fs(scale)? * (speed * f32::from_bits(mh.word(5, at)?)));
+                wheel = if fwd {
+                    wheel.wrapping_add(turn)
+                } else {
+                    wheel.wrapping_sub(turn)
+                };
+            }
+            if fwd {
+                off[ax] += speed;
+                if off[ax] > range {
+                    off[ax] = range;
+                    timer = timer.wrapping_add(1);
+                    se(&mut c, 2);
+                }
+            } else {
+                off[ax] -= speed;
+                if off[ax] < -range {
+                    off[ax] = -range;
+                    timer = timer.wrapping_add(1);
+                    se(&mut c, 2);
+                }
+            }
+        }
+        (i.exec == 0x9cc0, mh.f(k.sphere)?)
+    };
+    // The child at the offset point, then the collision piece (+0x2B04 on).
+    let (push, pop) = (
+        engine(0x80116098, json!([])),
+        if ex {
+            engine(0x801160e4, json!([]))
+        } else {
+            engine(0x80115dc8, json!([1]))
+        },
+    );
+    let translate = |p: Value| {
+        if ex {
+            engine(0x8011616c, json!([p]))
+        } else {
+            engine(0x8011538c, json!([0, p]))
+        }
+    };
+    let place = |c: &mut Vec<Value>| {
+        c.extend([
+            push.clone(),
+            engine(0x801153e4, json!([0])),
+            translate(json!("work+0x14")),
+            engine(0x80115828, json!([0, i.rot])),
+        ]);
+    };
+    let o: [u32; 3] = off.map(f32::to_bits);
+    if i.child {
+        place(&mut c);
+        c.push(engine(
+            0x80114f0c,
+            json!([0, "dyn+0x38", "child.work+0x14"]),
+        ));
+        c.push(pop.clone());
+    }
+    if i.obj {
+        let template = mh.at(loader + 0x88, 5)?;
+        let (model, radius) = mh.template_model(template)?;
+        let delta: [u32; 3] = [0, 1, 2].map(|k| (off[k] - old[k]).to_bits());
+        place(&mut c);
+        c.extend([
+            engine(0x80114f0c, json!([0, "dyn+0x38", "dyn+0x8"])),
+            engine(0x801154ec, json!([0, delta, "colli+0x10"])),
+            translate(s(5, model + 0x18)),
+            engine(0x80114f0c, json!([0, "dyn+0x38", "sphere"])),
+            pop,
+            engine(0x800398d8, json!(["sphere", (sphere + radius).to_bits()])),
+        ]);
+        if i.within {
+            flags |= 0x100;
+        } else {
+            flags &= !0x100;
+        }
+    }
+    Ok(
+        json!({ "calls": c, "state": { "mode": mode, "timer": timer, "flags": flags,
+        "speed": speed.to_bits(), "off": o, "wheel": wheel,
+        "colli+0x2c": if i.obj { json!("colli+0x10") } else { Value::Null } } }),
+    )
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerDisplayInput {
+    pub display: u32,
+    pub rot: u32,
+    /// MHCONT0: .bss+0xB0 (a clipped model) when set.
+    #[serde(default)]
+    pub clip: Option<u32>,
+    /// TRUCK: game state 0x801CC168 +0x7C and `dyn`+0x44.
+    #[serde(default)]
+    pub clock: u32,
+    #[serde(default)]
+    pub wheel: i32,
+}
+
+/// +0x2CB8, +0x35F0, +0x3DF4, +0xA250: draw the container at its place
+/// moved by the offset; TRUCK adds a blinking lamp and two wheels.
+pub fn container_display(mh: &MetalHarbor<'_>, i: &ContainerDisplayInput) -> Result<Value> {
+    let d = i.display;
+    container(d)?;
+    let ex = d == 0x3df4;
+    let mut c = vec![engine(0x80116e18, json!([mh.ptr(d + 0x20, 5)?]))];
+    let tr = |p: Value| {
+        if ex || d == 0xa250 {
+            engine(0x8011616c, json!([p]))
+        } else {
+            engine(0x8011538c, json!([0, p]))
+        }
+    };
+    c.push(if ex {
+        engine(0x80116098, json!([]))
+    } else {
+        engine(0x80115d60, json!([0]))
+    });
+    c.extend([
+        tr(json!("work+0x14")),
+        engine(0x80115828, json!([0, i.rot])),
+        tr(json!("dyn+0x38")),
+        engine(0x8002b2e8, json!([0x2400])),
+    ]);
+    match d {
+        0x2cb8 => c.push(engine(0x80031a28, json!([mh.ptr(0x2d1c, 5)?]))),
+        0x35f0 => {
+            mh.at(0x3654, 6)?; // .bss+0xB0
+            c.push(match i.clip {
+                Some(m) if m != 0 => engine(0x8011f514, json!([m])),
+                _ => engine(0x80031a28, json!([mh.ptr(0x367c, 5)?])),
+            });
+        }
+        0x3df4 => c.push(engine(0x80031a28, json!([mh.ptr(0x3e4c, 5)?]))),
+        _ => c.push(engine(0x80031a28, json!([mh.loaded(0xa2ac, 4)?]))),
+    }
+    c.push(engine(0x8002b2d8, json!([0x2400])));
+    if d == 0xa250 {
+        let colour = if i.clock % 48 <= 20 {
+            -1i32 as u32
+        } else {
+            0xff80_8080
+        };
+        let at = |pc| -> Result<Value> { Ok(s(5, mh.at(pc, 5)? + 8)) };
+        c.extend([
+            engine(0x80116098, json!([])),
+            engine(0x8011616c, json!([at(0xa2c8)?])),
+            engine(0x80031260, json!([mh.loaded(0xa2d8, 4)?, colour])),
+            engine(0x801160e4, json!([])),
+        ]);
+        for (t, m) in [(0xa32c, 0xa34c), (0xa364, 0xa384)] {
+            c.extend([
+                engine(0x80116098, json!([])),
+                engine(0x8011616c, json!([at(t)?])),
+                engine(0x80115c60, json!([0, i.wheel])),
+                engine(0x80031a28, json!([mh.loaded(m, 4)?])),
+                engine(0x801160e4, json!([])),
+            ]);
+        }
+        c.push(engine(0x80115dc8, json!([2])));
+    } else {
+        c.push(if ex {
+            engine(0x801160e4, json!([]))
+        } else {
+            engine(0x80115dc8, json!([1]))
+        });
+    }
+    Ok(json!({ "calls": c, "state": {} }))
+}
+
+/// +0x2670, +0x2FA8, +0x3908, +0x9C5C: unregister the collision piece if
+/// registered, clear task +0x40, free the block.
+pub fn container_dest(dest: u32, obj: bool) -> Result<Value> {
+    if container(dest)?[3] != dest {
+        return Err(Error::invalid("not a stage 10 container destructor"));
+    }
+    let mut c = Vec::new();
+    if obj {
+        c.push(engine(0x800231cc, json!(["task", "dyn"])));
+    }
+    c.push(engine(0x80119828, json!(["dyn"])));
+    Ok(json!({ "calls": c, "state": { "task+0x40": 0, "dyn": 0 } }))
+}
+
 /// Run one routine by name on a JSON input (the oracle's case format).
 pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
     let mh = MetalHarbor::read(rel_bytes)?;
@@ -896,6 +1440,13 @@ pub fn replay(rel_bytes: &[u8], routine: &str, input: &Value) -> Result<Value> {
         "bridge_exec" => bridge_exec(&mh, &parse(input)?),
         "bridge_display" => bridge_display(&mh, &parse(input)?),
         "bridge_dest" => Ok(bridge_dest(parse::<BridgeDestInput>(input)?.obj)),
+        "container_load" => container_load(&mh, &parse(input)?),
+        "container_exec" => container_exec(&mh, &parse(input)?),
+        "container_display" => container_display(&mh, &parse(input)?),
+        "container_dest" => {
+            let i: DestInput = parse(input)?;
+            container_dest(i.dest, i.obj)
+        }
         _ => Err(Error::invalid(format!(
             "unknown stage 10 routine {routine}"
         ))),
@@ -909,6 +1460,12 @@ struct ExecInput {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BridgeDestInput {
+    obj: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DestInput {
+    dest: u32,
     obj: bool,
 }
 #[derive(Deserialize)]
