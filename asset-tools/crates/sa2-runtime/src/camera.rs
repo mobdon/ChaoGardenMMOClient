@@ -78,3 +78,88 @@ pub fn camera_init(rt: &mut Runtime, cam: &mut Camera, stage: i16, count: i32) {
     rt.engine(AFTER_2, vec![0]);
     cam.adafc = 0;
 }
+
+/// Mode 0x13 "INIT" (fn_800C96BC): how far behind the player (r2-0x6290)
+/// and how high above (r2-0x628C) it puts the camera.
+const INIT_BACK: f32 = 60.0;
+const INIT_UP: f32 = 30.0;
+/// INIT hands over to slot 0 once its slot has run this many frames.
+const INIT_FRAMES: u32 = 5;
+
+/// What a camera mode writes into the view block 0x801FF3E4: the camera
+/// position (+0xC..+0x14) and the point it looks at (+0x30..+0x38).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct View {
+    pub pos: [f32; 3],
+    pub target: [f32; 3],
+}
+
+/// One frame of mode 0x13 "INIT" (fn_800C96BC) for a player at `pos` with
+/// twp angles `ang` and player work +0x13C `height`: the target is the
+/// player raised by `height`; the camera sits `INIT_BACK` back along the
+/// player's facing (fn_800C5524: (1,0,0) turned by Z, X, then -Y) and
+/// `INIT_UP` higher.
+pub fn init_view(pos: [f32; 3], ang: [i32; 3], height: f32) -> View {
+    use sa2_asset_tools::{ninja_matrix, ninja_trig::fnmsubs};
+    let mut stack = ninja_matrix::MatrixStack::new();
+    let dir = ninja_matrix::rotate_by_angles(&mut stack, ang, [1.0, 0.0, 0.0]);
+    let mut cam: [f32; 3] = std::array::from_fn(|k| fnmsubs(INIT_BACK, dir[k], pos[k]));
+    cam[1] += INIT_UP;
+    View {
+        pos: cam,
+        target: [pos[0], pos[1] + height, pos[2]],
+    }
+}
+
+/// Viewport 0's default camera as `fn_800C4458` sets it up: INIT in slot
+/// 0xE over CARMEL (mode 0xD, fn_800C86A4) in slot 0.
+#[derive(Debug, Clone, Default)]
+pub struct DefaultCamera {
+    /// Slot 0xE's frame counter (+0x260), counted after each call.
+    frames: u32,
+}
+
+impl DefaultCamera {
+    /// One camera exec for the player at `pos`/`ang` with `height`.
+    /// shortcut: CARMEL is not ported yet, so after INIT hands over the
+    /// INIT placement keeps running; replace with CARMEL when it lands.
+    pub fn step(&mut self, pos: [f32; 3], ang: [i32; 3], height: f32) -> View {
+        let v = init_view(pos, ang, height);
+        self.frames = self.frames.saturating_add(1);
+        v
+    }
+
+    /// INIT has handed over to slot 0 (it drops itself on the frame its
+    /// counter is past `INIT_FRAMES`).
+    pub fn handed_over(&self) -> bool {
+        self.frames > INIT_FRAMES + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_puts_the_camera_behind_and_above() {
+        // Angle 0 faces +X, so the camera is 60 back along -X and 30 up.
+        let v = init_view([10.0, 0.0, 5.0], [0; 3], 12.0);
+        assert_eq!(v.target, [10.0, 12.0, 5.0]);
+        assert_eq!(v.pos, [-50.0, 30.0, 5.0]);
+        // A quarter turn (0x4000 BAMS) moves it onto the Z axis.
+        let q = init_view([0.0; 3], [0, 0x4000, 0], 0.0);
+        assert!(q.pos[0].abs() < 1e-3 && (q.pos[2].abs() - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn init_hands_over_after_its_frames() {
+        let mut c = DefaultCamera::default();
+        for _ in 0..=INIT_FRAMES {
+            c.step([0.0; 3], [0; 3], 0.0);
+            assert!(!c.handed_over());
+        }
+        c.step([0.0; 3], [0; 3], 0.0);
+        c.step([0.0; 3], [0; 3], 0.0);
+        assert!(c.handed_over());
+    }
+}

@@ -334,23 +334,19 @@ pub fn model_mesh(model: &sa2_asset_tools::model::Model) -> (Mesh, BTreeMap<u8, 
     (b.mesh, b.skipped)
 }
 
-/// `mesh` placed at `pos` and rotated Z·Y·X by `ang` (BAMS), the default
-/// Ninja node transform. shortcut: the walker's own display routine (its
-/// angle offsets and motion pose) is not traced; replace this once it is.
+/// `mesh` placed as the walker display fn_800B15B8 places the player model:
+/// translate to `pos`, then njRotateZ(ang.z), njRotateX(ang.x),
+/// njRotateY(0x8000 - ang.y) (twp +0x10, +0x8, +0xC). shortcut: its extra
+/// translation (a rotated offset from the work) and twp +0x20 scale are
+/// left out, and the model stays in its bind pose (no motion yet).
 pub fn place(mesh: &Mesh, pos: [f32; 3], ang: [i32; 3]) -> Mesh {
-    let n = Node {
-        offset: 0,
-        parent_offset: None,
-        flags: 0,
-        attach_offset: 0,
-        position: pos,
-        rotation_bams: ang,
-        scale: [1.0; 3],
-        child_offset: 0,
-        sibling_offset: 0,
-        quaternion_scalar: None,
-    };
-    let m = local(&n);
+    let mut m = IDENTITY;
+    for k in 0..3 {
+        m[k][3] = pos[k];
+    }
+    m = mul(&m, &rot(2, ang[2]));
+    m = mul(&m, &rot(0, ang[0]));
+    m = mul(&m, &rot(1, 0x8000i32.wrapping_sub(ang[1])));
     let mut out = mesh.clone();
     for v in &mut out.vertices {
         v.pos = apply(&m, v.pos, 1.0);

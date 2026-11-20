@@ -56,6 +56,7 @@ pub struct App {
     player: Option<sa2_runtime::TaskId>,
     /// The walker's model in its own space (bind pose).
     walker: Option<Mesh>,
+    camera: sa2_runtime::camera::DefaultCamera,
     pub triangles: u32,
 }
 
@@ -188,6 +189,7 @@ impl App {
             config,
             player,
             walker,
+            camera: Default::default(),
             triangles: (land.indices.len() / 3) as u32,
         })
     }
@@ -199,15 +201,22 @@ impl App {
         pads[0].stick = [stick_x, stick_y];
         pads[0].button = buttons;
         self.game.step(pads);
-        let (pos, ang) = self
+        let (pos, ang, height) = self
             .player
             .and_then(|t| self.game.rt.task(t))
             .map(|t| {
                 let f = |o| f32::from_bits(t.twp_word(o));
                 let a = |o| t.twp_word(o) as i32;
-                ([f(0x14), f(0x18), f(0x1C)], [a(0x8), a(0xC), a(0x10)])
+                // Player work +0x13C (the camera's target height).
+                let h = t
+                    .w40
+                    .as_ref()
+                    .and_then(|w| w.get(0x13C..0x140))
+                    .map_or(0.0, |b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+                ([f(0x14), f(0x18), f(0x1C)], [a(0x8), a(0xC), a(0x10)], h)
             })
-            .unwrap_or(([0.0; 3], [0; 3]));
+            .unwrap_or(([0.0; 3], [0; 3], 0.0));
+        let cam = self.camera.step(pos, ang, height);
         match &self.walker {
             Some(m) => self
                 .renderer
@@ -225,8 +234,8 @@ impl App {
         });
         let size = [self.config.width, self.config.height];
         let vp = look_at(
-            [pos[0] - 260.0, pos[1] + 180.0, pos[2] + 260.0],
-            [pos[0], pos[1] + 20.0, pos[2]],
+            cam.pos,
+            cam.target,
             1.0,
             size[0] as f32 / size[1] as f32,
             5.0,
