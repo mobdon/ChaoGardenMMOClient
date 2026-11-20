@@ -2,13 +2,12 @@
 //! landtable: the DODAIGEN object spawns copies of one Basic platform (DODAI)
 //! along +X ahead of the players. This module reads that template and the
 //! generator constants from the fingerprinted GC module and replays the
-//! generator's placement rule. Platform falling, meteors and player response
-//! are not simulated; no surface flags are inferred beyond the native
-//! dynamic-collision registration word.
+//! generator's placement rule, using only behavior read from that code. The
+//! platform update is in duel_platform_motion.
 use crate::{
     city_land,
     city_rel::{CityRel, Reference},
-    collision, manifest,
+    manifest,
     model::{self, DecodeBudget, Node},
     object_table,
     stage::{self, BasicAttachment},
@@ -288,12 +287,6 @@ impl Generator {
         Ok(out)
     }
 }
-impl Spawn {
-    /// True unless DODAI starts falling on its first state-1 update.
-    pub fn persists(&self, g: &Generator) -> bool {
-        !self.activated && self.timer as i16 <= g.fall_after
-    }
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -321,104 +314,4 @@ pub fn replay(rel_bytes: &[u8], request: &[u8]) -> Result<serde_json::Value> {
         frames.push(FrameReplay { state, spawns });
     }
     Ok(serde_json::json!({ "generator": g, "frames": frames }))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlacedPlatform {
-    pub x: f32,
-    pub timer: u16,
-    pub activated: bool,
-    pub persists: bool,
-    /// First vertex of this platform in `vertices`, when it persists.
-    pub first_vertex: Option<u32>,
-}
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Terrain {
-    pub source_sha256: &'static str,
-    pub coordinate_space: &'static str,
-    pub generator: Generator,
-    pub players_x: [Option<f32>; 2],
-    pub template: Platform,
-    pub platforms: Vec<PlacedPlatform>,
-    /// World-space collision of the persisting platforms only.
-    pub vertices: Vec<[f32; 3]>,
-    pub triangles: Vec<[u32; 3]>,
-    /// Degenerate strip triples skipped once in the shared template.
-    pub template_degenerate_triangles: usize,
-    pub unknowns: Vec<&'static str>,
-}
-/// The platforms present after DODAIGEN's first two updates with the
-/// players at the given X positions (normally the authored start rows).
-pub fn start_terrain(rel_bytes: &[u8], players_x: [Option<f32>; 2]) -> Result<Terrain> {
-    let g = generator(rel_bytes)?;
-    let template = read_rel(rel_bytes)?;
-    let n = &template.node;
-    if n.scale != [1.0; 3] {
-        return Err(Error::invalid("unexpected platform template scale"));
-    }
-    let mut local = Vec::new();
-    let mut degenerate = 0;
-    for set in &template.attachment.meshsets {
-        for poly in &set.polygons {
-            for i in 0..collision::triangle_count(set, poly)? {
-                let t = collision::triangle_indices(set, poly, i);
-                if t.iter()
-                    .any(|&j| j as usize >= template.attachment.vertices.len())
-                {
-                    return Err(Error::invalid("platform index outside vertices"));
-                }
-                if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] {
-                    degenerate += 1;
-                } else {
-                    local.push(t);
-                }
-            }
-        }
-    }
-    let mut state = GeneratorState::default();
-    let input = FrameInput {
-        players: players_x,
-        ..Default::default()
-    };
-    let mut spawns = g.step(&mut state, &input)?;
-    spawns.extend(g.step(&mut state, &input)?);
-    let (mut vertices, mut triangles, mut platforms) = (Vec::new(), Vec::new(), Vec::new());
-    for s in spawns {
-        let persists = s.persists(&g);
-        let first = vertices.len() as u32;
-        if persists {
-            vertices.extend(
-                template
-                    .attachment
-                    .vertices
-                    .iter()
-                    .map(|v| [v[0] + s.x, v[1], v[2]]),
-            );
-            triangles.extend(local.iter().map(|t| t.map(|j| j + first)));
-        }
-        platforms.push(PlacedPlatform {
-            x: s.x,
-            timer: s.timer,
-            activated: s.activated,
-            persists,
-            first_vertex: persists.then_some(first),
-        });
-    }
-    Ok(Terrain {
-        source_sha256: REL_SHA256,
-        coordinate_space: "native SA2 world units; Y up; platform origin at (x, 0, 0)",
-        generator: g,
-        players_x,
-        template,
-        platforms,
-        vertices,
-        triangles,
-        template_degenerate_triangles: degenerate,
-        unknowns: vec![
-            "Spawned DODAI work Y, Z and angles are taken as zero: the generator writes only X, the timer and the activation byte, and the engine allocator was not executed.",
-            "Later platforms appear as players advance; use Generator::step per frame. Falling, timers after landing, meteors and player response are not simulated.",
-        ],
-    })
 }

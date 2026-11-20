@@ -76,9 +76,10 @@ If task +0x30 is nonzero, the engine task check runs first and a true result
 skips the whole update. The debris helper body, rendering and collision
 response are not executed.
 
-Consecutive platforms abut, forming one deck along +X. With both authored
-start rows at X 0 (Sonic Z −15, Shadow Z +15), the first two updates spawn
-seven platforms from X 0 to 1800, a solid deck from −150 to 1950.
+With both player slots at X 0 (the authored start rows), the generator's
+second update spawns seven platforms, X 0 to 1800. The generator writes only
+X, the timer and the activation byte; Y, Z and angles come from the engine
+allocator, which is not executed, so this port does not assemble a world mesh.
 
 ## Rust interface
 
@@ -88,13 +89,10 @@ seven platforms from X 0 to 1800, a solid deck from −150 to 1950.
 - `Generator::step(state, frame)` replays one DODAIGEN update. It refuses an
   update that would spawn more than 4096 platforms; at very large X the native
   loop would never end.
-- `duel_platform::start_terrain(rel, players_x)` returns the opening platforms
-  and their world-space collision triangles.
 - `duel_platform_motion::Platform::step(work, frame, rand)` replays one DODAI
   update from a spawn.
 
 ```powershell
-sa2-assets duel-terrain <game>\resource\gd_PC\stg42D.rel .local\out\terrain42.json <game>\sonic2app.exe
 sa2-assets duel-generator <game>\resource\gd_PC\stg42D.rel .local\out\gen.json REQUEST.json
 sa2-assets duel-platform-update <game>\resource\gd_PC\stg42D.rel .local\out\platform.json PLATFORM.json
 ```

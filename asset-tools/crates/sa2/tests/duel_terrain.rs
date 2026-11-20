@@ -39,13 +39,11 @@ fn generator_follows_players_and_deadline() {
     assert_eq!(first.len(), 7);
     assert_eq!(first[6].x, 1800.0);
     assert_eq!(first[1].timer, (-120i16) as u16);
-    assert!(first.iter().all(|p| p.persists(&g)));
-    // A player far ahead pulls the cursor; old platforms behind it fall at once.
+    // A player far ahead pulls the cursor forward.
     let ahead = g.step(&mut s, &frame(Some(5000.0), None)).unwrap();
     assert_eq!(ahead.first().unwrap().x, 2100.0);
     assert_eq!(ahead.last().unwrap().x, 6900.0);
     assert_eq!(ahead[0].timer, 1160);
-    assert!(!ahead[0].persists(&g));
     assert_eq!((s.frames, s.flags), (3, 0));
     // The counter passes three after this frame's spawning; later platforms
     // are created already activated with timer 900.
@@ -146,19 +144,6 @@ fn installed_template_matches_executable_platform() {
         (36000, 900, 720)
     );
     assert_eq!(g.collision_flags, 0x2800_0001);
-
-    let t = duel_platform::start_terrain(&rel, [Some(0.0), Some(0.0)]).unwrap();
-    let xs: Vec<f32> = t.platforms.iter().map(|p| p.x).collect();
-    assert_eq!(xs, [0.0, 300.0, 600.0, 900.0, 1200.0, 1500.0, 1800.0]);
-    assert!(t.platforms.iter().all(|p| p.persists));
-    assert_eq!(t.vertices.len(), 7 * 24);
-    assert_eq!(t.triangles.len() % 7, 0);
-    // Adjacent 300-unit platforms abut: one continuous deck from -150 to 1950.
-    let (lo, hi) = t
-        .vertices
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[0]), h.max(v[0])));
-    assert_eq!((lo, hi), (-150.0, 1950.0));
 }
 
 #[test]
