@@ -892,6 +892,8 @@ pub enum PlacementClock {
     SuperPlayer(Box<SuperPlayerFrame>),
     /// Section 1 + 0xe370: super-form flight movement for one frame.
     SuperFlight(Box<SuperFlightFrame>),
+    /// Section 1 + 0xc598: per-frame collision placement of a super form.
+    SuperCollision(Box<SuperCollisionFrame>),
     /// Section 1 + 0xeb38: the voice-channel gate checked before stage cues.
     /// `channels` is None when the engine channel table pointer is null.
     VoiceGate {
@@ -2660,6 +2662,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         }
         PlacementClock::SuperPlayer(frame) => return super_player(&rel, &frame),
         PlacementClock::SuperFlight(frame) => return super_flight(&rel, &frame),
+        PlacementClock::SuperCollision(frame) => return super_collision(&rel, &frame),
         PlacementClock::InitialHealth => {
             let data = phase_constant(&rel, 0x52a, 5)?;
             return Ok(serde_json::json!({"health": data[0] as i8 as f32}));
@@ -3572,4 +3575,59 @@ fn super_flight(
         serde_json::json!({"events":ev,"acceleration":acc,"thrust":out,"angle":angle,
         "scope":"Stage-side flight math of 0xe370. The engine stick query, vector and matrix services and the turn routines are observed; their effects are not modeled."}),
     )
+}
+
+/// Inputs to section 1 + 0xc598.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuperCollisionFrame {
+    pub entity: u32,
+    pub data2: u32,
+    pub player: u32,
+    pub action: i8,
+    /// Entity floats 0x14..0x1c (position) and player float 0x140.
+    pub position: [f32; 3],
+    pub height: f32,
+    /// The vector the engine call 0x8003e778 leaves in place of (0, height, 0).
+    pub rotated: [f32; 3],
+}
+/// Section 1 + 0xc598: unless the action is 67, clears the entity's X and Z
+/// rotation and two data2 words; then places the collision sphere at the
+/// position plus the rotated height offset.
+fn super_collision(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &SuperCollisionFrame,
+) -> Result<serde_json::Value> {
+    let store = |site: u32, region: &str, offset: u32, value: u32| serde_json::json!({"site":site,"store":region,"offset":offset,"size":4,"value":value});
+    let mut ev = Vec::new();
+    if f.action != 67 {
+        ev.extend([
+            store(0xc5cc, "data2", 0x20, 0),
+            store(0xc5d0, "data2", 0x18, 0),
+            store(0xc5d4, "entity", 0x10, 0),
+            store(0xc5d8, "entity", 0x8, 0),
+        ]);
+    }
+    let zero = stage_f32(rel, 0xc5de, 4, 0)?;
+    ev.push(
+        serde_json::json!({"site":0xc600,"call":engine_import(rel, 0xc600)?,
+        "args":[f.entity],"vectors":{"4":[zero, f.height, zero]}}),
+    );
+    let mut center = f.rotated;
+    for (i, site) in [0xc60cu32, 0xc610, 0xc618].into_iter().enumerate() {
+        ev.push(store(site, "inner", 8 + 4 * i as u32, center[i].to_bits()));
+    }
+    for (i, site) in [0xc628u32, 0xc638, 0xc648].into_iter().enumerate() {
+        center[i] += f.position[i];
+        ev.push(store(site, "inner", 8 + 4 * i as u32, center[i].to_bits()));
+    }
+    for (i, site) in [0xc654u32, 0xc658, 0xc660].into_iter().enumerate() {
+        ev.push(store(
+            site,
+            "inner",
+            0x38 + 4 * i as u32,
+            center[i].to_bits(),
+        ));
+    }
+    Ok(serde_json::json!({"events":ev,"center":center}))
 }

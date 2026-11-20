@@ -17,6 +17,7 @@ its call site, target and the arguments the stage code sets, and its result is a
 | `timed_voice` | 0xf070 | Timed boss voice lines |
 | `super_player` | 0xad8c | One update of a super-form player (control flow) |
 | `super_flight` | 0xe370 | Super-form flight thrust, speed bands and turning |
+| `super_collision` | 0xc598 | Per-frame collision sphere placement for a super form |
 
 ## Handoff camera
 
@@ -115,8 +116,11 @@ runs the engine follow and tail calls only. Otherwise it counts the 6-frame cycl
 Every dispatch case ends with three engine calls: 0x80046b7c, 0x80045618 and 0x8003e400. The
 effect block then follows the travel since the last frame. For character 9 the scale is 0.25,
 with thresholds 0.8 and 0.4; for character 10 it is 0.2, with 0.64 and 0.4. When 0x8004fda0
-reports a defeat, the action becomes 58. The local handlers 0xbad0, 0xc598, 0xe9f0, 0xe1ac,
-0xc67c and 0xdc90 are reported with their arguments, but not yet ported; 0xe370 is ported below.
+reports a defeat, the action becomes 58. The local handlers 0xbad0, 0xe9f0, 0xe1ac, 0xc67c and
+0xdc90 are reported with their arguments, but not yet ported. 0xe370 (flight) and 0xc598
+(collision placement) are ported. 0xc598 clears entity rotation words 8 and 0x10 and data2 words
+0x18 and 0x20 unless the action is 67. It then places the collision sphere (inner words 8..0x10,
+copied to 0x38..0x40) at the position plus the engine-rotated offset (0, player float 0x140, 0).
 
 ## Flight movement
 
@@ -148,6 +152,7 @@ instructions with relocated data and compare them against the Rust output:
 | `tests/finalhazard_switch_camera_ppc.py` | 336 camera packets: both states, both slots, characters 9/10/−1, yaw wraparound, modes −1/13/14/20 |
 | `tests/finalhazard_handoff_replay_ppc.py` | 400 replays, 39,182 frames; every call, argument and non-stack store in order. Stage calls and the handoff start run natively in 240 replays, 160 of them starting in state 0 or out of range. Every reachable branch must be reached |
 | `tests/finalhazard_super_flight_ppc.py` | 3,000 flight updates across all speed bands, both stick states, every turn routine; engine pointer outputs written into emulated memory |
+| `tests/finalhazard_super_collision_ppc.py` | 500 collision placements |
 | `tests/finalhazard_super_player_ppc.py` | 1,500 updates across every dispatched action, both characters, effect block present or absent; every call, argument and non-stack store |
 | `tests/finalhazard_stage_frame_ppc.py` | 197 voice-gate, 600 arena (270 radial clamps) and 3,000 voice-line cases |
 
