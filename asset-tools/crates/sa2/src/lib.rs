@@ -52,6 +52,7 @@ pub mod land_select;
 pub mod manifest;
 pub mod model;
 pub mod motion;
+pub mod mov_control;
 pub mod msl_math;
 pub mod ninja_matrix;
 pub mod ninja_trig;
