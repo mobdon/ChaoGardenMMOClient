@@ -980,6 +980,10 @@ pub enum PlacementClock {
     AttackUpdate(Box<AttackUpdateFrame>),
     /// Section 1 + 0x5808..0x59ac: attack piece helpers.
     AttackPiece(Box<AttackPieceFrame>),
+    /// Section 1 + 0x59b0: attack formation spawn.
+    AttackFormation(Box<AttackFormationFrame>),
+    /// Section 1 + 0x5c04: attack hold timer.
+    AttackHold(Box<AttackHoldFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2780,6 +2784,8 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::AttackObject(frame) => return attack_object(&rel, &frame),
         PlacementClock::AttackUpdate(frame) => return attack_update(&rel, &frame),
         PlacementClock::AttackPiece(frame) => return attack_piece(&rel, &frame),
+        PlacementClock::AttackFormation(frame) => return attack_formation(&rel, &frame),
+        PlacementClock::AttackHold(frame) => return attack_hold(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -8600,4 +8606,170 @@ fn attack_piece(
         out["returned"] = serde_json::json!(r);
     }
     Ok(out)
+}
+
+/// What the formation spawn reads: block half-word 0 (the piece count),
+/// the f1 results of local 0x40cc (square root) and 0x80111fd8 (floor),
+/// stage byte 0 (through module word 6:0x4a8), the engine sine and cosine
+/// results in call order (single precision), the pieces local 0x55d8
+/// returns in order, and the entity flags half-word 4.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttackFormationFrame {
+    pub task: u32,
+    pub count: i16,
+    pub root: f32,
+    pub floor: f64,
+    pub stage_id: i8,
+    pub trig: Vec<f32>,
+    pub pieces: Vec<u32>,
+    pub flags: i16,
+}
+/// Section 1 + 0x59b0: spawn `count` pieces in a grid of floor(sqrt(count))
+/// rows across the sphere of radius 5:0x3ff8, the columns sweeping from the
+/// stage side, each piece stored in the table at 6:0x274. A failed spawn
+/// trims the count and stops; otherwise the attack moves to action 1 (with
+/// a 60-frame hold when entity flag 0x100 is set).
+fn attack_formation(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &AttackFormationFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let st = |site: u32,
+              region: &str,
+              offset: serde_json::Value,
+              size: u32,
+              value: serde_json::Value| serde_json::json!({"site":site,"store":region,"offset":offset,"size":size,"value":value});
+    let n = |v: u32| serde_json::json!(v);
+    let radius = {
+        let r = rel
+            .reference(1, 0x5a86)
+            .filter(|r| r.module == 88 && r.section == 5)
+            .ok_or_else(|| Error::invalid("missing formation radius"))?;
+        let at = r.addend as usize + 8;
+        let b = rel
+            .data(5)?
+            .get(at..at + 4)
+            .ok_or_else(|| Error::invalid("formation radius out of range"))?;
+        f32::from_be_bytes(b.try_into().unwrap())
+    };
+    let mut trig = f.trig.iter().copied();
+    let mut next_trig = || {
+        trig.next()
+            .ok_or_else(|| Error::invalid("missing trig result"))
+    };
+    let mut pieces = f.pieces.iter().copied();
+    let count = i32::from(f.count);
+    let mut root = serde_json::json!({"site":0x5a00,"local":0x40cc,"args":[],
+        "floats":[f64::from(biased_float(rel, 0x59de, count)?)]});
+    root["result"] = serde_json::json!(f64::from(f.root));
+    let mut floor = call(0x5a04, serde_json::json!([]))?;
+    floor["floats"] = serde_json::json!([f64::from(f.root)]);
+    let mut ev = vec![root, floor];
+    let rows = fctiwz(f.floor) as i16 as i32;
+    if rows == 0 {
+        return Err(Error::invalid(
+            "zero rows divides by zero in the native code",
+        ));
+    }
+    let rest = (count - rows * rows) as i16 as i32;
+    let q = rest / rows;
+    let extra = if (rest - q * rows) as i8 == 0 {
+        q as i8 as i32
+    } else {
+        q + 1
+    };
+    let row_step = 0x6000 / (rows + 1);
+    let columns = (rows + extra as i8 as i32) as i16 as i32;
+    let column_step = 0x6000 / (columns + 1);
+    let mut row_angle = -0x3000i32;
+    let mut index = 0i32;
+    let mut slot = 0u32;
+    let mut row = 0i32;
+    let finish = |ev: &mut Vec<serde_json::Value>, a: u32, b: u32, c: u32| {
+        if f.flags & 0x100 != 0 {
+            ev.push(st(a, "entity", n(6), 2, n(0x3c)));
+        }
+        ev.push(st(b, "entity", n(0), 1, n(1)));
+        ev.push(st(c, "entity", n(1), 1, n(0)));
+    };
+    while (row as i8 as i32) < rows {
+        row_angle = row_angle.wrapping_add(row_step);
+        ev.push(call(0x5aa8, serde_json::json!([row_angle as u32]))?);
+        let height = -(radius * next_trig()?);
+        ev.push(call(0x5abc, serde_json::json!([row_angle as u32]))?);
+        let ring = radius * next_trig()?;
+        let mut column_angle: i32 = if f.stage_id == 0 { -0x7000 } else { 0x1000 };
+        let mut column = 0i32;
+        while (column as i8 as i32) < columns {
+            column_angle = column_angle.wrapping_add(column_step);
+            ev.push(call(0x5b08, serde_json::json!([column_angle as u32]))?);
+            let x = ring * next_trig()?;
+            ev.push(call(0x5b1c, serde_json::json!([column_angle as u32]))?);
+            let z = -(ring * next_trig()?);
+            ev.push(serde_json::json!({"site":0x5b3c,"local":0x55d8,"args":[f.task, "stack", 0, index as u32],
+                "vectors":{"1": [f64::from(x), f64::from(height), f64::from(z)]}}));
+            let piece = pieces
+                .next()
+                .ok_or_else(|| Error::invalid("missing spawned piece"))?;
+            if piece == 0 {
+                ev.push(st(
+                    0x5b4c,
+                    "block",
+                    n(0),
+                    2,
+                    n((index as i8 as i32 as u32) & 0xffff),
+                ));
+                return Ok(serde_json::json!({"events":ev}));
+            }
+            ev.push(st(
+                0x5b54,
+                "module",
+                serde_json::json!(module_ref(rel, 0x5a62, 4 * slot)?),
+                4,
+                n(piece),
+            ));
+            column += 1;
+            index += 1;
+            if index as i8 as i32 == count {
+                finish(&mut ev, 0x5b84, 0x5b8c, 0x5b94);
+                return Ok(serde_json::json!({"events":ev}));
+            }
+            slot += 1;
+        }
+        row += 1;
+    }
+    finish(&mut ev, 0x5bd0, 0x5bd8, 0x5be0);
+    Ok(serde_json::json!({"events":ev}))
+}
+
+/// Entity flags half-word 4 and half-word 6 (the hold timer).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttackHoldFrame {
+    pub flags: i16,
+    pub timer: u16,
+}
+/// Section 1 + 0x5c04: while entity flag 0x100 is set, count the hold down
+/// and relaunch (30 frames, action 2) when it runs out.
+fn attack_hold(
+    _rel: &crate::city_rel::CityRel<'_>,
+    f: &AttackHoldFrame,
+) -> Result<serde_json::Value> {
+    let st = |site: u32, offset: u32, size: u32, value: u32| serde_json::json!({"site":site,"store":"entity","offset":offset,"size":size,"value":value});
+    let mut ev = Vec::new();
+    if f.flags & 0x100 != 0 {
+        let left = f.timer.wrapping_sub(1);
+        ev.push(st(0x5c20, 6, 2, left.into()));
+        if left == 0 {
+            ev.extend([
+                st(0x5c34, 6, 2, 0x1e),
+                st(0x5c3c, 0, 1, 2),
+                st(0x5c44, 1, 1, 0),
+            ]);
+        }
+    }
+    Ok(serde_json::json!({"events":ev}))
 }
