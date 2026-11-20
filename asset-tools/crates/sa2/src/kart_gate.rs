@@ -90,7 +90,7 @@ fn verified_module(bytes: &[u8]) -> Result<CityRel<'_>> {
     {
         return Err(Error::invalid("unsupported CartD.rel revision"));
     }
-    CityRel::read_identified(bytes, 80)
+    CityRel::read_stage(bytes, "CartD.rel")
 }
 pub fn tick(bytes: &[u8], s: GateTick) -> Result<GateResult> {
     let rel = verified_module(bytes)?;
@@ -120,7 +120,7 @@ fn tick_registered(rel: &CityRel<'_>, s: GateTick) -> Result<GateResult> {
                 ));
             }
             r.latch = 1;
-            r.calls.push("main:8006b710(25,0,0,0)");
+            r.calls.push("main:8006b978(25,0,0,0)");
             r.timer_word = r
                 .timer_word
                 .wrapping_add((ticks as i32 as u32).wrapping_mul(60));

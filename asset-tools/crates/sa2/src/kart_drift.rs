@@ -216,7 +216,7 @@ pub fn tick(bytes: &[u8], s: Input) -> Result<Update> {
     if s.sustained.is_none() && !(0..5).contains(&s.work_a4) {
         return Err(Error::invalid("state 2 requires windup index 0 through 4"));
     }
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     let data = rel.data(5)?;
     let constants = rel.data(4)?;
     let f = |i: usize| f32::from_be_bytes(constants[i..i + 4].try_into().unwrap());

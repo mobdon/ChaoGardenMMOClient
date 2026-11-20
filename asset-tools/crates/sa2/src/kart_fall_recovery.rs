@@ -81,7 +81,7 @@ fn run(bytes: &[u8], s: Input, route: Option<&[[[f32; 2]; 4]]>) -> Result<Output
         .map(|r| r.len() as i32)
         .or(s.segment_count)
         .ok_or_else(|| Error::invalid("missing recovery segment count"))?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let data = rel.data(4)?;
     let f = |n: usize| f32::from_be_bytes(data[n..n + 4].try_into().unwrap());
     let mut v = s.vehicle;
@@ -464,7 +464,7 @@ fn contact_sequence(
     let s = s.fields;
     let impact = previous
         .map(|(before, work_b8)| -> Result<Impact> {
-            let rel = CityRel::read_identified(bytes, 80)?;
+            let rel = CityRel::read_stage(bytes, "CartD.rel")?;
             let tolerance = f32::from_be_bytes(rel.data(4)?[0x240..0x244].try_into().unwrap());
             let speed = |[x, z]: [f32; 2]| (x * x + z * z).sqrt();
             let now = speed([c.velocity[0], c.velocity[2]]);

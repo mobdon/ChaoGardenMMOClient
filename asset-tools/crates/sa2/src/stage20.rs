@@ -1,5 +1,5 @@
 //! Stage 20 registered entry task: initial service request and position tracking.
-use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+use crate::{city_rel::CityRel, Error, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 #[derive(Deserialize)]
@@ -35,7 +35,7 @@ fn splash_spawn(rel: &CityRel<'_>, s: SplashSpawn) -> Result<Value> {
     let invalid = || Error::invalid("inconsistent splash spawn observation");
     let ptr = |site, section| {
         rel.reference(1, site)
-            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.section == section && r.kind == 4)
             .map(|r| r.addend as usize)
             .ok_or_else(invalid)
     };
@@ -96,7 +96,7 @@ fn splash_secondary(rel: &CityRel<'_>, s: SplashSecondary) -> Result<Value> {
             let missing = || Error::invalid("missing secondary splash constant");
             let r = rel
                 .reference(1, site)
-                .filter(|r| r.module == 19 && r.kind == 4 && r.section == 4)
+                .filter(|r| r.module == rel.module_id() && r.kind == 4 && r.section == 4)
                 .ok_or_else(missing)?;
             let at = r.addend as usize;
             Ok(f32::from_be_bytes(
@@ -124,7 +124,9 @@ fn splash_secondary(rel: &CityRel<'_>, s: SplashSecondary) -> Result<Value> {
             if let Some(allocated) = s.allocations {
                 let ptr = |site, section| {
                     rel.reference(1, site)
-                        .filter(|r| r.module == 19 && r.kind == 4 && r.section == section)
+                        .filter(|r| {
+                            r.module == rel.module_id() && r.kind == 4 && r.section == section
+                        })
                         .map(|r| r.addend)
                         .ok_or_else(|| Error::invalid("missing ripple factory reference"))
                 };
@@ -169,7 +171,7 @@ fn splash_update(rel: &CityRel<'_>, mut s: SplashUpdate) -> Result<Value> {
         let err = || Error::invalid("missing splash update data");
         let r = rel
             .reference(1, site)
-            .filter(|r| r.kind == 4 && r.module == 19)
+            .filter(|r| r.kind == 4 && r.module == rel.module_id())
             .ok_or_else(err)?;
         let at = r.addend as usize + delta;
         Ok(u32::from_be_bytes(
@@ -231,7 +233,7 @@ fn splash_display(rel: &CityRel<'_>, s: SplashDisplay) -> Result<Value> {
     let missing = || Error::invalid("missing splash display reference");
     let data = |site| {
         rel.reference(1, site)
-            .filter(|r| r.module == 19 && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.kind == 4)
             .ok_or_else(missing)
     };
     let ptr = |site| data(site).map(|r| r.addend);
@@ -338,7 +340,7 @@ fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
             link = 0;
         }
         let bits = |site| -> Result<u32> {
-            let p = field(site, 19, 4)? as usize;
+            let p = field(site, rel.module_id(), 4)? as usize;
             Ok(u32::from_be_bytes(
                 rel.data(4)?
                     .get(p..p + 4)
@@ -366,27 +368,33 @@ fn stage_exit(rel: &CityRel<'_>, e: StageExit) -> Result<Value> {
         (1, 0x1ada, 8, 0x1aea),
         (2, 0x1b02, 36, 0x1b12),
     ] {
-        if slots[idx] == e.code_base.wrapping_add(field(reference, 19, 1)?) {
+        if slots[idx]
+            == e.code_base
+                .wrapping_add(field(reference, rel.module_id(), 1)?)
+        {
             slots[idx] = 0;
             ops.push(json!({"clear":field(base,0,6)?+offset}));
         }
     }
     let mut splash = json!({"local":0xcac4});
     if expand_cleanup {
-        splash["release"] = engine(0xcad8, json!([field(0xcad6, 19, 5)?]))?;
+        splash["release"] = engine(0xcad8, json!([field(0xcad6, rel.module_id(), 5)?]))?;
     }
     ops.push(splash);
     ops.push(engine(0x1b28, json!([]))?);
     for (site, left, right) in [(0x1b3c, 0x1b32, 0x1b3a), (0x1b50, 0x1b46, 0x1b4e)] {
         ops.push(engine(
             site,
-            json!([field(left, 19, 5)?, field(right, 19, 5)?]),
+            json!([
+                field(left, rel.module_id(), 5)?,
+                field(right, rel.module_id(), 5)?
+            ]),
         )?);
     }
     ops.push(engine(0x1b54, json!([]))?);
     if e.layout_handle != 0 {
         ops.push(engine(0x1b6c, json!([e.layout_handle]))?);
-        ops.push(json!({"clearBss":field(0x1b5e,19,6)?}));
+        ops.push(json!({"clearBss":field(0x1b5e,rel.module_id(),6)?}));
     }
     ops.push(engine(0x1b78, json!([]))?);
     Ok(json!({"slots":slots,"layoutHandle":0,"operations":ops}))
@@ -409,7 +417,7 @@ fn background_draw_calls(rel: &CityRel<'_>, d: BackgroundDraw) -> Result<Value> 
     let invalid = || Error::invalid("invalid duel background callback");
     let ptr = |site, section| {
         rel.reference(1, site)
-            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.section == section && r.kind == 4)
             .map(|r| r.addend)
             .ok_or_else(invalid)
     };
@@ -475,7 +483,7 @@ fn background_updates(rel: &CityRel<'_>, b: Background) -> Result<Value> {
     let invalid = || Error::invalid("invalid duel background table");
     let reference = |site, section| {
         rel.reference(1, site)
-            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.section == section && r.kind == 4)
             .map(|r| r.addend as usize)
             .ok_or_else(invalid)
     };
@@ -541,7 +549,7 @@ fn walker_setup(rel: &CityRel<'_>, w: Walker) -> Result<Value> {
     let invalid = || Error::invalid("inconsistent walker initialization observation");
     let ptr = |site, section| {
         rel.reference(1, site)
-            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.section == section && r.kind == 4)
             .map(|r| r.addend)
             .ok_or_else(invalid)
     };
@@ -609,7 +617,7 @@ fn fog_load(rel: &CityRel<'_>, v: FogLoad) -> Result<Value> {
     }
     let ptr = |site, section| {
         rel.reference(1, site)
-            .filter(|r| r.module == 19 && r.section == section && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.section == section && r.kind == 4)
             .map(|r| r.addend)
             .ok_or_else(invalid)
     };
@@ -690,7 +698,7 @@ fn opponent_startup(rel: &CityRel<'_>, s: Startup) -> Result<Value> {
         let invalid = || Error::invalid("invalid duel layout setup relocation");
         let pointer = |site, section| {
             rel.reference(1, site)
-                .filter(|r| r.module == 19 && r.kind == 4 && r.section == section)
+                .filter(|r| r.module == rel.module_id() && r.kind == 4 && r.section == section)
                 .map(|r| r.addend)
                 .ok_or_else(invalid)
         };
@@ -854,22 +862,15 @@ fn splash_sites(q: i32) -> (u32, u32, u32) {
 }
 
 fn identified_module(module: &[u8]) -> Result<CityRel<'_>> {
-    let invalid = || Error::invalid("unexpected stage 20 entry module");
-    let source = stage_land::catalog()
-        .iter()
-        .find(|s| s.filename == "stg20D.rel")
-        .ok_or_else(invalid)?;
-    if module.len() != source.size || manifest::sha256(module) != source.sha256 {
-        return Err(invalid());
-    }
-    CityRel::read_identified(module, source.module)
+    CityRel::read_stage(module, "stg20D.rel")
+        .map_err(|_| Error::invalid("unexpected stage 20 entry module"))
 }
 pub fn splash_resource(module: &[u8], q: i32) -> Result<(String, usize)> {
     let rel = identified_module(module)?;
     let (_, name, list) = splash_sites(q);
     let at = |site| {
         rel.reference(1, site)
-            .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.section == 5 && r.kind == 4)
             .map(|r| r.addend as usize)
             .ok_or_else(|| Error::invalid("missing splash list reference"))
     };
@@ -893,7 +894,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
     let rel = identified_module(module)?;
     let constant = |pc| -> Result<f32> {
         let r = rel.reference(1, pc).ok_or_else(invalid)?;
-        if (r.module, r.section, r.kind) != (19, 4, 4) {
+        if (r.module, r.section, r.kind) != (rel.module_id(), 4, 4) {
             return Err(invalid());
         }
         let at = r.addend as usize;
@@ -928,7 +929,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         if mode == 0 {
             let f = constant(0x1bd6)?;
             call = Some(
-                json!({"engine":0x800c82dcu32,"slot":0,"positionAtCall":position,"float4":f,"float8":f,
+                json!({"engine":0x800c8544u32,"slot":0,"positionAtCall":position,"float4":f,"float8":f,
                 "word12":10,"byte16":1,"byte17":0,"float20":constant(0x1bee)?,"float24":constant(0x1c16)?,"word28":0}),
             );
             mode = 1;
@@ -941,7 +942,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
         }
         frames.push(json!({"mode":mode,"position":position,"call":call}));
     }
-    let mut report = json!({"module":19,"entry":0x1b90,"frames":frames});
+    let mut report = json!({"module":rel.module_id(),"entry":0x1b90,"frames":frames});
     if let Some(s) = secondary {
         report["splashSecondary"] = splash_secondary(&rel, s)?;
     }
@@ -996,7 +997,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
                 }
                 let r = rel
                     .reference(1, 0x118f6)
-                    .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+                    .filter(|r| r.module == rel.module_id() && r.section == 5 && r.kind == 4)
                     .ok_or_else(invalid)?;
                 let at = (r.addend + idx * 4) as usize;
                 let kind = u32::from_be_bytes(
@@ -1046,7 +1047,7 @@ pub fn replay(module: &[u8], request: &[u8]) -> Result<Value> {
             }
             let table = rel
                 .reference(1, 0x11762)
-                .filter(|r| r.module == 19 && r.section == 5 && r.kind == 4)
+                .filter(|r| r.module == rel.module_id() && r.section == 5 && r.kind == 4)
                 .ok_or_else(invalid)?
                 .addend as usize;
             let at = table + 4 * index;
@@ -1274,7 +1275,7 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
     let invalid = || Error::invalid("unexpected walker controller observation");
     let field = |pc, sect| {
         rel.reference(1, pc)
-            .filter(|r| r.module == 19 && r.section == sect && r.kind == 4)
+            .filter(|r| r.module == rel.module_id() && r.section == sect && r.kind == 4)
             .map(|r| r.addend)
             .ok_or_else(invalid)
     };
@@ -1579,7 +1580,7 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         };
         report = json!({"dispatch":target,"continueAt":0x1424,"steering":steering,"mode":mode,
             "counter":if mode!=5 || pulse {0}else{v.counter},"timerWrite":timer,
-            "byteWrites":if pulse {vec![0x803ad485u32,0x803ad495]}else{vec![]}});
+            "byteWrites":if pulse {vec![0x803ad885u32,0x803ad895]}else{vec![]}});
     }
     if let Some(v) = c.state_two {
         if target != 0xad4 {
@@ -1705,7 +1706,7 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
             report["mode"] = json!(mode);
             report["counter"] = json!(counter);
             report["byteWrites"] = json!(if pulse {
-                vec![0x803ad485u32, 0x803ad495]
+                vec![0x803ad885u32, 0x803ad895]
             } else {
                 vec![]
             });
@@ -1741,7 +1742,7 @@ fn dispatch_controller(rel: &CityRel<'_>, c: Controller) -> Result<Value> {
         }
         report = json!({"dispatch":target,"continueAt":0x1424,"mode":mode,"timerWrite":timer,"counter":counter,
             "angleArgs":[v.slot0[0]-v.slot1[0],v.slot0[2]-v.slot1[2]],"yaw":yaw,"scalar":number(4,field(0x13ca,4)?)?,
-            "byteWrites":if pulse{vec![0x803ad485u32,0x803ad495]}else{vec![]},"operations":ops});
+            "byteWrites":if pulse{vec![0x803ad885u32,0x803ad895]}else{vec![]},"operations":ops});
     }
     if let Some(v) = c.state_one {
         if target != 0x924 {
@@ -1845,7 +1846,7 @@ fn arena_bounds(rel: &CityRel<'_>, mut position: [f32; 3]) -> Result<Value> {
     let value = |site, displacement: usize| -> Result<f32> {
         let reference = rel
             .reference(1, site)
-            .filter(|r| r.module == 19 && r.kind == 4 && r.section == 5)
+            .filter(|r| r.module == rel.module_id() && r.kind == 4 && r.section == 5)
             .ok_or_else(invalid)?;
         let at = reference.addend as usize + displacement;
         Ok(f32::from_be_bytes(

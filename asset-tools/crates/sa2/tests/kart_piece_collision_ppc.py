@@ -9,6 +9,7 @@ Usage: python kart_piece_collision_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR
   generated slot/mode/count cases and compare the register/unregister call.
 """
 import json
+from gsne8p import steam_rel
 import random
 import struct
 import subprocess
@@ -33,7 +34,7 @@ for section, addr in base.items():
         u.mem_write(addr, data[off:off + size])
 for mod, at in struct.iter_unpack(">II", data[word(40):word(40) + word(44)]):
     while True:
-        delta, kind, sec, add = struct.unpack_from(">HBBI", data, at)
+        delta, kind, sec, add = steam_rel(struct.unpack_from(">HBBI", data, at), mod)
         at += 8
         if kind == 203:
             break

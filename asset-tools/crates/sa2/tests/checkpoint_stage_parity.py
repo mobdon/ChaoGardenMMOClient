@@ -3,11 +3,12 @@ import hashlib
 import os
 import struct
 from pathlib import Path
+from gsne8p import IMPORTS
 
 root = Path(os.environ["SA2_GAME_PATH"]) / "resource/gd_PC"
 
 
-def load(path):
+def load(path, steam=True):
     data = path.read_bytes()
     word = lambda off: struct.unpack_from(">I", data, off)[0]
     section = word(16) + 8
@@ -29,18 +30,18 @@ def load(path):
             if target == 5 and module == word(0) and kind == 1 and sec == 1:
                 pointers[off] = addend
             if target == 1 and module == 0:
-                imports[off] = (kind, sec, addend)
+                imports[off] = (kind, sec, IMPORTS[addend] if steam else addend)
             if target == 1 and module == word(0) and kind in (4,6):
                 sec_base=word(word(16)+8*sec)&~1
                 local[off]=(kind,sec,addend,data[sec_base+addend:sec_base+addend+8])
     return data[start:start+word(section+4)], imports, local, pointers
 
 
-city_path = root/"stg13D.rel"
-assert hashlib.sha256(city_path.read_bytes()).hexdigest() == "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b"
-city, reference, city_local, city_ptr = load(city_path)
-assert reference[0x43cc8] == (10, 2, 0x80065148)
-assert [reference[i][2] for i in (0x43dcc,0x43dd4)] == [0x800651f4,0x800651c0]
+city_path = Path(os.environ["SA2_GC_REL_DIR"])/"stg13D.rel"
+assert hashlib.sha256(city_path.read_bytes()).hexdigest() == "f5a986c2be0c7f8577538202cca0f714299617203a8cb1d7ef37d4d11f827423"
+city, reference, city_local, city_ptr = load(city_path, steam=False)
+assert reference[0x43cc8] == (10, 2, 0x800653b0)
+assert [reference[i][2] for i in (0x43dcc,0x43dd4)] == [0x8006545c,0x80065428]
 matched = []
 layouts = []
 for path in sorted(root.glob("stg*D.rel")):

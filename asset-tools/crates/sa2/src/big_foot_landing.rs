@@ -75,7 +75,7 @@ pub(super) fn run(
                         calls.push(json!({"engine2558":[11,0,0,10]}));
                         calls.push(json!({"motion":5}));
                         for offset in anchors {
-                            calls.push(json!({"helper57524":[offset,120]}));
+                            calls.push(json!({"helper57818":[offset,120]}));
                         }
                         s.flags |= 0x100;
                         calls.push(json!({"disableCollision":8}));
@@ -94,7 +94,7 @@ pub(super) fn run(
                     s.flags |= 1;
                     height = Some(0.);
                     calls.extend([
-                        json!("helper55148"),
+                        json!("helper5543c"),
                         json!({"engine2558":[7,0,0,100]}),
                         json!("engine276c"),
                         json!({"effectDescriptor":844}),

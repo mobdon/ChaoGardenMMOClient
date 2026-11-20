@@ -55,7 +55,7 @@ pub struct Tick {
 /// CartD 0x42c8..0x46f4. Imported angle, trig, distance and RNG results are observations.
 pub fn tick(bytes: &[u8], s: Input) -> Result<Tick> {
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     tick_verified(&rel, s)
 }
 fn tick_verified(rel: &CityRel, s: Input) -> Result<Tick> {
@@ -263,7 +263,7 @@ pub struct Setup {
 /// Module-wide writes made by race setup at 0x5ce8..0x5e74.
 pub fn setup(bytes: &[u8], s: SetupInput) -> Result<Setup> {
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let c = rel.data(4)?;
     let d = rel.data(5)?;
     let f = |p: &[u8], i: usize| f32::from_be_bytes(p[i..i + 4].try_into().unwrap());

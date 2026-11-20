@@ -14,7 +14,7 @@
 //! state, the Ninja sine, cosine and matrix calls, and child-task creation.
 //! The matrix calls are reported in order with their arguments, and the
 //! caller supplies `calc_point`.
-use crate::{city_rel::CityRel, manifest, stage_land, Error, Result};
+use crate::{city_rel::CityRel, manifest, Error, Result};
 use serde::Serialize;
 
 /// Section 1 range holding both callbacks and their helpers.
@@ -25,25 +25,25 @@ pub const CODE_HASH: &str = "774d303d924ed508fb67a6b552fc1bccab8e71fb4ec6e8600fd
 
 /// Engine imports at offsets from `CODE_START`: (offset, address).
 const IMPORTS: &[(u32, u32)] = &[
-    (0x74, 0x8011_5d50),  // linear: njPushMatrix
-    (0x7c, 0x8011_509c),  // linear: unit matrix
-    (0x84, 0x8011_5e24),  // linear: translate
-    (0x90, 0x8011_5560),  // linear: rotate (angle Z)
-    (0x9c, 0x8011_54e0),  // linear: rotate (angle Y)
-    (0xa8, 0x8011_5918),  // linear: rotate (angle X)
-    (0xf0, 0x8011_2050),  // linear: sine
-    (0x108, 0x8011_4bc4), // linear: calc point
-    (0x12c, 0x8011_5d9c), // linear: pop
-    (0x280, 0x8006_538c), // linear init: clip gate
-    (0x338, 0x8011_94b4), // work allocation
-    (0x37c, 0x8006_5120), // SET state read
-    (0x4c0, 0x8007_1878), // destructor: free child
-    (0x510, 0x8006_5134), // destructor: save SET state
-    (0x520, 0x8011_94e0), // destructor: free work
-    (0x5b4, 0x8006_538c), // update: clip gate
-    (0x618, 0x8007_1ba4), // update: create child task
-    (0x6ac, 0x8006_5148), // update: mark SET entry done
-    (0x6b8, 0x8007_1878), // update: free task
+    (0x74, 0x8011_6098),  // linear: njPushMatrix
+    (0x7c, 0x8011_53e4),  // linear: unit matrix
+    (0x84, 0x8011_616c),  // linear: translate
+    (0x90, 0x8011_58a8),  // linear: rotate (angle Z)
+    (0x9c, 0x8011_5828),  // linear: rotate (angle Y)
+    (0xa8, 0x8011_5c60),  // linear: rotate (angle X)
+    (0xf0, 0x8011_2398),  // linear: sine
+    (0x108, 0x8011_4f0c), // linear: calc point
+    (0x12c, 0x8011_60e4), // linear: pop
+    (0x280, 0x8006_55f4), // linear init: clip gate
+    (0x338, 0x8011_97fc), // work allocation
+    (0x37c, 0x8006_5388), // SET state read
+    (0x4c0, 0x8007_1ae0), // destructor: free child
+    (0x510, 0x8006_539c), // destructor: save SET state
+    (0x520, 0x8011_9828), // destructor: free work
+    (0x5b4, 0x8006_55f4), // update: clip gate
+    (0x618, 0x8007_1e0c), // update: create child task
+    (0x6ac, 0x8006_53b0), // update: mark SET entry done
+    (0x6b8, 0x8007_1ae0), // update: free task
 ];
 
 fn invalid() -> Error {
@@ -83,14 +83,8 @@ pub struct Program {
 impl Program {
     /// Read and verify the ring-group code of an installed stage REL.
     pub fn read(filename: &str, bytes: &[u8]) -> Result<Self> {
-        let info = stage_land::catalog()
-            .iter()
-            .find(|i| i.filename == filename)
-            .ok_or_else(invalid)?;
-        if bytes.len() != info.size || manifest::sha256(bytes) != info.sha256 {
-            return Err(invalid());
-        }
-        let rel = CityRel::read_identified(bytes, info.module)?;
+        let rel = CityRel::read_stage(bytes, &filename).map_err(|_| invalid())?;
+        let module = rel.module_id();
         let row = |want: &[u8]| -> Result<u32> {
             let d5 = rel.data(5)?;
             for row in (4..d5.len() as u32).step_by(4) {
@@ -137,7 +131,7 @@ impl Program {
             let lo = rel.reference(1, CODE_START + at + 6).ok_or_else(invalid)?;
             if (
                 hi.module, hi.kind, hi.section, lo.module, lo.kind, lo.section,
-            ) != (info.module, 6, 4, info.module, 4, 4)
+            ) != (module, 6, 4, module, 4, 4)
                 || hi.addend != lo.addend
             {
                 return Err(invalid());
@@ -149,7 +143,7 @@ impl Program {
             return Err(invalid());
         }
         Ok(Self {
-            module: info.module,
+            module,
             linear_init,
             circle_init,
             spacing_base,
@@ -313,15 +307,15 @@ impl RingGroup {
                 position: self.position,
             },
             Call::Rotate {
-                import: 0x8011_5560,
+                import: 0x8011_58a8,
                 angle: a[2],
             },
             Call::Rotate {
-                import: 0x8011_54e0,
+                import: 0x8011_5828,
                 angle: a[1],
             },
             Call::Rotate {
-                import: 0x8011_5918,
+                import: 0x8011_5c60,
                 angle: a[0],
             },
         ]);

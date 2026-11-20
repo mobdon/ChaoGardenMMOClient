@@ -53,7 +53,7 @@ pub struct Output {
 }
 pub fn tick(bytes: &[u8], s: Input) -> Result<Output> {
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     tick_verified(&rel, s)
 }
 pub(crate) fn tick_verified(rel: &CityRel, s: Input) -> Result<Output> {

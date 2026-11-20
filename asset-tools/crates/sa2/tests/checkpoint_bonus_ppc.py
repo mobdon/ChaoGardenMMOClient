@@ -4,8 +4,8 @@ from pathlib import Path
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
 
-d = (Path(os.environ["SA2_GAME_PATH"]) / "resource/gd_PC/stg13D.rel").read_bytes()
-assert hashlib.sha256(d).hexdigest() == "bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b"
+d = (Path(os.environ["SA2_GC_REL_DIR"]) / "stg13D.rel").read_bytes()
+assert hashlib.sha256(d).hexdigest() == "f5a986c2be0c7f8577538202cca0f714299617203a8cb1d7ef37d4d11f827423"
 w = lambda i: struct.unpack_from(">I", d, i)[0]
 text = w(w(16)+8) & ~1
 u = Uc(UC_ARCH_PPC, UC_MODE_PPC32 | UC_MODE_BIG_ENDIAN)

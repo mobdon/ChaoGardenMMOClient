@@ -68,7 +68,8 @@ fn call_json(c: &Call) -> Value {
 #[ignore = "requires the installed City Escape module and Python with Unicorn PPC"]
 fn matches_installed_powerpc() {
     let python = env::var("SA2_PPC_PYTHON").unwrap_or_else(|_| "python".into());
-    let rel = gd().join("stg13D.rel");
+    let rel =
+        PathBuf::from(env::var_os("SA2_GC_REL_DIR").expect("SA2_GC_REL_DIR")).join("stg13D.rel");
     let o = Command::new(python)
         .arg("-I")
         .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/dash_panel_ppc.py"))

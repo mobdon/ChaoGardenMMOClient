@@ -127,7 +127,7 @@ impl Update {
 }
 pub fn step(bytes: &[u8], input: Input) -> Result<Update> {
     kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     step_verified(&rel, input)
 }
 fn step_verified(rel: &CityRel, input: Input) -> Result<Update> {

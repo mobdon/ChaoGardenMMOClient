@@ -4,12 +4,13 @@ from pathlib import Path
 import key_pickup_reference as pickup
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]); gd=game/"resource/gd_PC"
-B,D,T,W,G=0x81000000,0x82000000,0x100000,0x100100,0x801cbd88
+game=Path(os.environ["SA2_GAME_PATH"]); gd=game/"resource/gd_PC"; gc=Path(os.environ["SA2_GC_REL_DIR"])
+from gsne8p import IMPORTS
+B,D,T,W,G=0x81000000,0x82000000,0x100000,0x100100,0x801cc168
 FIRST,END=0x25114,0x252d0
 def words(d,addr):return struct.unpack_from('>I',d,addr)[0]
-def image(level):
-    d=(gd/f"stg{level:02}D.rel").read_bytes()
+def image(level,root=gd):
+    d=(root/f"stg{level:02}D.rel").read_bytes()
     sec=lambda i:words(d,words(d,16)+8*i)&~1
     refs={}
     for mod,at in struct.iter_unpack('>II',d[words(d,40):words(d,40)+words(d,44)]):
@@ -18,7 +19,7 @@ def image(level):
             inc,kind,s,v=struct.unpack_from('>HBBI',d,at);at+=8
             if kind==203:break
             if kind==202:section=s;off=0;continue
-            off+=inc;refs[section,off]=(mod,s,v,kind)
+            off+=inc;refs[section,off]=(mod,s,IMPORTS[v] if mod==0 and root==gd and kind in (1,4,6,10) else v,kind)
     rows= [k for (t,k),(m,s,v,kind) in refs.items() if t==5 and kind==1 and d[sec(s)+v:sec(s)+v+9].lower()==b'contchao\0']
     init,={refs[5,row-4][2] for row in rows if (5,row-4) in refs and refs[5,row-4][1]==1}
     def target(pc):
@@ -34,13 +35,13 @@ def image(level):
     assert hashlib.sha256(code).hexdigest()=="ecb24e66ce5db8bc559b93918eac137898b51d562f0978a1e1d9dd2d14fe96ec"
     for off,val in zip((0x46,0xb2,0xd6,0xf2,0x106,0x142,0x192),(1145569280,3206125978,1050253722,1065101558,1034147594,1075838976,512)):
         m,s,a,k=refs[1,cb+off];assert m==words(d,0) and words(d,sec(s)+a)==val
-    for off,addr in [(0x50,2147718768),(0x78,2147948664),(0x12c,2147510004),(0x170,2147897672),(0x17c,2147948664),(0x188,2147546348)]:
+    for off,addr in [(0x50,2147719384),(0x78,2147949280),(0x12c,2147510004),(0x170,2147898288),(0x17c,2147949280),(0x188,2147546348)]:
         m,_,a,k=refs[1,cb+off];assert (m,k,a)==(0,10,addr)
     pickup.verify(d,sec,refs,target(cb+0x15c))
     return d,sec,refs
 for level in (3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,21,22,23,24,25,26,27,28,30,32,40,43,44):image(level)
-d,sec,refs=image(13)
-assert hashlib.sha256(d).hexdigest()=="bcb2f3e2dbead7bafebcda84063fba54bac831cbd9102fd0230d78a5b88b570b"
+d,sec,refs=image(13,gc)
+assert hashlib.sha256(d).hexdigest()=="f5a986c2be0c7f8577538202cca0f714299617203a8cb1d7ef37d4d11f827423"
 code=bytearray(d[sec(1)+FIRST:sec(1)+END])
 u=Uc(UC_ARCH_PPC,UC_MODE_PPC32|UC_MODE_BIG_ENDIAN)
 seen=set()
@@ -61,7 +62,7 @@ for (t,off),(mod,s,a,k) in refs.items():
 for p in [B+FIRST,B+0x79f8,B+0x24fc0,B+0x24eac,T,T+0x2000,B+END]:page(p)
 u.mem_write(B+FIRST,bytes(code));u.mem_write(B+0x79f8,d[sec(1)+0x79f8:sec(1)+0x7a00])
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|8192)
-actions={0x800066f4:'checkHitPlayer',0x80071878:'freeTask',refs[1,0x25164][2]:'queryWithin800',0x8000f4ec:'registerCollision',B+0x24eac:'startPickupTask'}
+actions={0x800066f4:'checkHitPlayer',0x80071ae0:'freeTask',refs[1,0x25164][2]:'queryWithin800',0x8000f4ec:'registerCollision',B+0x24eac:'startPickupTask'}
 def hook(uc,pc,size,_):
     name=actions[pc];calls.append(name)
     if name=='queryWithin800':reg(3,int(f['within_800']))

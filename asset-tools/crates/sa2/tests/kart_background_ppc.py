@@ -8,6 +8,7 @@ Usage: python kart_background_ppc.py CLI EXE DATA_DLL CartD.rel PRIVATE_DIR   (S
   every course and must give Rust's minimum_y.
 """
 import json
+from gsne8p import steam_rel
 import os
 import struct
 import subprocess
@@ -38,7 +39,7 @@ u.mem_map(ENGINE, 0x2000)
 u.mem_map(SCRATCH, 0x1000)
 for mod, at in struct.iter_unpack(">II", data[word(40):word(40) + word(44)]):
     while True:
-        delta, kind, sec, add = struct.unpack_from(">HBBI", data, at)
+        delta, kind, sec, add = steam_rel(struct.unpack_from(">HBBI", data, at), mod)
         at += 8
         if kind == 203:
             break

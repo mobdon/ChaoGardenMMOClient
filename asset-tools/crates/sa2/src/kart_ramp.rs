@@ -31,7 +31,7 @@ pub fn initialize(bytes: &[u8], pose: TaskPose) -> Result<RampInit> {
     if !pose.position.iter().all(|v| v.is_finite()) {
         return Err(Error::invalid("nonfinite task position"));
     }
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let err = || Error::invalid("unexpected kart jump-panel relocation");
     // Object list slot 1: callback and independent name pointer.
     let (1, callback_offset) = rel.local_pointer(5, 0x15f0)?.ok_or_else(err)? else {
@@ -151,7 +151,7 @@ fn panel_contacts(bytes: &[u8], input: RampTick, dash: bool) -> Result<TickResul
     {
         return Err(Error::invalid("invalid ramp tick observations"));
     }
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let hi = rel
         .reference(1, 0x5bca)
         .ok_or_else(|| Error::invalid("missing kart table relocation"))?;
@@ -258,7 +258,7 @@ pub fn response(bytes: &[u8], input: ResponseInput) -> Result<ResponseWrites> {
     if manifest::sha256(bytes) != HASH {
         return Err(Error::invalid("unsupported CartD.rel revision"));
     }
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     let constants = rel.data(4)?;
     let threshold = f32::from_be_bytes(constants[0x21c..0x220].try_into().unwrap());
     let factor = f64::from_be_bytes(constants[0x208..0x210].try_into().unwrap());
@@ -353,7 +353,7 @@ pub struct DashUpdate {
 /// Native DASH PANEL callback 0xac40. Keep rotation input separate from the imported matrix result.
 pub fn dash(bytes: &[u8], s: DashInput) -> Result<DashUpdate> {
     crate::kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     if rel.local_pointer(5, 0x1600)? != Some((1, 0xac40)) {
         return Err(Error::invalid("unexpected dash panel callback"));
     }
@@ -505,7 +505,7 @@ pub struct DashDisplay {
 pub fn display(bytes: &[u8], pak: &[u8], s: DashDisplay) -> Result<serde_json::Value> {
     use serde_json::json;
     crate::kart_progress::verify(bytes)?;
-    let rel = CityRel::read_identified(bytes, 80)?;
+    let rel = CityRel::read_stage(bytes, "CartD.rel")?;
     if s.current_view_metric >= f32::from_be_bytes(rel.data(4)?[0x1c0..0x1c4].try_into().unwrap()) {
         return Ok(json!({"draw":null}));
     }

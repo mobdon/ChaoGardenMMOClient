@@ -10,7 +10,7 @@ from pathlib import Path
 from unicorn import Uc, UC_ARCH_PPC, UC_MODE_PPC32, UC_MODE_BIG_ENDIAN, UC_HOOK_CODE
 from unicorn import ppc_const as R
 
-rel = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(os.environ["SA2_GAME_PATH"]) / "resource/gd_PC/stg13D.rel"
+rel = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(os.environ["SA2_GC_REL_DIR"]) / "stg13D.rel"
 d = rel.read_bytes()
 w = lambda a: struct.unpack_from('>I', d, a)[0]
 sec = lambda i: w(w(16) + 8 * i) & ~1
@@ -56,7 +56,7 @@ for s in (4, 5):
     page(base(s), size(s)); u.mem_write(base(s), d[sec(s):sec(s) + size(s)])
 page(base(6) + 0x6f8)
 page(B + U, LEN + 4); u.mem_write(B + U, bytes(code)); put(END, 'I', 0x4e800020)
-for a in (T, STACK - 0x1000, STACK, 0x801e7368, 0x801e7388): page(a, 0x400)
+for a in (T, STACK - 0x1000, STACK, 0x801e7768, 0x801e7788): page(a, 0x400)
 u.reg_write(R.UC_PPC_REG_MSR, u.reg_read(R.UC_PPC_REG_MSR) | 0x2000)
 reg = lambda i: u.reg_read(getattr(R, f'UC_PPC_REG_{i}'))
 def setreg(i, v): u.reg_write(getattr(R, f'UC_PPC_REG_{i}'), v)
@@ -66,7 +66,7 @@ def hook(uc, pc, sz, name):
     if name == 'gate': setreg(3, int(obs['clipped']))
     elif name == 'init': calls.append({'call': 'initCollision'})
     elif name == 'hit':
-        h = obs['hit']; setreg(3, 0 if h is None else (get(0x801e7388 + 4, 'I') if h == 1 else H0 + 0x10 * h))
+        h = obs['hit']; setreg(3, 0 if h is None else (get(0x801e7788 + 4, 'I') if h == 1 else H0 + 0x10 * h))
     elif name == 'conv': fpr1(obs['frames'])
     elif name == 'accel':
         v = [get(reg(4) + 4 * i, 'f') for i in range(3)]
@@ -76,10 +76,10 @@ def hook(uc, pc, sz, name):
         assert (reg(4), reg(5), reg(6)) == (0, 0, 0); calls.append({'call': 'sound', 'code': reg(3)})
     elif name == 'rumble': calls.append({'call': 'rumble', 'slot': reg(3), 'args': [reg(4), reg(5), reg(6)]})
     elif name == 'entry': calls.append({'call': 'entryCollision'})
-for addr, name in [(0x8006538c, 'gate'), (0x8000f7d8, 'init'), (0x800066f4, 'hit'), (0x80110fa0, 'conv'),
-                   (0x80039c48, 'accel'), (0x8006b710, 'sound'), (0x8002f8c4, 'rumble'), (0x8000f4ec, 'entry')]:
+for addr, name in [(0x800655f4, 'gate'), (0x8000f7d8, 'init'), (0x800066f4, 'hit'), (0x801112e8, 'conv'),
+                   (0x80039eb0, 'accel'), (0x8006b978, 'sound'), (0x8002fb2c, 'rumble'), (0x8000f4ec, 'entry')]:
     page(addr); put(addr, 'I', 0x4e800020); u.hook_add(UC_HOOK_CODE, hook, begin=addr, end=addr, user_data=name)
-put(0x801e7368, 'I', P0); put(0x801e7368 + 4, 'I', P1); put(0x801e7388 + 4, 'I', P1)
+put(0x801e7768, 'I', P0); put(0x801e7768 + 4, 'I', P1); put(0x801e7788 + 4, 'I', P1)
 fbits = lambda x: struct.unpack('>I', struct.pack('>f', x))[0]
 rng = random.Random(13)
 cases = []

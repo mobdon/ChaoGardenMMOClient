@@ -41,7 +41,7 @@ pub fn replay(bytes: &[u8], mut s: Input) -> Result<Output> {
             "expected 60 kart stick samples and a valid write cursor",
         ));
     }
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     let scale = f32::from_be_bytes(rel.data(4)?[0x200..0x204].try_into().unwrap());
     let mut frames = Vec::with_capacity(s.frames.len());
     for f in s.frames {
@@ -681,7 +681,7 @@ impl Recovery {
 /// CartD state 1, 0x36b4..0x3998. Horizontal motion controls the state exit.
 pub fn recovery(bytes: &[u8], s: RecoveryInput) -> Result<Recovery> {
     kart_progress::verify(bytes)?;
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     recovery_with_constants(rel.data(4)?, s)
 }
 fn recovery_with_constants(data: &[u8], s: RecoveryInput) -> Result<Recovery> {
@@ -851,7 +851,7 @@ impl Spin {
 /// State 4 decays the signed angular step and calls 0x30dc on crossing zero.
 pub fn spin(bytes: &[u8], s: SpinInput) -> Result<Spin> {
     kart_progress::verify(bytes)?;
-    let rel = crate::city_rel::CityRel::read_identified(bytes, 80)?;
+    let rel = crate::city_rel::CityRel::read_stage(bytes, "CartD.rel")?;
     spin_with_constants(rel.data(4)?, s)
 }
 fn spin_with_constants(data: &[u8], s: SpinInput) -> Result<Spin> {

@@ -1,5 +1,6 @@
 """Compare active jump-panel task branches with the installed PPC instructions."""
 import hashlib,json,struct,subprocess,sys,tempfile
+from gsne8p import steam_rel
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE,UC_HOOK_MEM_WRITE
 from unicorn import ppc_const as R
@@ -17,7 +18,7 @@ for sec,addr in base.items():
     if off:u.mem_write(addr,d[off:off+size])
 for mod,at in struct.iter_unpack(">II",d[word(40):word(40)+word(44)]):
     while True:
-        delta,k,s,a=struct.unpack_from(">HBBI",d,at);at+=8
+        delta,k,s,a=steam_rel(struct.unpack_from(">HBBI", d, at), mod);at+=8
         if k==203:break
         if k==202:target=s;loc=0;continue
         loc+=delta
