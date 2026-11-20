@@ -647,7 +647,28 @@ pub fn action_button(
             }
             return true;
         }
-        0x34 => 0x800A_C850,
+        0x34 => {
+            // fn_800AC850: the Tails/Chao walkers' lock-on stance.
+            set_mode(t, p, 0x3E, 0xB4);
+            p.set_h(0x17C, 0);
+            t.or_h(tw::FLAG, 0x400);
+            zero_speeds(m, p);
+            eng.call(EngineCall::Rumble {
+                addr: 0x8002_F9D4,
+                args: [pnum as i32, 3, 0x1E, 0x20],
+            });
+            eng.call(se_call(0x2016));
+            let id = match p.ub(3) {
+                0xD => Some(0x3016),
+                0xE => Some(0x301C),
+                6 => Some(0x3004),
+                _ => None,
+            };
+            if let Some(id) = id {
+                eng.call(se_at(id, t.v3(tw::POS)));
+            }
+            return true;
+        }
         0x35 => 0x800A_D208,
         0x36 => 0x800A_CF38,
         0x37 => 0x800A_CB9C,
