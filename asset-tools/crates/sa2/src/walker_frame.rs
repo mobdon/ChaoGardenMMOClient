@@ -197,6 +197,8 @@ pub struct SpeedTask {
 /// back to world space into `world` (the motion work's vector), clamp it with
 /// fn_80046950 and drop tiny components when there is no stick input.
 /// `analog_active` is fn_8004E560(task, player, NULL, NULL) != 0.
+// The native branches stay separate even where two of them do the same thing.
+#[allow(clippy::if_same_then_else)]
 pub fn player_world_speed(
     stack: &mut MatrixStack,
     w: &mut SpeedWork,
