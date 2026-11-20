@@ -168,7 +168,7 @@ impl Default for LandNodes {
 // --- Ninja's paired-single matrix routines -------------------------------
 
 /// njTranslateEx (0x8011616C): m = m * T(v).
-fn translate(m: &mut Mtx, v: Vec3) {
+pub(crate) fn translate(m: &mut Mtx, v: Vec3) {
     for row in m.iter_mut() {
         let a = fmadds(row[2], v[2], row[0] * v[0]);
         let b = fmadds(row[3], 1.0, row[1] * v[1]);
