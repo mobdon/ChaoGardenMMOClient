@@ -878,3 +878,109 @@ pub fn settle_contact(
 fn sub3(a: Vec3, b: Vec3) -> Vec3 {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
+
+const WALL_SAME: f32 = f32::from_bits(0x3f7f_ff58); // r2-0x7504, 0.99999
+
+/// Player-work speeds fn_80041C78 reads: `spd.x` (+0x64), +0xF0, and
+/// PhysicsArray `jog_speed` / `run_speed` (+0xE4, +0xE8).
+#[derive(Debug, Clone, Copy)]
+pub struct PushSpeeds {
+    pub spd_x: f32,
+    pub f_f0: f32,
+    pub jog: f32,
+    pub run: f32,
+}
+
+/// fn_80041C78 (the grounded wall push): for each non-floor hit facing
+/// against the motion, stop `vel` when it runs straight in (flag 0x00400000
+/// and a fast `spd.x` return 2), cap `vel` at `run_speed` when the motion
+/// pushes in by more than 4.5 (return 1), unless the entry has flag
+/// 0x00080000. Two distinct walls set the stuck flag; a small body against
+/// static walls stops (1); in task mode 1 two walls stop the motion and cap
+/// `vel` at 0.6 * `jog_speed` (1, unless entry flag 0x1000); otherwise the
+/// motion is cut to the nearest wall. Returns the routine's code.
+pub fn wall_push(
+    i: &SlideInput,
+    entry_flags: u32,
+    speeds: &PushSpeeds,
+    hits: &[ContactHit],
+    motion: &mut Vec3,
+    vel: &mut Vec3,
+) -> (i32, bool) {
+    let mut code = 0;
+    let mut near = NEAR_LIMIT;
+    let mut walls = 0;
+    let mut at: Option<usize> = None;
+    let mut dists = vec![];
+    for (k, h) in hits.iter().enumerate() {
+        let d = point_distance(h.head, i.center);
+        dists.push(d);
+        if is_floor(i, h).0 {
+            continue;
+        }
+        let t = if nj_scalor(*motion) == ZERO {
+            *motion
+        } else {
+            unit_vector(*motion)
+        };
+        let into = inner_product(t, h.facing);
+        if !(into < ZERO) {
+            continue;
+        }
+        let distinct = match at {
+            None => true,
+            Some(w) => !(inner_product(h.facing, hits[w].facing) >= WALL_SAME),
+        };
+        if distinct {
+            walls += 1;
+        }
+        if near > d {
+            near = d;
+            at = Some(k);
+        }
+        if entry_flags & 0x0008_0000 == 0 {
+            if into < -nj_cos(0x600) {
+                *vel = [ZERO; 3];
+                if entry_flags & 0x0040_0000 != 0 && speeds.spd_x >= speeds.f_f0 {
+                    code = 2;
+                }
+            }
+            if inner_product(*motion, h.facing) < WALL_PUSH {
+                let cap = speeds.run;
+                if nj_scalor(*vel) > cap {
+                    *vel = unit_vector(*vel).map(|c| c * cap);
+                    code = 1;
+                }
+            }
+        }
+    }
+    if walls == 0 {
+        return (code, false);
+    }
+    let stuck =
+        walls >= 2 && !(matches!(i.character, 0 | 1) && (0x4c..=0x52).contains(&i.task_mode));
+    let len = nj_scalor(*motion);
+    if !i.entry_has_task && small_body(i.character, i.f134, i.row0_74, i.row1_74) {
+        *motion = [ZERO; 3];
+        *vel = [ZERO; 3];
+        return (1, stuck);
+    }
+    if i.task_mode == 1 && walls >= 2 && entry_flags & 0x1000 == 0 {
+        let cap = LIFT_FALLING * speeds.jog;
+        *motion = [ZERO; 3];
+        if nj_scalor(*vel) > cap {
+            *vel = unit_vector(*vel).map(|c| c * cap);
+        }
+        return (1, stuck);
+    }
+    if let Some(k) = at {
+        if dists[k] < len {
+            *motion = if nj_scalor(*motion) == ZERO {
+                [ZERO; 3]
+            } else {
+                unit_vector(*motion).map(|c| c * dists[k])
+            };
+        }
+    }
+    (code, stuck)
+}

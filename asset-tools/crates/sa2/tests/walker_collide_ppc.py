@@ -291,7 +291,53 @@ for _ in range(4000):
                    "center_after": [W(Q + 4 + 4 * j) for j in range(3)], "motion_after": [W(Q + 0x10 + 4 * j) for j in range(3)],
                    "along_after": [W(Q + 0x6C + 4 * j) for j in range(3)], "mw_after": [W(MW + 4 * j) for j in range(3)],
                    "aim_after": m.get(MW + 0x1C, "i")})
+# fn_80041C78: grounded wall push.
+push = []
+for _ in range(4000):
+    n = rng.choice([0, 1, 1, 2, 3, 5])
+    up = [0.0, 1.0, 0.0] if rng.random() < 0.6 else unit()
+    glob = [0.0, -1.0, 0.0] if rng.random() < 0.7 else unit()
+    center = [rf(50) for _ in range(3)]
+    motion = [rf(10) for _ in range(3)]
+    vel = [rf(8) for _ in range(3)]
+    hits = []
+    for _ in range(n):
+        if hits and rng.random() < 0.2:
+            facing = hits[-1][0]
+        else:
+            mm = sum(x * x for x in motion) ** 0.5 or 1.0
+            facing = rng.choice([unit(), [f32(-x / mm + rng.uniform(-0.3, 0.3)) for x in motion], up])
+            nn = sum(x * x for x in facing) ** 0.5 or 1.0
+            facing = [f32(x / nn) for x in facing]
+        hits.append((facing, [f32(center[j] + rng.uniform(-15, 15)) for j in range(3)]))
+    for k, (facing, head) in enumerate(hits):
+        put3(TAILS + 0x58 * k + 0x14, facing)
+        put3(TAILS + 0x58 * k + 0x2C, head)
+    m.put(Q + 0x28, "H", n)
+    put3(Q + 4, center); put3(Q + 0x10, motion); put3(Q + 0x1C, up)
+    put3(VEL, vel); put3(GLOBAL, glob)
+    mode = rng.choice([0x4C, 0x10, 1, 1, 0])
+    ch = rng.choice([0, 1, 2, 6])
+    f134 = f32(rng.uniform(0, 20))
+    has_task = rng.random() < 0.3
+    eflags = rng.choice([0, 0x00080000, 0x00400000, 0x1000, 0x00401000, rng.randrange(1 << 32)])
+    sp = [rf(10), f32(rng.uniform(2, 8)), f32(rng.uniform(0.5, 2)), f32(rng.uniform(2, 6))]
+    m.put(TASK, "b", mode)
+    m.put(PW + 1, "b", ch); m.put(PW + 0x134, "f", f134)
+    for o, x in zip((0x64, 0xF0, 0xE4, 0xE8), sp):
+        m.put(PW + o, "f", x)
+    m.put(ENTRY, "I", eflags)
+    m.put(ENTRY + 8, "I", 0x81107000 if has_task else 0)
+    m.put(R13 - 0x78F4, "I", 0)
+    m.call(0x80041C78, r3=TASK, r4=VEL, r5=PW, r6=Q, r7=ENTRY)
+    push.append({"mode": mode, "ch": ch, "f134": fb(f134), "task": has_task, "eflags": eflags,
+                 "speeds": [fb(x) for x in sp], "center": [fb(x) for x in center], "up": [fb(x) for x in up],
+                 "global": [fb(x) for x in glob], "motion": [fb(x) for x in motion], "vel": [fb(x) for x in vel],
+                 "hits": [[[fb(x) for x in f], [fb(x) for x in h]] for f, h in hits],
+                 "ret": m.gpr(3), "stuck": W(R13 - 0x78F4),
+                 "motion_after": [W(Q + 0x10 + 4 * j) for j in range(3)], "vel_after": [W(VEL + 4 * j) for j in range(3)]})
 print(json.dumps({"lift": lift, "rows": rows, "surface": surface, "slide": slide, "planes": planes, "wall": wall,
+                  "push": push,
                   "settle": settle,
                   "tilt": tilt, "angles": angles,
                   "row74": [m.get(PHYS + 0x74, "I"), m.get(PHYS + 0xF8, "I")]}))

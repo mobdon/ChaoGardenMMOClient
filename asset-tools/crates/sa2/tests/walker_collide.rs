@@ -4,9 +4,9 @@ use sa2_asset_tools::land_nodes::Candidate;
 use sa2_asset_tools::ninja_matrix::MatrixStack;
 use sa2_asset_tools::walker_collide::{
     adjust_angle, apply_surface, diff_angle, plane_intersection, settle_contact, slide_airborne,
-    slide_grounded, sphere_lift, sub_angle, tilt_to_contact, wall_slide, LiftInput, Line,
-    MotionWork, PhysicsRow, Plane, SlideInput, SlideQuery, SurfaceWork, TiltSpeeds, TurnWork,
-    WallSlideInput,
+    slide_grounded, sphere_lift, sub_angle, tilt_to_contact, wall_push, wall_slide, LiftInput,
+    Line, MotionWork, PhysicsRow, Plane, PushSpeeds, SlideInput, SlideQuery, SurfaceWork,
+    TiltSpeeds, TurnWork, WallSlideInput,
 };
 use serde_json::Value;
 use std::{path::PathBuf, process::Command};
@@ -302,5 +302,52 @@ fn matches_main_dol() {
         assert_eq!(bits3(q.along), bits3(v3(&c["along_after"])), "along {c}");
         assert_eq!(bits3(mw.spd), bits3(v3(&c["mw_after"])), "mw {c}");
         assert_eq!(mw.ang_aim, g(&c["aim_after"]), "aim {c}");
+    }
+    for c in v["push"].as_array().unwrap() {
+        let i = SlideInput {
+            task_mode: c["mode"].as_i64().unwrap() as i8,
+            character: c["ch"].as_i64().unwrap() as i8,
+            f134: f(&c["f134"]),
+            row0_74: f(&r74[0]),
+            row1_74: f(&r74[1]),
+            entry_has_task: c["task"].as_bool().unwrap(),
+            center: v3(&c["center"]),
+            up: v3(&c["up"]),
+            global: v3(&c["global"]),
+        };
+        let sp = &c["speeds"];
+        let speeds = PushSpeeds {
+            spd_x: f(&sp[0]),
+            f_f0: f(&sp[1]),
+            jog: f(&sp[2]),
+            run: f(&sp[3]),
+        };
+        let hits: Vec<ContactHit> = c["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| ContactHit {
+                candidate: Candidate { node: 0, tri: 0 },
+                angles: (0, 0),
+                normal: [0.0; 3],
+                facing: v3(&h[0]),
+                foot: [0.0; 3],
+                head: v3(&h[1]),
+                along: [0.0; 3],
+                across: [0.0; 3],
+                start_height: 0.0,
+                end_height: 0.0,
+            })
+            .collect();
+        let mut motion = v3(&c["motion"]);
+        let mut vel = v3(&c["vel"]);
+        let (code, stuck) = wall_push(&i, u(&c["eflags"]), &speeds, &hits, &mut motion, &mut vel);
+        assert_eq!(
+            (code as u32, stuck as u32),
+            (u(&c["ret"]), u(&c["stuck"])),
+            "{c}"
+        );
+        assert_eq!(bits3(motion), bits3(v3(&c["motion_after"])), "motion {c}");
+        assert_eq!(bits3(vel), bits3(v3(&c["vel_after"])), "vel {c}");
     }
 }
