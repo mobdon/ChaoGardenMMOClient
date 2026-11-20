@@ -122,8 +122,11 @@ fn installed_mover_rules_and_session_inventory() {
             assert_eq!(s.unimplemented.get(name), Some(&n), "{name}");
         }
         // 8 fence rails, 4 gears, 4 spheres, 1 cylinder, the tank and the
-        // 7 sirens' and 34 fluorescent lights' radius-5 spheres.
-        assert_eq!(s.shapes.len(), 59);
+        // 7 sirens' and 34 fluorescent lights' radius-5 spheres, and 24
+        // security cameras' radius-8.5 bodies.
+        assert_eq!(s.shapes.len(), 83);
+        assert_eq!(s.cams.len(), 24);
+        assert!(!s.unimplemented.contains_key("CAM"));
         assert_eq!(s.fluos.len(), 34);
         assert_eq!(
             (s.sirens.len(), s.searchlights.len(), s.sound_emitters.len()),
@@ -149,8 +152,10 @@ fn standing_on_the_one_way_elevator_carries_it_to_its_target() {
         let target = e.target;
         let stand = PlayerSample {
             center: s.movers[i].position(),
+            position: s.movers[i].position(),
             standing_on: Some(i),
             touching_goal: None,
+            hit_cam_lens: None,
         };
         let mut started = None;
         let mut bridge = None;
@@ -188,8 +193,10 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let ring = s.rings_placed[0].position;
         let events = s.step(Some(PlayerSample {
             center: ring,
+            position: ring,
             standing_on: None,
             touching_goal: None,
+            hit_cam_lens: None,
         }));
         // Strictly within 14 of the centre; two lines overlap here, 10 apart.
         let taken = events
@@ -201,9 +208,11 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let goal = s.goals[0].position;
         let events = s.step(Some(PlayerSample {
             center: goal,
+            position: goal,
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),
+            hit_cam_lens: None,
         }));
         assert!(events
             .iter()
@@ -352,5 +361,42 @@ fn wall_gates_drop_when_no_resting_elevator_is_near() {
         }
         // Five boxes each.
         assert_eq!(s.wall_solid(0).len(), 5 * 12);
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn security_camera_tracks_the_player_and_breaks_when_its_lens_is_hit() {
+    with_session(|mut s| {
+        let c = s.cams[0].position;
+        let head = s.cams[0].head;
+        // 100 to the side, inside the range test's 300.
+        let at = [c[0] + 100.0, c[1], c[2]];
+        let sample = |hit| PlayerSample {
+            center: at,
+            position: at,
+            standing_on: None,
+            touching_goal: None,
+            hit_cam_lens: hit,
+        };
+        s.step(Some(sample(None)));
+        let turned = (s.cams[0].head.wrapping_sub(head) as i16).unsigned_abs();
+        assert!(turned > 0 && turned <= 128, "{turned}");
+        // The lens task sets the parent's NextAction; the parent explodes
+        // on its next exec.
+        let events = s.step(Some(sample(Some(0))));
+        assert!(!events.iter().any(|e| matches!(e, Event::CamDestroyed { .. })));
+        let events = s.step(Some(sample(None)));
+        let Some(Event::CamDestroyed { cam: 0, explosion }) = events
+            .iter()
+            .find(|e| matches!(e, Event::CamDestroyed { .. }))
+        else {
+            panic!("{events:?}");
+        };
+        assert_eq!(explosion.position[1], s.cams[0].lens[1] - 10.0);
+        // Destroyed cameras no longer turn.
+        let head = s.cams[0].head;
+        s.step(Some(sample(None)));
+        assert_eq!(s.cams[0].head, head);
     });
 }

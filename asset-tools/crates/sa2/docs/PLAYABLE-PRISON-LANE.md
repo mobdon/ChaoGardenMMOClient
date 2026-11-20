@@ -72,12 +72,12 @@ outer door (114 frames) gates travel.
 | Death zones | PC_SA2/STG09.ini at 0xC4C6E4 | Volumes only |
 | Checkpoints, springs | placements; `spring::StageSpring` | Checkpoint positions; spring launch vectors (njRotate); contact is not run |
 | SIREN (7), FLUO (34), SEARCHLIGHT (12), SE, SIGNA | `prison_visuals` (SIREN 0x5A30/0x5B20, FLUO 0x418C/0x4260, SEARCHLIGHT 0x5708/0x57A0, SE 0x560C, SIGNA 0x58D8) | Per-frame state ported: siren spin (random start, +1120), fluorescent flicker (0.25 steps, rand timers), searchlight tilt (njSin sweep 0-45 degrees), emitter sound (9 or 0xD); sirens and lights keep their radius-5 spheres. SIGNA only draws. Random draws use MSL rand (GSNE8P 0x8010DC88, seed 1) in this session's call order, which differs from the game's global order |
+| CAM security cameras (24) | `prison_cam` (0x2450 set-up, 0x25DC exec; lens child 0x28C8 / 0x2948) | Ported: a radius-8.5 body sphere (sec5+0x3A7C4); the lens (radius 4, sec5+0x3A7F4) sits at the model's child node (0, 0.8, 12.6) through njRotateY(Rotation.y). While a player's collision centre passes the range test (GSNE8P 0x800398D8, `player_range`: the length is Gekko's `frsqrte` then `fres` estimate) against 300, the head turns toward the player's position by trunc(10430.38043493439 * atan2f(dx, dz)), at most 128 BAMS a frame. A host-reported lens hit sets NextAction, and on the next frame the camera is destroyed (`Event::CamDestroyed`: the lens point 10 lower, velocity (0, 0.2, 0), sound 0x14). The lens takes an enemy block with group 0xFF, so cameras never count toward a door. The ground probe and the debris and explosion spawns are not run, and neither is the object range check (0x800655F4; the session does not stream SET objects) |
 | BIG THE CAT | 0x33E3C | The GameCube module's callback does nothing |
 
 Everything else is listed by name in `Session::unimplemented`: item boxes,
-enemies, and CAM, CHAOPIPE, EFFOBJ0, KNUDAI, ORI and ROCKETMISSSILE, which
-need main-program routines not yet ported (motion 0x800334B0, the player
-range test 0x800398D8, atan2f).
+enemies, CHAOPIPE, EFFOBJ0, KNUDAI, ORI and ROCKETMISSSILE. The colour blend
+they share (GSNE8P 0x800334B0) is ported as `color_blend::blend_argb`.
 
 ## Offline verification
 

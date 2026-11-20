@@ -38,6 +38,7 @@ pub mod player_range;
 pub mod ninja_trig;
 pub mod prison_visuals;
 pub mod prison_doors;
+pub mod prison_cam;
 pub mod play_objects;
 pub mod play_session;
 pub mod play_world;

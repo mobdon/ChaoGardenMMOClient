@@ -120,8 +120,10 @@ fn standing_on_a_lift_raises_it_by_its_native_rule() {
         let top = l.top;
         let stand = PlayerSample {
             center: s.movers[i].position(),
+            position: s.movers[i].position(),
             standing_on: Some(i),
             touching_goal: None,
+            hit_cam_lens: None,
         };
         let mut started = None;
         for _ in 0..400 {
@@ -148,9 +150,11 @@ fn goal_contact_writes_the_slot_word() {
         let goal = s.goals[0].position;
         let events = s.step(Some(PlayerSample {
             center: goal,
+            position: goal,
             standing_on: None,
             // The engine reports the contact; its test is main-program code.
             touching_goal: Some(0),
+            hit_cam_lens: None,
         }));
         assert!(events
             .iter()

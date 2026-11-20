@@ -28,6 +28,7 @@ use crate::{
         enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
         WALL_ROW_COUNT,
     },
+    prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
     prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
     spring::{SpringKind, StageSpring},
     Error, Result,
@@ -150,8 +151,11 @@ const FRAME_RATE: f32 = 60.0;
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSample {
-    /// Collision centre (feet plus the PhysicsArray center_height).
+    /// Collision centre (feet plus the PhysicsArray center_height); the
+    /// range test 0x800398D8 reads it.
     pub center: V3,
+    /// The player task's position (twp +0x14), which CAM aims at.
+    pub position: V3,
     /// The engine's "player standing on this object" answer, as an index
     /// into `Session::movers`.
     pub standing_on: Option<usize>,
@@ -159,6 +163,9 @@ pub struct PlayerSample {
     /// (an index into `Session::goals`); the player's own collision shape
     /// and the CCL test are main-program code.
     pub touching_goal: Option<usize>,
+    /// A security camera lens (an index into `Session::cams`) whose
+    /// collision the engine reports hit by the player's attack this frame.
+    pub hit_cam_lens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -188,6 +195,11 @@ pub enum Event {
     /// A WALL gate started to drop (no resting elevator near).
     WallDropping {
         wall: usize,
+    },
+    /// A security camera was destroyed (sound 0x14).
+    CamDestroyed {
+        cam: usize,
+        explosion: CamExplosion,
     },
     GoalContact {
         layer: usize,
@@ -656,6 +668,7 @@ pub struct Session {
     #[serde(skip)]
     wall_rows: Vec<CollisionRow>,
     pub sirens: Vec<Siren>,
+    pub cams: Vec<SecurityCamera>,
     pub fluos: Vec<Fluo>,
     pub searchlights: Vec<Searchlight>,
     pub sound_emitters: Vec<SoundEmitter>,
@@ -785,6 +798,7 @@ impl Session {
         let mut doors = vec![];
         let mut walls = vec![];
         let mut sirens = vec![];
+        let mut cams = vec![];
         let mut fluos = vec![];
         let mut searchlights = vec![];
         let mut sound_emitters = vec![];
@@ -879,6 +893,20 @@ impl Session {
                         shapes.push(RoundShape::Sphere {
                             center: pl.position,
                             radius: SIREN_RADIUS,
+                        });
+                    }
+                    (_, "CAM") if rules.prison_doors => {
+                        // stg09D.rel 0x2450: the body's radius-8.5 sphere
+                        // (sec5+0x3A7C4); the lens sphere stays on the camera.
+                        cams.push(SecurityCamera::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation[1],
+                        ));
+                        shapes.push(RoundShape::Sphere {
+                            center: pl.position,
+                            radius: CAM_RADIUS,
                         });
                     }
                     (_, "SEARCHLIGHT") if rules.prison_doors => searchlights.push(Searchlight {
@@ -1110,6 +1138,7 @@ impl Session {
             walls,
             wall_rows,
             sirens,
+            cams,
             fluos,
             searchlights,
             sound_emitters,
@@ -1239,6 +1268,14 @@ impl Session {
         }
         for s in &mut self.sirens {
             s.step();
+        }
+        let centres = [player.map(|p| p.center), None];
+        let positions = [player.map(|p| p.position), None];
+        for (i, c) in self.cams.iter_mut().enumerate() {
+            let hit = player.and_then(|p| p.hit_cam_lens) == Some(i);
+            if let Some(explosion) = c.step(&centres, &positions, hit) {
+                events.push(Event::CamDestroyed { cam: i, explosion });
+            }
         }
         for f in &mut self.fluos {
             f.step(&mut self.rand);
