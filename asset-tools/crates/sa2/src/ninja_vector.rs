@@ -60,7 +60,7 @@ pub fn vector_angle(a: Vec3, b: Vec3, side: Option<Vec3>) -> i32 {
     let cross = outer_product(a, b);
     if let Some(c) = side {
         let dot = inner_product(c, cross);
-        if dot < ZERO || dot.is_nan() {
+        if dot < ZERO {
             angle = 0x10000i32.wrapping_sub(angle);
         }
     }
