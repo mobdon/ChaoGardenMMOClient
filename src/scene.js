@@ -1711,8 +1711,75 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   });
   onReady();
 
+  // Server-owned garden plots and groves. Native family/stage models load from
+  // the local bridge (`tree-<family>-<stage>.glb`) when converted; until then a
+  // labelled procedural stand-in shows stage and hanging fruit only.
+  const plotVisuals = new Map();
+  let plotZone = null;
+  const PLOT_STAGE_SCALE = { seed: 0.12, young: 0.45, mature: 0.8, dying: 0.7, dead: 0.5 };
+  function clearPlots() {
+    for (const visual of plotVisuals.values()) visual.root.dispose();
+    plotVisuals.clear();
+  }
+  async function attachNativePlotTree(visual, key) {
+    const container = await loadLocalAsset(key);
+    if (!container || disposed || visual.root.isDisposed() || visual.key !== key) return;
+    const holder = new TransformNode(`${key}-native`, scene);
+    const entries = container.instantiateModelsToScene(name => `${visual.root.uniqueId}-${name}`, false, { doNotInstantiate: true });
+    for (const entryRoot of entries.rootNodes) entryRoot.parent = holder;
+    holder.scaling.setAll(0.1);
+    holder.parent = visual.root;
+    for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
+    for (const mesh of visual.proxy) mesh.setEnabled(false);
+    canvas.dataset.nativePlotTrees = String(Number(canvas.dataset.nativePlotTrees || 0) + 1);
+  }
+  function plotVisual(place, zone) {
+    const tree = place.tree;
+    const stage = tree?.stage || 'empty';
+    const family = typeof tree?.family === 'string' ? tree.family : null;
+    const fruit = Number.isInteger(tree?.fruitReady) ? Math.min(3, tree.fruitReady) : 0;
+    const signature = `${stage}:${family}:${fruit}`;
+    const existing = plotVisuals.get(place.id);
+    if (existing?.signature === signature && !existing.root.isDisposed()) return;
+    existing?.root.dispose();
+    const root = new TransformNode(`plot-${place.id}`, scene);
+    root.position.copyFromFloats(place.x, 0, place.z);
+    root.parent = scenery || world;
+    const proxy = [];
+    const soil = cylinder('plot-soil', [0, 0.03, 0], { height: 0.06, diameter: 1.6, tessellation: 24 }, '#8a6a48', root);
+    soil.metadata = { careTarget: place.id };
+    if (stage !== 'empty' && place.grove !== true) {
+      const s = PLOT_STAGE_SCALE[stage] ?? 0.5;
+      const crown = stage === 'dying' || stage === 'dead' ? '#b49a62' : zone === 'dark' ? '#705a9d' : '#62b46b';
+      proxy.push(cylinder('plot-trunk', [0, 1.8 * s, 0], { height: 3.6 * s, diameterBottom: 0.6 * s, diameterTop: 0.35 * s }, '#94724c', root));
+      if (stage !== 'dead') proxy.push(sphere('plot-crown', [0, 4.4 * s, 0], [3.4 * s, 3 * s, 3.4 * s], crown, root, 6));
+      for (let i = 0; i < fruit; i++) {
+        const a = i * Math.PI * 2 / 3;
+        proxy.push(sphere('plot-fruit', [Math.cos(a) * 1.1 * s, 3.4 * s, Math.sin(a) * 1.1 * s], [0.5, 0.58, 0.5], '#f6bc64', root));
+      }
+    }
+    for (const mesh of root.getChildMeshes()) { mesh.isPickable = false; shadows.addShadowCaster(mesh, false); }
+    const visual = { root, proxy, signature, key: family && ['young', 'mature', 'dying'].includes(stage) ? `tree-${family}-${stage}` : null };
+    plotVisuals.set(place.id, visual);
+    if (visual.key) void attachNativePlotTree(visual, visual.key);
+  }
+  function setCare(care, self) {
+    const zone = self?.zone;
+    if (zone !== plotZone) { clearPlots(); plotZone = zone; }
+    const plots = Array.isArray(care?.garden?.plots) ? care.garden.plots : [];
+    const seen = new Set();
+    for (const plot of plots) {
+      if (plot?.zone !== zone || typeof plot.id !== 'string' || !Number.isFinite(plot.x) || !Number.isFinite(plot.z)) continue;
+      seen.add(plot.id);
+      plotVisual(plot, zone);
+    }
+    for (const [id, visual] of plotVisuals) if (!seen.has(id)) { visual.root.dispose(); plotVisuals.delete(id); }
+    canvas.dataset.gardenPlots = String(plotVisuals.size);
+  }
+
   return {
     setSnapshot,
+    setCare,
     handleEvent,
     clearInput: blur,
     setPaused(value) { paused = !!value; gaitControls.setPaused(paused); if (paused) blur(); },

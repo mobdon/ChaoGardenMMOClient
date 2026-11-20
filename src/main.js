@@ -6,6 +6,7 @@ import { createGameAudio } from './audio.js';
 import { createStageSelect } from './stages.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
+import { createGardenCare } from './garden-care.js';
 import { INTERACTION_ANCHORS } from '../shared/constants.js';
 
 const $ = (selector) => document.querySelector(selector);
@@ -33,6 +34,15 @@ let watchTimer;
 const audio = createGameAudio($('#audio-toggle'), $('#garden'), {
   volumeInput: $('#music-volume'), volumeOutput: $('#music-volume-value'), voiceButton: $('#voices-toggle'),
 });
+const gardenCare = createGardenCare({ root: $('#garden-care-panel'), send: message => {
+  if (socket?.readyState !== WebSocket.OPEN) return false;
+  socket.send(JSON.stringify(message)); return true;
+} });
+function toggleCare(open = $('#garden-care-panel').hidden) {
+  $('#garden-care-panel').hidden = !open;
+  $('#care-open').setAttribute('aria-pressed', String(open));
+}
+$('#care-open').addEventListener('click', () => toggleCare());
 const stageSelect = createStageSelect(stagesDialog, { onAction: action, onChange: updatePaused });
 $('#stages-open').addEventListener('click', () => stageSelect.open());
 
@@ -162,10 +172,12 @@ window.addEventListener('keydown', (event) => {
   if (shopDialog.open || stagesDialog.open) return;
   if (event.code === 'KeyC') panel(currentPanel === 'character' ? 'world' : 'character');
   if (event.code === 'KeyJ') panel(currentPanel === 'journal' ? 'world' : 'journal');
+  if (event.code === 'KeyG') toggleCare();
   if (event.code === 'Escape') panel('world');
 });
 
 function connected(isConnected) {
+  if (!isConnected) gardenCare.update(snapshot?.care, player, { connected: false });
   $('#connection-dot').className = `status-dot ${isConnected ? 'connected' : 'error'}`;
   $('#connection-text').textContent = isConnected ? 'Local garden · connected' : 'Reconnecting…';
   if (!isConnected && watchPending) clearWatchPending();
@@ -210,6 +222,7 @@ function render(next) {
     if (takingControl) $('#garden').focus({ preventScroll: true });
   }
   updateWatchButton();
+  gardenCare.update(next.care, player, { connected: socket?.readyState === WebSocket.OPEN, serverTime: next.serverTime });
   if (Date.now() - lastSlotUpdate > 10000) rememberChao();
   $('#garden').dataset.playerX = player.x.toFixed(3);
   $('#garden').dataset.playerZ = player.z.toFixed(3);
@@ -230,6 +243,7 @@ function render(next) {
     attackButton.title = mounted ? 'Fire the Dark Chao Walker cannon (F)' : 'Attack a nearby robot (F)';
   }
   garden?.setSnapshot(next);
+  garden?.setCare?.(next.care, player);
   audio.setZone(player.zone);
   const zone = zones[player.zone] || zones.garden;
   if (lastZone !== player.zone) {
@@ -312,6 +326,7 @@ function connect(token) {
         pendingSave?.resolve();
       }
       if (message.kind === 'mech-shot') $('#garden').dataset.mechShots = String(Number($('#garden').dataset.mechShots || 0) + 1);
+      gardenCare.handleEvent(message);
       garden?.handleEvent?.(message);
     }
   };
