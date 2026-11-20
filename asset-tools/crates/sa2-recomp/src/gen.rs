@@ -229,7 +229,9 @@ pub fn translate(w: u32, pc: u32, ctx: &Ctx) -> Ins {
                 format!("{pre}if {cond} {{ {} }}", goto(ctx, t, &mut targets))
             }
         }
-        17 => format!("panic!(\"sc at {pc:#010x}\");"),
+        // sc: the OS system-call handler only syncs (DCFlushRange uses it as a
+        // barrier); memory here is always coherent.
+        17 => String::new(),
         18 => {
             let li = ((w & 0x03FF_FFFC) << 6) as i32 >> 6;
             let t = if w & 2 != 0 { li as u32 } else { pc.wrapping_add(li as u32) };

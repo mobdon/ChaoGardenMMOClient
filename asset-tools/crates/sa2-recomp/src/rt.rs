@@ -58,11 +58,27 @@ pub struct Runtime {
     /// Recompiled REL modules: (module id, code section size) -> dispatch(section,
     /// offset). The size tells apart modules that share an id.
     pub rels: HashMap<(u32, u32), fn(u32, u32) -> Option<Func>>,
+    /// Calls made so far, and the most recent targets (ring, newest at
+    /// `calls % TRACE`), for reporting where a run stopped.
+    pub calls: u64,
+    pub trace: [u32; TRACE],
+    /// Stop with a panic after this many calls (0 = no limit): a hardware
+    /// poll that never sees its bit would otherwise spin forever.
+    pub budget: u64,
 }
+
+pub const TRACE: usize = 32;
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self { overrides: HashMap::new(), generated: |_| None, rels: HashMap::new() }
+        Self {
+            overrides: HashMap::new(),
+            generated: |_| None,
+            rels: HashMap::new(),
+            calls: 0,
+            trace: [0; TRACE],
+            budget: 0,
+        }
     }
 }
 
@@ -99,6 +115,11 @@ impl Runtime {
 
 /// Call the function at `addr` (bl, bctrl, blrl and tail calls all end here).
 pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    c.rt.trace[c.rt.calls as usize % TRACE] = addr;
+    c.rt.calls += 1;
+    if c.rt.budget != 0 && c.rt.calls > c.rt.budget {
+        panic!("sa2-recomp: call budget of {} reached at {addr:#010x}", c.rt.budget);
+    }
     match c.rt.resolve(m, addr) {
         Some(f) => f(c, m),
         None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x})", c.lr),
