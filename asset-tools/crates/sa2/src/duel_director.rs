@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 
-/// Player object (`0x801E7368[i]`) fields the director reads.
+/// Player object (`0x801e7768[i]`) fields the director reads.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Body {
@@ -25,7 +25,7 @@ pub struct Body {
     pub yaw: i32,
     pub pos: [f32; 3],
 }
-/// Player data (`0x801E7328[i]`) fields the director reads or writes.
+/// Player data (`0x801e7728[i]`) fields the director reads or writes.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Data {
@@ -45,7 +45,7 @@ pub struct Data {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct World {
-    /// Game bytes at 0x801CBD88 + 0x30, 0x31, 0x32, 0x34, 0x37, 0x39, 0x42.
+    /// Game bytes at 0x801cc168 + 0x30, 0x31, 0x32, 0x34, 0x37, 0x39, 0x42.
     pub g30: i8,
     pub g31: i8,
     pub g32: i8,
@@ -55,15 +55,15 @@ pub struct World {
     pub g42: i8,
     /// Game word +0x7C.
     pub g7c: u32,
-    /// Camera block at 0x801E4FF8: word, float, angle word, float (raw bits).
+    /// Camera block at 0x801e53f8: word, float, angle word, float (raw bits).
     pub camera: [u32; 4],
-    /// Bytes at 0x803AD484+1, 0x803AD488+1, 0x803AD494+1, 0x803AD498+1.
+    /// Bytes at 0x803ad884+1, 0x803ad888+1, 0x803ad894+1, 0x803ad898+1.
     pub flags: [u8; 4],
-    /// 0x803AD5D0 is non-null with a zero +0xC word.
+    /// 0x803ad9d0 is non-null with a zero +0xC word.
     pub ready: bool,
     pub bodies: [Body; 2],
     pub data: [Data; 2],
-    /// Task +0xC (child task) and 0x801E7388 slots, as opaque values.
+    /// Task +0xC (child task) and 0x801e7788 slots, as opaque values.
     pub child: u32,
     pub slots: [u32; 2],
 }
@@ -190,7 +190,7 @@ impl Run<'_> {
     }
     /// trunc(base + range * rand / 32768) into the work limit.
     fn rand_limit(&mut self, base: usize, range: usize) -> Result<i16> {
-        let r = self.query(0x8010d940, json!([]))? as i32;
+        let r = self.query(0x8010dc88, json!([]))? as i32;
         let u = self.k(0x4c) * (r as f64 as f32);
         let v = self.k(base) + self.k(range) * u;
         Ok(v as i32 as i16)
@@ -208,14 +208,14 @@ impl Run<'_> {
         let (p1, p2) = (self.w.bodies[0], self.w.bodies[1]);
         let dx = p1.pos[0] - p2.pos[0];
         let dz = p1.pos[2] - p2.pos[2];
-        let a = self.query(0x80110e20, json!([bits(dx), bits(dz)]))?;
+        let a = self.query(0x80111168, json!([bits(dx), bits(dz)]))?;
         let ang = 0x4000i32.wrapping_sub((self.c.bams_per_radian * a) as i32);
-        let diff = self.query(0x8002b678, json!([ang, p2.yaw]))? as i32;
+        let diff = self.query(0x8002b8e0, json!([ang, p2.yaw]))? as i32;
         Ok(diff < 0x5000)
     }
     fn distance(&mut self) -> Result<f64> {
         let (p1, p2) = (self.w.bodies[0].pos, self.w.bodies[1].pos);
-        self.query(0x8011b314, json!([p1.map(bits), p2.map(bits)]))
+        self.query(0x8011b65c, json!([p1.map(bits), p2.map(bits)]))
     }
     /// +0x168 (fcmpo/bgt: an unordered gauge still runs the check)
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -254,7 +254,7 @@ impl Run<'_> {
     fn pace(&mut self, scale: f32) {
         let d = self.w.data[1];
         self.call(
-            0x8003a0b0,
+            0x8003a318,
             json!([1, bits(scale * d.speed), bits(d.field68), bits(d.field6c)]),
         );
     }
@@ -303,10 +303,10 @@ impl Run<'_> {
         // fcmpo/blt then fcmpo/bge: lost when below Y -50 or 150 behind.
         let lost = p2.pos[1] < self.k(0x24) || p2.pos[0] < p1.pos[0] - self.k(0x28);
         if lost && self.k.mode != 9 && self.k.mode != 0xd {
-            self.call(0x80087ebc, json!([1, "data[1]+0x230"]));
+            self.call(0x80088124, json!([1, "data[1]+0x230"]));
             self.k.mode = 9;
             self.k.timer = 0;
-            self.call(0x800466b4, json!([0, "data[1]"]));
+            self.call(0x8004691c, json!([0, "data[1]"]));
             self.close_menus()?;
             match self.w.data[1].character {
                 0 => self.call(0x800117ec, json!([0x8ce, 3])),
@@ -314,7 +314,7 @@ impl Run<'_> {
                 _ => {}
             }
         }
-        let m = self.query(0x8001ccbc, json!([]))? as i32;
+        let m = self.query(0x8001cd40, json!([]))? as i32;
         if m == 7 || self.k.mode == 0 || self.k.mode == 1 {
             self.w.camera = [0, bits(self.k(0x2c)), 0, bits(self.k(0x2c))];
             if self.k.mode != 0 && self.k.mode != 1 {
@@ -322,7 +322,7 @@ impl Run<'_> {
             }
             for slot in 0..2 {
                 self.call(
-                    0x8003a0b0,
+                    0x8003a318,
                     json!([slot, bits(self.k(0x30)), bits(self.k(0)), bits(self.k(0))]),
                 );
             }
@@ -356,11 +356,11 @@ impl Run<'_> {
         self.tail()
     }
     fn mode0(&mut self) -> Result<()> {
-        if self.query(0x8001ccbc, json!([]))? as i32 != 0x10 {
+        if self.query(0x8001cd40, json!([]))? as i32 != 0x10 {
             return Ok(());
         }
-        self.call(0x80022bdc, json!([3]));
-        self.call(0x8001dccc, json!([]));
+        self.call(0x80022e24, json!([3]));
+        self.call(0x8001dd50, json!([]));
         self.k.mode = 1;
         self.k.limit = 0x168;
         match self.w.data[1].character {
@@ -375,7 +375,7 @@ impl Run<'_> {
         };
         self.place_point();
         self.call(
-            0x800c7844,
+            0x800c7aac,
             json!([0, { "f0": bits(self.k(0x2c)), "w1": a, "point": self.k.point.map(bits),
                         "f3": bits(self.k(0x3c)), "f4": bits(self.k(0x40)), "w5": b }]),
         );
@@ -389,14 +389,14 @@ impl Run<'_> {
     fn mode1(&mut self) -> Result<()> {
         self.place_point();
         let v = [self.k(0), self.k(8), self.k(0)].map(bits);
-        self.call(0x8003a2e4, json!([1, self.w.slots[0], v, 3]));
-        self.call(0x8003a2e4, json!([0, self.w.slots[1], v, 3]));
+        self.call(0x8003a54c, json!([1, self.w.slots[0], v, 3]));
+        self.call(0x8003a54c, json!([0, self.w.slots[1], v, 3]));
         if self.k.timer > self.k.limit {
             if self.k.flag == 0 {
                 let mut at = self.c.point_base;
                 at[1] += self.k(0x44);
                 self.k.flag = 1;
-                let m = self.query(0x8001dd1c, json!([]))? as i32;
+                let m = self.query(0x8001dda0, json!([]))? as i32;
                 let pick = match m {
                     0 => -1,
                     1 => 0,
@@ -414,16 +414,16 @@ impl Run<'_> {
                     );
                 }
             }
-            self.call(0x80022c1c, json!([0]));
-            self.call(0x8001dce0, json!([]));
+            self.call(0x80022e64, json!([0]));
+            self.call(0x8001dd64, json!([]));
             self.k.timer = 0;
             self.k.mode = 5;
             self.k.limit = self.rand_limit(0x3c, 0x48)?;
         } else if self.k.timer as i32 > self.k.limit as i32 - 0x14 {
-            if self.query(0x800c3974, json!([0]))? as i32 == 0xd {
-                self.call(0x800c7540, json!([0]));
+            if self.query(0x800c3bdc, json!([0]))? as i32 == 0xd {
+                self.call(0x800c77a8, json!([0]));
             }
-            self.call(0x800cd434, json!([0, { "w0": 0, "from": "bodies[0]+0x14", "to": "work+0x14", "f3": bits(self.k(0x50)) }]));
+            self.call(0x800cd69c, json!([0, { "w0": 0, "from": "bodies[0]+0x14", "to": "work+0x14", "f3": bits(self.k(0x50)) }]));
         } else if self.k.timer == 0x78 {
             let line = match self.w.data[1].character {
                 0 => Some(0x8c7),
@@ -441,7 +441,7 @@ impl Run<'_> {
         let (p1, p2) = (self.w.bodies[0], self.w.bodies[1]);
         if p2.pos[0] < p1.pos[0] - self.k(0x54) {
             let a = self.query(
-                0x80110e20,
+                0x80111168,
                 json!([bits(p1.pos[0] - p2.pos[0]), bits(p1.pos[2] - p2.pos[2])]),
             )?;
             let ang = 0x4000i32.wrapping_sub((self.c.bams_per_radian * a) as i32);
@@ -516,7 +516,7 @@ impl Run<'_> {
         let (p1, p2) = (self.w.bodies[0], self.w.bodies[1]);
         if p2.pos[1] < self.k(0x80) {
             let x = (p2.pos[0] - self.k(0x28)) / self.k(0x44);
-            let v = self.query(0x80111e34, json!([bits(x)]))?;
+            let v = self.query(0x8011217c, json!([bits(x)]))?;
             if v >= self.k(0x84) as f64 {
                 self.camera_angle(0, 0x2c);
                 self.k.timer = 0;
@@ -595,18 +595,18 @@ impl Run<'_> {
             v[0] += self.k(0xa4);
             v[1] = self.k(0xa8);
             v[2] = self.k(0);
-            self.call(0x80039754, json!([1, bits(v[0]), bits(v[1]), bits(v[2])]));
+            self.call(0x800399bc, json!([1, bits(v[0]), bits(v[1]), bits(v[2])]));
         } else if t == 0x12c {
             let mut v = self.w.bodies[1].pos;
             v[1] = self.k(0xac);
             v[2] = self.k(0);
-            self.call(0x80087ebc, json!([1, v.map(bits)]));
-            self.call(0x8006b710, json!([8, 0, 0, 0]));
+            self.call(0x80088124, json!([1, v.map(bits)]));
+            self.call(0x8006b978, json!([8, 0, 0, 0]));
         } else if t == 0x14a {
             let mut v = self.w.bodies[1].pos;
             v[1] = self.k(0x90);
             v[2] = self.k(0);
-            self.call(0x80039754, json!([1, bits(v[0]), bits(v[1]), bits(v[2])]));
+            self.call(0x800399bc, json!([1, bits(v[0]), bits(v[1]), bits(v[2])]));
             self.k.mode = 2;
             self.k.timer = 0;
         }
@@ -616,7 +616,7 @@ impl Run<'_> {
         if self.w.data[0].field1c & 3 == 0 {
             let (p1, p2) = (self.w.bodies[0], self.w.bodies[1]);
             let a = self.query(
-                0x80110e20,
+                0x80111168,
                 json!([bits(p1.pos[0] - p2.pos[0]), bits(p1.pos[2] - p2.pos[2])]),
             )?;
             let ang = 0x4000i32.wrapping_sub((self.c.bams_per_radian * a) as i32);
@@ -650,7 +650,7 @@ impl Run<'_> {
                 self.c.lane
             };
             self.call(
-                0x80039754,
+                0x800399bc,
                 json!([1, bits(p2.pos[0]), bits(p2.pos[1]), bits(z)]),
             );
         }
@@ -665,17 +665,17 @@ impl Run<'_> {
                 (self.k(0), self.k(0x10)),
             ];
             for (i, (goal, rate)) in goals.into_iter().enumerate() {
-                t[i] = stfs(self.query(0x8002abf4, json!([bits(t[i]), bits(goal), bits(rate)]))?);
+                t[i] = stfs(self.query(0x8002ae5c, json!([bits(t[i]), bits(goal), bits(rate)]))?);
             }
             self.k.target = t;
         } else {
             self.k.target = self.w.bodies[1].pos;
         }
-        let m = self.query(0x8001ccbc, json!([]))? as i32;
+        let m = self.query(0x8001cd40, json!([]))? as i32;
         if m == 7 || self.w.g7c == 0 {
             self.w.data[1].gauge = self.k(0xb0);
             if self.w.child != 0 {
-                self.call(0x80071888, json!([self.w.child]));
+                self.call(0x80071af0, json!([self.w.child]));
             }
             self.k.flag = 0;
             self.k.timer = 0;
@@ -688,7 +688,7 @@ impl Run<'_> {
                 .push(json!({ "local": "0x20470", "args": ["task", "data[1]+0x48"] }));
         }
         if self.w.data[1].gauge <= self.k(0) {
-            self.call(0x8003a2e4, json!([0, self.w.slots[1], 0, 3]));
+            self.call(0x8003a54c, json!([0, self.w.slots[1], 0, 3]));
         }
         Ok(())
     }

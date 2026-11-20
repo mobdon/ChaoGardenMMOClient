@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run stage 42's setup and teardown and compare duel-stage-setup.
 
-Usage: python duel_stage_setup_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_stage_setup_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes stg42D.rel +0x2CF0 (setup) and +0x2F88 (teardown) with their module
 helpers under Unicorn. Engine imports are recording stubs: string functions
 behave as C strings; loads, allocations and queries return scenario values;
@@ -12,10 +12,10 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE,UC_HOOK_MEM_WRITE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);gd=game/"resource/gd_PC";rel=gd/"stg42D.rel"
+game=Path(os.environ["SA2_GAME_PATH"]);gd=game/"resource/gd_PC";rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
 B,D,T,STOP=0x81000000,0x82000000,0x90000000,0x80f00000
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -83,74 +83,74 @@ def run(scn,mode):
         if S6<=v<S6+0x400000:return f"s6+0x{v-S6:x}"
         return f"0x{v:08x}"
     calls=[];st={'modes':list(scn.get('modeQueries',[])),'tasks':list(scn.get('tasks',[])),'allocs':list(scn.get('allocations',[]))}
-    # Player tables: obj1 slots at 0x801E7368, data slots 0x801E7328, presence 0x801E7388.
+    # Player tables: obj1 slots at 0x801e7768, data slots 0x801e7728, presence 0x801e7788.
     p1=[alloc(0x100,f'player1[{i}]') for i in range(2)];p2=[alloc(0x100,f'player2[{i}]') for i in range(2)]
-    for i in range(2):put(0x801e7368+4*i,'I',p1[i]);put(0x801e7328+4*i,'I',p2[i])
-    rc=scn.get('rivalCharacter');put(0x801e7388+4,'I',alloc(0x10) if rc is not None else 0)
+    for i in range(2):put(0x801e7768+4*i,'I',p1[i]);put(0x801e7728+4*i,'I',p2[i])
+    rc=scn.get('rivalCharacter');put(0x801e7788+4,'I',alloc(0x10) if rc is not None else 0)
     if rc is not None:put(p2[1]+3,'b',rc)
     names[p2[1]+0x48]='player2[1]+0x48'
-    put(0x801cbd88+0x11,'b',scn.get('language',0))
-    for a,v in zip((0x801a2638,0x801a2640),scn.get('callbackSlotsRaw',[0,0])):put(a,'I',v)
+    put(0x801cc168+0x11,'b',scn.get('language',0))
+    for a,v in zip((0x801a2a18,0x801a2a20),scn.get('callbackSlotsRaw',[0,0])):put(a,'I',v)
     # Module state before the call.
     for off,v in ((0x654,scn.get('fogTaskRaw',0)),(0x698,scn['banksRaw'][0]),(0x69c,scn['banksRaw'][1]),(0,scn.get('setRaw',SENT))):put(S6+off,'I',v)
-    src=bytes(scn.get('lightSourceMemory',[]));u.mem_write(0x801e5470,src or bytes(384))
+    src=bytes(scn.get('lightSourceMemory',[]));u.mem_write(0x801e5870,src or bytes(384))
     files={k:(v[0],v[1]) for k,v in scn.get('messageFiles',{}).items()}
     for k,(at,words) in files.items():
         u.page(at,len(words)*4);u.mem_write(at,b''.join(struct.pack('>I',x) for x in words))
     task_names={B+0x3cc:'task0',B+0x3128:'task1',B+0xae04:'task2'}
     def hook(uc,pc,sz,_):
         # CodeWarrior _savegpr_N / _restgpr_N: r(N)..r31 at r11 - 4 * (32 - r).
-        if 0x8010ac50<=pc<0x8010ac9c or 0x8010ac9c<=pc<0x8010ace8:
-            save=pc<0x8010ac9c;first=14+(pc-(0x8010ac50 if save else 0x8010ac9c))//4;r11=reg(11)
+        if 0x8010af98<=pc<0x8010afe4 or 0x8010afe4<=pc<0x8010b030:
+            save=pc<0x8010afe4;first=14+(pc-(0x8010af98 if save else 0x8010afe4))//4;r11=reg(11)
             for r in range(first,32):
                 at=r11-4*(32-r)
                 if save:put(at,'I',reg(r))
                 else:uc.reg_write(getattr(R,f'UC_PPC_REG_{r}'),get(at,'I'))
             return
         a=[reg(i) for i in range(3,10)]
-        if pc==0x8010dcb0:s=cstr(a[1]);uc.mem_write(a[0],s.encode()+b'\0');written.add(a[0]);return
-        if pc==0x8010dc40:s=cstr(a[0])+cstr(a[1]);uc.mem_write(a[0],s.encode()+b'\0');return
-        if pc==0x8010da60:
+        if pc==0x8010dff8:s=cstr(a[1]);uc.mem_write(a[0],s.encode()+b'\0');written.add(a[0]);return
+        if pc==0x8010df88:s=cstr(a[0])+cstr(a[1]);uc.mem_write(a[0],s.encode()+b'\0');return
+        if pc==0x8010dda8:
             s=cstr(a[0]);i=s.rfind(chr(a[1]));uc.reg_write(R.UC_PPC_REG_3,a[0]+i if i>=0 else 0);return
-        if pc==0x8001dd24:v=st['modes'].pop(0);calls.append(('0x8001dd24',[a[0],v]));uc.reg_write(R.UC_PPC_REG_3,v&0xffffffff);return
-        if pc==0x80071ba4:
-            made=st['tasks'].pop(0);calls.append(('0x80071ba4',[a[0],a[1],desc(a[2]),cstr(a[3]),made]))
+        if pc==0x8001dda8:v=st['modes'].pop(0);calls.append(('0x8001dda8',[a[0],v]));uc.reg_write(R.UC_PPC_REG_3,v&0xffffffff);return
+        if pc==0x80071e0c:
+            made=st['tasks'].pop(0);calls.append(('0x80071e0c',[a[0],a[1],desc(a[2]),cstr(a[3]),made]))
             t=alloc(0x60,task_names[a[2]]) if made else 0;uc.reg_write(R.UC_PPC_REG_3,t);return
-        if pc==0x801194b4:
-            got=st['allocs'].pop(0);calls.append(('0x801194b4',[a[0],a[1],got]));uc.reg_write(R.UC_PPC_REG_3,alloc(0x20,'alloc0') if got else 0);return
-        if pc==0x80070790:
-            calls.append(('0x80070790',[a[0],desc(a[1])]));t=alloc(0x60,'child');wk=alloc(0x40,'child.work');put(t+0x34,'I',wk);uc.reg_write(R.UC_PPC_REG_3,t);return
-        if pc==0x80064f84:calls.append(('0x80064f84',[cstr(a[0]),cstr(a[1]),a[2],scn['setHandle']]));uc.reg_write(R.UC_PPC_REG_3,scn['setHandle']);return
+        if pc==0x801197fc:
+            got=st['allocs'].pop(0);calls.append(('0x801197fc',[a[0],a[1],got]));uc.reg_write(R.UC_PPC_REG_3,alloc(0x20,'alloc0') if got else 0);return
+        if pc==0x800709f8:
+            calls.append(('0x800709f8',[a[0],desc(a[1])]));t=alloc(0x60,'child');wk=alloc(0x40,'child.work');put(t+0x34,'I',wk);uc.reg_write(R.UC_PPC_REG_3,t);return
+        if pc==0x800651ec:calls.append(('0x800651ec',[cstr(a[0]),cstr(a[1]),a[2],scn['setHandle']]));uc.reg_write(R.UC_PPC_REG_3,scn['setHandle']);return
         if pc==0x8001a13c:
             v=scn['lightLoads'][st.setdefault('light',0)];st['light']+=1
             calls.append(('0x8001a13c',[cstr(a[0]),desc(a[1]),v]));uc.reg_write(R.UC_PPC_REG_3,v&0xffffffff);return
         if pc==0x8001a16c:calls.append(('0x8001a16c',[cstr(a[0]),desc(a[1]),scn['fogLoad']]));uc.reg_write(R.UC_PPC_REG_3,scn['fogLoad']&0xffffffff);return
         if pc==0x8001a190:
             n=cstr(a[0]);at=files.get(n,(0,))[0];calls.append(('0x8001a190',[n,at]));uc.reg_write(R.UC_PPC_REG_3,at);return
-        if pc in (0x800725b8,):calls.append((hex(pc),[cstr(a[0]),desc(a[1])]));return
-        if pc in (0x8006d298,):calls.append((hex(pc),[cstr(a[0]),desc(a[1])]));return
+        if pc in (0x80072820,):calls.append((hex(pc),[cstr(a[0]),desc(a[1])]));return
+        if pc in (0x8006d500,):calls.append((hex(pc),[cstr(a[0]),desc(a[1])]));return
         if pc==0x80011050:calls.append((hex(pc),[cstr(a[0])]));return
-        if pc in (0x80112278,0x8011bfb4):calls.append((hex(pc),[fbits(1),fbits(2)]));return
-        if pc==0x80117844:calls.append((hex(pc),a[:3]));return
-        if pc in (0x8000532c,0x80119430):calls.append((hex(pc),[desc(a[0]),a[1],a[2]]));return
-        if pc==0x801193a4:calls.append((hex(pc),[desc(a[0]),desc(a[1]),struct.unpack('>i',struct.pack('>I',a[2]))[0]]));return
-        if pc in (0x80072008,0x80071fb0,0x80071eb0,0x80066124):calls.append((hex(pc),[desc(a[0]),desc(a[1]) if pc!=0x80066124 else a[1]]));return
-        if pc in (0x80086bd4,0x80087258,0x8001d6c8,0x80022bdc,0x80011a04,0x8011bfc0):calls.append((hex(pc),[a[0]]));return
-        if pc==0x8011bf80:calls.append((hex(pc),[struct.unpack('>i',struct.pack('>I',a[0]))[0]]));return
-        if pc in (0x80071878,0x80071888,0x801194e0,0x8001a2b0):calls.append((hex(pc),[desc(a[0]) if a[0] in names else a[0]]));return
-        if pc==0x8003ba5c:calls.append((hex(pc),[desc(a[0])]));return
+        if pc in (0x801125c0,0x8011c2fc):calls.append((hex(pc),[fbits(1),fbits(2)]));return
+        if pc==0x80117b8c:calls.append((hex(pc),a[:3]));return
+        if pc in (0x8000532c,0x80119778):calls.append((hex(pc),[desc(a[0]),a[1],a[2]]));return
+        if pc==0x801196ec:calls.append((hex(pc),[desc(a[0]),desc(a[1]),struct.unpack('>i',struct.pack('>I',a[2]))[0]]));return
+        if pc in (0x80072270,0x80072218,0x80072118,0x8006638c):calls.append((hex(pc),[desc(a[0]),desc(a[1]) if pc!=0x8006638c else a[1]]));return
+        if pc in (0x80086e3c,0x800874c0,0x8001d74c,0x80022e24,0x80011a04,0x8011c308):calls.append((hex(pc),[a[0]]));return
+        if pc==0x8011c2c8:calls.append((hex(pc),[struct.unpack('>i',struct.pack('>I',a[0]))[0]]));return
+        if pc in (0x80071ae0,0x80071af0,0x80119828,0x8001a2b0):calls.append((hex(pc),[desc(a[0]) if a[0] in names else a[0]]));return
+        if pc==0x8003bcc4:calls.append((hex(pc),[desc(a[0])]));return
         calls.append((hex(pc),[]))
-    for a in imports|{0x8010ac50+4*k for k in range(19)}|{0x8010ac9c+4*k for k in range(19)}:
+    for a in imports|{0x8010af98+4*k for k in range(19)}|{0x8010afe4+4*k for k in range(19)}:
         u.page(a,4);u.mem_write(a,struct.pack('>I',0x4e800020));u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
     # Locations the module may write, with how to read each.
     slots={'player1[1]+0x2':(p1[1]+2,'B'),'player2[1]+0x48':(p2[1]+0x48,'I'),
            's6+0x0':(S6,'I'),'s6+0x14':(S6+0x14,'I'),'s6+0x644':(S6+0x644,'P'),'s6+0x648':(S6+0x648,'I'),'s6+0x650':(S6+0x650,'I'),
            's6+0x654':(S6+0x654,'P'),'s6+0x698':(S6+0x698,'I'),'s6+0x69c':(S6+0x69c,'I'),'s5+0x1747c':(S5+0x1747c,'i'),'s5+0x17480':(S5+0x17480,'i'),
-           '0x803ad7c8':(0x803ad7c8,'P'),'0x801a2638':(0x801a2638,'P'),'0x801a2640':(0x801a2640,'P'),
-           '0x802b6c20':(0x802b6c20,'S'),'0x802b6c00':(0x802b6c00,'S')}
-    for a in (0x803ad7c8,0x802b6c20,0x802b6c00,S5+0x1747c,S5+0x17480):put(a,'I',SENT)
-    u.mem_write(0x801e73d8,struct.pack('>I',SENT)*14)
-    for k in range(12):u.mem_write(0x801e5230+0x30*k,struct.pack('>I',SENT)*9)
+           '0x803adbc8':(0x803adbc8,'P'),'0x801a2a18':(0x801a2a18,'P'),'0x801a2a20':(0x801a2a20,'P'),
+           '0x802b7020':(0x802b7020,'S'),'0x802b7000':(0x802b7000,'S')}
+    for a in (0x803adbc8,0x802b7020,0x802b7000,S5+0x1747c,S5+0x17480):put(a,'I',SENT)
+    u.mem_write(0x801e77d8,struct.pack('>I',SENT)*14)
+    for k in range(12):u.mem_write(0x801e5630+0x30*k,struct.pack('>I',SENT)*9)
     before={}
     def read(addr,kind):
         if kind=='S':return cstr(addr)
@@ -169,11 +169,11 @@ def run(scn,mode):
     state={}
     for k,(a,kind) in slots.items():
         if a in written:state[k]=read(a,kind)
-    tbl=[desc(get(0x801e73d8+4*i,'I')) for i in range(14)]
-    if get(0x801e73d8,'I')!=SENT:state['0x801e73d8']=tbl
+    tbl=[desc(get(0x801e77d8+4*i,'I')) for i in range(14)]
+    if get(0x801e77d8,'I')!=SENT:state['0x801e77d8']=tbl
     for k in range(12):
-        row=[get(0x801e5230+0x30*k+4*i,'I') for i in range(9)]
-        if row!=[SENT]*9:state[f'0x{0x801e5230+0x30*k:08x}']=row
+        row=[get(0x801e5630+0x30*k+4*i,'I') for i in range(9)]
+        if row!=[SENT]*9:state[f'0x{0x801e5630+0x30*k:08x}']=row
     for nm,(at,words) in files.items():
         n=words.index(0xffffffff);cur=[get(at+4*i,'I') for i in range(n)]
         if cur!=words[:n]:state[f'message@0x{at:08x}']=cur
@@ -192,7 +192,7 @@ def rust_calls(cs):
     out=[]
     for c in cs:
         a=c['args'];e=c['engine']
-        out.append((e if e!='0x8001dd24' else e,a))
+        out.append((e if e!='0x8001dda8' else e,a))
     return out
 light=list((gd/"stg42_light.bin").read_bytes())
 mh={'mh0042e.prs':[0x900,[0,0x10,0x20,0,0x30,0xffffffff,7]],'mhsysj.prs':[0x80f00800,[0x4,0x8,0xffffffff]]}

@@ -107,7 +107,7 @@ fn fnmadds(a: f32, c: f32, b: f32) -> f32 {
 /// PSMTXInverse (0x800ED484) in place, as njInvertMatrix(NULL) calls it.
 /// A zero determinant leaves the matrix alone. The reciprocal is Gekko's
 /// `fres` estimate and one Newton step.
-fn invert(m: &mut Mtx) {
+pub(crate) fn invert(m: &mut Mtx) {
     let [[m00, m01, m02, m03], [m10, m11, m12, m13], [m20, m21, m22, m23]] = *m;
     let a0 = fmsubs(m11, m22, m21 * m12);
     let a1 = fmsubs(m12, m20, m22 * m10);

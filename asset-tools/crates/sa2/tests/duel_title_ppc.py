@@ -1,6 +1,6 @@
 """Local PowerPC oracle: run the boss title card system and compare duel-title.
 
-Usage: python duel_title_ppc.py SA2_ASSETS_EXE   (SA2_GAME_PATH = Steam install; Unicorn 2.1)
+Usage: python duel_title_ppc.py SA2_ASSETS_EXE   (SA2_GC_REL_DIR = GameCube disc stage RELs; Unicorn 2.1)
 Executes stg42D.rel BossTitleExec create (+0x22070), update (+0x21DE4),
 delete (+0x2200C), glyph update (+0x211FC) and window update (+0x218AC) with
 their helpers under Unicorn, for both stage 42 descriptors and a synthetic
@@ -10,10 +10,10 @@ import hashlib,json,os,random,struct,subprocess,sys,tempfile
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_PPC,UC_MODE_PPC32,UC_MODE_BIG_ENDIAN,UC_HOOK_CODE
 from unicorn import ppc_const as R
-game=Path(os.environ["SA2_GAME_PATH"]);rel=game/"resource/gd_PC/stg42D.rel"
-B,D,T,STOP,G=0x81000000,0x82000000,0x90000000,0x80f00000,0x801cbd88
+rel=Path(os.environ["SA2_GC_REL_DIR"])/"stg42D.rel"
+B,D,T,STOP,G=0x81000000,0x82000000,0x90000000,0x80f00000,0x801cc168
 d=rel.read_bytes()
-assert hashlib.sha256(d).hexdigest()=="51d7b743c95cc8533e402533d73d43abab04c4de2e08770d615e143e1925385d"
+assert hashlib.sha256(d).hexdigest()=="4403be7d54343b13c2fe4770865d26c2dd755e75d58eff96e66b7fffb2600538"
 w=lambda a:struct.unpack_from('>I',d,a)[0]
 sec=lambda i:w(w(16)+8*i)&~1
 size=lambda i:w(w(16)+8*i+4)
@@ -51,7 +51,7 @@ for (t,off),(m,s,a,k) in refs.items():
         if m==0:imports.add(val)
         struct.pack_into('>I',code,off,0x48000001|((val-(B+off))&0x3fffffc))
 page(B,len(code));u.mem_write(B,bytes(code))
-SAVE=[0x8010ac50+4*k for k in range(19)];REST=[0x8010ac9c+4*k for k in range(19)]
+SAVE=[0x8010af98+4*k for k in range(19)];REST=[0x8010afe4+4*k for k in range(19)]
 for a in imports|{STOP}|set(SAVE)|set(REST):page(a,4);put(a,'I',0x4e800020)
 page(T,0x200000)
 u.reg_write(R.UC_PPC_REG_MSR,u.reg_read(R.UC_PPC_REG_MSR)|0x2000)
@@ -67,11 +67,11 @@ def hook(uc,pc,sz,_):
             else:uc.reg_write(getattr(R,f'UC_PPC_REG_{r}'),get(at,'I'))
         return
     E=lambda args:calls.append({'engine':f'0x{pc:08x}','args':args})
-    if pc in (0x80071ba4,0x80070790):
-        upd=reg(5) if pc==0x80071ba4 else reg(4)
+    if pc in (0x80071e0c,0x800709f8):
+        upd=reg(5) if pc==0x80071e0c else reg(4)
         kind={B+0x21de4:'title',B+0x218ac:'window',B+0x211fc:'glyph'}[upd]
         ok=st['inputs'].get({'title':'task','window':'windowTask','glyph':'glyph'}[kind],True)
-        if pc==0x80071ba4:E([reg(3),reg(4),f's1+0x{upd-B:x}','BossTitleExec',ok])
+        if pc==0x80071e0c:E([reg(3),reg(4),f's1+0x{upd-B:x}','BossTitleExec',ok])
         else:E([reg(3),f's1+0x{upd-B:x}','parent' if kind=='title' else 'task',ok])
         if not ok:uc.reg_write(R.UC_PPC_REG_3,0);return
         t=alloc(0x60);wk=alloc(0x40);put(t+0x34,'I',wk);put(t+8,'I',st.get('title',0))
@@ -80,17 +80,17 @@ def hook(uc,pc,sz,_):
         elif kind=='window':st['window']=t
         else:st['glyphs'].append(t)
         uc.reg_write(R.UC_PPC_REG_3,t);return
-    if pc==0x801194b4:
+    if pc==0x801197fc:
         n=reg(3)*reg(4);key={0x2c:'copy'}.get(n) if reg(3)==1 else None
         if key is None:key='lineBuffer' if st['bufs']==('line' if st['hasWindow'] is False else 'line') and False else None
         which=st['allocs'].pop(0);ok=st['inputs'][which]
         E([reg(3),reg(4),ok]);uc.reg_write(R.UC_PPC_REG_3,alloc(max(n,0x10)+0x40) if ok else 0)
         if ok and which=='lineBuffer':st['lineBuf']=reg(3)
         return
-    if pc==0x8001dcf4:E([st['inputs']['modeQuery']]);uc.reg_write(R.UC_PPC_REG_3,st['inputs']['modeQuery']&0xffffffff);return
-    if pc in (0x80071878,0x80071888):E(['task']);return
-    if pc==0x8006b710:E([struct.unpack('>i',struct.pack('>I',reg(3)))[0],reg(4),reg(5),reg(6)]);return
-    if pc==0x801194e0:E(['line' if reg(3)==get(st['copy'],'I') else 'windowLine']);return
+    if pc==0x8001dd78:E([st['inputs']['modeQuery']]);uc.reg_write(R.UC_PPC_REG_3,st['inputs']['modeQuery']&0xffffffff);return
+    if pc in (0x80071ae0,0x80071af0):E(['task']);return
+    if pc==0x8006b978:E([struct.unpack('>i',struct.pack('>I',reg(3)))[0],reg(4),reg(5),reg(6)]);return
+    if pc==0x80119828:E(['line' if reg(3)==get(st['copy'],'I') else 'windowLine']);return
     raise AssertionError(hex(pc))
 for a in imports|set(SAVE)|set(REST):u.hook_add(UC_HOOK_CODE,hook,begin=a,end=a)
 def run(entry,r3,r4=0,r10=0):
@@ -185,7 +185,7 @@ with tempfile.TemporaryDirectory(dir=Path.cwd()/'.local') as tmp:
                 for k,o in (('g37',0x37),('g09',9),('g39',0x39)):put(G+o,'b',int(op['pauses'][k]))
                 c=get(st['title']+0x40,'I');n=get(c+4,'h');lb=get(c,'I');put(lb+16*n+8,'H',op['beyond'])
                 run(0x21de4,st['title'])
-                freed=any(x['engine']=='0x80071878' for x in calls)
+                freed=any(x['engine']=='0x80071ae0' for x in calls)
                 native.append((list(calls),snapshot()));rust_ops.append(op)
                 if freed:break
             elif op['op']=='glyphs':

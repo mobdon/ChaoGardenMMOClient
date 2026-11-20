@@ -14,29 +14,43 @@
 //! centre and the mover it stands on each frame (`PlayerSample`), and the
 //! session runs the native object rules against it.
 use crate::{
+    chao_pipe::{ChaoPipe, PipeEvent},
     death_zones,
+    effect_emitter::{EffectEmitter, Emission},
     fan_stage::MountedStage,
     goal_ring,
+    knudai::{Knudai, KnudaiEvent, KnudaiInputs, KnudaiPlayer},
+    minimal::{Minimal, MinimalEvent, MinimalInputs, MinimalPlayer},
     iron_gate_movers::{self as movers, Bridge, Elevator, Lift, MoverLayout, MoverProgram},
     ninja_trig::{nj_rotate_sin_cos, nj_sin},
+    ori::{Ori, OriEvent},
     play_objects::{
         collision_rows, death_zone_triangles, place_y, read_object_solid, CollisionRow,
     },
     play_world::{add, len, make_tri, sub, PlayWorld, V3},
     player_physics::PlayerParameters,
+    prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
     prison_doors::{
         enemy_counts, DoorSound, ElevatorWall, Enemy, PrisonDoor, DOOR_KINDS, WALL_ROWS,
         WALL_ROW_COUNT,
     },
-    chao_pipe::{ChaoPipe, PipeEvent},
-    effect_emitter::{EffectEmitter, Emission},
-    ori::{Ori, OriEvent},
+    prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
     rocket::{Rocket, RocketEvent, RocketInputs},
     solid_box::{collapse_above, SolidBox, SolidBoxEvent, NO_GROUND},
-    prison_cam::{CamExplosion, SecurityCamera, CAM_RADIUS},
-    prison_visuals::{Fluo, MslRand, Searchlight, Siren, SoundEmitter, FLUO_RADIUS, SIREN_RADIUS},
     spring::{SpringKind, StageSpring},
     Error, Result,
+};
+use crate::{
+    enemy_lib::{
+        e_ai::{rows as e_ai_rows, EAi},
+        e_gold::{rows as e_gold_rows, EGold},
+        e_kumi::{rows as e_kumi_rows, EKumi},
+        e_namie::ENamie,
+        host::{EnemyHost, Event as EnemyEvent},
+        motion::read_table,
+        EnemyTask, PlayerView, Rand, StageEnemy,
+    },
+    ninja_matrix::MatrixStack,
 };
 use serde::Serialize;
 
@@ -161,6 +175,8 @@ pub struct PlayerSample {
     pub center: V3,
     /// The player task's position (twp +0x14), which CAM aims at.
     pub position: V3,
+    /// The player task's Rotation.y (twp +0xC), which KNUDAI turns.
+    pub yaw: i32,
     /// The player task's Action byte (twp +0), which CHAOPIPE reads.
     pub action: u8,
     /// The player task's Status has bit 0 or 1 (on the ground), which the
@@ -206,6 +222,12 @@ pub enum Event {
     WallDropping {
         wall: usize,
     },
+    /// An enemy's own kill path ran (E AI 0x4F1C4): it left its group and
+    /// scored `points`.
+    EnemyDestroyed {
+        enemy: usize,
+        points: i32,
+    },
     /// A security camera was destroyed (sound 0x14).
     CamDestroyed {
         cam: usize,
@@ -220,6 +242,17 @@ pub enum Event {
     Pipe {
         pipe: usize,
         event: PipeEvent,
+    },
+    /// The KNUDAI Mystic Melody shrine played a sound, asked for an action,
+    /// showed a hint or turned the player.
+    Knudai {
+        knudai: usize,
+        event: KnudaiEvent,
+    },
+    /// A MINIMAL animal capsule was collected, asked for action 0x2A or went.
+    Minimal {
+        minimal: usize,
+        event: MinimalEvent,
     },
     /// A ROCKETMISSSILE armed, puffed, flew, linked or exploded.
     Rocket {
@@ -698,6 +731,17 @@ pub struct Session {
     /// Live-enemy count per group (the byte table at 0x801E4AB8).
     #[serde(skip)]
     pub group_counts: [u8; 256],
+    /// The enemies whose own logic runs (E AI), by index into `enemies`.
+    #[serde(skip)]
+    pub enemy_ai: Vec<(usize, EnemyAi)>,
+    #[serde(skip)]
+    stack: MatrixStack,
+    /// GAME+0x7C (0x801CC1E4): the frame counter fn_80062B38 advances
+    /// while +0x37 is clear. Here it counts the steps before this one with
+    /// `effects_suppressed` clear; where the game advances it relative to
+    /// the enemies' tasks is not traced.
+    #[serde(skip)]
+    pub game_frames: i32,
     pub doors: Vec<PrisonDoor>,
     pub walls: Vec<ElevatorWall>,
     #[serde(skip)]
@@ -709,6 +753,22 @@ pub struct Session {
     pub solid_boxes: Vec<SolidBox>,
     pub oris: Vec<Ori>,
     pub rockets: Vec<Rocket>,
+    pub minimals: Vec<Minimal>,
+    pub shrines: Vec<Knudai>,
+    /// The melody word at GSNE8P 0x803ADC14 (a bit per shrine).
+    pub melody_bits: u32,
+    /// Host state KNUDAI reads: player 1's motion pair (+0x178, +0x17A of its
+    /// 0x801E7728 entry), whether a message is showing (0x800E018C) and
+    /// whether the message table has the hint entries.
+    pub player_motion: (i16, i16),
+    pub message_showing: bool,
+    pub hints_loaded: bool,
+    /// fn_80023808 then fn_800D05D0 per listed land entry at a point (radius
+    /// 10), for MINIMAL; the host supplies it from its land collision.
+    #[serde(skip)]
+    pub land_probes: Option<Box<dyn FnMut(V3) -> Vec<crate::land_probe::Probe>>>,
+    /// 0x80005500 (r13-0x7B10), the gravity mode MINIMAL reads.
+    pub gravity_mode: u32,
     /// The switch bytes (PC 0x802B95E0 + id): bit 0 on, bit 1 changed.
     #[serde(skip)]
     pub switches: [u8; 256],
@@ -730,6 +790,11 @@ pub struct Session {
     /// see no ground.
     #[serde(skip)]
     pub ground_probe: Option<Box<dyn Fn(V3) -> f32>>,
+    /// GetShadowPosXYZ / fn_80066E1C (`land_probe::shadow_xyz`) at a point,
+    /// for the enemies' ground and walls. The host supplies it from its land
+    /// collision; without it the probe finds nothing (an empty selection).
+    #[serde(skip)]
+    pub shadow_probe: Option<Box<ShadowProbe>>,
     /// The byte at GSNE8P 0x801CC168 + 0x37 that stops EFFOBJ0 emitting;
     /// the host sets it.
     pub effects_suppressed: bool,
@@ -852,6 +917,50 @@ impl Session {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let (e_ai_table, e_ai_radius, e_gold_table, e_kumi_table) = if rules.prison_doors {
+            let info = crate::stage_land::catalog()
+                .iter()
+                .find(|i| i.filename == rules.movers.module_file)
+                .ok_or_else(|| Error::invalid("stage module is not catalogued"))?;
+            let rel = crate::city_rel::CityRel::read_identified(src.stage_module, info.module)?;
+            let d = rel.data(5)?;
+            let radius = |row: u32| {
+                let at = (row + 0xC) as usize;
+                d.get(at..at + 4)
+                    .map(|b| f32::from_be_bytes(b.try_into().unwrap()))
+                    .ok_or_else(|| Error::invalid("E AI collision row"))
+            };
+            (
+                read_table(
+                    src.stage_module,
+                    info.module,
+                    5,
+                    e_ai_rows::MOTION,
+                    e_ai_rows::MOTION_ROWS,
+                )?,
+                [
+                    radius(e_ai_rows::COLLISION)?,
+                    radius(e_ai_rows::COLLISION + 0x60)?,
+                ],
+                read_table(
+                    src.stage_module,
+                    info.module,
+                    5,
+                    e_gold_rows::MOTION,
+                    e_gold_rows::MOTION_ROWS,
+                )?,
+                read_table(
+                    src.stage_module,
+                    info.module,
+                    5,
+                    e_kumi_rows::MOTION,
+                    e_kumi_rows::MOTION_ROWS,
+                )?,
+            )
+        } else {
+            (vec![], [0.0; 2], vec![], vec![])
+        };
+        let mut enemy_ai = vec![];
         let mut world = PlayWorld::from_collision(&collision);
         let mut movers = vec![];
         let mut rings_placed = vec![];
@@ -868,6 +977,8 @@ impl Session {
         let mut solid_boxes = vec![];
         let mut oris = vec![];
         let mut rockets = vec![];
+        let mut minimals = vec![];
+        let mut shrines = vec![];
         // stg09D.rel sec5+0x8E484: SOLIDBOX's cube row.
         let solid_box_row = if rules.prison_doors {
             Some(collision_rows(src.stage_module, rules.movers.module_file, 0x8e484, 1)?.remove(0))
@@ -984,6 +1095,23 @@ impl Session {
                             radius: CAM_RADIUS,
                         });
                     }
+                    (_, "KNUDAI") if rules.prison_doors => {
+                        shrines.push(Knudai::new(li, p.placement_index, pl.position, pl.rotation))
+                    }
+                    (_, "MINIMAL") if rules.prison_doors => {
+                        // The level's animal table (0x80195B54) is filled at
+                        // run time; the host can set `Minimal::animal`.
+                        minimals.push(Minimal::new(
+                            li,
+                            p.placement_index,
+                            pl.position,
+                            pl.rotation,
+                            pl.parameters,
+                            &mut rand,
+                            |_| 0,
+                            0,
+                        ))
+                    }
                     (_, "ROCKETMISSSILE") if rules.prison_doors => rockets.push(Rocket::new(
                         li,
                         p.placement_index,
@@ -1068,6 +1196,30 @@ impl Session {
                             velocity: 0.0,
                         }),
                     (_, n) if rules.prison_doors && enemy_counts(n, pl.parameters).is_some() => {
+                        // The SET loader (0x80065E54) sign-extends the
+                        // rotation halfwords.
+                        let task = EnemyTask {
+                            ang: pl.rotation.map(|a| a as i16 as i32),
+                            pos: pl.position,
+                            scl: pl.parameters,
+                            ..Default::default()
+                        };
+                        let native = match runs_natively(n) {
+                            Some("E AI") => {
+                                Some(StageEnemy::Ai(EAi::new(task, e_ai_table.clone())))
+                            }
+                            Some("E GOLD") => {
+                                Some(StageEnemy::Gold(EGold::new(task, e_gold_table.clone())))
+                            }
+                            Some("E KUMI") => {
+                                Some(StageEnemy::Kumi(EKumi::new(task, e_kumi_table.clone())))
+                            }
+                            Some("E NAMIE") => Some(StageEnemy::Namie(ENamie::new(task))),
+                            _ => None,
+                        };
+                        if let Some(e) = native {
+                            enemy_ai.push((enemies.len(), EnemyAi::new(e, e_ai_radius)));
+                        }
                         enemies.push(Enemy {
                             layer: li,
                             index: p.placement_index,
@@ -1077,9 +1229,11 @@ impl Session {
                             counted: enemy_counts(n, pl.parameters) == Some(true),
                             alive: true,
                         });
-                        *unimplemented
-                            .entry(format!("{name} (group count only)"))
-                            .or_insert(0) += 1;
+                        if runs_natively(n).is_none() {
+                            *unimplemented
+                                .entry(format!("{name} (group count only)"))
+                                .or_insert(0) += 1;
+                        }
                     }
                     (_, "MLIFT") => {
                         let solid = solid(place(&lift_solid));
@@ -1238,12 +1392,20 @@ impl Session {
             world,
             death_zones: zones,
             group_counts: {
+                // The enemies that run natively count themselves in their
+                // set-up.
                 let mut c = [0u8; 256];
-                for e in enemies.iter().filter(|e| e.counted) {
+                for e in enemies
+                    .iter()
+                    .filter(|e| e.counted && runs_natively(&e.name).is_none())
+                {
                     c[e.group as usize] = c[e.group as usize].wrapping_add(1);
                 }
                 c
             },
+            enemy_ai,
+            stack: MatrixStack::new(),
+            game_frames: 0,
             enemies,
             doors,
             door_rows,
@@ -1256,6 +1418,14 @@ impl Session {
             solid_boxes,
             oris,
             rockets,
+            minimals,
+            shrines,
+            melody_bits: 0,
+            player_motion: (0, 0),
+            message_showing: false,
+            hints_loaded: false,
+            land_probes: None,
+            gravity_mode: 0,
             switches: [0; 256],
             rocket_child_hits: vec![],
             ori_breaks: 0,
@@ -1263,6 +1433,7 @@ impl Session {
             ori_rockets: vec![],
             solid_box_row,
             ground_probe: None,
+            shadow_probe: None,
             effects_suppressed: false,
             fluos,
             searchlights,
@@ -1279,8 +1450,17 @@ impl Session {
     }
 
     /// Report an enemy destroyed (by the walker's attacks, which are
-    /// main-program code). Decrements its group count as 0x80018B88 does.
+    /// main-program code). An enemy whose own logic runs (E AI) is hit:
+    /// its task gets the collision-hit flag 4 and its kill path runs on the
+    /// next step. Others leave their group count as 0x80018B88 does.
     pub fn destroy_enemy(&mut self, i: usize) -> bool {
+        if let Some((_, ai)) = self.enemy_ai.iter_mut().find(|(e, _)| *e == i) {
+            if !self.enemies[i].alive || ai.enemy.dying() {
+                return false;
+            }
+            ai.hit = true;
+            return true;
+        }
         let Some(e) = self.enemies.get_mut(i).filter(|e| e.alive) else {
             return false;
         };
@@ -1318,7 +1498,12 @@ impl Session {
         let (Some(b), Some(r)) = (self.solid_boxes.get(i), self.solid_box_row.as_ref()) else {
             return vec![];
         };
-        ccl_box_tris(b.position, [0, b.yaw, 0], r, [r.size[0], r.size[1], r.size[2]])
+        ccl_box_tris(
+            b.position,
+            [0, b.yaw, 0],
+            r,
+            [r.size[0], r.size[1], r.size[2]],
+        )
     }
 
     /// An ORI's cube (sec5+0x7FDF0, the same 20-unit cube) while it stands.
@@ -1329,7 +1514,12 @@ impl Session {
         if o.state >= 2 {
             return vec![];
         }
-        ccl_box_tris(o.position, [0, o.rotation[1] as u16, 0], r, [r.size[0], r.size[1], r.size[2]])
+        ccl_box_tris(
+            o.position,
+            [0, o.rotation[1] as u16, 0],
+            r,
+            [r.size[0], r.size[1], r.size[2]],
+        )
     }
 
     /// 0x92C4, the stack collapse a breaking container or ORI runs at its
@@ -1447,7 +1637,59 @@ impl Session {
         let mut ground = |p: V3| probe.map_or(NO_GROUND, |g| g(p));
         for (i, b) in self.solid_boxes.iter_mut().enumerate() {
             if let Some(event) = b.step(&mut ground) {
-                events.push(Event::SolidBox { solid_box: i, event });
+                events.push(Event::SolidBox {
+                    solid_box: i,
+                    event,
+                });
+            }
+        }
+        {
+            let mut players = [None; 8];
+            players[0] = player.map(|p| MinimalPlayer {
+                position: p.position,
+                character: self.character,
+                action: p.action,
+            });
+            let mut no_land = |_p: V3| vec![];
+            let land: &mut dyn FnMut(V3) -> Vec<crate::land_probe::Probe> = match self.land_probes.as_mut() {
+                Some(f) => f.as_mut(),
+                None => &mut no_land,
+            };
+            let nearest = |_p: V3| 0usize;
+            let mut input = MinimalInputs {
+                players,
+                nearest: &nearest,
+                use_nearest: false,
+                suppressed: self.effects_suppressed,
+                gravity_mode: self.gravity_mode,
+                rotation_x_byte: 0,
+                land,
+                motion: None,
+            };
+            for (i, m) in self.minimals.iter_mut().enumerate() {
+                for event in m.step(&mut input) {
+                    events.push(Event::Minimal { minimal: i, event });
+                }
+            }
+        }
+        let shrine_input = KnudaiInputs {
+            players: [
+                player.map(|p| KnudaiPlayer {
+                    centre: p.center,
+                    position: p.position,
+                    yaw: p.yaw,
+                    action: p.action,
+                    character: self.character,
+                }),
+                None,
+            ],
+            motion: self.player_motion,
+            message_showing: self.message_showing,
+            hints_loaded: self.hints_loaded,
+        };
+        for (i, k) in self.shrines.iter_mut().enumerate() {
+            for event in k.step(&shrine_input, &mut self.melody_bits) {
+                events.push(Event::Knudai { knudai: i, event });
             }
         }
         let child_hits = std::mem::take(&mut self.rocket_child_hits);
@@ -1536,6 +1778,10 @@ impl Session {
                 events.push(Event::WallDropping { wall: i });
             }
         }
+        self.step_enemies(player, &mut events);
+        if !self.effects_suppressed {
+            self.game_frames = self.game_frames.wrapping_add(1);
+        }
         for (i, d) in self.doors.iter_mut().enumerate() {
             let was = d.state;
             let clear = self.group_counts[d.group as usize] == 0;
@@ -1592,7 +1838,214 @@ impl Session {
         }
     }
 
+    /// One frame of every live enemy that runs natively (E AI, E GOLD,
+    /// E KUMI and E NAMIE).
+    fn step_enemies(&mut self, player: Option<PlayerSample>, events: &mut Vec<Event>) {
+        for (i, ai) in self.enemy_ai.iter_mut() {
+            if !self.enemies[*i].alive {
+                continue;
+            }
+            if std::mem::take(&mut ai.hit) {
+                ai.enemy.task_mut().flags |= 4;
+            }
+            let mut host = EnemyWorld {
+                player,
+                shadow_probe: self.shadow_probe.as_deref(),
+                game_37: self.effects_suppressed,
+                game_7c: self.game_frames,
+                hit: ai.enemy.task().flags & 4 != 0,
+                broken: ai.broken,
+                row_radius: ai.row_radius,
+                radius: &mut ai.radius,
+                events: vec![],
+            };
+            // One rand state for the whole game (MSL `next`).
+            let mut rand = Rand(self.rand.seed);
+            ai.enemy.exec(
+                &mut host,
+                &mut self.stack,
+                &mut rand,
+                &mut self.group_counts,
+            );
+            self.rand.seed = rand.0;
+            for e in host.events {
+                match e {
+                    EnemyEvent::Score { points } => {
+                        self.score = self.score.wrapping_add(points as u32);
+                        events.push(Event::EnemyDestroyed { enemy: *i, points });
+                    }
+                    EnemyEvent::Free => self.enemies[*i].alive = false,
+                    EnemyEvent::SetEntryBroken => ai.broken = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+
     pub fn elapsed_seconds(&self) -> f32 {
         self.frame as f32 / FRAME_RATE
     }
 }
+
+/// The enemies whose own logic runs here (their `_F` and `_N` variants
+/// share the row callbacks).
+fn runs_natively(name: &str) -> Option<&'static str> {
+    let base = name
+        .strip_suffix("_F")
+        .or_else(|| name.strip_suffix("_N"))
+        .unwrap_or(name);
+    ["E AI", "E GOLD", "E KUMI", "E NAMIE"]
+        .into_iter()
+        .find(|&n| n == base)
+}
+
+/// An enemy that runs natively and what the session keeps for it.
+#[derive(Debug, Clone)]
+pub struct EnemyAi {
+    pub enemy: StageEnemy,
+    /// Its first collision entry's radius (cwp->info[0] +0xC).
+    pub radius: f32,
+    /// The first rows' radii in its CollisionData (stg09D.rel section 5
+    /// +0xC3DC8 and, for kind 5, +0xC3E28), read from the REL.
+    row_radius: [f32; 2],
+    hit: bool,
+    /// Its SET entry's broken mark (SetBroken / CheckBroken).
+    broken: bool,
+}
+
+impl EnemyAi {
+    fn new(enemy: StageEnemy, row_radius: [f32; 2]) -> Self {
+        Self {
+            enemy,
+            radius: 0.0,
+            row_radius,
+            hit: false,
+            broken: false,
+        }
+    }
+}
+
+/// What the session tells its enemies. Player contact, culling, ground
+/// collision are main-program code it does not run: the player is never
+/// touched or bumped, enemies are never culled and ground collision leaves
+/// them where they are, GetShadowPos finds no ground (-1e6), and no player
+/// touches a spring. Of the game state at 0x801CC168, +0x37 is the host's
+/// `effects_suppressed` and +0x7C counts frames (`Session::game_frames`);
+/// +0x39, +0x3C and +0x42 keep their main.dol initial values (0).
+struct EnemyWorld<'a> {
+    player: Option<PlayerSample>,
+    shadow_probe: Option<&'a ShadowProbe>,
+    game_37: bool,
+    game_7c: i32,
+    hit: bool,
+    broken: bool,
+    row_radius: [f32; 2],
+    radius: &'a mut f32,
+    events: Vec<EnemyEvent>,
+}
+
+impl EnemyHost for EnemyWorld<'_> {
+    fn game_37(&self) -> bool {
+        self.game_37
+    }
+    fn game_39_42(&self) -> (u8, u8) {
+        (0, 0)
+    }
+    fn game_7c(&self) -> i32 {
+        self.game_7c
+    }
+    fn game_3c(&self) -> u8 {
+        0
+    }
+    fn shadow_pos(&mut self, _pos: V3) -> f32 {
+        -1.0e6
+    }
+    fn spring_touch(&mut self) -> Option<i32> {
+        None
+    }
+    fn kumi_display_buffer(&mut self, _model: u32) -> bool {
+        false
+    }
+    fn players(&self) -> [Option<PlayerView>; 2] {
+        [
+            self.player.map(|p| PlayerView {
+                pos: p.position,
+                center: p.center,
+            }),
+            None,
+        ]
+    }
+    fn player_mode(&self, index: usize) -> i8 {
+        match (index, self.player) {
+            (0, Some(p)) => p.action as i8,
+            _ => 0,
+        }
+    }
+    fn range_out(&mut self) -> bool {
+        false
+    }
+    fn set_entry_dead(&self) -> bool {
+        false
+    }
+    fn set_entry_broken(&self) -> bool {
+        self.broken
+    }
+    fn hit_by_held_object(&mut self) -> bool {
+        false
+    }
+    fn hit_player(&self) -> bool {
+        false
+    }
+    fn bumped(&self) -> bool {
+        false
+    }
+    fn hit_by_player(&mut self) -> bool {
+        self.hit
+    }
+    fn damage_hook(&mut self, _pos: V3) -> bool {
+        false
+    }
+    fn collision_hit(&self) -> bool {
+        false
+    }
+    fn hit_by_player_index(&mut self) -> Option<i32> {
+        None
+    }
+    fn score_doubled(&mut self) -> bool {
+        false
+    }
+    fn shadow(&mut self, p: V3, water: bool) -> (crate::land_probe::Shadow, bool) {
+        match self.shadow_probe {
+            Some(f) => f(p, water),
+            None => (
+                crate::land_probe::Shadow {
+                    hits: [None; 6],
+                    coords: [-1.0e6, 1.0e6, -1.0e6, 1.0e6, -1.0e6, 1.0e6],
+                },
+                false,
+            ),
+        }
+    }
+    fn collision_radius(&self) -> f32 {
+        *self.radius
+    }
+    fn set_collision_radius(&mut self, r: f32) {
+        *self.radius = r;
+    }
+    fn collision_entry(&mut self) {}
+    fn event(&mut self, e: EnemyEvent) {
+        if let EnemyEvent::CollisionInit { rows, .. } = e {
+            // CCL_Init copies the rows; E AI may change the radius later in
+            // the same frame.
+            if rows == e_ai_rows::COLLISION {
+                *self.radius = self.row_radius[0];
+            } else if rows == e_ai_rows::COLLISION + 0x60 {
+                *self.radius = self.row_radius[1];
+            }
+        }
+        self.events.push(e);
+    }
+}
+
+/// GetShadowPosXYZ / fn_80066E1C on the host's land collision.
+pub type ShadowProbe = dyn Fn(V3, bool) -> (crate::land_probe::Shadow, bool);

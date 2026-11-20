@@ -5,6 +5,10 @@ accessible on GitHub. The persistent tracker is
 [client issue 11](https://github.com/mobdon/ChaoGardenMMOClient/issues/11).
 This document is a scope/evidence ledger, not a completion claim.
 
+**Work order:** [PORT-PLAN.md](PORT-PLAN.md) is the phased plan (November 20, 2026),
+ordered toward the first level playable as a Chao on the website. Each phase has
+an issue under #11.
+
 The source/data/authority boundary remains unchanged: game code, shared
 mechanics and readers/converters are Rust; browser/platform code presents
 state and submits bounded intents through agreed Rust/WASM/service boundaries.
@@ -96,7 +100,7 @@ For Sonic vs Shadow 2, duel-platform EXE OUTPUT.json reads the separate local-sp
 
 [Goal-ring contact](GOAL-RING.md) covers native initialization decisions and activation calls across the 28 mapped story levels. The mission controller and automatic story advancement remain unimplemented.
 
-[Iron Gate native stage rules](PLAYABLE-IRON-GATE.md) and [Prison Lane native stage rules](PLAYABLE-PRISON-LANE.md) build both walker stages from their game files and run only rules read there: lifts, two-door elevators, bridges, object solids, ring pickup and goal contact, driven by a host-supplied player sample. Neither is playable: the walker's movement, lock-on and laser are encrypted main-program code.
+[Iron Gate native stage rules](PLAYABLE-IRON-GATE.md) and [Prison Lane native stage rules](PLAYABLE-PRISON-LANE.md) build both walker stages from their game files and run only rules read there: lifts, two-door elevators, bridges, object solids, ring pickup and goal contact, driven by a host-supplied player sample. Neither is playable yet. The walker's movement is main-program code, which the Steam build encrypts; it is being ported from the GameCube main.dol instead ([walker port map](WALKER-PORT-MAP.md), PR #435). Lock-on and the laser follow.
 [City Escape native inputs](CITY-ESCAPE-NATIVE.md) reads Sonic's physics row, the start, terrain, rails, death zones, springs and goal program with no adapted rules. The dash-panel callback is ported from stg13D.rel and matches the installed PowerPC. The doc also records why no Sonic controller can be ported from the Steam install.
 
 [Sonic movement from main.dol](SONIC-MOVEMENT-NATIVE.md) ports the player controller from the GameCube main.dol of the user's own disc, under a Unicorn harness that interprets paired-single code. Ninja trigonometry, the matrix stack, the player-frame helpers and the analog input (fn_8004E560) match main.dol bit for bit; the shared ground-movement routine is next.

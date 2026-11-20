@@ -1,6 +1,7 @@
 //! Prison Lane's native stage rules on the installed Steam data. The
 //! session runs only rules read from the game files; these tests supply the
 //! player sample the engine would report and check the native responses.
+use sa2_asset_tools::knudai::KnudaiEvent;
 use sa2_asset_tools::ori::OriEvent;
 use sa2_asset_tools::rocket::RocketEvent;
 use sa2_asset_tools::{
@@ -133,6 +134,10 @@ fn installed_mover_rules_and_session_inventory() {
         assert_eq!(s.solid_boxes.len(), 6);
         assert_eq!(s.oris.len(), 1);
         assert_eq!(s.rockets.len(), 1);
+        assert_eq!(s.minimals.len(), 11);
+        assert_eq!(s.shrines.len(), 1);
+        assert!(!s.unimplemented.contains_key("KNUDAI"));
+        assert!(!s.unimplemented.contains_key("MINIMAL"));
         assert!(!s.unimplemented.contains_key("ROCKETMISSSILE"));
         assert!(!s.unimplemented.contains_key("ORI"));
         assert!(!s.unimplemented.contains_key("SOLIDBOX"));
@@ -165,6 +170,7 @@ fn standing_on_the_one_way_elevator_carries_it_to_its_target() {
         let stand = PlayerSample {
             center: s.movers[i].position(),
             position: s.movers[i].position(),
+            yaw: 0,
             action: 0,
             grounded: false,
             standing_on: Some(i),
@@ -208,6 +214,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let events = s.step(Some(PlayerSample {
             center: ring,
             position: ring,
+            yaw: 0,
             action: 0,
             grounded: false,
             standing_on: None,
@@ -225,6 +232,7 @@ fn goal_contact_and_ring_pickup_follow_the_native_rules() {
         let events = s.step(Some(PlayerSample {
             center: goal,
             position: goal,
+            yaw: 0,
             action: 0,
             grounded: false,
             standing_on: None,
@@ -263,6 +271,9 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         let members: Vec<usize> = (0..s.enemies.len())
             .filter(|&i| s.enemies[i].group == group && s.enemies[i].counted)
             .collect();
+        // Native enemies join their groups in their set-up, on their first
+        // frame.
+        s.step(None);
         assert!(!members.is_empty() && !s.group_clear(group));
         // Closed while the group lives.
         for _ in 0..60 {
@@ -272,8 +283,24 @@ fn a_cell_door_opens_once_its_enemy_group_is_destroyed() {
         for &i in &members {
             assert!(s.destroy_enemy(i));
         }
+        // A native kill path leaves the group on the enemy's next frame, before
+        // the doors read the counts.
+        let first = s.step(None);
+        let killed = first
+            .iter()
+            .filter(|e| matches!(e, Event::EnemyDestroyed { .. }))
+            .count();
+        // E AI, E GOLD and E KUMI run their own kill paths.
+        let native = members
+            .iter()
+            .filter(|&&i| s.enemy_ai.iter().any(|(e, _)| *e == i))
+            .count();
+        assert_eq!(killed, native);
         assert!(s.group_clear(group));
-        let mut opening = None;
+        let mut opening = first
+            .iter()
+            .any(|e| matches!(e, Event::DoorOpening { door } if *door == d))
+            .then_some(s.frame);
         let mut opened = None;
         for _ in 0..400 {
             for e in s.step(None) {
@@ -393,6 +420,7 @@ fn security_camera_tracks_the_player_and_breaks_when_its_lens_is_hit() {
         let sample = |hit| PlayerSample {
             center: at,
             position: at,
+            yaw: 0,
             action: 0,
             grounded: false,
             standing_on: None,
@@ -493,6 +521,7 @@ fn riding_the_rocket_breaks_the_ori_it_aims_at() {
         let rider = PlayerSample {
             center: at,
             position: at,
+            yaw: 0,
             standing_on: None,
             touching_goal: None,
             hit_cam_lens: None,
@@ -525,5 +554,52 @@ fn riding_the_rocket_breaks_the_ori_it_aims_at() {
         assert!(armed && linked && hit, "{armed} {linked} {hit}");
         // The ORI waits by the rocket's distance, then breaks and goes.
         assert_eq!(s.oris[0].state, 1);
+    });
+}
+
+#[test]
+#[ignore = "requires installed game and SA Tools 786 PC_SA2 maps"]
+fn mystic_melody_shrine_asks_for_the_melody_then_remembers_it() {
+    with_session(|mut s| {
+        let at = s.shrines[0].position;
+        let near = [at[0] + 10.0, at[1], at[2]];
+        let mut sample = PlayerSample {
+            center: near,
+            position: near,
+            yaw: 0,
+            standing_on: None,
+            touching_goal: None,
+            hit_cam_lens: None,
+            action: 0,
+            grounded: true,
+        };
+        let events = s.step(Some(sample));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Knudai {
+                event: KnudaiEvent::RequestAction { action: 0x2d, .. },
+                ..
+            }
+        )));
+        sample.action = 0x2d;
+        let events = s.step(Some(sample));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Knudai {
+                event: KnudaiEvent::Sound { sound: 0x101e },
+                ..
+            }
+        )));
+        assert_eq!(s.melody_bits, s.shrines[0].melody_bit());
+        // Played: the shrine now asks for 0x2E instead.
+        sample.action = 0;
+        let events = s.step(Some(sample));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            Event::Knudai {
+                event: KnudaiEvent::RequestAction { action: 0x2e, .. },
+                ..
+            }
+        )));
     });
 }

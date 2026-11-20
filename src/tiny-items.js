@@ -65,6 +65,10 @@ export function tinyCareView(care, { connected = false, careMutations = false, a
           detail: kind === 'fruit' ? 'Native fruit · adapted effects' : 'Seed · plant it in the garden on desktop',
           mayConsume: kind === 'fruit' && mayCare && quantity > 0 && enabled };
       }
+      if (kind === 'egg' || kind === 'hat') {
+        return { id, quantity, label: careItemLabel(id, care.catalog),
+          detail: kind === 'egg' ? 'Egg · put it down in a garden on desktop' : 'Hat · give it to your Chao on desktop', mayConsume: false };
+      }
       const source = native.get(id);
       const named = typeof source?.name === 'string' && source.name.length > 0 && source.name.length <= 200;
       const available = id === 'garden-fruit' || (care.catalog?.enabled === true && !!source);
