@@ -56,9 +56,17 @@ async function run(files) {
   const app = await App.start(canvas, files.exe, files.stg11, files.set_s ?? undefined, files.set_u ?? undefined);
   status.textContent = `Iron Gate · ${app.triangles} land triangles`;
   addEventListener('resize', () => { fit(); app.resize(canvas.width, canvas.height); });
-  const step = () => {
-    const [x, y, b] = pad();
-    status.textContent = app.frame(x, y, b);
+  // The game runs at 60 frames a second whatever the display's rate.
+  const tick = 1000 / 60;
+  let last = performance.now(), owed = 0;
+  const step = now => {
+    owed = Math.min(owed + (now - last), 4 * tick);
+    last = now;
+    while (owed >= tick) {
+      owed -= tick;
+      const [x, y, b] = pad();
+      status.textContent = app.frame(x, y, b);
+    }
     requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
