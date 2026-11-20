@@ -70,7 +70,21 @@ fn pak_archive(_: &Path, b: &[u8]) -> Result<String, String> {
             dds += 1;
         }
     }
-    Ok(format!("{} entries, {dds} DDS decoded", entries.len()))
+    // Packs with an .inf must pair every GVM slot with one of their DDS files.
+    let has_inf = entries
+        .iter()
+        .any(|x| x.name.to_ascii_lowercase().ends_with(".inf"));
+    let slots = if has_inf {
+        archive::pak_textures_in_slot_order(&entries)
+            .map_err(e)?
+            .len()
+    } else {
+        0
+    };
+    Ok(format!(
+        "{} entries, {dds} DDS decoded, {slots} slots",
+        entries.len()
+    ))
 }
 
 /// Read a CSB bank and decode every ADX segment it stores.
