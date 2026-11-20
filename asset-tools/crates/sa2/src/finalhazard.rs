@@ -925,6 +925,8 @@ pub enum PlacementClock {
     BossUpdate(Box<BossUpdateFrame>),
     /// Section 1 + 0x9d4..0xe2c: the boss state helpers.
     BossHelper(Box<BossHelperFrame>),
+    /// Section 1 + 0xe2c: boss action 0.
+    BossActionZero(Box<BossActionZeroFrame>),
     StageSqrt {
         values: Vec<f32>,
     },
@@ -2700,6 +2702,7 @@ pub fn placement_clock(bytes: &[u8], input: PlacementClock) -> Result<serde_json
         PlacementClock::BossConstruct(frame) => return boss_construct(&rel, &frame),
         PlacementClock::BossUpdate(frame) => return boss_update(&rel, &frame),
         PlacementClock::BossHelper(frame) => return boss_helper(&rel, &frame),
+        PlacementClock::BossActionZero(frame) => return boss_action_zero(&rel, &frame),
         PlacementClock::StageSqrt { values } => {
             let out: Vec<u32> = values.iter().map(|&v| stage_sqrt(v).to_bits()).collect();
             return Ok(serde_json::json!({"bits":out}));
@@ -5539,4 +5542,98 @@ fn boss_helper(
         _ => return Err(Error::invalid("not a boss helper routine")),
     };
     Ok(serde_json::json!({"events":ev,"returned":returned as u32}))
+}
+
+/// What boss action 0 reads: the task, its entity (word 0x34) and data
+/// (word 0x40), the data's motion object (word 0xc), entity byte 1 at entry
+/// and again after the set-up calls, motion float 0x1c, the result of
+/// 0x8002cb10, stage byte 0 (through module word 6:0x4a8), the result of
+/// 0x8001dd1c, and the stage block pointer read at the end.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BossActionZeroFrame {
+    pub task: u32,
+    pub entity: u32,
+    pub data: u32,
+    pub motion: u32,
+    pub step: i8,
+    pub step_after: u8,
+    pub motion_frame: f32,
+    pub motion_done: i32,
+    pub stage_id: i8,
+    pub players: i32,
+}
+/// Section 1 + 0xe2c: boss action 0. Step 0 starts the motion and the
+/// light and camera set-up; while the motion frame is inside the window at
+/// 4:0xe0 / 4:0xe8 a sound and voice play; when the motion ends the boss
+/// spawns its ring burst (0x18ed0, up to 3), switches to action 2 and plays
+/// the next sound. The stage block's half-word 0xa is cleared every frame.
+fn boss_action_zero(
+    rel: &crate::city_rel::CityRel<'_>,
+    f: &BossActionZeroFrame,
+) -> Result<serde_json::Value> {
+    let call = |site: u32, args: serde_json::Value| -> Result<serde_json::Value> {
+        Ok(serde_json::json!({"site":site,"call":engine_import(rel, site)?,"args":args}))
+    };
+    let local = |site: u32, target: u32, args: serde_json::Value| serde_json::json!({"site":site,"local":target,"args":args});
+    let constant = |site: u32, offset: usize, len: usize| -> Result<&[u8]> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88 && r.section == 4)
+            .ok_or_else(|| Error::invalid("missing boss action constant"))?;
+        let at = r.addend as usize + offset;
+        rel.data(4)?
+            .get(at..at + len)
+            .ok_or_else(|| Error::invalid("boss action constant out of range"))
+    };
+    let single = |site: u32, offset: usize| -> Result<f64> {
+        Ok(f64::from(f32::from_be_bytes(
+            constant(site, offset, 4)?.try_into().unwrap(),
+        )))
+    };
+    let module = |site: u32| -> Result<String> {
+        let r = rel
+            .reference(1, site)
+            .filter(|r| r.module == 88)
+            .ok_or_else(|| Error::invalid("missing boss action reference"))?;
+        Ok(format!("88:{}+{:#x}", r.section, r.addend))
+    };
+    let mut ev = Vec::new();
+    if f.step >= 0 && f.step <= 1 {
+        if f.step == 0 {
+            ev.extend([
+                call(0xe78, serde_json::json!([3]))?,
+                serde_json::json!({"site":0xe90,"local":0x1ed8,"args":[0, 0],"floats":[single(0xe82, 0x18)?]}),
+                call(0xe9c, serde_json::json!([f.motion, 0]))?,
+                local(0xea8, 0x1b0f4, serde_json::json!([f.task, f.data + 0x28])),
+                local(0xeb8, 0x1ccf4, serde_json::json!([f.task, module(0xeb2)?])),
+                serde_json::json!({"site":0xec4,"store":"entity","offset":1,"size":1,
+                    "value":f.step_after.wrapping_add(1)}),
+            ]);
+        }
+        let frame = f64::from(f.motion_frame);
+        let upper = f64::from_be_bytes(constant(0xee2, 0, 8)?.try_into().unwrap());
+        if frame > single(0xece, 0)? && frame < upper {
+            ev.extend([
+                call(0xf08, serde_json::json!([0xf, f.task, 1, 0, 0x96]))?,
+                call(0xf18, serde_json::json!([f.task, 3, 0x7f]))?,
+            ]);
+        }
+        ev.push(call(0xf20, serde_json::json!([f.motion]))?);
+        if f.motion_done != 0 {
+            ev.extend([
+                call(0xf40, serde_json::json!([f.stage_id as i32 as u32]))?,
+                call(0xf4c, serde_json::json!([f.motion, 1]))?,
+                serde_json::json!({"site":0xf54,"store":"state","offset":4,"size":1,"value":0xff}),
+                serde_json::json!({"site":0xf64,"local":0x1d10c,"args":[],"floats":[single(0xf5a, 0)?]}),
+                call(0xf68, serde_json::json!([]))?,
+                local(0xf90, 0x18ed0, serde_json::json!([f.entity + 0x14, 0, 0, f.players.min(3) as u32, 1, f.task])),
+                local(0xf9c, 0xdc4, serde_json::json!([f.task, 2])),
+                call(0xfb4, serde_json::json!([3, f.task, 1, 0, 0x96]))?,
+                call(0xfc4, serde_json::json!([f.task, 3, 0x78]))?,
+            ]);
+        }
+    }
+    ev.push(serde_json::json!({"site":0xfd8,"store":"stage","offset":0xa,"size":2,"value":0}));
+    Ok(serde_json::json!({"events":ev}))
 }
