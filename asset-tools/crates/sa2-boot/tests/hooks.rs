@@ -123,7 +123,9 @@ fn retrace_moves_clock_and_count() {
     assert_eq!(c.r[3], before + 1);
     call(&mut c, &mut m, clock::OS_GET_TIME);
     let t1 = (u64::from(c.r[3]) << 32) | u64::from(c.r[4]);
-    assert!(t1 - t0 > clock::TB_PER_FRAME);
+    // One frame of time per retrace, not two (the game skipped draws then).
+    let step = sa2_recomp::os::TB_PER_FRAME;
+    assert!((step..2 * step).contains(&(t1 - t0)), "{}", t1 - t0);
     c.r[3] = 0x8030_0000;
     call(&mut c, &mut m, vi::VI_SET_NEXT_FRAME_BUFFER);
     assert_eq!(vi::next_frame_buffer(), 0x8030_0000);

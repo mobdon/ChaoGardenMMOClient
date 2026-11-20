@@ -3,7 +3,7 @@
 //! VIWaitForRetrace sleeps the calling thread until the next one, and the
 //! setup calls do nothing. VISetNextFrameBuffer is remembered for the
 //! host to show.
-use crate::{clock, guest_call};
+use crate::guest_call;
 use sa2_recomp::rt::{Cpu, Mem};
 use sa2_recomp::{global, global::Global};
 
@@ -32,7 +32,9 @@ fn wait_for_retrace(c: &mut Cpu, m: &mut Mem) {
 
 /// Every OS frame (a frame hook): the retrace interrupt.
 fn retrace(c: &mut Cpu, m: &mut Mem) {
-    clock::advance_frame(c);
+    // pump() already moved the time base one frame; moving it here too ran
+    // the game clock at twice real time, so the game skipped every other
+    // draw to catch up (30 frames a second, movement in double steps).
     let n = RETRACES.get().wrapping_add(1);
     RETRACES.set(n);
     let cb = POST_CB.get();
