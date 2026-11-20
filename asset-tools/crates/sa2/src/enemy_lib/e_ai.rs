@@ -128,7 +128,7 @@ impl EAi {
             3 => self.state_patrol(host, stack, rand, counts),
             5 => self.state_attack(host, stack, rand, counts),
             6 => self.state_drop_wait(host, rand, counts),
-            7 => self.state_drop(host, rand, counts),
+            7 => self.state_drop(host, stack, rand, counts),
             8 => {
                 self.state_held(host, rand, counts);
                 engine::save_position(&self.task, &mut self.work);
@@ -407,7 +407,7 @@ impl EAi {
     }
 
     /// 0x4F658: flying movement.
-    fn fly(&mut self, host: &mut impl EnemyHost) {
+    fn fly(&mut self, host: &mut impl EnemyHost, stack: &mut MatrixStack) {
         if host.game_37() {
             return;
         }
@@ -436,10 +436,10 @@ impl EAi {
         t.pos[2] += -(w.spd[0] * nj_sin(t.ang[1])) + c;
         t.pos[1] -= nj_sin(w.bob);
         w.bob = w.bob.wrapping_add(0x300);
-        host.ground(&mut self.task, &mut self.work);
+        super::ground::collide(stack, &mut self.task, &mut self.work, host);
         let (t, w) = (&mut self.task, &mut self.work);
         t.pos[1] += nj_sin(w.bob);
-        if w.shadow_y < w.probe[1] + w.hover {
+        if w.shadow.coords[2] < w.probe[1] + w.hover {
             w.spd[1] -= k(0x3d4c_cccd);
             if w.spd[1] < -2.0 {
                 w.spd[1] = -2.0;
@@ -454,12 +454,12 @@ impl EAi {
     }
 
     /// 0x4F910: falling (state 7).
-    fn fall(&mut self, host: &mut impl EnemyHost) {
+    fn fall(&mut self, host: &mut impl EnemyHost, stack: &mut MatrixStack) {
         if host.game_37() {
             return;
         }
         self.task.pos[1] += self.work.spd[1];
-        host.ground(&mut self.task, &mut self.work);
+        super::ground::collide(stack, &mut self.task, &mut self.work, host);
         let w = &mut self.work;
         if w.motion.current != 8 {
             w.spd[1] = 0.0;
@@ -716,7 +716,7 @@ impl EAi {
         self.leash_flag(host);
         self.notice(host, NoticeFrom::Home);
         self.turn(host, rand);
-        self.fly(host);
+        self.fly(host, stack);
         self.jets(host, stack);
         self.damage(host, rand, counts);
         if self.task.mode == 10 || self.task.mode == 8 {
@@ -743,7 +743,7 @@ impl EAi {
         let kind = self.task.kind;
         if kind == 1 || (kind == 3 && self.task.flags & 0x800 == 0) {
             self.turn(host, rand);
-            self.fly(host);
+            self.fly(host, stack);
         }
         self.jets(host, stack);
         self.damage(host, rand, counts);
@@ -829,7 +829,13 @@ impl EAi {
 
     /// State 7 (0x5077C): drop to the ground, then become kind 0, 2 or 4
     /// in state 2.
-    fn state_drop(&mut self, host: &mut impl EnemyHost, rand: &mut Rand, counts: &mut GroupCounts) {
+    fn state_drop(
+        &mut self,
+        host: &mut impl EnemyHost,
+        stack: &mut MatrixStack,
+        rand: &mut Rand,
+        counts: &mut GroupCounts,
+    ) {
         let (g39, g42) = host.game_39_42();
         if engine::player_in_range(
             NoticeFrom::Body,
@@ -845,7 +851,7 @@ impl EAi {
             self.task.flags &= !0x2000;
         }
         self.turn(host, rand);
-        self.fall(host);
+        self.fall(host, stack);
         self.timer_tick(host);
         let cur = self.work.motion.current;
         if cur == 3 {

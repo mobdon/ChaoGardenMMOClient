@@ -382,7 +382,7 @@ impl EKumi {
     }
 
     /// 0x4B250: flying kinds (1, 3 and 7 in state 1).
-    fn fly(&mut self, host: &mut impl EnemyHost) {
+    fn fly(&mut self, host: &mut impl EnemyHost, stack: &mut MatrixStack) {
         if host.game_37() {
             return;
         }
@@ -404,9 +404,9 @@ impl EKumi {
         t.pos[1] += w.spd[1];
         let c = w.spd[2] * nj_cos(t.ang[1]);
         t.pos[2] += -(w.spd[0] * nj_sin(t.ang[1])) + c;
-        host.ground(&mut self.task, &mut self.work);
+        super::ground::collide(stack, &mut self.task, &mut self.work, host);
         let (t, w) = (&mut self.task, &mut self.work);
-        if w.shadow_y < (w.probe[1] + w.hover) - 2.0 * t.scl[1] {
+        if w.shadow.coords[2] < (w.probe[1] + w.hover) - 2.0 * t.scl[1] {
             w.spd[1] -= k(0x3d4c_cccd);
             if w.spd[1] < -2.0 {
                 w.spd[1] = -2.0;
@@ -486,7 +486,7 @@ impl EKumi {
         self.notice(host);
         self.turn(host);
         match self.task.kind {
-            1 | 3 | 7 => self.fly(host),
+            1 | 3 | 7 => self.fly(host, stack),
             5 => self.bob_steps(),
             _ => self.bob(host),
         }

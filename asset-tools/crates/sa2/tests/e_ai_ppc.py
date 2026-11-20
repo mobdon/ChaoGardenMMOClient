@@ -16,11 +16,15 @@ Needs SA2_MAIN_DOL and SA2_STAGE_REL (GameCube stg09D.rel), never committed.
 import json, os, random, struct, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
+import dol_ppc  # noqa: E402
+import gekko_fres  # noqa: E402
 from dol_ppc import Dol  # noqa: E402
 from stage_rel_ppc import load_rel  # noqa: E402
 
 dol = Dol(os.environ["SA2_MAIN_DOL"])
-m = dol.machine()
+m = dol.machine(boot=False)
+gekko_fres.install(m, dol_ppc)  # Gekko's fres estimate (njScalor, njUnitVector)
+m.boot()
 rel = load_rel(m, os.environ["SA2_STAGE_REL"])
 R1 = lambda off: rel.addr(1, off)
 fb = lambda x: struct.unpack('>I', struct.pack('>f', x))[0]
@@ -108,16 +112,30 @@ m.stub(0x80037EDC, ret(lambda: frame_in['hit_index'] & 0xffffffff))   # IsThisTa
 m.stub(0x80035C54, ret(lambda: frame_in['score_doubled']))
 
 
-def ground(mm):
-    w = mm.get(TASK + 0x38, 'I')
-    mm.put(w + 0xF8, 'I', frame_in['probe_y'])
-    mm.put(w + 0x150, 'I', frame_in['shadow_y'])
-    if frame_in['landed']:
-        mm.put(w + 0x4C, 'H', mm.get(w + 0x4C, 'H') | 0x80)
-    ev('ground')
+def shadow(water):
+    # GetShadowPosXYZ / fn_80066E1C: the scripted land answer. Each ray's
+    # coordinate is the probe point's plus a scripted offset; rays without a
+    # hit keep their other fields, as the game leaves them.
+    def stub(mm):
+        b = mm.gpr(3)
+        pos = [mm.get(b + 4 * k, 'f') for k in range(3)]
+        ev('shadow', [mm.get(b + 4 * k, 'I') for k in range(3)], int(water))
+        for r, rec in enumerate(frame_in['shadow']):
+            a = b + 0xC + 0x20 * r
+            coord = f32(pos[r // 2] + struct.unpack('>f', struct.pack('>I', rec[4]))[0])
+            if rec[0]:
+                mm.u.mem_write(a, struct.pack('>4I', 1, rec[1], rec[2] & 0xffffffff, rec[3] & 0xffffffff))
+                mm.put(a + 0x10, 'f', coord)
+                mm.u.mem_write(a + 0x14, struct.pack('>3I', *rec[5:8]))
+            else:
+                mm.put(a, 'I', 0)
+                mm.put(a + 0x10, 'f', -1e6 if r % 2 == 0 else 1e6)
+        mm.gpr(3, frame_in['shadow_ret'])
+    return stub
 
 
-m.stub(0x80017C00, ground)
+m.stub(0x80067210, shadow(False))
+m.stub(0x80066E1C, shadow(True))
 m.stub(0x8006B7EC, lambda mm: ev('sound', mm.gpr(3), mm.gpr(6), vec(mm, 7)))
 m.stub(0x8006A5F4, lambda mm: ev('task_sound', mm.gpr(3), mm.gpr(6)))
 m.stub(0x80062E0C, lambda mm: ev('score', mm.gpr(3)))
@@ -190,6 +208,29 @@ rng = random.Random(int(os.environ.get("SA2_E_AI_SEED", "11")))
 
 def rf(lo, hi):
     return f32(rng.uniform(lo, hi))
+
+
+def unit():
+    if rng.random() < 0.5:
+        v = [0.0, 0.0, 0.0]
+        v[rng.randrange(3)] = rng.choice([1.0, -1.0])
+        return [fb(x) for x in v]
+    v = [rng.uniform(-1, 1) for _ in range(3)]
+    n = sum(x * x for x in v) ** 0.5 or 1.0
+    return [fb(f32(x / n)) for x in v]
+
+
+def make_shadow():
+    out = []
+    for r in range(6):
+        below = r % 2 == 0
+        hit = int(rng.random() < (0.6 if r in (2, 3) else 0.3))
+        off = rf(-60, 0) if below else rf(0, 60)
+        if r == 2 and rng.random() < 0.3:
+            off = rf(-8, 8)
+        out.append([hit, rng.choice([0, 1, rng.randrange(1 << 31)]), rng.randrange(-0x8000, 0x8000),
+                    rng.randrange(-0x8000, 0x8000), fb(off)] + unit())
+    return out
 
 
 runs = []
@@ -283,7 +324,7 @@ for run in range(int(os.environ.get("SA2_E_AI_RUNS", "80"))):
             'range_out': int(rng.random() < 0.005), 'set_dead': 0,
             'hit_player': int(rng.random() < 0.03), 'hit_by_player': int(rng.random() < 0.5),
             'hit_index': rng.choice([0, 1, -1]), 'score_doubled': int(rng.random() < 0.5),
-            'probe_y': fb(rf(-50, 50)), 'shadow_y': fb(rf(-50, 50)), 'landed': int(rng.random() < 0.3),
+            'shadow': make_shadow(), 'shadow_ret': int(rng.random() < 0.5),
             'flag4': int(hit), 'spring': int(rng.random() < 0.02),
             'held_hit': int(rng.random() < 0.01), 'broken': int(rng.random() < 0.05),
             'shadow_pos': fb(rng.choice([-1e6, rf(-300, 300)])), 'cwp_bit': int(cwp_bit), 'a4': a4,

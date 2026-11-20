@@ -138,9 +138,9 @@ pub trait EnemyHost {
     fn hit_by_player_index(&mut self) -> Option<i32>;
     /// fn_80035C54(task): the points are doubled.
     fn score_doubled(&mut self) -> bool;
-    /// fn_80017C00(twp, work): ground and wall collision (main.dol, land
-    /// collision). It may move the task and set work fields.
-    fn ground(&mut self, task: &mut super::EnemyTask, work: &mut super::EnemyWork);
+    /// GetShadowPosXYZ (`water` false) or fn_80066E1C (`water` true) at a
+    /// point: `land_probe::shadow_xyz` on the host's land collision.
+    fn shadow(&mut self, p: V3, water: bool) -> (crate::land_probe::Shadow, bool);
     /// The first collision entry's radius (cwp->info[0] +0xC).
     fn collision_radius(&self) -> f32;
     fn set_collision_radius(&mut self, r: f32);

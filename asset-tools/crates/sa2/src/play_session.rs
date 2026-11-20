@@ -46,7 +46,7 @@ use crate::{
         e_namie::ENamie,
         host::{EnemyHost, Event as EnemyEvent},
         motion::read_table,
-        EnemyTask, EnemyWork, PlayerView, Rand, StageEnemy,
+        EnemyTask, PlayerView, Rand, StageEnemy,
     },
     ninja_matrix::MatrixStack,
 };
@@ -759,6 +759,11 @@ pub struct Session {
     /// see no ground.
     #[serde(skip)]
     pub ground_probe: Option<Box<dyn Fn(V3) -> f32>>,
+    /// GetShadowPosXYZ / fn_80066E1C (`land_probe::shadow_xyz`) at a point,
+    /// for the enemies' ground and walls. The host supplies it from its land
+    /// collision; without it the probe finds nothing (an empty selection).
+    #[serde(skip)]
+    pub shadow_probe: Option<Box<ShadowProbe>>,
     /// The byte at GSNE8P 0x801CC168 + 0x37 that stops EFFOBJ0 emitting;
     /// the host sets it.
     pub effects_suppressed: bool,
@@ -1370,6 +1375,7 @@ impl Session {
             ori_rockets: vec![],
             solid_box_row,
             ground_probe: None,
+            shadow_probe: None,
             effects_suppressed: false,
             fluos,
             searchlights,
@@ -1737,6 +1743,7 @@ impl Session {
             }
             let mut host = EnemyWorld {
                 player,
+                shadow_probe: self.shadow_probe.as_deref(),
                 game_37: self.effects_suppressed,
                 game_7c: self.game_frames,
                 hit: ai.enemy.task().flags & 4 != 0,
@@ -1820,6 +1827,7 @@ impl EnemyAi {
 /// +0x39, +0x3C and +0x42 keep their main.dol initial values (0).
 struct EnemyWorld<'a> {
     player: Option<PlayerSample>,
+    shadow_probe: Option<&'a ShadowProbe>,
     game_37: bool,
     game_7c: i32,
     hit: bool,
@@ -1899,7 +1907,18 @@ impl EnemyHost for EnemyWorld<'_> {
     fn score_doubled(&mut self) -> bool {
         false
     }
-    fn ground(&mut self, _task: &mut EnemyTask, _work: &mut EnemyWork) {}
+    fn shadow(&mut self, p: V3, water: bool) -> (crate::land_probe::Shadow, bool) {
+        match self.shadow_probe {
+            Some(f) => f(p, water),
+            None => (
+                crate::land_probe::Shadow {
+                    hits: [None; 6],
+                    coords: [-1.0e6, 1.0e6, -1.0e6, 1.0e6, -1.0e6, 1.0e6],
+                },
+                false,
+            ),
+        }
+    }
     fn collision_radius(&self) -> f32 {
         *self.radius
     }
@@ -1920,3 +1939,6 @@ impl EnemyHost for EnemyWorld<'_> {
         self.events.push(e);
     }
 }
+
+/// GetShadowPosXYZ / fn_80066E1C on the host's land collision.
+pub type ShadowProbe = dyn Fn(V3, bool) -> (crate::land_probe::Shadow, bool);

@@ -15,6 +15,7 @@ pub mod e_gold;
 pub mod e_kumi;
 pub mod e_namie;
 pub mod engine;
+pub mod ground;
 pub mod host;
 pub mod motion;
 
@@ -104,9 +105,14 @@ pub struct EnemyWork {
     pub f_98: f32,
     pub f_ac: f32,
     pub scale: V3,
-    /// +0xC0, +0xC8, +0xCC, +0xD4..+0xE8, +0xEC, +0xF0.
-    pub f_c0: f32,
+    /// +0xA0: the ground normal under the enemy (0x800184E4).
+    pub ground_normal: V3,
+    /// +0xBC: the probe point's offset from the position, in the enemy's
+    /// frame (fn_800186B0).
+    pub probe_offset: V3,
+    /// +0xC8: the probe's height to the ceiling.
     pub f_c8: f32,
+    /// +0xCC: the wall radius (fn_80017D4C).
     pub f_cc: f32,
     /// +0xD0: height above the ground probe the enemy keeps.
     pub hover: f32,
@@ -120,9 +126,10 @@ pub struct EnemyWork {
     pub f_f0: f32,
     /// +0xF4: the ground probe position (fn_800186B0).
     pub probe: V3,
-    /// +0x150: the ground height under the probe (GetShadowPosXYZ's
-    /// result at +0x140).
-    pub shadow_y: f32,
+    /// +0x100..+0x1C0: the six-ray probe's block (GetShadowPosXYZ). Ray 2's
+    /// coordinate (+0x150) is the ground height, ray 3's (+0x170) the
+    /// ceiling.
+    pub shadow: crate::land_probe::Shadow,
     /// +0x1C0.
     pub f_1c0: f32,
     /// +0x1C4: the bobbing angle.

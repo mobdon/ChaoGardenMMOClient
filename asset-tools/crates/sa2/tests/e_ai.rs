@@ -13,6 +13,7 @@ use sa2_asset_tools::{
         motion::{read_table, Motion},
         EnemyTask, EnemyWork, PlayerView, Rand, V3,
     },
+    land_probe::{Hit, Shadow},
     ninja_matrix::MatrixStack,
 };
 use serde_json::{json, Value};
@@ -97,7 +98,8 @@ fn decode_work(b: &[u8], sec5: u32) -> EnemyWork {
         f_98: b.f(0x98),
         f_ac: b.f(0xAC),
         scale: b.v(0xB0),
-        f_c0: b.f(0xC0),
+        ground_normal: b.v(0xA0),
+        probe_offset: b.v(0xBC),
         f_c8: b.f(0xC8),
         f_cc: b.f(0xCC),
         hover: b.f(0xD0),
@@ -110,7 +112,21 @@ fn decode_work(b: &[u8], sec5: u32) -> EnemyWork {
         f_ec: b.f(0xEC),
         f_f0: b.f(0xF0),
         probe: b.v(0xF4),
-        shadow_y: b.f(0x150),
+        shadow: {
+            let mut s = Shadow::default();
+            for r in 0..6 {
+                let a = 0x100 + 0x20 * r;
+                s.coords[r] = b.f(a + 0x10);
+                s.hits[r] = (b.w(a) != 0).then(|| Hit {
+                    flags: b.w(a + 4),
+                    angle_x: b.w(a + 8) as i32,
+                    angle_z: b.w(a + 0xC) as i32,
+                    y: b.f(a + 0x10),
+                    normal: b.v(a + 0x14),
+                });
+            }
+            s
+        },
         f_1c0: b.f(0x1C0),
         bob: b.w(0x1C4) as i32,
         i_1cc: b.w(0x1CC) as i32,
@@ -234,13 +250,25 @@ impl EnemyHost for Host<'_> {
     fn score_doubled(&mut self) -> bool {
         self.b("score_doubled")
     }
-    fn ground(&mut self, _task: &mut EnemyTask, work: &mut EnemyWork) {
-        work.probe[1] = f(&self.i["probe_y"]);
-        work.shadow_y = f(&self.i["shadow_y"]);
-        if self.b("landed") {
-            work.flags |= 0x80;
+    fn shadow(&mut self, p: V3, water: bool) -> (Shadow, bool) {
+        self.events.push(json!(["shadow", bits(p), water as u32]));
+        let mut s = Shadow::default();
+        for (r, rec) in self.i["shadow"].as_array().unwrap().iter().enumerate() {
+            if u(&rec[0]) != 0 {
+                let coord = p[r / 2] + f(&rec[4]);
+                s.coords[r] = coord;
+                s.hits[r] = Some(Hit {
+                    flags: u(&rec[1]),
+                    angle_x: rec[2].as_i64().unwrap() as i32,
+                    angle_z: rec[3].as_i64().unwrap() as i32,
+                    y: coord,
+                    normal: [f(&rec[5]), f(&rec[6]), f(&rec[7])],
+                });
+            } else {
+                s.coords[r] = if r % 2 == 0 { -1.0e6 } else { 1.0e6 };
+            }
         }
-        self.events.push(json!(["ground"]));
+        (s, self.b("shadow_ret"))
     }
     fn collision_radius(&self) -> f32 {
         self.radius.unwrap()
