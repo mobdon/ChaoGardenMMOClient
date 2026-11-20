@@ -60,6 +60,7 @@ fn matches_main_dol() {
         .map(|r| PhysicsRow {
             run_accel: f(&r[0]),
             f58: f(&r[1]),
+            f74: 0.0,
             weight: f(&r[2]),
         })
         .collect();
