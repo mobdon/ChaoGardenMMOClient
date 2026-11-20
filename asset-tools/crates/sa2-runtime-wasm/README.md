@@ -16,4 +16,9 @@ python -I serve.py "C:/Program Files (x86)/Steam/steamapps/common/Sonic Adventur
 
 Open http://127.0.0.1:8411/ and pick the game folder, or open
 `?from=/game/` to load the same files from `serve.py` (development).
-Arrows or WASD move the stick, Space is A.
+Arrows or WASD move the stick, Space is A, X is B, Enter is Start;
+IJKL move the C-stick and Q/E press L/R. A controller works too: the page
+reads the first one in the browser's standard Gamepad layout and turns it
+into the raw GameCube pad (`sa2_runtime::host_pad`), so the game's own
+`PADClamp` and button table handle it. A, B, X, Y by name, right bumper is
+Z, triggers are analog L/R, d-pad and Start as labelled.

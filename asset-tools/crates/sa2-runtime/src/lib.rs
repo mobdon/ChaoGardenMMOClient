@@ -10,6 +10,7 @@
 pub mod camera;
 pub mod frame;
 pub mod game;
+pub mod host_pad;
 pub mod input;
 pub mod objects;
 pub mod player;
