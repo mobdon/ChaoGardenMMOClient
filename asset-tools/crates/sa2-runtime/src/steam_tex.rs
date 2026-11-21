@@ -385,7 +385,9 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
     // shortcut: limit read from 0x8001a190 only; other archive loaders' scratch sizes unverified.
     // shortcut: segalogo at 1.67 MB still hung the logo screen inside that 2 MB, so another limit applies (another loader or the texture allocation in 0x801197d0, unverified); until it is found, nothing bigger than Steam's GC archive is served.
     let prs = prs_literal(&out);
-    (out.len() <= gvm.len() && prs.len().div_ceil(0x800) * 0x800 <= SCRATCH).then_some(prs)
+    // SA2_STEAM_TEX_2X=1 (diagnosis only): serve archives up to the scratch size.
+    let fits_gc = out.len() <= gvm.len() || std::env::var_os("SA2_STEAM_TEX_2X").is_some();
+    (fits_gc && prs.len().div_ceil(0x800) * 0x800 <= SCRATCH).then_some(prs)
 }
 
 /// DXT1 blocks to RGBA8 (only when the `.inf` asks for a non-CMPR format).

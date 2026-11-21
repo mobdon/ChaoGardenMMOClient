@@ -276,6 +276,17 @@ fn traced(c: &mut Cpu, m: &mut Mem, addr: u32, what: &str) {
     }
     eprintln!("steam sound: {what} {id:#x} -> {:#x}", c.r[3]);
 }
+fn archive_load(c: &mut Cpu, m: &mut Mem) {
+    let name = crate::cstr(m, c.r[3]);
+    eprintln!("steam tex: load {name}");
+    traced(c, m, 0x8001_A190, "tex archive");
+}
+fn unpack(c: &mut Cpu, m: &mut Mem) {
+    traced(c, m, 0x800D_2684, "tex unpack");
+}
+fn tex_upload(c: &mut Cpu, m: &mut Mem) {
+    traced(c, m, 0x8011_97D0, "tex upload");
+}
 fn play_request(c: &mut Cpu, m: &mut Mem) {
     traced(c, m, 0x8006_AFFC, "request");
 }
@@ -287,6 +298,11 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if std::env::var_os("SA2_TRACE_SOUND").is_some() {
         c.rt.set_override(0x8006_AFFC, play_request);
         c.rt.set_override(0x8006_C78C, lookup);
+    }
+    if std::env::var_os("SA2_TRACE_TEX").is_some() {
+        c.rt.set_override(0x8001_A190, archive_load);
+        c.rt.set_override(0x800D_2684, unpack);
+        c.rt.set_override(0x8011_97D0, tex_upload);
     }
     c.rt.set_override(SEQ_MESSAGE, seq_message);
     c.rt.set_override(LOAD_FILE, load_file);
