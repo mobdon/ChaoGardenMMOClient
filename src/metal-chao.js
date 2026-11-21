@@ -8,8 +8,7 @@ export const METAL_CHAO_LOOK = 'metal-sonic-chao';
 export const METAL_CHAO_PARTS = [
   { key: 'metal-chao-head', node: '016' },
   { key: 'metal-chao-shoe-right', node: '013' }, { key: 'metal-chao-shoe-left', node: '006' },
-  { key: 'metal-chao-hand-right', node: '010' }, { key: 'metal-chao-hand-left', node: '003' },
-  { key: 'metal-chao-core', node: '001' }, { key: 'metal-chao-jet', node: '001' },
+  { key: 'metal-chao-core', node: '001' },
 ];
 // Chao feet, head, eyes, ear tips and mouth: replaced by Metal Sonic's shoes and head.
 export const METAL_CHAO_HIDDEN = new Set([6, 13, 16, 17, 18, 19, 20, 21, 22, 23, 25, 27]);
