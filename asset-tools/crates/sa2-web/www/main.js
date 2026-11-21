@@ -124,6 +124,7 @@ function loadedWorker() {
     else if (m.crash) log(`game thread ${m.tid} stopped: ${m.crash}`, true);
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
+    else if (m.area !== undefined) roomArea(m.area);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
   w.postMessage({ init: true, module, memory, env, picked, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
@@ -145,11 +146,20 @@ function mmoToken() {
 // the MMO server (same socket and messages as the hub page, src/main.js).
 // The game's own Chao Lobby is the MMO hub (mob 2026-11-21): stage 90 with no area.
 const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 5: 'race' };
+let room = null;
 function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: zone }));
+  room = { ws, zone };
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: room.zone }));
   // 4001: this card's Chao went out somewhere else; don't fight over it.
-  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, zone), 3000); };
+  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
+}
+// The game changed Chao World area (its own teleporters): follow it into that room.
+function roomArea(area) {
+  const zone = roomZones[area === 0 ? '' : area];
+  if (!room || !zone || zone === room.zone) return;
+  room.zone = zone;
+  if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: zone }));
 }
 // Hold the card while the game runs: renew its lease (10 minutes on the
 // server) and give the Chao back when the tab closes.

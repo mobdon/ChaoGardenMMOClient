@@ -39,6 +39,8 @@ const LAST_AREA: u32 = 12;
 static PENDING: Global<Option<(u16, u32)>> = global!(None);
 /// SA2_CHAO_AREA: the Chao World area to change to once the lobby is up.
 static AREA: Global<Option<u32>> = global!(None);
+/// Started in Chao World: the last area told to the page (u32::MAX before the first).
+static SHOWN: Global<Option<u32>> = global!(None);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -51,6 +53,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
         PENDING.set(Some((CHAO_WORLD, 0)));
+        SHOWN.set(Some(u32::MAX));
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
                 .ok()
@@ -87,13 +90,16 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             start(c, m, stage, ch);
         }
     }
-    if let Some(area) = AREA.get() {
-        if let Some(text) = chaomain_text(m) {
-            // Once the lobby (area 0) is running, change area the game's own way.
-            if guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]) == 0 {
-                guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
-                AREA.set(None);
-            }
+    if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
+        let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
+        // Once the lobby (area 0) is running, change area the game's own way.
+        if let (Some(area), 0) = (AREA.get(), now) {
+            guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
+            AREA.set(None);
+        }
+        if now != shown {
+            SHOWN.set(Some(now));
+            tell_page(now);
         }
     }
     original(c, m, TOP_LEVEL);
@@ -111,6 +117,15 @@ fn start(c: &mut Cpu, m: &mut Mem, stage: u16, ch: u32) {
     m.w8(GAME, 0);
     m.w32(NEXT_GLOBAL_MODE, MD_ACTION_INIT);
     m.w32(GLOBAL_MODE, MD_ACTION_INIT);
+}
+
+/// The browser page's `/dev/area` (sa2-web worker.js): the Chao World area,
+/// so the page keeps the player in that area's MMO room. Absent on desktop.
+fn tell_page(area: u32) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open("/dev/area") {
+        let _ = f.write_all(&[area as u8]);
+    }
 }
 
 /// ChaoMain's linked .text (section 1), through the game's module list
