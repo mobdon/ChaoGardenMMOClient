@@ -187,6 +187,8 @@ struct Prepared {
     textures: wgpu::BindGroup,
     material_offset: u32,
     vertex_offset: u64,
+    /// The vertex layout's stride (draws with the same stride share a binding).
+    stride: u64,
     first_index: u32,
     index_count: u32,
 }
@@ -222,6 +224,8 @@ pub struct GxRenderer {
     /// clear-only pass starts where the next real one does).
     passes: FastMap<(u64, usize, usize), Pass>,
     passes_of: u64,
+    /// Recorded passes not yet submitted.
+    pending: Vec<wgpu::CommandBuffer>,
     /// Textures made by EFB copies, by id (reused by the next copy).
     efb_copies: FastMap<TextureId, wgpu::Texture>,
 }
@@ -314,6 +318,7 @@ impl GxRenderer {
             viewport: None,
             passes: FastMap::default(),
             passes_of: 0,
+            pending: Vec::new(),
             efb_copies: FastMap::default(),
         }
     }
@@ -582,13 +587,23 @@ impl GxRenderer {
         draws: &[GpuDraw<'_>],
     ) {
         self.render_pass(None, target, size, clear, scene, draws);
+        self.flush();
+    }
+
+    /// Submit the passes recorded since the last flush, in order.
+    fn flush(&mut self) {
+        if !self.pending.is_empty() {
+            self.queue.submit(self.pending.drain(..));
+        }
     }
 
     /// Everything a pass needs except the draws' position matrices.
     fn prepare(&mut self, scene: &SceneParams, draws: &[GpuDraw<'_>]) -> Pass {
         let mut uniforms = params::fill_scene_params(scene);
+        uniforms.reserve(SCENE_SLOT + draws.len() * MATERIAL_SLOT);
         uniforms.resize(SCENE_SLOT, 0);
-        let mut vertices: Vec<u8> = Vec::new();
+        let mut vertices: Vec<u8> =
+            Vec::with_capacity(draws.iter().map(|d| d.vertices.len() + 64).sum());
         let mut indices: Vec<u32> = Vec::new();
         let mut prepared = Vec::new();
         let mut last_material: Option<(&MaterialParams, u32)> = None;
@@ -615,14 +630,16 @@ impl GxRenderer {
                 Some((p, o)) if p == d.material_params => o,
                 _ => {
                     let o = uniforms.len() as u32;
-                    uniforms.extend(params::fill_material_params(d.material_params));
+                    params::fill_material_params_into(d.material_params, &mut uniforms);
                     uniforms.resize(o as usize + MATERIAL_SLOT, 0);
                     last_material = Some((d.material_params, o));
                     o
                 }
             };
-            // Vertex buffers start on a stride-aligned offset per draw.
-            let vertex_offset = vertices.len().div_ceil(4) * 4;
+            // Each draw's vertices start on a multiple of its stride, so one
+            // binding of the buffer reaches them through a base vertex.
+            let stride = d.layout.stride.max(1);
+            let vertex_offset = vertices.len().div_ceil(stride) * stride;
             vertices.resize(vertex_offset, 0);
             vertices.extend_from_slice(d.vertices);
             let first_index = indices.len() as u32;
@@ -633,6 +650,7 @@ impl GxRenderer {
                 textures,
                 material_offset,
                 vertex_offset: vertex_offset as u64,
+                stride: stride as u64,
                 first_index,
                 index_count: d.indices.len() as u32,
             });
@@ -710,74 +728,36 @@ impl GxRenderer {
             for p in &pass.prepared {
                 let at = mats.len();
                 if let Some(d) = draws.get(p.draw) {
-                    mats.extend(params::fill_draw_params(d.draw_params));
+                    params::fill_draw_params_into(d.draw_params, &mut mats);
                 }
                 mats.resize(at + DRAW_SLOT, 0);
             }
             self.queue.write_buffer(m, 0, &mats);
         }
         let depth = self.depth_view(size);
-        let mut enc = self.device.create_command_encoder(&Default::default());
-        {
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("gx"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: match clear {
-                            Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
-                                r: c[0],
-                                g: c[1],
-                                b: c[2],
-                                a: c[3],
-                            }),
-                            None => wgpu::LoadOp::Load,
-                        },
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: if clear.is_some() {
-                            wgpu::LoadOp::Clear(1.0)
-                        } else {
-                            wgpu::LoadOp::Load
-                        },
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            if let Some(v) = self.viewport {
-                let w = size[0] as f32;
-                let h = size[1] as f32;
-                let x = v[0].clamp(0.0, w);
-                let y = v[1].clamp(0.0, h);
-                let vw = v[2].clamp(1.0, w - x).max(1.0);
-                let vh = v[3].clamp(1.0, h - y).max(1.0);
-                if x < w && y < h {
-                    rp.set_viewport(x, y, vw, vh, v[4].min(v[5]), v[5].max(v[4]));
-                }
-            }
-            if let Some((bind, v, i, _)) = &pass.buffers {
-                rp.set_index_buffer(i.slice(..), wgpu::IndexFormat::Uint32);
-                for (n, p) in pass.prepared.iter().enumerate() {
-                    rp.set_pipeline(&p.pipeline);
-                    let draw_offset = (n * DRAW_SLOT) as u32;
-                    rp.set_bind_group(0, bind, &[0, p.material_offset, draw_offset]);
-                    rp.set_bind_group(1, &p.textures, &[]);
-                    rp.set_vertex_buffer(0, v.slice(p.vertex_offset..));
-                    rp.draw_indexed(p.first_index..p.first_index + p.index_count, 0, 0..1);
-                }
-            }
-        }
-        self.queue.submit([enc.finish()]);
+        let viewport = self.viewport.and_then(|v| {
+            let w = size[0] as f32;
+            let h = size[1] as f32;
+            let x = v[0].clamp(0.0, w);
+            let y = v[1].clamp(0.0, h);
+            let vw = v[2].clamp(1.0, w - x).max(1.0);
+            let vh = v[3].clamp(1.0, h - y).max(1.0);
+            (x < w && y < h).then_some([x, y, vw, vh, v[4].min(v[5]), v[5].max(v[4])])
+        });
+        let buffers = pass.buffers.as_ref().map(|(b, v, i, _)| (b, v, i));
+        let all = 0..pass.prepared.len();
+        let cmd = record_slice(
+            &self.device,
+            target,
+            &depth,
+            clear,
+            viewport,
+            buffers,
+            &pass.prepared,
+            all,
+        );
+        // Submitted with the frame's other passes (one submit a frame).
+        self.pending.push(cmd);
         if let Some(k) = key {
             self.passes.insert(k, pass);
         }
@@ -823,6 +803,7 @@ impl GxRenderer {
             size,
             Some(clear_color),
         );
+        self.flush();
     }
 
     /// The offscreen EFB for render-to-texture passes.
@@ -854,6 +835,7 @@ impl GxRenderer {
     /// shortcut: the copy's own scale and texture format are not applied
     /// (full resolution, the target's colour format).
     fn copy_to_texture(&mut self, efb: &wgpu::Texture, copy: &crate::api::TexCopy) {
+        self.flush();
         let [x, y, w, h] = copy.src;
         let x = x.min(efb.width().saturating_sub(1));
         let y = y.min(efb.height().saturating_sub(1));
@@ -983,4 +965,92 @@ fn binding(buffer: &wgpu::Buffer, size: usize) -> wgpu::BindingResource<'_> {
         offset: 0,
         size: wgpu::BufferSize::new(size as u64),
     })
+}
+
+/// Record `prepared[range]` as one render pass (clearing first with `clear`).
+#[allow(clippy::too_many_arguments)]
+fn record_slice(
+    device: &wgpu::Device,
+    target: &wgpu::TextureView,
+    depth: &wgpu::TextureView,
+    clear: Option<[f64; 4]>,
+    viewport: Option<[f32; 6]>,
+    buffers: Option<(&wgpu::BindGroup, &wgpu::Buffer, &wgpu::Buffer)>,
+    prepared: &[Prepared],
+    range: std::ops::Range<usize>,
+) -> wgpu::CommandBuffer {
+    let mut enc = device.create_command_encoder(&Default::default());
+    {
+        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("gx"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: match clear {
+                        Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
+                            r: c[0],
+                            g: c[1],
+                            b: c[2],
+                            a: c[3],
+                        }),
+                        None => wgpu::LoadOp::Load,
+                    },
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: if clear.is_some() {
+                        wgpu::LoadOp::Clear(1.0)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        if let Some([x, y, w, h, near, far]) = viewport {
+            rp.set_viewport(x, y, w, h, near, far);
+        }
+        if let Some((bind, v, i)) = buffers {
+            // A pipeline, textures or vertex buffer the draw before already
+            // set isn't set again; draws of one vertex layout share a binding
+            // and start at a base vertex.
+            rp.set_index_buffer(i.slice(..), wgpu::IndexFormat::Uint32);
+            let mut pipeline: Option<&wgpu::RenderPipeline> = None;
+            let mut textures: Option<&wgpu::BindGroup> = None;
+            let mut stride = 0u64;
+            for (n, p) in prepared
+                .iter()
+                .enumerate()
+                .take(range.end)
+                .skip(range.start)
+            {
+                if pipeline != Some(&p.pipeline) {
+                    rp.set_pipeline(&p.pipeline);
+                    pipeline = Some(&p.pipeline);
+                }
+                let draw_offset = (n * DRAW_SLOT) as u32;
+                rp.set_bind_group(0, bind, &[0, p.material_offset, draw_offset]);
+                if textures != Some(&p.textures) {
+                    rp.set_bind_group(1, &p.textures, &[]);
+                    textures = Some(&p.textures);
+                }
+                if p.stride != stride {
+                    rp.set_vertex_buffer(0, v.slice(..));
+                    stride = p.stride;
+                }
+                let base = (p.vertex_offset / p.stride.max(1)) as i32;
+                rp.draw_indexed(p.first_index..p.first_index + p.index_count, base, 0..1);
+            }
+        }
+    }
+    enc.finish()
 }

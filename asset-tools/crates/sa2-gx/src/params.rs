@@ -164,11 +164,13 @@ pub const SCENE_PARAMS_SIZE: usize = 80;
 pub const MATERIAL_PARAMS_SIZE: usize = 2560;
 pub const DRAW_PARAMS_SIZE: usize = 480;
 
-struct Fill(Vec<f32>);
+/// Writes uniform data straight into a byte buffer (no vector per block:
+/// a frame packs ~2,500 material blocks).
+struct Fill<'a>(&'a mut Vec<u8>);
 
-impl Fill {
+impl Fill<'_> {
     fn v4(&mut self, v: [f32; 4]) {
-        self.0.extend_from_slice(&v);
+        self.0.extend_from_slice(bytemuck::cast_slice(&v));
     }
     fn m34(&mut self, m: &Mtx34) {
         m.iter().for_each(|r| self.v4(*r));
@@ -176,20 +178,26 @@ impl Fill {
     fn v3(&mut self, v: [f32; 3]) {
         self.v4([v[0], v[1], v[2], 0.0]);
     }
-    fn bytes(self) -> Vec<u8> {
-        bytemuck::cast_slice(&self.0).to_vec()
-    }
 }
 
 pub fn fill_scene_params(p: &SceneParams) -> Vec<u8> {
-    let mut f = Fill(Vec::with_capacity(20));
+    let mut out = Vec::with_capacity(80);
+    let mut f = Fill(&mut out);
     p.projection.iter().for_each(|c| f.v4(*c));
     f.v4([p.lod_bias, 0.0, 0.0, 0.0]);
-    f.bytes()
+    out
 }
 
 pub fn fill_material_params(p: &MaterialParams) -> Vec<u8> {
-    let mut f = Fill(Vec::with_capacity(MATERIAL_PARAMS_SIZE / 4));
+    let mut out = Vec::with_capacity(MATERIAL_PARAMS_SIZE);
+    fill_material_params_into(p, &mut out);
+    out
+}
+
+/// [`fill_material_params`] appended to `out`.
+pub fn fill_material_params_into(p: &MaterialParams, out: &mut Vec<u8>) {
+    let at = out.len();
+    let mut f = Fill(out);
     p.colors.iter().for_each(|c| f.v4(*c));
     p.tex_mtx.iter().for_each(|m| f.m34(m));
     for pair in p.texture_mappings.chunks(2) {
@@ -224,15 +232,19 @@ pub fn fill_material_params(p: &MaterialParams) -> Vec<u8> {
     f.v4([t[8], t[9], 0.0, 0.0]);
     f.v4(fog.color);
     f.v4([p.dynamic_alpha_ref[0], p.dynamic_alpha_ref[1], 0.0, 0.0]);
-    let b = f.bytes();
-    debug_assert_eq!(b.len(), MATERIAL_PARAMS_SIZE);
-    b
+    debug_assert_eq!(out.len() - at, MATERIAL_PARAMS_SIZE);
 }
 
 pub fn fill_draw_params(p: &DrawParams) -> Vec<u8> {
-    let mut f = Fill(Vec::with_capacity(DRAW_PARAMS_SIZE / 4));
+    let mut out = Vec::with_capacity(DRAW_PARAMS_SIZE);
+    fill_draw_params_into(p, &mut out);
+    out
+}
+
+/// [`fill_draw_params`] appended to `out`.
+pub fn fill_draw_params_into(p: &DrawParams, out: &mut Vec<u8>) {
+    let mut f = Fill(out);
     p.pos_mtx.iter().for_each(|m| f.m34(m));
-    f.bytes()
 }
 
 #[cfg(test)]

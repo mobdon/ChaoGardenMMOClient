@@ -12,6 +12,13 @@ pub static RENDER: AtomicU64 = AtomicU64::new(0);
 pub static SLEEP: AtomicU64 = AtomicU64::new(0);
 /// Pictures the window presented (more than game frames when it blends).
 pub static PRESENTS: AtomicU64 = AtomicU64::new(0);
+/// Per presented picture: blending, waiting for a swapchain image, recording
+/// the frame, the GPU's own time (SA2_PROFILE_GPU) and presenting.
+pub static TWEEN: AtomicU64 = AtomicU64::new(0);
+pub static ACQUIRE: AtomicU64 = AtomicU64::new(0);
+pub static DRAW: AtomicU64 = AtomicU64::new(0);
+pub static GPU: AtomicU64 = AtomicU64::new(0);
+pub static PRESENT: AtomicU64 = AtomicU64::new(0);
 static FRAMES: AtomicU64 = AtomicU64::new(0);
 /// Frame hook calls: emulated retraces (60 a second of game time).
 static RETRACES: AtomicU64 = AtomicU64::new(0);
@@ -38,7 +45,21 @@ pub fn frames(n: u64) {
     }
     let f = FRAMES.swap(0, Relaxed).max(1) as f64;
     let r = RETRACES.swap(0, Relaxed) as f64 / secs;
-    let shown = PRESENTS.swap(0, Relaxed) as f64 / secs;
+    let presents = PRESENTS.swap(0, Relaxed);
+    let shown = presents as f64 / secs;
+    let pic = |c: &AtomicU64| c.swap(0, Relaxed) as f64 / 1e6 / presents.max(1) as f64;
+    let (tw, acq, draw, gpu, pres) = (
+        pic(&TWEEN),
+        pic(&ACQUIRE),
+        pic(&DRAW),
+        pic(&GPU),
+        pic(&PRESENT),
+    );
+    if presents > 0 {
+        eprintln!(
+            "prof window: {shown:.0} pictures/s, per picture: blend {tw:.2}, acquire {acq:.2}, record {draw:.2}, gpu {gpu:.2}, present {pres:.2} ms"
+        );
+    }
     let ms = |c: &AtomicU64| c.swap(0, Relaxed) as f64 / 1e6 / f;
     let (gx, hook, render, sleep) = (ms(&GX), ms(&HOOK), ms(&RENDER), ms(&SLEEP));
     let total = secs * 1000.0 / f;

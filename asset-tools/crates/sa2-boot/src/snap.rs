@@ -134,6 +134,32 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
                 eprintln!("frame {n} 2d draw {i}: mtx0 {:?} proj {:?} vp {:?} pn {}", d.draw_params.pos_mtx[0], d.projection, d.viewport, d.material.use_pn_mtx_idx);
             }
         }
+        // SA2_SNAP_WIDE: how widescreen sees each draw (HUD or 3D, where it
+        // lands, its texture size), the frame drawn widened for 16:9 (squeezed
+        // into the 4:3 snapshot, so gaps show as black).
+        let mut wide;
+        let f = if std::env::var_os("SA2_SNAP_WIDE").is_some() {
+            for (i, d) in f.draws.iter().enumerate() {
+                let tex = d.material_params.texture_mappings[0];
+                eprintln!(
+                    "wide frame {n} draw {i}: hud {} extent {:?} tex {:?} {}x{} vp {:?} mtx {:?} proj00 {}",
+                    sa2_gx::widescreen::is_hud(d),
+                    sa2_gx::widescreen::extent(d),
+                    tex.texture,
+                    tex.width,
+                    tex.height,
+                    d.viewport,
+                    d.draw_params.pos_mtx[0],
+                    d.projection[0][0]
+                );
+            }
+            wide = f.clone();
+            sa2_gx::widescreen::widen(&mut wide, 16.0 / 9.0);
+            sa2_gx::widescreen::clamp_hud_textures(&mut wide);
+            &wide
+        } else {
+            f
+        };
         // SA2_SNAP_COPIES: the frame's EFB copies and every draw sampling one.
         if std::env::var_os("SA2_SNAP_COPIES").is_some() {
             for c in &f.tex_copies {

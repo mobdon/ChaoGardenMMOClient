@@ -288,16 +288,33 @@ impl ApplicationHandler for App {
                     self.arrived = std::time::Instant::now();
                 }
                 if let Some(f) = &mut self.last {
+                    use crate::prof::{add, ACQUIRE, DRAW, GPU, PRESENT, TWEEN};
+                    let t0 = std::time::Instant::now();
                     if let Some(tw) = &self.tween {
                         tw.apply(f, self.arrived.elapsed().as_secs_f32() / GAME_FRAME);
                     }
-                    match g.surface.get_current_texture() {
+                    add(&TWEEN, t0);
+                    let t1 = std::time::Instant::now();
+                    let acquired = g.surface.get_current_texture();
+                    add(&ACQUIRE, t1);
+                    match acquired {
                         wgpu::CurrentSurfaceTexture::Success(tex)
                         | wgpu::CurrentSurfaceTexture::Suboptimal(tex) => {
                             let view = tex.texture.create_view(&Default::default());
+                            let t2 = std::time::Instant::now();
                             g.renderer
                                 .render_frame(f, &view, [g.config.width, g.config.height]);
+                            add(&DRAW, t2);
+                            // SA2_PROFILE_GPU: wait for the GPU to finish the
+                            // picture, to time its share (slows the window).
+                            if std::env::var_os("SA2_PROFILE_GPU").is_some() {
+                                let t = std::time::Instant::now();
+                                let _ = g.device.poll(wgpu::PollType::wait_indefinitely());
+                                add(&GPU, t);
+                            }
+                            let t3 = std::time::Instant::now();
                             g.queue.present(tex);
+                            add(&PRESENT, t3);
                             crate::prof::PRESENTS.fetch_add(1, Relaxed);
                         }
                         wgpu::CurrentSurfaceTexture::Outdated => {
