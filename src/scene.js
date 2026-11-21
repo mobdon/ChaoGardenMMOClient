@@ -292,6 +292,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           knuckles: ['al_knuckles.sa2mdl_3', 'al_knuckles.sa2mdl_5', 'al_knuckles.sa2mdl_6', 'al_knuckles.sa2mdl_7'],
           amy: ['al_amy.sa2mdl_2', 'al_amy.sa2mdl_4', 'al_amy.sa2mdl_5', 'al_amy.sa2mdl_6'],
         };
+        // al_knuckles.sa2mdl texture chunk 0x45F8 (attach 0x4684, chest mark): Ninja flags 0x94 = flip U + clamp V.
+        // The glTF export dropped it; restore it on that one mesh.
+        if (key === 'knuckles') for (const mesh of container.meshes) {
+          const texture = /0022D7AC/i.test(mesh.name) ? mesh.material?.albedoTexture : null;
+          if (texture) { texture.wrapU = Texture.MIRROR_ADDRESSMODE; texture.wrapV = Texture.CLAMP_ADDRESSMODE; }
+        }
         const isFamilyBody = key.startsWith('chao-body-');
         const isCharacter = isFamilyBody || Object.hasOwn(faceMaterials, key);
         const isCinematicEmerald = /^emerald-(red|blue|green|cyan|purple|yellow|white)$/.test(key);
