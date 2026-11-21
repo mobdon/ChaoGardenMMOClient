@@ -65,7 +65,14 @@ fn entry(m: &mut Mem, path: u32) -> Option<i32> {
     {
         return None;
     }
-    let r = DVD.with_borrow_mut(|d| d.as_mut()?.entry(&p));
+    let r = DVD.with_borrow_mut(|d| {
+        let d = d.as_mut()?;
+        let r = d.entry(&p);
+        if r.is_none() {
+            crate::steam_sound::missing_bank(&d.files, &p);
+        }
+        r
+    });
     if r.is_some() {
         crate::pad::opened(&p);
     }
