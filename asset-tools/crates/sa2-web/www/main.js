@@ -141,6 +141,15 @@ function startThread(tid, arg) {
 function mmoToken() {
   try { return localStorage.getItem('chao-garden-session-v1') || ''; } catch { return ''; }
 }
+// In a Chao World area from a hub portal, stay in that zone's shared room on
+// the MMO server (same socket and messages as the hub page, src/main.js).
+const roomZones = { 1: 'garden', 2: 'hero', 3: 'dark', 5: 'race' };
+function joinRoom(token, zone) {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: zone }));
+  // 4001: this card's Chao went out somewhere else; don't fight over it.
+  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, zone), 3000); };
+}
 // Hold the card while the game runs: renew its lease (10 minutes on the
 // server) and give the Chao back when the tab closes.
 function keepCard(token) {
@@ -199,10 +208,12 @@ async function start() {
   // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
+  if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
+  if (token && roomZones[q.get('area')]) joinRoom(token, roomZones[q.get('area')]);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });

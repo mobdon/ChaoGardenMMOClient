@@ -22,9 +22,23 @@ const MD_ACTION_INIT: u32 = 4;
 /// The Stage Select's start code reads its stage/character table through the
 /// relocation at advertiseD section 1 + 0x10246 (`lis r3` at 0x10244).
 const TABLE_RELOC: (u8, u32) = (1, 0x10246);
+/// Chao World. Not a row of the Stage Select table: its own branch
+/// (advertiseD section 1, 0x103E8..0x104F0) does `SetStageNum(0x5A)`,
+/// `SetPlayerChar(0, c)`, clears +0x20/+0x1E/+0, next global mode 4.
+const CHAO_WORLD: u16 = 0x5A;
+/// ChaoMain (module 0x3C) .text: `AL_GetStageNumber` 0x27FA0 (current Chao
+/// area) and the area change 0x27E00 (FINDINGS, chao-competition-recomp).
+const CHAOMAIN: u32 = 0x3C;
+const AL_GET_STAGE_NUMBER: u32 = 0x2_7FA0;
+const AL_CHANGE_AREA: u32 = 0x2_7E00;
+/// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 5 Entrance/race,
+/// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
+const LAST_AREA: u32 = 12;
 
 /// (stage, character) to start, until it has started.
 static PENDING: Global<Option<(u16, u32)>> = global!(None);
+/// SA2_CHAO_AREA: the Chao World area to change to once the lobby is up.
+static AREA: Global<Option<u32>> = global!(None);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -33,6 +47,19 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     else {
         return;
     };
+    if stage == CHAO_WORLD {
+        // Character 0 (Sonic): the Chao World branch takes the cursor's
+        // character; any character enters the same Chao World.
+        PENDING.set(Some((CHAO_WORLD, 0)));
+        AREA.set(
+            std::env::var("SA2_CHAO_AREA")
+                .ok()
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .filter(|a| (1..=LAST_AREA).contains(a)),
+        );
+        c.rt.set_override(TOP_LEVEL, top_level);
+        return;
+    }
     let Some(rel) = crate::dvd::read_file("advertiseD.rel") else {
         eprintln!("start-stage: advertiseD.rel not found; booting to the title");
         return;
@@ -60,6 +87,15 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             start(c, m, stage, ch);
         }
     }
+    if let Some(area) = AREA.get() {
+        if let Some(text) = chaomain_text(m) {
+            // Once the lobby (area 0) is running, change area the game's own way.
+            if guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]) == 0 {
+                guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
+                AREA.set(None);
+            }
+        }
+    }
     original(c, m, TOP_LEVEL);
 }
 
@@ -67,12 +103,27 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
 fn start(c: &mut Cpu, m: &mut Mem, stage: u16, ch: u32) {
     guest_call(c, m, SET_STAGE_NUM, &[u32::from(stage)]);
     guest_call(c, m, SET_PLAYER_CHAR, &[0, ch]);
-    m.w8(GAME + 0x23, 0); // mission: the menu's cursor, mission 1 here (and 0 for stage 0x1F)
+    if stage != CHAO_WORLD {
+        m.w8(GAME + 0x23, 0); // mission: the menu's cursor, mission 1 here (and 0 for stage 0x1F)
+    }
     m.w8(GAME + 0x20, 0);
     m.w8(GAME + 0x1E, 0);
     m.w8(GAME, 0);
     m.w32(NEXT_GLOBAL_MODE, MD_ACTION_INIT);
     m.w32(GLOBAL_MODE, MD_ACTION_INIT);
+}
+
+/// ChaoMain's linked .text (section 1), through the game's module list
+/// (OSModuleInfo: id +0, next +4, section table +0x10). None until linked.
+fn chaomain_text(m: &Mem) -> Option<u32> {
+    let mut info = m.r32(0x8000_30C8);
+    while info != 0 {
+        if m.r32(info) == CHAOMAIN {
+            return Some(m.r32(m.r32(info + 0x10) + 8) & !1);
+        }
+        info = m.r32(info + 4);
+    }
+    None
 }
 
 /// The Stage Select's rows (stage, character; 16 bytes each, ended by stage
@@ -182,6 +233,20 @@ mod tests {
             (m.r8(GAME + 0x23), m.r8(GAME + 0x1E), m.r32(GLOBAL_MODE)),
             (0, 0, MD_ACTION_INIT)
         );
+    }
+
+    #[test]
+    fn finds_chaomain_text_in_the_module_list() {
+        let mut m = Mem::default();
+        assert_eq!(chaomain_text(&m), None);
+        // Two modules: 0x10 then ChaoMain; ChaoMain's section 1 at 0x8100_0001 (exec bit).
+        m.w32(0x8000_30C8, 0x8040_0000);
+        m.w32(0x8040_0000, 0x10);
+        m.w32(0x8040_0004, 0x8040_0100);
+        m.w32(0x8040_0100, CHAOMAIN);
+        m.w32(0x8040_0110, 0x8040_0200);
+        m.w32(0x8040_0208, 0x8100_0001);
+        assert_eq!(chaomain_text(&m), Some(0x8100_0000));
     }
 
     /// The player's own advertiseD.rel (kept local): SA2_ADVERTISE_REL=path.

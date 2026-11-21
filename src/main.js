@@ -3,7 +3,9 @@ import './sonic.css';
 import './title.css';
 import { createGarden } from './scene.js';
 import { createGameAudio } from './audio.js';
-import { createStageSelect } from './stages.js';
+import { createStageSelect, SA2_PAGE } from './stages.js';
+// ChaoMain area numbers: 1 Neutral, 2 Hero, 3 Dark, 5 race Entrance.
+const chaoWorldAreas = { garden: 1, hero: 2, dark: 3, race: 5 };
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createGardenCare } from './garden-care.js';
@@ -301,6 +303,8 @@ function render(next) {
     attackButton.title = mounted ? 'Fire the Dark Chao Walker cannon (F)' : 'Attack a nearby robot (F)';
   }
   $('#school-open').hidden=player.zone!=='hub';
+  // A hub portal into a garden or the race opens the game's own Chao World area (sa2_boot::start_stage).
+  if (lastZone === 'hub' && chaoWorldAreas[player.zone]) location.assign(`${SA2_PAGE}?stage=90&area=${chaoWorldAreas[player.zone]}`);
   if ($('#school-dialog').open) renderSchool();
   garden?.setSnapshot(next);
   garden?.setCare?.(next.care, player);
