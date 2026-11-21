@@ -6,6 +6,8 @@ import './sonic.css';
 import { createGardenCare } from './garden-care.js';
 import { createBreedingMenu } from './breeding-menu.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
+import { createStatRow, updateStatRow } from './stat-ui.js';
+import { nativeText } from './native-text.js';
 
 let mounted = null;
 // One overlay per page; a reconnected room socket takes over sending.
@@ -17,10 +19,14 @@ export function mountOverlay(nextSocket) {
   // The inventory lives on the Chao stats card (mob): click the card or press Tab.
   const card = document.getElementById('mmo-card');
   const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:auto;right:auto;left:16px;bottom:72px';
+  // The game's own stat window rows (stat-ui.js: native frame, font and grade cells), then the native inventory.
+  const title = el('div'), stats = el('div', undefined, 'stats-list');
+  const STATS = ['swim', 'fly', 'run', 'power', 'stamina', 'luck', 'intelligence'];
+  for (const name of STATS) stats.append(createStatRow(name));
   const care = el('div'), breedingRoot = el('div'); breedingRoot.hidden = true;
   const breedButton = el('button', 'Breeding'), tinyButton = el('button', 'Tiny Garden');
   for (const b of [breedButton, tinyButton]) b.tabIndex = -1;
-  panel.append(care, el('div'), breedButton, tinyButton, breedingRoot);
+  panel.append(title, stats, care, el('div'), breedButton, tinyButton, breedingRoot);
   document.body.append(panel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
@@ -41,6 +47,10 @@ export function mountOverlay(nextSocket) {
   mounted.api = {
     snapshot(next) {
       const player = next.players.find(p => p.id === next.selfId);
+      if (player) {
+        title.replaceChildren(nativeText(player.name, 'native-stat-name'));
+        for (const name of STATS) { const row = stats.querySelector(`[data-stat="${name}"]`); if (row && player.stats?.[name]) updateStatRow(row, name, player.stats[name]); }
+      }
       gardenCare.update(next.care, player, { connected: true, serverTime: next.serverTime, nest: next.life?.nest || [] });
       breeding.update(next);
     },
