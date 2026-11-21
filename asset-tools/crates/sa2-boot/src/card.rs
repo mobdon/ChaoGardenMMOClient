@@ -287,8 +287,14 @@ fn mmo_changed() -> i32 {
         Ok(())
     };
     #[cfg(target_os = "wasi")]
-    let sent = std::fs::write(CARD_DEVICE, crate::card_pack::pack(&whole_card()))
-        .map_err(|e| e.to_string());
+    // Synced: the page answers sync with the server's yes or no.
+    let sent = (|| {
+        use std::io::Write;
+        let mut device = std::fs::File::create(CARD_DEVICE)?;
+        device.write_all(&crate::card_pack::pack(&whole_card()))?;
+        device.sync_all()
+    })()
+    .map_err(|e| e.to_string());
     if let Err(e) = sent {
         eprintln!("card (mmo): could not save the card: {e}");
         return IOERROR;
