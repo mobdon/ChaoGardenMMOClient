@@ -159,3 +159,13 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   root.all().find(n => n.tagName === 'button' && n.textContent === 'Put down').listeners.click();
   assert.deepEqual(sent[0].intent, { kind: 'place-egg', itemId: 'egg:2' });
 });
+
+test('worn hats map to the traced native head node and model keys', async () => {
+  const { hatAssets, CHAO_HAT_NODE, NATIVE_HAT_IDS } = await import('../src/chao-attachments.js');
+  assert.equal(CHAO_HAT_NODE, '016');
+  assert.deepEqual(hatAssets(3), ['hat-3']);
+  assert.deepEqual(hatAssets(9), ['hat-9', 'hat-9-eye', 'hat-9-jaw']);
+  assert.deepEqual(hatAssets(15), ['hat-15']);
+  for (const hat of [null, undefined, 0, 1, 2, 16, 40, '3', 3.5]) assert.deepEqual(hatAssets(hat), [], String(hat));
+  assert.deepEqual(NATIVE_HAT_IDS, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+});
