@@ -195,7 +195,9 @@ fn board_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if f % 60 == 0 {
         eprintln!("chao-player lvl: frame {f} board obj {obj:#x} nodes {}/{} verts {} centre {cw:?}", worlds.len(), rest.nodes.len(), verts.len());
     }
-    BOARD.set(Some((f, tris, cw)));
+    // The centre in Sonic's model space: the Chao draws before the board, so
+    // seat() places it with next frame's root instead of lagging a frame.
+    BOARD.set(Some((f, tris, apply(&rel, cw))));
     // Draw scaled about its world centre: cur' = base * S_c * inv(base) * cur.
     let s = BOARD_SCALE;
     let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * cw[i] }));
@@ -228,10 +230,16 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         return original(c, m, addr);
     }
     let (obj, mot) = (c.r[3], c.r[4]);
+    let (regs, f1) = (c.r, c.f[1]);
     NODES.with_borrow_mut(|n| n.clear());
     CAPTURE.set(true);
     original(c, m, addr);
     CAPTURE.set(false);
+    // SA2_SHOW_SONIC (debug): draw Sonic too, to compare the seat with his.
+    if std::env::var_os("SA2_SHOW_SONIC").is_some() {
+        (c.r, c.f[1]) = (regs, f1);
+        original(c, m, addr);
+    }
     let n = NODES.with_borrow(|n| n.len());
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if f % 60 == 0 {
@@ -785,7 +793,7 @@ thread_local! {
 fn seat(m: &Mem) -> Option<([[f32; 3]; 3], [f32; 3])> {
     let _ = m;
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    let (bf, mut tris, centre) = BOARD.with_borrow(|b| b.clone())?;
+    let (bf, mut tris, local) = BOARD.with_borrow(|b| b.clone())?;
     if f > bf + 1 || RIDER.get() == 0 {
         return None;
     }
@@ -804,7 +812,7 @@ fn seat(m: &Mem) -> Option<([[f32; 3]; 3], [f32; 3])> {
     let col = |j: usize| { let l = (0..3).map(|i| root[i][j] * root[i][j]).sum::<f32>().sqrt().max(1e-6); [root[0][j] / l, root[1][j] / l, root[2][j] / l] };
     let (c0, c1, c2) = (col(0), col(1), col(2));
     let r: [[f32; 3]; 3] = std::array::from_fn(|i| [c2[i], c1[i], -c0[i]]);
-    Some((r, centre))
+    Some((r, apply(&root, local)))
 }
 
 /// Retarget Sonic's skeleton (made model-space by his root) onto the Chao.
