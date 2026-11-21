@@ -1,4 +1,4 @@
-//! Chao MMO glue (approved by mob 2026-11-21): SA2_START_STAGE=<stage> starts
+//! Chao MMO glue: SA2_START_STAGE=<stage> starts
 //! that stage straight from boot, with no menus and no scripted input. It does
 //! what the game's own Stage Select does when a stage is confirmed
 //! (advertiseD.rel section 1, 0x101E0..0x1034C): `SetStageNum` 0x8001DD8C,

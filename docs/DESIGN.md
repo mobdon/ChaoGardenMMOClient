@@ -143,7 +143,7 @@ The first loadout is a server-owned cosmetic preview with owner equip/unequip ac
 
 ## Complete Chao-system and stage catalog
 
-The user asked to map all ideas and uses so nothing is lost, explicitly including Kindergarten, toys and the Black Market. “Town” was corrected to “mechanics”; do not add a separate town requirement. [MECHANICS.md](MECHANICS.md) holds the system-by-system coverage map and intended MMO use. It must retain unknowns and future uses as well as implemented features.
+The goal is to map all ideas and uses so nothing is lost, explicitly including Kindergarten, toys and the Black Market. “Town” was corrected to “mechanics”; do not add a separate town requirement. [MECHANICS.md](MECHANICS.md) holds the system-by-system coverage map and intended MMO use. It must retain unknowns and future uses as well as implemented features.
 
 Catalog the Kindergarten facilities and classroom skills, health/naming interactions, toys/instruments and learned play actions, Black Market stock and inventory/equipment, food/trees, animals/drives, stats/growth, appearance/genetics, breeding/eggs, reincarnation/life cycle, needs/emotions/personality/social behavior, races and karate. Identify original evidence and assets before presenting assumptions as faithful original behavior. The existing four-item Amy shop is a working foundation, not completion of the original Black Market economy.
 
@@ -180,7 +180,7 @@ The repositories are independent. Public interaction constants may be copied/gen
 
 Run frontend and backend as separate processes. The browser receives static client assets and exchanges inputs/snapshots through an API/WebSocket boundary. Local development denies direct access to the server directory, saves, tools, scripts and tests. Only explicitly allowed converted local assets are served by the local asset bridge. Existing profile data must survive runtime changes.
 
-Both repos contain our source and documentation. Installed/extracted models, textures, audio, movies, saves, binary tools and converted game assets remain outside Git under ignored local storage. The user asked for separation; a full new admin platform is future work rather than a prerequisite to the current preview.
+Both repos contain our source and documentation. Installed/extracted models, textures, audio, movies, saves, binary tools and converted game assets remain outside Git under ignored local storage. They are kept separate; a full new admin platform is future work rather than a prerequisite to the current preview.
 
 ## Rust migration and protocol
 

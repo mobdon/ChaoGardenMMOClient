@@ -38,7 +38,7 @@ logic stays the native port in `sa2-runtime`; this file covers only drawing.
 ## Sources
 
 - The GC model reader and the draw path are our own.
-- mob approved adapting noclip.website's MIT-licensed generic GX code
+- Approved: adapting noclip.website's MIT-licensed generic GX code
   (its `src/gx/` folder only: TEV state to shaders, vertex formats, texture
   decoding, blend/Z/cull mapping) into Rust. It's pinned at
   magcius/noclip.website `2cebac2a5d1d7c44535397a14f51e764ca823767`, cloned
