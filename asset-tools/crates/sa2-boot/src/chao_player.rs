@@ -110,7 +110,12 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     let a = rt::sec(m, 60, 1) + CHAO_EXEC;
+    // The exec's own walker (.text 0xAA0) also calls the node transform
+    // 0x1454: keep the pose for the draw walker only, or the exec uses up
+    // the node indices 0..39 and the draw gets none.
+    let draw = CHAO_DRAW.replace(false);
     rel_original(c, m, a, chao_exec);
+    CHAO_DRAW.set(draw);
 }
 
 /// mob 2026-11-21 (board.py): Sonic's board drawn at the Chao's size.
@@ -227,6 +232,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     if live && RIDER.get() != 0 {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
+        CHAO_NODE.set(0);
         let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
         return rel_original(c, m, a, chao_display);
     }
@@ -543,6 +549,8 @@ const STEAM_TO_EV: [u8; 62] = [
 ];
 
 thread_local! {
+    static SAID_POSE: Cell<bool> = const { Cell::new(false) };
+    static SAID_NODE: Cell<bool> = const { Cell::new(false) };
     /// Set while the cutscene Chao draws: its node matrices come from the pose.
     static CHAO_DRAW: Cell<bool> = const { Cell::new(false) };
     static CHAO_NODE: Cell<usize> = const { Cell::new(0) };
@@ -582,7 +590,8 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         return rel_original(c, m, a, chao_node);
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    if CHAO_FRAME.replace(f) != f {
+    // In a stage the display resets the count; in a cutscene, each frame.
+    if CHAO_FRAME.replace(f) != f && RIDER.get() == 0 {
         CHAO_NODE.set(0);
     }
     let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
@@ -603,7 +612,15 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
     rel_original(c, m, a, chao_node);
-    let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) else { return };
+    let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) else {
+        if i == 40 && !SAID_NODE.replace(true) {
+            eprintln!("chao-player: node transform past 40 nodes, posed {} (pose not applied)", POSED.with_borrow(|p| p.len()));
+        }
+        return;
+    };
+    if !SAID_POSE.replace(true) {
+        eprintln!("chao-player: Sonic's pose applied to the Chao's draw (node {i}, rider {:#x})", RIDER.get());
+    }
     let p = CHAO_PLACE.get();
     // current = place * [r t]
     for row in 0..3 {
