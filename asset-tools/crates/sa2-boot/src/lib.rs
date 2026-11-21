@@ -15,6 +15,8 @@ pub mod dvd;
 pub mod gamepad;
 pub mod gx;
 pub mod io;
+#[cfg(not(target_os = "wasi"))]
+pub mod mmo;
 pub mod pad;
 pub mod prof;
 #[cfg(not(target_os = "wasi"))]

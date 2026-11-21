@@ -121,7 +121,44 @@ fn used_blocks() -> u32 {
 }
 
 fn present(chan: u32) -> bool {
-    chan == 0 && dir().is_some()
+    chan == 0 && dir().is_some() && mmo_card_in()
+}
+
+/// The MMO server card is in the slot only while signed in.
+fn mmo_card_in() -> bool {
+    #[cfg(not(target_os = "wasi"))]
+    return !crate::mmo::configured() || crate::mmo::signed_in();
+    #[cfg(target_os = "wasi")]
+    return true;
+}
+
+/// Mounting the server card checks the garden save out into the cache folder.
+fn mmo_mount() -> i32 {
+    #[cfg(not(target_os = "wasi"))]
+    if crate::mmo::configured() {
+        let Some(path) = data_path(crate::mmo::GARDEN_FILE) else {
+            return NOCARD;
+        };
+        if let Err(e) = crate::mmo::pull(&path) {
+            eprintln!("card (mmo): could not load the garden save: {e}");
+            return IOERROR;
+        }
+    }
+    READY
+}
+
+/// After the game wrote the garden file, the server must have it too, or the
+/// game is told the write failed.
+fn mmo_written(name: &str, data: &[u8]) -> i32 {
+    #[cfg(not(target_os = "wasi"))]
+    if crate::mmo::configured() && name == crate::mmo::GARDEN_FILE {
+        if let Err(e) = crate::mmo::push(data) {
+            eprintln!("card (mmo): could not save the garden: {e}");
+            return IOERROR;
+        }
+    }
+    let _ = (name, data);
+    READY
 }
 
 /// Write `bytes` to `path` through a temporary file, so a crash mid-write
@@ -155,6 +192,8 @@ fn finish_async(c: &mut Cpu, chan: u32, r: i32, cb: u32) {
 
 /// Frame hook: the callbacks of asynchronous card calls.
 fn done(c: &mut Cpu, m: &mut Mem) {
+    #[cfg(not(target_os = "wasi"))]
+    crate::mmo::renew_if_due();
     for (cb, chan, r) in DONE.take() {
         guest_call(c, m, cb, &[chan, r as u32]);
     }
@@ -204,7 +243,7 @@ fn get_mem_size(c: &mut Cpu, m: &mut Mem) {
 // CARDMount(chan, workArea, detachCallback)
 fn mount(c: &mut Cpu, _m: &mut Mem) {
     let chan = c.r[3];
-    let r = if present(chan) { READY } else { NOCARD };
+    let r = if present(chan) { mmo_mount() } else { NOCARD };
     trace(&format!("mount {chan} -> {r}"));
     set_result(c, chan, r);
 }
@@ -212,7 +251,7 @@ fn mount(c: &mut Cpu, _m: &mut Mem) {
 // CARDMountAsync(chan, workArea, detachCallback, attachCallback)
 fn mount_async(c: &mut Cpu, _m: &mut Mem) {
     let chan = c.r[3];
-    let r = if present(chan) { READY } else { NOCARD };
+    let r = if present(chan) { mmo_mount() } else { NOCARD };
     trace(&format!("mount async {chan} -> {r}"));
     finish_async(c, chan, r, c.r[6]);
 }
@@ -408,7 +447,7 @@ fn write_to_file(m: &mut Mem, fi: u32, buf: u32, len: u32, off: u32) -> (u32, i3
     (
         chan,
         if write_file(&path, &data) {
-            READY
+            mmo_written(&name, &data)
         } else {
             IOERROR
         },
