@@ -3,7 +3,8 @@
 //! `SA2_MMO_TEST_SERVER=http://127.0.0.1:PORT SA2_MMO_TEST_TOKEN=... cargo test --test mmo_card -- --ignored`.
 //! The card bytes are synthetic test input, never game data.
 #![cfg(not(target_os = "wasi"))]
-use sa2_boot::mmo;
+use sa2_boot::{card, install_all, mmo};
+use sa2_recomp::rt::{call, Cpu, Mem};
 use std::io::Read;
 
 #[test]
@@ -44,4 +45,26 @@ fn server_card_checks_out_saves_and_holds_the_lease() {
     let mut bytes = Vec::new();
     back.into_reader().read_to_end(&mut bytes).unwrap();
     assert_eq!(sa2_boot::card_pack::unpack(&bytes), Some(card));
+}
+
+#[test]
+fn a_card_the_server_wont_give_leaves_slot_a_empty() {
+    // Nothing listens on port 9: the checkout fails as it would offline.
+    let dir = std::env::temp_dir().join(format!("mmo-card-out-{}", std::process::id()));
+    std::env::set_var("SA2_MEMCARD", &dir);
+    std::env::set_var("SA2_MMO_SERVER", "http://127.0.0.1:9");
+    std::env::set_var("SA2_MMO_TOKEN", "signed-in");
+    let (mut c, mut m) = (Cpu::default(), Mem::default());
+    install_all(
+        &mut c,
+        &mut m,
+        Box::new(sa2_runtime::dvd::MemFiles::default()),
+    );
+    for _ in 0..2 {
+        // CARDMount(0, work, no detach callback): no card, not an error.
+        c.r[3..6].copy_from_slice(&[0, 0x8000_4000, 0]);
+        call(&mut c, &mut m, card::CARD_MOUNT);
+        assert_eq!(c.r[3] as i32, -3, "CARD_RESULT_NOCARD");
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }

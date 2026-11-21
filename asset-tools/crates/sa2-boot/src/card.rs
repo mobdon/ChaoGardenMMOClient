@@ -210,8 +210,12 @@ fn used_blocks() -> u32 {
 }
 
 fn present(chan: u32) -> bool {
-    chan == 0 && store::available() && mmo_card_in()
+    chan == 0 && store::available() && mmo_card_in() && !CARD_OUT.with_borrow(|out| *out)
 }
+
+/// The server card couldn't be checked out (offline, held by another game):
+/// the slot reads as empty, as a pulled card would, instead of failing reads.
+static CARD_OUT: Global<bool> = global!(false);
 
 /// The MMO server card is in the slot only while signed in.
 fn mmo_card_in() -> bool {
@@ -271,8 +275,9 @@ fn mmo_mount() -> i32 {
             .map(|()| CHECKED_OUT.set(true))
     };
     if let Err(e) = stored {
-        eprintln!("card (mmo): could not load the card: {e}");
-        return IOERROR;
+        eprintln!("card (mmo): could not load the card, slot A stays empty: {e}");
+        CARD_OUT.set(true);
+        return NOCARD;
     }
     READY
 }
