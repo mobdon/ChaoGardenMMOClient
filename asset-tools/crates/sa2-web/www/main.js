@@ -175,7 +175,12 @@ async function start() {
     else if (ev.data.log) log(ev.data.log, true);
   };
   renderer.postMessage({ canvas: off, ctl: sh.ctl, slots: sh.slots, wide, fpsCap }, [off]);
-  env = Object.entries(await (await fetch('env.json')).json()).map(([k, v]) => `${k}=${v}`);
+  // Steam first: its files win, a picked disc only fills what Steam lacks.
+  const e = await (await fetch('env.json')).json();
+  delete e.SA2_DISC_FIRST;
+  if (picked.some(([p]) => p === '@disc' || p.startsWith('disc/'))) e.SA2_DISC_DIR = '/disc';
+  e.SA2_STEAM_DIR ??= '/steam';
+  env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });
