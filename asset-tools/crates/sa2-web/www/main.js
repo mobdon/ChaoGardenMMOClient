@@ -15,6 +15,31 @@ const wide = q.get('aspect') !== '4:3';
 const fpsCap = Number(q.get('fps')) || 0; // 60: never blend between frames
 
 const $ = (id) => document.getElementById(id);
+// ?gpulog: count GPU textures and buffers made (for finding what grows).
+const gpuStats = (window.gpuStats = { tex: 0, texBytes: 0, buf: 0, bufBytes: 0, texDestroyed: 0, bufDestroyed: 0, big: [], kinds: {} });
+if (q.has('gpulog') && navigator.gpu) {
+  const D = GPUDevice.prototype;
+  const ct = D.createTexture, cb = D.createBuffer;
+  D.createTexture = function (d) {
+    const s = d.size, w = s.width ?? s[0], h = s.height ?? s[1] ?? 1, l = s.depthOrArrayLayers ?? s[2] ?? 1;
+    const bytes = w * h * l * 4 * (d.mipLevelCount > 1 ? 1.34 : 1);
+    gpuStats.tex++;
+    gpuStats.texBytes += bytes;
+    const k = `${d.label} ${w}x${h}`;
+    gpuStats.kinds[k] = (gpuStats.kinds[k] || 0) + 1;
+    const t = ct.call(this, d), de = t.destroy;
+    t.destroy = function () { gpuStats.texDestroyed++; return de.call(this); };
+    return t;
+  };
+  D.createBuffer = function (d) {
+    gpuStats.buf++;
+    gpuStats.bufBytes += d.size;
+    if (d.size > 8e6) gpuStats.big.push(`buf ${d.size} ${d.label}`);
+    const b = cb.call(this, d), de = b.destroy;
+    b.destroy = function () { gpuStats.bufDestroyed++; return de.call(this); };
+    return b;
+  };
+}
 const canvas = $('screen'), status = $('status'), logBox = $('log');
 const lines = [];
 const gameLog = (window.gameLog = []);
@@ -146,7 +171,7 @@ function frame(now) {
   screen.draw(now, w, h);
   prof.draw += performance.now() - t1;
   prof.pics++;
-  requestAnimationFrame(frame);
+  if (!window.stopGame) requestAnimationFrame(frame);
 }
 setInterval(() => {
   const per = (v, n) => (n ? v / n : 0).toFixed(1);
@@ -172,7 +197,7 @@ async function start() {
   $('start').remove();
   canvas.focus();
   startThread(0, 0);
-  requestAnimationFrame(frame);
+  if (!window.stopGame) requestAnimationFrame(frame);
 }
 
 $('go').addEventListener('click', () => start().catch((e) => {
@@ -181,3 +206,16 @@ $('go').addEventListener('click', () => start().catch((e) => {
 }));
 // ?autostart: start without the button (for testing; sound may stay off).
 if (q.has('autostart')) $('go').click();
+// ?gpulog: a line a second of what the GPU got, and a stop at 1.5 GB of textures.
+if (q.has('gpulog')) {
+  gpuStats.hist = [];
+  const t = setInterval(() => {
+    const g = gpuStats;
+    g.hist.push(`${(performance.now() / 1000) | 0}s tex ${g.tex} (${(g.texBytes / 1e6) | 0} MB) destroyed ${g.texDestroyed} buf ${g.buf} destroyed ${g.bufDestroyed} | ${status.textContent.slice(0, 60)}`);
+    if (g.texBytes - 0 > 1.5e9) {
+      clearInterval(t);
+      window.stopGame = true;
+      g.hist.push('stopped at 1.5 GB of textures: ' + JSON.stringify(Object.entries(g.kinds).sort((a, b) => b[1] - a[1]).slice(0, 8)));
+    }
+  }, 1000);
+}
