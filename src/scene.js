@@ -361,7 +361,14 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
             const facePart = isFamilyBody ? /al_eye|al_mouth/i.test(mat.albedoTexture?.name || '') : faceMaterials[key]?.includes(mat.name);
             // The game blends these Chaos textures (SRC_ALPHA/INV_SRC_ALPHA, strips flagged USE_ALPHA in
             // al_dchaos/al_hchaos/al_nchaos.sa2mdl); the GLB export marked them opaque.
-            const nativeBlend = /al_(dcha01|hcha00|ncha0[012])/i.test(mat.albedoTexture?.name || '');
+            // Converted with scripts/convert-assets.py: the part's own Ninja material in glTF extras.
+            const ninja = mat.metadata?.gltf?.extras?.ninja;
+            const nativeBlend = ninja ? ninja.useAlpha && !facePart : /al_(dcha01|hcha00|ncha0[012])/i.test(mat.albedoTexture?.name || '');
+            const texture = mat.albedoTexture;
+            if (ninja && texture) {
+              texture.wrapU = ninja.mirrorU ? Texture.MIRROR_ADDRESSMODE : ninja.clampU ? Texture.CLAMP_ADDRESSMODE : Texture.WRAP_ADDRESSMODE;
+              texture.wrapV = ninja.mirrorV ? Texture.MIRROR_ADDRESSMODE : ninja.clampV ? Texture.CLAMP_ADDRESSMODE : Texture.WRAP_ADDRESSMODE;
+            }
             const solidCharacterPart = isCharacter && !facePart && !nativeBlend;
             mat.transparencyMode = solidCharacterPart ? 0 : mat.transparencyMode === 2 || mat.transparencyMode === 3 ? 1 : mat.transparencyMode ?? 0;
             mat.alphaCutOff = 0.45;
