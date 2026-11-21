@@ -1,7 +1,8 @@
 //! The MMO server memory card: signing in inserts it. With `SA2_MMO_SERVER`
-//! set, slot A is present only while `SA2_MMO_TOKEN` holds a session token
-//! (from the server's `/api/session`), and the Chao garden file is the
-//! account's save on the server: mounting checks it out (`GET
+//! set, slot A is present only while a session token is there (from the
+//! server's `/api/session`, in `SA2_MMO_TOKEN` or the file
+//! `SA2_MMO_TOKEN_FILE`), and the Chao garden file is the account's save on
+//! the server: mounting checks it out (`GET
 //! /api/game-save`), and every write of it sends the whole file back (`PUT`).
 //! The bytes are exactly what the game wrote. Other card files stay in the
 //! local `SA2_MEMCARD` folder, which works as the cache.
@@ -38,9 +39,14 @@ fn server() -> Option<String> {
         .map(|s| s.trim_end_matches('/').to_owned())
 }
 
+/// The session token: `SA2_MMO_TOKEN`, or the file `SA2_MMO_TOKEN_FILE`
+/// names, re-read on each check so signing in while the game runs inserts
+/// the card and the game's own card checks see it arrive.
 fn token() -> Option<String> {
     std::env::var("SA2_MMO_TOKEN")
         .ok()
+        .or_else(|| std::fs::read_to_string(std::env::var_os("SA2_MMO_TOKEN_FILE")?).ok())
+        .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
 }
 
