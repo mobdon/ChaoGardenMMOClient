@@ -54,6 +54,18 @@ fn force_stage(m: &mut Mem) {
     }
 }
 
+/// A whole game file by its disc path (as the game would open it).
+pub(crate) fn read_file(path: &str) -> Option<Vec<u8>> {
+    DVD.with_borrow_mut(|d| {
+        let d = d.as_mut()?;
+        let e = d.entry(path)?;
+        let mut buf = vec![0u8; usize::try_from(d.length(e)?).ok()?];
+        let n = d.read(e, 0, &mut buf)?;
+        buf.truncate(n);
+        Some(buf)
+    })
+}
+
 fn entry(m: &mut Mem, path: u32) -> Option<i32> {
     force_stage(m);
     let p = cstr(m, path);
