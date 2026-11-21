@@ -4,6 +4,9 @@
 'use strict';
 
 const RATE = 32000;
+// Samples to keep waiting (64 a millisecond): play a touch faster above this,
+// slower below, so a game a little off 60 neither runs dry nor piles up.
+const TARGET = 60 * 64;
 
 class Mix extends AudioWorkletProcessor {
   constructor(o) {
@@ -11,7 +14,9 @@ class Mix extends AudioWorkletProcessor {
     const { ctl, audio } = o.processorOptions;
     this.ctl = new Int32Array(ctl);
     this.ring = new Int16Array(audio);
-    this.step = RATE / sampleRate;
+    this.base = RATE / sampleRate;
+    this.step = this.base;
+    this.fill = TARGET;
     this.pos = 0;
     this.prev = [0, 0];
     this.next = [0, 0];
@@ -26,8 +31,8 @@ class Mix extends AudioWorkletProcessor {
     let have = (w - r) >>> 0;
     // Too far behind (the tab was hidden, the game caught up): back to 60 ms.
     if (have > 150 * 64) {
-      r = (w - 60 * 64) >>> 0;
-      have = 60 * 64;
+      r = (w - TARGET) >>> 0;
+      have = this.fill = TARGET;
     }
     // Ran dry: fade out and wait for 40 ms to build up, instead of holding a
     // sample (a click) and then playing late.
@@ -43,6 +48,8 @@ class Mix extends AudioWorkletProcessor {
       return true;
     }
     this.waiting = false;
+    this.fill += (have - this.fill) * 0.01;
+    this.step = this.base * (1 + Math.max(-0.04, Math.min(0.04, ((this.fill - TARGET) / TARGET) * 0.05)));
     for (let i = 0; i < out[0].length; i++) {
       this.pos += this.step;
       while (this.pos >= 1) {
