@@ -333,6 +333,7 @@ function render(next) {
   for (const [selector, slot, item, label] of [
     ['#owner-air-shoes', 'footwear', 'shadow-air-shoes', 'Shadow’s Air Shoes'],
     ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves', 'Knuckles’ Hammer Gloves'],
+    ['#owner-metal-chao', 'look', 'metal-sonic-chao', 'Metal Sonic Chao look'],
   ]) {
     const button = $(selector);
     const equipped = player.gear?.[slot] === item;
@@ -586,6 +587,7 @@ $('#owner-walker').addEventListener('click', () => action(player?.vehicle === 'd
 for (const [selector, slot, item] of [
   ['#owner-air-shoes', 'footwear', 'shadow-air-shoes'],
   ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves'],
+  ['#owner-metal-chao', 'look', 'metal-sonic-chao'],
 ]) {
   $(selector).addEventListener('click', () => {
     if (!player) return;

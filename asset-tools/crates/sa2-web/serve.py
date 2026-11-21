@@ -16,6 +16,9 @@ import argparse
 import json
 import os
 import http.server
+import urllib.error
+import urllib.parse
+import urllib.request
 import webbrowser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -37,9 +40,15 @@ ap.add_argument('--pkg', default=os.path.join(WWW, 'pkg'), help="the page build 
 ap.add_argument('--mount', type=pair, action='append', default=[], help='name=folder')
 ap.add_argument('--file', type=pair, action='append', default=[], help='path=file')
 ap.add_argument('--env', type=pair, action='append', default=[], help='KEY=VALUE for the game')
+ap.add_argument('--api', help='the Chao MMO server (http://127.0.0.1:PORT): /api/* is passed to it, so the page and the game share its origin')
 ap.add_argument('--port', type=int, default=8420)
 ap.add_argument('--open', action='store_true', help='open the page in the default browser')
 args = ap.parse_args()
+if args.api:
+    u = urllib.parse.urlsplit(args.api)
+    if u.scheme != 'http' or u.hostname not in ('127.0.0.1', 'localhost', '::1'):
+        ap.error('--api must be an http://127.0.0.1:PORT address on this computer')
+    args.api = args.api.rstrip('/')
 MOUNTS = {k: os.path.realpath(v) for k, v in args.mount}
 FILES = {k: os.path.realpath(v) for k, v in args.file}
 ENV = dict(args.env)
@@ -132,7 +141,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 n -= len(chunk)
 
+    # The MMO server's API, passed through as is (the server card, sign-in).
+    PASS = ('Authorization', 'Content-Type', 'x-save-lease', 'x-save-revision')
+
+    def api(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        data = self.rfile.read(n) if n else None
+        req = urllib.request.Request(args.api + self.path, data=data, method=self.command,
+                                     headers={k: self.headers[k] for k in self.PASS if self.headers.get(k)})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                code, body, hdrs = r.status, r.read(), r.headers
+        except urllib.error.HTTPError as e:
+            code, body, hdrs = e.code, e.read(), e.headers
+        except OSError as e:
+            return self.body(502, 'text/plain', f'MMO server: {e}'.encode())
+        keep = [(k, v) for k, v in hdrs.items() if k.lower().startswith('x-save-')]
+        self.head(code, hdrs.get('Content-Type', 'application/octet-stream'), len(body), keep)
+        self.wfile.write(body)
+
+    do_PUT = do_POST = do_DELETE = lambda self: self.api() if args.api and self.path.startswith('/api/') else self.body(404, 'text/plain', b'not found')
+
     def do_GET(self):
+        if args.api and self.path.startswith('/api/'):
+            return self.api()
         path, _, query = self.path.partition('?')
         path = path.split('#', 1)[0]
         if path.startswith('/fs/') or path == '/fs':

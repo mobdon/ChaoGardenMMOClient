@@ -155,7 +155,12 @@ fn constants(disc: &Rel, steam: &Rel, out: &mut [u8]) -> (usize, usize) {
 /// `(disc offset, Steam offset, length)` and unmatched stretches
 /// `(disc offset, disc length, Steam offset, Steam length)`.
 pub fn align(d: &[u8], s: &[u8]) -> (Vec<(usize, usize, usize)>, Vec<(usize, usize, usize, usize)>) {
-    let eq = |i: usize, j: usize, n: usize| i + n <= d.len() && j + n <= s.len() && d[i..i + n] == s[j..j + n];
+    // A run of one byte (zero padding) matches at any shift: it can't show
+    // where the two versions line up again.
+    let telling = |w: &[u8]| w.iter().any(|&x| x != w[0]);
+    let eq = |i: usize, j: usize, n: usize| {
+        i + n <= d.len() && j + n <= s.len() && d[i..i + n] == s[j..j + n] && telling(&d[i..i + n])
+    };
     let (mut patches, mut gaps) = (Vec::new(), Vec::new());
     let (mut i, mut j) = (0, 0);
     while i < d.len() && j < s.len() {
@@ -165,25 +170,42 @@ pub fn align(d: &[u8], s: &[u8]) -> (Vec<(usize, usize, usize)>, Vec<(usize, usi
             continue;
         }
         // A changed value: the same length, then the files agree again.
-        if let Some(k) = (1..=MAX_REPLACE).find(|&k| eq(i + k, j + k, WINDOW)) {
-            patches.push((i, j, k));
-            i += k;
-            j += k;
-            continue;
-        }
+        let replace = (1..=MAX_REPLACE).find(|&k| eq(i + k, j + k, WINDOW));
         // An insertion or deletion: the nearest point where they agree again.
+        // Looked for even when a replacement fits: a value removed in one
+        // place and another added a little later also lines up again at the
+        // same length, and would copy every value between them one slot off.
+        let limit = replace.map_or(MAX_SHIFT, |k| k.min(MAX_SHIFT));
         let mut at = std::collections::HashMap::new();
         if let Some(room) = s.len().checked_sub(j + WINDOW) {
-            for b in 0..=MAX_SHIFT.min(room) {
-                at.entry(&s[j + b..j + b + WINDOW]).or_insert(b);
+            for b in 0..=limit.min(room) {
+                let w = &s[j + b..j + b + WINDOW];
+                if telling(w) {
+                    at.entry(w).or_insert(b);
+                }
             }
         }
         let room = d.len().checked_sub(i + WINDOW);
-        let best = room
+        let shift = room
             .into_iter()
-            .flat_map(|room| 0..=MAX_SHIFT.min(room))
+            .flat_map(|room| 0..=limit.min(room))
             .filter_map(|a| at.get(&d[i + a..i + a + WINDOW]).map(|&b| (a, b)))
-            .min_by_key(|&(a, b)| a + b);
+            .filter(|&(a, b)| a != b)
+            .min_by_key(|&(a, b)| a + b)
+            // Bytes just before the resync that agree (the padding) belong to
+            // the matched part, not the gap.
+            .map(|(mut a, mut b)| {
+                while a > 0 && b > 0 && d[i + a - 1] == s[j + b - 1] {
+                    a -= 1;
+                    b -= 1;
+                }
+                (a, b)
+            });
+        let best = match (replace, shift) {
+            (Some(k), Some((a, b))) if a + b > k => Some((k, k)),
+            (Some(k), None) => Some((k, k)),
+            (_, shift) => shift,
+        };
         match best {
             Some((a, b)) if a == b => patches.push((i, j, a)),
             Some((a, b)) => gaps.push((i, a, j, b)),
@@ -217,5 +239,48 @@ mod tests {
         let (patches, gaps) = align(&d, &s);
         assert_eq!(patches, vec![(50, 50, 1)]);
         assert_eq!(gaps, vec![(120, 0, 120, 4)]);
+    }
+
+    #[test]
+    fn zero_padding_does_not_hide_an_insertion() {
+        // advertiseD section 4: the disc has 4 more bytes before a run of
+        // zeros; lining up the zeros shifted every later constant by 4.
+        let a: Vec<u8> = (1..=40).collect();
+        let b: Vec<u8> = (101..=140).collect();
+        let mut d = a.clone();
+        d.extend([9, 9, 9, 8]);
+        d.extend([0; 64]);
+        d.extend(&b);
+        let mut s = a.clone();
+        s.extend([0; 64]);
+        s.extend(&b);
+        let (patches, gaps) = align(&d, &s);
+        for (doff, soff, len) in patches {
+            assert_eq!(d[doff..doff + len], s[soff..soff + len], "a patch changes the disc");
+        }
+        assert_eq!(gaps, vec![(40, 4, 40, 0)]);
+    }
+
+
+    #[test]
+    fn a_removed_value_then_an_added_one_are_two_gaps() {
+        // advertiseD section 4: Steam dropped the disc's 4.0 and added a
+        // constant 0x34 bytes later. Copying the stretch between as same-length
+        // "changed values" put every constant there one slot off (the memory
+        // card screen's slide speed read 0.0 and the screen never took A).
+        let a: Vec<u8> = (1..=40).collect();
+        let m: Vec<u8> = (41..=80).collect();
+        let b: Vec<u8> = (101..=140).collect();
+        let mut d = a.clone();
+        d.extend([0x40, 0x80, 0, 0]);
+        d.extend(&m);
+        d.extend(&b);
+        let mut s = a.clone();
+        s.extend(&m);
+        s.extend([0x3d, 0xba, 0x2e, 0x8c]);
+        s.extend(&b);
+        let (patches, gaps) = align(&d, &s);
+        assert!(patches.is_empty(), "{patches:?}");
+        assert_eq!(gaps, vec![(40, 4, 40, 0), (84, 0, 80, 4)]);
     }
 }
