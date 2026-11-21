@@ -228,9 +228,15 @@ pub fn mix(out: &mut [[i32; 2]; FRAME]) {
                         }
                     }
                 }
+                // Linear interpolation: nearest-sample resampling of Steam's
+                // 22.05/44.1 kHz cues to the mix rate sounded distorted.
                 let n = v.cue.channels;
-                o[0] += (f32::from(v.cue.pcm[i * n]) * gl) as i32;
-                o[1] += (f32::from(v.cue.pcm[i * n + n - 1]) * gr) as i32;
+                let j = if i + 1 < frames { i + 1 } else { v.cue.loop_at.filter(|&l| l < frames).unwrap_or(i) };
+                let t = (v.pos - i as f64) as f32;
+                let at = |k: usize, c: usize| f32::from(v.cue.pcm[k * n + c]);
+                let lerp = |c: usize| at(i, c) + (at(j, c) - at(i, c)) * t;
+                o[0] += (lerp(0) * gl) as i32;
+                o[1] += (lerp(n - 1) * gr) as i32;
                 v.pos += step;
             }
             if done {
@@ -332,7 +338,7 @@ mod tests {
         });
         let mut out = [[0; 2]; FRAME];
         mix(&mut out);
-        assert_eq!(&out[..5], &[[0, 100], [0, 100], [0, -50], [0, -50], [0, 0]]);
+        assert_eq!(&out[..5], &[[0, 100], [0, 25], [0, -50], [0, -50], [0, 0]]);
         assert!(
             CHANNELS.with_borrow(|c| c[&(7, 0)].voice.is_none()),
             "ended"
