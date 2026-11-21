@@ -20,7 +20,7 @@ WORK = ROOT / '.local/extracted/metal-chao'
 OUT = ROOT / '.local/imports/metal-chao'
 TOOL = os.environ.get('SA2_ASSETS') or str(ROOT / 'asset-tools/crates/sa2/target/release/sa2-assets')
 GD = GAME / 'resource/gd_PC'
-STYLE = {'belly': [0.8, 0.92, 0.8], 'shoe': 1.0, 'core': 0.45, 'head': 0.9, 'headY': 0.0, 'headZ': 0.0, 'skullBack': 0.5, 'coreY': 0.45, 'jetY': 0.5}
+STYLE = {'belly': [0.8, 0.92, 0.8], 'shoe': 1.0, 'core': 0.45, 'head': 1.0, 'headY': 0.0, 'headZ': 0.0, 'skullBack': 0.5, 'coreY': 0.45, 'jetY': 0.5}
 SKIN_TEXTURE = 3  # metalsonictex entry 3: Metal Sonic's blue environment-mapped metal
 HIDE_NODES = [6, 13, 16, 17, 18, 19, 20, 21, 22, 23, 25, 27]  # Chao feet, head, eyes, ear tips and mouth: replaced by Metal Sonic's
 
@@ -83,7 +83,8 @@ def build():
     head = S(19, 20, 21, 22, 23, 24); P = points(head); hl, hh = box([16])
     skull = P[P[:, 0] < STYLE['skullBack']]
     src = np.array([(skull[:, 0].min() + skull[:, 0].max()) / 2, P[:, 1].min(), 0])
-    sc = (hh[0] - hl[0]) * STYLE['head'] / (skull[:, 2].max() - skull[:, 2].min())
+    # Same body-to-head proportion as a Chao (mob): the head (jaw to crown, spikes excluded) is as tall as the Chao head.
+    sc = (hh[1] - hl[1]) * STYLE['head'] / (skull[:, 1].max() - skull[:, 1].min())
     parts.append(('head', 16, head, sc, src, np.array([0, hl[1] + STYLE['headY'], (hl[2] + hh[2]) / 2 + STYLE['headZ']]), None))
     body = points([s for s in CS if s['node'] == 1]); bl, bh = body.min(0), body.max(0)
     P = points(S(13)); y = bl[1] + (bh[1] - bl[1]) * STYLE['coreY']
