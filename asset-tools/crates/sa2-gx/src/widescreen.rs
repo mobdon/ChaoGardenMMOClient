@@ -99,6 +99,13 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
         .skip(first)
         .any(|d| is_hud(d) && spans(d) && d.material_params.texture_mappings[0].width >= 256.0);
     let centres = group_centres(frame, first);
+    // HUD drawn before the last 3D draw marks something in the scene (a
+    // lock-on reticle at its target's screen spot): it follows the 3D view.
+    let last_3d = frame
+        .draws
+        .iter()
+        .rposition(|d| on_screen(d) && !is_hud(d) && !is_view_space(d))
+        .unwrap_or(0);
     for (i, d) in frame.draws.iter_mut().enumerate().skip(first) {
         if !on_screen(d) {
             continue;
@@ -134,6 +141,9 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
             // its tiles, a fade): stretch it to the full width, every piece
             // the same way so the tiles stay joined.
             m[0] = m[0].map(|v| v / k);
+            continue;
+        }
+        if i < last_3d {
             continue;
         }
         // Where its group sits decides (a row of glyphs moves as one).

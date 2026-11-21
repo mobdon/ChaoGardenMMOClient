@@ -315,3 +315,51 @@ fn a_row_of_glyphs_moves_as_one() {
     let moved: Vec<f32> = after.iter().zip(&before).map(|(a, b)| a - b).collect();
     assert!((moved[0] - moved[1]).abs() < 1e-4, "same move: {moved:?}");
 }
+
+#[test]
+fn a_lock_on_reticle_follows_the_3d_view() {
+    // A reticle is a HUD sprite the game draws between 3D draws, at its
+    // target's 4:3 screen spot; fixed HUD (score, lives) comes after the last
+    // 3D draw. In the left third the reticle must not jump to the edge.
+    let mut gx = Gx::new();
+    gx.clear_vtx_desc();
+    gx.set_vtx_desc(attr::POS, attr_type::DIRECT);
+    gx.set_vtx_attr_fmt(0, attr::POS, comp_cnt::POS_XYZ, comp_type::F32, 0);
+    gx.set_viewport(0.0, 0.0, 640.0, 480.0, 0.0, 1.0);
+    let mem = Ram(&[]);
+    let quad = |gx: &mut Gx, x0: f32, x1: f32, y0: f32, y1: f32, z: f32| {
+        gx.begin(command::DRAW_QUADS, 0, 4);
+        for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)] {
+            gx.position3f32(x, y, z);
+        }
+        gx.end(&mem);
+    };
+    let world = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, -10.0],
+    ];
+    gx.load_pos_mtx_imm(&world, 0);
+    quad(&mut gx, -1.0, 1.0, -1.0, 1.0, 0.0);
+    gx.load_pos_mtx_imm(&HUD, 0);
+    quad(&mut gx, -60.0, -120.0, 200.0, 260.0, -1.0); // reticle, left third
+    gx.load_pos_mtx_imm(&world, 0);
+    quad(&mut gx, -1.0, 1.0, -1.0, 1.0, 0.0); // more 3D after it
+    gx.load_pos_mtx_imm(&HUD, 0);
+    quad(&mut gx, -30.0, -90.0, 420.0, 460.0, -1.0); // lives icon, left third
+    let mut f = gx.take_frame();
+    for d in &mut f.draws {
+        d.projection = PERSP;
+    }
+    let reticle = [-90.0, 230.0, -1.0];
+    let lives = [-60.0, 440.0, -1.0];
+    let before = (ndc_x(&f.draws[1], reticle), ndc_x(&f.draws[3], lives));
+    assert!(before.0 < -1.0 / 3.0 && before.1 < -1.0 / 3.0);
+    widen(&mut f, 16.0 / 9.0);
+    let k = 0.75;
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+    // The reticle scales with the wider 3D view, like the point it marks.
+    assert!(close(ndc_x(&f.draws[1], reticle), before.0 * k));
+    // Fixed HUD still moves to its edge.
+    assert!(close(ndc_x(&f.draws[3], lives), before.1 * k - (1.0 - k)));
+}
