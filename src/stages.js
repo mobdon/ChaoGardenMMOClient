@@ -1,7 +1,7 @@
 import catalog from '../shared/stage-catalog.json';
 
 // shortcut: the browser game's page path is assumed until the site's hosting is set up; change it there.
-const SA2_PAGE = '/sa2/';
+export const SA2_PAGE = '/sa2/';
 
 const familyNames = { speed: 'Speed', hunt: 'Treasure hunt', mech: 'Mech', boss: 'Boss', chao: 'Chao', kart: 'Kart', other: 'Other' };
 
