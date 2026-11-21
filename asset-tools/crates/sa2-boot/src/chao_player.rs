@@ -621,7 +621,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if !SAID_POSE.replace(true) {
         eprintln!("chao-player: Sonic's pose applied to the Chao's draw (node {i}, rider {:#x})", RIDER.get());
     }
-    let p = CHAO_PLACE.get();
+    let p = if POSED_WORLD.get() { mtx(m, m.r32(NJ_BASE_MATRIX)) } else { CHAO_PLACE.get() };
     // current = place * [r t]
     for row in 0..3 {
         for col in 0..4 {
@@ -711,8 +711,7 @@ fn write_pose(m: &mut Mem, chao: u32) {
 
 /// The stage pose for this frame's draw: Sonic's retargeted pose, seated on
 /// the board while it draws, in the Chao's local space (its display places
-/// it at chaowk +0x14 with yaw +0x0C, as `pin` set them).
-/// unverified: that the display's placement is only that translation + yaw.
+/// it at chaowk +0x14 with yaw +0x0C, as `pin` set them); seated, in world.
 fn level_pose(m: &Mem, chao: u32) {
     let cw = m.r32(chao + 0x34);
     let root = if cw == 0 { 0 } else { m.r32(cw + 0x510) };
@@ -729,22 +728,29 @@ fn level_pose(m: &Mem, chao: u32) {
         }
     });
     pose_chao();
+    POSED_WORLD.set(false);
     let Some((r, c)) = seat(m) else { return };
-    let f = |a: u32| f32::from_bits(m.r32(a));
-    let pos = [f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C)];
-    let (sy, cy) = ((m.r32(cw + 0x0C) as i32 as f32) * std::f32::consts::TAU / 65536.0).sin_cos();
-    let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
-    // local = ry^T (r p + c - pos)
+    // Seated: world matrices (r p + c); chao_node puts them under the view
+    // (base) matrix, so the display's own placement does not matter.
     let mul = |a: &[[f32; 3]; 3], v: [f32; 3]| -> [f32; 3] { std::array::from_fn(|i| (0..3).map(|k| a[i][k] * v[k]).sum()) };
-    let rt3: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| ry[j][i]));
-    let to_local: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| rt3[i][k] * r[k][j]).sum()));
     POSED.with_borrow_mut(|p| {
         for (r0, t0) in p.iter_mut() {
-            *r0 = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| to_local[i][k] * r0[k][j]).sum()));
+            *r0 = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| r[i][k] * r0[k][j]).sum()));
             let w = mul(&r, *t0);
-            *t0 = mul(&rt3, [w[0] + c[0] - pos[0], w[1] + c[1] - pos[1], w[2] + c[2] - pos[2]]);
+            *t0 = [w[0] + c[0], w[1] + c[1], w[2] + c[2]];
         }
     });
+    POSED_WORLD.set(true);
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+        let f = |a: u32| f32::from_bits(m.r32(a));
+        eprintln!("chao-player lvl: seated, board centre {c:?}, chao root {:?}, posed root {:?}",
+            [f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C)], POSED.with_borrow(|p| p.first().map(|x| x.1)));
+    }
+}
+
+thread_local! {
+    /// POSED holds world matrices (seated on the board), not Chao-local ones.
+    static POSED_WORLD: Cell<bool> = const { Cell::new(false) };
 }
 
 /// While a board drew this or last frame: seat the posed Chao on it
