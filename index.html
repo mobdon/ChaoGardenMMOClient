@@ -17,7 +17,7 @@
           <button class="nav-button active" data-panel="world">The world</button>
           <button class="nav-button" data-panel="character">My Chao <span class="key-hint">C</span></button>
           <button class="nav-button" data-panel="journal">Journal <span class="key-hint">J</span></button>
-          <button id="school-open" hidden>Kindergarten</button>
+          <button class="nav-button" id="school-open" hidden>Kindergarten</button>
           <button class="nav-button" id="shop-open">Chao shop <span class="key-hint">B</span></button>
           <button class="nav-button" id="care-open" aria-pressed="false">Garden care <span class="key-hint">G</span></button>
           <button class="nav-button" id="breeding-open" aria-pressed="false">Breeding</button>
@@ -116,6 +116,7 @@
           <section class="save-select" aria-labelledby="save-select-heading"><div class="title-section-label"><h3 id="save-select-heading">CONTINUE YOUR STORY</h3><span>LOCAL SLOTS</span></div><div id="save-slots"></div></section>
           <details class="new-chao"><summary>＋ START WITH A NEW CHAO</summary><form id="join-form"><label for="chao-name">YOUR CHAO’S NAME</label><div><input id="chao-name" name="name" maxlength="7" autocomplete="nickname" value="Chao" required/><button id="join-button" class="primary-button" type="submit">Let’s go ↗</button></div><small>Goes on your memory card with your other Chao, up to 8.</small></form></details>
           <details class="new-chao insert-card"><summary>▣ INSERT A MEMORY CARD</summary><form id="card-form"><label for="card-code">MEMORY CARD CODE</label><div><input id="card-code" name="code" autocomplete="off" spellcheck="false" placeholder="xxxx xxxx xxxx …" required/><button class="primary-button" type="submit">Insert ↗</button></div><small>Brings back every Chao on your card from another browser or device.</small></form></details>
+          <button id="owner-login" class="text-button" type="button">Owner login (this PC only) ↗</button>
           <p id="join-error" role="alert"></p>
           <div class="title-footer"><a class="title-tiny-link" href="/tiny.html">TAKE THE LITTLE ADVENTURE WITH YOU · TINY GARDEN ↗</a><div class="welcome-requirements"><span id="install-status-dot" class="status-dot"></span><span id="install-status">Checking local SA2 files…</span></div><small>Progress is saved by the game server. Slots remember this browser’s Chao.<br>SA2 runs from your own Steam folder or GameCube disc.</small></div>
         </div>
