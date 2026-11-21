@@ -130,6 +130,9 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // ChaoMain queues the model draw past this call (no walker runs inside
     // it, ev28), so the flag stays on for the frame while in a cutscene.
     CHAO_DRAW.set(ev);
+    if ev {
+        write_pose(m, c.r[3]);
+    }
     rel_original(c, m, a, chao_display);
     if ev && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
         eprintln!("chao-player ev: Chao drew {} nodes, posed {}", CHAO_NODE.get(), POSED.with_borrow(|p| p.len()));
@@ -204,6 +207,9 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     // node matrices from the skipped walk, put the Chao at his root.
     c.rt.set_override(DRAW_MOTION, trace_draw_motion);
     c.rt.set_override(EV_SHAPE_DRAW, ev_shape_draw);
+    c.rt.set_override(0x8011_E19C, |c, m| ev_draw(c, m, 0x8011_E19C));
+    c.rt.set_override(0x8011_E1C4, |c, m| ev_draw(c, m, 0x8011_E1C4));
+    c.rt.set_override(0x8011_E1EC, |c, m| ev_draw(c, m, 0x8011_E1EC));
     c.rt.set_override(CNK_CACHE_DRAW, cnk_cache_draw);
     c.rt.set_override(NODE_TRANSFORM, node_transform);
     sa2_recomp::os::add_frame_hook(ev_frame_hook);
@@ -256,6 +262,9 @@ fn trace_draw_motion(c: &mut Cpu, m: &mut Mem) {
 /// Trace/hide for every Ninja draw call eventD's entity dispatcher uses.
 fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let (obj, mot, lr) = (c.r[3], c.r[4], c.lr);
+    if CHAO_DRAW.get() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+        eprintln!("chao-player ev: chao draw via {addr:#x} obj {obj:#x} motion {mot:#x} lr {lr:#x} nodes so far {}", CHAO_NODE.get());
+    }
     if EV_SONIC.contains(&obj) {
         // The cutscene's Sonic: walk his motion for the node matrices, draw nothing.
         NODES.with_borrow_mut(|n| n.clear());
@@ -490,6 +499,69 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
         }
     }
+}
+
+/// ChaoMain's exec walker (.text 0xAA0) copies each node's matrix to the
+/// pointer at AL_OBJECT+0xC4 (njGetMatrix at 0xC14/0xDE8); the display draws
+/// from those. With the exec off in a cutscene, write the posed matrices there.
+/// unverified: chaowk+0x670 is the AL_OBJECT root (0x1F1FC loads it on the
+/// draw path); the stored matrices are Chao model space (display adds world).
+fn write_pose(m: &mut Mem, chao: u32) {
+    let cw = m.r32(chao + 0x34);
+    let root = if cw == 0 { 0 } else { m.r32(cw + 0x670) };
+    let ram = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
+    if !ram(cw) || !ram(root) {
+        return;
+    }
+    // Only a sane node tree (the Chao has ~40): a wrong root must not walk garbage.
+    let (mut n, mut stack) = (0, vec![root]);
+    while let Some(o) = stack.pop() {
+        if !ram(o) || n > 100 {
+            return;
+        }
+        n += 1;
+        for k in [0x2c, 0x30] {
+            let v = m.r32(o + k);
+            if v != 0 {
+                stack.push(v);
+            }
+        }
+    }
+    if n < 20 {
+        return;
+    }
+    CHAO_REST.with_borrow_mut(|r| {
+        if r.is_none() {
+            let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]]);
+            eprintln!("chao-player ev: Chao AL root {root:#x} nodes {}", rest.nodes.len());
+            *r = Some(rest);
+        }
+    });
+    pose_chao();
+    let mut nodes = vec![];
+    fn walk(m: &Mem, o: u32, out: &mut Vec<u32>) {
+        let mut o = o;
+        while o >= 0x8000_0000 && out.len() < 128 {
+            out.push(o);
+            walk(m, m.r32(o + 0x2c), out);
+            o = m.r32(o + 0x30);
+        }
+    }
+    walk(m, root, &mut nodes);
+    POSED.with_borrow(|p| {
+        for (&n, &(r, t)) in nodes.iter().zip(p.iter()) {
+            let dst = m.r32(n + 0xC4);
+            if dst < 0x8000_0000 {
+                continue;
+            }
+            for row in 0..3 {
+                for col in 0..3 {
+                    m.w32(dst + 4 * (4 * row + col) as u32, r[row][col].to_bits());
+                }
+                m.w32(dst + 4 * (4 * row + 3) as u32, t[row].to_bits());
+            }
+        }
+    });
 }
 
 /// Retarget Sonic's skeleton (made model-space by his root) onto the Chao.
