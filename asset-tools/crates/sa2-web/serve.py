@@ -82,7 +82,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(length))
-        self.send_header('Cache-Control', 'no-store')
+        # Builds may be kept and checked again (Chrome then reuses the code it
+        # compiled from them); everything else, the game's files included, not.
+        cached = any(k == 'ETag' for k, _ in extra)
+        self.send_header('Cache-Control', 'no-cache' if cached else 'no-store')
         self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
         self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
         self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
@@ -97,11 +100,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def json(self, obj, code=200):
         self.body(code, 'application/json', json.dumps(obj).encode())
 
-    def send_file(self, path):
+    def send_file(self, path, cache=False):
         size = os.path.getsize(path)
         start, end = 0, size - 1
         rng = self.headers.get('Range', '')
         code, extra = 200, [('Accept-Ranges', 'bytes')]
+        if cache:
+            tag = f'"{size}-{os.stat(path).st_mtime_ns}"'
+            extra.append(('ETag', tag))
+            if self.headers.get('If-None-Match') == tag:
+                self.head(304, 'application/wasm', 0, extra)
+                return
         if rng.startswith('bytes='):
             a, _, b = rng[6:].partition('-')
             start = int(a) if a else 0
@@ -131,7 +140,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == '/env.json':
             return self.json(ENV)
         if path == '/game.wasm':
-            return self.send_file(os.path.realpath(args.game))
+            return self.send_file(os.path.realpath(args.game), cache=True)
         if path.startswith('/pkg/'):
             p = os.path.realpath(os.path.join(args.pkg, path[5:]))
             root = os.path.realpath(args.pkg)
@@ -140,7 +149,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             root = WWW
         if not p.startswith(root + os.sep) or not os.path.isfile(p):
             return self.body(404, 'text/plain', b'not found')
-        self.send_file(p)
+        self.send_file(p, cache=p.endswith('.wasm'))
 
     def fs(self, rel, query):
         rel = rel.strip('/')
