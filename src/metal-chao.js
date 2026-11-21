@@ -5,11 +5,9 @@ import { ChaoLookEnvironment, nodeIndexOf } from './chao-look.js';
 // own meshes (Steam metalsonicmdl.prs model 418), each converted into the frame
 // of the Chao node it rides on by scripts/metal-chao/convert.py (never in Git).
 export const METAL_CHAO_LOOK = 'metal-sonic-chao';
-export const METAL_CHAO_PARTS = [
-  { key: 'metal-chao-torso', node: '001' }, { key: 'metal-chao-head', node: '016' },
-  { key: 'metal-chao-arm-right', node: '010' }, { key: 'metal-chao-arm-left', node: '003' },
-  { key: 'metal-chao-leg-right', node: '013' }, { key: 'metal-chao-leg-left', node: '006' },
-];
+// One rigged model: Metal Sonic's own skeleton, skinned body in Chao form and his own motions
+// (scripts/metal-chao/skin.py, converted locally from the player's Steam files, never in Git).
+export const METAL_CHAO_RIG = 'metal-chao-rigged';
 // Metal Sonic's whole body replaces the Chao's (mob: 'all metal sonic body but in chao form'): every Chao mesh hides.
 export const METAL_CHAO_HIDDEN = new Set(Array.from({ length: 40 }, (_, index) => index));
 
@@ -51,4 +49,21 @@ export function metalPartMaterial(mesh) {
   material.albedoTexture = null;
   material.albedoColor?.set?.(1, 1, 1);
   (material.metadata.chaoLookEnvironment ??= new ChaoLookEnvironment(material)).setEnvironment(environment, false);
+}
+
+// His clip for how the Chao is moving: his own stand / walk / jog / run, and his top-speed pose
+// (the one he flies in) when airborne or faster than a run. Thresholds match the walkers' gaits.
+export function metalClip({ speed = 0, grounded = true, moving = false }) {
+  if (!grounded || speed > 2.4) return { name: 'fly', rate: 1 };
+  if (!moving) return { name: 'stand', rate: 1 };
+  const name = speed > 1.65 ? 'run' : speed > 1.2 ? 'jog' : 'walk';
+  const reference = name === 'run' ? 1.9 : name === 'jog' ? 1.5 : 1;
+  return { name, rate: Math.max(0.4, Math.min(1.5, speed / reference)) };
+}
+
+export function playMetalClip(rig, { name, rate }) {
+  const group = rig.groups.get(name) || rig.groups.get('stand');
+  if (!group) return;
+  if (rig.current !== group) { rig.current?.stop(); group.start(true, rate); rig.current = group; }
+  group.speedRatio = rate;
 }

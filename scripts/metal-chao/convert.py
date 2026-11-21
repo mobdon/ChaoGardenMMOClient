@@ -30,7 +30,8 @@ def tool(*args):
 
 def prepare():
     WORK.mkdir(parents=True, exist_ok=True); OUT.mkdir(parents=True, exist_ok=True)
-    tool('prs', GD / 'metalsonicmdl.prs', WORK / 'metalsonicmdl.bin') if not (WORK / 'metalsonicmdl.bin').exists() else None
+    for bank in ('metalsonicmdl', 'metalsonicmtn', 'plcommtn'):  # his model, his motions, the shared player motions
+        if not (WORK / f'{bank}.bin').exists(): tool('prs', GD / f'{bank}.prs', WORK / f'{bank}.bin')
     if not (WORK / 'tex').exists(): tool('extract', GD / 'metalsonictex.prs', WORK / 'tex')
     for i in range(13):
         png = WORK / f'metal-{i:05d}.png'
@@ -128,4 +129,5 @@ def build():
 
 if __name__ == '__main__':
     if not (GD / 'metalsonicmdl.prs').exists(): raise SystemExit('Pass the Sonic Adventure 2 install folder (Steam).')
-    prepare(); build()
+    prepare(); build()  # build() also writes the skin texture the client hides the Chao with
+    import skin; print('Wrote', skin.build(OUT / 'metal-chao-rigged.glb'))

@@ -14,7 +14,7 @@ import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
-import { METAL_CHAO_LOOK, METAL_CHAO_PARTS, applyMetalSkin, metalPartMaterial, metalSkinTexture } from './metal-chao.js';
+import { METAL_CHAO_LOOK, METAL_CHAO_RIG, applyMetalSkin, metalClip, metalPartMaterial, metalSkinTexture, playMetalClip } from './metal-chao.js';
 import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
 import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
 import { attachNativeBehaviours, readBehaviour, updateNativeBehaviour } from './chao-behaviour.js';
@@ -791,35 +791,31 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     for (const slot of ['footwear', 'hands']) if (gear[slot] && item.imported) void attachOwnerGear(item, slot, gear[slot], item.gearVersion);
   }
 
-  // The owner's Metal Sonic Chao: Metal Sonic's own parts (converted locally by
-  // scripts/metal-chao/convert.py) parented to their Chao nodes like a worn hat,
-  // his blue metal sphere-mapped on the body, and the Chao head/feet hidden.
+  // The owner's Metal Sonic Chao: Metal Sonic's own rigged body in Chao form (converted locally by
+  // scripts/metal-chao/skin.py) beside the hidden Chao model, playing his own motions.
   function setMetalChao(item, on) {
     for (const root of item.metalChaoRoots || []) destroyGroup(root);
+    for (const group of item.metalChaoRig?.groups.values() || []) group.dispose();
     item.metalChaoRoots = [];
+    item.metalChaoRig = null;
     const visual = item.imported?.visual;
     if (!visual) return;
     applyMetalSkin(visual, on ? metalSkinTexture(scene) : null);
     canvas.dataset.metalChao = on ? 'loading' : '';
     if (!on) return;
     const version = item.gearVersion;
-    const nodes = visual.getDescendants();
-    for (const part of METAL_CHAO_PARTS) {
-      const socket = nodes.find(node => new RegExp(`(?:^|-)${part.node}_object_`).test(node.name));
-      if (!socket) continue;
-      void loadLocalAsset(part.key).then(container => {
-        if (!container || disposed || item.root.isDisposed() || version !== item.gearVersion) return;
-        const entries = container.instantiateModelsToScene(name => `${item.root.name}-${part.key}-${name}`, false, { doNotInstantiate: true });
-        const holder = new TransformNode(`${item.root.name}-${part.key}`, scene);
-        for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
-        for (const entryRoot of entries.rootNodes) entryRoot.dispose();
-        holder.rotation.x = Math.PI / 2; // same exported-frame turn as setHat
-        holder.parent = socket;
-        for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); metalPartMaterial(mesh); }
-        item.metalChaoRoots.push(holder);
-        canvas.dataset.metalChao = String(item.metalChaoRoots.length);
-      });
-    }
+    void loadLocalAsset(METAL_CHAO_RIG).then(container => {
+      if (!container || disposed || item.root.isDisposed() || version !== item.gearVersion) return;
+      const entries = container.instantiateModelsToScene(name => `${item.root.name}-metal-${name}`, false, { doNotInstantiate: true });
+      for (const root of entries.rootNodes) {
+        root.parent = visual; // same frame as the Chao's own glTF root
+        for (const mesh of root.getChildMeshes()) { mesh.receiveShadows = true; mesh.alwaysSelectAsActiveMesh = true; shadows.addShadowCaster(mesh, false); metalPartMaterial(mesh); }
+      }
+      for (const group of entries.animationGroups) group.stop();
+      item.metalChaoRoots = entries.rootNodes;
+      item.metalChaoRig = { groups: new Map(entries.animationGroups.map(group => [group.name, group])), current: null };
+      canvas.dataset.metalChao = 'rigged';
+    });
   }
 
   async function attachNativeBooster(item) {
@@ -1743,6 +1739,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item.nativeVisualSpeed = movingPose ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
         const kinematics = { speed, visualSpeed: item.nativeVisualSpeed, grounded,
           jumpOffset: motion?.jumpOffset, verticalVelocity: motion?.verticalVelocity, fresh, swimming, mounted };
+        if (item.metalChaoRig) playMetalClip(item.metalChaoRig, metalClip({ speed: item.groundSpeed || 0, grounded: grounded || !fresh, moving: item.moving }));
         const behaviourMotion = item.behaviour && grounded && imported.behaviourCatalog?.size
           ? updateNativeBehaviour(imported, item.root, item.behaviour, { now: performance.now(), fresh, mounted, swimming })
           : null;
