@@ -10,7 +10,7 @@ import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.j
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
 import { CHAO_GEAR_JOINTS, CHAO_HAT_NODE, animalPartAssets, hatAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
-import { restoreNativeChaosSampling } from './chao-materials.js';
+import { applyNinjaEnvironment, restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
@@ -385,6 +385,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
               mat.twoSidedLighting = true;
             }
             restoreNativeChaosSampling(key, mat);
+            applyNinjaEnvironment(mat);
           }
         }
         return container;

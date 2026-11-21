@@ -1,4 +1,4 @@
-import { Texture } from '@babylonjs/core';
+import { MaterialPluginBase, Texture } from '@babylonjs/core';
 
 // Verified against the local SAIO import of the three AL_RootObject models.
 // Facial overlay materials are deliberately absent. Flame/body RGB remains
@@ -31,4 +31,29 @@ export function restoreNativeChaosSampling(key, material) {
   texture.wrapV = source.wrapV;
   texture.updateSamplingMode(source.samplingMode);
   return true;
+}
+
+// Ninja USE_ENV (saio useEnvironment): the game draws that strip with UVs from
+// the view-space normal (GX texgen NRM * 0.5 + 0.5), giving the Chaos shine.
+class NinjaEnvPlugin extends MaterialPluginBase {
+  constructor(material) { super(material, 'NinjaEnv', 200, { NINJA_ENV: false }); this._enable(true); }
+  prepareDefines(defines) { defines.NINJA_ENV = true; }
+  getClassName() { return 'NinjaEnvPlugin'; }
+  getCustomCode(type) {
+    if (type !== 'fragment') return null;
+    return { CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
+#if defined(NINJA_ENV) && defined(ALBEDO)
+  vec2 ninjaEnvUV = normalize((view * vec4(normalW, 0.0)).xyz).xy * 0.5 + 0.5;
+  vec3 ninjaEnv = texture2D(albedoSampler, ninjaEnvUV).rgb;
+  #ifdef GAMMAALBEDO
+  ninjaEnv = toLinearSpace(ninjaEnv);
+  #endif
+  surfaceAlbedo = ninjaEnv * vAlbedoColor.rgb;
+#endif
+` };
+  }
+}
+
+export function applyNinjaEnvironment(material) {
+  if (material?.metadata?.gltf?.extras?.ninja?.useEnvironment && !material.pluginManager?.getPlugin?.('NinjaEnv')) new NinjaEnvPlugin(material);
 }
