@@ -10,6 +10,7 @@
 use crate::{cstr, guest_call};
 use sa2_recomp::rt::{Cpu, Mem};
 use sa2_recomp::{global, global::Global};
+#[cfg(not(target_os = "wasi"))]
 use std::path::PathBuf;
 
 pub const CARD_INIT: u32 = 0x8016_D4DC;
@@ -38,6 +39,7 @@ pub const CARD_DELETE: u32 = 0x8017_2868;
 pub const CARD_GET_STATUS: u32 = 0x8017_2AA8;
 pub const CARD_SET_STATUS_ASYNC: u32 = 0x8017_2BD4;
 pub const CARD_SET_STATUS: u32 = 0x8017_2D48;
+pub const CARD_SET_STATUS_EX: u32 = 0x8017_30A0;
 
 const READY: i32 = 0;
 const NOCARD: i32 = -3;
@@ -59,6 +61,7 @@ static RESULT: Global<[i32; 2]> = global!([0; 2]);
 /// Callbacks to run on the next frame: (callback, channel, result).
 static DONE: Global<Vec<(u32, u32, i32)>> = global!(Vec::new());
 
+#[cfg(not(target_os = "wasi"))]
 fn dir() -> Option<PathBuf> {
     std::env::var_os("SA2_MEMCARD").map(PathBuf::from)
 }
@@ -69,47 +72,133 @@ fn trace(what: &str) {
     }
 }
 
-fn hex(name: &str) -> String {
-    name.bytes().map(|b| format!("{b:02x}")).collect()
+/// Where the card's files live. Desktop: the SA2_MEMCARD folder. Browser:
+/// memory, whose only copy is the server card (the page's `/dev/card`).
+#[cfg(not(target_os = "wasi"))]
+mod store {
+    use super::dir;
+    use std::path::PathBuf;
+
+    fn hex(name: &str) -> String {
+        name.bytes().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn unhex(s: &str) -> Option<String> {
+        let bytes: Option<Vec<u8>> = (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+            .collect();
+        String::from_utf8(bytes?).ok()
+    }
+
+    fn data_path(name: &str) -> Option<PathBuf> {
+        Some(dir()?.join(format!("{}.dat", hex(name))))
+    }
+    fn stat_path(name: &str) -> Option<PathBuf> {
+        Some(dir()?.join(format!("{}.stat", hex(name))))
+    }
+    /// Write through a temporary file, so a crash mid-write never leaves half a save.
+    fn write_file(path: Option<PathBuf>, bytes: &[u8]) -> bool {
+        let Some(path) = path else { return false };
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_ok()
+    }
+    pub fn available() -> bool {
+        dir().is_some()
+    }
+    pub fn init() {
+        if let Some(d) = dir() {
+            let _ = std::fs::create_dir_all(d);
+        }
+    }
+    /// The card's files by name, in a stable order (their file numbers).
+    pub fn names() -> Vec<String> {
+        let Some(d) = dir() else { return Vec::new() };
+        let mut names: Vec<String> = std::fs::read_dir(&d)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter_map(|e| {
+                        let n = e.file_name().to_string_lossy().into_owned();
+                        unhex(n.strip_suffix(".dat")?)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+    pub fn size(name: &str) -> u32 {
+        data_path(name)
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map_or(0, |m| m.len() as u32)
+    }
+    pub fn data(name: &str) -> Vec<u8> {
+        data_path(name)
+            .and_then(|p| std::fs::read(p).ok())
+            .unwrap_or_default()
+    }
+    pub fn stat(name: &str) -> Vec<u8> {
+        stat_path(name)
+            .and_then(|p| std::fs::read(p).ok())
+            .unwrap_or_default()
+    }
+    pub fn put_data(name: &str, bytes: &[u8]) -> bool {
+        write_file(data_path(name), bytes)
+    }
+    pub fn put_stat(name: &str, bytes: &[u8]) -> bool {
+        write_file(stat_path(name), bytes)
+    }
+    pub fn remove(name: &str) {
+        for p in [data_path(name), stat_path(name)].into_iter().flatten() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
 }
 
-fn unhex(s: &str) -> Option<String> {
-    let bytes: Option<Vec<u8>> = (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
-        .collect();
-    String::from_utf8(bytes?).ok()
+#[cfg(target_os = "wasi")]
+mod store {
+    use sa2_recomp::{global, global::Global};
+    use std::collections::BTreeMap;
+
+    /// name -> (status, data)
+    static FILES: Global<BTreeMap<String, (Vec<u8>, Vec<u8>)>> = global!(BTreeMap::new());
+
+    /// The server card is in the slot only while signed in.
+    pub fn available() -> bool {
+        std::env::var("SA2_MMO_TOKEN").is_ok_and(|t| !t.is_empty())
+    }
+    pub fn init() {}
+    pub fn names() -> Vec<String> {
+        FILES.with_borrow(|f| f.keys().cloned().collect())
+    }
+    pub fn size(name: &str) -> u32 {
+        FILES.with_borrow(|f| f.get(name).map_or(0, |e| e.1.len() as u32))
+    }
+    pub fn data(name: &str) -> Vec<u8> {
+        FILES.with_borrow(|f| f.get(name).map(|e| e.1.clone()).unwrap_or_default())
+    }
+    pub fn stat(name: &str) -> Vec<u8> {
+        FILES.with_borrow(|f| f.get(name).map(|e| e.0.clone()).unwrap_or_default())
+    }
+    pub fn put_data(name: &str, bytes: &[u8]) -> bool {
+        FILES.with_borrow_mut(|f| f.entry(name.into()).or_default().1 = bytes.to_vec());
+        true
+    }
+    pub fn put_stat(name: &str, bytes: &[u8]) -> bool {
+        FILES.with_borrow_mut(|f| f.entry(name.into()).or_default().0 = bytes.to_vec());
+        true
+    }
+    pub fn remove(name: &str) {
+        FILES.with_borrow_mut(|f| f.remove(name));
+    }
 }
 
-/// The card's files by name, in a stable order (their file numbers).
 fn files() -> Vec<String> {
-    let Some(d) = dir() else { return Vec::new() };
-    let mut names: Vec<String> = std::fs::read_dir(&d)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let n = e.file_name().to_string_lossy().into_owned();
-                    unhex(n.strip_suffix(".dat")?)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    names
-}
-
-fn data_path(name: &str) -> Option<PathBuf> {
-    Some(dir()?.join(format!("{}.dat", hex(name))))
-}
-
-fn stat_path(name: &str) -> Option<PathBuf> {
-    Some(dir()?.join(format!("{}.stat", hex(name))))
+    store::names()
 }
 
 fn size_of(name: &str) -> u32 {
-    data_path(name)
-        .and_then(|p| std::fs::metadata(p).ok())
-        .map_or(0, |m| m.len() as u32)
+    store::size(name)
 }
 
 fn blocks(size: u32) -> u32 {
@@ -121,14 +210,96 @@ fn used_blocks() -> u32 {
 }
 
 fn present(chan: u32) -> bool {
-    chan == 0 && dir().is_some()
+    chan == 0 && store::available() && mmo_card_in()
 }
 
-/// Write `bytes` to `path` through a temporary file, so a crash mid-write
-/// never leaves half a save.
-fn write_file(path: &std::path::Path, bytes: &[u8]) -> bool {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_ok()
+/// The MMO server card is in the slot only while signed in.
+fn mmo_card_in() -> bool {
+    #[cfg(not(target_os = "wasi"))]
+    return !crate::mmo::configured() || crate::mmo::signed_in();
+    #[cfg(target_os = "wasi")]
+    return true;
+}
+
+/// Put a card from the server into the store. Server files overwrite local
+/// ones of the same name; local files the server lacks stay (and go up with
+/// the next change), so nothing is lost.
+fn store_card(files: Vec<crate::card_pack::CardFile>) -> Result<(), String> {
+    for (name, stat, data) in files {
+        if !store::put_data(&name, &data) || (!stat.is_empty() && !store::put_stat(&name, &stat)) {
+            return Err(format!("could not store {name:?}"));
+        }
+    }
+    Ok(())
+}
+
+fn whole_card() -> Vec<crate::card_pack::CardFile> {
+    files()
+        .into_iter()
+        .map(|n| (n.clone(), store::stat(&n), store::data(&n)))
+        .collect()
+}
+
+/// The browser's server card: the page answers reads of this device with the
+/// checked-out card and sends writes to the server (lease and revision kept
+/// there), so the game thread never waits on a socket of its own.
+#[cfg(target_os = "wasi")]
+const CARD_DEVICE: &str = "/dev/card";
+#[cfg(target_os = "wasi")]
+static CHECKED_OUT: Global<bool> = global!(false);
+
+/// Mounting the server card checks the whole card out.
+fn mmo_mount() -> i32 {
+    #[cfg(not(target_os = "wasi"))]
+    let stored = if crate::mmo::configured() {
+        crate::mmo::pull(store_card)
+    } else {
+        Ok(())
+    };
+    #[cfg(target_os = "wasi")]
+    let stored = if CHECKED_OUT.with_borrow(|c| *c) {
+        Ok(())
+    } else {
+        std::fs::read(CARD_DEVICE)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                if bytes.is_empty() {
+                    return Ok(()); // a new card: the game's first save fills it
+                }
+                store_card(crate::card_pack::unpack(&bytes).ok_or("the server card is damaged")?)
+            })
+            .map(|()| CHECKED_OUT.set(true))
+    };
+    if let Err(e) = stored {
+        eprintln!("card (mmo): could not load the card: {e}");
+        return IOERROR;
+    }
+    READY
+}
+
+/// After the game changed a card file, the server must have the card too,
+/// or the game is told the change failed.
+fn mmo_changed() -> i32 {
+    #[cfg(not(target_os = "wasi"))]
+    let sent = if crate::mmo::configured() {
+        crate::mmo::push(&whole_card())
+    } else {
+        Ok(())
+    };
+    #[cfg(target_os = "wasi")]
+    // Synced: the page answers sync with the server's yes or no.
+    let sent = (|| {
+        use std::io::Write;
+        let mut device = std::fs::File::create(CARD_DEVICE)?;
+        device.write_all(&crate::card_pack::pack(&whole_card()))?;
+        device.sync_all()
+    })()
+    .map_err(|e| e.to_string());
+    if let Err(e) = sent {
+        eprintln!("card (mmo): could not save the card: {e}");
+        return IOERROR;
+    }
+    READY
 }
 
 fn set_result(c: &mut Cpu, chan: u32, r: i32) {
@@ -155,6 +326,8 @@ fn finish_async(c: &mut Cpu, chan: u32, r: i32, cb: u32) {
 
 /// Frame hook: the callbacks of asynchronous card calls.
 fn done(c: &mut Cpu, m: &mut Mem) {
+    #[cfg(not(target_os = "wasi"))]
+    crate::mmo::renew_if_due();
     for (cb, chan, r) in DONE.take() {
         guest_call(c, m, cb, &[chan, r as u32]);
     }
@@ -204,7 +377,7 @@ fn get_mem_size(c: &mut Cpu, m: &mut Mem) {
 // CARDMount(chan, workArea, detachCallback)
 fn mount(c: &mut Cpu, _m: &mut Mem) {
     let chan = c.r[3];
-    let r = if present(chan) { READY } else { NOCARD };
+    let r = if present(chan) { mmo_mount() } else { NOCARD };
     trace(&format!("mount {chan} -> {r}"));
     set_result(c, chan, r);
 }
@@ -212,7 +385,7 @@ fn mount(c: &mut Cpu, _m: &mut Mem) {
 // CARDMountAsync(chan, workArea, detachCallback, attachCallback)
 fn mount_async(c: &mut Cpu, _m: &mut Mem) {
     let chan = c.r[3];
-    let r = if present(chan) { READY } else { NOCARD };
+    let r = if present(chan) { mmo_mount() } else { NOCARD };
     trace(&format!("mount async {chan} -> {r}"));
     finish_async(c, chan, r, c.r[6]);
 }
@@ -248,12 +421,7 @@ fn format(c: &mut Cpu, _m: &mut Mem) {
         return;
     }
     for n in files() {
-        if let Some(p) = data_path(&n) {
-            let _ = std::fs::remove_file(p);
-        }
-        if let Some(p) = stat_path(&n) {
-            let _ = std::fs::remove_file(p);
-        }
+        store::remove(&n);
     }
     trace("format");
     set_result(c, chan, READY);
@@ -345,14 +513,14 @@ fn create_file(m: &mut Mem, chan: u32, name_at: u32, size: u32, fi: u32) -> i32 
     if used_blocks() + blocks(size) > BLOCKS {
         return INSSPACE;
     }
-    let ok = data_path(&name).is_some_and(|p| write_file(&p, &vec![0; size as usize]));
+    let ok = store::put_data(&name, &vec![0; size as usize]);
     if !ok {
         return IOERROR;
     }
     let no = files().iter().position(|n| *n == name).unwrap_or(0);
     fill_info(m, fi, chan, no, &name);
     trace(&format!("create {name:?} {size} bytes"));
-    READY
+    mmo_changed()
 }
 
 // CARDCreate(chan, fileName, size, CARDFileInfo*)
@@ -379,9 +547,7 @@ fn read_file(m: &mut Mem, fi: u32, buf: u32, len: u32, off: u32) -> (u32, i32) {
     let Some((chan, name)) = file_of(m, fi) else {
         return (0, NOFILE);
     };
-    let data = data_path(&name)
-        .and_then(|p| std::fs::read(p).ok())
-        .unwrap_or_default();
+    let data = store::data(&name);
     let start = (off as usize).min(data.len());
     let end = (off as usize).saturating_add(len as usize).min(data.len());
     m.load(buf, &data[start..end]);
@@ -393,10 +559,7 @@ fn write_to_file(m: &mut Mem, fi: u32, buf: u32, len: u32, off: u32) -> (u32, i3
     let Some((chan, name)) = file_of(m, fi) else {
         return (0, NOFILE);
     };
-    let Some(path) = data_path(&name) else {
-        return (chan, NOCARD);
-    };
-    let mut data = std::fs::read(&path).unwrap_or_default();
+    let mut data = store::data(&name);
     let end = off as usize + len as usize;
     if data.len() < end {
         data.resize(end, 0);
@@ -407,8 +570,8 @@ fn write_to_file(m: &mut Mem, fi: u32, buf: u32, len: u32, off: u32) -> (u32, i3
     trace(&format!("write {name:?} {len} at {off}"));
     (
         chan,
-        if write_file(&path, &data) {
-            READY
+        if store::put_data(&name, &data) {
+            mmo_changed()
         } else {
             IOERROR
         },
@@ -457,14 +620,9 @@ fn delete_file(m: &Mem, chan: u32, name_at: u32) -> i32 {
     if !files().contains(&name) {
         return NOFILE;
     }
-    if let Some(p) = data_path(&name) {
-        let _ = std::fs::remove_file(p);
-    }
-    if let Some(p) = stat_path(&name) {
-        let _ = std::fs::remove_file(p);
-    }
+    store::remove(&name);
     trace(&format!("delete {name:?}"));
-    READY
+    mmo_changed()
 }
 
 // CARDDelete(chan, fileName)
@@ -561,9 +719,7 @@ fn get_status(c: &mut Cpu, m: &mut Mem) {
         m.w8(st + i as u32, b);
     }
     m.w32(st + 0x20, size_of(&name));
-    let saved = stat_path(&name)
-        .and_then(|p| std::fs::read(p).ok())
-        .unwrap_or_default();
+    let saved = store::stat(&name);
     if saved.len() == (STAT_TO - STAT_FROM) as usize {
         m.load(st + STAT_FROM, &saved);
     } else {
@@ -581,10 +737,10 @@ fn set_status_of(m: &Mem, chan: u32, no: usize, st: u32) -> i32 {
         return NOFILE;
     };
     let bytes: Vec<u8> = (STAT_FROM..STAT_TO).map(|i| m.r8(st + i)).collect();
-    let ok = stat_path(&name).is_some_and(|p| write_file(&p, &bytes));
+    let ok = store::put_stat(&name, &bytes);
     trace(&format!("set status {name:?}"));
     if ok {
-        READY
+        mmo_changed()
     } else {
         IOERROR
     }
@@ -594,6 +750,23 @@ fn set_status_of(m: &Mem, chan: u32, no: usize, st: u32) -> i32 {
 fn set_status(c: &mut Cpu, m: &mut Mem) {
     let r = set_status_of(m, c.r[3], c.r[4] as usize, c.r[5]);
     set_result(c, c.r[3], r);
+}
+
+// __CARDSetStatusEx(chan, fileNo, CARDDir*): the Chao World save sets its
+// directory entry this way after CARDSetStatus. The host card keeps no
+// directory blocks (CARDSetStatus already stored the status), so it only
+// reports the result; unhooked, it reached the real library and failed.
+fn set_status_ex(c: &mut Cpu, _m: &mut Mem) {
+    let chan = c.r[3];
+    let r = if !present(chan) {
+        NOCARD
+    } else if files().get(c.r[4] as usize).is_none() {
+        NOFILE
+    } else {
+        READY
+    };
+    trace(&format!("set_status_ex {} -> {r}", c.r[4]));
+    set_result(c, chan, r);
 }
 
 // CARDSetStatusAsync(chan, fileNo, CARDStat*, cb)
@@ -606,8 +779,10 @@ fn set_status_async(c: &mut Cpu, m: &mut Mem) {
 /// Only with SA2_MEMCARD: otherwise the game's own CARD library finds the
 /// slot empty, as before.
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
-    let Some(d) = dir() else { return };
-    let _ = std::fs::create_dir_all(d);
+    if !store::available() {
+        return;
+    }
+    store::init();
     for (addr, f) in [
         (CARD_INIT, nothing as sa2_recomp::rt::Func),
         (CARD_GET_RESULT_CODE, get_result_code),
@@ -635,6 +810,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         (CARD_GET_STATUS, get_status),
         (CARD_SET_STATUS_ASYNC, set_status_async),
         (CARD_SET_STATUS, set_status),
+        (CARD_SET_STATUS_EX, set_status_ex),
     ] {
         c.rt.set_override(addr, f);
     }
