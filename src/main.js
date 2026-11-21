@@ -534,7 +534,8 @@ function openSchool(){
   renderSchool();$('#school-name').value=player.name;
   $('#school-dialog').showModal();updatePaused();
 }
-$('#school-open').addEventListener('click',openSchool);
+// The game's own Kindergarten (Chao World area 6) via the shared Chao World entry.
+$('#school-open').addEventListener('click',()=>window.location.assign('/sa2/?stage=90&area=6'));
 $('#school-close').addEventListener('click',()=>$('#school-dialog').close());
 $('#school-dialog').addEventListener('close',updatePaused);
 $('#school-name-form').addEventListener('submit',event=>{
