@@ -228,12 +228,10 @@ pub fn mix(out: &mut [[i32; 2]; FRAME]) {
                         }
                     }
                 }
+                // Linear interpolation: nearest-sample resampling of Steam's
+                // 22.05/44.1 kHz cues to the mix rate sounded distorted.
                 let n = v.cue.channels;
-                let j = if i + 1 < frames {
-                    i + 1
-                } else {
-                    v.cue.loop_at.filter(|&l| l < frames).unwrap_or(i)
-                };
+                let j = if i + 1 < frames { i + 1 } else { v.cue.loop_at.filter(|&l| l < frames).unwrap_or(i) };
                 let t = (v.pos - i as f64) as f32;
                 let at = |k: usize, c: usize| f32::from(v.cue.pcm[k * n + c]);
                 let lerp = |c: usize| at(i, c) + (at(j, c) - at(i, c)) * t;
