@@ -20,6 +20,7 @@ pub mod session;
 pub mod set;
 pub mod sound;
 pub mod stage;
+pub mod steam_tex;
 pub mod task;
 pub mod walker_slot;
 
