@@ -18,6 +18,10 @@ use std::sync::Arc;
 
 /// gcax: one MIDI message to a sequence player (handle, ?, status, data1, data2).
 pub const SEQ_MESSAGE: u32 = 0x8014_03B8;
+/// The game's file load (name, buffer) -> nonzero when loaded.
+pub const LOAD_FILE: u32 = 0x8001_A13C;
+/// The game's sound loader hands a loaded bank file (buffer) to gcax.
+pub const REGISTER_BANK: u32 = 0x8006_CF00;
 
 struct Bank {
     name: String,
@@ -51,6 +55,10 @@ struct Voice {
 
 static BANKS: Global<BTreeMap<u32, Bank>> = global!(BTreeMap::new());
 static CHANNELS: Global<BTreeMap<(u32, u32), Channel>> = global!(BTreeMap::new());
+/// Bank files Steam answered for (lower-case request name).
+static STEAM_FILES: Global<Vec<String>> = global!(Vec::new());
+/// The buffer a Steam-answered bank load left empty.
+static EMPTY_BUFFER: Global<Option<u32>> = global!(None);
 
 /// The game asked for `request` (e.g. `se_kart.mlt`) and no file answered:
 /// register Steam's `.../<stem>/<N>.csb` files under that folder name.
@@ -85,6 +93,11 @@ pub fn missing_bank(files: &dyn GameFiles, request: &str) {
         if files.read_at(&path, 0, &mut bytes) != Some(bytes.len()) {
             continue;
         }
+        STEAM_FILES.with_borrow_mut(|f| {
+            if !f.contains(&lower) {
+                f.push(lower.clone());
+            }
+        });
         match csb::read(&bytes) {
             Ok(cues) => BANKS.with_borrow_mut(|b| {
                 b.insert(
@@ -175,6 +188,15 @@ fn message(handle: u32, status: u32, d1: u32, d2: u32) {
 /// In place of 0x801403b8: follow the message, then let the game's own
 /// sequencer have it.
 fn seq_message(c: &mut Cpu, m: &mut Mem) {
+    if std::env::var_os("SA2_TRACE_SOUND").is_some() {
+        eprintln!(
+            "steam sound: msg {:#x} {:02x} {:02x} {:02x}",
+            c.r[3],
+            c.r[5] & 0xFF,
+            c.r[6] & 0xFF,
+            c.r[7] & 0xFF
+        );
+    }
     message(c.r[3], c.r[5] & 0xFF, c.r[6] & 0xFF, c.r[7] & 0xFF);
     if let Some(f) = (c.rt.generated)(SEQ_MESSAGE) {
         f(c, m);
@@ -218,8 +240,37 @@ pub fn mix(out: &mut [[i32; 2]; FRAME]) {
     });
 }
 
+/// In place of 0x8001a13c: the game's own load first. A bank file only
+/// Steam has (its CSBs registered above) counts as loaded, so the game's
+/// sound loader (0x8006d200) goes on to install its own sound tables
+/// (work+0x840..), which it skips when the load fails; the buffer stays
+/// untouched and gcax is not handed it.
+fn load_file(c: &mut Cpu, m: &mut Mem) {
+    let (name, buffer) = (crate::cstr(m, c.r[3]).to_ascii_lowercase(), c.r[4]);
+    if let Some(f) = (c.rt.generated)(LOAD_FILE) {
+        f(c, m);
+    }
+    if c.r[3] == 0 && STEAM_FILES.with_borrow(|s| s.contains(&name)) {
+        c.r[3] = 1;
+        EMPTY_BUFFER.set(Some(buffer));
+    }
+}
+
+/// In place of 0x8006cf00: skip the bank buffer a Steam load left empty.
+fn register_bank(c: &mut Cpu, m: &mut Mem) {
+    if EMPTY_BUFFER.get() == Some(c.r[3]) {
+        EMPTY_BUFFER.set(None);
+        return;
+    }
+    if let Some(f) = (c.rt.generated)(REGISTER_BANK) {
+        f(c, m);
+    }
+}
+
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(SEQ_MESSAGE, seq_message);
+    c.rt.set_override(LOAD_FILE, load_file);
+    c.rt.set_override(REGISTER_BANK, register_bank);
 }
 
 #[cfg(test)]
