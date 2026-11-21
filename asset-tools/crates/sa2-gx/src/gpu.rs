@@ -177,6 +177,9 @@ struct PipelineKey {
 
 struct GpuTexture {
     view: wgpu::TextureView,
+    /// An uploaded texture (`None` for an EFB copy, which `efb_copies` owns).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    texture: Option<wgpu::Texture>,
 }
 
 /// A draw ready to record: everything but its position matrices.
@@ -312,7 +315,7 @@ pub struct GxRenderer {
     samplers: FastMap<SamplerDesc, wgpu::Sampler>,
     texture_binds: FastMap<[(Option<TextureId>, SamplerDesc); 8], wgpu::BindGroup>,
     white: wgpu::TextureView,
-    depth: Option<(wgpu::TextureView, [u32; 2])>,
+    depth: Vec<(wgpu::TextureView, wgpu::Texture, [u32; 2])>,
     /// Offscreen EFB for render-to-texture passes.
     efb: Option<wgpu::Texture>,
     /// Viewport for the next [`Self::render`] (x, y, w, h, near, far in
@@ -415,7 +418,7 @@ impl GxRenderer {
             samplers: FastMap::default(),
             texture_binds: FastMap::default(),
             white,
-            depth: None,
+            depth: Vec::new(),
             efb: None,
             viewport: None,
             passes: FastMap::default(),
@@ -490,12 +493,22 @@ impl GxRenderer {
             wgpu::util::TextureDataOrder::LayerMajor,
             &data,
         );
-        self.textures.insert(
+        let old = self.textures.insert(
             id,
             GpuTexture {
                 view: t.create_view(&Default::default()),
+                texture: Some(t),
             },
         );
+        // In a browser a dropped texture lives until garbage collection, and
+        // the game uploads textures again every frame: free the old one now.
+        // (Native wgpu frees it on drop, once nothing in flight uses it.)
+        #[cfg(target_arch = "wasm32")]
+        if let Some(t) = old.and_then(|o| o.texture) {
+            t.destroy();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        drop(old);
         self.next_texture = self.next_texture.max(id + 1);
         self.texture_binds
             .retain(|k, _| !k.iter().any(|(t, _)| *t == Some(id)));
@@ -656,10 +669,11 @@ impl GxRenderer {
     }
 
     fn depth_view(&mut self, size: [u32; 2]) -> wgpu::TextureView {
-        if let Some((v, s)) = &self.depth {
-            if *s == size {
-                return v.clone();
-            }
+        // One depth buffer per size: render-to-texture passes (640x480)
+        // and the picture (the window's size) alternate every frame, and
+        // a single slot made two new depth textures a picture.
+        if let Some((v, _, _)) = self.depth.iter().find(|d| d.2 == size) {
+            return v.clone();
         }
         let t = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gx depth"),
@@ -676,7 +690,11 @@ impl GxRenderer {
             view_formats: &[],
         });
         let v = t.create_view(&Default::default());
-        self.depth = Some((v.clone(), size));
+        // A few sizes at most (a resized window leaves its old one behind).
+        if self.depth.len() >= 3 {
+            self.depth.remove(0);
+        }
+        self.depth.push((v.clone(), t, size));
         v
     }
 
@@ -1054,6 +1072,7 @@ impl GxRenderer {
             id,
             GpuTexture {
                 view: t.create_view(&Default::default()),
+                texture: None,
             },
         );
         self.next_texture = self.next_texture.max(id + 1);
