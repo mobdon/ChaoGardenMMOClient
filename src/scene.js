@@ -1655,12 +1655,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       if (!item.nativeMotion?.available || !Number.isFinite(item.nativeMotion.frame)) item.imported?.skate?.apply();
     }
     for (const item of playerMeshes.values()) groundImportedFeet(item);
-    for (const item of playerMeshes.values()) {
-      const skate = item.imported?.skate?.diagnostics;
-      item.imported?.steadyHead?.update(renderDelta, { mounted: !!item.vehicleKey,
-        gait: item.nativeGait || 'Idle', skateBlend: item.nativeMotion?.available && Number.isFinite(item.nativeMotion.frame) ? 0 : skate?.blend || 0, skatePhase: skate?.phase || 0 });
-      item.imported?.steadyHead?.apply();
-    }
+    // No head lock: native motions and Shadow's skate rigging drive the head themselves.
     for (const item of animatedDecor) if (item.kind === 'npc') groundImportedFeet(item.chao);
   });
   scene.onBeforeRenderObservable.add(() => {
