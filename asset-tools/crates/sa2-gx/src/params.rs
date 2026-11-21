@@ -155,11 +155,6 @@ impl Default for SceneParams {
 pub const EFB_WIDTH: f32 = 640.0;
 pub const EFB_HEIGHT: f32 = 528.0;
 
-/// GX picks mip levels for the 640x528 EFB; bias them for this viewport.
-pub fn calc_lod_bias(width: f32, height: f32) -> f32 {
-    (width / EFB_WIDTH).min(height / EFB_HEIGHT).log2()
-}
-
 pub const SCENE_PARAMS_SIZE: usize = 80;
 pub const MATERIAL_PARAMS_SIZE: usize = 2560;
 pub const DRAW_PARAMS_SIZE: usize = 480;

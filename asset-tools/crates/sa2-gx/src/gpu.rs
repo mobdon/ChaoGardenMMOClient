@@ -1094,7 +1094,8 @@ impl GxRenderer {
         size: [u32; 2],
         mut clear: Option<[f64; 4]>,
     ) {
-        let lod_bias = params::calc_lod_bias(size[0] as f32, size[1] as f32);
+        // Only the game's own per-texture LOD bias: mips follow the real output size (as Steam).
+        let lod_bias = 0.0;
         let mut start = range.start;
         while start < range.end || clear.is_some() {
             let first = frame.draws.get(start).filter(|_| start < range.end);
