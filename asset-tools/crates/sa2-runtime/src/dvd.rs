@@ -73,14 +73,13 @@ impl GameFiles for DirFiles {
         out
     }
     fn size(&self, path: &str) -> Option<u64> {
-        if is_font(path) {
-            return Some(self.font(path)?.len() as u64);
+        if let Some(f) = self.converted(path) {
+            return Some(f.len() as u64);
         }
         self.raw_size(path)
     }
     fn read_at(&self, path: &str, offset: u64, buf: &mut [u8]) -> Option<usize> {
-        if is_font(path) {
-            let f = self.font(path)?;
+        if let Some(f) = self.converted(path) {
             let rest = f.get(usize::try_from(offset).ok()?..)?;
             let n = rest.len().min(buf.len());
             buf[..n].copy_from_slice(&rest[..n]);
@@ -125,20 +124,38 @@ pub fn steam_font_to_gc(steam: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-type FontCache = std::sync::Mutex<BTreeMap<PathBuf, std::sync::Arc<Vec<u8>>>>;
+type FontCache = std::sync::Mutex<BTreeMap<PathBuf, Option<std::sync::Arc<Vec<u8>>>>>;
 static FONTS: std::sync::OnceLock<FontCache> = std::sync::OnceLock::new();
 
 impl DirFiles {
-    /// A Steam font converted once and kept (the game reads it in pieces).
-    fn font(&self, path: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+    /// A Steam file in the GameCube layout, converted once and kept (the game
+    /// reads it in pieces): subtitle fonts, and texture archives `<name>.prs`
+    /// that have a Steam `PRS/<name>.pak`. `None`: serve the file as it is.
+    fn converted(&self, path: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        let pak = path
+            .to_lowercase()
+            .strip_suffix(".prs")
+            .and_then(|p| p.rsplit_once('/'))
+            .map(|(dir, stem)| self.root.join(format!("{dir}/PRS/{stem}.pak")))
+            .filter(|p| p.is_file());
+        if !is_font(path) && pak.is_none() {
+            return None;
+        }
         let full = self.root.join(path);
         let mut cache = FONTS.get_or_init(Default::default).lock().ok()?;
         if let Some(f) = cache.get(&full) {
-            return Some(f.clone());
+            return f.clone();
         }
-        let f = std::sync::Arc::new(steam_font_to_gc(&std::fs::read(&full).ok()?)?);
+        let raw = std::fs::read(&full).ok()?;
+        let f = match pak {
+            Some(pak) => std::fs::read(pak)
+                .ok()
+                .and_then(|p| crate::steam_tex::pak_to_prs(&p, &raw)),
+            None => steam_font_to_gc(&raw),
+        }
+        .map(std::sync::Arc::new);
         cache.insert(full, f.clone());
-        Some(f)
+        f
     }
     fn raw_size(&self, path: &str) -> Option<u64> {
         std::fs::metadata(self.root.join(path))
