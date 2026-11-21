@@ -83,11 +83,26 @@ function pick(list) {
 }
 const isPicked = (path) => picked !== null && pickedRoots.has(path.split('/')[0].toLowerCase());
 
+// The hosted build has no serve.py: its fs-index.json lists the files under
+// fs/ ({path: [is_dir, size]}), and stat and ls answer from it.
+let fsIndex;
+function hosted() {
+  if (fsIndex === undefined) {
+    const r = xhr('/fs-index.json');
+    fsIndex = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : null;
+  }
+  return fsIndex;
+}
+
 function stat(path) {
   if (DEVICES[path] !== undefined) return { dir: false, size: 0, dev: true };
   if (isPicked(path)) {
     const k = path.toLowerCase(), f = picked.get(k);
     return f ? { dir: false, size: f.size } : pickedDirs.has(k) ? { dir: true, size: 0 } : null;
+  }
+  if (hosted()) {
+    const e = path === '' ? [true, 0] : fsIndex[path];
+    return e ? { dir: e[0], size: e[1] } : null;
   }
   if (statCache.has(path)) return statCache.get(path);
   const r = xhr('/fs/' + encodeURI(path) + '?stat');
@@ -286,6 +301,10 @@ function resolve(dirfd, p, n) {
 
 function lsDir(path) {
   if (isPicked(path)) return [...(pickedDirs.get(path.toLowerCase()) || new Map()).values()];
+  if (hosted()) {
+    const pre = path ? path + '/' : '';
+    return Object.entries(fsIndex).filter(([k]) => k.startsWith(pre) && !k.slice(pre.length).includes('/')).map(([k, [d, s]]) => [k.slice(pre.length), d, s]);
+  }
   const r = xhr('/fs/' + encodeURI(path) + '?ls');
   const list = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : [];
   return list;
