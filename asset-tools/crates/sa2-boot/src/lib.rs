@@ -10,6 +10,7 @@
 pub mod audio;
 pub mod card;
 pub mod card_pack;
+pub mod chao_player;
 pub mod clock;
 pub mod dvd;
 #[cfg(not(target_os = "wasi"))]
@@ -43,6 +44,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     card::install(c, m);
     wide::install(c, m);
     walker::install(c, m);
+    chao_player::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).

@@ -422,8 +422,19 @@ pub fn fsel(a: f64, b: f64, c: f64) -> f64 {
 
 // ---- memory ----
 
-// 48 MiB (dev-kit size, retail is 24 MiB) so ChaoMain can load above 0x81800000 beside a stage.
-pub const MEM1: u32 = 0x0300_0000;
+/// Address ceiling of MEM1 (the whole 0x80000000 segment); the RAM actually
+/// allocated and reported to the game is [`mem1`], set at startup.
+pub const MEM1: u32 = 0x1000_0000;
+
+/// MEM1 size in bytes: SA2_MEM1_MB (default 200, retail is 24), clamped to
+/// 24..=256 MiB, read once. Above 24 MiB, ChaoMain can load beside a stage.
+pub fn mem1() -> u32 {
+    static SIZE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *SIZE.get_or_init(|| {
+        let mb = std::env::var("SA2_MEM1_MB").ok().and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(200);
+        mb.clamp(24, 256) << 20
+    })
+}
 pub const LC: u32 = 0x4000;
 
 /// Gekko physical memory: 24 MB MEM1 (seen at 0x80000000 and 0xC0000000)
@@ -438,7 +449,7 @@ pub struct Mem {
 impl Default for Mem {
     fn default() -> Self {
         Self {
-            ram: vec![0; MEM1 as usize],
+            ram: vec![0; mem1() as usize],
             lc: vec![0; LC as usize],
             io_read: |a, _| panic!("sa2-recomp: unhandled hardware read {a:#010x}"),
             io_write: |a, _, _| panic!("sa2-recomp: unhandled hardware write {a:#010x}"),
