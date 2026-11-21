@@ -133,32 +133,46 @@ fn mmo_card_in() -> bool {
     return true;
 }
 
-/// Mounting the server card checks the garden save out into the cache folder.
+/// Mounting the server card checks the whole card out into the cache folder.
+/// Server files overwrite local ones of the same name; local files the
+/// server lacks stay (and go up with the next change), so nothing is lost.
 fn mmo_mount() -> i32 {
     #[cfg(not(target_os = "wasi"))]
     if crate::mmo::configured() {
-        let Some(path) = data_path(crate::mmo::GARDEN_FILE) else {
-            return NOCARD;
-        };
-        if let Err(e) = crate::mmo::pull(&path) {
-            eprintln!("card (mmo): could not load the garden save: {e}");
+        let stored = crate::mmo::pull(|files| {
+            for (name, stat, data) in files {
+                let (Some(d), Some(s)) = (data_path(&name), stat_path(&name)) else {
+                    return Err("no card folder".into());
+                };
+                if !write_file(&d, &data) || (!stat.is_empty() && !write_file(&s, &stat)) {
+                    return Err(format!("could not store {name:?}"));
+                }
+            }
+            Ok(())
+        });
+        if let Err(e) = stored {
+            eprintln!("card (mmo): could not load the card: {e}");
             return IOERROR;
         }
     }
     READY
 }
 
-/// After the game wrote the garden file, the server must have it too, or the
-/// game is told the write failed.
-fn mmo_written(name: &str, data: &[u8]) -> i32 {
+/// After the game changed a card file, the server must have the card too,
+/// or the game is told the change failed.
+fn mmo_changed() -> i32 {
     #[cfg(not(target_os = "wasi"))]
-    if crate::mmo::configured() && name == crate::mmo::GARDEN_FILE {
-        if let Err(e) = crate::mmo::push(data) {
-            eprintln!("card (mmo): could not save the garden: {e}");
+    if crate::mmo::configured() {
+        let read = |p: Option<PathBuf>| p.and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
+        let card: Vec<_> = files()
+            .into_iter()
+            .map(|n| (n.clone(), read(stat_path(&n)), read(data_path(&n))))
+            .collect();
+        if let Err(e) = crate::mmo::push(&card) {
+            eprintln!("card (mmo): could not save the card: {e}");
             return IOERROR;
         }
     }
-    let _ = (name, data);
     READY
 }
 
@@ -392,7 +406,7 @@ fn create_file(m: &mut Mem, chan: u32, name_at: u32, size: u32, fi: u32) -> i32 
     let no = files().iter().position(|n| *n == name).unwrap_or(0);
     fill_info(m, fi, chan, no, &name);
     trace(&format!("create {name:?} {size} bytes"));
-    READY
+    mmo_changed()
 }
 
 // CARDCreate(chan, fileName, size, CARDFileInfo*)
@@ -448,7 +462,7 @@ fn write_to_file(m: &mut Mem, fi: u32, buf: u32, len: u32, off: u32) -> (u32, i3
     (
         chan,
         if write_file(&path, &data) {
-            mmo_written(&name, &data)
+            mmo_changed()
         } else {
             IOERROR
         },
@@ -504,7 +518,7 @@ fn delete_file(m: &Mem, chan: u32, name_at: u32) -> i32 {
         let _ = std::fs::remove_file(p);
     }
     trace(&format!("delete {name:?}"));
-    READY
+    mmo_changed()
 }
 
 // CARDDelete(chan, fileName)
@@ -624,7 +638,7 @@ fn set_status_of(m: &Mem, chan: u32, no: usize, st: u32) -> i32 {
     let ok = stat_path(&name).is_some_and(|p| write_file(&p, &bytes));
     trace(&format!("set status {name:?}"));
     if ok {
-        READY
+        mmo_changed()
     } else {
         IOERROR
     }

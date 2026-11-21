@@ -1,25 +1,61 @@
 //! The MMO server memory card: signing in inserts it. With `SA2_MMO_SERVER`
 //! set, slot A is present only while a session token is there (from the
 //! server's `/api/session`, in `SA2_MMO_TOKEN` or the file
-//! `SA2_MMO_TOKEN_FILE`), and the Chao garden file is the account's save on
-//! the server: mounting checks it out (`GET
-//! /api/game-save`), and every write of it sends the whole file back (`PUT`).
-//! The bytes are exactly what the game wrote. Other card files stay in the
-//! local `SA2_MEMCARD` folder, which works as the cache.
+//! `SA2_MMO_TOKEN_FILE`), and the whole card is the account's save on the
+//! server: mounting checks it out (`GET /api/game-save`) into the local
+//! `SA2_MEMCARD` folder (the cache), and every change the game makes to a
+//! card file sends the whole card back (`PUT`). File bytes are exactly what
+//! the game wrote.
+//!
+//! The card travels as `SA2CARD1` then, per file: name length (u8), name,
+//! status length (u8), the status bytes `CARDSetStatus` stored, data length
+//! (u32 LE), data.
 //!
 //! Desktop only: the browser build has no card folder and bridges this
 //! through its page instead.
 use sa2_recomp::{global, global::Global};
 use std::io::Read;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
-/// The Chao garden save on the card. Source: ChaoMain card code (GSNE8P),
-/// as read by the Race/Karate thread; the live trace confirms it.
-pub const GARDEN_FILE: &str = "SONIC2B__ALF";
+/// A whole Memory Card 59 (59 blocks of data) plus room for the file names
+/// and status: the server's limit for one card.
+const MAX_BYTES: u64 = 65 * 8192;
 
-/// A whole Memory Card 59: the server's limit for one card file.
-const MAX_BYTES: u64 = 59 * 8192;
+const MAGIC: &[u8] = b"SA2CARD1";
+
+/// A card file as (name, status bytes, data).
+pub type CardFile = (String, Vec<u8>, Vec<u8>);
+
+pub fn pack(files: &[CardFile]) -> Vec<u8> {
+    let mut out = MAGIC.to_vec();
+    for (name, stat, data) in files {
+        out.push(name.len() as u8);
+        out.extend_from_slice(name.as_bytes());
+        out.push(stat.len() as u8);
+        out.extend_from_slice(stat);
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(data);
+    }
+    out
+}
+
+pub fn unpack(bytes: &[u8]) -> Option<Vec<CardFile>> {
+    let mut rest = bytes.strip_prefix(MAGIC)?;
+    let mut take = |n: usize| {
+        let (head, tail) = (rest.get(..n)?, rest.get(n..)?);
+        rest = tail;
+        Some(head.to_vec())
+    };
+    let mut files = Vec::new();
+    while let Some(len) = take(1) {
+        let name = String::from_utf8(take(len[0] as usize)?).ok()?;
+        let stat_len = take(1)?[0] as usize;
+        let stat = take(stat_len)?;
+        let size = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+        files.push((name, stat, take(size)?));
+    }
+    Some(files)
+}
 
 /// The server keeps a lease 10 minutes; renew well inside that.
 const RENEW_EVERY: Duration = Duration::from_secs(120);
@@ -70,10 +106,10 @@ fn trace(what: &str) {
     }
 }
 
-/// Check the garden save out into `path` (the local cache file), once per run.
-/// A server with no save yet keeps the local file, which the game's next
-/// write uploads.
-pub fn pull(path: &Path) -> Result<(), String> {
+/// Check the card out, once per run, and hand its files to `store`. A server
+/// with no card yet keeps the local files, which the game's next change
+/// uploads.
+pub fn pull(store: impl FnOnce(Vec<CardFile>) -> Result<(), String>) -> Result<(), String> {
     if SESSION.with_borrow(|s| s.is_some()) {
         return Ok(());
     }
@@ -97,7 +133,7 @@ pub fn pull(path: &Path) -> Result<(), String> {
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     if !bytes.is_empty() {
-        std::fs::write(path, &bytes).map_err(|e| e.to_string())?;
+        store(unpack(&bytes).ok_or("the server card is damaged")?)?;
     }
     trace(&format!(
         "checked out revision {revision}, {} bytes",
@@ -111,8 +147,9 @@ pub fn pull(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Send the whole garden file after the game wrote it.
-pub fn push(bytes: &[u8]) -> Result<(), String> {
+/// Send the whole card after the game changed it.
+pub fn push(files: &[CardFile]) -> Result<(), String> {
+    let bytes = &pack(files);
     let (lease, revision) = SESSION
         .with_borrow(|s| s.as_ref().map(|s| (s.lease.clone(), s.revision)))
         .ok_or("save not checked out")?;
@@ -174,5 +211,27 @@ pub fn release() {
         .call();
     if let Err(e) = result {
         eprintln!("card (mmo): could not release the garden save: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_card_survives_the_trip() {
+        let files = vec![
+            ("SONIC2B__ALF".to_owned(), vec![1; 24], vec![7; 65536]),
+            ("SONIC2B__S01".to_owned(), Vec::new(), vec![]),
+        ];
+        assert_eq!(unpack(&pack(&files)), Some(files.clone()));
+        assert_eq!(unpack(&pack(&[])), Some(vec![]));
+        let whole = pack(&files);
+        assert_eq!(
+            unpack(&whole[..whole.len() - 1]),
+            None,
+            "a cut card is refused"
+        );
+        assert_eq!(unpack(b"not a card"), None);
     }
 }
