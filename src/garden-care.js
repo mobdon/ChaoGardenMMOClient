@@ -147,11 +147,11 @@ const reasons = {
 export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID(), hatch = async () => {} }) {
   if (!root) throw new TypeError('Garden care needs a panel root.');
   const document = root.ownerDocument;
-  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false, selected = 0, naming = null;
+  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false, selected = 0, naming = null, nest = [];
   const icons = new Map();
   // The game's own 32x32 panels: one per animal and drive, one shared by all fruit and all eggs. Seeds and hats have none yet.
   const panelFile = item => item.kind === 'animal' || item.kind === 'drive' ? `item-panel-${Number(item.id.slice(4))}.png`
-    : item.kind === 'fruit' || item.kind === 'egg' ? `item-panel-${item.kind}.png` : null;
+    : item.kind === 'fruit' || item.kind === 'egg' ? `item-panel-${item.kind}.png` : item.kind === 'bred-egg' ? 'item-panel-egg.png' : null;
   const panelIcon = item => {
     const file = panelFile(item);
     if (!file || !globalThis.Image) return null;
@@ -202,7 +202,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       slot.disabled = !!pending;
       slot.addEventListener('click', () => {
         if (n !== selected) { selected = n; previous = ''; render(); return; }
-        if (item.kind === 'egg') { naming = { itemId: item.id, name: '' }; previous = ''; render(); return; }
+        if (item.kind === 'egg' || item.kind === 'bred-egg') { naming = { egg: item.kind === 'egg' ? { itemId: item.id } : { eggId: item.id }, name: '' }; previous = ''; render(); return; }
         if (use && item.mayUse) submit({ kind: use, itemId: item.id });
       });
       entries[n]?.image.addEventListener?.('load', () => { shown[n].icon = entries[n].sharp; draw(); });
@@ -218,9 +218,9 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       input.addEventListener('keydown', event => {
         if (event.key === 'Escape') { naming = null; previous = ''; render(); }
         if (event.key !== 'Enter' || !naming.name.trim()) return;
-        const { itemId, name } = naming; naming = null;
+        const { egg, name } = naming; naming = null;
         feedback = 'Hatching…'; previous = ''; render();
-        hatch({ itemId }, name.trim()).then(() => { feedback = `${name.trim()} hatched into a new slot on your memory card.`; },
+        hatch(egg, name.trim()).then(() => { feedback = `${name.trim()} hatched into a new slot on your memory card.`; },
           error => { feedback = error.message; }).finally(() => { previous = ''; render(); });
       });
       box.append(input);
@@ -231,7 +231,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
   }
   function render() {
     const view = gardenCareView(care, player, { connected, serverTime });
-    const signature = JSON.stringify([view, pending?.requestId, feedback]);
+    const signature = JSON.stringify([view, nest, pending?.requestId, feedback]);
     if (signature === previous) return;
     previous = signature;
     root.replaceChildren(el('h2', 'Garden care'));
@@ -273,8 +273,11 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       root.append(shop);
     }
     root.append(el('h3', 'Carried'));
-    if (!view.items.length) root.append(el('p', 'Nothing carried. Shake trees for fruit or find animals in missions.', 'garden-care-note'));
-    else root.append(carriedWindow(view.items));
+    // Bred eggs carry their parents' genes (AL_CreateChildGene); they wait here to be hatched.
+    const carried = [...view.items, ...nest.map(egg => ({ id: egg.id, kind: 'bred-egg', quantity: 1, mayUse: true,
+      label: `Egg of ${egg.motherName || '?'} and ${egg.fatherName || '?'}` }))];
+    if (!carried.length) root.append(el('p', 'Nothing carried. Shake trees for fruit or find animals in missions.', 'garden-care-note'));
+    else root.append(carriedWindow(carried));
     if (view.hat) root.append(el('p', `Wearing: ${view.hat}`, 'garden-care-note'));
     if (view.parts.length) {
       root.append(el('h3', 'Animal parts'));
@@ -290,6 +293,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     update(nextCare, nextPlayer, options = {}) {
       const reconnected = !connected && !!options.connected;
       care = nextCare; player = nextPlayer; connected = !!options.connected; serverTime = options.serverTime;
+      nest = options.nest ?? nest;
       // A lost acknowledgement is retried with the identical request, never a new one.
       if (reconnected && pending) send(pending);
       // Entering the Black Market asks the server to restock if its timer ran out.

@@ -50,7 +50,7 @@ async function hatchEgg(egg, name) {
   if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
   saveSlots.record(data.token, data.player, undefined, sessionCard);
 }
-const breeding = createBreedingMenu({ root: $('#breeding-panel'), hatch: hatchEgg,
+const breeding = createBreedingMenu({ root: $('#breeding-panel'),
   playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)), send: message => {
   if (socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(message)); return true;
@@ -275,7 +275,7 @@ function render(next) {
     if (takingControl) $('#garden').focus({ preventScroll: true });
   }
   updateWatchButton();
-  gardenCare.update(next.care, player, { connected: socket?.readyState === WebSocket.OPEN, serverTime: next.serverTime });
+  gardenCare.update(next.care, player, { connected: socket?.readyState === WebSocket.OPEN, serverTime: next.serverTime, nest: next.life?.nest || [] });
   breeding.update(next);
   if (Date.now() - lastSlotUpdate > 10000) rememberChao();
   $('#garden').dataset.playerX = player.x.toFixed(3);

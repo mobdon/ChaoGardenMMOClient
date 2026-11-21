@@ -181,4 +181,11 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   name.listeners.keydown({ key: 'Enter' });
   assert.deepEqual(hatched, [[{ itemId: 'egg:2' }, 'Pip']], 'the egg hatches into a new slot');
   assert.equal(sent.length, 0, 'it is not put down in the garden');
+  // A bred egg lands in the inventory with its parents' names and hatches the same way.
+  panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true, nest: [{ id: 'nest-1', motherName: 'Mine', fatherName: 'Bub' }] });
+  const bred = root.all().find(n => n.className === 'garden-care-slot' && n.attributes['aria-label'] === 'Egg of Mine and Bub x1');
+  bred.listeners.click(); bred.listeners.click();
+  const bredName = root.all().find(n => n.className === 'garden-care-name');
+  bredName.value = 'Kin'; bredName.listeners.input(); bredName.listeners.keydown({ key: 'Enter' });
+  assert.deepEqual(hatched[1], [{ eggId: 'nest-1' }, 'Kin']);
 });

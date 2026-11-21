@@ -18,7 +18,7 @@ export function checkup(p) {
   return [['Grown up', life.stage === 'adult'], ['Healthy', life.ill === false], ['In the mood', life.inTheMood === true], ['Free', life.busy === false]];
 }
 
-/** Who can be picked: grown-up Chao in this garden, callers first. Eggs in the nest follow. */
+/** Who can be picked: grown-up Chao in this garden, callers first. Bred eggs go to the inventory. */
 export function breedingView(snapshot, offers = new Map(), now = Date.now()) {
   const self = snapshot?.players?.find(p => p.id === snapshot.selfId);
   if (!self || !snapshot.life) return { valid: false, rows: [] };
@@ -27,16 +27,14 @@ export function breedingView(snapshot, offers = new Map(), now = Date.now()) {
     .filter(p => p.id !== self.id && p.zone === self.zone && p.life?.stage === 'adult')
     .sort((a, b) => Number(calling(b.id)) - Number(calling(a.id)) || a.name.localeCompare(b.name))
     .map(p => ({ kind: 'partner', id: p.id, label: p.name, note: calling(p.id) ? `${p.name} is calling you` : p.name, stats: p.stats, check: checkup(p) }));
-  const eggs = (snapshot.life.nest || []).map(egg => ({ kind: 'egg', id: egg.id, label: 'Egg',
-    note: `Egg of ${egg.motherName || '?'} and ${egg.fatherName || '?'}` }));
-  return { valid: true, revision: snapshot.life.revision, canBreed: !!snapshot.life.eligibility?.canBreed, self: checkup(self), rows: [...partners, ...eggs] };
+  return { valid: true, revision: snapshot.life.revision, canBreed: !!snapshot.life.eligibility?.canBreed, self: checkup(self), rows: partners };
 }
 
 export function createBreedingMenu({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID(),
-  hatch = async () => {}, statRows = null, playScene = null }) {
+  statRows = null, playScene = null }) {
   const document = root.ownerDocument;
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; return n; };
-  let snapshot = null, selected = 0, pending = null, feedback = '', naming = null, previous = '';
+  let snapshot = null, selected = 0, pending = null, feedback = '', previous = '';
   const offers = new Map();
   // The game's breeding scene plays here, small, kept across re-renders.
   const sceneHost = el('div', undefined, 'breeding-scene-host');
@@ -44,7 +42,7 @@ export function createBreedingMenu({ root, send = () => false, requestId = () =>
 
   function render() {
     const view = breedingView(snapshot, offers);
-    const signature = JSON.stringify([view, selected, pending?.requestId, feedback, naming]);
+    const signature = JSON.stringify([view, selected, pending?.requestId, feedback]);
     if (signature === previous) return;
     previous = signature;
     root.replaceChildren(el('h2', 'Breeding'), sceneHost);
@@ -52,7 +50,6 @@ export function createBreedingMenu({ root, send = () => false, requestId = () =>
     if (!view.rows.length) { root.append(el('p', 'No grown-up Chao in this garden yet.', 'garden-care-note')); return; }
     selected = Math.min(selected, view.rows.length - 1);
     const rows = view.rows.map(row => ({ ...row }));
-    if (naming) rows[selected].note = naming.name || 'Name?';
     const size = listSize(rows.length);
     const box = el('div', undefined, 'garden-care-carried');
     const canvas = el('canvas'); canvas.width = size.width * 2; canvas.height = size.height * 2; canvas.setAttribute('aria-hidden', 'true');
@@ -70,8 +67,7 @@ export function createBreedingMenu({ root, send = () => false, requestId = () =>
       pick.setAttribute('aria-pressed', String(n === selected));
       pick.disabled = !!pending;
       pick.addEventListener('click', () => {
-        if (n !== selected) { selected = n; naming = null; render(); return; }
-        if (row.kind === 'egg') { naming = { eggId: row.id, name: '' }; render(); return; }
+        if (n !== selected) { selected = n; render(); return; }
         if (!view.canBreed) { feedback = 'Only a grown-up Chao that isn’t busy can breed.'; render(); return; }
         pending = { type: 'life', requestId: requestId(), expectedRevision: view.revision, intent: { kind: 'breed', partnerId: row.id } };
         pending.partnerName = row.label;
@@ -82,22 +78,6 @@ export function createBreedingMenu({ root, send = () => false, requestId = () =>
       });
       box.append(pick);
     });
-    if (naming) {
-      const input = el('input', undefined, 'garden-care-name');
-      input.maxLength = 7; input.value = naming.name;
-      input.setAttribute('aria-label', 'Name your new Chao');
-      Object.assign(input.style, { top: `${size.window}px`, height: `${size.height - size.window}px` });
-      input.addEventListener('input', () => { naming.name = input.value; rows[selected].note = input.value || 'Name?'; draw(); });
-      input.addEventListener('keydown', event => {
-        if (event.key === 'Escape') { naming = null; render(); }
-        if (event.key !== 'Enter' || !naming.name.trim()) return;
-        const { eggId, name } = naming; naming = null; feedback = 'Hatching…'; render();
-        hatch({ eggId }, name.trim()).then(() => { feedback = `${name.trim()} hatched into a new slot on your memory card.`; },
-          error => { feedback = error.message; }).finally(render);
-      });
-      box.append(input);
-      globalThis.queueMicrotask?.(() => input.focus?.());
-    }
     root.append(box);
     draw();
     const chosen = view.rows[selected];
