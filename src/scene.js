@@ -1792,6 +1792,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           selfVehicleActive = mounted;
         }
         const target = item.root.position.add(new Vector3(0, mounted ? item.vehicle.height * 0.55 : 0.28, 0));
+        // Third person: while walking forward the orbit swings back behind the Chao (same aim as the R key).
+        if (item.moving && (keys.has('KeyW') || keys.has('ArrowUp'))) {
+          const behind = -Math.PI / 2 - item.root.rotation.y;
+          const turn = Math.atan2(Math.sin(behind - camera.alpha), Math.cos(behind - camera.alpha));
+          camera.alpha += turn * Math.min(1, dt * 3);
+        }
         // Preserve the player's orbit when translating its focus. The target
         // property setter otherwise rebuilds alpha/beta/radius from the old
         // camera position, immediately undoing the mounted fit and zoom.
