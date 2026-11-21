@@ -10,7 +10,7 @@ export function createHatch(rand = Math.random) {
   const shakes = rand() < 0.6 ? 2 : 3;
   const kind = rand() < 0.5 ? 'Pon' : 'Kyoro', { frames, chao } = EGG[kind];
   const out = {
-    kind, shakes, chaoState: chao, shakeFrame: 0, eggFrame: 0, chaoFrame: 0,
+    kind, shakes, frames, chaoState: chao, shakeFrame: 0, eggFrame: 0, chaoFrame: 0,
     get shaking() { return out.shakeFrame < shakes * SHAKE_FRAMES; },
     get done() { return out.eggFrame >= frames && out.chaoFrame >= CHAO_END; },
     step() {
@@ -30,6 +30,8 @@ function glbExtras(bytes) {
 }
 const load = (B, scene, url) => fetch(url).then(r => r.ok ? r.arrayBuffer() : null)
   .then(buffer => buffer && LoadGlb(B, scene, new Uint8Array(buffer))).catch(() => null);
+// The converted egg motions keep their own key timing; play them by native frame over their whole range.
+const seek = (group, frame, frames) => group?.goToFrame(group.from + (group.to - group.from) * frame / frames);
 const LoadGlb = (B, scene, bytes) => B.LoadAssetContainerAsync(bytes, scene, { pluginExtension: '.glb' }).then(c => ({ c, bytes }));
 
 /** Play the hatch in `host`. Resolves when it ends; never throws. */
@@ -72,8 +74,8 @@ export async function playHatchScene(host) {
         for (; carry >= 1 && !hatch.done; carry--) hatch.step();
         const shaking = hatch.shaking && !!shakeGroup;
         show(wholeEntries, shaking); show(eggEntries, !shaking); show(chaoEntries, !hatch.shaking);
-        if (shaking) shakeGroup.goToFrame(hatch.shakeFrame % SHAKE_FRAMES);
-        eggGroup?.goToFrame(hatch.eggFrame); chaoGroup?.goToFrame(hatch.chaoFrame);
+        if (shaking) seek(shakeGroup, hatch.shakeFrame % SHAKE_FRAMES, SHAKE_FRAMES);
+        seek(eggGroup, hatch.eggFrame, hatch.frames); chaoGroup?.goToFrame(hatch.chaoFrame);
         scene.render();
         if (hatch.done) { engine.stopRenderLoop(); setTimeout(() => { finish(); resolve(true); }, 800); }
       });
