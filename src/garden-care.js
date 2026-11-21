@@ -149,11 +149,14 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
   const document = root.ownerDocument;
   let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false, selected = 0;
   const icons = new Map();
-  // The game's own 32x32 panel for animals and drives; other kinds have none extracted yet.
+  // The game's own 32x32 panels: one per animal and drive, one shared by all fruit and all eggs. Seeds and hats have none yet.
+  const panelFile = item => item.kind === 'animal' || item.kind === 'drive' ? `item-panel-${Number(item.id.slice(4))}.png`
+    : item.kind === 'fruit' || item.kind === 'egg' ? `item-panel-${item.kind}.png` : null;
   const panelIcon = item => {
-    if ((item.kind !== 'animal' && item.kind !== 'drive') || !globalThis.Image) return null;
-    if (!icons.has(item.id)) { const icon = new Image(); icon.src = `/api/assets/item-panel-${Number(item.id.slice(4))}.png`; icons.set(item.id, icon); }
-    return icons.get(item.id);
+    const file = panelFile(item);
+    if (!file || !globalThis.Image) return null;
+    if (!icons.has(file)) { const icon = new Image(); icon.src = `/api/assets/${file}`; icons.set(file, icon); }
+    return icons.get(file);
   };
   const el = (tag, text, className) => {
     const node = document.createElement(tag);

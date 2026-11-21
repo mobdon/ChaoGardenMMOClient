@@ -74,6 +74,8 @@ const panels = ['pen', 'goma', 'rako', 'usa', 'chit', 'ino', 'kuma', 'tora', 'go
   'shep', 'ara', 'han', 'bone', 'batman', 'dra', 'uni', 'phen', 'cdr_y', 'cdr_g', 'cdr_r', 'cdr_p'];
 for (const [id, name] of panels.entries()) selectedSprites.push({ archive: 'al_panel', filename: `panel_${name}.png`,
   alias: `item-panel-${id}.png`, role: `Original inventory panel for native item ${id}`, evidence: 'al_panel entry, matched by eye to its animal or drive.' });
+for (const kind of ['fruit', 'egg']) selectedSprites.push({ archive: 'al_tex_common', filename: `panel_${kind}.png`,
+  alias: `item-panel-${kind}.png`, role: `Original ${kind} panel`, evidence: `al_tex_common panel_${kind}, found beside the al_panel set.` });
 for (const { archive, filename, alias, role, evidence } of selectedSprites) {
   const source = report.sources.find(source => (archive === null || source.relativePath.endsWith(`/${archive}.prs`)) && source.sprites.some(sprite => sprite.filename === filename));
   const sprite = source?.sprites.find(sprite => sprite.filename === filename);

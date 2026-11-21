@@ -4,7 +4,7 @@
 // al_panel item icons, and the 22px ad_22ascii font. The game has no inventory
 // screen; this layout is the Chao Select screen's, measured at 640x480.
 export const WINDOW = { width: 240, height: 202 }; // smallest window; it grows a row at a time
-const PIECE = { x: 104, y: 4, w: 40, h: 60, band: 16, side: 2, stripe: 8 };
+const PIECE = { x: 104, y: 4, w: 40, h: 60, band: 16, side: 2, corner: 12, stripe: 8 }; // corner: the bands' rounded ends, kept unstretched
 const GRID = { x: 12, y: 24, pitch: 56, columns: 4, cursor: [48, 46] };
 const BAR = 32; // message bar height below the window (screen y 413-444)
 
@@ -59,11 +59,13 @@ export function drawText(ctx, font, metrics, text, x, y) {
 
 /** The Chao Select window, sliced from its texture: bands kept, stripes repeated, sides stretched down. */
 function drawWindow(ctx, atlas, H) {
-  const { x, y, w, h, band, side, stripe } = PIECE, W = WINDOW.width;
-  const columns = [[0, side, 0, side], [side, w - 2 * side, side, W - 2 * side], [w - side, side, W - side, side]];
-  for (const [sx, sw, dx, dw] of columns) {
+  const { x, y, w, h, band, side, corner, stripe } = PIECE, W = WINDOW.width;
+  const slices = edge => [[0, edge, 0, edge], [edge, w - 2 * edge, edge, W - 2 * edge], [w - edge, edge, W - edge, edge]];
+  for (const [sx, sw, dx, dw] of slices(corner)) {
     ctx.drawImage(atlas, x + sx, y, sw, band, dx, 0, dw, band);
     ctx.drawImage(atlas, x + sx, y + h - band, sw, band, dx, H - band, dw, band);
+  }
+  for (const [sx, sw, dx, dw] of slices(side)) {
     for (let dy = band; dy < H - band; dy += stripe) {
       const rows = Math.min(stripe, H - band - dy);
       ctx.drawImage(atlas, x + sx, y + band, sw, rows, dx, dy, dw, rows);
@@ -83,10 +85,10 @@ export function drawInventory(ctx, { atlas, font, metrics }, items, selected) {
   items.forEach((item, n) => {
     const { x, y } = slotAt(n);
     if (n === selected) { ctx.fillStyle = 'rgb(127,127,255)'; ctx.fillRect(x, y, ...GRID.cursor); }
-    if (item.icon?.complete && item.icon.naturalWidth) ctx.drawImage(item.icon, x + 8, y + 7, 32, 32);
+    if (item.icon?.complete && item.icon.naturalWidth) ctx.drawImage(item.icon, x + 8, y + 2, 32, 32);
     const count = `x${item.quantity}`;
     const width = [...count].reduce((sum, c) => sum + ((metrics[c]?.[1] ?? 6) + 3) * FONT.scale, 0);
-    drawText(ctx, font, metrics, count, x + GRID.cursor[0] - width, y + GRID.cursor[1] - 16);
+    drawText(ctx, font, metrics, count, x + GRID.cursor[0] - width, y + GRID.cursor[1] - 13); // under the icon, not over it
   });
   ctx.fillStyle = '#000';
   ctx.fillRect(0, size.window, size.width, BAR);
