@@ -38,6 +38,7 @@ pub const CARD_DELETE: u32 = 0x8017_2868;
 pub const CARD_GET_STATUS: u32 = 0x8017_2AA8;
 pub const CARD_SET_STATUS_ASYNC: u32 = 0x8017_2BD4;
 pub const CARD_SET_STATUS: u32 = 0x8017_2D48;
+pub const CARD_SET_STATUS_EX: u32 = 0x8017_30A0;
 
 const READY: i32 = 0;
 const NOCARD: i32 = -3;
@@ -635,6 +636,23 @@ fn set_status(c: &mut Cpu, m: &mut Mem) {
     set_result(c, c.r[3], r);
 }
 
+// __CARDSetStatusEx(chan, fileNo, CARDDir*): the Chao World save sets its
+// directory entry this way after CARDSetStatus. The host card keeps no
+// directory blocks (CARDSetStatus already stored the status), so it only
+// reports the result; unhooked, it reached the real library and failed.
+fn set_status_ex(c: &mut Cpu, _m: &mut Mem) {
+    let chan = c.r[3];
+    let r = if !present(chan) {
+        NOCARD
+    } else if files().get(c.r[4] as usize).is_none() {
+        NOFILE
+    } else {
+        READY
+    };
+    trace(&format!("set_status_ex {} -> {r}", c.r[4]));
+    set_result(c, chan, r);
+}
+
 // CARDSetStatusAsync(chan, fileNo, CARDStat*, cb)
 fn set_status_async(c: &mut Cpu, m: &mut Mem) {
     let chan = c.r[3];
@@ -674,6 +692,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         (CARD_GET_STATUS, get_status),
         (CARD_SET_STATUS_ASYNC, set_status_async),
         (CARD_SET_STATUS, set_status),
+        (CARD_SET_STATUS_EX, set_status_ex),
     ] {
         c.rt.set_override(addr, f);
     }
