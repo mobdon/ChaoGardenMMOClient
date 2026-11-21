@@ -3,19 +3,23 @@ import struct,math,numpy as np
 def rot(axis,b):
     a=b*2*math.pi/65536;c,s=math.cos(a),math.sin(a);M=np.eye(4)
     i,j={'x':(1,2),'y':(2,0),'z':(0,1)}[axis];M[i,i]=c;M[i,j]=-s;M[j,i]=s;M[j,j]=c;return M
+def euler(r,fl):
+    # sa2 pose.rs (pinned SA Tools 1.2.2): Rz*Ry*Rx, or Ry*Rx*Rz for the ZXY flag 0x20
+    return rot('y',r[1])@rot('x',r[0])@rot('z',r[2]) if fl&0x20 else rot('z',r[2])@rot('y',r[1])@rot('x',r[0])
 class Model:
-    def __init__(s,get,e,root,pose=None):
-        s.g=get;s.e=e;s.nodes=[];s.pose=pose or {};s._walk(root,-1,np.eye(4))
+    def __init__(s,get,e,root,pose=None,anim=None):
+        s.g=get;s.e=e;s.nodes=[];s.pose=pose or {};s.anim=anim or {};s._walk(root,-1,np.eye(4))
     def u(s,f,o,n=None): return struct.unpack(s.e+f,s.g(o,struct.calcsize(f)))
     def _walk(s,o,parent,PW):
         while o:
             b=s.g(o,0x34);e=s.e
             fl,att=struct.unpack(e+'II',b[:8]);pos=struct.unpack(e+'3f',b[8:20]);r=struct.unpack(e+'3i',b[20:32]);sc=struct.unpack(e+'3f',b[32:44]);ch,sib=struct.unpack(e+'II',b[44:52])
+            i=len(s.nodes);a=s.anim.get(i,{});pos=a.get('pos',pos);r=a.get('rot',r);sc=a.get('scl',sc)  # motion keys replace bind values
             L=np.eye(4)
             if not fl&1: L[:3,3]=pos
-            if not fl&2: L=L@(rot('z',r[2])@rot('x',r[0])@rot('y',r[1]) if fl&0x20 else rot('x',r[0])@rot('y',r[1])@rot('z',r[2]))
+            if not fl&2: L=L@euler(r,fl)
             if not fl&4: L=L@np.diag([*sc,1])
-            i=len(s.nodes);L=L@s.pose.get(i,np.eye(4));W=PW@L;s.nodes.append(dict(i=i,parent=parent,flags=fl,att=att,W=W,off=o));s._walk(ch,i,W);o=sib
+            L=L@s.pose.get(i,np.eye(4));W=PW@L;s.nodes.append(dict(i=i,parent=parent,flags=fl,att=att,W=W,off=o));s._walk(ch,i,W);o=sib
     def evaluate(s):
         cache={};nrm={};surfaces=[];polycache={}
         for n in s.nodes:

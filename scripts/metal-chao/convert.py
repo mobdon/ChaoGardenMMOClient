@@ -36,12 +36,12 @@ def prepare():
         png = WORK / f'metal-{i:05d}.png'
         if not png.exists(): tool('texture', WORK / f'tex/{i:05d}.gvr', png)
 
-def metal(pose=None):
+def metal(pose=None, anim=None):
     d = (WORK / 'metalsonicmdl.bin').read_bytes(); i = 0
     while True:
         k, o = struct.unpack('>iI', d[i:i + 8])
         if k == -1: raise SystemExit('Metal Sonic model 418 not in metalsonicmdl.prs')
-        if k == 418: return Model(lambda a, n: d[a:a + n], '>', o, pose)
+        if k == 418: return Model(lambda a, n: d[a:a + n], '>', o, pose, anim)
         i += 8
 
 def chao():
