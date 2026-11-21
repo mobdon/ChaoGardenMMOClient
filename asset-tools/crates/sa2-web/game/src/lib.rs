@@ -109,7 +109,13 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
         }
     }
     sa2_boot::pad::set_port0(p);
+    let t = std::time::Instant::now();
     pace();
+    // SA2_PROFILE: where each second's frame time went (game, limiter sleep).
+    if sa2_boot::prof::on() {
+        sa2_boot::prof::add(&sa2_boot::prof::SLEEP, t);
+        sa2_boot::prof::frames(1);
+    }
 }
 
 /// `/dev/pad`: 16 bytes. Keys held (u16, bits as [`KEYS`]); then the

@@ -92,9 +92,12 @@ function writePad() {
 
 // ---- threads ------------------------------------------------------------
 let module, memory, env, workers = 0;
-function startThread(tid, arg) {
+// Workers with the game already loaded, so a new game thread (a stage load,
+// an event) starts at once instead of loading 80 MB first.
+const POOL = 4;
+const pool = [];
+function loadedWorker() {
   const w = new Worker('worker.js');
-  workers++;
   w.onmessage = (ev) => {
     const m = ev.data;
     if (m.spawn !== undefined) startThread(m.spawn, m.arg);
@@ -103,8 +106,15 @@ function startThread(tid, arg) {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
   };
-  w.onerror = (e) => log(`game thread ${tid}: ${e.message}`, true);
-  w.postMessage({ module, memory, tid, arg, env, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
+  w.onerror = (e) => log(`game thread: ${e.message}`, true);
+  w.postMessage({ init: true, module, memory, env, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
+  return w;
+}
+function startThread(tid, arg) {
+  const w = pool.shift() || loadedWorker();
+  workers++;
+  w.postMessage({ tid, arg });
+  while (pool.length < POOL) pool.push(loadedWorker());
 }
 
 // ---- drawing (render.js, a worker of its own) ------------------------------
