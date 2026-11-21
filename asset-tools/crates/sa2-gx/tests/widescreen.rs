@@ -240,3 +240,25 @@ fn a_screen_of_2d_art_is_pillarboxed() {
         assert_eq!(d.viewport[2], 480.0, "4:3 of the 16:9 width");
     }
 }
+
+#[test]
+fn a_flash_over_2d_art_stays_in_the_middle() {
+    // An untextured full-screen quad (the title's white flash) over 2D art: the
+    // side bars stay black instead of turning grey.
+    let mut gx = Gx::new();
+    gx.clear_vtx_desc();
+    gx.set_vtx_desc(attr::POS, attr_type::DIRECT);
+    gx.set_vtx_attr_fmt(0, attr::POS, comp_cnt::POS_XYZ, comp_type::F32, 0);
+    gx.set_viewport(0.0, 0.0, 640.0, 480.0, 0.0, 1.0);
+    gx.load_pos_mtx_imm(&HUD, 0);
+    gx.begin(command::DRAW_QUADS, 0, 4);
+    for (x, y) in [(0.0, 0.0), (-640.0, 0.0), (-640.0, 480.0), (0.0, 480.0)] {
+        gx.position3f32(x, y, -1.0);
+    }
+    gx.end(&Ram(&[]));
+    let mut f = gx.take_frame();
+    f.draws[0].projection = PERSP;
+    widen(&mut f, 16.0 / 9.0);
+    assert_eq!(f.draws[0].viewport[0], 80.0);
+    assert_eq!(f.draws[0].viewport[2], 480.0);
+}

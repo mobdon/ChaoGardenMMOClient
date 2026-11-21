@@ -104,8 +104,9 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
         // A fade or flash covers the whole screen, top to bottom.
         let fade = span && !textured(d) && ext.is_some_and(|(_, _, t, b)| b - t >= 1.9);
         if flat || (span && is_hud(d) && (movie || textured(d))) {
-            if fade {
-                // A fade or flash: across the whole window.
+            if fade && !flat {
+                // A fade or flash over a movie: across the whole window (over 2D art it
+                // stays with the art, so a white flash leaves the side bars black).
                 remap_x(&mut d.projection, k, 0.0);
                 let m = &mut d.draw_params.pos_mtx[0];
                 m[0] = m[0].map(|v| v / k);
