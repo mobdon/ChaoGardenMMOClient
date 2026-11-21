@@ -1,4 +1,4 @@
-import { canvasSize, drawInventory, loadInventoryArt, slotAt, SLOT } from './native-inventory.js';
+import { canvasSize, drawInventory, loadInventoryArt, slotAt, SLOT, upscalePanel } from './native-inventory.js';
 // Desktop garden care: renders the server's canonical care/garden snapshot and
 // submits bounded care intents. The server owns inventory, growth, fruit,
 // proximity, effects and animal parts; this module never computes them.
@@ -155,7 +155,11 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
   const panelIcon = item => {
     const file = panelFile(item);
     if (!file || !globalThis.Image) return null;
-    if (!icons.has(file)) { const icon = new Image(); icon.src = `/api/assets/${file}`; icons.set(file, icon); }
+    if (!icons.has(file)) {
+      const entry = { image: new Image(), sharp: null };
+      entry.image.addEventListener('load', () => { entry.sharp = upscalePanel(entry.image, document); });
+      entry.image.src = `/api/assets/${file}`; icons.set(file, entry);
+    }
     return icons.get(file);
   };
   const el = (tag, text, className) => {
@@ -176,12 +180,18 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     selected = Math.min(selected, items.length - 1);
     const size = canvasSize(items.length);
     const box = el('div', undefined, 'garden-care-carried');
-    const canvas = el('canvas'); canvas.width = size.width; canvas.height = size.height; canvas.setAttribute('aria-hidden', 'true');
+    // Drawn at 2x so the upscaled icons stay sharp; the window and font scale by whole pixels.
+    const canvas = el('canvas'); canvas.width = size.width * 2; canvas.height = size.height * 2; canvas.setAttribute('aria-hidden', 'true');
+    Object.assign(canvas.style, { width: `${size.width}px`, height: `${size.height}px` });
     box.append(canvas);
-    const shown = items.map(item => ({ ...item, icon: panelIcon(item) }));
+    const entries = items.map(panelIcon);
+    const shown = items.map((item, n) => ({ ...item, icon: entries[n]?.sharp ?? null }));
     // A picked egg asks for the new Chao's name in the message bar.
     if (naming) shown[selected].label = naming.name || 'Name?';
-    const draw = () => loadInventoryArt(document).then(art => { if (art) drawInventory(canvas.getContext?.('2d'), art, shown, selected); });
+    const draw = () => loadInventoryArt(document).then(art => {
+      const ctx = art && canvas.getContext?.('2d'); if (!ctx) return;
+      ctx.setTransform(2, 0, 0, 2, 0, 0); drawInventory(ctx, art, shown, selected);
+    });
     items.forEach((item, n) => {
       const { x, y } = slotAt(n);
       const use = item.kind === 'seed' ? null : item.kind === 'egg' ? 'place-egg' : item.kind === 'hat' ? 'give-hat' : 'consume';
@@ -195,7 +205,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
         if (item.kind === 'egg') { naming = { itemId: item.id, name: '' }; previous = ''; render(); return; }
         if (use && item.mayUse) submit({ kind: use, itemId: item.id });
       });
-      shown[n].icon?.addEventListener?.('load', draw);
+      entries[n]?.image.addEventListener?.('load', () => { shown[n].icon = entries[n].sharp; draw(); });
       box.append(slot);
     });
     if (naming) {

@@ -85,7 +85,7 @@ export function drawInventory(ctx, { atlas, font, metrics }, items, selected) {
   items.forEach((item, n) => {
     const { x, y } = slotAt(n);
     if (n === selected) { ctx.fillStyle = 'rgb(127,127,255)'; ctx.fillRect(x, y, ...GRID.cursor); }
-    if (item.icon?.complete && item.icon.naturalWidth) ctx.drawImage(item.icon, x + 8, y + 2, 32, 32);
+    if (item.icon) { ctx.imageSmoothingEnabled = true; ctx.drawImage(item.icon, x + 8, y + 2, 32, 32); ctx.imageSmoothingEnabled = false; }
     const count = `x${item.quantity}`;
     const width = [...count].reduce((sum, c) => sum + ((metrics[c]?.[1] ?? 6) + 3) * FONT.scale, 0);
     drawText(ctx, font, metrics, count, x + GRID.cursor[0] - width, y + GRID.cursor[1] - 13); // under the icon, not over it
@@ -109,4 +109,39 @@ export function loadInventoryArt(document = globalThis.document) {
     return { atlas, font, metrics: measureFont(ctx.getImageData(0, 0, canvas.width, canvas.height)) };
   });
   return art;
+}
+
+/**
+ * Scale2x (EPX), the standard pixel-art doubler: each pixel becomes four, and a
+ * corner takes a neighbour's colour only where two neighbours agree, so edges
+ * smooth without inventing colours. `data` is RGBA; returns the doubled RGBA.
+ */
+export function scale2x(data, width, height) {
+  const out = new Uint8ClampedArray(width * height * 16);
+  const px = (x, y) => (Math.min(height - 1, Math.max(0, y)) * width + Math.min(width - 1, Math.max(0, x))) * 4;
+  const same = (a, b) => data[a] === data[b] && data[a + 1] === data[b + 1] && data[a + 2] === data[b + 2] && data[a + 3] === data[b + 3];
+  const put = (x, y, from) => out.set(data.subarray(from, from + 4), (y * width * 2 + x) * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const e = px(x, y), b = px(x, y - 1), d = px(x - 1, y), f = px(x + 1, y), h = px(x, y + 1);
+      const edge = !same(b, h) && !same(d, f);
+      put(2 * x, 2 * y, edge && same(d, b) ? d : e);
+      put(2 * x + 1, 2 * y, edge && same(b, f) ? f : e);
+      put(2 * x, 2 * y + 1, edge && same(d, h) ? d : e);
+      put(2 * x + 1, 2 * y + 1, edge && same(h, f) ? f : e);
+    }
+  }
+  return out;
+}
+
+/** A panel doubled twice (4x) for sharp icons on any screen; the game's own pixels, smoothed. */
+export function upscalePanel(image, document = globalThis.document) {
+  let width = image.naturalWidth, height = image.naturalHeight;
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+  let data = ctx.getImageData(0, 0, width, height).data;
+  for (let pass = 0; pass < 2; pass++) { data = scale2x(data, width, height); width *= 2; height *= 2; }
+  canvas.width = width; canvas.height = height;
+  canvas.getContext('2d').putImageData(new ImageData(data, width, height), 0, 0);
+  return canvas;
 }
