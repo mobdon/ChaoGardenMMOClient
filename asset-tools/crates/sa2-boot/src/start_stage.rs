@@ -42,6 +42,16 @@ const SAVE_SLOT: u32 = 0x2C30;
 const AL_GENE_CREATE: u32 = 0x1_218C;
 const CREATE_EGG: u32 = 0x8F20;
 const GENE_SIZE: u32 = 0xC0;
+/// MMO hub residents: the game's own character Chao (al_chao_info.h TYPE_TAILS
+/// 0x17, TYPE_KNUCKLES 0x18, TYPE_AMY 0x19), made with `CreateChaoExtra`
+/// (see CREATE_CHAO_EXTRA). Offsets from the player in the lobby are
+/// the old web hub's NPC spots (src/scene.js addNPC), an MMO choice.
+const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 12.0, 6.0), (0x19, -4.0, 8.0)];
+/// ChaoMain `CreateChaoExtra` 0x3148C (chao.h): (param, IsParamCopy, element,
+/// &pos, angy). IsParamCopy=1 keeps them out of every save.
+const CREATE_CHAO_EXTRA: u32 = 0x3_148C;
+/// CHAO_PARAM_GC is 0x800 bytes; `type` at +0x80 (al_chao_info.h).
+const PARAM_SIZE: u32 = 0x800;
 /// main.dol `playertwp` .bss 0x801E7768 (taskwk*[]); taskwk +0x14 is pos.
 const PLAYERTWP: u32 = 0x801E_7768;
 
@@ -53,6 +63,8 @@ static AREA: Global<Option<u32>> = global!(None);
 static SHOWN: Global<Option<u32>> = global!(None);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
+/// The lobby's residents are out (cleared when the game leaves the lobby).
+static RESIDENTS_OUT: Global<bool> = global!(false);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -115,6 +127,12 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             HATCH.set(false);
             lay_egg(c, m, text);
         }
+        if now != 0 {
+            RESIDENTS_OUT.set(false);
+        } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+            RESIDENTS_OUT.set(true);
+            residents(c, m, text);
+        }
         if now != shown {
             SHOWN.set(Some(now));
             tell_page(now);
@@ -140,6 +158,25 @@ fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
     }
     guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
+    c.r[1] = sp;
+}
+
+/// The hub's character Chao, with normal Chao AI, near where the player arrives.
+fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
+    let sp = c.r[1];
+    c.r[1] = sp - 0x100 - PARAM_SIZE;
+    let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
+    let player = m.r32(PLAYERTWP) + 0x14;
+    for (ty, dx, dz) in RESIDENTS {
+        for i in (0..PARAM_SIZE).step_by(4) {
+            m.w32(param + i, 0);
+        }
+        m.w8(param + 0x80, ty);
+        m.w32(pos, (f32::from_bits(m.r32(player)) + dx).to_bits());
+        m.w32(pos + 4, m.r32(player + 4));
+        m.w32(pos + 8, (f32::from_bits(m.r32(player + 8)) + dz).to_bits());
+        guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, 0, pos, 0]);
+    }
     c.r[1] = sp;
 }
 
