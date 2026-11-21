@@ -321,8 +321,6 @@ function render(next) {
   const form = ({ normal: 'Neutral', hero: 'Hero', dark: 'Dark', chaos: 'Chaos' })[player.form] || 'Neutral';
   $('#hud-name').textContent = player.name;
   $('#hud-form').textContent = `${player.form === 'chaos' && player.alignment <= -60 ? 'Dark Chaos' : form}${player.admin ? ' · ADMIN' : ''}`;
-  $('#hud-health').textContent = `${player.hp} / ${player.maxHp} HP`;
-  $('#health-fill').style.width = `${player.hp / player.maxHp * 100}%`;
   $('#ring-count').textContent = player.rings.toLocaleString();
   $('#profile-name').textContent = player.name;
   $('#profile-form').textContent = `${player.form === 'chaos' && player.alignment <= -60 ? 'Dark Chaos' : form} · Happiness ${player.happiness} · Energy ${player.energy}`;
