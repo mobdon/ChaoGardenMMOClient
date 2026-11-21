@@ -374,8 +374,9 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
                 (_, Kind::Rgba) => rgba_to_rgb5a3(level, w, h),
             });
         }
-        let mip = (gc_flags & !1) | u8::from(levels > 1);
-        out[entry + 30] = (out[entry + 30] & !1) | u8::from(levels > 1);
+        // Steam's texture is direct colour: drop GC palette flags (0x2/0x8), which made indexed GC textures (City Escape sky, billboards, truck) read as grey noise.
+        let mip = u8::from(levels > 1);
+        out[entry + 30] = mip;
         out[entry + 31] = fmt;
         out[entry + 33] = dims_code(dds.w) << 4 | dims_code(dds.h);
         out.extend_from_slice(b"GVRT");
