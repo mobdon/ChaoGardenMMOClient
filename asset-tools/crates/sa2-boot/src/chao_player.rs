@@ -251,18 +251,6 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
-        // The motion drawn, as its number in the game's motion table
-        // (0x801E5D28 +4: the array ObjectBoardDisp indexes, o_ce_board.c).
-        let list = m.r32(MOTION_TABLE + 4);
-        let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-        if (0x8000_0000..0x8C00_0000).contains(&list) {
-            let k8 = (0..1000u32).find(|&k| m.r32(list + 8 * k) == mot);
-            let k4 = (0..2000u32).find(|&k| m.r32(list + 4 * k) == mot);
-            MOTION_NO.set(k8.map_or(u16::MAX, |k| k as u16));
-            if f % 120 == 0 {
-                eprintln!("chao-player knux table {list:#x} mot {mot:#x} -> stride8 {k8:?} stride4 {k4:?}");
-            }
-        }
     }
     // A new rider skeleton size: its node positions in root space, once.
     if n > 8 && SEEN_SKEL.with_borrow_mut(|s| s.insert((obj, n))) {
@@ -917,17 +905,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     tick(c, m, pos);
 }
 
-/// playerwk m.action and m.plactptr (mtnwk at +0x174 after look +0x144;
+/// playerwk m.action (the animation state, = PC AnimInfo.Current) and m.plactptr (mtnwk at +0x174 after look +0x144;
 /// decomp player.h; +0xC0 is the physics row, matching 0x8004F838's copy).
 /// The motion number is the PL_ACTION entry's actnum (0x10-byte entries).
 const OBJ2_ACTION: u32 = 0x178;
-const MOTION_TABLE: u32 = 0x801E_5D28;
 const OBJ2_PLACTPTR: u32 = 0x198;
 
 thread_local! {
     static LAST_ACT: Cell<u16> = const { Cell::new(u16::MAX) };
-    /// The rider's motion number this frame (index of the drawn motion).
-    static MOTION_NO: Cell<u16> = const { Cell::new(u16::MAX) };
     /// The Chao plays its own motion: no retarget this frame.
     static OWN_MOTION: Cell<bool> = const { Cell::new(false) };
     /// The posed Chao flipped in its own x (punch 2).
@@ -954,10 +939,12 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     if !(0x8000_0000..0x8C00_0000).contains(&table) {
         return;
     }
+    // The animation state (PC CharObj2 AnimInfo.Current; mob's numbers).
+    // SA2_KNUX_STATE=n (debug): treat the rider as in state n, to check a rule.
+    let act = std::env::var("SA2_KNUX_STATE").ok().and_then(|v| v.parse().ok()).unwrap_or(idx as u16);
     let actnum = m.r16(table + 0x10 * idx);
-    let act = MOTION_NO.get();
     if LAST_ACT.get() != act {
-        eprintln!("chao-player knux: action {idx} actnum {actnum} motion {act}");
+        eprintln!("chao-player knux: state {act} actnum {actnum}");
     }
     let (own, mirror, fwd) = match act {
         109 => (Some(582), false, 0.0),
