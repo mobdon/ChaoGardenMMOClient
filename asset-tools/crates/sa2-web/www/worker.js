@@ -88,7 +88,7 @@ const isPicked = (path) => picked !== null && pickedRoots.has(path.split('/')[0]
 let fsIndex;
 function hosted() {
   if (fsIndex === undefined) {
-    const r = xhr('/fs-index.json');
+    const r = xhr('fs-index.json');
     fsIndex = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : null;
   }
   return fsIndex;
@@ -105,7 +105,7 @@ function stat(path) {
     return e ? { dir: e[0], size: e[1] } : null;
   }
   if (statCache.has(path)) return statCache.get(path);
-  const r = xhr('/fs/' + encodeURI(path) + '?stat');
+  const r = xhr('fs/' + encodeURI(path) + '?stat');
   const s = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : null;
   statCache.set(path, s);
   return s;
@@ -124,7 +124,7 @@ function block(path, n) {
     if (!f) return null;
     b = f.read ? f.read(n * DISC_BLOCK, (n + 1) * DISC_BLOCK) : new Uint8Array(new FileReaderSync().readAsArrayBuffer(f.slice(n * BLOCK, (n + 1) * BLOCK)));
   } else {
-    const r = xhr('/fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
+    const r = xhr('fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
     if (r.status !== 200 && r.status !== 206) return null;
     b = new Uint8Array(r.response);
     if (r.status === 200) b = b.subarray(n * BLOCK, (n + 1) * BLOCK);
@@ -305,7 +305,7 @@ function lsDir(path) {
     const pre = path ? path + '/' : '';
     return Object.entries(fsIndex).filter(([k]) => k.startsWith(pre) && !k.slice(pre.length).includes('/')).map(([k, [d, s]]) => [k.slice(pre.length), d, s]);
   }
-  const r = xhr('/fs/' + encodeURI(path) + '?ls');
+  const r = xhr('fs/' + encodeURI(path) + '?ls');
   const list = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : [];
   return list;
 

@@ -73,6 +73,8 @@ export default defineConfig({
     proxy: {
       '/api': { target: `http://127.0.0.1:${process.env.GAME_PORT || 3001}` },
       '/ws': { target: `ws://127.0.0.1:${process.env.GAME_PORT || 3001}`, ws: true },
+      // The exported SA2 in Browser site (serve-site.bat), under the MMO page's origin; it sends its own COOP/COEP.
+      '/sa2': { target: `http://127.0.0.1:${process.env.SA2_SITE_PORT || 8420}`, rewrite: (p) => p.replace(/^\/sa2/, '') || '/' },
     },
   },
   build: { target: 'es2022', rolldownOptions: { input: { main: 'index.html', tiny: 'tiny.html', widget: 'widget.html', phone: 'phone.html' } } },
