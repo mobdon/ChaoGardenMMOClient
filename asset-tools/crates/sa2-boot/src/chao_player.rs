@@ -110,12 +110,7 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     let a = rt::sec(m, 60, 1) + CHAO_EXEC;
-    let me = c.r[3];
     rel_original(c, m, a, chao_exec);
-    // In a stage: Sonic's live pose over the matrices the exec just built.
-    if RIDER.get() != 0 && matches!(STEP.get(), Step::Live(ch) if ch == me) {
-        write_pose(m, me);
-    }
 }
 
 /// mob 2026-11-21 (board.py): Sonic's board drawn at the Chao's size.
@@ -224,7 +219,17 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
-    let ev = RIDER.get() == 0 && matches!(STEP.get(), Step::Live(ch) if ch == c.r[3]);
+    let live = matches!(STEP.get(), Step::Live(ch) if ch == c.r[3]);
+    let ev = RIDER.get() == 0 && live;
+    // In a stage: ChaoMain's draw walker (.text 0x88CC, from the display's
+    // 0x8260) calls the node transform 0x1454 per node; chao_node replaces
+    // each result with the retargeted pose (Chao-local, posed below).
+    if live && RIDER.get() != 0 {
+        level_pose(m, c.r[3]);
+        CHAO_DRAW.set(true);
+        let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
+        return rel_original(c, m, a, chao_display);
+    }
     // ChaoMain queues the model draw past this call (no walker runs inside
     // it, ev28), so the flag stays on for the frame while in a cutscene.
     CHAO_DRAW.set(ev);
@@ -592,7 +597,9 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                 *r = Some(rest);
             }
         });
-        pose_chao();
+        if RIDER.get() == 0 {
+            pose_chao();
+        }
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
     rel_original(c, m, a, chao_node);
@@ -685,6 +692,44 @@ fn write_pose(m: &mut Mem, chao: u32) {
     });
 }
 
+/// The stage pose for this frame's draw: Sonic's retargeted pose, seated on
+/// the board while it draws, in the Chao's local space (its display places
+/// it at chaowk +0x14 with yaw +0x0C, as `pin` set them).
+/// unverified: that the display's placement is only that translation + yaw.
+fn level_pose(m: &Mem, chao: u32) {
+    let cw = m.r32(chao + 0x34);
+    let root = if cw == 0 { 0 } else { m.r32(cw + 0x510) };
+    if !(0x8000_0000..0x8C00_0000).contains(&root) {
+        return POSED.set(vec![]);
+    }
+    CHAO_REST.with_borrow_mut(|r| {
+        if r.is_none() {
+            let dirs = std::fs::read_to_string(std::env::var("SA2_CHAO_ARM_DIRS").unwrap_or_default())
+                .ok().and_then(|j| crate::chao_retarget::parse_arm_dirs(&j)).unwrap_or_default();
+            let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), root, dirs);
+            eprintln!("chao-player lvl: Chao rest {root:#x} nodes {}", rest.nodes.len());
+            *r = Some(rest);
+        }
+    });
+    pose_chao();
+    let Some((r, c)) = seat(m) else { return };
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let pos = [f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C)];
+    let (sy, cy) = ((m.r32(cw + 0x0C) as i32 as f32) * std::f32::consts::TAU / 65536.0).sin_cos();
+    let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+    // local = ry^T (r p + c - pos)
+    let mul = |a: &[[f32; 3]; 3], v: [f32; 3]| -> [f32; 3] { std::array::from_fn(|i| (0..3).map(|k| a[i][k] * v[k]).sum()) };
+    let rt3: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| ry[j][i]));
+    let to_local: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| rt3[i][k] * r[k][j]).sum()));
+    POSED.with_borrow_mut(|p| {
+        for (r0, t0) in p.iter_mut() {
+            *r0 = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| to_local[i][k] * r0[k][j]).sum()));
+            let w = mul(&r, *t0);
+            *t0 = mul(&rt3, [w[0] + c[0] - pos[0], w[1] + c[1] - pos[1], w[2] + c[2] - pos[2]]);
+        }
+    });
+}
+
 /// While a board drew this or last frame: seat the posed Chao on it
 /// (retarget `seat_on_board`), and return the Chao-space -> world rotation
 /// and origin (board centre) to place it with.
@@ -766,9 +811,39 @@ fn exec(c: &mut Cpu, m: &mut Mem) {
     if let Step::Live(chao) = STEP.get() {
         RIDER.set(data1);
         pin(m, chao, data1);
+        physics_row(m);
         return;
     }
     tick(c, m, pos);
+}
+
+/// Physics table (0x84 bytes a row) that 0x8004F838 copies to the player's
+/// obj2 +0xC0; player 1 obj2 pointer (walker.rs, native).
+const PHYSICS: u32 = 0x8019_6578;
+const P1_OBJ2: u32 = 0x801E_7728;
+/// mob 2026-11-21: off the board mob's Chao moves with Metal Sonic's row;
+/// on the board Sonic's own row as the game set it.
+/// unverified: row 12 is Metal Sonic's (coordinator's note, not yet read
+/// from the character id table).
+const METAL_ROW: u32 = 12;
+
+fn physics_row(m: &mut Mem) {
+    let obj2 = m.r32(P1_OBJ2);
+    if !(0x8000_0000..0x8C00_0000).contains(&obj2) {
+        return;
+    }
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
+    // Sonic's own row as the game copied it, kept for the board.
+    let own = SONIC_ROW.with_borrow_mut(|r| r.get_or_insert_with(|| (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect()).clone());
+    let metal = PHYSICS + 0x84 * METAL_ROW;
+    for (i, o) in (0..0x84).step_by(4).enumerate() {
+        m.w32(obj2 + 0xC0 + o, if board { own[i] } else { m.r32(metal + o) });
+    }
+}
+
+thread_local! {
+    static SONIC_ROW: std::cell::RefCell<Option<Vec<u32>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The ChaoMain load/create steps, driven once a frame from Sonic's exec in a
