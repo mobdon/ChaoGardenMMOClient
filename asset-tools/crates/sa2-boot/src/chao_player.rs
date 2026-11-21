@@ -29,6 +29,9 @@ use std::cell::Cell;
 
 const SONIC_EXEC: u32 = 0x8008_3E44;
 const SONIC_DISP: u32 = 0x8007_BFF4;
+const KNUX_EXEC: u32 = 0x8009_F8A0;
+const KNUX_DISP: u32 = 0x8009_9BA0;
+const ROUGE_DISP: u32 = 0x8009_8280;
 const READ_FILE: u32 = 0x8001_ACAC;
 const PRS_EXPAND: u32 = 0x800D_2684;
 const OS_LINK: u32 = 0x800E_839C;
@@ -216,6 +219,7 @@ fn board_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
 }
 
 thread_local! {
+    static SEEN_SKEL: std::cell::RefCell<std::collections::BTreeSet<(u32, usize)>> = Default::default();
     /// Set while Sonic's in-stage display is walked for his skeleton.
     static LCAP: Cell<bool> = const { Cell::new(false) };
 }
@@ -248,6 +252,12 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
     }
+    // A new rider skeleton size: its node positions in root space, once.
+    if n > 8 && SEEN_SKEL.with_borrow_mut(|s| s.insert((obj, n))) {
+        let nodes = NODES.with_borrow(|v| v.clone());
+        let p: Vec<[f32; 3]> = nodes.iter().map(|e| { let r = inv_mul(&nodes[0], e); [r[0][3], r[1][3], r[2][3]].map(|x| (x * 1000.0).round() / 1000.0) }).collect();
+        eprintln!("chao-player skel: obj {obj:#x} nodes {n} root-space {p:?}");
+    }
 }
 
 /// Place the Chao on the rider right before it draws (after its own exec).
@@ -269,6 +279,12 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // 0x8260) calls the node transform 0x1454 per node; chao_node replaces
     // each result with the retargeted pose (Chao-local, posed below).
     if live && RIDER.get() != 0 {
+        // SA2_CHAO_TEXLIST=1 (probe): the Chao's body texlist as the current
+        // one (r13-0x7228) before its display; Wild Canyon crashes in the
+        // texture lookup 0x8011C76C with the stage's list current.
+        if std::env::var("SA2_CHAO_TEXLIST").is_ok_and(|v| v == "1") {
+            m.w32(NJ_CURRENT_TEXLIST, rt::sec(m, 60, 5) + TEXTURES[0].1);
+        }
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
@@ -342,7 +358,10 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         eprintln!("chao-player: needs SA2_MEM1_MB >= 48");
         return;
     }
-    c.rt.set_override(SONIC_EXEC, exec);
+    // Sonic, Shadow and Metal share one exec and display; Knuckles and Rouge
+    // one exec (0x8009F8A0) with their own displays (coordinator notes).
+    c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
+    c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
         c.rt.set_override(DRAW_MOTION, trace_draw_motion);
         c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
@@ -363,7 +382,12 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(NODE_TRANSFORM, node_transform);
     sa2_recomp::os::add_frame_hook(ev_frame_hook);
     c.rt.set_override(ADX_START_AFS, voice);
-    c.rt.set_override(SONIC_DISP, display);
+    c.rt.set_override(SONIC_DISP, |c, m| display(c, m, SONIC_DISP));
+    // SA2_CHAO_KNUX_DISP=0 (debug): leave Knuckles's and Rouge's displays alone.
+    if !std::env::var("SA2_CHAO_KNUX_DISP").is_ok_and(|v| v == "0") {
+        c.rt.set_override(KNUX_DISP, |c, m| display(c, m, KNUX_DISP));
+        c.rt.set_override(ROUGE_DISP, |c, m| display(c, m, ROUGE_DISP));
+    }
 }
 
 /// ADX start from an AFS archive; the voice task calls it at 0x80012760
@@ -457,6 +481,7 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
 const EV_SHAPE_DRAW: u32 = 0x8011_F2BC;
 const CNK_CACHE_DRAW: u32 = 0x8011_DF20;
 const NJ_BASE_MATRIX: u32 = 0x803A_E0C0; // _nj_base_matrix (pointer)
+const NJ_CURRENT_TEXLIST: u32 = 0x803A_E098; // r13-0x7228, read by 0x8011C76C
 const NJ_CURRENT_MATRIX: u32 = 0x803A_E0C4; // _nj_current_matrix_ptr_
 /// The intro's (e0000) Sonic: model pointers of his event entity records as
 /// eventD's scene table (eventD sec6+0x14BC, 0x2C records) holds them in the
@@ -846,20 +871,20 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
     m.load(a, &vec![0; n as usize]);
 }
 
-fn display(c: &mut Cpu, m: &mut Mem) {
+fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if matches!(STEP.get(), Step::Live(_)) {
-        // Sonic's own display, walked for his node matrices, drawing nothing.
+        // The rider's own display, walked for his node matrices, drawing nothing.
         LCAP.set(true);
-        original(c, m, SONIC_DISP);
+        original(c, m, addr);
         LCAP.set(false);
         return;
     }
-    original(c, m, SONIC_DISP);
+    original(c, m, addr);
 }
 
-fn exec(c: &mut Cpu, m: &mut Mem) {
+fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let task = c.r[3];
-    original(c, m, SONIC_EXEC);
+    original(c, m, addr);
     let data1 = m.r32(task + 0x34);
     if data1 == 0 {
         return;
