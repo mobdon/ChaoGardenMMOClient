@@ -504,11 +504,11 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
 /// ChaoMain's exec walker (.text 0xAA0) copies each node's matrix to the
 /// pointer at AL_OBJECT+0xC4 (njGetMatrix at 0xC14/0xDE8); the display draws
 /// from those. With the exec off in a cutscene, write the posed matrices there.
-/// unverified: chaowk+0x670 is the AL_OBJECT root (0x1F1FC loads it on the
-/// draw path); the stored matrices are Chao model space (display adds world).
+/// The AL_OBJECT root is chaowk+0x510 (ChaoMain 0xA24 passes it to 0xAA0).
+/// unverified: the stored matrices are Chao model space (display adds world).
 fn write_pose(m: &mut Mem, chao: u32) {
     let cw = m.r32(chao + 0x34);
-    let root = if cw == 0 { 0 } else { m.r32(cw + 0x670) };
+    let root = if cw == 0 { 0 } else { m.r32(cw + 0x510) };
     let ram = |a: u32| (0x8000_0000..0x8C00_0000).contains(&a);
     if !ram(cw) || !ram(root) {
         return;
@@ -548,8 +548,16 @@ fn write_pose(m: &mut Mem, chao: u32) {
         }
     }
     walk(m, root, &mut nodes);
+    // World placement: the Chao's position (cw+0x14) and yaw (cw+0x0C, BAMS).
+    // unverified: the exec stores world-space node matrices (no camera).
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let pos = [f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C)];
+    let (sy, cy) = ((m.r32(cw + 0x0C) as i32 as f32) * std::f32::consts::TAU / 65536.0).sin_cos();
+    let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     POSED.with_borrow(|p| {
-        for (&n, &(r, t)) in nodes.iter().zip(p.iter()) {
+        for (&n, &(r0, t0)) in nodes.iter().zip(p.iter()) {
+            let r: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| ry[i][k] * r0[k][j]).sum()));
+            let t: [f32; 3] = std::array::from_fn(|i| (0..3).map(|k| ry[i][k] * t0[k]).sum::<f32>() + pos[i]);
             let dst = m.r32(n + 0xC4);
             if dst < 0x8000_0000 {
                 continue;
