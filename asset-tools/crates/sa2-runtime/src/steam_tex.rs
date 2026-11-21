@@ -9,9 +9,12 @@
 //! global indexes, header flags) comes from Steam's own GameCube-format
 //! `<name>.prs` next to it; only the pixels come from the DDS files, at
 //! Steam's resolution (472 of 2,025 Steam textures are twice the GC size).
-//! DXT1 becomes CMPR losslessly (same block coding, GC tile order and bit
-//! order); 32-bit and DXT5 textures become RGB5A3, the format the `.inf`
-//! names.
+//! The GC format comes from the `.inf`. For CMPR, DXT1 carries over
+//! losslessly (same block coding, GC tile order and bit order) and DXT5
+//! keeps its colour blocks (its alpha drops, as the GC texture is CMPR too);
+//! other formats become RGB5A3. A DDS smaller than the GC texture (Steam's
+//! 4x4 stubs), or 32-bit art where the GC texture is CMPR, keeps the GC
+//! texture from Steam's own `.prs`.
 //! shortcut: mip levels are kept only when the DDS chain reaches 1x1 (else level 0 alone); RGB5A3 quantizes Steam's 8-bit colour (try RGBA8 if the game's loader takes it).
 use sa2_asset_tools::archive::decompress_prs;
 
@@ -52,8 +55,16 @@ pub fn read_pak(pak: &[u8]) -> Option<Vec<(String, &[u8])>> {
 struct Dds {
     w: usize,
     h: usize,
-    dxt1: bool,
+    kind: Kind,
     levels: Vec<Vec<u8>>,
+}
+
+/// How a DDS level is stored: DXT1 or DXT5 blocks as in the file, or RGBA8.
+#[derive(PartialEq)]
+enum Kind {
+    Dxt1,
+    Dxt5,
+    Rgba,
 }
 
 fn read_dds(d: &[u8]) -> Option<Dds> {
@@ -79,7 +90,7 @@ fn read_dds(d: &[u8]) -> Option<Dds> {
             }
             b"DXT5" => {
                 let n = blocks * 16;
-                let b = decode_dxt5(d.get(p..p + n)?, lw, lh);
+                let b = d.get(p..p + n)?.to_vec();
                 p += n;
                 b
             }
@@ -108,7 +119,11 @@ fn read_dds(d: &[u8]) -> Option<Dds> {
     Some(Dds {
         w,
         h,
-        dxt1: four == b"DXT1",
+        kind: match four {
+            b"DXT1" => Kind::Dxt1,
+            b"DXT5" => Kind::Dxt5,
+            _ => Kind::Rgba,
+        },
         levels,
     })
 }
@@ -171,6 +186,29 @@ fn decode_dxt5(src: &[u8], w: usize, h: usize) -> Vec<u8> {
                 let o = (y * w + x) * 4;
                 out[o..o + 4].copy_from_slice(&[c[0], c[1], c[2], alpha((abits >> (3 * i)) & 7)]);
             }
+        }
+    }
+    out
+}
+
+/// DXT5 blocks' colour halves as DXT1 blocks that stay in 4-colour mode
+/// (CMPR, like DXT1, reads c0 <= c1 as 3 colours + transparent): swap the
+/// endpoints and flip index bit 0 when c0 < c1; equal endpoints are one colour.
+fn dxt5_colour_blocks(dxt5: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(dxt5.len() / 2);
+    for b in dxt5.chunks(16) {
+        let c = &b[8..16];
+        let (c0, c1) = (
+            u16::from_le_bytes([c[0], c[1]]),
+            u16::from_le_bytes([c[2], c[3]]),
+        );
+        if c0 > c1 {
+            out.extend_from_slice(c);
+        } else if c0 < c1 {
+            out.extend_from_slice(&[c[2], c[3], c[0], c[1]]);
+            out.extend(c[4..8].iter().map(|x| x ^ 0x55));
+        } else {
+            out.extend_from_slice(&[c[0], c[1], c[2], c[3], 0, 0, 0, 0]);
         }
     }
     out
@@ -273,6 +311,13 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
     if inf.len() != count * 60 {
         return None;
     }
+    let mut chunks = Vec::with_capacity(count);
+    let mut p = 8 + header;
+    for _ in 0..count {
+        let len = 8 + le32(&gvm, p + 4)? as usize;
+        chunks.push(gvm.get(p..p + len)?);
+        p += len;
+    }
     let mut out = gvm.get(..8 + header)?.to_vec();
     for i in 0..count {
         let rec = &inf[i * 60..][..60];
@@ -293,27 +338,30 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
                 .is_some_and(|f| f == format!("{name}.dds"))
         })?;
         let dds = read_dds(dds.1)?;
+        let rd = |at: usize| {
+            u32::from_le_bytes([rec[at], rec[at + 1], rec[at + 2], rec[at + 3]]) as usize
+        };
+        let (gc_w, gc_h) = (rd(44), rd(48));
+        let skel = chunks.get(i)?;
+        let want_cmpr = rec[32] == CMPR;
+        // Steam's own texture only when it is at least the GC size and has a
+        // lossless route (DXT -> CMPR, anything -> RGB5A3); else Steam's GC one.
+        if dds.w < gc_w || dds.h < gc_h || (want_cmpr && dds.kind == Kind::Rgba) {
+            out.extend_from_slice(skel);
+            continue;
+        }
+        let fmt = if want_cmpr { CMPR } else { RGB5A3 };
         let full = (dds.w.max(dds.h).trailing_zeros() + 1) as usize;
         let levels = if dds.levels.len() >= full { full } else { 1 };
-        let fmt = if dds.dxt1 && rec[32] == CMPR {
-            CMPR
-        } else {
-            RGB5A3
-        };
         let mut data = Vec::new();
         for (l, level) in dds.levels.iter().take(levels).enumerate() {
             let (w, h) = ((dds.w >> l).max(1), (dds.h >> l).max(1));
-            let rgba;
-            let px = if dds.dxt1 && fmt == RGB5A3 {
-                rgba = dxt1_rgba(level, w, h);
-                &rgba
-            } else {
-                level
-            };
-            data.extend(if fmt == CMPR {
-                dxt1_to_cmpr(px, w, h)
-            } else {
-                rgba_to_rgb5a3(px, w, h)
+            data.extend(match (fmt, &dds.kind) {
+                (CMPR, Kind::Dxt1) => dxt1_to_cmpr(level, w, h),
+                (CMPR, _) => dxt1_to_cmpr(&dxt5_colour_blocks(level), w, h),
+                (_, Kind::Dxt1) => rgba_to_rgb5a3(&dxt1_rgba(level, w, h), w, h),
+                (_, Kind::Dxt5) => rgba_to_rgb5a3(&decode_dxt5(level, w, h), w, h),
+                (_, Kind::Rgba) => rgba_to_rgb5a3(level, w, h),
             });
         }
         let mip = u8::from(levels > 1);
@@ -380,6 +428,16 @@ mod tests {
         assert_eq!(c.len(), 32);
         assert_eq!(&c[..8], &[0x12, 0, 0x56, 0x34, 0b0001_1011, 0, 0, 0]);
         assert_eq!(c[8 + 1], 1, "second block of the tile is block (0,1)");
+    }
+
+    #[test]
+    fn dxt5_colour_blocks_stay_in_four_colour_mode() {
+        // Synthetic DXT5 blocks: alpha half ignored; c0 < c1 gets swapped.
+        let mut b = vec![0u8; 8];
+        b.extend_from_slice(&[0x01, 0x00, 0x02, 0x00, 0b1110_0100, 0, 0, 0]);
+        let c = dxt5_colour_blocks(&b);
+        assert_eq!(&c[..4], &[0x02, 0x00, 0x01, 0x00]);
+        assert_eq!(c[4], 0b1011_0001, "indices 0<->1 and 2<->3");
     }
 
     #[test]
