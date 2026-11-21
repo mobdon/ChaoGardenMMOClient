@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canvasSize, measureFont, scale2x, slotAt } from '../src/native-inventory.js';
+import { canvasSize, measureFont, slotAt } from '../src/native-inventory.js';
 
 test('slots run four across at the Chao Select pitch and the window grows a row at a time', () => {
   assert.deepEqual([0, 3, 4].map(slotAt), [{ x: 12, y: 24 }, { x: 180, y: 24 }, { x: 12, y: 80 }]);
@@ -16,15 +16,3 @@ test('glyph widths come from the font image: opaque, bright columns are ink', ()
   assert.deepEqual(measureFont({ data, width })['0'], [4, 6]);
 });
 
-test('scale2x smooths a diagonal edge with existing colours only', () => {
-  const A = [255, 0, 0, 255], B = [0, 0, 255, 255];
-  // A B
-  // B B  -> the top-left pixel's lower-right corner takes B, where two B neighbours meet.
-  const data = new Uint8ClampedArray([...A, ...B, ...B, ...B]);
-  const out = scale2x(data, 2, 2);
-  const at = (x, y) => [...out.subarray((y * 4 + x) * 4, (y * 4 + x) * 4 + 4)];
-  assert.deepEqual(at(0, 0), A);
-  assert.deepEqual(at(1, 1), B);
-  assert.equal(out.length, 4 * 4 * 4);
-  assert.ok([...Array(16).keys()].every(i => [A, B].some(c => c.every((v, k) => v === out[i * 4 + k]))), 'no new colours');
-});

@@ -1,4 +1,4 @@
-import { canvasSize, drawInventory, loadInventoryArt, slotAt, SLOT, upscalePanel } from './native-inventory.js';
+import { canvasSize, drawInventory, loadInventoryArt, slotAt, SLOT } from './native-inventory.js';
 // Desktop garden care: renders the server's canonical care/garden snapshot and
 // submits bounded care intents. The server owns inventory, growth, fruit,
 // proximity, effects and animal parts; this module never computes them.
@@ -157,7 +157,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     if (!file || !globalThis.Image) return null;
     if (!icons.has(file)) {
       const entry = { image: new Image(), sharp: null };
-      entry.image.addEventListener('load', () => { entry.sharp = upscalePanel(entry.image, document); });
+      entry.image.addEventListener('load', () => { entry.sharp = entry.image; });
       entry.image.src = `/api/assets/${file}`; icons.set(file, entry);
     }
     return icons.get(file);
@@ -180,7 +180,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     selected = Math.min(selected, items.length - 1);
     const size = canvasSize(items.length);
     const box = el('div', undefined, 'garden-care-carried');
-    // Drawn at 2x so the upscaled icons stay sharp; the window and font scale by whole pixels.
+    // Drawn at 2x; the window, icons and font scale by whole pixels.
     const canvas = el('canvas'); canvas.width = size.width * 2; canvas.height = size.height * 2; canvas.setAttribute('aria-hidden', 'true');
     Object.assign(canvas.style, { width: `${size.width}px`, height: `${size.height}px` });
     box.append(canvas);
