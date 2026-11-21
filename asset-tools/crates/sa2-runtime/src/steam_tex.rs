@@ -20,6 +20,8 @@ use sa2_asset_tools::archive::decompress_prs;
 
 const CMPR: u8 = 14;
 const RGB5A3: u8 = 5;
+/// 0x811ffe60 - 0x80fffe60: the archive loader's scratch (0x8001a190).
+const SCRATCH: usize = 0x20_0000;
 
 fn le32(b: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
@@ -375,11 +377,14 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
         out.extend_from_slice(&(dds.h as u16).to_be_bytes());
         out.extend(data);
     }
-    // The game loads texture archives into buffers sized for the GC files:
-    // segalogo's three 1024x1024 DXT5 logos (6 MB as RGB5A3, GC 0.56 MB) hung
-    // the logo screen. Bigger than Steam's GC archive: keep that one.
-    // shortcut: Steam's 2x textures are skipped this way; serve them once the game's buffer sizes are found.
-    (out.len() <= gvm.len()).then(|| prs_literal(&out))
+    // The game's archive loader (0x8001a190) reads the .prs to 0x811ffe60
+    // minus its size rounded to 0x800 and unpacks it upward from 0x80fffe60:
+    // one 2 MB scratch. A literal-only stream is longer than its output, so
+    // the unpack never overtakes unread input; it fits while the rounded
+    // .prs is within 2 MB. Bigger: keep Steam's GC-format archive.
+    // shortcut: limit read from 0x8001a190 only; other archive loaders' scratch sizes unverified.
+    let prs = prs_literal(&out);
+    (prs.len().div_ceil(0x800) * 0x800 <= SCRATCH).then_some(prs)
 }
 
 /// DXT1 blocks to RGBA8 (only when the `.inf` asks for a non-CMPR format).
