@@ -251,6 +251,18 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
+        // The motion drawn, as its number in the game's motion table
+        // (0x801E5D28 +4: the array ObjectBoardDisp indexes, o_ce_board.c).
+        let list = m.r32(MOTION_TABLE + 4);
+        let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        if (0x8000_0000..0x8C00_0000).contains(&list) {
+            let k8 = (0..1000u32).find(|&k| m.r32(list + 8 * k) == mot);
+            let k4 = (0..2000u32).find(|&k| m.r32(list + 4 * k) == mot);
+            MOTION_NO.set(k8.map_or(u16::MAX, |k| k as u16));
+            if f % 120 == 0 {
+                eprintln!("chao-player knux table {list:#x} mot {mot:#x} -> stride8 {k8:?} stride4 {k4:?}");
+            }
+        }
     }
     // A new rider skeleton size: its node positions in root space, once.
     if n > 8 && SEEN_SKEL.with_borrow_mut(|s| s.insert((obj, n))) {
@@ -649,6 +661,13 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     if i == 0 {
+        if MIRROR.get() {
+            // The whole Chao flipped in its own x: every node inherits it.
+            for r in 0..3u32 {
+                let a = cur_ptr + 4 * (4 * r);
+                m.w32(a, (-f32::from_bits(m.r32(a))).to_bits());
+            }
+        }
         CHAO_PLACE.set(mtx(m, cur_ptr));
         let root = c.r[3];
         CHAO_REST.with_borrow_mut(|r| {
@@ -845,7 +864,8 @@ fn pose_chao() {
         STEAM_TO_EV.iter().map(|&e| inv_mul(&s[0], &s[e as usize])).collect()
     });
     let posed = CHAO_REST.with_borrow(|r| match (r, sonic.len()) {
-        (Some(rest), 62) => rest.pose(&sonic, false, 0.0),
+        _ if OWN_MOTION.get() => vec![],
+        (Some(rest), 62) => rest.pose(&sonic, false, ARM_FWD.get()),
         _ => vec![],
     });
     POSED.set(posed);
@@ -886,10 +906,75 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if let Step::Live(chao) = STEP.get() {
         RIDER.set(data1);
         pin(m, chao, data1);
-        physics_row(m);
+        // Physics stays native for Knuckles and Rouge (mob's rules).
+        if addr == SONIC_EXEC {
+            physics_row(m);
+        } else {
+            knuckles_rules(c, m, chao);
+        }
         return;
     }
     tick(c, m, pos);
+}
+
+/// playerwk m.action and m.plactptr (mtnwk at +0x174 after look +0x144;
+/// decomp player.h; +0xC0 is the physics row, matching 0x8004F838's copy).
+/// The motion number is the PL_ACTION entry's actnum (0x10-byte entries).
+const OBJ2_ACTION: u32 = 0x178;
+const MOTION_TABLE: u32 = 0x801E_5D28;
+const OBJ2_PLACTPTR: u32 = 0x198;
+
+thread_local! {
+    static LAST_ACT: Cell<u16> = const { Cell::new(u16::MAX) };
+    /// The rider's motion number this frame (index of the drawn motion).
+    static MOTION_NO: Cell<u16> = const { Cell::new(u16::MAX) };
+    /// The Chao plays its own motion: no retarget this frame.
+    static OWN_MOTION: Cell<bool> = const { Cell::new(false) };
+    /// The posed Chao flipped in its own x (punch 2).
+    static MIRROR: Cell<bool> = const { Cell::new(false) };
+    static ARM_FWD: Cell<f32> = const { Cell::new(0.0) };
+}
+
+/// mob's approved rules for Knuckles and Rouge (coordinator 2026-11-21):
+/// punch 1 (Knuckles motion 109) = Chao karate 582, punch 2 (110) = 582
+/// mirrored, punch 3 on (111 uppercut, 138 hammer) = Knuckles retargeted with
+/// the arms biased 0.8 forward; dig (90-92, 95-96) and the rest retargeted.
+/// shortcut: glide (Chao fly 130) and climb (Chao climb 155) are not wired:
+/// Knuckles's glide/climb motion numbers are not known from the files yet.
+/// shortcut: the karate motion starts on the action change, not frame-synced
+/// to Knuckles's 109/110 nframe.
+/// shortcut: no arm snap (chao-arm-dirs.json is not on this PC): 1:1 arms.
+fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
+    let obj2 = m.r32(P1_OBJ2);
+    if !(0x8000_0000..0x8C00_0000).contains(&obj2) {
+        return;
+    }
+    let idx = u32::from(m.r16(obj2 + OBJ2_ACTION));
+    let table = m.r32(obj2 + OBJ2_PLACTPTR);
+    if !(0x8000_0000..0x8C00_0000).contains(&table) {
+        return;
+    }
+    let actnum = m.r16(table + 0x10 * idx);
+    let act = MOTION_NO.get();
+    if LAST_ACT.get() != act {
+        eprintln!("chao-player knux: action {idx} actnum {actnum} motion {act}");
+    }
+    let (own, mirror, fwd) = match act {
+        109 => (Some(582), false, 0.0),
+        110 => (Some(582), true, 0.0),
+        111 | 138 => (None, false, 0.8),
+        _ => (None, false, 0.0),
+    };
+    if LAST_ACT.replace(act) != act {
+        eprintln!("chao-player knux: action {act} -> chao motion {own:?} mirror {mirror} arm fwd {fwd}");
+        if let Some(mo) = own {
+            let s1 = rt::sec(m, 60, 1);
+            call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, mo]);
+        }
+    }
+    OWN_MOTION.set(own.is_some());
+    MIRROR.set(mirror);
+    ARM_FWD.set(fwd);
 }
 
 /// Physics table (0x84 bytes a row) that 0x8004F838 copies to the player's
