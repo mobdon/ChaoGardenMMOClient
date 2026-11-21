@@ -145,12 +145,13 @@ function mmoToken() {
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
 // The game's own Chao Lobby is the MMO hub (mob 2026-11-21): stage 90 with no area.
-const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 5: 'race' };
+// One server room per ChaoMain area (server CHAO_WORLD_ZONES).
+const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 4: 'chao-race', 5: 'race-entrance', 6: 'kindergarten', 9: 'stadium', 10: 'chao-karate', 11: 'chao-karate' };
 let room = null;
 function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
   room = { ws, zone };
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: room.zone }));
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone }));
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
 }
@@ -159,7 +160,7 @@ function roomArea(area) {
   const zone = roomZones[area === 0 ? '' : area];
   if (!room || !zone || zone === room.zone) return;
   room.zone = zone;
-  if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: zone }));
+  if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
 }
 // Hold the card while the game runs: renew its lease (10 minutes on the
 // server) and give the Chao back when the tab closes.
