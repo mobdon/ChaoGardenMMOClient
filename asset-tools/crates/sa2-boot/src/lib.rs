@@ -25,6 +25,7 @@ pub mod serve;
 pub mod snap;
 pub mod steam_sound;
 pub mod vi;
+pub mod walker;
 pub mod wide;
 #[cfg(not(target_os = "wasi"))]
 pub mod window;
@@ -43,6 +44,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     clock::install(c, m);
     card::install(c, m);
     wide::install(c, m);
+    walker::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).

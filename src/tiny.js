@@ -453,7 +453,7 @@ function consumeSnapshot(next) {
 
 function openSocket(activeToken, generation) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const current = new WebSocket(`${protocol}//${location.host}/ws${accountV2 ? '' : `?token=${encodeURIComponent(activeToken)}`}`);
+  const current = new WebSocket(`${protocol}//${location.host}/ws?tiny=1${accountV2 ? '' : `&token=${encodeURIComponent(activeToken)}`}`);
   socket = current;
   current.onopen = () => {
     if (generation !== connectionGeneration) { current.close(); return; }
