@@ -99,6 +99,8 @@ function pickedFiles() {
   const list = [];
   for (const [id, mount] of [['steam-dir', 'steam'], ['disc-dir', 'disc']])
     for (const f of $(id).files) list.push([`${mount}/${f.webkitRelativePath.split('/').slice(1).join('/')}`, f]);
+  // A disc image (.iso, .gcm, .rvz): each game thread opens it itself (disc.js).
+  if ($('disc-img').files[0]) list.push(['@disc', $('disc-img').files[0]]);
   return list.concat(addedFiles);
 }
 // pickFolder('steam', [[path in folder, File], …]): the same from a script

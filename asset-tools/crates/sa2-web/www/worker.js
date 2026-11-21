@@ -8,6 +8,10 @@ const E = { SUCCESS: 0, BADF: 8, INVAL: 28, IO: 29, ISDIR: 31, NOENT: 44, NOSYS:
 const FT = { DIR: 3, FILE: 4, CHAR: 2 };
 const BLOCK = 2 << 20; // file read cache block (fewer round trips to the server)
 const MAX_BLOCKS = 12;
+// Files inside a compressed disc image: a chunk at a time, so a read never
+// holds a game thread up unpacking megabytes.
+const DISC_BLOCK = 128 << 10;
+const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
 const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12;
@@ -56,7 +60,15 @@ function pick(list) {
   picked = new Map();
   pickedDirs = new Map();
   pickedRoots = new Set();
+  const all = [];
   for (const [path, file] of list) {
+    // A disc image: its files, read from inside it (disc.js).
+    if (path === '@disc') {
+      importScripts('vendor/fzstd.js', 'disc.js');
+      for (const [name, f] of discFiles(discReader(file))) all.push([`disc/${name}`, f]);
+    } else all.push([path, file]);
+  }
+  for (const [path, file] of all) {
     picked.set(path.toLowerCase(), file);
     const parts = path.split('/');
     pickedRoots.add(parts[0].toLowerCase());
@@ -94,7 +106,7 @@ function block(path, n) {
   if (isPicked(path)) {
     const f = picked.get(path.toLowerCase());
     if (!f) return null;
-    b = new Uint8Array(new FileReaderSync().readAsArrayBuffer(f.slice(n * BLOCK, (n + 1) * BLOCK)));
+    b = f.read ? f.read(n * DISC_BLOCK, (n + 1) * DISC_BLOCK) : new Uint8Array(new FileReaderSync().readAsArrayBuffer(f.slice(n * BLOCK, (n + 1) * BLOCK)));
   } else {
     const r = xhr('/fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
     if (r.status !== 200 && r.status !== 206) return null;
@@ -313,9 +325,9 @@ const wasi = {
     for (const [p, len] of iovs(iov, n)) {
       let want = Math.min(len, f.size - f.pos), at = p;
       while (want > 0) {
-        const bn = Math.floor(f.pos / BLOCK), b = block(f.path, bn);
+        const bs = blockSize(f.path), bn = Math.floor(f.pos / bs), b = block(f.path, bn);
         if (!b) return E.IO;
-        const from = f.pos - bn * BLOCK, k = Math.min(want, b.length - from);
+        const from = f.pos - bn * bs, k = Math.min(want, b.length - from);
         if (k <= 0) break;
         u8().set(b.subarray(from, from + k), at);
         at += k;
