@@ -127,6 +127,18 @@ function rememberChao(savedAt) {
   lastSlotUpdate = Date.now();
 }
 
+// The slot's memory card on the server: a look only, it never checks the save out.
+async function showCard(line, token) {
+  try {
+    const response = await fetch('/api/game-save/status', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    if (!response.ok) return;
+    const card = await response.json();
+    line.textContent = card.inGame ? 'MEMORY CARD · IN THE GAME NOW'
+      : card.savedAt ? `MEMORY CARD · GAME SAVE ${new Date(card.savedAt).toLocaleString()}`
+      : 'MEMORY CARD · EMPTY UNTIL YOUR FIRST CHAO WORLD SAVE';
+  } catch { /* No server reachable: the slot shows no card line. */ }
+}
+
 function showTitle() {
   const container = $('#save-slots');
   container.replaceChildren();
@@ -142,10 +154,19 @@ function showTitle() {
     info.textContent = slot.form ? `${form} ${slot.form === 'chaos' ? 'CHAOS CHAO' : 'CHAO'} · ${slot.rings ?? 0} RINGS${slot.admin ? ' · ADMIN' : ''}` : 'Resume your existing server save';
     if (slot.savedAt) { const saved = document.createElement('small'); saved.textContent = `Saved ${new Date(slot.savedAt).toLocaleString()}`; meta.append(name, info, saved); }
     else meta.append(name, info);
+    const card = document.createElement('small'); card.className = 'save-slot-card'; meta.append(card);
+    void showCard(card, slot.token);
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
     button.append(icon, meta, arrow);
     button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token));
-    container.append(button);
+    const code = document.createElement('details'); code.className = 'card-code';
+    const summary = document.createElement('summary'); summary.textContent = 'MEMORY CARD CODE';
+    const value = document.createElement('code'); value.textContent = slot.token.match(/.{4}/g).join(' ');
+    const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy';
+    copy.addEventListener('click', () => void navigator.clipboard?.writeText(slot.token).then(() => { copy.textContent = 'Copied'; }, () => {}));
+    const warn = document.createElement('small'); warn.textContent = 'Keep this private. Anyone with this code owns this Chao. Insert it on another browser to bring your Chao back.';
+    code.append(summary, value, copy, warn);
+    container.append(button, code);
   }
   if (!slots.length) {
     const empty = document.createElement('p'); empty.className = 'save-empty'; empty.textContent = 'A new story is waiting. Name your first Chao below.'; container.append(empty);
@@ -361,10 +382,16 @@ async function join(name, token = sessionToken) {
     updatePaused();
   } catch (error) {
     if (!welcome.open) welcome.showModal();
-    $('#join-error').textContent = `${error.message} Check that npm run dev is running.`;
+    $('#join-error').textContent = `${error.message} The Chao server may be down. Try again in a moment.`;
   } finally { joining = false; $('#join-button').disabled = false; document.querySelectorAll('.save-slot').forEach(button => { button.disabled = false; }); }
 }
 
+$('#card-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const code = $('#card-code').value.replace(/\s+/g, '').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(code)) { $('#join-error').textContent = 'That memory card code isn\u2019t complete. It has 64 letters and numbers.'; return; }
+  void join('Chao', code);
+});
 $('#join-form').addEventListener('submit', (event) => { event.preventDefault(); void join($('#chao-name').value, null); });
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 showTitle();
@@ -428,12 +455,11 @@ async function loadStatus() {
     if (!response.ok) throw new Error('Bridge unavailable');
     const data = await response.json();
     setup = data.setup;
-    $('#install-status').textContent = setup.found ? 'Steam SA2 files found · BATTLE required' : 'Local SA2 installation not found';
+    $('#install-status').textContent = setup.found ? 'SA2 files found' : 'Local SA2 installation not found';
     $('#install-status-dot').className = `status-dot ${setup.found ? 'connected' : 'error'}`;
     renderSetup(setup);
   } catch {
-    $('#install-status').textContent = 'Start the local bridge with npm run dev';
-    $('#install-status-dot').className = 'status-dot error';
+    $('.welcome-requirements').hidden = true; // only the local dev bridge reports install files
     $('#setup-content').textContent = 'The local bridge is unavailable. Start it with npm run dev.';
   }
 }
