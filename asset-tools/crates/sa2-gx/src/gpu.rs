@@ -200,6 +200,104 @@ struct Pass {
     buffers: Option<(wgpu::BindGroup, wgpu::Buffer, wgpu::Buffer, wgpu::Buffer)>,
 }
 
+/// Most passes a recorded frame keeps buffers for (render-to-texture passes
+/// and the picture); passes past it get buffers of their own each frame.
+const GEO_SLOTS: usize = 32;
+
+/// A pass's GPU buffers, kept from one recorded frame to the next: the
+/// buffers grow when a frame needs more and are otherwise written in place,
+/// and only the bytes that changed since the last frame are uploaded (level
+/// geometry is the same frame after frame; the camera and objects move
+/// through the matrices).
+#[derive(Default)]
+struct Geo {
+    uniforms: Kept,
+    vertices: Kept,
+    indices: Kept,
+    matrices: Kept,
+    bind: Option<wgpu::BindGroup>,
+}
+
+/// A buffer and the bytes last written to it.
+#[derive(Default)]
+struct Kept {
+    buffer: Option<wgpu::Buffer>,
+    last: Vec<u8>,
+}
+
+impl Kept {
+    /// A buffer of at least `size` bytes; true when it is a new one.
+    fn reserve(
+        &mut self,
+        device: &wgpu::Device,
+        size: usize,
+        usage: wgpu::BufferUsages,
+    ) -> (wgpu::Buffer, bool) {
+        let size = size.max(4).next_multiple_of(4);
+        match &self.buffer {
+            Some(b) if b.size() >= size as u64 => (b.clone(), false),
+            _ => {
+                // Room to grow: frames vary a little in size.
+                let b = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("gx kept"),
+                    size: (size + size / 4).next_multiple_of(256) as u64,
+                    usage,
+                    mapped_at_creation: false,
+                });
+                if let Some(old) = self.buffer.take() {
+                    old.destroy();
+                }
+                self.buffer = Some(b.clone());
+                self.last.clear();
+                (b, true)
+            }
+        }
+    }
+
+    /// Make the buffer hold `data`, uploading only the span that differs.
+    fn sync(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+        usage: wgpu::BufferUsages,
+    ) -> (wgpu::Buffer, bool) {
+        let (b, new) = self.reserve(device, data.len(), usage);
+        if let Some((lo, hi)) = changed(&self.last, data) {
+            if hi > lo {
+                let mut chunk = data[lo..hi].to_vec();
+                chunk.resize(chunk.len().next_multiple_of(4), 0);
+                queue.write_buffer(&b, lo as u64, &chunk);
+            }
+            self.last.clear();
+            self.last.extend_from_slice(data);
+        }
+        (b, new)
+    }
+}
+
+/// The span of `new` to write over `old` (4-byte aligned), or None when the
+/// two are the same.
+fn changed(old: &[u8], new: &[u8]) -> Option<(usize, usize)> {
+    if old == new {
+        return None;
+    }
+    let same = |a: &u8, b: &u8| a == b;
+    let lo = old.iter().zip(new).take_while(|(a, b)| same(a, b)).count() / 4 * 4;
+    let hi = if old.len() == new.len() {
+        new.len()
+            - old
+                .iter()
+                .rev()
+                .zip(new.iter().rev())
+                .take_while(|(a, b)| same(a, b))
+                .count()
+    } else {
+        new.len()
+    };
+    Some((lo, hi.max(lo)))
+}
+
 pub struct GxRenderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -228,6 +326,10 @@ pub struct GxRenderer {
     pending: Vec<wgpu::CommandBuffer>,
     /// Textures made by EFB copies, by id (reused by the next copy).
     efb_copies: FastMap<TextureId, wgpu::Texture>,
+    /// Buffers kept between recorded frames, by pass (see [`Geo`]).
+    geo: Vec<Geo>,
+    /// The next pass's slot in `geo` this frame.
+    geo_next: usize,
 }
 
 impl GxRenderer {
@@ -320,6 +422,8 @@ impl GxRenderer {
             passes_of: 0,
             pending: Vec::new(),
             efb_copies: FastMap::default(),
+            geo: Vec::new(),
+            geo_next: 0,
         }
     }
 
@@ -598,7 +702,7 @@ impl GxRenderer {
     }
 
     /// Everything a pass needs except the draws' position matrices.
-    fn prepare(&mut self, scene: &SceneParams, draws: &[GpuDraw<'_>]) -> Pass {
+    fn prepare(&mut self, scene: &SceneParams, draws: &[GpuDraw<'_>], slot: Option<usize>) -> Pass {
         let mut uniforms = params::fill_scene_params(scene);
         uniforms.reserve(SCENE_SLOT + draws.len() * MATERIAL_SLOT);
         uniforms.resize(SCENE_SLOT, 0);
@@ -661,45 +765,94 @@ impl GxRenderer {
                 buffers: None,
             };
         }
-        let mk = |label, contents: &[u8], usage| {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(label),
-                    contents,
-                    usage,
-                })
+        let mats = (prepared.len() * DRAW_SLOT).max(DRAW_SLOT);
+        let usage = |u| u | wgpu::BufferUsages::COPY_DST;
+        let (bufs, fresh) = match slot.and_then(|s| self.geo.get_mut(s).map(|g| (s, g))) {
+            // A pass of a recorded frame: its slot's buffers, kept between
+            // frames, take only the bytes that changed since the last frame.
+            Some((_, g)) => {
+                let (u, a) = g.uniforms.sync(
+                    &self.device,
+                    &self.queue,
+                    &uniforms,
+                    usage(wgpu::BufferUsages::UNIFORM),
+                );
+                let (v, b) = g.vertices.sync(
+                    &self.device,
+                    &self.queue,
+                    &vertices,
+                    usage(wgpu::BufferUsages::VERTEX),
+                );
+                let (i, c) = g.indices.sync(
+                    &self.device,
+                    &self.queue,
+                    bytemuck::cast_slice(&indices),
+                    usage(wgpu::BufferUsages::INDEX),
+                );
+                let (m, d) =
+                    g.matrices
+                        .reserve(&self.device, mats, usage(wgpu::BufferUsages::UNIFORM));
+                let _ = (b, c);
+                ((u, v, i, m), (a || d).then_some(slot).flatten())
+            }
+            None => {
+                let mk = |label, contents: &[u8], usage| {
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some(label),
+                            contents,
+                            usage,
+                        })
+                };
+                let u = mk("gx uniforms", &uniforms, wgpu::BufferUsages::UNIFORM);
+                let v = mk("gx vertices", &vertices, wgpu::BufferUsages::VERTEX);
+                let i = mk(
+                    "gx indices",
+                    bytemuck::cast_slice(&indices),
+                    wgpu::BufferUsages::INDEX,
+                );
+                let m = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("gx draw matrices"),
+                    size: mats as u64,
+                    usage: usage(wgpu::BufferUsages::UNIFORM),
+                    mapped_at_creation: false,
+                });
+                ((u, v, i, m), None)
+            }
         };
-        let u = mk("gx uniforms", &uniforms, wgpu::BufferUsages::UNIFORM);
-        let v = mk("gx vertices", &vertices, wgpu::BufferUsages::VERTEX);
-        let i = mk(
-            "gx indices",
-            bytemuck::cast_slice(&indices),
-            wgpu::BufferUsages::INDEX,
-        );
-        let m = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gx draw matrices"),
-            size: (prepared.len() * DRAW_SLOT) as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gx uniforms"),
-            layout: &self.uniform_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: binding(&u, params::SCENE_PARAMS_SIZE),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: binding(&u, params::MATERIAL_PARAMS_SIZE),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: binding(&m, params::DRAW_PARAMS_SIZE),
-                },
-            ],
-        });
+        let (u, v, i, m) = bufs;
+        // The bind group names the uniform and matrix buffers: made again
+        // only when one of them was replaced by a bigger one.
+        let kept = slot
+            .and_then(|s| self.geo.get(s))
+            .and_then(|g| g.bind.clone());
+        let bind = match (kept, fresh) {
+            (Some(b), None) => b,
+            _ => {
+                let b = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("gx uniforms"),
+                    layout: &self.uniform_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: binding(&u, params::SCENE_PARAMS_SIZE),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: binding(&u, params::MATERIAL_PARAMS_SIZE),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: binding(&m, params::DRAW_PARAMS_SIZE),
+                        },
+                    ],
+                });
+                if let Some(g) = slot.and_then(|s| self.geo.get_mut(s)) {
+                    g.bind = Some(b.clone());
+                }
+                b
+            }
+        };
         Pass {
             prepared,
             buffers: Some((bind, v, i, m)),
@@ -721,7 +874,16 @@ impl GxRenderer {
     ) {
         let pass = match key.and_then(|k| self.passes.remove(&k)) {
             Some(p) => p,
-            None => self.prepare(scene, draws),
+            None => {
+                let slot = key.map(|_| self.geo_next).filter(|s| *s < GEO_SLOTS);
+                if let Some(s) = slot {
+                    self.geo_next += 1;
+                    if self.geo.len() <= s {
+                        self.geo.resize_with(s + 1, Geo::default);
+                    }
+                }
+                self.prepare(scene, draws, slot)
+            }
         };
         if let Some((_, _, _, m)) = &pass.buffers {
             let mut mats = Vec::with_capacity(pass.prepared.len() * DRAW_SLOT);
@@ -779,6 +941,7 @@ impl GxRenderer {
         if frame.serial != self.passes_of || !frame.uploads.is_empty() {
             self.passes.clear();
             self.passes_of = frame.serial;
+            self.geo_next = 0;
         }
         let c = frame.clear_color;
         let clear_color = [c[0] as f64, c[1] as f64, c[2] as f64, c[3] as f64];
@@ -1053,4 +1216,26 @@ fn record_slice(
         }
     }
     enc.finish()
+}
+
+#[cfg(test)]
+mod kept_tests {
+    use super::changed;
+
+    #[test]
+    fn uploads_only_what_changed() {
+        let a = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        assert_eq!(changed(&a, &a), None);
+        let mut b = a;
+        b[6] = 0;
+        // From the 4-byte boundary at or before the first change.
+        assert_eq!(changed(&a, &b), Some((4, 7)));
+        // Longer or shorter: to the end of the new bytes.
+        assert_eq!(
+            changed(&a, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+            Some((8, 11))
+        );
+        assert_eq!(changed(&a, &a[..6]), Some((4, 6)));
+        assert_eq!(changed(&[], &a), Some((0, 10)));
+    }
 }
