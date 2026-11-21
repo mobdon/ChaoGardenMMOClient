@@ -1,4 +1,4 @@
-// Chao MMO glue: the one Inventory button over the game page (/sa2/), with
+// Chao MMO glue: the inventory on the Chao stats card over the game page (/sa2/), with
 // breeding and Tiny Garden opened from inside it (mob 2026-11-21). It reuses the
 // hub page's own modules and the game page's room socket.
 import './style.css';
@@ -14,25 +14,14 @@ export function mountOverlay(nextSocket) {
   mounted = { socket: nextSocket };
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text) n.textContent = text; if (className) n.className = className; return n; };
   const send = message => mounted.socket.readyState === WebSocket.OPEN && (mounted.socket.send(JSON.stringify(message)), true);
-  // Corner holders in the hub top bar's look (mob): logo top-left; sound + Inventory top-right.
-  const corner = (side) => { const c = el('header', undefined, 'topbar'); c.style.cssText = `position:fixed;z-index:7;top:8px;left:auto;right:auto;${side}:8px;width:auto;height:56px;padding:0 18px;border-radius:14px`; return c; };
-  const logo = corner('left');
-  logo.innerHTML = '<span class="wordmark"><span class="brand-symbol">\u25c9</span><span>CHAO<span class="wordmark-light">GARDEN</span><small>ADVENTURE \u00b7 RACE \u00b7 BATTLE</small></span></span>';
-  const bar = corner('right'); const nav = el('nav', undefined, 'top-links'); bar.append(nav);
-  const mute = el('button', 'Sound on', 'nav-button'), volume = el('input');
-  volume.type = 'range'; volume.min = '0'; volume.max = '100'; volume.value = '100'; volume.setAttribute('aria-label', 'Volume');
-  const setGain = () => { if (globalThis.sa2Gain) globalThis.sa2Gain.gain.value = mute.dataset.off ? 0 : volume.value / 100; };
-  mute.addEventListener('click', () => { mute.dataset.off = mute.dataset.off ? '' : '1'; mute.textContent = mute.dataset.off ? 'Sound off' : 'Sound on'; setGain(); });
-  volume.addEventListener('input', setGain);
-  const button = el('button', 'Inventory', 'nav-button mmo-overlay-button');
-  for (const n of [mute, volume, button]) n.tabIndex = -1;
-  nav.append(mute, volume, button);
-  const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:72px';
+  // The inventory lives on the Chao stats card (mob): click the card or press Tab.
+  const card = document.getElementById('mmo-card');
+  const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:auto;right:auto;left:16px;bottom:72px';
   const care = el('div'), breedingRoot = el('div'); breedingRoot.hidden = true;
   const breedButton = el('button', 'Breeding'), tinyButton = el('button', 'Tiny Garden');
   for (const b of [breedButton, tinyButton]) b.tabIndex = -1;
   panel.append(care, el('div'), breedButton, tinyButton, breedingRoot);
-  document.body.append(logo, bar, panel);
+  document.body.append(panel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
     const token = localStorage.getItem(SESSION_KEY), card = slots.list().find(s => s.token === token)?.card;
@@ -44,7 +33,9 @@ export function mountOverlay(nextSocket) {
     slots.record(data.token, data.player, undefined, card);
   } });
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
-  button.addEventListener('click', () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); });
+  const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
+  if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
+  addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
   tinyButton.addEventListener('click', () => window.open('/tiny.html', '_blank'));
   mounted.api = {
