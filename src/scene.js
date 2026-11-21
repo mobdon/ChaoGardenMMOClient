@@ -14,6 +14,7 @@ import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
+import { METAL_CHAO_LOOK, METAL_CHAO_PARTS, applyMetalSkin, metalPartMaterial, metalSkinTexture } from './metal-chao.js';
 import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
 import { createNativeChaoShadow, createNativeShadowTerrainIndex } from './chao-shadows.js';
 import { attachNativeBehaviours, readBehaviour, updateNativeBehaviour } from './chao-behaviour.js';
@@ -243,6 +244,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     return {
       footwear: data.admin && data.gear?.footwear === 'shadow-air-shoes' ? 'shadow-air-shoes' : null,
       hands: data.admin && data.gear?.hands === 'knuckles-hammer-gloves' ? 'knuckles-hammer-gloves' : null,
+      look: data.admin && data.gear?.look === METAL_CHAO_LOOK ? METAL_CHAO_LOOK : null,
     };
   }
 
@@ -774,11 +776,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
 
   function setOwnerGear(item, next, force = false) {
     const gear = gearFor({ admin: item.admin, gear: next });
-    const key = `${gear.footwear || ''}:${gear.hands || ''}`;
+    const key = `${gear.footwear || ''}:${gear.hands || ''}:${gear.look || ''}`;
     item.gear = gear;
     if (!force && key === item.gearKey) return;
     item.gearKey = key;
     item.gearVersion = (item.gearVersion || 0) + 1;
+    setMetalChao(item, gear.look === METAL_CHAO_LOOK);
     for (const attachments of Object.values(item.ownerGear || {})) for (const entry of attachments) {
       for (const mesh of entry.fit.meshes) mesh.setEnabled(true);
       destroyGroup(entry.root);
@@ -786,6 +789,37 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     item.ownerGear = { footwear: [], hands: [] };
     if (item.imported) item.imported.footwearMeshes = [];
     for (const slot of ['footwear', 'hands']) if (gear[slot] && item.imported) void attachOwnerGear(item, slot, gear[slot], item.gearVersion);
+  }
+
+  // The owner's Metal Sonic Chao: Metal Sonic's own parts (converted locally by
+  // scripts/metal-chao/convert.py) parented to their Chao nodes like a worn hat,
+  // his blue metal sphere-mapped on the body, and the Chao head/feet hidden.
+  function setMetalChao(item, on) {
+    for (const root of item.metalChaoRoots || []) destroyGroup(root);
+    item.metalChaoRoots = [];
+    const visual = item.imported?.visual;
+    if (!visual) return;
+    applyMetalSkin(visual, on ? metalSkinTexture(scene) : null);
+    canvas.dataset.metalChao = on ? 'loading' : '';
+    if (!on) return;
+    const version = item.gearVersion;
+    const nodes = visual.getDescendants();
+    for (const part of METAL_CHAO_PARTS) {
+      const socket = nodes.find(node => new RegExp(`(?:^|-)${part.node}_object_`).test(node.name));
+      if (!socket) continue;
+      void loadLocalAsset(part.key).then(container => {
+        if (!container || disposed || item.root.isDisposed() || version !== item.gearVersion) return;
+        const entries = container.instantiateModelsToScene(name => `${item.root.name}-${part.key}-${name}`, false, { doNotInstantiate: true });
+        const holder = new TransformNode(`${item.root.name}-${part.key}`, scene);
+        for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
+        for (const entryRoot of entries.rootNodes) entryRoot.dispose();
+        holder.rotation.x = Math.PI / 2; // same exported-frame turn as setHat
+        holder.parent = socket;
+        for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); metalPartMaterial(mesh); }
+        item.metalChaoRoots.push(holder);
+        canvas.dataset.metalChao = String(item.metalChaoRoots.length);
+      });
+    }
   }
 
   async function attachNativeBooster(item) {
