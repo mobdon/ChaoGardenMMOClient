@@ -12,13 +12,19 @@
 //! Eggman 7), so speed and acceleration match the stage. In main.dol rows 13
 //! and 14 differ from 6 and 7 at +0x10, +0x3C, +0x40 and +0x60 only.
 //!
-//! Voices (mob, 2026-11-21: no Eggman voice lines): while player 1 is a Chao
-//! Walker, the voice task (exec 0x800125D8) does not start its queued voice
-//! (ADX start from the voice archive at 0x80012760), so the stage's voice
-//! lines stay silent. Sound effects and music are separate and still play.
-//! shortcut: mutes every voice line in the stage, not only Eggman's; the
+//! Sounds: the walker code plays the Chao Walkers' own sound (0x201B Chao
+//! Walker, 0x201E Dark, via 0x8006B978 at 0x800B4A64/0x800B4A84), which is in
+//! the 2P walker bank se_ch_wk_BATTLE.mlt; 1P loads se_ch_wk.mlt (table
+//! 0x801CD520 vs 0x801CD580 in 0x800D960C). So the 1P walker bank load
+//! (0x8006CFEC) gets the 2P bank's name, the game's own string.
+//!
+//! Voices (mob, 2026-11-21: no Eggman voice lines, Chao sounds instead): while
+//! player 1 is a Chao Walker, the voice task (exec 0x800125D8) does not start
+//! its queued voice (ADX start at 0x80012760); it plays that walker's own
+//! sound instead. Music and other sound effects are unchanged.
+//! shortcut: covers every voice line in the stage, not only Eggman's; the
 //! speaker of each voice id is not mapped yet.
-use crate::original;
+use crate::{guest_call, original};
 use sa2_recomp::rt::{Cpu, Mem};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
@@ -36,6 +42,12 @@ const ADX_START_AFS: u32 = 0x8013_476C;
 const FROM_VOICE_TASK: u32 = 0x8001_2768;
 /// Player 1's character work (obj2), set up by 0x8004F838 (table 0x801E5C48 + 0x1AE0).
 const PLAYER1_OBJ2: u32 = 0x801E_7728;
+/// Sound bank load by name (r3); the walker bank names in main.dol.
+const LOAD_BANK: u32 = 0x8006_CFEC;
+const WALKER_BANK: u32 = 0x8017_5E78; // "se_ch_wk.mlt"
+const WALKER_BANK_2P: u32 = 0x8017_5E9C; // "se_ch_wk_BATTLE.mlt"
+/// Play a sound effect (r3 = id, r4-r6 = 0), as the walker code calls it.
+const PLAY_SE: u32 = 0x8006_B978;
 
 /// The mech row player 1's Chao Walker takes during its load (0 = none).
 static MECH_ROW: AtomicU32 = AtomicU32::new(0);
@@ -48,6 +60,14 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(EGGMAN_WALKER, eggman);
     c.rt.set_override(PHYSICS_SETUP, physics);
     c.rt.set_override(ADX_START_AFS, adx_start);
+    c.rt.set_override(LOAD_BANK, load_bank);
+}
+
+fn load_bank(c: &mut Cpu, m: &mut Mem) {
+    if c.r[3] == WALKER_BANK {
+        c.r[3] = WALKER_BANK_2P;
+    }
+    original(c, m, LOAD_BANK);
 }
 
 fn tails(c: &mut Cpu, m: &mut Mem) {
@@ -86,7 +106,13 @@ fn physics(c: &mut Cpu, m: &mut Mem) {
 
 fn adx_start(c: &mut Cpu, m: &mut Mem) {
     let obj2 = m.r32(PLAYER1_OBJ2);
-    if c.lr == FROM_VOICE_TASK && obj2 != 0 && matches!(m.r8(obj2 + 3), 13 | 14) {
+    if c.lr == FROM_VOICE_TASK && obj2 != 0 {
+        let se = match m.r8(obj2 + 3) {
+            13 => 0x201B,
+            14 => 0x201E,
+            _ => return original(c, m, ADX_START_AFS),
+        };
+        guest_call(c, m, PLAY_SE, &[se, 0, 0, 0]);
         return;
     }
     original(c, m, ADX_START_AFS);
@@ -150,12 +176,34 @@ mod tests {
     }
 
     #[test]
-    fn voice_task_is_silent_only_for_a_chao_walker() {
+    fn the_walker_bank_is_the_2p_one() {
+        fn bank(c: &mut Cpu, m: &mut Mem) {
+            m.w32(0x8000_6000, c.r[3]);
+        }
+        let (mut c, mut m) = (Cpu::default(), Mem::default());
+        c.rt.generated = |a| (a == LOAD_BANK).then_some(bank as sa2_recomp::rt::Func);
+        c.r[3] = WALKER_BANK;
+        load_bank(&mut c, &mut m);
+        assert_eq!(m.r32(0x8000_6000), WALKER_BANK_2P);
+        c.r[3] = 0x8017_5E68;
+        load_bank(&mut c, &mut m);
+        assert_eq!(m.r32(0x8000_6000), 0x8017_5E68, "other banks unchanged");
+    }
+
+    #[test]
+    fn voice_task_plays_the_walker_sound_only_for_a_chao_walker() {
         fn started(c: &mut Cpu, _m: &mut Mem) {
             c.r[9] = 1;
         }
+        fn se(c: &mut Cpu, m: &mut Mem) {
+            m.w32(0x8000_6000, c.r[3]);
+        }
         let (mut c, mut m) = (Cpu::default(), Mem::default());
-        c.rt.generated = |a| (a == ADX_START_AFS).then_some(started as sa2_recomp::rt::Func);
+        c.rt.generated = |a| match a {
+            ADX_START_AFS => Some(started as sa2_recomp::rt::Func),
+            PLAY_SE => Some(se),
+            _ => None,
+        };
         m.w32(PLAYER1_OBJ2, OBJ2);
         let run = |c: &mut Cpu, m: &mut Mem, id: u8, lr: u32| {
             m.w8(OBJ2 + 3, id);
@@ -166,13 +214,15 @@ mod tests {
         assert_eq!(
             run(&mut c, &mut m, 14, FROM_VOICE_TASK),
             0,
-            "Dark Chao Walker: silent"
+            "Dark Chao Walker: no voice"
         );
+        assert_eq!(m.r32(0x8000_6000), 0x201E, "its own sound");
         assert_eq!(
             run(&mut c, &mut m, 13, FROM_VOICE_TASK),
             0,
-            "Chao Walker: silent"
+            "Chao Walker: no voice"
         );
+        assert_eq!(m.r32(0x8000_6000), 0x201B, "its own sound");
         assert_eq!(
             run(&mut c, &mut m, 7, FROM_VOICE_TASK),
             1,
