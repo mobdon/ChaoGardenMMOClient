@@ -1,7 +1,7 @@
 // One game thread: an instance of the game build (wasm32-wasip1-threads) on
 // the shared memory, with the WASI calls std makes answered here. Files come
-// from the local server (/fs/...) with synchronous requests, which workers
-// may make; /dev/gx, /dev/pad and /dev/audio are the page's devices.
+// from folders the player picked in the page, else from the local server
+// (/fs/...), both read synchronously, which workers may do; /dev/gx, /dev/pad and /dev/audio are the page's devices.
 'use strict';
 
 const E = { SUCCESS: 0, BADF: 8, INVAL: 28, IO: 29, ISDIR: 31, NOENT: 44, NOSYS: 52, NOTDIR: 54, SPIPE: 70 };
@@ -49,8 +49,33 @@ function xhr(url, range) {
   return r;
 }
 
+// Folders the player picked in the page (main.js): files read straight from
+// their computer, no server. Names match without case, as on Windows.
+let picked = null, pickedDirs, pickedRoots;
+function pick(list) {
+  picked = new Map();
+  pickedDirs = new Map();
+  pickedRoots = new Set();
+  for (const [path, file] of list) {
+    picked.set(path.toLowerCase(), file);
+    const parts = path.split('/');
+    pickedRoots.add(parts[0].toLowerCase());
+    for (let i = 1; i < parts.length; i++) {
+      const dir = parts.slice(0, i).join('/').toLowerCase();
+      if (!pickedDirs.has(dir)) pickedDirs.set(dir, new Map());
+      const last = i === parts.length - 1;
+      pickedDirs.get(dir).set(parts[i].toLowerCase(), [parts[i], !last, last ? file.size : 0]);
+    }
+  }
+}
+const isPicked = (path) => picked !== null && pickedRoots.has(path.split('/')[0].toLowerCase());
+
 function stat(path) {
   if (DEVICES[path] !== undefined) return { dir: false, size: 0, dev: true };
+  if (isPicked(path)) {
+    const k = path.toLowerCase(), f = picked.get(k);
+    return f ? { dir: false, size: f.size } : pickedDirs.has(k) ? { dir: true, size: 0 } : null;
+  }
   if (statCache.has(path)) return statCache.get(path);
   const r = xhr('/fs/' + encodeURI(path) + '?stat');
   const s = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : null;
@@ -66,10 +91,16 @@ function block(path, n) {
     blocks.set(key, b);
     return b;
   }
-  const r = xhr('/fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
-  if (r.status !== 200 && r.status !== 206) return null;
-  b = new Uint8Array(r.response);
-  if (r.status === 200) b = b.subarray(n * BLOCK, (n + 1) * BLOCK);
+  if (isPicked(path)) {
+    const f = picked.get(path.toLowerCase());
+    if (!f) return null;
+    b = new Uint8Array(new FileReaderSync().readAsArrayBuffer(f.slice(n * BLOCK, (n + 1) * BLOCK)));
+  } else {
+    const r = xhr('/fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
+    if (r.status !== 200 && r.status !== 206) return null;
+    b = new Uint8Array(r.response);
+    if (r.status === 200) b = b.subarray(n * BLOCK, (n + 1) * BLOCK);
+  }
   blocks.set(key, b);
   if (blocks.size > MAX_BLOCKS) blocks.delete(blocks.keys().next().value);
   return b;
@@ -192,6 +223,7 @@ function resolve(dirfd, p, n) {
 }
 
 function lsDir(path) {
+  if (isPicked(path)) return [...(pickedDirs.get(path.toLowerCase()) || new Map()).values()];
   const r = xhr('/fs/' + encodeURI(path) + '?ls');
   const list = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : [];
   return list;
@@ -464,6 +496,7 @@ onmessage = (ev) => {
     sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
     args = m.args;
     env = m.env;
+    if (m.picked && m.picked.length) pick(m.picked);
     const imports = { env: { memory: mem }, wasi_snapshot_preview1: {}, wasi: { 'thread-spawn': threadSpawn } };
     for (const imp of WebAssembly.Module.imports(m.module)) {
       if (imp.module === 'wasi_snapshot_preview1') {

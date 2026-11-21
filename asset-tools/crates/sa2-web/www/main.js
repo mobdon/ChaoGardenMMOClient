@@ -90,6 +90,22 @@ function writePad() {
   pad[11] = rt;
 }
 
+// ---- the player's own files -----------------------------------------------
+// Folders picked on the start screen, as [game path, File]: the game sees the
+// Steam folder as /steam and the disc folder as /disc. A folder not picked
+// comes from the local server, if it has one.
+let picked = [];
+function pickedFiles() {
+  const list = [];
+  for (const [id, mount] of [['steam-dir', 'steam'], ['disc-dir', 'disc']])
+    for (const f of $(id).files) list.push([`${mount}/${f.webkitRelativePath.split('/').slice(1).join('/')}`, f]);
+  return list.concat(addedFiles);
+}
+// pickFolder('steam', [[path in folder, File], …]): the same from a script
+// (tests: the browser's automation can't fill a folder input).
+const addedFiles = [];
+window.pickFolder = (mount, entries) => entries.forEach(([p, f]) => addedFiles.push([`${mount}/${p}`, f]));
+
 // ---- threads ------------------------------------------------------------
 let module, memory, env, workers = 0;
 // Workers with the game already loaded, so a new game thread (a stage load,
@@ -107,7 +123,7 @@ function loadedWorker() {
     else if (m.done) workers--;
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
-  w.postMessage({ init: true, module, memory, env, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
+  w.postMessage({ init: true, module, memory, env, picked, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
   return w;
 }
 function startThread(tid, arg) {
@@ -140,6 +156,7 @@ setInterval(() => {
 
 async function start() {
   $('go').disabled = true;
+  picked = pickedFiles();
   status.textContent = 'loading…';
   if (!crossOriginIsolated) throw new Error('the page needs cross-origin isolation (open it from the local server)');
   const audio = new AudioContext({ latencyHint: 'interactive' });

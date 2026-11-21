@@ -23,7 +23,9 @@
 <canvas id="screen" tabindex="0" aria-label="Game screen"></canvas>
 <div id="start"><div>
   <h1>Sonic Adventure 2</h1>
-  <p>Recompiled from the GameCube release, reading the game files from your own Steam folder through this computer's local server.</p>
+  <p>Recompiled from the GameCube release. The game files come from your own copy and never leave your computer: pick your Steam game folder (steamapps/common/Sonic Adventure 2) and, if you have one, your extracted GameCube disc folder. A folder you don't pick is read from this computer's local server.</p>
+  <p class="pick"><label>Steam game folder <input type="file" id="steam-dir" webkitdirectory></label></p>
+  <p class="pick"><label>GameCube disc folder <input type="file" id="disc-dir" webkitdirectory></label></p>
   <p>W A S D move &middot; Space jump (A) &middot; E or Left Shift action (B) &middot; Q (X) &middot; R (Y) &middot; Enter start &middot; 1 and 3 (L and R) &middot; a gamepad works too &middot; double-click for full screen</p>
   <button id="go">Play</button>
 </div></div>
