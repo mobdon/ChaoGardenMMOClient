@@ -15,6 +15,8 @@ carries COOP/COEP headers.
 import argparse
 import json
 import os
+import shutil
+import sys
 import http.server
 import urllib.error
 import urllib.parse
@@ -43,6 +45,7 @@ ap.add_argument('--env', type=pair, action='append', default=[], help='KEY=VALUE
 ap.add_argument('--api', help='the Chao MMO server (http://127.0.0.1:PORT): /api/* is passed to it, so the page and the game share its origin')
 ap.add_argument('--port', type=int, default=8420)
 ap.add_argument('--open', action='store_true', help='open the page in the default browser')
+ap.add_argument('--export', metavar='DIR', help="write a static site to DIR instead of serving: the page, the game build and the --file/--mount files (never the player's steam or disc mounts)")
 args = ap.parse_args()
 if args.api:
     u = urllib.parse.urlsplit(args.api)
@@ -79,6 +82,44 @@ def virtual_dir(rel):
             is_dir = bool(tail) or k in MOUNTS
             out[head] = (is_dir, 0 if is_dir else os.path.getsize(FILES[k]))
     return out
+
+
+def export(out):
+    """The hosted build: static files plus fs-index.json, which answers the
+    worker's stat and ls where no serve.py runs. The player's own Steam folder
+    and disc are never copied; the page reads those from what they pick."""
+    if os.path.exists(out):
+        sys.exit(f'{out} exists; give a new folder')
+    entries = {}  # path -> [is_dir, size]
+
+    def add(rel, src):
+        dst = os.path.join(out, 'fs', *rel.split('/'))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copyfile(src, dst)
+        entries[rel] = [False, os.path.getsize(src)]
+        parts = rel.split('/')
+        for i in range(1, len(parts)):
+            entries.setdefault('/'.join(parts[:i]), [True, 0])
+
+    for rel, src in FILES.items():
+        add(rel, src)
+    for name, root in MOUNTS.items():
+        if name in ('steam', 'disc'):
+            continue
+        for d, _, names in os.walk(root):
+            for n in names:
+                add(name + '/' + os.path.relpath(os.path.join(d, n), root).replace(os.sep, '/'), os.path.join(d, n))
+    shutil.copytree(WWW, out, ignore=shutil.ignore_patterns('pkg'), dirs_exist_ok=True)
+    shutil.copytree(args.pkg, os.path.join(out, 'pkg'))
+    shutil.copyfile(args.game, os.path.join(out, 'game.wasm'))
+    with open(os.path.join(out, 'env.json'), 'w') as f:
+        json.dump({k: v for k, v in ENV.items() if k not in ('SA2_STEAM_DIR', 'SA2_DISC_DIR', 'SA2_DISC_FIRST')}, f)
+    with open(os.path.join(out, 'fs-index.json'), 'w') as f:
+        json.dump(entries, f)
+    # Shared memory between the game's threads needs cross-origin isolation.
+    with open(os.path.join(out, '_headers'), 'w') as f:
+        f.write('/*\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n')
+    print(f'{out}: {sum(not d for d, _ in entries.values())} files under fs/')
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -211,6 +252,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.body(404, 'text/plain', b'not found')
 
 
+if args.export:
+    export(args.export)
+    sys.exit()
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
 srv.daemon_threads = True
 url = f'http://127.0.0.1:{args.port}/'
