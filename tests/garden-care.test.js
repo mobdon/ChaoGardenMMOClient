@@ -80,7 +80,7 @@ test('Tiny Garden items list fruit and seeds without offering to eat seeds', () 
 });
 
 class Node {
-  constructor(tag, doc) { this.tagName = tag; this.ownerDocument = doc; this.children = []; this.listeners = {}; this.attributes = {}; this.textContent = ''; this.disabled = false; }
+  constructor(tag, doc) { this.tagName = tag; this.ownerDocument = doc; this.children = []; this.listeners = {}; this.attributes = {}; this.textContent = ''; this.disabled = false; this.style = { setProperty() {} }; this.classList = { toggle() {} }; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(k, v) { this.attributes[k] = v; }
@@ -105,6 +105,22 @@ test('panel submits one request, retries it unchanged after reconnect and report
   assert.deepEqual(sent[1], sent[0]);
   assert.equal(panel.handleEvent({ type: 'event', kind: 'care-result', rulesVersion: 'adapted-care-v1', requestId: 'req-1', accepted: false, revision: 7, code: 'no-fruit' }), true);
   assert.ok(root.all().some(n => n.textContent === 'No fruit is ripe yet.'));
+});
+
+test('carried items sit in Chao Select slots: the first pick selects, the second uses', () => {
+  const document = { createElement: tag => new Node(tag, document) };
+  const root = new Node('aside', document);
+  const sent = [];
+  createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-slot' }).update(care(), { zone: 'garden', x: 13, z: 2 }, { connected: true, serverTime: 1 });
+  const slots = () => root.all().filter(n => n.className === 'garden-care-slot');
+  assert.deepEqual(slots().map(n => n.attributes['aria-label']), ['Penguin x1', 'Native item 22 x1', 'Garden Fruit x1', 'Hero Fruit x2', 'Hero Seed x1']);
+  assert.equal(slots()[0].attributes['aria-pressed'], 'true');
+  const fruit = slots().findIndex(n => n.attributes['aria-label'] === 'Hero Fruit x2');
+  slots()[fruit].listeners.click();
+  assert.equal(sent.length, 0, 'the first pick only moves the cursor');
+  assert.equal(slots()[fruit].attributes['aria-pressed'], 'true');
+  slots()[fruit].listeners.click();
+  assert.deepEqual(sent[0].intent, { kind: 'consume', itemId: 'sa2-fruit:5' });
 });
 
 test('animal parts map to the traced native Chao nodes and exact model names', async () => {
@@ -144,8 +160,8 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   const withItems = { ...care(), inventory: { 'egg:2': 1, 'hat:3': 1 }, hat: 9, emblems: { count: 12 },
     market: { stock: [{ itemId: 'theme:omochao', price: 10000, sell: 0 }, { itemId: 'egg:5', price: 600, sell: 0 }], sellPrices: { 'hat:3': 500 } } };
   const garden = gardenCareView(withItems, { zone: 'garden', x: 0, z: 0, rings: 0 }, { connected: true });
-  assert.equal(garden.items.find(i => i.id === 'egg:2').mayUse, true, 'eggs go down in a garden');
-  assert.equal(gardenCareView(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true }).items.find(i => i.id === 'egg:2').mayUse, false);
+  assert.equal(garden.items.find(i => i.id === 'egg:2').mayUse, false, 'eggs don\u2019t hatch in a garden');
+  assert.equal(gardenCareView(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true }).items.find(i => i.id === 'egg:2').mayUse, true, 'they hatch in the hub');
   assert.equal(garden.hat, 'Pan');
   assert.equal(garden.emblems, 12);
   const shop = gardenCareView(withItems, { zone: 'hub', x: -4, z: 8, rings: 20000 }, { connected: true });
@@ -154,8 +170,32 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   const document = { createElement: tag => new Node(tag, document) };
   const root = new Node('aside', document);
   const sent = [];
-  const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg' });
-  panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true });
-  root.all().find(n => n.tagName === 'button' && n.textContent === 'Put down').listeners.click();
-  assert.deepEqual(sent[0].intent, { kind: 'place-egg', itemId: 'egg:2' });
+  const hatched = [];
+  const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg', hatch: async (...args) => { hatched.push(args); } });
+  panel.update(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true });
+  const egg = root.all().find(n => n.className === 'garden-care-slot' && n.attributes['aria-label'] === 'White egg x1');
+  egg.listeners.click(); egg.listeners.click();
+  const name = root.all().find(n => n.className === 'garden-care-name');
+  assert.equal(name.maxLength, 7, 'picking an egg asks for a name the game can hold');
+  name.value = 'Pip'; name.listeners.input();
+  name.listeners.keydown({ key: 'Enter' });
+  assert.deepEqual(hatched, [[{ itemId: 'egg:2' }, 'Pip']], 'the egg hatches into a new slot');
+  assert.equal(sent.length, 0, 'it is not put down in the garden');
+  // A bred egg lands in the inventory with its parents' names and hatches the same way.
+  panel.update(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true, nest: [{ id: 'nest-1', motherName: 'Mine', fatherName: 'Bub' }] });
+  const bred = root.all().find(n => n.className === 'garden-care-slot' && n.attributes['aria-label'] === 'Egg of Mine and Bub x1');
+  bred.listeners.click(); bred.listeners.click();
+  const bredName = root.all().find(n => n.className === 'garden-care-name');
+  bredName.value = 'Kin'; bredName.listeners.input(); bredName.listeners.keydown({ key: 'Enter' });
+  assert.deepEqual(hatched[1], [{ eggId: 'nest-1' }, 'Kin']);
+});
+
+test('worn hats map to the traced native head node and model keys', async () => {
+  const { hatAssets, CHAO_HAT_NODE, NATIVE_HAT_IDS } = await import('../src/chao-attachments.js');
+  assert.equal(CHAO_HAT_NODE, '016');
+  assert.deepEqual(hatAssets(3), ['hat-3']);
+  assert.deepEqual(hatAssets(9), ['hat-9', 'hat-9-eye', 'hat-9-jaw']);
+  assert.deepEqual(hatAssets(15), ['hat-15']);
+  for (const hat of [null, undefined, 0, 1, 2, 16, 40, '3', 3.5]) assert.deepEqual(hatAssets(hat), [], String(hat));
+  assert.deepEqual(NATIVE_HAT_IDS, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 });
