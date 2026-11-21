@@ -403,14 +403,14 @@ function connect(token) {
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken, card = null) {
+async function join(name, token = sessionToken, card = null, owner = false) {
   if (joining) return;
   joining = true;
   $('#join-button').disabled = true;
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
   $('#join-error').textContent = '';
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}) }) });
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}), ...(owner ? { owner: true } : {}) }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
@@ -449,6 +449,8 @@ $('#join-form').addEventListener('submit', (event) => {
   let newest; try { newest = saveSlots.list()[0]; } catch { /* no slots */ }
   void join($('#chao-name').value, null, newest && (newest.card || newest.token));
 });
+// Local owner login: only answered by a loopback server started with CHAO_OWNER_BOOTSTRAP.
+$('#owner-login').addEventListener('click', () => void join('Chao', null, null, true));
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 showTitle();
 
