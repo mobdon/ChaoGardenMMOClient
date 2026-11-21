@@ -891,11 +891,22 @@ fn physics_row(m: &mut Mem) {
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
-    // Sonic's own row as the game copied it, kept for the board.
-    let own = SONIC_ROW.with_borrow_mut(|r| r.get_or_insert_with(|| (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect()).clone());
+    // mob 2026-11-21: the board has its own physics. The game's row is
+    // whatever it last wrote there (Metal's is ours), kept for the board.
+    let now: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect();
     let metal = PHYSICS + 0x84 * METAL_ROW;
+    let metal: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(metal + o)).collect();
+    let own = SONIC_ROW.with_borrow_mut(|r| {
+        if now != metal && r.as_ref() != Some(&now) {
+            if r.is_some() {
+                eprintln!("chao-player: the game set a new physics row at frame {f} (board {board})");
+            }
+            *r = Some(now);
+        }
+        r.clone().unwrap_or_default()
+    });
     for (i, o) in (0..0x84).step_by(4).enumerate() {
-        m.w32(obj2 + 0xC0 + o, if board { own[i] } else { m.r32(metal + o) });
+        m.w32(obj2 + 0xC0 + o, if board { own[i] } else { metal[i] });
     }
 }
 
