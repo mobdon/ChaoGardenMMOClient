@@ -17,6 +17,7 @@ pub mod gx;
 pub mod io;
 pub mod pad;
 pub mod prof;
+pub mod serve;
 #[cfg(not(target_os = "wasi"))]
 pub mod snap;
 pub mod vi;
