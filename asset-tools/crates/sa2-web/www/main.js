@@ -147,8 +147,18 @@ const roomZones = { 1: 'garden', 2: 'hero', 3: 'dark', 5: 'race' };
 function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
   ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: zone }));
+  ws.onmessage = ({ data }) => { try { const m = JSON.parse(data); if (m.type === 'snapshot') showCard(m.players.find(p => p.id === m.selfId)); } catch { /* not ours */ } };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, zone), 3000); };
+}
+// The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
+function showCard(player) {
+  if (!player) return;
+  const card = document.getElementById('mmo-card');
+  card.style.display = 'flex';
+  card.querySelector('.icon').textContent = player.admin ? '\u2726' : '\u25c9';
+  card.querySelector('.name').textContent = player.name;
+  card.querySelector('.rings').textContent = player.rings.toLocaleString();
 }
 // Hold the card while the game runs: renew its lease (10 minutes on the
 // server) and give the Chao back when the tab closes.
