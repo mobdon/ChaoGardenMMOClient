@@ -39,7 +39,7 @@ export function loadChaoLookManifest(fetcher = fetch) {
 }
 
 // TEXMTX9: view-space normal x scale(0.5, -0.5) + 0.5.
-class ChaoLookEnvironment extends MaterialPluginBase {
+export class ChaoLookEnvironment extends MaterialPluginBase {
   constructor(material) {
     super(material, 'ChaoLookEnvironment', 210, { CHAO_LOOK_ENV: false, CHAO_LOOK_ADD: false }, true, false);
     this.doNotSerialize = true;
