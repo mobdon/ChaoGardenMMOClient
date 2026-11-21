@@ -126,7 +126,14 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
+    let ev = RIDER.get() == 0 && matches!(STEP.get(), Step::Live(ch) if ch == c.r[3]);
+    // ChaoMain queues the model draw past this call (no walker runs inside
+    // it, ev28), so the flag stays on for the frame while in a cutscene.
+    CHAO_DRAW.set(ev);
     rel_original(c, m, a, chao_display);
+    if ev && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+        eprintln!("chao-player ev: Chao drew {} nodes, posed {}", CHAO_NODE.get(), POSED.with_borrow(|p| p.len()));
+    }
 }
 
 /// The emotion ball's anchor follows the head from the previous frame, so on
@@ -255,6 +262,9 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
         CAPTURE.set(true);
         original(c, m, addr);
         CAPTURE.set(false);
+        if obj == EV_SONIC[0] {
+            SKEL.set(NODES.with_borrow(|n| n.clone()));
+        }
         let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
         if f % 60 == 0 {
             eprintln!("chao-player ev motion: frame {f} obj {obj:#x} nodes {}", NODES.with_borrow(|n| n.len()));
@@ -394,6 +404,109 @@ fn node_transform(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
+/// Steam Sonic's 62 nodes (sonicmdl.prs depth-first, the retarget's ids) ->
+/// the e0000 cutscene Sonic skeleton's 56 (0x812a24ec, depth-first), matched
+/// by parent structure and rest offsets (chao-player\ev25\steam62.txt vs
+/// ev24\skeleton.txt): legs z-0.283/-0.324 6-15 -> 20-28 and z+0.324 16-25
+/// -> 6-14 (Steam's extra ankle offset node shares its parent's), tail 26-30
+/// -> 15-19, spine 31-34 -> 29-32, arms z+ 35-42 -> 49-55 and z- 54-61 ->
+/// 33-39, head 43-53 -> 40-48. The event has no Steam node 2 (0.094 up): it
+/// uses node 2 (5.13 up, Steam 1) for both.
+const STEAM_TO_EV: [u8; 62] = [
+    0, 2, 2, 3, 4, 5, 20, 21, 22, 23, 24, 24, 25, 26, 27, 28, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15,
+    16, 17, 18, 19, 29, 30, 31, 32, 49, 50, 51, 52, 53, 54, 55, 55, 40, 41, 42, 43, 44, 43, 44, 45,
+    46, 47, 48, 33, 34, 35, 36, 37, 38, 39, 39,
+];
+
+thread_local! {
+    /// Set while the cutscene Chao draws: its node matrices come from the pose.
+    static CHAO_DRAW: Cell<bool> = const { Cell::new(false) };
+    static CHAO_NODE: Cell<usize> = const { Cell::new(0) };
+    static CHAO_FRAME: Cell<u64> = const { Cell::new(u64::MAX) };
+    /// base * Chao placement, as its display left it before the first node.
+    static CHAO_PLACE: Cell<[[f32; 4]; 3]> = const { Cell::new([[0.0; 4]; 3]) };
+    static CHAO_REST: std::cell::RefCell<Option<crate::chao_retarget::ChaoRest>> = const { std::cell::RefCell::new(None) };
+    /// Retargeted Chao node worlds (Chao model space) for this frame.
+    static POSED: std::cell::RefCell<Vec<crate::chao_retarget::Xf>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Sonic's cutscene skeleton (56 world matrices) from this frame's walk.
+    static SKEL: std::cell::RefCell<Vec<[[f32; 4]; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// ChaoMain's per-node transform (r3 AL_OBJECT, same first 13 words as an
+/// NJS_OBJECT), called by its node walker (.text 0xAA0) right after the push.
+const AL_NODE_TRANSFORM: u32 = 0x1454;
+
+/// Debug: ChaoMain's recursive matrix-push walkers; log which run while the
+/// cutscene Chao displays (finding its node draw).
+const AL_WALKERS: [u32; 6] = [0xAA0, 0x13DC, 0x88CC, 0x2CB9C, 0x2DEA4, 0x5113C];
+macro_rules! walker_probe {
+    ($($n:ident = $i:expr),*) => {$(
+        fn $n(c: &mut Cpu, m: &mut Mem) {
+            if CHAO_DRAW.get() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+                eprintln!("chao-player ev: walker {:#x} r3 {:#x} r4 {:#x}", AL_WALKERS[$i], c.r[3], c.r[4]);
+            }
+            let a = rt::sec(m, 60, 1) + AL_WALKERS[$i];
+            rel_original(c, m, a, $n);
+        }
+    )*};
+}
+walker_probe!(w0 = 0, w1 = 1, w2 = 2, w3 = 3, w4 = 4, w5 = 5);
+
+fn chao_node(c: &mut Cpu, m: &mut Mem) {
+    if !CHAO_DRAW.get() {
+        let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
+        return rel_original(c, m, a, chao_node);
+    }
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if CHAO_FRAME.replace(f) != f {
+        CHAO_NODE.set(0);
+    }
+    let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    if i == 0 {
+        CHAO_PLACE.set(mtx(m, cur_ptr));
+        let root = c.r[3];
+        CHAO_REST.with_borrow_mut(|r| {
+            if r.is_none() {
+                let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]]);
+                eprintln!("chao-player ev: Chao rest model {root:#x} nodes {}", rest.nodes.len());
+                *r = Some(rest);
+            }
+        });
+        pose_chao();
+    }
+    let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
+    rel_original(c, m, a, chao_node);
+    let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) else { return };
+    let p = CHAO_PLACE.get();
+    // current = place * [r t]
+    for row in 0..3 {
+        for col in 0..4 {
+            let v: f32 = if col < 3 {
+                (0..3).map(|k| p[row][k] * r[k][col]).sum()
+            } else {
+                (0..3).map(|k| p[row][k] * t[k]).sum::<f32>() + p[row][3]
+            };
+            m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
+        }
+    }
+}
+
+/// Retarget Sonic's skeleton (made model-space by his root) onto the Chao.
+fn pose_chao() {
+    let sonic: Vec<[[f32; 4]; 3]> = SKEL.with_borrow(|s| {
+        if s.len() < 56 {
+            return vec![];
+        }
+        STEAM_TO_EV.iter().map(|&e| inv_mul(&s[0], &s[e as usize])).collect()
+    });
+    let posed = CHAO_REST.with_borrow(|r| match (r, sonic.len()) {
+        (Some(rest), 62) => rest.pose(&sonic, false, 0.0),
+        _ => vec![],
+    });
+    POSED.set(posed);
+}
+
 fn call(c: &mut Cpu, m: &mut Mem, f: u32, args: &[u32]) -> u32 {
     crate::guest_call(c, m, f, args)
 }
@@ -521,6 +634,10 @@ fn setup_and_create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     c.rt.set_override(s1 + AL_BEHAVIOR_CONTROL, behavior);
     c.rt.set_override(s1 + CHAO_DISPLAY, chao_display);
     c.rt.set_override(s1 + CHAO_EXEC, chao_exec);
+    c.rt.set_override(s1 + AL_NODE_TRANSFORM, chao_node);
+    for (a, f) in AL_WALKERS.iter().zip([w0 as rt::Func, w1, w2, w3, w4, w5]) {
+        c.rt.set_override(s1 + a, f);
+    }
     // In a cutscene (no rider) the bank load is skipped: suspected of the
     // ev15 stall right after Live. shortcut: no Chao voice in the intro yet.
     if RIDER.get() != 0 || EV_SPOT.get().is_none() {
