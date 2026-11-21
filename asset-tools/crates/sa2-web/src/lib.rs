@@ -54,6 +54,61 @@ fn split(job: &[u8]) -> Option<(&[u8], &[u8])> {
     Some((fifo_bytes, ram_bytes))
 }
 
+/// Frames the decoder finished and the screen hasn't taken yet, with when
+/// each was decoded. Both live in one shared memory (two workers run this
+/// module), so the decoder hands over whole frames.
+static READY: std::sync::Mutex<Vec<(Frame, f64)>> = std::sync::Mutex::new(Vec::new());
+
+fn ready() -> std::sync::MutexGuard<'static, Vec<(Frame, f64)>> {
+    READY.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Decodes the game's GX jobs, on a worker of its own: decoding a frame
+/// takes as long as drawing several, so the screen's worker only draws.
+#[wasm_bindgen]
+pub struct Decoder {
+    fifo: GxFifo,
+    /// Where the page copies each job (kept: one allocation, not one a frame).
+    job: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl Decoder {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Decoder {
+        Decoder {
+            fifo: GxFifo::default(),
+            job: Vec::new(),
+        }
+    }
+
+    /// Room for a job of `len` bytes: the page copies it to this address in
+    /// this module's memory, then calls [`Self::decode`].
+    pub fn job_at(&mut self, len: usize) -> *mut u8 {
+        self.job.resize(len, 0);
+        self.job.as_mut_ptr()
+    }
+
+    /// Decode the job copied in (at `now_ms`, `performance.now()`), widened
+    /// to `aspect` (width / height; 0 keeps 4:3), for the screen to take.
+    pub fn decode(&mut self, now_ms: f64, aspect: f32) -> Result<(), JsValue> {
+        let (fifo, ram) = split(&self.job).ok_or_else(|| err("not a GX job"))?;
+        self.fifo.write(fifo, &Ram(ram));
+        let mut f = self.fifo.gx.take_frame();
+        sa2_gx::widescreen::clamp_hud_textures(&mut f);
+        if aspect > 0.0 {
+            sa2_gx::widescreen::widen(&mut f, aspect);
+        }
+        ready().push((f, now_ms));
+        Ok(())
+    }
+}
+
+impl Default for Decoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 #[wasm_bindgen]
 impl Screen {
     /// WebGPU when the browser has it, else WebGL2.
@@ -157,6 +212,24 @@ impl Screen {
         self.last = Some(f);
         self.arrived_ms = now_ms;
         Ok(())
+    }
+
+    /// Take the frames the decoder finished: every texture they upload,
+    /// and the newest to draw (blended from the one before when `blend`).
+    /// How many there were.
+    pub fn take(&mut self, blend: bool) -> u32 {
+        let frames = std::mem::take(&mut *ready());
+        let n = frames.len() as u32;
+        for (mut f, at) in frames {
+            for u in f.uploads.drain(..) {
+                self.renderer.replace_texture(u.id, &u.levels);
+            }
+            let prev = self.last.take();
+            self.tween = prev.filter(|_| blend).map(|p| Tween::new(&p, &f));
+            self.last = Some(f);
+            self.arrived_ms = at;
+        }
+        n
     }
 
     /// Draw the newest frame at the canvas's size now.

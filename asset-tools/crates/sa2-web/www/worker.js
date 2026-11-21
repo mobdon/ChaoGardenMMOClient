@@ -6,8 +6,8 @@
 
 const E = { SUCCESS: 0, BADF: 8, INVAL: 28, IO: 29, ISDIR: 31, NOENT: 44, NOSYS: 52, NOTDIR: 54, SPIPE: 70 };
 const FT = { DIR: 3, FILE: 4, CHAR: 2 };
-const BLOCK = 1 << 20; // file read cache block
-const MAX_BLOCKS = 16;
+const BLOCK = 2 << 20; // file read cache block (fewer round trips to the server)
+const MAX_BLOCKS = 12;
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
 const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12;
@@ -120,6 +120,7 @@ function gxWrite(bytes) {
       if (gx.need > 0) {
         c[3 + gx.slot] = gx.need;
         Atomics.store(c, 1 + gx.slot, 1);
+        Atomics.notify(c, 1 + gx.slot); // wake decode.js
         Atomics.store(c, 5, gx.slot ^ 1);
       }
       gx.slot = -1;
@@ -454,25 +455,30 @@ function threadSpawn(arg) {
   return t;
 }
 
+// Two steps, so the page can keep threads ready: "init" loads the game build
+// into this worker (the slow part), "run" starts a thread in it.
 onmessage = (ev) => {
   const m = ev.data;
-  mem = m.memory;
-  sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
-  tid = m.tid;
-  args = m.args;
-  env = m.env;
-  nextFd = 100 + tid * 1000;
-  const imports = { env: { memory: mem }, wasi_snapshot_preview1: {}, wasi: { 'thread-spawn': threadSpawn } };
-  for (const imp of WebAssembly.Module.imports(m.module)) {
-    if (imp.module === 'wasi_snapshot_preview1') {
-      imports.wasi_snapshot_preview1[imp.name] = wasi[imp.name] ? guarded(wasi[imp.name]) : ((...a) => {
-        postMessage({ log: `wasi: ${imp.name} isn't supported`, err: true, tid });
-        return E.NOSYS;
-      });
+  if (m.init) {
+    mem = m.memory;
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
+    args = m.args;
+    env = m.env;
+    const imports = { env: { memory: mem }, wasi_snapshot_preview1: {}, wasi: { 'thread-spawn': threadSpawn } };
+    for (const imp of WebAssembly.Module.imports(m.module)) {
+      if (imp.module === 'wasi_snapshot_preview1') {
+        imports.wasi_snapshot_preview1[imp.name] = wasi[imp.name] ? guarded(wasi[imp.name]) : ((...a) => {
+          postMessage({ log: `wasi: ${imp.name} isn't supported`, err: true, tid });
+          return E.NOSYS;
+        });
+      }
     }
+    views();
+    instance = new WebAssembly.Instance(m.module, imports);
+    return;
   }
-  views();
-  instance = new WebAssembly.Instance(m.module, imports);
+  tid = m.tid;
+  nextFd = 100 + tid * 1000;
   try {
     if (tid === 0) instance.exports._start();
     else instance.exports.wasi_thread_start(tid, m.arg);
