@@ -22,14 +22,29 @@ reads the player's own folders.
 ## Build
 
 The game build rebuilds std with unwinding, which the game's threads use to
-end, so it needs nightly with `rust-src` and the `wasm32-wasip1-threads`
-target:
+end, and uses wasm SIMD (a steady 60 in Iron Gate; 45-53 without), so it
+needs nightly with `rust-src` and the `wasm32-wasip1-threads` target. The
+generated `sa2-host` crate's `.cargo/config.toml`:
+
+```toml
+[build]
+target = "wasm32-wasip1-threads"
+
+[unstable]
+build-std = ["std", "panic_unwind"]
+
+[target.wasm32-wasip1-threads]
+rustflags = ["-C", "panic=unwind", "-C", "target-feature=+exception-handling,+simd128",
+             "-C", "link-arg=--max-memory=1073741824", "-C", "link-arg=--initial-memory=67108864"]
+```
+
+The page's module runs on two workers sharing one memory (render.js draws,
+decode.js decodes), so it is built with wasm threads too (flags in this
+crate's `.cargo/config.toml`):
 
 ```powershell
-# in the generated sa2-host crate, with this crate's .cargo/config.toml settings
-cargo +nightly build --release
-# the page's renderer
-cargo build --release --target wasm32-unknown-unknown
+cargo +nightly build --release   # in the sa2-host crate
+cargo +nightly build --release --target wasm32-unknown-unknown -Zbuild-std=std,panic_abort
 wasm-bindgen --target web --out-dir www/pkg target/wasm32-unknown-unknown/release/sa2_web.wasm
 ```
 
