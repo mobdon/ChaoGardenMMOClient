@@ -49,6 +49,10 @@ async function hatchEgg(egg, name) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
   saveSlots.record(data.token, data.player, undefined, sessionCard);
+  // After naming, the egg hatches as the new Chao's intro, under the inventory.
+  const host = document.createElement('div'); host.className = 'hatch-scene';
+  $('#garden-care-panel').after(host);
+  await import('./hatch-scene.js').then(m => m.playHatchScene(host)).finally(() => host.remove());
 }
 const breeding = createBreedingMenu({ root: $('#breeding-panel'),
   playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)), send: message => {
