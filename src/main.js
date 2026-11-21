@@ -7,6 +7,7 @@ import { createStageSelect } from './stages.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createGardenCare } from './garden-care.js';
+import { createBreedingMenu } from './breeding-menu.js';
 import { INTERACTION_ANCHORS } from '../shared/constants.js';
 
 const $ = (selector) => document.querySelector(selector);
@@ -20,6 +21,7 @@ let socket;
 let snapshot;
 let player;
 let sessionToken = localStorage.getItem(tokenKey);
+let sessionCard = null; // the memory card code, when this browser has it
 let reconnectTimer;
 let currentPanel = 'world';
 let setup;
@@ -37,7 +39,35 @@ const audio = createGameAudio($('#audio-toggle'), $('#garden'), {
 const gardenCare = createGardenCare({ root: $('#garden-care-panel'), send: message => {
   if (socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(message)); return true;
+}, hatch: hatchEgg });
+// An egg (carried {itemId}, or bred in the nest {eggId}) hatches into a new slot on this memory card.
+async function hatchEgg(egg, name) {
+  // The egg hatches into a new slot on this memory card; this Chao keeps playing.
+  if (!sessionCard) throw new Error('Insert your memory card first to hatch an egg.');
+  const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, card: sessionCard, egg: { from: sessionToken, ...egg } }) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
+  saveSlots.record(data.token, data.player, undefined, sessionCard);
+  // After naming, the egg hatches as the new Chao's intro, under the inventory.
+  const host = document.createElement('div'); host.className = 'hatch-scene';
+  $('#garden-care-panel').after(host);
+  await import('./hatch-scene.js').then(m => m.playHatchScene(host)).finally(() => host.remove());
+}
+const breeding = createBreedingMenu({ root: $('#breeding-panel'),
+  playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)), send: message => {
+  if (socket?.readyState !== WebSocket.OPEN) return false;
+  socket.send(JSON.stringify(message)); return true;
+}, statRows: (stats, names) => {
+  // The partner in the Doctor's own stat window.
+  const list = document.createElement('div'); list.className = 'breeding-stats';
+  for (const name of names) { const row = createStatRow(name); updateStatRow(row, name, stats[name] || {}); list.append(row); }
+  return list;
 } });
+$('#breeding-open').addEventListener('click', () => {
+  const open = $('#breeding-panel').hidden;
+  $('#breeding-panel').hidden = !open; $('#breeding-open').setAttribute('aria-pressed', String(open));
+});
 function toggleCare(open = $('#garden-care-panel').hidden) {
   $('#garden-care-panel').hidden = !open;
   $('#care-open').setAttribute('aria-pressed', String(open));
@@ -119,7 +149,7 @@ function updatePaused() { garden?.setPaused(saving || $('#school-dialog').open |
 
 function rememberChao(savedAt) {
   if (!player || !sessionToken) return;
-  try { saveSlots.record(sessionToken, player, savedAt); }
+  try { saveSlots.record(sessionToken, player, savedAt, sessionCard); }
   catch {
     if (!storageWarning) toast('This browser could not remember your Chao slot. Keep this session open.', 'error');
     storageWarning = true;
@@ -127,11 +157,24 @@ function rememberChao(savedAt) {
   lastSlotUpdate = Date.now();
 }
 
+// The slot's memory card on the server: a look only, it never checks the save out.
+async function showCard(line, token) {
+  try {
+    const response = await fetch('/api/game-save/status', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    if (!response.ok) return;
+    const card = await response.json();
+    line.textContent = card.inGame ? 'MEMORY CARD · IN THE GAME NOW'
+      : card.savedAt ? `MEMORY CARD · GAME SAVE ${new Date(card.savedAt).toLocaleString()}`
+      : 'MEMORY CARD · EMPTY UNTIL YOUR FIRST CHAO WORLD SAVE';
+  } catch { /* No server reachable: the slot shows no card line. */ }
+}
+
 function showTitle() {
   const container = $('#save-slots');
   container.replaceChildren();
   let slots = [];
   try { slots = saveSlots.list(); } catch { /* Storage may be unavailable in private browser settings. */ }
+  const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
     const icon = document.createElement('span'); icon.className = 'save-slot-icon'; icon.textContent = slot.admin ? '✦' : '◉';
@@ -142,10 +185,22 @@ function showTitle() {
     info.textContent = slot.form ? `${form} ${slot.form === 'chaos' ? 'CHAOS CHAO' : 'CHAO'} · ${slot.rings ?? 0} RINGS${slot.admin ? ' · ADMIN' : ''}` : 'Resume your existing server save';
     if (slot.savedAt) { const saved = document.createElement('small'); saved.textContent = `Saved ${new Date(slot.savedAt).toLocaleString()}`; meta.append(name, info, saved); }
     else meta.append(name, info);
+    const card = document.createElement('small'); card.className = 'save-slot-card'; meta.append(card);
+    void showCard(card, slot.token);
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
     button.append(icon, meta, arrow);
-    button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token));
-    container.append(button);
+    button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
+    const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
+    if (shownCards.has(cardCode)) { container.append(button); continue; }
+    shownCards.add(cardCode);
+    const code = document.createElement('details'); code.className = 'card-code';
+    const summary = document.createElement('summary'); summary.textContent = 'MEMORY CARD CODE';
+    const value = document.createElement('code'); value.textContent = cardCode.match(/.{4}/g).join(' ');
+    const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy';
+    copy.addEventListener('click', () => void navigator.clipboard?.writeText(cardCode).then(() => { copy.textContent = 'Copied'; }, () => {}));
+    const warn = document.createElement('small'); warn.textContent = 'Keep this private. Anyone with this code owns every Chao on this card. Insert it on another browser to bring them all back.';
+    code.append(summary, value, copy, warn);
+    container.append(button, code);
   }
   if (!slots.length) {
     const empty = document.createElement('p'); empty.className = 'save-empty'; empty.textContent = 'A new story is waiting. Name your first Chao below.'; container.append(empty);
@@ -224,7 +279,8 @@ function render(next) {
     if (takingControl) $('#garden').focus({ preventScroll: true });
   }
   updateWatchButton();
-  gardenCare.update(next.care, player, { connected: socket?.readyState === WebSocket.OPEN, serverTime: next.serverTime });
+  gardenCare.update(next.care, player, { connected: socket?.readyState === WebSocket.OPEN, serverTime: next.serverTime, nest: next.life?.nest || [] });
+  breeding.update(next);
   if (Date.now() - lastSlotUpdate > 10000) rememberChao();
   $('#garden').dataset.playerX = player.x.toFixed(3);
   $('#garden').dataset.playerZ = player.z.toFixed(3);
@@ -331,6 +387,7 @@ function connect(token) {
       }
       if (message.kind === 'mech-shot') $('#garden').dataset.mechShots = String(Number($('#garden').dataset.mechShots || 0) + 1);
       gardenCare.handleEvent(message);
+      breeding.handleEvent(message);
       garden?.handleEvent?.(message);
     }
   };
@@ -338,22 +395,25 @@ function connect(token) {
     connected(false);
     pendingSave?.reject(new Error('The connection closed before the save was confirmed.'));
     if (event.code === 1008) { toast('The connection was paused. Reload to rejoin.', 'error'); return; }
+    // Another Chao from this memory card was selected; this one went back to the card.
+    if (event.code === 4001) { toast(event.reason || 'Another Chao from this memory card is out now.', 'info'); showTitle(); return; }
     reconnectTimer = setTimeout(() => connect(token), 2000);
   };
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken) {
+async function join(name, token = sessionToken, card = null) {
   if (joining) return;
   joining = true;
   $('#join-button').disabled = true;
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
   $('#join-error').textContent = '';
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token }) });
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}) }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
+    sessionCard = data.card || card;
     player = data.player;
     rememberChao();
     welcome.close();
@@ -361,11 +421,33 @@ async function join(name, token = sessionToken) {
     updatePaused();
   } catch (error) {
     if (!welcome.open) welcome.showModal();
-    $('#join-error').textContent = `${error.message} Check that npm run dev is running.`;
+    $('#join-error').textContent = `${error.message} The Chao server may be down. Try again in a moment.`;
   } finally { joining = false; $('#join-button').disabled = false; document.querySelectorAll('.save-slot').forEach(button => { button.disabled = false; }); }
 }
 
-$('#join-form').addEventListener('submit', (event) => { event.preventDefault(); void join($('#chao-name').value, null); });
+$('#card-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const code = $('#card-code').value.replace(/\s+/g, '').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(code)) { $('#join-error').textContent = 'That memory card code isn\u2019t complete. It has 64 letters and numbers.'; return; }
+  void insertCard(code);
+});
+
+// Inserting a card brings every Chao on it into this browser's slots.
+async function insertCard(code) {
+  try {
+    const response = await fetch('/api/card', { headers: { Authorization: `Bearer ${code}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Memory card was not found.');
+    for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, code);
+    $('#card-code').value = ''; $('#join-error').textContent = '';
+    showTitle();
+  } catch (error) { $('#join-error').textContent = error.message; }
+}
+$('#join-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  let newest; try { newest = saveSlots.list()[0]; } catch { /* no slots */ }
+  void join($('#chao-name').value, null, newest && (newest.card || newest.token));
+});
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 showTitle();
 
@@ -428,12 +510,11 @@ async function loadStatus() {
     if (!response.ok) throw new Error('Bridge unavailable');
     const data = await response.json();
     setup = data.setup;
-    $('#install-status').textContent = setup.found ? 'Steam SA2 files found · BATTLE required' : 'Local SA2 installation not found';
+    $('#install-status').textContent = setup.found ? 'SA2 files found' : 'Local SA2 installation not found';
     $('#install-status-dot').className = `status-dot ${setup.found ? 'connected' : 'error'}`;
     renderSetup(setup);
   } catch {
-    $('#install-status').textContent = 'Start the local bridge with npm run dev';
-    $('#install-status-dot').className = 'status-dot error';
+    $('.welcome-requirements').hidden = true; // only the local dev bridge reports install files
     $('#setup-content').textContent = 'The local bridge is unavailable. Start it with npm run dev.';
   }
 }

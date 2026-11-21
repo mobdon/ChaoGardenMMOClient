@@ -14,7 +14,7 @@ const imports = path.resolve('.local/imports');
 await mkdir(output, { recursive: true });
 await mkdir(imports, { recursive: true });
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const archives = ['al_tex_common', 'al_tex_chao', 'al_tex_ent_common_en', 'al_tex_odekake_menu_en', 'al_tex_cave_menu_en', 'al_common_tex'];
+const archives = ['al_tex_common', 'al_tex_chao', 'al_tex_ent_common_en', 'al_tex_odekake_menu_en', 'al_tex_cave_menu_en', 'al_common_tex', 'al_panel', 'al_icon'];
 const report = {
   generatedAt: new Date().toISOString(),
   tool: 'X-Hax SA Tools release 786 ArchiveTool -png; original installed archives read only',
@@ -64,12 +64,26 @@ const selectedSprites = [
     evidence: 'Native ASCII and extended glyphs. A common font asset, not a complete stat window.' },
   { archive: 'al_tex_ent_common_en', filename: 'add_parameter_race_en.png', alias: 'chao-race-parameter.png', role: 'Original English race-entry parameter atlas',
     evidence: 'Visible Swim/Fly/Run/Power/Stamina, type/alignment labels, digits, Lv. and green meter segments. Race-entry context, not the garden stat panel.' },
+  // archive null: taken from whichever extracted archive holds it.
+  { archive: null, filename: 'add_select_race_en.png', alias: 'chao-select-window.png', role: 'Original English Chao Select atlas',
+    evidence: 'Chao Select window at 104,4 40x60, pixel-matched to the 640x480 Chao Select screen; drawn as the carried-items window.' },
 ];
+// al_panel: the game's own 32x32 panels for the 21 animals and 4 Chaos Drives,
+// in native item order (care catalog ids 0-24), each checked by eye.
+const panels = ['pen', 'goma', 'rako', 'usa', 'chit', 'ino', 'kuma', 'tora', 'gori', 'kuja', 'oum', 'kon', 'ska',
+  'shep', 'ara', 'han', 'bone', 'batman', 'dra', 'uni', 'phen', 'cdr_y', 'cdr_g', 'cdr_r', 'cdr_p'];
+for (const [id, name] of panels.entries()) selectedSprites.push({ archive: 'al_panel', filename: `panel_${name}.png`,
+  alias: `item-panel-${id}.png`, role: `Original inventory panel for native item ${id}`, evidence: 'al_panel entry, matched by eye to its animal or drive.' });
+// AL_IconHeart sets texture 3 of the AL_ICON list (al_icon.prs entry 3), confirmed in code.
+selectedSprites.push({ archive: 'al_icon', filename: 'al_icon05.png', alias: 'chao-icon-heart.png', role: 'Original Chao heart icon',
+  evidence: 'AL_IconHeart texture number 3; AL_IconDrawSub binds AL_ICON; entry 3 is al_icon05.' });
+for (const kind of ['fruit', 'egg']) selectedSprites.push({ archive: 'al_tex_common', filename: `panel_${kind}.png`,
+  alias: `item-panel-${kind}.png`, role: `Original ${kind} panel`, evidence: `al_tex_common panel_${kind}, found beside the al_panel set.` });
 for (const { archive, filename, alias, role, evidence } of selectedSprites) {
-  const source = report.sources.find(source => source.relativePath.endsWith(`/${archive}.prs`));
+  const source = report.sources.find(source => (archive === null || source.relativePath.endsWith(`/${archive}.prs`)) && source.sprites.some(sprite => sprite.filename === filename));
   const sprite = source?.sprites.find(sprite => sprite.filename === filename);
-  if (!sprite) throw new Error(`Selected native sprite missing: ${archive}/${filename}`);
-  await copyFile(path.join(output, archive, filename), path.join(imports, alias));
+  if (!sprite) throw new Error(`Selected native sprite missing: ${archive ?? 'any archive'}/${filename}`);
+  await copyFile(path.join(output, path.basename(source.relativePath, '.prs'), filename), path.join(imports, alias));
   report.selected.push({ archive: source.relativePath, archiveSha256: source.sha256, ...sprite, alias, role, evidence });
 }
 report.statPanelRegions = {

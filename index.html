@@ -20,6 +20,7 @@
           <button id="school-open" hidden>Kindergarten</button>
           <button class="nav-button" id="shop-open">Chao shop <span class="key-hint">B</span></button>
           <button class="nav-button" id="care-open" aria-pressed="false">Garden care <span class="key-hint">G</span></button>
+          <button class="nav-button" id="breeding-open" aria-pressed="false">Breeding</button>
           <button class="nav-button" id="stages-open">Stage select</button>
           <button class="nav-button" id="watch-toggle" type="button" aria-pressed="false" disabled>Watch off</button>
           <button class="nav-button" id="tiny-open">Tiny Garden</button>
@@ -112,9 +113,10 @@
           <h2 id="title-heading">A LITTLE<br>MORE <em>CHAOS.</em></h2>
           <p class="title-intro">Your garden. Your rivals. Your legend.</p>
           <section class="save-select" aria-labelledby="save-select-heading"><div class="title-section-label"><h3 id="save-select-heading">CONTINUE YOUR STORY</h3><span>LOCAL SLOTS</span></div><div id="save-slots"></div></section>
-          <details class="new-chao"><summary>＋ START WITH A NEW CHAO</summary><form id="join-form"><label for="chao-name">YOUR CHAO’S NAME</label><div><input id="chao-name" name="name" maxlength="20" autocomplete="nickname" value="Chao" required/><button id="join-button" class="primary-button" type="submit">Let’s go ↗</button></div><small>Your existing Chao stays in its save slot.</small></form></details>
+          <details class="new-chao"><summary>＋ START WITH A NEW CHAO</summary><form id="join-form"><label for="chao-name">YOUR CHAO’S NAME</label><div><input id="chao-name" name="name" maxlength="7" autocomplete="nickname" value="Chao" required/><button id="join-button" class="primary-button" type="submit">Let’s go ↗</button></div><small>Goes on your memory card with your other Chao, up to 8.</small></form></details>
+          <details class="new-chao insert-card"><summary>▣ INSERT A MEMORY CARD</summary><form id="card-form"><label for="card-code">MEMORY CARD CODE</label><div><input id="card-code" name="code" autocomplete="off" spellcheck="false" placeholder="xxxx xxxx xxxx …" required/><button class="primary-button" type="submit">Insert ↗</button></div><small>Brings back every Chao on your card from another browser or device.</small></form></details>
           <p id="join-error" role="alert"></p>
-          <div class="title-footer"><a class="title-tiny-link" href="/tiny.html">TAKE THE LITTLE ADVENTURE WITH YOU · TINY GARDEN ↗</a><div class="welcome-requirements"><span id="install-status-dot" class="status-dot"></span><span id="install-status">Checking local SA2 files…</span></div><small>Progress is saved by the game server. Slots remember this browser’s Chao.<br>Steam SA2 + BATTLE required for the intended game.</small></div>
+          <div class="title-footer"><a class="title-tiny-link" href="/tiny.html">TAKE THE LITTLE ADVENTURE WITH YOU · TINY GARDEN ↗</a><div class="welcome-requirements"><span id="install-status-dot" class="status-dot"></span><span id="install-status">Checking local SA2 files…</span></div><small>Progress is saved by the game server. Slots remember this browser’s Chao.<br>SA2 runs from your own Steam folder or GameCube disc.</small></div>
         </div>
       </dialog>
 
@@ -126,11 +128,12 @@
         <p class="fine-print">File discovery identifies content, and does not authenticate Steam ownership. BATTLE entitlement must be checked in Steam.</p>
       </dialog>
       <aside id="garden-care-panel" class="garden-care-panel" aria-label="Garden care" hidden></aside>
+      <aside id="breeding-panel" class="garden-care-panel" aria-label="Breeding" hidden></aside>
       <dialog id="shop-dialog" class="shop-dialog">
       <dialog id="school-dialog" class="shop-dialog">
       <div class="panel-heading"><span class="eyebrow">CHAO KINDERGARTEN</span><button class="close-button" id="school-close" aria-label="Leave Kindergarten">×</button></div>
       <h2>Health Center</h2><p id="school-report"></p>
-      <h3>Name your Chao</h3><form id="school-name-form"><label>Chao name <input id="school-name" maxlength="18" required></label> <button class="soft-button">Save name</button></form>
+      <h3>Name your Chao</h3><form id="school-name-form"><label>Chao name <input id="school-name" maxlength="7" required></label> <button class="soft-button">Save name</button></form>
       <hr><button class="soft-button" id="school-market">Visit the Black Market ↗</button>
     </dialog>
     <dialog id="shop-dialog" class="shop-dialog">

@@ -1,3 +1,4 @@
+import { canvasSize, drawInventory, loadInventoryArt, slotAt, SLOT } from './native-inventory.js';
 // Desktop garden care: renders the server's canonical care/garden snapshot and
 // submits bounded care intents. The server owns inventory, growth, fruit,
 // proximity, effects and animal parts; this module never computes them.
@@ -80,9 +81,8 @@ export function gardenCareView(care, player, { connected = false, serverTime } =
       const kind = careItemKind(id);
       const native = ['fruit', 'seed', 'egg', 'hat'].includes(kind);
       const enabled = kind === 'food' || (native ? care.catalog?.fruitsEnabled === true : care.catalog?.enabled === true);
-      // Eggs go down in a garden; hats are put down by the Chao. Seeds are planted.
-      const inGarden = ['garden', 'hero', 'dark'].includes(player?.zone);
-      const usable = kind === 'seed' ? false : kind === 'egg' ? inGarden : true;
+      // Eggs hatch into a new slot in the hub; hats are put down by the Chao. Seeds are planted.
+      const usable = kind === 'seed' ? false : kind === 'egg' ? player?.zone === 'hub' : true;
       return { id, kind, quantity, label: careItemLabel(id, care.catalog), mayUse: mayCare && (kind === 'egg' || cooldownReady) && enabled && usable };
     })
     .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id, 'en', { numeric: true }));
@@ -143,10 +143,24 @@ const reasons = {
   'nest-full': 'Your nest is full.', 'chao-wont-wear': 'Your Chao is not interested in hats.', 'already-wearing': 'Your Chao is already wearing a hat.',
 };
 
-export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID() }) {
+export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID(), hatch = async () => {} }) {
   if (!root) throw new TypeError('Garden care needs a panel root.');
   const document = root.ownerDocument;
-  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false;
+  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false, selected = 0, naming = null, nest = [];
+  const icons = new Map();
+  // The game's own 32x32 panels: one per animal and drive, one shared by all fruit and all eggs. Seeds and hats have none yet.
+  const panelFile = item => item.kind === 'animal' || item.kind === 'drive' ? `item-panel-${Number(item.id.slice(4))}.png`
+    : item.kind === 'fruit' || item.kind === 'egg' ? `item-panel-${item.kind}.png` : item.kind === 'bred-egg' ? 'item-panel-egg.png' : null;
+  const panelIcon = item => {
+    const file = panelFile(item);
+    if (!file || !globalThis.Image) return null;
+    if (!icons.has(file)) {
+      const entry = { image: new Image(), sharp: null };
+      entry.image.addEventListener('load', () => { entry.sharp = entry.image; });
+      entry.image.src = `/api/assets/${file}`; icons.set(file, entry);
+    }
+    return icons.get(file);
+  };
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -160,9 +174,64 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     if (send(request) === false) return;
     pending = request; feedback = ''; render();
   }
+  // The carried items in the Chao Select window: pick a slot, pick it again to use it.
+  function carriedWindow(items) {
+    selected = Math.min(selected, items.length - 1);
+    const size = canvasSize(items.length);
+    const box = el('div', undefined, 'garden-care-carried');
+    // Drawn at 2x; the window, icons and font scale by whole pixels.
+    const canvas = el('canvas'); canvas.width = size.width * 2; canvas.height = size.height * 2; canvas.setAttribute('aria-hidden', 'true');
+    Object.assign(canvas.style, { width: `${size.width}px`, height: `${size.height}px` });
+    box.append(canvas);
+    const entries = items.map(panelIcon);
+    const shown = items.map((item, n) => ({ ...item, icon: entries[n]?.sharp ?? null }));
+    // A picked egg asks for the new Chao's name in the message bar.
+    if (naming) shown[selected].label = naming.name || 'Name?';
+    const draw = () => loadInventoryArt(document).then(art => {
+      const ctx = art && canvas.getContext?.('2d'); if (!ctx) return;
+      ctx.setTransform(2, 0, 0, 2, 0, 0); drawInventory(ctx, art, shown, selected);
+    });
+    items.forEach((item, n) => {
+      const { x, y } = slotAt(n);
+      const use = item.kind === 'seed' ? null : item.kind === 'egg' ? 'place-egg' : item.kind === 'hat' ? 'give-hat' : 'consume';
+      const slot = el('button', undefined, 'garden-care-slot');
+      Object.assign(slot.style, { left: `${x}px`, top: `${y}px`, width: `${SLOT.width}px`, height: `${SLOT.height}px` });
+      slot.setAttribute('aria-label', `${item.label} x${item.quantity}`);
+      slot.setAttribute('aria-pressed', String(n === selected));
+      slot.disabled = !!pending;
+      slot.addEventListener('click', () => {
+        if (n !== selected) { selected = n; previous = ''; render(); return; }
+        if ((item.kind === 'egg' || item.kind === 'bred-egg') && !item.mayUse) { feedback = 'Eggs hatch in the hub.'; previous = ''; render(); return; }
+        if (item.kind === 'egg' || item.kind === 'bred-egg') { naming = { egg: item.kind === 'egg' ? { itemId: item.id } : { eggId: item.id }, name: '' }; previous = ''; render(); return; }
+        if (use && item.mayUse) submit({ kind: use, itemId: item.id });
+      });
+      entries[n]?.image.addEventListener?.('load', () => { shown[n].icon = entries[n].sharp; draw(); });
+      box.append(slot);
+    });
+    if (naming) {
+      const input = el('input', undefined, 'garden-care-name');
+      input.maxLength = 7; // the game's name length
+      input.value = naming.name;
+      input.setAttribute('aria-label', 'Name your new Chao');
+      Object.assign(input.style, { top: `${size.window}px`, height: `${size.height - size.window}px` });
+      input.addEventListener('input', () => { naming.name = input.value; shown[selected].label = input.value || 'Name?'; draw(); });
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { naming = null; previous = ''; render(); }
+        if (event.key !== 'Enter' || !naming.name.trim()) return;
+        const { egg, name } = naming; naming = null;
+        feedback = 'Hatching…'; previous = ''; render();
+        hatch(egg, name.trim()).then(() => { feedback = `${name.trim()} hatched into a new slot on your memory card.`; },
+          error => { feedback = error.message; }).finally(() => { previous = ''; render(); });
+      });
+      box.append(input);
+      globalThis.queueMicrotask?.(() => input.focus?.());
+    }
+    draw();
+    return box;
+  }
   function render() {
     const view = gardenCareView(care, player, { connected, serverTime });
-    const signature = JSON.stringify([view, pending?.requestId, feedback]);
+    const signature = JSON.stringify([view, nest, pending?.requestId, feedback]);
     if (signature === previous) return;
     previous = signature;
     root.replaceChildren(el('h2', 'Garden care'));
@@ -204,22 +273,11 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       root.append(shop);
     }
     root.append(el('h3', 'Carried'));
-    if (!view.items.length) root.append(el('p', 'Nothing carried. Shake trees for fruit or find animals in missions.', 'garden-care-note'));
-    const list = el('ul', undefined, 'garden-care-items');
-    for (const item of view.items) {
-      const row = el('li');
-      row.append(el('span', `${item.label} ×${item.quantity}`));
-      if (item.kind !== 'seed') {
-        const verb = item.kind === 'egg' ? 'Put down' : item.kind === 'hat' || item.kind === 'animal' || item.kind === 'drive' ? 'Give' : 'Feed';
-        const use = el('button', verb, 'small-button');
-        use.disabled = !item.mayUse || !!pending;
-        const intent = item.kind === 'egg' ? 'place-egg' : item.kind === 'hat' ? 'give-hat' : 'consume';
-        use.addEventListener('click', () => submit({ kind: intent, itemId: item.id }));
-        row.append(use);
-      }
-      list.append(row);
-    }
-    root.append(list);
+    // Bred eggs carry their parents' genes (AL_CreateChildGene); they wait here to be hatched.
+    const carried = [...view.items, ...nest.map(egg => ({ id: egg.id, kind: 'bred-egg', quantity: 1, mayUse: player?.zone === 'hub',
+      label: `Egg of ${egg.motherName || '?'} and ${egg.fatherName || '?'}` }))];
+    if (!carried.length) root.append(el('p', 'Nothing carried. Shake trees for fruit or find animals in missions.', 'garden-care-note'));
+    else root.append(carriedWindow(carried));
     if (view.hat) root.append(el('p', `Wearing: ${view.hat}`, 'garden-care-note'));
     if (view.parts.length) {
       root.append(el('h3', 'Animal parts'));
@@ -235,6 +293,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     update(nextCare, nextPlayer, options = {}) {
       const reconnected = !connected && !!options.connected;
       care = nextCare; player = nextPlayer; connected = !!options.connected; serverTime = options.serverTime;
+      nest = options.nest ?? nest;
       // A lost acknowledgement is retried with the identical request, never a new one.
       if (reconnected && pending) send(pending);
       // Entering the Black Market asks the server to restock if its timer ran out.

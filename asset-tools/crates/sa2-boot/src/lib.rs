@@ -9,12 +9,15 @@
 
 pub mod audio;
 pub mod card;
+pub mod card_pack;
 pub mod clock;
 pub mod dvd;
 #[cfg(not(target_os = "wasi"))]
 pub mod gamepad;
 pub mod gx;
 pub mod io;
+#[cfg(not(target_os = "wasi"))]
+pub mod mmo;
 pub mod pad;
 pub mod prof;
 #[cfg(not(target_os = "wasi"))]

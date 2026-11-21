@@ -24,3 +24,5 @@ png = "0.18.1"
 winit = "0.30.12"
 cpal = "0.15.3"
 gilrs = "0.11"
+# The MMO server memory card (mmo.rs).
+ureq = "2.12"
