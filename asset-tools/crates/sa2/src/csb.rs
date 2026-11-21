@@ -239,6 +239,8 @@ pub struct Synth {
     pub name: String,
     /// Waveform (`SOUND_ELEMENT` name) or another synth this one plays.
     pub link: String,
+    /// The `volume` column (1000 in most rows).
+    pub volume: u64,
 }
 
 /// One stored waveform segment, as an absolute byte range in the CSB file.
@@ -315,6 +317,7 @@ pub fn read(input: &[u8]) -> Result<Bank> {
             synths.push(Synth {
                 name: t.text(r, "synname")?,
                 link: t.text(r, "lnkname")?,
+                volume: t.unsigned(r, "volume")?,
             });
         }
     }

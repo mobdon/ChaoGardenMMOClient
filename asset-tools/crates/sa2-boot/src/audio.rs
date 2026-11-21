@@ -166,7 +166,8 @@ fn ax_frame(c: &mut Cpu, m: &mut Mem) {
     arq_done(c, m);
     guest_call(c, m, AX_SYNC_PBS, &[0]);
     let pbs = guest_call(c, m, AX_GET_PBS, &[]);
-    let mix = mix_voices(m, pbs);
+    let mut mix = mix_voices(m, pbs);
+    crate::steam_sound::mix(&mut mix);
     guest_call(c, m, AX_SERVICE_CALLBACK_STACK, &[]);
     let cb = USER_CB.get();
     if cb != 0 {

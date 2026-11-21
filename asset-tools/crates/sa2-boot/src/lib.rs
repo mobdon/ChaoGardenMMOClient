@@ -23,6 +23,7 @@ pub mod prof;
 pub mod serve;
 #[cfg(not(target_os = "wasi"))]
 pub mod snap;
+pub mod steam_sound;
 pub mod vi;
 pub mod wide;
 #[cfg(not(target_os = "wasi"))]
@@ -38,6 +39,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     vi::install(c, m);
     pad::install(c, m);
     audio::install(c, m);
+    steam_sound::install(c, m);
     clock::install(c, m);
     card::install(c, m);
     wide::install(c, m);
