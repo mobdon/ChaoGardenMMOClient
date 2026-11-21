@@ -14,8 +14,9 @@ const DISC_BLOCK = 128 << 10;
 const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
-const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12;
-const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD };
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD };
+const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_CARD;
 
 let mem, sh, tid, args, env, instance;
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -185,6 +186,55 @@ function audioWrite(bytes) {
   Atomics.store(c, 6, w);
 }
 
+// ---- the MMO server memory card (sa2-boot card.rs, /dev/card) -------------
+// Reading checks the whole card out of the server (GET /api/game-save); a
+// write gathers the packed card and sync sends it (PUT). The lease and the
+// revision sit in memory every game thread shares, as the page renews the
+// lease from there: [0..8) revision, [8..) lease id.
+const card = { read: null, pos: 0, out: [] };
+function cardToken() {
+  const line = (env || []).find((e) => e.startsWith('SA2_MMO_TOKEN='));
+  return line ? line.slice('SA2_MMO_TOKEN='.length) : '';
+}
+function cardRequest(method, body) {
+  const r = new XMLHttpRequest();
+  r.open(method, '/api/game-save', false);
+  r.responseType = 'arraybuffer';
+  r.setRequestHeader('Authorization', `Bearer ${cardToken()}`);
+  if (method === 'PUT') {
+    const lease = dec.decode(sh.card.slice(8)).replace(/\0+$/, '');
+    r.setRequestHeader('x-save-lease', lease);
+    r.setRequestHeader('x-save-revision', String(new DataView(sh.card.buffer).getBigUint64(0, true)));
+  }
+  r.send(body);
+  return r;
+}
+function cardCheckOut() {
+  const r = cardRequest('GET');
+  if (r.status !== 200) return false;
+  const lease = enc.encode(r.getResponseHeader('x-save-lease') || '');
+  new DataView(sh.card.buffer).setBigUint64(0, BigInt(r.getResponseHeader('x-save-revision') || 0), true);
+  sh.card.fill(0, 8);
+  sh.card.set(lease.subarray(0, sh.card.length - 8), 8);
+  card.read = new Uint8Array(r.response);
+  card.pos = 0;
+  return true;
+}
+function cardSend() {
+  const all = new Uint8Array(card.out.reduce((n, b) => n + b.length, 0));
+  let at = 0;
+  for (const b of card.out) all.set(b, at), (at += b.length);
+  card.out = [];
+  const r = cardRequest('PUT', all);
+  if (r.status !== 200) {
+    postMessage({ log: `card: the server didn't take the save (${r.status})`, err: true, tid });
+    return false;
+  }
+  const v = new DataView(sh.card.buffer);
+  v.setBigUint64(0, v.getBigUint64(0, true) + 1n, true);
+  return true;
+}
+
 // ---- WASI ---------------------------------------------------------------
 
 // The (address, length) pairs, with the memory they cover in view.
@@ -297,6 +347,7 @@ const wasi = {
       if (fd === 1 || fd === 2) flushOut(fd, dec.decode(bytes.slice()));
       else if (fd === DEV_GX) gxWrite(bytes);
       else if (fd === DEV_AUDIO) audioWrite(bytes);
+      else if (fd === DEV_CARD) card.out.push(bytes.slice());
       else return E.BADF;
       total += len;
     }
@@ -304,6 +355,18 @@ const wasi = {
     return 0;
   },
   fd_read(fd, iov, n, nr) {
+    if (fd === DEV_CARD) {
+      let total = 0;
+      for (const [p, len] of iovs(iov, n)) {
+        const k = Math.min(len, (card.read?.length || 0) - card.pos);
+        if (k <= 0) break;
+        u8().set(card.read.subarray(card.pos, card.pos + k), p);
+        card.pos += k;
+        total += k;
+      }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
     if (fd === DEV_PAD) {
       let total = 0;
       for (const [p, len] of iovs(iov, n)) {
@@ -349,7 +412,7 @@ const wasi = {
     return r;
   },
   fd_seek(fd, off, whence, ptr) {
-    if (fd >= DEV_AUDIO && fd <= DEV_PAD) {
+    if (isDevice(fd)) {
       dv().setBigUint64(ptr, 0n, true);
       return 0;
     }
@@ -378,7 +441,7 @@ const wasi = {
     let type = FT.CHAR;
     if (fd === PREOPEN) type = FT.DIR;
     else if (fds.has(fd)) type = fds.get(fd).dir ? FT.DIR : FT.FILE;
-    else if (fd > 2 && (fd < DEV_AUDIO || fd > DEV_PAD)) return E.BADF;
+    else if (fd > 2 && !isDevice(fd)) return E.BADF;
     d.setUint8(ptr, type);
     d.setUint16(ptr + 2, 0, true);
     d.setBigUint64(ptr + 8, 0xffffffffffffffffn, true);
@@ -388,7 +451,7 @@ const wasi = {
   fd_fdstat_set_flags: () => 0,
   fd_filestat_get(fd, ptr) {
     if (fd === PREOPEN) return writeStat(ptr, { dir: true }), 0;
-    if (fd >= DEV_AUDIO && fd <= DEV_PAD) return writeStat(ptr, { dev: true }), 0;
+    if (isDevice(fd)) return writeStat(ptr, { dev: true }), 0;
     const f = fds.get(fd);
     if (!f) return E.BADF;
     writeStat(ptr, f);
@@ -406,6 +469,12 @@ const wasi = {
     const path = resolve(dirfd, p, n);
     if (path === null) return E.BADF;
     if (DEVICES[path] !== undefined) {
+      // The card: opened to write (O_CREAT/O_TRUNC) gathers a save, else checks the card out.
+      if (path === 'dev/card') {
+        if (!cardToken()) return E.NOENT;
+        if (oflags & 9) card.out = [];
+        else if (!cardCheckOut()) return E.IO;
+      }
       dv().setUint32(fdp, DEVICES[path], true);
       return 0;
     }
@@ -490,7 +559,7 @@ const wasi = {
   fd_advise: () => 0,
   fd_allocate: () => 0,
   fd_datasync: () => 0,
-  fd_sync: () => 0,
+  fd_sync: (fd) => (fd === DEV_CARD && !cardSend() ? E.IO : 0),
 };
 
 function threadSpawn(arg) {
@@ -505,7 +574,7 @@ onmessage = (ev) => {
   const m = ev.data;
   if (m.init) {
     mem = m.memory;
-    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
     args = m.args;
     env = m.env;
     if (m.picked && m.picked.length) pick(m.picked);

@@ -32,6 +32,7 @@ const sh = {
   pad: new SharedArrayBuffer(16),
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
+  card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
 
@@ -135,6 +136,21 @@ function startThread(tid, arg) {
   while (pool.length < POOL) pool.push(loadedWorker());
 }
 
+// ---- the MMO server memory card -------------------------------------------
+// The MMO title screen keeps the signed-in Chao's token (src/save-slots.js).
+function mmoToken() {
+  try { return localStorage.getItem('chao-garden-session-v1') || ''; } catch { return ''; }
+}
+// Hold the card while the game runs: renew its lease (10 minutes on the
+// server) and give the Chao back when the tab closes.
+function keepCard(token) {
+  const lease = () => new TextDecoder().decode(new Uint8Array(sh.card).slice(8)).replace(/\0+$/, '');
+  const call = (method, keepalive) => lease() && fetch('/api/game-save/lease', { method, keepalive,
+    headers: { Authorization: `Bearer ${token}`, 'x-save-lease': lease() } }).catch(() => {});
+  setInterval(() => call('POST'), 120_000);
+  addEventListener('pagehide', () => call('DELETE', true));
+}
+
 // ---- drawing (render.js, a worker of its own) ------------------------------
 let renderer, picture = '';
 const ticksMain = [];
@@ -180,7 +196,11 @@ async function start() {
   delete e.SA2_DISC_FIRST;
   if (picked.some(([p]) => p === '@disc' || p.startsWith('disc/'))) e.SA2_DISC_DIR = '/disc';
   e.SA2_STEAM_DIR ??= '/steam';
+  // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
+  const token = mmoToken();
+  if (token) e.SA2_MMO_TOKEN = token;
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
+  if (token) keepCard(token);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });
