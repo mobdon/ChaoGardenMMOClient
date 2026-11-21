@@ -21,7 +21,7 @@ class Model:
             if not fl&4: L=L@np.diag([*sc,1])
             L=L@s.pose.get(i,np.eye(4));W=PW@L;s.nodes.append(dict(i=i,parent=parent,flags=fl,att=att,W=W,off=o));s._walk(ch,i,W);o=sib
     def evaluate(s):
-        cache={};nrm={};surfaces=[];polycache={}
+        cache={};nrm={};surfaces=[];polycache={};s.infl=infl={}
         for n in s.nodes:
             if not n['att'] or n['flags']&8: continue
             vp,pp=s.u('II',n['att'])
@@ -35,12 +35,12 @@ class Model:
                     wp=(W@[*p,1])[:3];wn=N@nv;idx=io+k;w=1.0;start=True
                     if t==44:
                         f=s.u('I',a+24)[0];idx=io+(f&0xffff);w=(f>>16)/255.0;start=(fl&3)==0
-                    if start: cache[idx]=wp*w;nrm[idx]=wn*w
-                    else: cache[idx]=cache.get(idx,0)+wp*w;nrm[idx]=nrm.get(idx,0)+wn*w
+                    if start: cache[idx]=wp*w;nrm[idx]=wn*w;infl[idx]=[(n['i'],w)]
+                    else: cache[idx]=cache.get(idx,0)+wp*w;nrm[idx]=nrm.get(idx,0)+wn*w;infl.setdefault(idx,[]).append((n['i'],w))
                 vp+=4+size*4
             if pp: s._polys(pp,n,cache,nrm,surfaces,polycache)
         return surfaces
-    def _polys(s,pp,n,cache,nrm,surfaces,polycache):
+    def _polys(s,pp,n,cache,nrm,surfaces,polycache):  # vertices: (pos, normal, uv, [(node, weight)])
             tex=None;sf=0;diff=(255,255,255,255)
             while True:
                 h=s.u('H',pp)[0];t=h&0xff;cf=h>>8
@@ -71,5 +71,5 @@ class Model:
                             a,b,c=cs[k],cs[k+1],cs[k+2]
                             if (k%2==1)^rev: a,b=b,a
                             tris.append((a,b,c))
-                    surfaces.append(dict(node=n['i'],tex=tex,flags=cf,diff=diff,tris=[[ (cache[i],nrm.get(i,np.zeros(3)),uv) for i,uv in tr] for tr in tris if all(i in cache for i,_ in tr)]))
+                    surfaces.append(dict(node=n['i'],tex=tex,flags=cf,diff=diff,tris=[[ (cache[i],nrm.get(i,np.zeros(3)),uv,s.infl[i]) for i,uv in tr] for tr in tris if all(i in cache for i,_ in tr)]))
                 pp+=4+size*2
