@@ -3,7 +3,8 @@
 Run portable Blender --background --factory-startup --python this-file after
 scripts/extract-animal-care.js. Optional: -- --render NAME... renders checks.
 Also exports the seven tree kinds (young/mature/dying) and the 24 fruits as
-standalone Y-up GLBs (tree-<kind>-<stage>.glb, fruit-<key>.glb).
+standalone Y-up GLBs (tree-<kind>-<stage>.glb, fruit-<key>.glb), and the
+worn Black Market hats (hat-<id>[-<part>].glb; -- --hats-only converts just those).
 All game-derived output stays in ignored .local/ storage.
 
 Each part GLB mirrors the converted Chao (scripts/convert-assets.py): its one
@@ -43,6 +44,67 @@ CATEGORY = {'leftArm': 'arms', 'rightArm': 'arms', 'leftEar': 'ears', 'rightEar'
             'leftHorn': 'horns', 'rightHorn': 'horns', 'leftLeg': 'legs', 'rightLeg': 'legs', 'tail': 'tail',
             'leftWing': 'wings', 'rightWing': 'wings', 'tongue': 'tongue'}
 
+# Worn hats (GSNE8P ChaoMain al_draw_B .text 0x88CC, jump table .data 0xD98):
+# at Chao node 16 the headgear byte selects these objects, drawn under the node
+# matrix with no offset. Each GC object is matched to the Steam Data_DLL model
+# of the same name by bounds and vertex chunk; the Steam model is converted.
+HAT_NODE = 16
+HAT_TEXTURE_PACK = 'al_body'  # GC texlist .data 0x97A3C, loaded as AL_BODY (.text 0x287A8)
+HAT_MODELS = '.local/extracted/pc-chao/Chao/models'
+HATS = {
+    3: [('', 'MayuObjectList/object_al_mask_apple_mask_apple.sa2mdl', '0x3191C8')],
+    4: [('', 'MayuObjectList/object_al_mask_bucket_mask_bucket.sa2mdl', '0x319C90')],
+    5: [('', 'MayuObjectList/object_al_mask_can_mask_can.sa2mdl', '0x31A3EC')],
+    6: [('', 'MayuObjectList/object_al_mask_cdbox_mask_cdbox.sa2mdl', '0x31AA94')],
+    7: [('', 'MayuObjectList/object_al_mask_flowerpot_mask_flowerpot.sa2mdl', '0x31B570')],
+    8: [('', 'MayuObjectList/object_al_mask_paperbag_mask_paperbag.sa2mdl', '0x31B99C')],
+    9: [('', 'MayuObjectList/object_al_mask_stewpan_mask_stewpan.sa2mdl', '0x31C550'),
+        ('eye', 'object_al_mask_stewpan_eye_mask_stewpan_eye.sa2mdl', '0x31C6F8'),
+        ('jaw', 'object_al_mask_stewpan_jaw_mask_stewpan_jaw.sa2mdl', '0x31C810')],
+    10: [('', 'MayuObjectList/object_al_mask_stump_mask_stump.sa2mdl', '0x31D3C0')],
+    11: [('', 'MayuObjectList/object_al_mask_wmelon_mask_wmelon.sa2mdl', '0x31E178')],
+    12: [('', 'MaskObjObjectList/object_al_mask_wool_a_mask_wool_a.sa2mdl', '0x31F120')],
+    13: [('', 'MaskObjObjectList/object_al_mask_wool_b_mask_wool_b.sa2mdl', '0x3200C8')],
+    14: [('', 'MaskObjObjectList/object_al_mask_wool_c_mask_wool_c.sa2mdl', '0x321070')],
+    15: [('', 'MayuObjectList/object_al_mzsk_teethingring_mzsk_teethingring.sa2mdl', '0x3216EC')],
+}
+
+
+def native_root_is_identity(path):
+    """The hat object's own transform is dropped with the export root, so it must be identity."""
+    data = path.read_bytes()
+    if data[:7] != b'SA2MDL\0':
+        raise RuntimeError(f'Unexpected model format: {path}')
+    root = struct.unpack_from('<I', data, 8)[0]
+    position = struct.unpack_from('<3f', data, root + 8)
+    angles = struct.unpack_from('<3i', data, root + 0x14)
+    scale = struct.unpack_from('<3f', data, root + 0x20)
+    return position == (0, 0, 0) and angles == (0, 0, 0) and scale == (1, 1, 1)
+
+
+def convert_hats():
+    records = []
+    for hat, parts in HATS.items():
+        for part, relative, address in parts:
+            native = ROOT / HAT_MODELS / relative
+            if not native_root_is_identity(native):
+                raise RuntimeError(f'Hat root transform is not identity: {native}')
+            name = f'hat-{hat}' + (f'-{part}' if part else '')
+            attach = {'chaoNode': HAT_NODE, 'hat': hat, 'part': part or 'main',
+                      'frame': 'Children of the root are in the Chao joint frame (Blender Z-up, as below Chao joint 000). Parent them to Chao node chaoNode at identity.'}
+            source = {'model': f'{HAT_MODELS}/{relative}', 'texturePack': HAT_TEXTURE_PACK,
+                      'gcObjectAddress': address, 'gcSource': 'GSNE8P ChaoMain al_draw_B .text 0x88CC', 'attach': attach}
+            record = export_attached(name, native, HAT_TEXTURE_PACK, source)
+            if any(abs(value) > 1e-6 for value in record['droppedExportRootTranslation']) \
+                    or any(abs(value) > 1e-6 for value in record['droppedExportRootRotation'][:3]):
+                raise RuntimeError(f'Hat export root carried a transform: {native}')
+            records.append({'name': name, 'hat': hat, 'part': part or 'main', 'chaoNode': HAT_NODE,
+                            'nativeModel': source['model'], 'gcObjectAddress': address, **record})
+            print('SA2_HAT=' + json.dumps({key: records[-1][key] for key in ('name', 'vertices', 'chaoNode')}))
+    (OUTPUT / 'hats-manifest.json').write_text(json.dumps(
+        {'version': 1, 'texturePack': HAT_TEXTURE_PACK, 'chaoNode': HAT_NODE, 'count': len(records), 'hats': records}, indent=2) + '\n')
+    print(json.dumps({'hats': len(records)}))
+
 
 def read_glb(path):
     data = path.read_bytes()
@@ -60,6 +122,19 @@ def write_glb(path, document, binary_chunk):
 def convert_part(animal, age, slot, model):
     native = ROOT / model['path']
     name = f"animal-part-{animal['key']}-{age}-{slot}"
+    attach = {'chaoNode': CHAO_NODE[slot], 'category': CATEGORY[slot], 'slot': slot,
+              'frame': 'Children of the root are in the Chao joint frame (Blender Z-up, as below Chao joint 000). Drop the root and parent them to Chao node chaoNode at identity.'}
+    source = {'model': model['path'], 'modelName': model['name'], 'texturePack': TEXTURE_PACK,
+              'nativeObjectAddress': model['nativeObjectAddress'], 'exportRootAddress': model['rootAddress'],
+              'species': animal['key'], 'age': age, 'attach': attach}
+    record = export_attached(name, native, TEXTURE_PACK, source)
+    return {'name': name, 'species': animal['key'], 'animalId': animal['id'], 'age': age, 'slot': slot,
+            'category': CATEGORY[slot], 'chaoNode': CHAO_NODE[slot], 'nativeModel': model['path'],
+            'nativeObjectAddress': model['nativeObjectAddress'], **record}
+
+
+def export_attached(name, native, texture_pack, source):
+    """Export one original model as a GLB whose root's children attach to a Chao node at identity."""
     helpers.clear_scene()
     result = bpy.ops.saio.import_mdl(filepath=str(native), files=[{'name': native.name}], import_as_armature=True)
     if result != {'FINISHED'}:
@@ -67,7 +142,7 @@ def convert_part(animal, age, slot, model):
     for obj in list(bpy.context.scene.objects):
         if obj.name.startswith('SAIO Bone Shape'):
             bpy.data.objects.remove(obj, do_unlink=True)
-    originals = helpers.prepare_materials(TEXTURE_PACK)
+    originals = helpers.prepare_materials(texture_pack)
     meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
     if not meshes:
         raise RuntimeError(f'No geometry imported: {native}')
@@ -122,26 +197,23 @@ def convert_part(animal, age, slot, model):
                 mat['alphaCutoff'] = 0.5
         else:
             mat['alphaMode'] = 'OPAQUE'
-    attach = {'chaoNode': CHAO_NODE[slot], 'category': CATEGORY[slot], 'slot': slot,
-              'frame': 'Children of the root are in the Chao joint frame (Blender Z-up, as below Chao joint 000). Drop the root and parent them to Chao node chaoNode at identity.'}
     document['asset'].setdefault('extras', {})['sa2Source'] = {
-        'model': model['path'], 'modelName': model['name'], 'texturePack': TEXTURE_PACK,
-        'nativeObjectAddress': model['nativeObjectAddress'], 'exportRootAddress': model['rootAddress'],
-        'droppedExportRootTranslation': wrapper_translation, 'droppedExportRootRotation': wrapper_rotation, 'species': animal['key'], 'age': age, 'attach': attach}
+        **source, 'droppedExportRootTranslation': wrapper_translation, 'droppedExportRootRotation': wrapper_rotation}
     write_glb(temporary, document, binary_chunk)
     helpers.replace_asset(temporary, target)
-    return {'name': name, 'species': animal['key'], 'animalId': animal['id'], 'age': age, 'slot': slot,
-            'category': CATEGORY[slot], 'chaoNode': CHAO_NODE[slot], 'nativeModel': model['path'],
-            'nativeModelSha256': hashlib.sha256(native.read_bytes()).hexdigest(),
-            'nativeObjectAddress': model['nativeObjectAddress'], 'output': str(target.relative_to(ROOT)).replace('\\', '/'),
+    return {'nativeModelSha256': hashlib.sha256(native.read_bytes()).hexdigest(),
+            'output': str(target.relative_to(ROOT)).replace('\\', '/'),
             'bytes': target.stat().st_size, 'meshCount': len(meshes), 'vertices': sum(len(obj.data.vertices) for obj in meshes),
             'vertexColorLayers': color_layers, 'partRootChildren': [node.get('name') for node in part_children],
             'partRootTranslation': [node.get('translation', [0, 0, 0]) for node in part_children],
+            'droppedExportRootTranslation': wrapper_translation, 'droppedExportRootRotation': wrapper_rotation,
             'materials': [{'name': mat['name'], 'texture': mat.get('texture'), 'textureIndex': mat['textureIndex'],
                            'useAlpha': mat['useAlpha'], 'doubleSided': mat['doubleSided']} for mat in originals]}
 
-
 def main():
+    if '--hats-only' in sys.argv:
+        convert_hats()
+        return
     catalog = json.loads(CATALOG.read_text())
     records, skipped = [], []
     for animal in catalog['animals']:
@@ -176,6 +248,7 @@ def main():
                        'nativeAddress': fruit['model']['address'], **record})
     (OUTPUT / 'garden-models-manifest.json').write_text(json.dumps({'version': 1, 'texturePack': 'al_object', 'models': garden}, indent=2) + '\n')
     print(json.dumps({'garden': len(garden)}))
+    convert_hats()
     if '--render' in sys.argv:
         for name in sys.argv[sys.argv.index('--render') + 1:]:
             helpers.clear_scene()

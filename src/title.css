@@ -26,6 +26,7 @@
 .save-slot-meta { flex: 1; min-width: 0; }
 .save-slot strong { display: block; font-size: 15px; overflow-wrap: anywhere; }
 .save-slot small { display: block; font-size: 8px; line-height: 1.8; color: #9ab8d7; margin-top: 2px; }
+.save-slot .save-slot-card { color: #ffd84d; }
 .save-slot-arrow { color: #ffdc5d; font-size: 20px; }
 .save-empty { margin: 0; padding: 15px; font-size: 11px; line-height: 1.6; border: 1px dashed #315378; color: #9ab5d2; border-radius: 7px; }
 .new-chao { margin: 17px 0; border-bottom: 1px solid #1e3756; padding-bottom: 15px; }
@@ -54,3 +55,8 @@
   .title-screen h2 { font-size: 39px; }
   .title-intro { font-size: 11px; }
 }
+.card-code { margin: -4px 0 8px; padding: 0 12px; font-size: 9px; color: #9ab8d7; }
+.card-code summary { cursor: pointer; letter-spacing: .12em; padding: 4px 0; }
+.card-code code { display: block; font-size: 12px; color: #ffd84d; word-spacing: 4px; overflow-wrap: anywhere; margin: 4px 0; }
+.card-code button { font: inherit; color: white; background: #143a66; border: 1px solid #315a87; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.card-code small { display: block; margin-top: 6px; }

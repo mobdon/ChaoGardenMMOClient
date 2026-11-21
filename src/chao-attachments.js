@@ -140,3 +140,20 @@ export function animalPartAssets(parts, age = 'child') {
   }
   return result;
 }
+
+// Worn hats, traced from the GameCube ChaoMain module (GSNE8P). al_draw_B
+// (.text 0x88CC) walks the Chao skeleton in draw order; at node 16 (the head)
+// it draws the hat named by the Chao's headgear byte (+0xD5) through the jump
+// table at .data 0xD98, under that node's matrix with no extra offset. The
+// Pan (9) draws three objects: the pan and its eye and jaw pieces. Only the
+// Black Market hats the server can give (3-15) are listed; pumpkin (1), skull
+// (2) and egg shells (16 and up) have no source in this game yet.
+export const CHAO_HAT_NODE = '016';
+export const NATIVE_HAT_IDS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const HAT_EXTRA_PARTS = { 9: ['eye', 'jaw'] };
+
+// Asset keys for a worn hat; anything the native switch does not draw is ignored.
+export function hatAssets(hat) {
+  if (!NATIVE_HAT_IDS.includes(hat)) return [];
+  return [`hat-${hat}`, ...(HAT_EXTRA_PARTS[hat] || []).map(part => `hat-${hat}-${part}`)];
+}

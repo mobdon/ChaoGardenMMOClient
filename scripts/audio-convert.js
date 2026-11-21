@@ -48,6 +48,8 @@ const jobs = [
   ['music-garden', 'ADX/chao_g_bgm_n.adx'],
   ['music-hero', 'ADX/chao_g_bgm_h.adx'],
   ['music-dark', 'ADX/chao_g_bgm_d.adx'],
+  // The breeding jingle (fn_60_40130: Jingle_Play("chao_g_dance.adx")).
+  ['jingle-chao-g-dance', 'ADX/chao_g_dance.adx'],
 ].map(([name, source]) => ({ name, source, input: join(resource, source), sourceSha256: hash(readFileSync(join(resource, source))) }));
 
 // These exact English AFS entries are identified in X-Hax's original dialogue map.
