@@ -1,3 +1,4 @@
+import { nativeText } from './native-text.js';
 // Desktop garden care: renders the server's canonical care/garden snapshot and
 // submits bounded care intents. The server owns inventory, growth, fruit,
 // proximity, effects and animal parts; this module never computes them.
@@ -208,7 +209,12 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     const list = el('ul', undefined, 'garden-care-items');
     for (const item of view.items) {
       const row = el('li');
-      row.append(el('span', `${item.label} ×${item.quantity}`));
+      if (item.kind === 'animal' || item.kind === 'drive') {
+        // The game's own panel, with the count in its own font in the corner.
+        row.className = 'garden-care-panel';
+        const icon = el('img'); icon.src = `/api/assets/item-panel-${Number(item.id.slice(4))}.png`; icon.alt = item.label;
+        row.append(icon, nativeText(`x${item.quantity}`, 'garden-care-count', undefined, document), el('span', item.label, 'garden-care-panel-name'));
+      } else row.append(el('span', `${item.label} ×${item.quantity}`));
       if (item.kind !== 'seed') {
         const verb = item.kind === 'egg' ? 'Put down' : item.kind === 'hat' || item.kind === 'animal' || item.kind === 'drive' ? 'Give' : 'Feed';
         const use = el('button', verb, 'small-button');

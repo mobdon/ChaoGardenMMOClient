@@ -80,7 +80,7 @@ test('Tiny Garden items list fruit and seeds without offering to eat seeds', () 
 });
 
 class Node {
-  constructor(tag, doc) { this.tagName = tag; this.ownerDocument = doc; this.children = []; this.listeners = {}; this.attributes = {}; this.textContent = ''; this.disabled = false; }
+  constructor(tag, doc) { this.tagName = tag; this.ownerDocument = doc; this.children = []; this.listeners = {}; this.attributes = {}; this.textContent = ''; this.disabled = false; this.style = { setProperty() {} }; this.classList = { toggle() {} }; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(k, v) { this.attributes[k] = v; }
@@ -105,6 +105,15 @@ test('panel submits one request, retries it unchanged after reconnect and report
   assert.deepEqual(sent[1], sent[0]);
   assert.equal(panel.handleEvent({ type: 'event', kind: 'care-result', rulesVersion: 'adapted-care-v1', requestId: 'req-1', accepted: false, revision: 7, code: 'no-fruit' }), true);
   assert.ok(root.all().some(n => n.textContent === 'No fruit is ripe yet.'));
+});
+
+test('animals and drives show the game\'s own panel with the count in the corner', () => {
+  const document = { createElement: tag => new Node(tag, document) };
+  const root = new Node('aside', document);
+  createGardenCare({ root }).update(care(), { zone: 'garden', x: 13, z: 2 }, { connected: true, serverTime: 1 });
+  const icons = root.all().filter(n => n.tagName === 'img').map(n => n.src);
+  assert.deepEqual(icons, ['/api/assets/item-panel-0.png', '/api/assets/item-panel-22.png']);
+  assert.ok(root.all().some(n => n.className === 'garden-care-count' && n.children[0].textContent === 'x1'));
 });
 
 test('animal parts map to the traced native Chao nodes and exact model names', async () => {

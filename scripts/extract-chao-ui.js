@@ -14,7 +14,7 @@ const imports = path.resolve('.local/imports');
 await mkdir(output, { recursive: true });
 await mkdir(imports, { recursive: true });
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const archives = ['al_tex_common', 'al_tex_chao', 'al_tex_ent_common_en', 'al_tex_odekake_menu_en', 'al_tex_cave_menu_en', 'al_common_tex'];
+const archives = ['al_tex_common', 'al_tex_chao', 'al_tex_ent_common_en', 'al_tex_odekake_menu_en', 'al_tex_cave_menu_en', 'al_common_tex', 'al_panel'];
 const report = {
   generatedAt: new Date().toISOString(),
   tool: 'X-Hax SA Tools release 786 ArchiveTool -png; original installed archives read only',
@@ -65,6 +65,12 @@ const selectedSprites = [
   { archive: 'al_tex_ent_common_en', filename: 'add_parameter_race_en.png', alias: 'chao-race-parameter.png', role: 'Original English race-entry parameter atlas',
     evidence: 'Visible Swim/Fly/Run/Power/Stamina, type/alignment labels, digits, Lv. and green meter segments. Race-entry context, not the garden stat panel.' },
 ];
+// al_panel: the game's own 32x32 panels for the 21 animals and 4 Chaos Drives,
+// in native item order (care catalog ids 0-24), each checked by eye.
+const panels = ['pen', 'goma', 'rako', 'usa', 'chit', 'ino', 'kuma', 'tora', 'gori', 'kuja', 'oum', 'kon', 'ska',
+  'shep', 'ara', 'han', 'bone', 'batman', 'dra', 'uni', 'phen', 'cdr_y', 'cdr_g', 'cdr_r', 'cdr_p'];
+for (const [id, name] of panels.entries()) selectedSprites.push({ archive: 'al_panel', filename: `panel_${name}.png`,
+  alias: `item-panel-${id}.png`, role: `Original inventory panel for native item ${id}`, evidence: 'al_panel entry, matched by eye to its animal or drive.' });
 for (const { archive, filename, alias, role, evidence } of selectedSprites) {
   const source = report.sources.find(source => source.relativePath.endsWith(`/${archive}.prs`));
   const sprite = source?.sprites.find(sprite => sprite.filename === filename);
