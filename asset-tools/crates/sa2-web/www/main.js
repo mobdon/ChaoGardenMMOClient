@@ -152,7 +152,14 @@ function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
   room = { ws, zone };
   ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone }));
-  ws.onmessage = ({ data }) => { try { const m = JSON.parse(data); if (m.type === 'snapshot') showCard(m.players.find(p => p.id === m.selfId)); } catch { /* not ours */ } };
+  // The MMO overlay (Inventory, breeding, Tiny Garden) is the client's own module; the game boots without it.
+  let overlay = null;
+  import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
+  ws.onmessage = ({ data }) => {
+    let m; try { m = JSON.parse(data); } catch { return; }
+    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); }
+    if (m.type === 'event') overlay?.event(m);
+  };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
 }
