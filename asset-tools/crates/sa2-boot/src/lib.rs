@@ -11,14 +11,17 @@ pub mod audio;
 pub mod card;
 pub mod clock;
 pub mod dvd;
+#[cfg(not(target_os = "wasi"))]
 pub mod gamepad;
 pub mod gx;
 pub mod io;
 pub mod pad;
 pub mod prof;
+#[cfg(not(target_os = "wasi"))]
 pub mod snap;
 pub mod vi;
 pub mod wide;
+#[cfg(not(target_os = "wasi"))]
 pub mod window;
 
 use sa2_recomp::rt::{call, Cpu, Mem};
