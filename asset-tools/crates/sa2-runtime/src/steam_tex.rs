@@ -327,7 +327,11 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
         out.extend_from_slice(&(dds.h as u16).to_be_bytes());
         out.extend(data);
     }
-    Some(prs_literal(&out))
+    // The game loads texture archives into buffers sized for the GC files:
+    // segalogo's three 1024x1024 DXT5 logos (6 MB as RGB5A3, GC 0.56 MB) hung
+    // the logo screen. Bigger than Steam's GC archive: keep that one.
+    // shortcut: Steam's 2x textures are skipped this way; serve them once the game's buffer sizes are found.
+    (out.len() <= gvm.len()).then(|| prs_literal(&out))
 }
 
 /// DXT1 blocks to RGBA8 (only when the `.inf` asks for a non-CMPR format).
