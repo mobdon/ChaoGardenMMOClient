@@ -1,17 +1,22 @@
 // One game thread: an instance of the game build (wasm32-wasip1-threads) on
 // the shared memory, with the WASI calls std makes answered here. Files come
-// from the local server (/fs/...) with synchronous requests, which workers
-// may make; /dev/gx, /dev/pad and /dev/audio are the page's devices.
+// from folders the player picked in the page, else from the local server
+// (/fs/...), both read synchronously, which workers may do; /dev/gx, /dev/pad and /dev/audio are the page's devices.
 'use strict';
 
 const E = { SUCCESS: 0, BADF: 8, INVAL: 28, IO: 29, ISDIR: 31, NOENT: 44, NOSYS: 52, NOTDIR: 54, SPIPE: 70 };
 const FT = { DIR: 3, FILE: 4, CHAR: 2 };
 const BLOCK = 2 << 20; // file read cache block (fewer round trips to the server)
 const MAX_BLOCKS = 12;
+// Files inside a compressed disc image: a chunk at a time, so a read never
+// holds a game thread up unpacking megabytes.
+const DISC_BLOCK = 128 << 10;
+const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
-const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12;
-const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD };
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD };
+const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_CARD;
 
 let mem, sh, tid, args, env, instance;
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -49,8 +54,41 @@ function xhr(url, range) {
   return r;
 }
 
+// Folders the player picked in the page (main.js): files read straight from
+// their computer, no server. Names match without case, as on Windows.
+let picked = null, pickedDirs, pickedRoots;
+function pick(list) {
+  picked = new Map();
+  pickedDirs = new Map();
+  pickedRoots = new Set();
+  const all = [];
+  for (const [path, file] of list) {
+    // A disc image: its files, read from inside it (disc.js).
+    if (path === '@disc') {
+      importScripts('vendor/fzstd.js', 'disc.js');
+      for (const [name, f] of discFiles(discReader(file))) all.push([`disc/${name}`, f]);
+    } else all.push([path, file]);
+  }
+  for (const [path, file] of all) {
+    picked.set(path.toLowerCase(), file);
+    const parts = path.split('/');
+    pickedRoots.add(parts[0].toLowerCase());
+    for (let i = 1; i < parts.length; i++) {
+      const dir = parts.slice(0, i).join('/').toLowerCase();
+      if (!pickedDirs.has(dir)) pickedDirs.set(dir, new Map());
+      const last = i === parts.length - 1;
+      pickedDirs.get(dir).set(parts[i].toLowerCase(), [parts[i], !last, last ? file.size : 0]);
+    }
+  }
+}
+const isPicked = (path) => picked !== null && pickedRoots.has(path.split('/')[0].toLowerCase());
+
 function stat(path) {
   if (DEVICES[path] !== undefined) return { dir: false, size: 0, dev: true };
+  if (isPicked(path)) {
+    const k = path.toLowerCase(), f = picked.get(k);
+    return f ? { dir: false, size: f.size } : pickedDirs.has(k) ? { dir: true, size: 0 } : null;
+  }
   if (statCache.has(path)) return statCache.get(path);
   const r = xhr('/fs/' + encodeURI(path) + '?stat');
   const s = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : null;
@@ -66,10 +104,16 @@ function block(path, n) {
     blocks.set(key, b);
     return b;
   }
-  const r = xhr('/fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
-  if (r.status !== 200 && r.status !== 206) return null;
-  b = new Uint8Array(r.response);
-  if (r.status === 200) b = b.subarray(n * BLOCK, (n + 1) * BLOCK);
+  if (isPicked(path)) {
+    const f = picked.get(path.toLowerCase());
+    if (!f) return null;
+    b = f.read ? f.read(n * DISC_BLOCK, (n + 1) * DISC_BLOCK) : new Uint8Array(new FileReaderSync().readAsArrayBuffer(f.slice(n * BLOCK, (n + 1) * BLOCK)));
+  } else {
+    const r = xhr('/fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
+    if (r.status !== 200 && r.status !== 206) return null;
+    b = new Uint8Array(r.response);
+    if (r.status === 200) b = b.subarray(n * BLOCK, (n + 1) * BLOCK);
+  }
   blocks.set(key, b);
   if (blocks.size > MAX_BLOCKS) blocks.delete(blocks.keys().next().value);
   return b;
@@ -142,6 +186,55 @@ function audioWrite(bytes) {
   Atomics.store(c, 6, w);
 }
 
+// ---- the MMO server memory card (sa2-boot card.rs, /dev/card) -------------
+// Reading checks the whole card out of the server (GET /api/game-save); a
+// write gathers the packed card and sync sends it (PUT). The lease and the
+// revision sit in memory every game thread shares, as the page renews the
+// lease from there: [0..8) revision, [8..) lease id.
+const card = { read: null, pos: 0, out: [] };
+function cardToken() {
+  const line = (env || []).find((e) => e.startsWith('SA2_MMO_TOKEN='));
+  return line ? line.slice('SA2_MMO_TOKEN='.length) : '';
+}
+function cardRequest(method, body) {
+  const r = new XMLHttpRequest();
+  r.open(method, '/api/game-save', false);
+  r.responseType = 'arraybuffer';
+  r.setRequestHeader('Authorization', `Bearer ${cardToken()}`);
+  if (method === 'PUT') {
+    const lease = dec.decode(sh.card.slice(8)).replace(/\0+$/, '');
+    r.setRequestHeader('x-save-lease', lease);
+    r.setRequestHeader('x-save-revision', String(new DataView(sh.card.buffer).getBigUint64(0, true)));
+  }
+  r.send(body);
+  return r;
+}
+function cardCheckOut() {
+  const r = cardRequest('GET');
+  if (r.status !== 200) return false;
+  const lease = enc.encode(r.getResponseHeader('x-save-lease') || '');
+  new DataView(sh.card.buffer).setBigUint64(0, BigInt(r.getResponseHeader('x-save-revision') || 0), true);
+  sh.card.fill(0, 8);
+  sh.card.set(lease.subarray(0, sh.card.length - 8), 8);
+  card.read = new Uint8Array(r.response);
+  card.pos = 0;
+  return true;
+}
+function cardSend() {
+  const all = new Uint8Array(card.out.reduce((n, b) => n + b.length, 0));
+  let at = 0;
+  for (const b of card.out) all.set(b, at), (at += b.length);
+  card.out = [];
+  const r = cardRequest('PUT', all);
+  if (r.status !== 200) {
+    postMessage({ log: `card: the server didn't take the save (${r.status})`, err: true, tid });
+    return false;
+  }
+  const v = new DataView(sh.card.buffer);
+  v.setBigUint64(0, v.getBigUint64(0, true) + 1n, true);
+  return true;
+}
+
 // ---- WASI ---------------------------------------------------------------
 
 // The (address, length) pairs, with the memory they cover in view.
@@ -192,6 +285,7 @@ function resolve(dirfd, p, n) {
 }
 
 function lsDir(path) {
+  if (isPicked(path)) return [...(pickedDirs.get(path.toLowerCase()) || new Map()).values()];
   const r = xhr('/fs/' + encodeURI(path) + '?ls');
   const list = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : [];
   return list;
@@ -253,6 +347,7 @@ const wasi = {
       if (fd === 1 || fd === 2) flushOut(fd, dec.decode(bytes.slice()));
       else if (fd === DEV_GX) gxWrite(bytes);
       else if (fd === DEV_AUDIO) audioWrite(bytes);
+      else if (fd === DEV_CARD) card.out.push(bytes.slice());
       else return E.BADF;
       total += len;
     }
@@ -260,6 +355,18 @@ const wasi = {
     return 0;
   },
   fd_read(fd, iov, n, nr) {
+    if (fd === DEV_CARD) {
+      let total = 0;
+      for (const [p, len] of iovs(iov, n)) {
+        const k = Math.min(len, (card.read?.length || 0) - card.pos);
+        if (k <= 0) break;
+        u8().set(card.read.subarray(card.pos, card.pos + k), p);
+        card.pos += k;
+        total += k;
+      }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
     if (fd === DEV_PAD) {
       let total = 0;
       for (const [p, len] of iovs(iov, n)) {
@@ -281,9 +388,9 @@ const wasi = {
     for (const [p, len] of iovs(iov, n)) {
       let want = Math.min(len, f.size - f.pos), at = p;
       while (want > 0) {
-        const bn = Math.floor(f.pos / BLOCK), b = block(f.path, bn);
+        const bs = blockSize(f.path), bn = Math.floor(f.pos / bs), b = block(f.path, bn);
         if (!b) return E.IO;
-        const from = f.pos - bn * BLOCK, k = Math.min(want, b.length - from);
+        const from = f.pos - bn * bs, k = Math.min(want, b.length - from);
         if (k <= 0) break;
         u8().set(b.subarray(from, from + k), at);
         at += k;
@@ -305,7 +412,7 @@ const wasi = {
     return r;
   },
   fd_seek(fd, off, whence, ptr) {
-    if (fd >= DEV_AUDIO && fd <= DEV_PAD) {
+    if (isDevice(fd)) {
       dv().setBigUint64(ptr, 0n, true);
       return 0;
     }
@@ -334,7 +441,7 @@ const wasi = {
     let type = FT.CHAR;
     if (fd === PREOPEN) type = FT.DIR;
     else if (fds.has(fd)) type = fds.get(fd).dir ? FT.DIR : FT.FILE;
-    else if (fd > 2 && (fd < DEV_AUDIO || fd > DEV_PAD)) return E.BADF;
+    else if (fd > 2 && !isDevice(fd)) return E.BADF;
     d.setUint8(ptr, type);
     d.setUint16(ptr + 2, 0, true);
     d.setBigUint64(ptr + 8, 0xffffffffffffffffn, true);
@@ -344,7 +451,7 @@ const wasi = {
   fd_fdstat_set_flags: () => 0,
   fd_filestat_get(fd, ptr) {
     if (fd === PREOPEN) return writeStat(ptr, { dir: true }), 0;
-    if (fd >= DEV_AUDIO && fd <= DEV_PAD) return writeStat(ptr, { dev: true }), 0;
+    if (isDevice(fd)) return writeStat(ptr, { dev: true }), 0;
     const f = fds.get(fd);
     if (!f) return E.BADF;
     writeStat(ptr, f);
@@ -362,6 +469,12 @@ const wasi = {
     const path = resolve(dirfd, p, n);
     if (path === null) return E.BADF;
     if (DEVICES[path] !== undefined) {
+      // The card: opened to write (O_CREAT/O_TRUNC) gathers a save, else checks the card out.
+      if (path === 'dev/card') {
+        if (!cardToken()) return E.NOENT;
+        if (oflags & 9) card.out = [];
+        else if (!cardCheckOut()) return E.IO;
+      }
       dv().setUint32(fdp, DEVICES[path], true);
       return 0;
     }
@@ -446,7 +559,7 @@ const wasi = {
   fd_advise: () => 0,
   fd_allocate: () => 0,
   fd_datasync: () => 0,
-  fd_sync: () => 0,
+  fd_sync: (fd) => (fd === DEV_CARD && !cardSend() ? E.IO : 0),
 };
 
 function threadSpawn(arg) {
@@ -461,9 +574,10 @@ onmessage = (ev) => {
   const m = ev.data;
   if (m.init) {
     mem = m.memory;
-    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
     args = m.args;
     env = m.env;
+    if (m.picked && m.picked.length) pick(m.picked);
     const imports = { env: { memory: mem }, wasi_snapshot_preview1: {}, wasi: { 'thread-spawn': threadSpawn } };
     for (const imp of WebAssembly.Module.imports(m.module)) {
       if (imp.module === 'wasi_snapshot_preview1') {

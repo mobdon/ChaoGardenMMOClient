@@ -6,6 +6,8 @@ import init, { Screen } from './pkg/sa2_web.js';
 let screen, ctl, wide, fpsCap;
 let size = [1, 1];
 let shown = 0, blend = false, decoded = '';
+// Game frames that arrived together and were never on screen (a hitch).
+let skipped = 0;
 const prof = { draw: 0, pics: 0 };
 const ticks = [];
 
@@ -15,7 +17,9 @@ function frame(now) {
   if (ticks.length > 60) ticks.shift();
   if (ticks.length === 60 && !fpsCap) blend = 59000 / (now - ticks[0]) > 70;
   Atomics.store(ctl, 8, wide ? Math.round((size[0] / Math.max(1, size[1])) * 1000) : 0);
-  shown += screen.take(blend);
+  const n = screen.take(blend);
+  shown += n;
+  if (n > 1) skipped += n - 1;
   const t1 = performance.now();
   // The same shared clock as decode.js.
   screen.draw(performance.timeOrigin + now, size[0], size[1]);
@@ -28,10 +32,10 @@ setInterval(() => {
   if (!screen) return;
   const per = (v, n) => (n ? v / n : 0).toFixed(1);
   postMessage({
-    status: `${screen.backend()} · ${shown} game frames/s${decoded} · ${prof.pics} pictures/s (draw ${per(prof.draw, prof.pics)} ms)${blend ? ' · blended' : ''}`,
+    status: `${screen.backend()} · ${shown} game frames/s${decoded} · ${prof.pics} pictures/s (draw ${per(prof.draw, prof.pics)} ms)${blend ? ' · blended' : ''}${skipped ? ` · ${skipped} skipped` : ''}`,
   });
   prof.draw = prof.pics = 0;
-  shown = 0;
+  shown = skipped = 0;
 }, 1000);
 
 onmessage = async (ev) => {

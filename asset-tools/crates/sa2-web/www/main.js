@@ -4,7 +4,7 @@
 //
 // Shared with the workers (ctl, Int32): [0] last thread id, [1..2] slot full,
 // [3..4] slot length, [5] slot the game fills next, [6] sound written,
-// [7] sound read.
+// [7] sound read, [8] canvas aspect (render.js), [9] sound dropouts, [10] sound skips.
 
 const SLOT = 40 << 20; // a frame's pipe bytes and 24 MiB of RAM
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
@@ -32,6 +32,7 @@ const sh = {
   pad: new SharedArrayBuffer(16),
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
+  card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
 
@@ -90,6 +91,24 @@ function writePad() {
   pad[11] = rt;
 }
 
+// ---- the player's own files -----------------------------------------------
+// Folders picked on the start screen, as [game path, File]: the game sees the
+// Steam folder as /steam and the disc folder as /disc. A folder not picked
+// comes from the local server, if it has one.
+let picked = [];
+function pickedFiles() {
+  const list = [];
+  for (const [id, mount] of [['steam-dir', 'steam'], ['disc-dir', 'disc']])
+    for (const f of $(id).files) list.push([`${mount}/${f.webkitRelativePath.split('/').slice(1).join('/')}`, f]);
+  // A disc image (.iso, .gcm, .rvz): each game thread opens it itself (disc.js).
+  if ($('disc-img').files[0]) list.push(['@disc', $('disc-img').files[0]]);
+  return list.concat(addedFiles);
+}
+// pickFolder('steam', [[path in folder, File], …]): the same from a script
+// (tests: the browser's automation can't fill a folder input).
+const addedFiles = [];
+window.pickFolder = (mount, entries) => entries.forEach(([p, f]) => addedFiles.push([`${mount}/${p}`, f]));
+
 // ---- threads ------------------------------------------------------------
 let module, memory, env, workers = 0;
 // Workers with the game already loaded, so a new game thread (a stage load,
@@ -107,7 +126,7 @@ function loadedWorker() {
     else if (m.done) workers--;
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
-  w.postMessage({ init: true, module, memory, env, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
+  w.postMessage({ init: true, module, memory, env, picked, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
   return w;
 }
 function startThread(tid, arg) {
@@ -115,6 +134,21 @@ function startThread(tid, arg) {
   workers++;
   w.postMessage({ tid, arg });
   while (pool.length < POOL) pool.push(loadedWorker());
+}
+
+// ---- the MMO server memory card -------------------------------------------
+// The MMO title screen keeps the signed-in Chao's token (src/save-slots.js).
+function mmoToken() {
+  try { return localStorage.getItem('chao-garden-session-v1') || ''; } catch { return ''; }
+}
+// Hold the card while the game runs: renew its lease (10 minutes on the
+// server) and give the Chao back when the tab closes.
+function keepCard(token) {
+  const lease = () => new TextDecoder().decode(new Uint8Array(sh.card).slice(8)).replace(/\0+$/, '');
+  const call = (method, keepalive) => lease() && fetch('/api/game-save/lease', { method, keepalive,
+    headers: { Authorization: `Bearer ${token}`, 'x-save-lease': lease() } }).catch(() => {});
+  setInterval(() => call('POST'), 120_000);
+  addEventListener('pagehide', () => call('DELETE', true));
 }
 
 // ---- drawing (render.js, a worker of its own) ------------------------------
@@ -133,11 +167,14 @@ function frame() {
   requestAnimationFrame(frame);
 }
 setInterval(() => {
-  status.textContent = `${picture} · ${workers} threads`;
+  const drop = Atomics.exchange(ctl, 9, 0), skip = Atomics.exchange(ctl, 10, 0);
+  const sound = drop || skip ? ` · sound: ${drop} dropouts, ${skip} skips` : '';
+  status.textContent = `${picture}${sound} · ${workers} threads`;
 }, 1000);
 
 async function start() {
   $('go').disabled = true;
+  picked = pickedFiles();
   status.textContent = 'loading…';
   if (!crossOriginIsolated) throw new Error('the page needs cross-origin isolation (open it from the local server)');
   const audio = new AudioContext({ latencyHint: 'interactive' });
@@ -154,7 +191,16 @@ async function start() {
     else if (ev.data.log) log(ev.data.log, true);
   };
   renderer.postMessage({ canvas: off, ctl: sh.ctl, slots: sh.slots, wide, fpsCap }, [off]);
-  env = Object.entries(await (await fetch('env.json')).json()).map(([k, v]) => `${k}=${v}`);
+  // Steam first: its files win, a picked disc only fills what Steam lacks.
+  const e = await (await fetch('env.json')).json();
+  delete e.SA2_DISC_FIRST;
+  if (picked.some(([p]) => p === '@disc' || p.startsWith('disc/'))) e.SA2_DISC_DIR = '/disc';
+  e.SA2_STEAM_DIR ??= '/steam';
+  // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
+  const token = mmoToken();
+  if (token) e.SA2_MMO_TOKEN = token;
+  env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
+  if (token) keepCard(token);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });

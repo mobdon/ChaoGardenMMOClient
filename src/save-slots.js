@@ -16,7 +16,7 @@ export function createSaveSlots(storage) {
     return [...new Map(rows.map(row => [row.token, row])).values()].sort((a, b) => (b.lastPlayedAt || 0) - (a.lastPlayedAt || 0));
   }
 
-  function record(token, player, savedAt) {
+  function record(token, player, savedAt, card) {
     const rows = list();
     const previous = rows.find(row => row.token === token) || {};
     const row = {
@@ -24,6 +24,7 @@ export function createSaveSlots(storage) {
       form: player.form, alignment: player.alignment, rings: player.rings,
       admin: !!player.admin, lastPlayedAt: Date.now(),
       ...(savedAt === undefined ? {} : { savedAt }),
+      ...(card ? { card } : {}),
     };
     storage.setItem(SAVE_SLOTS_KEY, JSON.stringify([row, ...rows.filter(item => item.token !== token)]));
     storage.setItem(SESSION_KEY, token);
