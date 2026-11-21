@@ -740,7 +740,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
 
   // The worn hat the server reports (care.hat). Native al_draw_B draws it at
   // Chao node 16 under that node's matrix, so each hat part is parented to the
-  // node at identity, in the same frame as the animal parts above.
+  // node. The armature export turns each Chao joint frame Z-up to Y-up, but a
+  // hat is a plain object tree and is not turned, so the holder gets the same
+  // +90 degree X turn (checked headless: hats 3, 9 and 12 sit on the crown).
   function setHat(item, hat, force = false) {
     const key = String(hat ?? '');
     if (!force && key === item.hatKey) return;
@@ -760,6 +762,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         const holder = new TransformNode(`${item.root.name}-${assetKey}`, scene);
         for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
         for (const entryRoot of entries.rootNodes) entryRoot.dispose();
+        holder.rotation.x = Math.PI / 2;
         holder.parent = socket;
         for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
         item.hatRoots.push(holder);
