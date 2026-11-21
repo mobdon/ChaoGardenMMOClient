@@ -436,6 +436,8 @@ pub fn mem1() -> u32 {
     })
 }
 pub const LC: u32 = 0x4000;
+/// Offset of the hardware registers in the 0xC segment (0xCC000000).
+const HW: u32 = 0x0C00_0000;
 
 /// Gekko physical memory: 24 MB MEM1 (seen at 0x80000000 and 0xC0000000)
 /// and the 16 KB locked cache at 0xE0000000. Hardware registers go to `io`.
@@ -467,7 +469,10 @@ impl Mem {
     #[inline]
     fn loc(&self, a: u32) -> Loc {
         match a >> 28 {
-            0x8 | 0xC if a & 0x0FFF_FFFF < MEM1 => Loc::Ram((a & 0x0FFF_FFFF) as usize),
+            0x8 if a & 0x0FFF_FFFF < MEM1 => Loc::Ram((a & 0x0FFF_FFFF) as usize),
+            // The uncached mirror stops at the hardware registers (0xCC000000):
+            // RAM past 192 MiB is reached through 0x8... only.
+            0xC if a & 0x0FFF_FFFF < HW => Loc::Ram((a & 0x0FFF_FFFF) as usize),
             0xE if a & 0x0FFF_FFFF < LC => Loc::Lc((a & 0x0FFF_FFFF) as usize),
             0x0 if a < MEM1 => Loc::Ram(a as usize),
             _ => Loc::Io,
