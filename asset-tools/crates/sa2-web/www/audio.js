@@ -31,6 +31,7 @@ class Mix extends AudioWorkletProcessor {
     let have = (w - r) >>> 0;
     // Too far behind (the tab was hidden, the game caught up): back to 60 ms.
     if (have > 150 * 64) {
+      Atomics.add(c, 10, 1); // ctl[10]: skips, for the page's status
       r = (w - TARGET) >>> 0;
       have = this.fill = TARGET;
     }
@@ -38,6 +39,7 @@ class Mix extends AudioWorkletProcessor {
     // sample (a click) and then playing late.
     const need = Math.ceil(out[0].length * this.step) * 2 + 2;
     if (this.waiting ? have < 40 * 64 : have < need) {
+      if (!this.waiting) Atomics.add(c, 9, 1); // ctl[9]: dropouts
       this.waiting = true;
       for (let ch = 0; ch < out.length; ch++) {
         const k = Math.min(ch, 1);

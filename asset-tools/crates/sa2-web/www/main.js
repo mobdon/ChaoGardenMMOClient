@@ -4,7 +4,7 @@
 //
 // Shared with the workers (ctl, Int32): [0] last thread id, [1..2] slot full,
 // [3..4] slot length, [5] slot the game fills next, [6] sound written,
-// [7] sound read.
+// [7] sound read, [8] canvas aspect (render.js), [9] sound dropouts, [10] sound skips.
 
 const SLOT = 40 << 20; // a frame's pipe bytes and 24 MiB of RAM
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
@@ -133,7 +133,9 @@ function frame() {
   requestAnimationFrame(frame);
 }
 setInterval(() => {
-  status.textContent = `${picture} · ${workers} threads`;
+  const drop = Atomics.exchange(ctl, 9, 0), skip = Atomics.exchange(ctl, 10, 0);
+  const sound = drop || skip ? ` · sound: ${drop} dropouts, ${skip} skips` : '';
+  status.textContent = `${picture}${sound} · ${workers} threads`;
 }, 1000);
 
 async function start() {
