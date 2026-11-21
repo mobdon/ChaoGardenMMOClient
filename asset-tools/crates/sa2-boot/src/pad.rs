@@ -145,6 +145,9 @@ pub fn scripted(frame: u64) -> bool {
 /// later entry (on another file) opens (e.g. `title.adx+60~60:1000` presses Start until the
 /// next screen's file loads), for screens that ignore an early press.
 pub fn script(frame: u64) -> Option<PadStatus> {
+    if let Some(p) = replay(frame) {
+        return Some(p);
+    }
     let script = std::env::var("SA2_INPUT").ok()?;
     let opens = OPENS.lock().unwrap_or_else(|e| e.into_inner());
     Some(script_at(&script, &opens, frame))
@@ -246,14 +249,114 @@ pub fn opened(name: &str) {
 
 /// Controller port 0 only (the others stay disconnected).
 pub fn set_port0(p: PadStatus) {
+    record(p);
     let mut pads = default_pads();
     pads[0] = p;
     set(pads);
 }
 
+/// One recorded frame hook: `hook button sx sy cx cy l r a b` (decimal).
+fn line(frame: u64, p: &PadStatus) -> String {
+    format!(
+        "{frame} {} {} {} {} {} {} {} {} {}",
+        p.button,
+        p.stick[0],
+        p.stick[1],
+        p.substick[0],
+        p.substick[1],
+        p.triggers[0],
+        p.triggers[1],
+        p.analog_a,
+        p.analog_b
+    )
+}
+
+fn parse(l: &str) -> Option<(u64, PadStatus)> {
+    let v: Vec<i64> = l
+        .split_whitespace()
+        .map(|x| x.parse().ok())
+        .collect::<Option<_>>()?;
+    let [f, b, sx, sy, cx, cy, tl, tr, aa, ab] = v.as_slice().try_into().ok()?;
+    let i8_ = |x: i64| i8::try_from(x).ok();
+    let u8_ = |x: i64| u8::try_from(x).ok();
+    Some((
+        u64::try_from(f).ok()?,
+        PadStatus {
+            button: u16::try_from(b).ok()?,
+            stick: [i8_(sx)?, i8_(sy)?],
+            substick: [i8_(cx)?, i8_(cy)?],
+            triggers: [u8_(tl)?, u8_(tr)?],
+            analog_a: u8_(aa)?,
+            analog_b: u8_(ab)?,
+            err: 0,
+        },
+    ))
+}
+
+static RECORDER: Global<Option<std::io::BufWriter<std::fs::File>>> = global!(None);
+/// Frame hooks recorded / replayed so far (the line key).
+static RECORDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static REPLAYED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// SA2_RECORD=file: write controller 1 as the game reads it, a line a frame,
+/// so a run can be replayed exactly (SA2_REPLAY).
+fn record(p: PadStatus) {
+    let Some(path) = std::env::var_os("SA2_RECORD") else {
+        return;
+    };
+    use std::io::Write;
+    // The frame hook sets the pad once a hook; replay counts the same way.
+    let frame = RECORDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    RECORDER.with_borrow_mut(|r| {
+        if r.is_none() {
+            *r = std::fs::File::create(&path)
+                .ok()
+                .map(std::io::BufWriter::new);
+        }
+        if let Some(w) = r {
+            let _ = writeln!(w, "{}", line(frame, &p));
+            let _ = w.flush();
+        }
+    });
+}
+
+static REPLAY: Global<Option<std::collections::HashMap<u64, PadStatus>>> = global!(None);
+
+/// SA2_REPLAY=file: controller 1 as recorded with SA2_RECORD (frames not in
+/// the file: nothing pressed).
+fn replay(_frame: u64) -> Option<PadStatus> {
+    let path = std::env::var_os("SA2_REPLAY")?;
+    let frame = REPLAYED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    REPLAY.with_borrow_mut(|r| {
+        let map = r.get_or_insert_with(|| {
+            std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(parse)
+                .collect()
+        });
+        Some(map.get(&frame).copied().unwrap_or_default())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::script_at;
+
+    #[test]
+    fn recorded_lines_read_back() {
+        let p = super::PadStatus {
+            button: 0x1100,
+            stick: [-100, 71],
+            substick: [3, -4],
+            triggers: [200, 0],
+            analog_a: 9,
+            analog_b: 0,
+            err: 0,
+        };
+        assert_eq!(super::parse(&super::line(4321, &p)), Some((4321, p)));
+        assert_eq!(super::parse("12 not numbers"), None);
+    }
 
     #[test]
     fn repeat_presses_until_the_next_screen_loads() {

@@ -158,6 +158,8 @@ struct App {
     tween: Option<Tween>,
     arrived: std::time::Instant,
     next_present: std::time::Instant,
+    /// Pictures saved so far (SA2_CAPTURE).
+    captured: u64,
     error: Option<String>,
 }
 
@@ -200,6 +202,10 @@ fn open(event_loop: &ActiveEventLoop) -> Result<Gpu, String> {
         .ok_or("surface not supported")?;
     // The game's colours are already gamma-encoded: use a non-sRGB format.
     config.format = config.format.remove_srgb_suffix();
+    // SA2_CAPTURE reads presented pictures back from the swapchain.
+    if capture().is_some() {
+        config.usage |= wgpu::TextureUsages::COPY_SRC;
+    }
     // At or above the display's rate, vsync paces the window. Below it (120
     // on a 165 Hz screen), presenting waits for nothing and a timer paces it:
     // with both, a picture that just missed a refresh waited for the next and
@@ -312,6 +318,13 @@ impl ApplicationHandler for App {
                                 let _ = g.device.poll(wgpu::PollType::wait_indefinitely());
                                 add(&GPU, t);
                             }
+                            if let Some((dir, from, count)) = capture() {
+                                let frame = sa2_recomp::host::FRAMES.load(Relaxed);
+                                if frame >= from && self.captured < count {
+                                    save_picture(g, &tex.texture, &dir, frame, self.captured);
+                                    self.captured += 1;
+                                }
+                            }
                             let t3 = std::time::Instant::now();
                             g.queue.present(tex);
                             add(&PRESENT, t3);
@@ -359,6 +372,7 @@ fn run(rx: Receiver<Frame>) -> Result<(), String> {
         tween: None,
         arrived: std::time::Instant::now(),
         next_present: std::time::Instant::now(),
+        captured: 0,
         error: None,
     };
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
@@ -385,6 +399,79 @@ fn hold(bit: u16, state: ElementState) {
         ElementState::Pressed => HELD.fetch_or(bit, Relaxed),
         ElementState::Released => HELD.fetch_and(!bit, Relaxed),
     };
+}
+
+/// SA2_CAPTURE=dir,first_frame,count: save `count` presented pictures as
+/// PNGs from game frame `first_frame` on (every picture the window shows,
+/// in-between ones included), to find what flickers from picture to picture.
+fn capture() -> Option<(std::path::PathBuf, u64, u64)> {
+    let v = std::env::var("SA2_CAPTURE").ok()?;
+    let mut it = v.rsplitn(3, ',');
+    let count = it.next()?.trim().parse().ok()?;
+    let from = it.next()?.trim().parse().ok()?;
+    Some((it.next()?.into(), from, count))
+}
+
+fn save_picture(g: &Gpu, tex: &wgpu::Texture, dir: &std::path::Path, frame: u64, n: u64) {
+    let (w, h) = (tex.width(), tex.height());
+    let row = (w * 4).div_ceil(256) * 256;
+    let buf = g.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("capture"),
+        size: u64::from(row) * u64::from(h),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = g.device.create_command_encoder(&Default::default());
+    enc.copy_texture_to_buffer(
+        tex.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: None,
+            },
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    g.queue.submit([enc.finish()]);
+    buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    if g.device.poll(wgpu::PollType::wait_indefinitely()).is_err() {
+        return;
+    }
+    let Ok(data) = buf.slice(..).get_mapped_range() else {
+        return;
+    };
+    let bgra = matches!(
+        tex.format(),
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h as usize {
+        let line = &data[y * row as usize..][..w as usize * 4];
+        for p in line.as_chunks::<4>().0 {
+            if bgra {
+                rgb.extend([p[2], p[1], p[0]]);
+            } else {
+                rgb.extend([p[0], p[1], p[2]]);
+            }
+        }
+    }
+    let _ = std::fs::create_dir_all(dir);
+    let path = dir.join(format!("pic_{n:05}_f{frame:06}.png"));
+    let Ok(file) = std::fs::File::create(&path) else {
+        return;
+    };
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    if let Ok(mut wr) = enc.write_header() {
+        let _ = wr.write_image_data(&rgb);
+    }
 }
 
 #[cfg(test)]

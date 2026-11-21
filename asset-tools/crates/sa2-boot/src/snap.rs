@@ -93,7 +93,16 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         let Some(s) = s.as_mut() else { return Ok(None) };
         note_uploads(&mut s.pending, &f.uploads);
         let tween = std::env::var_os("SA2_SNAP_TWEEN").is_some();
-        if every == 0 || !n.is_multiple_of(every) {
+        // SA2_FRAMES_RANGE=a-b: only frames a..=b (with SA2_FRAMES_EVERY=1,
+        // every frame there: flicker shows only in consecutive frames).
+        let in_range = std::env::var("SA2_FRAMES_RANGE")
+            .ok()
+            .and_then(|r| {
+                let (a, b) = r.split_once('-')?;
+                Some((a.trim().parse::<u64>().ok()?, b.trim().parse::<u64>().ok()?))
+            })
+            .is_none_or(|(a, b)| (a..=b).contains(&n));
+        if every == 0 || !n.is_multiple_of(every) || !in_range {
             if tween && every != 0 && (n + 1).is_multiple_of(every) {
                 s.before = Some(f.clone());
             }
@@ -160,6 +169,28 @@ pub fn frame(f: &Frame, n: u64, every: u64, dir: &Path) -> Result<Option<PathBuf
         } else {
             f
         };
+        // SA2_SNAP_ROP: blend, alpha-test and depth state of the frame's draws,
+        // grouped (which kinds of draw a frame is made of).
+        if std::env::var_os("SA2_SNAP_ROP").is_some() {
+            let mut kinds: std::collections::BTreeMap<String, usize> = Default::default();
+            for d in &f.draws {
+                let m = &d.material;
+                let tex = d.material_params.texture_mappings[0];
+                let k = format!(
+                    "view-space {} rop {:?} alpha {:?} stages {} tex0 {}x{}",
+                    d.draw_params.pos_mtx[0][0] == [1.0, 0.0, 0.0, 0.0],
+                    m.rop,
+                    m.alpha_test,
+                    m.tev_stages.len(),
+                    tex.width,
+                    tex.height
+                );
+                *kinds.entry(k).or_default() += 1;
+            }
+            for (k, n) in kinds {
+                eprintln!("rop: {n} x {k}");
+            }
+        }
         // SA2_SNAP_COPIES: the frame's EFB copies and every draw sampling one.
         if std::env::var_os("SA2_SNAP_COPIES").is_some() {
             for c in &f.tex_copies {

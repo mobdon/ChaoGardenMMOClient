@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audio;
+pub mod card;
 pub mod clock;
 pub mod dvd;
 #[cfg(not(target_os = "wasi"))]
@@ -33,6 +34,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     pad::install(c, m);
     audio::install(c, m);
     clock::install(c, m);
+    card::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).
