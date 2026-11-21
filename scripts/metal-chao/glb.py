@@ -46,7 +46,7 @@ def write(path,parts,texfile,skeleton=None):
         views[acc[skin['inverseBindMatrices']]['bufferView']].pop('target')
         for k in mesh_nodes: nodes[k]['skin']=0
         roots=[base+i for i,j in enumerate(J) if j['parent']<0]
-        nodes.append(dict(name='root',matrix=np.asarray(skeleton['root'],float).T.reshape(-1).tolist(),children=mesh_nodes+roots))
+        nodes.append(dict(name='root',extras=skeleton.get('extras',{}),matrix=np.asarray(skeleton['root'],float).T.reshape(-1).tolist(),children=mesh_nodes+roots))
         anims=[]
         for a in skeleton.get('animations',[]):
             ch=[];sm=[]

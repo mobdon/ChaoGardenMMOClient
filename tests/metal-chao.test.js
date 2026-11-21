@@ -30,13 +30,17 @@ test('metal skin hides the replaced Chao nodes and restores them', () => {
   assert.equal(meshes[1].material, original);
 });
 
-test('his clip follows how the Chao moves', () => {
-  assert.equal(metalClip({ moving: false }).name, 'stand');
-  assert.equal(metalClip({ moving: true, speed: 1 }).name, 'walk');
-  assert.equal(metalClip({ moving: true, speed: 1.4 }).name, 'jog');
-  assert.equal(metalClip({ moving: true, speed: 2 }).name, 'run');
-  assert.equal(metalClip({ moving: true, speed: 3 }).name, 'fly');
-  assert.equal(metalClip({ grounded: false }).name, 'fly');
+test('his clip follows his own physics row and motion rates', () => {
+  const native = { physics: { jog: 0.46, run: 1.39, rush: 2.3 },
+    clips: { stand: { mode: 3, speed: 0.1 }, walk: { mode: 11, speed: 1 }, jog: { mode: 11, speed: 0.04 }, run: { mode: 11, speed: 0.05 }, fly: { mode: 10, speed: 0.2 } } };
+  const at = gameSpeed => metalClip({ moving: true, speed: gameSpeed * 60 }, native, 1);
+  assert.deepEqual(metalClip({ moving: false }, native, 1), { name: 'stand', rate: 0.1 });
+  assert.equal(at(0.3).name, 'walk');
+  assert.equal(at(1).name, 'jog');
+  assert.equal(at(2).name, 'run');
+  assert.equal(at(3).name, 'fly');
+  assert.ok(Math.abs(at(3).rate - 0.6) < 1e-9);
+  assert.equal(metalClip({ grounded: false }, native, 1).name, 'fly');
 });
 
 test('switching clips stops the old one and loops the new one', () => {

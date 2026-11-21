@@ -51,14 +51,21 @@ export function metalPartMaterial(mesh) {
   (material.metadata.chaoLookEnvironment ??= new ChaoLookEnvironment(material)).setEnvironment(environment, false);
 }
 
-// His clip for how the Chao is moving: his own stand / walk / jog / run, and his top-speed pose
-// (the one he flies in) when airborne or faster than a run. Thresholds match the walkers' gaits.
-export function metalClip({ speed = 0, grounded = true, moving = false }) {
-  if (!grounded || speed > 2.4) return { name: 'fly', rate: 1 };
-  if (!moving) return { name: 'stand', rate: 1 };
-  const name = speed > 1.65 ? 'run' : speed > 1.2 ? 'jog' : 'walk';
-  const reference = name === 'run' ? 1.9 : name === 'jog' ? 1.5 : 1;
-  return { name, rate: Math.max(0.4, Math.min(1.5, speed / reference)) };
+// His clip for how the Chao is moving, the way SA2 picks Metal Sonic's rows 7-10: by his speed in game
+// units per frame against his physics row's jog / run / rush speeds. `native` is the rigged model's root
+// extras (converter: his physics row and clip rows from the player's own sonic2app.exe); `worldPerGameUnit`
+// turns game units into this world's units. Rates follow the game's motion step: a mode-3 row advances
+// by its speed per frame, a mode-10 row by speed x forward speed.
+export function metalClip({ speed = 0, grounded = true, moving = false }, native, worldPerGameUnit) {
+  const clip = name => native.clips[name] || { mode: 3, speed: 1 };
+  const gameSpeed = speed / worldPerGameUnit / 60;
+  const name = !grounded ? 'fly' : !moving ? 'stand'
+    : gameSpeed < native.physics.jog ? 'walk' : gameSpeed < native.physics.run ? 'jog'
+    : gameSpeed < native.physics.rush ? 'run' : 'fly';
+  const { mode, speed: rowSpeed } = clip(name);
+  // shortcut: mode-11 rows scale by the player's +0x44 speed, which is not traced yet; walk/jog/run use
+  // the forward speed like mode 10 until it is.
+  return { name, rate: mode === 3 ? rowSpeed : rowSpeed * gameSpeed };
 }
 
 export function playMetalClip(rig, { name, rate }) {

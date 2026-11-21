@@ -813,7 +813,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       }
       for (const group of entries.animationGroups) group.stop();
       item.metalChaoRoots = entries.rootNodes;
-      item.metalChaoRig = { groups: new Map(entries.animationGroups.map(group => [group.name, group])), current: null };
+      const native = container.transformNodes.find(node => node.metadata?.gltf?.extras?.gameUnit)?.metadata.gltf.extras;
+      if (!native) return;
+      // game units -> world: his model's game unit in Chao-model units, times the Chao visual's scale.
+      item.metalChaoRig = { groups: new Map(entries.animationGroups.map(group => [group.name, group])), current: null, native, worldPerGameUnit: native.gameUnit * visual.scaling.y };
       canvas.dataset.metalChao = 'rigged';
     });
   }
@@ -1739,7 +1742,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         item.nativeVisualSpeed = movingPose ? smoothObservedSpeed(item.nativeVisualSpeed, speed, dt) : 0;
         const kinematics = { speed, visualSpeed: item.nativeVisualSpeed, grounded,
           jumpOffset: motion?.jumpOffset, verticalVelocity: motion?.verticalVelocity, fresh, swimming, mounted };
-        if (item.metalChaoRig) playMetalClip(item.metalChaoRig, metalClip({ speed: item.groundSpeed || 0, grounded: grounded || !fresh, moving: item.moving }));
+        if (item.metalChaoRig) playMetalClip(item.metalChaoRig, metalClip({ speed: item.groundSpeed || 0, grounded: grounded || !fresh, moving: item.moving }, item.metalChaoRig.native, item.metalChaoRig.worldPerGameUnit));
         const behaviourMotion = item.behaviour && grounded && imported.behaviourCatalog?.size
           ? updateNativeBehaviour(imported, item.root, item.behaviour, { now: performance.now(), fresh, mounted, swimming })
           : null;
