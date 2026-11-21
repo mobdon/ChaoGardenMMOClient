@@ -18,6 +18,7 @@
 <section>Music <select id="bgm"></select> <button id="play">Play</button> <button id="stop">Stop</button>
   <label>volume <input id="vol" type="range" min="0" max="1" step="0.05" value="0.8"></label></section>
 <section>Sound effect <select id="bank"></select> <input id="sub" type="number" min="1" value="1" style="width:5em"> <button id="se">Play</button> <span id="seinfo"></span></section>
+<section>Voice <input id="voice" type="number" min="0" max="2726" value="2654" style="width:6em"> <label><input id="en" type="checkbox" checked> English</label> <button id="say">Play</button></section>
 <script type="module">
 import { Sa2Audio } from './sa2-audio.js';
 const $ = id => document.getElementById(id);
@@ -50,6 +51,7 @@ $('se').onclick = async () => {
   const part = +p.slice(i + 1).replace('.csb', '');
   await audio.run({ PlaySe: { bank: p.slice(0, i), part, subsong: +$('sub').value } });
 };
+$("say").onclick = async () => { await audio.resume(); await audio.run({ PlayVoice: { index: +$("voice").value, english: $("en").checked } }); };
 // Development: ?from=<url prefix> reads the same files from a local server; ?list=<url> gives the paths.
 const q = new URLSearchParams(location.search);
 if (q.get('from')) {

@@ -10,6 +10,7 @@ from the folder the player picks.
   `git clone --depth 1 --branch r2168 https://github.com/vgmstream/vgmstream`, then
   `ZIG=zig VGMSTREAM_SRC=<checkout> ./build.sh`. The built `.wasm` (1.4 MB) is committed, so
   CI and the web build need no C toolchain.
+- `../crates/sa2-voice-wasm` → `web/ahx.wasm` (+ `web/ahx.js`): AHX voices. Rebuild with `cargo build --release --target wasm32-unknown-unknown` there and copy `sa2_voice_wasm.wasm` to `web/ahx.wasm`.
 - `web/vgmstream.js`: loads the wasm, `decode(bytes, name, subsong)` → per-channel `Float32Array`s + loop points.
 - `web/sa2-audio.js`: Web Audio backend. Takes the engine's `sa2_runtime::sound::SoundCmd`
   (serde shape, e.g. `{ PlayBgm: { file: 'BOSS_02A.ADX' } }`) and plays it on master/bgm/se/voice
@@ -24,6 +25,6 @@ from the folder the player picks.
 | --- | ---: | --- |
 | `gd_PC/ADX/*.adx` music | 157 | all decode (CRI ADX type 03), loop points kept |
 | `MLT/`, `MPB/`, `event/MLT/` `.csb` sound banks | 193 + 37 + 53 | all 6,577 waveforms decode (AAX/ADX subsongs) |
-| `event_adx(_e).afs` voices | 2 archives, 2,727 entries each | **not decoded**: entries are AHX (MPEG layer II), which vgmstream only decodes with libmpg123 (LGPL). `Sa2Audio` takes a `decodeVoice` hook instead; the repo's own Rust AHX decoder (`sa2::audio::decode_ahx_wav`) is the candidate. |
+| `event_adx(_e).afs` voices | 2 archives, 2,727 entries each | all 5,454 decode with the repo's own Rust AHX decoder (`sa2::audio::decode_ahx_wav`) built as `web/ahx.wasm` (66 KB) from `asset-tools/crates/sa2-voice-wasm`; vgmstream would need LGPL libmpg123 for AHX. |
 
 Subsongs are vgmstream's waveform order; `sa2::csb` maps cue names to waveforms.

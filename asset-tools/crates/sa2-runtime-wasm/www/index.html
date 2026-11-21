@@ -17,11 +17,13 @@
   <label>Steam "Sonic Adventure 2" folder:
     <input id="folder" type="file" webkitdirectory directory>
   </label>
-  <span id="status">Pick the game folder. Nothing leaves this computer. Arrows or WASD to move, Space is A.</span>
+  <span id="status">Pick the game folder. Nothing leaves this computer. WASD to move, Space is A. A controller works too.</span>
 </header>
 <canvas id="view"></canvas>
 <script type="module">
-import init, { App } from './pkg/sa2_runtime_wasm.js';
+import init, { App, browser_pad } from './pkg/sa2_runtime_wasm.js';
+// The sound player (asset-tools/vgmstream-wasm/web; serve.py maps it to /sound/).
+import { Sa2Audio } from './sound/sa2-audio.js';
 
 const status = document.getElementById('status');
 const canvas = document.getElementById('view');
@@ -43,22 +45,43 @@ function fit() {
 }
 
 const keys = new Set();
-addEventListener('keydown', e => { keys.add(e.code); if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
+addEventListener('keydown', e => { keys.add(e.code); if (e.code === 'Space') e.preventDefault(); });
 addEventListener('keyup', e => keys.delete(e.code));
+// Raw GameCube values (PADRead's output); the game's own PADClamp limits
+// them. Keys: stick WASD (arrow keys are not bound), C-stick IJKL, L/R Q/E, A Space, B X, Start Enter.
 function pad() {
   const k = c => keys.has(c);
-  const x = (k('ArrowRight') || k('KeyD') ? 72 : 0) - (k('ArrowLeft') || k('KeyA') ? 72 : 0);
-  const y = (k('ArrowUp') || k('KeyW') ? 72 : 0) - (k('ArrowDown') || k('KeyS') ? 72 : 0);
-  const b = (k('Space') ? 0x100 : 0) | (k('KeyX') ? 0x200 : 0) | (k('Enter') ? 0x1000 : 0);
-  return [x, y, b];
+  const dir = (p, n) => (p ? 127 : 0) - (n ? 127 : 0);
+  const x = dir(k('KeyD'), k('KeyA'));
+  const y = dir(k('KeyW'), k('KeyS'));
+  const cx = dir(k('KeyL'), k('KeyJ')), cy = dir(k('KeyI'), k('KeyK'));
+  const l = k('KeyQ') ? 255 : 0, r = k('KeyE') ? 255 : 0;
+  const b = (k('Space') ? 0x100 : 0) | (k('KeyX') ? 0x200 : 0) | (k('Enter') ? 0x1000 : 0)
+    | (l ? 0x40 : 0) | (r ? 0x20 : 0);
+  return [x, y, cx, cy, l, r, b];
 }
 
-async function run(files) {
+// The first connected controller, in the browser's standard layout.
+function gamepad() {
+  for (const g of navigator.getGamepads?.() ?? []) {
+    if (g?.connected) return [Float32Array.from(g.axes), Float32Array.from(g.buttons, b => b.value)];
+  }
+  return [new Float32Array(), new Float32Array()];
+}
+
+// readFile(path under the game folder) -> Uint8Array | null, for sound files read on demand.
+async function run(files, readFile) {
   fit();
   status.textContent = 'Loading Iron Gate…';
   await init();
   const app = await App.start(canvas, files.exe, files.stg11, files.set_s ?? undefined, files.set_u ?? undefined, files.motions ?? undefined, files.landtx ?? undefined, files.walker_mdl ?? undefined, files.walker_tex ?? undefined);
   status.textContent = `Iron Gate · ${app.triangles} land triangles`;
+  // Sound is optional: the game runs silent if the player cannot load.
+  const audio = await Sa2Audio.create({ readFile }).catch(e => { console.warn('no sound:', e); return null; });
+  // Browsers start audio only after the player presses something.
+  const wake = () => audio?.resume();
+  addEventListener('keydown', wake);
+  addEventListener('pointerdown', wake);
   addEventListener('resize', () => { fit(); app.resize(canvas.width, canvas.height); });
   // The game runs at 60 frames a second whatever the display's rate.
   const tick = 1000 / 60;
@@ -68,8 +91,10 @@ async function run(files) {
     last = now;
     while (owed >= tick) {
       owed -= tick;
-      const [x, y, b] = pad();
-      status.textContent = app.frame(x, y, b);
+      const [axes, buttons] = gamepad();
+      const p = browser_pad(axes, buttons, ...pad());
+      status.textContent = app.frame_pad(...p);
+      for (const cmd of JSON.parse(app.sounds())) audio?.run(cmd);
     }
     requestAnimationFrame(step);
   };
@@ -90,19 +115,24 @@ document.getElementById('folder').addEventListener('change', async e => {
     if (!f && (k === 'exe' || k === 'stg11')) return fail(`missing ${p}`);
     files[k] = f ? new Uint8Array(await f.arrayBuffer()) : null;
   }
-  run(files).catch(fail);
+  const readFile = async p => {
+    const f = byPath.get(p.toLowerCase());
+    return f ? new Uint8Array(await f.arrayBuffer()) : null;
+  };
+  run(files, readFile).catch(fail);
 });
 
 // Development: ?from=<url prefix> fetches the same files from a local server.
 const from = new URLSearchParams(location.search).get('from');
 if (from) {
   (async () => {
-    const files = {};
-    for (const [k, p] of Object.entries(want)) {
+    const readFile = async p => {
       const r = await fetch(from + p);
-      files[k] = r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
-    }
-    await run(files);
+      return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+    };
+    const files = {};
+    for (const [k, p] of Object.entries(want)) files[k] = await readFile(p);
+    await run(files, readFile);
   })().catch(fail);
 }
 </script>

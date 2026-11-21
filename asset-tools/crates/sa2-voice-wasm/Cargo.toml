@@ -1,0 +1,20 @@
+[package]
+name = "sa2-voice-wasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "AHX voice decoding (sa2::audio::decode_ahx_wav) as a tiny wasm module for the browser"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sa2-asset-tools = { path = "../sa2" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

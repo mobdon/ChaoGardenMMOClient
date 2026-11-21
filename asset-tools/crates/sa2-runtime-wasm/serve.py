@@ -17,6 +17,16 @@ ALLOWED = {'sonic2app.exe', 'resource/gd_PC/stg11D.rel', 'resource/gd_PC/set0011
            'resource/gd_PC/set0011_u.bin', 'resource/gd_PC/landtx11.prs',
            'resource/gd_PC/ewalkmtn.prs', 'resource/gd_PC/ewalkmdl.prs',
            'resource/gd_PC/ewalktex.prs'}
+# The sound player (asset-tools/vgmstream-wasm/web) is served at /sound/.
+SOUND = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'vgmstream-wasm', 'web')
+SOUND_FILES = {'sa2-audio.js', 'vgmstream.js', 'vgmstream.wasm', 'ahx.js', 'ahx.wasm'}
+
+
+def is_audio(rel):
+    """Music (ADX), sound banks (CSB) and voice archives (AFS) under gd_PC."""
+    parts = rel.split('/')
+    return (rel.startswith('resource/gd_PC/') and '..' not in parts and '' not in parts
+            and rel.lower().endswith(('.adx', '.csb', '.afs')))
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -25,7 +35,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path.startswith('/game/'):
             rel = path[len('/game/'):]
             # Only the files the page asks for; nothing else of the install.
-            return os.path.join(GAME, *rel.split('/')) if rel in ALLOWED else os.devnull + '.missing'
+            return os.path.join(GAME, *rel.split('/')) if rel in ALLOWED or is_audio(rel) else os.devnull + '.missing'
+        if path.startswith('/sound/'):
+            name = path[len('/sound/'):]
+            return os.path.join(SOUND, name) if name in SOUND_FILES else os.devnull + '.missing'
         return super().translate_path(path)
 
     def end_headers(self):
