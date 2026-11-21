@@ -110,7 +110,105 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     let a = rt::sec(m, 60, 1) + CHAO_EXEC;
+    let me = c.r[3];
     rel_original(c, m, a, chao_exec);
+    // In a stage: Sonic's live pose over the matrices the exec just built.
+    if RIDER.get() != 0 && matches!(STEP.get(), Step::Live(ch) if ch == me) {
+        write_pose(m, me);
+    }
+}
+
+/// mob 2026-11-21 (board.py): Sonic's board drawn at the Chao's size.
+const BOARD_SCALE: f32 = 0.40;
+
+thread_local! {
+    /// The board drawn this frame: (frame, triangles in Chao space from
+    /// Sonic's model space, board centroid in world).
+    static BOARD: std::cell::RefCell<Option<(u64, Vec<[crate::chao_retarget::V3; 3]>, [f32; 3])>> = const { std::cell::RefCell::new(None) };
+}
+
+fn apply(a: &[[f32; 4]; 3], p: [f32; 3]) -> [f32; 3] {
+    std::array::from_fn(|i| (0..3).map(|k| a[i][k] * p[k]).sum::<f32>() + a[i][3])
+}
+
+/// City Escape's board task display (stg13D ObjectBoardDisp, .text 0x518,
+/// size 0x218, decomp o_ce_board.c): its Ninja draws are the board.
+fn from_board_disp(c: &Cpu, m: &Mem) -> bool {
+    const STAGE: u32 = 0x803A_D820;
+    if RIDER.get() == 0 || m.r16(STAGE) != 13 {
+        return false;
+    }
+    // The stage number is set before stg13D links: sec() panics while unlinked.
+    let Ok(text) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rt::sec(m, 13, 1))) else {
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+            eprintln!("chao-player lvl: stg13D unlinked; draw lr {:#x} obj {:#x}", c.lr, c.r[3]);
+        }
+        return false;
+    };
+    let disp = text + 0x518;
+    (disp..disp + 0x218).contains(&c.lr)
+}
+
+/// The board (rest vertices `verts`, object space) drawn scaled about its
+/// centre; remembered for the seat.
+fn board_draw(c: &mut Cpu, m: &mut Mem, addr: u32, verts: Vec<[f32; 3]>) {
+    let model = c.r[3];
+    let root = SKEL.with_borrow(|s| s.first().copied());
+    let (Some(root), false) = (root, verts.is_empty()) else { return original(c, m, addr) };
+    let cl = verts.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / verts.len() as f32);
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let cur = mtx(m, cur_ptr);
+    let w = inv_mul(&mtx(m, m.r32(NJ_BASE_MATRIX)), &cur);
+    let rel = inv_mul(&root, &w);
+    let tris = verts.iter().map(|&v| { let q = crate::chao_retarget::to_chao(apply(&rel, v)); [q, q, q] }).collect();
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if f % 60 == 0 {
+        eprintln!("chao-player lvl: frame {f} board? lr {:#x} model {model:#x} verts {}", c.lr, verts.len());
+    }
+    BOARD.set(Some((f, tris, apply(&w, cl))));
+    let s = BOARD_SCALE;
+    for r in 0..3 {
+        let t = cur[r][3] + (1.0 - s) * (0..3).map(|k| cur[r][k] * cl[k]).sum::<f32>();
+        for k in 0..3 {
+            m.w32(cur_ptr + 4 * (4 * r + k) as u32, (cur[r][k] * s).to_bits());
+        }
+        m.w32(cur_ptr + 4 * (4 * r + 3) as u32, t.to_bits());
+    }
+    original(c, m, addr);
+    for r in 0..3 {
+        for k in 0..4 {
+            m.w32(cur_ptr + 4 * (4 * r + k) as u32, cur[r][k].to_bits());
+        }
+    }
+}
+
+thread_local! {
+    /// Set while Sonic's in-stage display is walked for his skeleton.
+    static LCAP: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A Ninja draw inside Sonic's in-stage display: record the node matrices
+/// of each motion draw, draw nothing.
+fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    if CAPTURE.get() {
+        if addr == 0x8011_DF44 {
+            return;
+        }
+        return original(c, m, addr);
+    }
+    let (obj, mot) = (c.r[3], c.r[4]);
+    NODES.with_borrow_mut(|n| n.clear());
+    CAPTURE.set(true);
+    original(c, m, addr);
+    CAPTURE.set(false);
+    let n = NODES.with_borrow(|n| n.len());
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if f % 60 == 0 {
+        eprintln!("chao-player lvl: frame {f} draw {addr:#x} obj {obj:#x} motion {mot:#x} nodes {n}");
+    }
+    if n >= 56 {
+        SKEL.set(NODES.with_borrow(|n| n.clone()));
+    }
 }
 
 /// Place the Chao on the rider right before it draws (after its own exec).
@@ -211,6 +309,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(0x8011_E1C4, |c, m| ev_draw(c, m, 0x8011_E1C4));
     c.rt.set_override(0x8011_E1EC, |c, m| ev_draw(c, m, 0x8011_E1EC));
     c.rt.set_override(CNK_CACHE_DRAW, cnk_cache_draw);
+    c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
     c.rt.set_override(NODE_TRANSFORM, node_transform);
     sa2_recomp::os::add_frame_hook(ev_frame_hook);
     c.rt.set_override(ADX_START_AFS, voice);
@@ -264,6 +363,17 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let (obj, mot, lr) = (c.r[3], c.r[4], c.lr);
     if CHAO_DRAW.get() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
         eprintln!("chao-player ev: chao draw via {addr:#x} obj {obj:#x} motion {mot:#x} lr {lr:#x} nodes so far {}", CHAO_NODE.get());
+    }
+    if LCAP.get() {
+        return level_capture(c, m, addr);
+    }
+    if from_board_disp(c, m) {
+        let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
+        let w = rest.worlds(&[]);
+        let verts: Vec<[f32; 3]> = rest.verts.iter().zip(&w).flat_map(|(vs, (r, t))| {
+            vs.iter().map(|v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()
+        }).collect();
+        return board_draw(c, m, addr, verts);
     }
     if EV_SONIC.contains(&obj) {
         // The cutscene's Sonic: walk his motion for the node matrices, draw nothing.
@@ -538,6 +648,7 @@ fn write_pose(m: &mut Mem, chao: u32) {
         }
     });
     pose_chao();
+    let seated = seat(m);
     let mut nodes = vec![];
     fn walk(m: &Mem, o: u32, out: &mut Vec<u32>) {
         let mut o = o;
@@ -554,6 +665,8 @@ fn write_pose(m: &mut Mem, chao: u32) {
     let pos = [f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C)];
     let (sy, cy) = ((m.r32(cw + 0x0C) as i32 as f32) * std::f32::consts::TAU / 65536.0).sin_cos();
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+    // On the board: Sonic's root rotation (with the slope), at the board centre.
+    let (ry, pos) = seated.unwrap_or((ry, pos));
     POSED.with_borrow(|p| {
         for (&n, &(r0, t0)) in nodes.iter().zip(p.iter()) {
             let r: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| ry[i][k] * r0[k][j]).sum()));
@@ -572,11 +685,42 @@ fn write_pose(m: &mut Mem, chao: u32) {
     });
 }
 
+/// While a board drew this or last frame: seat the posed Chao on it
+/// (retarget `seat_on_board`), and return the Chao-space -> world rotation
+/// and origin (board centre) to place it with.
+fn seat(m: &Mem) -> Option<([[f32; 3]; 3], [f32; 3])> {
+    let _ = m;
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let (bf, mut tris, centre) = BOARD.with_borrow(|b| b.clone())?;
+    if f > bf + 1 || RIDER.get() == 0 {
+        return None;
+    }
+    let (root, sonic): ([[f32; 4]; 3], Vec<[[f32; 4]; 3]>) = SKEL.with_borrow(|s| {
+        (s.first().copied().unwrap_or_default(), s.iter().map(|e| inv_mul(&s[0], e)).collect())
+    });
+    if sonic.len() != 62 {
+        return None;
+    }
+    CHAO_REST.with_borrow(|r| {
+        let rest = r.as_ref()?;
+        POSED.with_borrow_mut(|p| { rest.seat_on_board(p, &sonic, &mut tris, BOARD_SCALE); });
+        Some(())
+    })?;
+    // Sonic root rotation, columns normalised, times from_chao (c -> [-c2, c1, c0]).
+    let col = |j: usize| { let l = (0..3).map(|i| root[i][j] * root[i][j]).sum::<f32>().sqrt().max(1e-6); [root[0][j] / l, root[1][j] / l, root[2][j] / l] };
+    let (c0, c1, c2) = (col(0), col(1), col(2));
+    let r: [[f32; 3]; 3] = std::array::from_fn(|i| [c2[i], c1[i], -c0[i]]);
+    Some((r, centre))
+}
+
 /// Retarget Sonic's skeleton (made model-space by his root) onto the Chao.
 fn pose_chao() {
     let sonic: Vec<[[f32; 4]; 3]> = SKEL.with_borrow(|s| {
         if s.len() < 56 {
             return vec![];
+        }
+        if s.len() == 62 {
+            return s.iter().map(|e| inv_mul(&s[0], e)).collect();
         }
         STEAM_TO_EV.iter().map(|&e| inv_mul(&s[0], &s[e as usize])).collect()
     });
@@ -602,7 +746,11 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
 
 fn display(c: &mut Cpu, m: &mut Mem) {
     if matches!(STEP.get(), Step::Live(_)) {
-        return; // the Chao is drawn by its own task
+        // Sonic's own display, walked for his node matrices, drawing nothing.
+        LCAP.set(true);
+        original(c, m, SONIC_DISP);
+        LCAP.set(false);
+        return;
     }
     original(c, m, SONIC_DISP);
 }
