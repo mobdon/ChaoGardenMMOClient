@@ -173,6 +173,12 @@ const SOURCES: &[(&str, &str, &str, &str)] = &[
         "7eb19b01972165404f5cec75da6ad5dbe9f687b1d213b6c50dafbbc2381972c6",
         "d6b69c1916c0967f00df41fe463e480e7123dff98a72a5187f544490b80c2f89",
     ),
+    (
+        "MetalSonic",
+        "metalsonicmtn",
+        "58c50938f8d33c1dd7d3860fb50bc31a7bc98cb9b3b7b5c687b94898003c832f",
+        "60077f0034facdb877eed484237aace01e6c0d404ff4169f10c2735f032d5919",
+    ),
 ];
 
 fn sample_character(
