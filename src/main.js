@@ -7,6 +7,7 @@ import { createStageSelect } from './stages.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createGardenCare } from './garden-care.js';
+import { createBreedingMenu } from './breeding-menu.js';
 import { INTERACTION_ANCHORS } from '../shared/constants.js';
 
 const $ = (selector) => document.querySelector(selector);
@@ -38,15 +39,30 @@ const audio = createGameAudio($('#audio-toggle'), $('#garden'), {
 const gardenCare = createGardenCare({ root: $('#garden-care-panel'), send: message => {
   if (socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(message)); return true;
-}, hatch: async (itemId, name) => {
+}, hatch: hatchEgg });
+// An egg (carried {itemId}, or bred in the nest {eggId}) hatches into a new slot on this memory card.
+async function hatchEgg(egg, name) {
   // The egg hatches into a new slot on this memory card; this Chao keeps playing.
   if (!sessionCard) throw new Error('Insert your memory card first to hatch an egg.');
   const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, card: sessionCard, egg: { from: sessionToken, itemId } }) });
+    body: JSON.stringify({ name, card: sessionCard, egg: { from: sessionToken, ...egg } }) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
   saveSlots.record(data.token, data.player, undefined, sessionCard);
+}
+const breeding = createBreedingMenu({ root: $('#breeding-panel'), hatch: hatchEgg, send: message => {
+  if (socket?.readyState !== WebSocket.OPEN) return false;
+  socket.send(JSON.stringify(message)); return true;
+}, statRows: (stats, names) => {
+  // The partner in the Doctor's own stat window.
+  const list = document.createElement('div'); list.className = 'breeding-stats';
+  for (const name of names) { const row = createStatRow(name); updateStatRow(row, name, stats[name] || {}); list.append(row); }
+  return list;
 } });
+$('#breeding-open').addEventListener('click', () => {
+  const open = $('#breeding-panel').hidden;
+  $('#breeding-panel').hidden = !open; $('#breeding-open').setAttribute('aria-pressed', String(open));
+});
 function toggleCare(open = $('#garden-care-panel').hidden) {
   $('#garden-care-panel').hidden = !open;
   $('#care-open').setAttribute('aria-pressed', String(open));
@@ -259,6 +275,7 @@ function render(next) {
   }
   updateWatchButton();
   gardenCare.update(next.care, player, { connected: socket?.readyState === WebSocket.OPEN, serverTime: next.serverTime });
+  breeding.update(next);
   if (Date.now() - lastSlotUpdate > 10000) rememberChao();
   $('#garden').dataset.playerX = player.x.toFixed(3);
   $('#garden').dataset.playerZ = player.z.toFixed(3);
@@ -365,6 +382,7 @@ function connect(token) {
       }
       if (message.kind === 'mech-shot') $('#garden').dataset.mechShots = String(Number($('#garden').dataset.mechShots || 0) + 1);
       gardenCare.handleEvent(message);
+      breeding.handleEvent(message);
       garden?.handleEvent?.(message);
     }
   };

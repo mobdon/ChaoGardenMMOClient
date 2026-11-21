@@ -96,6 +96,32 @@ export function drawInventory(ctx, { atlas, font, metrics }, items, selected) {
   if (label) drawText(ctx, font, metrics, label, 8, size.window + 8);
 }
 
+const ROW = 24; // one Chao name per row, the font's 16 px plus the cursor's margin
+
+/** A Chao Select window listing names, one per row, for picking a Chao. */
+export function listSize(count) {
+  const height = Math.max(WINDOW.height, GRID.y + count * ROW + PIECE.band);
+  return { width: WINDOW.width, height: height + BAR, window: height };
+}
+export function rowAt(n) { return { x: GRID.x, y: GRID.y + n * ROW, width: WINDOW.width - 2 * GRID.x, height: ROW }; }
+
+/** `rows` are {label, note}: the name in the row, `note` in the message bar when it's selected. */
+export function drawChaoList(ctx, { atlas, font, metrics }, rows, selected) {
+  const size = listSize(rows.length);
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, size.width, size.height);
+  drawWindow(ctx, atlas, size.window);
+  rows.forEach((row, n) => {
+    const box = rowAt(n);
+    if (n === selected) { ctx.fillStyle = 'rgb(127,127,255)'; ctx.fillRect(box.x, box.y, box.width, box.height); }
+    drawText(ctx, font, metrics, row.label, box.x + 6, box.y + 2);
+  });
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, size.window, size.width, BAR);
+  const note = rows[selected]?.note;
+  if (note) drawText(ctx, font, metrics, note, 8, size.window + 8);
+}
+
 let art;
 /** The window atlas and font from the server's native assets, with glyph widths measured once. Null when they can't load. */
 export function loadInventoryArt(document = globalThis.document) {

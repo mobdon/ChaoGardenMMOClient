@@ -179,6 +179,6 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   assert.equal(name.maxLength, 7, 'picking an egg asks for a name the game can hold');
   name.value = 'Pip'; name.listeners.input();
   name.listeners.keydown({ key: 'Enter' });
-  assert.deepEqual(hatched, [['egg:2', 'Pip']], 'the egg hatches into a new slot');
+  assert.deepEqual(hatched, [[{ itemId: 'egg:2' }, 'Pip']], 'the egg hatches into a new slot');
   assert.equal(sent.length, 0, 'it is not put down in the garden');
 });

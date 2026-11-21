@@ -220,7 +220,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
         if (event.key !== 'Enter' || !naming.name.trim()) return;
         const { itemId, name } = naming; naming = null;
         feedback = 'Hatching…'; previous = ''; render();
-        hatch(itemId, name.trim()).then(() => { feedback = `${name.trim()} hatched into a new slot on your memory card.`; },
+        hatch({ itemId }, name.trim()).then(() => { feedback = `${name.trim()} hatched into a new slot on your memory card.`; },
           error => { feedback = error.message; }).finally(() => { previous = ''; render(); });
       });
       box.append(input);
