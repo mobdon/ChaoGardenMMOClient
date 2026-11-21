@@ -179,11 +179,17 @@ impl GameFiles for FlatDir {
     }
     fn size(&self, path: &str) -> Option<u64> {
         let name = path.rsplit('/').next()?;
-        DirFiles { root: self.dir.clone() }.raw_size(name)
+        DirFiles {
+            root: self.dir.clone(),
+        }
+        .raw_size(name)
     }
     fn read_at(&self, path: &str, offset: u64, buf: &mut [u8]) -> Option<usize> {
         let name = path.rsplit('/').next()?;
-        DirFiles { root: self.dir.clone() }.raw_read_at(name, offset, buf)
+        DirFiles {
+            root: self.dir.clone(),
+        }
+        .raw_read_at(name, offset, buf)
     }
 }
 
