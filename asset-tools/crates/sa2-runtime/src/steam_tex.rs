@@ -353,8 +353,16 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
             continue;
         }
         let fmt = if want_cmpr { CMPR } else { RGB5A3 };
+        // Mip levels only where the GC texture has them (GVRT flags bit 0):
+        // Steam's chain on a GC texture without mips garbled "Licensed by
+        // Nintendo" (256x32) on the logo screen.
+        let gc_flags = skel[10];
         let full = (dds.w.max(dds.h).trailing_zeros() + 1) as usize;
-        let levels = if dds.levels.len() >= full { full } else { 1 };
+        let levels = if gc_flags & 1 != 0 && dds.levels.len() >= full {
+            full
+        } else {
+            1
+        };
         let mut data = Vec::new();
         for (l, level) in dds.levels.iter().take(levels).enumerate() {
             let (w, h) = ((dds.w >> l).max(1), (dds.h >> l).max(1));
@@ -366,8 +374,8 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
                 (_, Kind::Rgba) => rgba_to_rgb5a3(level, w, h),
             });
         }
-        let mip = u8::from(levels > 1);
-        out[entry + 30] = mip;
+        let mip = (gc_flags & !1) | u8::from(levels > 1);
+        out[entry + 30] = (out[entry + 30] & !1) | u8::from(levels > 1);
         out[entry + 31] = fmt;
         out[entry + 33] = dims_code(dds.w) << 4 | dims_code(dds.h);
         out.extend_from_slice(b"GVRT");
