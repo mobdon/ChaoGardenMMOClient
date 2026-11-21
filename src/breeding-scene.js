@@ -101,6 +101,14 @@ export async function playBreedingScene(host) {
     return heart;
   });
   const jingle = new Audio('/api/assets/jingle-chao-g-dance.mp3');
+  // The game's own egg (object_alo_dummyegg), shown plain (EggColor 0, al_egg01) when it's laid.
+  const eggModel = fetch('/api/assets/chao-egg.glb').then(r => r.ok ? r.arrayBuffer() : null)
+    .then(buffer => buffer && B.LoadAssetContainerAsync(new Uint8Array(buffer), scene, { pluginExtension: '.glb' })).catch(() => null);
+  const layEgg = () => void eggModel.then(egg => {
+    if (!egg) return;
+    const root = egg.instantiateModelsToScene(name => name, false).rootNodes[0];
+    root.position.set(pair[1].root.position.x - 2.0, 0, 0); // 2.0 in front of the answerer, at its height
+  });
   const courtship = createCourtship(rows);
   const show = (c, s) => {
     const row = rows.get(s.state), group = row && c.groups.get(row.nativeName);
@@ -113,7 +121,10 @@ export async function playBreedingScene(host) {
     engine.runRenderLoop(() => {
       carry += engine.getDeltaTime() / (1000 / 60);
       for (; carry >= 1 && !courtship.done; carry--, frame++) {
-        for (const event of courtship.step()) if (event === 'jingle') void jingle.play().catch(() => {});
+        for (const event of courtship.step()) {
+          if (event === 'jingle') void jingle.play().catch(() => {});
+          if (event === 'egg') layEgg();
+        }
       }
       show(pair[0], courtship.inviter); show(pair[1], courtship.answerer);
       hearts.forEach(h => h.scaling.setAll(heartScale(frame, 60) / HEART.max));
