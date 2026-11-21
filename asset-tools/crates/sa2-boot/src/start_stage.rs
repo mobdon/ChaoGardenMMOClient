@@ -34,6 +34,16 @@ const AL_CHANGE_AREA: u32 = 0x2_7E00;
 /// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 5 Entrance/race,
 /// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
 const LAST_AREA: u32 = 12;
+/// A new player's egg, laid the way ChaoMain's `AL_ItemCreateManagerExecutor`
+/// (0x18F7C, its call at 0x19208) makes a bought egg: a save slot from
+/// `fn_60_2C30` 0x2C30, `AL_GeneCreate` 0x1218C into a 0xC0-byte gene,
+/// then `CreateEgg(gene, slot, 0, &pos, 3)` 0x8F20. ChaoMain symbols.txt (GSNE8P).
+const SAVE_SLOT: u32 = 0x2C30;
+const AL_GENE_CREATE: u32 = 0x1_218C;
+const CREATE_EGG: u32 = 0x8F20;
+const GENE_SIZE: u32 = 0xC0;
+/// main.dol `playertwp` .bss 0x801E7768 (taskwk*[]); taskwk +0x14 is pos.
+const PLAYERTWP: u32 = 0x801E_7768;
 
 /// (stage, character) to start, until it has started.
 static PENDING: Global<Option<(u16, u32)>> = global!(None);
@@ -41,6 +51,8 @@ static PENDING: Global<Option<(u16, u32)>> = global!(None);
 static AREA: Global<Option<u32>> = global!(None);
 /// Started in Chao World: the last area told to the page (u32::MAX before the first).
 static SHOWN: Global<Option<u32>> = global!(None);
+/// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
+static HATCH: Global<bool> = global!(false);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -60,6 +72,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .filter(|a| (1..=LAST_AREA).contains(a)),
         );
+        HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
         c.rt.set_override(TOP_LEVEL, top_level);
         return;
     }
@@ -97,12 +110,37 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
             AREA.set(None);
         }
+        // Arrived in the lobby (the player task is up): lay the egg once.
+        if HATCH.get() && now == 0 && m.r32(PLAYERTWP) != 0 {
+            HATCH.set(false);
+            lay_egg(c, m, text);
+        }
         if now != shown {
             SHOWN.set(Some(now));
             tell_page(now);
         }
     }
     original(c, m, TOP_LEVEL);
+}
+
+/// The game's own egg at the player's feet, with guest scratch for the gene
+/// and position on a lowered stack (as the native caller keeps them).
+fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
+    let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
+    if slot == 0 {
+        eprintln!("start-stage: no free Chao save slot; no egg");
+        return;
+    }
+    let sp = c.r[1];
+    c.r[1] = sp - 0x100 - GENE_SIZE;
+    let (gene, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + GENE_SIZE);
+    let player = m.r32(PLAYERTWP) + 0x14;
+    for i in 0..3 {
+        m.w32(pos + i * 4, m.r32(player + i * 4));
+    }
+    guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
+    guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
+    c.r[1] = sp;
 }
 
 /// advertiseD 0x1028C..0x1034C (the one-player branch), in order.
