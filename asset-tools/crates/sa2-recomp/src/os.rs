@@ -528,16 +528,45 @@ pub fn pump(c: &mut Cpu, m: &mut Mem) {
         .ok()
         .and_then(|s| s.parse::<u64>().ok());
     if at.is_some() && at == Some(pumps()) {
-        let mut sp = saved.0[1];
-        eprint!("stack at pump {}:", at.unwrap_or(0));
-        for _ in 0..24 {
-            sp = m.r32(sp);
-            if sp == 0 || sp == u32::MAX {
-                break;
+        // SA2_STACK_THREAD=addr: that thread's saved stack instead (its
+        // OSContext keeps r1 at +4); =all: every thread on the OS's active
+        // list (head at 0x800000DC, linked at +0x2FC), with its state.
+        let which = std::env::var("SA2_STACK_THREAD").unwrap_or_default();
+        let mut stacks: Vec<(String, u32)> = Vec::new();
+        if which.trim() == "all" {
+            let mut t = m.r32(0x8000_00DC);
+            for _ in 0..64 {
+                if t == 0 {
+                    break;
+                }
+                let state = m.r16(t.wrapping_add(0x2C8));
+                stacks.push((
+                    format!(
+                        "thread {t:#x} state {state} suspend {} prio {} pc {:#x}",
+                        m.r32(t.wrapping_add(0x2CC)) as i32,
+                        m.r32(t.wrapping_add(0x2D0)) as i32,
+                        m.r32(t.wrapping_add(0x198))
+                    ),
+                    m.r32(t.wrapping_add(4)),
+                ));
+                t = m.r32(t.wrapping_add(0x2FC));
             }
-            eprint!(" {:#010x}", m.r32(sp + 4));
+        } else {
+            let sp = u32::from_str_radix(which.trim().trim_start_matches("0x"), 16)
+                .map_or(saved.0[1], |t| m.r32(t.wrapping_add(4)));
+            stacks.push(("current".into(), sp));
         }
-        eprintln!();
+        for (who, mut sp) in stacks {
+            eprint!("stack at pump {} ({who}):", at.unwrap_or(0));
+            for _ in 0..24 {
+                sp = m.r32(sp);
+                if sp == 0 || sp == u32::MAX {
+                    break;
+                }
+                eprint!(" {:#010x}", m.r32(sp + 4));
+            }
+            eprintln!();
+        }
     }
     let hooks: Vec<Func> = S.with_borrow(|s| s.frame_hooks.clone());
     for h in hooks {
