@@ -2,10 +2,12 @@
 //! relocations and code match GSNE8P's main.dol) with Steam's section bytes
 //! copied in wherever they line up.
 //!
-//! - A section the same size in both: Steam's bytes, all of them.
-//! - A data section Steam rebuilt (another size): the two are aligned and
-//!   Steam's bytes replace the disc's where a run corresponds (same length
-//!   between matching stretches); insertions and deletions are listed.
+//! - A code section the same size in both: Steam's bytes, all of them.
+//! - A data section: the two are aligned and Steam's bytes replace the
+//!   disc's where a run corresponds (same length between matching
+//!   stretches); insertions and deletions are listed. Even at the same size:
+//!   stg44D's Steam data drops 8 bytes and adds 8 later, and copied whole it
+//!   put 559 words 8 bytes off (Mad Space crashed loading).
 //! - A code section Steam rebuilt: the disc's code is kept.
 //!
 //! Relocated fields hold zero in both files and OSLink fills them, so a
@@ -44,7 +46,7 @@ pub fn hybrid(disc: &Rel, steam: &Rel) -> Hybrid {
             continue;
         };
         let base = d.offset as usize;
-        if d.size == s.size {
+        if d.size == s.size && (d.exec || s.exec) {
             for (k, (a, b)) in dr.iter().zip(sr).enumerate() {
                 if a != b {
                     out.bytes[base + k] = *b;
