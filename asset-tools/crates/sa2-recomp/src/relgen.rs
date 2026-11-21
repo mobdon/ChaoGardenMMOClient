@@ -1,5 +1,5 @@
 //! `sa2-recomp rels`: recompile every REL. Steam's gd_PC copy is used wherever
-//! it differs from the disc (mob's rule: Steam always wins). Steam RELs were
+//! it differs from the disc (project rule: Steam always wins). Steam RELs were
 //! linked against another main.dol build, so their main.dol imports are mapped
 //! to GSNE8P addresses using the RELs both versions share.
 

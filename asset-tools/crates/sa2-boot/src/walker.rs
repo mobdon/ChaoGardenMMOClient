@@ -8,7 +8,7 @@
 //! with those two flags set; both are restored right after, so the stage keeps
 //! its 1P rules. Player 2 loads as chosen.
 //!
-//! Physics (mob, 2026-11-21): the walker keeps the mech's own row (Tails 6,
+//! Physics: the walker keeps the mech's own row (Tails 6,
 //! Eggman 7), so speed and acceleration match the stage. In main.dol rows 13
 //! and 14 differ from 6 and 7 at +0x10, +0x3C, +0x40 and +0x60 only.
 //!
@@ -18,7 +18,7 @@
 //! 0x801CD520 vs 0x801CD580 in 0x800D960C). So the 1P walker bank load
 //! (0x8006CFEC) gets the 2P bank's name, the game's own string.
 //!
-//! Voices (mob, 2026-11-21: no Eggman voice lines, Chao sounds instead): while
+//! Voices (no Eggman voice lines, Chao sounds instead): while
 //! player 1 is a Chao Walker, the voice task (exec 0x800125D8) does not start
 //! its queued voice (ADX start at 0x80012760); it plays that walker's own
 //! sound instead. Music and other sound effects are unchanged.

@@ -1,10 +1,10 @@
 # SA2 Battle Rust port: phased plan (November 20, 2026)
 
 This is the working order for the rest of the port. It is ordered toward one
-goal first: **a level a person can play on mob's website, with the stage's
+goal first: **a level a person can play on the project website, with the stage's
 native character**. Later phases widen that to every character, stage, boss,
 kart and Chao competition. Playing levels as a Chao comes after the whole game
-is ported (mob, November 20, 2026).
+is ported (decided November 20, 2026).
 
 [FULL-GAME-PORT.md](FULL-GAME-PORT.md) stays the acceptance ledger and
 [issue #11](https://github.com/mobdon/ChaoGardenMMOClient/issues/11) stays the
@@ -54,7 +54,7 @@ branch, main at e5cbd92; full report in the project's
    is checked against the PowerPC under the Unicorn harness (`tests/dol_ppc.py`).
    No invented timers, odds, positions or rules. A rule with no native source is
    left out and fails closed, and the doc says so.
-2. **Code reference: the GameCube disc** (GSNE8P, mob's own copy; main.dol SHA-1
+2. **Code reference: the GameCube disc** (GSNE8P, the owner's own copy; main.dol SHA-1
    `e4c50f32242a3cd36cdc8ae776661601a52130a2`, matching the roeming/SA2B
    reconstruction's `config/GSNE8P/symbols.txt`).
 3. **Data base: the player's Steam install.** Every reader and every runtime
@@ -223,7 +223,7 @@ The single biggest gap. Today each routine runs alone from a JSON request.
 
 ### Phase 2: First playable level on the website
 
-**Target (decided by mob): Iron Gate, played with its native character (Mech
+**Target (decided): Iron Gate, played with its native character (Mech
 Eggman), loaded exactly as the one-player story does** (loader 0x800B5D2C, row 7,
 G+0x1E = 0). Playing as a Chao comes after the rest of the game is ported. The
 Chao Walker trace is kept for then: all four walker loaders install the walker
@@ -251,7 +251,7 @@ two-player select (ENGINE-MAP.md 8, 8a, 8b).
 - **Website:** a page that loads the player's own Steam data locally, runs the
   WASM build and plays Iron Gate. No game data is hosted.
 - **Depends on:** Phase 1, #456.
-- **Acceptance:** on mob's website, a person plays Iron Gate Mission 1 from the
+- **Acceptance:** on the project website, a person plays Iron Gate Mission 1 from the
   start to the goal ring as Mech Eggman, with input-driven native ticks and
   a stored replay that reproduces the run.
 
@@ -355,13 +355,13 @@ run in parallel on the server.
 ## Decided
 
 - **First playable: Iron Gate with its native character, Mech Eggman**
-  (mob, November 20, 2026). Use only the native characters for now.
+  (decided November 20, 2026). Use only the native characters for now.
 - **Playing as a Chao is deferred** until after the rest of the game is ported
-  (mob, November 20, 2026). The earlier choice of the Chao Walker for Iron Gate
+  (decided November 20, 2026). The earlier choice of the Chao Walker for Iron Gate
   is withdrawn; ENGINE-MAP.md 8a/8b keep the trace of how the game reaches the
   Chao Walker rows.
 
-## Open questions for mob
+## Open questions for the owner
 
 1. How the website gets the player's Steam data: a local folder picker in the
    browser is assumed here; nothing is hosted.
