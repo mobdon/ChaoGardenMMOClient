@@ -198,6 +198,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(DRAW_MOTION, trace_draw_motion);
     c.rt.set_override(EV_SHAPE_DRAW, ev_shape_draw);
     c.rt.set_override(CNK_CACHE_DRAW, cnk_cache_draw);
+    c.rt.set_override(NODE_TRANSFORM, node_transform);
     sa2_recomp::os::add_frame_hook(ev_frame_hook);
     c.rt.set_override(ADX_START_AFS, voice);
     c.rt.set_override(SONIC_DISP, display);
@@ -249,7 +250,16 @@ fn trace_draw_motion(c: &mut Cpu, m: &mut Mem) {
 fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let (obj, mot, lr) = (c.r[3], c.r[4], c.lr);
     if EV_SONIC.contains(&obj) {
-        return; // the cutscene's Sonic (eyes): the Chao stands in
+        // The cutscene's Sonic: walk his motion for the node matrices, draw nothing.
+        NODES.with_borrow_mut(|n| n.clear());
+        CAPTURE.set(true);
+        original(c, m, addr);
+        CAPTURE.set(false);
+        let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        if f % 60 == 0 {
+            eprintln!("chao-player ev motion: frame {f} obj {obj:#x} nodes {}", NODES.with_borrow(|n| n.len()));
+        }
+        return;
     }
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some()
         && SEEN_DRAWS.with_borrow_mut(|s| s.insert((obj, mot))) {
@@ -368,10 +378,20 @@ fn cnk_cache_draw(c: &mut Cpu, m: &mut Mem) {
     if !CAPTURE.get() {
         return original(c, m, CNK_CACHE_DRAW);
     }
-    let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
-    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
-    NODES.with_borrow_mut(|n| n.push(inv_mul(&base, &cur)));
     c.r[3] = 0;
+}
+
+/// Ninja node transform (r3 node) the motion walker 0x8012099C applies to
+/// each node after its push: afterwards the current matrix is that node's.
+const NODE_TRANSFORM: u32 = 0x8011_3C4C;
+
+fn node_transform(c: &mut Cpu, m: &mut Mem) {
+    original(c, m, NODE_TRANSFORM);
+    if CAPTURE.get() {
+        let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+        let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+        NODES.with_borrow_mut(|n| n.push(inv_mul(&base, &cur)));
+    }
 }
 
 fn call(c: &mut Cpu, m: &mut Mem, f: u32, args: &[u32]) -> u32 {
