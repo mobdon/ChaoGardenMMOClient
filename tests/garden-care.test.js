@@ -170,9 +170,15 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   const document = { createElement: tag => new Node(tag, document) };
   const root = new Node('aside', document);
   const sent = [];
-  const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg' });
+  const hatched = [];
+  const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg', hatch: async (...args) => { hatched.push(args); } });
   panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true });
   const egg = root.all().find(n => n.className === 'garden-care-slot' && n.attributes['aria-label'] === 'White egg x1');
   egg.listeners.click(); egg.listeners.click();
-  assert.deepEqual(sent[0].intent, { kind: 'place-egg', itemId: 'egg:2' });
+  const name = root.all().find(n => n.className === 'garden-care-name');
+  assert.equal(name.maxLength, 7, 'picking an egg asks for a name the game can hold');
+  name.value = 'Pip'; name.listeners.input();
+  name.listeners.keydown({ key: 'Enter' });
+  assert.deepEqual(hatched, [['egg:2', 'Pip']], 'the egg hatches into a new slot');
+  assert.equal(sent.length, 0, 'it is not put down in the garden');
 });

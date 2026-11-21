@@ -38,6 +38,14 @@ const audio = createGameAudio($('#audio-toggle'), $('#garden'), {
 const gardenCare = createGardenCare({ root: $('#garden-care-panel'), send: message => {
   if (socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(message)); return true;
+}, hatch: async (itemId, name) => {
+  // The egg hatches into a new slot on this memory card; this Chao keeps playing.
+  if (!sessionCard) throw new Error('Insert your memory card first to hatch an egg.');
+  const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, card: sessionCard, egg: { from: sessionToken, itemId } }) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
+  saveSlots.record(data.token, data.player, undefined, sessionCard);
 } });
 function toggleCare(open = $('#garden-care-panel').hidden) {
   $('#garden-care-panel').hidden = !open;

@@ -144,10 +144,10 @@ const reasons = {
   'nest-full': 'Your nest is full.', 'chao-wont-wear': 'Your Chao is not interested in hats.', 'already-wearing': 'Your Chao is already wearing a hat.',
 };
 
-export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID() }) {
+export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID(), hatch = async () => {} }) {
   if (!root) throw new TypeError('Garden care needs a panel root.');
   const document = root.ownerDocument;
-  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false, selected = 0;
+  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false, selected = 0, naming = null;
   const icons = new Map();
   // The game's own 32x32 panels: one per animal and drive, one shared by all fruit and all eggs. Seeds and hats have none yet.
   const panelFile = item => item.kind === 'animal' || item.kind === 'drive' ? `item-panel-${Number(item.id.slice(4))}.png`
@@ -179,6 +179,8 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     const canvas = el('canvas'); canvas.width = size.width; canvas.height = size.height; canvas.setAttribute('aria-hidden', 'true');
     box.append(canvas);
     const shown = items.map(item => ({ ...item, icon: panelIcon(item) }));
+    // A picked egg asks for the new Chao's name in the message bar.
+    if (naming) shown[selected].label = naming.name || 'Name?';
     const draw = () => loadInventoryArt(document).then(art => { if (art) drawInventory(canvas.getContext?.('2d'), art, shown, selected); });
     items.forEach((item, n) => {
       const { x, y } = slotAt(n);
@@ -190,11 +192,30 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       slot.disabled = !!pending;
       slot.addEventListener('click', () => {
         if (n !== selected) { selected = n; previous = ''; render(); return; }
+        if (item.kind === 'egg') { naming = { itemId: item.id, name: '' }; previous = ''; render(); return; }
         if (use && item.mayUse) submit({ kind: use, itemId: item.id });
       });
       shown[n].icon?.addEventListener?.('load', draw);
       box.append(slot);
     });
+    if (naming) {
+      const input = el('input', undefined, 'garden-care-name');
+      input.maxLength = 7; // the game's name length
+      input.value = naming.name;
+      input.setAttribute('aria-label', 'Name your new Chao');
+      Object.assign(input.style, { top: `${size.window}px`, height: `${size.height - size.window}px` });
+      input.addEventListener('input', () => { naming.name = input.value; shown[selected].label = input.value || 'Name?'; draw(); });
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { naming = null; previous = ''; render(); }
+        if (event.key !== 'Enter' || !naming.name.trim()) return;
+        const { itemId, name } = naming; naming = null;
+        feedback = 'Hatching…'; previous = ''; render();
+        hatch(itemId, name.trim()).then(() => { feedback = `${name.trim()} hatched into a new slot on your memory card.`; },
+          error => { feedback = error.message; }).finally(() => { previous = ''; render(); });
+      });
+      box.append(input);
+      globalThis.queueMicrotask?.(() => input.focus?.());
+    }
     draw();
     return box;
   }
