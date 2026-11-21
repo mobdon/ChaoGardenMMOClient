@@ -151,28 +151,59 @@ fn from_board_disp(c: &Cpu, m: &Mem) -> bool {
 
 /// The board (rest vertices `verts`, object space) drawn scaled about its
 /// centre; remembered for the seat.
-fn board_draw(c: &mut Cpu, m: &mut Mem, addr: u32, verts: Vec<[f32; 3]>) {
-    let model = c.r[3];
-    let root = SKEL.with_borrow(|s| s.first().copied());
-    let (Some(root), false) = (root, verts.is_empty()) else { return original(c, m, addr) };
-    let cl = verts.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / verts.len() as f32);
+fn board_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    let (obj, root) = (c.r[3], SKEL.with_borrow(|s| s.first().copied()));
+    let Some(root) = root else { return original(c, m, addr) };
+    let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     let cur = mtx(m, cur_ptr);
-    let w = inv_mul(&mtx(m, m.r32(NJ_BASE_MATRIX)), &cur);
-    let rel = inv_mul(&root, &w);
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    // A capture pass (drawing nothing) for the board's node matrices as its
+    // motion poses them this frame: the rest pose is not where it draws.
+    let (regs, f1) = (c.r, c.f[1]);
+    NODES.with_borrow_mut(|n| n.clear());
+    // Only the motion draws walk nodes through the captured transform.
+    if addr != 0x8011_DF44 {
+        CAPTURE.set(true);
+        original(c, m, addr);
+        CAPTURE.set(false);
+        (c.r, c.f[1]) = (regs, f1);
+    }
+    for r in 0..3 {
+        for k in 0..4 {
+            m.w32(cur_ptr + 4 * (4 * r + k) as u32, cur[r][k].to_bits());
+        }
+    }
+    let nodes = NODES.with_borrow(|n| n.clone());
+    let w = inv_mul(&base, &cur);
+    // World node matrices: captured, or the rest tree under the board placement.
+    let worlds: Vec<[[f32; 4]; 3]> = if nodes.len() == rest.nodes.len() {
+        nodes
+    } else {
+        rest.worlds(&[]).iter().map(|(r, t)| std::array::from_fn(|i| std::array::from_fn(|j| {
+            if j < 3 { (0..3).map(|k| w[i][k] * r[k][j]).sum() } else { (0..3).map(|k| w[i][k] * t[k]).sum::<f32>() + w[i][3] }
+        }))).collect()
+    };
+    let verts: Vec<[f32; 3]> = rest.verts.iter().zip(&worlds).flat_map(|(vs, wm)| vs.iter().map(|&v| apply(wm, v)).collect::<Vec<_>>()).collect();
+    if verts.is_empty() {
+        return original(c, m, addr);
+    }
+    let cw = verts.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / verts.len() as f32);
+    let rel = inv_mul(&root, &[[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.]]);
     let tris = verts.iter().map(|&v| { let q = crate::chao_retarget::to_chao(apply(&rel, v)); [q, q, q] }).collect();
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if f % 60 == 0 {
-        eprintln!("chao-player lvl: frame {f} board? lr {:#x} model {model:#x} verts {}", c.lr, verts.len());
+        eprintln!("chao-player lvl: frame {f} board obj {obj:#x} nodes {}/{} verts {} centre {cw:?}", worlds.len(), rest.nodes.len(), verts.len());
     }
-    BOARD.set(Some((f, tris, apply(&w, cl))));
+    BOARD.set(Some((f, tris, cw)));
+    // Draw scaled about its world centre: cur' = base * S_c * inv(base) * cur.
     let s = BOARD_SCALE;
+    let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * cw[i] }));
     for r in 0..3 {
-        let t = cur[r][3] + (1.0 - s) * (0..3).map(|k| cur[r][k] * cl[k]).sum::<f32>();
-        for k in 0..3 {
-            m.w32(cur_ptr + 4 * (4 * r + k) as u32, (cur[r][k] * s).to_bits());
+        for k in 0..4 {
+            let v = (0..3).map(|q| base[r][q] * ws[q][k]).sum::<f32>() + if k == 3 { base[r][3] } else { 0.0 };
+            m.w32(cur_ptr + 4 * (4 * r + k) as u32, v.to_bits());
         }
-        m.w32(cur_ptr + 4 * (4 * r + 3) as u32, t.to_bits());
     }
     original(c, m, addr);
     for r in 0..3 {
@@ -379,12 +410,7 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
         return level_capture(c, m, addr);
     }
     if from_board_disp(c, m) {
-        let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
-        let w = rest.worlds(&[]);
-        let verts: Vec<[f32; 3]> = rest.verts.iter().zip(&w).flat_map(|(vs, (r, t))| {
-            vs.iter().map(|v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()
-        }).collect();
-        return board_draw(c, m, addr, verts);
+        return board_draw(c, m, addr);
     }
     if EV_SONIC.contains(&obj) {
         // The cutscene's Sonic: walk his motion for the node matrices, draw nothing.
