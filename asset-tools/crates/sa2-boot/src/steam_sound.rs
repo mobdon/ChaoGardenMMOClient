@@ -175,6 +175,15 @@ fn message(handle: u32, status: u32, d1: u32, d2: u32) {
 /// In place of 0x801403b8: follow the message, then let the game's own
 /// sequencer have it.
 fn seq_message(c: &mut Cpu, m: &mut Mem) {
+    if std::env::var_os("SA2_TRACE_SOUND").is_some() {
+        eprintln!(
+            "steam sound: msg {:#x} {:02x} {:02x} {:02x}",
+            c.r[3],
+            c.r[5] & 0xFF,
+            c.r[6] & 0xFF,
+            c.r[7] & 0xFF
+        );
+    }
     message(c.r[3], c.r[5] & 0xFF, c.r[6] & 0xFF, c.r[7] & 0xFF);
     if let Some(f) = (c.rt.generated)(SEQ_MESSAGE) {
         f(c, m);
