@@ -206,7 +206,9 @@ async function start() {
   const audio = new AudioContext({ latencyHint: 'interactive' });
   await audio.audioWorklet.addModule('audio.js');
   const mix = new AudioWorkletNode(audio, 'sa2-mix', { outputChannelCount: [2], processorOptions: { ctl: sh.ctl, audio: sh.audio } });
-  mix.connect(audio.destination);
+  // Master volume for the MMO sound corner (src/game-overlay.js).
+  globalThis.sa2Gain = audio.createGain();
+  mix.connect(globalThis.sa2Gain).connect(audio.destination);
   const dpr = devicePixelRatio || 1;
   canvas.width = Math.round(canvas.clientWidth * dpr);
   canvas.height = Math.round(canvas.clientHeight * dpr);
