@@ -18,6 +18,7 @@ pub mod pad;
 pub mod prof;
 pub mod snap;
 pub mod vi;
+pub mod wide;
 pub mod window;
 
 use sa2_recomp::rt::{call, Cpu, Mem};
@@ -32,6 +33,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     audio::install(c, m);
     clock::install(c, m);
     card::install(c, m);
+    wide::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).
