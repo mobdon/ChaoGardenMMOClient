@@ -107,7 +107,14 @@ impl ChaoRest {
         let p = |i: usize| pos(&sonic[i]);
         let n = self.nodes.len();
         let mut extra = vec![None; n];
-        extra[1] = Some(body_rot(sonic));
+        let body = body_rot(sonic);
+        extra[1] = Some(body);
+        // mob 2026-11-21: the head follows the rider's head node 1:1 (not
+        // rigid on the body, which bobs with the run cycle): node 16 gets the
+        // head frame in place of the body frame.
+        if n > 16 {
+            extra[16] = Some(mm(&head_rot(sonic), &tr(&body)));
+        }
         let w1 = self.worlds(&extra);
         for &(piv, mesh, a, b) in &LIMBS {
             let u = sub(self.centroid(&w1, mesh), w1[piv].1);
@@ -223,6 +230,19 @@ pub fn body_rot(sonic: &[[[f32; 4]; 3]]) -> M3 {
     std::array::from_fn(|i| [sd[i], up[i], fw[i]])
 }
 
+/// Head frame from the rider's head node 43 to the muzzle 47 (forward) and
+/// the pair 51/52 (left/right of the face); rest = identity.
+/// unverified: that 47 and 51/52 are the muzzle and the face sides in every
+/// 62-node rider (positions in Shadow's Radical Highway dump fit).
+pub fn head_rot(sonic: &[[[f32; 4]; 3]]) -> M3 {
+    let p = |i: usize| pos(&sonic[i]);
+    let fw = unit(to_chao(sub(p(47), p(43))));
+    let sd = to_chao(sub(p(51), p(52)));
+    let sd = unit(sub(sd, mul(fw, dot(sd, fw))));
+    let up = cross(fw, sd);
+    std::array::from_fn(|i| [sd[i], up[i], fw[i]])
+}
+
 /// Eigenvector of the smallest eigenvalue of a symmetric 3x3 (Jacobi).
 fn smallest_eigvec(mut a: M3) -> V3 {
     let mut v = I3;
@@ -334,7 +354,19 @@ mod tests {
     /// Synthetic two-limb rig: a Sonic arm pointing where the Chao arm
     /// already points leaves the arm alone; pointing elsewhere turns it there.
     #[test]
-    fn limb_follows_sonic_direction() {
+    fn head_frame_rest_is_identity() {
+        let mut s = [[[0.0f32; 4]; 3]; 62];
+        let set = |s: &mut [[[f32; 4]; 3]; 62], i: usize, p: V3| for k in 0..3 { s[i][k][3] = p[k]; };
+        set(&mut s, 43, [0., 5., 0.]);
+        set(&mut s, 47, [-1., 5., 0.]); // muzzle ahead: Sonic -x = chao +z
+        set(&mut s, 51, [-1., 5., 0.2]); // left of the face: Sonic +z = chao +x
+        set(&mut s, 52, [-1., 5., -0.2]);
+        let h = head_rot(&s);
+        for i in 0..3 { assert!(near(h[i], I3[i])); }
+    }
+
+    #[test]
+        fn limb_follows_sonic_direction() {
         let mut nodes = vec![(-1, [0.; 3], I3), (0, [0.; 3], I3)];
         let mut verts = vec![vec![], vec![]];
         for i in 2..16 { nodes.push((1, [0.; 3], I3)); verts.push(vec![[0., -1., 0.]]); let _ = i; }

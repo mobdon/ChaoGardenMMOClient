@@ -794,6 +794,18 @@ fn level_pose(m: &Mem, chao: u32) {
     });
     pose_chao();
     POSED_WORLD.set(false);
+    // SA2_HEAD_LOG=a-b (debug): the posed head (node 16) and body (node 1)
+    // up vectors and the rider's spine 2->34 each frame, to see head jitter.
+    if let Some((a, b)) = std::env::var("SA2_HEAD_LOG").ok().and_then(|r| { let (a, b) = r.split_once('-')?; Some((a.parse::<u64>().ok()?, b.parse::<u64>().ok()?)) }) {
+        let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        if (a..=b).contains(&f) {
+            let up = |r: &[[f32; 3]; 3]| [r[0][1], r[1][1], r[2][1]].map(|x| (x * 1000.0).round() / 1000.0);
+            let sp = SKEL.with_borrow(|s| if s.len() == 62 { let a = inv_mul(&s[0], &s[2]); let b = inv_mul(&s[0], &s[34]); [b[0][3] - a[0][3], b[1][3] - a[1][3], b[2][3] - a[2][3]].map(|x| (x * 1000.0).round() / 1000.0) } else { [0.0; 3] });
+            POSED.with_borrow(|p| if p.len() > 16 {
+                eprintln!("head f{f}: body up {:?} head up {:?} head pos {:?} spine {sp:?}", up(&p[1].0), up(&p[16].0), p[16].1.map(|x| (x * 1000.0).round() / 1000.0));
+            });
+        }
+    }
     let Some((r, c)) = seat(m) else { return };
     // Seated: world matrices (r p + c); chao_node puts them under the view
     // (base) matrix, so the display's own placement does not matter.
