@@ -823,8 +823,8 @@ const PHYSICS: u32 = 0x8019_6578;
 const P1_OBJ2: u32 = 0x801E_7728;
 /// mob 2026-11-21: off the board mob's Chao moves with Metal Sonic's row;
 /// on the board Sonic's own row as the game set it.
-/// unverified: row 12 is Metal Sonic's (coordinator's note, not yet read
-/// from the character id table).
+/// Row = the character id byte obj2+3 (0x8004F838 multiplies it by 0x84);
+/// Metal Sonic's loader 0x80086BA4 stores 0xC there (Sonic's 0x800874C0: 0).
 const METAL_ROW: u32 = 12;
 
 fn physics_row(m: &mut Mem) {
