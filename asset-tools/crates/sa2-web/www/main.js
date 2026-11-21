@@ -143,7 +143,8 @@ function mmoToken() {
 }
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
-const roomZones = { 1: 'garden', 2: 'hero', 3: 'dark', 5: 'race' };
+// The game's own Chao Lobby is the MMO hub (mob 2026-11-21): stage 90 with no area.
+const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 5: 'race' };
 function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
   ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: zone }));
@@ -213,7 +214,7 @@ async function start() {
   if (token) e.SA2_MMO_TOKEN = token;
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
-  if (token && roomZones[q.get('area')]) joinRoom(token, roomZones[q.get('area')]);
+  if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });
