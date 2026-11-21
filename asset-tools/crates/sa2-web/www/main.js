@@ -199,6 +199,7 @@ async function start() {
   // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
+  if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
