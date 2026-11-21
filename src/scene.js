@@ -359,10 +359,17 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
             mat.alpha = 1;
             // Family bodies keep the original eye and mouth overlays; only those mask.
             const facePart = isFamilyBody ? /al_eye|al_mouth/i.test(mat.albedoTexture?.name || '') : faceMaterials[key]?.includes(mat.name);
-            const solidCharacterPart = isCharacter && !facePart;
+            // The game blends these Chaos textures (SRC_ALPHA/INV_SRC_ALPHA, strips flagged USE_ALPHA in
+            // al_dchaos/al_hchaos/al_nchaos.sa2mdl); the GLB export marked them opaque.
+            const nativeBlend = /al_(dcha01|hcha00|ncha0[012])/i.test(mat.albedoTexture?.name || '');
+            const solidCharacterPart = isCharacter && !facePart && !nativeBlend;
             mat.transparencyMode = solidCharacterPart ? 0 : mat.transparencyMode === 2 || mat.transparencyMode === 3 ? 1 : mat.transparencyMode ?? 0;
             mat.alphaCutOff = 0.45;
             mat.useAlphaFromAlbedoTexture = mat.transparencyMode === 1;
+            if (nativeBlend) {
+              mat.transparencyMode = 2; mat.useAlphaFromAlbedoTexture = true;
+              mat.alphaMode = Engine.ALPHA_COMBINE; mat.backFaceCulling = false;
+            }
             if (solidCharacterPart) {
               mat.opacityTexture = null;
               mat.alphaMode = Engine.ALPHA_DISABLE;
