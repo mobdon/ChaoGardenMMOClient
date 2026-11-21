@@ -107,13 +107,20 @@ test('panel submits one request, retries it unchanged after reconnect and report
   assert.ok(root.all().some(n => n.textContent === 'No fruit is ripe yet.'));
 });
 
-test('animals and drives show the game\'s own panel with the count in the corner', () => {
+test('carried items sit in Chao Select slots: the first pick selects, the second uses', () => {
   const document = { createElement: tag => new Node(tag, document) };
   const root = new Node('aside', document);
-  createGardenCare({ root }).update(care(), { zone: 'garden', x: 13, z: 2 }, { connected: true, serverTime: 1 });
-  const icons = root.all().filter(n => n.tagName === 'img').map(n => n.src);
-  assert.deepEqual(icons, ['/api/assets/item-panel-0.png', '/api/assets/item-panel-22.png']);
-  assert.ok(root.all().some(n => n.className === 'garden-care-count' && n.children[0].textContent === 'x1'));
+  const sent = [];
+  createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-slot' }).update(care(), { zone: 'garden', x: 13, z: 2 }, { connected: true, serverTime: 1 });
+  const slots = () => root.all().filter(n => n.className === 'garden-care-slot');
+  assert.deepEqual(slots().map(n => n.attributes['aria-label']), ['Penguin x1', 'Native item 22 x1', 'Garden Fruit x1', 'Hero Fruit x2', 'Hero Seed x1']);
+  assert.equal(slots()[0].attributes['aria-pressed'], 'true');
+  const fruit = slots().findIndex(n => n.attributes['aria-label'] === 'Hero Fruit x2');
+  slots()[fruit].listeners.click();
+  assert.equal(sent.length, 0, 'the first pick only moves the cursor');
+  assert.equal(slots()[fruit].attributes['aria-pressed'], 'true');
+  slots()[fruit].listeners.click();
+  assert.deepEqual(sent[0].intent, { kind: 'consume', itemId: 'sa2-fruit:5' });
 });
 
 test('animal parts map to the traced native Chao nodes and exact model names', async () => {
@@ -165,6 +172,7 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   const sent = [];
   const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg' });
   panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true });
-  root.all().find(n => n.tagName === 'button' && n.textContent === 'Put down').listeners.click();
+  const egg = root.all().find(n => n.className === 'garden-care-slot' && n.attributes['aria-label'] === 'White egg x1');
+  egg.listeners.click(); egg.listeners.click();
   assert.deepEqual(sent[0].intent, { kind: 'place-egg', itemId: 'egg:2' });
 });

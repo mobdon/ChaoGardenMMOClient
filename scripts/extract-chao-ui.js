@@ -64,6 +64,9 @@ const selectedSprites = [
     evidence: 'Native ASCII and extended glyphs. A common font asset, not a complete stat window.' },
   { archive: 'al_tex_ent_common_en', filename: 'add_parameter_race_en.png', alias: 'chao-race-parameter.png', role: 'Original English race-entry parameter atlas',
     evidence: 'Visible Swim/Fly/Run/Power/Stamina, type/alignment labels, digits, Lv. and green meter segments. Race-entry context, not the garden stat panel.' },
+  // archive null: taken from whichever extracted archive holds it.
+  { archive: null, filename: 'add_select_race_en.png', alias: 'chao-select-window.png', role: 'Original English Chao Select atlas',
+    evidence: 'Chao Select window at 104,4 40x60, pixel-matched to the 640x480 Chao Select screen; drawn as the carried-items window.' },
 ];
 // al_panel: the game's own 32x32 panels for the 21 animals and 4 Chaos Drives,
 // in native item order (care catalog ids 0-24), each checked by eye.
@@ -72,10 +75,10 @@ const panels = ['pen', 'goma', 'rako', 'usa', 'chit', 'ino', 'kuma', 'tora', 'go
 for (const [id, name] of panels.entries()) selectedSprites.push({ archive: 'al_panel', filename: `panel_${name}.png`,
   alias: `item-panel-${id}.png`, role: `Original inventory panel for native item ${id}`, evidence: 'al_panel entry, matched by eye to its animal or drive.' });
 for (const { archive, filename, alias, role, evidence } of selectedSprites) {
-  const source = report.sources.find(source => source.relativePath.endsWith(`/${archive}.prs`));
+  const source = report.sources.find(source => (archive === null || source.relativePath.endsWith(`/${archive}.prs`)) && source.sprites.some(sprite => sprite.filename === filename));
   const sprite = source?.sprites.find(sprite => sprite.filename === filename);
-  if (!sprite) throw new Error(`Selected native sprite missing: ${archive}/${filename}`);
-  await copyFile(path.join(output, archive, filename), path.join(imports, alias));
+  if (!sprite) throw new Error(`Selected native sprite missing: ${archive ?? 'any archive'}/${filename}`);
+  await copyFile(path.join(output, path.basename(source.relativePath, '.prs'), filename), path.join(imports, alias));
   report.selected.push({ archive: source.relativePath, archiveSha256: source.sha256, ...sprite, alias, role, evidence });
 }
 report.statPanelRegions = {

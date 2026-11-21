@@ -1,4 +1,4 @@
-import { nativeText } from './native-text.js';
+import { canvasSize, drawInventory, loadInventoryArt, slotAt, SLOT } from './native-inventory.js';
 // Desktop garden care: renders the server's canonical care/garden snapshot and
 // submits bounded care intents. The server owns inventory, growth, fruit,
 // proximity, effects and animal parts; this module never computes them.
@@ -147,7 +147,14 @@ const reasons = {
 export function createGardenCare({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID() }) {
   if (!root) throw new TypeError('Garden care needs a panel root.');
   const document = root.ownerDocument;
-  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false;
+  let care = null, player = null, connected = false, serverTime, pending = null, feedback = '', previous = '', marketVisited = false, selected = 0;
+  const icons = new Map();
+  // The game's own 32x32 panel for animals and drives; other kinds have none extracted yet.
+  const panelIcon = item => {
+    if ((item.kind !== 'animal' && item.kind !== 'drive') || !globalThis.Image) return null;
+    if (!icons.has(item.id)) { const icon = new Image(); icon.src = `/api/assets/item-panel-${Number(item.id.slice(4))}.png`; icons.set(item.id, icon); }
+    return icons.get(item.id);
+  };
   const el = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -160,6 +167,33 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     const request = { type: 'care', requestId: requestId(), expectedRevision: view.revision, intent };
     if (send(request) === false) return;
     pending = request; feedback = ''; render();
+  }
+  // The carried items in the Chao Select window: pick a slot, pick it again to use it.
+  function carriedWindow(items) {
+    selected = Math.min(selected, items.length - 1);
+    const size = canvasSize(items.length);
+    const box = el('div', undefined, 'garden-care-carried');
+    const canvas = el('canvas'); canvas.width = size.width; canvas.height = size.height; canvas.setAttribute('aria-hidden', 'true');
+    box.append(canvas);
+    const shown = items.map(item => ({ ...item, icon: panelIcon(item) }));
+    const draw = () => loadInventoryArt(document).then(art => { if (art) drawInventory(canvas.getContext?.('2d'), art, shown, selected); });
+    items.forEach((item, n) => {
+      const { x, y } = slotAt(n);
+      const use = item.kind === 'seed' ? null : item.kind === 'egg' ? 'place-egg' : item.kind === 'hat' ? 'give-hat' : 'consume';
+      const slot = el('button', undefined, 'garden-care-slot');
+      Object.assign(slot.style, { left: `${x}px`, top: `${y}px`, width: `${SLOT.width}px`, height: `${SLOT.height}px` });
+      slot.setAttribute('aria-label', `${item.label} x${item.quantity}`);
+      slot.setAttribute('aria-pressed', String(n === selected));
+      slot.disabled = !!pending;
+      slot.addEventListener('click', () => {
+        if (n !== selected) { selected = n; previous = ''; render(); return; }
+        if (use && item.mayUse) submit({ kind: use, itemId: item.id });
+      });
+      shown[n].icon?.addEventListener?.('load', draw);
+      box.append(slot);
+    });
+    draw();
+    return box;
   }
   function render() {
     const view = gardenCareView(care, player, { connected, serverTime });
@@ -206,26 +240,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     }
     root.append(el('h3', 'Carried'));
     if (!view.items.length) root.append(el('p', 'Nothing carried. Shake trees for fruit or find animals in missions.', 'garden-care-note'));
-    const list = el('ul', undefined, 'garden-care-items');
-    for (const item of view.items) {
-      const row = el('li');
-      if (item.kind === 'animal' || item.kind === 'drive') {
-        // The game's own panel, with the count in its own font in the corner.
-        row.className = 'garden-care-panel';
-        const icon = el('img'); icon.src = `/api/assets/item-panel-${Number(item.id.slice(4))}.png`; icon.alt = item.label;
-        row.append(icon, nativeText(`x${item.quantity}`, 'garden-care-count', undefined, document), el('span', item.label, 'garden-care-panel-name'));
-      } else row.append(el('span', `${item.label} ×${item.quantity}`));
-      if (item.kind !== 'seed') {
-        const verb = item.kind === 'egg' ? 'Put down' : item.kind === 'hat' || item.kind === 'animal' || item.kind === 'drive' ? 'Give' : 'Feed';
-        const use = el('button', verb, 'small-button');
-        use.disabled = !item.mayUse || !!pending;
-        const intent = item.kind === 'egg' ? 'place-egg' : item.kind === 'hat' ? 'give-hat' : 'consume';
-        use.addEventListener('click', () => submit({ kind: intent, itemId: item.id }));
-        row.append(use);
-      }
-      list.append(row);
-    }
-    root.append(list);
+    else root.append(carriedWindow(view.items));
     if (view.hat) root.append(el('p', `Wearing: ${view.hat}`, 'garden-care-note'));
     if (view.parts.length) {
       root.append(el('h3', 'Animal parts'));
