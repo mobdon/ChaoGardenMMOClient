@@ -233,7 +233,7 @@ pub fn ras_color_channel_id(v: u32) -> u32 {
 }
 
 /// Builds a [`GxMaterial`] with GX's call shapes (GXMaterialBuilder).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GxMaterialBuilder {
     cull_mode: u32,
     light_channels: Vec<LightChannelControl>,
@@ -346,6 +346,14 @@ impl GxMaterialBuilder {
             normalize,
             post_matrix,
         };
+    }
+
+    /// The matrix texgen `i` multiplies by (from the matrix index registers;
+    /// the texgen registers don't hold it).
+    pub fn set_tex_gen_matrix(&mut self, i: usize, matrix: u32) {
+        if let Some(g) = self.tex_gens.get_mut(i) {
+            g.matrix = matrix;
+        }
     }
 
     /// `GXSetChanCtrl`: `idx` is a GXChannelID (COLOR0, ALPHA0, COLOR0A0...).
@@ -643,7 +651,7 @@ impl GxMaterialBuilder {
             2 => (tex_gen_type::SRTG, tex_gen_src::COLOR0),
             _ => (tex_gen_type::SRTG, tex_gen_src::COLOR1),
         };
-        // noclip leaves the matrix index (XF_MATRIXINDEX) unread.
+        // The matrix comes from XF_MATRIXINDEX0/1 (`set_tex_gen_matrix`).
         let dv = r.xf_get(xf_register::XF_DUALTEX0_ID + i, 0);
         let post = (dv & 0xFF) + post_tex_gen_matrix::PTTEXMTX0;
         let normalize = (dv >> 8) & 1 != 0;

@@ -8,12 +8,21 @@
 #![forbid(unsafe_code)]
 
 pub mod audio;
+pub mod card;
 pub mod clock;
 pub mod dvd;
+#[cfg(not(target_os = "wasi"))]
+pub mod gamepad;
 pub mod gx;
 pub mod io;
 pub mod pad;
+pub mod prof;
+#[cfg(not(target_os = "wasi"))]
+pub mod snap;
 pub mod vi;
+pub mod wide;
+#[cfg(not(target_os = "wasi"))]
+pub mod window;
 
 use sa2_recomp::rt::{call, Cpu, Mem};
 
@@ -26,6 +35,8 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     pad::install(c, m);
     audio::install(c, m);
     clock::install(c, m);
+    card::install(c, m);
+    wide::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).
@@ -43,14 +54,16 @@ pub(crate) fn cstr(m: &Mem, mut a: u32) -> String {
 }
 
 /// Call a guest function (a callback) from a hook with `args` in r3.., keeping
-/// the hook's caller-visible registers.
-pub(crate) fn guest_call(c: &mut Cpu, m: &mut Mem, f: u32, args: &[u32]) {
+/// the hook's caller-visible registers. Returns the callee's r3.
+pub(crate) fn guest_call(c: &mut Cpu, m: &mut Mem, f: u32, args: &[u32]) -> u32 {
     let saved = (c.r, c.lr, c.ctr, c.cr);
     for (i, a) in args.iter().enumerate() {
         c.r[3 + i] = *a;
     }
     call(c, m, f);
+    let r3 = c.r[3];
     (c.r, c.lr, c.ctr, c.cr) = saved;
+    r3
 }
 
 /// Run the recompiled original at `addr` (for hooks that wrap it).

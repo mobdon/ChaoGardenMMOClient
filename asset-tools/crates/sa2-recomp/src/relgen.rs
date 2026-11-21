@@ -94,14 +94,15 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     let mut pairs = Vec::new();
     let mut votes: HashMap<u32, HashMap<u32, u32>> = HashMap::new();
     for n in &names {
-        let d = find(disc, n).and_then(|p| read_rel(&p));
+        let disc_path = find(disc, n);
+        let d = disc_path.as_deref().and_then(read_rel);
         let s = find(steam, n).and_then(|p| read_rel(&p));
         if let (Some(d), Some(s)) = (&d, &s) {
             for (x, y) in align(d, s) {
                 *votes.entry(y.addend).or_default().entry(x.addend).or_default() += 1;
             }
         }
-        pairs.push((n.clone(), d, s));
+        pairs.push((n.clone(), d, s, disc_path));
     }
     let mut map: HashMap<u32, u32> =
         votes.into_iter().map(|(k, v)| (k, v.into_iter().max_by_key(|(_, c)| *c).unwrap().0)).collect();
@@ -141,7 +142,7 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     let me = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string().replace('\\', "/");
     let crate_toml = |name: &str, deps: &str| {
         format!(
-            "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\n{deps}"
+            "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}/rt\", package = \"sa2-recomp-rt\" }}\n{deps}"
         )
     };
     let mut members = Vec::new();
@@ -149,11 +150,37 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     let mut report = String::new();
     let (mut total_fns, mut total_unknown, mut unmapped_total) = (0, 0, 0);
 
-    for (name, d, s) in &pairs {
-        let differs = matches!((d, s), (Some(d), Some(s)) if d.bytes != s.bytes);
+    std::fs::create_dir_all(out.join("hybrid")).map_err(|e| e.to_string())?;
+    let mut hybrids = String::new();
+    for (name, d, s, disc_path) in &pairs {
+        // Disc code, Steam values (the default): the disc module, which matches
+        // GSNE8P's main.dol, with Steam's section bytes where they line up.
+        // SA2_STEAM_MODULES=a,b|* uses Steam's own copy (imports remapped).
+        let packed = disc_path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("prs")));
+        let built;
         let (rel, from_steam) = match (d, s) {
-            (_, Some(s)) if differs || d.is_none() => (s, true),
-            (Some(d), _) => (d, false),
+            (_, Some(s)) if steam_only(name) || d.is_none() => (s, true),
+            (Some(d), Some(s)) if !packed && !plain(name) => {
+                let h = crate::hybrid::hybrid(d, s);
+                let _ = writeln!(hybrids, "{name}: {} bytes from Steam, {} unmatched", h.patched, h.unmatched.len());
+                for u in &h.unmatched {
+                    let _ = writeln!(hybrids, "    {u}");
+                }
+                std::fs::write(out.join("hybrid").join(format!("{name}.rel")), &h.bytes).map_err(|e| e.to_string())?;
+                built = Rel::parse(h.bytes).map_err(|e| format!("{name}: {e}"))?;
+                (&built, false)
+            }
+            (Some(d), _) => {
+                // A PRS-packed disc module can't be repacked with Steam's values:
+                // the disc file is served as it is.
+                if let Some(p) = disc_path {
+                    let file = p.file_name().unwrap_or_default();
+                    std::fs::copy(p, out.join("hybrid").join(file)).map_err(|e| e.to_string())?;
+                }
+                let why = if packed { "PRS-packed" } else if plain(name) { "Steam values not applied" } else { "no Steam copy" };
+                let _ = writeln!(hybrids, "{name}: disc copy as is ({why})");
+                (d, false)
+            }
             _ => {
                 let _ = writeln!(report, "{name}: missing in both folders");
                 continue;
@@ -169,6 +196,17 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         // Relocations in the text section, as Rust target expressions.
         let mut relocs = HashMap::new();
         let mut starts: BTreeSet<u32> = BTreeSet::from([0]);
+        // The header's prolog, epilog and unresolved handlers (section byte at
+        // 0x30..0x33, offsets at 0x34..0x3F) are called by address.
+        for k in 0..3 {
+            let sec = rel.bytes.get(0x30 + k).copied().unwrap_or(0) as u32;
+            let at = 0x34 + 4 * k;
+            if sec == ti {
+                if let Some(b) = rel.bytes.get(at..at + 4) {
+                    starts.insert(u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+                }
+            }
+        }
         let mut extra = BTreeSet::new();
         let mut unmapped = 0;
         let mut bad_calls = 0;
@@ -204,7 +242,9 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
                 }
             }
             if r.section as u32 == ti {
-                relocs.insert(r.offset, (r.kind, target));
+                // ADDR16 relocations name the halfword (instruction + 2); key
+                // every code relocation by its instruction.
+                relocs.insert(r.offset & !3, (r.kind, target));
             }
         }
         // Function boundaries: the decomp's symbols when the code is the disc's,
@@ -244,7 +284,9 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
         std::fs::write(out.join(&modname).join("Cargo.toml"), crate_toml(&modname, "")).map_err(|e| e.to_string())?;
         members.push(modname.clone());
         // Keyed by code size too: some modules share an id (titleD/stg00D).
-        let _ = writeln!(register, "    rt.rels.insert(({id}, {:#x}), {modname}::dispatch);", text.size);
+        // One feature per module (named like its crate): a build links only the
+        // modules it needs (`--features sa2-recomp-rels/m_mcwarnd`), or `all`.
+        let _ = writeln!(register, "    #[cfg(feature = \"{modname}\")]\n    rt.rels.insert(({id}, {:#x}), {modname}::dispatch);", text.size);
         let _ = writeln!(
             report,
             "{name}: id {id} {} functions {} unknown {unknown} calls not at a main.dol function {bad_calls} unmapped main.dol imports {unmapped}",
@@ -258,9 +300,11 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     register.push_str("}\n");
     lib.push_str(&register);
     std::fs::write(out.join("src/lib.rs"), lib).map_err(|e| e.to_string())?;
-    let deps: String = members.iter().map(|m| format!("{m} = {{ path = \"{m}\" }}\n")).collect();
+    let deps: String = members.iter().map(|m| format!("{m} = {{ path = \"{m}\", optional = true }}\n")).collect();
+    let feats: String = members.iter().map(|m| format!("{m} = [\"dep:{m}\"]\n")).collect();
     let list: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
     let toml = crate_toml("sa2-recomp-rels", &deps)
+        + &format!("\n[features]\nall = [{}]\n{feats}", list.join(", "))
         + &format!("\n[workspace]\nmembers = [{}]\n\n[profile.dev]\nopt-level = 1\n", list.join(", "));
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;
     // 24 of these crates compiling at once made rustc abort (0xc0000409) on a
@@ -268,10 +312,23 @@ pub fn run(disc: &Path, steam: &Path, config: &Path, out: &Path) -> Result<(), S
     std::fs::create_dir_all(out.join(".cargo")).map_err(|e| e.to_string())?;
     std::fs::write(out.join(".cargo/config.toml"), "[build]\njobs = 6\n").map_err(|e| e.to_string())?;
     std::fs::write(out.join("REPORT.txt"), &report).map_err(|e| e.to_string())?;
+    std::fs::write(out.join("HYBRID.txt"), &hybrids).map_err(|e| e.to_string())?;
     println!(
         "modules {} | functions {total_fns} | unknown instructions {total_unknown} | unmapped Steam imports {unmapped_total} | address map {} entries | details in REPORT.txt",
         pairs.len(),
         map.len()
     );
     Ok(())
+}
+
+fn steam_only(name: &str) -> bool {
+    std::env::var("SA2_STEAM_MODULES").unwrap_or_default().split(',').any(|s| s.trim() == "*" || s.trim().eq_ignore_ascii_case(name))
+}
+
+/// Modules kept as the disc has them (no Steam values): SA2_PLAIN_MODULES,
+/// plus eventD by default. shortcut: eventD's patched data crashes the opening
+/// event (a wild pointer at frame 882); find the bad patch, then drop it here.
+fn plain(name: &str) -> bool {
+    name.eq_ignore_ascii_case("eventD")
+        || std::env::var("SA2_PLAIN_MODULES").unwrap_or_default().split(',').any(|s| s.trim().eq_ignore_ascii_case(name))
 }

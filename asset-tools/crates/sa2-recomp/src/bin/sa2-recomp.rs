@@ -31,13 +31,17 @@ fn main() {
 const PER_FILE: usize = 150;
 
 /// Write the `sa2-host` crate: links the generated main.dol and REL crates
-/// into `sa2_recomp::host`. Run it as `sa2-host MAIN.DOL SYMBOLS.TXT [CALLS]`.
+/// into `sa2_recomp::host`. Run it as `sa2-host MAIN.DOL SYMBOLS.TXT [CALLS]
+/// [SECONDS]`. The REL modules are the optional `rels` feature: boot needs
+/// main.dol only, and linking all 94 modules costs a long build.
 fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> {
     let p = |x: &Path| std::path::absolute(x).map(|a| a.display().to_string().replace('\\', "/")).map_err(|e| e.to_string());
     let me = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string().replace('\\', "/");
     let toml = format!(
         "[package]\nname = \"sa2-host\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[workspace]\n\n\
-         [dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\nsa2-recomp-gen = {{ path = \"{}\" }}\nsa2-recomp-rels = {{ path = \"{}\" }}\n",
+         [features]\nrels = [\"dep:sa2-recomp-rels\"]\n\n\
+         [dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\nsa2-boot = {{ path = \"{me}/../sa2-boot\" }}\nsa2-runtime = {{ path = \"{me}/../sa2-runtime\" }}\n\
+         sa2-recomp-gen = {{ path = \"{}\" }}\nsa2-recomp-rels = {{ path = \"{}\", optional = true }}\n",
         p(main_crate)?,
         p(rels_crate)?
     );
@@ -45,15 +49,99 @@ fn host(main_crate: &Path, rels_crate: &Path, out: &Path) -> Result<(), String> 
         fn main() {\n\
         \x20   let a: Vec<String> = std::env::args().collect();\n\
         \x20   if a.len() < 3 {\n\
-        \x20       eprintln!(\"usage: sa2-host MAIN.DOL SYMBOLS.TXT [CALLS]\");\n\
+        \x20       eprintln!(\"usage: sa2-host MAIN.DOL SYMBOLS.TXT [CALLS] [SECONDS]\");\n\
         \x20       std::process::exit(2);\n\
         \x20   }\n\
         \x20   let dol = std::fs::read(&a[1]).expect(\"read main.dol\");\n\
         \x20   let syms = std::fs::read_to_string(&a[2]).unwrap_or_default();\n\
         \x20   let budget = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(100_000_000);\n\
+        \x20   let secs = a.get(4).and_then(|s| s.parse().ok()).unwrap_or(20);\n\
+        \x20   #[cfg(feature = \"rels\")]\n\
+        \x20   let register: fn(&mut sa2_recomp::rt::Runtime) = sa2_recomp_rels::register;\n\
+        \x20   #[cfg(not(feature = \"rels\"))]\n\
+        \x20   let register: fn(&mut sa2_recomp::rt::Runtime) = |_| {};\n\
         \x20   std::panic::set_hook(Box::new(|_| {}));\n\
-        \x20   let r = sa2_recomp::host::run(&dol, sa2_recomp_gen::dispatch, sa2_recomp_rels::register, budget).expect(\"host\");\n\
-        \x20   sa2_recomp::host::print(&r, &syms);\n\
+        \x20   sa2_recomp::host::run(&dol, &syms, sa2_recomp_gen::dispatch, register, setup, budget, secs).expect(\"host\");\n\
+        }\n\
+        \n\
+        /// The engine's boot hooks (DVD from the Steam folder in SA2_STEAM_DIR,\n\
+        /// GX, VI, PAD, audio, clock), and a frame count from the GX sink.\n\
+        fn setup(c: &mut sa2_recomp::rt::Cpu, m: &mut sa2_recomp::rt::Mem) {\n\
+        \x20   let root = std::env::var(\"SA2_STEAM_DIR\")\n\
+        \x20       .unwrap_or_else(|_| \"C:/Program Files (x86)/Steam/steamapps/common/Sonic Adventure 2\".into());\n\
+        \x20   use sa2_runtime::dvd::{DirFiles, FlatDir, GameFiles, Layered};\n\
+        \x20   let mut files: Vec<Box<dyn GameFiles>> = vec![Box::new(DirFiles { root: root.into() })];\n\
+        \x20   // Files the Steam release dropped come from an extracted disc folder.\n\
+        \x20   // SA2_DISC_FIRST: the disc folder before Steam (a GameCube-faithful run).\n\
+        \x20   if let Some(dir) = std::env::var_os(\"SA2_DISC_DIR\") {\n\
+        \x20       let disc: Box<dyn GameFiles> = Box::new(FlatDir { dir: dir.into() });\n\
+        \x20       if std::env::var_os(\"SA2_DISC_FIRST\").is_some() {\n\
+        \x20           files.insert(0, disc);\n\
+        \x20       } else {\n\
+        \x20           files.push(disc);\n\
+        \x20       }\n\
+        \x20   }\n\
+        \x20   // SA2_REL_DIR: the hybrid modules (disc code, Steam values) first.\n\
+        \x20   if let Some(dir) = std::env::var_os(\"SA2_REL_DIR\") {\n\
+        \x20       files.insert(0, Box::new(FlatDir { dir: dir.into() }));\n\
+        \x20   }\n\
+        \x20   sa2_boot::install_all(c, m, Box::new(Layered(files)));\n\
+        \x20   // SA2_WINDOW: show the game in a window; the keyboard is controller 0.\n\
+        \x20   if std::env::var_os(\"SA2_WINDOW\").is_some() {\n\
+        \x20       sa2_boot::window::start();\n\
+        \x20   }\n\
+        \x20   sa2_recomp::os::add_frame_hook(|_, _| {\n\
+        \x20       let hook_start = std::time::Instant::now();\n\
+        \x20       let frames = sa2_boot::gx::take_frames();\n\
+        \x20       let n = frames.len() as u64;\n\
+        \x20       let f = sa2_recomp::host::FRAMES.fetch_add(n, std::sync::atomic::Ordering::Relaxed);\n\
+        \x20       // SA2_FRAMES=dir: a PNG of every 300th frame; new unhandled GX logged.\n\
+        \x20       let every = std::env::var(\"SA2_FRAMES_EVERY\").ok().and_then(|s| s.parse().ok()).unwrap_or(300);\n\
+        \x20       if let Some(dir) = std::env::var_os(\"SA2_FRAMES\") {\n\
+        \x20           for (k, (_, fr)) in frames.iter().enumerate() {\n\
+        \x20               match sa2_boot::snap::frame(fr, f + k as u64, every, std::path::Path::new(&dir)) {\n\
+        \x20                   Ok(Some(p)) => eprintln!(\"snap: {} ({} draws) newly unhandled GX {:?}\", p.display(), fr.draws.len(), sa2_boot::gx::unhandled_new()),\n\
+        \x20                   Ok(None) => {}\n\
+        \x20                   Err(e) => eprintln!(\"snap: {e}\"),\n\
+        \x20               }\n\
+        \x20           }\n\
+        \x20       }\n\
+        \x20       // Controller 1: in the window the keyboard, with any SA2_INPUT\n\
+        \x20       // presses added (the keyboard works throughout and has the pad to\n\
+        \x20       // itself once the script is done); headless SA2_INPUT, else\n\
+        \x20       // SA2_AUTOPRESS.\n\
+        \x20       let window = std::env::var_os(\"SA2_WINDOW\").is_some();\n\
+        \x20       let script = sa2_boot::pad::script(f);\n\
+        \x20       if window {\n\
+        \x20           let mut p = sa2_boot::window::pad();\n\
+        \x20           if let Some(s) = script {\n\
+        \x20               p.button |= s.button;\n\
+        \x20               if s.stick != [0, 0] {\n\
+        \x20                   p.stick = s.stick;\n\
+        \x20               }\n\
+        \x20           }\n\
+        \x20           sa2_boot::pad::set_port0(p);\n\
+        \x20       } else if let Some(s) = script {\n\
+        \x20           sa2_boot::pad::set_port0(s);\n\
+        \x20       } else if std::env::var_os(\"SA2_AUTOPRESS\").is_some() {\n\
+        \x20           sa2_boot::pad::autopress(f);\n\
+        \x20       }\n\
+        \x20       if window {\n\
+        \x20           for (_, fr) in frames {\n\
+        \x20               sa2_boot::window::submit(fr);\n\
+        \x20           }\n\
+        \x20       }\n\
+        \x20       sa2_boot::prof::add(&sa2_boot::prof::HOOK, hook_start);\n\
+        \x20       if window {\n\
+        \x20           let t = std::time::Instant::now();\n\
+        \x20           sa2_boot::window::pace();\n\
+        \x20           sa2_boot::prof::add(&sa2_boot::prof::SLEEP, t);\n\
+        \x20       }\n\
+        \x20       // SA2_PROFILE: fps and where each frame's time went, every second.\n\
+        \x20       if sa2_boot::prof::on() {\n\
+        \x20           sa2_boot::prof::frames(n);\n\
+        \x20       }\n\
+        \x20   });\n\
         }\n";
     std::fs::create_dir_all(out.join("src")).map_err(|e| e.to_string())?;
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;
@@ -141,7 +229,7 @@ fn run(dol_path: &Path, sym_path: &Path, out: &Path) -> Result<(), String> {
     let me = Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string().replace('\\', "/");
     let toml = format!(
         "[package]\nname = \"sa2-recomp-gen\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n\
-         [workspace]\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}\" }}\n\n\
+         [workspace]\n\n[dependencies]\nsa2-recomp = {{ path = \"{me}/rt\", package = \"sa2-recomp-rt\" }}\n\n\
          [profile.dev]\nopt-level = 1\n"
     );
     std::fs::write(out.join("Cargo.toml"), toml).map_err(|e| e.to_string())?;

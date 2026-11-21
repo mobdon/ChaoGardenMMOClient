@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "sa2-recomp"
 version = "0.1.0"
+dependencies = [
+ "sa2-recomp-rt",
+]
+
+[[package]]
+name = "sa2-recomp-rt"
+version = "0.1.0"

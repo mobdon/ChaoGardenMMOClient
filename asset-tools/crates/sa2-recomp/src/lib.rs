@@ -6,8 +6,10 @@
 
 pub mod dol;
 pub mod gen;
+pub mod global;
 pub mod host;
+pub mod hybrid;
+pub mod os;
 pub mod rel;
 pub mod relgen;
-pub mod os;
-pub mod rt;
+pub use sa2_recomp_rt::rt;

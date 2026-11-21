@@ -9,3 +9,4 @@ description = "Static recompiler: GSNE8P main.dol and disc RELs (PowerPC Gekko) 
 [workspace]
 
 [dependencies]
+sa2-recomp-rt = { path = "rt" }

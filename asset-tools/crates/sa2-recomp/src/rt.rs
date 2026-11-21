@@ -4,6 +4,8 @@
 //! the recompiled function at that GSNE8P address.
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU32, AtomicU64};
 
 pub type Func = fn(&mut Cpu, &mut Mem);
 
@@ -58,16 +60,58 @@ pub struct Runtime {
     /// Recompiled REL modules: (module id, code section size) -> dispatch(section,
     /// offset). The size tells apart modules that share an id.
     pub rels: HashMap<(u32, u32), fn(u32, u32) -> Option<Func>>,
-    /// Calls made so far, and the most recent targets (ring, newest at
-    /// `calls % TRACE`), for reporting where a run stopped.
-    pub calls: u64,
-    pub trace: [u32; TRACE],
-    /// Stop with a panic after this many calls (0 = no limit): a hardware
-    /// poll that never sees its bit would otherwise spin forever.
+    /// Stop with a panic after this many calls (0 = no limit).
     pub budget: u64,
+    /// Loop back-edges taken, and what runs every `PREEMPT_EVERY` of them
+    /// (the host: an interrupt for a spin-wait, a yield for a thread).
+    pub ticks: u64,
+    pub preempt: Option<Func>,
+    /// Module code ranges seen linked: (start, end, id, size, section). The
+    /// game may call a module's epilog after OSUnlink took it off the list;
+    /// its code is still in memory until another module is linked there.
+    pub seen: std::cell::RefCell<Vec<(u32, u32, u32, u32, u32)>>,
+    /// main.dol calls by `(addr - 0x80000000) / 4`, filled on first use
+    /// (overrides included): one index instead of a hash and a big match.
+    table: std::cell::RefCell<Vec<Option<Func>>>,
+    /// Calls into REL modules by address; cleared when modules change
+    /// ([`Runtime::modules_changed`], from OSLink/OSUnlink).
+    rel_cache: std::cell::RefCell<HashMap<u32, Func, std::hash::BuildHasherDefault<AddrHasher>>>,
 }
 
+/// Main RAM's code range the call table covers.
+const TABLE_BASE: u32 = 0x8000_0000;
+const TABLE_LEN: usize = 0x0040_0000 / 4;
+
+/// Hashes a code address as itself (they are already well spread).
+#[derive(Default)]
+pub struct AddrHasher(u64);
+
+impl std::hash::Hasher for AddrHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(*b);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.0 = u64::from(v).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+/// Calls made so far and the most recent targets (ring, newest at
+/// `CALLS % TRACE`). Globals so a watchdog thread can report where a run that
+/// spins in a loop without calls is stuck.
+pub static CALLS: AtomicU64 = AtomicU64::new(0);
+pub static RING: [AtomicU32; TRACE] = [const { AtomicU32::new(0) }; TRACE];
 pub const TRACE: usize = 32;
+
+/// The most recent call targets, oldest first.
+pub fn trace() -> Vec<u32> {
+    let n = CALLS.load(Relaxed);
+    (n.saturating_sub(TRACE as u64)..n).map(|i| RING[i as usize % TRACE].load(Relaxed)).collect()
+}
 
 impl Default for Runtime {
     fn default() -> Self {
@@ -75,9 +119,12 @@ impl Default for Runtime {
             overrides: HashMap::new(),
             generated: |_| None,
             rels: HashMap::new(),
-            calls: 0,
-            trace: [0; TRACE],
             budget: 0,
+            ticks: 0,
+            preempt: None,
+            seen: Default::default(),
+            table: Default::default(),
+            rel_cache: Default::default(),
         }
     }
 }
@@ -85,6 +132,44 @@ impl Default for Runtime {
 impl Runtime {
     pub fn set_override(&mut self, addr: u32, f: Func) {
         self.overrides.insert(addr, f);
+        if let Some(slot) = Self::slot(addr).and_then(|i| self.table.get_mut().get_mut(i)) {
+            *slot = Some(f);
+        }
+        self.rel_cache.get_mut().remove(&addr);
+    }
+
+    /// A REL module was linked or unlinked: cached REL calls may be stale.
+    pub fn modules_changed(&self) {
+        self.rel_cache.borrow_mut().clear();
+    }
+
+    fn slot(addr: u32) -> Option<usize> {
+        let i = (addr.checked_sub(TABLE_BASE)? / 4) as usize;
+        (i < TABLE_LEN && addr % 4 == 0).then_some(i)
+    }
+
+    /// [`Self::resolve`] through the call table (main.dol) or the REL cache.
+    pub fn lookup(&self, m: &Mem, addr: u32) -> Option<Func> {
+        if let Some(i) = Self::slot(addr) {
+            if let Some(Some(f)) = self.table.borrow().get(i) {
+                return Some(*f);
+            }
+            if (self.generated)(addr).is_some() || self.overrides.contains_key(&addr) {
+                let f = self.resolve(m, addr)?;
+                let mut t = self.table.borrow_mut();
+                if t.is_empty() {
+                    t.resize(TABLE_LEN, None);
+                }
+                t[i] = Some(f);
+                return Some(f);
+            }
+        }
+        if let Some(f) = self.rel_cache.borrow().get(&addr) {
+            return Some(*f);
+        }
+        let f = self.resolve(m, addr)?;
+        self.rel_cache.borrow_mut().insert(addr, f);
+        Some(f)
     }
     pub fn resolve(&self, m: &Mem, addr: u32) -> Option<Func> {
         if let Some(f) = self.overrides.get(&addr) {
@@ -104,23 +189,42 @@ impl Runtime {
                 let size = m.r32(tab + sec * 8 + 4);
                 let base = off & !1;
                 if off & 1 != 0 && (base..base + size).contains(&addr) {
+                    let end = base.wrapping_add(size);
+                    let mut seen = self.seen.borrow_mut();
+                    seen.retain(|s| s.1 <= base || s.0 >= end);
+                    seen.push((base, end, id, size, sec));
                     return self.rels.get(&(id, size)).and_then(|d| d(sec, addr - base));
                 }
             }
             info = m.r32(info + 4);
         }
-        None
+        let seen = self.seen.borrow();
+        let &(base, _, id, size, sec) = seen.iter().find(|s| (s.0..s.1).contains(&addr))?;
+        self.rels.get(&(id, size)).and_then(|d| d(sec, addr - base))
+    }
+}
+
+pub const PREEMPT_EVERY: u64 = 1 << 20;
+
+/// A loop back-edge in recompiled code.
+#[inline]
+pub fn backedge(c: &mut Cpu, m: &mut Mem) {
+    c.rt.ticks = c.rt.ticks.wrapping_add(1);
+    if c.rt.ticks % PREEMPT_EVERY == 0 {
+        if let Some(f) = c.rt.preempt {
+            f(c, m);
+        }
     }
 }
 
 /// Call the function at `addr` (bl, bctrl, blrl and tail calls all end here).
 pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    c.rt.trace[c.rt.calls as usize % TRACE] = addr;
-    c.rt.calls += 1;
-    if c.rt.budget != 0 && c.rt.calls > c.rt.budget {
+    let n = CALLS.fetch_add(1, Relaxed);
+    RING[n as usize % TRACE].store(addr, Relaxed);
+    if c.rt.budget != 0 && n >= c.rt.budget {
         panic!("sa2-recomp: call budget of {} reached at {addr:#010x}", c.rt.budget);
     }
-    match c.rt.resolve(m, addr) {
+    match c.rt.lookup(m, addr) {
         Some(f) => f(c, m),
         None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x})", c.lr),
     }
@@ -134,11 +238,32 @@ pub fn sec(m: &Mem, id: u32, sec: u32) -> u32 {
     let mut info = m.r32(OS_MODULE_HEAD);
     while info != 0 {
         if m.r32(info) == id {
+            LINKED.with_borrow_mut(|l| l.insert(id, info));
             return m.r32(m.r32(info + 0x10) + sec * 8) & !1;
         }
         info = m.r32(info + 4);
     }
-    panic!("sa2-recomp: module {id} is not linked");
+    // Unlinked but still in memory (the game runs a module's code after
+    // OSUnlink, e.g. its epilog): its section table is still there.
+    match LINKED.with_borrow(|l| l.get(&id).copied()) {
+        Some(info) => m.r32(m.r32(info + 0x10) + sec * 8) & !1,
+        None => panic!("sa2-recomp: module {id} is not linked"),
+    }
+}
+
+/// The last OSModuleInfo seen linked for each module id. Process-wide: game
+/// threads run on host threads of their own.
+static LINKED: Linked = Linked(std::sync::LazyLock::new(Default::default));
+
+struct Linked(std::sync::LazyLock<std::sync::Mutex<HashMap<u32, u32>>>);
+
+impl Linked {
+    fn with_borrow_mut<R>(&self, f: impl FnOnce(&mut HashMap<u32, u32>) -> R) -> R {
+        f(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+    fn with_borrow<R>(&self, f: impl FnOnce(&HashMap<u32, u32>) -> R) -> R {
+        self.with_borrow_mut(|m| f(m))
+    }
 }
 
 impl Cpu {
@@ -197,7 +322,11 @@ impl Cpu {
             1 => (self.so as u32) << 31 | (self.ca as u32) << 29,
             8 => self.lr,
             9 => self.ctr,
-            268 | 284 => self.tb as u32,
+            268 | 284 => {
+                // Time advances as it is read, so busy-waits on the time base end.
+                self.tb = self.tb.wrapping_add(16);
+                self.tb as u32
+            }
             269 | 285 => (self.tb >> 32) as u32,
             912..=919 => self.gqr[(n - 912) as usize],
             _ => self.spr[n as usize & 1023],

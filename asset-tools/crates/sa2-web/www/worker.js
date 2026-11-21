@@ -1,0 +1,490 @@
+// One game thread: an instance of the game build (wasm32-wasip1-threads) on
+// the shared memory, with the WASI calls std makes answered here. Files come
+// from the local server (/fs/...) with synchronous requests, which workers
+// may make; /dev/gx, /dev/pad and /dev/audio are the page's devices.
+'use strict';
+
+const E = { SUCCESS: 0, BADF: 8, INVAL: 28, IO: 29, ISDIR: 31, NOENT: 44, NOSYS: 52, NOTDIR: 54, SPIPE: 70 };
+const FT = { DIR: 3, FILE: 4, CHAR: 2 };
+const BLOCK = 2 << 20; // file read cache block (fewer round trips to the server)
+const MAX_BLOCKS = 12;
+// Fixed numbers for the devices, the same in every thread (a file opened on
+// one game thread may be written on another, as the sound file is).
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD };
+
+let mem, sh, tid, args, env, instance;
+const enc = new TextEncoder(), dec = new TextDecoder();
+const fds = new Map(); // this thread's open files: fd -> {path, pos, size, dir}
+let nextFd;
+const statCache = new Map();
+const blocks = new Map(); // `${path}@${n}` -> Uint8Array, oldest first
+const out = { 1: '', 2: '' };
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+// Views on the shared memory. Another thread's memory.grow doesn't reach this
+// thread's buffer by itself: grow(0) refreshes it.
+let U8, DV;
+function views() {
+  U8 = new Uint8Array(mem.buffer);
+  DV = new DataView(mem.buffer);
+}
+function need(end) {
+  if (end > U8.length) {
+    mem.grow(0);
+    views();
+  }
+}
+const dv = () => DV;
+const u8 = () => U8;
+// (slice() past the end returns less instead of failing: look first.)
+const str = (p, n) => (need(p + n), dec.decode(u8().slice(p, p + n)));
+
+function xhr(url, range) {
+  const r = new XMLHttpRequest();
+  r.open('GET', url, false);
+  r.responseType = 'arraybuffer';
+  if (range) r.setRequestHeader('Range', range);
+  r.send();
+  return r;
+}
+
+function stat(path) {
+  if (DEVICES[path] !== undefined) return { dir: false, size: 0, dev: true };
+  if (statCache.has(path)) return statCache.get(path);
+  const r = xhr('/fs/' + encodeURI(path) + '?stat');
+  const s = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : null;
+  statCache.set(path, s);
+  return s;
+}
+
+function block(path, n) {
+  const key = path + '@' + n;
+  let b = blocks.get(key);
+  if (b) {
+    blocks.delete(key);
+    blocks.set(key, b);
+    return b;
+  }
+  const r = xhr('/fs/' + encodeURI(path), `bytes=${n * BLOCK}-${(n + 1) * BLOCK - 1}`);
+  if (r.status !== 200 && r.status !== 206) return null;
+  b = new Uint8Array(r.response);
+  if (r.status === 200) b = b.subarray(n * BLOCK, (n + 1) * BLOCK);
+  blocks.set(key, b);
+  if (blocks.size > MAX_BLOCKS) blocks.delete(blocks.keys().next().value);
+  return b;
+}
+
+function flushOut(fd, text) {
+  out[fd] += text;
+  let i;
+  while ((i = out[fd].indexOf('\n')) >= 0) {
+    const line = out[fd].slice(0, i);
+    out[fd] = out[fd].slice(i + 1);
+    postMessage({ log: line, err: fd === 2, tid });
+  }
+}
+
+// ---- devices ------------------------------------------------------------
+
+// /dev/gx: a job is 16 header bytes (magic, XFB, pipe length, RAM length),
+// the pipe bytes, then RAM; it goes to the page's free slot.
+const gx = { slot: -1, need: 0, at: 0, view: null };
+const ctl = () => sh.ctl; // Int32Array: see main.js
+function gxWrite(bytes) {
+  let off = 0;
+  while (off < bytes.length) {
+    if (gx.slot < 0) {
+      if (bytes.length - off < 16) return; // a broken job: drop it
+      const h = new DataView(bytes.buffer, bytes.byteOffset + off, 16);
+      if (h.getUint32(0, true) !== 0x47584a42) return;
+      gx.need = 16 + h.getUint32(8, true) + h.getUint32(12, true);
+      const c = ctl();
+      const s = Atomics.load(c, 5);
+      // Wait while the page still has both slots (it is two frames behind).
+      while (Atomics.load(c, 1 + s) !== 0) Atomics.wait(c, 1 + s, 1, 100);
+      gx.slot = s;
+      gx.at = 0;
+      gx.view = sh.slots[s];
+      if (gx.need > gx.view.length) {
+        postMessage({ log: `gx: a frame of ${gx.need} bytes is bigger than a slot`, err: true, tid });
+        gx.need = -1;
+      }
+    }
+    const n = Math.min(bytes.length - off, Math.abs(gx.need) - gx.at);
+    if (gx.need > 0) gx.view.set(bytes.subarray(off, off + n), gx.at);
+    gx.at += n;
+    off += n;
+    if (gx.at >= Math.abs(gx.need)) {
+      const c = ctl();
+      if (gx.need > 0) {
+        c[3 + gx.slot] = gx.need;
+        Atomics.store(c, 1 + gx.slot, 1);
+        Atomics.notify(c, 1 + gx.slot); // wake decode.js
+        Atomics.store(c, 5, gx.slot ^ 1);
+      }
+      gx.slot = -1;
+    }
+  }
+}
+
+// /dev/audio: the WAV the mix is written to; its 44-byte headers are skipped,
+// its samples (16-bit stereo, 32 kHz) go to the page's ring.
+function audioWrite(bytes) {
+  if (bytes.length === 44 && bytes[0] === 0x52 && bytes[1] === 0x49) return;
+  const ring = sh.audio, c = ctl(), cap = ring.length;
+  const n = bytes.length >> 1;
+  let w = Atomics.load(c, 6);
+  const s = new Int16Array(n);
+  new Uint8Array(s.buffer).set(bytes.subarray(0, n * 2));
+  for (let i = 0; i < n; i++) ring[(w + i) % cap] = s[i];
+  w = (w + n) >>> 0;
+  Atomics.store(c, 6, w);
+}
+
+// ---- WASI ---------------------------------------------------------------
+
+// The (address, length) pairs, with the memory they cover in view.
+function iovs(ptr, len) {
+  need(ptr + 8 * len);
+  const d = dv(), list = [];
+  for (let i = 0; i < len; i++) list.push([d.getUint32(ptr + 8 * i, true), d.getUint32(ptr + 8 * i + 4, true)]);
+  for (const [p, n] of list) need(p + n);
+  return list;
+}
+
+// A call that went past this thread's view of memory sees it again, once.
+// (Calls that change state check their spans first, with need().)
+function guarded(f) {
+  return (...raw) => {
+    // Addresses past 2 GiB arrive as negative i32s.
+    const a = raw.map((x) => (typeof x === "number" ? x >>> 0 : x));
+    try {
+      return f(...a);
+    } catch (e) {
+      if (!(e instanceof RangeError)) throw e;
+      const before = U8.length;
+      mem.grow(0);
+      views();
+      try {
+        return f(...a);
+      } catch (e2) {
+        throw new Error(`${e2} (memory ${before} -> ${U8.length} bytes, call args ${a.join(',')})`);
+      }
+    }
+  };
+}
+
+function writeStat(ptr, s) {
+  const d = dv();
+  for (let i = 0; i < 64; i += 8) d.setBigUint64(ptr + i, 0n, true);
+  d.setUint8(ptr + 16, s.dev ? FT.CHAR : s.dir ? FT.DIR : FT.FILE);
+  d.setBigUint64(ptr + 24, 1n, true);
+  d.setBigUint64(ptr + 32, BigInt(s.size || 0), true);
+}
+
+function resolve(dirfd, p, n) {
+  const name = str(p, n).replace(/^\/+/, '').replace(/\/+$/, '');
+  if (dirfd === PREOPEN) return name;
+  const f = fds.get(dirfd);
+  if (!f || !f.dir) return null;
+  return (f.path ? f.path + '/' : '') + name;
+}
+
+function lsDir(path) {
+  const r = xhr('/fs/' + encodeURI(path) + '?ls');
+  const list = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : [];
+  return list;
+
+}
+
+const wasi = {
+  args_sizes_get(c, b) {
+    const d = dv();
+    d.setUint32(c, args.length, true);
+    d.setUint32(b, args.reduce((n, a) => n + enc.encode(a).length + 1, 0), true);
+    return 0;
+  },
+  args_get(argv, buf) {
+    const d = dv(), m = u8();
+    for (const a of args) {
+      d.setUint32(argv, buf, true);
+      argv += 4;
+      const e = enc.encode(a);
+      m.set(e, buf);
+      m[buf + e.length] = 0;
+      buf += e.length + 1;
+    }
+    return 0;
+  },
+  environ_sizes_get(c, b) {
+    const d = dv();
+    d.setUint32(c, env.length, true);
+    d.setUint32(b, env.reduce((n, a) => n + enc.encode(a).length + 1, 0), true);
+    return 0;
+  },
+  environ_get(p, buf) {
+    const d = dv(), m = u8();
+    for (const a of env) {
+      d.setUint32(p, buf, true);
+      p += 4;
+      const e = enc.encode(a);
+      m.set(e, buf);
+      m[buf + e.length] = 0;
+      buf += e.length + 1;
+    }
+    return 0;
+  },
+  clock_res_get(id, ptr) {
+    dv().setBigUint64(ptr, 1000n, true);
+    return 0;
+  },
+  clock_time_get(id, _prec, ptr) {
+    // One clock for every thread: time origin + now (each worker's own
+    // performance.now() starts at its own origin).
+    const ms = id === 0 ? Date.now() : performance.timeOrigin + performance.now();
+    dv().setBigUint64(ptr, BigInt(Math.round(ms * 1e6)), true);
+    return 0;
+  },
+  fd_write(fd, iov, n, nw) {
+    let total = 0;
+    for (const [p, len] of iovs(iov, n)) {
+      const bytes = u8().subarray(p, p + len);
+      if (fd === 1 || fd === 2) flushOut(fd, dec.decode(bytes.slice()));
+      else if (fd === DEV_GX) gxWrite(bytes);
+      else if (fd === DEV_AUDIO) audioWrite(bytes);
+      else return E.BADF;
+      total += len;
+    }
+    dv().setUint32(nw, total, true);
+    return 0;
+  },
+  fd_read(fd, iov, n, nr) {
+    if (fd === DEV_PAD) {
+      let total = 0;
+      for (const [p, len] of iovs(iov, n)) {
+        const k = Math.min(len, 16 - total);
+        u8().set(sh.pad.subarray(total, total + k), p);
+        total += k;
+      }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
+    if (fd === 0) {
+      dv().setUint32(nr, 0, true);
+      return 0;
+    }
+    const f = fds.get(fd);
+    if (!f) return E.BADF;
+    if (f.dir) return E.ISDIR;
+    let total = 0;
+    for (const [p, len] of iovs(iov, n)) {
+      let want = Math.min(len, f.size - f.pos), at = p;
+      while (want > 0) {
+        const bn = Math.floor(f.pos / BLOCK), b = block(f.path, bn);
+        if (!b) return E.IO;
+        const from = f.pos - bn * BLOCK, k = Math.min(want, b.length - from);
+        if (k <= 0) break;
+        u8().set(b.subarray(from, from + k), at);
+        at += k;
+        f.pos += k;
+        want -= k;
+        total += k;
+      }
+    }
+    dv().setUint32(nr, total, true);
+    return 0;
+  },
+  fd_pread(fd, iov, n, off, nr) {
+    const f = fds.get(fd);
+    if (!f) return E.BADF;
+    const keep = f.pos;
+    f.pos = Number(off);
+    const r = wasi.fd_read(fd, iov, n, nr);
+    f.pos = keep;
+    return r;
+  },
+  fd_seek(fd, off, whence, ptr) {
+    if (fd >= DEV_AUDIO && fd <= DEV_PAD) {
+      dv().setBigUint64(ptr, 0n, true);
+      return 0;
+    }
+    const f = fds.get(fd);
+    if (!f) return E.BADF;
+    const base = whence === 0 ? 0 : whence === 1 ? f.pos : f.size;
+    const pos = base + Number(off);
+    if (pos < 0) return E.INVAL;
+    f.pos = pos;
+    dv().setBigUint64(ptr, BigInt(pos), true);
+    return 0;
+  },
+  fd_tell(fd, ptr) {
+    const f = fds.get(fd);
+    if (!f) return E.BADF;
+    dv().setBigUint64(ptr, BigInt(f.pos), true);
+    return 0;
+  },
+  fd_close(fd) {
+    if (fd === DEV_GX) gx.slot = -1;
+    fds.delete(fd);
+    return 0;
+  },
+  fd_fdstat_get(fd, ptr) {
+    const d = dv();
+    let type = FT.CHAR;
+    if (fd === PREOPEN) type = FT.DIR;
+    else if (fds.has(fd)) type = fds.get(fd).dir ? FT.DIR : FT.FILE;
+    else if (fd > 2 && (fd < DEV_AUDIO || fd > DEV_PAD)) return E.BADF;
+    d.setUint8(ptr, type);
+    d.setUint16(ptr + 2, 0, true);
+    d.setBigUint64(ptr + 8, 0xffffffffffffffffn, true);
+    d.setBigUint64(ptr + 16, 0xffffffffffffffffn, true);
+    return 0;
+  },
+  fd_fdstat_set_flags: () => 0,
+  fd_filestat_get(fd, ptr) {
+    if (fd === PREOPEN) return writeStat(ptr, { dir: true }), 0;
+    if (fd >= DEV_AUDIO && fd <= DEV_PAD) return writeStat(ptr, { dev: true }), 0;
+    const f = fds.get(fd);
+    if (!f) return E.BADF;
+    writeStat(ptr, f);
+    return 0;
+  },
+  path_filestat_get(dirfd, _flags, p, n, ptr) {
+    const path = resolve(dirfd, p, n);
+    if (path === null) return E.BADF;
+    const s = path === '' ? { dir: true } : stat(path);
+    if (!s || s.dir === undefined) return E.NOENT;
+    writeStat(ptr, s);
+    return 0;
+  },
+  path_open(dirfd, _dirflags, p, n, oflags, _rb, _ri, _fdflags, fdp) {
+    const path = resolve(dirfd, p, n);
+    if (path === null) return E.BADF;
+    if (DEVICES[path] !== undefined) {
+      dv().setUint32(fdp, DEVICES[path], true);
+      return 0;
+    }
+    const s = path === '' ? { dir: true, size: 0 } : stat(path);
+    if (!s || s.dir === undefined) return E.NOENT;
+    if (oflags & 2 && !s.dir) return E.NOTDIR; // O_DIRECTORY
+    const fd = nextFd++;
+    fds.set(fd, { path, pos: 0, size: s.size, dir: s.dir });
+    dv().setUint32(fdp, fd, true);
+    return 0;
+  },
+  fd_readdir(fd, buf, len, cookie, usedp) {
+    const f = fds.get(fd);
+    if (!f || !f.dir) return E.BADF;
+    if (!f.list) f.list = lsDir(f.path);
+    const d = dv(), m = u8();
+    let at = 0;
+    for (let i = Number(cookie); i < f.list.length && at < len; i++) {
+      const [name, isDir] = f.list[i];
+      const e = enc.encode(name), head = new DataView(new ArrayBuffer(24));
+      head.setBigUint64(0, BigInt(i + 1), true);
+      head.setBigUint64(8, BigInt(i + 1), true);
+      head.setUint32(16, e.length, true);
+      head.setUint8(20, isDir ? FT.DIR : FT.FILE);
+      const ent = new Uint8Array(24 + e.length);
+      ent.set(new Uint8Array(head.buffer), 0);
+      ent.set(e, 24);
+      const k = Math.min(ent.length, len - at);
+      m.set(ent.subarray(0, k), buf + at);
+      at += k;
+    }
+    d.setUint32(usedp, at, true);
+    return 0;
+  },
+  fd_prestat_get(fd, ptr) {
+    if (fd !== PREOPEN) return E.BADF;
+    const d = dv();
+    d.setUint8(ptr, 0);
+    d.setUint32(ptr + 4, 1, true);
+    return 0;
+  },
+  fd_prestat_dir_name(fd, p, n) {
+    if (fd !== PREOPEN) return E.BADF;
+    u8()[p] = 0x2f; // "/"
+    return 0;
+  },
+  poll_oneoff(inp, outp, nsubs, neventsp) {
+    const d = dv();
+    let wait = Infinity;
+    const now = BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6));
+    for (let i = 0; i < nsubs; i++) {
+      const s = inp + 48 * i;
+      if (d.getUint8(s + 8) !== 0) continue; // only clocks
+      let t = d.getBigUint64(s + 24, true);
+      if (d.getUint16(s + 40, true) & 1) t = t > now ? t - now : 0n;
+      wait = Math.min(wait, Number(t) / 1e6);
+    }
+    if (wait !== Infinity && wait > 0) Atomics.wait(sleeper, 0, 0, wait);
+    for (let i = 0; i < nsubs; i++) {
+      const s = inp + 48 * i, o = outp + 32 * i;
+      d.setBigUint64(o, d.getBigUint64(s, true), true);
+      d.setUint16(o + 8, 0, true);
+      d.setUint8(o + 10, d.getUint8(s + 8));
+    }
+    d.setUint32(neventsp, nsubs, true);
+    return 0;
+  },
+  random_get(p, n) {
+    need(p + n);
+    const tmp = new Uint8Array(n);
+    for (let i = 0; i < n; i += 65536) crypto.getRandomValues(tmp.subarray(i, Math.min(n, i + 65536)));
+    u8().set(tmp, p);
+    return 0;
+  },
+  sched_yield: () => 0,
+  proc_exit(code) {
+    flushOut(1, '\n');
+    flushOut(2, '\n');
+    postMessage({ exit: code, tid });
+    throw new Error('exit ' + code);
+  },
+  fd_advise: () => 0,
+  fd_allocate: () => 0,
+  fd_datasync: () => 0,
+  fd_sync: () => 0,
+};
+
+function threadSpawn(arg) {
+  const t = Atomics.add(ctl(), 0, 1) + 1;
+  postMessage({ spawn: t, arg });
+  return t;
+}
+
+// Two steps, so the page can keep threads ready: "init" loads the game build
+// into this worker (the slow part), "run" starts a thread in it.
+onmessage = (ev) => {
+  const m = ev.data;
+  if (m.init) {
+    mem = m.memory;
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
+    args = m.args;
+    env = m.env;
+    const imports = { env: { memory: mem }, wasi_snapshot_preview1: {}, wasi: { 'thread-spawn': threadSpawn } };
+    for (const imp of WebAssembly.Module.imports(m.module)) {
+      if (imp.module === 'wasi_snapshot_preview1') {
+        imports.wasi_snapshot_preview1[imp.name] = wasi[imp.name] ? guarded(wasi[imp.name]) : ((...a) => {
+          postMessage({ log: `wasi: ${imp.name} isn't supported`, err: true, tid });
+          return E.NOSYS;
+        });
+      }
+    }
+    views();
+    instance = new WebAssembly.Instance(m.module, imports);
+    return;
+  }
+  tid = m.tid;
+  nextFd = 100 + tid * 1000;
+  try {
+    if (tid === 0) instance.exports._start();
+    else instance.exports.wasi_thread_start(tid, m.arg);
+    postMessage({ done: true, tid });
+    close(); // the thread ended: nothing more runs here
+  } catch (e) {
+    if (!String(e).startsWith('Error: exit')) postMessage({ crash: String(e && e.stack || e), tid });
+  }
+};
