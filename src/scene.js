@@ -730,6 +730,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         // Skip the glTF handedness root: the Chao hierarchy already carries it.
         for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
         for (const entryRoot of entries.rootNodes) entryRoot.dispose();
+        holder.rotation.x = Math.PI / 2; // same exported-frame turn as setHat below
         holder.parent = socket;
         for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
         item.animalPartRoots.push(holder);
