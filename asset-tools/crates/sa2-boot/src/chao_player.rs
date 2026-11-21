@@ -141,8 +141,14 @@ fn from_board_disp(c: &Cpu, m: &Mem) -> bool {
     if RIDER.get() == 0 || m.r16(STAGE) != 13 {
         return false;
     }
-    // The stage number is set before stg13D links: sec() panics while unlinked.
-    let Ok(text) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rt::sec(m, 13, 1))) else {
+    // The stage number is set before stg13D (module 13) links, and sec()
+    // panics while unlinked: look in the OS module list first (no caught
+    // panic: the web build cannot unwind).
+    let linked = std::iter::successors(Some(m.r32(rt::OS_MODULE_HEAD)), |&i| Some(m.r32(i + 4)))
+        .take_while(|&i| i != 0)
+        .take(256)
+        .any(|i| m.r32(i) == 13);
+    let Some(text) = linked.then(|| rt::sec(m, 13, 1)) else {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
             eprintln!("chao-player lvl: stg13D unlinked; draw lr {:#x} obj {:#x}", c.lr, c.r[3]);
         }
@@ -930,6 +936,15 @@ thread_local! {
 /// to Knuckles's 109/110 nframe.
 /// shortcut: no arm snap (chao-arm-dirs.json is not on this PC): 1:1 arms.
 fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
+    // SA2_CHAO_PROBE=nocolli (probe): clear the Chao's collision (taskwk +0x2C)
+    // so the rider's B is not "Pet".
+    if std::env::var("SA2_CHAO_PROBE").is_ok_and(|v| v.contains("nocolli")) {
+        let cw = m.r32(chao + 0x34);
+        if cw != 0 && m.r32(cw + 0x2C) != 0 {
+            eprintln!("chao-player: Chao collision {:#x} cleared", m.r32(cw + 0x2C));
+            m.w32(cw + 0x2C, 0);
+        }
+    }
     let obj2 = m.r32(P1_OBJ2);
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) {
         return;
