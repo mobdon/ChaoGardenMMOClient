@@ -20,6 +20,7 @@ let socket;
 let snapshot;
 let player;
 let sessionToken = localStorage.getItem(tokenKey);
+let sessionCard = null; // the memory card code, when this browser has it
 let reconnectTimer;
 let currentPanel = 'world';
 let setup;
@@ -119,7 +120,7 @@ function updatePaused() { garden?.setPaused(saving || $('#school-dialog').open |
 
 function rememberChao(savedAt) {
   if (!player || !sessionToken) return;
-  try { saveSlots.record(sessionToken, player, savedAt); }
+  try { saveSlots.record(sessionToken, player, savedAt, sessionCard); }
   catch {
     if (!storageWarning) toast('This browser could not remember your Chao slot. Keep this session open.', 'error');
     storageWarning = true;
@@ -144,6 +145,7 @@ function showTitle() {
   container.replaceChildren();
   let slots = [];
   try { slots = saveSlots.list(); } catch { /* Storage may be unavailable in private browser settings. */ }
+  const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
     const icon = document.createElement('span'); icon.className = 'save-slot-icon'; icon.textContent = slot.admin ? '✦' : '◉';
@@ -158,13 +160,16 @@ function showTitle() {
     void showCard(card, slot.token);
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
     button.append(icon, meta, arrow);
-    button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token));
+    button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
+    const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
+    if (shownCards.has(cardCode)) { container.append(button); continue; }
+    shownCards.add(cardCode);
     const code = document.createElement('details'); code.className = 'card-code';
     const summary = document.createElement('summary'); summary.textContent = 'MEMORY CARD CODE';
-    const value = document.createElement('code'); value.textContent = slot.token.match(/.{4}/g).join(' ');
+    const value = document.createElement('code'); value.textContent = cardCode.match(/.{4}/g).join(' ');
     const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy';
-    copy.addEventListener('click', () => void navigator.clipboard?.writeText(slot.token).then(() => { copy.textContent = 'Copied'; }, () => {}));
-    const warn = document.createElement('small'); warn.textContent = 'Keep this private. Anyone with this code owns this Chao. Insert it on another browser to bring your Chao back.';
+    copy.addEventListener('click', () => void navigator.clipboard?.writeText(cardCode).then(() => { copy.textContent = 'Copied'; }, () => {}));
+    const warn = document.createElement('small'); warn.textContent = 'Keep this private. Anyone with this code owns every Chao on this card. Insert it on another browser to bring them all back.';
     code.append(summary, value, copy, warn);
     container.append(button, code);
   }
@@ -364,17 +369,18 @@ function connect(token) {
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken) {
+async function join(name, token = sessionToken, card = null) {
   if (joining) return;
   joining = true;
   $('#join-button').disabled = true;
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
   $('#join-error').textContent = '';
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token }) });
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}) }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
+    sessionCard = data.card || card;
     player = data.player;
     rememberChao();
     welcome.close();
@@ -390,9 +396,25 @@ $('#card-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const code = $('#card-code').value.replace(/\s+/g, '').toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(code)) { $('#join-error').textContent = 'That memory card code isn\u2019t complete. It has 64 letters and numbers.'; return; }
-  void join('Chao', code);
+  void insertCard(code);
 });
-$('#join-form').addEventListener('submit', (event) => { event.preventDefault(); void join($('#chao-name').value, null); });
+
+// Inserting a card brings every Chao on it into this browser's slots.
+async function insertCard(code) {
+  try {
+    const response = await fetch('/api/card', { headers: { Authorization: `Bearer ${code}` }, cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Memory card was not found.');
+    for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, code);
+    $('#card-code').value = ''; $('#join-error').textContent = '';
+    showTitle();
+  } catch (error) { $('#join-error').textContent = error.message; }
+}
+$('#join-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  let newest; try { newest = saveSlots.list()[0]; } catch { /* no slots */ }
+  void join($('#chao-name').value, null, newest && (newest.card || newest.token));
+});
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 showTitle();
 

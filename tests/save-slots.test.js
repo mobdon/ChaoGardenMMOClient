@@ -27,3 +27,14 @@ test('ordinary snapshots never invent a durable save acknowledgement', () => {
   slots.record(ownerToken, owner, 123456);
   assert.equal(slots.record(ownerToken, { ...owner, rings: 50 }).savedAt, 123456);
 });
+
+test('a slot remembers the memory card its Chao is on', () => {
+  const store = new Map();
+  const storage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  const slots = createSaveSlots(storage);
+  const token = 'a'.repeat(64), card = 'b'.repeat(64);
+  slots.record(token, { id: 'one', name: 'One' }, undefined, card);
+  assert.equal(slots.list()[0].card, card);
+  slots.record(token, { id: 'one', name: 'One' }); // later saves keep the card
+  assert.equal(slots.list()[0].card, card);
+});
