@@ -20,9 +20,9 @@ WORK = ROOT / '.local/extracted/metal-chao'
 OUT = ROOT / '.local/imports/metal-chao'
 TOOL = os.environ.get('SA2_ASSETS') or str(ROOT / 'asset-tools/crates/sa2/target/release/sa2-assets')
 GD = GAME / 'resource/gd_PC'
-STYLE = {'belly': [0.8, 0.92, 0.8], 'shoe': 1.0, 'core': 0.45, 'head': 1.0, 'headY': 0.0, 'headZ': 0.0, 'skullBack': 0.5, 'coreY': 0.45, 'jetY': 0.5}
+STYLE = {'height': 1.0, 'arms': 0.8, 'armSpread': 45, 'legs': 0.75, 'belly': [1, 1, 1], 'head': 1.45, 'headY': 0.0, 'headZ': 0.0, 'skullBack': 0.5, 'coreY': 0.45, 'jetY': 0.5}
 SKIN_TEXTURE = 3  # metalsonictex entry 3: Metal Sonic's blue environment-mapped metal
-HIDE_NODES = [6, 13, 16, 17, 18, 19, 20, 21, 22, 23, 25, 27]  # Chao feet, head, eyes, ear tips and mouth: replaced by Metal Sonic's
+HIDE_NODES = list(range(40))  # the whole Chao is drawn as Metal Sonic; the Chao rig still moves him
 
 def tool(*args):
     run = subprocess.run([TOOL, *map(str, args)], capture_output=True, text=True)
@@ -36,12 +36,12 @@ def prepare():
         png = WORK / f'metal-{i:05d}.png'
         if not png.exists(): tool('texture', WORK / f'tex/{i:05d}.gvr', png)
 
-def metal():
+def metal(pose=None):
     d = (WORK / 'metalsonicmdl.bin').read_bytes(); i = 0
     while True:
         k, o = struct.unpack('>iI', d[i:i + 8])
         if k == -1: raise SystemExit('Metal Sonic model 418 not in metalsonicmdl.prs')
-        if k == 418: return Model(lambda a, n: d[a:a + n], '>', o)
+        if k == 418: return Model(lambda a, n: d[a:a + n], '>', o, pose)
         i += 8
 
 def chao():
@@ -67,30 +67,53 @@ def belly(surface, W):
     return {**surface, 'tris': [[(o + (v[0] - o) * k, v[1], v[2]) for v in t] for t in surface['tris']]}
 
 def build():
-    M = metal().evaluate(); C = chao(); CS = C.evaluate(); CW = {n['i']: n['W'] for n in C.nodes}
+    C = chao(); CS = C.evaluate(); CW = {n['i']: n['W'] for n in C.nodes}
     CS = [belly(s, CW[1]) if s['node'] == 1 else s for s in CS]
-    S = lambda *ix: [M[i] for i in ix]
     def box(nodes):
         P = points([s for s in CS if s['node'] in nodes]); return P.min(0), P.max(0)
-    # The real Chao body stays (its own arms, hands and rig); Metal Sonic's head replaces the Chao
-    # head on the head bone, his shoes replace the Chao feet, his chest core sits on the belly.
-    parts = []  # (key, socket node, surfaces, scale, source anchor, destination anchor, keep)
-    for side, src, node in (('right', S(1, 2, 3, 4), 13), ('left', S(5, 6, 7, 8), 6)):
-        lo, hi = points(src).min(0), points(src).max(0); flo, fhi = box([node])
-        sc = (fhi[2] - flo[2]) * STYLE['shoe'] / (hi[0] - lo[0])  # shoe length fits the Chao foot
-        parts.append((f'shoe-{side}', node, src, sc, np.array([(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2]),
-                      np.array([(flo[0] + fhi[0]) / 2, flo[1], (flo[2] + fhi[2]) / 2]), None))
-    head = S(19, 20, 21, 22, 23, 24); P = points(head); hl, hh = box([16])
-    skull = P[P[:, 0] < STYLE['skullBack']]
-    src = np.array([(skull[:, 0].min() + skull[:, 0].max()) / 2, P[:, 1].min(), 0])
-    # Same body-to-head proportion as a Chao (mob): the head (jaw to crown, spikes excluded) is as tall as the Chao head.
-    sc = (hh[1] - hl[1]) * STYLE['head'] / (skull[:, 1].max() - skull[:, 1].min())
-    parts.append(('head', 16, head, sc, src, np.array([0, hl[1] + STYLE['headY'], (hl[2] + hh[2]) / 2 + STYLE['headZ']]), None))
-    body = points([s for s in CS if s['node'] == 1]); bl, bh = body.min(0), body.max(0)
-    P = points(S(13)); y = bl[1] + (bh[1] - bl[1]) * STYLE['coreY']
-    band = body[(abs(body[:, 1] - y) < .3) & (abs(body[:, 0]) < .6)]
-    parts.append(('core', 1, S(13), STYLE['core'], np.array([P[:, 0].max(), (P[:, 1].min() + P[:, 1].max()) / 2, (P[:, 2].min() + P[:, 2].max()) / 2]),
-                  np.array([0, y, band[:, 2].max() - .03]), None))
+    # Metal Sonic's own whole body in Chao form (mob: 'all metal sonic body but in chao form', 'a mix' of proportions).
+    # Posed and proportioned through his own skeleton, so his weighted skin bends and stretches at the joints
+    # instead of tearing: head scaled at the neck, arms at the shoulders, legs at the hips.
+    pose = {44: np.diag([STYLE['head']] * 3 + [1]), 37: np.diag([STYLE['arms']] * 3 + [1]), 56: np.diag([STYLE['arms']] * 3 + [1]),
+            7: np.diag([STYLE['legs']] * 3 + [1]), 17: np.diag([STYLE['legs']] * 3 + [1])}
+    def turn(u, v):
+        u, v = u / np.linalg.norm(u), v / np.linalg.norm(v); w = np.cross(u, v); c = u @ v
+        K = np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]]); return np.eye(3) + K + K @ K / (1 + c)
+    def aim(node, child, target):  # rotate a joint so the bone to its child points along target (world space)
+        Wn = {n['i']: n['W'] for n in metal(pose).nodes}; W3 = Wn[node][:3, :3]
+        P = np.eye(4); P[:3, :3] = np.linalg.inv(W3) @ turn(Wn[child][:3, 3] - Wn[node][:3, 3], target) @ W3
+        pose[node] = pose.get(node, np.eye(4)) @ P
+    # Arms held out like a normal Chao's (mob: full arms, not crossed): straighten the elbows (bind pose bends the claws
+    # in to the hips), then aim each arm along the Chao's own left arm (AL_RootObject node 3 -> 4), mirrored, lifted out.
+    ca = CW[4][:3, 3] - CW[3][:3, 3]; g = np.radians(STYLE['armSpread'])
+    ca = np.array([ca[0] * np.cos(g) - ca[1] * np.sin(g), ca[0] * np.sin(g) + ca[1] * np.cos(g), ca[2]])
+    chao_arm = np.array([-ca[2], ca[1], ca[0]])  # Chao space -> Metal space (inverse of R)
+    for sh, el, wr, side in ((37, 38, 40, 1), (56, 57, 59, -1)):
+        J0 = {n['i']: n['W'][:3, 3] for n in metal(pose).nodes}
+        aim(el, wr, J0[el] - J0[sh]); aim(sh, el, chao_arm * [1, 1, side])
+    MM = metal(pose); M = MM.evaluate(); J = {n['i']: n['W'][:3, 3] for n in MM.nodes}
+    # Cut into parts that ride the Chao's nodes: each triangle goes to the region whose bone segment is nearest.
+    SEG = {'torso': [(2, 34)], 'arm-right': [(56, 57), (57, 59)], 'arm-left': [(37, 38), (38, 40)],
+           'leg-right': [(7, 9), (9, 13)], 'leg-left': [(17, 19), (19, 23)]}
+    def dist(p, a, b):
+        a, b = J[a], J[b]; t = np.clip(np.dot(p - a, b - a) / np.dot(b - a, b - a), 0, 1); return np.linalg.norm(p - (a + t * (b - a)))
+    fixed = {**{i: 'head' for i in (19, 20, 21, 22, 23, 24)}, **{i: 'leg-right' for i in (1, 2, 3, 4)},
+             **{i: 'leg-left' for i in (5, 6, 7, 8)}, **{i: 'arm-left' for i in (16, 17, 18)}, **{i: 'arm-right' for i in (27, 28, 29)}}
+    split = {r: [] for r in [*SEG, 'head']}
+    for i, surface in enumerate(M):
+        if i in fixed: split[fixed[i]].append(surface); continue
+        buckets = {r: [] for r in SEG}
+        for t in surface['tris']:
+            c = np.mean([v[0] for v in t], axis=0)
+            buckets[min(SEG, key=lambda r: min(dist(c, a, b) for a, b in SEG[r]))].append(t)
+        for r, tris in buckets.items():
+            if tris: split[r].append({**surface, 'tris': tris})
+    allp = points(M); ground = allp[:, 1].min(); height = allp[:, 1].max() - ground
+    # Whole figure as tall as the Chao (crown of the Chao head to its soles), standing on the Chao's ground.
+    hl, hh = box([16]); total = STYLE['height'] * hh[1] / height
+    origin = np.array([J[2][0], ground, J[2][2]])
+    plan = [('torso', 1), ('head', 16), ('arm-right', 10), ('arm-left', 3), ('leg-right', 13), ('leg-left', 6)]
+    parts = [(region, node, split[region], total, origin, np.zeros(3), None) for region, node in plan]
     texfile = lambda _set, tex, _s: str(WORK / f'metal-{tex:05d}.png') if tex is not None and (WORK / f'metal-{tex:05d}.png').exists() else None
     manifest = []; local = []
     for key, node, src, sc, a, d, keep in parts:

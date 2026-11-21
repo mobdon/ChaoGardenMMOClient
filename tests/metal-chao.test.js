@@ -30,9 +30,9 @@ test('metal skin hides the replaced Chao nodes and restores them', () => {
   assert.equal(meshes[1].material, original);
 });
 
-test('every part rides a real Chao node and none rides a hidden one except the head', () => {
+test('every part rides a real Chao node', () => {
   for (const part of METAL_CHAO_PARTS) {
     assert.match(part.node, /^\d{3}$/);
-    assert.ok(part.key === 'metal-chao-head' || !METAL_CHAO_HIDDEN.has(Number(part.node)) || /shoe/.test(part.key), part.key);
+    assert.ok(Number(part.node) < 40, part.key);
   }
 });

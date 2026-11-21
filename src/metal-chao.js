@@ -6,12 +6,12 @@ import { ChaoLookEnvironment, nodeIndexOf } from './chao-look.js';
 // of the Chao node it rides on by scripts/metal-chao/convert.py (never in Git).
 export const METAL_CHAO_LOOK = 'metal-sonic-chao';
 export const METAL_CHAO_PARTS = [
-  { key: 'metal-chao-head', node: '016' },
-  { key: 'metal-chao-shoe-right', node: '013' }, { key: 'metal-chao-shoe-left', node: '006' },
-  { key: 'metal-chao-core', node: '001' },
+  { key: 'metal-chao-torso', node: '001' }, { key: 'metal-chao-head', node: '016' },
+  { key: 'metal-chao-arm-right', node: '010' }, { key: 'metal-chao-arm-left', node: '003' },
+  { key: 'metal-chao-leg-right', node: '013' }, { key: 'metal-chao-leg-left', node: '006' },
 ];
-// Chao feet, head, eyes, ear tips and mouth: replaced by Metal Sonic's shoes and head.
-export const METAL_CHAO_HIDDEN = new Set([6, 13, 16, 17, 18, 19, 20, 21, 22, 23, 25, 27]);
+// Metal Sonic's whole body replaces the Chao's (mob: 'all metal sonic body but in chao form'): every Chao mesh hides.
+export const METAL_CHAO_HIDDEN = new Set(Array.from({ length: 40 }, (_, index) => index));
 
 let skin = null;
 export function metalSkinTexture(scene) {
