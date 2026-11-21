@@ -197,6 +197,8 @@ async function start() {
   if (picked.some(([p]) => p === '@disc' || p.startsWith('disc/'))) e.SA2_DISC_DIR = '/disc';
   e.SA2_STEAM_DIR ??= '/steam';
   // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
+  // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
+  if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);

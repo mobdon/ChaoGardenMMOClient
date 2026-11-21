@@ -80,3 +80,4 @@ dialog{background:#f4f9fff7;border-color:#e8f3ff;color:#123e7a}.welcome-dialog{b
 .owner-loadout summary { cursor: pointer; color: #1c5b9b; font-size: 10px; font-weight: 900; letter-spacing: .6px; }
 .owner-loadout summary span { float: right; }
 .owner-loadout .owner-form-button { margin-top: 8px; }
+.stage-play { font-size: 9px; color: #fff; background: #1f6fd1; padding: 4px 7px; border-radius: 4px; text-decoration: none; }
