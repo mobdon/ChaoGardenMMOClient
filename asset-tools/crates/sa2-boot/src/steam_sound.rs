@@ -267,7 +267,27 @@ fn register_bank(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
+/// SA2_TRACE_SOUND: the game's play request (0x8006affc: id -> slot or -1)
+/// and its id lookup (0x8006c78c: id -> table entry).
+fn traced(c: &mut Cpu, m: &mut Mem, addr: u32, what: &str) {
+    let id = c.r[3];
+    if let Some(f) = (c.rt.generated)(addr) {
+        f(c, m);
+    }
+    eprintln!("steam sound: {what} {id:#x} -> {:#x}", c.r[3]);
+}
+fn play_request(c: &mut Cpu, m: &mut Mem) {
+    traced(c, m, 0x8006_AFFC, "request");
+}
+fn lookup(c: &mut Cpu, m: &mut Mem) {
+    traced(c, m, 0x8006_C78C, "lookup");
+}
+
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
+    if std::env::var_os("SA2_TRACE_SOUND").is_some() {
+        c.rt.set_override(0x8006_AFFC, play_request);
+        c.rt.set_override(0x8006_C78C, lookup);
+    }
     c.rt.set_override(SEQ_MESSAGE, seq_message);
     c.rt.set_override(LOAD_FILE, load_file);
     c.rt.set_override(REGISTER_BANK, register_bank);
