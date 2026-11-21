@@ -48,50 +48,12 @@ test('idle and walk preserve every native head channel without applying a correc
   } finally { r.engine.dispose(); }
 });
 
-test('running locks016 and visible eyes despite parent sway, grounding and actor turns', () => {
+test('running keeps the native head motion (head bob)', () => {
   const r = rig();
   try {
-    const original = r.relative(r.head), originalEye = r.relative(r.eye);
     settle(r.control, { gait: 'Run' });
-    for (let frame = 0; frame < 120; frame++) {
-      r.control.restoreBase();
-      r.actor.position.x += .01;
-      r.actor.rotationQuaternion.copyFrom(Quaternion.RotationYawPitchRoll(frame * .01, 0, 0));
-      r.body.position.y = 1 + Math.sin(frame * .3) * .25;
-      r.body.rotationQuaternion.copyFrom(Quaternion.RotationYawPitchRoll(.1, Math.sin(frame * .2) * .4, .1));
-      r.pivot.rotationQuaternion.copyFrom(Quaternion.RotationAxis(Vector3.Right(), Math.cos(frame * .3) * .3));
-      r.visual.position.y = .015 + Math.cos(frame * .3) * .05;
-      r.foot.rotationQuaternion.copyFrom(Quaternion.RotationAxis(Vector3.Right(), Math.sin(frame * .3)));
-      r.head.rotationQuaternion.copyFrom(Quaternion.RotationYawPitchRoll(.2, Math.cos(frame * .2) * .3, -.1));
-      const base = r.local(r.head), limbs = [r.local(r.body), r.local(r.neck), r.local(r.pivot), r.local(r.foot)];
-      r.control.update(1 / 60, { gait: 'Run' }); r.control.apply();
-      closeMatrix(r.relative(r.head), original); closeMatrix(r.relative(r.eye), originalEye);
-      assert.deepEqual([r.local(r.body), r.local(r.neck), r.local(r.pivot), r.local(r.foot)], limbs);
-      assert.deepEqual(r.head.scaling.asArray(), base.s); assert.equal(r.head.parent, base.parent);
-      r.control.restoreBase(); assert.deepEqual(r.local(r.head), base);
-    }
-  } finally { r.engine.dispose(); }
-});
-
-test('run entry and exit ease over the short transition and then release native walking', () => {
-  const r = rig();
-  try {
-    const anchorY = r.relative(r.head).getTranslation().y;
-    r.body.position.y += .4;
-    const nativeY = r.relative(r.head).getTranslation().y;
-    r.control.update(HEAD_LOCK_SECONDS / 2, { gait: 'Run' }); r.control.apply();
-    const enteringY = r.relative(r.head).getTranslation().y;
-    assert.ok(enteringY > anchorY && enteringY < nativeY);
-    assert.ok(r.control.diagnostics.blend > 0 && r.control.diagnostics.blend < 1);
-    r.control.restoreBase(); r.control.update(HEAD_LOCK_SECONDS / 2, { gait: 'Run' }); r.control.apply();
-    assert.ok(Math.abs(r.relative(r.head).getTranslation().y - anchorY) < 1e-6);
-    r.control.restoreBase(); r.control.update(HEAD_LOCK_SECONDS / 2, { gait: 'Walk' }); r.control.apply();
-    const exitingY = r.relative(r.head).getTranslation().y;
-    assert.ok(exitingY > anchorY && exitingY < nativeY);
-    assert.equal(r.control.diagnostics.mode, 'blending-out');
-    r.control.restoreBase(); r.control.update(HEAD_LOCK_SECONDS / 2, { gait: 'Walk' }); r.control.apply();
-    assert.ok(Math.abs(r.relative(r.head).getTranslation().y - nativeY) < 1e-6);
     assert.equal(r.control.diagnostics.active, false);
+    assert.equal(r.control.diagnostics.mode, 'natural');
   } finally { r.engine.dispose(); }
 });
 
@@ -141,7 +103,7 @@ test('mounted pilots immediately recover the exact native pose and unmount start
     r.control.update(0, { mounted: true, gait: 'Run', skateBlend: 1 }); r.control.apply();
     assert.deepEqual(r.local(r.head), before);
     assert.equal(r.control.diagnostics.active, false); assert.equal(r.control.diagnostics.mode, 'mounted');
-    r.control.update(1 / 60, { gait: 'Run' });
+    r.control.update(1 / 60, { gait: 'Run', skateBlend: 1 });
     assert.ok(r.control.diagnostics.blend > 0 && r.control.diagnostics.blend < 1);
     r.control.dispose(); assert.equal(r.control.diagnostics.active, false); assert.deepEqual(r.local(r.head), before);
   } finally { r.engine.dispose(); }
