@@ -12,6 +12,7 @@ pub mod dvd;
 pub mod follow;
 pub mod frame;
 pub mod game;
+pub mod host_pad;
 pub mod input;
 pub mod objects;
 pub mod player;

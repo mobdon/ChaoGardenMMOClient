@@ -20,6 +20,7 @@ pub mod prof;
 #[cfg(not(target_os = "wasi"))]
 pub mod snap;
 pub mod vi;
+pub mod wide;
 #[cfg(not(target_os = "wasi"))]
 pub mod window;
 
@@ -35,6 +36,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     audio::install(c, m);
     clock::install(c, m);
     card::install(c, m);
+    wide::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).

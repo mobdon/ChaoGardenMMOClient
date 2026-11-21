@@ -98,14 +98,19 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
         .iter()
         .skip(first)
         .any(|d| is_hud(d) && spans(d) && d.material_params.texture_mappings[0].width >= 256.0);
-    for d in frame.draws.iter_mut().skip(first).filter(|d| on_screen(d)) {
+    let centres = group_centres(frame, first);
+    for (i, d) in frame.draws.iter_mut().enumerate().skip(first) {
+        if !on_screen(d) {
+            continue;
+        }
         let ext = (is_hud(d) || flat).then(|| extent(d)).flatten();
         let span = ext.is_some_and(|(a, b, _, _)| a <= -0.95 && b >= 0.95);
         // A fade or flash covers the whole screen, top to bottom.
         let fade = span && !textured(d) && ext.is_some_and(|(_, _, t, b)| b - t >= 1.9);
         if flat || (span && is_hud(d) && (movie || textured(d))) {
-            if fade {
-                // A fade or flash: across the whole window.
+            if fade && !flat {
+                // A fade or flash over a movie: across the whole window (over 2D art it
+                // stays with the art, so a white flash leaves the side bars black).
                 remap_x(&mut d.projection, k, 0.0);
                 let m = &mut d.draw_params.pos_mtx[0];
                 m[0] = m[0].map(|v| v / k);
@@ -131,7 +136,8 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
             m[0] = m[0].map(|v| v / k);
             continue;
         }
-        let c = (a + b) / 2.0;
+        // Where its group sits decides (a row of glyphs moves as one).
+        let c = centres.get(i).copied().flatten().unwrap_or((a + b) / 2.0);
         let edge = 1.0 - k;
         let shift = if c < -1.0 / 3.0 {
             -edge
@@ -152,6 +158,47 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
             }
         }
     }
+}
+
+/// The centre of each HUD piece's group: consecutive pieces side by side on a
+/// row (overlapping vertically, at most a small gap apart) form one, such as
+/// the digits of a time or a label and its value. Anchoring by each glyph's
+/// own centre split "05:21:02" between the middle and the right edge.
+fn group_centres(frame: &Frame, first: usize) -> Vec<Option<f32>> {
+    const GAP: f32 = 0.12;
+    let piece = |d: &DrawCmd| {
+        extent(d).filter(|&(a, b, t, btm)| {
+            is_hud(d) && !(a <= -0.95 && b >= 0.95) && btm - t < 1.8
+        })
+    };
+    let mut out = vec![None; frame.draws.len()];
+    let mut group: Vec<usize> = Vec::new();
+    let mut span = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let close = |g: &mut Vec<usize>, s: (f32, f32, f32, f32), out: &mut Vec<Option<f32>>| {
+        for &j in g.iter() {
+            out[j] = Some((s.0 + s.1) / 2.0);
+        }
+        g.clear();
+    };
+    for (i, d) in frame.draws.iter().enumerate().skip(first) {
+        let Some((a, b, t, btm)) = piece(d) else {
+            continue;
+        };
+        let joins = !group.is_empty()
+            && t <= span.3
+            && btm >= span.2
+            && a <= span.1 + GAP
+            && b >= span.0 - GAP;
+        if joins {
+            span = (span.0.min(a), span.1.max(b), span.2.min(t), span.3.max(btm));
+        } else {
+            close(&mut group, span, &mut out);
+            span = (a, b, t, btm);
+        }
+        group.push(i);
+    }
+    close(&mut group, span, &mut out);
+    out
 }
 
 /// Drawn with no view transform (vertices already in view space): 2D quads.

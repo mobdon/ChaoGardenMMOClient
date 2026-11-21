@@ -240,3 +240,78 @@ fn a_screen_of_2d_art_is_pillarboxed() {
         assert_eq!(d.viewport[2], 480.0, "4:3 of the 16:9 width");
     }
 }
+
+#[test]
+fn a_flash_over_2d_art_stays_in_the_middle() {
+    // An untextured full-screen quad (the title's white flash) over 2D art: the
+    // side bars stay black instead of turning grey.
+    let mut gx = Gx::new();
+    gx.clear_vtx_desc();
+    gx.set_vtx_desc(attr::POS, attr_type::DIRECT);
+    gx.set_vtx_attr_fmt(0, attr::POS, comp_cnt::POS_XYZ, comp_type::F32, 0);
+    gx.set_viewport(0.0, 0.0, 640.0, 480.0, 0.0, 1.0);
+    gx.load_pos_mtx_imm(&HUD, 0);
+    gx.begin(command::DRAW_QUADS, 0, 4);
+    for (x, y) in [(0.0, 0.0), (-640.0, 0.0), (-640.0, 480.0), (0.0, 480.0)] {
+        gx.position3f32(x, y, -1.0);
+    }
+    gx.end(&Ram(&[]));
+    let mut f = gx.take_frame();
+    f.draws[0].projection = PERSP;
+    widen(&mut f, 16.0 / 9.0);
+    assert_eq!(f.draws[0].viewport[0], 80.0);
+    assert_eq!(f.draws[0].viewport[2], 480.0);
+}
+
+#[test]
+fn a_row_of_glyphs_moves_as_one() {
+    // A 3D scene, then two neighbouring HUD glyphs whose own centres fall on
+    // either side of the anchoring line (normalised x 1/3): the results
+    // screen's "05:21:02" was split between the middle and the right edge.
+    let mut gx = Gx::new();
+    gx.clear_vtx_desc();
+    gx.set_vtx_desc(attr::POS, attr_type::DIRECT);
+    gx.set_vtx_attr_fmt(0, attr::POS, comp_cnt::POS_XYZ, comp_type::F32, 0);
+    gx.set_viewport(0.0, 0.0, 640.0, 480.0, 0.0, 1.0);
+    let mem = Ram(&[]);
+    let quad = |gx: &mut Gx, x0: f32, x1: f32, y0: f32, y1: f32, z: f32| {
+        gx.begin(command::DRAW_QUADS, 0, 4);
+        for (x, y) in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)] {
+            gx.position3f32(x, y, z);
+        }
+        gx.end(&mem);
+    };
+    gx.load_pos_mtx_imm(
+        &[
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, -10.0],
+        ],
+        0,
+    );
+    quad(&mut gx, -1.0, 1.0, -1.0, 1.0, 0.0);
+    gx.load_pos_mtx_imm(&HUD, 0);
+    quad(&mut gx, -416.0, -426.0, 200.0, 220.0, -1.0);
+    quad(&mut gx, -428.0, -438.0, 200.0, 220.0, -1.0);
+    let mut f = gx.take_frame();
+    for d in &mut f.draws {
+        d.projection = PERSP;
+    }
+    let before: Vec<f32> = f.draws[1..]
+        .iter()
+        .map(|d| ndc_x(d, [-421.0, 210.0, -1.0]))
+        .collect();
+    let own: Vec<f32> = f.draws[1..]
+        .iter()
+        .zip([-421.0, -433.0])
+        .map(|(d, x)| ndc_x(d, [x, 210.0, -1.0]))
+        .collect();
+    assert!(own[0] < 1.0 / 3.0 && own[1] > 1.0 / 3.0, "straddle: {own:?}");
+    widen(&mut f, 16.0 / 9.0);
+    let after: Vec<f32> = f.draws[1..]
+        .iter()
+        .map(|d| ndc_x(d, [-421.0, 210.0, -1.0]))
+        .collect();
+    let moved: Vec<f32> = after.iter().zip(&before).map(|(a, b)| a - b).collect();
+    assert!((moved[0] - moved[1]).abs() < 1e-4, "same move: {moved:?}");
+}

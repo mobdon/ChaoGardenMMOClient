@@ -261,3 +261,19 @@ fn arq_moves_bytes_now_and_calls_back_later() {
     // The callback comes at the next frame: here, not in another test.
     call(&mut c, &mut m, vi::VI_WAIT_FOR_RETRACE);
 }
+
+#[test]
+fn widescreen_widens_the_clip_rectangle_about_the_centre() {
+    // _nj_screen_ cx = 320; clip rectangle left 0, right 639 (4:3).
+    let mut m = Mem::default();
+    m.wf32(0x8035_78E8 + 0x08, 320.0);
+    m.wf32(0x8035_78C0 + 0x18, 0.0);
+    m.wf32(0x8035_78C0 + 0x20, 639.0);
+    m.wf32(0x8035_78C0 + 0x1C, 0.0);
+    sa2_boot::wide::widen_clip(&mut m);
+    assert_eq!(m.rf32(0x8035_78C0 + 0x18), -240.0);
+    assert_eq!(m.rf32(0x8035_78C0 + 0x20), 320.0 + 319.0 * 1.75);
+    assert_eq!(m.rf32(0x8035_78C0 + 0x0C), -560.0, "left - cx");
+    assert_eq!(m.rf32(0x8035_78C0 + 0x08), 319.0 * 1.75, "right - cx");
+    assert_eq!(m.rf32(0x8035_78C0 + 0x1C), 0.0, "top unchanged");
+}
