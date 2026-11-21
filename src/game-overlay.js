@@ -2,6 +2,7 @@
 // breeding and Tiny Garden opened from inside it (mob 2026-11-21). It reuses the
 // hub page's own modules and the game page's room socket.
 import './style.css';
+import './sonic.css';
 import { createGardenCare } from './garden-care.js';
 import { createBreedingMenu } from './breeding-menu.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
@@ -13,15 +14,18 @@ export function mountOverlay(nextSocket) {
   mounted = { socket: nextSocket };
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text) n.textContent = text; if (className) n.className = className; return n; };
   const send = message => mounted.socket.readyState === WebSocket.OPEN && (mounted.socket.send(JSON.stringify(message)), true);
-  const button = el('button', 'Inventory', 'mmo-overlay-button');
-  button.style.cssText = 'position:fixed;right:16px;top:16px;z-index:7';
+  // The hub page's own top bar look (mob: "the top bar is good"), with only Inventory in it.
+  const bar = el('header', undefined, 'topbar'); bar.style.cssText = 'position:fixed;z-index:7';
+  bar.innerHTML = '<span class="wordmark"><span class="brand-symbol">\u25c9</span><span>CHAO<span class="wordmark-light">GARDEN</span><small>ADVENTURE \u00b7 RACE \u00b7 BATTLE</small></span></span><nav class="top-links"></nav>';
+  const button = el('button', 'Inventory', 'nav-button mmo-overlay-button');
+  bar.querySelector('nav').append(button);
   button.tabIndex = -1; // never takes the game's keyboard focus
-  const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.top = '56px';
+  const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:110px';
   const care = el('div'), breedingRoot = el('div'); breedingRoot.hidden = true;
   const breedButton = el('button', 'Breeding'), tinyButton = el('button', 'Tiny Garden');
   for (const b of [breedButton, tinyButton]) b.tabIndex = -1;
   panel.append(care, el('div'), breedButton, tinyButton, breedingRoot);
-  document.body.append(button, panel);
+  document.body.append(bar, panel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
     const token = localStorage.getItem(SESSION_KEY), card = slots.list().find(s => s.token === token)?.card;
