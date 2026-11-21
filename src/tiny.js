@@ -490,6 +490,7 @@ function openSocket(activeToken, generation) {
     clearTimeout(saveTimer); pendingSave = false; returnAfterSave = false;
     connectionLabel('offline', 'Disconnected'); renderGame();
     notice('Connection lost. Controls stopped. An unfinished round may be canceled by the server.', true);
+    if (event.code === 4001) { $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = event.reason || 'Another Chao from this memory card is out now.'; return; }
     if (event.code !== 1008) scheduleReconnect(activeToken);
     else { $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = 'Load this saved Chao again at the garden title.'; }
   };

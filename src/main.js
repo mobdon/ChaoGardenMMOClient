@@ -391,6 +391,8 @@ function connect(token) {
     connected(false);
     pendingSave?.reject(new Error('The connection closed before the save was confirmed.'));
     if (event.code === 1008) { toast('The connection was paused. Reload to rejoin.', 'error'); return; }
+    // Another Chao from this memory card was selected; this one went back to the card.
+    if (event.code === 4001) { toast(event.reason || 'Another Chao from this memory card is out now.', 'info'); showTitle(); return; }
     reconnectTimer = setTimeout(() => connect(token), 2000);
   };
   socket.onerror = () => connected(false);
