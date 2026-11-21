@@ -410,7 +410,7 @@ async function join(name, token = sessionToken, card = null, owner = false) {
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
   $('#join-error').textContent = '';
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}), ...(owner ? { owner: true } : {}) }) });
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}), ...(owner ? { ownerLogin: true } : {}) }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
