@@ -6,7 +6,7 @@
 // [3..4] slot length, [5] slot the game fills next, [6] sound written,
 // [7] sound read, [8] canvas aspect (render.js), [9] sound dropouts, [10] sound skips.
 
-const SLOT = 40 << 20; // a frame's pipe bytes and 24 MiB of RAM
+const SLOT = 64 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 48 fits; more needs a bigger slot)
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
 const q = new URLSearchParams(location.search);
