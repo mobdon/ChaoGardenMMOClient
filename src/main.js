@@ -50,7 +50,8 @@ async function hatchEgg(egg, name) {
   if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
   saveSlots.record(data.token, data.player, undefined, sessionCard);
 }
-const breeding = createBreedingMenu({ root: $('#breeding-panel'), hatch: hatchEgg, send: message => {
+const breeding = createBreedingMenu({ root: $('#breeding-panel'), hatch: hatchEgg,
+  playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)), send: message => {
   if (socket?.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(message)); return true;
 }, statRows: (stats, names) => {

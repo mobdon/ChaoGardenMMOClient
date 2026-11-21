@@ -14,7 +14,7 @@ const imports = path.resolve('.local/imports');
 await mkdir(output, { recursive: true });
 await mkdir(imports, { recursive: true });
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const archives = ['al_tex_common', 'al_tex_chao', 'al_tex_ent_common_en', 'al_tex_odekake_menu_en', 'al_tex_cave_menu_en', 'al_common_tex', 'al_panel'];
+const archives = ['al_tex_common', 'al_tex_chao', 'al_tex_ent_common_en', 'al_tex_odekake_menu_en', 'al_tex_cave_menu_en', 'al_common_tex', 'al_panel', 'al_icon'];
 const report = {
   generatedAt: new Date().toISOString(),
   tool: 'X-Hax SA Tools release 786 ArchiveTool -png; original installed archives read only',
@@ -74,6 +74,9 @@ const panels = ['pen', 'goma', 'rako', 'usa', 'chit', 'ino', 'kuma', 'tora', 'go
   'shep', 'ara', 'han', 'bone', 'batman', 'dra', 'uni', 'phen', 'cdr_y', 'cdr_g', 'cdr_r', 'cdr_p'];
 for (const [id, name] of panels.entries()) selectedSprites.push({ archive: 'al_panel', filename: `panel_${name}.png`,
   alias: `item-panel-${id}.png`, role: `Original inventory panel for native item ${id}`, evidence: 'al_panel entry, matched by eye to its animal or drive.' });
+// AL_IconHeart sets texture 3 of the AL_ICON list (al_icon.prs entry 3), confirmed in code.
+selectedSprites.push({ archive: 'al_icon', filename: 'al_icon05.png', alias: 'chao-icon-heart.png', role: 'Original Chao heart icon',
+  evidence: 'AL_IconHeart texture number 3; AL_IconDrawSub binds AL_ICON; entry 3 is al_icon05.' });
 for (const kind of ['fruit', 'egg']) selectedSprites.push({ archive: 'al_tex_common', filename: `panel_${kind}.png`,
   alias: `item-panel-${kind}.png`, role: `Original ${kind} panel`, evidence: `al_tex_common panel_${kind}, found beside the al_panel set.` });
 for (const { archive, filename, alias, role, evidence } of selectedSprites) {

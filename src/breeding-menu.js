@@ -33,18 +33,21 @@ export function breedingView(snapshot, offers = new Map(), now = Date.now()) {
 }
 
 export function createBreedingMenu({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID(),
-  hatch = async () => {}, statRows = null, onEgg = () => {} }) {
+  hatch = async () => {}, statRows = null, playScene = null }) {
   const document = root.ownerDocument;
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; return n; };
   let snapshot = null, selected = 0, pending = null, feedback = '', naming = null, previous = '';
   const offers = new Map();
+  // The game's breeding scene plays here, small, kept across re-renders.
+  const sceneHost = el('div', undefined, 'breeding-scene-host');
+  const egg = () => { if (playScene && !sceneHost.children?.length) void playScene(sceneHost); };
 
   function render() {
     const view = breedingView(snapshot, offers);
     const signature = JSON.stringify([view, selected, pending?.requestId, feedback, naming]);
     if (signature === previous) return;
     previous = signature;
-    root.replaceChildren(el('h2', 'Breeding'));
+    root.replaceChildren(el('h2', 'Breeding'), sceneHost);
     if (!view.valid) { root.append(el('p', 'Join a garden first.', 'garden-care-note')); return; }
     if (!view.rows.length) { root.append(el('p', 'No grown-up Chao in this garden yet.', 'garden-care-note')); return; }
     selected = Math.min(selected, view.rows.length - 1);
@@ -114,11 +117,11 @@ export function createBreedingMenu({ root, send = () => false, requestId = () =>
     update(next) { snapshot = next; render(); },
     handleEvent(event) {
       if (event?.kind === 'life-breed-offer') { offers.set(event.fromId, { expiresAt: event.expiresAt }); render(); return true; }
-      if (event?.kind === 'life-egg-laid') { feedback = `An egg was laid with ${event.partnerName}!`; onEgg(); render(); return true; }
+      if (event?.kind === 'life-egg-laid') { feedback = `An egg was laid with ${event.partnerName}!`; egg(); render(); return true; }
       if (event?.kind !== 'life-result' || !pending || event.requestId !== pending.requestId) return false;
       const name = pending.partnerName; pending = null;
       feedback = (codes[event.code] || (() => event.accepted ? 'Done.' : `Not now (${event.code}).`))(name);
-      if (event.code === 'egg-laid') onEgg();
+      if (event.code === 'egg-laid') egg();
       render(); return true;
     },
   };
