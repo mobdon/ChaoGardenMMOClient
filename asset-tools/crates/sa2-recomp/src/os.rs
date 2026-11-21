@@ -60,7 +60,12 @@ pub const TB_HZ: u64 = 40_500_000;
 pub const TB_PER_FRAME: u64 = TB_HZ / 60;
 /// Host stack for each game thread but the first (recompiled code nests a
 /// Rust frame per guest call). Reserved, not committed.
+#[cfg(not(target_family = "wasm"))]
 const THREAD_STACK: usize = 256 << 20;
+/// In wasm a guest call nests in the engine's own stack; this one (in
+/// linear memory, shared by every thread) holds only spilled values.
+#[cfg(target_family = "wasm")]
+const THREAD_STACK: usize = 16 << 20;
 
 struct Alarm {
     addr: u32,

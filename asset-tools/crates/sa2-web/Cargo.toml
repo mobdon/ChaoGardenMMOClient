@@ -1,0 +1,25 @@
+[package]
+name = "sa2-web"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "The recompiled SA2 in a browser tab, page side: decodes the game's GX jobs and draws them with sa2-gx on WebGPU or WebGL2"
+
+# Own workspace, like the other sa2 crates; the game side is game/.
+[workspace]
+exclude = ["game"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sa2-gx = { path = "../sa2-gx" }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "webgpu", "webgl"] }
+wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+
+[profile.release]
+opt-level = 3
+lto = true

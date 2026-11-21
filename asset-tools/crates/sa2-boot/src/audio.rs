@@ -206,6 +206,8 @@ static LIVE: Mutex<Live> = Mutex::new(Live {
 });
 
 /// Play the mix on the default output device, on a thread of its own.
+/// The browser build plays through SA2_AUDIO_WAV instead (sa2-web).
+#[cfg(not(target_os = "wasi"))]
 pub fn play() {
     std::thread::spawn(|| {
         if let Err(e) = run_output() {
@@ -214,6 +216,7 @@ pub fn play() {
     });
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn run_output() -> Result<(), Box<dyn std::error::Error>> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     let dev = cpal::default_host()
@@ -510,6 +513,7 @@ pub fn install(c: &mut Cpu, m: &mut Mem) {
         }
     }
     if std::env::var_os("SA2_WINDOW").is_some() && std::env::var_os("SA2_MUTE").is_none() {
+        #[cfg(not(target_os = "wasi"))]
         play();
     }
     for (base, len) in [(DSP_REGS, 0x200), (AI_REGS, 0x20)] {

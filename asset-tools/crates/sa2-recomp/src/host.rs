@@ -88,7 +88,7 @@ pub fn run(dol_bytes: &[u8], symbols: &str, dispatch: fn(u32) -> Option<Func>, r
     let (tx, rx) = std::sync::mpsc::channel();
     // Recompiled code nests a Rust frame per guest call; give it room.
     std::thread::Builder::new()
-        .stack_size(1 << 30)
+        .stack_size(if cfg!(target_family = "wasm") { 64 << 20 } else { 1 << 30 })
         .spawn(move || {
             let mut m = Mem { io_read, io_write, ..Mem::default() };
             dol.load(&mut m);

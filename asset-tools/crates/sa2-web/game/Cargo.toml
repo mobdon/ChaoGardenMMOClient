@@ -1,0 +1,16 @@
+[package]
+name = "sa2-web-game"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "The recompiled SA2 in a browser tab, game side (wasm32-wasip1-threads): the boot hooks, with GX frames, sound and the controller going through device files the page serves"
+
+# Own workspace, like the other sa2 crates.
+[workspace]
+
+[dependencies]
+sa2-recomp = { path = "../../sa2-recomp" }
+sa2-boot = { path = "../../sa2-boot" }
+sa2-runtime = { path = "../../sa2-runtime" }
+sa2-asset-tools = { path = "../../sa2" }

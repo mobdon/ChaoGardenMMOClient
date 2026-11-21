@@ -15,6 +15,10 @@ sa2-gx = { path = "../sa2-gx" }
 sa2-runtime = { path = "../sa2-runtime" }
 sa2-asset-tools = { path = "../sa2" }
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan"] }
+
+# The window, speakers and gamepads; the browser build (wasm32-wasip1-threads)
+# has its own, in sa2-web.
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
 pollster = "0.4.0"
 png = "0.18.1"
 winit = "0.30.12"
