@@ -5,10 +5,11 @@ from pathlib import Path
 import convert, glb
 from motion import Bank, frame_anim
 # Metal Sonic animation states (sonic2app.exe MetalSonic table, VA 0xA1A7E8, 16-byte rows) -> clip names.
-STATES = {'stand': 0, 'walk': 7, 'jog': 8, 'run': 9, 'fly': 10}
-# Speed-driven rows (mode 11) advance by animation_speed x the player's speed; this is the speed baked in.
-# shortcut: one assumed speed per state (game units/frame), replace with the recompiled game's own rule.
-ASSUMED_SPEED = {'walk': 0.5, 'jog': 5.0, 'run': 5.0}
+STATES = {'stand': 0, 'walk': 7, 'jog': 8, 'run': 9, 'fly': 10}  # SA2 picks 7-10 by speed against jog/run/rush
+# Clips are baked at one game frame per 1/60 s. The game's motion step (GSNE8P fn_8003D8D0) advances a
+# mode-3 row by its speed, a mode-10 row by speed x forward speed (player +0x64) and a mode-11 row by
+# speed x stored ground speed (player +0x44) (pointers set in fn_8004F838); the client applies that rate.
+PHYSICS = 0x17391E8  # Steam PhysicsArray (SA2Variables.h); row 12 = Metal Sonic (GC 0x80196578 holds the same)
 
 def rows(exe):
     import pefile, struct
@@ -18,6 +19,12 @@ def rows(exe):
         motion, model, mode, nxt, _ts, speed = struct.unpack('<hhhhff', pe.get_data(0xA1A7E8 + state * 16 - base, 16))
         out[name] = dict(motion=motion, mode=mode, speed=speed)
     return out
+
+def physics(exe):
+    import pefile, struct
+    pe = pefile.PE(str(exe), fast_load=True)
+    v = struct.unpack('<i32f', pe.get_data(PHYSICS + 12 * 0x84 - pe.OPTIONAL_HEADER.ImageBase, 0x84))
+    return dict(speedMaxH=v[4], jog=v[9], run=v[10], rush=v[11], height=v[29])
 
 def quat(m):
     m = m[:3, :3]; t = np.trace(m)
@@ -53,18 +60,20 @@ def build(out):
     anims = []
     for name, row in table.items():
         frames, parts = motion(row['motion']); per = {i: ([], [], []) for i in range(len(nodes))}
-        per_tick = row['speed'] * (ASSUMED_SPEED[name] if row['mode'] == 11 else 1)  # game frames advanced per 1/60 s
         for f in range(frames + 1):  # last key = first frame again, so the clip loops cleanly
             for i, L in enumerate(locals_(convert.metal(pose, frame_anim(parts, f % frames)))):
                 t, q, _ = trs(L); prev = per[i][2][-1] if per[i][2] else None
                 if prev is not None and np.dot(prev, q) < 0: q = -q
-                per[i][0].append(f / per_tick / 60); per[i][1].append(t); per[i][2].append(q)
+                per[i][0].append(f / 60); per[i][1].append(t); per[i][2].append(q)
         ch = []
         for i, (times, ts, qs) in per.items():
             ch += [(i, 'translation', times, ts), (i, 'rotation', times, qs)]
         anims.append(dict(name=name, channels=ch))
     tex = lambda _s, t, _x: str(convert.WORK / f'metal-{t:05d}.png') if t is not None and (convert.WORK / f'metal-{t:05d}.png').exists() else None
-    glb.write(str(out), [dict(name='metal-chao', texset='metal', surfaces=M)], tex, dict(nodes=nodes, ibm=ibm, root=root, animations=anims))
+    glb.write(str(out), [dict(name='metal-chao', texset='metal', surfaces=M)], tex, dict(nodes=nodes, ibm=ibm, root=root, animations=anims,
+              # gameUnit: one game unit in Chao-model units, so speeds convert to the Chao's world.
+              extras=dict(gameUnit=float(total), clips={k: dict(mode=r['mode'], speed=r['speed']) for k, r in table.items()},
+                          physics=physics(convert.GAME / 'sonic2app.exe'))))
     return out
 
 if __name__ == '__main__':
