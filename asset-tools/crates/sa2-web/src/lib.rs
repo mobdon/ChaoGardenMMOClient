@@ -58,14 +58,27 @@ fn split(job: &[u8]) -> Option<(&[u8], &[u8])> {
 impl Screen {
     /// WebGPU when the browser has it, else WebGL2.
     pub async fn open(canvas: web_sys::HtmlCanvasElement) -> Result<Screen, JsValue> {
-        let (w, h) = (canvas.width().max(1), canvas.height().max(1));
+        let size = (canvas.width(), canvas.height());
+        Self::open_on(wgpu::SurfaceTarget::Canvas(canvas), size).await
+    }
+
+    /// The same, on a canvas handed to a worker (the page's own thread
+    /// then only reads input and plays sound).
+    pub async fn open_offscreen(canvas: web_sys::OffscreenCanvas) -> Result<Screen, JsValue> {
+        let size = (canvas.width(), canvas.height());
+        Self::open_on(wgpu::SurfaceTarget::OffscreenCanvas(canvas), size).await
+    }
+
+    async fn open_on(
+        target: wgpu::SurfaceTarget<'static>,
+        (w, h): (u32, u32),
+    ) -> Result<Screen, JsValue> {
+        let (w, h) = (w.max(1), h.max(1));
         let instance = wgpu::util::new_instance_with_webgpu_detection(
             wgpu::InstanceDescriptor::new_without_display_handle(),
         )
         .await;
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
-            .map_err(err)?;
+        let surface = instance.create_surface(target).map_err(err)?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),

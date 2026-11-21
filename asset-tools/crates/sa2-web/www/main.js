@@ -1,45 +1,19 @@
 // The page: starts the game's threads (workers on one shared memory), sends
 // them the keyboard and gamepad, plays their sound, and draws each finished
-// frame they hand over with the renderer (pkg/sa2_web.js).
+// frame they hand over with the renderer (render.js, a worker of its own).
 //
 // Shared with the workers (ctl, Int32): [0] last thread id, [1..2] slot full,
 // [3..4] slot length, [5] slot the game fills next, [6] sound written,
 // [7] sound read.
-import init, { Screen } from './pkg/sa2_web.js';
 
 const SLOT = 40 << 20; // a frame's pipe bytes and 24 MiB of RAM
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
-const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB (browsers commit the maximum) // as the game build links
+const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
 const q = new URLSearchParams(location.search);
 const wide = q.get('aspect') !== '4:3';
 const fpsCap = Number(q.get('fps')) || 0; // 60: never blend between frames
 
 const $ = (id) => document.getElementById(id);
-// ?gpulog: count GPU textures and buffers made (for finding what grows).
-const gpuStats = (window.gpuStats = { tex: 0, texBytes: 0, buf: 0, bufBytes: 0, texDestroyed: 0, bufDestroyed: 0, big: [], kinds: {} });
-if (q.has('gpulog') && navigator.gpu) {
-  const D = GPUDevice.prototype;
-  const ct = D.createTexture, cb = D.createBuffer;
-  D.createTexture = function (d) {
-    const s = d.size, w = s.width ?? s[0], h = s.height ?? s[1] ?? 1, l = s.depthOrArrayLayers ?? s[2] ?? 1;
-    const bytes = w * h * l * 4 * (d.mipLevelCount > 1 ? 1.34 : 1);
-    gpuStats.tex++;
-    gpuStats.texBytes += bytes;
-    const k = `${d.label} ${w}x${h}`;
-    gpuStats.kinds[k] = (gpuStats.kinds[k] || 0) + 1;
-    const t = ct.call(this, d), de = t.destroy;
-    t.destroy = function () { gpuStats.texDestroyed++; return de.call(this); };
-    return t;
-  };
-  D.createBuffer = function (d) {
-    gpuStats.buf++;
-    gpuStats.bufBytes += d.size;
-    if (d.size > 8e6) gpuStats.big.push(`buf ${d.size} ${d.label}`);
-    const b = cb.call(this, d), de = b.destroy;
-    b.destroy = function () { gpuStats.bufDestroyed++; return de.call(this); };
-    return b;
-  };
-}
 const canvas = $('screen'), status = $('status'), logBox = $('log');
 const lines = [];
 const gameLog = (window.gameLog = []);
@@ -60,7 +34,6 @@ const sh = {
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
-const slotViews = sh.slots.map((s) => new Uint8Array(s));
 
 // ---- input --------------------------------------------------------------
 // Bits as the game reads them (sa2-web-game KEYS): A D S W, Space, E,
@@ -134,50 +107,23 @@ function startThread(tid, arg) {
   w.postMessage({ module, memory, tid, arg, env, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
 }
 
-// ---- drawing ------------------------------------------------------------
-let wasm, screen, readSlot = 0, shown = 0, blend = false;
-const prof = { submit: 0, draw: 0, pics: 0 };
-const ticks = [];
-function frame(now) {
+// ---- drawing (render.js, a worker of its own) ------------------------------
+let renderer, picture = '';
+const ticksMain = [];
+// The page's own loop: the controller and the canvas's size, each refresh.
+function frame() {
   writePad();
   const dpr = devicePixelRatio || 1;
   const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w;
-    canvas.height = h;
+  if (renderer && (w !== frame.w || h !== frame.h)) {
+    frame.w = w;
+    frame.h = h;
+    renderer.postMessage({ size: [w, h] });
   }
-  // The display's rate: blend between game frames when it is above 60.
-  ticks.push(now);
-  if (ticks.length > 60) ticks.shift();
-  if (ticks.length === 60 && !fpsCap) blend = 59000 / (now - ticks[0]) > 70;
-  // Every finished frame (the game never waits on the display's rate).
-  while (Atomics.load(ctl, 1 + readSlot) === 1) {
-    const len = ctl[3 + readSlot];
-    try {
-      const t0 = performance.now();
-      const at = screen.job_at(len) >>> 0;
-      new Uint8Array(wasm.memory.buffer, at, len).set(slotViews[readSlot].subarray(0, len));
-      screen.submit(now, wide, blend);
-      prof.submit += performance.now() - t0;
-    } catch (e) {
-      log(`frame: ${e}`, true);
-    }
-    Atomics.store(ctl, 1 + readSlot, 0);
-    Atomics.notify(ctl, 1 + readSlot);
-    readSlot ^= 1;
-    shown++;
-  }
-  const t1 = performance.now();
-  screen.draw(now, w, h);
-  prof.draw += performance.now() - t1;
-  prof.pics++;
-  if (!window.stopGame) requestAnimationFrame(frame);
+  requestAnimationFrame(frame);
 }
 setInterval(() => {
-  const per = (v, n) => (n ? v / n : 0).toFixed(1);
-  status.textContent = `${screen ? screen.backend() : ''} · ${shown} game frames/s (decode ${per(prof.submit, shown)} ms) · ${prof.pics} pictures/s (draw ${per(prof.draw, prof.pics)} ms) · ${workers} threads${blend ? ' · blended' : ''}`;
-  prof.submit = prof.draw = prof.pics = 0;
-  shown = 0;
+  status.textContent = `${picture} · ${workers} threads`;
 }, 1000);
 
 async function start() {
@@ -188,8 +134,16 @@ async function start() {
   await audio.audioWorklet.addModule('audio.js');
   const mix = new AudioWorkletNode(audio, 'sa2-mix', { outputChannelCount: [2], processorOptions: { ctl: sh.ctl, audio: sh.audio } });
   mix.connect(audio.destination);
-  wasm = await init();
-  screen = await Screen.open(canvas);
+  const dpr = devicePixelRatio || 1;
+  canvas.width = Math.round(canvas.clientWidth * dpr);
+  canvas.height = Math.round(canvas.clientHeight * dpr);
+  const off = canvas.transferControlToOffscreen();
+  renderer = new Worker('render.js', { type: 'module' });
+  renderer.onmessage = (ev) => {
+    if (ev.data.status) picture = ev.data.status;
+    else if (ev.data.log) log(ev.data.log, true);
+  };
+  renderer.postMessage({ canvas: off, ctl: sh.ctl, slots: sh.slots, wide, fpsCap }, [off]);
   env = Object.entries(await (await fetch('env.json')).json()).map(([k, v]) => `${k}=${v}`);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
@@ -197,7 +151,7 @@ async function start() {
   $('start').remove();
   canvas.focus();
   startThread(0, 0);
-  if (!window.stopGame) requestAnimationFrame(frame);
+  requestAnimationFrame(frame);
 }
 
 $('go').addEventListener('click', () => start().catch((e) => {
@@ -206,16 +160,3 @@ $('go').addEventListener('click', () => start().catch((e) => {
 }));
 // ?autostart: start without the button (for testing; sound may stay off).
 if (q.has('autostart')) $('go').click();
-// ?gpulog: a line a second of what the GPU got, and a stop at 1.5 GB of textures.
-if (q.has('gpulog')) {
-  gpuStats.hist = [];
-  const t = setInterval(() => {
-    const g = gpuStats;
-    g.hist.push(`${(performance.now() / 1000) | 0}s tex ${g.tex} (${(g.texBytes / 1e6) | 0} MB) destroyed ${g.texDestroyed} buf ${g.buf} destroyed ${g.bufDestroyed} | ${status.textContent.slice(0, 60)}`);
-    if (g.texBytes - 0 > 1.5e9) {
-      clearInterval(t);
-      window.stopGame = true;
-      g.hist.push('stopped at 1.5 GB of textures: ' + JSON.stringify(Object.entries(g.kinds).sort((a, b) => b[1] - a[1]).slice(0, 8)));
-    }
-  }, 1000);
-}
