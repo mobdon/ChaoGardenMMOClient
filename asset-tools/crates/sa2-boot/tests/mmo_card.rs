@@ -43,5 +43,5 @@ fn server_card_checks_out_saves_and_holds_the_lease() {
     assert_eq!(back.header("x-save-revision"), Some("2"));
     let mut bytes = Vec::new();
     back.into_reader().read_to_end(&mut bytes).unwrap();
-    assert_eq!(mmo::unpack(&bytes), Some(card));
+    assert_eq!(sa2_boot::card_pack::unpack(&bytes), Some(card));
 }

@@ -9,6 +9,7 @@
 
 pub mod audio;
 pub mod card;
+pub mod card_pack;
 pub mod clock;
 pub mod dvd;
 #[cfg(not(target_os = "wasi"))]
