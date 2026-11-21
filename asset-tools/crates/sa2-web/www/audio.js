@@ -4,6 +4,9 @@
 'use strict';
 
 const RATE = 32000;
+// Samples to keep waiting (64 a millisecond): play a touch faster above this,
+// slower below, so a game a little off 60 neither runs dry nor piles up.
+const TARGET = 60 * 64;
 
 class Mix extends AudioWorkletProcessor {
   constructor(o) {
@@ -11,7 +14,9 @@ class Mix extends AudioWorkletProcessor {
     const { ctl, audio } = o.processorOptions;
     this.ctl = new Int32Array(ctl);
     this.ring = new Int16Array(audio);
-    this.step = RATE / sampleRate;
+    this.base = RATE / sampleRate;
+    this.step = this.base;
+    this.fill = TARGET;
     this.pos = 0;
     this.prev = [0, 0];
     this.next = [0, 0];
@@ -26,13 +31,15 @@ class Mix extends AudioWorkletProcessor {
     let have = (w - r) >>> 0;
     // Too far behind (the tab was hidden, the game caught up): back to 60 ms.
     if (have > 150 * 64) {
-      r = (w - 60 * 64) >>> 0;
-      have = 60 * 64;
+      Atomics.add(c, 10, 1); // ctl[10]: skips, for the page's status
+      r = (w - TARGET) >>> 0;
+      have = this.fill = TARGET;
     }
     // Ran dry: fade out and wait for 40 ms to build up, instead of holding a
     // sample (a click) and then playing late.
     const need = Math.ceil(out[0].length * this.step) * 2 + 2;
     if (this.waiting ? have < 40 * 64 : have < need) {
+      if (!this.waiting) Atomics.add(c, 9, 1); // ctl[9]: dropouts
       this.waiting = true;
       for (let ch = 0; ch < out.length; ch++) {
         const k = Math.min(ch, 1);
@@ -43,6 +50,11 @@ class Mix extends AudioWorkletProcessor {
       return true;
     }
     this.waiting = false;
+    this.fill += (have - this.fill) * 0.01;
+    // Gentle near the target (no pitch wobble at 60), up to 12% when nearly
+    // dry or full: a game dipping to 56 plays a little low instead of cutting out.
+    const d = (this.fill - TARGET) / TARGET;
+    this.step = this.base * (1 + Math.max(-0.12, Math.min(0.12, d * 0.08 + d * d * d * 0.12)));
     for (let i = 0; i < out[0].length; i++) {
       this.pos += this.step;
       while (this.pos >= 1) {
