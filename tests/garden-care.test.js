@@ -160,8 +160,8 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   const withItems = { ...care(), inventory: { 'egg:2': 1, 'hat:3': 1 }, hat: 9, emblems: { count: 12 },
     market: { stock: [{ itemId: 'theme:omochao', price: 10000, sell: 0 }, { itemId: 'egg:5', price: 600, sell: 0 }], sellPrices: { 'hat:3': 500 } } };
   const garden = gardenCareView(withItems, { zone: 'garden', x: 0, z: 0, rings: 0 }, { connected: true });
-  assert.equal(garden.items.find(i => i.id === 'egg:2').mayUse, true, 'eggs go down in a garden');
-  assert.equal(gardenCareView(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true }).items.find(i => i.id === 'egg:2').mayUse, false);
+  assert.equal(garden.items.find(i => i.id === 'egg:2').mayUse, false, 'eggs don\u2019t hatch in a garden');
+  assert.equal(gardenCareView(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true }).items.find(i => i.id === 'egg:2').mayUse, true, 'they hatch in the hub');
   assert.equal(garden.hat, 'Pan');
   assert.equal(garden.emblems, 12);
   const shop = gardenCareView(withItems, { zone: 'hub', x: -4, z: 8, rings: 20000 }, { connected: true });
@@ -172,7 +172,7 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   const sent = [];
   const hatched = [];
   const panel = createGardenCare({ root, send: m => { sent.push(m); return true; }, requestId: () => 'req-egg', hatch: async (...args) => { hatched.push(args); } });
-  panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true });
+  panel.update(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true });
   const egg = root.all().find(n => n.className === 'garden-care-slot' && n.attributes['aria-label'] === 'White egg x1');
   egg.listeners.click(); egg.listeners.click();
   const name = root.all().find(n => n.className === 'garden-care-name');
@@ -182,7 +182,7 @@ test('Black Market eggs, hats and themes use native names and the right intents'
   assert.deepEqual(hatched, [[{ itemId: 'egg:2' }, 'Pip']], 'the egg hatches into a new slot');
   assert.equal(sent.length, 0, 'it is not put down in the garden');
   // A bred egg lands in the inventory with its parents' names and hatches the same way.
-  panel.update(withItems, { zone: 'garden', x: 0, z: 0 }, { connected: true, nest: [{ id: 'nest-1', motherName: 'Mine', fatherName: 'Bub' }] });
+  panel.update(withItems, { zone: 'hub', x: 0, z: 0 }, { connected: true, nest: [{ id: 'nest-1', motherName: 'Mine', fatherName: 'Bub' }] });
   const bred = root.all().find(n => n.className === 'garden-care-slot' && n.attributes['aria-label'] === 'Egg of Mine and Bub x1');
   bred.listeners.click(); bred.listeners.click();
   const bredName = root.all().find(n => n.className === 'garden-care-name');

@@ -81,9 +81,8 @@ export function gardenCareView(care, player, { connected = false, serverTime } =
       const kind = careItemKind(id);
       const native = ['fruit', 'seed', 'egg', 'hat'].includes(kind);
       const enabled = kind === 'food' || (native ? care.catalog?.fruitsEnabled === true : care.catalog?.enabled === true);
-      // Eggs go down in a garden; hats are put down by the Chao. Seeds are planted.
-      const inGarden = ['garden', 'hero', 'dark'].includes(player?.zone);
-      const usable = kind === 'seed' ? false : kind === 'egg' ? inGarden : true;
+      // Eggs hatch into a new slot in the hub; hats are put down by the Chao. Seeds are planted.
+      const usable = kind === 'seed' ? false : kind === 'egg' ? player?.zone === 'hub' : true;
       return { id, kind, quantity, label: careItemLabel(id, care.catalog), mayUse: mayCare && (kind === 'egg' || cooldownReady) && enabled && usable };
     })
     .sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id, 'en', { numeric: true }));
@@ -202,6 +201,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
       slot.disabled = !!pending;
       slot.addEventListener('click', () => {
         if (n !== selected) { selected = n; previous = ''; render(); return; }
+        if ((item.kind === 'egg' || item.kind === 'bred-egg') && !item.mayUse) { feedback = 'Eggs hatch in the hub.'; previous = ''; render(); return; }
         if (item.kind === 'egg' || item.kind === 'bred-egg') { naming = { egg: item.kind === 'egg' ? { itemId: item.id } : { eggId: item.id }, name: '' }; previous = ''; render(); return; }
         if (use && item.mayUse) submit({ kind: use, itemId: item.id });
       });
@@ -274,7 +274,7 @@ export function createGardenCare({ root, send = () => false, requestId = () => g
     }
     root.append(el('h3', 'Carried'));
     // Bred eggs carry their parents' genes (AL_CreateChildGene); they wait here to be hatched.
-    const carried = [...view.items, ...nest.map(egg => ({ id: egg.id, kind: 'bred-egg', quantity: 1, mayUse: true,
+    const carried = [...view.items, ...nest.map(egg => ({ id: egg.id, kind: 'bred-egg', quantity: 1, mayUse: player?.zone === 'hub',
       label: `Egg of ${egg.motherName || '?'} and ${egg.fatherName || '?'}` }))];
     if (!carried.length) root.append(el('p', 'Nothing carried. Shake trees for fruit or find animals in missions.', 'garden-care-note'));
     else root.append(carriedWindow(carried));
