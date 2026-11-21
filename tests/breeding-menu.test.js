@@ -13,8 +13,8 @@ class Node {
 const snapshot = () => ({
   selfId: 'me', serverTime: 1000,
   players: [
-    { id: 'me', name: 'Mine', zone: 'garden', life: { stage: 'adult' } },
-    { id: 'b', name: 'Bubbles', zone: 'garden', life: { stage: 'adult' }, stats: { swim: { level: 3, grade: 2 } } },
+    { id: 'me', name: 'Mine', zone: 'garden', life: { stage: 'adult', ill: false, inTheMood: true, busy: false } },
+    { id: 'b', name: 'Bubbles', zone: 'garden', life: { stage: 'adult', ill: true, inTheMood: true, busy: false }, stats: { swim: { level: 3, grade: 2 } } },
     { id: 'c', name: 'Cheese', zone: 'garden', life: { stage: 'adult' } },
     { id: 'kid', name: 'Kid', zone: 'garden', life: { stage: 'child' } },
     { id: 'far', name: 'Far', zone: 'hero', life: { stage: 'adult' } },
@@ -38,6 +38,8 @@ test('pick once to see the Chao, again to invite it; a nest egg is named and hat
   const picks = () => root.all().filter(n => n.className === 'garden-care-slot');
   assert.deepEqual(picks().map(n => n.attributes['aria-label']), ['Bubbles', 'Cheese', 'Egg of Mine and Bubbles']);
   assert.equal(shown.at(-1).swim.level, 3, 'the selected partner shows in the stat window');
+  const checks = root.all().filter(n => n.className === 'breeding-not').map(n => n.textContent);
+  assert.deepEqual(checks, ['\u2716 Healthy'], 'the check-up shows what stops Bubbles');
   picks()[0].listeners.click();
   assert.deepEqual(sent, [{ type: 'life', requestId: 'r1', expectedRevision: 4, intent: { kind: 'breed', partnerId: 'b' } }]);
   menu.handleEvent({ kind: 'life-result', requestId: 'r1', accepted: true, code: 'offer-sent' });

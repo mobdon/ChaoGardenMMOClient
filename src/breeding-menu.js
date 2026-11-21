@@ -12,6 +12,12 @@ const codes = {
   'activity-conflict': () => 'Finish what you’re doing first.', 'partner-unavailable': name => `${name} left.`,
 };
 
+/** The Doctor-style check the game's breeding rules make on a Chao (all from the server). */
+export function checkup(p) {
+  const life = p?.life || {};
+  return [['Grown up', life.stage === 'adult'], ['Healthy', life.ill === false], ['In the mood', life.inTheMood === true], ['Free', life.busy === false]];
+}
+
 /** Who can be picked: grown-up Chao in this garden, callers first. Eggs in the nest follow. */
 export function breedingView(snapshot, offers = new Map(), now = Date.now()) {
   const self = snapshot?.players?.find(p => p.id === snapshot.selfId);
@@ -20,10 +26,10 @@ export function breedingView(snapshot, offers = new Map(), now = Date.now()) {
   const partners = snapshot.players
     .filter(p => p.id !== self.id && p.zone === self.zone && p.life?.stage === 'adult')
     .sort((a, b) => Number(calling(b.id)) - Number(calling(a.id)) || a.name.localeCompare(b.name))
-    .map(p => ({ kind: 'partner', id: p.id, label: p.name, note: calling(p.id) ? `${p.name} is calling you` : p.name, stats: p.stats }));
+    .map(p => ({ kind: 'partner', id: p.id, label: p.name, note: calling(p.id) ? `${p.name} is calling you` : p.name, stats: p.stats, check: checkup(p) }));
   const eggs = (snapshot.life.nest || []).map(egg => ({ kind: 'egg', id: egg.id, label: 'Egg',
     note: `Egg of ${egg.motherName || '?'} and ${egg.fatherName || '?'}` }));
-  return { valid: true, revision: snapshot.life.revision, canBreed: !!snapshot.life.eligibility?.canBreed, rows: [...partners, ...eggs] };
+  return { valid: true, revision: snapshot.life.revision, canBreed: !!snapshot.life.eligibility?.canBreed, self: checkup(self), rows: [...partners, ...eggs] };
 }
 
 export function createBreedingMenu({ root, send = () => false, requestId = () => globalThis.crypto.randomUUID(),
@@ -92,7 +98,15 @@ export function createBreedingMenu({ root, send = () => false, requestId = () =>
     root.append(box);
     draw();
     const chosen = view.rows[selected];
-    if (chosen?.kind === 'partner' && statRows) root.append(statRows(chosen.stats || {}, STATS));
+    if (chosen?.kind === 'partner') {
+      if (statRows) root.append(statRows(chosen.stats || {}, STATS));
+      for (const [who, check] of [['Your Chao', view.self], [chosen.label, chosen.check]]) {
+        const list = el('ul', undefined, 'breeding-check'); list.setAttribute('aria-label', `${who} check-up`);
+        list.append(el('li', who, 'breeding-check-name'));
+        for (const [label, ok] of check) list.append(el('li', `${ok ? '\u2714' : '\u2716'} ${label}`, ok ? 'breeding-ok' : 'breeding-not'));
+        root.append(list);
+      }
+    }
     if (pending || feedback) { const note = el('p', pending ? 'Calling…' : feedback, 'garden-care-note'); note.setAttribute('role', 'status'); root.append(note); }
   }
 
