@@ -422,7 +422,8 @@ pub fn fsel(a: f64, b: f64, c: f64) -> f64 {
 
 // ---- memory ----
 
-pub const MEM1: u32 = 0x0180_0000;
+// 48 MiB (dev-kit size, retail is 24 MiB) so ChaoMain can load above 0x81800000 beside a stage.
+pub const MEM1: u32 = 0x0300_0000;
 pub const LC: u32 = 0x4000;
 
 /// Gekko physical memory: 24 MB MEM1 (seen at 0x80000000 and 0xC0000000)
