@@ -54,6 +54,12 @@ const CREATE_CHAO_EXTRA: u32 = 0x3_148C;
 const PARAM_SIZE: u32 = 0x800;
 /// main.dol `playertwp` .bss 0x801E7768 (taskwk*[]); taskwk +0x14 is pos.
 const PLAYERTWP: u32 = 0x801E_7768;
+/// main.dol positional sound calls ChaoMain makes for a Chao's voice, each
+/// given that Chao's taskwk +0x14 (task +0x34 is the taskwk): `fn_8006B7EC`
+/// (id, 0, 0, vol, pos) and `SE_CallV2_Timer` 0x8006AFFC (id, task, 1, vol,
+/// timer, pos). Their callers in ChaoMain ignore the return value.
+const SE_AT_POS: u32 = 0x8006_B7EC;
+const SE_AT_POS_TIMER: u32 = 0x8006_AFFC;
 
 /// (stage, character) to start, until it has started.
 static PENDING: Global<Option<(u16, u32)>> = global!(None);
@@ -65,6 +71,8 @@ static SHOWN: Global<Option<u32>> = global!(None);
 static HATCH: Global<bool> = global!(false);
 /// The lobby's residents are out (cleared when the game leaves the lobby).
 static RESIDENTS_OUT: Global<bool> = global!(false);
+/// The residents' taskwks, so their Chao sounds stay silent.
+static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -86,6 +94,10 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         );
         HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
         c.rt.set_override(TOP_LEVEL, top_level);
+        c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
+        c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
+            quiet_residents(c, m, SE_AT_POS_TIMER, 8)
+        });
         return;
     }
     let Some(rel) = crate::dvd::read_file("advertiseD.rel") else {
@@ -129,6 +141,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
         if now != 0 {
             RESIDENTS_OUT.set(false);
+            RESIDENT_TWP.set([0; 3]);
         } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
             RESIDENTS_OUT.set(true);
             residents(c, m, text);
@@ -167,7 +180,8 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
     let player = m.r32(PLAYERTWP) + 0x14;
-    for (ty, dx, dz) in RESIDENTS {
+    let mut twp = [0; 3];
+    for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
         for i in (0..PARAM_SIZE).step_by(4) {
             m.w32(param + i, 0);
         }
@@ -175,9 +189,23 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
         m.w32(pos, (f32::from_bits(m.r32(player)) + dx).to_bits());
         m.w32(pos + 4, m.r32(player + 4));
         m.w32(pos + 8, (f32::from_bits(m.r32(player + 8)) + dz).to_bits());
-        guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, 0, pos, 0]);
+        let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, 0, pos, 0]);
+        if task != 0 {
+            twp[n] = m.r32(task + 0x34);
+        }
     }
+    RESIDENT_TWP.set(twp);
     c.r[1] = sp;
+}
+
+/// The hub's character Chao make no Chao sounds: a positional sound whose
+/// position is a resident's taskwk +0x14 is dropped; every other one plays.
+fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
+    let twp = c.r[pos_reg].wrapping_sub(0x14);
+    if twp != 0 && RESIDENT_TWP.get().contains(&twp) {
+        return;
+    }
+    original(c, m, addr);
 }
 
 /// advertiseD 0x1028C..0x1034C (the one-player branch), in order.
