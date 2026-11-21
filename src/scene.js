@@ -9,7 +9,7 @@ import { NATIVE_GARDENS, isNativeTerrainMesh } from './world-layout.js';
 import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.js';
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
-import { CHAO_GEAR_JOINTS, animalPartAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
+import { CHAO_GEAR_JOINTS, CHAO_HAT_NODE, animalPartAssets, hatAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
 import { restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
@@ -502,6 +502,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     if (item.vehicleKey) attachNativeWalker(item);
     setOwnerGear(item, item.gear, true);
     setAnimalParts(item, item.animalParts, true);
+    setHat(item, item.hat, true);
     canvas.dispatchEvent(new CustomEvent('chao-assets', { detail: { key, loaded: true } }));
   }
 
@@ -733,6 +734,36 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
         item.animalPartRoots.push(holder);
         canvas.dataset.animalParts = String(item.animalPartRoots.length);
+      });
+    }
+  }
+
+  // The worn hat the server reports (care.hat). Native al_draw_B draws it at
+  // Chao node 16 under that node's matrix, so each hat part is parented to the
+  // node at identity, in the same frame as the animal parts above.
+  function setHat(item, hat, force = false) {
+    const key = String(hat ?? '');
+    if (!force && key === item.hatKey) return;
+    item.hatKey = key;
+    item.hatVersion = (item.hatVersion || 0) + 1;
+    for (const root of item.hatRoots || []) destroyGroup(root);
+    item.hatRoots = [];
+    canvas.dataset.chaoHat = '';
+    if (!item.imported) return;
+    const socket = item.imported.visual.getDescendants().find(node => new RegExp(`(?:^|-)${CHAO_HAT_NODE}_object_`).test(node.name));
+    if (!socket) return;
+    const version = item.hatVersion;
+    for (const assetKey of hatAssets(hat)) {
+      void loadLocalAsset(assetKey).then(container => {
+        if (!container || disposed || item.root.isDisposed() || version !== item.hatVersion) return;
+        const entries = container.instantiateModelsToScene(name => `${item.root.name}-hat-${name}`, false, { doNotInstantiate: true });
+        const holder = new TransformNode(`${item.root.name}-${assetKey}`, scene);
+        for (const entryRoot of entries.rootNodes) for (const child of [...entryRoot.getChildren()]) child.parent = holder;
+        for (const entryRoot of entries.rootNodes) entryRoot.dispose();
+        holder.parent = socket;
+        for (const mesh of holder.getChildMeshes()) { mesh.receiveShadows = true; shadows.addShadowCaster(mesh, false); }
+        item.hatRoots.push(holder);
+        canvas.dataset.chaoHat = String(hat);
       });
     }
   }
@@ -1529,6 +1560,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       setOwnerGear(item, data.gear);
       item.animalParts = data.animalParts;
       setAnimalParts(item, data.animalParts);
+      item.hat = data.hat;
+      setHat(item, data.hat);
       setEquipment(item, data.equipped);
       item.root.setEnabled(data.zone === zone || !data.zone);
     });
