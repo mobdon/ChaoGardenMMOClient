@@ -51,7 +51,10 @@ class Mix extends AudioWorkletProcessor {
     }
     this.waiting = false;
     this.fill += (have - this.fill) * 0.01;
-    this.step = this.base * (1 + Math.max(-0.04, Math.min(0.04, ((this.fill - TARGET) / TARGET) * 0.05)));
+    // Gentle near the target (no pitch wobble at 60), up to 12% when nearly
+    // dry or full: a game dipping to 56 plays a little low instead of cutting out.
+    const d = (this.fill - TARGET) / TARGET;
+    this.step = this.base * (1 + Math.max(-0.12, Math.min(0.12, d * 0.08 + d * d * d * 0.12)));
     for (let i = 0; i < out[0].length; i++) {
       this.pos += this.step;
       while (this.pos >= 1) {
