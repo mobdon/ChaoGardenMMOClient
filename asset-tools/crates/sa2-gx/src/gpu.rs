@@ -298,6 +298,10 @@ fn changed(old: &[u8], new: &[u8]) -> Option<(usize, usize)> {
     } else {
         new.len()
     };
+    // The end goes up to a whole word too: the upload is padded to 4 bytes,
+    // and padding inside the data would zero bytes that didn't change (warped
+    // meshes, wrong glyphs). Past the data's end the padding is harmless.
+    let hi = hi.next_multiple_of(4).min(new.len());
     Some((lo, hi.max(lo)))
 }
 
@@ -1247,8 +1251,8 @@ mod kept_tests {
         assert_eq!(changed(&a, &a), None);
         let mut b = a;
         b[6] = 0;
-        // From the 4-byte boundary at or before the first change.
-        assert_eq!(changed(&a, &b), Some((4, 7)));
+        // Whole words around the change.
+        assert_eq!(changed(&a, &b), Some((4, 8)));
         // Longer or shorter: to the end of the new bytes.
         assert_eq!(
             changed(&a, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
@@ -1256,5 +1260,28 @@ mod kept_tests {
         );
         assert_eq!(changed(&a, &a[..6]), Some((4, 6)));
         assert_eq!(changed(&[], &a), Some((0, 10)));
+    }
+
+    #[test]
+    fn a_padded_upload_never_zeroes_unchanged_bytes() {
+        // As Kept::sync uploads: data[lo..hi] padded with zeros to 4 bytes,
+        // over a buffer holding the old bytes. The buffer must equal the new.
+        let old: Vec<u8> = (1..=40).collect();
+        for at in 0..old.len() {
+            for len in [old.len(), old.len() + 3, at + 1] {
+                let mut new: Vec<u8> = (1..=len as u8).collect();
+                if let Some(b) = new.get_mut(at) {
+                    *b = 0xEE;
+                }
+                let mut gpu = old.clone();
+                gpu.resize(64, 0);
+                if let Some((lo, hi)) = changed(&old, &new) {
+                    let mut chunk = new[lo..hi].to_vec();
+                    chunk.resize(chunk.len().next_multiple_of(4), 0);
+                    gpu[lo..lo + chunk.len()].copy_from_slice(&chunk);
+                }
+                assert_eq!(&gpu[..new.len()], &new[..], "change at {at}, length {len}");
+            }
+        }
     }
 }
