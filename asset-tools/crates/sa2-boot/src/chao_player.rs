@@ -279,12 +279,6 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // 0x8260) calls the node transform 0x1454 per node; chao_node replaces
     // each result with the retargeted pose (Chao-local, posed below).
     if live && RIDER.get() != 0 {
-        // SA2_CHAO_TEXLIST=1 (probe): the Chao's body texlist as the current
-        // one (r13-0x7228) before its display; Wild Canyon crashes in the
-        // texture lookup 0x8011C76C with the stage's list current.
-        if std::env::var("SA2_CHAO_TEXLIST").is_ok_and(|v| v == "1") {
-            m.w32(NJ_CURRENT_TEXLIST, rt::sec(m, 60, 5) + TEXTURES[0].1);
-        }
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
@@ -481,7 +475,6 @@ fn ev_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
 const EV_SHAPE_DRAW: u32 = 0x8011_F2BC;
 const CNK_CACHE_DRAW: u32 = 0x8011_DF20;
 const NJ_BASE_MATRIX: u32 = 0x803A_E0C0; // _nj_base_matrix (pointer)
-const NJ_CURRENT_TEXLIST: u32 = 0x803A_E098; // r13-0x7228, read by 0x8011C76C
 const NJ_CURRENT_MATRIX: u32 = 0x803A_E0C4; // _nj_current_matrix_ptr_
 /// The intro's (e0000) Sonic: model pointers of his event entity records as
 /// eventD's scene table (eventD sec6+0x14BC, 0x2C records) holds them in the
@@ -1002,7 +995,15 @@ fn setup_and_create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     m.w32(s6 + 0x41F48, 1);
     call(c, m, s1 + 0x28AC4, &[]);
     call(c, m, s1 + 0x1B350, &[]);
-    for (name, texlist) in TEXTURES {
+    // Only the Chao's own lists (AL_MINI_PARTS_TEX .. AL_COMMON_TEX): with
+    // AL_TEX_COMMON, AL_MINIMAL_TEX, AL_OBJECT and AL_TOY too, Wild Canyon's
+    // textures overflow and it crashes in the texture lookup 0x8011C76C
+    // (frame 464; 7 lists run, 8 crash). The garden's objects, toys and
+    // animals are not needed on a rider.
+    // unverified: that no Chao part draws from AL_TEX_COMMON (crops look right).
+    // SA2_CHAO_TEXSET=i,j,.. (debug): load only these lists.
+    let set: Vec<usize> = std::env::var("SA2_CHAO_TEXSET").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_else(|| (0..7).collect());
+    for &(name, texlist) in set.iter().filter_map(|&i| TEXTURES.get(i)) {
         call(c, m, s1 + 0x28C50, &[s4 + name, s5 + texlist, 0]);
     }
     call(c, m, s1 + 0x1FA10, &[]);
