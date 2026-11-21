@@ -66,6 +66,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   camera.inertia = 0.8;
   camera.checkCollisions = true;
   camera.collisionRadius = new Vector3(0.12, 0.12, 0.12);
+  // Terrain collisions push the orbit up; remember the player's own angle/zoom and ease back once clear.
+  let cameraHome = { beta: camera.beta, radius: camera.radius }, cameraCollidedAt = -1, cameraDragging = false;
+  camera.onCollide = () => { cameraCollidedAt = performance.now(); };
+  canvas.addEventListener('pointerdown', () => { cameraDragging = true; });
+  window.addEventListener('pointerup', () => { if (cameraDragging) cameraHome = { beta: camera.beta, radius: camera.radius }; cameraDragging = false; });
+  canvas.addEventListener('wheel', () => requestAnimationFrame(() => { cameraHome.radius = camera.radius; }), { passive: true });
   camera.attachControl(canvas, true);
   camera.inputs.attached.keyboard?.detachControl();
   if (camera.inputs.attached.pointers) camera.inputs.attached.pointers.buttons = [2];
@@ -1787,6 +1793,10 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           selfVehicleActive = mounted;
         }
         const target = item.root.position.add(new Vector3(0, mounted ? item.vehicle.height * 0.55 : 0.28, 0));
+        if (!cameraDragging && performance.now() - cameraCollidedAt > 250) {
+          camera.beta += (cameraHome.beta - camera.beta) * Math.min(1, dt * 4);
+          camera.radius += (cameraHome.radius - camera.radius) * Math.min(1, dt * 4);
+        }
         // Third person: while walking forward the orbit swings back behind the Chao (same aim as the R key).
         if (item.moving && (keys.has('KeyW') || keys.has('ArrowUp'))) {
           const behind = -Math.PI / 2 - item.root.rotation.y;
