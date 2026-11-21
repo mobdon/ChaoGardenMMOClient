@@ -70,5 +70,6 @@ export function createStageSelect(dialog, { onAction, onChange }) {
   }
   dialog.addEventListener('close', onChange);
   render();
-  return { open() { dialog.showModal(); onChange(); search.focus(); } };
+  // showModal throws if the dialog was left open non-modally (open but hidden).
+  return { open() { if (dialog.open) dialog.close(); dialog.showModal(); onChange(); search.focus(); } };
 }
