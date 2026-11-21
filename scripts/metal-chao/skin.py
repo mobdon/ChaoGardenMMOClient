@@ -4,8 +4,20 @@ import json, numpy as np
 from pathlib import Path
 import convert, glb
 from motion import Bank, frame_anim
-# Metal Sonic animation states (sonic2app.exe MetalSonic table) -> clip names the client plays.
-CLIPS = {'stand': 169, 'walk': 222, 'jog': 223, 'run': 224, 'fly': 225}
+# Metal Sonic animation states (sonic2app.exe MetalSonic table, VA 0xA1A7E8, 16-byte rows) -> clip names.
+STATES = {'stand': 0, 'walk': 7, 'jog': 8, 'run': 9, 'fly': 10}
+# Speed-driven rows (mode 11) advance by animation_speed x the player's speed; this is the speed baked in.
+# shortcut: one assumed speed per state (game units/frame), replace with the recompiled game's own rule.
+ASSUMED_SPEED = {'walk': 0.5, 'jog': 5.0, 'run': 5.0}
+
+def rows(exe):
+    import pefile, struct
+    pe = pefile.PE(str(exe), fast_load=True); base = pe.OPTIONAL_HEADER.ImageBase
+    out = {}
+    for name, state in STATES.items():
+        motion, model, mode, nxt, _ts, speed = struct.unpack('<hhhhff', pe.get_data(0xA1A7E8 + state * 16 - base, 16))
+        out[name] = dict(motion=motion, mode=mode, speed=speed)
+    return out
 
 def quat(m):
     m = m[:3, :3]; t = np.trace(m)
@@ -28,7 +40,8 @@ def build(out):
     pose = {44: d(S['head']), 37: d(S['arms']), 56: d(S['arms']), 7: d(S['legs']), 17: d(S['legs'])}
     banks = {b: Bank((convert.WORK / f'{b}.bin').read_bytes()) for b in ('metalsonicmtn', 'plcommtn')}
     motion = lambda slot: next(b for b in banks.values() if slot in b.rows).motion(slot)
-    frames, parts = motion(CLIPS['stand'])
+    table = rows(convert.GAME / 'sonic2app.exe')
+    frames, parts = motion(table['stand']['motion'])
     rest = convert.metal(pose, frame_anim(parts, 0)); M = rest.evaluate()
     P = convert.points(M); ground = P[:, 1].min(); height = P[:, 1].max() - ground
     C = convert.chao(); CS = C.evaluate(); hh = convert.points([s for s in CS if s['node'] == 16]).max(0)
@@ -38,13 +51,14 @@ def build(out):
     nodes = [dict(name=f'metal-{n["i"]:03d}', parent=n['parent'], **dict(zip('trs', trs(L)))) for n, L in zip(rest.nodes, locals_(rest))]
     ibm = [np.linalg.inv(n['W']) for n in rest.nodes]
     anims = []
-    for name, slot in CLIPS.items():
-        frames, parts = motion(slot); per = {i: ([], [], []) for i in range(len(nodes))}
+    for name, row in table.items():
+        frames, parts = motion(row['motion']); per = {i: ([], [], []) for i in range(len(nodes))}
+        per_tick = row['speed'] * (ASSUMED_SPEED[name] if row['mode'] == 11 else 1)  # game frames advanced per 1/60 s
         for f in range(frames + 1):  # last key = first frame again, so the clip loops cleanly
             for i, L in enumerate(locals_(convert.metal(pose, frame_anim(parts, f % frames)))):
                 t, q, _ = trs(L); prev = per[i][2][-1] if per[i][2] else None
                 if prev is not None and np.dot(prev, q) < 0: q = -q
-                per[i][0].append(f / 60); per[i][1].append(t); per[i][2].append(q)
+                per[i][0].append(f / per_tick / 60); per[i][1].append(t); per[i][2].append(q)
         ch = []
         for i, (times, ts, qs) in per.items():
             ch += [(i, 'translation', times, ts), (i, 'rotation', times, qs)]

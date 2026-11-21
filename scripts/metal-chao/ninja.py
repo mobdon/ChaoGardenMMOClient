@@ -16,9 +16,9 @@ class Model:
             fl,att=struct.unpack(e+'II',b[:8]);pos=struct.unpack(e+'3f',b[8:20]);r=struct.unpack(e+'3i',b[20:32]);sc=struct.unpack(e+'3f',b[32:44]);ch,sib=struct.unpack(e+'II',b[44:52])
             i=len(s.nodes);a=s.anim.get(i,{});pos=a.get('pos',pos);r=a.get('rot',r);sc=a.get('scl',sc)  # motion keys replace bind values
             L=np.eye(4)
-            if not fl&1: L[:3,3]=pos
-            if not fl&2: L=L@euler(r,fl)
-            if not fl&4: L=L@np.diag([*sc,1])
+            if not fl&1 or 'pos' in a: L[:3,3]=pos  # motion keys apply even where the bind flags skip a channel (matches sa2 pose.rs)
+            if not fl&2 or 'rot' in a: L=L@euler(r,fl)
+            if not fl&4 or 'scl' in a: L=L@np.diag([*sc,1])
             L=L@s.pose.get(i,np.eye(4));W=PW@L;s.nodes.append(dict(i=i,parent=parent,flags=fl,att=att,W=W,off=o));s._walk(ch,i,W);o=sib
     def evaluate(s):
         cache={};nrm={};surfaces=[];polycache={};s.infl=infl={}
