@@ -103,8 +103,8 @@ fn wider_view_and_hud_at_the_edges() {
     let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
     // 3D: a wider view (the same point lands nearer the centre).
     assert!(close(ndc_x(&f.draws[0], corner), before[0] * k));
-    // Left HUD: kept in proportion and moved to the left edge.
-    assert!(close(ndc_x(&f.draws[1], left), before[1] * k - (1.0 - k)));
+    // Left HUD: kept in proportion and moved toward the left edge, as Steam has it.
+    assert!(close(ndc_x(&f.draws[1], left), before[1] * k - (1.0 - k) * sa2_gx::widescreen::STEAM_EDGE));
     // Middle HUD: kept in proportion, still centred.
     assert!(close(ndc_x(&f.draws[2], middle), before[2] * k));
     // One projection for every screen draw (they share a render pass).
@@ -361,5 +361,5 @@ fn a_lock_on_reticle_follows_the_3d_view() {
     // The reticle scales with the wider 3D view, like the point it marks.
     assert!(close(ndc_x(&f.draws[1], reticle), before.0 * k));
     // Fixed HUD still moves to its edge.
-    assert!(close(ndc_x(&f.draws[3], lives), before.1 * k - (1.0 - k)));
+    assert!(close(ndc_x(&f.draws[3], lives), before.1 * k - (1.0 - k) * sa2_gx::widescreen::STEAM_EDGE));
 }

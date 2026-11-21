@@ -6,6 +6,12 @@
 use crate::api::{DrawCmd, Frame};
 use crate::vtx::{InputFormat, VertexInput};
 
+/// How far toward the screen edge side HUD moves, as a share of the extra
+/// width: Steam's 16:9 HUD (mob's 2560x1440 City Escape screenshot) sits
+/// about 8.2% in from each side, where the game's 4:3 layout puts it 2.5% in;
+/// 0.494 of the extra width lands it there.
+pub const STEAM_EDGE: f32 = 0.494;
+
 /// How the HUD's screen-space sprites are drawn: a view matrix that maps
 /// pixel coordinates (about 1/457 a pixel) with no translation.
 pub fn is_hud(d: &DrawCmd) -> bool {
@@ -148,7 +154,7 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
         }
         // Where its group sits decides (a row of glyphs moves as one).
         let c = centres.get(i).copied().flatten().unwrap_or((a + b) / 2.0);
-        let edge = 1.0 - k;
+        let edge = (1.0 - k) * STEAM_EDGE;
         let shift = if c < -1.0 / 3.0 {
             -edge
         } else if c > 1.0 / 3.0 {
