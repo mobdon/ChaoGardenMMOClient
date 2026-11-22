@@ -440,6 +440,15 @@ thread_local! {
     /// KNUCKMDL's own models by slot (the gloves and Knuckles's body), whatever
     /// the shared table or EXTRA_MODELS hold there.
     static KNUX_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+    /// TERIOSMDL's own models by slot (the Air Shoes and Shadow's body):
+    /// a slot the game's table already held kept the table's model, so
+    /// model_obj there drew another file's model (a hand) on the feet.
+    static SHADOW_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+}
+
+/// A TERIOSMDL model by slot: its own load first, then the shared lookup.
+fn shadow_obj(m: &Mem, k: u32) -> u32 {
+    SHADOW_MODELS.with_borrow(|e| e.get(&k).copied()).unwrap_or_else(|| model_obj(m, k))
 }
 
 /// A model slot: one this module loaded, else the game's table.
@@ -617,7 +626,7 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
         // Chao World: the right boot (78 = slot 163) on both feet, as the hub does.
         let model = models.get(n).copied().unwrap_or(if chao_world(m) { 163 } else { model });
-        let obj = model_obj(m, model);
+        let obj = shadow_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             continue;
         }
@@ -1566,7 +1575,9 @@ fn ensure_rider_rest(m: &Mem) {
     if RIDER_REST.with_borrow(|r| r.is_some()) || sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 != 0 {
         return;
     }
-    let found = (0..0x428u32).map(|k| model_obj(m, k)).filter(|o| (0x8000_0000..0x8C00_0000).contains(o)).find(|&o| crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62);
+    // Shadow's own body first: KNUCKMDL's body (slot 285) has 62 nodes too.
+    let shadow: Vec<u32> = SHADOW_MODELS.with_borrow(|e| e.values().copied().collect());
+    let found = shadow.into_iter().chain((0..0x428u32).map(|k| model_obj(m, k))).filter(|o| (0x8000_0000..0x8C00_0000).contains(o)).find(|&o| crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62);
     let Some(obj) = found else { return };
     let rr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]).worlds(&[]);
     let r0 = rr.first().map(|x| x.0).unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
@@ -2113,6 +2124,7 @@ fn drop_stage_loads() {
     KNUX_TEX.set(None);
     EXTRA_MODELS.with_borrow_mut(|e| e.clear());
     KNUX_MODELS.with_borrow_mut(|e| e.clear());
+    SHADOW_MODELS.with_borrow_mut(|e| e.clear());
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);
@@ -2284,7 +2296,8 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // loading outlived the area step on arrival, its blocks were handed
         // out again, and its FreeTask on leaving crashed the task loop
         // ("no function at 0x10000004" right after "remote ... offline").
-        let kept = REMOTE.with_borrow(|r| r.values().filter(|e| e.task != 0).count());
+        // The card box's portrait Chao (extra_chao) lives there too.
+        let kept = REMOTE.with_borrow(|r| r.values().filter(|e| e.task != 0).count()) + EXTRA_TASKS.with_borrow(|x| x.len());
         if kept == 0 {
             REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
                 *reg = crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END);
@@ -2374,6 +2387,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             m.w32(heap_var, GEAR_HEAP);
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
             let mdl = load_models(c, m, SHADOW_MDL_NAME);
+            SHADOW_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
             if tex == 0 {
@@ -2387,7 +2401,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             // Node and vertex counts name each model (Shadow's boot: 2 nodes, 174 vertices).
             let size = |o: u32| if (0x8000_0000..0x8C00_0000).contains(&o) { let r = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]); (r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>()) } else { (0, 0) };
             eprintln!("chao-player: boot slots 161/163 -> {:#x} {:?} / {:#x} {:?} (table {:#x}/{:#x}), glove slots 329/331 -> {:#x} {:?} / {:#x} {:?}, Knuckles body 285 -> {:#x} {:?}",
-                model_obj(m, 161), size(model_obj(m, 161)), model_obj(m, 163), size(model_obj(m, 163)), m.r32(MODELS + 4 * 161), m.r32(MODELS + 4 * 163),
+                shadow_obj(m, 161), size(shadow_obj(m, 161)), shadow_obj(m, 163), size(shadow_obj(m, 163)), m.r32(MODELS + 4 * 161), m.r32(MODELS + 4 * 163),
                 knux_obj(m, 329), size(knux_obj(m, 329)), knux_obj(m, 331), size(knux_obj(m, 331)), knux_obj(m, KNUX_BODY_SLOT), size(knux_obj(m, KNUX_BODY_SLOT)));
             m.w32(heap_var, keep_heap);
             eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x} (heap {GEAR_HEAP}, was {keep_heap})");
@@ -2783,6 +2797,7 @@ fn destroy_task(c: &mut Cpu, m: &mut Mem) {
         }
     }
     REMOTE.with_borrow_mut(|r| r.values_mut().filter(|e| e.task == t).for_each(|e| e.task = 0));
+    EXTRA_TASKS.with_borrow_mut(|x| x.remove(&t));
     let exec = m.r32(t + TASK_EXEC);
     if !linked_copies(m, &[BASE]).is_empty() && (BASE..BSS).contains(&exec) {
         BASE_TASK_GONE.set(true);
@@ -3430,7 +3445,18 @@ pub(crate) fn extra_chao(c: &mut Cpu, m: &mut Mem, info: u32, pos: u32) -> u32 {
     m.w32(cur, heap);
     let t = call(c, m, rt::sec(m, 60, 1) + 0x3148C, &[info, 1, 0, pos, 0]);
     m.w32(cur, old);
+    if t != 0 {
+        EXTRA_TASKS.with_borrow_mut(|x| x.insert(t));
+    }
     t
+}
+
+thread_local! {
+    /// Live extra_chao tasks: their blocks are in the remote heap, which must
+    /// not start empty again under them (a reset under the card box's
+    /// portrait Chao handed its blocks to the next remote Chao, and the task
+    /// loop then ran a garbage task: "no function at 0x10000004").
+    static EXTRA_TASKS: std::cell::RefCell<std::collections::BTreeSet<u32>> = Default::default();
 }
 
 /// The player's Chao's record (0x800 bytes), as [`export_record`] sends it.
