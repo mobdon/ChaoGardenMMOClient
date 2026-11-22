@@ -167,8 +167,8 @@ function showCard(player) {
   const icon = card.querySelector('.icon');
   if (!icon.dataset.chao) {
     icon.dataset.chao = '1';
-    const canvas = Object.assign(document.createElement('canvas'), { width: 96, height: 120 });
-    canvas.style.cssText = 'position:static;width:48px;height:60px;display:block'; // the page pins every canvas full-screen
+    const canvas = Object.assign(document.createElement('canvas'), { width: 128, height: 160 });
+    canvas.style.cssText = 'position:static;width:64px;height:80px;display:block'; // the page pins every canvas full-screen
     icon.replaceChildren(canvas);
     import('/src/chao-portrait.js').then(m => m.mountChaoPortrait(canvas, player)).catch(() => {});
   }
