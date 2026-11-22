@@ -23,9 +23,16 @@ public final class LoginActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         ScrollView scroll=new ScrollView(this); LinearLayout column=new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL); column.setPadding(dp(24),dp(32),dp(24),dp(32)); scroll.addView(column); setContentView(scroll);
+        column.setOrientation(LinearLayout.VERTICAL); column.setPadding(dp(24),dp(24),dp(24),dp(24));
+        // One readable column, centred on a wide (unfolded) screen.
+        scroll.addView(column,new android.widget.FrameLayout.LayoutParams(Math.min(getResources().getDisplayMetrics().widthPixels,dp(520)),-2,android.view.Gravity.CENTER_HORIZONTAL));
+        setContentView(scroll);
+        // The scroll area itself stays clear of the status bar, navigation bar, taskbar and keyboard.
         scroll.setOnApplyWindowInsetsListener((view,insets)->{
-            column.setPadding(dp(24)+insets.getSystemWindowInsetLeft(),dp(24)+insets.getSystemWindowInsetTop(),dp(24)+insets.getSystemWindowInsetRight(),dp(24)+insets.getSystemWindowInsetBottom());
+            if(android.os.Build.VERSION.SDK_INT>=30) {
+                android.graphics.Insets bars=insets.getInsets(android.view.WindowInsets.Type.systemBars()|android.view.WindowInsets.Type.displayCutout()|android.view.WindowInsets.Type.ime());
+                view.setPadding(bars.left,bars.top,bars.right,bars.bottom);
+            } else view.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());
             return insets;
         });
         text(column,"Tiny Garden",28);
