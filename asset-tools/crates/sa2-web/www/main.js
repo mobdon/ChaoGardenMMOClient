@@ -339,7 +339,11 @@ async function start() {
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
   if (token) setInterval(() => mmoTick(token), 100);
   status.textContent = 'compiling the game…';
-  module = await WebAssembly.compileStreaming(fetch('game.wasm'));
+  // The compressed build (game.wasm.br, sent as brotli-encoded wasm) when the
+  // site has a current one; else the plain file.
+  const br = await fetch('game.wasm.br').catch(() => null);
+  const packed = br && br.ok && (br.headers.get('content-type') || '').startsWith('application/wasm');
+  module = await WebAssembly.compileStreaming(packed ? br : fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });
   $('start').remove();
   canvas.focus();

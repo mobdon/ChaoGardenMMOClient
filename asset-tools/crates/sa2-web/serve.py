@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 import http.server
 import urllib.error
@@ -112,6 +113,9 @@ def export(out):
     shutil.copytree(WWW, out, ignore=shutil.ignore_patterns('pkg'), dirs_exist_ok=True)
     shutil.copytree(args.pkg, os.path.join(out, 'pkg'))
     shutil.copyfile(args.game, os.path.join(out, 'game.wasm'))
+    # The game build compressed (628 MB -> about 23 MB with brotli 9): the page
+    # fetches game.wasm.br first and the host sends it as brotli-encoded wasm.
+    subprocess.run(['brotli', '-q', '9', '-f', '-o', os.path.join(out, 'game.wasm.br'), os.path.join(out, 'game.wasm')], check=True)
     with open(os.path.join(out, 'env.json'), 'w') as f:
         json.dump({k: v for k, v in ENV.items() if k not in ('SA2_STEAM_DIR', 'SA2_DISC_DIR', 'SA2_DISC_FIRST')}, f)
     with open(os.path.join(out, 'fs-index.json'), 'w') as f:
@@ -119,6 +123,7 @@ def export(out):
     # Shared memory between the game's threads needs cross-origin isolation.
     with open(os.path.join(out, '_headers'), 'w') as f:
         f.write('/*\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n')
+        f.write('/game.wasm.br\n  Content-Type: application/wasm\n  Content-Encoding: br\n  Cache-Control: no-cache\n')
     print(f'{out}: {sum(not d for d, _ in entries.values())} files under fs/')
 
 
