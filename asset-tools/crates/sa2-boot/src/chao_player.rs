@@ -835,6 +835,16 @@ const GLOVE_SCALE: f32 = 1.0;
 /// KNUCKMDL body model 142 in the model table (slot 2n+1).
 const KNUX_BODY_SLOT: u32 = 285;
 const GLOVE_REACH: f32 = 0.55;
+/// Where along the arm (shoulder 0 -> hand tip 1) the glove's origin (his
+/// wrist) sits, and how far the fists turn out from the hips (degrees):
+/// a presentation fit, not game data. SA2_GLOVE_UP / SA2_GLOVE_OUT override.
+/// unverified: first values, from the request for higher and 5-15 degrees out.
+fn glove_up() -> f32 {
+    std::env::var("SA2_GLOVE_UP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.35)
+}
+fn glove_out() -> f32 {
+    std::env::var("SA2_GLOVE_OUT").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0)
+}
 
 fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
     let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| (r.worlds(&[]), r.verts.clone())))?;
@@ -950,7 +960,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // Chao's wrist (where the hand starts along the arm), so the arm goes
         // through the cuff (mob 2026-11-22: bigger, higher on the wrist).
         let t: [f32; 3] = if native.is_some() && !std::env::var("SA2_GLOVE_PIVOT").is_ok() {
-            std::array::from_fn(|i| sh[i] + ax[i] * reach * GLOVE_REACH)
+            std::array::from_fn(|i| sh[i] + ax[i] * reach * glove_up())
         } else if std::env::var("SA2_GLOVE_PIVOT").is_ok_and(|v| v == "wrist") {
             let along = |p: &[f32; 3]| (0..3).map(|i| p[i] * ax[i]).sum::<f32>();
             let (lo, hi) = src.iter().map(along).fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v), h.max(v)));
@@ -962,6 +972,15 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
             std::array::from_fn(|i| hc[i] - sc[i] * s)
         };
         let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * s } else { t[i] }));
+        // Swung out from the hips about the Chao's forward axis (+z) through
+        // the shoulder: the right arm (-x) turns towards -x, the left towards +x.
+        let out_deg = glove_out() * if sh[0] < 0.0 { -1.0 } else { 1.0 };
+        let (so, co) = out_deg.to_radians().sin_cos();
+        let rz = [[co, -so, 0.0], [so, co, 0.0], [0.0, 0.0, 1.0]];
+        let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| {
+            let lin = (0..3).map(|q| rz[i][q] * desired[q][j]).sum::<f32>();
+            if j < 3 { lin } else { sh[i] + (0..3).map(|q| rz[i][q] * (desired[q][3] - sh[q])).sum::<f32>() }
+        }));
         out[k] = (model, inv_mul(&aw, &desired));
         let _ = arm;
     }
@@ -993,6 +1012,10 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         let Some(node) = HANDS.with_borrow(|h| h[k]) else { continue };
         let place = mul34(&node, &local);
         let place = gear_tune(if k == 0 { "fist0" } else { "fist1" }).map_or(place, |t| mul34(&place, &t));
+        if f % 300 == 0 {
+            let ft = FEET.with_borrow(|x| x[k].map(|v| [v[0][3], v[1][3], v[2][3]]));
+            eprintln!("chao-player gloves: {k} arm node at {:?}, fist at {:?}, foot {:?}, local t {:?}", [node[0][3], node[1][3], node[2][3]], [place[0][3], place[1][3], place[2][3]], ft, [local[0][3], local[1][3], local[2][3]]);
+        }
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
