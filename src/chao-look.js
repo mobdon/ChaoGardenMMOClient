@@ -137,8 +137,9 @@ function ownMaterial(root, mesh) {
 function bodyTexture(scene, index) {
   const file = manifest?.bodyTextureFiles?.[index];
   if (!file) return null;
-  if (!textures.has(file)) textures.set(file, new Texture(`/api/assets/${file}`, scene, true, false, Texture.BILINEAR_SAMPLINGMODE));
-  return textures.get(file);
+  const key = `${scene.uid}:${file}`; // per scene: the login portraits have scenes of their own
+  if (!textures.has(key)) textures.set(key, new Texture(`/api/assets/${file}`, scene, true, false, Texture.BILINEAR_SAMPLINGMODE));
+  return textures.get(key);
 }
 
 function morphRecord(root) {
