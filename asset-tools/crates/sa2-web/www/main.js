@@ -178,7 +178,7 @@ globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
 // The game keys remote Chao by a number: the first 52 bits of the player id.
 const numId = (id) => String(BigInt('0x' + (String(id).replace(/[^0-9a-f]/gi, '').slice(0, 13) || '0')));
-let poseSeen = 0, recSeen = 0;
+let poseSeen = 0, recSeen = 0, poseSent = null, poseSeq = 0, poseFullAt = 0, poseWs = null;
 const recVersions = new Map();
 function mmoTick(token) {
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
@@ -186,7 +186,14 @@ function mmoTick(token) {
     poseSeen = seq;
     try {
       const text = new TextDecoder().decode(mmoBytes.slice(MMO.POSE_OUT + 8, MMO.POSE_OUT + 8 + pose[1]));
-      room.ws.send(JSON.stringify({ type: 'action', action: 'chao-pose', pose: JSON.parse(text) }));
+      // Only the keys that changed, with a sequence number; the whole pose
+      // each second and after joining or changing room (server merges keys).
+      const pose = JSON.parse(text), now = performance.now(), full = !poseSent || room.ws !== poseWs || now - poseFullAt > 1000;
+      const out = { seq: ++poseSeq };
+      for (const k of ['x', 'y', 'z', 'angle', 'motion', 'frame', 'gear']) if (full || pose[k] !== poseSent[k]) out[k] = pose[k];
+      if (full) poseFullAt = now, poseWs = room.ws;
+      poseSent = pose;
+      if (full || Object.keys(out).length > 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-pose', pose: out }));
     } catch {}
   }
   const rec = mmoHead(MMO.REC_OUT), rseq = Atomics.load(rec, 0);
