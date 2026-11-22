@@ -461,7 +461,8 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let regs = (c.r, c.f);
     let ext = |vs: Vec<[f32; 3]>| (0..3).map(|k| { let (lo, hi) = vs.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); hi - lo }).fold(0.0f32, f32::max);
     for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
-        let model = models.get(n).copied().unwrap_or(model);
+        // Chao World: the right boot (78 = slot 163) on both feet, as the hub does.
+        let model = models.get(n).copied().unwrap_or(if chao_world(m) { 163 } else { model });
         let obj = model_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             continue;
@@ -471,12 +472,25 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         let br = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
         let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
         let centre = bv.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / bv.len().max(1) as f32);
-        let boot = ext(bv);
+        let boot = ext(bv.clone());
         let len = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| ext(r.verts[node].clone()))).unwrap_or(0.0);
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player shoes: boot {n} obj {obj:#x} boot {boot} foot {len} feet {:?}", FEET.with_borrow(|f| f[n].map(|v| [v[0][3], v[1][3], v[2][3]])));
         }
         if boot <= 0.0 || len <= 0.0 {
+            continue;
+        }
+        // Chao World, native rig: the web hub's fit (mmo-play src/chao-attachments.js
+        // 19-49): the right boot on node 6, mirrored in x for node 13, fitted in
+        // the Chao's rest model space, then carried by the animated foot node.
+        if chao_world(m) {
+            if let Some(place) = hub_boot_place(m, n, node, &br, &bv) {
+                for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
+                m.w32(list, tex);
+                let lcap = LCAP.replace(false);
+                call(c, m, 0x8011_DF44, &[obj]);
+                LCAP.set(lcap);
+            }
             continue;
         }
         // SA2_SHOE_SCALE=k (debug): k times the fitted size.
@@ -525,6 +539,43 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     (c.r, c.f) = regs;
     m.w32(list, keep_list);
     for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, keep_m[r][k].to_bits()); } }
+}
+
+/// The hub's boot mount (chao-attachments.js 19-27): the boot model's own up
+/// and toe directions, turned to the Chao foot's +y / +z.
+const BOOT_UP: [f32; 3] = [0.802_577_7, -0.596_420_6, 0.012_308_6];
+const BOOT_FWD: [f32; 3] = [-0.596_517_8, -0.802_573, 0.006_565_9];
+
+/// View-space matrix for boot `n` (0 = node 13, mirrored; 1 = node 6): the
+/// hub's rest fit B (scale 0.90 of the foot's z length, centred in x/z, sole
+/// on the foot's lowest point), carried by the foot: FEET * inv(rest foot) * B.
+fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::ChaoRest, bv: &[[f32; 3]]) -> Option<[[f32; 4]; 3]> {
+    let _ = br;
+    let fv = FEET.with_borrow(|f| f[n])?;
+    let (worlds, foot_v) = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| (r.worlds(&[]), r.verts[6].clone())))?;
+    let (rr, rt) = worlds[6];
+    let foot: Vec<[f32; 3]> = foot_v.iter().map(|v| std::array::from_fn(|i| rt[i] + (0..3).map(|k| rr[i][k] * v[k]).sum::<f32>())).collect();
+    let x = [BOOT_UP[1] * BOOT_FWD[2] - BOOT_UP[2] * BOOT_FWD[1], BOOT_UP[2] * BOOT_FWD[0] - BOOT_UP[0] * BOOT_FWD[2], BOOT_UP[0] * BOOT_FWD[1] - BOOT_UP[1] * BOOT_FWD[0]];
+    let mount = [x, BOOT_UP, BOOT_FWD];
+    let shoe: Vec<[f32; 3]> = bv.iter().map(|v| std::array::from_fn(|i| (0..3).map(|k| mount[i][k] * v[k]).sum::<f32>())).collect();
+    let bounds = |p: &[[f32; 3]]| p.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| (std::array::from_fn(|i| lo[i].min(v[i])), std::array::from_fn(|i| hi[i].max(v[i]))));
+    let ((flo, fhi), (slo, shi)) = (bounds(&foot), bounds(&shoe));
+    if foot.is_empty() || shoe.is_empty() || shi[2] - slo[2] <= 0.0 { return None; }
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]);
+    let fc: [f32; 3] = std::array::from_fn(|i| (flo[i] + fhi[i]) / 2.0);
+    let scn: [f32; 3] = std::array::from_fn(|i| (slo[i] + shi[i]) / 2.0);
+    let pos = [fc[0] - scn[0] * sc, flo[1] - slo[1] * sc, fc[2] - scn[2] * sc];
+    // B (rest model space, 3x4), mirrored in x for the other foot.
+    let mir = if node == 6 { 1.0 } else { -1.0 };
+    let b: [[f32; 4]; 3] = std::array::from_fn(|i| { let f = if i == 0 { mir } else { 1.0 }; std::array::from_fn(|j| f * if j < 3 { mount[i][j] * sc } else { pos[i] }) });
+    // inv(rest of this foot node) * B, then the animated foot (view space).
+    let (nr, nt) = worlds[node];
+    let ninv = crate::skate::inv(&nr);
+    let rel: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| {
+        let v: f32 = (0..3).map(|k| ninv[i][k] * b[k][j]).sum();
+        if j < 3 { v } else { v - (0..3).map(|k| ninv[i][k] * nt[k]).sum::<f32>() }
+    }));
+    Some(mul34(&fv, &rel))
 }
 
 /// Knuckles's Hammer Gloves item (KNUCKMDL 164 right / 165 left = slots
