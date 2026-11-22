@@ -17,6 +17,19 @@ const GX_MAGIC: u32 = 0x4758_4A42;
 /// A game frame (NTSC), in milliseconds.
 const GAME_FRAME_MS: f64 = 1001.0 / 60.0;
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(s: &str);
+}
+
+/// Built with panic=abort, a panic only reaches the page as "unreachable":
+/// print its message first so a crash says where it happened.
+fn panic_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| std::panic::set_hook(Box::new(|i| console_error(&format!("sa2-web panic: {i}")))));
+}
+
 fn err(e: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
@@ -123,6 +136,7 @@ impl GxMemory for Tracked<'_> {
 impl Decoder {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Decoder {
+        panic_hook();
         Decoder {
             fifo: GxFifo::default(),
             job: Vec::new(),
@@ -204,6 +218,7 @@ impl Screen {
     /// The same, on a canvas handed to a worker (the page's own thread
     /// then only reads input and plays sound).
     pub async fn open_offscreen(canvas: web_sys::OffscreenCanvas) -> Result<Screen, JsValue> {
+        panic_hook();
         let size = (canvas.width(), canvas.height());
         Self::open_on(wgpu::SurfaceTarget::OffscreenCanvas(canvas), size).await
     }
