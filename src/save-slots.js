@@ -33,5 +33,10 @@ export function createSaveSlots(storage) {
     storage.setItem(SESSION_KEY, token);
     return row;
   }
-  return { list, record };
+  /** Forget one slot on this browser; the Chao stays on the server and its card code brings it back. */
+  function remove(token) {
+    storage.setItem(SAVE_SLOTS_KEY, JSON.stringify(list().filter(row => row.token !== token)));
+    if (storage.getItem(SESSION_KEY) === token) storage.removeItem(SESSION_KEY);
+  }
+  return { list, record, remove };
 }

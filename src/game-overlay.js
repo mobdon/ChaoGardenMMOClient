@@ -6,7 +6,8 @@ import './sonic.css';
 import { createGardenCare } from './garden-care.js';
 import { createBreedingMenu } from './breeding-menu.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
-import { createStatRow, updateStatRow } from './stat-ui.js';
+import { gradeCells, grades } from './stat-ui.js';
+import { mountChaoPortrait } from './chao-portrait.js';
 import { nativeText } from './native-text.js';
 
 let mounted = null, lastNest = [];
@@ -20,29 +21,66 @@ export function mountOverlay(nextSocket) {
   const card = document.getElementById('mmo-card');
   const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:auto;right:auto;left:16px;bottom:72px';
   // The game's own stat window rows (stat-ui.js: native frame, font and grade cells), then the native inventory.
-  const title = el('div'), stats = el('div', undefined, 'stats-list');
-  const STATS = ['swim', 'fly', 'run', 'power', 'stamina', 'luck', 'intelligence'];
-  for (const name of STATS) stats.append(createStatRow(name));
+  // The game's own medical-chart record page (page A, crop origin x264,y40): name bar, attributes,
+  // ability type, portrait box and the five skill rows (y260..388 step 32), filled from the snapshot.
+  const at = (node, x, y, w, h) => { node.style.cssText += `;position:absolute;left:${x}px;top:${y}px` + (w ? `;width:${w}px;height:${h}px` : ''); return node; };
+  const record = el('div'); record.id = 'character-panel'; record.style.cssText = 'position:absolute;inset:0';
+  const nameBox = at(el('div'), 0, 40, 360, 28), attr = at(el('div'), 40, 104), type = at(el('div'), 40, 156);
+  nameBox.style.textAlign = 'center';
+  const portrait = at(Object.assign(el('canvas'), { width: 208, height: 216 }), 232, 84, 104, 108);
+  const ROWS = ['swim', 'fly', 'run', 'power', 'stamina'];
+  const rows = ROWS.map((name, i) => {
+    const y = 220 + i * 32;
+    const label = at(nativeText(name[0].toUpperCase() + name.slice(1), 'native-stat-name'), 40, y);
+    const bar = at(el('div'), 120, y + 8, 80, 8); bar.style.background = 'transparent';
+    const fill = el('div'); fill.style.cssText = 'height:100%;background:#ffe37a'; bar.append(fill);
+    const points = at(el('div'), 220, y), grade = at(el('span', undefined, 'native-grade'), 300, y, 22, 22);
+    record.append(label, bar, points, grade);
+    return { name, fill, points, grade };
+  });
+  record.append(nameBox, attr, type, portrait);
+  let portraitFor = null;
+  function updateRecord(player, life) {
+    nameBox.replaceChildren(nativeText(player.name, 'native-stat-name'));
+    attr.replaceChildren(nativeText(player.alignment >= 60 ? 'Hero' : player.alignment <= -60 ? 'Dark' : 'Neutral', 'native-stat-name'));
+    type.replaceChildren(nativeText(life?.stage === 'adult' || player.admin ? 'Adult' : 'Child', 'native-stat-name'));
+    for (const row of rows) {
+      const stat = player.stats?.[row.name]; if (!stat) continue;
+      row.fill.style.width = `${Math.min(99, stat.level) / 99 * 100}%`;
+      row.points.replaceChildren(nativeText(String(Math.min(9999, stat.points)).padStart(4, '0'), 'native-stat-name'));
+      const [x, y] = gradeCells[grades[stat.grade] || 'E'];
+      row.grade.style.setProperty('--grade-x', `${-x}px`); row.grade.style.setProperty('--grade-y', `${-y}px`);
+    }
+    if (portraitFor !== player.id) { portraitFor = player.id; void mountChaoPortrait(portrait, player).catch(() => {}); }
+  }
   const care = el('div'), breedingRoot = el('div'); breedingRoot.hidden = true;
   const breedButton = el('button', 'Breeding');
   for (const b of [breedButton]) { b.tabIndex = -1; b.replaceChildren(nativeText(b.textContent, 'native-stat-name')); }
-  // The hub's native stat-row styles are scoped to #character-panel (sonic.css); without it each row's frame spreads over the panel.
-  const statBox = el('div'); statBox.id = 'character-panel'; statBox.append(stats);
   breedButton.hidden = true; breedingRoot.hidden = false;
   // The Kindergarten medical chart as the menu: its pages (360x440, cropped from the game's 640x480
   // layout at x264,y40) are the background, its L/R tabs (top 16 px) flip Stats / Inventory / Breeding.
   const body = el('div'); body.style.cssText = 'position:absolute;left:16px;right:16px;top:72px;bottom:16px;overflow:auto';
-  const tab = (left, width, step) => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${left}px;width:${width}px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(page + step)); return t; };
-  const pages = [['a', [title, statBox]], ['b', [care]], ['c', [breedingRoot]]];
+  // Five native-shape tabs, 70x16 each from the left edge to x350 (the frame corner shows past the last): blue record, yellow care, pink record, green inventory, purple breeding.
+  const tab = n => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${n * 70}px;width:70px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(n)); return t; };
+  // Page B / C headings: MsgAlKinderHe strings at the chart draw's own spots (screen xy minus the x264,y40 crop).
+  // shortcut: headings only; their values need the personality/sickness getters and karate W/L/D, which the snapshot doesn't carry yet.
+  const labels = rows => { const page = el('div'); page.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+    for (const [text, x, y, centre] of rows) { const n = at(nativeText(text, 'native-stat-name'), x - 264, y - 40); if (centre) n.style.transform = 'translateX(-50%)'; page.append(n); }
+    return page; };
+  const yellow = labels([['Personality', 288, 74], ['Favorite', 288, 148], ['Age', 288, 222], ['Times transformed', 452, 222], ['Condition', 288, 286]]);
+  const pink = labels([['Record', 444, 84, true], ['Chao Race', 288, 110], ['Chao Karate', 288, 276], ['Rank', 288, 370]]);
+  const pages = [['a5', record], ['b5', yellow], ['c5', pink], ['d', care], ['e', breedingRoot]];
   let page = 0;
   function show(n) {
-    page = (n + pages.length) % pages.length;
-    const [art, nodes] = pages[page];
+    page = n;
+    const [art, node] = pages[page];
     panel.style.background = `url(/api/assets/medchart-page-${art}.png) no-repeat 0 0 / 360px 440px`;
-    body.replaceChildren(...nodes);
+    for (const [, other] of pages.slice(0, 3)) other.hidden = other !== node;
+    body.style.display = page >= 3 ? '' : 'none';
+    if (page >= 3) body.replaceChildren(node);
   }
   panel.style.cssText += ';width:360px;height:440px;max-height:none;padding:0;overflow:visible;border-radius:0;box-shadow:none;image-rendering:pixelated';
-  panel.append(tab(0, 96, -1), tab(192, 96, 1), body);
+  panel.append(record, yellow, pink, ...[0, 1, 2, 3, 4].map(tab), body);
   show(0);
   document.body.append(panel);
   const slots = createSaveSlots(localStorage);
@@ -59,7 +97,8 @@ export function mountOverlay(nextSocket) {
     window.sa2HatchEgg?.(bred ? { ...egg, gene: bred.gene, eggColor: bred.eggColor } : egg);
   } });
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
-  const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
+  // Like the game's chart, every open starts on the blue page.
+  const toggle = () => { panel.hidden = !panel.hidden; if (!panel.hidden) show(0); document.getElementById('screen')?.focus(); };
   if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
   addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
@@ -67,8 +106,7 @@ export function mountOverlay(nextSocket) {
     snapshot(next) {
       const player = next.players.find(p => p.id === next.selfId);
       if (player) {
-        title.replaceChildren(nativeText(player.name, 'native-stat-name'));
-        for (const name of STATS) { const row = stats.querySelector(`[data-stat="${name}"]`); if (row && player.stats?.[name]) updateStatRow(row, name, player.stats[name]); }
+        updateRecord(player, next.life);
       }
       lastNest = next.life?.nest || [];
       gardenCare.update(next.care, player, { connected: true, serverTime: next.serverTime, nest: next.life?.nest || [] });

@@ -195,7 +195,18 @@ function showTitle() {
     const card = document.createElement('small'); card.className = 'save-slot-card'; meta.append(card);
     void showCard(card, slot.token);
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
-    button.append(icon, meta, arrow);
+    const remove = document.createElement('span'); remove.className = 'save-slot-delete'; remove.role = 'button'; remove.tabIndex = 0;
+    remove.textContent = '✕'; remove.title = 'Delete this Chao';
+    remove.addEventListener('click', event => {
+      event.stopPropagation();
+      if (!confirm(`Delete ${slot.name || 'this Chao'} forever? It is removed from the server and its memory card code can't bring it back.`)) return;
+      void fetch('/api/chao', { method: 'DELETE', headers: { Authorization: `Bearer ${slot.token}` } }).then(async response => {
+        // 401: the server no longer knows this token, so only the local slot is left to clear.
+        if (!response.ok && response.status !== 401) { alert((await response.json().catch(() => ({}))).error || 'Could not delete this Chao.'); return; }
+        saveSlots.remove(slot.token); showTitle();
+      }, () => alert('Could not reach the server.'));
+    });
+    button.append(icon, meta, remove, arrow);
     button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
     const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
     if (shownCards.has(cardCode)) { container.append(button); continue; }
