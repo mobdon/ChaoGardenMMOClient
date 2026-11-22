@@ -22,7 +22,7 @@ test('the jingle starts at contact, both sway, both cheer on frame 302, then ban
   assert.equal(c.answerer.state, STATE.HASYAGU);
   assert.equal(c.inviter.state, STATE.HASYAGU);
   let frames = 0, egg = null;
-  while (!c.done && frames++ < 5000) if (c.step().includes('egg')) egg = frames;
+  while (!c.done && frames++ < 5000) if (c.step().includes('hop')) egg = frames;
   assert.equal(egg, 20, 'the egg on the cheer\u2019s 21st frame');
   assert.ok(c.done, 'the scene ends');
 });

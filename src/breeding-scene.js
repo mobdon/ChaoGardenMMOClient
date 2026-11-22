@@ -47,8 +47,8 @@ export function createCourtship(rows, rand = Math.random) {
       tick++;
       if (!cheer && tick >= CHEER_AT) { cheer = true; play(inviter, STATE.HASYAGU); play(answerer, STATE.HASYAGU); }
       advance(inviter); advance(answerer);
-      // The 21st frame of the cheer: both hop and the egg appears.
-      if (cheer && ++cheerFrames === 21) out.push('egg');
+      // The 21st frame of the cheer: both hop back (and the game lays the egg).
+      if (cheer && ++cheerFrames === 21) out.push('hop');
       return out;
     },
   };
@@ -107,31 +107,17 @@ export async function playBreedingScene(host) {
     return heart;
   });
   const jingle = new Audio('/api/assets/jingle-chao-g-dance.mp3');
-  // The game's own egg (object_alo_dummyegg), shown plain (EggColor 0, al_egg01) when it's laid.
-  const eggModel = Promise.resolve(game?.gameEggGlb(false))
-    .then(own => own || fetch('/api/assets/chao-egg.glb').then(r => r.ok ? r.arrayBuffer() : null))
-    .then(buffer => buffer && B.LoadAssetContainerAsync(new Uint8Array(buffer), scene, { pluginExtension: '.glb' })).catch(() => null);
-  const layEgg = () => void eggModel.then(egg => {
-    if (!egg) return;
-    const root = egg.instantiateModelsToScene(name => name, false).rootNodes[0];
-    // Scene choice: midway between the pair. The game lays it 2.0 in front of the answerer (fn 0x40130).
-    root.position.set((pair[0].root.position.x + pair[1].root.position.x) / 2, 0, 0);
-    // CreateEgg mode 1 (GC ChaoMain.rel .text 0x8F20): size 0.1, squash 0.2. Spring speed (+0x20) starts 0: unverified.
-    let k = 0.1, s = 0.2, v = 0;
-    const base = root.scaling.clone(); // the loader's root flips z
-    // Scene choice (not the game's): the pair step apart by half the egg's width as it grows, so it sits clear between them.
-    const box = root.getHierarchyBoundingVectors(), half = (box.max.x - box.min.x) / 2, mid = root.position.x;
-    const start = pair.map(c => c.root.position.x);
-    // One game frame of EGG (.text 0x96F8..0x9760), drawn as AL_EggDisplayer (0x9360) scales it.
-    growEgg = () => {
-      if (k < 1) k += 0.06;
-      v += 0.15 * (1 - s); s += v; v *= 0.9;
-      pair.forEach((c, n) => { c.root.position.x = start[n] + Math.sign(start[n] - mid) * half * (Math.min(k, 1) - 0.1) / 0.9; });
-      root.scaling.set(base.x * s * k, base.y * (2 - s) * k, base.z * s * k);
-    };
-    growEgg();
+  // The hop on the 21st cheer frame (GC ChaoMain.rel .text 0x40488, 0x40938): speed 0.8 up and 0.25 backward.
+  // Then one MOV_Control frame each (GC main.dol 0x8002F448): the Chao's gravity -0.055 (CreateChaoExtra 0x3167C)
+  // is added to the upward speed and the speed is added to the position. No egg is drawn (the scene's own choice).
+  let hop = null;
+  const startHop = () => { hop = pair.map((c, n) => ({ c, x: n ? 0.25 : -0.25, y: 0.8 })); };
+  const stepHop = () => hop?.forEach(h => {
+    if (!h.c) return;
+    h.y -= 0.055; h.c.root.position.x += h.x; h.c.root.position.y += h.y;
+    // shortcut: the landing (floor bounce and friction in MOV_DetectCollision) is not traced, so the Chao stops on the ground
+    if (h.c.root.position.y <= 0) { h.c.root.position.y = 0; h.c = null; }
   });
-  let growEgg = () => {};
   const courtship = createCourtship(rows);
   const show = (c, s) => {
     const row = rows.get(s.state), group = row && c.groups.get(row.nativeName);
@@ -146,9 +132,9 @@ export async function playBreedingScene(host) {
       for (; carry >= 1 && !courtship.done; carry--, frame++) {
         for (const event of courtship.step()) {
           if (event === 'jingle') void jingle.play().catch(() => {});
-          if (event === 'egg') layEgg();
+          if (event === 'hop') startHop();
         }
-        growEgg();
+        stepHop();
       }
       show(pair[0], courtship.inviter); show(pair[1], courtship.answerer);
       hearts.forEach(h => h.scaling.setAll(heartScale(frame, 60) / HEART.max));
