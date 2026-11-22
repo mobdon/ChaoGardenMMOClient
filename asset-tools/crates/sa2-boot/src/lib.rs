@@ -13,6 +13,7 @@ pub mod card_pack;
 pub mod chao_cache;
 pub mod chao_player;
 pub mod chao_retarget;
+pub mod skate;
 pub mod chao_speed;
 pub mod clock;
 pub mod dvd;

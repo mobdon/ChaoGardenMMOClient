@@ -275,6 +275,7 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
+        RIDER_OBJ.set(obj);
         air_shoes(c, m);
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
@@ -422,8 +423,7 @@ fn load_models(c: &mut Cpu, m: &mut Mem, name: u32) -> u32 {
 const SHOES: [(usize, usize, u32); 2] = [(13, 14, 161), (6, 24, 163)];
 /// The client's fit (docs/MIRRORED-GEAR-FIT.md): boot length 0.90 of the Chao foot.
 const SHOE_LENGTH_RATIO: f32 = 0.90;
-/// Chao leg nodes posed from the rider when wearing Shadow's shoes.
-const SHOE_LEGS: [usize; 4] = [5, 6, 12, 13];
+
 
 /// Shadow's boots on the Chao's feet (nodes 13/6, which follow the rider's
 /// legs 7->14 and 17->24, the retarget's LIMBS; Sonic's 6-15 leg is his
@@ -666,7 +666,6 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         if (0x8000_0000..0x8C00_0000).contains(&root) {
             CHAO_REST.with_borrow_mut(|r| if r.is_none() { *r = Some(crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]])); });
         }
-        pose_chao(); // the rider's pose, for the legs under the shoes
         NATIVE_DRAW.set(true);
         CHAO_NODE.set(0);
         rel_original(c, m, a, chao_display);
@@ -1044,18 +1043,11 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         // The player's Chao on its native rig: its foot nodes for the boots.
         if NATIVE_DRAW.get() {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
-            // Wearing Shadow's shoes: the legs (pivot/mesh 5-6, 12-13) follow
-            // the rider's own walk/run/skate; body, head and arms stay native.
-            if SHOE_LEGS.contains(&i) && MOVING.get() && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
-                if let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) {
-                    let p = CHAO_PLACE.get();
-                    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
-                    for row in 0..3 {
-                        for col in 0..4 {
-                            let v: f32 = if col < 3 { (0..3).map(|k| p[row][k] * r[k][col]).sum() } else { (0..3).map(|k| p[row][k] * t[k]).sum::<f32>() + p[row][3] };
-                            m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
-                        }
-                    }
+            // Wearing Shadow's shoes and moving: the web hub's skate overlay
+            // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
+            if MOVING.get() && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+                if let Some(&(_, src, w, cap)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
+                    skate_node(m, i, src, w, cap);
                 }
             }
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
@@ -1121,6 +1113,38 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         let cur = mtx(m, cur_ptr);
         FEET.with_borrow_mut(|f| f[k] = Some(cur));
     }
+}
+
+/// One skate-mapped node: rotation from skate::desired (Chao model space,
+/// under the Chao's placement), position kept as the native pose drew it.
+fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
+    let r3 = |x: &[[f32; 4]; 3]| -> [[f32; 3]; 3] { std::array::from_fn(|a| std::array::from_fn(|b| x[a][b])) };
+    let Some(now) = SKEL.with_borrow(|s| (s.len() == 62).then(|| r3(&inv_mul(&s[0], &s[src])))) else { return };
+    let obj = RIDER_OBJ.get();
+    if !(0x8000_0000..0x8C00_0000).contains(&obj) { return; }
+    let rest = RIDER_REST.with_borrow_mut(|r| {
+        if r.as_ref().map(|(o, _)| *o) != Some(obj) {
+            let rr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]).worlds(&[]);
+            *r = Some((obj, rr.into_iter().map(|(rot, _)| rot).collect()));
+        }
+        r.as_ref().and_then(|(_, v)| v.get(src).copied())
+    });
+    let chao_rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
+    let (Some(rest), Some(chao_rest)) = (rest, chao_rest) else { return };
+    let d = crate::skate::desired(&now, &rest, &chao_rest, w, cap);
+    let p = CHAO_PLACE.get();
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    for row in 0..3 {
+        for col in 0..3 {
+            let v: f32 = (0..3).map(|k| p[row][k] * d[k][col]).sum();
+            m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
+        }
+    }
+}
+
+thread_local! {
+    static RIDER_OBJ: Cell<u32> = const { Cell::new(0) };
+    static RIDER_REST: std::cell::RefCell<Option<(u32, Vec<[[f32; 3]; 3]>)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Arm nodes 3/10's view-space matrices from this draw walk, for the gloves.
