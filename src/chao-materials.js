@@ -97,6 +97,8 @@ export function applyNativeChaoMaterial(key, mat) {
   mat.alphaCutOff = 0.45;
   mat.useAlphaFromAlbedoTexture = mat.transparencyMode === 1;
   if (nativeBlend) {
+    // The export marks every texture opaque; the engine only blends by a texture that reports alpha.
+    if (texture) texture.hasAlpha = true;
     mat.transparencyMode = 2; mat.useAlphaFromAlbedoTexture = true;
     mat.alphaMode = Engine.ALPHA_COMBINE; mat.backFaceCulling = false;
   }
