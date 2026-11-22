@@ -334,13 +334,42 @@ fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32, b: [f32; 3]) {
             m.w32(cur_ptr + 4 * (4 * r + k) as u32, scaled[r][k].to_bits());
         }
     }
+    // The Dark Chao's ball is Shadow's own: his model of the same slot
+    // (Sonic's model number + 130, the offset Sonic's display uses between
+    // Sonic's 43 and Shadow's 173) with Shadow's texture list.
+    // unverified: the +130 offset holds for the ball slot (check the crop).
+    let cur_list = m.r32(c.r[13].wrapping_sub(0x7228)) + 0x20;
+    let keep = (m.r32(cur_list), c.r[3]);
+    if let Some(tex) = SHADOW_TEX.get().filter(|_| addr == DRAW_MOTION && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")) {
+        let k = (0..0x428).find(|&k| m.r32(MODELS + 4 * k) == c.r[3]);
+        if let Some(sh) = k.map(|k| m.r32(MODELS + 4 * (k + 130))).filter(|&o| o != 0) {
+            c.r[3] = sh;
+            m.w32(cur_list, tex);
+        }
+    }
     original(c, m, addr);
+    m.w32(cur_list, keep.0);
+    c.r[3] = keep.1;
     for r in 0..3 {
         for k in 0..4 {
             m.w32(cur_ptr + 4 * (4 * r + k) as u32, cur[r][k].to_bits());
         }
     }
 }
+
+thread_local! {
+    /// Shadow's texture list once loaded into a Sonic level.
+    static SHADOW_TEX: Cell<Option<u32>> = const { Cell::new(None) };
+}
+/// The character loader's calls (Sonic's 0x800874C0 at 0x800875F0/0x800875FC):
+/// texture list by name 0x80072548 and model file by name 0x80050210, which
+/// fills the model table 0x801E6688; with Shadow's own names TERIOSTEX
+/// (0x801748E0) and TERIOSMDL.PRS (0x801748EC).
+const LOAD_TEX: u32 = 0x8007_2548;
+const LOAD_MDL: u32 = 0x8005_0210;
+const SHADOW_TEX_NAME: u32 = 0x8017_48E0;
+const SHADOW_MDL_NAME: u32 = 0x8017_48EC;
+const MODELS: u32 = 0x801E_6688;
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
@@ -1076,6 +1105,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
+        // Shadow's textures and models for the Dark Chao's ball, once, in
+        // Sonic's levels (playerwk +1 = 0, the byte Sonic's display picks his models by).
+        if addr == SONIC_EXEC && m.r8(m.r32(P1_OBJ2) + 1) == 0 && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
+            let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
+            let mdl = call(c, m, LOAD_MDL, &[SHADOW_MDL_NAME]);
+            eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
+            SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
+        }
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
             physics_row(m);
