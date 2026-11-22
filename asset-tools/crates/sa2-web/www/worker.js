@@ -231,7 +231,10 @@ function cardRequest(method, body) {
 }
 function cardCheckOut() {
   const r = cardRequest('GET');
-  if (r.status !== 200) return false;
+  if (r.status !== 200) {
+    postMessage({ log: `card: the server didn't check the card out (${r.status})`, err: true, tid });
+    return false;
+  }
   const lease = enc.encode(r.getResponseHeader('x-save-lease') || '');
   new DataView(sh.card.buffer).setBigUint64(0, BigInt(r.getResponseHeader('x-save-revision') || 0), true);
   sh.card.fill(0, 8);
