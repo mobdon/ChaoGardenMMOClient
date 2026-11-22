@@ -629,8 +629,9 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         // 1.0672683, 0.2922889, -0.2537795 in the hub's X-mirrored space).
         // (Slots 181/183, drawn before, are models 90/91, not jets.)
         // unverified: the shift's signs in the game's space (checked by eye).
-        if MOVING.get() && !debug_off("jets") {
-            let wide = LAST_MOTION.get() == 119;
+        // Jets only while the skate is in (the hub shows them with its blend).
+        if skate_blend(false) > 0.0 && !debug_off("jets") {
+            let wide = skate_blend(false) >= 1.0;
             let shift: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 1.067_268_3], [0.0, 1.0, 0.0, -0.292_288_9], [0.0, 0.0, 1.0, 0.253_779_5]];
             let at = if hub != 0 { mul34(&place, &shift) } else { place };
             for js in if wide { [195u32, 197] } else { [193, 199] } {
@@ -2014,7 +2015,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
-            if MOVING.get() && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+            if skate_blend(i == 0) > 0.0 && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
                 if let Some(&(_, src, w, cap)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
                     skate_node(m, i, src, w, cap);
                 }
@@ -2132,12 +2133,36 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
     let d = crate::skate::desired(&now, &rest, &chao_rest, w, cap);
     let p = CHAO_PLACE.get();
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    // Blended with the Chao's own walk pose while the skate comes in or goes out.
+    let b = skate_blend(false);
     for row in 0..3 {
         for col in 0..3 {
             let v: f32 = (0..3).map(|k| p[row][k] * d[k][col]).sum();
-            m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
+            let a = cur_ptr + 4 * (4 * row + col) as u32;
+            let own = f32::from_bits(m.r32(a));
+            m.w32(a, (own + (v - own) * b).to_bits());
         }
     }
+}
+
+/// How far the skate is blended in (0 = the Chao's own walk, 1 = skating),
+/// the hub's rule (src/shadow-skate.js SkateCadence): in while it runs
+/// (the hub's skate speed band; here the game's own walk/run switch), out
+/// when it slows, over the hub's 0.42 s in and 0.28 s out (smoothstep).
+/// `step`: advance one frame (once per draw, at node 0).
+fn skate_blend(step: bool) -> f32 {
+    if step {
+        let target = if MOVING.get() && LAST_MOTION.get() == 119 { 1.0f32 } else { 0.0 };
+        let p = SKATE_PROGRESS.get();
+        let dt = if target > p { 1.0 / (0.42 * 60.0) } else { 1.0 / (0.28 * 60.0) };
+        SKATE_PROGRESS.set(p + (target - p).clamp(-dt, dt));
+    }
+    let p = SKATE_PROGRESS.get();
+    p * p * (3.0 - 2.0 * p)
+}
+
+thread_local! {
+    static SKATE_PROGRESS: Cell<f32> = const { Cell::new(0.0) };
 }
 
 thread_local! {
