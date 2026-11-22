@@ -251,6 +251,7 @@ function joinRoom(token, zone) {
       const self = m.players.find(p => p.id === m.selfId);
       // The picker's list once the signed-in Chao is known; asked again (every 10 s) until it has a record.
       if (self && !cardIds.size && Date.now() - cardAt > 10000) { cardAt = Date.now(); cardSelf = self; cardChao(token); }
+      if (self) firstSheet(self, token);
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
     }
     if (m.type === 'event') { overlay?.event(m); breedEvent(m); }
@@ -596,6 +597,20 @@ function karateLocks() {
     b.title = locked ? 'Needs Power above 400' : '';
     b.style.background = b.disabled ? '#666' : '#f5a800';
   }
+}
+// One PC play is enough for the phone: when the server has no Tiny Garden picture sheet for this
+// login yet, the signed-in Chao's is sent once, with no Transporter pick. A pick replaces it later.
+let firstSheetAsked = false;
+function firstSheet(self, token) {
+  if (firstSheetAsked) return;
+  firstSheetAsked = true;
+  fetch('/api/tiny-chao', { method: 'HEAD', headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }).then((r) => {
+    if (r.status !== 404) return null;
+    return import('/src/tiny-sheet.js').then((m) => m.renderTinySheet(self)).then((sheet) => {
+      console.log('tiny-garden: first sheet', sheet ? `${sheet.size} bytes` : 'no sheet');
+      return sheet && fetch(`/api/tiny-chao?chao=${encodeURIComponent(self.id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' }, body: sheet });
+    });
+  }).then((r) => r && console.log('tiny-garden: first sheet stored', r.status)).catch((e) => console.log('tiny-garden: first sheet failed', String(e)));
 }
 // The player's card box is the game's own (sa2-boot card_box.rs): the page feeds it the name and the rings.
 function showCard(player) {
