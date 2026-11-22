@@ -141,6 +141,7 @@ static MACHINE: Global<(u32, u32)> = global!((0, 0));
 static HIT_HOOKED: Global<bool> = global!(false);
 /// What the log last said of the machine: its task, and how it was touched (0 no, 1 the game's hit, 2 reach).
 static SAID: Global<(u32, u8)> = global!((0, 0));
+static PLACED: Global<bool> = global!(false);
 
 /// Each frame in Chao World: once module 73 is linked (again), point its
 /// sprites at the Tiny Chao Garden art and hook its menu.
@@ -151,6 +152,19 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     });
     if !HIT_HOOKED.replace(true) {
         c.rt.set_override(HIT, hit);
+    }
+    // SA2_CHAO_AT=x,y,z (debug): once a garden's machine is up, put the player
+    // there, e.g. on the machine's spot to test its opening without the walk.
+    let (_, slot) = MACHINE.get();
+    let player = m.r32(PLAYERTWP);
+    if slot != 0 && m.r32(slot) != 0 && player != 0 && !PLACED.get() {
+        if let Some(at) = std::env::var("SA2_CHAO_AT").ok().and_then(|v| place(&v)) {
+            PLACED.set(true);
+            eprintln!("tiny-transporter: debug, player put at {at:?}");
+            for (o, v) in [0x14, 0x18, 0x1C].into_iter().zip(at) {
+                m.wf32(player + o, f64::from(v));
+            }
+        }
     }
     let Some(text) = module_section(m, MODULE, 1) else {
         TEXT.set(0);
@@ -194,6 +208,12 @@ fn hit(c: &mut Cpu, m: &mut Mem) {
     if SAID.replace((task, how)) != (task, how) {
         eprintln!("tiny-transporter: machine at {machine:?}, touched: {}", ["no", "the game's own hit", "by reach"][how as usize]);
     }
+}
+
+fn place(text: &str) -> Option<[f32; 3]> {
+    let mut v = text.split(',').map(|n| n.trim().parse::<f32>());
+    let at = [v.next()?.ok()?, v.next()?.ok()?, v.next()?.ok()?];
+    v.next().is_none().then_some(at)
 }
 
 /// The player at `player` stands on the machine's trigger shape.
@@ -445,6 +465,13 @@ mod tests {
         assert_eq!(one_side(3, 0), (4, 2)); // onto side 0: OK instead
         assert_eq!(one_side(4, 2), (4, 2)); // OK
         assert_eq!(one_side(3, 2), (3, 2)); // Back
+    }
+
+    #[test]
+    fn debug_place_reads_three_numbers() {
+        assert_eq!(place("72, 10,28"), Some([72.0, 10.0, 28.0]));
+        assert_eq!(place("72,10"), None);
+        assert_eq!(place("72,10,x"), None);
     }
 
     #[test]

@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -202,6 +202,7 @@ function loadedWorker() {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
     else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
+    else if (m.area === 250) location.replace('/'); // sa2-boot chao_player.rs: the player's Chao could not be made, back to the login
     else if (SHOE_PICKUPS[m.area]) pickedUp(SHOE_PICKUPS[m.area]);
     else if (m.area !== undefined) roomArea(m.area);
     else if (m.extras !== undefined) extrasChanged(...m.extras);
@@ -264,7 +265,7 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -326,6 +327,28 @@ function breedEvent(m) {
   else return;
   breedFeed();
 }
+// Story progress (sa2-boot story.rs): the stages the server lets this card
+// start go to /mmo/story-in as (stage, character) byte pairs; the game writes
+// [count, stage, character] to /mmo/story-out when a stage's first mission is
+// cleared, the server records it and answers with the new list.
+let storySeen = 0;
+function storyIn(story) {
+  if (!Array.isArray(story?.unlocked)) return;
+  const pairs = Uint8Array.from(story.unlocked.flat()).subarray(0, MMO.STORY_MAX);
+  mmoBytes.set(pairs, MMO.STORY + 8);
+  const h = mmoHead(MMO.STORY);
+  Atomics.store(h, 1, pairs.length);
+  Atomics.add(h, 0, 1); // 0 = not loaded: the game keeps its own flags
+}
+const storyLoad = (token) => fetch('/api/story', { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.ok && r.json()).then(storyIn).catch(() => {});
+function storyCleared(token) {
+  const out = mmoHead(MMO.STORY_OUT), seq = Atomics.load(out, 0);
+  if (seq === storySeen) return;
+  storySeen = seq;
+  const [, stage, character] = mmoBytes.slice(MMO.STORY_OUT + 8, MMO.STORY_OUT + 11);
+  fetch('/api/story/clear', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ stage, character }) })
+    .then((r) => r.ok && r.json()).then(storyIn).catch(() => {});
+}
 function breedPick() {
   const out = mmoHead(MMO.BREED_OUT), seq = Atomics.load(out, 0);
   if (seq === breed.seen) return;
@@ -341,6 +364,7 @@ const recVersions = new Map();
 function mmoTick(token) {
   karateLocks();
   breedPick();
+  storyCleared(token);
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
   if (seq !== poseSeen && room?.ws.readyState === 1) {
     poseSeen = seq;
@@ -647,10 +671,10 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
-  if (token) cardChao(token);
+  if (token) cardChao(token), storyLoad(token);
   if (token) loadSettings(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
   if (token) setInterval(() => mmoTick(token), 100);

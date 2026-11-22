@@ -486,9 +486,40 @@ fn set_x(m: &mut Mem, rec: u32, (x0, x1): (i16, i16), saved: &mut Vec<(u32, u16)
     }
 }
 
-/// Rewrite the three pages' tab and edge records for five 70 wide tabs.
-fn retab(m: &mut Mem, s4: u32) {
+/// The backdrop (890) also draws the Kindergarten room's title: an icon
+/// (rodata 0xE8) and two runs of quads from the title table's row for the
+/// room number bss+0x130 (rodata 0x298, or 0x2F8 by language; a row is
+/// records, count, records, count). A borrowed module's room number is 0,
+/// "Principal's": outside the Kindergarten there is no room to name.
+const TITLE_ICON: u32 = 0xE8;
+const TITLE_ROWS: [u32; 2] = [0x298, 0x2F8];
+const ROOM: u32 = 0x130;
+
+/// The records of the room title 890 would draw.
+fn title_records(m: &Mem, s4: u32) -> Vec<u32> {
+    let mut out = vec![s4 + TITLE_ICON];
+    for table in TITLE_ROWS {
+        let row = s4 + table + m.r32(BSS + ROOM) * 16;
+        for run in [row, row + 8] {
+            let (records, n) = (m.r32(run), m.r32(run + 4));
+            // Only what the art can be: a few records inside this module.
+            if n <= 8 && records >= s4 && records < BSS {
+                out.extend((0..n).map(|i| records + i * 16));
+            }
+        }
+    }
+    out
+}
+
+/// Rewrite the three pages' tab and edge records for five 70 wide tabs;
+/// a borrowed module's room title gets no width.
+fn retab(m: &mut Mem, s4: u32, borrowed: bool) {
     let mut saved = Vec::new();
+    if borrowed {
+        for rec in title_records(m, s4) {
+            set_x(m, rec, (0, 0), &mut saved);
+        }
+    }
     for (page, table) in TABLE.iter().enumerate() {
         let t = s4 + table;
         let (tabs, labels, edge) = layout(page);
@@ -612,10 +643,22 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
         let chao = crate::chao_player::player_chao();
         eprintln!("kinder-chart: Tab (Chao World {in_world}, Chao {chao:x?}, {:?})", STATE.get());
     }
+    if !in_world {
+        WAITING.set(0);
+    }
     match STATE.get() {
-        State::Closed if press && in_world => {
-            if let Some(chao) = crate::chao_player::player_chao() {
-                STATE.set(open(c, m, chao));
+        // A Tab the heap refused is kept for a while: the chart opens when
+        // the memory is there; Tab again gives it up.
+        State::Closed if in_world && (press || WAITING.get() > 0) => {
+            let waited = WAITING.replace(0);
+            if !(press && waited > 0) {
+                if let Some(chao) = crate::chao_player::player_chao() {
+                    if heap_ok(c, m, press) {
+                        STATE.set(open(c, m, chao));
+                    } else {
+                        WAITING.set(next_wait(press, waited));
+                    }
+                }
             }
         }
         State::Open { work, .. } if press => {
@@ -684,13 +727,30 @@ fn name_codes(name: &[u8]) -> [u8; 7] {
 /// the free heap is logged at every open.
 use crate::chao_player::REMOTE_CHAO_BYTES as HEAP_NEEDED;
 
-fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
+/// Frames a refused Tab still waits for memory (ten seconds).
+const WAIT: u32 = 600;
+static WAITING: Global<u32> = global!(0);
+
+/// The frames left to wait after a refusal: a press starts the wait.
+fn next_wait(press: bool, waited: u32) -> u32 {
+    if press { WAIT } else { waited - 1 }
+}
+
+/// Whether the game heap has room for the portrait Chao (seen in a build
+/// run: 56 KB free right after arriving in the lobby, 126 KB and more a few
+/// seconds later; ten opens with the check, no crash).
+fn heap_ok(c: &Cpu, m: &Mem, log: bool) -> bool {
     let free = crate::chao_player::os_heap_free(m, m.r32(c.r[13].wrapping_sub(0x71B4)));
-    eprintln!("kinder-chart: {} KB free in the game heap", free / 1024);
-    if free < HEAP_NEEDED {
-        eprintln!("kinder-chart: not opened, the portrait Chao needs {} KB", HEAP_NEEDED / 1024);
-        return State::Closed;
+    if log {
+        eprintln!("kinder-chart: {} KB free in the game heap", free / 1024);
+        if free < HEAP_NEEDED {
+            eprintln!("kinder-chart: waiting, the portrait Chao needs {} KB", HEAP_NEEDED / 1024);
+        }
     }
+    free >= HEAP_NEEDED
+}
+
+fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
     let borrowed = !linked(m, KINDER);
     if borrowed && !borrow(c, m) {
         return State::Closed;
@@ -743,7 +803,7 @@ fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
     m.w32(task + 0x1C, DISPLAY);
     call(c, m, s1 + OPEN, &[work]);
     PAGE.set(0);
-    retab(m, s4);
+    retab(m, s4, borrowed);
     eprintln!(
         "kinder-chart: open (module {})",
         if borrowed { "borrowed" } else { "the area's" }
@@ -879,6 +939,31 @@ mod tests {
         assert_eq!(row_at(300.0, 371.0), None, "below the list");
         assert_eq!(row_at(270.0, 300.0), None, "left of the box");
         assert_eq!(row_at(610.0, 300.0), None, "right of the box");
+    }
+
+    #[test]
+    fn a_borrowed_charts_room_title_is_found() {
+        // The module's own rows for room 0 (its relocations): one record each.
+        let mut m = Mem::default();
+        let s4 = BASE + 0x1_4000;
+        for (table, first) in [(0x298, 0xF8), (0x2F8, 0x1C8)] {
+            for (run, rec) in [(0, first), (8, first + 0x10)] {
+                m.w32(s4 + table + run, s4 + rec);
+                m.w32(s4 + table + run + 4, 1);
+            }
+        }
+        assert_eq!(title_records(&m, s4), [0xE8, 0xF8, 0x108, 0x1C8, 0x1D8].map(|o| s4 + o));
+        // Not linked (a pointer outside the module): only the icon.
+        m.w32(s4 + 0x298, 0x1234);
+        m.w32(s4 + 0x2A0, 0xBF86_0EBF);
+        assert_eq!(title_records(&m, s4), [0xE8, 0x1C8, 0x1D8].map(|o| s4 + o));
+    }
+
+    #[test]
+    fn a_refused_tab_waits_ten_seconds() {
+        assert_eq!(next_wait(true, 0), WAIT);
+        assert_eq!(next_wait(false, WAIT), WAIT - 1);
+        assert_eq!(next_wait(false, 1), 0, "then it is given up");
     }
 
     #[test]
