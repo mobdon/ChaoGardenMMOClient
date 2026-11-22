@@ -24,11 +24,11 @@ export function mountOverlay(nextSocket) {
   const STATS = ['swim', 'fly', 'run', 'power', 'stamina', 'luck', 'intelligence'];
   for (const name of STATS) stats.append(createStatRow(name));
   const care = el('div'), breedingRoot = el('div'); breedingRoot.hidden = true;
-  const breedButton = el('button', 'Breeding'), tinyButton = el('button', 'Tiny Garden');
-  for (const b of [breedButton, tinyButton]) { b.tabIndex = -1; b.replaceChildren(nativeText(b.textContent, 'native-stat-name')); }
+  const breedButton = el('button', 'Breeding');
+  for (const b of [breedButton]) { b.tabIndex = -1; b.replaceChildren(nativeText(b.textContent, 'native-stat-name')); }
   // The hub's native stat-row styles are scoped to #character-panel (sonic.css); without it each row's frame spreads over the panel.
   const statBox = el('div'); statBox.id = 'character-panel'; statBox.append(stats);
-  panel.append(title, statBox, care, el('div'), breedButton, tinyButton, breedingRoot);
+  panel.append(title, statBox, care, el('div'), breedButton, breedingRoot);
   document.body.append(panel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
@@ -48,14 +48,6 @@ export function mountOverlay(nextSocket) {
   if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
   addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
-  // Tiny Garden rides along on the same card (inventory rule): opened inside the panel, not a new tab.
-  let tiny = null;
-  tinyButton.addEventListener('click', () => {
-    if (tiny) { tiny.remove(); tiny = null; return; }
-    tiny = Object.assign(document.createElement('iframe'), { src: '/tiny.html', title: 'Tiny Garden' });
-    tiny.style.cssText = 'position:static;display:block;width:100%;height:420px;border:0;margin-top:8px';
-    panel.append(tiny);
-  });
   mounted.api = {
     snapshot(next) {
       const player = next.players.find(p => p.id === next.selfId);
