@@ -1439,6 +1439,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if let Step::Live(chao) = STEP.get() {
         RIDER.set(data1);
         pin(m, chao, data1);
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
+            eprintln!("chao-player: type {:#x} analysed {} yaw rider {:#x} chao {:#x}", m.r8(INFO + 0x80), m.r8(INFO + 0x438), m.r32(data1 + 0x0C), m.r32(m.r32(chao + 0x34) + 0x0C));
+        }
         // ChaoMain AL_DisableNade (.text 0x5A3C, = CCL_Disable(task, 2)):
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
