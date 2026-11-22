@@ -7,15 +7,16 @@
 type M3 = [[f32; 3]; 3];
 
 /// (Chao node, rider node, weight, cap in degrees), shadow-skate.js 40-47, 165-170.
-pub const MAP: [(usize, usize, f32, f32); 8] = [
+/// shortcut: the feet (6 <- 23, 13 <- 13) are left on their native motion: the
+/// overlay's foot turn swung the boots off the drawn feet; add them back once
+/// the heel frames are checked against the hub.
+pub const MAP: [(usize, usize, f32, f32); 6] = [
     (1, 4, 1.0, 24.0),   // body
     (14, 44, 1.0, 180.0), // head: fully Shadow's while skating (no native bounce)
     (3, 37, 1.0, 75.0),  // left upper arm
     (4, 40, 1.0, 75.0),  // left hand
     (10, 56, 1.0, 75.0), // right upper arm
     (11, 59, 1.0, 75.0), // right hand
-    (6, 23, 1.0, 50.0),  // left foot <- left heel
-    (13, 13, 1.0, 50.0), // right foot <- right heel
 ];
 
 const A: M3 = [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]];
