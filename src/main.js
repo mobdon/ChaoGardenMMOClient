@@ -171,11 +171,29 @@ async function showCard(line, token) {
   } catch { /* No server reachable: the slot shows no card line. */ }
 }
 
+let autoCardBusy = false;
+async function autoCard() {
+  // One at a time, and not again within a minute (a reload while the first is underway).
+  const KEY = 'chao-garden-auto-card';
+  if (autoCardBusy || Date.now() - Number(localStorage.getItem(KEY) || 0) < 60_000) return;
+  autoCardBusy = true;
+  try {
+    localStorage.setItem(KEY, String(Date.now()));
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Chao' }) });
+    const data = await response.json();
+    if (response.ok && data.token) { localStorage.setItem(`chao-garden-hatch-${data.player.id}`, '1'); saveSlots.record(data.token, data.player, undefined, data.card); showTitle(); }
+  } catch { /* the login's own buttons still work */ } finally { autoCardBusy = false; }
+}
+
 function showTitle() {
   const container = $('#save-slots');
   container.replaceChildren();
   let slots = [];
   try { slots = saveSlots.list(); } catch { /* Storage may be unavailable in private browser settings. */ }
+  // Every browser has a card: on a first visit (no saved Chao here) one is
+  // made for it, with its new Chao still an egg to hatch in the lobby. A
+  // memory card code can still swap in an existing card.
+  if (!slots.length) void autoCard();
   const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
@@ -444,7 +462,12 @@ async function join(name, token = sessionToken, card = null, owner = false, slot
     player = data.player;
     rememberChao();
     // The game's own Chao Lobby is the hub now (mob 2026-11-21); ?oldhub keeps this page as a reference.
-    if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign(token || card || owner ? '/sa2/?stage=90&autostart' : '/sa2/?stage=90&hatch=1&autostart'); return; }
+    if (!new URLSearchParams(location.search).has('oldhub')) {
+      // An auto-made card's Chao is still an egg: its first entry hatches it.
+      const hatchKey = `chao-garden-hatch-${player.id}`, hatch = !(token || card || owner) || localStorage.getItem(hatchKey) === '1';
+      localStorage.removeItem(hatchKey);
+      window.location.assign(hatch ? '/sa2/?stage=90&hatch=1&autostart' : '/sa2/?stage=90&autostart'); return;
+    }
     welcome.close();
     connect(sessionToken);
     updatePaused();
