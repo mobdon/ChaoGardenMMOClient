@@ -39,6 +39,7 @@
   /* sign in */
   #login { max-width: 23rem; margin: 12vh auto 0; padding: 1.5rem; display: grid; gap: .9rem; background: var(--surface); border: 1px solid var(--line); border-radius: .75rem; }
   #login label { display: grid; gap: .3rem; color: var(--dim); font-size: .85rem; }
+  #login .keep { display: block; margin: 0; color: var(--dim); font-size: .8rem; }
 
   /* frame */
   #panel { max-width: 82rem; margin: 0 auto; padding: 0 1rem 3rem; }
@@ -108,6 +109,9 @@
   <label>Username or email <input id="who" autocomplete="username" required></label>
   <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
   <label>Your key file <input id="key" type="file" required></label>
+  <label class="keep"><input id="keep" type="checkbox"> Remember this key on this browser</label>
+  <p id="kept" class="keep">Only on a PC you trust: anyone who uses this browser could take the key.
+    <button id="forget" type="button" class="small" hidden>Forget key</button></p>
   <button class="primary">Sign in</button>
   <p id="error" role="alert"></p>
 </form>
@@ -217,11 +221,21 @@ function signOut(why = '') {
   $('panel').hidden = true; $('login').hidden = false; $('error').textContent = why; $('password').value = '';
 }
 $('out').onclick = () => signOut();
+// An opt-in copy of the key stays in this browser only; it goes nowhere but the sign-in request.
+const KEPT = 'panel-key';
+const keptKey = () => { try { return localStorage.getItem(KEPT); } catch { return null; } };
+function showKept() {
+  const kept = !!keptKey();
+  $('key').required = !kept; $('forget').hidden = !kept; $('keep').checked = kept;
+}
+$('forget').onclick = () => { try { localStorage.removeItem(KEPT); } catch {} showKept(); };
+$('keep').onchange = () => { if (!$('keep').checked) $('forget').onclick(); };
+showKept();
 $('login').onsubmit = async (e) => {
   e.preventDefault();
   $('error').textContent = '';
   // The key is 64 hex characters. A file saved from a Windows console can be UTF-16 or carry other text around it.
-  const key = (await $('key').files[0].text()).replace(/\0/g, '').match(/(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/)?.[0];
+  const key = $('key').files[0] ? (await $('key').files[0].text()).replace(/\0/g, '').match(/(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/)?.[0] : keptKey();
   if (!key) { $('error').textContent = 'That file is not a panel key.'; return; }
   const r = await fetch('/api/panel/login', {
     method: 'POST', cache: 'no-store',
@@ -231,6 +245,8 @@ $('login').onsubmit = async (e) => {
   const data = r ? await r.json().catch(() => ({})) : {};
   if (!r?.ok) { $('error').textContent = data.error || 'Could not reach the server.'; return; }
   ({ token, role } = data);
+  try { if ($('keep').checked) localStorage.setItem(KEPT, key); } catch {}
+  showKept();
   $('me').textContent = `${data.username} · ${role}`;
   for (const o of document.querySelectorAll('[data-admin]')) o.hidden = role !== 'admin';
   $('login').hidden = true; $('panel').hidden = false; $('password').value = ''; $('key').value = '';
