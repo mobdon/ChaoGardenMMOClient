@@ -207,7 +207,7 @@ function showTitle() {
       }, () => alert('Could not reach the server.'));
     });
     button.append(icon, meta, remove, arrow);
-    button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
+    button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card, false, slot.id));
     const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
     if (shownCards.has(cardCode)) { container.append(button); continue; }
     shownCards.add(cardCode);
@@ -421,7 +421,7 @@ function connect(token) {
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken, card = null, owner = false) {
+async function join(name, token = sessionToken, card = null, owner = false, slotId = null) {
   if (joining) return;
   joining = true;
   $('#join-button').disabled = true;
@@ -429,8 +429,16 @@ async function join(name, token = sessionToken, card = null, owner = false) {
   $('#join-error').textContent = '';
   try {
     const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}), ...(owner ? { ownerLogin: true } : {}) }) });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
+    let data = await response.json();
+    // A saved slot whose key the server no longer knows (each owner login
+    // issues a new one): on this PC the owner login gets a fresh key, and if
+    // it is the same Chao the slot takes it (rememberChao) and play goes on.
+    if (!response.ok && token && slotId && $('#owner-login')) {
+      const fresh = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ownerLogin: true }) });
+      const next = await fresh.json().catch(() => ({}));
+      if (fresh.ok && next.player?.id === slotId) data = next;
+      else throw new Error(data.error || 'Could not join the garden.');
+    } else if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
     sessionCard = data.card || card;
     player = data.player;
@@ -473,6 +481,9 @@ $('#join-form').addEventListener('submit', (event) => {
 $('#owner-login').addEventListener('click', () => void join('Chao', null, null, true));
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 showTitle();
+// Back from the game because its memory card couldn't be loaded (sa2 page).
+{ const card = new URLSearchParams(location.search).get('card');
+  if (card) $('#join-error').textContent = card === '409' ? 'Your Chao is still open in another game tab. Close it, then pick your Chao again.' : "Your Chao's save could not be loaded. Pick your Chao again to log back in."; }
 
 async function saveAndLeave(destination) {
   if (saving || !player) return;
