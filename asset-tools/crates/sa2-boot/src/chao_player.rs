@@ -1839,7 +1839,7 @@ struct Remote {
 
 /// Remote Chao drawn at once in an area: the nearest ones; the rest stay
 /// cached. SA2_REMOTE_MAX overrides it (for the 8/16/24 measurement).
-const REMOTE_MAX: usize = 8;
+const REMOTE_MAX: usize = 50;
 /// Shown this far behind the newest update, sliding between updates.
 const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
@@ -1927,8 +1927,21 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
             for (o, v) in p.into_iter().enumerate() {
                 m.w32(POS + 4 * o as u32, v.to_bits());
             }
+            // Never let the game run out of heap (each Chao takes about
+            // 72 KB): create only with room to spare, in the remote heap.
+            let Some(heap) = remote_heap(c, m) else { continue };
+            if heap_free(m, heap) < REMOTE_CHAO_BYTES {
+                if !SAID_FULL.replace(true) {
+                    eprintln!("chao-player remote: heap {heap} full ({} KB free), {id} stays cached", heap_free(m, heap) / 1024);
+                }
+                continue;
+            }
+            let cur = c.r[13].wrapping_sub(0x71B4);
+            let old = m.r32(cur);
+            m.w32(cur, heap);
             let t = call(c, m, s1 + 0x3148C, &[info, 0, 0, POS, 0]);
-            eprintln!("chao-player remote: {id} task {t:#x}");
+            m.w32(cur, old);
+            eprintln!("chao-player remote: {id} task {t:#x} (heap {heap}: {} KB free)", heap_free(m, heap) / 1024);
             REMOTE.with_borrow_mut(|r| if let Some(e) = r.get_mut(&id) { e.task = t; e.motion = 0; });
         } else if n >= max && task != 0 {
             call(c, m, s1 + KILL_CHAO, &[task]);
@@ -2027,4 +2040,87 @@ fn import_record(m: &mut Mem, id: u64) {
 
 thread_local! {
     static PENDING_KILL: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+
+/// MMO glue: other players' Chao get an OS heap of their own (OSCreateHeap
+/// 0x800E473C), 32 MB at 0x83000000..0x85000000 in the raised MEM1 (needs
+/// SA2_MEM1_MB >= 80; the browser copies all guest RAM for GX).
+/// The game's malloc/free wrappers (0x8011989C / 0x801198C4) use the heap
+/// index at r13 -0x71B4: it is switched to this heap around their creation,
+/// and OSFreeToHeap is routed here for any block inside it (the game frees a
+/// Chao's memory later, from its own task cleanup).
+const REMOTE_HEAP_START: u32 = 0x8300_0000;
+const REMOTE_HEAP_END: u32 = 0x8500_0000;
+/// One Chao task's heap use, measured (remote tasks 0x11CC0 apart), rounded up.
+const REMOTE_CHAO_BYTES: u32 = 0x1_4000;
+const OS_CREATE_HEAP: u32 = 0x800E_473C;
+const OS_FREE_TO_HEAP: u32 = 0x800E_4650;
+
+thread_local! {
+    static REMOTE_HEAP_ID: Cell<Option<u32>> = const { Cell::new(None) };
+    static SAID_FULL: Cell<bool> = const { Cell::new(false) };
+}
+
+fn remote_heap(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
+    if let Some(h) = REMOTE_HEAP_ID.get() {
+        return Some(h);
+    }
+    if (rt::mem1() | 0x8000_0000) < REMOTE_HEAP_END {
+        if !SAID_FULL.replace(true) {
+            eprintln!("chao-player remote: no heap, MEM1 ends below {REMOTE_HEAP_END:#x} (SA2_MEM1_MB >= 80); remote Chao stay cached");
+        }
+        return None;
+    }
+    raise_chao_limit(m);
+    let h = call(c, m, OS_CREATE_HEAP, &[REMOTE_HEAP_START, REMOTE_HEAP_END]) as i32;
+    eprintln!("chao-player remote: heap {h} at {REMOTE_HEAP_START:#x}..{REMOTE_HEAP_END:#x} ({} KB, about {} Chao)",
+        (REMOTE_HEAP_END - REMOTE_HEAP_START) / 1024, (REMOTE_HEAP_END - REMOTE_HEAP_START) / REMOTE_CHAO_BYTES);
+    if h < 0 {
+        return None;
+    }
+    REMOTE_HEAP_ID.set(Some(h as u32));
+    c.rt.set_override(OS_FREE_TO_HEAP, free_to_heap);
+    Some(h as u32)
+}
+
+fn free_to_heap(c: &mut Cpu, m: &mut Mem) {
+    if let Some(h) = REMOTE_HEAP_ID.get() {
+        if (REMOTE_HEAP_START..REMOTE_HEAP_END).contains(&c.r[4]) {
+            c.r[3] = h;
+        }
+    }
+    original(c, m, OS_FREE_TO_HEAP);
+}
+
+/// Free bytes in OS heap `h` (HeapArray 0x803ADC68: size, free list, used list).
+fn heap_free(m: &Mem, h: u32) -> u32 {
+    let d = m.r32(0x803A_DC68) + 12 * h;
+    let (mut free, mut cell) = (0u32, m.r32(d + 4));
+    for _ in 0..100_000 {
+        if !(0x8000_0000..0x8C00_0000).contains(&cell) {
+            break;
+        }
+        free += m.r32(cell + 8);
+        cell = m.r32(cell + 4);
+    }
+    free
+}
+
+
+/// ChaoMain's per-category limit of its world list (nbMaxEntry, the u32
+/// array at .data sec4 +0x81E0 that ALW_Entry2 0x2984C searches up to;
+/// each category has 64 slots of 0x48 in CommuID's 0x1200 block). Category
+/// 0's limit is raised to all 64 slots for other players' Chao.
+/// unverified: category 0 is the Chao's (read as 0x20 = 32 in the disc data).
+const NB_MAX_ENTRY: u32 = 0x81E0;
+const WORLD_SLOTS: u32 = 64;
+
+fn raise_chao_limit(m: &mut Mem) {
+    let a = rt::sec(m, 60, 4) + NB_MAX_ENTRY;
+    let old = m.r32(a);
+    if old < WORLD_SLOTS {
+        m.w32(a, WORLD_SLOTS);
+        eprintln!("chao-player remote: world list limit {old} -> {WORLD_SLOTS}");
+    }
 }
