@@ -1648,7 +1648,50 @@ fn self_drive(m: &Mem) -> bool {
     chao_world(m) && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_CHAO_SELF").is_ok_and(|v| v.trim() == "1")
 }
 
+/// SA2_CHAO_PMOVE=1 (with SA2_CHAO_SELF=1): the character's own exec moves
+/// the Chao instead of chao_drive.
+fn player_move_on() -> bool {
+    std::env::var("SA2_CHAO_PMOVE").is_ok_and(|v| v.trim() == "1")
+}
+
+/// The character's exec (Sonic/Shadow/Metal 0x80083E44: action state in twp
+/// +0x00, then e.g. 0x80048490, 0x8004C734, 0x80046DE4 speed (pwp +0x64 +=
+/// acc +0x58), 0x80045880, 0x8003E668 per state) run on the Chao's body: for
+/// the call the task's twp (+0x34) is the Chao's, with the character's
+/// collision work (twp +0x2C) so its land and object collision apply.
+/// The Chao's own MOVE_WORK step and AL_DetectCollision stand down: both
+/// skip while MOVE_WORK flag 0x10 is set (MOV_Control 0x8002F448, ChaoMain
+/// .text 0x3600). The character's display never runs.
+/// shortcut: the Chao twp's first word (mode, smode, id, btimer) carries the
+/// character's action state while this runs; unverified that no Chao code
+/// reads it for the player's Chao (its AI is off).
+fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
+    let (cw, mw, own) = (m.r32(chao + 0x34), m.r32(chao + 0x38), m.r32(task + 0x34));
+    if cw == 0 || own == 0 {
+        return;
+    }
+    if PMOVE_CHAO.replace(chao) != chao {
+        m.w32(cw, m.r32(own));
+        eprintln!("chao-drive: player move on the Chao's body (twp {cw:#x}, character twp {own:#x}, state {})", m.r8(own));
+    }
+    if mw != 0 {
+        m.w16(mw + 0x40, m.r16(mw + 0x40) | 0x10);
+    }
+    let chao_cwp = m.r32(cw + 0x2C);
+    m.w32(task + 0x34, cw);
+    m.w32(cw + 0x2C, m.r32(own + 0x2C));
+    c.r[3] = task;
+    original(c, m, addr);
+    m.w32(task + 0x34, own);
+    m.w32(cw + 0x2C, chao_cwp);
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+        let f = |a: u32| f32::from_bits(m.r32(a));
+        eprintln!("chao-drive: pmove state {} pos ({:.1},{:.1},{:.1}) yaw {:#x} flag {:#x}", m.r8(cw), f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C), m.r32(cw + 0x0C), m.r16(cw + 4));
+    }
+}
+
 thread_local! {
+    static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
     static SELF_LOGGED: Cell<bool> = const { Cell::new(false) };
@@ -1660,8 +1703,11 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if SELF_LOGGED.replace(me) != me {
         eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
     }
+    let pmove = me && player_move_on();
     if !me {
         original(c, m, addr);
+    } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
+        player_move(c, m, addr, task, chao);
     }
     // A new stage or Chao World area drops the Chao task:
     // create the player's Chao again.
@@ -1706,7 +1752,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // task-work pointer is its own, so camera and objects follow it.
         data1 = m.r32(chao + 0x34);
         if data1 != 0 {
-            crate::chao_drive::drive(c, m, chao, rt::sec(m, 60, 1));
+            if !pmove {
+                crate::chao_drive::drive(c, m, chao, rt::sec(m, 60, 1));
+            }
             if !std::env::var("SA2_CHAO_PTWP").is_ok_and(|v| v == "0") {
                 m.w32(PLAYERTWP, data1);
             }
