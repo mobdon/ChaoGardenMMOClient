@@ -311,7 +311,7 @@ thread_local! {
 }
 
 /// The game's own ball draw, scaled to the Chao's size (BOARD_SCALE, the
-/// Sonic -> Chao size mob set for the board) and centred on the Chao.
+/// Sonic -> Chao size used for the board) and centred on the Chao.
 fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32, b: [f32; 3]) {
     let Step::Live(chao) = STEP.get() else { return };
     let cwk = m.r32(chao + 0x34);
@@ -377,7 +377,7 @@ const MODELS: u32 = 0x801E_6688;
 /// left/right pair; drawn 3x on the Chao feet they show as his air shoes,
 /// lvl9 sbv3). The left is his own left boot (no mirror).
 const SHOES: [(usize, usize, u32); 2] = [(13, 14, 161), (6, 24, 163)];
-/// mob's fit (client docs/MIRRORED-GEAR-FIT.md): boot length 0.90 of the Chao foot.
+/// The client's fit (docs/MIRRORED-GEAR-FIT.md): boot length 0.90 of the Chao foot.
 const SHOE_LENGTH_RATIO: f32 = 0.90;
 
 /// Shadow's boots on the Chao's feet (nodes 13/6, which follow the rider's
@@ -1441,7 +1441,7 @@ thread_local! {
     static SHADOW_MOVES: Cell<bool> = const { Cell::new(false) };
 }
 
-/// mob 2026-11-22: off the board in Sonic's levels the owner's Chao moves
+/// Off the board in Sonic's levels the owner's Chao moves
 /// like Shadow (physics stays Metal's row). Every state whose Shadow row plays
 /// a different motion number takes Shadow's row (motion, blend, speed; Sonic's
 /// model field kept), from Shadow's own motion file loaded once.
