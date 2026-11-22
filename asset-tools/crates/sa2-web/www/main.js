@@ -278,9 +278,11 @@ chat.id = 'chat';
 chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-input" maxlength="200" placeholder="Room chat (/w for world)" aria-label="Chat message" hidden>';
 document.body.append(chat);
 const chatLog = chat.firstChild, chatInput = chat.lastChild;
-function chatLine({ channel, fromName, text }) {
+function chatLine({ channel, fromId, fromName, text }) {
   const line = document.createElement('div');
   line.className = channel;
+  if (fromId) line.title = `Click to mute ${fromName}`;
+  if (fromId) line.onclick = () => { room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId })); chatLine({ channel: 'system', fromName: 'Muted', text: fromName }); };
   line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
   chatLog.append(line);
   while (chatLog.childElementCount > 50) chatLog.firstChild.remove();
@@ -310,6 +312,9 @@ chatInput.addEventListener('blur', () => (chatInput.hidden = true));
 // 8 kHz 16-bit mono in 60 ms frames keeps each message under the server's 2 KB cap.
 const VOICE_RATE = 8000, VOICE_FRAME = 480;
 let voiceCtx = null, voiceMic = null, talking = false;
+// MMO settings the game's own options menu sets (saved on the server by that menu).
+// voiceMode: 'hold' (hold V to talk) or 'open' (open mic).
+const mmoSettings = (globalThis.mmoSettings ??= { voiceMode: 'hold' });
 const voiceAt = new Map(); // sender id -> next play time, so frames queue back to back
 async function voiceStart() {
   voiceCtx ??= new AudioContext();
@@ -320,8 +325,10 @@ async function voiceStart() {
   const step = voiceCtx.sampleRate / VOICE_RATE;
   let pending = [], phase = 0;
   proc.onaudioprocess = ({ inputBuffer }) => {
-    if (!talking || room?.ws.readyState !== 1) { pending = []; return; }
     const input = inputBuffer.getChannelData(0);
+    // Open mic sends only while the player speaks (level gate), not room hiss.
+    const speaking = talking || (mmoSettings.voiceMode === 'open' && Math.hypot(...input) / Math.sqrt(input.length) > 0.02);
+    if (!speaking || room?.ws.readyState !== 1) { pending = []; return; }
     for (; phase < input.length; phase += step) pending.push(Math.max(-1, Math.min(1, input[phase | 0])) * 32767);
     phase -= input.length;
     while (pending.length >= VOICE_FRAME) {
@@ -334,8 +341,10 @@ async function voiceStart() {
   proc.connect(voiceCtx.createGain()).connect(voiceCtx.destination); // gain 1 on silence: keeps the processor running
   voiceMic = { stream, proc };
 }
-function voicePlay({ fromId, volume, data }) {
-  if (!voiceCtx) return; // browsers allow audio only after the first key or click
+function voicePlay({ fromId, fromName, volume, data }) {
+  if (!voiceCtx) return; // the server never sends voice from players you muted
+  // A new voice nearby gets one clickable line, so it can be muted like chat.
+  if (!voiceAt.has(fromId)) chatLine({ channel: 'system', fromId, fromName, text: 'is talking nearby (click to mute)' }); // browsers allow audio only after the first key or click
   const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
   const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
   const buf = voiceCtx.createBuffer(1, pcm.length, VOICE_RATE);
@@ -356,4 +365,6 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => { if (e.code === 'KeyV') talking = false; });
 addEventListener('blur', () => (talking = false));
-for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => (voiceCtx ??= new AudioContext()), { once: true });
+for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => { voiceCtx ??= new AudioContext(); if (mmoSettings.voiceMode === 'open') voiceStart().catch(() => {}); }, { once: true });
+// The options menu calls this after switching voiceMode to 'open' (needs the mic now).
+globalThis.mmoVoiceStart = () => voiceStart();
