@@ -1191,9 +1191,11 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     // SA2_SHOE_SCALE=k (debug): k times the hub fit, to see it in a check.
     // shortcut: 1.4x by eye on the self-driven Chao with the character's own
     // rest foot as the mount (lobby close-ups: 1.0 sits inside the foot, 1.6
-    // swallows it); rider mode used 1.7 with the hub mount. The computed fit
+    // swallows it); rider mode used 1.7 with the hub mount. The hub's shoe
+    // file: 1.6 by eye (test copy run r83: at 1.0 it sat inside the foot,
+    // at 1.6 it covers the foot as in the hub). The computed fit
     // alone sits inside the foot: find the measuring difference.
-    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(if hub { 1.0 } else { 1.4 });
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(if hub { 1.6 } else { 1.4 });
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
         eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
     }
