@@ -1839,8 +1839,18 @@ fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     let save = call(c, m, s1 + 0xDFA0, &[]).wrapping_add(0xA64);
     let slots = call(c, m, s1 + 0xCC98, &[]).min(64);
     let Some(own) = (0..slots).map(|i| save + i * 0x800).find(|&p| m.r8(p + 0x80) >= 2) else {
-        eprintln!("chao-player: no hatched Chao on the card ({slots} slots); back to the login");
-        return Step::Failed;
+        // shortcut: live cards hold no game save yet; until the server profile's
+        // Chao is mapped in (open question), the profile's Dark Chaos type is used.
+        // SA2_CARD_CHAO_ONLY=1: no save Chao -> back to the login.
+        if std::env::var("SA2_CARD_CHAO_ONLY").is_ok_and(|v| v == "1") {
+            eprintln!("chao-player: no hatched Chao on the card ({slots} slots); back to the login");
+            return Step::Failed;
+        }
+        eprintln!("chao-player: no save Chao on the card ({slots} slots); profile Dark Chaos type");
+        m.w8(INFO + 0x80, 0x16);
+        m.w8(INFO + 0x438, 1);
+        m.w8(INFO + 0x84, 0xFF);
+        return create_from_info(c, m, pos);
     };
     for o in (0..0x800).step_by(4) {
         m.w32(INFO + o, m.r32(own + o));
