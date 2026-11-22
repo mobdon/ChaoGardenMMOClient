@@ -2715,8 +2715,15 @@ const REMOTE_FAR_EVERY: u64 = 5;
 const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
 const REMOTE_GONE: std::time::Duration = std::time::Duration::from_secs(1);
-/// ChaoMain KillChao (.text 0x31450).
+/// ChaoMain KillChao (.text 0x31450): AL_ClearChaoParam on the record at
+/// chaowk +0x5C (0x4DC bytes zeroed), then FreeTask.
 pub(crate) const KILL_CHAO: u32 = 0x31450;
+/// main.dol FreeTask. Other players' Chao leave with this alone: their record
+/// at chaowk +0x5C is chao_cache's shared copy, and KillChao zeroed it, so a
+/// Chao re-made from it after a record update was all zeros (giant blobs on
+/// screen, then a task with a garbage display pointer: "no function at
+/// 0x10000004", lr 0x800713BC).
+const FREE_TASK: u32 = 0x8007_1AE0;
 
 fn export_pose(m: &Mem) {
     let Ok(path) = std::env::var("SA2_POSE_OUT") else { return };
@@ -2789,13 +2796,13 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
     }
     let s1 = rt::sec(m, 60, 1);
     for t in PENDING_KILL.with_borrow_mut(std::mem::take) {
-        call(c, m, s1 + KILL_CHAO, &[t]);
+        call(c, m, FREE_TASK, &[t]);
     }
     // Offline: the task leaves at once; the cache keeps the record for its grace.
     let gone: Vec<(u64, u32)> = REMOTE.with_borrow(|r| r.iter().filter(|(_, e)| now.duration_since(e.last_seen) > REMOTE_GONE).map(|(&id, e)| (id, e.task)).collect());
     for (id, task) in gone {
         if task != 0 {
-            call(c, m, s1 + KILL_CHAO, &[task]);
+            call(c, m, FREE_TASK, &[task]);
         }
         crate::chao_cache::set_online(id, false);
         REMOTE.with_borrow_mut(|r| r.remove(&id));
@@ -2833,7 +2840,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
             eprintln!("chao-player remote: {id} task {t:#x} (heap {heap}: {} KB free)", heap_free(m, heap) / 1024);
             REMOTE.with_borrow_mut(|r| if let Some(e) = r.get_mut(&id) { e.task = t; e.motion = 0; });
         } else if n >= max && task != 0 {
-            call(c, m, s1 + KILL_CHAO, &[task]);
+            call(c, m, FREE_TASK, &[task]);
             REMOTE.with_borrow_mut(|r| if let Some(e) = r.get_mut(&id) { e.task = 0; });
         }
     }
