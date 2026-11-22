@@ -79,7 +79,8 @@ pub(crate) fn node(cur: [[f32; 4]; 3]) {
 /// A Chao's display ended: its spot joins this frame's.
 pub(crate) fn finish() {
     let Some(d) = CUR.take() else { return };
-    if SAID.with_borrow_mut(|s| s.insert(d.label.clone())) {
+    // Once per label without a spot, and once with its first spot.
+    if SAID.with_borrow_mut(|s| s.insert(format!("{} {}", d.label, d.top.is_some()))) {
         eprintln!("name-tags: {} drew {} nodes, spot {:?}", d.label, d.nodes, d.top);
     }
     if let Some((x, y)) = d.top {

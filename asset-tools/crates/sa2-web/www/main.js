@@ -342,6 +342,15 @@ function tagEl(label) {
 function drawTags() {
   if (!tagLayer) {
     tagLayer = Object.assign(document.createElement('div'), { id: 'tags' });
+    // The styles travel with this script, so a page that only takes main.js still places the tags.
+    // The plate is the old hub's (src/scene.js label): admin is gold on red.
+    const css = document.createElement('style');
+    css.textContent = `#tags { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.tag { position: absolute; left: 0; top: 0; margin-top: -.3rem; display: flex; align-items: center; gap: .3rem; padding: .15rem .7rem; border-radius: 1rem; background: rgba(18,42,42,.84); color: #e8f7ef; font: 600 13px system-ui, sans-serif; white-space: nowrap; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+.tag[hidden] { display: none; }
+.tag.admin { background: rgba(117,27,35,.96); color: #ffdc72; }
+.tag img { width: 16px; height: 16px; image-rendering: pixelated; }`;
+    document.head.append(css);
     document.body.append(tagLayer);
   }
   const h = mmoHead(MMO.TAGS), seq = Atomics.load(h, 0);
