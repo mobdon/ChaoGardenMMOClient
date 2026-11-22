@@ -2516,11 +2516,12 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let mdl = load_models(c, m, SHADOW_MDL_NAME);
             SHADOW_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
             // Every TERIOSMDL model by slot with its node and vertex counts (to find his shoe models).
-            let all: Vec<String> = LAST_LOAD.with_borrow(|l| l.iter().map(|(&k, &o)| {
+            // (The character's own file is already in the game's table: list that too.)
+            let all: Vec<String> = (0..0x428u32).filter_map(|k| { let o = shadow_obj(m, k); (0x8000_0000..0x8C00_0000).contains(&o).then_some((k, o)) }).map(|(k, o)| {
                 let r = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]);
                 format!("{k}:{}n/{}v", r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>())
-            }).collect());
-            eprintln!("chao-player: TERIOSMDL slots {}", all.join(" "));
+            }).collect();
+            eprintln!("chao-player: model slots {}", all.join(" "));
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
             if tex == 0 {
