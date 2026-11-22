@@ -367,7 +367,37 @@ fn click(c: &mut Cpu, m: &mut Mem, work: u32) {
     }
 }
 
+/// A name as the Chao's record holds it (7 bytes at +0x12, 0 ends):
+/// ChaoMain 1D58C shows code 0x5F as a space and a code below it as the
+/// ASCII character 0x20 above.
+/// shortcut: ASCII only (other characters are left out); the game's table
+/// has more, add them when names need them.
+fn name_codes(name: &[u8]) -> [u8; 7] {
+    let mut out = [0; 7];
+    let codes = name.iter().take_while(|&&b| b != 0).filter_map(|&b| match b {
+        b' ' => Some(0x5F),
+        0x21..=0x7E => Some(b - 0x20),
+        _ => None,
+    });
+    for (o, code) in out.iter_mut().zip(codes) {
+        *o = code;
+    }
+    out
+}
+
+/// The chart's portrait is a whole Chao out of the game heap.
+/// Unverified: a build run crashed inside the portrait's creation once in
+/// two opens; too little heap is the cause that fits, not a proven one, so
+/// the free heap is logged at every open.
+use crate::chao_player::REMOTE_CHAO_BYTES as HEAP_NEEDED;
+
 fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
+    let free = crate::chao_player::os_heap_free(m, m.r32(c.r[13].wrapping_sub(0x71B4)));
+    eprintln!("kinder-chart: {} KB free in the game heap", free / 1024);
+    if free < HEAP_NEEDED {
+        eprintln!("kinder-chart: not opened, the portrait Chao needs {} KB", HEAP_NEEDED / 1024);
+        return State::Closed;
+    }
     let borrowed = !linked(m, KINDER);
     if borrowed && !borrow(c, m) {
         return State::Closed;
@@ -387,6 +417,10 @@ fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
         return State::Closed;
     }
     m.w32(work + 8, chao);
+    // The server's name for the Chao (the page's SA2_NAME_IN), into its record.
+    if let Some(name) = std::env::var("SA2_NAME_IN").ok().and_then(|p| std::fs::read(p).ok()).filter(|n| n.first().is_some_and(|&b| b != 0)) {
+        m.load(m.r32(m.r32(chao + 0x34) + 0x5C) + 0x12, &name_codes(&name));
+    }
     let info = call(c, m, c1 + CHAO_INFO, &[chao]);
     m.w32(work + 0xC, info);
     let msg = call(c, m, c1 + MSG_LOAD, &[s4 + MSG_NAME]);
@@ -516,6 +550,13 @@ fn linked(m: &Mem, id: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_becomes_the_records_codes() {
+        assert_eq!(name_codes(b"Tester\0"), [0x34, 0x45, 0x53, 0x54, 0x45, 0x52, 0]);
+        assert_eq!(name_codes(b"A b\0zz"), [0x21, 0x5F, 0x42, 0, 0, 0, 0]);
+        assert_eq!(name_codes(b"LongerName"), [0x2C, 0x4F, 0x4E, 0x47, 0x45, 0x52, 0x2E]);
+    }
 
     #[test]
     fn tab_opens_once_per_press() {
