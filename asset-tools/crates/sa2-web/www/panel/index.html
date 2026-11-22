@@ -111,6 +111,7 @@
   <header>
     <h1>Staff panel</h1>
     <div id="status"></div>
+    <button id="invisible" class="small" aria-pressed="false" title="Hide your own Chao from other players">Invisible</button>
     <span id="me" class="dim"></span>
     <button id="out" class="small">Sign out</button>
   </header>
@@ -173,7 +174,7 @@ async function call(path, body) {
   return data;
 }
 function signOut(why = '') {
-  token = null; clearInterval(timer); listening = false;
+  token = null; clearInterval(timer); listening = false; following = null;
   $('panel').hidden = true; $('login').hidden = false; $('error').textContent = why; $('password').value = '';
 }
 $('out').onclick = () => signOut();
@@ -206,6 +207,20 @@ async function act(player, kind) {
   try { await call('/api/panel/sanction', { playerId: player.id, kind, minutes }); await refresh(); }
   catch (e) { $('note').textContent = e.message; }
 }
+// Teleport and follow move the staff member's own Chao in their own game; a follow repeats the call.
+let following = null;
+async function goTo(playerId, again) {
+  if (!again) $('note').textContent = '';
+  try { await call('/api/panel/goto', { playerId, following: again }); }
+  catch (e) { following = null; $('note').textContent = e.message; draw(); }
+}
+setInterval(() => { if (token && following) goTo(following, true); }, 2000);
+$('invisible').onclick = async () => {
+  const on = $('invisible').getAttribute('aria-pressed') !== 'true';
+  $('note').textContent = '';
+  try { await call('/api/panel/invisible', { on }); $('invisible').setAttribute('aria-pressed', on); refresh(); }
+  catch (e) { $('note').textContent = e.message; }
+};
 function pick(room) {
   picked = picked === room ? null : room;
   if (listening) $('listen').click(); // a listen is for one room: stop when the room changes
@@ -248,6 +263,12 @@ function draw() {
     for (const [label, kind, cls] of [['Mute chat', 'chat', ''], ['Mute voice', 'voice', ''], ['Kick', 'kick', 'bad'], ['Ban', 'ban', 'bad']]) {
       const b = el('button', label, `small ${cls}`); b.onclick = () => act(p, kind); actions.append(b);
     }
+    const go = el('button', 'Go to', 'small'); go.onclick = () => goTo(p.id, false);
+    const tail = el('button', following === p.id ? 'Stop following' : 'Follow', 'small');
+    tail.setAttribute('aria-pressed', following === p.id);
+    tail.onclick = () => { following = following === p.id ? null : p.id; if (following) goTo(p.id, false); draw(); };
+    actions.prepend(go, tail);
+    if (p.invisible) who.append(el('span', 'invisible', 'tag staff'));
     row.append(who, actions);
     return row;
   }));
