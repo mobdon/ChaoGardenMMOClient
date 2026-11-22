@@ -79,6 +79,8 @@ const PARAM_SIZE: u32 = 0x800;
 /// game's own cocoon (`ALBHV_Mayu` 0x3AE44) for a child (type 2) Chao.
 /// ChaoMain never creates TYPE_OMOCHAO itself, so Omochao can't be used here.
 const GUIDE: usize = 1;
+/// CHAO_PARAM_GC `type` (+0x80) of a child Chao (al_chao_info.h TYPE_CHILD).
+const CHILD: u8 = 2;
 /// ChaoMain 0x1531C loads the full-growth value with `lis r3` of section 5
 /// + 0x2A50 and `lfs f1, 0x48(r3)` (recompiled p2.rs).
 const FULL_GROWTH: (u32, u32) = (0x2A50, 0x48);
@@ -396,7 +398,9 @@ fn restore_cocoon(m: &mut Mem) {
 /// Chao's growth goes to full, and ChaoMain's own check evolves it.
 fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
     let guide = RESIDENT_TWP.get()[GUIDE];
-    if guide == 0 {
+    // Nothing starts until the egg has hatched: the slot's type is 1 for the
+    // egg (seen in a run's log) and 2 for the child the cocoon check wants.
+    if guide == 0 || m.r8(TUTORIAL_SLOT.get() + 0x80) != CHILD {
         return;
     }
     // The player is the hidden character or, as its own Chao, that Chao: the nearer one counts.
@@ -424,7 +428,15 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
         return;
     }
     if let Some(words) = GUIDE_LINES.get(line) {
+        // shortcut: the window call crashed a run (bad address inside ChaoMain) and is untraced,
+        // so the lines only show with SA2_TUTORIAL_TEXT=1; make it the default once the call is proven.
+        if !std::env::var("SA2_TUTORIAL_TEXT").is_ok_and(|v| v.trim() == "1") {
+            eprintln!("tutorial: line {line} skipped (SA2_TUTORIAL_TEXT is off)");
+            LINE.set((line + 1, LINE_FRAMES));
+            return;
+        }
         let buf = guest_call(c, m, ALLOC, &[1, words.len() as u32 + 1]);
+        eprintln!("tutorial: line {line} buffer {buf:#x}, calling the window");
         if buf != 0 {
             for (i, b) in words.bytes().chain([0]).enumerate() {
                 m.w8(buf + i as u32, b);
