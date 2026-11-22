@@ -310,7 +310,7 @@ fn text(c: &mut Cpu, m: &mut Mem, s: &str, flags: u32, x: f32, y: f32, size: f32
 }
 
 /// The flags D2A4 gives the portrait Chao (chaowk + 0xA0).
-fn portrait_flags(f: u32) -> u32 {
+pub(crate) fn portrait_flags(f: u32) -> u32 {
     (f & !(0x8 | 0x2 | 0x10 | 0x2_0000)) | 0x2000
 }
 
