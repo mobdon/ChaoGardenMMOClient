@@ -39,6 +39,7 @@ export function mountOverlay(nextSocket) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
     slots.record(data.token, data.player, undefined, card);
+    window.sa2HatchEgg?.(); // the game lays the egg at the player's feet in the lobby
   } });
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
   const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
