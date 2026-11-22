@@ -1164,7 +1164,7 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
 }
 
 fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    if matches!(STEP.get(), Step::Live(_)) {
+    if matches!(STEP.get(), Step::Live(_)) && (m.r16(STAGE_NUM) as i16) < 90 {
         // The rider's own display, walked for his node matrices, drawing nothing.
         LCAP.set(true);
         original(c, m, addr);
@@ -1174,9 +1174,18 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
     original(c, m, addr);
 }
 
+/// The stage number (i16 at 0x803AD820); 90 and up are Chao World, where the
+/// game loads ChaoMain itself: the player Chao (its own ChaoMain copy at
+/// BASE) would collide with it (web lobby: "no function at 0x812012d0",
+/// lr inside BASE).
+const STAGE_NUM: u32 = 0x803A_D820;
+
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let task = c.r[3];
     original(c, m, addr);
+    if m.r16(STAGE_NUM) as i16 >= 90 {
+        return;
+    }
     let data1 = m.r32(task + 0x34);
     if data1 == 0 {
         return;
