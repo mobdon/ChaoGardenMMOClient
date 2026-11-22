@@ -474,7 +474,14 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         let s = SHOE_LENGTH_RATIO * len / boot * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         let _ = (node, &posed, ry, cpos);
         let Some(fv) = FEET.with_borrow(|f| f[n]) else { continue };
-        let wpos = [fv[0][3], fv[1][3], fv[2][3]];
+        // Native rig: the boot centred on the Chao foot mesh's centre (its
+        // vertices' mean under the foot node), not on the node origin.
+        let wpos = if chao_world(m) {
+            let fc = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| { let v = &r.verts[node]; v.iter().fold([0.0f32; 3], |a, p| [a[0] + p[0], a[1] + p[1], a[2] + p[2]]).map(|x| x / v.len().max(1) as f32) })).unwrap_or([0.0; 3]);
+            std::array::from_fn(|i| fv[i][3] + (0..3).map(|k| fv[i][k] * fc[k]).sum::<f32>())
+        } else {
+            [fv[0][3], fv[1][3], fv[2][3]]
+        };
         // The rider's foot rotation under this view; the Chao foot's view position.
         // Native rig (Chao World): the Chao foot node's own rotation, unit-scaled.
         let fw = if chao_world(m) {
