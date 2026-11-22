@@ -61,7 +61,7 @@ export function mountOverlay(nextSocket) {
   // layout at x264,y40) are the background, its L/R tabs (top 16 px) flip Stats / Inventory / Breeding.
   const body = el('div'); body.style.cssText = 'position:absolute;left:16px;right:16px;top:72px;bottom:16px;overflow:auto';
   const tab = (left, width, step) => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${left}px;width:${width}px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(page + step)); return t; };
-  const pages = [['a', [record]], ['b', [care]], ['c', [breedingRoot]]];
+  const pages = [['a', [record]], ['b', [care]]];
   let page = 0;
   function show(n) {
     page = (n + pages.length) % pages.length;
@@ -75,6 +75,11 @@ export function mountOverlay(nextSocket) {
   panel.append(record, tab(0, 96, -1), tab(192, 96, 1), body);
   show(0);
   document.body.append(panel);
+  // Breeding has its own screen (B), apart from the Tab chart.
+  const breedPanel = el('section', undefined, 'garden-care-panel'); breedPanel.hidden = true;
+  breedPanel.style.cssText = 'position:fixed;top:auto;right:16px;left:auto;bottom:72px';
+  breedPanel.append(nativeText('Breeding', 'native-stat-name'), breedingRoot);
+  document.body.append(breedPanel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
     const token = localStorage.getItem(SESSION_KEY), card = slots.list().find(s => s.token === token)?.card;
@@ -91,7 +96,10 @@ export function mountOverlay(nextSocket) {
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
   const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
   if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
-  addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
+  addEventListener('keydown', event => {
+    if (event.key === 'Tab') { event.preventDefault(); toggle(); }
+    if (event.code === 'KeyB' && !event.target.closest?.('input,textarea')) breedPanel.hidden = !breedPanel.hidden;
+  }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
   mounted.api = {
     snapshot(next) {
