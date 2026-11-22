@@ -565,7 +565,11 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         // vertices still run, filling the weights).
         let body = RIDER_OBJ.get();
         let w = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
-        if let Some(&(hr, ht)) = w.get(23) {
+        // SA2_BOOT_PARTS (debug): bit 1 his heel/toe, bit 2 the overlay.
+        // Default the overlay alone: his heel/toe still draws as a
+        // screen-sized mesh this way (runs r61-r65), unresolved.
+        let parts = std::env::var("SA2_BOOT_PARTS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
+        if let (true, Some(&(hr, ht))) = (parts & 1 != 0, w.get(23)) {
             let w23: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { hr[i][j] } else { ht[i] }));
             let id: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| f32::from(u8::from(i == j))));
             let at = mul34(&place, &inv_mul(&w23, &id));
@@ -579,7 +583,7 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
             call(c, m, 0x8011_DF44, &[body]);
             for &(model, pl) in &plists { m.w32(model + 4, pl); }
         }
-        if (0x8000_0000..0x8C00_0000).contains(&overlay) {
+        if parts & 2 != 0 && (0x8000_0000..0x8C00_0000).contains(&overlay) {
             put(m);
             call(c, m, 0x8011_DF44, &[overlay]);
         }
