@@ -81,7 +81,11 @@ fn setup(c: &mut Cpu, m: &mut Mem) {
 }
 
 /// Pipe bytes of the frame being built.
-static QUEUED: Global<Vec<u8>> = global!(Vec::new());
+/// Per thread (the game thread both writes the pipe and ends the frame): a
+/// lock per pipe write was ~9% of the game thread in a browser profile.
+thread_local! {
+    static QUEUED: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 fn pipe_write(_a: u32, size: u32, v: u32) {
     let b = v.to_be_bytes();
@@ -112,10 +116,18 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
         // FULL_EVERY frames and with SA2_GX_FULLSCAN. A page a frame newly
         // needs arrives one frame late.
         let frame = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-        let used = if frame % FULL_EVERY == 0 || std::env::var_os("SA2_GX_FULLSCAN").is_some() { None } else { used_pages() };
+        let used = if frame == 0 || std::env::var_os("SA2_GX_FULLSCAN").is_some() { None } else { used_pages() };
+        // The safety net, spread out: each frame also compares the next
+        // 1/FULL_EVERY of RAM, so all of it is covered once every FULL_EVERY
+        // frames without one long frame (a whole-RAM compare at 192 MB was a
+        // once-a-second hitch).
+        let total = m.ram.len().div_ceil(PAGE);
+        let slice = total.div_ceil(FULL_EVERY as usize).max(1);
+        let sweep = (frame as usize % FULL_EVERY as usize) * slice;
+        let sweep = sweep..(sweep + slice).min(total);
         let mut pages = Vec::new();
         for (i, (now, was)) in m.ram.chunks(PAGE).zip(shadow.chunks_mut(PAGE)).enumerate() {
-            if used.as_ref().is_some_and(|u| u.get(i >> 5).is_none_or(|w| w & (1 << (i & 31)) == 0)) {
+            if !sweep.contains(&i) && used.as_ref().is_some_and(|u| u.get(i >> 5).is_none_or(|w| w & (1 << (i & 31)) == 0)) {
                 continue;
             }
             if now != was {
