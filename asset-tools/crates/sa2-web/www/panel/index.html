@@ -55,10 +55,8 @@
 
   /* room map */
   #map { display: grid; gap: .6rem; grid-template-columns: repeat(6, minmax(0, 1fr));
-    grid-template-areas: "garden garden hero hero dark dark" "kinder kinder hub hub entrance entrance" "menus menus menus menus menus menus" "stadium stadium race race karate karate"; }
-  #map .menus { grid-area: menus; margin-top: .4rem; font-size: .85rem; color: var(--dim); }
-  .room.menu { min-height: 4rem; background: none; border-style: dashed; }
-  @media (max-width: 34rem) { #map { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; } #map .room { grid-area: auto !important; } #map .menus { grid-area: auto; grid-column: 1 / -1; order: 1; } #map .menu { order: 2; } }
+    grid-template-areas: "garden garden hero hero dark dark" "kinder kinder hub hub entrance entrance"; }
+  @media (max-width: 34rem) { #map { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; } #map .room { grid-area: auto !important; } }
   .room { display: grid; grid-template-rows: auto 1fr auto; gap: .35rem; min-height: 6.5rem; padding: .7rem .8rem; text-align: left; background: var(--raised); border-radius: .6rem; }
   .room[data-room="hub"] { min-height: 8.5rem; }
   .room .name { font-size: .85rem; color: var(--dim); }
@@ -195,7 +193,7 @@ let token = null, role = null, timer = 0;
 const ROOMS = { garden: ['Chao Garden', 'garden'], hero: ['Hero Garden', 'hero'], dark: ['Dark Garden', 'dark'],
   kindergarten: ['Kindergarten', 'kinder'], hub: ['Chao Lobby', 'hub'], stadium: ['Stadium', 'stadium'],
   'race-entrance': ['Race Entrance', 'entrance'], 'chao-race': ['Chao Race', 'race'], 'chao-karate': ['Chao Karate', 'karate'] };
-// Menu screens and events: players are there but are not walking around a room.
+// Menu screens and events are not rooms: no tile on the map. Players there still show under Everyone online.
 const MENUS = ['stadium', 'chao-race', 'chao-karate'];
 // The server's main stats (server MAIN_STATS).
 const MAIN_STATS = ['swim', 'fly', 'run', 'power', 'stamina'];
@@ -323,15 +321,13 @@ function pick(room) {
 function draw() {
   const { players, lines, board, reports } = last;
   // Map: one tile per room, made once and updated in place so focus and hover survive a refresh.
-  const rooms = [...new Set([...Object.keys(ROOMS), ...players.map((p) => p.room)])];
-  if (!$('map').querySelector('.menus')) $('map').append(el('span', 'In a menu or event, not walking around', 'menus'));
+  const rooms = [...new Set([...Object.keys(ROOMS), ...players.map((p) => p.room)])].filter((r) => !MENUS.includes(r));
   for (const room of rooms) {
     let tile = $('map').querySelector(`[data-room="${CSS.escape(room)}"]`);
     if (!tile) {
       tile = el('button', null, 'room'); tile.type = 'button'; tile.dataset.room = room;
       if (ROOMS[room]) tile.style.gridArea = ROOMS[room][1]; else tile.style.gridColumn = 'span 2';
       tile.append(el('span', roomName(room), 'name'), el('span', '0', 'count'), el('span', null, 'dots'));
-      if (MENUS.includes(room)) tile.classList.add('menu');
       tile.onclick = () => pick(room);
       $('map').append(tile);
     }
