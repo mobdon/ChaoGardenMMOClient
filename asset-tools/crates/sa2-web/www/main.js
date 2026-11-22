@@ -362,7 +362,9 @@ function mmoTick(token) {
     pickSeen = pseq;
     // The Chao picked in the Chao Transporter becomes the phone's: its picture
     // sheet (src/tiny-sheet.js) goes to the server, which keeps one per card.
-    const picked = cardIds.get(new TextDecoder().decode(mmoBytes.slice(MMO.PICK + 8, MMO.PICK + 8 + pick[1])));
+    const id = new TextDecoder().decode(mmoBytes.slice(MMO.PICK + 8, MMO.PICK + 8 + pick[1]));
+    // Id 0: the signed-in Chao, listed by the game itself when this page listed none.
+    const picked = cardIds.get(id) ?? (id === '0' ? cardSelf : undefined);
     if (picked) import('/src/tiny-sheet.js').then((m) => m.renderTinySheet(picked)).then((sheet) => {
       console.log('tiny-transporter: picked', picked.id, sheet ? `sheet ${sheet.size} bytes` : 'no sheet');
       return sheet && fetch(`/api/tiny-chao?chao=${encodeURIComponent(picked.id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' }, body: sheet });

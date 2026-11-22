@@ -26,7 +26,8 @@
 //! 1, the Move screen's right-hand box. Its Chao are the memory card's server
 //! Chao (SA2_CARD_CHAO: their ids, a line each, in the card's order; the page
 //! writes their records to SA2_RECORD_IN), not the garden's: a garden Chao
-//! has no login. The pick goes to SA2_TINY_PICK_OUT as that Chao's id. The
+//! has no login. When the page lists none, the signed-in Chao is listed from
+//! the game's own record, as id 0. The pick goes to SA2_TINY_PICK_OUT as that Chao's id. The
 //! stats window shows the Chao under the cursor: its update (.text 0) makes
 //! its Chao from ChaoMain 0xE684 (the Chao in the player's arms) whenever it
 //! has none, so that answers with the cursor's record while the screen is up.
@@ -130,6 +131,10 @@ static TEXT: Global<u32> = global!(0);
 /// The Drop off screen is being made: its sockets are left out.
 static NO_SOCKETS: Global<bool> = global!(false);
 static WAITED: Global<u32> = global!(0);
+/// The signed-in Chao's place in the list when the page listed no Chao: its
+/// record is the game's own (the server hands a record out only for a Chao
+/// that is online in the caller's room, so the page often has none).
+const SELF: u64 = 0;
 /// The card's Chao in the picker, in slot order.
 static CARD: Global<Vec<u64>> = global!(Vec::new());
 /// The record the stats window shows (0 = none), and where ChaoMain's HELD
@@ -364,9 +369,12 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
             }
             m.w32(picker, MOVE_MODE);
             m.w32(picker + 0x28, 4); // the cursor starts on side 1's first Chao
-            let card = card_chao(m);
+            let mut card = card_chao(m);
+            if card.is_empty() && crate::chao_player::own_record(m).is_some() {
+                card.push(SELF);
+            }
             for i in 0..24 {
-                let info = card.get(i as usize).and_then(|&id| crate::chao_cache::info_addr(id));
+                let info = card.get(i as usize).and_then(|&id| if id == SELF { crate::chao_player::own_record(m) } else { crate::chao_cache::info_addr(id) });
                 m.w32(cm_bss + SIDE_1 + i * 4, info.unwrap_or(0));
             }
             c.f[1].ps0 = m.rf32(cm_ro + PANEL_X);
@@ -377,13 +385,13 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
             HELD_AT.set(cm_text + HELD);
             let first = m.r32(cm_bss + SIDE_1);
             show(c, m, first);
-            eprintln!("tiny-transporter: picker made with {} card Chao", card.len());
+            eprintln!("tiny-transporter: picker made with {} card Chao (the signed-in one from the game: {})", card.len(), card == [SELF]);
             CARD.set(card);
         }
         PHASE_INPUT => {
             let state = if picker == 0 { CANCELLED } else { m.r32(cm_bss + PICKER_STATE) };
             // Their records stay cached while they are on show.
-            CARD.with_borrow(|c| c.iter().for_each(|&id| crate::chao_cache::set_online(id, true)));
+            CARD.with_borrow(|c| c.iter().filter(|&&id| id != SELF).for_each(|&id| crate::chao_cache::set_online(id, true)));
             if picker != 0 {
                 let (column, row) = one_side(m.r32(picker + 0x28), m.r32(picker + 0x2C));
                 m.w32(picker + 0x28, column);
