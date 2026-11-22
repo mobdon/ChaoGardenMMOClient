@@ -9,6 +9,8 @@
 //! L/R change the page, B or Start goes back. Values come from the page
 //! (`/dev/pad` bytes 12-15, [`set_page_settings`]); a change goes back to it on
 //! `/dev/extras`, and the page saves it on the MMO server.
+//! In a level (three rows already: CONTINUE, RESTART, EXIT) the same window
+//! scrolls through four rows, EXTRAS between RESTART and EXIT.
 //! EXIT goes back to the lobby instead of leaving Chao World (see [`exit_stays_in_chao_world`]).
 //! Addresses: GSNE8P main.dol, traced in fn_8001E12C / fn_8001B404 /
 //! fn_8001F368 (see the pause trace notes).
@@ -54,6 +56,12 @@ const RUMBLE_OFF: u32 = GAME + 0x14;
 const PAUSE_PLAYER: u32 = GAME + 0x17;
 /// Per-controller state pointers (fn_8001F368 0x8001FD08): +0x10 buttons pressed.
 const PADS: u32 = 0x801E_55D8;
+/// Per-player buttons pressed this frame, as fn_8001E12C reads them to move
+/// the cursor (0x8001E218 up, 0x8001E2B0 down); held ones 0x10 further on.
+const PRESSED: u32 = 0x801E_5398;
+const HELD: u32 = PRESSED + 0x10;
+const UP: u32 = 0x10;
+const DOWN: u32 = 0x20;
 
 /// Small-data globals (r13-relative), from the traced functions.
 const STAGE: u32 = 0x7AA0; // i16 stage number; 0x5A is Chao World
@@ -66,6 +74,11 @@ const CHAO_WORLD: u16 = 0x5A;
 const PAUSED: u16 = 0x11;
 /// Text ids of the three pause rows (fn_8001E12C).
 const ROW_TEXT: [u32; 3] = [2, 3, 4];
+/// The row messages the stage start made (fn_80021828): CONTINUE, RESTART, EXIT.
+const ROW_MESSAGES: [u32; 3] = [0x7A80, 0x7A7C, 0x7A78];
+const REPEAT: u32 = 0x7A74; // i16 cursor hold counter; the cursor moves at 0
+/// A level's four rows: CONTINUE, RESTART, EXTRAS, EXIT.
+const LEVEL_EXTRAS: u8 = 2;
 
 /// GC pad bits (the page's controller 1).
 const PAD_LEFT: u16 = 0x0001;
@@ -119,6 +132,8 @@ static HAVE: Global<bool> = global!(false);
 static APPLIED: Global<Option<[u8; 9]>> = global!(None);
 /// Extras page open (Some(page)) in the pause window.
 static PAGE: Global<Option<usize>> = global!(None);
+/// A level's pause: the first of its four rows the window shows (0 or 1).
+static TOP: Global<u8> = global!(0);
 /// Controller 1 buttons and stick x last frame, for presses.
 static INPUT: Global<(u16, i8)> = global!((0, 0));
 static LAST_INPUT: Global<(u16, i8)> = global!((0, 0));
@@ -209,8 +224,43 @@ fn row_draw(c: &mut Cpu, m: &mut Mem) {
         if let Some(message) = text.and_then(|text| message(c, m, &text)) {
             c.r[5] = message;
         }
+    } else if in_level(c, m) {
+        let slot = ROW_TEXT.iter().position(|&t| t == c.r[3]);
+        let message = match (PAGE.get(), slot) {
+            (_, None) => None,
+            (Some(_), _) => row_text(PAGE.get(), c.r[3], &VALUES.get())
+                .and_then(|text| message(c, m, text.as_bytes())),
+            (None, Some(slot)) => match TOP.get() + slot as u8 {
+                LEVEL_EXTRAS => message(c, m, EXTRAS.as_bytes()),
+                row => {
+                    let game_row = usize::from(row - u8::from(row > LEVEL_EXTRAS));
+                    Some(m.r32(sda(c, ROW_MESSAGES[game_row])))
+                }
+            },
+        };
+        if let Some(message) = message {
+            c.r[5] = message;
+        }
     }
     original(c, m, ROW_DRAW);
+}
+
+/// A level's pause with all three of the game's rows (layout mode 3).
+fn in_level(c: &Cpu, m: &Mem) -> bool {
+    !in_chao_world(c, m) && m.r16(sda(c, STATE)) == PAUSED && m.r8(sda(c, MODE)) == 3
+}
+
+/// One cursor step through a level's four rows in the three-row window:
+/// the new first row, and whether the step only scrolls (the cursor stays).
+/// Past either end the game's own wrap moves the cursor and the window follows.
+fn level_step(top: u8, cursor: u8, down: bool) -> (u8, bool) {
+    match (top, cursor, down) {
+        (0, 2, true) => (1, true),
+        (1, 0, false) => (0, true),
+        (1, 2, true) => (0, false),
+        (0, 0, false) => (1, false),
+        _ => (top, false),
+    }
 }
 
 /// The loaded pause text (r13-0x786C, offsets at +4*id, as fn_80021828 reads
@@ -265,15 +315,19 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
     let pressed = now & !before;
     let left = pressed & PAD_LEFT != 0 || (stick < -64 && stick_before >= -64);
     let right = pressed & PAD_RIGHT != 0 || (stick > 64 && stick_before <= 64);
-    let paused = in_chao_world(c, m) && m.r16(sda(c, STATE)) == PAUSED;
+    let level = in_level(c, m);
+    let paused = level || (in_chao_world(c, m) && m.r16(sda(c, STATE)) == PAUSED);
     if !paused {
         PAGE.set(None);
+        TOP.set(0);
         original(c, m, PAUSE_EXEC);
         return;
     }
     if let Some(page) = PAGE.get() {
         if pressed & (PAD_B | PAD_START) != 0 {
             PAGE.set(None);
+            // Back on EXTRAS: the middle row (a level's window scrolled down).
+            TOP.set(1);
             m.w8(sda(c, CURSOR), 1);
             guest_call(c, m, MENU_SE, &[SE_MOVE, 0, 0, 0]);
         } else if pressed & (PAD_L | PAD_R) != 0 {
@@ -304,9 +358,30 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
     let player = u32::from(m.r8(PAUSE_PLAYER).clamp(1, 2)) - 1;
     let pad = m.r32(PADS + 4 * player);
     let mask = m.r32(sda(c, CONFIRM_MASK));
+    let cursor = m.r8(sda(c, CURSOR));
+    if level {
+        // The cursor moves as fn_8001E12C will move it (0x8001E1B4..0x8001E1FC).
+        let pressed = PRESSED + 4 * player;
+        let held = m.r32(HELD + 4 * player) & 0xF0 != 0;
+        let repeat = m.r16(sda(c, REPEAT)) as i16;
+        let moves = !held || !(1..0xF0).contains(&repeat);
+        let (up, down) = (m.r32(pressed) & UP != 0, m.r32(pressed) & DOWN != 0);
+        if moves && (up || down) {
+            // Up wins, as in the game's own order.
+            let (top, scrolls) = level_step(TOP.get(), cursor, !up);
+            TOP.set(top);
+            if scrolls {
+                m.w32(pressed, m.r32(pressed) & !(UP | DOWN));
+                guest_call(c, m, MENU_SE, &[SE_MOVE, 0, 0, 0]);
+            }
+        }
+    }
+    let extras_row = if level { LEVEL_EXTRAS - TOP.get() } else { 1 };
     if pad != 0 && m.r32(pad + 0x10) & mask != 0 {
-        let cursor = m.r8(sda(c, CURSOR));
-        if cursor == 1 {
+        if level && TOP.get() == 1 && cursor == 0 {
+            // RESTART scrolled to the top row: the game's own row 1.
+            m.w8(sda(c, CURSOR), 1);
+        } else if cursor == extras_row {
             // Used up here, so the game's restart never sees it.
             m.w32(pad + 0x10, m.r32(pad + 0x10) & !mask);
             guest_call(c, m, MENU_SE, &[SE_CONFIRM, 0, 0, 0]);
@@ -406,6 +481,31 @@ mod tests {
         );
         assert!(!exit_stays_in_chao_world(Some(4)), "race: the game's own");
         assert!(!exit_stays_in_chao_world(None), "not started in Chao World");
+    }
+
+    #[test]
+    fn a_levels_four_rows_scroll_through_the_window() {
+        // Down from CONTINUE to EXIT and round: (top, cursor) after each step.
+        let (mut top, mut cursor) = (0u8, 0u8);
+        let mut seen = vec![];
+        for _ in 0..4 {
+            let (t, scrolls) = level_step(top, cursor, true);
+            top = t;
+            if !scrolls {
+                cursor = (cursor + 1) % 3;
+            }
+            seen.push(top + cursor);
+        }
+        assert_eq!(seen, [1, 2, 3, 0], "RESTART, EXTRAS, EXIT, CONTINUE");
+        for _ in 0..4 {
+            let (t, scrolls) = level_step(top, cursor, false);
+            top = t;
+            if !scrolls {
+                cursor = (cursor + 2) % 3;
+            }
+            seen.push(top + cursor);
+        }
+        assert_eq!(seen[4..], [3, 2, 1, 0], "and back up");
     }
 
     #[test]
