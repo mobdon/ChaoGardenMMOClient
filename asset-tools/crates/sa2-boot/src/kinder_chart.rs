@@ -50,7 +50,8 @@
 //! draw D4C4(_, cp1252 string, flags, f1 x, f2 y, f3 width, f4 size) at the
 //! spots C50C gives the pink page's (title 444,84 size 20 flags 5; headers
 //! x 288, y 110 / 276 / 370 size 16; body y 390 size 20). The page feeds it
-//! (SA2_BREED_IN: the player's Chao's name, a message, then a line
+//! (SA2_BREED_IN: the player's Chao's name, a message, the player's Heart
+//! Fruit count (empty: not known), then a line
 //! "id<tab>name" for each of the player's other Chao); a click on a name
 //! picks it, a second click sends its id to the page (SA2_BREED_OUT), which
 //! asks the server. The rules stay the server's.
@@ -221,6 +222,8 @@ static PARTNER: Global<Option<(String, u32, [u32; 2])>> = global!(None);
 struct Breed {
     me: String,
     message: String,
+    /// The player's Heart Fruit count as the page gives it.
+    hearts: String,
     /// id, name
     chao: Vec<(String, String)>,
     picked: String,
@@ -228,6 +231,7 @@ struct Breed {
 static BREED: Global<Breed> = global!(Breed {
     me: String::new(),
     message: String::new(),
+    hearts: String::new(),
     chao: Vec::new(),
     picked: String::new(),
 });
@@ -236,14 +240,14 @@ static BREED: Global<Breed> = global!(Breed {
 fn breed_feed(text: &str) -> Breed {
     let mut lines = text.lines();
     let mut next = || lines.next().unwrap_or("").trim().to_string();
-    let (me, message) = (next(), next());
+    let (me, message, hearts) = (next(), next(), next());
     let chao = lines
         .filter_map(|l| l.split_once('\t'))
         .map(|(id, name)| (id.trim().to_string(), name.trim().to_string()))
         .filter(|(id, _)| !id.is_empty())
         .take(LIST_X.len() * LIST_ROWS)
         .collect();
-    Breed { me, message, chao, picked: String::new() }
+    Breed { me, message, hearts, chao, picked: String::new() }
 }
 
 /// The list entry at a game screen position.
@@ -389,9 +393,9 @@ fn scene(c: &mut Cpu, m: &mut Mem, work: u32) {
 /// The breeding page's strings.
 fn breed_text(c: &mut Cpu, m: &mut Mem) {
     // Taken out while the game draws: a guest call may switch game threads.
-    let (me, message, names, picked) = BREED.with_borrow(|b| {
+    let (me, message, hearts, names, picked) = BREED.with_borrow(|b| {
         let picked = b.chao.iter().position(|(id, _)| *id == b.picked);
-        (b.me.clone(), b.message.clone(), b.chao.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>(), picked)
+        (b.me.clone(), b.message.clone(), b.hearts.clone(), b.chao.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>(), picked)
     });
     text(c, m, "Breeding", 5, 444.0, 84.0, 20.0);
     let pair = match picked {
@@ -400,6 +404,9 @@ fn breed_text(c: &mut Cpu, m: &mut Mem) {
     };
     text(c, m, &pair, 0, 288.0, 110.0, 16.0);
     text(c, m, "Your Chao", 0, 288.0, 276.0, 16.0);
+    if !hearts.is_empty() {
+        text(c, m, &format!("Heart Fruit x{hearts}"), 0, LIST_X[1], 276.0, 16.0);
+    }
     for (i, name) in names.iter().enumerate() {
         let mark = if picked == Some(i) { ">" } else { " " };
         let y = LIST_Y + LIST_PITCH * (i % LIST_ROWS) as f32;
@@ -847,12 +854,12 @@ mod tests {
 
     #[test]
     fn the_breeding_feed_is_name_message_then_chao() {
-        let b = breed_feed("Tester\nNot now.\n12\tMika\n\tnoid\nbad line\n34\tTails2\n");
-        assert_eq!((b.me.as_str(), b.message.as_str()), ("Tester", "Not now."));
+        let b = breed_feed("Tester\nNot now.\n3\n12\tMika\n\tnoid\nbad line\n34\tTails2\n");
+        assert_eq!((b.me.as_str(), b.message.as_str(), b.hearts.as_str()), ("Tester", "Not now.", "3"));
         assert_eq!(b.chao, [("12".to_string(), "Mika".to_string()), ("34".to_string(), "Tails2".to_string())]);
         assert_eq!(breed_feed("").chao.len(), 0);
         let many: String = (0..20).map(|i| format!("{i}\tC{i}\n")).collect();
-        assert_eq!(breed_feed(&format!("a\n\n{many}")).chao.len(), 8, "what the list box holds");
+        assert_eq!(breed_feed(&format!("a\n\n\n{many}")).chao.len(), 8, "what the list box holds");
     }
 
     #[test]

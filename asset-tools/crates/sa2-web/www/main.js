@@ -291,22 +291,26 @@ async function cardChao(token) {
   } catch {}
 }
 // The chart's breeding page (sa2-boot kinder_chart.rs) lists the player's
-// other Chao: /mmo/breed-in is the player's Chao's name, a message, then
+// other Chao: /mmo/breed-in is the player's Chao's name, a message, the Heart Fruit count, then
 // "id<tab>name" lines. The game sends the picked one back (/mmo/breed-out) and
 // the server decides; its answer becomes the message.
-// For a partner on the player's own card the server lays the egg at once
+// Line 3 is the player's Heart Fruit count (empty when the server's fruit
+// names aren't known). For a partner on the player's own card the server lays the egg at once
 // (code egg-laid); unverified against a running server.
-const breed = { self: null, revision: 0, message: '', pending: null, seen: 0 };
+const breed = { self: null, revision: 0, message: '', pending: null, seen: 0, hearts: '' };
 const breedCodes = { 'offer-sent': 'Asked. Waiting for an answer.', 'egg-laid': 'An egg was laid!', 'garden-full': 'The garden is full.', 'not-ready': 'Not ready to breed yet.', 'stage-conflict': 'Both Chao must be grown up.', 'nest-full': 'Your nest is full.', 'partner-busy': 'That Chao is busy.', 'partner-nest-full': 'Its nest is full.', 'partner-unavailable': 'That Chao is not here.' };
 function breedFeed() {
   const rows = [...cardIds].filter(([, p]) => p.id !== breed.self?.id).map(([n, p]) => `${n}\t${p.name || 'Chao'}`);
-  const text = new TextEncoder().encode([breed.self?.name || '', breed.message, ...rows].join('\n') + '\n').subarray(0, MMO.BREED_MAX);
+  const text = new TextEncoder().encode([breed.self?.name || '', breed.message, breed.hearts, ...rows].join('\n') + '\n').subarray(0, MMO.BREED_MAX);
   mmoBytes.set(text, MMO.BREED + 8);
   Atomics.store(mmoHead(MMO.BREED), 1, text.length);
 }
 function breedSnapshot(m) {
   breed.self = m.players.find((p) => p.id === m.selfId) || null;
   breed.revision = m.life?.revision ?? breed.revision;
+  // Heart Fruit by the server catalog's own name (no id is assumed here).
+  const heart = (m.care?.catalog?.fruits || []).filter((f) => /heart/i.test(f?.name || '')).map((f) => `fruit:${f.id}`);
+  breed.hearts = heart.length ? String(heart.reduce((n, id) => n + (m.care.inventory?.[id] || 0), 0)) : '';
   breedFeed();
 }
 function breedEvent(m) {
