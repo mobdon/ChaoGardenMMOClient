@@ -673,11 +673,12 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
                 for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
                 m.w32(list, tex);
                 let lcap = LCAP.replace(false);
-                // SA2_SHADOW_FOOT=1 (debug): also Shadow's own foot node of his
-                // body model (nodes 14/24) under the Air Shoes model; off by
-                // default, the feet wear the Air Shoes model alone.
+                // Shadow's own shoe: the foot node of his body model (nodes
+                // 14/24) with its children, under the Air Shoes item model
+                // (the item alone is not his shoe). SA2_SHADOW_FOOT=0 (debug):
+                // the item alone.
                 let foot_obj = node_obj(m, RIDER_OBJ.get(), foot);
-                if foot_obj != 0 && std::env::var("SA2_SHADOW_FOOT").is_ok_and(|v| v == "1") {
+                if foot_obj != 0 && !std::env::var("SA2_SHADOW_FOOT").is_ok_and(|v| v == "0") {
                     let sib = m.r32(foot_obj + 0x30);
                     m.w32(foot_obj + 0x30, 0);
                     // The node's own rest offset is in its object: draw it at the boot's place.
