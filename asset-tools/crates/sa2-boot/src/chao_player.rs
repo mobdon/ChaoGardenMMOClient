@@ -110,6 +110,9 @@ fn behavior(c: &mut Cpu, m: &mut Mem) {
 /// Pin before the Chao's own exec too, so its emotion ball and shadow are
 /// computed at the rider's position this frame.
 fn chao_exec(c: &mut Cpu, m: &mut Mem) {
+    if idle_hidden(m, c.r[3]) {
+        return;
+    }
     remote_pin(m, c.r[3]);
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
@@ -584,6 +587,9 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
+    if idle_hidden(m, c.r[3]) {
+        return;
+    }
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
             pin(m, chao, RIDER.get());
@@ -1427,6 +1433,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         }
         // The game dropped the remote Chao's tasks too.
         REMOTE.with_borrow_mut(|r| r.values_mut().for_each(|e| e.task = 0));
+        GARDEN.set(None);
     }
     let data1 = m.r32(task + 0x34);
     if data1 == 0 {
@@ -1831,6 +1838,19 @@ fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_save_chao_fill_the_garden_to_eight_and_players_take_their_places() {
+        // Alone: the player's Chao and 7 of their own others.
+        assert!((0..7).all(|rank| idle_has_place(rank, 0)));
+        assert!(!idle_has_place(7, 0));
+        // 3 other players: 4 places left.
+        assert!(idle_has_place(3, 3));
+        assert!(!idle_has_place(4, 3));
+        // 7 or more other players: none.
+        assert!(!idle_has_place(0, 7));
+        assert!(!idle_has_place(0, 50));
+    }
     use crate::chao_retarget::ChaoRest;
 
     #[test]
@@ -1977,6 +1997,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
             REMOTE.with_borrow_mut(|r| if let Some(e) = r.get_mut(&id) { e.task = 0; });
         }
     }
+    garden_tick(c, m, s1);
     // A new motion number plays the Chao's own motion.
     let changes: Vec<(u32, u32)> = REMOTE.with_borrow_mut(|r| r.values_mut().filter_map(|e| {
         let mo = e.samples.back()?.3;
@@ -2014,6 +2035,73 @@ fn remote_pin(m: &mut Mem, task: u32) {
     m.w32(cw + 0x0C, a);
 }
 
+
+// ---- The player's own other Chao in a garden (MMO glue). ----
+/// A garden shows at most this many Chao on a player's screen (the game's
+/// own garden limit, AL_SetChaoOnTheGarden's `AL_GetLocalChaoCount < 8`):
+/// the player's Chao, the other players' Chao, then the player's own other
+/// Chao from their save in the places left. Only on this player's screen.
+const GARDEN_MAX: usize = 8;
+/// ChaoMain AL_GetGardenInfo / AL_GetMaxChao (.text), and the save's Chao
+/// slots in the garden info (0x800 bytes each; AL_SetChaoOnTheGarden walks
+/// them and creates the ones whose +0x81 is this garden).
+const AL_GET_GARDEN_INFO: u32 = 0xDFA0;
+const AL_GET_MAX_CHAO: u32 = 0xCC98;
+const GARDEN_SLOTS: u32 = 0xA64;
+
+#[derive(Clone, Copy)]
+struct Garden {
+    slots: u32,
+    count: u32,
+    area: u32,
+    players: usize,
+}
+
+thread_local! {
+    static GARDEN: Cell<Option<Garden>> = const { Cell::new(None) };
+}
+
+/// Whether the own save Chao that is number `rank` (from 0) in its garden
+/// has a place while `players` other players' Chao are shown.
+fn idle_has_place(rank: usize, players: usize) -> bool {
+    1 + players + rank < GARDEN_MAX
+}
+
+/// Every frame in a garden (areas 1..3): where the save's slots are and how
+/// many other players' Chao are shown.
+fn garden_tick(c: &mut Cpu, m: &mut Mem, s1: u32) {
+    let area = call(c, m, s1 + 0x27FA0, &[]);
+    GARDEN.set((1..=3).contains(&area).then(|| Garden {
+        slots: call(c, m, s1 + AL_GET_GARDEN_INFO, &[]) + GARDEN_SLOTS,
+        count: call(c, m, s1 + AL_GET_MAX_CHAO, &[]).min(64),
+        area,
+        players: REMOTE.with_borrow(|r| r.values().filter(|e| e.task != 0).count()),
+    }));
+}
+
+/// True for one of the player's own save Chao in the garden that has no
+/// place right now: it neither runs nor draws until a place frees up. The
+/// task and its save record stay untouched (KillChao would clear the save
+/// record: AL_ClearChaoParam on chaowk +0x5C).
+/// Unverified until a live run: that skipping exec and display hides it
+/// completely (no shadow, no collision).
+fn idle_hidden(m: &Mem, task: u32) -> bool {
+    let Some(g) = GARDEN.get() else { return false };
+    if matches!(STEP.get(), Step::Live(chao) if chao == task) {
+        return false;
+    }
+    let cw = m.r32(task + 0x34);
+    if !(0x8000_0000..0x8C00_0000).contains(&cw) {
+        return false;
+    }
+    let rec = m.r32(cw + 0x5C);
+    let Some(off) = rec.checked_sub(g.slots) else { return false };
+    if off % 0x800 != 0 || off / 0x800 >= g.count {
+        return false;
+    }
+    let here = |i: u32| m.r8(g.slots + i * 0x800 + 0x80) != 0 && u32::from(m.r8(g.slots + i * 0x800 + 0x81)) == g.area;
+    !idle_has_place((0..off / 0x800).filter(|&i| here(i)).count(), g.players)
+}
 
 /// The own Chao's live record (0x800 bytes; the pointer at chaowk +0x5C, as
 /// agreed with the gardens thread: unverified until the log line below
