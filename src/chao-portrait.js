@@ -3,6 +3,7 @@
 // -0x38E (about -5 deg) as CreateChaoExtra places it (ChaoMain 0x55A20). Used for the MMO card
 // icon (small) and the login screen (big).
 import { captureChaoPose, cloneNativeMotion } from './chao-locomotion.js';
+import { applyNativeChaoMaterial } from './chao-materials.js';
 
 // Babylon is left-handed and mirrors the game's X, so the game's -0x38E turn is +0x38E here.
 const TURN = 0x38e / 0x10000 * Math.PI * 2;
@@ -33,11 +34,15 @@ export async function mountChaoPortrait(canvas, player) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     const container = await B.LoadAssetContainerAsync(bytes, scene, { pluginExtension: '.glb' });
     container.extras = glbExtras(bytes);
+    // Drawn as the hub draws a Chao (unlit native textures, masked face); a lit PBR default read as flat with dark eyes.
+    if (key !== 'chao-behaviour') {
+      for (const mat of container.materials) if ('albedoColor' in mat) applyNativeChaoMaterial(key, mat);
+      for (const mesh of container.meshes) mesh.hasVertexAlpha = false;
+    }
     return container;
   };
   const engine = new B.Engine(canvas, true, { alpha: true }), scene = new B.Scene(engine);
   scene.clearColor = new B.Color4(0, 0, 0, 0);
-  new B.HemisphericLight('light', new B.Vector3(0, 1, 0.4), scene);
   const dispose = () => { engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
   const [model, source] = await Promise.all([load(portraitAsset(player)), load('chao-behaviour')]);
   if (!model) { dispose(); return () => {}; }
