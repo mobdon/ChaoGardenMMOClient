@@ -1646,6 +1646,7 @@ fn physics_row(m: &mut Mem) {
         }
         r.clone().unwrap_or_default()
     });
+    let metal = if chao_world(m) { crate::chao_speed::row(m, INFO, &own, &metal) } else { metal };
     for (i, o) in (0..0x84).step_by(4).enumerate() {
         m.w32(obj2 + 0xC0 + o, if board { own[i] } else { metal[i] });
     }
