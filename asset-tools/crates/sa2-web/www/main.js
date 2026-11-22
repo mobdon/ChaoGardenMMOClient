@@ -33,6 +33,9 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064), // the MMO files (worker.js, MMO)
+  // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
+  pages: new SharedArrayBuffer(4 + 65536),
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
 
@@ -157,12 +160,76 @@ function joinRoom(token, zone) {
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
   ws.onmessage = ({ data }) => {
     let m; try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); }
+    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); }
     if (m.type === 'event') overlay?.event(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
 }
+// ---- the other players' Chao (sa2-boot chao_player.rs, worker.js MMO files) --
+// The game's own pose goes to the room each 100 ms; the room's other players
+// with a pose come back as lines "id x y z angle motion frame gear"; Chao
+// records go to and from the server by version. The server routes may not
+// exist yet: failures stay quiet.
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+const mmoBytes = new Uint8Array(sh.mmo);
+globalThis.sa2Mmo = sh.mmo; // for checks from the console
+const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
+// The game keys remote Chao by a number: the first 52 bits of the player id.
+const numId = (id) => String(BigInt('0x' + (String(id).replace(/[^0-9a-f]/gi, '').slice(0, 13) || '0')));
+let poseSeen = 0, recSeen = 0;
+const recVersions = new Map();
+function mmoTick(token) {
+  const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
+  if (seq !== poseSeen && room?.ws.readyState === 1) {
+    poseSeen = seq;
+    try {
+      const text = new TextDecoder().decode(mmoBytes.slice(MMO.POSE_OUT + 8, MMO.POSE_OUT + 8 + pose[1]));
+      room.ws.send(JSON.stringify({ type: 'action', action: 'chao-pose', pose: JSON.parse(text) }));
+    } catch {}
+  }
+  const rec = mmoHead(MMO.REC_OUT), rseq = Atomics.load(rec, 0);
+  if (rseq !== recSeen) {
+    recSeen = rseq;
+    const body = mmoBytes.slice(MMO.REC_OUT + 8, MMO.REC_OUT + 8 + rec[1]);
+    fetch('/api/chao-record', { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' }, body }).catch(() => {});
+  }
+}
+function othersIn(m, token) {
+  const lines = [];
+  for (const p of m.players || []) {
+    if (p.id === m.selfId) continue;
+    const c = p.chaoPose;
+    if (c) lines.push([numId(p.id), c.x, c.y, c.z, c.angle | 0, c.motion | 0, c.frame || 0, c.gear | 0].join(' '));
+    if (p.chaoRecordVersion !== undefined && recVersions.get(p.id) !== p.chaoRecordVersion) {
+      recVersions.set(p.id, p.chaoRecordVersion);
+      fetch(`/api/chao-record/${encodeURIComponent(p.id)}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => b && recordIn(numId(p.id), new Uint8Array(b))).catch(() => {});
+    }
+  }
+  const text = new TextEncoder().encode(lines.join('\n') + (lines.length ? '\n' : ''));
+  const n = Math.min(text.length, MMO.POSE_IN_MAX);
+  mmoBytes.set(text.subarray(0, n), MMO.POSE_IN + 8);
+  Atomics.store(mmoHead(MMO.POSE_IN), 1, n);
+}
+// A remote Chao's record into its slot (by id, else the first free one), with a new version.
+function recordIn(id, bytes) {
+  const v = new DataView(sh.mmo);
+  let slot = -1, free = -1;
+  for (let i = 0; i < MMO.NSLOT; i++) {
+    const k = String(v.getBigUint64(MMO.SLOTS + i * MMO.SLOT, true));
+    if (k === id) slot = i;
+    if (k === '0' && free < 0) free = i;
+  }
+  if (slot < 0) slot = free;
+  if (slot < 0) return;
+  const at = MMO.SLOTS + slot * MMO.SLOT, h = new Int32Array(sh.mmo, at + 8, 2);
+  mmoBytes.set(bytes.subarray(0, MMO.REC), at + 16);
+  h[1] = Math.min(bytes.length, MMO.REC);
+  v.setBigUint64(at, BigInt(id), true);
+  Atomics.add(h, 0, 1);
+}
+
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
   const zone = roomZones[area === 0 ? '' : area];
@@ -238,7 +305,7 @@ async function start() {
     if (ev.data.status) picture = ev.data.status;
     else if (ev.data.log) log(ev.data.log, true);
   };
-  renderer.postMessage({ canvas: off, ctl: sh.ctl, slots: sh.slots, wide, fpsCap }, [off]);
+  renderer.postMessage({ canvas: off, ctl: sh.ctl, slots: sh.slots, pages: sh.pages, wide, fpsCap }, [off]);
   // Steam first: its files win, a picked disc only fills what Steam lacks.
   const e = await (await fetch('env.json')).json();
   delete e.SA2_DISC_FIRST;
@@ -252,9 +319,11 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
+  if (token) setInterval(() => mmoTick(token), 100);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });

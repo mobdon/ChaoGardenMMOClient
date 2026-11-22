@@ -14,9 +14,11 @@ const DISC_BLOCK = 128 << 10;
 const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
-const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14;
-const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA };
-const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_AREA;
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES };
+const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_GXPAGES;
+// /dev/gxpages as read since it was opened: the decoder's page bits (main.js sh.pages).
+const gxPages = { bytes: new Uint8Array(0), pos: 0 };
 
 let mem, sh, tid, args, env, instance;
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -154,10 +156,13 @@ function gxWrite(bytes) {
   let off = 0;
   while (off < bytes.length) {
     if (gx.slot < 0) {
-      if (bytes.length - off < 16) return; // a broken job: drop it
-      const h = new DataView(bytes.buffer, bytes.byteOffset + off, 16);
-      if (h.getUint32(0, true) !== 0x47584a42) return;
-      gx.need = 16 + h.getUint32(8, true) + h.getUint32(12, true);
+      if (bytes.length - off < 20) return; // a broken job: drop it
+      const h = new DataView(bytes.buffer, bytes.byteOffset + off, 20);
+      const magic = h.getUint32(0, true);
+      // GXJB: whole RAM; GXJD: only the changed 4 KiB pages (index + bytes each).
+      if (magic === 0x47584a42) gx.need = 16 + h.getUint32(8, true) + h.getUint32(12, true);
+      else if (magic === 0x47584a44) gx.need = 20 + h.getUint32(8, true) + h.getUint32(16, true) * 4100;
+      else return;
       const c = ctl();
       const s = Atomics.load(c, 5);
       // Wait while the page still has both slots (it is two frames behind).
@@ -250,6 +255,44 @@ function cardSend() {
   return true;
 }
 
+// ---- MMO files (sa2-boot chao_player.rs) ----------------------------------
+// The other players' Chao: the game writes its own pose and record to
+// /mmo/pose-out and /mmo/record-out and reads the others' from /mmo/pose-in
+// and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
+// the page sends and fetches them over the MMO server.
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
+// Bytes of a file the game reads, or null when it doesn't exist.
+function mmoRead(path) {
+  const b = sh.mmo;
+  if (path === 'mmo/pose-in') {
+    const len = Math.min(Atomics.load(mmoI32(MMO.POSE_IN), 1), MMO.POSE_IN_MAX);
+    return { bytes: b.slice(MMO.POSE_IN + 8, MMO.POSE_IN + 8 + len), ver: 0 };
+  }
+  const m = /^mmo\/rec\/(\d+)$/.exec(path);
+  if (!m) return null;
+  const s = mmoSlot(m[1]);
+  if (s < 0) return null;
+  const at = MMO.SLOTS + s * MMO.SLOT, h = new Int32Array(b.buffer, at + 8, 2);
+  return { bytes: b.slice(at + 16, at + 16 + Math.min(h[1], MMO.REC)), ver: Atomics.load(h, 0) };
+}
+function mmoSlot(id) {
+  const v = new DataView(sh.mmo.buffer);
+  for (let i = 0; i < MMO.NSLOT; i++) if (String(v.getBigUint64(MMO.SLOTS + i * MMO.SLOT, true)) === id) return i;
+  return -1;
+}
+// A file the game wrote, on close.
+function mmoWrite(path, bytes) {
+  const out = path === 'mmo/pose-out' ? [MMO.POSE_OUT, MMO.POSE_OUT_MAX] : path === 'mmo/record-out' ? [MMO.REC_OUT, MMO.REC] : null;
+  if (!out) return;
+  const n = Math.min(bytes.length, out[1]);
+  sh.mmo.set(bytes.subarray(0, n), out[0] + 8);
+  const h = mmoI32(out[0]);
+  Atomics.store(h, 1, n);
+  Atomics.add(h, 0, 1);
+}
+const isMmo = (path) => path === 'mmo' || path.startsWith('mmo/');
+
 // ---- WASI ---------------------------------------------------------------
 
 // The (address, length) pairs, with the memory they cover in view.
@@ -289,6 +332,7 @@ function writeStat(ptr, s) {
   d.setUint8(ptr + 16, s.dev ? FT.CHAR : s.dir ? FT.DIR : FT.FILE);
   d.setBigUint64(ptr + 24, 1n, true);
   d.setBigUint64(ptr + 32, BigInt(s.size || 0), true);
+  if (s.ver) d.setBigUint64(ptr + 48, BigInt(s.ver) * 1000000n, true); // mtim: a new record reads as newer
 }
 
 function resolve(dirfd, p, n) {
@@ -368,6 +412,7 @@ const wasi = {
       else if (fd === DEV_AUDIO) audioWrite(bytes);
       else if (fd === DEV_CARD) card.out.push(bytes.slice());
       else if (fd === DEV_AREA) postMessage({ area: bytes[bytes.length - 1] }); // sa2_boot::start_stage
+      else if (fds.get(fd)?.out) fds.get(fd).out.push(bytes.slice());
       else return E.BADF;
       total += len;
     }
@@ -382,6 +427,18 @@ const wasi = {
         if (k <= 0) break;
         u8().set(card.read.subarray(card.pos, card.pos + k), p);
         card.pos += k;
+        total += k;
+      }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
+    if (fd === DEV_GXPAGES) {
+      let total = 0;
+      for (const [p, len] of iovs(iov, n)) {
+        const k = Math.min(len, gxPages.bytes.length - gxPages.pos);
+        if (k <= 0) break;
+        u8().set(gxPages.bytes.subarray(gxPages.pos, gxPages.pos + k), p);
+        gxPages.pos += k;
         total += k;
       }
       dv().setUint32(nr, total, true);
@@ -404,6 +461,18 @@ const wasi = {
     const f = fds.get(fd);
     if (!f) return E.BADF;
     if (f.dir) return E.ISDIR;
+    if (f.mmo) {
+      let total = 0;
+      for (const [p, len] of iovs(iov, n)) {
+        const k = Math.min(len, f.mmo.length - f.pos);
+        if (k <= 0) break;
+        u8().set(f.mmo.subarray(f.pos, f.pos + k), p);
+        f.pos += k;
+        total += k;
+      }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
     let total = 0;
     for (const [p, len] of iovs(iov, n)) {
       let want = Math.min(len, f.size - f.pos), at = p;
@@ -453,6 +522,13 @@ const wasi = {
   },
   fd_close(fd) {
     if (fd === DEV_GX) gx.slot = -1;
+    const f = fds.get(fd);
+    if (f?.out) {
+      const all = new Uint8Array(f.out.reduce((k, b) => k + b.length, 0));
+      let at = 0;
+      for (const b of f.out) all.set(b, at), (at += b.length);
+      mmoWrite(f.path, all);
+    }
     fds.delete(fd);
     return 0;
   },
@@ -480,6 +556,13 @@ const wasi = {
   path_filestat_get(dirfd, _flags, p, n, ptr) {
     const path = resolve(dirfd, p, n);
     if (path === null) return E.BADF;
+    if (isMmo(path)) {
+      if (path === 'mmo' || path === 'mmo/rec') return writeStat(ptr, { dir: true }), 0;
+      const f = mmoRead(path);
+      if (!f) return E.NOENT;
+      writeStat(ptr, { size: f.bytes.length, ver: f.ver });
+      return 0;
+    }
     const s = path === '' ? { dir: true } : stat(path);
     if (!s || s.dir === undefined) return E.NOENT;
     writeStat(ptr, s);
@@ -490,12 +573,26 @@ const wasi = {
     if (path === null) return E.BADF;
     if (DEVICES[path] !== undefined) {
       // The card: opened to write (O_CREAT/O_TRUNC) gathers a save, else checks the card out.
+      if (path === 'dev/gxpages') {
+        const n = Atomics.load(sh.pages, 0);
+        gxPages.bytes = new Uint8Array(sh.pages.buffer.slice(4, 4 + 4 * n));
+        gxPages.pos = 0;
+      }
       if (path === 'dev/card') {
         if (!cardToken()) return E.NOENT;
         if (oflags & 9) card.out = [];
         else if (!cardCheckOut()) return E.IO;
       }
       dv().setUint32(fdp, DEVICES[path], true);
+      return 0;
+    }
+    if (isMmo(path)) {
+      // O_CREAT/O_TRUNC: the game writes it (committed on close); else read a snapshot.
+      const f = oflags & 9 ? { bytes: new Uint8Array(0), ver: 0 } : mmoRead(path);
+      if (!f) return E.NOENT;
+      const fd = nextFd++;
+      fds.set(fd, { path, pos: 0, size: f.bytes.length, dir: false, mmo: f.bytes, ver: f.ver, out: oflags & 9 ? [] : null });
+      dv().setUint32(fdp, fd, true);
       return 0;
     }
     const s = path === '' ? { dir: true, size: 0 } : stat(path);
@@ -594,7 +691,7 @@ onmessage = (ev) => {
   const m = ev.data;
   if (m.init) {
     mem = m.memory;
-    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)) };
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
     args = m.args;
     env = m.env;
     if (m.picked && m.picked.length) pick(m.picked);
