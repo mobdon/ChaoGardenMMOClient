@@ -1091,7 +1091,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // display, drawing nothing) poses the Chao, so it walks, runs and skates
     // with his motions. SA2_CHAO_RETARGET=1 (debug): also outside self mode;
     // =0: the Chao's own motions.
-    if live && RIDER.get() != 0 && (!chao_world(m) || self_retarget(m) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
+    if live && RIDER.get() != 0 && (!chao_world(m) || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
@@ -2154,6 +2154,17 @@ fn spin_flash(c: &mut Cpu, m: &mut Mem) {
     m.w32(w + 0x1C, keep_scale);
 }
 
+/// Moving (or within 30 frames of it): Shadow's skeleton poses the Chao.
+/// Standing still the Chao keeps its own stand (his idle, retargeted,
+/// bent it over with its hands on the floor; test copy run r56).
+fn self_in_motion() -> bool {
+    sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(MOVED_AT.get()) < 30
+}
+
+thread_local! {
+    static MOVED_AT: Cell<u64> = const { Cell::new(0) };
+}
+
 /// Self mode with the Chao posed from the hidden character's skeleton
 /// (default; SA2_CHAO_RETARGET=0: the Chao's own motions).
 fn self_retarget(m: &Mem) -> bool {
@@ -2473,6 +2484,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let lp = LAST_RIDER_POS.replace(pos);
         let d2: f32 = (0..3).map(|i| { let d = f32::from_bits(pos[i]) - f32::from_bits(lp[i]); d * d }).sum();
         MOVING.set(d2 > 0.01 * 0.01);
+        if MOVING.get() {
+            MOVED_AT.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
+        }
         // Chao World: the hub's gait (mmo-play src/chao-locomotion.js) with the
         // game's own motions: AL_motion_table 0 alm_tati (stand), 578
         // alm_aruki_ncz (walk), 119 alm_run (run); common-motions.ini.
