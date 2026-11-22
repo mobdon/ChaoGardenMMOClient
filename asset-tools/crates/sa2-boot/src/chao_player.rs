@@ -1984,6 +1984,14 @@ thread_local! {
     static RECORD_SEEN: std::cell::RefCell<std::collections::BTreeMap<u64, std::time::SystemTime>> = Default::default();
 }
 
+/// The own Chao's save record (the pointer at chaowk +0x5C) while it is
+/// live, for glue that hands it to the game (race_control).
+pub(crate) fn own_record(m: &Mem) -> Option<u32> {
+    let Step::Live(chao) = STEP.get() else { return None };
+    let rec = m.r32(m.r32(chao + 0x34) + 0x5C);
+    (0x8000_0000..0x8C00_0000).contains(&rec).then_some(rec)
+}
+
 fn export_record(m: &Mem) {
     let Ok(path) = std::env::var("SA2_RECORD_OUT") else { return };
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
