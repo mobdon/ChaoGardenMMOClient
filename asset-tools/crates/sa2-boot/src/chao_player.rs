@@ -1485,6 +1485,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
             // hands and feet this draw recorded.
             hammer_gloves(c, m);
             air_shoes(c, m);
+            try_on(c, m);
         }
         return crate::name_tags::finish();
     }
@@ -1508,6 +1509,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         if self_drive(m) {
             hammer_gloves(c, m);
             air_shoes(c, m);
+            try_on(c, m);
         }
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
             let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.len()));
@@ -2065,8 +2067,82 @@ thread_local! {
     static RIDER_REST: std::cell::RefCell<Option<(u32, Vec<[[f32; 3]; 3]>)>> = const { std::cell::RefCell::new(None) };
 }
 
+/// Gear debugger try-on (only with the ?geartune=1 panel): each planned
+/// character item (shared/upgrade-catalog.json wearable models, PC model id n
+/// = GC table slot 2n+1) drawn on the Chao at a node origin at half size, for
+/// the panel to move into place ("Copy values" gives the numbers to commit).
+/// Sonic's items need SONICMDL/SONICTEX, loaded once into heap 1 here.
+/// (panel key, file, model slot, Chao node: 1 body, 16 head, 3/10 arms, 6/13 feet)
+const TRY_ON: [(&str, u8, u32, usize); 7] = [
+    ("sunglasses", b'K', 323, 16), // KNUCKMDL 161
+    ("necklace", b'K', 337, 1),    // KNUCKMDL 168
+    ("sflame", b'T', 201, 3),      // TERIOSMDL 100
+    ("lshoe0", b'S', 27, 6),       // SONICMDL 13 (right)
+    ("lshoe1", b'S', 29, 13),      // SONICMDL 14 (left)
+    ("ring", b'S', 51, 10),        // SONICMDL 25 Flame Ring
+    ("bracelet", b'S', 53, 3),     // SONICMDL 26 Bounce Bracelet
+];
+
+fn try_on(c: &mut Cpu, m: &mut Mem) {
+    if std::env::var_os("SA2_GEAR_TUNE").is_none() || debug_off("tryon") {
+        return;
+    }
+    if SONIC_TEX.get().is_none() {
+        let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
+        let keep_heap = m.r32(heap_var);
+        m.w32(heap_var, GEAR_HEAP);
+        write_str(m, b"SONICTEX");
+        let tex = call(c, m, LOAD_TEX, &[STR]);
+        write_str(m, b"SONICMDL.PRS");
+        let mdl = load_models(c, m, STR);
+        SONIC_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
+        m.w32(heap_var, keep_heap);
+        eprintln!("chao-player try-on: Sonic's textures {tex:#x}, models {mdl:#x} ({} slots)", SONIC_MODELS.with_borrow(|s| s.len()));
+        SONIC_TEX.set(Some(tex));
+    }
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let keep_m = mtx(m, cur_ptr);
+    let list = m.r32(c.r[13].wrapping_sub(0x7228)) + 0x20;
+    let keep_list = m.r32(list);
+    let regs = (c.r, c.f);
+    let lcap = LCAP.replace(false);
+    for &(key, file, slot, node) in &TRY_ON {
+        if slot == 0 || debug_off(key) {
+            continue;
+        }
+        let (obj, tex) = match file {
+            b'K' => (knux_obj(m, slot), KNUX_TEX.get()),
+            b'T' => (shadow_obj(m, slot), SHADOW_TEX.get()),
+            _ => (SONIC_MODELS.with_borrow(|s| s.get(&slot).copied()).unwrap_or(0), SONIC_TEX.get()),
+        };
+        let Some(at) = NODE_MATS.with_borrow(|n| n.get(&node).copied()) else { continue };
+        let (Some(tex), true) = (tex.filter(|&t| t != 0), (0x8000_0000..0x8C00_0000).contains(&obj)) else { continue };
+        let half: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if i == j { 0.5 } else { 0.0 }));
+        let place = mul34(&at, &half);
+        let place = gear_tune(key).map_or(place, |t| mul34(&place, &t));
+        for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
+        m.w32(list, tex);
+        call(c, m, 0x8011_DF44, &[obj]);
+    }
+    LCAP.set(lcap);
+    (c.r, c.f) = regs;
+    m.w32(list, keep_list);
+    for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, keep_m[r][q].to_bits()); } }
+}
+
+thread_local! {
+    static SONIC_TEX: Cell<Option<u32>> = const { Cell::new(None) };
+    static SONIC_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+    /// This draw's view-space matrices of the Chao nodes the try-on uses.
+    static NODE_MATS: std::cell::RefCell<std::collections::BTreeMap<usize, [[f32; 4]; 3]>> = Default::default();
+}
+
 /// Arm nodes 3/10's view-space matrices from this draw walk, for the gloves.
 fn record_hand(m: &Mem, i: usize, cur_ptr: u32) {
+    if matches!(i, 1 | 3 | 6 | 10 | 13 | 16) {
+        let cur = mtx(m, cur_ptr);
+        NODE_MATS.with_borrow_mut(|n| { n.insert(i, cur); });
+    }
     if i == 3 || i == 10 {
         let cur = mtx(m, cur_ptr);
         HANDS.with_borrow_mut(|h| h[usize::from(i == 10)] = Some(cur));
@@ -4066,7 +4142,10 @@ const AL_IS_ON_SCREEN3: u32 = 0x1_A590;
 
 fn on_screen3(c: &mut Cpu, m: &mut Mem) {
     let t = c.r[3];
-    let ours = matches!(STEP.get(), Step::Live(ch) if ch == t) || REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == t));
+    let ours = matches!(STEP.get(), Step::Live(ch) if ch == t) || REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == t))
+        // The card box's portrait Chao: on a wide canvas the box sits left of
+        // the game's 640 (card_box left_edge), where this test culled it.
+        || EXTRA_TASKS.with_borrow(|x| x.contains(&t));
     let a = rt::sec(m, 60, 1) + AL_IS_ON_SCREEN3;
     // The original still runs: it also stores the camera distance the draw uses.
     rel_original(c, m, a, on_screen3);

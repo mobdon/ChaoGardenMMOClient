@@ -633,7 +633,7 @@ function showCard(player) {
 // piece "name dx dy dz rx ry rz scale", offsets in the piece's own frame,
 // degrees); "Copy values" puts the lines on the clipboard.
 function gearTuner() {
-  const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2' };
+  const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2', sunglasses: 'Sunglasses', necklace: 'Air Necklace', sflame: 'Flame Ring (Shadow)', lshoe0: 'Light Shoe 1', lshoe1: 'Light Shoe 2', ring: 'Flame Ring (Sonic)', bracelet: 'Bounce Bracelet' };
   const keys = [['dx', -3, 3, 0.02], ['dy', -3, 3, 0.02], ['dz', -3, 3, 0.02], ['rx', -180, 180, 1], ['ry', -180, 180, 1], ['rz', -180, 180, 1], ['scale', 0.2, 3, 0.01]];
   const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
   const text = () => Object.entries(vals).map(([p, v]) => [p, ...keys.map(([k]) => v[k])].join(' ')).join('\n') + '\n';
@@ -662,11 +662,11 @@ function gearTuner() {
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', selog: '0', mute: '', tp: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', tryon: '1', selog: '0', mute: '', tp: '' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
-  for (const k of ['fists', 'shoes', 'jets', 'selog']) {
+  for (const k of ['fists', 'shoes', 'jets', 'tryon', 'selog']) {
     const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
     cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); };
     const l = document.createElement('label');
