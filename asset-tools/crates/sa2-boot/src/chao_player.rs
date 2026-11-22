@@ -500,6 +500,14 @@ thread_local! {
     static GEAR_TUNE: std::cell::RefCell<std::collections::BTreeMap<String, [f32; 7]>> = Default::default();
 }
 
+/// Knuckles's fist for a Hammer Gloves plate: right plate 329 with fist 163,
+/// left 331 with 161 (KNUCKMDL 80/81, the pair the slot log showed as hands).
+/// unverified: which of 161/163 is his right fist (by analogy with Shadow's
+/// boots, where 161 is the left).
+fn knux_fist(plate: u32) -> u32 {
+    if plate == 329 { 163 } else { 161 }
+}
+
 /// A KNUCKMDL model by slot: its own load first, then the shared lookup.
 fn knux_obj(m: &Mem, k: u32) -> u32 {
     KNUX_MODELS.with_borrow(|e| e.get(&k).copied()).unwrap_or_else(|| model_obj(m, k))
@@ -866,6 +874,25 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         if ssize <= 0.0 {
             return None;
         }
+        // Native mount: the Hammer Gloves item (1 node, 42 vertices) is only
+        // the metal plate; Knuckles's own fist (KNUCKMDL 80/81 = slots 161/163,
+        // drawn with it, see knux_fist) gives the size: the fist, not the
+        // plate, is fitted to the Chao's hand (the plate alone, fitted, made a
+        // box down to the floor; test build, build 13).
+        let ssize = if native.is_some() {
+            let fist = knux_obj(m, knux_fist(model));
+            if (0x8000_0000..0x8C00_0000).contains(&fist) {
+                let fr = crate::chao_retarget::read_chao(&|a| m.r32(a), fist, [vec![], vec![]]);
+                let fv: Vec<[f32; 3]> = fr.verts.iter().zip(fr.worlds(&[])).flat_map(|(vs, (rr, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|q| rr[i][q] * v[q]).sum::<f32>())).collect::<Vec<_>>()).collect();
+                let fs: Vec<[f32; 3]> = fv.iter().map(|p| std::array::from_fn(|i| (0..3).map(|q| r[i][q] * p[q]).sum())).collect();
+                let (_, fsize) = bounds(&fs);
+                if fsize > 0.0 { fsize } else { ssize }
+            } else {
+                ssize
+            }
+        } else {
+            ssize
+        };
         // SA2_GLOVE_SCALE=k (debug): k times the fitted size.
         let s = hsize * GLOVE_SCALE / ssize * std::env::var("SA2_GLOVE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         // SA2_GLOVE_PIVOT=wrist (debug): the glove's end nearest the shoulder
@@ -923,6 +950,13 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
         call(c, m, 0x8011_DF44, &[knux_obj(m, model)]);
+        // Knuckles's own fist under the plate (same frame: both are built on
+        // his hand node).
+        let fist = knux_obj(m, knux_fist(model));
+        if (0x8000_0000..0x8C00_0000).contains(&fist) {
+            for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
+            call(c, m, 0x8011_DF44, &[fist]);
+        }
         LCAP.set(lcap);
     }
     (c.r, c.f) = regs;
