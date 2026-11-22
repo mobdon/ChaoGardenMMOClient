@@ -230,6 +230,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
     }
     crate::race_probe::frame(c, m);
+    crate::karate::frame(c, m);
     original(c, m, TOP_LEVEL);
 }
 

@@ -83,7 +83,7 @@ const STAND_MOTION: u32 = 1;
 
 /// Run a REL function that this module overrides, by dropping the override
 /// for the one call.
-fn rel_original(c: &mut Cpu, m: &mut Mem, addr: u32, me: rt::Func) {
+pub(crate) fn rel_original(c: &mut Cpu, m: &mut Mem, addr: u32, me: rt::Func) {
     c.rt.overrides.remove(&addr);
     c.rt.modules_changed();
     rt::call(c, m, addr);
@@ -113,6 +113,14 @@ pub(crate) fn behavior(c: &mut Cpu, m: &mut Mem) {
 /// computed at the rider's position this frame.
 fn chao_exec(c: &mut Cpu, m: &mut Mem) {
     remote_pin(m, c.r[3]);
+    // Beyond the REMOTE_NEAR nearest, a remote Chao's exec (motion and
+    // ChaoMain's per-frame work) runs every REMOTE_FAR_EVERY frames; its
+    // position still follows every frame and it is drawn every frame.
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let skip = REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == c.r[3] && (e.offscreen || (e.rank >= REMOTE_NEAR && (f + e.rank as u64) % REMOTE_FAR_EVERY != 0))));
+    if skip {
+        return;
+    }
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
             pin(m, chao, RIDER.get());
@@ -586,6 +594,9 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
+    if remote_offscreen(m, c.r[3]) {
+        return;
+    }
     crate::name_tags::begin(tag_label(m, c.r[3]));
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
@@ -1422,8 +1433,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if let Step::Live(_) = STEP.get() {
             STEP.set(Step::Wait(0));
         }
-        // The game dropped the remote Chao's tasks too.
+        // The game dropped the remote Chao's tasks too, without freeing their
+        // blocks one by one (the remote heap only shrank across a garden ->
+        // lobby change): their heap starts empty again for the new area.
         REMOTE.with_borrow_mut(|r| r.values_mut().for_each(|e| e.task = 0));
+        REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
+            *reg = crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END);
+            sizes.clear();
+        });
     }
     let data1 = m.r32(task + 0x34);
     if data1 == 0 {
@@ -1852,11 +1869,19 @@ struct Remote {
     samples: std::collections::VecDeque<(std::time::Instant, [f32; 3], u16, u32)>,
     last_seen: std::time::Instant,
     motion: u32,
+    /// Distance rank among the live remote Chao (0 = nearest).
+    rank: usize,
+    /// Outside the view at its last display: no exec, no draw.
+    offscreen: bool,
 }
 
 /// Remote Chao drawn at once in an area: the nearest ones; the rest stay
 /// cached. SA2_REMOTE_MAX overrides it (for the 8/16/24 measurement).
-const REMOTE_MAX: usize = 8;
+const REMOTE_MAX: usize = 50;
+/// The nearest this many remote Chao run every frame; farther ones every
+/// REMOTE_FAR_EVERY frames (staggered by rank).
+const REMOTE_NEAR: usize = 12;
+const REMOTE_FAR_EVERY: u64 = 5;
 /// Shown this far behind the newest update, sliding between updates.
 const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
@@ -1904,7 +1929,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
             crate::chao_cache::get_or_load(m, id, &info, 0, false);
             crate::chao_cache::set_online(id, true);
             REMOTE.with_borrow_mut(|r| {
-                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0 });
+                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0, rank: usize::MAX, offscreen: false });
                 if e.samples.back().is_none_or(|s| s.1 != p || s.2 != a as u16 || s.3 != mo) {
                     e.samples.push_back((now, p, a as u16, mo));
                     while e.samples.len() > 4 {
@@ -1938,14 +1963,27 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
     let mut order = pos.clone();
     order.sort_by(|a, b| d2(a.1).total_cmp(&d2(b.1)));
     for (n, (id, p)) in order.into_iter().enumerate() {
-        let task = REMOTE.with_borrow(|r| r[&id].task);
+        let task = REMOTE.with_borrow_mut(|r| { let e = r.get_mut(&id).unwrap(); e.rank = n; e.task });
         if n < max && task == 0 {
             let Some(info) = crate::chao_cache::info_addr(id) else { continue };
             for (o, v) in p.into_iter().enumerate() {
                 m.w32(POS + 4 * o as u32, v.to_bits());
             }
+            // Never let the game run out of heap (each Chao takes about
+            // 72 KB): create only with room to spare, in the remote heap.
+            let Some(heap) = remote_heap(c, m) else { continue };
+            if heap_free(m, heap) < REMOTE_CHAO_BYTES {
+                if !SAID_FULL.replace(true) {
+                    eprintln!("chao-player remote: heap {heap} full ({} KB free), {id} stays cached", heap_free(m, heap) / 1024);
+                }
+                continue;
+            }
+            let cur = c.r[13].wrapping_sub(0x71B4);
+            let old = m.r32(cur);
+            m.w32(cur, heap);
             let t = call(c, m, s1 + 0x3148C, &[info, 0, 0, POS, 0]);
-            eprintln!("chao-player remote: {id} task {t:#x}");
+            m.w32(cur, old);
+            eprintln!("chao-player remote: {id} task {t:#x} (heap {heap}: {} KB free)", heap_free(m, heap) / 1024);
             REMOTE.with_borrow_mut(|r| if let Some(e) = r.get_mut(&id) { e.task = t; e.motion = 0; });
         } else if n >= max && task != 0 {
             call(c, m, s1 + KILL_CHAO, &[task]);
@@ -2056,4 +2094,132 @@ fn import_record(m: &mut Mem, id: u64) {
 
 thread_local! {
     static PENDING_KILL: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+
+/// MMO glue: other players' Chao get a heap of their own, 32 MB at
+/// 0x83000000..0x85000000 in the raised MEM1 (needs SA2_MEM1_MB >= 80; the
+/// browser copies all guest RAM for GX). The game's OS heap array has room
+/// for its own two heaps only (OSCreateHeap returned -1), so this heap is
+/// ours: the game's malloc/free wrappers (0x8011989C / 0x801198C4) pass the
+/// heap index at r13 -0x71B4 to OSAllocFromHeap / OSFreeToHeap; around a
+/// remote Chao's creation that index is REMOTE_HEAP, and those two calls are
+/// served from this region (first fit, freed blocks reused). Any free of a
+/// block inside it comes back here (the game frees a Chao later, from its
+/// own task cleanup).
+const REMOTE_HEAP_START: u32 = 0x8300_0000;
+const REMOTE_HEAP_END: u32 = 0x8500_0000;
+/// The heap index the game's wrappers see while a remote Chao is created.
+const REMOTE_HEAP: u32 = 0x5243; // not a valid OS heap index
+/// One Chao task's heap use, measured (remote tasks 0x11CC0 apart), rounded up.
+const REMOTE_CHAO_BYTES: u32 = 0x1_4000;
+const OS_ALLOC_FROM_HEAP: u32 = 0x800E_4554;
+const OS_FREE_TO_HEAP: u32 = 0x800E_4650;
+
+thread_local! {
+    static REMOTE_ALLOC: std::cell::RefCell<Option<(crate::chao_cache::Region, std::collections::BTreeMap<u32, u32>)>> = const { std::cell::RefCell::new(None) };
+    static SAID_FULL: Cell<bool> = const { Cell::new(false) };
+}
+
+fn remote_heap(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
+    if REMOTE_ALLOC.with_borrow(|r| r.is_some()) {
+        return Some(REMOTE_HEAP);
+    }
+    if (rt::mem1() | 0x8000_0000) < REMOTE_HEAP_END {
+        if !SAID_FULL.replace(true) {
+            eprintln!("chao-player remote: no heap, MEM1 ends below {REMOTE_HEAP_END:#x} (SA2_MEM1_MB >= 80); remote Chao stay cached");
+        }
+        return None;
+    }
+    raise_chao_limit(m);
+    REMOTE_ALLOC.set(Some((crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END), Default::default())));
+    c.rt.set_override(OS_ALLOC_FROM_HEAP, alloc_from_heap);
+    c.rt.set_override(OS_FREE_TO_HEAP, free_to_heap);
+    eprintln!("chao-player remote: heap at {REMOTE_HEAP_START:#x}..{REMOTE_HEAP_END:#x} ({} KB, about {} Chao)",
+        (REMOTE_HEAP_END - REMOTE_HEAP_START) / 1024, (REMOTE_HEAP_END - REMOTE_HEAP_START) / REMOTE_CHAO_BYTES);
+    Some(REMOTE_HEAP)
+}
+
+fn alloc_from_heap(c: &mut Cpu, m: &mut Mem) {
+    if c.r[3] != REMOTE_HEAP {
+        return original(c, m, OS_ALLOC_FROM_HEAP);
+    }
+    let size = c.r[4];
+    c.r[3] = REMOTE_ALLOC.with_borrow_mut(|r| {
+        let (reg, sizes) = r.as_mut()?;
+        let a = reg.alloc(size)?;
+        sizes.insert(a, size);
+        Some(a)
+    }).unwrap_or(0);
+}
+
+fn free_to_heap(c: &mut Cpu, m: &mut Mem) {
+    let p = c.r[4];
+    if (REMOTE_HEAP_START..REMOTE_HEAP_END).contains(&p) {
+        REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
+            if let Some(n) = sizes.remove(&p) {
+                reg.free(p, n);
+            }
+        });
+        return;
+    }
+    original(c, m, OS_FREE_TO_HEAP);
+}
+
+/// Free bytes left in the remote heap (blocks freed back count as free).
+fn heap_free(_m: &Mem, _h: u32) -> u32 {
+    REMOTE_ALLOC.with_borrow(|r| r.as_ref().map_or(0, |(reg, _)| (REMOTE_HEAP_END - REMOTE_HEAP_START) - reg.used()))
+}
+
+/// ChaoMain's per-category limit of its world list (nbMaxEntry, the u32
+/// array at .data sec4 +0x81E0 that ALW_Entry2 0x2984C searches up to;
+/// each category has 64 slots of 0x48 in CommuID's 0x1200 block). Category
+/// 0's limit is raised to all 64 slots for other players' Chao.
+/// unverified: category 0 is the Chao's (read as 0x20 = 32 in the disc data).
+const NB_MAX_ENTRY: u32 = 0x81E0;
+const WORLD_SLOTS: u32 = 64;
+
+fn raise_chao_limit(m: &mut Mem) {
+    let a = rt::sec(m, 60, 4) + NB_MAX_ENTRY;
+    let old = m.r32(a);
+    if old < WORLD_SLOTS {
+        m.w32(a, WORLD_SLOTS);
+        eprintln!("chao-player remote: world list limit {old} -> {WORLD_SLOTS}");
+    }
+}
+
+
+/// A remote Chao outside the view (with REMOTE_VIEW_MARGIN units to spare):
+/// its display draws nothing and its exec is skipped until it comes back;
+/// remote_pin keeps its position following meanwhile. The view is the base
+/// matrix this display runs under; "in front" is the side the player's own
+/// Chao is on (no camera convention assumed).
+/// shortcut: the horizontal and vertical limits are |x|,|y| <= REMOTE_VIEW_SLOPE
+/// * depth + margin (about 63 degrees each side), wider than the game's view
+/// rather than read from its projection; upgrade with the real FOV if Chao pop.
+const REMOTE_VIEW_SLOPE: f32 = 2.0;
+const REMOTE_VIEW_MARGIN: f32 = 8.0;
+
+fn remote_offscreen(m: &Mem, task: u32) -> bool {
+    if task == 0 || !REMOTE.with_borrow(|r| r.values().any(|e| e.task == task)) {
+        return false;
+    }
+    let Step::Live(own) = STEP.get() else { return false };
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    let view = |cw: u32| -> [f32; 3] {
+        let p = [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(cw + o)));
+        std::array::from_fn(|i| (0..3).map(|k| base[i][k] * p[k]).sum::<f32>() + base[i][3])
+    };
+    let (own_cw, cw) = (m.r32(own + 0x34), m.r32(task + 0x34));
+    if own_cw == 0 || cw == 0 {
+        return false;
+    }
+    let front = view(own_cw)[2].signum();
+    let v = view(cw);
+    let depth = v[2] * front;
+    let out = depth < -REMOTE_VIEW_MARGIN
+        || v[0].abs() > REMOTE_VIEW_SLOPE * depth.max(0.0) + REMOTE_VIEW_MARGIN
+        || v[1].abs() > REMOTE_VIEW_SLOPE * depth.max(0.0) + REMOTE_VIEW_MARGIN;
+    REMOTE.with_borrow_mut(|r| if let Some(e) = r.values_mut().find(|e| e.task == task) { e.offscreen = out; });
+    out
 }

@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 4096 + 8 + 16384), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -211,7 +211,7 @@ function joinRoom(token, zone) {
 // with a pose come back as lines "id x y z angle motion frame gear"; Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, TAGS: 133912, TAGS_MAX: 4096, TREE: 138016, TREE_MAX: 16384 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -220,6 +220,7 @@ const numId = (id) => String(BigInt('0x' + (String(id).replace(/[^0-9a-f]/gi, ''
 let poseSeen = 0, recSeen = 0;
 const recVersions = new Map();
 function mmoTick(token) {
+  karateLocks();
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
   if (seq !== poseSeen && room?.ws.readyState === 1) {
     poseSeen = seq;
@@ -354,10 +355,44 @@ function cover(on) {
 
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
+  karateButtons(area === 10 || area === 11);
   const zone = roomZones[area === 0 ? '' : area];
   if (!room || !zone || zone === room.zone) return;
   room.zone = zone;
   if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
+}
+// ---- Chao Karate attack buttons (sa2-boot karate.rs) ----------------------
+// The player's Chao does the pressed attack at its next attack; the game
+// refuses the two strong ones until Power is above 400, and says so here.
+// shortcut: plain page buttons; the game's own font and capsule sprites are
+// not drawn here yet, upgrade when the page can read the player's textures.
+const KARATE_MOVES = [[4, 'Hard Kick'], [7, 'Punch'], [6, 'Beating Up'], [8, 'Windup Punch', true], [5, 'Roundhouse', true]];
+function karateButtons(on) {
+  let bar = document.getElementById('karate');
+  if (!bar && on) {
+    bar = Object.assign(document.createElement('div'), { id: 'karate' });
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;display:flex;gap:.5rem;justify-content:center;z-index:4';
+    for (const [id, name, strong] of KARATE_MOVES) {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: name });
+      b.style.cssText = 'padding:.45rem 1rem;border-radius:1.2rem;background:#f5a800;color:#fff;font-weight:700;text-shadow:0 1px 2px #000';
+      if (strong) b.dataset.strong = '1';
+      b.addEventListener('click', () => {
+        mmoBytes[MMO.KARATE + 1] = id;
+        mmoBytes[MMO.KARATE]++; // a new press, after its button is in place
+        canvas.focus();
+      });
+      bar.append(b);
+    }
+    document.body.append(bar);
+  }
+  if (bar) bar.style.display = on ? 'flex' : 'none';
+}
+function karateLocks() {
+  for (const b of document.querySelectorAll('#karate [data-strong]')) {
+    b.disabled = !mmoBytes[MMO.KARATE + 4];
+    b.title = b.disabled ? 'Needs Power above 400' : '';
+    b.style.background = b.disabled ? '#666' : '#f5a800';
+  }
 }
 // The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
 function showCard(player) {
@@ -442,7 +477,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_TAGS_OUT: '/mmo/tags-out', SA2_TREE_OUT: '/mmo/tree-icon' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_TREE_OUT: '/mmo/tree-icon' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
