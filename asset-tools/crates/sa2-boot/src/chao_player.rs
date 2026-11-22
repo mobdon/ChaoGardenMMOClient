@@ -726,7 +726,8 @@ const DARK_CHAO_SOUND: u32 = 0x201E;
 fn voice(c: &mut Cpu, m: &mut Mem) {
     // From the start of the run: the drop line plays before the Chao is loaded.
     if c.lr == FROM_VOICE_TASK {
-        if matches!(STEP.get(), Step::Live(_)) {
+        // Chao World: the line is only dropped (no Chao voice on arriving).
+        if matches!(STEP.get(), Step::Live(_)) && !chao_world(m) {
             call(c, m, PLAY_SE, &[DARK_CHAO_SOUND, 0, 0, 0]);
         }
         return;
