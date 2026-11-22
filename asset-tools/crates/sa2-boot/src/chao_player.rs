@@ -1337,7 +1337,8 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
         LCAP.set(false);
         return;
     }
-    original(c, m, addr);
+    // Never Sonic: until the player's Chao is up (a new area, a reload, after
+    // the transporter) the rider draws nothing in any stage.
 }
 
 /// The stage number (i16 at 0x803AD820); 90 and up are Chao World, where the
@@ -1702,6 +1703,9 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
         Step::Live(chao) => Step::Live(chao),
         Step::Failed => Step::Failed,
     };
+    if next == Step::Failed && STEP.get() != Step::Failed {
+        no_chao();
+    }
     if next != STEP.get() && !matches!(next, Step::Wait(_)) {
         eprintln!("chao-player: {next:x?}");
     }
@@ -1764,6 +1768,15 @@ fn module_linked(m: &Mem, id: u32) -> bool {
         .take_while(|&i| i != 0)
         .take(256)
         .any(|i| m.r32(i) == id)
+}
+
+/// The page's /dev/area code 252: the player's Chao could not be made, so
+/// the page goes back to the login instead of ever showing Sonic.
+fn no_chao() {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open("/dev/area") {
+        let _ = f.write_all(&[252]);
+    }
 }
 
 fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
