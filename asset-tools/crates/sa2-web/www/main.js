@@ -450,17 +450,24 @@ chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-in
 document.body.append(chat);
 const chatLog = chat.firstChild, chatInput = chat.lastChild;
 // Muting adds a "Muted" line; clicking that line unmutes (the server keeps the list).
-function muteClick(fromId, fromName, muted) {
+function muteClick(fromId, fromName, muted, number) {
   room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId, muted }));
   chatLine({ channel: 'system', fromName: muted ? 'Muted' : 'Unmuted', text: muted ? `${fromName} (click to unmute)` : fromName,
     onclick: muted && (() => muteClick(fromId, fromName, false)) });
+  if (muted) chatLine({ channel: 'system', fromName: 'Report', text: `${fromName} to the moderators (click)`, onclick: () => reportClick(fromId, fromName, number) });
+}
+// Sends the muted player, and the chat line that was clicked, to the staff.
+async function reportClick(targetId, fromName, line) {
+  const r = await fetch('/api/report', { method: 'POST', body: JSON.stringify({ targetId, line, reason: 'Reported from chat' }),
+    headers: { Authorization: `Bearer ${mmoToken()}`, 'Content-Type': 'application/json' } }).catch(() => null);
+  chatLine({ channel: 'system', fromName: 'Report', text: r?.ok ? `${fromName} was reported to the moderators.` : (await r?.json().catch(() => null))?.error ?? 'Could not send the report.' });
 }
 function chatLine({ channel, fromId, fromName, text, onclick, line: number }) {
   const line = document.createElement('div');
   line.className = channel;
   if (number) line.dataset.line = number;
   if (fromId) line.title = `Click to mute ${fromName}`;
-  if (fromId) line.onclick = () => muteClick(fromId, fromName, true);
+  if (fromId) line.onclick = () => muteClick(fromId, fromName, true, number);
   if (onclick) line.onclick = onclick;
   line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
   chatLog.append(line);
