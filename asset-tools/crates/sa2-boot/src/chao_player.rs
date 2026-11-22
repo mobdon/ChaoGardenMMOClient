@@ -1125,7 +1125,10 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
     let rest = RIDER_REST.with_borrow_mut(|r| {
         if r.as_ref().map(|(o, _)| *o) != Some(obj) {
             let rr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]).worlds(&[]);
-            *r = Some((obj, rr.into_iter().map(|(rot, _)| rot).collect()));
+            // Relative to the rider's root node, like the live pose (SKEL[0]-relative).
+            let r0 = rr.first().map(|x| x.0).unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+            let inv0 = crate::skate::inv(&r0);
+            *r = Some((obj, rr.into_iter().map(|(rot, _)| crate::skate::mul(&inv0, &rot)).collect()));
         }
         r.as_ref().and_then(|(_, v)| v.get(src).copied())
     });
