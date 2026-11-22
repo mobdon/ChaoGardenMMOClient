@@ -258,6 +258,7 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
+        air_shoes(c, m);
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
@@ -370,6 +371,80 @@ const LOAD_MDL: u32 = 0x8005_0210;
 const SHADOW_TEX_NAME: u32 = 0x8017_48E0;
 const SHADOW_MDL_NAME: u32 = 0x8017_48EC;
 const MODELS: u32 = 0x801E_6688;
+
+/// Shadow's boots: TERIOSMDL models in slots 161/163 (a 2-node, 174-vertex
+/// left/right pair; drawn 3x on the Chao feet they show as his air shoes,
+/// lvl9 sbv3). The left is his own left boot (no mirror).
+const SHOES: [(usize, usize, u32); 2] = [(13, 14, 161), (6, 24, 163)];
+/// mob's fit (client docs/MIRRORED-GEAR-FIT.md): boot length 0.90 of the Chao foot.
+const SHOE_LENGTH_RATIO: f32 = 0.90;
+
+/// Shadow's boots on the Chao's feet (nodes 13/6, which follow the rider's
+/// legs 7->14 and 17->24, the retarget's LIMBS; Sonic's 6-15 leg is his
+/// right). Drawn from the rider's own display, under its view, like the
+/// ball (a draw from inside ChaoMain's walk showed nothing). Each boot takes
+/// the rider's foot rotation, sits at the Chao foot node from the last posed
+/// Chao, and is scaled to the Chao foot.
+/// shortcut: lengths are longest vertex extents, not a heel-to-toe axis; the
+/// Chao foot position is last frame's pose.
+fn air_shoes(c: &mut Cpu, m: &mut Mem) {
+    let (Some(tex), Step::Live(chao)) = (SHADOW_TEX.get(), STEP.get()) else { return };
+    if OWN_MOTION.get() || std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+        return;
+    }
+    let cwk = m.r32(chao + 0x34);
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let cpos = [f(cwk + 0x14), f(cwk + 0x18), f(cwk + 0x1C)];
+    let (sy, cy) = ((m.r32(cwk + 0x0C) as i32 as f32) * std::f32::consts::TAU / 65536.0).sin_cos();
+    let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+    let posed = POSED.with_borrow(|p| p.clone());
+    let skel = SKEL.with_borrow(|s| s.clone());
+    if posed.len() < 14 || skel.len() != 62 {
+        return;
+    }
+    let models: Vec<u32> = std::env::var("SA2_SHOE_MODELS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let keep_m = mtx(m, cur_ptr);
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    let list = m.r32(c.r[13].wrapping_sub(0x7228)) + 0x20;
+    let keep_list = m.r32(list);
+    let regs = (c.r, c.f);
+    let ext = |vs: Vec<[f32; 3]>| (0..3).map(|k| { let (lo, hi) = vs.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); hi - lo }).fold(0.0f32, f32::max);
+    for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
+        let model = models.get(n).copied().unwrap_or(model);
+        let obj = m.r32(MODELS + 4 * model);
+        if !(0x8000_0000..0x8C00_0000).contains(&obj) {
+            continue;
+        }
+        // The boot's vertices in its own model space (its nodes carry the rest
+        // offset from Shadow's foot): centred on the Chao foot below.
+        let br = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
+        let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
+        let centre = bv.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / bv.len().max(1) as f32);
+        let boot = ext(bv);
+        let len = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| ext(r.verts[node].clone()))).unwrap_or(0.0);
+        if boot <= 0.0 || len <= 0.0 {
+            continue;
+        }
+        // SA2_SHOE_SCALE=k (debug): k times the fitted size.
+        let s = SHOE_LENGTH_RATIO * len / boot * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        let _ = (node, &posed, ry, cpos);
+        let Some(fv) = FEET.with_borrow(|f| f[n]) else { continue };
+        let wpos = [fv[0][3], fv[1][3], fv[2][3]];
+        // The rider's foot rotation under this view; the Chao foot's view position.
+        let fw = mul34(&base, &skel[foot]);
+        let place: [[f32; 4]; 3] = std::array::from_fn(|r| std::array::from_fn(|k| if k < 3 { fw[r][k] * s } else { wpos[r] - (0..3).map(|q| fw[r][q] * s * centre[q]).sum::<f32>() }));
+        for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
+        m.w32(list, tex);
+        // Not through level_capture: this draw is meant to show.
+        let lcap = LCAP.replace(false);
+        call(c, m, 0x8011_DF44, &[obj]);
+        LCAP.set(lcap);
+    }
+    (c.r, c.f) = regs;
+    m.w32(list, keep_list);
+    for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, keep_m[r][k].to_bits()); } }
+}
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
@@ -806,6 +881,15 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
         }
     }
+    // The foot nodes' view-space matrices, for the boots (next draw).
+    if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
+        let cur = mtx(m, cur_ptr);
+        FEET.with_borrow_mut(|f| f[k] = Some(cur));
+    }
+}
+
+thread_local! {
+    static FEET: std::cell::RefCell<[Option<[[f32; 4]; 3]>; 2]> = const { std::cell::RefCell::new([None; 2]) };
 }
 
 #[derive(Default)]
