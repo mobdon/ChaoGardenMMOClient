@@ -577,6 +577,7 @@ async function start() {
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';
+  if (/^\d+$/.test(q.get('wave') || '')) e.SA2_COMBAT_WAVE = q.get('wave');
   // A new player (no Chao on the card yet): their egg is laid in the lobby.
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
