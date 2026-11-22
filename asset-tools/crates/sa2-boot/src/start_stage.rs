@@ -44,7 +44,7 @@ const AL_CHANGE_AREA: u32 = 0x2_7E00;
 /// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
 const LAST_AREA: u32 = 12;
 /// The Chao Lobby's stage number (al_stage.h: 7 lobby; 0 is none, while loading).
-const LOBBY: u32 = 7;
+pub(crate) const LOBBY: u32 = 7;
 /// ChaoMain .bss (section 5) +0x972E8: the previous stage, returned by
 /// `AL_GetPreStageNumber` 0x27F90 (symbols.txt). Unverified that the lobby
 /// reads it only at its start; the headless arrival check is the test.
@@ -120,6 +120,10 @@ static SHOWN: Global<Option<u32>> = global!(None);
 static TP_ARRIVE: Global<bool> = global!(false);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
+/// The pending start has happened; the title after it means the game came back.
+static STARTED: Global<bool> = global!(false);
+/// The pause menu's EXIT asked for the lobby ([`go_lobby`]).
+static TO_LOBBY: Global<bool> = global!(false);
 /// The lobby's residents are out (cleared when the game leaves the lobby).
 static RESIDENTS_OUT: Global<bool> = global!(false);
 /// The residents' taskwks, so their Chao sounds stay silent.
@@ -148,7 +152,8 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
         PENDING.set(Some((CHAO_WORLD, 0)));
-        SHOWN.set(Some(u32::MAX));
+        chao_world_glue(c);
+        c.rt.set_override(TOP_LEVEL, top_level);
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
                 .ok()
@@ -159,11 +164,6 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
             TP_ARRIVE.set(true);
         }
         HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
-        c.rt.set_override(TOP_LEVEL, top_level);
-        c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
-        c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
-            quiet_residents(c, m, SE_AT_POS_TIMER, 8)
-        });
         return;
     }
     let Some(rel) = crate::dvd::read_file("advertiseD.rel") else {
@@ -185,6 +185,15 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
             "start-stage: stage {stage} is not in the game's Stage Select; booting to the title"
         ),
     }
+}
+
+/// The Chao World glue: the area told to the page, the lobby's residents.
+fn chao_world_glue(c: &mut Cpu) {
+    SHOWN.set(Some(u32::MAX));
+    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
+    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
+        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
+    });
 }
 
 fn top_level(c: &mut Cpu, m: &mut Mem) {
@@ -210,11 +219,27 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     if mode == MD_TITLE_INIT || mode == MD_AFTER_CARD {
         if let Some((stage, ch)) = PENDING.take() {
+            STARTED.set(true);
             start(c, m, stage, ch);
+        } else if mode == MD_TITLE_INIT && STARTED.get() {
+            // MMO glue: the title never shows. Back at it after the start (a
+            // level's EXIT or end, the lobby's own way out): Chao World, as at
+            // boot. Unverified: that each of those ways reaches this mode.
+            if SHOWN.get().is_none() {
+                chao_world_glue(c);
+            }
+            start(c, m, CHAO_WORLD, 0);
         }
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
+        if TO_LOBBY.get() {
+            TO_LOBBY.set(false);
+            if now != 0 && now != LOBBY {
+                // The call ChaoMain's own way back to the lobby makes (0xB4F0).
+                guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
+            }
+        }
         // Once the lobby is running, change area the game's own way.
         if let (Some(area), LOBBY) = (AREA.get(), now) {
             guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
@@ -253,6 +278,19 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     crate::race_probe::frame(c, m);
     original(c, m, TOP_LEVEL);
+}
+
+/// The Chao World area the player is in ([`LOBBY`] = lobby, 0 while loading),
+/// when the game was started in Chao World and ChaoMain is loaded.
+pub(crate) fn chao_area(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
+    SHOWN.get()?;
+    let text = chaomain_text(m)?;
+    Some(guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]))
+}
+
+/// Change to the lobby on the next frame, outside the pause.
+pub(crate) fn go_lobby() {
+    TO_LOBBY.set(true);
 }
 
 /// The game's own egg at the player's feet, with guest scratch for the gene

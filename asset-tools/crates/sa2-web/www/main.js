@@ -283,6 +283,8 @@ function cover(on) {
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
   const zone = roomZones[area === 0 ? '' : area];
+  // Arrived in Chao World from a level (the pause menu's EXIT): no room yet.
+  if (!room && zone && mmoToken()) return joinRoom(mmoToken(), zone);
   if (!room || !zone || zone === room.zone) return;
   room.zone = zone;
   if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
