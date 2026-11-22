@@ -1911,6 +1911,19 @@ fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
             eprintln!("chao-player: no hatched Chao on the card ({slots} slots); back to the login");
             return Step::Failed;
         }
+        // SA2_CHAO_TO_SAVE=1 (one-off, the owner's save): the Chao is made in a
+        // free save slot of the game's own (ChaoMain fn_60_2C30), so the game's
+        // own card save keeps it from then on.
+        if std::env::var("SA2_CHAO_TO_SAVE").is_ok_and(|v| v == "1") {
+            let slot = call(c, m, s1 + 0x2C30, &[]);
+            if slot != 0 {
+                eprintln!("chao-player: making the Chao in save slot {slot:#x}");
+                m.w8(slot + 0x80, 0x16);
+                m.w8(slot + 0x438, 1);
+                m.w8(slot + 0x84, 0xFF);
+                return create_at(c, m, pos, slot);
+            }
+        }
         eprintln!("chao-player: no save Chao on the card ({slots} slots); profile Dark Chaos type");
         m.w8(INFO + 0x80, 0x16);
         m.w8(INFO + 0x438, 1);
@@ -1925,11 +1938,15 @@ fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
 }
 
 fn create_from_info(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
+    create_at(c, m, pos, INFO)
+}
+
+fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
     for (o, w) in pos.into_iter().enumerate() {
         m.w32(POS + 4 * o as u32, w);
     }
     let s1 = rt::sec(m, 60, 1);
-    let chao = call(c, m, s1 + 0x3148C, &[INFO, 0, 0, POS, 0]);
+    let chao = call(c, m, s1 + 0x3148C, &[param, 0, 0, POS, 0]);
     if chao == 0 {
         eprintln!("chao-player: CreateChaoExtra returned 0");
         return Step::Failed;
