@@ -39,6 +39,7 @@ const MOVE_FLAG_FLOOR: u16 = 0x0400;
 thread_local! {
     static SPEED: Cell<f32> = const { Cell::new(0.0) };
     static LAST_BUTTONS: Cell<u16> = const { Cell::new(0) };
+    static SKIP_LOGGED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn f(m: &Mem, a: u32) -> f32 {
@@ -66,6 +67,9 @@ pub fn drive(c: &mut Cpu, m: &mut Mem, chao: u32, text: u32) {
     let mw = m.r32(chao + 0x38);
     let obj2 = m.r32(P1_OBJ2);
     if cw == 0 || !(0x8000_0000..0x8C00_0000).contains(&obj2) {
+        if !SKIP_LOGGED.replace(true) {
+            eprintln!("chao-drive: skipped (cw {cw:#x}, obj2 {obj2:#x})");
+        }
         return;
     }
     let p = crate::pad::port0();

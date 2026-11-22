@@ -1651,11 +1651,15 @@ fn self_drive(m: &Mem) -> bool {
 thread_local! {
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
+    static SELF_LOGGED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let task = c.r[3];
     let me = self_drive(m);
+    if SELF_LOGGED.replace(me) != me {
+        eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
+    }
     if !me {
         original(c, m, addr);
     }
