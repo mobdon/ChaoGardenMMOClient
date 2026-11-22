@@ -1245,12 +1245,12 @@ fn glove_native() -> bool {
 /// Where along the arm (shoulder 0 -> hand tip 1) the glove's origin (his
 /// wrist) sits, and how far the fists turn out from the hips (degrees):
 /// a presentation fit, not game data. SA2_GLOVE_UP / SA2_GLOVE_OUT override.
-/// unverified: first values, from the request for higher and 5-15 degrees out.
+/// Negative leans the fists in towards the body (10 in, after 10 out looked wrong).
 fn glove_up() -> f32 {
     std::env::var("SA2_GLOVE_UP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.35)
 }
 fn glove_out() -> f32 {
-    std::env::var("SA2_GLOVE_OUT").ok().and_then(|v| v.parse().ok()).unwrap_or(10.0)
+    std::env::var("SA2_GLOVE_OUT").ok().and_then(|v| v.parse().ok()).unwrap_or(-10.0)
 }
 
 fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
