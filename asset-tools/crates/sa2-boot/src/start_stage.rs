@@ -283,8 +283,8 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
 }
 
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
-/// The Chao World areas the residents roam: lobby, Neutral, Hero, Dark Garden.
-const ROAM: [u32; 4] = [LOBBY, 1, 2, 3];
+/// The residents' round: a garden, back to the lobby, then the next garden.
+const ROAM: [u32; 6] = [1, LOBBY, 2, LOBBY, 3, LOBBY];
 const ROAM_SECS: u64 = 300;
 
 /// Where resident `n` is now: every 5 minutes of wall-clock time each moves
