@@ -419,7 +419,10 @@ fn load_models(c: &mut Cpu, m: &mut Mem, name: u32) -> u32 {
     for k in 0..0x428u32 {
         let now = m.r32(MODELS + 4 * k);
         if now != 0 && before[k as usize] == 0 {
-            EXTRA_MODELS.with_borrow_mut(|e| e.insert(k, now));
+            // First file wins a slot: Shadow's boots are slots 161/163, and
+            // KNUCKMDL, loaded next into the same (emptied) slots, overwrote
+            // them with Knuckles's own models (his hand drawn as a "boot").
+            EXTRA_MODELS.with_borrow_mut(|e| { e.entry(k).or_insert(now); });
             m.w32(MODELS + 4 * k, 0);
         }
     }
@@ -660,6 +663,8 @@ const GLOVE_REFS: [(u32, [f32; 3], [f32; 3]); 2] = [
     (331, [0.171_001_5, 0.896_849_7, -0.407_944_7], [-0.985_151_6, 0.162_074_6, -0.056_639_6]),
 ];
 const GLOVE_SCALE: f32 = 1.12;
+/// KNUCKMDL body model 142 in the model table (slot 2n+1).
+const KNUX_BODY_SLOT: u32 = 285;
 const GLOVE_REACH: f32 = 0.55;
 
 fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
@@ -697,10 +702,26 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         let (u, f) = (n(up), n(fwd));
         let x = n([u[1] * f[2] - u[2] * f[1], u[2] * f[0] - u[0] * f[2], u[0] * f[1] - u[1] * f[0]]);
         let r = [x, u, f];
+        // Native mount (default): the glove model is built in Knuckles's hand
+        // node frame (his display draws it there), so turn it by his rest hand
+        // rotation (KNUCKMDL body model 142 = slot 285: hand nodes 61 right,
+        // 42 left, the frames the hub vectors were read from) and his facing
+        // (-x) to the Chao's (+z), as the boots do with Shadow's foot.
+        // SA2_GLOVE_HUB=1 (debug): the hub's vectors instead.
+        let native = (!std::env::var("SA2_GLOVE_HUB").is_ok_and(|v| v == "1")).then(|| {
+            let body = model_obj(m, KNUX_BODY_SLOT);
+            if !(0x8000_0000..0x8C00_0000).contains(&body) { return None; }
+            let kr = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
+            let node = if k == 0 { 61 } else { 42 };
+            let (hr, _) = *kr.get(node)?;
+            let r0 = kr.first().map(|x| x.0)?;
+            Some(crate::skate::mul(&[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], &crate::skate::unit(&crate::skate::mul(&crate::skate::inv(&r0), &hr))))
+        }).flatten();
+        let r = native.unwrap_or(r);
         // Point the fist out along the arm (shoulder -> hand marker), not the
         // Chao's +z: the glove's forward goes to the arm direction, its up stays
         // world up (flattened against the arm).
-        let r = if !std::env::var("SA2_GLOVE_ALONG_ARM").is_ok() { r } else {
+        let r = if native.is_some() || !std::env::var("SA2_GLOVE_ALONG_ARM").is_ok() { r } else {
             // The hub's fist points down and out: forward = the arm direction
             // tipped down by SA2_GLOVE_TIP degrees (default 0: 45 hid them), up = toward +y.
             let tip = std::env::var("SA2_GLOVE_TIP").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0).to_radians();
@@ -712,6 +733,18 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
             let b: [[f32; 3]; 3] = std::array::from_fn(|i| [x2[i], y[i], a[i]]);
             crate::skate::mul(&b, &r)
         };
+        // SA2_GLOVE_FIX="rx,ry,rz" (debug, degrees): turn the glove in its own
+        // model frame before the mount, to find the way it faces on the Chao.
+        let r = match std::env::var("SA2_GLOVE_FIX").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
+            Some(a) if a.len() == 3 => {
+                let (sx, cx) = a[0].to_radians().sin_cos(); let (sy, cy) = a[1].to_radians().sin_cos(); let (sz, cz) = a[2].to_radians().sin_cos();
+                let rx = [[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]];
+                let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+                let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
+                crate::skate::mul(&r, &crate::skate::mul(&rz, &crate::skate::mul(&ry, &rx)))
+            }
+            _ => r,
+        };
         let gr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
         let gv: Vec<[f32; 3]> = gr.verts.iter().zip(gr.worlds(&[])).flat_map(|(vs, (rr, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|q| rr[i][q] * v[q]).sum::<f32>())).collect::<Vec<_>>()).collect();
         let src: Vec<[f32; 3]> = gv.iter().map(|p| std::array::from_fn(|i| (0..3).map(|q| r[i][q] * p[q]).sum())).collect();
@@ -721,7 +754,25 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         }
         // SA2_GLOVE_SCALE=k (debug): k times the fitted size.
         let s = hsize * GLOVE_SCALE / ssize * std::env::var("SA2_GLOVE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
-        let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * s } else { hc[i] - sc[i] * s }));
+        // SA2_GLOVE_PIVOT=wrist (debug): the glove's end nearest the shoulder
+        // (its cuff: the vertices in the first 15% along the arm) sits on the
+        // wrist, where the hand starts along the arm, instead of the glove's
+        // centre on the hand's centre.
+        // Native mount: the glove's origin (Knuckles's hand node) on the
+        // Chao's hand marker node.
+        let t: [f32; 3] = if native.is_some() && !std::env::var("SA2_GLOVE_PIVOT").is_ok() {
+            hand
+        } else if std::env::var("SA2_GLOVE_PIVOT").is_ok_and(|v| v == "wrist") {
+            let along = |p: &[f32; 3]| (0..3).map(|i| p[i] * ax[i]).sum::<f32>();
+            let (lo, hi) = src.iter().map(along).fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v), h.max(v)));
+            let cuff: Vec<&[f32; 3]> = src.iter().filter(|p| along(p) <= lo + 0.15 * (hi - lo)).collect();
+            let cc: [f32; 3] = std::array::from_fn(|i| cuff.iter().map(|p| p[i]).sum::<f32>() / cuff.len().max(1) as f32);
+            let wrist: [f32; 3] = std::array::from_fn(|i| sh[i] + ax[i] * reach * GLOVE_REACH);
+            std::array::from_fn(|i| wrist[i] - cc[i] * s)
+        } else {
+            std::array::from_fn(|i| hc[i] - sc[i] * s)
+        };
+        let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * s } else { t[i] }));
         out[k] = (model, inv_mul(&aw, &desired));
         let _ = arm;
     }
@@ -924,8 +975,11 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     // SA2_SE_LOG=1 (debug): the game's other sound calls too (the positional
     // ones are logged in start_stage), with the caller, to find which sound
     // a moving Chao makes.
+    // The character's own sounds while its exec moves a Chao (the landing
+    // and stop sound at main.dol 0x80080CB4..0x80080CFC: 0x2016, 0x201A for
+    // Metal's physics row 12, else 0x2003) are not played: mob 2026-11-22.
+    c.rt.set_override(SE_CALLS[0], |c, m| se_log(c, m, SE_CALLS[0]));
     if std::env::var("SA2_SE_LOG").is_ok_and(|v| v == "1") {
-        c.rt.set_override(SE_CALLS[0], |c, m| se_log(c, m, SE_CALLS[0]));
         c.rt.set_override(SE_CALLS[1], |c, m| se_log(c, m, SE_CALLS[1]));
         c.rt.set_override(SE_CALLS[2], |c, m| se_log(c, m, SE_CALLS[2]));
         c.rt.set_override(SE_CALLS[3], |c, m| se_log(c, m, SE_CALLS[3]));
@@ -1767,7 +1821,6 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
         return;
     }
     if PMOVE_CHAO.replace(chao) != chao {
-        m.w32(cw, m.r32(own));
         eprintln!("chao-drive: player move on the Chao's body (twp {cw:#x}, character twp {own:#x}, state {})", m.r8(own));
     }
     if mw != 0 {
@@ -1783,14 +1836,26 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     m.w32(task + 0x34, cw);
     m.w32(cw + 0x2C, m.r32(own + 0x2C));
     c.r[3] = task;
+    // The character's action state and flags (twp +0x00..+0x08: mode,
+    // smode, id, btimer, flag, wtimer) stay in its own task work and are lent
+    // to the Chao's for the call only: left in the Chao's, the Chao's own exec
+    // read them as its own and its motion stopped (mob: it moved, its
+    // animation did not).
+    let chao_head = [m.r32(cw), m.r32(cw + 4)];
+    m.w32(cw, m.r32(own));
+    m.w32(cw + 4, m.r32(own + 4));
     IN_PMOVE.set(true);
     original(c, m, addr);
     IN_PMOVE.set(false);
+    m.w32(own, m.r32(cw));
+    m.w32(own + 4, m.r32(cw + 4));
+    m.w32(cw, chao_head[0]);
+    m.w32(cw + 4, chao_head[1]);
     m.w32(task + 0x34, own);
     m.w32(cw + 0x2C, chao_cwp);
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
         let f = |a: u32| f32::from_bits(m.r32(a));
-        eprintln!("chao-drive: pmove state {} pos ({:.1},{:.1},{:.1}) yaw {:#x} flag {:#x}", m.r8(cw), f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C), m.r32(cw + 0x0C), m.r16(cw + 4));
+        eprintln!("chao-drive: pmove state {} pos ({:.1},{:.1},{:.1}) yaw {:#x} flag {:#x} chao mode {} motion {}", m.r8(own), f(cw + 0x14), f(cw + 0x18), f(cw + 0x1C), m.r32(cw + 0x0C), m.r16(own + 4), m.r8(cw), LAST_MOTION.get());
     }
 }
 
@@ -1868,8 +1933,20 @@ const GEAR_HEAP: u32 = 1;
 const SE_CALLS: [u32; 4] = [0x8006_B978, 0x8006_B1FC, 0x8006_BB10, 0x8006_C78C];
 
 fn se_log(c: &mut Cpu, m: &mut Mem, at: u32) {
-    eprintln!("se: {at:#x} id {:#x} r4 {:#x} lr {:#x} pmove {}", c.r[3], c.r[4], c.lr, IN_PMOVE.get());
+    if SE_LOG.get() {
+        eprintln!("se: {at:#x} id {:#x} r4 {:#x} lr {:#x} pmove {}", c.r[3], c.r[4], c.lr, IN_PMOVE.get());
+    }
+    if at == SE_CALLS[0] && IN_PMOVE.get() {
+        // shortcut: no sound slot reported to the caller (-1); the callers
+        // seen (0x80080CFC) ignore it.
+        c.r[3] = u32::MAX;
+        return;
+    }
     original(c, m, at);
+}
+
+thread_local! {
+    static SE_LOG: Cell<bool> = Cell::new(std::env::var("SA2_SE_LOG").is_ok_and(|v| v == "1"));
 }
 
 /// The character's exec is running on the Chao's body (player_move): its own
@@ -1963,9 +2040,8 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             if !pmove {
                 crate::chao_drive::drive(c, m, chao, rt::sec(m, 60, 1));
             }
-            let from: u32 = if pmove { 0x00 } else { 0x08 };
             if own != 0 {
-                for o in (from..0x20).step_by(4) {
+                for o in (0x08..0x20).step_by(4) {
                     m.w32(own + o, m.r32(data1 + o));
                 }
             }
