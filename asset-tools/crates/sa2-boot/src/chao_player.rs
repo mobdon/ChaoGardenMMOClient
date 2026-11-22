@@ -65,6 +65,8 @@ enum Step {
 
 thread_local! {
     static STEP: Cell<Step> = const { Cell::new(Step::Wait(0)) };
+    /// The frame the Chao went live (see `starting`).
+    static LIVE_SINCE: Cell<u64> = const { Cell::new(0) };
     /// Sonic's data1 (position +0x14, rotation +0x08) for the Chao's display.
     static RIDER: Cell<u32> = const { Cell::new(0) };
     /// Rider position at the previous Chao display (for the emotion ball).
@@ -928,6 +930,24 @@ const FROM_VOICE_TASK: u32 = 0x8001_2768;
 const LOAD_BANK: u32 = 0x8006_CFEC;
 const WALKER_BANK_2P: u32 = 0x8017_5E9C; // "se_ch_wk_BATTLE.mlt"
 
+/// MMO choice: how long after the Chao appears a level counts as starting
+/// (frames; about 10 s), with no replacement voice line.
+const START_FRAMES: u64 = 600;
+
+fn starting() -> bool {
+    let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    now.saturating_sub(LIVE_SINCE.get()) < START_FRAMES
+}
+
+/// The own Chao's taskwk (task +0x34), 0 while it isn't out: its own Chao
+/// sounds are not played to its player (start_stage's positional sound hooks).
+pub(crate) fn own_chao_twp(m: &Mem) -> u32 {
+    match STEP.get() {
+        Step::Live(task) => m.r32(task + 0x34),
+        _ => 0,
+    }
+}
+
 fn voice(c: &mut Cpu, m: &mut Mem) {
     // From the start of the run: the drop line plays before the Chao is loaded.
     if c.lr == FROM_VOICE_TASK {
@@ -1690,6 +1710,12 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     if mw != 0 {
         m.w16(mw + 0x40, m.r16(mw + 0x40) | 0x10);
     }
+    // The Chao's exec enters its own collision (CCL_Entry) while twp +0xA0
+    // has bit 8; the character's collision is at the same spot, and a
+    // jump into it went down the character's hit path (main.dol 0x80055A50:
+    // knock-back, then an unchecked hook at 0x801A2A18 that is null in Chao
+    // World). Unverified that the hitter was the Chao itself.
+    m.w32(cw + 0xA0, m.r32(cw + 0xA0) & !8);
     let chao_cwp = m.r32(cw + 0x2C);
     m.w32(task + 0x34, cw);
     m.w32(cw + 0x2C, m.r32(own + 0x2C));
@@ -1712,20 +1738,24 @@ thread_local! {
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let task = c.r[3];
-    let me = self_drive(m);
+    // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
+    let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
+    // Self mode only for a Chao made in this stage and area: on the first
+    // frame after a change STEP still names the Chao of the stage just left
+    // (from a level, on the ChaoMain copy at BASE), until the reset below.
+    let me = self_drive(m) && LIVE_STAGE.get() == m.r16(STAGE_NUM) ^ (area << 8);
     if SELF_LOGGED.replace(me) != me {
         eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
     }
     let pmove = me && player_move_on();
     if !me {
+        c.r[3] = task;
         original(c, m, addr);
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
         player_move(c, m, addr, task, chao);
     }
     // A new stage or Chao World area drops the Chao task:
     // create the player's Chao again.
-    // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
-    let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
     // Offline players' cached Chao leave after the grace period.
     crate::chao_cache::tick();
     if chao_world(m) && matches!(STEP.get(), Step::Live(_)) && module_linked(m, 60) {
@@ -2167,6 +2197,27 @@ fn motion_log(c: &mut Cpu, m: &mut Mem) {
     rel_original(c, m, a, motion_log);
 }
 
+/// The game left a level in-process (start_stage restarts Chao World): take
+/// the copies loaded at BASE/MOT off the module list, so the ChaoMain the game
+/// loads next is the only module 60 (two gave "no function at 0x81201310",
+/// lr inside BASE). Unverified: nothing else still points into the copies.
+pub(crate) fn unlink_copies(c: &mut Cpu, m: &mut Mem) {
+    for base in linked_copies(m, &[BASE, MOT]) {
+        eprintln!("chao-player: unlinking the copy at {base:#x}");
+        call(c, m, sa2_recomp::os::OS_UNLINK, &[base]);
+    }
+    STEP.set(Step::Wait(0));
+}
+
+/// Which of `bases` are OSModuleInfo addresses on the OS module list.
+fn linked_copies(m: &Mem, bases: &[u32]) -> Vec<u32> {
+    std::iter::successors(Some(m.r32(rt::OS_MODULE_HEAD)), |&i| Some(m.r32(i + 4)))
+        .take_while(|&i| i != 0)
+        .take(256)
+        .filter(|i| bases.contains(i))
+        .collect()
+}
+
 fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     // The player's own Chao from their card: the first hatched Chao (type >= 2,
     // CHAO_PARAM_GC +0x80) in the loaded Chao save, which ChaoMain fn_60_2C30
@@ -2250,6 +2301,7 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
         call(c, m, LOAD_BANK, &[WALKER_BANK_2P]);
     }
     call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, STAND_MOTION]);
+    LIVE_SINCE.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
     Step::Live(chao)
 }
 
@@ -2512,6 +2564,14 @@ const RECORD_EVERY: u64 = 180;
 thread_local! {
     static RECORD_SENT: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
     static RECORD_SEEN: std::cell::RefCell<std::collections::BTreeMap<u64, std::time::SystemTime>> = Default::default();
+}
+
+/// The own Chao's save record (the pointer at chaowk +0x5C) while it is
+/// live, for glue that hands it to the game (race_control).
+pub(crate) fn own_record(m: &Mem) -> Option<u32> {
+    let Step::Live(chao) = STEP.get() else { return None };
+    let rec = m.r32(m.r32(chao + 0x34) + 0x5C);
+    (0x8000_0000..0x8C00_0000).contains(&rec).then_some(rec)
 }
 
 fn export_record(m: &Mem) {

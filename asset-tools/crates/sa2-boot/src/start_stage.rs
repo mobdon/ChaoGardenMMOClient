@@ -19,6 +19,11 @@ const GLOBAL_MODE: u32 = GAME + 0x80;
 const NEXT_GLOBAL_MODE: u32 = GAME + 0x84;
 const MD_TITLE_INIT: u32 = 1;
 const MD_ACTION_INIT: u32 = 4;
+/// Set when the game leaves a stage for the title: the stage's exec returning
+/// -1 (exit) or -2 (0x800D2EF0, 0x800D2F68), after the stage is torn down the
+/// same way as before a restart's mode 4. Its handler only goes on to mode 13
+/// and the title (0x800D2E8C). At boot it comes before the start.
+const MD_LEFT_STAGE: u32 = 2;
 /// The first global mode after the memory card is read (see top_level).
 const MD_AFTER_CARD: u32 = 12;
 /// The boot logos (Nintendo, SEGA, Sonic Team), timed against frames with SA2_MODE_LOG.
@@ -169,6 +174,11 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     else {
         return;
     };
+    // Every MMO start: Chao that must stay silent (see quiet_residents).
+    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
+    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
+        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
+    });
     if stage == CHAO_WORLD {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
@@ -178,7 +188,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         // character table; the headless run checks the rider's model.
         let rider = std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1);
         PENDING.set(Some((CHAO_WORLD, rider)));
-        chao_world_glue(c);
+        SHOWN.set(Some(u32::MAX));
         c.rt.set_override(TOP_LEVEL, top_level);
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
@@ -220,17 +230,9 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     }
 }
 
-/// The Chao World glue: the area told to the page, the lobby's residents.
-fn chao_world_glue(c: &mut Cpu) {
-    SHOWN.set(Some(u32::MAX));
-    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
-    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
-        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
-    });
-}
-
 fn top_level(c: &mut Cpu, m: &mut Mem) {
-    if PENDING.get().is_some() && std::env::var("SA2_MODE_LOG").is_ok() {
+    // Every change of global mode, so a run shows which way the game went.
+    {
         let mode = m.r32(GLOBAL_MODE);
         if MODE_SEEN.get() != mode {
             MODE_SEEN.set(mode);
@@ -254,18 +256,22 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if let Some((stage, ch)) = PENDING.take() {
             STARTED.set(true);
             start(c, m, stage, ch);
-        } else if mode == MD_TITLE_INIT && STARTED.get() {
-            // MMO glue: the title never shows. Back at it after the start (a
-            // level's EXIT or end, the lobby's own way out): Chao World, as at
-            // boot. Unverified: that each of those ways reaches this mode.
-            if SHOWN.get().is_none() {
-                chao_world_glue(c);
-            }
-            start(c, m, CHAO_WORLD, 0);
         }
     }
     if SHOWN.get().is_some() {
         crate::tiny_transporter::frame(c, m);
+    }
+    if mode == MD_LEFT_STAGE && STARTED.get() {
+        // MMO glue: the title never shows. The game left the stage it was
+        // started in (a level's EXIT, Chao World's own way out): Chao World
+        // again, as at boot. Unverified: an exit that skips this mode (the
+        // exec's -1 path can go to mode 21 then 13, 0x800D2FB0).
+        eprintln!("start-stage: the game left its stage; starting Chao World");
+        if SHOWN.get().is_none() {
+            SHOWN.set(Some(u32::MAX));
+        }
+        crate::chao_player::unlink_copies(c, m);
+        start(c, m, CHAO_WORLD, 0);
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
@@ -273,6 +279,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             TO_LOBBY.set(false);
             if now != 0 && now != LOBBY {
                 // The call ChaoMain's own way back to the lobby makes (0xB4F0).
+                eprintln!("start-stage: area {now} to the lobby (pause EXIT)");
                 guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
             }
         }
@@ -320,6 +327,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             tell_page(if now == LOBBY { 0 } else { now });
         }
     }
+    crate::race_control::frame(c, m);
     crate::race_probe::frame(c, m);
     crate::karate::frame(c, m);
     original(c, m, TOP_LEVEL);

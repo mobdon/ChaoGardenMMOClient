@@ -24,8 +24,9 @@ function glbExtras(bytes) {
   } catch { return null; }
 }
 
-/** Render `player`'s Chao into `canvas`. Returns a dispose function; a missing asset leaves the canvas empty. */
-export async function mountChaoPortrait(canvas, player) {
+/** `player`'s Chao model in a scene of its own on `canvas`, standing as imported with the camera on
+ * its front; null when its asset is missing. */
+export async function openChaoScene(canvas, player, options = {}) {
   const B = await import('@babylonjs/core'); await import('@babylonjs/loaders/glTF/index.js');
   const load = async key => {
     const response = await fetch(`/api/assets/${key}.glb`).catch(() => null);
@@ -35,25 +36,32 @@ export async function mountChaoPortrait(canvas, player) {
     container.extras = glbExtras(bytes);
     return container;
   };
-  const engine = new B.Engine(canvas, true, { alpha: true }), scene = new B.Scene(engine);
+  const engine = new B.Engine(canvas, true, { alpha: true, ...options }), scene = new B.Scene(engine);
   scene.clearColor = new B.Color4(0, 0, 0, 0);
   new B.HemisphericLight('light', new B.Vector3(0, 1, 0.4), scene);
   const dispose = () => { engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
   const [model, source] = await Promise.all([load(portraitAsset(player)), load('chao-behaviour')]);
-  if (!model) { dispose(); return () => {}; }
+  if (!model) { dispose(); return null; }
   const entries = model.instantiateModelsToScene(name => name, false);
   for (const group of entries.animationGroups) group.stop();
   const visual = entries.rootNodes[0];
-  visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
-  const imported = { entries, visual };
-  const stand = source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
-  // The motion table's own PlaySpeed (native frames per 60 Hz tick); the clip's keys are one per native frame.
-  const speed = source?.extras?.chaoBehaviour?.clips?.find(row => row.nativeName === 'alm_tati')?.tableProperties?.PlaySpeed;
-  stand?.start(true, Number.isFinite(speed) && speed > 0 ? speed : 1);
   const { min, max } = visual.getHierarchyBoundingVectors();
   const height = max.y - min.y;
   const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
   camera.minZ = 0.01;
+  return { B, engine, scene, visual, imported: { entries, visual }, source, dispose };
+}
+
+/** Render `player`'s Chao into `canvas`. Returns a dispose function; a missing asset leaves the canvas empty. */
+export async function mountChaoPortrait(canvas, player) {
+  const opened = await openChaoScene(canvas, player);
+  if (!opened) return () => {};
+  const { B, engine, scene, visual, imported, source, dispose } = opened;
+  visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
+  const stand = source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
+  // The motion table's own PlaySpeed (native frames per 60 Hz tick); the clip's keys are one per native frame.
+  const speed = source?.extras?.chaoBehaviour?.clips?.find(row => row.nativeName === 'alm_tati')?.tableProperties?.PlaySpeed;
+  stand?.start(true, Number.isFinite(speed) && speed > 0 ? speed : 1);
   engine.runRenderLoop(() => scene.render());
   return dispose;
 }

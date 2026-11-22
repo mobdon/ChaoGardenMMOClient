@@ -97,7 +97,9 @@ pub(crate) fn flush() {
     finish();
     let spots = FRAME.with_borrow_mut(std::mem::take);
     if let Ok(path) = std::env::var("SA2_TAGS_OUT") {
-        let _ = std::fs::write(path, lines(&spots));
+        // The chart covers the screen: no tags over it.
+        let shown = if crate::kinder_chart::is_open() { String::new() } else { lines(&spots) };
+        let _ = std::fs::write(path, shown);
     }
     if !TREE_DONE.replace(true) {
         tree_icon();
