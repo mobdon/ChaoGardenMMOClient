@@ -130,6 +130,7 @@ function loadedWorker() {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
     else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
+    else if (SHOE_PICKUPS[m.area]) pickedUp(SHOE_PICKUPS[m.area]);
     else if (m.area !== undefined) roomArea(m.area);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
@@ -147,6 +148,15 @@ function startThread(tid, arg) {
 // The MMO title screen keeps the signed-in Chao's token (src/save-slots.js).
 function mmoToken() {
   try { return localStorage.getItem('chao-garden-session-v1') || ''; } catch { return ''; }
+}
+// The game's own shoe upgrade, picked up in a level (sa2_boot::gear_pickup):
+// the server lets this card's Chao wear the shoes from then on.
+const SHOE_PICKUPS = { 252: 'sonic-light-shoes', 251: 'shadow-air-shoes' };
+function pickedUp(item) {
+  const token = mmoToken();
+  if (!token) return;
+  fetch('/api/gear-pickup', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item }) }).then(r => r.ok, () => false).then(ok => ok || log(`could not tell the server about ${item}`, true));
 }
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
