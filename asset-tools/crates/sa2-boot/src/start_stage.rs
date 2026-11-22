@@ -219,6 +219,8 @@ const COCOON_HOLD: u32 = 1300;
 static COCOON_RESTORE: Global<(u32, [u32; 3], u32)> = global!((0, [0; 3], 0));
 /// The new Chao's (save slot, type, growth bits) last logged, and frames the tutorial has run.
 static SLOT_SEEN: Global<(u32, u8, u32)> = global!((0, 0, 0));
+/// The save slot of the egg laid for a new player (0 = none laid).
+static EGG_SLOT: Global<u32> = global!(0);
 static LOG_FRAMES: Global<u32> = global!(0);
 /// Next guide line to show and frames until it shows.
 static LINE: Global<(usize, u32)> = global!((0, 0));
@@ -368,7 +370,8 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
         if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
-            lay_egg_with(c, m, text, None);
+            // Only a new player's egg: an egg an existing player picked is not their own Chao.
+            EGG_SLOT.set(lay_egg_with(c, m, text, None));
         }
         // Eggs the player picked and named on the page hatch here too.
         if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
@@ -446,11 +449,12 @@ pub(crate) fn go_lobby() {
 
 /// The game's own egg at the player's feet, with guest scratch for the gene
 /// and position on a lowered stack (as the native caller keeps them).
-fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>) {
+/// Returns the egg's save slot (0 = none was free).
+fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>) -> u32 {
     let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
     if slot == 0 {
         eprintln!("start-stage: no free Chao save slot; no egg");
-        return;
+        return 0;
     }
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - GENE_SIZE;
@@ -475,6 +479,7 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
         SLOT_SEEN.set((slot, 0, 0));
         TUTORIAL_SLOT.set(slot);
     }
+    slot
 }
 
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
@@ -690,6 +695,20 @@ fn section(m: &Mem, text: u32, n: u32) -> u32 {
         info = m.r32(info + 4);
     }
     0
+}
+
+/// A new player's run: `Some(0)` until the egg is laid, then its save slot.
+/// The player has no Chao of their own before that egg hatches (chao_player).
+pub(crate) fn hatch_slot() -> Option<u32> {
+    match EGG_SLOT.get() {
+        0 => HATCH.get().then_some(0),
+        slot => Some(slot),
+    }
+}
+
+/// The tutorial's evolution is under way (growth written, cocoon timers short).
+pub(crate) fn evolving() -> bool {
+    COCOON_RESTORE.get().0 != 0
 }
 
 /// Logs the new Chao's type (param +0x80) and growth when either changes:

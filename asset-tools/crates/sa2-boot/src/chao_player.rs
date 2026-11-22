@@ -68,6 +68,10 @@ thread_local! {
     /// The frame the Chao went live (see `starting`).
     /// Sonic's data1 (position +0x14, rotation +0x08) for the Chao's display.
     static RIDER: Cell<u32> = const { Cell::new(0) };
+    /// A new player's hatched Chao: its task seen in its exec, waiting to be
+    /// taken over, and whether it has been (the player then has their Chao).
+    static HATCHED: Cell<u32> = const { Cell::new(0) };
+    static HATCH_TAKEN: Cell<bool> = const { Cell::new(false) };
     /// Rider position at the previous Chao display (for the emotion ball).
     static LAST: Cell<[f32; 3]> = const { Cell::new([0.0; 3]) };
 }
@@ -98,8 +102,10 @@ pub(crate) fn behavior(c: &mut Cpu, m: &mut Mem) {
     if crate::start_stage::standing_resident(m, c.r[3]) {
         return;
     }
+    // Except while the tutorial evolves it: the cocoon is a behaviour of its own.
+    // Unverified until a run: that this is enough for ChaoMain's growth check to start it.
     if let Step::Live(chao) = STEP.get() {
-        if m.r32(chao + 0x34) == c.r[3] || chao == c.r[3] {
+        if (m.r32(chao + 0x34) == c.r[3] || chao == c.r[3]) && !crate::start_stage::evolving() {
             return;
         }
     }
@@ -118,6 +124,15 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
         return;
     }
     remote_pin(m, c.r[3]);
+    // A new player's own Chao is the one that hatches from their egg: the Chao
+    // whose record (chaowk +0x5C) is the egg's save slot. tick() takes it over.
+    if new_player_waiting() {
+        let cw = m.r32(c.r[3] + 0x34);
+        let slot = crate::start_stage::hatch_slot().unwrap_or(0);
+        if slot != 0 && (0x8000_0000..0x8C00_0000).contains(&cw) && m.r32(cw + 0x5C) == slot {
+            HATCHED.set(c.r[3]);
+        }
+    }
     // Beyond the REMOTE_NEAR nearest, a remote Chao's exec (motion and
     // ChaoMain's per-frame work) runs every REMOTE_FAR_EVERY frames; its
     // position still follows every frame and it is drawn every frame.
@@ -2523,6 +2538,20 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
         Step::Wait(n) if n < 60 => Step::Wait(n + 1),
         // Leaving by the lobby exit: no new Chao while the game goes to its menu.
         Step::Wait(_) if crate::start_stage::to_stage_select_pending() => Step::Wait(60),
+        Step::Wait(_) if chao_world(m) && module_linked(m, 60) && new_player_waiting() => {
+            // No Chao is made for a new player (no default Chao): the hooks go in
+            // so the hatched Chao is seen in its exec, and that Chao becomes the player.
+            hook(c, m);
+            match HATCHED.replace(0) {
+                0 => Step::Wait(60),
+                chao => {
+                    eprintln!("chao-player: the hatched Chao {chao:#x} (slot {:#x}) is the player", m.r32(m.r32(chao + 0x34) + 0x5C));
+                    HATCH_TAKEN.set(true);
+                    call(c, m, LOAD_BANK, &[WALKER_BANK_2P]);
+                    Step::Live(chao)
+                }
+            }
+        }
         Step::Wait(_) if chao_world(m) => {
             if module_linked(m, 60) { create(c, m, pos) } else { Step::Wait(60) }
         }
@@ -2697,6 +2726,32 @@ fn linked_copies(m: &Mem, bases: &[u32]) -> Vec<u32> {
         .collect()
 }
 
+/// A new player's run before their egg's Chao is theirs. After the takeover
+/// an area change makes the Chao again as for any player: create() finds it
+/// on the card as the first hatched Chao.
+fn new_player_waiting() -> bool {
+    !HATCH_TAKEN.get() && crate::start_stage::hatch_slot().is_some()
+}
+
+/// The overrides the player's Chao runs through.
+fn hook(c: &mut Cpu, m: &mut Mem) {
+    let s1 = rt::sec(m, 60, 1);
+    if c.rt.overrides.contains_key(&(s1 + CHAO_EXEC)) {
+        return;
+    }
+    c.rt.set_override(s1 + AL_BEHAVIOR_CONTROL, behavior);
+    c.rt.set_override(s1 + CHAO_DISPLAY, chao_display);
+    c.rt.set_override(s1 + CHAO_EXEC, chao_exec);
+    c.rt.set_override(s1 + AL_IS_ON_SCREEN3, on_screen3);
+    c.rt.set_override(s1 + AL_NODE_TRANSFORM, chao_node);
+    if std::env::var_os("SA2_MOTION_LOG").is_some() {
+        c.rt.set_override(s1 + AL_SET_MOTION_LINK, motion_log);
+    }
+    for (a, f) in AL_WALKERS.iter().zip([w0 as rt::Func, w1, w2, w3, w4, w5]) {
+        c.rt.set_override(s1 + a, f);
+    }
+}
+
 fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     // The player's own Chao from their card: the first hatched Chao (type >= 2,
     // CHAO_PARAM_GC +0x80) in the loaded Chao save, which ChaoMain fn_60_2C30
@@ -2764,17 +2819,7 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
         return Step::Failed;
     }
     let s1 = rt::sec(m, 60, 1);
-    c.rt.set_override(s1 + AL_BEHAVIOR_CONTROL, behavior);
-    c.rt.set_override(s1 + CHAO_DISPLAY, chao_display);
-    c.rt.set_override(s1 + CHAO_EXEC, chao_exec);
-    c.rt.set_override(s1 + AL_IS_ON_SCREEN3, on_screen3);
-    c.rt.set_override(s1 + AL_NODE_TRANSFORM, chao_node);
-    if std::env::var_os("SA2_MOTION_LOG").is_some() {
-        c.rt.set_override(s1 + AL_SET_MOTION_LINK, motion_log);
-    }
-    for (a, f) in AL_WALKERS.iter().zip([w0 as rt::Func, w1, w2, w3, w4, w5]) {
-        c.rt.set_override(s1 + a, f);
-    }
+    hook(c, m);
     // In a cutscene (no rider) the bank load is skipped: suspected of the
     // ev15 stall right after Live. shortcut: no Chao voice in the intro yet.
     if RIDER.get() != 0 || EV_SPOT.get().is_none() {
