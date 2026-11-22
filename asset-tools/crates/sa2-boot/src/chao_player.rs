@@ -422,6 +422,8 @@ fn load_models(c: &mut Cpu, m: &mut Mem, name: u32) -> u32 {
 const SHOES: [(usize, usize, u32); 2] = [(13, 14, 161), (6, 24, 163)];
 /// The client's fit (docs/MIRRORED-GEAR-FIT.md): boot length 0.90 of the Chao foot.
 const SHOE_LENGTH_RATIO: f32 = 0.90;
+/// Chao leg nodes posed from the rider when wearing Shadow's shoes.
+const SHOE_LEGS: [usize; 4] = [5, 6, 12, 13];
 
 /// Shadow's boots on the Chao's feet (nodes 13/6, which follow the rider's
 /// legs 7->14 and 17->24, the retarget's LIMBS; Sonic's 6-15 leg is his
@@ -664,6 +666,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         if (0x8000_0000..0x8C00_0000).contains(&root) {
             CHAO_REST.with_borrow_mut(|r| if r.is_none() { *r = Some(crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]])); });
         }
+        pose_chao(); // the rider's pose, for the legs under the shoes
         NATIVE_DRAW.set(true);
         CHAO_NODE.set(0);
         rel_original(c, m, a, chao_display);
@@ -1034,10 +1037,27 @@ walker_probe!(w0 = 0, w1 = 1, w2 = 2, w3 = 3, w4 = 4, w5 = 5);
 fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if !CHAO_DRAW.get() {
         let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
+        if NATIVE_DRAW.get() && CHAO_NODE.get() == 0 {
+            CHAO_PLACE.set(mtx(m, m.r32(NJ_CURRENT_MATRIX)));
+        }
         rel_original(c, m, a, chao_node);
         // The player's Chao on its native rig: its foot nodes for the boots.
         if NATIVE_DRAW.get() {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
+            // Wearing Shadow's shoes: the legs (pivot/mesh 5-6, 12-13) follow
+            // the rider's own walk/run/skate; body, head and arms stay native.
+            if SHOE_LEGS.contains(&i) && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+                if let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) {
+                    let p = CHAO_PLACE.get();
+                    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+                    for row in 0..3 {
+                        for col in 0..4 {
+                            let v: f32 = if col < 3 { (0..3).map(|k| p[row][k] * r[k][col]).sum() } else { (0..3).map(|k| p[row][k] * t[k]).sum::<f32>() + p[row][3] };
+                            m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
+                        }
+                    }
+                }
+            }
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
                 let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
                 FEET.with_borrow_mut(|f| f[k] = Some(cur));

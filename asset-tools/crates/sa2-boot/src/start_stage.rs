@@ -132,7 +132,12 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if stage == CHAO_WORLD {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
-        PENDING.set(Some((CHAO_WORLD, 0)));
+        // MMO glue: Shadow (character 1) rides, so a Chao in Shadow's shoes walks
+        // and skates with Shadow's own motions (SA2_CHAO_RIDER=n overrides; debug).
+        // shortcut: character number 1 = Shadow is unverified against the
+        // character table; the headless run checks the rider's model.
+        let rider = std::env::var("SA2_CHAO_RIDER").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1);
+        PENDING.set(Some((CHAO_WORLD, rider)));
         SHOWN.set(Some(u32::MAX));
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
