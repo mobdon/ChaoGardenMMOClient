@@ -9,7 +9,7 @@ import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { nativeText } from './native-text.js';
 
-let mounted = null;
+let mounted = null, lastNest = [];
 // One overlay per page; a reconnected room socket takes over sending.
 export function mountOverlay(nextSocket) {
   if (mounted) { mounted.socket = nextSocket; return mounted.api; }
@@ -24,11 +24,26 @@ export function mountOverlay(nextSocket) {
   const STATS = ['swim', 'fly', 'run', 'power', 'stamina', 'luck', 'intelligence'];
   for (const name of STATS) stats.append(createStatRow(name));
   const care = el('div'), breedingRoot = el('div'); breedingRoot.hidden = true;
-  const breedButton = el('button', 'Breeding'), tinyButton = el('button', 'Tiny Garden');
-  for (const b of [breedButton, tinyButton]) { b.tabIndex = -1; b.replaceChildren(nativeText(b.textContent, 'native-stat-name')); }
+  const breedButton = el('button', 'Breeding');
+  for (const b of [breedButton]) { b.tabIndex = -1; b.replaceChildren(nativeText(b.textContent, 'native-stat-name')); }
   // The hub's native stat-row styles are scoped to #character-panel (sonic.css); without it each row's frame spreads over the panel.
   const statBox = el('div'); statBox.id = 'character-panel'; statBox.append(stats);
-  panel.append(title, statBox, care, el('div'), breedButton, tinyButton, breedingRoot);
+  breedButton.hidden = true; breedingRoot.hidden = false;
+  // The Kindergarten medical chart as the menu: its pages (360x440, cropped from the game's 640x480
+  // layout at x264,y40) are the background, its L/R tabs (top 16 px) flip Stats / Inventory / Breeding.
+  const body = el('div'); body.style.cssText = 'position:absolute;left:16px;right:16px;top:72px;bottom:16px;overflow:auto';
+  const tab = (left, width, step) => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${left}px;width:${width}px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(page + step)); return t; };
+  const pages = [['a', [title, statBox]], ['b', [care]], ['c', [breedingRoot]]];
+  let page = 0;
+  function show(n) {
+    page = (n + pages.length) % pages.length;
+    const [art, nodes] = pages[page];
+    panel.style.background = `url(/api/assets/medchart-page-${art}.png) no-repeat 0 0 / 360px 440px`;
+    body.replaceChildren(...nodes);
+  }
+  panel.style.cssText += ';width:360px;height:440px;max-height:none;padding:0;overflow:visible;border-radius:0;box-shadow:none;image-rendering:pixelated';
+  panel.append(tab(0, 96, -1), tab(192, 96, 1), body);
+  show(0);
   document.body.append(panel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
@@ -39,21 +54,15 @@ export function mountOverlay(nextSocket) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
     slots.record(data.token, data.player, undefined, card);
-    window.sa2HatchEgg?.(); // the game lays the egg at the player's feet in the lobby
+    // The game lays it at the player's feet in the lobby, with the bred egg's own gene when it has one.
+    const bred = lastNest.find(e => e.id === egg.eggId);
+    window.sa2HatchEgg?.(bred ? { ...egg, gene: bred.gene, eggColor: bred.eggColor } : egg);
   } });
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
   const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
   if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
   addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
-  // Tiny Garden rides along on the same card (inventory rule): opened inside the panel, not a new tab.
-  let tiny = null;
-  tinyButton.addEventListener('click', () => {
-    if (tiny) { tiny.remove(); tiny = null; return; }
-    tiny = Object.assign(document.createElement('iframe'), { src: '/tiny.html', title: 'Tiny Garden' });
-    tiny.style.cssText = 'position:static;display:block;width:100%;height:420px;border:0;margin-top:8px';
-    panel.append(tiny);
-  });
   mounted.api = {
     snapshot(next) {
       const player = next.players.find(p => p.id === next.selfId);
@@ -61,6 +70,7 @@ export function mountOverlay(nextSocket) {
         title.replaceChildren(nativeText(player.name, 'native-stat-name'));
         for (const name of STATS) { const row = stats.querySelector(`[data-stat="${name}"]`); if (row && player.stats?.[name]) updateStatRow(row, name, player.stats[name]); }
       }
+      lastNest = next.life?.nest || [];
       gardenCare.update(next.care, player, { connected: true, serverTime: next.serverTime, nest: next.life?.nest || [] });
       breeding.update(next);
     },
