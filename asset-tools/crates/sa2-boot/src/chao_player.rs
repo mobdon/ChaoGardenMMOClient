@@ -113,7 +113,7 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
     // ChaoMain's per-frame work) runs every REMOTE_FAR_EVERY frames; its
     // position still follows every frame and it is drawn every frame.
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    let skip = REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == c.r[3] && e.rank >= REMOTE_NEAR && (f + e.rank as u64) % REMOTE_FAR_EVERY != 0));
+    let skip = REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == c.r[3] && (e.offscreen || (e.rank >= REMOTE_NEAR && (f + e.rank as u64) % REMOTE_FAR_EVERY != 0))));
     if skip {
         return;
     }
@@ -590,6 +590,9 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
+    if remote_offscreen(m, c.r[3]) {
+        return;
+    }
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
             pin(m, chao, RIDER.get());
@@ -1851,6 +1854,8 @@ struct Remote {
     motion: u32,
     /// Distance rank among the live remote Chao (0 = nearest).
     rank: usize,
+    /// Outside the view at its last display: no exec, no draw.
+    offscreen: bool,
 }
 
 /// Remote Chao drawn at once in an area: the nearest ones; the rest stay
@@ -1859,7 +1864,7 @@ const REMOTE_MAX: usize = 50;
 /// The nearest this many remote Chao run every frame; farther ones every
 /// REMOTE_FAR_EVERY frames (staggered by rank).
 const REMOTE_NEAR: usize = 12;
-const REMOTE_FAR_EVERY: u64 = 3;
+const REMOTE_FAR_EVERY: u64 = 5;
 /// Shown this far behind the newest update, sliding between updates.
 const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
@@ -1907,7 +1912,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
             crate::chao_cache::get_or_load(m, id, &info, 0, false);
             crate::chao_cache::set_online(id, true);
             REMOTE.with_borrow_mut(|r| {
-                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0, rank: usize::MAX });
+                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0, rank: usize::MAX, offscreen: false });
                 if e.samples.back().is_none_or(|s| s.1 != p || s.2 != a as u16 || s.3 != mo) {
                     e.samples.push_back((now, p, a as u16, mo));
                     while e.samples.len() > 4 {
@@ -2152,4 +2157,40 @@ fn raise_chao_limit(m: &mut Mem) {
         m.w32(a, WORLD_SLOTS);
         eprintln!("chao-player remote: world list limit {old} -> {WORLD_SLOTS}");
     }
+}
+
+
+/// A remote Chao outside the view (with REMOTE_VIEW_MARGIN units to spare):
+/// its display draws nothing and its exec is skipped until it comes back;
+/// remote_pin keeps its position following meanwhile. The view is the base
+/// matrix this display runs under; "in front" is the side the player's own
+/// Chao is on (no camera convention assumed).
+/// shortcut: the horizontal and vertical limits are |x|,|y| <= REMOTE_VIEW_SLOPE
+/// * depth + margin (about 63 degrees each side), wider than the game's view
+/// rather than read from its projection; upgrade with the real FOV if Chao pop.
+const REMOTE_VIEW_SLOPE: f32 = 2.0;
+const REMOTE_VIEW_MARGIN: f32 = 8.0;
+
+fn remote_offscreen(m: &Mem, task: u32) -> bool {
+    if task == 0 || !REMOTE.with_borrow(|r| r.values().any(|e| e.task == task)) {
+        return false;
+    }
+    let Step::Live(own) = STEP.get() else { return false };
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    let view = |cw: u32| -> [f32; 3] {
+        let p = [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(cw + o)));
+        std::array::from_fn(|i| (0..3).map(|k| base[i][k] * p[k]).sum::<f32>() + base[i][3])
+    };
+    let (own_cw, cw) = (m.r32(own + 0x34), m.r32(task + 0x34));
+    if own_cw == 0 || cw == 0 {
+        return false;
+    }
+    let front = view(own_cw)[2].signum();
+    let v = view(cw);
+    let depth = v[2] * front;
+    let out = depth < -REMOTE_VIEW_MARGIN
+        || v[0].abs() > REMOTE_VIEW_SLOPE * depth.max(0.0) + REMOTE_VIEW_MARGIN
+        || v[1].abs() > REMOTE_VIEW_SLOPE * depth.max(0.0) + REMOTE_VIEW_MARGIN;
+    REMOTE.with_borrow_mut(|r| if let Some(e) = r.values_mut().find(|e| e.task == task) { e.offscreen = out; });
+    out
 }
