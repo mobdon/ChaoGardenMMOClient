@@ -50,6 +50,7 @@ function hold(bit, down) {
   held = down ? held | bit : held & ~bit;
 }
 addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return; // typing in chat, not playing
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
   e.preventDefault();
@@ -73,6 +74,7 @@ const BUTTONS = [[0, 0x0100], [2, 0x0200], [1, 0x0400], [3, 0x0800], [9, 0x1000]
 function writePad() {
   pad[0] = held & 0xff;
   pad[1] = held >> 8;
+  writeExtras();
   const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find((p) => p && p.connected);
   if (!g) {
     pad[2] = 0;
@@ -161,6 +163,7 @@ function loadedWorker() {
     else if (m.done) workers--;
     else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
     else if (m.area !== undefined) roomArea(m.area);
+    else if (m.extras !== undefined) extrasChanged(...m.extras);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
   w.postMessage({ init: true, module, memory, env, picked, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
@@ -195,6 +198,7 @@ function joinRoom(token, zone) {
     let m; try { m = JSON.parse(data); } catch { return; }
     if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); }
     if (m.type === 'event') overlay?.event(m);
+    if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
@@ -273,7 +277,7 @@ function cover(on) {
     document.body.append(c);
   }
   c.style.display = on ? 'block' : 'none';
-  if (globalThis.sa2Gain) globalThis.sa2Gain.gain.value = on ? 0 : 1;
+  if (gameVolume) gameVolume.gain.value = on ? 0 : Number.isInteger(mmoSettings.volume) ? mmoSettings.volume / 10 : 1;
 }
 
 // The game changed Chao World area (its own teleporters): follow it into that room.
@@ -285,8 +289,8 @@ function roomArea(area) {
 }
 // The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
 function showCard(player) {
-  if (!player) return;
   const card = document.getElementById('mmo-card');
+  if (!player || !card) return; // the card element comes from the MMO overlay
   card.style.display = 'flex';
   // The player's own Chao as the game's Chao Select shows it (src/chao-portrait.js); drawn once.
   const icon = card.querySelector('.icon');
@@ -341,8 +345,8 @@ async function start() {
   await audio.audioWorklet.addModule('audio.js');
   const mix = new AudioWorkletNode(audio, 'sa2-mix', { outputChannelCount: [2], processorOptions: { ctl: sh.ctl, audio: sh.audio } });
   // Master volume for the MMO sound corner (src/game-overlay.js).
-  globalThis.sa2Gain = audio.createGain();
-  mix.connect(globalThis.sa2Gain).connect(audio.destination);
+  gameVolume = globalThis.sa2Gain = audio.createGain();
+  mix.connect(gameVolume).connect(audio.destination);
   const dpr = devicePixelRatio || 1;
   canvas.width = Math.round(canvas.clientWidth * dpr);
   canvas.height = Math.round(canvas.clientHeight * dpr);
@@ -369,6 +373,7 @@ async function start() {
   if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
+  if (token) loadSettings(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
   if (token) setInterval(() => mmoTick(token), 100);
   status.textContent = 'compiling the game…';
@@ -386,3 +391,148 @@ $('go').addEventListener('click', () => start().catch((e) => {
 }));
 // ?autostart: start without the button (for testing; sound may stay off).
 if (q.has('autostart')) $('go').click();
+
+// ---- Extras settings (pause menu), saved only on the MMO server ----------
+// The page applies the rows it owns: game volume, chat box, frame cap; voice
+// reads mmoSettings.voiceMode. The game applies its own rows (language, sound mode...).
+let gameVolume = null;
+function applySettings(s) {
+  const opening = s.voiceMode === 'open' && mmoSettings.voiceMode !== 'open';
+  Object.assign(mmoSettings, s);
+  if (opening) globalThis.mmoVoiceStart?.().catch(() => {}); // mic refused: stays silent
+  if (gameVolume && Number.isInteger(mmoSettings.volume)) gameVolume.gain.value = mmoSettings.volume / 10;
+  chat.hidden = mmoSettings.chat === false;
+  if (renderer && mmoSettings.fps) renderer.postMessage({ fps: mmoSettings.fps });
+}
+async function loadSettings(token) {
+  const r = await fetch('/api/settings', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+  if (r?.ok) applySettings((await r.json()).settings || {});
+  settingsLoaded = true;
+}
+// The game's pause Extras pages (sa2_boot::pause_extras): its rows, in its order,
+// and the bytes it reads back on /dev/pad 12-15.
+const THEMES = ['def', 'sn', 'sd', 'tl', 'kn', 'rg', 'am', 'eg', 'ma', 'ch', 'se'];
+const EXTRAS_ROWS = [
+  ['voiceLanguage', ['english', 'japanese']], ['sound', ['stereo', 'mono']], ['vibration', [true, false]],
+  ['menuTheme', THEMES], ['voiceMode', ['hold', 'open']], ['chat', [true, false]],
+  ['volume', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], ['music', [true, false]], ['fps', [60, 120, 165]],
+];
+function extrasChanged(row, choice) {
+  const [key, choices] = EXTRAS_ROWS[row] || [];
+  if (key && choice < choices.length) mmoSaveSettings({ [key]: choices[choice] });
+}
+let settingsLoaded = false;
+function writeExtras() {
+  const s = mmoSettings, bit = (on, n) => (on ? 1 << n : 0);
+  pad[12] = bit(settingsLoaded, 0) | bit(s.sound === 'mono', 1) | bit(s.voiceLanguage === 'japanese', 2)
+    | bit(s.vibration === false, 3) | bit(s.music === false, 4) | bit(s.chat === false, 5) | bit(s.voiceMode === 'open', 6);
+  pad[13] = Number.isInteger(s.volume) ? s.volume : 10;
+  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps));
+  pad[15] = Math.max(0, THEMES.indexOf(s.menuTheme));
+}
+
+// The Extras page calls this when a row changes: applied now, saved on the server.
+globalThis.mmoSaveSettings = (changes) => {
+  applySettings(changes);
+  const token = mmoToken();
+  if (token) fetch('/api/settings', { method: 'POST', body: JSON.stringify(changes),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }).catch(() => {});
+};
+
+// ---- chat: world (everyone) and room (this area), relayed by the MMO server --
+// T opens the box; a message starting "/w " goes to world chat, the rest to the room.
+const chat = document.createElement('div');
+chat.id = 'chat';
+chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-input" maxlength="200" placeholder="Room chat (/w for world)" aria-label="Chat message" hidden>';
+document.body.append(chat);
+const chatLog = chat.firstChild, chatInput = chat.lastChild;
+function chatLine({ channel, fromId, fromName, text }) {
+  const line = document.createElement('div');
+  line.className = channel;
+  if (fromId) line.title = `Click to mute ${fromName}`;
+  if (fromId) line.onclick = () => { room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId })); chatLine({ channel: 'system', fromName: 'Muted', text: fromName }); };
+  line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
+  chatLog.append(line);
+  while (chatLog.childElementCount > 50) chatLog.firstChild.remove();
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyT' || e.target === chatInput || !room || chat.hidden) return;
+  e.preventDefault();
+  held = 0;
+  chatInput.hidden = false;
+  chatInput.focus();
+});
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { chatInput.value = ''; chatInput.blur(); }
+  if (e.key !== 'Enter') return;
+  const world = chatInput.value.startsWith('/w ');
+  const text = (world ? chatInput.value.slice(3) : chatInput.value).trim();
+  if (text && room?.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chat', channel: world ? 'world' : 'room', text }));
+  chatInput.value = '';
+  chatInput.blur();
+});
+chatInput.addEventListener('blur', () => (chatInput.hidden = true));
+
+// ---- proximity voice: hold V to talk --------------------------------------
+// Mic audio goes only to the MMO server (never player to player, so no one sees
+// another player's address); the server relays it to Chao within its radius.
+// 8 kHz 16-bit mono in 60 ms frames keeps each message under the server's 2 KB cap.
+const VOICE_RATE = 8000, VOICE_FRAME = 480;
+let voiceCtx = null, voiceMic = null, talking = false;
+// MMO settings the game's own options menu sets (saved on the server by that menu).
+// voiceMode: 'hold' (hold V to talk) or 'open' (open mic).
+const mmoSettings = (globalThis.mmoSettings ??= { voiceMode: 'hold' });
+const voiceAt = new Map(); // sender id -> next play time, so frames queue back to back
+async function voiceStart() {
+  voiceCtx ??= new AudioContext();
+  if (voiceMic) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const src = voiceCtx.createMediaStreamSource(stream);
+  const proc = voiceCtx.createScriptProcessor(2048, 1, 1);
+  const step = voiceCtx.sampleRate / VOICE_RATE;
+  let pending = [], phase = 0;
+  proc.onaudioprocess = ({ inputBuffer }) => {
+    const input = inputBuffer.getChannelData(0);
+    // Open mic sends only while the player speaks (level gate), not room hiss.
+    const speaking = talking || (mmoSettings.voiceMode === 'open' && Math.hypot(...input) / Math.sqrt(input.length) > 0.02);
+    if (!speaking || room?.ws.readyState !== 1) { pending = []; return; }
+    for (; phase < input.length; phase += step) pending.push(Math.max(-1, Math.min(1, input[phase | 0])) * 32767);
+    phase -= input.length;
+    while (pending.length >= VOICE_FRAME) {
+      const pcm = new Int16Array(pending.splice(0, VOICE_FRAME));
+      const data = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
+      room.ws.send(JSON.stringify({ type: 'action', action: 'voice', data }));
+    }
+  };
+  src.connect(proc);
+  proc.connect(voiceCtx.createGain()).connect(voiceCtx.destination); // gain 1 on silence: keeps the processor running
+  voiceMic = { stream, proc };
+}
+function voicePlay({ fromId, fromName, volume, data }) {
+  if (!voiceCtx) return; // the server never sends voice from players you muted
+  // A new voice nearby gets one clickable line, so it can be muted like chat.
+  if (!voiceAt.has(fromId)) chatLine({ channel: 'system', fromId, fromName, text: 'is talking nearby (click to mute)' }); // browsers allow audio only after the first key or click
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+  const buf = voiceCtx.createBuffer(1, pcm.length, VOICE_RATE);
+  buf.getChannelData(0).set(Float32Array.from(pcm, (v) => v / 32768));
+  const node = voiceCtx.createBufferSource();
+  node.buffer = buf;
+  const gain = voiceCtx.createGain();
+  gain.gain.value = Math.max(0, Math.min(1, volume));
+  node.connect(gain).connect(voiceCtx.destination);
+  const at = Math.max(voiceCtx.currentTime + 0.05, voiceAt.get(fromId) ?? 0);
+  node.start(at);
+  voiceAt.set(fromId, at + buf.duration);
+}
+addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyV' || e.repeat || e.target instanceof HTMLInputElement || !room) return;
+  talking = true;
+  voiceStart().catch(() => (talking = false));
+});
+addEventListener('keyup', (e) => { if (e.code === 'KeyV') talking = false; });
+addEventListener('blur', () => (talking = false));
+for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => { voiceCtx ??= new AudioContext(); if (mmoSettings.voiceMode === 'open') voiceStart().catch(() => {}); }, { once: true });
+// The options menu calls this after switching voiceMode to 'open' (needs the mic now).
+globalThis.mmoVoiceStart = () => voiceStart();

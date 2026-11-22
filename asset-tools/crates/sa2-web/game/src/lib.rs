@@ -144,8 +144,9 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
 /// Each OS frame: controller 1 from the page, then hold the game to 60.
 /// SA2_INPUT presses are added, as in the window (the keyboard works
 /// throughout and has the pad to itself once the script is done).
-fn frame(_c: &mut Cpu, _m: &mut Mem) {
+fn frame(c: &mut Cpu, m: &mut Mem) {
     let mut p = pad();
+    sa2_boot::pause_extras::apply(c, m);
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if let Some(s) = sa2_boot::pad::script(f) {
         p.button |= s.button;
@@ -153,6 +154,7 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
             p.stick = s.stick;
         }
     }
+    sa2_boot::pause_extras::set_input(p.button, p.stick[0]);
     sa2_boot::pad::set_port0(p);
     let t = std::time::Instant::now();
     pace();
@@ -165,7 +167,8 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
 
 /// `/dev/pad`: 16 bytes. Keys held (u16, bits as [`KEYS`]); then the
 /// gamepad: connected (u8), unused (u8), buttons (u16, GC bits), stick
-/// x/y, C-stick x/y (i8), L/R (u8).
+/// x/y, C-stick x/y (i8), L/R (u8); then the Extras settings
+/// ([`sa2_boot::pause_extras::set_page_settings`]).
 fn read_pad() -> [u8; 16] {
     let mut b = [0u8; 16];
     if let Ok(mut f) = std::fs::File::open("/dev/pad") {
@@ -186,6 +189,7 @@ const KEYS: [u16; 15] = [
 /// desktop window combines them.
 fn pad() -> PadStatus {
     let b = read_pad();
+    sa2_boot::pause_extras::set_page_settings([b[12], b[13], b[14], b[15]]);
     let h = u16::from_le_bytes([b[0], b[1]]);
     let on = |i: usize| h >> i & 1 != 0;
     let mut p = PadStatus::default();
