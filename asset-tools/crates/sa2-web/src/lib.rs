@@ -70,6 +70,9 @@ pub struct Decoder {
     fifo: GxFifo,
     /// Where the page copies each job (kept: one allocation, not one a frame).
     job: Vec<u8>,
+    /// The game RAM as the page last patched it (changed-page jobs, GXJD):
+    /// kept here so only changed pages are written each frame.
+    ram: Vec<u8>,
 }
 
 #[wasm_bindgen]
@@ -79,6 +82,7 @@ impl Decoder {
         Decoder {
             fifo: GxFifo::default(),
             job: Vec::new(),
+            ram: Vec::new(),
         }
     }
 
@@ -89,18 +93,41 @@ impl Decoder {
         self.job.as_mut_ptr()
     }
 
+    /// The kept RAM, `len` bytes (zeroed when the length changes): the page
+    /// writes a changed-page job's pages here, then calls [`Self::decode_pages`].
+    pub fn ram_at(&mut self, len: usize) -> *mut u8 {
+        if self.ram.len() != len {
+            self.ram = vec![0; len];
+        }
+        self.ram.as_mut_ptr()
+    }
+
+    /// Decode a changed-page job: its pipe bytes copied in with [`Self::job_at`],
+    /// its pages already written into the kept RAM.
+    pub fn decode_pages(&mut self, now_ms: f64, aspect: f32) -> Result<(), JsValue> {
+        self.fifo.write(&self.job, &Ram(&self.ram));
+        self.finish(now_ms, aspect);
+        Ok(())
+    }
+
     /// Decode the job copied in (at `now_ms`, `performance.now()`), widened
     /// to `aspect` (width / height; 0 keeps 4:3), for the screen to take.
     pub fn decode(&mut self, now_ms: f64, aspect: f32) -> Result<(), JsValue> {
         let (fifo, ram) = split(&self.job).ok_or_else(|| err("not a GX job"))?;
         self.fifo.write(fifo, &Ram(ram));
+        self.finish(now_ms, aspect);
+        Ok(())
+    }
+}
+
+impl Decoder {
+    fn finish(&mut self, now_ms: f64, aspect: f32) {
         let mut f = self.fifo.gx.take_frame();
         sa2_gx::widescreen::clamp_hud_textures(&mut f);
         if aspect > 0.0 {
             sa2_gx::widescreen::widen(&mut f, aspect);
         }
         ready().push((f, now_ms));
-        Ok(())
     }
 }
 
