@@ -62,3 +62,7 @@
 .card-code code { display: block; font-size: 12px; color: #ffd84d; word-spacing: 4px; overflow-wrap: anywhere; margin: 4px 0; }
 .card-code button { font: inherit; color: white; background: #143a66; border: 1px solid #315a87; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
 .card-code small { display: block; margin-top: 6px; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 17px 0 0; }
+.auth-tabs button { padding: 13px; border: 1px solid #305681; border-radius: 5px 13px 5px 5px; background: #07172e; color: #a4c2e2; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; }
+.auth-tabs button[aria-selected="true"] { background: linear-gradient(105deg, #0f4ca5, #187ad4); color: white; border-color: transparent; border-bottom: 3px solid #ffd139; }
+.auth-tabs button:focus-visible { outline: 2px solid #ffd139; outline-offset: 2px; }
