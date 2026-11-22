@@ -3,7 +3,9 @@ import { createSaveSlots } from './save-slots.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { chaosVariant, chaoFormLabel, drawTinyAvatar, nativeDirection, setOwnAtlas } from './tiny-avatar.js';
 import { createTinyWatch } from './tiny-watch.js';
-import { createTinyTraining } from './tiny-training.js';
+// The panel that speaks the server's training (care envelope, adapted-afk-training); tiny-training.js
+// waits for a capability the Rust server never sends.
+import { createTinyTraining } from './tiny-afk-training.js';
 import { createTinyItems } from './tiny-items.js';
 import { durableTinyResult, readTinyCache, writeTinyCache, observedTime } from './tiny-state.js';
 import { createTinyAccount, supportsTinyAccounts } from './tiny-account.js';
@@ -341,7 +343,7 @@ function metricItems(values) {
 }
 
 function renderGame() {
-  training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || !!player?.watch || (accountV2 && account.pending), capabilities, serverTime });
+  training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || !!player?.watch || (accountV2 && account.pending), capabilities, serverTime, care: careState });
   gardenWatch.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || training.blocksActivity || (accountV2 && account.pending) });
   items.update(player, { connected: mayAct(), care: careState, accountsV2: accountV2, serverTime,
     careMutations: !accountV2 && careState?.rulesVersion === 'adapted-care-v1' });

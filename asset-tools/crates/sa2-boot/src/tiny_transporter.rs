@@ -140,6 +140,8 @@ static CARD: Global<Vec<u64>> = global!(Vec::new());
 /// The record the stats window shows (0 = none), and where ChaoMain's HELD
 /// is overridden to answer with it (0 = not overridden).
 static SHOWN: Global<u32> = global!(0);
+/// The slot chosen on the pick screen (picker +0x44, 1-based) as last read.
+static CHOSEN: Global<u32> = global!(0);
 static HELD_AT: Global<u32> = global!(0);
 /// ChaoMain's (.text + MACHINE_EXEC, .bss + MACHINE_TASK) this frame (0 = not linked).
 static MACHINE: Global<(u32, u32)> = global!((0, 0));
@@ -392,6 +394,7 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
             c.f[2].ps0 = m.rf32(cm_ro + PANEL_Y);
             crate::guest_call(c, m, cm_text + GARDEN_PANEL, &[MOVE_MODE, 1]);
             WAITED.set(0);
+            CHOSEN.set(0);
             c.rt.set_override(cm_text + HELD, held);
             HELD_AT.set(cm_text + HELD);
             let first = m.r32(cm_bss + SIDE_1);
@@ -400,7 +403,14 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
             CARD.set(card);
         }
         PHASE_INPUT => {
-            let state = if picker == 0 { CANCELLED } else { m.r32(cm_bss + PICKER_STATE) };
+            // The state outlives the picker: an OK that ends the picker in the
+            // same frame still reads as confirmed (unverified which the game does;
+            // build 13 left on OK with no pick logged).
+            let state = match m.r32(cm_bss + PICKER_STATE) {
+                CONFIRMED => CONFIRMED,
+                _ if picker == 0 => CANCELLED,
+                other => other,
+            };
             // Their records stay cached while they are on show.
             CARD.with_borrow(|c| c.iter().filter(|&&id| id != SELF).for_each(|&id| crate::chao_cache::set_online(id, true)));
             if picker != 0 {
@@ -414,6 +424,7 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                     m.w32(picker + 0x44, 1);
                 }
                 m.w32(picker + 0x38, m.r32(picker + 0x44));
+                CHOSEN.set(m.r32(picker + 0x44));
                 // The window follows the cursor over the Chao; on the buttons
                 // it keeps the last one.
                 if let Some(i) = cursor_slot(column, row) {
@@ -424,7 +435,7 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                 }
             }
             if state == CONFIRMED {
-                let slot = m.r32(picker + 0x44);
+                let slot = CHOSEN.get();
                 let id = CARD.with_borrow(|c| slot.checked_sub(1).and_then(|i| c.get(i as usize).copied()));
                 eprintln!("tiny-transporter: picked slot {slot}, Chao {id:?}");
                 if let (Some(id), Ok(path)) = (id, std::env::var("SA2_TINY_PICK_OUT")) {
@@ -433,6 +444,7 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                 crate::guest_call(c, m, cm_text + PICKER_SET_STATE, &[CANCELLED]);
             }
             if state == CONFIRMED || state == CANCELLED {
+                eprintln!("tiny-transporter: pick screen left, state {state}, picker {picker:#x}, chosen slot {}", CHOSEN.get());
                 crate::guest_call(c, m, text + SET_DONE, &[]);
                 crate::guest_call(c, m, text + SET_PHASE, &[PHASE_LEAVE]);
             }
