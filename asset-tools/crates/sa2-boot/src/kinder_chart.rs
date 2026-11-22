@@ -317,7 +317,9 @@ fn portrait_flags(f: u32) -> u32 {
 fn partner_free(c: &mut Cpu, m: &mut Mem) {
     if let Some((id, task, _)) = PARTNER.replace(None) {
         if linked(m, CHAOMAIN) {
-            call(c, m, rt::sec(m, CHAOMAIN, 1) + crate::chao_player::KILL_CHAO, &[task]);
+            // FreeTask, not KillChao: the partner's record is chao_cache's
+            // shared copy of another player's Chao, which KillChao zeroes.
+            call(c, m, crate::chao_player::FREE_TASK, &[task]);
         }
         if let Ok(id) = id.parse() {
             crate::chao_cache::set_online(id, false);

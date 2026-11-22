@@ -410,6 +410,38 @@ thread_local! {
 }
 
 /// A model slot: one this module loaded, else the game's table.
+/// SA2_GEAR_TUNE=<file> (debug, the page's ?geartune=1 panel): per gear piece
+/// "name dx dy dz rx ry rz scale", read about 4 times a second, applied in
+/// the piece's own model frame after its fit (move, then turn x, y, z in
+/// degrees, then scale). None when there is no tuner or no line for it.
+fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
+    let path = std::env::var("SA2_GEAR_TUNE").ok()?;
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if GEAR_TUNE_AT.replace(f / 15) != f / 15 {
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let map = text.lines().filter_map(|l| {
+            let v: Vec<&str> = l.split_whitespace().collect();
+            let n: Vec<f32> = v.get(1..8)?.iter().filter_map(|x| x.parse().ok()).collect();
+            (n.len() == 7).then(|| (v[0].to_string(), [n[0], n[1], n[2], n[3], n[4], n[5], n[6]]))
+        }).collect();
+        GEAR_TUNE.set(map);
+    }
+    let v = GEAR_TUNE.with_borrow(|t| t.get(name).copied())?;
+    let (sx, cx) = v[3].to_radians().sin_cos();
+    let (sy, cy) = v[4].to_radians().sin_cos();
+    let (sz, cz) = v[5].to_radians().sin_cos();
+    let rx = [[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]];
+    let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+    let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
+    let r = crate::skate::mul(&rz, &crate::skate::mul(&ry, &rx));
+    Some(std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * v[6] } else { v[i] })))
+}
+
+thread_local! {
+    static GEAR_TUNE_AT: Cell<u64> = const { Cell::new(u64::MAX) };
+    static GEAR_TUNE: std::cell::RefCell<std::collections::BTreeMap<String, [f32; 7]>> = Default::default();
+}
+
 /// A KNUCKMDL model by slot: its own load first, then the shared lookup.
 fn knux_obj(m: &Mem, k: u32) -> u32 {
     KNUX_MODELS.with_borrow(|e| e.get(&k).copied()).unwrap_or_else(|| model_obj(m, k))
@@ -523,6 +555,7 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
             if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
                 eprintln!("chao-player boot {n}: place {:?} foot {:?}", hp.map(|p| [p[0][3], p[1][3], p[2][3], p[0][0], p[1][1], p[2][2]]), FEET.with_borrow(|f| f[n].map(|v| [v[0][3], v[1][3], v[2][3]])));
             }
+            let hp = hp.map(|p| gear_tune(if n == 0 { "boot0" } else { "boot1" }).map_or(p, |t| mul34(&p, &t)));
             if let Some(place) = hp {
                 for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
                 m.w32(list, tex);
@@ -824,6 +857,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
     for (k, (model, local)) in fit.into_iter().enumerate() {
         let Some(node) = HANDS.with_borrow(|h| h[k]) else { continue };
         let place = mul34(&node, &local);
+        let place = gear_tune(if k == 0 { "fist0" } else { "fist1" }).map_or(place, |t| mul34(&place, &t));
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
@@ -2718,15 +2752,14 @@ const REMOTE_FAR_EVERY: u64 = 5;
 const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
 const REMOTE_GONE: std::time::Duration = std::time::Duration::from_secs(1);
-/// ChaoMain KillChao (.text 0x31450): AL_ClearChaoParam on the record at
-/// chaowk +0x5C (0x4DC bytes zeroed), then FreeTask.
-pub(crate) const KILL_CHAO: u32 = 0x31450;
-/// main.dol FreeTask. Other players' Chao leave with this alone: their record
+/// main.dol FreeTask. Chao leave with this, not ChaoMain's KillChao (.text
+/// 0x31450: AL_ClearChaoParam zeroes 0x4DC bytes of the record at chaowk
+/// +0x5C, then FreeTask). Other players' Chao: their record
 /// at chaowk +0x5C is chao_cache's shared copy, and KillChao zeroed it, so a
 /// Chao re-made from it after a record update was all zeros (giant blobs on
 /// screen, then a task with a garbage display pointer: "no function at
 /// 0x10000004", lr 0x800713BC).
-const FREE_TASK: u32 = 0x8007_1AE0;
+pub(crate) const FREE_TASK: u32 = 0x8007_1AE0;
 
 fn export_pose(m: &Mem) {
     let Ok(path) = std::env::var("SA2_POSE_OUT") else { return };

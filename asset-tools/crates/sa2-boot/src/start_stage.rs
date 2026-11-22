@@ -588,7 +588,10 @@ fn roam_live(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
                 m.w32(twp[n] + 0x0C, yaw);
             }
             None => {
-                guest_call(c, m, text + crate::chao_player::KILL_CHAO, &[task[n]]);
+                // FreeTask, not KillChao: KillChao zeroes the Chao's save
+                // record (AL_ClearChaoParam), and a resident who comes back
+                // later is made again from that record.
+                guest_call(c, m, crate::chao_player::FREE_TASK, &[task[n]]);
                 (twp[n], task[n], leaving[n]) = (0, 0, 0);
             }
         }
