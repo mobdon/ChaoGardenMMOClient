@@ -90,7 +90,8 @@ const isPicked = (path) => picked !== null && pickedRoots.has(path.split('/')[0]
 let fsIndex;
 function hosted() {
   if (fsIndex === undefined) {
-    const r = xhr('fs-index.json');
+    // Never from the browser's cache: a stale list hid files added later (the hub shoe).
+    const r = xhr('fs-index.json?t=' + Date.now());
     fsIndex = r.status === 200 ? JSON.parse(dec.decode(new Uint8Array(r.response))) : null;
   }
   return fsIndex;
