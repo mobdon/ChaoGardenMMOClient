@@ -402,9 +402,19 @@ const MODELS: u32 = 0x801E_6688;
 thread_local! {
     /// Model slots this module loaded, kept out of the game's table.
     static EXTRA_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+    /// Every slot the last load_models call filled or replaced, with its model.
+    static LAST_LOAD: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+    /// KNUCKMDL's own models by slot (the gloves and Knuckles's body), whatever
+    /// the shared table or EXTRA_MODELS hold there.
+    static KNUX_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
 }
 
 /// A model slot: one this module loaded, else the game's table.
+/// A KNUCKMDL model by slot: its own load first, then the shared lookup.
+fn knux_obj(m: &Mem, k: u32) -> u32 {
+    KNUX_MODELS.with_borrow(|e| e.get(&k).copied()).unwrap_or_else(|| model_obj(m, k))
+}
+
 fn model_obj(m: &Mem, k: u32) -> u32 {
     EXTRA_MODELS.with_borrow(|e| e.get(&k).copied()).unwrap_or_else(|| m.r32(MODELS + 4 * k))
 }
@@ -416,8 +426,19 @@ fn model_obj(m: &Mem, k: u32) -> u32 {
 fn load_models(c: &mut Cpu, m: &mut Mem, name: u32) -> u32 {
     let before: Vec<u32> = (0..0x428).map(|k| m.r32(MODELS + 4 * k)).collect();
     let r = call(c, m, LOAD_MDL, &[name]);
+    LAST_LOAD.with_borrow_mut(|l| l.clear());
     for k in 0..0x428u32 {
         let now = m.r32(MODELS + 4 * k);
+        if now != 0 && now != before[k as usize] {
+            LAST_LOAD.with_borrow_mut(|l| { l.insert(k, now); });
+        }
+        // The loader also replaces slots that were filled: KNUCKMDL put
+        // Knuckles's own models over the character's (Shadow's) boot slots
+        // 161/163, so the feet drew Knuckles's hands. The game's table keeps
+        // what it had; this file's model stays reachable through LAST_LOAD.
+        if now != 0 && before[k as usize] != 0 && now != before[k as usize] {
+            m.w32(MODELS + 4 * k, before[k as usize]);
+        }
         if now != 0 && before[k as usize] == 0 {
             // First file wins a slot: Shadow's boots are slots 161/163, and
             // KNUCKMDL, loaded next into the same (emptied) slots, overwrote
@@ -683,7 +704,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // The hub's vectors are in its glTF space, whose root mirrors the
         // source x (chao-attachments.js note): mirror them back for the game.
         let (up, fwd) = if std::env::var("SA2_GLOVE_NOMIRROR").is_ok() { (up, fwd) } else { ([-up[0], up[1], up[2]], [-fwd[0], fwd[1], fwd[2]]) };
-        let obj = model_obj(m, model);
+        let obj = knux_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             return None;
         }
@@ -709,7 +730,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // (-x) to the Chao's (+z), as the boots do with Shadow's foot.
         // SA2_GLOVE_HUB=1 (debug): the hub's vectors instead.
         let native = (!std::env::var("SA2_GLOVE_HUB").is_ok_and(|v| v == "1")).then(|| {
-            let body = model_obj(m, KNUX_BODY_SLOT);
+            let body = knux_obj(m, KNUX_BODY_SLOT);
             if !(0x8000_0000..0x8C00_0000).contains(&body) { return None; }
             let kr = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
             let node = if k == 0 { 61 } else { 42 };
@@ -806,7 +827,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
-        call(c, m, 0x8011_DF44, &[model_obj(m, model)]);
+        call(c, m, 0x8011_DF44, &[knux_obj(m, model)]);
         LCAP.set(lcap);
     }
     (c.r, c.f) = regs;
@@ -1872,6 +1893,7 @@ fn drop_stage_loads() {
     SHADOW_TEX.set(None);
     KNUX_TEX.set(None);
     EXTRA_MODELS.with_borrow_mut(|e| e.clear());
+    KNUX_MODELS.with_borrow_mut(|e| e.clear());
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);
@@ -1980,7 +2002,12 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let pmove = me && player_move_on();
     if !me {
         c.r[3] = task;
+        // Self mode in Chao World: the character is never seen or heard, also
+        // before the Chao takes over (its landing sound on arrival, mob).
+        let hidden = chao_world(m) && std::env::var("SA2_CHAO_SELF").is_ok_and(|v| v.trim() == "1");
+        IN_PMOVE.set(hidden);
         original(c, m, addr);
+        IN_PMOVE.set(false);
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
         player_move(c, m, addr, task, chao);
     }
@@ -2086,6 +2113,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let tex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
             if model_obj(m, 329) == 0 {
                 load_models(c, m, 0x8017_4F10);
+                KNUX_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
             }
             eprintln!("chao-player: Hammer Gloves textures {tex:#x} (rider {})", m.r8(obj2 + 1));
             KNUX_TEX.set(Some(tex).filter(|&t| t != 0));
@@ -2113,6 +2141,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             // KNUCKMDL.PRS, main.dol 0x80174F04 / 0x80174F10).
             let ktex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
             let kmdl = load_models(c, m, 0x8017_4F10);
+            KNUX_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
+            eprintln!("chao-player: boot slots 161/163 -> {:#x}/{:#x}, glove slots 329/331 -> {:#x}/{:#x}, Knuckles body 285 -> {:#x}",
+                model_obj(m, 161), model_obj(m, 163), knux_obj(m, 329), knux_obj(m, 331), knux_obj(m, KNUX_BODY_SLOT));
             m.w32(heap_var, keep_heap);
             eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x} (heap {GEAR_HEAP}, was {keep_heap})");
             KNUX_TEX.set(Some(ktex).filter(|&t| t != 0));
