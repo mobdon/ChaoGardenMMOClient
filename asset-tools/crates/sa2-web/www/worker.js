@@ -263,7 +263,7 @@ function cardSend() {
 // /mmo/pose-out and /mmo/record-out and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -272,6 +272,8 @@ function mmoRead(path) {
     const len = Math.min(Atomics.load(mmoI32(MMO.POSE_IN), 1), MMO.POSE_IN_MAX);
     return { bytes: b.slice(MMO.POSE_IN + 8, MMO.POSE_IN + 8 + len), ver: 0 };
   }
+  // Chao Karate (sa2-boot karate.rs): the page's [press counter, button].
+  if (path === 'mmo/karate-in') return { bytes: b.slice(MMO.KARATE, MMO.KARATE + 2), ver: 0 };
   const m = /^mmo\/rec\/(\d+)$/.exec(path);
   if (!m) return null;
   const s = mmoSlot(m[1]);
@@ -286,6 +288,7 @@ function mmoSlot(id) {
 }
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
+  if (path === 'mmo/karate-out') return void (sh.mmo[MMO.KARATE + 4] = bytes[0]); // 1: strong moves unlocked
   const out = path === 'mmo/pose-out' ? [MMO.POSE_OUT, MMO.POSE_OUT_MAX] : path === 'mmo/record-out' ? [MMO.REC_OUT, MMO.REC] : null;
   if (!out) return;
   const n = Math.min(bytes.length, out[1]);

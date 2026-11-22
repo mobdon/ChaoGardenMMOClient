@@ -83,7 +83,7 @@ const STAND_MOTION: u32 = 1;
 
 /// Run a REL function that this module overrides, by dropping the override
 /// for the one call.
-fn rel_original(c: &mut Cpu, m: &mut Mem, addr: u32, me: rt::Func) {
+pub(crate) fn rel_original(c: &mut Cpu, m: &mut Mem, addr: u32, me: rt::Func) {
     c.rt.overrides.remove(&addr);
     c.rt.modules_changed();
     rt::call(c, m, addr);
