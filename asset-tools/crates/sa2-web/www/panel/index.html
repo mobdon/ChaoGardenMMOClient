@@ -64,6 +64,10 @@
     </div>
     <div class="scroll"><table><thead><tr><th>Chao</th><th>Account</th><th>Room</th><th>Limits</th><th>Actions</th></tr></thead><tbody id="players"></tbody></table></div>
   </section>
+  <section>
+    <h2>Leaderboard</h2>
+    <div class="scroll"><table><thead><tr><th>#</th><th>Chao</th><th>Account</th><th>Rings</th><th>Stat levels</th><th>Best race</th><th>Races</th><th>Missions</th></tr></thead><tbody id="board"></tbody></table></div>
+  </section>
   <section><h2>Chat</h2><div id="chat"></div></section>
   <section>
     <h2>Voice</h2>
@@ -127,7 +131,13 @@ async function act(player, kind) {
 async function refresh() {
   if (!token) return;
   try {
-    const [status, list, chat] = await Promise.all([call('/api/panel/status'), call('/api/panel/players'), call('/api/panel/chat')]);
+    const [status, list, chat, board] = await Promise.all([call('/api/panel/status'), call('/api/panel/players'), call('/api/panel/chat'), call('/api/panel/leaderboard')]);
+    $('board').replaceChildren(...board.players.map((p, i) => {
+      const tr = el('tr');
+      tr.append(el('td', i + 1, 'dim'), el('td', p.name + (p.admin ? ' (owner)' : '') + (p.online ? ' ●' : '')), el('td', p.account ?? 'no account'),
+        el('td', p.rings.toLocaleString()), el('td', p.levels), el('td', p.bestRaceMs ? `${(p.bestRaceMs / 1000).toFixed(2)} s` : '', 'dim'), el('td', p.racesCompleted), el('td', p.missionsCompleted));
+      return tr;
+    }));
     $('status').textContent = `${status.online} online · up ${span(status.uptimeSeconds)}`
       + (status.listening?.length ? ` · listening: ${status.listening.map((l) => `${l.staff} in ${l.room}`).join(', ')}` : '');
     const rows = list.players.map((p) => {
