@@ -165,14 +165,15 @@ pub fn is_open() -> bool {
     STATE.get() != State::Closed
 }
 
-/// A click's game screen position (640x480) from its canvas position, for
-/// art in the right third of the screen: a wider canvas shows the game's x
-/// scaled by k = (4/3) / aspect and moved right by (1 - k) * STEAM_EDGE.
+/// A click's game screen position (640x480) from its canvas position: a
+/// wider canvas shows the chart 4:3 in the middle, the game's x scaled by
+/// k = (4/3) / aspect (seen in a 16:9 build run: with the HUD's move to the
+/// edge undone as well, every tab's click landed one tab left).
 fn to_game(x: u16, y: u16, aspect: u16) -> (f32, f32) {
     let mut nx = f32::from(x) / 65535.0 * 2.0 - 1.0;
     let k = (4.0 / 3.0) / (f32::from(aspect) / 1000.0);
     if k > 0.1 && k < 0.999 {
-        nx = (nx - (1.0 - k) * sa2_gx::widescreen::STEAM_EDGE) / k;
+        nx /= k;
     }
     ((nx + 1.0) * 320.0, f32::from(y) / 65535.0 * 480.0)
 }
@@ -555,12 +556,10 @@ mod tests {
     }
 
     #[test]
-    fn click_on_a_wide_canvas_undoes_the_hud_move() {
-        // 16:9: game x shows at clip k*x + (1-k)*STEAM_EDGE.
+    fn click_on_a_wide_canvas_undoes_the_narrowing() {
+        // 16:9: game x shows at clip k*x.
         let k = 0.75f32;
-        let shown = |gx: f32| {
-            ((gx / 320.0 - 1.0) * k + (1.0 - k) * sa2_gx::widescreen::STEAM_EDGE + 1.0) / 2.0
-        };
+        let shown = |gx: f32| ((gx / 320.0 - 1.0) * k + 1.0) / 2.0;
         for page in 0..5u8 {
             let gx = 264.0 + 70.0 * f32::from(page) + 35.0;
             let (x, y) = to_game((shown(gx) * 65535.0) as u16, 6553, 1778);
