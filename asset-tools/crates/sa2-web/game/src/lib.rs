@@ -163,7 +163,7 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
     }
 }
 
-/// `/dev/pad`: 16 bytes. Keys held (u16, bits as [`KEYS`]); then the
+/// `/dev/pad`: 16 bytes. Keys held (u16, bits as [`KEYS`], bit 15 Tab); then the
 /// gamepad: connected (u8), unused (u8), buttons (u16, GC bits), stick
 /// x/y, C-stick x/y (i8), L/R (u8).
 fn read_pad() -> [u8; 16] {
@@ -195,6 +195,8 @@ fn pad() -> PadStatus {
         }
     }
     p.stick = key_stick(on(0), on(1), on(2), on(3));
+    // Key bit 15: Tab / gamepad Back opens the Chao World chart.
+    sa2_boot::kinder_chart::set_tab(on(15));
     if b[2] != 0 {
         let s = |i: usize| b[i] as i8;
         p.button |= u16::from_le_bytes([b[4], b[5]]);
