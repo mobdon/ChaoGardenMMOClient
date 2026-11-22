@@ -673,8 +673,12 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // Chao's +z: the glove's forward goes to the arm direction, its up stays
         // world up (flattened against the arm).
         let r = if std::env::var("SA2_GLOVE_FWD_Z").is_ok() { r } else {
-            let a = n([ax[0], 0.0, ax[2]]);
-            let y = [0.0, 1.0, 0.0];
+            // The hub's fist points down and out: forward = the arm direction
+            // tipped down by SA2_GLOVE_TIP degrees (default 45), up = toward +y.
+            let tip = std::env::var("SA2_GLOVE_TIP").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(45.0).to_radians();
+            let h = n([ax[0], 0.0, ax[2]]);
+            let a = n([h[0] * tip.cos(), -tip.sin(), h[2] * tip.cos()]);
+            let y = n([-h[0] * tip.sin(), tip.cos(), -h[2] * tip.sin()]);
             let x2 = n([y[1] * a[2] - y[2] * a[1], y[2] * a[0] - y[0] * a[2], y[0] * a[1] - y[1] * a[0]]);
             // columns x2, y, a: maps +x/+y/+z to them.
             let b: [[f32; 3]; 3] = std::array::from_fn(|i| [x2[i], y[i], a[i]]);
