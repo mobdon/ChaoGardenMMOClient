@@ -115,7 +115,18 @@ export async function playBreedingScene(host) {
     if (!egg) return;
     const root = egg.instantiateModelsToScene(name => name, false).rootNodes[0];
     root.position.set(pair[1].root.position.x - 2.0, 0, 0); // 2.0 in front of the answerer, at its height
+    // CreateEgg mode 1 (GC ChaoMain.rel .text 0x8F20): size 0.1, squash 0.2. Spring speed (+0x20) starts 0: unverified.
+    let k = 0.1, s = 0.2, v = 0;
+    const base = root.scaling.clone(); // the loader's root flips z
+    // One game frame of EGG (.text 0x96F8..0x9760), drawn as AL_EggDisplayer (0x9360) scales it.
+    growEgg = () => {
+      if (k < 1) k += 0.06;
+      v += 0.15 * (1 - s); s += v; v *= 0.9;
+      root.scaling.set(base.x * s * k, base.y * (2 - s) * k, base.z * s * k);
+    };
+    growEgg();
   });
+  let growEgg = () => {};
   const courtship = createCourtship(rows);
   const show = (c, s) => {
     const row = rows.get(s.state), group = row && c.groups.get(row.nativeName);
@@ -132,6 +143,7 @@ export async function playBreedingScene(host) {
           if (event === 'jingle') void jingle.play().catch(() => {});
           if (event === 'egg') layEgg();
         }
+        growEgg();
       }
       show(pair[0], courtship.inviter); show(pair[1], courtship.answerer);
       hearts.forEach(h => h.scaling.setAll(heartScale(frame, 60) / HEART.max));
