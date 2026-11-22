@@ -548,8 +548,9 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
     let br = crate::chao_retarget::read_chao(&|a| m.r32(a), heel, [vec![], vec![]]);
     let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
     for (i, o) in (0x08..0x34).step_by(4).enumerate() { m.w32(heel + o, keep[i]); }
-    // The baked shoe's vertices fit it (the raw heel/toe lists are unweighted parts).
-    let bv = if baked_boot(c, m) != 0 { BAKED_VERTS.with_borrow(|v| v.clone()) } else { bv };
+    // The hub's own Air Shoes file when there is one (it fits as in the hub).
+    let hub = hub_shoe(c, m);
+    let bv = if hub != 0 { HUB_SHOE_VERTS.with_borrow(|v| v.clone()) } else if baked_boot(c, m) != 0 { BAKED_VERTS.with_borrow(|v| v.clone()) } else { bv };
     let node = SHOES[n].0;
     let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
     if let Some(place) = hp.map(|p| gear_tune(if n == 0 { "boot0" } else { "boot1" }).map_or(p, |t| mul34(&p, &t))) {
@@ -567,7 +568,11 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         // Default the overlay alone: the baked copy still lands off the foot
         // and its cached polygon list holds more of his leg (run r76).
         let parts = std::env::var("SA2_BOOT_PARTS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
-        if parts & 1 != 0 {
+        if hub != 0 {
+            put(m);
+            call(c, m, 0x8011_DF44, &[hub]);
+        }
+        if hub == 0 && parts & 1 != 0 {
             let baked = baked_boot(c, m);
             // SA2_BAKE_DRAW (debug): 0 bake only, 2 the vertices alone (no polygons).
             let mode = std::env::var("SA2_BAKE_DRAW").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1);
@@ -584,7 +589,7 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
                 call(c, m, 0x8011_DF44, &[baked]);
             }
         }
-        if parts & 2 != 0 && (0x8000_0000..0x8C00_0000).contains(&overlay) {
+        if hub == 0 && parts & 2 != 0 && (0x8000_0000..0x8C00_0000).contains(&overlay) {
             put(m);
             call(c, m, 0x8011_DF44, &[overlay]);
         }
@@ -599,6 +604,66 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         }
         LCAP.set(lcap);
     }
+}
+
+/// The hub's Air Shoes (its shadow-air-shoes-right.glb: TERIOSMDL 65 heel/toe
+/// and overlay 78, TERIOSTEX), converted by scripts/convert-hub-shoe-to-ninja.py
+/// into a Ninja chunk vertex and polygon list, read from the site's
+/// /mmo-assets/shadow-air-shoes-right.njsh (SA2_HUB_SHOE overrides; local
+/// game-derived data, never in git) into game heap 1 once per load. 0 without it.
+fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
+    if let Some(o) = HUB_SHOE.get() {
+        return o;
+    }
+    let path = std::env::var("SA2_HUB_SHOE").unwrap_or_else(|_| "/mmo-assets/shadow-air-shoes-right.njsh".into());
+    let Ok(b) = std::fs::read(&path) else {
+        eprintln!("chao-player boot: no hub shoe at {path}");
+        HUB_SHOE.set(Some(0));
+        return 0;
+    };
+    let u = |o: usize| b.get(o..o + 4).map_or(0, |x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]));
+    let (n, vlen, plen) = (u(4), u(8) as usize, u(12) as usize);
+    if &b[..4.min(b.len())] != b"NJSH" || b.len() < 16 + vlen + plen {
+        eprintln!("chao-player boot: {path} is not a hub shoe file");
+        HUB_SHOE.set(Some(0));
+        return 0;
+    }
+    let (model, obj) = (64u32, 0x40u32);
+    let total = (vlen + plen) as u32 + model + obj + 8;
+    let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
+    if mem == 0 {
+        HUB_SHOE.set(Some(0));
+        return 0;
+    }
+    zero(m, mem, total);
+    let vl = mem;
+    let pl = (mem + vlen as u32 + 3) & !3;
+    m.load(vl, &b[16..16 + vlen]);
+    m.load(pl, &b[16 + vlen..16 + vlen + plen]);
+    let mdl = (pl + plen as u32 + 3) & !3;
+    let o = mdl + model;
+    m.w32(mdl, vl);
+    m.w32(mdl + 4, pl);
+    m.w32(o, 0x17); // UNIT_POS | UNIT_ANG | UNIT_SCL | BREAK (no child)
+    m.w32(o + 4, mdl);
+    for j in 0..3 { m.w32(o + 32 + 4 * j, 1.0f32.to_bits()); }
+    // Its vertices for the fit: VN chunks (8-byte header, 24 bytes a vertex).
+    let f = |o: usize| f32::from_bits(u(o));
+    let (mut verts, mut a) = (vec![], 16usize);
+    while a < 16 + vlen && u(a) & 0xFF != 0xFF {
+        let (size, cnt) = ((u(a) >> 16) as usize, (u(a + 4) >> 16) as usize);
+        for k in 0..cnt { let p = a + 8 + 24 * k; verts.push([f(p), f(p + 4), f(p + 8)]); }
+        a += 4 + 4 * size;
+    }
+    eprintln!("chao-player boot: hub shoe {path} ({n} vertices, {} read) at {o:#x}", verts.len());
+    HUB_SHOE_VERTS.set(verts);
+    HUB_SHOE.set(Some(o));
+    o
+}
+
+thread_local! {
+    static HUB_SHOE: Cell<Option<u32>> = const { Cell::new(None) };
+    static HUB_SHOE_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Shadow's left heel (body node 23) and toe (24) as a new two-node object
@@ -764,67 +829,67 @@ thread_local! {
     static BAKED_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// A Ninja chunk polygon list (big-endian shorts from `start`, to its end
-/// chunk) with only the strips whose vertices are all in `keep`; material
-/// and other state chunks kept, polygon cache/draw chunks (types 4/5)
-/// dropped. Returns the new list and the strip counts kept and dropped.
-/// Strip types 64-75 by their shorts per vertex (index plus UV/normal/
-/// colour); an unknown type is kept whole.
-/// unverified: per-vertex sizes of types 67-69 and 73-75 (not in his shoe so far).
-fn shoe_strips(r16: &dyn Fn(u32) -> u16, start: u32, keep: &std::collections::BTreeSet<u32>) -> (Vec<u16>, usize, usize) {
-    let (mut out, mut kept, mut dropped) = (vec![], 0, 0);
-    let mut a = start;
-    for _ in 0..8192 {
-        let h = r16(a);
-        let t = h & 0xFF;
-        match t {
-            0xFF => break,
-            0 | 4 | 5 => a += 2,
-            1..=7 => { out.push(h); a += 2; }
-            8..=15 => { out.extend([h, r16(a + 2)]); a += 4; }
-            64..=75 => {
-                let size = r16(a + 2) as u32;
-                let end = a + 4 + 2 * size;
-                let base = match t { 64 | 73 => 1, 65 | 66 | 70 => 3, 67 => 4, 71 | 72 | 74 | 75 => 5, _ => 6 };
-                let w = r16(a + 4);
-                let (n, uf) = (w & 0x3FFF, (w >> 14) as u32);
-                let mut p = a + 6;
-                let mut strips: Vec<u16> = vec![];
-                let mut nk = 0u16;
-                for _ in 0..n {
-                    let cnt = (r16(p) as i16).unsigned_abs() as u32;
-                    let s0 = p;
-                    p += 2;
-                    let mut all = true;
-                    for i in 0..cnt {
-                        all &= keep.contains(&(r16(p) as u32));
-                        p += 2 * base + if i >= 2 { 2 * uf } else { 0 };
-                    }
-                    if all {
-                        strips.extend((s0..p).step_by(2).map(r16));
-                        nk += 1;
-                    } else {
-                        dropped += 1;
-                    }
-                }
-                if nk > 0 {
-                    out.extend([h, 1 + strips.len() as u16, ((uf as u16) << 14) | nk]);
-                    out.extend(strips);
-                    kept += nk as usize;
-                }
-                a = end;
-            }
-            _ => {
-                let size = r16(a + 2) as u32;
-                out.extend((a..a + 4 + 2 * size).step_by(2).map(r16));
-                a += 4 + 2 * size;
-            }
-        }
-    }
-    out.push(0x00FF);
-    (out, kept, dropped)
-}
-
+/// A Ninja chunk polygon list (big-endian shorts from `start`, to its end
+/// chunk) with only the strips whose vertices are all in `keep`; material
+/// and other state chunks kept, polygon cache/draw chunks (types 4/5)
+/// dropped. Returns the new list and the strip counts kept and dropped.
+/// Strip types 64-75 by their shorts per vertex (index plus UV/normal/
+/// colour); an unknown type is kept whole.
+/// unverified: per-vertex sizes of types 67-69 and 73-75 (not in his shoe so far).
+fn shoe_strips(r16: &dyn Fn(u32) -> u16, start: u32, keep: &std::collections::BTreeSet<u32>) -> (Vec<u16>, usize, usize) {
+    let (mut out, mut kept, mut dropped) = (vec![], 0, 0);
+    let mut a = start;
+    for _ in 0..8192 {
+        let h = r16(a);
+        let t = h & 0xFF;
+        match t {
+            0xFF => break,
+            0 | 4 | 5 => a += 2,
+            1..=7 => { out.push(h); a += 2; }
+            8..=15 => { out.extend([h, r16(a + 2)]); a += 4; }
+            64..=75 => {
+                let size = r16(a + 2) as u32;
+                let end = a + 4 + 2 * size;
+                let base = match t { 64 | 73 => 1, 65 | 66 | 70 => 3, 67 => 4, 71 | 72 | 74 | 75 => 5, _ => 6 };
+                let w = r16(a + 4);
+                let (n, uf) = (w & 0x3FFF, (w >> 14) as u32);
+                let mut p = a + 6;
+                let mut strips: Vec<u16> = vec![];
+                let mut nk = 0u16;
+                for _ in 0..n {
+                    let cnt = (r16(p) as i16).unsigned_abs() as u32;
+                    let s0 = p;
+                    p += 2;
+                    let mut all = true;
+                    for i in 0..cnt {
+                        all &= keep.contains(&(r16(p) as u32));
+                        p += 2 * base + if i >= 2 { 2 * uf } else { 0 };
+                    }
+                    if all {
+                        strips.extend((s0..p).step_by(2).map(r16));
+                        nk += 1;
+                    } else {
+                        dropped += 1;
+                    }
+                }
+                if nk > 0 {
+                    out.extend([h, 1 + strips.len() as u16, ((uf as u16) << 14) | nk]);
+                    out.extend(strips);
+                    kept += nk as usize;
+                }
+                a = end;
+            }
+            _ => {
+                let size = r16(a + 2) as u32;
+                out.extend((a..a + 4 + 2 * size).step_by(2).map(r16));
+                a += 4 + 2 * size;
+            }
+        }
+    }
+    out.push(0x00FF);
+    (out, kept, dropped)
+}
+
 /// The object of node `index` (depth first, as read_chao counts) in a model
 /// tree (NJS_OBJECT: child +0x2C, sibling +0x30), 0 when there is none.
 fn node_obj(m: &Mem, root: u32, index: usize) -> u32 {
@@ -1087,9 +1152,12 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     // Shadow's rest foot rotation (node 24, his model space) and his facing
     // (-x) to the Chao's (+z).
     ensure_rider_rest(_m);
-    let mount = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
+    // The hub's own shoe file is in the hub's coordinates: its mount as it is
+    // (src/chao-attachments.js shadowShoeMountRotation / mirroredShadowShoeRest).
+    let hub = HUB_SHOE.get().is_some_and(|o| o != 0);
+    let mount = if hub { mount } else { RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
         .map(|rf| crate::skate::mul(&[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], &crate::skate::unit(&rf)))
-        .unwrap_or(mount);
+        .unwrap_or(mount) };
     // SA2_BOOT_FIX="rx,ry,rz" (debug, degrees): a turn after the hub mount, to
     // find the handedness difference between the hub (Babylon) and the game.
     let mount = match std::env::var("SA2_BOOT_FIX").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
@@ -1125,7 +1193,7 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     // rest foot as the mount (lobby close-ups: 1.0 sits inside the foot, 1.6
     // swallows it); rider mode used 1.7 with the hub mount. The computed fit
     // alone sits inside the foot: find the measuring difference.
-    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.4);
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(if hub { 1.0 } else { 1.4 });
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
         eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
     }
@@ -2569,6 +2637,7 @@ fn drop_stage_loads() {
     KNUX_MODELS.with_borrow_mut(|e| e.clear());
     SHADOW_MODELS.with_borrow_mut(|e| e.clear());
     BAKED_BOOT.set(None);
+    HUB_SHOE.set(None);
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);
