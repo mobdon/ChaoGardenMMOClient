@@ -2,6 +2,7 @@ import './style.css';
 import './sonic.css';
 import './title.css';
 import { allowSavedFiles, canPickFolders, pickGameFiles, savedHandles } from './game-files.js';
+import { applyGameTextureStyles } from './game-assets.js';
 import { createGarden } from './scene.js';
 import { createGameAudio } from './audio.js';
 import { createStageSelect } from './stages.js';
@@ -421,7 +422,7 @@ async function join(name, token = sessionToken, card = null) {
   if (joining) return;
   // The game needs the player's own files: the local server's, or ones picked on this page.
   if (!(await gameFilesReady())) { $('#join-error').textContent = 'Pick your game files first.'; $('#pick-steam').focus(); return; }
-  void allowSavedFiles(); // still inside the click: renews read access for the game page
+  void allowSavedFiles().then(() => applyGameTextureStyles()); // still inside the click: renews read access for the game page
   joining = true;
   $('#join-button').disabled = true;
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });

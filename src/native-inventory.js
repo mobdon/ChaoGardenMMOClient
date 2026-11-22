@@ -123,11 +123,12 @@ export function drawChaoList(ctx, { atlas, font, metrics }, rows, selected) {
 }
 
 let art;
-/** The window atlas and font from the server's native assets, with glyph widths measured once. Null when they can't load. */
+/** The window atlas and font from the player's own game files, with glyph widths measured once. Null when they can't load. */
 export function loadInventoryArt(document = globalThis.document) {
   if (!globalThis.Image || !document?.createElement) return Promise.resolve(null);
   art ??= Promise.all(['chao-select-window.png', 'chao-stat-font.png'].map(name => new Promise(resolve => {
-    const image = new Image(); image.onload = () => resolve(image); image.onerror = () => resolve(null); image.src = `/api/assets/${name}`;
+    const image = new Image(); image.onload = () => resolve(image); image.onerror = () => resolve(null);
+    import('./game-assets.js').then(m => m.gameTextureUrl(name)).then(url => url ? image.src = url : resolve(null), () => resolve(null));
   }))).then(([atlas, font]) => {
     if (!atlas || !font) return null;
     const canvas = document.createElement('canvas'); canvas.width = font.naturalWidth; canvas.height = font.naturalHeight;

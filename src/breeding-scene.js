@@ -92,7 +92,8 @@ export async function playBreedingScene(host) {
   const height = max.y - min.y;
   new B.ArcRotateCamera('camera', -Math.PI / 2, 1.25, height * 3.2, new B.Vector3(0, height / 2, 0), scene);
   const heartMaterial = new B.StandardMaterial('heart', scene);
-  heartMaterial.diffuseTexture = new B.Texture('/api/assets/chao-icon-heart.png', scene); heartMaterial.diffuseTexture.hasAlpha = true;
+  const heartUrl = await import('./game-assets.js').then(m => m.gameTextureUrl('chao-icon-heart.png')).catch(() => null);
+  if (heartUrl) { heartMaterial.diffuseTexture = new B.Texture(heartUrl, scene); heartMaterial.diffuseTexture.hasAlpha = true; }
   heartMaterial.emissiveColor = new B.Color3(1, 0.45, 0.6); heartMaterial.disableLighting = true; heartMaterial.backFaceCulling = false;
   const hearts = pair.map(c => {
     const heart = B.MeshBuilder.CreatePlane('heart', { size: height * 0.12 }, scene);

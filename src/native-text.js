@@ -13,7 +13,7 @@ function nativeFontReady() {
     if (typeof Image === 'undefined') return resolve(false);
     const image = new Image();
     image.onload = () => resolve(true); image.onerror = () => resolve(false);
-    image.src = '/api/assets/chao-stat-font.png';
+    import('./game-assets.js').then(m => m.gameTextureUrl('chao-stat-font.png')).then(url => url ? image.src = url : resolve(false), () => resolve(false));
   });
 }
 
