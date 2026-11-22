@@ -561,6 +561,18 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     let foot: Vec<[f32; 3]> = foot_v.iter().map(|v| std::array::from_fn(|i| rt[i] + (0..3).map(|k| rr[i][k] * v[k]).sum::<f32>())).collect();
     let x = [BOOT_UP[1] * BOOT_FWD[2] - BOOT_UP[2] * BOOT_FWD[1], BOOT_UP[2] * BOOT_FWD[0] - BOOT_UP[0] * BOOT_FWD[2], BOOT_UP[0] * BOOT_FWD[1] - BOOT_UP[1] * BOOT_FWD[0]];
     let mount = [x, BOOT_UP, BOOT_FWD];
+    // SA2_BOOT_FIX="rx,ry,rz" (debug, degrees): a turn after the hub mount, to
+    // find the handedness difference between the hub (Babylon) and the game.
+    let mount = match std::env::var("SA2_BOOT_FIX").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
+        Some(a) if a.len() == 3 => {
+            let (sx, cx) = a[0].to_radians().sin_cos(); let (sy, cy) = a[1].to_radians().sin_cos(); let (sz, cz) = a[2].to_radians().sin_cos();
+            let rx = [[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]];
+            let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+            let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
+            crate::skate::mul(&rz, &crate::skate::mul(&ry, &crate::skate::mul(&rx, &mount)))
+        }
+        _ => mount,
+    };
     let shoe: Vec<[f32; 3]> = bv.iter().map(|v| std::array::from_fn(|i| (0..3).map(|k| mount[i][k] * v[k]).sum::<f32>())).collect();
     let bounds = |p: &[[f32; 3]]| p.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| (std::array::from_fn(|i| lo[i].min(v[i])), std::array::from_fn(|i| hi[i].max(v[i]))));
     let ((flo, fhi), (slo, shi)) = (bounds(&foot), bounds(&shoe));
