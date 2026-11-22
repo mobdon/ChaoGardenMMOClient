@@ -310,9 +310,6 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             RESIDENTS_OUT.set(true);
             residents(c, m, text, now);
         }
-        if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
-            tutorial(m, text);
-        }
         restore_cocoon(m);
         if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
             tutorial(c, m, text);
@@ -509,24 +506,6 @@ static STANDING_TASK: Global<u32> = global!(0);
 pub(crate) fn standing_resident(m: &Mem, r3: u32) -> bool {
     let task = STANDING_TASK.get();
     task != 0 && (r3 == task || r3 == m.r32(task + 0x34))
-}
-
-/// The tutorial ends when the player reaches the Tails Chao guide: the new
-/// Chao's growth goes to full, and ChaoMain's own check evolves it.
-fn tutorial(m: &mut Mem, text: u32) {
-    let guide = RESIDENT_TWP.get()[GUIDE];
-    if guide == 0 {
-        return;
-    }
-    let (p, o) = (m.r32(PLAYERTWP) + 0x14, guide + 0x14);
-    let d = |i| f32::from_bits(m.r32(p + i)) - f32::from_bits(m.r32(o + i));
-    if d(0) * d(0) + d(8) * d(8) > REACH_SQ {
-        return;
-    }
-    let (lo, off) = FULL_GROWTH;
-    let hi = (section(m, text, 5) + lo).wrapping_add(0x8000) & 0xFFFF_0000;
-    m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(hi + off));
-    TUTORIAL_SLOT.set(0);
 }
 
 /// ChaoMain's section `n` address, from the same module entry as `text`.
