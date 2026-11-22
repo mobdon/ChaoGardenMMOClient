@@ -136,6 +136,19 @@ impl Cache {
 pub fn get_or_load(m: &mut Mem, id: ChaoId, info: &[u8], gear: u32, own: bool) -> Option<u32> {
     with(|c| c.get_or_load(m, id, info, gear, own))
 }
+/// Overwrite a cached Chao's record (a newer version from the server);
+/// creates the entry when missing.
+pub fn replace(m: &mut Mem, id: ChaoId, info: &[u8]) -> Option<u32> {
+    with(|c| {
+        let a = match c.entries.get(&id) {
+            Some(e) => e.info,
+            None => return c.get_or_load(m, id, info, 0, false),
+        };
+        let n = info.len().min(INFO_SIZE as usize);
+        m.load(a, &info[..n]);
+        Some(a)
+    })
+}
 pub fn info_addr(id: ChaoId) -> Option<u32> {
     with(|c| c.entries.get(&id).map(|e| e.info))
 }

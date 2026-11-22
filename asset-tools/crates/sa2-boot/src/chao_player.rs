@@ -1384,6 +1384,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     crate::chao_cache::tick();
     if chao_world(m) && matches!(STEP.get(), Step::Live(_)) && module_linked(m, 60) {
         export_pose(m);
+        export_record(m);
         remote_tick(c, m);
     }
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
@@ -1878,6 +1879,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
         IMPORT_AT.set(f + EXPORT_EVERY);
         let text = std::env::var("SA2_POSE_IN").ok().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         for (id, p, a, mo) in text.lines().filter_map(parse_remote) {
+            import_record(m, id);
             // shortcut: a remote record is the owner's own save info until the
             // server relays each Chao's record; get_or_load keeps it per id.
             let info: Vec<u8> = (0..0x800).map(|i| m.r8(INFO + i)).collect();
@@ -1896,6 +1898,9 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
         }
     }
     let s1 = rt::sec(m, 60, 1);
+    for t in PENDING_KILL.with_borrow_mut(std::mem::take) {
+        call(c, m, s1 + KILL_CHAO, &[t]);
+    }
     // Offline: the task leaves at once; the cache keeps the record for its grace.
     let gone: Vec<(u64, u32)> = REMOTE.with_borrow(|r| r.iter().filter(|(_, e)| now.duration_since(e.last_seen) > REMOTE_GONE).map(|(&id, e)| (id, e.task)).collect());
     for (id, task) in gone {
@@ -1964,4 +1969,61 @@ fn remote_pin(m: &mut Mem, task: u32) {
         m.w32(cw + 0x14 + 4 * i as u32, v.to_bits());
     }
     m.w32(cw + 0x0C, a);
+}
+
+
+/// The own Chao's live record (0x800 bytes; the pointer at chaowk +0x5C, as
+/// agreed with the gardens thread: unverified until the log line below
+/// shows it equals INFO for the created Chao) to SA2_RECORD_OUT when it
+/// changes, at most every RECORD_EVERY frames. The page PUTs it raw to
+/// /api/chao-record.
+const RECORD_EVERY: u64 = 180;
+
+thread_local! {
+    static RECORD_SENT: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    static RECORD_SEEN: std::cell::RefCell<std::collections::BTreeMap<u64, std::time::SystemTime>> = Default::default();
+}
+
+fn export_record(m: &Mem) {
+    let Ok(path) = std::env::var("SA2_RECORD_OUT") else { return };
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let Step::Live(chao) = STEP.get() else { return };
+    if f % RECORD_EVERY != 0 {
+        return;
+    }
+    let cw = m.r32(chao + 0x34);
+    let rec = m.r32(cw + 0x5C);
+    let src = if (0x8000_0000..0x8C00_0000).contains(&rec) { rec } else { INFO };
+    let bytes: Vec<u8> = (0..0x800).map(|i| m.r8(src + i)).collect();
+    if RECORD_SENT.with_borrow(|s| *s != bytes) {
+        eprintln!("chao-player record: exported from {src:#x} (chaowk+0x5C {rec:#x}, INFO {INFO:#x})");
+        let _ = std::fs::write(&path, &bytes);
+        RECORD_SENT.set(bytes);
+    }
+}
+
+/// SA2_RECORD_IN/<id>: a remote Chao's raw record (the page writes it when
+/// the snapshot's chaoRecordVersion changes). A new file replaces the cached
+/// record and re-creates that Chao with it.
+fn import_record(m: &mut Mem, id: u64) {
+    let Ok(dir) = std::env::var("SA2_RECORD_IN") else { return };
+    let path = std::path::Path::new(&dir).join(id.to_string());
+    let Ok(t) = std::fs::metadata(&path).and_then(|md| md.modified()) else { return };
+    if RECORD_SEEN.with_borrow(|s| s.get(&id) == Some(&t)) {
+        return;
+    }
+    let Ok(bytes) = std::fs::read(&path) else { return };
+    RECORD_SEEN.with_borrow_mut(|s| s.insert(id, t));
+    if crate::chao_cache::replace(m, id, &bytes).is_some() {
+        eprintln!("chao-player record: {id} updated ({} bytes)", bytes.len());
+        // The task is re-created from the new record on the next tick.
+        let old = REMOTE.with_borrow_mut(|r| r.get_mut(&id).map(|e| std::mem::replace(&mut e.task, 0)).unwrap_or(0));
+        if old != 0 {
+            PENDING_KILL.with_borrow_mut(|k| k.push(old));
+        }
+    }
+}
+
+thread_local! {
+    static PENDING_KILL: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
 }
