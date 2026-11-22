@@ -60,19 +60,27 @@ export function mountOverlay(nextSocket) {
   // The Kindergarten medical chart as the menu: its pages (360x440, cropped from the game's 640x480
   // layout at x264,y40) are the background, its L/R tabs (top 16 px) flip Stats / Inventory / Breeding.
   const body = el('div'); body.style.cssText = 'position:absolute;left:16px;right:16px;top:72px;bottom:16px;overflow:auto';
-  const tab = (left, width, step) => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${left}px;width:${width}px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(page + step)); return t; };
-  const pages = [['a', [record]], ['b', [care]], ['c', [breedingRoot]]];
+  // Five native-shape tabs, 72x16 each across the top of the crop: blue record, yellow care, pink record, green inventory, purple breeding.
+  const tab = n => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${n * 72}px;width:72px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(n)); return t; };
+  // Page B / C headings: MsgAlKinderHe strings at the chart draw's own spots (screen xy minus the x264,y40 crop).
+  // shortcut: headings only; their values need the personality/sickness getters and karate W/L/D, which the snapshot doesn't carry yet.
+  const labels = rows => { const page = el('div'); page.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+    for (const [text, x, y, centre] of rows) { const n = at(nativeText(text, 'native-stat-name'), x - 264, y - 40); if (centre) n.style.transform = 'translateX(-50%)'; page.append(n); }
+    return page; };
+  const yellow = labels([['Personality', 288, 74], ['Favorite', 288, 148], ['Age', 288, 222], ['Times transformed', 452, 222], ['Condition', 288, 286]]);
+  const pink = labels([['Record', 444, 84, true], ['Chao Race', 288, 110], ['Chao Karate', 288, 276], ['Rank', 288, 370]]);
+  const pages = [['a5', record], ['b5', yellow], ['c5', pink], ['d', care], ['e', breedingRoot]];
   let page = 0;
   function show(n) {
-    page = (n + pages.length) % pages.length;
-    const [art, nodes] = pages[page];
+    page = n;
+    const [art, node] = pages[page];
     panel.style.background = `url(/api/assets/medchart-page-${art}.png) no-repeat 0 0 / 360px 440px`;
-    body.style.display = page ? '' : 'none';
-    if (page) body.replaceChildren(...nodes);
-    record.hidden = page !== 0;
+    for (const [, other] of pages.slice(0, 3)) other.hidden = other !== node;
+    body.style.display = page >= 3 ? '' : 'none';
+    if (page >= 3) body.replaceChildren(node);
   }
   panel.style.cssText += ';width:360px;height:440px;max-height:none;padding:0;overflow:visible;border-radius:0;box-shadow:none;image-rendering:pixelated';
-  panel.append(record, tab(0, 96, -1), tab(192, 96, 1), body);
+  panel.append(record, yellow, pink, ...[0, 1, 2, 3, 4].map(tab), body);
   show(0);
   document.body.append(panel);
   const slots = createSaveSlots(localStorage);
