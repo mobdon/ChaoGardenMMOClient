@@ -1737,6 +1737,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         remote_tick(c, m);
         crate::name_tags::flush();
     }
+    crate::kinder_chart::frame(c, m);
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
     // uses it; 7 = the lobby), to test the gear across a second change.

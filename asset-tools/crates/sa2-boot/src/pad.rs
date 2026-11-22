@@ -78,7 +78,6 @@ fn read(c: &mut Cpu, m: &mut Mem) {
     for (i, p) in PADS.get().iter().enumerate() {
         to_guest(m, base + 12 * i as u32, p);
     }
-    crate::kinder_chart::frame(c, m);
     c.r[3] = 0;
 }
 
