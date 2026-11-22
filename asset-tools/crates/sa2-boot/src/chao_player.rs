@@ -2179,7 +2179,6 @@ fn module_linked(m: &Mem, id: u32) -> bool {
         .any(|i| m.r32(i) == id)
 }
 
-<<<<<<< ours
 /// The page's /dev/area code 252: the player's Chao could not be made, so
 /// the page goes back to the login instead of ever showing Sonic.
 fn no_chao() {
@@ -2196,7 +2195,8 @@ fn motion_log(c: &mut Cpu, m: &mut Mem) {
     eprintln!("motion f{f}: task {:#x} motion {} lr {:#x} (sec1 +{:#x})", c.r[3], c.r[4], c.lr, c.lr.wrapping_sub(rt::sec(m, 60, 1)));
     let a = rt::sec(m, 60, 1) + AL_SET_MOTION_LINK;
     rel_original(c, m, a, motion_log);
-=======
+}
+
 /// The game left a level in-process (start_stage restarts Chao World): take
 /// the copies loaded at BASE/MOT off the module list, so the ChaoMain the game
 /// loads next is the only module 60 (two gave "no function at 0x81201310",
@@ -2216,7 +2216,6 @@ fn linked_copies(m: &Mem, bases: &[u32]) -> Vec<u32> {
         .take(256)
         .filter(|i| bases.contains(i))
         .collect()
->>>>>>> theirs
 }
 
 fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
