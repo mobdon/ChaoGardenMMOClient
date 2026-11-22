@@ -67,7 +67,15 @@ const SERVER_GENE: [(u32, u32); 4] = [(0x01, 0x02), (0x5C, 0x6A), (0x6C, 0x6E), 
 /// 0x17, TYPE_KNUCKLES 0x18, TYPE_AMY 0x19), made with `CreateChaoExtra`
 /// (see CREATE_CHAO_EXTRA). Offsets from the player in the lobby are
 /// the old web hub's NPC spots (src/scene.js addNPC), an MMO choice.
-const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 12.0, 6.0), (0x19, -4.0, 8.0)];
+const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 3.0, 3.0), (0x19, -4.0, 8.0)];
+/// Tails (RESIDENTS[1]) stands still by the arrival teleporter as the guide:
+/// no Chao AI, the native stand motion (ChaoMain AL_SetMotionLink 0x1B504,
+/// motion 1 as chao_player uses it). Its offset from the arrival point is an
+/// MMO placement choice.
+const STANDING: usize = 1;
+const AL_BEHAVIOR_CONTROL: u32 = 0xF8;
+const AL_SET_MOTION_LINK: u32 = 0x1_B504;
+const STAND_MOTION: u32 = 1;
 /// ChaoMain `CreateChaoExtra` 0x3148C (chao.h): (param, IsParamCopy, element,
 /// &pos, angy). IsParamCopy=1 keeps them out of every save.
 const CREATE_CHAO_EXTRA: u32 = 0x3_148C;
@@ -209,6 +217,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if now != LOBBY {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
+            STANDING_TASK.set(0);
         } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
             RESIDENTS_OUT.set(true);
             residents(c, m, text);
@@ -283,6 +292,7 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     let elem = pos + 0x10;
     let player = m.r32(PLAYERTWP) + 0x14;
     let mut twp = [0; 3];
+    let mut standing_task = 0;
     for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
         for i in (0..PARAM_SIZE).step_by(4) {
             m.w32(param + i, 0);
@@ -298,10 +308,33 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
         let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, elem, pos, 0]);
         if task != 0 {
             twp[n] = m.r32(task + 0x34);
+            if n == STANDING {
+                standing_task = task;
+            }
         }
     }
     RESIDENT_TWP.set(twp);
     c.r[1] = sp;
+    if twp[STANDING] != 0 {
+        // chao_player's AI hook skips the standing resident; install it if
+        // the player-Chao has not.
+        let a = text + AL_BEHAVIOR_CONTROL;
+        if !c.rt.overrides.contains_key(&a) {
+            c.rt.set_override(a, crate::chao_player::behavior);
+        }
+        STANDING_TASK.set(standing_task);
+        let link = text + AL_SET_MOTION_LINK;
+        guest_call(c, m, link, &[standing_task, STAND_MOTION]);
+    }
+}
+
+/// The standing resident's task (0 = none).
+static STANDING_TASK: Global<u32> = global!(0);
+
+/// True for the standing resident's task or its taskwk (AL_BehaviorControl's r3).
+pub(crate) fn standing_resident(m: &Mem, r3: u32) -> bool {
+    let task = STANDING_TASK.get();
+    task != 0 && (r3 == task || r3 == m.r32(task + 0x34))
 }
 
 /// The hub's character Chao make no Chao sounds: a positional sound whose

@@ -91,7 +91,11 @@ fn rel_original(c: &mut Cpu, m: &mut Mem, addr: u32, me: rt::Func) {
 }
 
 /// The player Chao's AI does not run: it rides, it does not wander.
-fn behavior(c: &mut Cpu, m: &mut Mem) {
+pub(crate) fn behavior(c: &mut Cpu, m: &mut Mem) {
+    // The lobby's standing resident (Tails, the guide) runs no AI either.
+    if crate::start_stage::standing_resident(m, c.r[3]) {
+        return;
+    }
     if let Step::Live(chao) = STEP.get() {
         if m.r32(chao + 0x34) == c.r[3] || chao == c.r[3] {
             return;
