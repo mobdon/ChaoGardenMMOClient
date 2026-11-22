@@ -2,7 +2,8 @@
 //! (PRS -> GVM -> GVR, the sa2 crate's own readers) as a PNG. The page reads the
 //! archive from the player's own game folder; nothing is fetched from a server.
 //! JS calls `buf_alloc`, copies the archive and the texture name in, calls `convert`,
-//! reads `out_ptr`/`out_len`, then `buf_free`s both buffers.
+//! reads `out_ptr`/`out_len`, then `buf_free`s both buffers. `chao` does the same for one
+//! Chao model with one motion as a GLB, from `Data_DLL.dll`, `al_body.prs` and `al_nc00.GVP`.
 //! Build: `cargo build --release --target wasm32-unknown-unknown`.
 
 use std::cell::RefCell;
@@ -60,6 +61,54 @@ pub unsafe extern "C" fn convert(
 ) -> i32 {
     let name = std::str::from_utf8(std::slice::from_raw_parts(name, name_len));
     name.is_ok_and(|name| convert_to_out(std::slice::from_raw_parts(prs, prs_len), name)) as i32
+}
+
+/// The Chao model `AL_RootObject[model]` of `Data_DLL.dll` with motion `al_motion_table[motion]`
+/// (named `motion`) as a GLB, textured from `al_body.prs` and the child palette `al_nc00.GVP`.
+fn chao_glb(
+    dll: &[u8],
+    body: &[u8],
+    gvp: &[u8],
+    model: usize,
+    motion: usize,
+) -> sa2_asset_tools::Result<Vec<u8>> {
+    use sa2_asset_tools::{chao_dll, chao_glb};
+    let model = chao_dll::read_chao_model(dll, model)?;
+    let clip = chao_dll::read_chao_motion(dll, motion)?;
+    let pngs = chao_glb::body_textures(&model, body, gvp)?;
+    chao_glb::export(&model, &pngs, &[("motion", &clip)])
+}
+
+/// Converts one Chao; the GLB (or nothing on error) is kept for `out_ptr`/`out_len`.
+pub fn chao_to_out(dll: &[u8], body: &[u8], gvp: &[u8], model: usize, motion: usize) -> bool {
+    let made = chao_glb(dll, body, gvp, model, motion);
+    let ok = made.is_ok();
+    OUT.with(|o| *o.borrow_mut() = made.unwrap_or_default());
+    ok
+}
+
+/// # Safety
+/// The three pointer/length pairs must be `buf_alloc`ed buffers: `Data_DLL.dll`, `al_body.prs`, `al_nc00.GVP`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn chao(
+    dll: *const u8,
+    dll_len: usize,
+    body: *const u8,
+    body_len: usize,
+    gvp: *const u8,
+    gvp_len: usize,
+    model: usize,
+    motion: usize,
+) -> i32 {
+    let bytes = |p, n| std::slice::from_raw_parts(p, n);
+    chao_to_out(
+        bytes(dll, dll_len),
+        bytes(body, body_len),
+        bytes(gvp, gvp_len),
+        model,
+        motion,
+    ) as i32
 }
 
 #[no_mangle]
@@ -136,6 +185,12 @@ mod tests {
         assert!(!convert_to_out(&prs, "level01"));
         assert_eq!(out_len(), 0);
         assert!(!convert_to_out(&[0u8; 16], "level00"));
+        assert_eq!(out_len(), 0);
+    }
+
+    #[test]
+    fn bad_chao_inputs_give_nothing() {
+        assert!(!chao_to_out(&[0u8; 64], &[0u8; 16], &[0u8; 16], 0, 0));
         assert_eq!(out_len(), 0);
     }
 }
