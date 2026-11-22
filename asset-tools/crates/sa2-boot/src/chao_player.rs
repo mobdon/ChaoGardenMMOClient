@@ -776,6 +776,10 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         CHAO_NODE.set(0);
         rel_original(c, m, a, chao_display);
         NATIVE_DRAW.set(false);
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
+            let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.len()));
+            eprintln!("chao-player native: walked {} node transforms, rest model nodes {rest:?}, hands {:?}", CHAO_NODE.get(), HANDS.with_borrow(|h| h.map(|x| x.map(|v| [v[0][3], v[1][3], v[2][3]]))));
+        }
         return;
     }
     if ev {
