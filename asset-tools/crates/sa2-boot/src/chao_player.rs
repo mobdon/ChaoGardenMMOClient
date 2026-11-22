@@ -660,6 +660,9 @@ fn pin(m: &mut Mem, chao: u32, data1: u32) {
 }
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
+    if std::env::var_os("SA2_HEAP_LOG").is_some() {
+        sa2_recomp::os::add_frame_hook(|_, m| heap_log(m));
+    }
     if !std::env::var("SA2_CHAO_PLAYER").is_ok_and(|v| v.trim() == "1") {
         return;
     }
@@ -1326,11 +1329,42 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
 /// player's Chao is created on the game's own module.
 const STAGE_NUM: u32 = 0x803A_D820;
 
+/// SA2_HEAP_LOG=n (debug): every n frames, the OS heaps (HeapArray
+/// 0x803ADC68: size, free list, allocated list per 12-byte descriptor) as
+/// total and free bytes, and the arena (0x803ADC70/74).
+fn heap_log(m: &Mem) {
+    let Some(n) = std::env::var("SA2_HEAP_LOG").ok().and_then(|v| v.parse::<u64>().ok()) else { return };
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if n == 0 || f % n != 0 {
+        return;
+    }
+    let (arr, num) = (m.r32(0x803A_DC68), m.r32(0x803A_DC6C));
+    let mb = |b: u32| b as f32 / 1048576.0;
+    let mut out = vec![];
+    for h in 0..num.min(16) {
+        let d = arr + 12 * h;
+        let size = m.r32(d) as i32;
+        if size < 0 {
+            continue;
+        }
+        let mut free = 0u32;
+        let mut cell = m.r32(d + 4);
+        for _ in 0..100_000 {
+            if !(0x8000_0000..0x8C00_0000).contains(&cell) { break; }
+            free += m.r32(cell + 8);
+            cell = m.r32(cell + 4);
+        }
+        out.push(format!("heap {h}: {:.2} MB, free {:.2} MB", mb(size as u32), mb(free)));
+    }
+    eprintln!("chao-player heap: frame {f} stage {} arena {:#x}-{:#x} {}", m.r16(STAGE_NUM), m.r32(0x803A_DC70), m.r32(0x803A_DC74), out.join("; "));
+}
+
 fn chao_world(m: &Mem) -> bool {
     m.r16(STAGE_NUM) as i16 >= 90
 }
 
 thread_local! {
+    static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
 }
 
@@ -1341,6 +1375,17 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     // create the player's Chao again.
     // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
     let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
+    // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
+    // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
+    // uses it; 7 = the lobby), to test the gear across a second change.
+    if chao_world(m) && module_linked(m, 60) {
+        if let Some((f, to)) = std::env::var("SA2_CHAO_AREA_AT").ok().and_then(|v| { let (f, a) = v.split_once(',')?; Some((f.trim().parse::<u64>().ok()?, a.trim().parse::<u32>().ok()?)) }) {
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f && !AREA_DONE.replace(true) {
+                eprintln!("chao-player: debug area change to {to}");
+                call(c, m, rt::sec(m, 60, 1) + 0x27E00, &[to]);
+            }
+        }
+    }
     let stage = m.r16(STAGE_NUM) ^ (area << 8);
     if LIVE_STAGE.replace(stage) != stage {
         RIDER.set(0);
