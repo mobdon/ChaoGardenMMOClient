@@ -23,6 +23,7 @@ const GX_PERSPECTIVE: u32 = 0;
 struct Drawing {
     label: String,
     top: Option<(f32, f32)>,
+    low: f32,
     nodes: u32,
 }
 
@@ -59,7 +60,7 @@ fn project(p: &[[f32; 4]; 4], v: [f32; 3]) -> Option<(f32, f32)> {
 /// A Chao's display starts (None: a Chao without a tag).
 pub(crate) fn begin(label: Option<String>) {
     finish();
-    CUR.set(label.map(|label| Drawing { label, top: None, nodes: 0 }));
+    CUR.set(label.map(|label| Drawing { label, top: None, low: f32::MAX, nodes: 0 }));
 }
 
 /// One node placed: `cur` is the 3x4 view-space current matrix.
@@ -69,6 +70,7 @@ pub(crate) fn node(cur: [[f32; 4]; 3]) {
         let Some(d) = d else { return };
         d.nodes += 1;
         if let Some(s) = project(&p, [cur[0][3], cur[1][3], cur[2][3]]) {
+            d.low = d.low.min(s.1);
             if d.top.is_none_or(|t| s.1 > t.1) {
                 d.top = Some(s);
             }
@@ -84,8 +86,15 @@ pub(crate) fn finish() {
         eprintln!("name-tags: {} drew {} nodes, spot {:?}", d.label, d.nodes, d.top);
     }
     if let Some((x, y)) = d.top {
-        FRAME.with_borrow_mut(|f| f.push((d.label, x, y)));
+        FRAME.with_borrow_mut(|f| f.push((d.label, x, raised(y, d.low))));
     }
+}
+
+/// The tag's height: the highest node is the middle of the ball over the
+/// Chao's head, so the tag goes a share of the Chao's own height above it
+/// (the ball's radius is about a twelfth of feet-to-ball in a build shot).
+fn raised(top: f32, low: f32) -> f32 {
+    top + (top - low) * 0.12
 }
 
 fn lines(spots: &[(String, f32, f32)]) -> String {
@@ -151,6 +160,13 @@ fn crop(rgba: &[u8], w: u32, h: u32, cell: [f32; 4]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_tag_clears_the_head_ball() {
+        // A Chao from -0.5 to 0.5: the tag sits above its top node; a one-node Chao stays put.
+        assert!((raised(0.5, -0.5) - 0.62).abs() < 1e-6);
+        assert_eq!(raised(0.3, 0.3), 0.3);
+    }
+
     // A GX perspective (row-major, w = -z), 90 degree field of view.
     const P: [[f32; 4]; 4] = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, -1.0, -1.0], [0.0, 0.0, -1.0, 0.0]];
 
@@ -172,7 +188,7 @@ mod tests {
         node(at(0.0, 9.0)); // not a tagged Chao
         finish();
         let spots = FRAME.with_borrow_mut(std::mem::take);
-        assert_eq!(lines(&spots), "p7 0.1000 0.5000\n");
+        assert_eq!(lines(&spots), "p7 0.1000 0.5600\n");
     }
 
     #[test]
