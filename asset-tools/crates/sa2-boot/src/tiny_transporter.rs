@@ -396,6 +396,12 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                 let (column, row) = one_side(m.r32(picker + 0x28), m.r32(picker + 0x2C));
                 m.w32(picker + 0x28, column);
                 m.w32(picker + 0x2C, row);
+                // MMO glue: OK needs a chosen Chao (+0x44, 1-based). With none
+                // chosen yet the first listed one is, so one Chao needs no extra
+                // press. unverified in a run: that +0x44 may be set from here.
+                if m.r32(picker + 0x44) == 0 && m.r32(cm_bss + SIDE_1) != 0 {
+                    m.w32(picker + 0x44, 1);
+                }
                 m.w32(picker + 0x38, m.r32(picker + 0x44));
                 // The window follows the cursor over the Chao; on the buttons
                 // it keeps the last one.
