@@ -346,8 +346,8 @@ fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32, b: [f32; 3]) {
     let cur_list = m.r32(c.r[13].wrapping_sub(0x7228)) + 0x20;
     let keep = (m.r32(cur_list), c.r[3]);
     if let Some(tex) = SHADOW_TEX.get().filter(|_| addr == DRAW_MOTION && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")) {
-        let k = (0..0x428).find(|&k| m.r32(MODELS + 4 * k) == c.r[3]);
-        if let Some(sh) = k.map(|k| m.r32(MODELS + 4 * (k + 130))).filter(|&o| o != 0) {
+        let k = (0..0x428).find(|&k| model_obj(m, k) == c.r[3]);
+        if let Some(sh) = k.map(|k| model_obj(m, k + 130)).filter(|&o| o != 0) {
             c.r[3] = sh;
             m.w32(cur_list, tex);
         }
@@ -375,6 +375,33 @@ const LOAD_MDL: u32 = 0x8005_0210;
 const SHADOW_TEX_NAME: u32 = 0x8017_48E0;
 const SHADOW_MDL_NAME: u32 = 0x8017_48EC;
 const MODELS: u32 = 0x801E_6688;
+
+thread_local! {
+    /// Model slots this module loaded, kept out of the game's table.
+    static EXTRA_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
+}
+
+/// A model slot: one this module loaded, else the game's table.
+fn model_obj(m: &Mem, k: u32) -> u32 {
+    EXTRA_MODELS.with_borrow(|e| e.get(&k).copied()).unwrap_or_else(|| m.r32(MODELS + 4 * k))
+}
+
+/// Load a model file with the game's loader, then take the slots it filled
+/// out of the game's table: Chao World frees that table on an area change,
+/// and freeing these crashed there (OSFreeToHeap at 0xffffffe4, lvl9 gdn).
+/// shortcut: they are never freed (loaded once per run).
+fn load_models(c: &mut Cpu, m: &mut Mem, name: u32) -> u32 {
+    let before: Vec<u32> = (0..0x428).map(|k| m.r32(MODELS + 4 * k)).collect();
+    let r = call(c, m, LOAD_MDL, &[name]);
+    for k in 0..0x428u32 {
+        let now = m.r32(MODELS + 4 * k);
+        if now != 0 && before[k as usize] == 0 {
+            EXTRA_MODELS.with_borrow_mut(|e| e.insert(k, now));
+            m.w32(MODELS + 4 * k, 0);
+        }
+    }
+    r
+}
 
 /// Shadow's boots: TERIOSMDL models in slots 161/163 (a 2-node, 174-vertex
 /// left/right pair; drawn 3x on the Chao feet they show as his air shoes,
@@ -416,7 +443,7 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let ext = |vs: Vec<[f32; 3]>| (0..3).map(|k| { let (lo, hi) = vs.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); hi - lo }).fold(0.0f32, f32::max);
     for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
         let model = models.get(n).copied().unwrap_or(model);
-        let obj = m.r32(MODELS + 4 * model);
+        let obj = model_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             continue;
         }
@@ -478,7 +505,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
     let mut out = [(0u32, [[0.0f32; 4]; 3]); 2];
     for (k, &(arm, tip)) in arms.iter().enumerate() {
         let (model, up, fwd) = GLOVE_REFS[k];
-        let obj = m.r32(MODELS + 4 * model);
+        let obj = model_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             return None;
         }
@@ -540,7 +567,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
-        call(c, m, 0x8011_DF44, &[m.r32(MODELS + 4 * model)]);
+        call(c, m, 0x8011_DF44, &[model_obj(m, model)]);
         LCAP.set(lcap);
     }
     (c.r, c.f) = regs;
@@ -1336,29 +1363,26 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // The Hammer Gloves item in Knuckles's and Rouge's levels: Knuckles's
         // models are there in his own; Rouge's need KNUCKMDL. KNUCKTEX is
         // loaded once for the glove's own list.
-        if !chao_world(m) && addr == KNUX_EXEC && KNUX_TEX.get().is_none() && !std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
+        if addr == KNUX_EXEC && KNUX_TEX.get().is_none() && !std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
             let obj2 = m.r32(P1_OBJ2);
             let tex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
-            if m.r32(MODELS + 4 * 329) == 0 {
-                call(c, m, LOAD_MDL, &[0x8017_4F10]);
+            if model_obj(m, 329) == 0 {
+                load_models(c, m, 0x8017_4F10);
             }
             eprintln!("chao-player: Hammer Gloves textures {tex:#x} (rider {})", m.r8(obj2 + 1));
             KNUX_TEX.set(Some(tex).filter(|&t| t != 0));
         }
         // Shadow's textures and models for the Dark Chao's ball, once, in
         // Sonic's levels (playerwk +1 = 0, the byte Sonic's display picks his models by).
-        // shortcut: not in Chao World yet: models loaded there broke the next
-        // area change (OSFreeToHeap at 0xffffffe4, lvl9 gdn), so the Chao goes
-        // without Shadow's ball, shoes and gloves there.
-        if !chao_world(m) && addr == SONIC_EXEC && m.r8(m.r32(P1_OBJ2) + 1) == 0 && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
+        if addr == SONIC_EXEC && m.r8(m.r32(P1_OBJ2) + 1) == 0 && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
-            let mdl = call(c, m, LOAD_MDL, &[SHADOW_MDL_NAME]);
+            let mdl = load_models(c, m, SHADOW_MDL_NAME);
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
             // Knuckles's textures and models for the Hammer Gloves item (KNUCKTEX /
             // KNUCKMDL.PRS, main.dol 0x80174F04 / 0x80174F10).
             let ktex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
-            let kmdl = call(c, m, LOAD_MDL, &[0x8017_4F10]);
+            let kmdl = load_models(c, m, 0x8017_4F10);
             eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x}");
             KNUX_TEX.set(Some(ktex).filter(|&t| t != 0));
             // SA2_MODEL_DUMP (debug): every loaded model slot with its node and vertex counts.
