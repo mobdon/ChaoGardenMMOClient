@@ -139,6 +139,8 @@ function eyeTexture(scene, index) {
 function ownFaceMaterial(root, mesh) {
   if (!mesh.metadata?.chaoFaceOwnMaterial) {
     mesh.material = mesh.material.clone(`${mesh.material.name}-face`);
+    // The eye and mouth images are cut-outs: mask by their alpha, or the clear texels draw solid.
+    mesh.material.transparencyMode = 1; mesh.material.useAlphaFromAlbedoTexture = true;
     mesh.metadata = { ...(mesh.metadata || {}), chaoFaceOwnMaterial: true };
     (root.metadata.ownedMaterials ||= []).push(mesh.material);
   }
