@@ -344,10 +344,14 @@ function metricItems(values) {
   $('#tiny-game-metrics').replaceChildren(...values.map(value => { const span = document.createElement('span'); span.textContent = value; return span; }));
 }
 
+// A Tiny Garden resident is watched by the server yet may still play: the server
+// takes tiny-start from it. Any other watch needs control taken first.
+function watchBlocks() { return !!player?.watch && careState?.tinyResident?.enabled !== true; }
+
 function renderGame() {
   // Opts the Chao into the Tiny Garden; the server refuses training with tiny-entry-required until then.
   resident.update(player, { connected: mayAct(), care: careState, capabilities, accountsV2: accountV2 });
-  training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || !!player?.watch || (accountV2 && account.pending), capabilities, serverTime, care: careState });
+  training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || watchBlocks() || (accountV2 && account.pending), capabilities, serverTime, care: careState });
   gardenWatch.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || training.blocksActivity || (accountV2 && account.pending) });
   items.update(player, { connected: mayAct(), care: careState, accountsV2: accountV2, serverTime,
     careMutations: !accountV2 && careState?.rulesVersion === 'adapted-care-v1' });
@@ -372,8 +376,8 @@ function renderGame() {
   $('#tiny-stop').hidden = !hasGame;
   $('#tiny-stop').disabled = !mayAct() || pendingStop || waiting || saved;
   renderRoundShortcut();
-  $('#tiny-start').disabled = !mayAct() || !player || hasGame || pendingStart || connecting || !!player?.watch || training.blocksActivity;
-  $('#tiny-start').textContent = pendingStart ? 'Starting your round…' : !connected ? 'Connect a saved Chao' : player?.watch ? 'Take control to play' : hasGame ? (saved ? 'Round complete' : waiting ? 'Saving result…' : 'Round in progress') : `Play ${definition.title}`;
+  $('#tiny-start').disabled = !mayAct() || !player || hasGame || pendingStart || connecting || watchBlocks() || training.blocksActivity;
+  $('#tiny-start').textContent = pendingStart ? 'Starting your round…' : !connected ? 'Connect a saved Chao' : watchBlocks() ? 'Take control to play' : hasGame ? (saved ? 'Round complete' : waiting ? 'Saving result…' : 'Round in progress') : `Play ${definition.title}`;
   $('#tiny-phase').textContent = pendingStop ? 'Stopping round…' : saved ? 'Result saved' : waiting ? 'Saving result…' : !hasGame ? 'Ready when you are' : 'Playing';
   $('#tiny-cover-title').textContent = connected ? definition.title : 'A little challenge awaits.';
   $('#tiny-cover-copy').textContent = connected ? 'Tap Play to start a fresh round.' : 'Connect your saved Chao and start a round.';
@@ -596,7 +600,7 @@ $('#tiny-games').addEventListener('click', event => {
   selectedGame = button.dataset.game; $('#tiny-result').hidden = true; notice(''); renderGame();
 });
 $('#tiny-start').addEventListener('click', async () => {
-  if (!mayAct() || !player || tinyGame || pendingStart || player.watch || training.blocksActivity) return;
+  if (!mayAct() || !player || tinyGame || pendingStart || watchBlocks() || training.blocksActivity) return;
   pendingStart = true; $('#tiny-result').hidden = true; notice('');
   const sent = send({ type: 'action', action: 'tiny-start', gameId: selectedGame }); renderGame();
   clearTimeout(pendingTimer); pendingTimer = setTimeout(() => { if (pendingStart) { pendingStart = false; notice('The server has not started the round yet. Try again once connected.', true); renderGame(); } }, 8_000);
