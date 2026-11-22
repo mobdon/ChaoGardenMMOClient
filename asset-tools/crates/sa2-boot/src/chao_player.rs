@@ -1768,6 +1768,27 @@ fn module_linked(m: &Mem, id: u32) -> bool {
         .any(|i| m.r32(i) == id)
 }
 
+/// The game left a level in-process (start_stage restarts Chao World): take
+/// the copies loaded at BASE/MOT off the module list, so the ChaoMain the game
+/// loads next is the only module 60 (two gave "no function at 0x81201310",
+/// lr inside BASE). Unverified: nothing else still points into the copies.
+pub(crate) fn unlink_copies(c: &mut Cpu, m: &mut Mem) {
+    for base in linked_copies(m, &[BASE, MOT]) {
+        eprintln!("chao-player: unlinking the copy at {base:#x}");
+        call(c, m, sa2_recomp::os::OS_UNLINK, &[base]);
+    }
+    STEP.set(Step::Wait(0));
+}
+
+/// Which of `bases` are OSModuleInfo addresses on the OS module list.
+fn linked_copies(m: &Mem, bases: &[u32]) -> Vec<u32> {
+    std::iter::successors(Some(m.r32(rt::OS_MODULE_HEAD)), |&i| Some(m.r32(i + 4)))
+        .take_while(|&i| i != 0)
+        .take(256)
+        .filter(|i| bases.contains(i))
+        .collect()
+}
+
 fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     zero(m, INFO, 0x800);
     // Owner Chao (server game.rs "admin-dark-chaos"): Dark Chaos, type 0x16 in
