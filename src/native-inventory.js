@@ -58,8 +58,8 @@ export function drawText(ctx, font, metrics, text, x, y) {
 }
 
 /** The Chao Select window, sliced from its texture: bands kept, stripes repeated, sides stretched down. */
-export function drawWindow(ctx, atlas, H, W = WINDOW.width) {
-  const { x, y, w, h, band, side, corner, stripe } = PIECE;
+function drawWindow(ctx, atlas, H) {
+  const { x, y, w, h, band, side, corner, stripe } = PIECE, W = WINDOW.width;
   const slices = edge => [[0, edge, 0, edge], [edge, w - 2 * edge, edge, W - 2 * edge], [w - edge, edge, W - edge, edge]];
   for (const [sx, sw, dx, dw] of slices(corner)) {
     ctx.drawImage(atlas, x + sx, y, sw, band, dx, 0, dw, band);

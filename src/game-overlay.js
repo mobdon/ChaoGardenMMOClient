@@ -8,7 +8,6 @@ import { createBreedingMenu } from './breeding-menu.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { nativeText } from './native-text.js';
-import { drawWindow, loadInventoryArt } from './native-inventory.js';
 
 let mounted = null;
 // One overlay per page; a reconnected room socket takes over sending.
@@ -40,15 +39,7 @@ export function mountOverlay(nextSocket) {
     slots.record(data.token, data.player, undefined, card);
   } });
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
-  // The panel's frame is the game's own Chao Select window, sliced to the panel's size.
-  const frame = () => void loadInventoryArt().then(art => {
-    if (!art || panel.hidden) return;
-    const c = Object.assign(document.createElement('canvas'), { width: panel.offsetWidth, height: panel.offsetHeight });
-    drawWindow(c.getContext('2d'), art.atlas, c.height, c.width);
-    Object.assign(panel.style, { background: `url(${c.toDataURL()}) no-repeat`, boxShadow: 'none', borderRadius: '0', imageRendering: 'pixelated' });
-  });
-  new ResizeObserver(frame).observe(panel);
-  const toggle = () => { panel.hidden = !panel.hidden; frame(); document.getElementById('screen')?.focus(); };
+  const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
   if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
   addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
