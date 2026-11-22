@@ -177,7 +177,11 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
     }
     sa2_boot::pad::set_port0(p);
     let t = std::time::Instant::now();
-    pace();
+    // Hidden boot logos before an MMO start: no 60 Hz wait, so they pass in
+    // a second or two instead of ~9 (MMO glue; the logos still run in full).
+    if !sa2_boot::start_stage::logos_hidden() {
+        pace();
+    }
     // SA2_PROFILE: where each second's frame time went (game, limiter sleep).
     if sa2_boot::prof::on() {
         sa2_boot::prof::add(&sa2_boot::prof::SLEEP, t);

@@ -28,6 +28,13 @@ const PAGE_COVER: u32 = 254;
 const PAGE_UNCOVER: u32 = 253;
 /// The page is covering the logos.
 static LOGOS_HIDDEN: Global<bool> = global!(false);
+
+/// The boot logos are running behind the page's cover before an MMO start:
+/// the host may run those frames as fast as it can (their own timer still
+/// counts every frame, so the game's own path out of them is unchanged).
+pub fn logos_hidden() -> bool {
+    LOGOS_HIDDEN.get()
+}
 /// The Stage Select's start code reads its stage/character table through the
 /// relocation at advertiseD section 1 + 0x10246 (`lis r3` at 0x10244).
 const TABLE_RELOC: (u8, u32) = (1, 0x10246);
@@ -214,7 +221,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             RESIDENTS_OUT.set(true);
             residents(c, m, text);
         }
-        if now == 0 && TUTORIAL_SLOT.get() != 0 {
+        if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
             tutorial(m, text);
         }
         if now != shown {
