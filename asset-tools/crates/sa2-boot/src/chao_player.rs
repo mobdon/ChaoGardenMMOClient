@@ -2111,11 +2111,20 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // The game dropped the remote Chao's tasks too, without freeing their
         // blocks one by one (the remote heap only shrank across a garden ->
         // lobby change): their heap starts empty again for the new area.
-        REMOTE.with_borrow_mut(|r| r.values_mut().for_each(|e| e.task = 0));
-        REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
-            *reg = crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END);
-            sizes.clear();
-        });
+        // Only when every remote task went through DestroyTask (destroy_task
+        // clears its entry): a remote Chao made while the lobby was still
+        // loading outlived the area step on arrival, its blocks were handed
+        // out again, and its FreeTask on leaving crashed the task loop
+        // ("no function at 0x10000004" right after "remote ... offline").
+        let kept = REMOTE.with_borrow(|r| r.values().filter(|e| e.task != 0).count());
+        if kept == 0 {
+            REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
+                *reg = crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END);
+                sizes.clear();
+            });
+        } else {
+            eprintln!("chao-player remote: {kept} remote Chao outlived the area change; their blocks stay allocated");
+        }
         GARDEN.set(None);
     }
     let mut data1 = m.r32(task + 0x34);
