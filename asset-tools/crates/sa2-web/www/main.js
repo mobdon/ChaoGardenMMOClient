@@ -657,7 +657,7 @@ function gearTuner() {
   });
   pick.onchange = () => rows.forEach((f) => f());
   // Debug toggles and the sound mute list: "set key value" lines in the same file.
-  const sets = { fists: '1', shoes: '1', jets: '1', selog: '0', mute: '' };
+  const sets = { fists: '1', shoes: '1', jets: '1', selog: '0', mute: '', tp: '' };
   const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
   const fx = document.createElement('div');
   fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
@@ -670,7 +670,10 @@ function gearTuner() {
   }
   const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
   mute.onchange = () => { sets.mute = mute.value.replace(/\s+/g, ','); send(); };
-  box.append(fx, mute);
+  // Spot mover: "x y z" puts the Chao there (the info overlay shows where it is).
+  const tp = Object.assign(document.createElement('input'), { placeholder: 'teleport to x y z', style: 'width:100%;margin-top:4px' });
+  tp.onchange = () => { sets.tp = tp.value.trim().replace(/\s+/g, ','); send(); };
+  box.append(fx, mute, tp);
   const copy = Object.assign(document.createElement('button'), { textContent: 'Copy values', style: 'margin-top:6px;width:100%' });
   copy.onclick = () => navigator.clipboard?.writeText(text()).catch(() => {});
   // Keys typed into the panel stay away from the game's controls.

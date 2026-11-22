@@ -1909,6 +1909,35 @@ fn info_out(m: &Mem, area: u16) {
     let _ = std::fs::write(path, line);
 }
 
+/// Debug panel "set tp x y z": the player's Chao (and the hidden character
+/// it moves as) is put at that spot once per new value, to try spawn and
+/// teleporter places.
+fn debug_teleport(m: &mut Mem, task: u32) {
+    let Some(v) = debug_set("tp") else { return };
+    if TP_DONE.with_borrow(|d| *d == v) {
+        return;
+    }
+    let p: Vec<f32> = v.split([',', ' ']).filter_map(|x| x.trim().parse().ok()).collect();
+    let Step::Live(chao) = STEP.get() else { return };
+    let cw = m.r32(chao + 0x34);
+    if p.len() != 3 || cw == 0 {
+        return;
+    }
+    TP_DONE.set(v);
+    for twp in [cw, m.r32(task + 0x34)] {
+        if twp != 0 {
+            for (i, x) in p.iter().enumerate() {
+                m.w32(twp + 0x14 + 4 * i as u32, x.to_bits());
+            }
+        }
+    }
+    eprintln!("chao-player: debug teleport to {p:?}");
+}
+
+thread_local! {
+    static TP_DONE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 fn chao_world(m: &Mem) -> bool {
     m.r16(STAGE_NUM) as i16 >= 90
 }
@@ -2135,6 +2164,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     crate::kinder_chart::frame(c, m);
     info_out(m, area);
+    debug_teleport(m, task);
     crate::card_box::frame(c, m);
     lobby_exit_hook(c, m);
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
