@@ -2042,28 +2042,33 @@ thread_local! {
 }
 
 
-/// MMO glue: other players' Chao get an OS heap of their own (OSCreateHeap
-/// 0x800E473C), 32 MB at 0x83000000..0x85000000 in the raised MEM1 (needs
-/// SA2_MEM1_MB >= 80; the browser copies all guest RAM for GX).
-/// The game's malloc/free wrappers (0x8011989C / 0x801198C4) use the heap
-/// index at r13 -0x71B4: it is switched to this heap around their creation,
-/// and OSFreeToHeap is routed here for any block inside it (the game frees a
-/// Chao's memory later, from its own task cleanup).
+/// MMO glue: other players' Chao get a heap of their own, 32 MB at
+/// 0x83000000..0x85000000 in the raised MEM1 (needs SA2_MEM1_MB >= 80; the
+/// browser copies all guest RAM for GX). The game's OS heap array has room
+/// for its own two heaps only (OSCreateHeap returned -1), so this heap is
+/// ours: the game's malloc/free wrappers (0x8011989C / 0x801198C4) pass the
+/// heap index at r13 -0x71B4 to OSAllocFromHeap / OSFreeToHeap; around a
+/// remote Chao's creation that index is REMOTE_HEAP, and those two calls are
+/// served from this region (first fit, freed blocks reused). Any free of a
+/// block inside it comes back here (the game frees a Chao later, from its
+/// own task cleanup).
 const REMOTE_HEAP_START: u32 = 0x8300_0000;
 const REMOTE_HEAP_END: u32 = 0x8500_0000;
+/// The heap index the game's wrappers see while a remote Chao is created.
+const REMOTE_HEAP: u32 = 0x5243; // not a valid OS heap index
 /// One Chao task's heap use, measured (remote tasks 0x11CC0 apart), rounded up.
 const REMOTE_CHAO_BYTES: u32 = 0x1_4000;
-const OS_CREATE_HEAP: u32 = 0x800E_473C;
+const OS_ALLOC_FROM_HEAP: u32 = 0x800E_4554;
 const OS_FREE_TO_HEAP: u32 = 0x800E_4650;
 
 thread_local! {
-    static REMOTE_HEAP_ID: Cell<Option<u32>> = const { Cell::new(None) };
+    static REMOTE_ALLOC: std::cell::RefCell<Option<(crate::chao_cache::Region, std::collections::BTreeMap<u32, u32>)>> = const { std::cell::RefCell::new(None) };
     static SAID_FULL: Cell<bool> = const { Cell::new(false) };
 }
 
 fn remote_heap(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
-    if let Some(h) = REMOTE_HEAP_ID.get() {
-        return Some(h);
+    if REMOTE_ALLOC.with_borrow(|r| r.is_some()) {
+        return Some(REMOTE_HEAP);
     }
     if (rt::mem1() | 0x8000_0000) < REMOTE_HEAP_END {
         if !SAID_FULL.replace(true) {
@@ -2072,40 +2077,44 @@ fn remote_heap(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
         return None;
     }
     raise_chao_limit(m);
-    let h = call(c, m, OS_CREATE_HEAP, &[REMOTE_HEAP_START, REMOTE_HEAP_END]) as i32;
-    eprintln!("chao-player remote: heap {h} at {REMOTE_HEAP_START:#x}..{REMOTE_HEAP_END:#x} ({} KB, about {} Chao)",
-        (REMOTE_HEAP_END - REMOTE_HEAP_START) / 1024, (REMOTE_HEAP_END - REMOTE_HEAP_START) / REMOTE_CHAO_BYTES);
-    if h < 0 {
-        return None;
-    }
-    REMOTE_HEAP_ID.set(Some(h as u32));
+    REMOTE_ALLOC.set(Some((crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END), Default::default())));
+    c.rt.set_override(OS_ALLOC_FROM_HEAP, alloc_from_heap);
     c.rt.set_override(OS_FREE_TO_HEAP, free_to_heap);
-    Some(h as u32)
+    eprintln!("chao-player remote: heap at {REMOTE_HEAP_START:#x}..{REMOTE_HEAP_END:#x} ({} KB, about {} Chao)",
+        (REMOTE_HEAP_END - REMOTE_HEAP_START) / 1024, (REMOTE_HEAP_END - REMOTE_HEAP_START) / REMOTE_CHAO_BYTES);
+    Some(REMOTE_HEAP)
+}
+
+fn alloc_from_heap(c: &mut Cpu, m: &mut Mem) {
+    if c.r[3] != REMOTE_HEAP {
+        return original(c, m, OS_ALLOC_FROM_HEAP);
+    }
+    let size = c.r[4];
+    c.r[3] = REMOTE_ALLOC.with_borrow_mut(|r| {
+        let (reg, sizes) = r.as_mut()?;
+        let a = reg.alloc(size)?;
+        sizes.insert(a, size);
+        Some(a)
+    }).unwrap_or(0);
 }
 
 fn free_to_heap(c: &mut Cpu, m: &mut Mem) {
-    if let Some(h) = REMOTE_HEAP_ID.get() {
-        if (REMOTE_HEAP_START..REMOTE_HEAP_END).contains(&c.r[4]) {
-            c.r[3] = h;
-        }
+    let p = c.r[4];
+    if (REMOTE_HEAP_START..REMOTE_HEAP_END).contains(&p) {
+        REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
+            if let Some(n) = sizes.remove(&p) {
+                reg.free(p, n);
+            }
+        });
+        return;
     }
     original(c, m, OS_FREE_TO_HEAP);
 }
 
-/// Free bytes in OS heap `h` (HeapArray 0x803ADC68: size, free list, used list).
-fn heap_free(m: &Mem, h: u32) -> u32 {
-    let d = m.r32(0x803A_DC68) + 12 * h;
-    let (mut free, mut cell) = (0u32, m.r32(d + 4));
-    for _ in 0..100_000 {
-        if !(0x8000_0000..0x8C00_0000).contains(&cell) {
-            break;
-        }
-        free += m.r32(cell + 8);
-        cell = m.r32(cell + 4);
-    }
-    free
+/// Free bytes left in the remote heap (blocks freed back count as free).
+fn heap_free(_m: &Mem, _h: u32) -> u32 {
+    REMOTE_ALLOC.with_borrow(|r| r.as_ref().map_or(0, |(reg, _)| (REMOTE_HEAP_END - REMOTE_HEAP_START) - reg.used()))
 }
-
 
 /// ChaoMain's per-category limit of its world list (nbMaxEntry, the u32
 /// array at .data sec4 +0x81E0 that ALW_Entry2 0x2984C searches up to;
