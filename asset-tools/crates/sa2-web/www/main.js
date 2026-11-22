@@ -32,14 +32,36 @@ function log(text, err) {
 const sh = {
   ctl: new SharedArrayBuffer(64),
   pad: new SharedArrayBuffer(16),
+  egg: new SharedArrayBuffer(4 + 8 * 0xa8),
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
+// A named egg hatches in the Chao Lobby (sa2_boot::start_stage reads /dev/egg).
+// Up to 8 queued; each slot is a u32 "has gene" flag then an AL_GENE (0xA4 bytes,
+// al_chao_info.h) holding the server egg's own alleles where the game keeps them.
+window.sa2HatchEgg = egg => {
+  const count = new Int32Array(sh.egg, 0, 1), n = Atomics.load(count, 0);
+  if (n >= 8) return false;
+  const slot = new DataView(sh.egg, 4 + n * 0xa8, 0xa8), g = egg?.gene;
+  for (let i = 0; i < 0xa8; i++) slot.setUint8(i, 0);
+  if (g) {
+    slot.setUint32(0, 1, true);
+    const at = 4, pair = (o, [a, b]) => { slot.setInt8(at + o, Number(a)); slot.setInt8(at + o + 1, Number(b)); };
+    if (egg.eggColor != null) slot.setInt8(at + 0x01, egg.eggColor);
+    g.abl.forEach((p, i) => pair(0x5c + i * 2, p));
+    pair(0x6c, g.lifeTime);
+    g.personality.forEach((p, i) => pair(0x74 + i * 2, p));
+    pair(0x8e, g.taste); pair(0x90, g.tv); pair(0x92, g.music); pair(0x94, g.color);
+    pair(0x96, g.nonTex); pair(0x98, g.jewel); pair(0x9a, g.multi);
+  }
+  Atomics.add(count, 0, 1);
+  return true;
+};
 
 // ---- input --------------------------------------------------------------
 // Bits as the game reads them (sa2-web-game KEYS): A D S W, Space, E,
@@ -178,7 +200,7 @@ function joinRoom(token, zone) {
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
   ws.onmessage = ({ data }) => {
     let m; try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); }
+    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); tagNames(m); }
     if (m.type === 'event') overlay?.event(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
@@ -189,7 +211,7 @@ function joinRoom(token, zone) {
 // with a pose come back as lines "id x y z angle motion frame gear"; Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -247,6 +269,75 @@ function recordIn(id, bytes) {
   h[1] = Math.min(bytes.length, MMO.REC);
   v.setBigUint64(at, BigInt(id), true);
   Atomics.add(h, 0, 1);
+}
+
+// ---- name tags (sa2-boot name_tags.rs) -----------------------------------
+// The game writes each tagged Chao's spot once a frame to /mmo/tags-out as
+// lines "label x y" (x, y: normalised device coordinates of its highest node,
+// drawn for 4:3); the tags are the old hub's name plates, drawn over the
+// canvas. Labels: "me", "p<id>" (numId), "r23" / "r24" / "r25" the residents.
+// A Tiny Garden resident (snapshot watch.resident) shows the game's own tree
+// icon (/mmo/tree-icon: u32 width, height, RGBA) on the left inside its tag.
+const RESIDENT_TAGS = { r23: 'Tails · NPC', r24: 'Knuckles · NPC', r25: 'Amy · NPC' };
+const tagInfo = new Map();
+function tagNames(m) {
+  tagInfo.clear();
+  for (const p of m.players || []) {
+    tagInfo.set(p.id === m.selfId ? 'me' : `p${numId(p.id)}`, { name: `${p.admin ? 'ADMIN • ' : ''}${p.name || 'Chao'}`, admin: !!p.admin, tiny: !!p.watch?.resident });
+  }
+}
+let tagLayer = null, tagSeen = -1, tagAt = 0, treeUrl = null;
+const tagEls = new Map();
+function treeIcon() {
+  if (treeUrl !== null) return treeUrl;
+  const h = mmoHead(MMO.TREE);
+  if (!Atomics.load(h, 0)) return null;
+  const v = new DataView(sh.mmo, MMO.TREE + 8), w = v.getUint32(0, true), ht = v.getUint32(4, true);
+  if (!w || !ht || w * ht * 4 + 8 > h[1]) return (treeUrl = '');
+  const c = Object.assign(document.createElement('canvas'), { width: w, height: ht });
+  c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(mmoBytes.slice(MMO.TREE + 16, MMO.TREE + 16 + w * ht * 4)), w, ht), 0, 0);
+  return (treeUrl = c.toDataURL());
+}
+function tagEl(label) {
+  let el = tagEls.get(label);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'tag';
+    el.append(Object.assign(document.createElement('img'), { alt: '' }), document.createElement('span'));
+    tagLayer.append(el);
+    tagEls.set(label, el);
+  }
+  const info = tagInfo.get(label), name = RESIDENT_TAGS[label] || info?.name || '';
+  if (el.lastChild.textContent !== name) el.lastChild.textContent = name;
+  el.classList.toggle('admin', !!info?.admin);
+  const tree = info?.tiny ? treeIcon() : '';
+  el.firstChild.hidden = !tree;
+  if (tree && el.firstChild.src !== tree) el.firstChild.src = tree;
+  return el;
+}
+function drawTags() {
+  if (!tagLayer) {
+    tagLayer = Object.assign(document.createElement('div'), { id: 'tags' });
+    document.body.append(tagLayer);
+  }
+  const h = mmoHead(MMO.TAGS), seq = Atomics.load(h, 0);
+  if (seq !== tagSeen) {
+    tagSeen = seq;
+    tagAt = performance.now();
+    const text = new TextDecoder().decode(mmoBytes.slice(MMO.TAGS + 8, MMO.TAGS + 8 + Math.min(h[1], MMO.TAGS_MAX)));
+    const r = canvas.getBoundingClientRect(), aspect = r.width / Math.max(1, r.height);
+    // render: a wide canvas widens the 3D view, x scaled by (4/3) / aspect (sa2_gx::widescreen).
+    const k = wide && aspect > 4 / 3 ? 4 / 3 / aspect : 1;
+    const shown = new Set();
+    for (const line of text.split('\n')) {
+      const [label, x, y] = line.split(' ');
+      if (!label || !(label in RESIDENT_TAGS || tagInfo.has(label))) continue;
+      const el = tagEl(label);
+      el.style.transform = `translate(${r.left + ((Number(x) * k + 1) / 2) * r.width}px, ${r.top + ((1 - Number(y)) / 2) * r.height}px) translate(-50%, -100%)`;
+      shown.add(label);
+    }
+    for (const [label, el] of tagEls) el.hidden = !shown.has(label);
+  } else if (performance.now() - tagAt > 250) for (const el of tagEls.values()) el.hidden = true; // out of Chao World
 }
 
 // While the boot logos run before an MMO start, the game is covered (plain
@@ -336,6 +427,7 @@ const ticksMain = [];
 // The page's own loop: the controller and the canvas's size, each refresh.
 function frame() {
   writePad();
+  drawTags();
   const dpr = devicePixelRatio || 1;
   const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
   if (renderer && (w !== frame.w || h !== frame.h)) {
@@ -385,7 +477,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_TREE_OUT: '/mmo/tree-icon' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);

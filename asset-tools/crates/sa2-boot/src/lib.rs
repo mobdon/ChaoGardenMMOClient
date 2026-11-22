@@ -23,6 +23,7 @@ pub mod io;
 pub mod kinder_chart;
 #[cfg(not(target_os = "wasi"))]
 pub mod mmo;
+pub mod name_tags;
 pub mod pad;
 pub mod prof;
 pub mod serve;
@@ -32,6 +33,7 @@ pub mod start_stage;
 pub mod karate;
 pub mod race_probe;
 pub mod steam_sound;
+pub mod tiny_transporter;
 pub mod vi;
 pub mod walker;
 pub mod wide;
@@ -54,6 +56,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     wide::install(c, m);
     walker::install(c, m);
     chao_player::install(c, m);
+    name_tags::install(c, m);
     kinder_chart::install(c, m);
     start_stage::install(c, m);
     race_probe::install(c, m);

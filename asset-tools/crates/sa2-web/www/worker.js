@@ -14,8 +14,8 @@ const DISC_BLOCK = 128 << 10;
 const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
-const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15;
-const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES };
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15, DEV_EGG = 16;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES, 'dev/egg': DEV_EGG };
 const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_GXPAGES;
 // /dev/gxpages as read since it was opened: the decoder's page bits (main.js sh.pages).
 const gxPages = { bytes: new Uint8Array(0), pos: 0 };
@@ -260,10 +260,11 @@ function cardSend() {
 
 // ---- MMO files (sa2-boot chao_player.rs) ----------------------------------
 // The other players' Chao: the game writes its own pose and record to
-// /mmo/pose-out and /mmo/record-out and reads the others' from /mmo/pose-in
+// /mmo/pose-out and /mmo/record-out (and its Chao's name tag spots to
+// /mmo/tags-out, the Tiny Garden tree icon to /mmo/tree-icon) and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -289,7 +290,8 @@ function mmoSlot(id) {
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
   if (path === 'mmo/karate-out') return void (sh.mmo[MMO.KARATE + 4] = bytes[0]); // 1: strong moves unlocked
-  const out = path === 'mmo/pose-out' ? [MMO.POSE_OUT, MMO.POSE_OUT_MAX] : path === 'mmo/record-out' ? [MMO.REC_OUT, MMO.REC] : null;
+  const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
+    'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX] }[path] || null;
   if (!out) return;
   const n = Math.min(bytes.length, out[1]);
   sh.mmo.set(bytes.subarray(0, n), out[0] + 8);
@@ -446,6 +448,23 @@ const wasi = {
         u8().set(gxPages.bytes.subarray(gxPages.pos, gxPages.pos + k), p);
         gxPages.pos += k;
         total += k;
+      }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
+    // /dev/egg: named eggs queued by the page (main.js sa2HatchEgg), taken by this
+    // read: a u32 count, then that many 0xA8-byte slots.
+    if (fd === DEV_EGG) {
+      const [[p, len] = []] = iovs(iov, n);
+      let total = 0;
+      const count = new Int32Array(sh.egg.buffer, 0, 1), k = Math.min(Atomics.load(count, 0), 8);
+      if (len >= 4 + k * 0xa8) {
+        u8().set(sh.egg.subarray(4, 4 + k * 0xa8), p + 4);
+        dv().setUint32(p, k, true);
+        Atomics.sub(count, 0, k);
+        // Anything queued while reading moves down to the front.
+        sh.egg.copyWithin(4, 4 + k * 0xa8);
+        total = 4 + k * 0xa8;
       }
       dv().setUint32(nr, total, true);
       return 0;
@@ -697,7 +716,7 @@ onmessage = (ev) => {
   const m = ev.data;
   if (m.init) {
     mem = m.memory;
-    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), egg: new Uint8Array(m.egg), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
     args = m.args;
     env = m.env;
     if (m.picked && m.picked.length) pick(m.picked);

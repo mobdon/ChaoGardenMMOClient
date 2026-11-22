@@ -57,11 +57,25 @@ const SAVE_SLOT: u32 = 0x2C30;
 const AL_GENE_CREATE: u32 = 0x1_218C;
 const CREATE_EGG: u32 = 0x8F20;
 const GENE_SIZE: u32 = 0xC0;
+/// AL_GENE (al_chao_info.h, 0xA4 bytes; CHAO_PARAM_GC +0x438..+0x4DC).
+const GENE_BYTES: usize = 0xA4;
+/// The AL_GENE byte ranges the server's egg carries (EggColor; Abl for its 7
+/// stats; LifeTime; Personality through Multi). The rest keeps AL_GeneCreate's.
+/// The layout is the SAMT (PC) header's; unverified on GC until a live hatch.
+const SERVER_GENE: [(u32, u32); 4] = [(0x01, 0x02), (0x5C, 0x6A), (0x6C, 0x6E), (0x74, 0x9C)];
 /// MMO hub residents: the game's own character Chao (al_chao_info.h TYPE_TAILS
 /// 0x17, TYPE_KNUCKLES 0x18, TYPE_AMY 0x19), made with `CreateChaoExtra`
 /// (see CREATE_CHAO_EXTRA). Offsets from the player in the lobby are
 /// the old web hub's NPC spots (src/scene.js addNPC), an MMO choice.
-const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 12.0, 6.0), (0x19, -4.0, 8.0)];
+const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 3.0, 3.0), (0x19, -4.0, 8.0)];
+/// Tails (RESIDENTS[1]) stands still by the arrival teleporter as the guide:
+/// no Chao AI, the native stand motion (ChaoMain AL_SetMotionLink 0x1B504,
+/// motion 1 as chao_player uses it). Its offset from the arrival point is an
+/// MMO placement choice.
+const STANDING: usize = 1;
+const AL_BEHAVIOR_CONTROL: u32 = 0xF8;
+const AL_SET_MOTION_LINK: u32 = 0x1_B504;
+const STAND_MOTION: u32 = 1;
 /// ChaoMain `CreateChaoExtra` 0x3148C (chao.h): (param, IsParamCopy, element,
 /// &pos, angy). IsParamCopy=1 keeps them out of every save.
 const CREATE_CHAO_EXTRA: u32 = 0x3_148C;
@@ -170,6 +184,9 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             start(c, m, stage, ch);
         }
     }
+    if SHOWN.get().is_some() {
+        crate::tiny_transporter::frame(c, m);
+    }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
         // Once the lobby is running, change area the game's own way.
@@ -189,14 +206,22 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
         if HATCH.get() && !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
-            lay_egg(c, m, text);
+            lay_egg_with(c, m, text, None);
         }
-        if now != LOBBY {
+        // Eggs the player picked and named on the page hatch here too.
+        if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
+            for gene in picked_eggs() {
+                lay_egg_with(c, m, text, gene.as_ref());
+            }
+        }
+        if now != shown {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
-        } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+            STANDING_TASK.set(0);
+        }
+        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
             RESIDENTS_OUT.set(true);
-            residents(c, m, text);
+            residents(c, m, text, now);
         }
         if now != shown {
             SHOWN.set(Some(now));
@@ -209,9 +234,31 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     original(c, m, TOP_LEVEL);
 }
 
+/// Named eggs the page queued since the last read (/dev/egg: a u32 count,
+/// then per egg a u32 "has gene" flag and an AL_GENE; absent outside the
+/// browser). Each is the server egg's gene, or None for the game's own.
+fn picked_eggs() -> Vec<Option<Vec<u8>>> {
+    use std::io::Read;
+    const SLOT: usize = 4 + GENE_BYTES;
+    let mut b = vec![0u8; 4 + 8 * SLOT];
+    let Ok(n) = std::fs::File::open("/dev/egg").and_then(|mut f| f.read(&mut b)) else {
+        return Vec::new();
+    };
+    if n < 4 {
+        return Vec::new();
+    }
+    let count = (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).min((n - 4) / SLOT);
+    (0..count)
+        .map(|i| {
+            let s = &b[4 + i * SLOT..4 + (i + 1) * SLOT];
+            (s[..4] != [0; 4]).then(|| s[4..].to_vec())
+        })
+        .collect()
+}
+
 /// The game's own egg at the player's feet, with guest scratch for the gene
 /// and position on a lowered stack (as the native caller keeps them).
-fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
+fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>) {
     let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
     if slot == 0 {
         eprintln!("start-stage: no free Chao save slot; no egg");
@@ -225,12 +272,69 @@ fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
         m.w32(pos + i * 4, m.r32(player + i * 4));
     }
     guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
+    if let Some(bytes) = from_server {
+        for (from, to) in SERVER_GENE {
+            for o in from..to {
+                m.w8(gene + o, bytes[o as usize]);
+            }
+        }
+    }
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
 }
 
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
-fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
+/// The residents' round: a garden, back to the lobby, then the next garden.
+const ROAM: [u32; 6] = [1, LOBBY, 2, LOBBY, 3, LOBBY];
+/// Where resident `n` is now. Each stays a random 2 to 5 minutes, then moves on
+/// along ROAM. The waits come from a hash of the day, the Chao and the hop, so
+/// every client reads the same schedule from the wall clock.
+fn roam_area(n: usize) -> u32 {
+    // The guide stays in the lobby by the arrival teleporter.
+    if n == STANDING {
+        return LOBBY;
+    }
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    ROAM[roam_hop(n as u64, t) % ROAM.len()]
+}
+
+/// The hop resident `n` is on at unix time `t` (restarts each UTC day).
+fn roam_hop(n: u64, t: u64) -> usize {
+    let (day, mut left) = (t / 86_400, t % 86_400);
+    let mut hop = 0u64;
+    loop {
+        // splitmix64 of (day, n, hop): 120..=300 s.
+        let mut z = (day << 20 ^ n << 16 ^ hop).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ z >> 30).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ z >> 27).wrapping_mul(0x94D0_49BB_1331_11EB);
+        let wait = 120 + (z ^ z >> 31) % 181;
+        if left < wait {
+            return (hop + n * 2 + day) as usize;
+        }
+        left -= wait;
+        hop += 1;
+    }
+}
+
+#[test]
+fn roam_waits_two_to_five_minutes() {
+    let mut last = roam_hop(1, 0);
+    let mut since = 0;
+    for t in 1..86_400 {
+        let h = roam_hop(1, t);
+        since += 1;
+        if h != last {
+            assert!((120..=300).contains(&since), "{since}");
+            (last, since) = (h, 0);
+        }
+    }
+}
+
+// shortcut: a resident only appears or leaves when the player enters an area,
+// not at the 5-minute mark itself; despawn live once KillChao's address is known.
+fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
@@ -240,7 +344,11 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     let elem = pos + 0x10;
     let player = m.r32(PLAYERTWP) + 0x14;
     let mut twp = [0; 3];
+    let mut standing_task = 0;
     for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
+        if roam_area(n) != now {
+            continue;
+        }
         for i in (0..PARAM_SIZE).step_by(4) {
             m.w32(param + i, 0);
         }
@@ -255,10 +363,41 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
         let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, elem, pos, 0]);
         if task != 0 {
             twp[n] = m.r32(task + 0x34);
+            if n == STANDING {
+                standing_task = task;
+            }
         }
     }
     RESIDENT_TWP.set(twp);
     c.r[1] = sp;
+    // Tails stands as the guide only by the lobby's arrival teleporter.
+    if twp[STANDING] != 0 && now == LOBBY {
+        // chao_player's AI hook skips the standing resident; install it if
+        // the player-Chao has not.
+        let a = text + AL_BEHAVIOR_CONTROL;
+        if !c.rt.overrides.contains_key(&a) {
+            c.rt.set_override(a, crate::chao_player::behavior);
+        }
+        STANDING_TASK.set(standing_task);
+        let link = text + AL_SET_MOTION_LINK;
+        guest_call(c, m, link, &[standing_task, STAND_MOTION]);
+    }
+}
+
+/// A hub resident's al_chao_info.h type (0x17 Tails, 0x18 Knuckles, 0x19 Amy), for its name tag.
+pub(crate) fn resident_type(m: &Mem, task: u32) -> Option<u8> {
+    let twp = m.r32(task + 0x34);
+    let n = RESIDENT_TWP.get().iter().position(|&t| t != 0 && t == twp)?;
+    Some(RESIDENTS[n].0)
+}
+
+/// The standing resident's task (0 = none).
+static STANDING_TASK: Global<u32> = global!(0);
+
+/// True for the standing resident's task or its taskwk (AL_BehaviorControl's r3).
+pub(crate) fn standing_resident(m: &Mem, r3: u32) -> bool {
+    let task = STANDING_TASK.get();
+    task != 0 && (r3 == task || r3 == m.r32(task + 0x34))
 }
 
 /// The hub's character Chao make no Chao sounds: a positional sound whose
@@ -303,9 +442,14 @@ fn chaomain_text(m: &Mem) -> Option<u32> {
 /// A linked ChaoMain section's address (section table entries are 8 bytes:
 /// offset, size; OSLink stores the .bss address there too).
 fn chaomain_section(m: &Mem, n: u32) -> Option<u32> {
+    module_section(m, CHAOMAIN, n)
+}
+
+/// A linked REL module's section address, None while it is not linked.
+pub(crate) fn module_section(m: &Mem, module: u32, n: u32) -> Option<u32> {
     let mut info = m.r32(0x8000_30C8);
     while info != 0 {
-        if m.r32(info) == CHAOMAIN {
+        if m.r32(info) == module {
             let at = m.r32(m.r32(info + 0x10) + n * 8) & !1;
             return (at != 0).then_some(at);
         }
