@@ -252,7 +252,11 @@ fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
     guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
-    TUTORIAL_SLOT.set(slot);
+    // The Omochao tutorial is off until it is checked (SA2_TUTORIAL=1 turns it on):
+    // with it, a new player's lobby hit an access outside RAM in testing.
+    if std::env::var("SA2_TUTORIAL").is_ok_and(|v| v.trim() == "1") {
+        TUTORIAL_SLOT.set(slot);
+    }
 }
 
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
