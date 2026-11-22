@@ -562,7 +562,7 @@ function karateButtons(on) {
   let bar = document.getElementById('karate');
   if (!bar && on) {
     bar = Object.assign(document.createElement('div'), { id: 'karate' });
-    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;display:flex;gap:.5rem;justify-content:center;z-index:4';
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;display:none;gap:.5rem;justify-content:center;z-index:4';
     for (const [id, name, strong] of KARATE_MOVES) {
       const b = Object.assign(document.createElement('button'), { type: 'button', textContent: `${bar.children.length + 1} ${name}` });
       b.style.cssText = 'padding:.45rem 1rem;border-radius:1.2rem;background:#f5a800;color:#fff;font-weight:700;text-shadow:0 1px 2px #000';
@@ -577,7 +577,7 @@ function karateButtons(on) {
     }
     document.body.append(bar);
   }
-  if (bar) bar.style.display = on ? 'flex' : 'none';
+  if (bar) bar.dataset.area = on ? '1' : ''; // karateLocks shows it once a bout is on
 }
 // Keys 1 to 5 press the buttons while they show (1 and 3 are the game's L and R elsewhere).
 function karateKey(e) {
@@ -590,7 +590,9 @@ function karateKey(e) {
 // A chosen move is seen through: no new move until the game says that press is done.
 const karateBusy = () => mmoBytes[MMO.KARATE] !== mmoBytes[MMO.KARATE + 5];
 function karateLocks() {
-  const busy = karateBusy();
+  const bar = document.getElementById('karate'), busy = karateBusy();
+  // Only while a bout is on (the game says so), never on the Karate menus.
+  if (bar) bar.style.display = bar.dataset.area && mmoBytes[MMO.KARATE + 6] ? 'flex' : 'none';
   for (const b of document.querySelectorAll('#karate button')) {
     const locked = b.dataset.strong && !mmoBytes[MMO.KARATE + 4];
     b.disabled = busy || locked;

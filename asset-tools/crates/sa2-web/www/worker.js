@@ -320,7 +320,7 @@ function mmoSlot(id) {
 }
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
-  if (path === 'mmo/karate-out') return void sh.mmo.set(bytes.subarray(0, 2), MMO.KARATE + 4); // [strong moves unlocked, press that is done]
+  if (path === 'mmo/karate-out') return void sh.mmo.set(bytes.subarray(0, 3), MMO.KARATE + 4); // [strong moves unlocked, press that is done, bout on]
   const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
     'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX], 'mmo/tiny-pick': [MMO.PICK, MMO.PICK_MAX], 'mmo/breed-out': [MMO.BREED_OUT, MMO.BREED_OUT_MAX], 'mmo/story-out': [MMO.STORY_OUT, MMO.STORY_OUT_MAX] }[path] || null;
   if (!out) return;
