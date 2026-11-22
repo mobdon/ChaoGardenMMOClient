@@ -74,27 +74,6 @@ def write_png_rows(target, width, height, rows):
     replace_asset(temporary, target)
 
 
-def normal_eye_cutout(source):
-    # The original normal-eye sprite has a white matte. Remove that matte
-    # rather than exposing the entire white eyeball shell as a googly eye.
-    image = bpy.data.images.load(str(source), check_existing=True)
-    image.colorspace_settings.name = 'Non-Color'
-    pixels = list(image.pixels)
-    width, height = image.size
-    rows = []
-    for y in reversed(range(height)):
-        row = bytearray([0])
-        for x in range(width):
-            p = (y * width + x) * 4
-            alpha = max(0, min(1, 1 - pixels[p]))
-            rgb = [max(0, min(1, (pixels[p + channel] - (1 - alpha)) / alpha)) if alpha > 0.001 else 0 for channel in range(3)]
-            row.extend([round(value * 255) for value in rgb] + [round(alpha * 255)])
-        rows.append(bytes(row))
-    target = EXTRACTED / 'textures/paletted/al_eye01-cutout.png'
-    write_png_rows(target, width, height, rows)
-    return target
-
-
 def export_original_icons():
     folder = EXTRACTED / 'textures/al_icon'
     if not folder.exists():
@@ -161,7 +140,7 @@ def clean_scene():
         bpy.data.actions.remove(action)
 
 
-def texture_materials(texture_pack, preserve_eye_whites=False):
+def texture_materials(texture_pack):
     folder = EXTRACTED / 'textures' / texture_pack
     rows = (folder / 'index.txt').read_text().splitlines()
     texture_files = [folder / row.split(',')[1] for row in rows if ',' in row]
@@ -189,12 +168,9 @@ def texture_materials(texture_pack, preserve_eye_whites=False):
             filename = texture_files[index]
             if texture_pack == 'al_body' and filename.stem in ['al_child02', 'al_child03', 'al_child04']:
                 filename = child_palette_texture(filename, ['al_child02', 'al_child03', 'al_child04'].index(filename.stem))
-            is_normal_eye = texture_pack == 'al_body' and filename.stem == 'al_eye01'
-            eye_cutout = is_normal_eye and not preserve_eye_whites
-            if is_normal_eye:
+            if texture_pack == 'al_body' and filename.stem == 'al_eye01':
+                # The normal eye as the game has it: opaque, white with the pupil.
                 filename = EXTRACTED / 'textures/al_eye/al_eye01.png'
-                if eye_cutout:
-                    filename = normal_eye_cutout(filename)
             loaded_image = bpy.data.images.load(str(filename), check_existing=True)
             has_alpha = any(alpha < 0.999 for alpha in list(loaded_image.pixels)[3::4])
             texture = mat.node_tree.nodes.new('ShaderNodeTexImage')
@@ -202,17 +178,9 @@ def texture_materials(texture_pack, preserve_eye_whites=False):
             texture.interpolation = 'Closest'
             mat.node_tree.links.new(texture.outputs['Color'], principled.inputs['Base Color'])
             # Legacy body texture alpha can encode native effects rather than
-            # holes. Only the explicit pupil cutout may mask Chao geometry.
-            allow_alpha = eye_cutout if texture_pack == 'al_body' else props.use_alpha
-            if allow_alpha and has_alpha:
-                if texture_pack == 'al_body':
-                    cutoff = mat.node_tree.nodes.new('ShaderNodeMath')
-                    cutoff.operation = 'GREATER_THAN'
-                    cutoff.inputs[1].default_value = 0.5
-                    mat.node_tree.links.new(texture.outputs['Alpha'], cutoff.inputs[0])
-                    mat.node_tree.links.new(cutoff.outputs[0], principled.inputs['Alpha'])
-                else:
-                    mat.node_tree.links.new(texture.outputs['Alpha'], principled.inputs['Alpha'])
+            # holes, so no al_body texture masks Chao geometry.
+            if texture_pack != 'al_body' and props.use_alpha and has_alpha:
+                mat.node_tree.links.new(texture.outputs['Alpha'], principled.inputs['Alpha'])
         mat.diffuse_color = diffuse
         materials.append({'name': mat.name, 'textureIndex': index, 'image': filename.name if filename else None})
     return materials
@@ -231,7 +199,7 @@ def prepare_geometry(name, texture_pack):
             if obj.type == 'MESH' and obj.parent_bone[:4] in ('019_', '022_'):
                 open_eye_overlays.append(obj.name)
                 bpy.data.objects.remove(obj, do_unlink=True)
-    materials = texture_materials(texture_pack, preserve_eye_whites=name in SPECIAL_NPCS)
+    materials = texture_materials(texture_pack)
     if texture_pack == 'al_body':
         # ChaoMouth enum starts at ToothySmile=1; the neutral default0 does
         # not draw either of the alternative open/toothy mouth polygons.
@@ -324,7 +292,7 @@ def export_scene(name, source, texture_pack):
                         'max': [max((obj.matrix_world @ Vector(c))[i] for c in obj.bound_box) for i in range(3)]} for obj in mesh_objects],
         'animations': [action.name for action in bpy.data.actions],
         'openEyeOverlaysRemoved': open_eye_overlays,
-        'originalEyeWhitesPreserved': name in SPECIAL_NPCS,
+        'originalEyeWhitesPreserved': name in SPECIAL_NPCS or name == 'chao',
         'animationFootMinY': animation_feet,
         'materials': materials, 'bytes': target.stat().st_size,
     })
