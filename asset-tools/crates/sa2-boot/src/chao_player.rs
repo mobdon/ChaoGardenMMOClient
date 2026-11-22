@@ -1710,6 +1710,12 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     if mw != 0 {
         m.w16(mw + 0x40, m.r16(mw + 0x40) | 0x10);
     }
+    // The Chao's exec enters its own collision (CCL_Entry) while twp +0xA0
+    // has bit 8; the character's collision is at the same spot, and a
+    // jump into it went down the character's hit path (main.dol 0x80055A50:
+    // knock-back, then an unchecked hook at 0x801A2A18 that is null in Chao
+    // World). Unverified that the hitter was the Chao itself.
+    m.w32(cw + 0xA0, m.r32(cw + 0xA0) & !8);
     let chao_cwp = m.r32(cw + 0x2C);
     m.w32(task + 0x34, cw);
     m.w32(cw + 0x2C, m.r32(own + 0x2C));
@@ -1732,20 +1738,24 @@ thread_local! {
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let task = c.r[3];
-    let me = self_drive(m);
+    // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
+    let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
+    // Self mode only for a Chao made in this stage and area: on the first
+    // frame after a change STEP still names the Chao of the stage just left
+    // (from a level, on the ChaoMain copy at BASE), until the reset below.
+    let me = self_drive(m) && LIVE_STAGE.get() == m.r16(STAGE_NUM) ^ (area << 8);
     if SELF_LOGGED.replace(me) != me {
         eprintln!("chao-drive: self mode {me} (stage {}, step {:?})", m.r16(STAGE_NUM), STEP.get());
     }
     let pmove = me && player_move_on();
     if !me {
+        c.r[3] = task;
         original(c, m, addr);
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
         player_move(c, m, addr, task, chao);
     }
     // A new stage or Chao World area drops the Chao task:
     // create the player's Chao again.
-    // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
-    let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
     // Offline players' cached Chao leave after the grace period.
     crate::chao_cache::tick();
     if chao_world(m) && matches!(STEP.get(), Step::Live(_)) && module_linked(m, 60) {
