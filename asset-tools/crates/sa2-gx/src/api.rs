@@ -329,6 +329,9 @@ pub struct Gx {
     in_call: bool,
     // Output.
     immediate: Option<Immediate>,
+    /// No register was written since the last FIFO draw, and that draw is a
+    /// 3D one: the next FIFO draw joins it (see [`Self::run_draws`]).
+    joinable: bool,
     frame: Frame,
     /// What this state machine ignored, with counts: unknown FIFO opcodes
     /// and BP/CP/XF registers it doesn't model ("BP 0x45", ...).
@@ -417,6 +420,7 @@ impl Gx {
             tlut_loads: FastMap::default(),
             in_call: false,
             immediate: None,
+            joinable: false,
             frame: Frame::default(),
             unhandled: FastMap::default(),
             last_loader: None,
@@ -698,7 +702,7 @@ impl Gx {
         let mut fifo = im.fifo;
         fifo.resize(needed, 0);
         fifo.push(0);
-        self.run_draws(&fifo, mem);
+        self.run_draws(&fifo, mem, false);
     }
 
     // ---- display lists -------------------------------------------------
@@ -804,7 +808,7 @@ impl Gx {
                     let mut one = dl[i..end].to_vec();
                     one.resize(3 + size * n, 0);
                     one.push(0);
-                    self.run_draws(&one, mem);
+                    self.run_draws(&one, mem, true);
                     i = end;
                 }
                 command::CALL_DL => {
@@ -820,10 +824,40 @@ impl Gx {
         }
     }
 
-    fn run_draws(&mut self, dl: &[u8], mem: &dyn GxMemory) {
+    /// Record the draw commands of `dl`. A FIFO draw (`fifo`) that follows
+    /// another with no register write between them has the same material,
+    /// matrices and vertex format, so its triangles are added to that draw:
+    /// a model drawn as many short strips costs one draw's state, not one
+    /// each. HUD and view-space draws stay apart (widescreen places each by
+    /// its own extent). Callers that change state through the `set_*`/`load_*`
+    /// methods between FIFO draws don't clear `joinable`; the FIFO's own
+    /// state changes all arrive as BP/CP/XF writes, which do.
+    fn run_draws(&mut self, dl: &[u8], mem: &dyn GxMemory, fifo: bool) {
         let (loader, layout) = self.loader();
         let used: [std::cell::Cell<usize>; ATTR_COUNT] = Default::default();
         let arrays = self.array_views(mem, &used);
+        let join = std::mem::take(&mut self.joinable) && fifo;
+        if let Some(last) = self
+            .frame
+            .draws
+            .last_mut()
+            .filter(|d| join && Arc::ptr_eq(&d.layout, &layout))
+        {
+            let base = (last.vertices.len() / layout.stride.max(1)) as u32;
+            let mut data = loader.parse_display_list(dl, base);
+            loader.load_vertex_data(&mut data, dl, &arrays);
+            last.vertices.extend_from_slice(&data.vertices);
+            last.indices.extend_from_slice(&data.indices);
+            // The part of each array window this joined draw indexed.
+            for a in attr::POS..=attr::TEX7 {
+                let n = used[a as usize].get();
+                if n > 0 {
+                    mem.touch(self.arrays[(a - attr::POS) as usize].0, n);
+                }
+            }
+            self.joinable = true;
+            return;
+        }
         let mut data = loader.parse_display_list(dl, 0);
         if data.indices.is_empty() {
             return;
@@ -837,7 +871,7 @@ impl Gx {
             }
         }
         let (material, params, draw_params) = self.snapshot(mem);
-        self.frame.draws.push(DrawCmd {
+        let d = DrawCmd {
             material,
             layout,
             vertices: data.vertices,
@@ -847,7 +881,10 @@ impl Gx {
             projection: self.wgpu_projection(),
             viewport: self.viewport,
             scissor: self.scissor,
-        });
+        };
+        self.joinable =
+            fifo && !crate::widescreen::is_hud(&d) && !crate::widescreen::is_view_space(&d);
+        self.frame.draws.push(d);
     }
 
     fn material(&mut self) -> Arc<GxMaterial> {
@@ -1051,6 +1088,7 @@ impl Gx {
     // ---- registers (display lists) ---------------------------------------
 
     fn xf_write(&mut self, addr: u32, v: u32) {
+        self.joinable = false;
         let f = f32::from_bits(v);
         match addr {
             0x000..=0x3FF => self.xf_matrices[addr as usize] = f,
@@ -1173,6 +1211,7 @@ impl Gx {
     }
 
     fn cp_write(&mut self, addr: u32, v: u32) {
+        self.joinable = false;
         let two = |v: u32, at: u32| (v >> at) & 3;
         match addr & 0xF0 {
             0x50 => {
@@ -1230,6 +1269,7 @@ impl Gx {
     }
 
     fn bp_write(&mut self, bag: u32) {
+        self.joinable = false;
         self.regs.bp_set(bag);
         let addr = bag >> 24;
         let r = &self.regs;

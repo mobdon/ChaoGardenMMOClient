@@ -188,3 +188,71 @@ fn unknown_bytes_are_skipped() {
     f.write(&s, &Ram(&[]));
     assert_eq!(f.gx.take_frame().draws.len(), 1);
 }
+
+/// One more triangle in the format `triangle` set up.
+fn another(s: &mut Vec<u8>) {
+    s.extend([0x90, 0, 3]);
+    for v in [[2.0f32, 0.0, 0.0], [3.0, 0.0, 0.0], [2.0, 1.0, 0.0]] {
+        for c in v {
+            s.extend(c.to_be_bytes());
+        }
+    }
+}
+
+/// A view matrix that is neither the identity nor the HUD's pixel scale.
+fn view_3d(s: &mut Vec<u8>) {
+    let m = [
+        1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, -10.0,
+    ];
+    xf(s, 0, &m.map(f32::to_bits));
+}
+
+#[test]
+fn draws_with_no_state_change_between_them_join() {
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    s.extend(triangle());
+    another(&mut s);
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    let frame = f.gx.take_frame();
+    assert_eq!(frame.draws.len(), 1);
+    let d = &frame.draws[0];
+    assert_eq!(d.indices, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(d.vertices.len(), 9 * d.layout.stride);
+    // The second triangle's first vertex is its own (x = 2), after the first's three.
+    let x =
+        |v: usize| f32::from_le_bytes(d.vertices[v * d.layout.stride..][..4].try_into().unwrap());
+    assert_eq!([x(0), x(3), x(6)], [0.0, 2.0, 2.0]);
+}
+
+#[test]
+fn a_state_change_or_a_2d_draw_starts_a_new_draw() {
+    // A register write between two 3D draws.
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    s.extend(triangle());
+    view_3d(&mut s);
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 2);
+    // View-space draws (identity matrix: 2D quads) are placed one by one.
+    let mut f = GxFifo::default();
+    let mut s = triangle();
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 2);
+    // A new frame starts its own draws.
+    let mut f = GxFifo::default();
+    let mut s = Vec::new();
+    view_3d(&mut s);
+    s.extend(triangle());
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 1);
+    let mut s = Vec::new();
+    another(&mut s);
+    f.write(&s, &Ram(&[]));
+    assert_eq!(f.gx.take_frame().draws.len(), 1);
+}
