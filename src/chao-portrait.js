@@ -16,12 +16,23 @@ export function portraitAsset(player) {
   return 'chao';
 }
 
+function glbExtras(bytes) {
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + view.getUint32(12, true)))).asset?.extras ?? null;
+  } catch { return null; }
+}
+
 /** Render `player`'s Chao into `canvas`. Returns a dispose function; a missing asset leaves the canvas empty. */
 export async function mountChaoPortrait(canvas, player) {
   const B = await import('@babylonjs/core'); await import('@babylonjs/loaders/glTF/index.js');
   const load = async key => {
     const response = await fetch(`/api/assets/${key}.glb`).catch(() => null);
-    return response?.ok ? B.LoadAssetContainerAsync(new Uint8Array(await response.arrayBuffer()), scene, { pluginExtension: '.glb' }) : null;
+    if (!response?.ok) return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const container = await B.LoadAssetContainerAsync(bytes, scene, { pluginExtension: '.glb' });
+    container.extras = glbExtras(bytes);
+    return container;
   };
   const engine = new B.Engine(canvas, true, { alpha: true }), scene = new B.Scene(engine);
   scene.clearColor = new B.Color4(0, 0, 0, 0);
@@ -35,7 +46,9 @@ export async function mountChaoPortrait(canvas, player) {
   visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
   const imported = { entries, visual };
   const stand = source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
-  stand?.start(true, 1);
+  // The motion table's own PlaySpeed (native frames per 60 Hz tick); the clip's keys are one per native frame.
+  const speed = source?.extras?.chaoBehaviour?.clips?.find(row => row.nativeName === 'alm_tati')?.tableProperties?.PlaySpeed;
+  stand?.start(true, Number.isFinite(speed) && speed > 0 ? speed : 1);
   const { min, max } = visual.getHierarchyBoundingVectors();
   const height = max.y - min.y;
   const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
