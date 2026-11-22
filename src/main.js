@@ -336,6 +336,7 @@ function render(next) {
   walkerButton.textContent = player.vehicle === 'dark-chao-walker' ? 'Leave Dark Chao Walker ↙' : 'Pilot Dark Chao Walker ↗';
   for (const [selector, slot, item, label] of [
     ['#owner-air-shoes', 'footwear', 'shadow-air-shoes', 'Shadow’s Air Shoes'],
+    ['#owner-light-shoes', 'footwear', 'sonic-light-shoes', 'Sonic’s Light Shoes'],
     ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves', 'Knuckles’ Hammer Gloves'],
     ['#owner-metal-chao', 'look', 'metal-sonic-chao', 'Metal Sonic Chao look'],
   ]) {
@@ -593,6 +594,7 @@ $('#owner-dark-form').addEventListener('click', () => action('admin-dark-chaos')
 $('#owner-walker').addEventListener('click', () => action(player?.vehicle === 'dark-chao-walker' ? 'dismount-vehicle' : 'mount-dark-walker'));
 for (const [selector, slot, item] of [
   ['#owner-air-shoes', 'footwear', 'shadow-air-shoes'],
+  ['#owner-light-shoes', 'footwear', 'sonic-light-shoes'],
   ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves'],
   ['#owner-metal-chao', 'look', 'metal-sonic-chao'],
 ]) {

@@ -5,6 +5,7 @@ import { careItemKind, careItemLabel } from './garden-care.js';
 const itemNames = {
   eggshell: 'Eggshell Cap',
   'shadow-air-shoes': 'Shadow Air Shoes',
+  'sonic-light-shoes': 'Sonic Light Shoes',
   'knuckles-hammer-gloves': 'Knuckles Hammer Gloves',
   'dark-chao-walker': 'Dark Chao Walker',
   'garden-fruit': 'Garden Fruit',
