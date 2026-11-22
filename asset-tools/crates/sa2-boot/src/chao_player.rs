@@ -565,7 +565,8 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     let bounds = |p: &[[f32; 3]]| p.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| (std::array::from_fn(|i| lo[i].min(v[i])), std::array::from_fn(|i| hi[i].max(v[i]))));
     let ((flo, fhi), (slo, shi)) = (bounds(&foot), bounds(&shoe));
     if foot.is_empty() || shoe.is_empty() || shi[2] - slo[2] <= 0.0 { return None; }
-    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]);
+    // SA2_SHOE_SCALE=k (debug): k times the hub fit, to see it in a check.
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
         eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
     }
