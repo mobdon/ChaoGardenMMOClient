@@ -81,6 +81,107 @@ pub fn export(
     clips: &[(&str, &ChaoMotion)],
     undrawn: &[usize],
 ) -> Result<Vec<u8>> {
+    export_family(model, pngs, clips, undrawn, &Family::default())
+}
+
+/// The other models of a body family, written as morph targets of the base model.
+#[derive(Default)]
+pub struct Family<'a> {
+    /// Family name for the record, e.g. `al_ncz`.
+    pub name: &'a str,
+    /// Target name and model; every model shares the base model's tree and vertex counts.
+    pub targets: &'a [(&'a str, &'a Model)],
+    /// Texture names by index, written as image names (the page tells face textures by name).
+    pub texture_names: BTreeMap<u16, String>,
+}
+
+/// One node of a model as the family blend needs it.
+struct Part {
+    trs: ([f32; 3], [f32; 4], [f32; 3]),
+    positions: BTreeMap<usize, [f32; 3]>,
+    /// Diffuse per strip chunk, RGBA 0..1.
+    diffuse: Vec<[f64; 4]>,
+}
+
+fn parts(model: &Model) -> Result<Vec<Part>> {
+    let rest = evaluate_model_pose(model, None, 0.)?;
+    let attachments: BTreeMap<_, _> = model.attachments.iter().map(|a| (a.offset, a)).collect();
+    let mut out: Vec<Option<Part>> = model.nodes.iter().map(|_| None).collect();
+    for pose in &rest.nodes {
+        let i = model
+            .nodes
+            .iter()
+            .position(|n| n.offset == pose.offset)
+            .ok_or_else(|| Error::invalid("posed node outside the model"))?;
+        let (mut positions, mut diffuse) = (BTreeMap::new(), Vec::new());
+        if let Some(attachment) = attachments.get(&pose.attach_offset) {
+            for chunk in &attachment.vertex_chunks {
+                for (n, v) in chunk.vertices.iter().enumerate() {
+                    positions.insert(chunk.index_offset as usize + n, v.position);
+                }
+            }
+            let mut material = Material::default();
+            for chunk in &attachment.polygon_chunks {
+                match chunk.kind {
+                    8 | 17..=23 => material.apply(chunk)?,
+                    64..=66 => diffuse.push(
+                        material
+                            .diffuse_rgba
+                            .unwrap_or([255; 4])
+                            .map(|x| f64::from(x) / 255.),
+                    ),
+                    _ => {}
+                }
+            }
+        }
+        out[i] = Some(Part {
+            trs: trs(&pose.local_matrix)?,
+            positions,
+            diffuse,
+        });
+    }
+    out.into_iter()
+        .map(|p| p.ok_or_else(|| Error::invalid("model node without a pose")))
+        .collect()
+}
+
+/// q = inverse(a) * b for unit quaternions [x, y, z, w].
+fn quat_between(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let (ax, ay, az, aw) = (-a[0], -a[1], -a[2], a[3]);
+    [
+        aw * b[0] + ax * b[3] + ay * b[2] - az * b[1],
+        aw * b[1] - ax * b[2] + ay * b[3] + az * b[0],
+        aw * b[2] + ax * b[1] - ay * b[0] + az * b[3],
+        aw * b[3] - ax * b[0] - ay * b[1] - az * b[2],
+    ]
+}
+
+/// [`export`] with `family.targets` as morph targets: vertex differences in each node's own
+/// space, plus on the root node `extras.chaoMorph` with every target's node rest difference
+/// (t = target - base, q = inverse(base) * target, s = target / base) and material diffuse.
+/// With targets the face nodes are tagged for the page (`extras.chaoFace`): eyes 18 and 21,
+/// eyelids 19 and 22, and each textured part of mouth node 27 as a node of its own.
+pub fn export_family(
+    model: &Model,
+    pngs: &BTreeMap<u16, Vec<u8>>,
+    clips: &[(&str, &ChaoMotion)],
+    undrawn: &[usize],
+    family: &Family,
+) -> Result<Vec<u8>> {
+    let morph = !family.targets.is_empty();
+    let base_parts = parts(model)?;
+    let target_parts = family
+        .targets
+        .iter()
+        .map(|(_, m)| {
+            let p = parts(m)?;
+            if p.len() != base_parts.len() {
+                return Err(Error::invalid("family model with another tree"));
+            }
+            Ok(p)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let target_names: Vec<&str> = family.targets.iter().map(|t| t.0).collect();
     let rest = evaluate_model_pose(model, None, 0.)?;
     let index_of: BTreeMap<u32, usize> = model
         .nodes
@@ -94,11 +195,16 @@ pub fn export(
     for (&id, bytes) in pngs {
         validate_png(bytes)?;
         image_of.insert(id, images.len());
-        images.push(json!({"mimeType":"image/png","bufferView":buffers.view(bytes,None)?,"extras":{"sa2TextureIndex":id}}));
+        let mut image = json!({"mimeType":"image/png","bufferView":buffers.view(bytes,None)?,"extras":{"sa2TextureIndex":id}});
+        if let Some(name) = family.texture_names.get(&id) {
+            image["name"] = name.as_str().into();
+        }
+        images.push(image);
     }
     let (mut meshes, mut materials, mut textures, mut samplers) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut nodes = vec![Value::Null; model.nodes.len()];
+    let mut mouth_nodes = Vec::new();
     for pose in &rest.nodes {
         let i = index_of[&pose.offset];
         let (translation, rotation, scale) = trs(&pose.local_matrix)?;
@@ -138,12 +244,19 @@ pub fn export(
                     64..=66 => {
                         let (mut positions, mut normals, mut uvs) =
                             (Vec::new(), Vec::new(), Vec::new());
+                        let mut deltas = vec![Vec::new(); target_parts.len()];
                         for strip in read_strips(chunk, &slots)? {
                             for corner in
                                 strip.triangles.iter().flatten().map(|c| &strip.corners[*c])
                             {
                                 let v = vertices[&corner.vertex];
                                 positions.push(v.position);
+                                for (delta, target) in deltas.iter_mut().zip(&target_parts) {
+                                    let p = target[i].positions.get(&corner.vertex).ok_or_else(
+                                        || Error::invalid("family model with other vertices"),
+                                    )?;
+                                    delta.push([0, 1, 2].map(|k| p[k] - v.position[k]));
+                                }
                                 normals.push(
                                     v.normal.ok_or_else(|| {
                                         Error::invalid("Chao vertex without normal")
@@ -180,9 +293,16 @@ pub fn export(
                             "alphaMode":if chunk.flags & 8 != 0 {"BLEND"} else {"OPAQUE"},
                             "doubleSided":chunk.flags & 16 != 0,
                             "extras":{"sa2Chunk":{"material":material,"stripKind":chunk.kind,"stripFlags":chunk.flags}}}));
-                        primitives.push(
-                            json!({"attributes":attributes,"material":materials.len()-1,"mode":4}),
-                        );
+                        let mut primitive =
+                            json!({"attributes":attributes,"material":materials.len()-1,"mode":4});
+                        if morph {
+                            let targets = deltas
+                                .iter()
+                                .map(|d| Ok(json!({"POSITION":buffers.attribute(d,"VEC3",true)?})))
+                                .collect::<Result<Vec<_>>>()?;
+                            primitive["targets"] = targets.into();
+                        }
+                        primitives.push((primitive, material.texture_id));
                     }
                     kind => {
                         return Err(Error::invalid(format!(
@@ -191,9 +311,40 @@ pub fn export(
                     }
                 }
             }
-            if !primitives.is_empty() {
-                node["mesh"] = meshes.len().into();
-                meshes.push(json!({"name":format!("attach_{:08X}", attachment.offset),"primitives":primitives}));
+            let mut mesh = |name: String, primitives: Vec<Value>| {
+                let mut mesh = json!({"name":name,"primitives":primitives});
+                if morph {
+                    mesh["weights"] = vec![0.; target_names.len()].into();
+                    mesh["extras"] = json!({"targetNames":target_names});
+                }
+                meshes.push(mesh);
+                meshes.len() - 1
+            };
+            let name = format!("attach_{:08X}", attachment.offset);
+            if morph && i == 27 {
+                // The mouth's two textured parts are shown and hidden apart.
+                for (slot, (primitive, texture)) in primitives.into_iter().enumerate() {
+                    let texture = texture.and_then(|id| family.texture_names.get(&id));
+                    mouth_nodes.push((
+                        i,
+                        json!({"name":format!("{i:03}_mouth_{slot}"),
+                        "mesh":mesh(format!("{name}_{slot}"), vec![primitive]),
+                        "extras":{"chaoFace":"mouth","mouthTexture":texture}}),
+                    ));
+                }
+            } else if !primitives.is_empty() {
+                let primitives = primitives.into_iter().map(|p| p.0).collect();
+                node["mesh"] = mesh(name, primitives).into();
+            }
+            if morph {
+                match i {
+                    18 | 21 => node["extras"]["chaoFace"] = "eye".into(),
+                    19 | 22 => {
+                        node["extras"]["chaoFace"] = "eyelid".into();
+                        node["extras"]["lidSide"] = if i == 19 { "left" } else { "right" }.into();
+                    }
+                    _ => {}
+                }
             }
         }
         nodes[i] = node;
@@ -253,7 +404,45 @@ pub fn export(
         rows.push(json!({"nativeName":name,"tableProperties":{"LoopProperty":clip.mode,"NextAnimation":clip.next,
             "TransitionSpeed":clip.link_step,"StartFrame":clip.start_frame,"EndFrame":clip.end_frame,"PlaySpeed":clip.play_speed}}));
     }
+    for (parent, node) in mouth_nodes {
+        let at = nodes.len();
+        match nodes[parent]["children"].as_array_mut() {
+            Some(children) => children.push(at.into()),
+            None => nodes[parent]["children"] = json!([at]),
+        }
+        nodes.push(node);
+    }
     let root = index_of[&model.root_offset];
+    if morph {
+        let (mut offsets, mut diffuse) = (serde_json::Map::new(), serde_json::Map::new());
+        for (name, target) in target_names.iter().zip(&target_parts) {
+            let mut of_target = serde_json::Map::new();
+            for (i, (b, t)) in base_parts.iter().zip(target).enumerate() {
+                if b.trs != t.trs {
+                    let node = nodes[i]["name"].as_str().unwrap_or_default().to_owned();
+                    let move_by = [0, 1, 2].map(|k| t.trs.0[k] - b.trs.0[k]);
+                    let scale_by = [0, 1, 2].map(|k| t.trs.2[k] / b.trs.2[k]);
+                    let turn_by = quat_between(b.trs.1, t.trs.1);
+                    of_target.insert(node, json!({"t":move_by,"q":turn_by,"s":scale_by}));
+                }
+            }
+            offsets.insert((*name).to_owned(), of_target.into());
+        }
+        for (i, b) in base_parts
+            .iter()
+            .enumerate()
+            .filter(|p| !p.1.diffuse.is_empty())
+        {
+            let mut entry = json!({"base":b.diffuse});
+            for (name, target) in target_names.iter().zip(&target_parts) {
+                entry[*name] = json!(target[i].diffuse);
+            }
+            diffuse.insert(format!("{i:03}"), entry);
+        }
+        nodes[root]["extras"]["chaoMorph"] = json!({"family":family.name,"targets":target_names,
+            "nodeOffsets":offsets,"space":"gltf-node-local",
+            "materialDiffuse":{"nodes":diffuse,"order":"strip chunks in order, RGBA 0..1"}});
+    }
     let mut doc = json!({"asset":{"version":"2.0","generator":"sa2-asset-tools","extras":{"chaoBehaviour":{"clips":rows}}},
         "scene":0,"scenes":[{"nodes":[root]}],"nodes":nodes,"meshes":meshes,"materials":materials,
         "buffers":[{"byteLength":buffers.bytes.len()}],"bufferViews":buffers.views.clone(),"accessors":buffers.accessors.clone()});
@@ -315,4 +504,30 @@ pub fn body_textures(
         pngs.insert(id, png);
     }
     Ok(pngs)
+}
+
+/// Texture names of `al_body.prs` by index.
+pub fn body_texture_names(al_body_prs: &[u8]) -> Result<BTreeMap<u16, String>> {
+    let data = crate::archive::decompress_prs(al_body_prs, MAX_ARCHIVE)?;
+    let entries = crate::archive::read_gvm(&data)?;
+    Ok((0..)
+        .zip(entries.iter().map(|e| e.name.to_string()))
+        .collect())
+}
+
+/// Target names and model numbers of the body family whose first model is `base`
+/// (AL_RootObject holds 18 families of six: z, n, s, f, r, p). The child family 0 also takes
+/// the hero and dark child sets, as the game's child blend moves toward them by alignment.
+pub fn family_targets(base: usize) -> Result<Vec<(String, usize)>> {
+    const SHAPES: [&str; 6] = ["z", "n", "s", "f", "r", "p"];
+    if base % 6 != 0 || base > 102 || (6..18).contains(&base) {
+        return Err(Error::invalid("not the first model of a body family"));
+    }
+    let mut out: Vec<_> = (1..6).map(|k| (SHAPES[k].to_owned(), base + k)).collect();
+    if base == 0 {
+        for (set, first) in [("h", 6), ("d", 12)] {
+            out.extend((0..6).map(|k| (format!("{set}{}", SHAPES[k]), first + k)));
+        }
+    }
+    Ok(out)
 }

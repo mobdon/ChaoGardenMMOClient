@@ -359,3 +359,71 @@ fn every_chao_body_converts_with_its_blended_palette() {
             .unwrap_or_else(|e| panic!("model {index}: {e}"));
     }
 }
+
+/// Every body family writes as one morphing model: all targets on every mesh, the family
+/// record on the root, the face tagged.
+#[test]
+#[ignore = "requires SA2_DATA_DLL and SA2_GD_PC (Steam resource/gd_PC)"]
+fn every_chao_family_writes_with_its_morph_targets() {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let body = std::fs::read(gd.join("al_body.prs")).unwrap();
+    let slots = chao_palettes(&gd);
+    let stand = chao_dll::read_chao_motion(&dll, 0).unwrap();
+    for base in (0..108).step_by(6).filter(|b| !(6..18).contains(b)) {
+        let names = chao_glb::family_targets(base).unwrap();
+        let models: Vec<_> = names
+            .iter()
+            .map(|(_, index)| chao_dll::read_chao_model(&dll, *index).unwrap())
+            .collect();
+        let targets: Vec<_> = names.iter().map(|n| n.0.as_str()).zip(&models).collect();
+        let model = chao_dll::read_chao_model(&dll, base).unwrap();
+        let family = base / 6;
+        let ratios = chao_palette::Ratios {
+            chao_type: if family < 3 { 2 } else { family as u8 + 2 },
+            ..chao_palette::Ratios::CHILD
+        };
+        let pngs = chao_glb::body_textures(&model, &body, &slots, &ratios).unwrap();
+        let glb = chao_glb::export_family(
+            &model,
+            &pngs,
+            &[("alm_tati", &stand)],
+            &[],
+            &chao_glb::Family {
+                name: "family",
+                targets: &targets,
+                texture_names: chao_glb::body_texture_names(&body).unwrap(),
+            },
+        )
+        .unwrap_or_else(|e| panic!("family {base}: {e}"));
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+        for mesh in doc["meshes"].as_array().unwrap() {
+            assert_eq!(
+                mesh["extras"]["targetNames"].as_array().unwrap().len(),
+                names.len()
+            );
+            for primitive in mesh["primitives"].as_array().unwrap() {
+                assert_eq!(primitive["targets"].as_array().unwrap().len(), names.len());
+            }
+        }
+        let nodes = doc["nodes"].as_array().unwrap();
+        let record = &nodes[0]["extras"]["chaoMorph"];
+        assert_eq!(record["targets"].as_array().unwrap().len(), names.len());
+        assert!(record["nodeOffsets"]["p"].is_object());
+        assert_eq!(nodes[18]["extras"]["chaoFace"], "eye");
+        assert_eq!(nodes[22]["extras"]["lidSide"], "right");
+        let mouths: Vec<_> = nodes[40..]
+            .iter()
+            .map(|n| n["extras"]["mouthTexture"].as_str().unwrap())
+            .collect();
+        assert_eq!(mouths.len(), 2, "family {base}: {mouths:?}");
+        assert!(mouths.contains(&"al_mouth02") && mouths.contains(&"al_mouth03"));
+        if base == 0 {
+            if let Some(out) = std::env::var_os("SA2_CHAO_FAMILY_OUT") {
+                std::fs::write(out, &glb).unwrap();
+            }
+        }
+    }
+}
