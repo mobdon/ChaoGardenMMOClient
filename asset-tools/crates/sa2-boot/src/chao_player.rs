@@ -77,6 +77,7 @@ const AL_BEHAVIOR_CONTROL: u32 = 0xF8;
 const CHAO_DISPLAY: u32 = 0x31950;
 const CHAO_EXEC: u32 = 0x31B80;
 const AL_SET_MOTION_LINK: u32 = 0x1B504;
+const AL_DISABLE_NADE: u32 = 0x5A3C;
 /// Motion the garden trace shows while a Chao stands thinking (ALBHV_Think).
 const STAND_MOTION: u32 = 1;
 
@@ -655,13 +656,6 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     if i == 0 {
-        if MIRROR.get() {
-            // The whole Chao flipped in its own x: every node inherits it.
-            for r in 0..3u32 {
-                let a = cur_ptr + 4 * (4 * r);
-                m.w32(a, (-f32::from_bits(m.r32(a))).to_bits());
-            }
-        }
         CHAO_PLACE.set(mtx(m, cur_ptr));
         let root = c.r[3];
         CHAO_REST.with_borrow_mut(|r| {
@@ -677,6 +671,9 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
     rel_original(c, m, a, chao_node);
+    if MIRROR.get() {
+        return mirror_node(m, i, cur_ptr);
+    }
     let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) else {
         if i == 40 && !SAID_NODE.replace(true) {
             eprintln!("chao-player: node transform past 40 nodes, posed {} (pose not applied)", POSED.with_borrow(|p| p.len()));
@@ -696,6 +693,87 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
                 (0..3).map(|k| p[row][k] * t[k]).sum::<f32>() + p[row][3]
             };
             m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
+        }
+    }
+}
+
+#[derive(Default)]
+struct Mirror {
+    /// This frame's node worlds as the walker computed them (unmirrored) and as written.
+    truew: Vec<[[f32; 4]; 3]>,
+    written: Vec<[[f32; 4]; 3]>,
+    /// Chao-local node matrices, this frame and last.
+    local: Vec<[[f32; 4]; 3]>,
+    last: Vec<[[f32; 4]; 3]>,
+    /// Left/right partner of each node (itself on the midline), from the rest pose.
+    partner: Vec<usize>,
+}
+
+thread_local! {
+    static MIR: std::cell::RefCell<Mirror> = Default::default();
+}
+
+/// a * b for 3x4 affine matrices.
+fn mul34(a: &[[f32; 4]; 3], b: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
+    std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum::<f32>() + if j == 3 { a[i][3] } else { 0.0 }))
+}
+
+/// S * l * S with S the reflection in the Chao's own x.
+fn reflect_x(l: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
+    std::array::from_fn(|r| std::array::from_fn(|c| if (r == 0) != (c == 0) { -l[r][c] } else { l[r][c] }))
+}
+
+/// Each node's left/right partner: the node whose rest position is nearest
+/// its own reflected in x (itself on the midline).
+fn mirror_partners(rest: &crate::chao_retarget::ChaoRest) -> Vec<usize> {
+    let w = rest.worlds(&[]);
+    w.iter().map(|&(_, p)| {
+        let q = [-p[0], p[1], p[2]];
+        let d = |j: usize| (0..3).map(|k| (w[j].1[k] - q[k]).powi(2)).sum::<f32>();
+        (0..w.len()).min_by(|&a, &b| d(a).total_cmp(&d(b))).unwrap_or(0)
+    }).collect()
+}
+
+/// Punch 2 (Knuckles 110): the Chao's karate 582 mirrored in its own x. A
+/// negative-determinant root matrix turned the faces inside out, so instead
+/// node i draws as S * L(partner(i)) * S: its partner's pose reflected,
+/// applied to its own (mirror-image) mesh, keeping the winding.
+/// shortcut: a partner later in the walk uses last frame's matrix (one frame behind).
+fn mirror_node(m: &mut Mem, i: usize, cur_ptr: u32) {
+    let place = CHAO_PLACE.get();
+    let cur = mtx(m, cur_ptr);
+    let parent = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.nodes.get(i)).and_then(|n| usize::try_from(n.0).ok()));
+    let out = MIR.with_borrow_mut(|s| {
+        if i == 0 {
+            s.last = std::mem::take(&mut s.local);
+            s.truew.clear();
+            s.written.clear();
+            if s.partner.is_empty() {
+                s.partner = CHAO_REST.with_borrow(|r| r.as_ref().map(mirror_partners)).unwrap_or_default();
+            }
+        }
+        if s.truew.len() != i {
+            return None;
+        }
+        // The walker built this node on the parent as written: undo that.
+        let (pw, pt) = match parent {
+            Some(p) if p < i => (s.written[p], s.truew[p]),
+            _ => (place, place),
+        };
+        let t = mul34(&pt, &inv_mul(&pw, &cur));
+        s.truew.push(t);
+        s.local.push(inv_mul(&place, &t));
+        let j = s.partner.get(i).copied().unwrap_or(i);
+        let l = if j <= i { s.local[j] } else { s.last.get(j).copied().unwrap_or(s.local[i]) };
+        let out = mul34(&place, &reflect_x(&l));
+        s.written.push(out);
+        Some(out)
+    });
+    if let Some(out) = out {
+        for r in 0..3 {
+            for k in 0..4 {
+                m.w32(cur_ptr + 4 * (4 * r + k) as u32, out[r][k].to_bits());
+            }
         }
     }
 }
@@ -912,6 +990,10 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if let Step::Live(chao) = STEP.get() {
         RIDER.set(data1);
         pin(m, chao, data1);
+        // ChaoMain AL_DisableNade (.text 0x5A3C, = CCL_Disable(task, 2)):
+        // the rider's B is its own move, not Pet (action 31). Each frame, as
+        // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
+        call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
             physics_row(m);
@@ -941,22 +1023,12 @@ thread_local! {
 /// mob's approved rules for Knuckles and Rouge (coordinator 2026-11-21):
 /// punch 1 (Knuckles motion 109) = Chao karate 582, punch 2 (110) = 582
 /// mirrored, punch 3 on (111 uppercut, 138 hammer) = Knuckles retargeted with
-/// the arms biased 0.8 forward; dig (90-92, 95-96) and the rest retargeted.
-/// shortcut: glide (Chao fly 130) and climb (Chao climb 155) are not wired:
-/// Knuckles's glide/climb motion numbers are not known from the files yet.
+/// the arms biased 0.8 forward; glide (105) = Chao fly 130, climb (100) =
+/// Chao climb 155; dig (90-92, 95-96) and the rest retargeted.
 /// shortcut: the karate motion starts on the action change, not frame-synced
 /// to Knuckles's 109/110 nframe.
 /// shortcut: no arm snap (chao-arm-dirs.json is not on this PC): 1:1 arms.
 fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
-    // SA2_CHAO_PROBE=nocolli (probe): clear the Chao's collision (taskwk +0x2C)
-    // so the rider's B is not "Pet".
-    if std::env::var("SA2_CHAO_PROBE").is_ok_and(|v| v.contains("nocolli")) {
-        let cw = m.r32(chao + 0x34);
-        if cw != 0 && m.r32(cw + 0x2C) != 0 {
-            eprintln!("chao-player: Chao collision {:#x} cleared", m.r32(cw + 0x2C));
-            m.w32(cw + 0x2C, 0);
-        }
-    }
     let obj2 = m.r32(P1_OBJ2);
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) {
         return;
@@ -977,6 +1049,8 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
         109 => (Some(582), false, 0.0),
         110 => (Some(582), true, 0.0),
         111 | 138 => (None, false, 0.8),
+        105 => (Some(130), false, 0.0),
+        100 => (Some(155), false, 0.0),
         _ => (None, false, 0.0),
     };
     if LAST_ACT.replace(act) != act {
@@ -1141,4 +1215,28 @@ fn setup_and_create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     }
     call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, STAND_MOTION]);
     Step::Live(chao)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chao_retarget::ChaoRest;
+
+    #[test]
+    fn mirror_pairs_left_right_and_keeps_winding() {
+        let i3 = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+        // root, a midline head, a left and a right hand
+        let rest = ChaoRest {
+            nodes: vec![(-1, [0.; 3], i3), (0, [0., 2., 0.], i3), (0, [1., 1., 0.], i3), (0, [-1., 1., 0.], i3)],
+            verts: vec![vec![]; 4],
+            arm_dirs: [vec![], vec![]],
+        };
+        assert_eq!(mirror_partners(&rest), vec![0, 1, 3, 2]);
+        let l = [[0.0, -1.0, 0.0, 3.0], [1.0, 0.0, 0.0, 4.0], [0.0, 0.0, 1.0, 5.0]];
+        let r = reflect_x(&l);
+        assert_eq!(reflect_x(&r), l);
+        assert_eq!([r[0][3], r[1][3], r[2][3]], [-3.0, 4.0, 5.0]);
+        let det = |a: &[[f32; 4]; 3]| a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+        assert_eq!(det(&r), det(&l));
+    }
 }
