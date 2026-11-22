@@ -521,7 +521,10 @@ $('#login-form').addEventListener('submit', async (event) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not log in.');
     $('#login-password').value = '';
-    for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, data.card);
+    // Remember me keeps the Chao's session key (never the password) so the next visit logs straight in.
+    const remember = $('#remember-me').checked;
+    try { if (remember) localStorage.setItem(REMEMBER_KEY, '1'); else localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ }
+    if (remember) for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, data.card);
     const first = data.chao[0];
     if (first) void join(first.player.name || 'Chao', first.token, data.card); else showTitle();
   } catch (error) { $('#join-error').textContent = error.message; }
@@ -529,7 +532,13 @@ $('#login-form').addEventListener('submit', async (event) => {
 // Local owner login: only answered by a loopback server started with CHAO_OWNER_BOOTSTRAP.
 $('#owner-login').addEventListener('click', () => void join('Chao', null, null, true));
 welcome.addEventListener('cancel', (event) => event.preventDefault());
+const REMEMBER_KEY = 'chao-garden-remember-v1';
 showTitle();
+// Remembered on this device: log straight back in to the last Chao.
+try {
+  const last = localStorage.getItem(REMEMBER_KEY) && saveSlots.list()[0];
+  if (last) void join(last.name || 'Chao', last.token, last.card);
+} catch { /* storage blocked: stay on the login */ }
 // Back from the game because its memory card couldn't be loaded (sa2 page).
 { const card = new URLSearchParams(location.search).get('card');
   if (card) $('#join-error').textContent = card === '409' ? 'Your Chao is still open in another game tab. Close it, then pick your Chao again.' : "Your Chao's save could not be loaded. Pick your Chao again to log back in."; }
@@ -554,6 +563,7 @@ async function saveAndLeave(destination) {
     connected(false); $('#connection-text').textContent = 'Title screen';
     for (const dialog of [shopDialog, stagesDialog, setupDialog]) if (dialog.open) dialog.close();
     if (destination) { location.assign(destination); return; }
+    try { localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ } // back to the title = logged out
     panel('world'); showTitle();
   } catch (error) { toast(error.message, 'error'); }
   finally { pendingSave = null; saving = false; button.disabled = false; button.textContent = originalLabel; updatePaused(); }
