@@ -152,6 +152,38 @@ static HATCH: Global<bool> = global!(false);
 static STARTED: Global<bool> = global!(false);
 /// The pause menu's EXIT asked for the lobby ([`go_lobby`]).
 static TO_LOBBY: Global<bool> = global!(false);
+/// The lobby exit was walked into (chao_player): leave for the game's own
+/// Stage Select instead of starting Chao World again.
+static TO_STAGE_SELECT: Global<bool> = global!(false);
+/// advertiseD (module 91): .bss 0x62054 is the menu screen its dispatcher
+/// fn_91_30818 switches on (jump table .data 0x9DE60); screen 3 runs
+/// fn_91_2BC44, the Stage Select (its confirm is fn_91_101E0, as `start`).
+/// The menu's own transitions write the next screen at +4.
+const ADVERTISE: u32 = 91;
+const MENU_SCREEN: u32 = 0x6_2054;
+const SCREEN_STAGE_SELECT: u32 = 3;
+static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
+
+pub(crate) fn to_stage_select() {
+    TO_STAGE_SELECT.set(true);
+}
+
+/// While going to the Stage Select: once the menu module is up, ask its
+/// screen dispatcher for the Stage Select, and log its top state and screen.
+/// Unverified: that the request field is honoured from the title state; the
+/// log shows which top state the menu is in when the request lands.
+fn stage_select_frame(m: &mut Mem) {
+    let Some(bss) = module_section(m, ADVERTISE, 6) else { return };
+    let now = (m.r32(bss), m.r32(bss + MENU_SCREEN), m.r32(bss + MENU_SCREEN + 4));
+    if MENU_SEEN.replace(now) != now {
+        eprintln!("start-stage: menu state {} screen {} next {}", now.0, now.1, now.2);
+    }
+    if now.1 == SCREEN_STAGE_SELECT {
+        TO_STAGE_SELECT.set(false);
+    } else {
+        m.w32(bss + MENU_SCREEN + 4, SCREEN_STAGE_SELECT);
+    }
+}
 /// The lobby's residents are out (cleared when the game leaves the lobby).
 static RESIDENTS_OUT: Global<bool> = global!(false);
 /// The residents' taskwks, so their Chao sounds stay silent.
@@ -271,7 +303,13 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     if SHOWN.get().is_some() {
         crate::tiny_transporter::frame(c, m);
     }
-    if mode == MD_LEFT_STAGE && STARTED.get() {
+    if TO_STAGE_SELECT.get() {
+        stage_select_frame(m);
+    }
+    if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
+        // The game's own way on from here is its title and menus.
+        eprintln!("start-stage: left Chao World by the lobby exit; on to the game's menus");
+    } else if mode == MD_LEFT_STAGE && STARTED.get() {
         // MMO glue: the title never shows. The game left the stage it was
         // started in (a level's EXIT, Chao World's own way out): Chao World
         // again, as at boot. Unverified: an exit that skips this mode (the

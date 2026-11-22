@@ -455,7 +455,9 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     let posed = POSED.with_borrow(|p| p.clone());
     let skel = SKEL.with_borrow(|s| s.clone());
-    if (posed.len() < 14 && !chao_world(m)) || skel.len() != 62 {
+    // Chao World places the boots from the Chao's own feet (hub fit): no
+    // rider skeleton needed there, and in self mode there is none.
+    if !chao_world(m) && (posed.len() < 14 || skel.len() != 62) {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player shoes: skipped (posed {}, skel {})", posed.len(), skel.len());
         }
@@ -808,6 +810,13 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         CHAO_NODE.set(0);
         rel_original(c, m, a, chao_display);
         NATIVE_DRAW.set(false);
+        // Self mode: no rider display walks, which is where the gear was drawn
+        // (level_capture); draw it here, from the feet and hands this native
+        // draw just recorded.
+        if self_drive(m) {
+            hammer_gloves(c, m);
+            air_shoes(c, m);
+        }
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
             let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.len()));
             eprintln!("chao-player native: walked {} node transforms, rest model nodes {rest:?}, hands {:?}", CHAO_NODE.get(), HANDS.with_borrow(|h| h.map(|x| x.map(|v| [v[0][3], v[1][3], v[2][3]]))));
@@ -1774,7 +1783,45 @@ fn drop_stage_loads() {
 /// found yet); raise it if a slow load still collides.
 const GEAR_LOAD_DELAY: u64 = 180;
 
+/// ChaoStgLobby (GSNE8P module 65, ChaoStgLobby.prs): ALO_LobbyExitExecutor's
+/// exec is .text 0x58C (fn_65_58C, set at 0xCA4 with CreateElementalTask).
+/// Its mode 1 runs the game's "player hits my trigger" test (main.dol
+/// 0x80005F88 with 0) and on a hit sets twp flag 0x100, locks the player
+/// (0x80022EB8, 0x8001DD50) and opens message 49 ("Exit from Chao garden.
+/// OK?", ChaoMain .text 0x1D11C/0x1D04C/0x1CF90), mode 4/5 wait for the
+/// answer, and Yes calls ChaoMain .text 0x27DA0, the game's own way out of
+/// Chao World (mode 6).
+/// MMO glue: on the hit it goes straight to the Yes path, no window and no
+/// lock, and start_stage takes the game on to its own Stage Select.
+const LOBBY_MODULE: u32 = 65;
+const LOBBY_EXIT_EXEC: u32 = 0x58C;
+const HIT_PLAYER: u32 = 0x8000_5F88;
+const LEAVE_CHAO_WORLD: u32 = 0x2_7DA0;
+
+fn lobby_exit_hook(c: &mut Cpu, m: &mut Mem) {
+    let at = if chao_world(m) && module_linked(m, LOBBY_MODULE) { rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC } else { 0 };
+    if at != 0 && EXIT_HOOKED.replace(at) != at {
+        c.rt.set_override(at, lobby_exit_exec);
+    }
+}
+
+fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
+    let (task, at) = (c.r[3], rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC);
+    let twp = m.r32(task + 0x34);
+    if twp != 0 && m.r8(twp) == 1 && m.r16(twp + 4) & 0x100 == 0 && call(c, m, HIT_PLAYER, &[task, 0]) != 0 {
+        eprintln!("chao-player: lobby exit -> the game's Stage Select");
+        m.w16(twp + 4, m.r16(twp + 4) | 0x100);
+        m.w8(twp, 6);
+        crate::start_stage::to_stage_select();
+        call(c, m, rt::sec(m, 60, 1) + LEAVE_CHAO_WORLD, &[]);
+        return;
+    }
+    c.r[3] = task;
+    rel_original(c, m, at, lobby_exit_exec);
+}
+
 thread_local! {
+    static EXIT_HOOKED: Cell<u32> = const { Cell::new(0) };
     static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
     static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
@@ -1812,6 +1859,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         crate::name_tags::flush();
     }
     crate::kinder_chart::frame(c, m);
+    lobby_exit_hook(c, m);
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
     // uses it; 7 = the lobby), to test the gear across a second change.
@@ -2245,10 +2293,13 @@ fn module_linked(m: &Mem, id: u32) -> bool {
 
 /// The page's /dev/area code 252: the player's Chao could not be made, so
 /// the page goes back to the login instead of ever showing Sonic.
+/// /dev/area code for "no Chao": 251/252 are the shoe pickups (main.js).
+const PAGE_NO_CHAO: u8 = 250;
+
 fn no_chao() {
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open("/dev/area") {
-        let _ = f.write_all(&[252]);
+        let _ = f.write_all(&[PAGE_NO_CHAO]);
     }
 }
 
