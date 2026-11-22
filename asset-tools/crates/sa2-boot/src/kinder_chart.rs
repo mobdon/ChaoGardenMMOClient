@@ -389,6 +389,15 @@ fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
     let info = call(c, m, c1 + CHAO_INFO, &[chao]);
     m.w32(work + 0xC, info);
     let msg = call(c, m, c1 + MSG_LOAD, &[s4 + MSG_NAME]);
+    if msg == 0 {
+        // The chart reads its strings through this pointer without a check.
+        eprintln!("kinder-chart: the chart's messages (MsgAlKinderHe) didn't load");
+        call(c, m, SY_FREE, &[work]);
+        if borrowed {
+            give_back(c, m);
+        }
+        return State::Closed;
+    }
     m.w32(work + 0x60, msg);
     m.load(NAME, b"MMOChart\0");
     let task = call(c, m, CREATE_ELEMENTAL_TASK, &[2, 2, MAIN, NAME]);
