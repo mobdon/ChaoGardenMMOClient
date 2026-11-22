@@ -26,7 +26,9 @@ export function mountOverlay(nextSocket) {
   const care = el('div'), breedingRoot = el('div'); breedingRoot.hidden = true;
   const breedButton = el('button', 'Breeding'), tinyButton = el('button', 'Tiny Garden');
   for (const b of [breedButton, tinyButton]) { b.tabIndex = -1; b.replaceChildren(nativeText(b.textContent, 'native-stat-name')); }
-  panel.append(title, stats, care, el('div'), breedButton, tinyButton, breedingRoot);
+  // The hub's native stat-row styles are scoped to #character-panel (sonic.css); without it each row's frame spreads over the panel.
+  const statBox = el('div'); statBox.id = 'character-panel'; statBox.append(stats);
+  panel.append(title, statBox, care, el('div'), breedButton, tinyButton, breedingRoot);
   document.body.append(panel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
