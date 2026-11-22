@@ -234,6 +234,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if SHOWN.get().is_none() {
             SHOWN.set(Some(u32::MAX));
         }
+        crate::chao_player::unlink_copies(c, m);
         start(c, m, CHAO_WORLD, 0);
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
