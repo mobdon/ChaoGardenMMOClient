@@ -1046,7 +1046,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
             // Wearing Shadow's shoes: the legs (pivot/mesh 5-6, 12-13) follow
             // the rider's own walk/run/skate; body, head and arms stay native.
-            if SHOE_LEGS.contains(&i) && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+            if SHOE_LEGS.contains(&i) && MOVING.get() && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
                 if let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) {
                     let p = CHAO_PLACE.get();
                     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
@@ -1349,6 +1349,10 @@ fn level_pose(m: &Mem, chao: u32) {
 thread_local! {
     /// POSED holds world matrices (seated on the board), not Chao-local ones.
     static POSED_WORLD: Cell<bool> = const { Cell::new(false) };
+    /// The rider moved since the last frame: the legs take its motion only then
+    /// (standing, the Chao's own legs).
+    static MOVING: Cell<bool> = const { Cell::new(false) };
+    static LAST_RIDER_POS: Cell<[u32; 3]> = const { Cell::new([0; 3]) };
     /// The player's Chao is being drawn on its native rig (Chao World).
     static NATIVE_DRAW: Cell<bool> = const { Cell::new(false) };
 }
@@ -1517,6 +1521,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let pos = [m.r32(data1 + 0x14), m.r32(data1 + 0x18), m.r32(data1 + 0x1C)];
     if let Step::Live(chao) = STEP.get() {
         RIDER.set(data1);
+        let lp = LAST_RIDER_POS.replace(pos);
+        let d2: f32 = (0..3).map(|i| { let d = f32::from_bits(pos[i]) - f32::from_bits(lp[i]); d * d }).sum();
+        MOVING.set(d2 > 0.01 * 0.01);
         pin(m, chao, data1);
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player: type {:#x} analysed {} yaw rider {:#x} chao {:#x}", m.r8(INFO + 0x80), m.r8(INFO + 0x438), m.r32(data1 + 0x0C), m.r32(m.r32(chao + 0x34) + 0x0C));
