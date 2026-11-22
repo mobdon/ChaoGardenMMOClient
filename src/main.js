@@ -550,11 +550,11 @@ for (const field of ['#login-name', '#login-password']) $(field).addEventListene
   if (rememberedSlot) { rememberedSlot = null; $('#login-password').value = ''; }
 });
 
-async function saveAndLeave(destination) {
+async function saveAndLeave() {
   if (saving || !player) return;
   if (socket?.readyState !== WebSocket.OPEN) { toast('Reconnect before saving and returning to the title.', 'error'); return; }
   saving = true;
-  const button = destination ? $('#tiny-open') : $('#save-title');
+  const button = $('#save-title');
   const originalLabel = button.textContent; button.disabled = true; button.textContent = 'Saving…';
   send({ type: 'input', dx: 0, dz: 0, jump: false, boost: false });
   updatePaused();
@@ -569,7 +569,6 @@ async function saveAndLeave(destination) {
     player = null; snapshot = null; lastZone = undefined;
     connected(false); $('#connection-text').textContent = 'Title screen';
     for (const dialog of [shopDialog, stagesDialog, setupDialog]) if (dialog.open) dialog.close();
-    if (destination) { location.assign(destination); return; }
     try { localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ } // back to the title = logged out
     loggedIn = null;
     panel('world'); showTitle();
@@ -577,7 +576,6 @@ async function saveAndLeave(destination) {
   finally { pendingSave = null; saving = false; button.disabled = false; button.textContent = originalLabel; updatePaused(); }
 }
 $('#save-title').addEventListener('click', () => void saveAndLeave());
-$('#tiny-open').addEventListener('click', () => void saveAndLeave('/tiny.html'));
 
 function renderSetup(data) {
   const container = $('#setup-content');

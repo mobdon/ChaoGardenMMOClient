@@ -18,7 +18,7 @@ public final class ServerOrigin {
     }
     public String value() { return origin; }
     public String api(String suffix) {
-        if (!java.util.Arrays.asList("account","lease","intent","pairing/claim").contains(suffix)) throw new IllegalArgumentException("Invalid API path");
+        if (!java.util.Arrays.asList("account/login","card","session","tiny-chao","tiny-care").contains(suffix)) throw new IllegalArgumentException("Invalid API path");
         return origin + "/api/" + suffix;
     }
     public String asset(String path) {
