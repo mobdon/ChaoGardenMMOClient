@@ -121,6 +121,8 @@ pub struct Place {
 
 static PLACE: Global<Place> = global!(Place { x: 16.0, y: 14.0, inner: 168.0 });
 static TASK: Global<u32> = global!(0);
+/// The page's canvas width / height in thousandths (0 = 4:3).
+static ASPECT: Global<u16> = global!(0);
 /// The art's texture list; Some(0) = it did not load (text only, no retry
 /// until the next stage).
 static TEX: Global<Option<u32>> = global!(None);
@@ -201,6 +203,19 @@ pub(crate) fn drop_stage_loads() {
     TEX.set(None);
     TASK.set(0);
     PORTRAIT.set(None);
+}
+
+/// The canvas aspect from the page (pad bytes 20..22).
+pub fn set_aspect(thousandths: u16) {
+    ASPECT.set(thousandths);
+}
+
+/// The game-screen x of the picture's real left edge: 0 at 4:3; a wider
+/// canvas shows more of the view to the left of the game's 640 (in a 16:9
+/// build shot the box sat 320 px in from the edge).
+fn left_edge(aspect: u16) -> f32 {
+    let a = f32::from(aspect) / 1000.0;
+    if a > 4.0 / 3.0 + 0.01 && a < 4.0 { 320.0 - 240.0 * a } else { 0.0 }
 }
 
 /// Move the box (the debug HUD tuner).
@@ -339,7 +354,8 @@ fn display(c: &mut Cpu, m: &mut Mem) {
     if !crate::chao_player::module_linked(m, CHAOMAIN) {
         return;
     }
-    let p = PLACE.get();
+    let mut p = PLACE.get();
+    p.x += left_edge(ASPECT.get());
     let c1 = rt::sec(m, CHAOMAIN, 1);
     if TEX.get().is_some_and(|t| t != 0) {
         let colour = rt::sec(m, CHAOMAIN, 5) + COLOUR;
@@ -428,6 +444,14 @@ mod tests {
         for (x, y, w, h) in fills(P) {
             assert!(x > P.x && y > P.y && x + w < P.x + 160.0 && y + h < P.y + 64.0);
         }
+    }
+
+    #[test]
+    fn a_wide_canvas_moves_the_box_to_its_real_left_edge() {
+        assert_eq!(left_edge(0), 0.0);
+        assert_eq!(left_edge(1333), 0.0);
+        // 16:9: the 4:3 picture starts 106.7 game units in from the left.
+        assert!((left_edge(1778) + 106.72).abs() < 0.1);
     }
 
     #[test]
