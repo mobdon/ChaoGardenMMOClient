@@ -2984,6 +2984,30 @@ fn free_to_heap(c: &mut Cpu, m: &mut Mem) {
     original(c, m, OS_FREE_TO_HEAP);
 }
 
+/// A Chao of its own kind (CreateChaoExtra type 1, as the Chao Select
+/// window's) from the record at `info`, standing at `pos`, in the remote
+/// heap so the lobby's own heap keeps its room. 0: no heap or no room.
+pub(crate) fn extra_chao(c: &mut Cpu, m: &mut Mem, info: u32, pos: u32) -> u32 {
+    let Some(heap) = remote_heap(c, m) else { return 0 };
+    if heap_free(m, heap) < REMOTE_CHAO_BYTES {
+        return 0;
+    }
+    let cur = c.r[13].wrapping_sub(0x71B4);
+    let old = m.r32(cur);
+    m.w32(cur, heap);
+    let t = call(c, m, rt::sec(m, 60, 1) + 0x3148C, &[info, 1, 0, pos, 0]);
+    m.w32(cur, old);
+    t
+}
+
+/// The player's Chao's record (0x800 bytes), as [`export_record`] sends it.
+pub(crate) fn player_record(m: &Mem) -> Option<Vec<u8>> {
+    let Step::Live(chao) = STEP.get() else { return None };
+    let rec = m.r32(m.r32(chao + 0x34) + 0x5C);
+    let src = if (0x8000_0000..0x8C00_0000).contains(&rec) { rec } else { INFO };
+    Some((0..0x800).map(|i| m.r8(src + i)).collect())
+}
+
 /// Free bytes left in the remote heap (blocks freed back count as free).
 fn heap_free(_m: &Mem, _h: u32) -> u32 {
     REMOTE_ALLOC.with_borrow(|r| r.as_ref().map_or(0, |(reg, _)| (REMOTE_HEAP_END - REMOTE_HEAP_START) - reg.used()))

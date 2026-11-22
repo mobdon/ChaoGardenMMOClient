@@ -19,9 +19,14 @@
 //! its shades, the text's place and size), that the art list loads in the
 //! lobby, and that the task's display runs after the room's.
 //!
-//! shortcut: no Chao portrait and no ring icon yet. The portrait needs a
-//! second Chao (80 KB) the lobby's heap does not have; the ring art sits on
-//! an orange panel in AL_TEX_COMMON and needs cutting out.
+//! The portrait is a real Chao from the player's own record, as the Chao
+//! Select window's are (CreateChaoExtra, turned -5 degrees): it does not
+//! show itself in the world; the box's display draws it at the box's own
+//! screen point, the way the chart's portrait is drawn (Kinder 0xC9A8).
+//! It lives in the remote Chao heap (chao_player.rs).
+//!
+//! shortcut: no ring icon yet; the ring art sits on an orange panel in
+//! AL_TEX_COMMON and needs cutting out.
 use crate::{guest_call as call, original};
 use sa2_recomp::rt::{self, Cpu, Mem};
 use sa2_recomp::{global, global::Global};
@@ -38,6 +43,23 @@ const GX_SET_TEV_SWAP_MODE: u32 = 0x8010_49A8;
 const GX_SET_TEV_SWAP_MODE_TABLE: u32 = 0x8010_4A00;
 const GX_SET_Z_MODE: u32 = 0x8010_517C;
 const GX_SET_CULL_MODE: u32 = 0x8010_1BBC;
+const GX_SET_BLEND_MODE: u32 = 0x8010_4FF8;
+// The chart's portrait draw (kinder_chart.rs).
+const MODEL_BEGIN: u32 = 0x8012_2B24;
+const SET_LIGHT: u32 = 0x8002_4CB8;
+const STAGE_LIGHT: u32 = 0x803A_D926;
+const NJ_PUSH_MATRIX_EX: u32 = 0x8011_6098;
+const NJ_POP_MATRIX_EX: u32 = 0x8011_60E4;
+const NJ_UNIT_MATRIX: u32 = 0x8011_53E4;
+const NJ_ROTATE_Y: u32 = 0x8011_5828;
+const NJ_TRANSLATE: u32 = 0x8011_5BD8;
+const NJ_GET_CURRENT_FOV: u32 = 0x8011_26A8;
+/// The Chao Select window's turn and depth for its Chao (ChaoMain 0x55A20:
+/// -5 degrees, rodata 0x9A8C).
+const TURN: u32 = 0xFC72;
+const CHAO_DEPTH: f32 = -31.0;
+/// Far behind everything, as the chart's portrait clear (Kinder 0xF244).
+const CLEAR_DEPTH: f32 = -1000.0;
 /// The language byte the chart's text reads (0 = Japanese font rows).
 const LANGUAGE: u32 = 0x801C_C168 + 0x11;
 
@@ -77,6 +99,8 @@ const OUT: u32 = SCRATCH + 0x60;
 /// Ten records: the window's nine, then a plain opaque texel for the fill.
 const COPIES: u32 = SCRATCH + 0x80;
 const FILL: u32 = 9;
+const ORIGIN: u32 = SCRATCH + 0x200;
+const RECORD_COPY: u32 = SCRATCH + 0x800;
 
 const MAIN: u32 = 0x7E00_000C;
 const DELETE: u32 = 0x7E00_0010;
@@ -91,12 +115,14 @@ pub struct Place {
     pub inner: f32,
 }
 
-static PLACE: Global<Place> = global!(Place { x: 16.0, y: 14.0, inner: 128.0 });
+static PLACE: Global<Place> = global!(Place { x: 16.0, y: 14.0, inner: 168.0 });
 static TASK: Global<u32> = global!(0);
 /// The art's texture list; Some(0) = it did not load (text only, no retry
 /// until the next stage).
 static TEX: Global<Option<u32>> = global!(None);
 static WHITENING: Global<bool> = global!(false);
+/// The portrait Chao's task (0: none could be made) and its two display functions.
+static PORTRAIT: Global<Option<(u32, [u32; 2])>> = global!(None);
 static FEED: Global<(String, Option<u32>)> = global!((String::new(), None));
 
 /// One window piece: record (0..=8 = the window's 10..=18), x anchor,
@@ -127,6 +153,23 @@ fn fills(p: Place) -> [(f32, f32, f32, f32); 2] {
     [(p.x + 2.0, p.y + 12.0, w - 4.0, 40.0), (p.x + 10.0, p.y + 3.0, w - 20.0, 58.0)]
 }
 
+/// The portrait's part of the box: 44 wide at the left (x, y, width, height).
+fn portrait_rect(p: Place) -> (f32, f32, f32, f32) {
+    (p.x + 10.0, p.y + 3.0, 44.0, 58.0)
+}
+
+/// Where the portrait Chao stands (its feet) on the screen.
+fn portrait_point(p: Place) -> (f32, f32) {
+    (p.x + 32.0, p.y + 58.0)
+}
+
+/// A screen point at a depth in view space, as ChaoMain 0x4F400 and its
+/// sprite draw place things: `tan` is the tangent of half the field of view.
+fn view_point((sx, sy): (f32, f32), depth: f32, tan: f32) -> [f32; 3] {
+    let k = -depth * tan / 320.0;
+    [(sx - 320.0) * k, (240.0 - sy) * k, depth]
+}
+
 /// The feed's name: up to 7 printable ASCII bytes, 0 ends.
 fn name_of(bytes: &[u8]) -> String {
     bytes.iter().take(7).take_while(|&&b| b != 0).filter(|b| (0x20..0x7F).contains(*b)).map(|&b| b as char).collect()
@@ -147,6 +190,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
 pub(crate) fn drop_stage_loads() {
     TEX.set(None);
     TASK.set(0);
+    PORTRAIT.set(None);
 }
 
 /// Move the box (the debug HUD tuner).
@@ -249,6 +293,23 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
         eprintln!("card-box: task {task:#x}");
     }
     TASK.set(task);
+    // The area change that took the old task took the old portrait too.
+    let mut portrait = (0, [0; 2]);
+    if let Some(record) = crate::chao_player::player_record(m) {
+        m.load(RECORD_COPY, &record);
+        m.load(ORIGIN, &[0; 12]);
+        let chao = crate::chao_player::extra_chao(c, m, RECORD_COPY, ORIGIN);
+        eprintln!("card-box: portrait Chao {chao:#x}");
+        if chao != 0 {
+            let wk = m.r32(chao + 0x34);
+            m.w32(wk + 0xA0, crate::kinder_chart::portrait_flags(m.r32(wk + 0xA0)));
+            // It never shows itself: the box draws it.
+            portrait = (chao, [m.r32(chao + 0x14), m.r32(chao + 0x20)]);
+            m.w32(chao + 0x14, 0);
+            m.w32(chao + 0x20, 0);
+        }
+    }
+    PORTRAIT.set(Some(portrait));
 }
 
 fn display(c: &mut Cpu, m: &mut Mem) {
@@ -260,11 +321,16 @@ fn display(c: &mut Cpu, m: &mut Mem) {
     if TEX.get().is_some_and(|t| t != 0) {
         let colour = rt::sec(m, CHAOMAIN, 5) + COLOUR;
         let keep = m.r32(colour);
-        call(c, m, GX_SET_Z_MODE, &[1, 7, 0]);
         call(c, m, GX_SET_CULL_MODE, &[0]);
         call(c, m, c1 + SPRITE_BLEND, &[]);
         WHITENING.set(true);
         m.w32(colour, WHITE);
+        // The portrait's part, far behind and into the depth buffer, so the
+        // Chao is not hidden by what the room drew there.
+        call(c, m, GX_SET_Z_MODE, &[1, 7, 1]);
+        let (x, y, w, h) = portrait_rect(p);
+        fcall(c, m, c1 + SPRITE, &[COPIES + FILL * RECORD, 0, -1i32 as u32, -1i32 as u32], &[x, y, CLEAR_DEPTH, w, h]);
+        call(c, m, GX_SET_Z_MODE, &[1, 7, 0]);
         for (x, y, w, h) in fills(p) {
             fcall(c, m, c1 + SPRITE, &[COPIES + FILL * RECORD, 0, -1i32 as u32, -1i32 as u32], &[x, y, DEPTH, w, h]);
         }
@@ -278,10 +344,29 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         call(c, m, GX_SET_TEV_SWAP_MODE_TABLE, &[1, 0, 0, 0, 3]);
     }
     let (name, rings) = FEED.with_borrow(|f| f.clone());
-    text(c, m, &name, p.x + 14.0, p.y + 10.0, 20.0);
+    text(c, m, &name, p.x + 60.0, p.y + 10.0, 20.0);
     if let Some(rings) = rings {
-        text(c, m, &format!("Rings {rings}"), p.x + 14.0, p.y + 34.0, 16.0);
+        text(c, m, &format!("Rings {rings}"), p.x + 60.0, p.y + 34.0, 16.0);
     }
+    let Some((chao, shows)) = PORTRAIT.get().filter(|p| p.0 != 0) else { return };
+    let fov = call(c, m, NJ_GET_CURRENT_FOV, &[]) as i32;
+    let tan = (fov as f32 / 2.0 * std::f32::consts::TAU / 65536.0).tan();
+    let [x, y, z] = view_point(portrait_point(p), CHAO_DEPTH, tan);
+    call(c, m, GX_SET_BLEND_MODE, &[1, 4, 5, 0]);
+    call(c, m, GX_SET_Z_MODE, &[1, 3, 1]);
+    call(c, m, MODEL_BEGIN, &[]);
+    call(c, m, SET_LIGHT, &[10]);
+    call(c, m, NJ_PUSH_MATRIX_EX, &[]);
+    call(c, m, NJ_UNIT_MATRIX, &[0]);
+    fcall(c, m, NJ_TRANSLATE, &[0], &[x, y, z]);
+    call(c, m, NJ_ROTATE_Y, &[0, TURN]);
+    for show in shows {
+        if show != 0 {
+            call(c, m, show, &[chao]);
+        }
+    }
+    call(c, m, NJ_POP_MATRIX_EX, &[]);
+    call(c, m, SET_LIGHT, &[m.r8(STAGE_LIGHT) as i8 as u32]);
 }
 
 #[cfg(test)]
@@ -289,6 +374,17 @@ mod tests {
     use super::*;
 
     const P: Place = Place { x: 16.0, y: 14.0, inner: 128.0 };
+
+    #[test]
+    fn the_portrait_stands_inside_its_part_of_the_box() {
+        let (x, y, w, h) = portrait_rect(P);
+        let (sx, sy) = portrait_point(P);
+        assert!(sx > x && sx < x + w && sy > y && sy <= y + h);
+        // Screen centre is straight ahead; left of it is -x, above it +y (90 degree view).
+        assert_eq!(view_point((320.0, 240.0), -31.0, 1.0), [0.0, 0.0, -31.0]);
+        let [vx, vy, _] = view_point((0.0, 0.0), -32.0, 1.0);
+        assert_eq!((vx, vy), (-32.0, 24.0));
+    }
 
     #[test]
     fn the_pieces_tile_the_box_without_gaps() {
