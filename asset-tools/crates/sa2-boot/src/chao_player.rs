@@ -444,6 +444,9 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let posed = POSED.with_borrow(|p| p.clone());
     let skel = SKEL.with_borrow(|s| s.clone());
     if (posed.len() < 14 && !chao_world(m)) || skel.len() != 62 {
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
+            eprintln!("chao-player shoes: skipped (posed {}, skel {})", posed.len(), skel.len());
+        }
         return;
     }
     let models: Vec<u32> = std::env::var("SA2_SHOE_MODELS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
@@ -473,7 +476,10 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         // SA2_SHOE_SCALE=k (debug): k times the fitted size.
         let s = SHOE_LENGTH_RATIO * len / boot * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         let _ = (node, &posed, ry, cpos);
-        let Some(fv) = FEET.with_borrow(|f| f[n]) else { continue };
+        let Some(fv) = FEET.with_borrow(|f| f[n]) else {
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 { eprintln!("chao-player shoes: no foot {n}"); }
+            continue;
+        };
         // Native rig: the boot centred on the Chao foot mesh's centre (its
         // vertices' mean under the foot node), not on the node origin.
         let wpos = if chao_world(m) {
