@@ -109,6 +109,14 @@ fn behavior(c: &mut Cpu, m: &mut Mem) {
 /// computed at the rider's position this frame.
 fn chao_exec(c: &mut Cpu, m: &mut Mem) {
     remote_pin(m, c.r[3]);
+    // Beyond the REMOTE_NEAR nearest, a remote Chao's exec (motion and
+    // ChaoMain's per-frame work) runs every REMOTE_FAR_EVERY frames; its
+    // position still follows every frame and it is drawn every frame.
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let skip = REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == c.r[3] && e.rank >= REMOTE_NEAR && (f + e.rank as u64) % REMOTE_FAR_EVERY != 0));
+    if skip {
+        return;
+    }
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
             pin(m, chao, RIDER.get());
@@ -1404,8 +1412,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if let Step::Live(_) = STEP.get() {
             STEP.set(Step::Wait(0));
         }
-        // The game dropped the remote Chao's tasks too.
+        // The game dropped the remote Chao's tasks too, without freeing their
+        // blocks one by one (the remote heap only shrank across a garden ->
+        // lobby change): their heap starts empty again for the new area.
         REMOTE.with_borrow_mut(|r| r.values_mut().for_each(|e| e.task = 0));
+        REMOTE_ALLOC.with_borrow_mut(|r| if let Some((reg, sizes)) = r.as_mut() {
+            *reg = crate::chao_cache::Region::new(REMOTE_HEAP_START, REMOTE_HEAP_END);
+            sizes.clear();
+        });
     }
     let data1 = m.r32(task + 0x34);
     if data1 == 0 {
@@ -1834,11 +1848,17 @@ struct Remote {
     samples: std::collections::VecDeque<(std::time::Instant, [f32; 3], u16, u32)>,
     last_seen: std::time::Instant,
     motion: u32,
+    /// Distance rank among the live remote Chao (0 = nearest).
+    rank: usize,
 }
 
 /// Remote Chao drawn at once in an area: the nearest ones; the rest stay
 /// cached. SA2_REMOTE_MAX overrides it (for the 8/16/24 measurement).
 const REMOTE_MAX: usize = 50;
+/// The nearest this many remote Chao run every frame; farther ones every
+/// REMOTE_FAR_EVERY frames (staggered by rank).
+const REMOTE_NEAR: usize = 12;
+const REMOTE_FAR_EVERY: u64 = 3;
 /// Shown this far behind the newest update, sliding between updates.
 const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
@@ -1886,7 +1906,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
             crate::chao_cache::get_or_load(m, id, &info, 0, false);
             crate::chao_cache::set_online(id, true);
             REMOTE.with_borrow_mut(|r| {
-                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0 });
+                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0, rank: usize::MAX });
                 if e.samples.back().is_none_or(|s| s.1 != p || s.2 != a as u16 || s.3 != mo) {
                     e.samples.push_back((now, p, a as u16, mo));
                     while e.samples.len() > 4 {
@@ -1920,7 +1940,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
     let mut order = pos.clone();
     order.sort_by(|a, b| d2(a.1).total_cmp(&d2(b.1)));
     for (n, (id, p)) in order.into_iter().enumerate() {
-        let task = REMOTE.with_borrow(|r| r[&id].task);
+        let task = REMOTE.with_borrow_mut(|r| { let e = r.get_mut(&id).unwrap(); e.rank = n; e.task });
         if n < max && task == 0 {
             let Some(info) = crate::chao_cache::info_addr(id) else { continue };
             for (o, v) in p.into_iter().enumerate() {
