@@ -142,6 +142,12 @@ static CARD: Global<Vec<u64>> = global!(Vec::new());
 static SHOWN: Global<u32> = global!(0);
 /// The slot chosen on the pick screen (picker +0x44, 1-based) as last read.
 static CHOSEN: Global<u32> = global!(0);
+/// The picker values last logged (debug).
+static SEEN: Global<[u32; 9]> = global!([0; 9]);
+/// ChaoMain .bss: the word its 0xDB60 answers with; 0 forces the picker's cursor to Back.
+const INPUT_FLAG: u32 = 0x1D358;
+/// The game's pad work pointer; +0x10 is the pressed buttons (confirm 0x4, cancel 0x402).
+const PAD: u32 = 0x801E_55D8;
 static HELD_AT: Global<u32> = global!(0);
 /// ChaoMain's (.text + MACHINE_EXEC, .bss + MACHINE_TASK) this frame (0 = not linked).
 static MACHINE: Global<(u32, u32)> = global!((0, 0));
@@ -411,6 +417,24 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                 _ if picker == 0 => CANCELLED,
                 other => other,
             };
+            // Debug: what the picker and the pad say, logged when it changes
+            // (build 14: the screen left with state 2 and no press).
+            if picker != 0 {
+                let now = [
+                    state,
+                    m.r32(picker + 0x14),
+                    m.r32(picker + 0x1C),
+                    m.r32(picker + 0x28),
+                    m.r32(picker + 0x2C),
+                    m.r32(picker + 0x38),
+                    m.r32(picker + 0x44),
+                    m.r32(cm_bss + INPUT_FLAG),
+                    m.r32(m.r32(PAD) + 0x10),
+                ];
+                if SEEN.replace(now) != now {
+                    eprintln!("tiny-transporter: picker state, parts, +1C, column, row, +38, +44, input flag, pressed: {now:x?}");
+                }
+            }
             // Their records stay cached while they are on show.
             CARD.with_borrow(|c| c.iter().filter(|&&id| id != SELF).for_each(|&id| crate::chao_cache::set_online(id, true)));
             if picker != 0 {
