@@ -4,7 +4,7 @@
 //! flags)` that the Race run behaviour (ChaoStgRace fn_76_D2B4) calls, logs
 //! each Chao task's angle Y and position every 30 calls, and with
 //! SA2_RACE_PROBE=steer holds angle Y a quarter turn from its first value after
-//! 300 calls. twp = task +0x34; angle (x, y, z) at twp +0x08, position at twp
+//! 60 calls. twp = task +0x34; angle (x, y, z) at twp +0x08, position at twp
 //! +0x14 (CreateChildTask copies +0x08..+0x1C; ENGINE-MAP). Unverified: that
 //! +0x0C is the heading the movement step uses; this probe is the check.
 use crate::{guest_call, original};
@@ -55,10 +55,10 @@ fn move_step(c: &mut Cpu, m: &mut Mem) {
         e.0 += 1;
         let (n, first) = *e;
         SEEN.set(Some(seen));
-        if STEER.get() && n >= 300 {
+        if STEER.get() && n >= 60 {
             m.w32(twp + 0x0C, first.wrapping_add(QUARTER_TURN));
         }
-        if n % 30 == 0 {
+        if n % 10 == 0 {
             let f = |o| f32::from_bits(m.r32(twp + o));
             eprintln!(
                 "race-probe: task {task:#x} call {n} angle_y {:#x} pos ({:.2}, {:.2}, {:.2})",
