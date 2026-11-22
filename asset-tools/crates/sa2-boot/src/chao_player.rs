@@ -308,7 +308,7 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     let n = NODES.with_borrow(|n| n.len());
     // Any rider (Knuckles's and Rouge's skeletons too): once a frame.
-    if n > 8 {
+    if n > 8 && !SELF_CAP.get() {
         hammer_gloves(c, m);
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
@@ -317,6 +317,9 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
+        if SELF_CAP.get() {
+            return;
+        }
         RIDER_OBJ.set(obj);
         air_shoes(c, m);
     } else if n > 0 {
@@ -1061,13 +1064,22 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // each result with the retargeted pose (Chao-local, posed below).
     // Chao World: the native Chao rig and its own motions draw it (no rider
     // skeleton copied onto it); elsewhere the rider's pose is retargeted.
-    // SA2_CHAO_RETARGET=1 (debug): retarget in Chao World too.
-    if live && RIDER.get() != 0 && (!chao_world(m) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
+    // Chao World self mode: the hidden Shadow's live skeleton (walked by his
+    // display, drawing nothing) poses the Chao, so it walks, runs and skates
+    // with his motions. SA2_CHAO_RETARGET=1 (debug): also outside self mode;
+    // =0: the Chao's own motions.
+    if live && RIDER.get() != 0 && (!chao_world(m) || self_retarget(m) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
         let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
         rel_original(c, m, a, chao_display);
+        if self_drive(m) {
+            // No rider draw carries the gear in self mode: draw it from the
+            // hands and feet this draw recorded.
+            hammer_gloves(c, m);
+            air_shoes(c, m);
+        }
         return crate::name_tags::finish();
     }
     // ChaoMain queues the model draw past this call (no walker runs inside
@@ -1950,6 +1962,15 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
 
 fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if self_drive(m) {
+        // His display walked for his skeleton only (SKEL), drawing nothing
+        // and no gear (the Chao's draw carries it).
+        if self_retarget(m) {
+            SELF_CAP.set(true);
+            LCAP.set(true);
+            original(c, m, addr);
+            LCAP.set(false);
+            SELF_CAP.set(false);
+        }
         return;
     }
     // SA2_RIDER_DISP_OFF=1 (test): skip the hidden rider's display in Chao
@@ -2057,6 +2078,17 @@ fn debug_teleport(m: &mut Mem, task: u32) {
 
 thread_local! {
     static TP_DONE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Self mode with the Chao posed from the hidden character's skeleton
+/// (default; SA2_CHAO_RETARGET=0: the Chao's own motions).
+fn self_retarget(m: &Mem) -> bool {
+    self_drive(m) && !std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "0")
+}
+
+thread_local! {
+    /// The character's display is walked only for SKEL (self mode).
+    static SELF_CAP: Cell<bool> = const { Cell::new(false) };
 }
 
 fn chao_world(m: &Mem) -> bool {
