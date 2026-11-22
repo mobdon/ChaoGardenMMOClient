@@ -57,6 +57,12 @@ const SAVE_SLOT: u32 = 0x2C30;
 const AL_GENE_CREATE: u32 = 0x1_218C;
 const CREATE_EGG: u32 = 0x8F20;
 const GENE_SIZE: u32 = 0xC0;
+/// AL_GENE (al_chao_info.h, 0xA4 bytes; CHAO_PARAM_GC +0x438..+0x4DC).
+const GENE_BYTES: usize = 0xA4;
+/// The AL_GENE byte ranges the server's egg carries (EggColor; Abl for its 7
+/// stats; LifeTime; Personality through Multi). The rest keeps AL_GeneCreate's.
+/// The layout is the SAMT (PC) header's; unverified on GC until a live hatch.
+const SERVER_GENE: [(u32, u32); 4] = [(0x01, 0x02), (0x5C, 0x6A), (0x6C, 0x6E), (0x74, 0x9C)];
 /// MMO hub residents: the game's own character Chao (al_chao_info.h TYPE_TAILS
 /// 0x17, TYPE_KNUCKLES 0x18, TYPE_AMY 0x19), made with `CreateChaoExtra`
 /// (see CREATE_CHAO_EXTRA). Offsets from the player in the lobby are
@@ -189,12 +195,12 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
         if HATCH.get() && !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
-            lay_egg(c, m, text);
+            lay_egg_with(c, m, text, None);
         }
         // Eggs the player picked and named on the page hatch here too.
         if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
-            for _ in 0..picked_eggs() {
-                lay_egg(c, m, text);
+            for gene in picked_eggs() {
+                lay_egg_with(c, m, text, gene.as_ref());
             }
         }
         if now != LOBBY {
@@ -214,20 +220,31 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     original(c, m, TOP_LEVEL);
 }
 
-/// How many named eggs the page has queued since the last read (/dev/egg:
-/// a little-endian u32, cleared by the read; absent outside the browser).
-fn picked_eggs() -> u32 {
+/// Named eggs the page queued since the last read (/dev/egg: a u32 count,
+/// then per egg a u32 "has gene" flag and an AL_GENE; absent outside the
+/// browser). Each is the server egg's gene, or None for the game's own.
+fn picked_eggs() -> Vec<Option<Vec<u8>>> {
     use std::io::Read;
-    let mut b = [0u8; 4];
-    match std::fs::File::open("/dev/egg").and_then(|mut f| f.read_exact(&mut b)) {
-        Ok(()) => u32::from_le_bytes(b),
-        Err(_) => 0,
+    const SLOT: usize = 4 + GENE_BYTES;
+    let mut b = vec![0u8; 4 + 8 * SLOT];
+    let Ok(n) = std::fs::File::open("/dev/egg").and_then(|mut f| f.read(&mut b)) else {
+        return Vec::new();
+    };
+    if n < 4 {
+        return Vec::new();
     }
+    let count = (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).min((n - 4) / SLOT);
+    (0..count)
+        .map(|i| {
+            let s = &b[4 + i * SLOT..4 + (i + 1) * SLOT];
+            (s[..4] != [0; 4]).then(|| s[4..].to_vec())
+        })
+        .collect()
 }
 
 /// The game's own egg at the player's feet, with guest scratch for the gene
 /// and position on a lowered stack (as the native caller keeps them).
-fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
+fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>) {
     let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
     if slot == 0 {
         eprintln!("start-stage: no free Chao save slot; no egg");
@@ -241,6 +258,13 @@ fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
         m.w32(pos + i * 4, m.r32(player + i * 4));
     }
     guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
+    if let Some(bytes) = from_server {
+        for (from, to) in SERVER_GENE {
+            for o in from..to {
+                m.w8(gene + o, bytes[o as usize]);
+            }
+        }
+    }
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
 }

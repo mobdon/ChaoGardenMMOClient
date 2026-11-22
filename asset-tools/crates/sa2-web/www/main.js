@@ -32,7 +32,7 @@ function log(text, err) {
 const sh = {
   ctl: new SharedArrayBuffer(64),
   pad: new SharedArrayBuffer(16),
-  egg: new SharedArrayBuffer(4),
+  egg: new SharedArrayBuffer(4 + 8 * 0xa8),
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
@@ -42,7 +42,26 @@ const sh = {
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
 // A named egg hatches in the Chao Lobby (sa2_boot::start_stage reads /dev/egg).
-window.sa2HatchEgg = () => Atomics.add(new Int32Array(sh.egg), 0, 1);
+// Up to 8 queued; each slot is a u32 "has gene" flag then an AL_GENE (0xA4 bytes,
+// al_chao_info.h) holding the server egg's own alleles where the game keeps them.
+window.sa2HatchEgg = egg => {
+  const count = new Int32Array(sh.egg, 0, 1), n = Atomics.load(count, 0);
+  if (n >= 8) return false;
+  const slot = new DataView(sh.egg, 4 + n * 0xa8, 0xa8), g = egg?.gene;
+  for (let i = 0; i < 0xa8; i++) slot.setUint8(i, 0);
+  if (g) {
+    slot.setUint32(0, 1, true);
+    const at = 4, pair = (o, [a, b]) => { slot.setInt8(at + o, Number(a)); slot.setInt8(at + o + 1, Number(b)); };
+    if (egg.eggColor != null) slot.setInt8(at + 0x01, egg.eggColor);
+    g.abl.forEach((p, i) => pair(0x5c + i * 2, p));
+    pair(0x6c, g.lifeTime);
+    g.personality.forEach((p, i) => pair(0x74 + i * 2, p));
+    pair(0x8e, g.taste); pair(0x90, g.tv); pair(0x92, g.music); pair(0x94, g.color);
+    pair(0x96, g.nonTex); pair(0x98, g.jewel); pair(0x9a, g.multi);
+  }
+  Atomics.add(count, 0, 1);
+  return true;
+};
 
 // ---- input --------------------------------------------------------------
 // Bits as the game reads them (sa2-web-game KEYS): A D S W, Space, E,
