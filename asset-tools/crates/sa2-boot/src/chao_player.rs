@@ -1245,15 +1245,15 @@ fn glove_native() -> bool {
 /// Where along the arm (shoulder 0 -> hand tip 1) the glove's origin (his
 /// wrist) sits, and how far the fists turn out from the hips (degrees):
 /// a presentation fit, not game data. SA2_GLOVE_UP / SA2_GLOVE_OUT override.
-/// Negative leans the fists in towards the body (10 in, after 10 out looked wrong).
+/// Degrees the cuff tips about its lowest point (positive: top in towards the body).
 fn glove_up() -> f32 {
     std::env::var("SA2_GLOVE_UP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.35)
 }
 fn glove_roll() -> f32 {
-    std::env::var("SA2_GLOVE_ROLL").ok().and_then(|v| v.parse().ok()).unwrap_or(-90.0)
+    std::env::var("SA2_GLOVE_ROLL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0)
 }
 fn glove_out() -> f32 {
-    std::env::var("SA2_GLOVE_OUT").ok().and_then(|v| v.parse().ok()).unwrap_or(-10.0)
+    std::env::var("SA2_GLOVE_OUT").ok().and_then(|v| v.parse().ok()).unwrap_or(15.0)
 }
 
 fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
@@ -1398,9 +1398,13 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
             (crate::skate::mul(&rot, &r), std::array::from_fn(|i| c[i] - s * rc[i]))
         };
         let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * s } else { t[i] }));
-        // Swung out from the hips about the Chao's forward axis (+z) through
-        // the shoulder: the right arm (-x) turns towards -x, the left towards +x.
+        // Tipped about the Chao's forward axis (+z) through the cuff's
+        // lowest point (its pivot): negative tips the top in towards the
+        // body. The right arm (-x) turns towards -x, the left towards +x.
         let out_deg = glove_out() * if sh[0] < 0.0 { -1.0 } else { 1.0 };
+        let low = src.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+        let piv: [f32; 3] = [t[0] + s * sc[0], t[1] + s * low, t[2] + s * sc[2]];
+        let sh = piv;
         let (so, co) = out_deg.to_radians().sin_cos();
         let rz = [[co, -so, 0.0], [so, co, 0.0], [0.0, 0.0, 1.0]];
         let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| {
