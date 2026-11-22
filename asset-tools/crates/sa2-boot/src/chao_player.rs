@@ -2084,6 +2084,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if chao_world(m) && matches!(STEP.get(), Step::Live(_)) && module_linked(m, 60) {
         export_pose(m);
         export_record(m);
+        take_skills(m);
         remote_tick(c, m);
         crate::name_tags::flush();
     }
@@ -2712,6 +2713,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn skills_are_raised_to_the_servers_and_never_lowered() {
+        // Tiny Garden training: the same level and progress, more points.
+        assert_eq!(raised((50, 40, 900), (50, 40, 960)), (50, 40, 960));
+        // Tiny Garden fruit: a level-up with its progress reset.
+        assert_eq!(raised((50, 90, 900), (51, 5, 915)), (51, 5, 915));
+        // The game grew since the server last saw the record: nothing is undone.
+        assert_eq!(raised((51, 5, 915), (50, 90, 900)), (51, 5, 915));
+    }
+
+    #[test]
     fn own_save_chao_fill_the_garden_to_eight_and_players_take_their_places() {
         // Alone: the player's Chao and 7 of their own others.
         assert!((0..7).all(|rank| idle_has_place(rank, 0)));
@@ -3078,6 +3089,40 @@ fn export_record(m: &Mem) {
         eprintln!("chao-player record: exported from {src:#x} (chaowk+0x5C {rec:#x}, INFO {INFO:#x})");
         let _ = std::fs::write(&path, &bytes);
         RECORD_SENT.set(bytes);
+    }
+}
+
+/// One skill as (level, progress, points): the record's own, raised to the
+/// server's where the server is ahead. Level and progress go together (a
+/// level-up resets progress); points never go down.
+fn raised(own: (u8, u8, u16), server: (u8, u8, u16)) -> (u8, u8, u16) {
+    let (level, progress) = (own.0, own.1).max((server.0, server.1));
+    (level, progress, own.2.max(server.2))
+}
+
+/// MMO glue: SA2_SKILLS_IN is the server's numbers for the player's Chao (7 x
+/// level, progress, points u16 big-endian; the answer to the record upload,
+/// so they are for this record). The live record is raised to them, which is
+/// how Tiny Garden training and fruit reach the game. Record offsets as the
+/// game's AL_ParameterGrow uses them: progress +0x20+i, level +0x30+i,
+/// points +0x38+2i.
+fn take_skills(m: &mut Mem) {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if f % RECORD_EVERY != 0 {
+        return;
+    }
+    let Some(rec) = own_record(m) else { return };
+    let Some(bytes) = std::env::var("SA2_SKILLS_IN").ok().and_then(|p| std::fs::read(p).ok()).filter(|b| b.len() == 28) else { return };
+    for (i, s) in bytes.chunks(4).enumerate() {
+        let i = i as u32;
+        let own = (m.r8(rec + 0x30 + i), m.r8(rec + 0x20 + i), m.r16(rec + 0x38 + 2 * i));
+        let new = raised(own, (s[0], s[1], u16::from_be_bytes([s[2], s[3]])));
+        if new != own {
+            eprintln!("chao-player skills: skill {i} {own:?} raised to {new:?} from the server");
+            m.w8(rec + 0x30 + i, new.0);
+            m.w8(rec + 0x20 + i, new.1);
+            m.w16(rec + 0x38 + 2 * i, new.2);
+        }
     }
 }
 
