@@ -120,6 +120,8 @@ static SHOWN: Global<Option<u32>> = global!(None);
 static TP_ARRIVE: Global<bool> = global!(false);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
+/// The pending start has happened; the title after it means the game came back.
+static STARTED: Global<bool> = global!(false);
 /// The pause menu's EXIT asked for the lobby ([`go_lobby`]).
 static TO_LOBBY: Global<bool> = global!(false);
 /// The lobby's residents are out (cleared when the game leaves the lobby).
@@ -151,6 +153,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         // character; any character enters the same Chao World.
         PENDING.set(Some((CHAO_WORLD, 0)));
         chao_world_glue(c);
+        c.rt.set_override(TOP_LEVEL, top_level);
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
                 .ok()
@@ -187,22 +190,10 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
 /// The Chao World glue: the area told to the page, the lobby's residents.
 fn chao_world_glue(c: &mut Cpu) {
     SHOWN.set(Some(u32::MAX));
-    c.rt.set_override(TOP_LEVEL, top_level);
     c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
     c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
         quiet_residents(c, m, SE_AT_POS_TIMER, 8)
     });
-}
-
-/// A level started from the MMO is being left with the pause menu's EXIT:
-/// start Chao World (the lobby) once the game is back at the mode a start
-/// happens in, as at boot. Unverified: that the game's own exit from a level
-/// passes through one of those modes (SA2_MODE_LOG prints them).
-pub(crate) fn lobby_after_exit(c: &mut Cpu) {
-    if std::env::var("SA2_START_STAGE").is_ok() {
-        PENDING.set(Some((CHAO_WORLD, 0)));
-        chao_world_glue(c);
-    }
 }
 
 fn top_level(c: &mut Cpu, m: &mut Mem) {
@@ -228,7 +219,16 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     if mode == MD_TITLE_INIT || mode == MD_AFTER_CARD {
         if let Some((stage, ch)) = PENDING.take() {
+            STARTED.set(true);
             start(c, m, stage, ch);
+        } else if mode == MD_TITLE_INIT && STARTED.get() {
+            // MMO glue: the title never shows. Back at it after the start (a
+            // level's EXIT or end, the lobby's own way out): Chao World, as at
+            // boot. Unverified: that each of those ways reaches this mode.
+            if SHOWN.get().is_none() {
+                chao_world_glue(c);
+            }
+            start(c, m, CHAO_WORLD, 0);
         }
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
