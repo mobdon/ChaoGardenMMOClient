@@ -8,9 +8,9 @@ public final class ServerOriginTest {
     @Test public void usesOneExplicitHttpsOriginForEveryDestination() {
         ServerOrigin origin = new ServerOrigin(" https://garden.example:8443/ ");
         assertEquals("https://garden.example:8443", origin.value());
-        assertEquals("https://garden.example:8443/api/account", origin.api("account"));
-        assertEquals("https://garden.example:8443/api/intent", origin.api("intent"));
-        assertEquals("https://garden.example:8443/api/pairing/claim", origin.api("pairing/claim"));
+        assertEquals("https://garden.example:8443/api/account/login", origin.api("account/login"));
+        assertEquals("https://garden.example:8443/api/session", origin.api("session"));
+        assertEquals("https://garden.example:8443/api/tiny-chao", origin.api("tiny-chao"));
         assertEquals("https://garden.example:8443/api/assets/tiny-dark-chaos.png", origin.asset("/api/assets/tiny-dark-chaos.png"));
         assertEquals("https://garden.example:8443/tiny.html", origin.garden());
     }

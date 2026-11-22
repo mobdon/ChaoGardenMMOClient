@@ -34,14 +34,15 @@
               <div><small>YOUR SAVED CHAO</small><h2 id="tiny-name">Meet you in the garden</h2><span id="tiny-form">Load an existing save to begin.</span></div>
               <div class="tiny-balance" aria-label="Saved ring balance"><span>◎</span><strong id="tiny-rings">—</strong><small>RINGS</small></div>
             </div>
-            <label id="tiny-slot-label" class="slot-label" hidden>Saved Chao<select id="tiny-slot" aria-label="Choose a saved Chao"></select></label>
-            <div id="tiny-auth" class="tiny-auth"><p id="tiny-auth-message">Looking for this browser's saved Chao…</p><a href="/?tiny=1" class="text-link">Load a save at the garden title <span>↗</span></a></div>
-            <form id="tiny-pairing" class="tiny-pairing" hidden>
-              <p>Pair this phone using a short-lived invitation approved on your desktop.</p>
-              <label>Invitation ID<input name="pairingId" required autocomplete="off" maxlength="128" spellcheck="false" /></label>
-              <label>One-time secret<input name="pairingSecret" type="password" required autocomplete="off" maxlength="256" /></label>
-              <button class="small-button" type="submit">Pair this device</button>
-            </form>
+            <label id="tiny-slot-label" class="slot-label" hidden>Pick your Chao<select id="tiny-slot" aria-label="Choose a saved Chao"></select></label>
+            <div id="tiny-auth" class="tiny-auth"><p id="tiny-auth-message">Looking for your saved login…</p></div>
+            <div id="tiny-login" class="tiny-login">
+              <div class="auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-auth="tiny-login-form">Log in</button><button type="button" role="tab" aria-selected="false" data-auth="tiny-card-form">Memory card</button></div>
+              <form id="tiny-login-form"><label>USERNAME OR EMAIL<input id="tiny-login-name" name="username" autocomplete="username" autocapitalize="none" required /></label><label>PASSWORD<input id="tiny-login-password" name="password" type="password" autocomplete="current-password" required /></label><label class="remember-me"><input id="tiny-remember" type="checkbox" checked /> Remember me on this device</label><button class="small-button" type="submit">Log in ↗</button></form>
+              <form id="tiny-card-form" hidden><label>MEMORY CARD CODE<input id="tiny-card-code" name="code" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="xxxx xxxx xxxx …" required /></label><button class="small-button" type="submit">Insert ↗</button><small>Use this when you can't get into your email.</small></form>
+              <p id="tiny-login-error" role="alert"></p>
+              <small>New here? Sign up and play once on your PC. Then your Chao is here.</small>
+            </div>
           </section>
           <p class="tiny-save-note" id="tiny-sync-note" role="status">Waiting for a server snapshot.</p>
           <p class="tiny-save-note" id="tiny-save-note" role="status">No save acknowledgement received this visit.</p>

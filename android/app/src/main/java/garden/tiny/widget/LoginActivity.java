@@ -15,9 +15,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import org.json.JSONObject;
 
-/** Native device setup. No WebView bridge, desktop token import or profile creation. */
-public final class PairingActivity extends Activity {
-    private EditText origin, pairingId, pairingSecret;
+/** The same login as the game: username or email with a password, or the memory card code. */
+public final class LoginActivity extends Activity {
+    private EditText origin, login, password, card;
     private TextView status;
     private Button claim, refresh, open, forget;
     @Override public void onCreate(Bundle saved) {
@@ -29,11 +29,12 @@ public final class PairingActivity extends Activity {
             return insets;
         });
         text(column,"Tiny Garden",28);
-        text(column,"Pair this Android widget with the same Chao on your desktop. In the desktop app, approve a new Android device and copy its two-minute invitation here.",16);
+        text(column,"Log in with your garden account. Your Chao is here after you have played once on your PC.",16);
         origin=field(column,"HTTPS server origin (https://garden.example)",false);
-        pairingId=field(column,"Pairing ID",false);
-        pairingSecret=field(column,"One-use pairing secret",true);
-        claim=button(column,"Pair approved device",v->claim());
+        login=field(column,"Username or email",false);
+        password=field(column,"Password",true);
+        card=field(column,"Or your memory card code, if you can't get into your email",true);
+        claim=button(column,"Log in",v->claim());
         refresh=button(column,"Refresh widget snapshot",v->run(()->new GardenRepository(this).refresh(),"Snapshot refreshed."));
         open=button(column,"Open Tiny Garden",v->openGarden());
         button(column,"Add home-screen widget",v->{
@@ -41,17 +42,17 @@ public final class PairingActivity extends Activity {
             if(manager.isRequestPinAppWidgetSupported()) manager.requestPinAppWidget(new ComponentName(this,GardenWidget.class),null,null);
             else status.setText("Long-press your launcher home screen, choose Widgets, then Tiny Garden.");
         });
-        forget=button(column,"Forget this device locally",v->run(()->{
+        forget=button(column,"Log out on this device",v->run(()->{
             new SecureStore(this).clear(); OriginalArtwork.clear(this); GardenJobService.cancel(this);
-        },"Local credential removed. Revoke this Android device in your desktop account to end server access."));
+        },"Logged out on this device."));
         status=text(column,"Reading device state…",16);
-        text(column,"The widget displays server snapshots and quick care. Minigames and AFK training controls open in the full Tiny Garden app. Android schedules background reads about every 30 minutes and may delay them. Refresh for current data.",14);
-        text(column,"Full-app entry opens /tiny.html on this HTTPS server. Sign in to the same account there; the widget never puts its credential into a browser URL. Original art is fetched from your server and is not bundled into this APK.",14);
+        text(column,"The widget shows your Chao as the server has it. Care, minigames and training open in Tiny Garden. Android schedules background reads about every 30 minutes and may delay them. Refresh for current data.",14);
+        text(column,"Open Tiny Garden uses the same login in your browser. Your password is never stored; the widget keeps only the key the server gave this login.",14);
         GardenRepository.IO.execute(()->{
             try {
                 JSONObject state=new SecureStore(this).read();
-                runOnUiThread(()->{ origin.setText(state.optString("origin")); status.setText(state.has("token")?"Device paired. "+(state.has("error")?state.optString("error"):"Refresh to read your Chao."):"No paired device."); });
-            } catch(Exception failure) { runOnUiThread(()->status.setText("Device storage is locked or invalid. Forget locally and pair again.")); }
+                runOnUiThread(()->{ origin.setText(state.optString("origin")); status.setText(state.has("token")?"Logged in. "+(state.has("error")?state.optString("error"):"Refresh to read your Chao."):"Not logged in."); });
+            } catch(Exception failure) { runOnUiThread(()->status.setText("Device storage is locked or invalid. Log out and log in again.")); }
         });
     }
     private TextView text(LinearLayout parent,String value,int size) {
@@ -82,24 +83,23 @@ public final class PairingActivity extends Activity {
     }
     private void setBusy(boolean busy) { claim.setEnabled(!busy); refresh.setEnabled(!busy); forget.setEnabled(!busy); open.setEnabled(!busy); }
     private void claim() {
-        final String server, id=pairingId.getText().toString().trim(), secret=pairingSecret.getText().toString().trim();
+        final String server, name=login.getText().toString().trim(), secret=password.getText().toString(),
+                code=card.getText().toString().replaceAll("\\s+","").toLowerCase(java.util.Locale.ROOT);
         try {
             server=new ServerOrigin(origin.getText().toString()).value();
-            if(id.isEmpty() || id.length()>256 || secret.length()<16 || secret.length()>512) throw new IllegalArgumentException("Copy the complete, short-lived desktop invitation.");
+            if(code.isEmpty() ? name.isEmpty() || secret.isEmpty() : !code.matches("[a-f0-9]{64}"))
+                throw new IllegalArgumentException(code.isEmpty()?"Enter your username or email and your password.":"That memory card code isn't complete. It has 64 letters and numbers.");
         } catch(IllegalArgumentException invalid) { status.setText(invalid.getMessage()); return; }
-        pairingSecret.setText("");
+        password.setText(""); card.setText("");
         run(()->{
-            JSONObject response=new Gateway(server,null).claim(new JSONObject().put("pairingId",id).put("pairingSecret",secret));
-            String token=Snapshot.text(response,"token",256), device=Snapshot.text(response,"deviceId",128);
-            if(token.length()<16) throw new IllegalArgumentException("Invalid device credential");
-            JSONObject identity=response.getJSONObject("identity");
-            if(Snapshot.integer(identity,"schemaVersion",2,2)!=2 || !device.equals(identity.getString("deviceId"))) throw new IllegalArgumentException("Incompatible identity service");
-            JSONObject state=new JSONObject().put("origin",server).put("token",token).put("deviceId",device)
-                    .put("accountId",Snapshot.text(identity,"accountId",128)).put("chaoId",Snapshot.text(identity,"chaoId",128))
-                    .put("pairedRevision",Snapshot.integer(identity,"revision",0,Snapshot.MAX_SAFE));
+            JSONObject reply=code.isEmpty()?new Gateway(server,null).login(new JSONObject().put("login",name).put("password",secret)):new Gateway(server,code).card();
+            // shortcut: the first Chao on the account, upgrade when the server records which Chao the player picked for the phone.
+            JSONObject first=reply.getJSONArray("chao").getJSONObject(0);
+            JSONObject state=new JSONObject().put("origin",server).put("token",Snapshot.text(first,"token",256))
+                    .put("chaoId",Snapshot.text(first.getJSONObject("player"),"id",128));
             OriginalArtwork.clear(this); new SecureStore(this).write(state); GardenJobService.schedule(this);
             new GardenRepository(this).refresh();
-        },"Device paired and snapshot loaded. Add the widget to your home screen.");
+        },"Logged in. Add the widget to your home screen.");
     }
     private void openGarden() {
         try { startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(new ServerOrigin(origin.getText().toString()).garden()))); }

@@ -2,7 +2,7 @@
 
 A native Android application and RemoteViews home-screen widget, separate from the browser preview at `widget.html`. Compact, wide and large layouts show the canonical Chao's needs, stats, activity and training availability. Android setup pairs an independent device credential; the widget opens the full Tiny Garden app for minigames and training controls.
 
-**Delivery status:** the actual debug APK and instrumentation APK build successfully; Android lint and all 44 regular JVM tests pass. The production Java adapter also passes a real isolated Rust pairing/care/restart round trip. The native package includes the verified local A2NE garden and original Neutral/Hero/Dark Chaos artwork when staged. Device execution remains unverified: no physical device was attached and the isolated software emulator attempts did not reach a usable Android guest. Production deployment and paired Android acceptance remain open. See [verification/STATUS.md](verification/STATUS.md) for exact evidence and limits.
+**Delivery status:** the widget now uses the normal account login (the pairing design below this line in older notes no longer applies). The plain-Java classes compile and their 28 JVM tests pass; the APK has **not** been rebuilt or run on a device since this change. Files under `verification/` describe the earlier pairing build.
 
 ## Build and test separately from the browser
 
@@ -16,18 +16,18 @@ Prerequisites: JDK 17, Gradle 8.11.1, Android SDK platform 35/build-tools 35.0.0
 
 The script runs `assembleDebug lintDebug testDebugUnitTest assembleDebugAndroidTest`; `-Connected` also runs `connectedDebugAndroidTest`. Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. Reports: `app/build/reports/`. Debug packaging is for verification; distribution needs project-owned release signing.
 
-## Pair and use
+## Log in and use
 
-1. Install the APK and open Tiny Garden. Enter a deliberately reachable HTTPS garden origin. A desktop loopback address is not reachable from a phone.
-2. Approve an Android invitation from the desktop account and copy its two-minute pairing ID/secret. Android submits the invitation once and stores its independent device credential using Android Keystore AES-GCM encryption; backup is disabled. Lost claim responses require a new invitation.
-3. Refresh and add the widget through the app or launcher picker. Responsive breakpoints are 160×180, 320×180 and 320×360dp; launcher grid counts vary. Compact shows one skill plus six in the app; wide shows seven levels; large shows all seven levels/grades. Accessibility retains points and hidden numeric grades.
-4. Pet and Rest/Wake send Rust Watch-care intents only for a current resident, recent snapshot and fresh tap. Android obtains a short watch lease if needed, submits its current revision/sequence and reads the canonical account after acknowledgement. It releases only the lease it acquired for that tap. Conflicts require refresh; uncertain mutations are never automatically replayed. Feed is not exposed because the existing Watch backend does not implement its inventory transaction.
-5. Open launches the same origin's `/tiny.html` in the full browser app. Sign in to the same account there; authenticated browser handoff remains separate. No credential enters a URL, WebView bridge or browser storage.
-6. Forget removes local credentials/cache. Revoke the device from the desktop account to end server access. Local removal does not claim remote revocation; confirmed authorization failures clear local credentials.
+1. Install the APK and open Tiny Garden. Enter the HTTPS garden server.
+2. Log in with your username or email and password, or with your memory card code. The app calls `POST /api/account/login` (or `GET /api/card`) and stores only the Chao key the server returns, sealed with Android Keystore. The password is never stored.
+3. The widget reads `GET /api/tiny-chao` and `POST /api/session`. Until the same account has played once on its PC the server has no Chao model and the widget says so.
+4. When the stored model is a PNG picture sheet (8 x 8 cells of 96 px) the widget draws your own Chao from its first cell; otherwise it uses the shared Chaos pictures.
+5. Pet and Rest/Wake open Tiny Garden in the browser: care needs a live garden visit, the widget only reads.
+6. Log out removes the key and cached pictures from the device.
 
 ## Data, art and background work
 
-The native adapter reads authenticated `GET /api/account`. It requires the exact canonical Chao ID and private identity/revision and translates `hunger` to Fullness. It never picks another player or creates a profile. Server simulation time is not a UTC clock. The current contract has no confirmed save UTC or durable AFK job, so save time/training remain unavailable; the widget labels its device receipt time as **Read**, never **Saved**. An internal display schema does not introduce new server routes.
+The native adapter reads the player in the `POST /api/session` reply. It requires the logged-in Chao ID and translates `hunger` to Fullness. It never picks another player or creates a profile. Server simulation time is not a UTC clock. The current contract has no confirmed save UTC or durable AFK job, so save time/training remain unavailable; the widget labels its device receipt time as **Read**, never **Saved**. An internal display schema does not introduce new server routes.
 
 The launcher shows a static snapshot. JobScheduler requests background reads every 30 minutes; Android may delay them under battery/network/quota limits. Manual refresh is available in the app and large widget. No foreground service, exact alarm, continuous simulation, local training settlement or offline reward queue exists. Delayed and redelivered care work is dropped; process changes invalidate freshness. A pending intent is encrypted before sending. Later authoritative revision/lease/sequence changes fence it before another care is allowed.
 

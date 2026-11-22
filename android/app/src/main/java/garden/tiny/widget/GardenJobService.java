@@ -23,12 +23,6 @@ public final class GardenJobService extends JobService {
         context.getSystemService(JobScheduler.class).enqueue(new JobInfo.Builder(REQUEST,new ComponentName(context,GardenJobService.class))
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build(),new JobWorkItem(work));
     }
-    static void enqueueCare(Context context,String action,String chao,long revision,long snapshotElapsed) {
-        Intent work=new Intent().setAction("care").putExtra("care",action).putExtra("chaoId",chao).putExtra("revision",revision)
-                .putExtra("snapshotElapsed",snapshotElapsed).putExtra("clickedElapsed",android.os.SystemClock.elapsedRealtime()).putExtra("process",GardenRepository.PROCESS);
-        context.getSystemService(JobScheduler.class).enqueue(new JobInfo.Builder(REQUEST,new ComponentName(context,GardenJobService.class))
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build(),new JobWorkItem(work));
-    }
     static void cancel(Context context) { JobScheduler jobs=context.getSystemService(JobScheduler.class); jobs.cancel(PERIODIC); jobs.cancel(REQUEST); }
     @Override public boolean onStartJob(JobParameters params) {
         java.util.concurrent.atomic.AtomicBoolean stop=new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -42,13 +36,7 @@ public final class GardenJobService extends JobService {
                 else {
                     JobWorkItem work;
                     while(!stop.get() && (work=params.dequeueWork())!=null) {
-                        Intent intent=work.getIntent();
-                        // Mutating work is never resumed automatically after an OS retry/restart.
-                        if(!stop.get() && "care".equals(intent.getAction()) && CarePolicy.firstDeliveryIsCurrent(work.getDeliveryCount(),intent.getStringExtra("process"),GardenRepository.PROCESS,
-                                intent.getLongExtra("clickedElapsed",-1),android.os.SystemClock.elapsedRealtime())) {
-                            try { repository.care(intent.getStringExtra("care"),intent.getStringExtra("chaoId"),intent.getLongExtra("revision",-1),intent.getLongExtra("snapshotElapsed",-1),intent.getLongExtra("clickedElapsed",-1),()->!stop.get()); }
-                            catch(Exception rejected) { /* Repository persisted safe status; no blind replay. */ }
-                        } else repository.refresh();
+                        repository.refresh();
                         if(!stop.get()) params.completeWork(work);
                     }
                 }
