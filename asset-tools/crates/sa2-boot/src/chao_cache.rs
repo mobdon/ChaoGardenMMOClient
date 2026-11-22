@@ -21,8 +21,11 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-/// The region's start: above chao_player's 0x8200_0000..0x82F0_3000 use.
-pub const BASE: u32 = 0x8300_0000;
+/// The region's start: right after chao_player's own use (ChaoMain, its
+/// motion module, the strings, INFO and the mixed action table end below
+/// 0x82F0_2A00), page-aligned; it runs to the top of MEM1 (SA2_MEM1_MB:
+/// about 1 MB at 48 MB, enough for hundreds of 0x800-byte records).
+pub const BASE: u32 = 0x82F0_4000;
 /// The save info record CreateChaoExtra takes.
 pub const INFO_SIZE: u32 = 0x800;
 /// An offline player's Chao stays cached this long before eviction.
@@ -80,7 +83,15 @@ thread_local! {
 }
 
 fn with<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
-    CACHE.with_borrow_mut(|c| f(c.get_or_insert_with(|| Cache { region: Region::new(BASE, sa2_recomp::rt::mem1() | 0x8000_0000), ..Default::default() })))
+    CACHE.with_borrow_mut(|c| f(c.get_or_insert_with(|| {
+        let end = sa2_recomp::rt::mem1() | 0x8000_0000;
+        if end <= BASE {
+            eprintln!("chao-cache: disabled, MEM1 ends at {end:#x} below its region {BASE:#x} (raise SA2_MEM1_MB)");
+            return Cache { region: Region::new(BASE, BASE), ..Default::default() };
+        }
+        eprintln!("chao-cache: region {BASE:#x}..{end:#x} ({} KB)", (end - BASE) / 1024);
+        Cache { region: Region::new(BASE, end), ..Default::default() }
+    })))
 }
 
 impl Cache {
