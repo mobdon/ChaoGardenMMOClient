@@ -1,6 +1,7 @@
 .title-screen.welcome-dialog { width: min(1120px, 96vw); max-width: 1120px; height: min(760px, 94dvh); max-height: 94dvh; padding: 0; border: 1px solid #23436d; border-radius: 18px; overflow: auto; text-align: left; background: #071329; color: #eef5ff; box-shadow: 0 30px 120px #000b; }
 .title-screen[open] { display: grid; grid-template-columns: .95fr 1fr; }
-.title-screen::backdrop { background: #040c1de8; backdrop-filter: blur(10px); }
+/* Solid: the old web hub scene behind the login must not show through. */
+.title-screen::backdrop { background: radial-gradient(ellipse at 50% 40%, #0b1f44, #040c1d 70%); }
 .title-art { min-height: 680px; position: relative; overflow: hidden; background: #0b182d; }
 .title-art img { width: 100%; height: 100%; object-fit: contain; object-position: center; position: absolute; }
 .title-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(0deg, #041027b3, transparent 30%), linear-gradient(90deg, transparent 80%, #071329); pointer-events: none; }
