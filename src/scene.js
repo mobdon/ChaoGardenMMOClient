@@ -248,7 +248,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
 
   function gearFor(data) {
     return {
-      footwear: data.admin && data.gear?.footwear === 'shadow-air-shoes' ? 'shadow-air-shoes' : null,
+      footwear: data.admin && ['shadow-air-shoes', 'sonic-light-shoes'].includes(data.gear?.footwear) ? data.gear.footwear : null,
       hands: data.admin && data.gear?.hands === 'knuckles-hammer-gloves' ? 'knuckles-hammer-gloves' : null,
       look: data.admin && data.gear?.look === METAL_CHAO_LOOK ? METAL_CHAO_LOOK : null,
     };
@@ -302,7 +302,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         const isCharacter = isFamilyBody || Object.hasOwn(faceMaterials, key);
         const isCinematicEmerald = /^emerald-(red|blue|green|cyan|purple|yellow|white)$/.test(key);
         const isNativeWalker = key === 'dark-chao-walker';
-        const isNativeGear = /^(shadow-air-shoes|knuckles-hammer-gloves)-(left|right)$/.test(key);
+        const isNativeGear = /^(shadow-air-shoes|sonic-light-shoes|knuckles-hammer-gloves)-(left|right)$/.test(key);
         const isNativeWalkerEffect = key === 'dark-walker-shot' || key === 'dark-walker-booster';
         for (const mat of container.materials) {
           if ('albedoColor' in mat) {
