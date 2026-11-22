@@ -106,6 +106,20 @@ static RESIDENTS_OUT: Global<bool> = global!(false);
 static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
 /// The new player's Chao save slot while the tutorial runs (0 = no tutorial).
 static TUTORIAL_SLOT: Global<u32> = global!(0);
+/// Cocoon timers (section 5 + 0x2A50, read by `ALBHV_Mayu` 0x3AE44) and its
+/// native frames 200/1800/900/900/100 (about 65 s); phases 2-4 cut to 300 frames each
+/// (1200 frames, about 20 s) for the tutorial's evolution only.
+const COCOON_FRAMES: [(u32, u32); 5] = [
+    (0x84, 60),
+    (0x88, 550),
+    (0x8C, 275),
+    (0x90, 275),
+    (0x94, 40),
+];
+/// Frames to keep the short timers before putting the native ones back.
+/// shortcut: shared table, so a garden Chao evolving in this window is also fast; a per-Chao hook would fix that.
+const COCOON_HOLD: u32 = 1300;
+static COCOON_RESTORE: Global<(u32, [u32; 5], u32)> = global!((0, [0; 5], 0));
 /// Next guide line to show and frames until it shows.
 static LINE: Global<(usize, u32)> = global!((0, 0));
 
@@ -181,6 +195,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             RESIDENTS_OUT.set(true);
             residents(c, m, text);
         }
+        restore_cocoon(m);
         if now == 0 && TUTORIAL_SLOT.get() != 0 {
             tutorial(c, m, text);
         }
@@ -237,6 +252,22 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     c.r[1] = sp;
 }
 
+/// Puts the cocoon's native phase timers back once the tutorial's evolution is over.
+fn restore_cocoon(m: &mut Mem) {
+    let (table, saved, left) = COCOON_RESTORE.get();
+    if table == 0 {
+        return;
+    }
+    if left > 0 {
+        COCOON_RESTORE.set((table, saved, left - 1));
+        return;
+    }
+    for (i, (o, _)) in COCOON_FRAMES.into_iter().enumerate() {
+        m.w32(table + o, saved[i]);
+    }
+    COCOON_RESTORE.set((0, [0; 5], 0));
+}
+
 /// The tutorial ends when the player reaches the Tails Chao guide: the new
 /// Chao's growth goes to full, and ChaoMain's own check evolves it.
 fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
@@ -266,8 +297,15 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
         return;
     }
     let (lo, off) = FULL_GROWTH;
-    let hi = (section(m, text, 5) + lo).wrapping_add(0x8000) & 0xFFFF_0000;
-    m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(hi + off));
+    let table = section(m, text, 5) + lo;
+    m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(table + off));
+    // Shorten the cocoon's phase timers for this evolution, put back afterwards.
+    let mut saved = [0u32; 5];
+    for (i, (o, f)) in COCOON_FRAMES.into_iter().enumerate() {
+        saved[i] = m.r32(table + o);
+        m.w32(table + o, f);
+    }
+    COCOON_RESTORE.set((table, saved, COCOON_HOLD));
     TUTORIAL_SLOT.set(0);
     LINE.set((0, 0));
 }
