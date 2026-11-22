@@ -1580,6 +1580,9 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
 }
 
 fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    if self_drive(m) {
+        return;
+    }
     // SA2_RIDER_DISP_OFF=1 (test): skip the hidden rider's display in Chao
     // World, to see whether the white skate glow comes from it.
     if chao_world(m) && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_RIDER_DISP_OFF").is_ok_and(|v| v == "1") {
@@ -1636,6 +1639,15 @@ fn chao_world(m: &Mem) -> bool {
     m.r16(STAGE_NUM) as i16 >= 90
 }
 
+/// playertwp[0] (main.dol .bss, GSNE8P symbols).
+const PLAYERTWP: u32 = 0x801E_7768;
+
+/// SA2_CHAO_SELF=1: in Chao World the player's Chao drives itself
+/// (chao_drive.rs) and Sonic's exec and display do not run at all.
+fn self_drive(m: &Mem) -> bool {
+    chao_world(m) && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_CHAO_SELF").is_ok_and(|v| v.trim() == "1")
+}
+
 thread_local! {
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
@@ -1643,7 +1655,10 @@ thread_local! {
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let task = c.r[3];
-    original(c, m, addr);
+    let me = self_drive(m);
+    if !me {
+        original(c, m, addr);
+    }
     // A new stage or Chao World area drops the Chao task:
     // create the player's Chao again.
     // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
@@ -1681,7 +1696,18 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             sizes.clear();
         });
     }
-    let data1 = m.r32(task + 0x34);
+    let mut data1 = m.r32(task + 0x34);
+    if let (true, Step::Live(chao)) = (me, STEP.get()) {
+        // The Chao is the player: it moves itself and the game's player 1
+        // task-work pointer is its own, so camera and objects follow it.
+        data1 = m.r32(chao + 0x34);
+        if data1 != 0 {
+            crate::chao_drive::drive(c, m, chao, rt::sec(m, 60, 1));
+            if !std::env::var("SA2_CHAO_PTWP").is_ok_and(|v| v == "0") {
+                m.w32(PLAYERTWP, data1);
+            }
+        }
+    }
     if data1 == 0 {
         return;
     }
