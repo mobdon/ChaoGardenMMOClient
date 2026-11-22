@@ -565,6 +565,12 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
     for (i, o) in (0x08..0x34).step_by(4).enumerate() { m.w32(heel + o, keep[i]); }
     // The hub's own Air Shoes file when there is one (it fits as in the hub).
     let hub = hub_shoe(c, m);
+    // Without the hub's shoe file nothing is drawn (the baked fallback lay
+    // on the floor beside the Chao on a site with a stale file list).
+    // SA2_BOOT_PARTS set (debug): the baked heel/toe and overlay.
+    if hub == 0 && std::env::var_os("SA2_BOOT_PARTS").is_none() {
+        return;
+    }
     let bv = if hub != 0 { HUB_SHOE_VERTS.with_borrow(|v| v.clone()) } else if baked_boot(c, m) != 0 { BAKED_VERTS.with_borrow(|v| v.clone()) } else { bv };
     let node = SHOES[n].0;
     let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
