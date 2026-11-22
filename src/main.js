@@ -507,6 +507,13 @@ $('#join-form').addEventListener('submit', async (event) => {
   } catch { toast('Could not reach the server to make your account.', 'error'); }
   $('#signup-password').value = '';
 });
+// Log in / Sign up tabs: one form shows at a time.
+document.querySelectorAll('.auth-tabs button').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('.auth-tabs button').forEach(other => {
+    other.setAttribute('aria-selected', String(other === tab));
+    $(`#${other.dataset.auth}`).hidden = other !== tab;
+  });
+}));
 // Log in: the server opens the account's memory card and its Chao fill the slots.
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
