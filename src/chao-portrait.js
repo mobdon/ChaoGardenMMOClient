@@ -32,13 +32,13 @@ export async function mountChaoPortrait(canvas, player) {
   const entries = model.instantiateModelsToScene(name => name, false);
   for (const group of entries.animationGroups) group.stop();
   const visual = entries.rootNodes[0];
-  visual.rotation = new B.Vector3(0, Math.PI + TURN, 0); // face the camera, then the select window's turn
+  visual.rotate(B.Axis.Y, TURN); // the select window's turn; the camera sits on the Chao's front (+z)
   const imported = { entries, visual };
   const stand = source && cloneNativeMotion(imported, source, captureChaoPose(imported), 'alm_tati', 'Stand');
   stand?.start(true, 1);
   const { min, max } = visual.getHierarchyBoundingVectors();
   const height = max.y - min.y;
-  const camera = new B.ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
+  const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
   camera.minZ = 0.01;
   engine.runRenderLoop(() => scene.render());
   return dispose;

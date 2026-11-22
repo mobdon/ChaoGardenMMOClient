@@ -39,13 +39,21 @@ export function mountOverlay(nextSocket) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
     slots.record(data.token, data.player, undefined, card);
+    window.sa2HatchEgg?.(); // the game lays the egg at the player's feet in the lobby
   } });
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
   const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
   if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
   addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
-  tinyButton.addEventListener('click', () => window.open('/tiny.html', '_blank'));
+  // Tiny Garden rides along on the same card (inventory rule): opened inside the panel, not a new tab.
+  let tiny = null;
+  tinyButton.addEventListener('click', () => {
+    if (tiny) { tiny.remove(); tiny = null; return; }
+    tiny = Object.assign(document.createElement('iframe'), { src: '/tiny.html', title: 'Tiny Garden' });
+    tiny.style.cssText = 'position:static;display:block;width:100%;height:420px;border:0;margin-top:8px';
+    panel.append(tiny);
+  });
   mounted.api = {
     snapshot(next) {
       const player = next.players.find(p => p.id === next.selfId);
