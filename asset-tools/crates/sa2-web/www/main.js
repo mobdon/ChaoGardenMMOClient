@@ -153,7 +153,7 @@ function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
   room = { ws, zone };
   ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone }));
-  ws.onmessage = ({ data }) => { try { const m = JSON.parse(data); if (m.kind === 'chat') chatLine(m); } catch {} };
+  ws.onmessage = ({ data }) => { try { const m = JSON.parse(data); if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m); } catch {} };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
 }
@@ -278,3 +278,57 @@ chatInput.addEventListener('keydown', (e) => {
   chatInput.blur();
 });
 chatInput.addEventListener('blur', () => (chatInput.hidden = true));
+
+// ---- proximity voice: hold V to talk --------------------------------------
+// Mic audio goes only to the MMO server (never player to player, so no one sees
+// another player's address); the server relays it to Chao within its radius.
+// 8 kHz 16-bit mono in 60 ms frames keeps each message under the server's 2 KB cap.
+const VOICE_RATE = 8000, VOICE_FRAME = 480;
+let voiceCtx = null, voiceMic = null, talking = false;
+const voiceAt = new Map(); // sender id -> next play time, so frames queue back to back
+async function voiceStart() {
+  voiceCtx ??= new AudioContext();
+  if (voiceMic) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const src = voiceCtx.createMediaStreamSource(stream);
+  const proc = voiceCtx.createScriptProcessor(2048, 1, 1);
+  const step = voiceCtx.sampleRate / VOICE_RATE;
+  let pending = [], phase = 0;
+  proc.onaudioprocess = ({ inputBuffer }) => {
+    if (!talking || room?.ws.readyState !== 1) { pending = []; return; }
+    const input = inputBuffer.getChannelData(0);
+    for (; phase < input.length; phase += step) pending.push(Math.max(-1, Math.min(1, input[phase | 0])) * 32767);
+    phase -= input.length;
+    while (pending.length >= VOICE_FRAME) {
+      const pcm = new Int16Array(pending.splice(0, VOICE_FRAME));
+      const data = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
+      room.ws.send(JSON.stringify({ type: 'action', action: 'voice', data }));
+    }
+  };
+  src.connect(proc);
+  proc.connect(voiceCtx.createGain()).connect(voiceCtx.destination); // gain 1 on silence: keeps the processor running
+  voiceMic = { stream, proc };
+}
+function voicePlay({ fromId, volume, data }) {
+  if (!voiceCtx) return; // browsers allow audio only after the first key or click
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+  const buf = voiceCtx.createBuffer(1, pcm.length, VOICE_RATE);
+  buf.getChannelData(0).set(Float32Array.from(pcm, (v) => v / 32768));
+  const node = voiceCtx.createBufferSource();
+  node.buffer = buf;
+  const gain = voiceCtx.createGain();
+  gain.gain.value = Math.max(0, Math.min(1, volume));
+  node.connect(gain).connect(voiceCtx.destination);
+  const at = Math.max(voiceCtx.currentTime + 0.05, voiceAt.get(fromId) ?? 0);
+  node.start(at);
+  voiceAt.set(fromId, at + buf.duration);
+}
+addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyV' || e.repeat || e.target instanceof HTMLInputElement || !room) return;
+  talking = true;
+  voiceStart().catch(() => (talking = false));
+});
+addEventListener('keyup', (e) => { if (e.code === 'KeyV') talking = false; });
+addEventListener('blur', () => (talking = false));
+for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => (voiceCtx ??= new AudioContext()), { once: true });
