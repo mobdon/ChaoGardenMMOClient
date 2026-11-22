@@ -1375,6 +1375,8 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     // create the player's Chao again.
     // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
     let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
+    // Offline players' cached Chao leave after the grace period.
+    crate::chao_cache::tick();
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
     // uses it; 7 = the lobby), to test the gear across a second change.

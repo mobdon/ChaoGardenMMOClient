@@ -10,6 +10,7 @@
 pub mod audio;
 pub mod card;
 pub mod card_pack;
+pub mod chao_cache;
 pub mod chao_player;
 pub mod chao_retarget;
 pub mod clock;
