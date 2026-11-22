@@ -2369,6 +2369,12 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         IN_PMOVE.set(hidden);
         original(c, m, addr);
         IN_PMOVE.set(false);
+        // SA2_YAW_LOG=1 (debug): the visible character's own yaw, to compare.
+        let own = m.r32(task + 0x34);
+        if own != 0 && chao_world(m) && std::env::var("SA2_YAW_LOG").is_ok_and(|v| v == "1") {
+            let f = |a: u32| f32::from_bits(m.r32(a));
+            eprintln!("yaw: frame {} char {:#06x} native pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), m.r32(own + 0x0C) & 0xFFFF, f(own + 0x14), f(own + 0x1C));
+        }
     } else if let (true, Step::Live(chao)) = (pmove, STEP.get()) {
         player_move(c, m, addr, task, chao);
     }
