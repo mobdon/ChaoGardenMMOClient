@@ -9,7 +9,7 @@ import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { nativeText } from './native-text.js';
 
-let mounted = null;
+let mounted = null, lastNest = [];
 // One overlay per page; a reconnected room socket takes over sending.
 export function mountOverlay(nextSocket) {
   if (mounted) { mounted.socket = nextSocket; return mounted.api; }
@@ -39,7 +39,9 @@ export function mountOverlay(nextSocket) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'The egg could not hatch.');
     slots.record(data.token, data.player, undefined, card);
-    window.sa2HatchEgg?.(); // the game lays the egg at the player's feet in the lobby
+    // The game lays it at the player's feet in the lobby, with the bred egg's own gene when it has one.
+    const bred = lastNest.find(e => e.id === egg.eggId);
+    window.sa2HatchEgg?.(bred ? { ...egg, gene: bred.gene, eggColor: bred.eggColor } : egg);
   } });
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
   const toggle = () => { panel.hidden = !panel.hidden; document.getElementById('screen')?.focus(); };
@@ -61,6 +63,7 @@ export function mountOverlay(nextSocket) {
         title.replaceChildren(nativeText(player.name, 'native-stat-name'));
         for (const name of STATS) { const row = stats.querySelector(`[data-stat="${name}"]`); if (row && player.stats?.[name]) updateStatRow(row, name, player.stats[name]); }
       }
+      lastNest = next.life?.nest || [];
       gardenCare.update(next.care, player, { connected: true, serverTime: next.serverTime, nest: next.life?.nest || [] });
       breeding.update(next);
     },
