@@ -383,6 +383,13 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
     }
 }
 
+/// A hub resident's al_chao_info.h type (0x17 Tails, 0x18 Knuckles, 0x19 Amy), for its name tag.
+pub(crate) fn resident_type(m: &Mem, task: u32) -> Option<u8> {
+    let twp = m.r32(task + 0x34);
+    let n = RESIDENT_TWP.get().iter().position(|&t| t != 0 && t == twp)?;
+    Some(RESIDENTS[n].0)
+}
+
 /// The standing resident's task (0 = none).
 static STANDING_TASK: Global<u32> = global!(0);
 

@@ -260,10 +260,11 @@ function cardSend() {
 
 // ---- MMO files (sa2-boot chao_player.rs) ----------------------------------
 // The other players' Chao: the game writes its own pose and record to
-// /mmo/pose-out and /mmo/record-out and reads the others' from /mmo/pose-in
+// /mmo/pose-out and /mmo/record-out (and its Chao's name tag spots to
+// /mmo/tags-out, the Tiny Garden tree icon to /mmo/tree-icon) and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, TAGS: 133912, TAGS_MAX: 4096, TREE: 138016, TREE_MAX: 16384 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -286,7 +287,8 @@ function mmoSlot(id) {
 }
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
-  const out = path === 'mmo/pose-out' ? [MMO.POSE_OUT, MMO.POSE_OUT_MAX] : path === 'mmo/record-out' ? [MMO.REC_OUT, MMO.REC] : null;
+  const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
+    'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX] }[path] || null;
   if (!out) return;
   const n = Math.min(bytes.length, out[1]);
   sh.mmo.set(bytes.subarray(0, n), out[0] + 8);

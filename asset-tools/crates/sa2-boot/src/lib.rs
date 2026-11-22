@@ -21,6 +21,7 @@ pub mod gx;
 pub mod io;
 #[cfg(not(target_os = "wasi"))]
 pub mod mmo;
+pub mod name_tags;
 pub mod pad;
 pub mod prof;
 pub mod serve;
@@ -52,6 +53,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     wide::install(c, m);
     walker::install(c, m);
     chao_player::install(c, m);
+    name_tags::install(c, m);
     start_stage::install(c, m);
     race_probe::install(c, m);
 }

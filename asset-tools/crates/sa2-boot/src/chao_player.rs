@@ -586,6 +586,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
+    crate::name_tags::begin(tag_label(m, c.r[3]));
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
             pin(m, chao, RIDER.get());
@@ -607,7 +608,8 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
         let a = rt::sec(m, 60, 1) + CHAO_DISPLAY;
-        return rel_original(c, m, a, chao_display);
+        rel_original(c, m, a, chao_display);
+        return crate::name_tags::finish();
     }
     // ChaoMain queues the model draw past this call (no walker runs inside
     // it, ev28), so the flag stays on for the frame while in a cutscene.
@@ -616,6 +618,7 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         write_pose(m, c.r[3]);
     }
     rel_original(c, m, a, chao_display);
+    crate::name_tags::finish();
     if ev && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
         eprintln!("chao-player ev: Chao drew {} nodes, posed {}", CHAO_NODE.get(), POSED.with_borrow(|p| p.len()));
     }
@@ -973,7 +976,8 @@ walker_probe!(w0 = 0, w1 = 1, w2 = 2, w3 = 3, w4 = 4, w5 = 5);
 fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if !CHAO_DRAW.get() {
         let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
-        return rel_original(c, m, a, chao_node);
+        rel_original(c, m, a, chao_node);
+        return crate::name_tags::node(mtx(m, m.r32(NJ_CURRENT_MATRIX)));
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     // In a stage the display resets the count; in a cutscene, each frame.
@@ -998,6 +1002,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
     rel_original(c, m, a, chao_node);
+    crate::name_tags::node(mtx(m, cur_ptr));
     // The hands as the Chao's own motion places them (replaced below when posed).
     record_hand(m, i, cur_ptr);
     if MIRROR.get() {
@@ -1390,6 +1395,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         export_pose(m);
         export_record(m);
         remote_tick(c, m);
+        crate::name_tags::flush();
     }
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
@@ -1946,6 +1952,18 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
     for (t, mo) in changes {
         call(c, m, s1 + AL_SET_MOTION_LINK, &[t, mo]);
     }
+}
+
+/// The name tag a Chao task carries: the player's own, another player's, or
+/// a hub resident's (see name_tags).
+fn tag_label(m: &Mem, task: u32) -> Option<String> {
+    if matches!(STEP.get(), Step::Live(ch) if ch == task) {
+        return Some("me".into());
+    }
+    if let Some(id) = REMOTE.with_borrow(|r| r.iter().find(|(_, e)| e.task == task && task != 0).map(|(&id, _)| id)) {
+        return Some(format!("p{id}"));
+    }
+    crate::start_stage::resident_type(m, task).map(|t| format!("r{t}"))
 }
 
 /// Before a remote Chao's exec: its position and yaw REMOTE_DELAY behind
