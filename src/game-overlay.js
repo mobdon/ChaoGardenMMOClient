@@ -28,7 +28,22 @@ export function mountOverlay(nextSocket) {
   for (const b of [breedButton]) { b.tabIndex = -1; b.replaceChildren(nativeText(b.textContent, 'native-stat-name')); }
   // The hub's native stat-row styles are scoped to #character-panel (sonic.css); without it each row's frame spreads over the panel.
   const statBox = el('div'); statBox.id = 'character-panel'; statBox.append(stats);
-  panel.append(title, statBox, care, el('div'), breedButton, breedingRoot);
+  breedButton.hidden = true; breedingRoot.hidden = false;
+  // The Kindergarten medical chart as the menu: its pages (360x440, cropped from the game's 640x480
+  // layout at x264,y40) are the background, its L/R tabs (top 16 px) flip Stats / Inventory / Breeding.
+  const body = el('div'); body.style.cssText = 'position:absolute;left:16px;right:16px;top:72px;bottom:16px;overflow:auto';
+  const tab = (left, width, step) => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${left}px;width:${width}px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(page + step)); return t; };
+  const pages = [['a', [title, statBox]], ['b', [care]], ['c', [breedingRoot]]];
+  let page = 0;
+  function show(n) {
+    page = (n + pages.length) % pages.length;
+    const [art, nodes] = pages[page];
+    panel.style.background = `url(/api/assets/medchart-page-${art}.png) no-repeat 0 0 / 360px 440px`;
+    body.replaceChildren(...nodes);
+  }
+  panel.style.cssText += ';width:360px;height:440px;max-height:none;padding:0;overflow:visible;border-radius:0;box-shadow:none;image-rendering:pixelated';
+  panel.append(tab(0, 96, -1), tab(192, 96, 1), body);
+  show(0);
   document.body.append(panel);
   const slots = createSaveSlots(localStorage);
   const gardenCare = createGardenCare({ root: care, send, hatch: async (egg, name) => {
