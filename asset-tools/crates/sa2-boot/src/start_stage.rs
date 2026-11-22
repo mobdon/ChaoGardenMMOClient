@@ -68,6 +68,8 @@ const PRE_STAGE: u32 = 0x9_72E8;
 const SAVE_SLOT: u32 = 0x2C30;
 const AL_GENE_CREATE: u32 = 0x1_218C;
 const CREATE_EGG: u32 = 0x8F20;
+/// The egg's frames left before it starts to hatch, in its work at task +0x40.
+const EGG_WAIT: u32 = 0x14;
 const GENE_SIZE: u32 = 0xC0;
 /// AL_GENE (al_chao_info.h, 0xA4 bytes; CHAO_PARAM_GC +0x438..+0x4DC).
 const GENE_BYTES: usize = 0xA4;
@@ -371,12 +373,12 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
             // Only a new player's egg: an egg an existing player picked is not their own Chao.
-            EGG_SLOT.set(lay_egg_with(c, m, text, None));
+            EGG_SLOT.set(lay_egg_with(c, m, text, None, true));
         }
         // Eggs the player picked and named on the page hatch here too.
         if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             for gene in picked_eggs() {
-                lay_egg_with(c, m, text, gene.as_ref());
+                lay_egg_with(c, m, text, gene.as_ref(), false);
             }
         }
         if now != shown {
@@ -450,7 +452,7 @@ pub(crate) fn go_lobby() {
 /// The game's own egg at the player's feet, with guest scratch for the gene
 /// and position on a lowered stack (as the native caller keeps them).
 /// Returns the egg's save slot (0 = none was free).
-fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>) -> u32 {
+fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8>>, hatch_now: bool) -> u32 {
     let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
     if slot == 0 {
         eprintln!("start-stage: no free Chao save slot; no egg");
@@ -471,8 +473,18 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
             }
         }
     }
-    guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
+    let egg = guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
+    // MMO glue: a new player's own egg (`hatch_now`) hatches on arrival; other eggs keep the game's wait. CreateEgg (0x9168) sets the wait at
+    // the egg's work (task +0x40) +0x14 to (100 + a random part) * 60 frames;
+    // AL_EggStop (0xA728) counts it down and, once it is below zero, sets the
+    // egg's state to 3. Read from the disassembly. Inferred, unverified until a
+    // run: that state 3 (AL_EggJump by the exec's call order) leads to the
+    // hatch (CreateChaoFromEgg is called from AL_EggCrash, 0x9914).
+    if hatch_now && egg != 0 {
+        m.w32(m.r32(egg + 0x40) + EGG_WAIT, 0);
+        eprintln!("tutorial: egg task {egg:#x}, its wait set to 0");
+    }
     eprintln!("tutorial: egg laid, save slot {slot:#x}");
     // The tutorial runs only with SA2_TUTORIAL=1: a start with the egg crashed the lobby on arrival.
     if std::env::var("SA2_TUTORIAL").is_ok_and(|v| v.trim() == "1") {
