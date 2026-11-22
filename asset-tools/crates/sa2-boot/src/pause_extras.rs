@@ -9,6 +9,7 @@
 //! L/R change the page, B or Start goes back. Values come from the page
 //! (`/dev/pad` bytes 12-15, [`set_page_settings`]); a change goes back to it on
 //! `/dev/extras`, and the page saves it on the MMO server.
+//! EXIT goes back to the lobby instead of leaving Chao World (see [`exit_stays_in_chao_world`]).
 //! Addresses: GSNE8P main.dol, traced in fn_8001E12C / fn_8001B404 /
 //! fn_8001F368 (see the pause trace notes).
 
@@ -300,11 +301,12 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
         original(c, m, ROWS);
         return;
     }
-    if m.r8(sda(c, CURSOR)) == 1 {
-        let player = u32::from(m.r8(PAUSE_PLAYER).clamp(1, 2)) - 1;
-        let pad = m.r32(PADS + 4 * player);
-        let mask = m.r32(sda(c, CONFIRM_MASK));
-        if pad != 0 && m.r32(pad + 0x10) & mask != 0 {
+    let player = u32::from(m.r8(PAUSE_PLAYER).clamp(1, 2)) - 1;
+    let pad = m.r32(PADS + 4 * player);
+    let mask = m.r32(sda(c, CONFIRM_MASK));
+    if pad != 0 && m.r32(pad + 0x10) & mask != 0 {
+        let cursor = m.r8(sda(c, CURSOR));
+        if cursor == 1 {
             // Used up here, so the game's restart never sees it.
             m.w32(pad + 0x10, m.r32(pad + 0x10) & !mask);
             guest_call(c, m, MENU_SE, &[SE_CONFIRM, 0, 0, 0]);
@@ -313,8 +315,24 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
             original(c, m, ROWS);
             return;
         }
+        let area = crate::start_stage::chao_area(c, m);
+        if cursor == 2 && exit_stays_in_chao_world(area) {
+            // The game's own CONTINUE closes the pause; the lobby follows.
+            if area != Some(0) {
+                crate::start_stage::go_lobby();
+            }
+            m.w8(sda(c, CURSOR), 0);
+        }
     }
     original(c, m, PAUSE_EXEC);
+}
+
+/// EXIT in Chao World (MMO): from an area it goes back to the lobby, in the
+/// lobby it only closes the pause. The game's own EXIT stays for the race
+/// (area 4: back to the race entrance, fn_8001F368 0x8001FE58..0x8001FE88)
+/// and when the game was not started in Chao World (area unknown).
+fn exit_stays_in_chao_world(area: Option<u32>) -> bool {
+    area.is_some_and(|a| a != 4)
 }
 
 /// The page's `/dev/extras` (sa2-web worker.js): setting `i` changed to `v`.
@@ -375,6 +393,14 @@ mod tests {
         set_page_settings([0b000_0001, 99, 9, 99]);
         assert_eq!(VALUES.get(), [0, 0, 0, 10, 0, 0, 10, 0, 2]);
         assert!(!music_off());
+    }
+
+    #[test]
+    fn exit_goes_to_the_lobby_except_from_the_race() {
+        assert!(exit_stays_in_chao_world(Some(1)), "garden: to the lobby");
+        assert!(exit_stays_in_chao_world(Some(0)), "lobby: close the pause");
+        assert!(!exit_stays_in_chao_world(Some(4)), "race: the game's own");
+        assert!(!exit_stays_in_chao_world(None), "not started in Chao World");
     }
 
     #[test]

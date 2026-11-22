@@ -34,6 +34,9 @@ const AL_CHANGE_AREA: u32 = 0x2_7E00;
 /// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 5 Entrance/race,
 /// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
 const LAST_AREA: u32 = 12;
+/// The lobby's own area number: ChaoMain starts in it (0x28944 `li r3, 7`) and
+/// its own way back to the lobby is the area change with 7 (0xB4EC..0xB4F0).
+const LOBBY: u32 = 7;
 /// A new player's egg, laid the way ChaoMain's `AL_ItemCreateManagerExecutor`
 /// (0x18F7C, its call at 0x19208) makes a bought egg: a save slot from
 /// `fn_60_2C30` 0x2C30, `AL_GeneCreate` 0x1218C into a 0xC0-byte gene,
@@ -100,6 +103,8 @@ static AREA: Global<Option<u32>> = global!(None);
 static SHOWN: Global<Option<u32>> = global!(None);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
+/// The pause menu's EXIT asked for the lobby ([`go_lobby`]).
+static TO_LOBBY: Global<bool> = global!(false);
 /// The lobby's residents are out (cleared when the game leaves the lobby).
 static RESIDENTS_OUT: Global<bool> = global!(false);
 /// The residents' taskwks, so their Chao sounds stay silent.
@@ -177,7 +182,14 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
-        let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
+        let now = lobby_is_0(guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]));
+        if TO_LOBBY.get() {
+            TO_LOBBY.set(false);
+            if now != 0 {
+                // The call ChaoMain's own way back to the lobby makes (0xB4F0).
+                guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
+            }
+        }
         // Once the lobby (area 0) is running, change area the game's own way.
         if let (Some(area), 0) = (AREA.get(), now) {
             guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
@@ -205,6 +217,33 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
     }
     original(c, m, TOP_LEVEL);
+}
+
+/// The lobby as 0, the number the rest of this glue and the page use for it.
+fn lobby_is_0(area: u32) -> u32 {
+    if area == LOBBY {
+        0
+    } else {
+        area
+    }
+}
+
+/// The Chao World area the player is in (0 = lobby), when the game was
+/// started in Chao World and ChaoMain is loaded.
+pub(crate) fn chao_area(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
+    SHOWN.get()?;
+    let text = chaomain_text(m)?;
+    Some(lobby_is_0(guest_call(
+        c,
+        m,
+        text + AL_GET_STAGE_NUMBER,
+        &[],
+    )))
+}
+
+/// Change to the lobby on the next frame, outside the pause.
+pub(crate) fn go_lobby() {
+    TO_LOBBY.set(true);
 }
 
 /// The game's own egg at the player's feet, with guest scratch for the gene
