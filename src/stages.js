@@ -12,7 +12,8 @@ export function createStageSelect(dialog, { onAction, onChange }) {
   const count = dialog.querySelector('.stage-count');
   let family = 'all';
   // The combat area is Big Foot's arena (stage 60) started without its boss (sa2_boot::combat).
-  const stages = [...(Array.isArray(catalog.stages) ? catalog.stages : []),
+  // Final Hazard (66, Super Sonic / Super Shadow) is held back for now: not listed.
+  const stages = [...(Array.isArray(catalog.stages) ? catalog.stages : []).filter(stage => stage.id !== 66),
     { id: 60, name: 'Combat area', character: 'Robot waves', family: 'boss', play: '?stage=60&combat=1' }];
 
   function render() {
