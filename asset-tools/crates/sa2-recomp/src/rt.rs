@@ -219,7 +219,12 @@ pub fn backedge(c: &mut Cpu, m: &mut Mem) {
 
 /// Call the function at `addr` (bl, bctrl, blrl and tail calls all end here).
 pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    let n = CALLS.fetch_add(1, Relaxed);
+    // A plain load and store, not an atomic add: the count and the trace ring
+    // are diagnostics (crash reports, the call budget), and the locked add on
+    // shared memory for every guest call was ~5% of the game thread. Threads
+    // racing here may drop a count.
+    let n = CALLS.load(Relaxed);
+    CALLS.store(n.wrapping_add(1), Relaxed);
     RING[n as usize % TRACE].store(addr, Relaxed);
     if c.rt.budget != 0 && n >= c.rt.budget {
         panic!("sa2-recomp: call budget of {} reached at {addr:#010x}", c.rt.budget);
