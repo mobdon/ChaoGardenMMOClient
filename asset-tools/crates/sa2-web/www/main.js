@@ -521,6 +521,7 @@ function karateButtons(on) {
       b.style.cssText = 'padding:.45rem 1rem;border-radius:1.2rem;background:#f5a800;color:#fff;font-weight:700;text-shadow:0 1px 2px #000';
       if (strong) b.dataset.strong = '1';
       b.addEventListener('click', () => {
+        if (karateBusy()) return;
         mmoBytes[MMO.KARATE + 1] = id;
         mmoBytes[MMO.KARATE]++; // a new press, after its button is in place
         canvas.focus();
@@ -539,10 +540,14 @@ function karateKey(e) {
   if (!e.repeat && !bar.children[n].disabled) bar.children[n].click();
   return true;
 }
+// A chosen move is seen through: no new move until the game says that press is done.
+const karateBusy = () => mmoBytes[MMO.KARATE] !== mmoBytes[MMO.KARATE + 5];
 function karateLocks() {
-  for (const b of document.querySelectorAll('#karate [data-strong]')) {
-    b.disabled = !mmoBytes[MMO.KARATE + 4];
-    b.title = b.disabled ? 'Needs Power above 400' : '';
+  const busy = karateBusy();
+  for (const b of document.querySelectorAll('#karate button')) {
+    const locked = b.dataset.strong && !mmoBytes[MMO.KARATE + 4];
+    b.disabled = busy || locked;
+    b.title = locked ? 'Needs Power above 400' : '';
     b.style.background = b.disabled ? '#666' : '#f5a800';
   }
 }
