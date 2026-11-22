@@ -7,6 +7,7 @@ import { createTinyWatch } from './tiny-watch.js';
 // waits for a capability the Rust server never sends.
 import { createTinyTraining } from './tiny-afk-training.js';
 import { createTinyItems } from './tiny-items.js';
+import { createTinyResident } from './tiny-resident.js';
 import { durableTinyResult, readTinyCache, writeTinyCache, observedTime } from './tiny-state.js';
 import { createTinyAccount, supportsTinyAccounts } from './tiny-account.js';
 import { tinyLogin } from './tiny-login.js';
@@ -79,6 +80,7 @@ const statRows = new Map();
 const gardenWatch = createTinyWatch({ send });
 const training = createTinyTraining({ root: $('#tiny-training-panel'), send });
 const items = createTinyItems({ root: $('#tiny-items-panel'), send });
+const resident = createTinyResident({ send });
 const account = createTinyAccount({
   transmit: rawSend,
   onState(state) { accountReady = state.ready; renderGame(); },
@@ -343,6 +345,8 @@ function metricItems(values) {
 }
 
 function renderGame() {
+  // Opts the Chao into the Tiny Garden; the server refuses training with tiny-entry-required until then.
+  resident.update(player, { connected: mayAct(), care: careState, capabilities, accountsV2: accountV2 });
   training.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || !!player?.watch || (accountV2 && account.pending), capabilities, serverTime, care: careState });
   gardenWatch.update(player, { connected: mayAct(), reconciled: connected, busy: !!tinyGame || pendingStart || training.blocksActivity || (accountV2 && account.pending) });
   items.update(player, { connected: mayAct(), care: careState, accountsV2: accountV2, serverTime,
@@ -465,6 +469,7 @@ function openSocket(activeToken, generation) {
     if (message.type === 'notice') { gardenWatch.handleNotice?.(message); training.handleEvent(message); pendingStart = false; pendingStop = false; if (message.kind === 'error' && pendingSave) { clearTimeout(saveTimer); pendingSave = false; returnAfterSave = false; } notice(message.text || 'The server could not complete that action.', message.kind === 'error'); renderGame(); }
     if (message.type === 'event') {
       training.handleEvent(message);
+      resident.handleEvent(message);
       if (items.handleEvent(message) && message.accepted === true) lastSavedAt = Date.now();
       if (message.kind === 'watch-saved' && message.accepted === true) lastSavedAt = Date.now();
       if (message.kind === 'saved' && message.playerId === player?.id && pendingSave && connected) {
