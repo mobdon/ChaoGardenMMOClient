@@ -21,6 +21,13 @@ const MD_TITLE_INIT: u32 = 1;
 const MD_ACTION_INIT: u32 = 4;
 /// The first global mode after the memory card is read (see top_level).
 const MD_AFTER_CARD: u32 = 12;
+/// The boot logos (Nintendo, SEGA, Sonic Team), timed against frames with SA2_MODE_LOG.
+const MD_LOGOS: u32 = 22;
+/// /dev/area values outside the area numbers: cover / uncover the game.
+const PAGE_COVER: u32 = 254;
+const PAGE_UNCOVER: u32 = 253;
+/// The page is covering the logos.
+static LOGOS_HIDDEN: Global<bool> = global!(false);
 /// The Stage Select's start code reads its stage/character table through the
 /// relocation at advertiseD section 1 + 0x10246 (`lis r3` at 0x10244).
 const TABLE_RELOC: (u8, u32) = (1, 0x10246);
@@ -151,6 +158,13 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     // comes after the card is read, so the start happens there too. Unverified:
     // what mode 12 is in the game's own terms.
     let mode = m.r32(GLOBAL_MODE);
+    // MMO glue: the boot logos (mode 22) can't be cut short (the game finishes
+    // work there the start needs), so the page covers them while a start is
+    // pending: /dev/area 254 = covering on, 253 = off.
+    if PENDING.get().is_some() && (mode == MD_LOGOS) != LOGOS_HIDDEN.get() {
+        LOGOS_HIDDEN.set(mode == MD_LOGOS);
+        tell_page(if mode == MD_LOGOS { PAGE_COVER } else { PAGE_UNCOVER });
+    }
     if mode == MD_TITLE_INIT || mode == MD_AFTER_CARD {
         if let Some((stage, ch)) = PENDING.take() {
             start(c, m, stage, ch);
