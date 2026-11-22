@@ -60,8 +60,8 @@ export function mountOverlay(nextSocket) {
   // The Kindergarten medical chart as the menu: its pages (360x440, cropped from the game's 640x480
   // layout at x264,y40) are the background, its L/R tabs (top 16 px) flip Stats / Inventory / Breeding.
   const body = el('div'); body.style.cssText = 'position:absolute;left:16px;right:16px;top:72px;bottom:16px;overflow:auto';
-  // Five native-shape tabs, 72x16 each across the top of the crop: blue record, yellow care, pink record, green inventory, purple breeding.
-  const tab = n => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${n * 72}px;width:72px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(n)); return t; };
+  // Five native-shape tabs, 70x16 each from the left edge to x350 (the frame corner shows past the last): blue record, yellow care, pink record, green inventory, purple breeding.
+  const tab = n => { const t = el('button'); t.style.cssText = `position:absolute;top:0;left:${n * 70}px;width:70px;height:16px;background:none;border:0;cursor:pointer`; t.tabIndex = -1; t.addEventListener('click', () => show(n)); return t; };
   // Page B / C headings: MsgAlKinderHe strings at the chart draw's own spots (screen xy minus the x264,y40 crop).
   // shortcut: headings only; their values need the personality/sickness getters and karate W/L/D, which the snapshot doesn't carry yet.
   const labels = rows => { const page = el('div'); page.style.cssText = 'position:absolute;inset:0;pointer-events:none';
