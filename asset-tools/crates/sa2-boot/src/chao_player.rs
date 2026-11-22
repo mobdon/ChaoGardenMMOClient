@@ -494,6 +494,18 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
                 m.w32(list, tex);
                 let lcap = LCAP.replace(false);
                 call(c, m, 0x8011_DF44, &[obj]);
+                // Heel/toe jets (Shadow's right jets 96-99 = slots 181-184, the
+                // hub's: modelled in the same foot frame as the boot) while moving.
+                // shortcut: all four drawn; the hub picks narrow/wide by speed.
+                if MOVING.get() {
+                    for js in 181..=184u32 {
+                        let jo = model_obj(m, js);
+                        if (0x8000_0000..0x8C00_0000).contains(&jo) {
+                            for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
+                            call(c, m, 0x8011_DF44, &[jo]);
+                        }
+                    }
+                }
                 LCAP.set(lcap);
             }
             continue;
@@ -650,6 +662,9 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
     let mut out = [(0u32, [[0.0f32; 4]; 3]); 2];
     for (k, &(arm, tip)) in arms.iter().enumerate() {
         let (model, up, fwd) = GLOVE_REFS[k];
+        // The hub's vectors are in its glTF space, whose root mirrors the
+        // source x (chao-attachments.js note): mirror them back for the game.
+        let (up, fwd) = if std::env::var("SA2_GLOVE_NOMIRROR").is_ok() { (up, fwd) } else { ([-up[0], up[1], up[2]], [-fwd[0], fwd[1], fwd[2]]) };
         let obj = model_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             return None;
@@ -672,7 +687,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // Point the fist out along the arm (shoulder -> hand marker), not the
         // Chao's +z: the glove's forward goes to the arm direction, its up stays
         // world up (flattened against the arm).
-        let r = if std::env::var("SA2_GLOVE_FWD_Z").is_ok() { r } else {
+        let r = if !std::env::var("SA2_GLOVE_ALONG_ARM").is_ok() { r } else {
             // The hub's fist points down and out: forward = the arm direction
             // tipped down by SA2_GLOVE_TIP degrees (default 0: 45 hid them), up = toward +y.
             let tip = std::env::var("SA2_GLOVE_TIP").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0).to_radians();
@@ -1565,6 +1580,11 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
 }
 
 fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    // SA2_RIDER_DISP_OFF=1 (test): skip the hidden rider's display in Chao
+    // World, to see whether the white skate glow comes from it.
+    if chao_world(m) && matches!(STEP.get(), Step::Live(_)) && std::env::var("SA2_RIDER_DISP_OFF").is_ok_and(|v| v == "1") {
+        return;
+    }
     if matches!(STEP.get(), Step::Live(_)) {
         // The rider's own display, walked for his node matrices, drawing nothing.
         LCAP.set(true);
