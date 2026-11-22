@@ -674,8 +674,8 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // world up (flattened against the arm).
         let r = if std::env::var("SA2_GLOVE_FWD_Z").is_ok() { r } else {
             // The hub's fist points down and out: forward = the arm direction
-            // tipped down by SA2_GLOVE_TIP degrees (default 45), up = toward +y.
-            let tip = std::env::var("SA2_GLOVE_TIP").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(45.0).to_radians();
+            // tipped down by SA2_GLOVE_TIP degrees (default 0: 45 hid them), up = toward +y.
+            let tip = std::env::var("SA2_GLOVE_TIP").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0).to_radians();
             let h = n([ax[0], 0.0, ax[2]]);
             let a = n([h[0] * tip.cos(), -tip.sin(), h[2] * tip.cos()]);
             let y = n([-h[0] * tip.sin(), tip.cos(), -h[2] * tip.sin()]);
