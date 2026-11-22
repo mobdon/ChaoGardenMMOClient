@@ -223,6 +223,7 @@ fn pad() -> PadStatus {
     let mut p = PadStatus::default();
     let w = |i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
     sa2_boot::kinder_chart::set_click(w(16), w(18), w(20), w(22));
+    sa2_boot::card_box::set_aspect(w(20));
     // The left mouse (key 13) picks the chart's tabs while it is open.
     let chart = sa2_boot::kinder_chart::is_open();
     for (i, bit) in KEYS.iter().enumerate() {
