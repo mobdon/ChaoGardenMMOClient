@@ -389,6 +389,10 @@ fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32, b: [f32; 3]) {
     let cur = mtx(m, cur_ptr);
     let base = mtx(m, m.r32(NJ_BASE_MATRIX));
     let w = inv_mul(&base, &cur);
+    // The captured centre is in view space (the walk's current matrix): to world.
+    let bv: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { f32::from(u8::from(i == j)) } else { b[i] }));
+    let bw = inv_mul(&base, &bv);
+    let b = [bw[0][3], bw[1][3], bw[2][3]];
     let s = BOARD_SCALE;
     // Scale about the ball's centre, then move that centre onto the Chao's.
     let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * b[i] + target[i] - b[i] }));
