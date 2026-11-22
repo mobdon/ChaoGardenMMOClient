@@ -877,6 +877,24 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if std::env::var_os("SA2_HEAP_LOG").is_some() {
         sa2_recomp::os::add_frame_hook(|_, m| heap_log(m));
     }
+    // SA2_HANG_LOG=1 (debug): a thread that prints the latest guest calls when
+    // frames stop for 5 s while calls go on (a guest loop that never ends).
+    if std::env::var("SA2_HANG_LOG").is_ok_and(|v| v.trim() == "1") {
+        std::thread::spawn(|| {
+            use std::sync::atomic::Ordering::Relaxed;
+            let (mut f0, mut said) = (u64::MAX, 0u64);
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let f = sa2_recomp::host::FRAMES.load(Relaxed);
+                if f == f0 && said != f {
+                    said = f;
+                    let t: Vec<String> = sa2_recomp::rt::trace().iter().map(|a| format!("{a:#x}")).collect();
+                    eprintln!("hang: frame {f} for 5 s, calls {}, last calls {}", sa2_recomp::rt::CALLS.load(Relaxed), t.join(" "));
+                }
+                f0 = f;
+            }
+        });
+    }
     if !std::env::var("SA2_CHAO_PLAYER").is_ok_and(|v| v.trim() == "1") {
         return;
     }
