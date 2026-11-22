@@ -248,8 +248,10 @@ mod tests {
     #[test]
     fn borrowed_module_fits_between_chao_player_areas() {
         // GC ChaoStgKinder.rel is 0xDE248 bytes expanded; bss 0x1A8.
-        assert!(BASE + 0xDE248 <= BSS);
-        assert!(BSS + 0x1A8 <= 0x82A0_0000, "chao_player MOT");
-        assert!(NAME + 9 <= 0x82A0_0000);
+        const {
+            assert!(BASE + 0xDE248 <= BSS);
+            assert!(BSS + 0x1A8 <= 0x82A0_0000, "chao_player MOT");
+            assert!(NAME + 9 <= 0x82A0_0000);
+        }
     }
 }
