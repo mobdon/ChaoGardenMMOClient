@@ -15,9 +15,13 @@
 //!
 //! The Drop off screen (.text 0x6218) keeps its title, bars and stats window;
 //! its three GBA sockets (.text 0x4854) are not made, and the Move screen's own
-//! Chao picker (ChaoMain) stands in their place with one garden panel, the
-//! player's side. Read from the generated code and the REL files; no part of
-//! it has run yet (unverified live):
+//! Chao picker (ChaoMain) stands in their place with one garden panel: side
+//! 1, the Move screen's right-hand box. Its Chao are the memory card's server
+//! Chao (SA2_CARD_CHAO: their ids, a line each, in the card's order; the page
+//! writes their records to SA2_RECORD_IN), not the garden's: a garden Chao
+//! has no login. The pick goes to SA2_TINY_PICK_OUT as that Chao's id. Read
+//! from the generated code and the REL files; no part of it has run yet
+//! (unverified live):
 //! - Drop off phases (.data +0x15F0): 0 makes the screen, 3 is the socket
 //!   input, 0x12..0x14 leave to the top menu;
 //! - ChaoMain 0x5287C(mode) makes the picker (work at .bss +0x50C88; a mode
@@ -27,7 +31,7 @@
 //!   the slot chosen on side 0 and 1 (1-based; OK needs both);
 //! - picker state at .bss +0x50C8C: 2 cancelled, 4 confirmed; the screen
 //!   answers 4 with 2 to close it; 0x52BAC is 0 once its panels are gone;
-//! - Chao records: .bss +0x3D08, pages of 8 pointers (0x20 bytes a page).
+//! - Chao records: .bss +0x3D08 + side * 0x60, three pages of 8 pointers.
 
 use crate::start_stage::module_section;
 use sa2_recomp::rt::{self, Cpu, Mem};
@@ -59,9 +63,11 @@ const GARDEN_PANEL: u32 = 0x54464;
 const PICKER_WORK: u32 = 0x50C88;
 const PICKER_STATE: u32 = 0x50C8C;
 const RECORDS: u32 = 0x3D08;
-/// The Move screen's panel height (ChaoMain .rodata) and the sockets' x.
+/// Side 1's record pointers (three pages of 8).
+const SIDE_1: u32 = RECORDS + 0x60;
+/// The Move screen's place for side 1's panel (ChaoMain .rodata: 480, 272).
+const PANEL_X: u32 = 0x99A0;
 const PANEL_Y: u32 = 0x999C;
-const PANEL_X: f64 = 480.0;
 const MOVE_MODE: u32 = 4;
 const CANCELLED: u32 = 2;
 const CONFIRMED: u32 = 4;
@@ -73,6 +79,8 @@ static TEXT: Global<u32> = global!(0);
 /// The Drop off screen is being made: its sockets are left out.
 static NO_SOCKETS: Global<bool> = global!(false);
 static WAITED: Global<u32> = global!(0);
+/// The card's Chao in the picker, in slot order.
+static CARD: Global<Vec<u64>> = global!(Vec::new());
 
 /// Each frame in Chao World: once module 73 is linked (again), point its
 /// sprites at the Tiny Chao Garden art and hook its menu.
@@ -191,24 +199,36 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
                 return;
             }
             m.w32(picker, MOVE_MODE);
-            c.f[1].ps0 = PANEL_X;
+            m.w32(picker + 0x28, 4); // the cursor starts on side 1's first Chao
+            let card = card_chao(m);
+            for i in 0..24 {
+                let info = card.get(i as usize).and_then(|&id| crate::chao_cache::info_addr(id));
+                m.w32(cm_bss + SIDE_1 + i * 4, info.unwrap_or(0));
+            }
+            c.f[1].ps0 = m.rf32(cm_ro + PANEL_X);
             c.f[2].ps0 = m.rf32(cm_ro + PANEL_Y);
-            crate::guest_call(c, m, cm_text + GARDEN_PANEL, &[MOVE_MODE, 0]);
+            crate::guest_call(c, m, cm_text + GARDEN_PANEL, &[MOVE_MODE, 1]);
             WAITED.set(0);
-            eprintln!("tiny-transporter: picker made");
+            eprintln!("tiny-transporter: picker made with {} card Chao", card.len());
+            CARD.set(card);
         }
         PHASE_INPUT => {
             let state = if picker == 0 { CANCELLED } else { m.r32(cm_bss + PICKER_STATE) };
+            // Their records stay cached while they are on show.
+            CARD.with_borrow(|c| c.iter().for_each(|&id| crate::chao_cache::set_online(id, true)));
             if picker != 0 {
                 let (column, row) = one_side(m.r32(picker + 0x28), m.r32(picker + 0x2C));
                 m.w32(picker + 0x28, column);
                 m.w32(picker + 0x2C, row);
-                m.w32(picker + 0x44, m.r32(picker + 0x38));
+                m.w32(picker + 0x38, m.r32(picker + 0x44));
             }
             if state == CONFIRMED {
-                let slot = m.r32(picker + 0x38);
-                let record = record_at(slot).map_or(0, |o| m.r32(cm_bss + RECORDS + o));
-                eprintln!("tiny-transporter: picked slot {slot}, record {record:#010x}");
+                let slot = m.r32(picker + 0x44);
+                let id = CARD.with_borrow(|c| slot.checked_sub(1).and_then(|i| c.get(i as usize).copied()));
+                eprintln!("tiny-transporter: picked slot {slot}, Chao {id:?}");
+                if let (Some(id), Ok(path)) = (id, std::env::var("SA2_TINY_PICK_OUT")) {
+                    let _ = std::fs::write(path, id.to_string());
+                }
                 crate::guest_call(c, m, cm_text + PICKER_SET_STATE, &[CANCELLED]);
             }
             if state == CONFIRMED || state == CANCELLED {
@@ -221,15 +241,27 @@ fn drop_off(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
-/// The cursor stays on the player's side: a step onto side 1's Chao lands on OK.
+/// The cursor stays on side 1: a step onto side 0's Chao lands on OK.
 fn one_side(column: u32, row: u32) -> (u32, u32) {
-    if row < 2 && column > 3 { (4, 2) } else { (column, row) }
+    if row < 2 && column < 4 { (4, 2) } else { (column, row) }
 }
 
-/// Offset of slot `slot`'s (1-based) pointer in side 0's record pages.
-fn record_at(slot: u32) -> Option<u32> {
-    let i = slot.checked_sub(1)?;
-    Some((i >> 3) * 0x20 + (i & 7) * 4)
+/// The card's Chao (at most a page of 8), each with its record in the cache.
+fn card_chao(m: &mut Mem) -> Vec<u64> {
+    let text = std::env::var("SA2_CARD_CHAO").ok().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    let ids = card_ids(&text);
+    if let Ok(dir) = std::env::var("SA2_RECORD_IN") {
+        for &id in &ids {
+            if let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join(id.to_string())) {
+                crate::chao_cache::replace(m, id, &bytes);
+            }
+        }
+    }
+    ids
+}
+
+fn card_ids(text: &str) -> Vec<u64> {
+    text.lines().filter_map(|l| l.trim().parse().ok()).take(8).collect()
 }
 
 /// Run an overridden REL function once without the override.
@@ -246,17 +278,15 @@ mod tests {
 
     #[test]
     fn cursor_keeps_to_side_0_and_the_buttons() {
-        assert_eq!(one_side(3, 1), (3, 1));
-        assert_eq!(one_side(4, 0), (4, 2)); // onto side 1: OK instead
+        assert_eq!(one_side(4, 1), (4, 1));
+        assert_eq!(one_side(3, 0), (4, 2)); // onto side 0: OK instead
         assert_eq!(one_side(4, 2), (4, 2)); // OK
         assert_eq!(one_side(3, 2), (3, 2)); // Back
     }
 
     #[test]
-    fn records_are_pages_of_eight_pointers() {
-        assert_eq!(record_at(0), None);
-        assert_eq!(record_at(1), Some(0));
-        assert_eq!(record_at(8), Some(0x1C));
-        assert_eq!(record_at(9), Some(0x20));
+    fn card_ids_are_a_page_of_numbers() {
+        assert_eq!(card_ids("12\nx\n 7 \n"), vec![12, 7]);
+        assert_eq!(card_ids(&"5\n".repeat(9)).len(), 8);
     }
 }
