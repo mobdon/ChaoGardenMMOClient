@@ -64,3 +64,26 @@ fn layout_splits_at_call_and_exit_targets() {
     let starts = [(0, 0)].into_iter().collect();
     assert_eq!(layout(starts, &[(0, 0x18)], word, |pc| pc == 0 || pc == 8), vec![(0, 0x18)]);
 }
+
+#[test]
+fn madd_matches_fused_mul_add() {
+    use sa2_recomp::rt::madd;
+    let mut s = 0x1234_5678_9abc_def0u64;
+    let mut next = || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    let special = [0.0, -0.0, 1.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, f32::MIN_POSITIVE as f64, 1e-45, f32::MAX as f64];
+    for i in 0..200_000 {
+        let pick = |r: u64, i: usize| match i % 4 {
+            0 => special[(r % special.len() as u64) as usize],
+            1 => f64::from_bits(r),
+            _ => f32::from_bits(r as u32) as f64,
+        };
+        let (a, c, b) = (pick(next(), i), pick(next(), i / 4), pick(next(), i / 16));
+        let (x, y) = (madd(a, c, b), a.mul_add(c, b));
+        assert!(x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()), "{a:e} {c:e} {b:e}");
+    }
+}
