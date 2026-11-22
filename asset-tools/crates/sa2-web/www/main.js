@@ -370,6 +370,8 @@ function breedPick() {
 }
 const recVersions = new Map();
 function mmoTick(token) {
+  // The canvas aspect for the game's card box (pad bytes 20..22, also set per click).
+  new DataView(sh.pad).setUint16(20, Atomics.load(ctl, 8), true);
   karateLocks();
   breedPick();
   storyCleared(token);

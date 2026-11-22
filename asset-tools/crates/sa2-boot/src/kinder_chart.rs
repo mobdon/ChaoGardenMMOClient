@@ -120,6 +120,24 @@ const NJ_PUSH_MATRIX_EX: u32 = 0x8011_6098;
 const NJ_POP_MATRIX_EX: u32 = 0x8011_60E4;
 const NJ_UNIT_MATRIX: u32 = 0x8011_53E4;
 const NJ_ROTATE_Y: u32 = 0x8011_5828;
+const NJ_TRANSLATE: u32 = 0x8011_5BD8;
+// The mating behaviour's own calls and numbers (ChaoMain 0x40130): the
+// dance motion 0xFC for 300 frames at speed 1.5, then motion 0x1D4, whose
+// frame 0x14 throws each Chao 0.8 up and 0.25 back a frame (gravity -0.055,
+// main.dol 0x8002F448), then motion 0x1EC; the stand motion is 0xEE.
+const AL_SET_MOTION_LINK_STEP: u32 = 0x1B4DC;
+const AL_SET_MOTION_SPD: u32 = 0x1B464;
+const MATE_DANCE: (u32, u32) = (0xFC, 300);
+const MATE_JUMP: (u32, u32) = (0x1D4, 0x14);
+const MATE_AFTER: (u32, u32) = (0x1EC, 120);
+const MATE_STAND: u32 = 0xEE;
+const MATE_LINK: u32 = 0xF;
+const HOP: (f32, f32, f32) = (0.8, 0.25, 0.055);
+/// The hop drawn at this share of the game's size: at full size each Chao
+/// would land about 7 units back, out of the page's scene box.
+const HOP_SCALE: f32 = 0.15;
+/// The page's line for a laid egg starts with this (sa2-web main.js breedEvent).
+const EGG_LINE: &str = "An egg was laid";
 /// ChaoMain .text.
 const CREATE_CHAO_EXTRA: u32 = 0x3148C;
 /// The portrait's depth and turn; the scene's two screen points.
@@ -216,6 +234,8 @@ static SAVED: Global<Vec<(u32, u16)>> = global!(Vec::new());
 /// The partner Chao in the scene: its id, task and the two display
 /// functions taken off the task (as D2A4 does with the portrait's).
 static PARTNER: Global<Option<(String, u32, [u32; 2])>> = global!(None);
+/// Frames since the mating scene began.
+static MATING: Global<Option<u32>> = global!(None);
 
 /// The breeding page's feed and the picked Chao's id.
 #[derive(Debug, PartialEq)]
@@ -257,6 +277,51 @@ fn row_at(x: f32, y: f32) -> Option<usize> {
     inside.then(|| usize::from(x >= LIST_X[1] - 6.0) * LIST_ROWS + row as usize)
 }
 
+/// A Chao's place in the hop, `t` frames after the throw: how far back and
+/// how far up, in the game's units; it stays where it lands.
+fn hop(t: u32) -> (f32, f32) {
+    let (up0, back, g) = HOP;
+    let height = |t: u32| up0 * t as f32 - g * (t * (t + 1)) as f32 / 2.0;
+    let land = (1..).find(|&t| height(t) <= 0.0).unwrap_or(1);
+    let t = t.min(land);
+    (back * t as f32, height(t).max(0.0))
+}
+
+/// The mating scene's step at frame `f`: a motion to start on this frame,
+/// and the frames since the throw (None before it).
+fn mate_step(f: u32) -> (Option<u32>, Option<u32>) {
+    let jump = MATE_DANCE.1;
+    let throw = jump + MATE_JUMP.1;
+    let after = throw + (1..).find(|&t| hop(t).1 <= 0.0).unwrap_or(1);
+    let motion = match f {
+        0 => Some(MATE_DANCE.0),
+        f if f == jump => Some(MATE_JUMP.0),
+        f if f == after => Some(MATE_AFTER.0),
+        f if f == after + MATE_AFTER.1 => Some(MATE_STAND),
+        _ => None,
+    };
+    (motion, f.checked_sub(throw))
+}
+
+/// The mating plays on the two scene Chao when the page's line says an egg
+/// was laid (no egg is drawn: it goes to the inventory).
+fn mating_tick(c: &mut Cpu, m: &mut Mem, work: u32) {
+    let Some(f) = MATING.get() else { return };
+    let c1 = rt::sec(m, CHAOMAIN, 1);
+    let tasks = [m.r32(work + 0x18), PARTNER.with_borrow(|p| p.as_ref().map_or(0, |p| p.1))];
+    if let (Some(motion), _) = mate_step(f) {
+        for task in tasks.into_iter().filter(|&t| t != 0) {
+            call(c, m, c1 + AL_SET_MOTION_LINK_STEP, &[task, motion, MATE_LINK]);
+            fcall(c, m, c1 + AL_SET_MOTION_SPD, &[task], &[if motion == MATE_DANCE.0 { 1.5 } else { 1.0 }]);
+        }
+        eprintln!("kinder-chart: mating frame {f}, motion {motion:#x}");
+        if motion == MATE_STAND {
+            return MATING.set(None);
+        }
+    }
+    MATING.set(Some(f + 1));
+}
+
 /// Read the page's feed; a picked Chao that left the list is unpicked.
 fn breed_read() {
     let Some(text) = std::env::var("SA2_BREED_IN").ok().and_then(|p| std::fs::read_to_string(p).ok()) else {
@@ -264,6 +329,9 @@ fn breed_read() {
     };
     let mut feed = breed_feed(&text);
     BREED.with_borrow_mut(|b| {
+        if feed.message.starts_with(EGG_LINE) && !b.message.is_empty() && feed.message != b.message && MATING.get().is_none() {
+            MATING.set(Some(0));
+        }
         if feed.chao.iter().any(|(id, _)| *id == b.picked) {
             feed.picked = std::mem::take(&mut b.picked);
         }
@@ -381,6 +449,11 @@ fn scene(c: &mut Cpu, m: &mut Mem, work: u32) {
         call(c, m, NJ_PUSH_MATRIX_EX, &[]);
         call(c, m, NJ_UNIT_MATRIX, &[0]);
         fcall(c, m, s1 + SCREEN_POINT, &[], &[SCENE[i].0, SCENE[i].1, DEPTH]);
+        // The hop: each Chao back from the other (left one left, right one right).
+        if let Some((back, up)) = MATING.get().and_then(|f| mate_step(f).1).map(hop) {
+            let away = if i == 0 { -1.0 } else { 1.0 };
+            fcall(c, m, NJ_TRANSLATE, &[0], &[away * back * HOP_SCALE, up * HOP_SCALE, 0.0]);
+        }
         call(c, m, NJ_ROTATE_Y, &[0, turns[i]]);
         for show in shows {
             if show != 0 {
@@ -673,6 +746,7 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
                     breed_read();
                 }
                 partner_sync(c, m);
+                mating_tick(c, m, work);
             }
             click(c, m, work);
         }
@@ -850,6 +924,7 @@ fn delete(c: &mut Cpu, m: &mut Mem) {
     };
     let s1 = rt::sec(m, KINDER, 1);
     untab(m);
+    MATING.set(None);
     partner_free(c, m);
     call(c, m, s1 + FREE_PORTRAIT, &[work]);
     call(c, m, SY_FREE, &[m.r32(work + 0x60)]);
@@ -906,6 +981,29 @@ fn linked(m: &Mem, id: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hop_goes_up_comes_down_and_stays_where_it_lands() {
+        assert_eq!(hop(0), (0.0, 0.0));
+        let (b1, u1) = hop(1);
+        assert!((b1 - 0.25).abs() < 1e-6 && (u1 - 0.745).abs() < 1e-6);
+        let top = (0..60).map(|t| hop(t).1).fold(0.0, f32::max);
+        assert!(top > 5.0 && top < 6.5, "{top}");
+        assert_eq!(hop(40), hop(400));
+        assert_eq!(hop(400).1, 0.0);
+        // Drawn small enough for the scene box: under 1.5 units back.
+        assert!(hop(400).0 * HOP_SCALE < 1.5);
+    }
+
+    #[test]
+    fn the_mating_runs_dance_jump_after_stand() {
+        assert_eq!(mate_step(0), (Some(0xFC), None));
+        assert_eq!(mate_step(299), (None, None));
+        assert_eq!(mate_step(300), (Some(0x1D4), None));
+        assert_eq!(mate_step(320), (None, Some(0)));
+        let starts: Vec<u32> = (0..600).filter_map(|f| mate_step(f).0).collect();
+        assert_eq!(starts, [0xFC, 0x1D4, 0x1EC, 0xEE]);
+    }
 
     #[test]
     fn a_name_becomes_the_records_codes() {
