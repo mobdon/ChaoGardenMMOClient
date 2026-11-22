@@ -34,6 +34,32 @@ const AL_CHANGE_AREA: u32 = 0x2_7E00;
 /// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 5 Entrance/race,
 /// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
 const LAST_AREA: u32 = 12;
+/// A new player's egg, laid the way ChaoMain's `AL_ItemCreateManagerExecutor`
+/// (0x18F7C, its call at 0x19208) makes a bought egg: a save slot from
+/// `fn_60_2C30` 0x2C30, `AL_GeneCreate` 0x1218C into a 0xC0-byte gene,
+/// then `CreateEgg(gene, slot, 0, &pos, 3)` 0x8F20. ChaoMain symbols.txt (GSNE8P).
+const SAVE_SLOT: u32 = 0x2C30;
+const AL_GENE_CREATE: u32 = 0x1_218C;
+const CREATE_EGG: u32 = 0x8F20;
+const GENE_SIZE: u32 = 0xC0;
+/// MMO hub residents: the game's own character Chao (al_chao_info.h TYPE_TAILS
+/// 0x17, TYPE_KNUCKLES 0x18, TYPE_AMY 0x19), made with `CreateChaoExtra`
+/// (see CREATE_CHAO_EXTRA). Offsets from the player in the lobby are
+/// the old web hub's NPC spots (src/scene.js addNPC), an MMO choice.
+const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 12.0, 6.0), (0x19, -4.0, 8.0)];
+/// ChaoMain `CreateChaoExtra` 0x3148C (chao.h): (param, IsParamCopy, element,
+/// &pos, angy). IsParamCopy=1 keeps them out of every save.
+const CREATE_CHAO_EXTRA: u32 = 0x3_148C;
+/// CHAO_PARAM_GC is 0x800 bytes; `type` at +0x80 (al_chao_info.h).
+const PARAM_SIZE: u32 = 0x800;
+/// main.dol `playertwp` .bss 0x801E7768 (taskwk*[]); taskwk +0x14 is pos.
+const PLAYERTWP: u32 = 0x801E_7768;
+/// main.dol positional sound calls ChaoMain makes for a Chao's voice, each
+/// given that Chao's taskwk +0x14 (task +0x34 is the taskwk): `fn_8006B7EC`
+/// (id, 0, 0, vol, pos) and `SE_CallV2_Timer` 0x8006AFFC (id, task, 1, vol,
+/// timer, pos). Their callers in ChaoMain ignore the return value.
+const SE_AT_POS: u32 = 0x8006_B7EC;
+const SE_AT_POS_TIMER: u32 = 0x8006_AFFC;
 
 /// (stage, character) to start, until it has started.
 static PENDING: Global<Option<(u16, u32)>> = global!(None);
@@ -41,6 +67,12 @@ static PENDING: Global<Option<(u16, u32)>> = global!(None);
 static AREA: Global<Option<u32>> = global!(None);
 /// Started in Chao World: the last area told to the page (u32::MAX before the first).
 static SHOWN: Global<Option<u32>> = global!(None);
+/// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
+static HATCH: Global<bool> = global!(false);
+/// The lobby's residents are out (cleared when the game leaves the lobby).
+static RESIDENTS_OUT: Global<bool> = global!(false);
+/// The residents' taskwks, so their Chao sounds stay silent.
+static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -60,7 +92,12 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .filter(|a| (1..=LAST_AREA).contains(a)),
         );
+        HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
         c.rt.set_override(TOP_LEVEL, top_level);
+        c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
+        c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
+            quiet_residents(c, m, SE_AT_POS_TIMER, 8)
+        });
         return;
     }
     let Some(rel) = crate::dvd::read_file("advertiseD.rel") else {
@@ -97,12 +134,78 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
             AREA.set(None);
         }
+        // Arrived in the lobby (the player task is up): lay the egg once.
+        if HATCH.get() && now == 0 && m.r32(PLAYERTWP) != 0 {
+            HATCH.set(false);
+            lay_egg(c, m, text);
+        }
+        if now != 0 {
+            RESIDENTS_OUT.set(false);
+            RESIDENT_TWP.set([0; 3]);
+        } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+            RESIDENTS_OUT.set(true);
+            residents(c, m, text);
+        }
         if now != shown {
             SHOWN.set(Some(now));
             tell_page(now);
         }
     }
     original(c, m, TOP_LEVEL);
+}
+
+/// The game's own egg at the player's feet, with guest scratch for the gene
+/// and position on a lowered stack (as the native caller keeps them).
+fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
+    let slot = guest_call(c, m, text + SAVE_SLOT, &[]);
+    if slot == 0 {
+        eprintln!("start-stage: no free Chao save slot; no egg");
+        return;
+    }
+    let sp = c.r[1];
+    c.r[1] = sp - 0x100 - GENE_SIZE;
+    let (gene, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + GENE_SIZE);
+    let player = m.r32(PLAYERTWP) + 0x14;
+    for i in 0..3 {
+        m.w32(pos + i * 4, m.r32(player + i * 4));
+    }
+    guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
+    guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
+    c.r[1] = sp;
+}
+
+/// The hub's character Chao, with normal Chao AI, near where the player arrives.
+fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
+    let sp = c.r[1];
+    c.r[1] = sp - 0x100 - PARAM_SIZE;
+    let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
+    let player = m.r32(PLAYERTWP) + 0x14;
+    let mut twp = [0; 3];
+    for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
+        for i in (0..PARAM_SIZE).step_by(4) {
+            m.w32(param + i, 0);
+        }
+        m.w8(param + 0x80, ty);
+        m.w32(pos, (f32::from_bits(m.r32(player)) + dx).to_bits());
+        m.w32(pos + 4, m.r32(player + 4));
+        m.w32(pos + 8, (f32::from_bits(m.r32(player + 8)) + dz).to_bits());
+        let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, 0, pos, 0]);
+        if task != 0 {
+            twp[n] = m.r32(task + 0x34);
+        }
+    }
+    RESIDENT_TWP.set(twp);
+    c.r[1] = sp;
+}
+
+/// The hub's character Chao make no Chao sounds: a positional sound whose
+/// position is a resident's taskwk +0x14 is dropped; every other one plays.
+fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
+    let twp = c.r[pos_reg].wrapping_sub(0x14);
+    if twp != 0 && RESIDENT_TWP.get().contains(&twp) {
+        return;
+    }
+    original(c, m, addr);
 }
 
 /// advertiseD 0x1028C..0x1034C (the one-player branch), in order.
