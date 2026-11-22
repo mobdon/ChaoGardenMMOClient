@@ -548,6 +548,8 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
     let br = crate::chao_retarget::read_chao(&|a| m.r32(a), heel, [vec![], vec![]]);
     let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
     for (i, o) in (0x08..0x34).step_by(4).enumerate() { m.w32(heel + o, keep[i]); }
+    // The baked shoe's vertices fit it (the raw heel/toe lists are unweighted parts).
+    let bv = if baked_boot(c, m) != 0 { BAKED_VERTS.with_borrow(|v| v.clone()) } else { bv };
     let node = SHOES[n].0;
     let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
     if let Some(place) = hp.map(|p| gear_tune(if n == 0 { "boot0" } else { "boot1" }).map_or(p, |t| mul34(&p, &t))) {
@@ -558,30 +560,29 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         let put = |m: &mut Mem| for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } };
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
-        // His heel/toe vertices are weighted to the leg above them, so the
-        // heel alone drew stretched across the screen (run r61): the whole
-        // body is drawn, placed so its heel lands on the boot's place, with
-        // every node's polygons off except heel 23 and toe 24 (their
-        // vertices still run, filling the weights).
-        let body = RIDER_OBJ.get();
-        let w = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
-        // SA2_BOOT_PARTS (debug): bit 1 his heel/toe, bit 2 the overlay.
-        // Default the overlay alone: his heel/toe still draws as a
-        // screen-sized mesh this way (runs r61-r65), unresolved.
+        // His heel/toe vertices are weighted to the leg above them: drawn
+        // straight from his body they stretched across the screen (runs
+        // r61-r65). Drawn from an unweighted copy baked from his rest pose.
+        // SA2_BOOT_PARTS (debug): bit 1 the baked heel/toe, bit 2 the overlay.
+        // Default the overlay alone: the baked copy still lands off the foot
+        // and its cached polygon list holds more of his leg (run r76).
         let parts = std::env::var("SA2_BOOT_PARTS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(2);
-        if let (true, Some(&(hr, ht))) = (parts & 1 != 0, w.get(23)) {
-            let w23: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { hr[i][j] } else { ht[i] }));
-            let id: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| f32::from(u8::from(i == j))));
-            let at = mul34(&place, &inv_mul(&w23, &id));
-            let plists: Vec<(u32, u32)> = (0..w.len()).filter(|&k| k != 23 && k != 24).filter_map(|k| {
-                let o = node_obj(m, body, k);
-                let model = if o != 0 { m.r32(o + 4) } else { 0 };
-                (0x8000_0000..0x8C00_0000).contains(&model).then(|| (model, m.r32(model + 4)))
-            }).collect();
-            for &(model, _) in &plists { m.w32(model + 4, 0); }
-            for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, at[r][k].to_bits()); } }
-            call(c, m, 0x8011_DF44, &[body]);
-            for &(model, pl) in &plists { m.w32(model + 4, pl); }
+        if parts & 1 != 0 {
+            let baked = baked_boot(c, m);
+            // SA2_BAKE_DRAW (debug): 0 bake only, 2 the vertices alone (no polygons).
+            let mode = std::env::var("SA2_BAKE_DRAW").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(1);
+            if baked != 0 && mode == 2 {
+                let mdl = m.r32(baked + 4);
+                let pl = m.r32(mdl + 4);
+                m.w32(mdl + 4, 0);
+                put(m);
+                call(c, m, 0x8011_DF44, &[baked]);
+                m.w32(mdl + 4, pl);
+            }
+            if baked != 0 && mode == 1 {
+                put(m);
+                call(c, m, 0x8011_DF44, &[baked]);
+            }
         }
         if parts & 2 != 0 && (0x8000_0000..0x8C00_0000).contains(&overlay) {
             put(m);
@@ -598,6 +599,161 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         }
         LCAP.set(lcap);
     }
+}
+
+/// Shadow's left heel (body node 23) and toe (24) as a new two-node object
+/// whose vertices are his rest-pose skinned positions, in the heel's frame:
+/// the whole body's vertex chunks run on the CPU (Ninja chunk weights:
+/// NF vertices carry index | weight << 16, chunk flags & 3 = 0 start,
+/// else add), then one plain VN chunk holds every cache entry, and the heel
+/// and toe keep their own polygon lists. Made once per load in game heap 1.
+/// unverified: the NF weight scale (255 = 1.0), checked only by the drawn result.
+fn baked_boot(c: &mut Cpu, m: &mut Mem) -> u32 {
+    let body = RIDER_OBJ.get();
+    if let Some((b, o)) = BAKED_BOOT.get() {
+        if b == body {
+            return o;
+        }
+    }
+    let r32 = |a: u32| m.r32(a);
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    // Nodes depth first with their objects and world (rotation, position).
+    let rest = crate::chao_retarget::read_chao(&r32, body, [vec![], vec![]]);
+    let w = rest.worlds(&[]);
+    let objs: Vec<u32> = (0..w.len()).map(|k| node_obj(m, body, k)).collect();
+    if w.len() < 25 || objs[23] == 0 || objs[24] == 0 {
+        return 0;
+    }
+    let mut cache: std::collections::BTreeMap<u32, ([f32; 3], [f32; 3])> = Default::default();
+    let mut shoe: std::collections::BTreeSet<u32> = Default::default();
+    for (k, &o) in objs.iter().enumerate() {
+        let att = r32(o + 4);
+        if att == 0 { continue; }
+        let (r, t) = w[k];
+        let mut vp = r32(att);
+        while vp != 0 {
+            let hdr = r32(vp);
+            let typ = hdr & 0xFF;
+            if typ == 0xFF { break; }
+            let (status, size) = ((hdr >> 8) & 3, hdr >> 16);
+            let w2 = r32(vp + 4);
+            let (off, cnt) = (w2 & 0xFFFF, w2 >> 16);
+            let stride = if cnt != 0 { (size - 1) / cnt } else { 0 };
+            let nf = typ == 37 || typ == 44;
+            let vn = (41..=47).contains(&typ);
+            for i in 0..cnt {
+                let a = vp + 8 + i * stride * 4;
+                let pos = [f(a), f(a + 4), f(a + 8)];
+                let nor = if vn { [f(a + 12), f(a + 16), f(a + 20)] } else { [0.0, 1.0, 0.0] };
+                let (idx, wt) = if nf { let x = r32(a + (stride - 1) * 4); (off + (x & 0xFFFF), (x >> 16) as f32 / 255.0) } else { (off + i, 1.0) };
+                let p: [f32; 3] = std::array::from_fn(|j| (t[j] + (0..3).map(|q| r[j][q] * pos[q]).sum::<f32>()) * wt);
+                let n: [f32; 3] = std::array::from_fn(|j| (0..3).map(|q| r[j][q] * nor[q]).sum::<f32>() * wt);
+                if k == 23 || k == 24 {
+                    shoe.insert(idx);
+                }
+                let e = cache.entry(idx).or_insert(([0.0; 3], [0.0; 3]));
+                if !nf || status == 0 {
+                    *e = (p, n);
+                } else {
+                    for j in 0..3 { e.0[j] += p[j]; e.1[j] += n[j]; }
+                }
+            }
+            vp += 4 + size * 4;
+        }
+    }
+    // The toe draws polygon list cache 1 (its plist: chunk 0x0105); the
+    // polygons are in the node that caches list 1 (chunk 0x0104), after it.
+    let r16 = |a: u32| if a & 2 == 0 { r32(a) >> 16 } else { r32(a - 2) & 0xFFFF };
+    let toe_pl = r32(r32(objs[24] + 4) + 4);
+    let want = if toe_pl != 0 && r16(toe_pl) & 0xFF == 5 { r16(toe_pl) >> 8 } else { u32::MAX };
+    let mut polys = 0u32;
+    'nodes: for &o in &objs {
+        let att = r32(o + 4);
+        let mut a = if att != 0 { r32(att + 4) } else { 0 };
+        for _ in 0..4096 {
+            if a == 0 { break; }
+            let h = r16(a);
+            let t = h & 0xFF;
+            if t == 0xFF { break; }
+            if t == 4 && h >> 8 == want {
+                polys = a + 2;
+                break 'nodes;
+            }
+            a += match t { 0..=7 => 2, 8..=15 => 4, _ => 4 + 2 * r16(a + 2) };
+        }
+    }
+    if polys == 0 {
+        eprintln!("chao-player boot: no cached polygon list {want} for his toe");
+        BAKED_BOOT.set(Some((body, 0)));
+        return 0;
+    }
+    let Some(&max) = cache.keys().next_back() else { return 0 };
+    // Into the heel's frame.
+    let (hr, ht) = w[23];
+    let inv = |v: [f32; 3], d: [f32; 3]| -> [f32; 3] { std::array::from_fn(|j| (0..3).map(|q| hr[q][j] * (v[q] - d[q])).sum::<f32>()) };
+    let cnt = max + 1;
+    // Chunks of at most 64 vertices, as his own (flags 0x80 like his heel's
+    // VN chunk): one chunk of 803 crashed the draw (run r71).
+    const PER: u32 = 64;
+    let chunks = cnt.div_ceil(PER);
+    let words = 2 * chunks + cnt * 6 + 1;
+    // Model and object blocks with zeroed room past their Ninja fields
+    // (unverified whether the GC draw keeps more per model).
+    let (vl_size, model_size, obj_size) = (words * 4, 64, 0x40);
+    let total = vl_size + 2 * (model_size + obj_size);
+    let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
+    if mem == 0 {
+        eprintln!("chao-player boot: no room to bake his heel/toe ({total} bytes)");
+        BAKED_BOOT.set(Some((body, 0)));
+        return 0;
+    }
+    zero(m, mem, total);
+    let vl = mem;
+    let mut a = vl;
+    for ch in 0..chunks {
+        let (off, n) = (ch * PER, PER.min(cnt - ch * PER));
+        m.w32(a, ((1 + n * 6) << 16) | (0x80 << 8) | 41);
+        m.w32(a + 4, (n << 16) | off);
+        a += 8;
+        for i in off..off + n {
+            let (p, nv) = cache.get(&i).copied().unwrap_or(([0.0; 3], [0.0, 1.0, 0.0]));
+            let (p, nv) = (inv(p, ht), inv(nv, [0.0; 3]));
+            for j in 0..3 {
+                m.w32(a + 4 * j as u32, p[j].to_bits());
+                m.w32(a + 12 + 4 * j as u32, nv[j].to_bits());
+            }
+            a += 24;
+        }
+    }
+    m.w32(a, 0xFF);
+    let (m_heel, m_toe) = (mem + vl_size, mem + vl_size + model_size);
+    let (o_heel, o_toe) = (mem + vl_size + 2 * model_size, mem + vl_size + 2 * model_size + obj_size);
+    for (mdl, vlist, pl) in [(m_heel, vl, polys), (m_toe, 0, 0)] {
+        m.w32(mdl, vlist);
+        m.w32(mdl + 4, pl);
+        for j in 0..3 { m.w32(mdl + 8 + 4 * j, 0); }
+        m.w32(mdl + 20, 0); // radius 0, as his own heel model
+    }
+    for (obj, mdl, child) in [(o_heel, m_heel, 0), (o_toe, m_toe, 0)] {
+        // UNIT_POS | UNIT_ANG | UNIT_SCL, and BREAK (0x10): the walk
+        // (0x8011DFC0) enters the child pointer unchecked unless BREAK is set.
+        m.w32(obj, 0x17);
+        m.w32(obj + 4, mdl);
+        for j in 0..3 { m.w32(obj + 8 + 4 * j, 0); m.w32(obj + 20 + 4 * j, 0); m.w32(obj + 32 + 4 * j, 1.0f32.to_bits()); }
+        m.w32(obj + 44, child);
+        m.w32(obj + 48, 0);
+    }
+    eprintln!("chao-player boot: baked his heel/toe ({cnt} cache entries, {} set) at {o_heel:#x}", cache.len());
+    BAKED_BOOT.set(Some((body, o_heel)));
+    BAKED_VERTS.set(shoe.iter().filter_map(|i| cache.get(i)).map(|&(p, _)| inv(p, ht)).collect());
+    o_heel
+}
+
+thread_local! {
+    /// (his body model, the baked heel/toe object) once made this load.
+    static BAKED_BOOT: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+    /// The baked shoe's own vertices (heel and toe), in the heel's frame.
+    static BAKED_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The object of node `index` (depth first, as read_chao counts) in a model
@@ -2343,6 +2499,7 @@ fn drop_stage_loads() {
     EXTRA_MODELS.with_borrow_mut(|e| e.clear());
     KNUX_MODELS.with_borrow_mut(|e| e.clear());
     SHADOW_MODELS.with_borrow_mut(|e| e.clear());
+    BAKED_BOOT.set(None);
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);
