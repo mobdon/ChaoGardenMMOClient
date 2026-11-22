@@ -58,6 +58,7 @@ const PADS: u32 = 0x801E_55D8;
 const STAGE: u32 = 0x7AA0; // i16 stage number; 0x5A is Chao World
 const STATE: u32 = 0x7AA6; // i16 game state; 0x11 paused
 const CURSOR: u32 = 0x7A89; // u8 pause row
+const TEXT_TABLE: u32 = 0x786C; // pointer to the loaded pause text (fn_80021828)
 const MODE: u32 = 0x7A88; // u8 pause layout: 2 = no RESTART, 3 = three rows
 const CONFIRM_MASK: u32 = 0x7F40; // u32 buttons that confirm
 const CHAO_WORLD: u16 = 0x5A;
@@ -121,7 +122,7 @@ static PAGE: Global<Option<usize>> = global!(None);
 static INPUT: Global<(u16, i8)> = global!((0, 0));
 static LAST_INPUT: Global<(u16, i8)> = global!((0, 0));
 /// Font messages made so far: (text, language, message).
-static MESSAGES: std::sync::Mutex<Vec<(String, u8, u32)>> = std::sync::Mutex::new(Vec::new());
+static MESSAGES: std::sync::Mutex<Vec<(Vec<u8>, u8, u32)>> = std::sync::Mutex::new(Vec::new());
 
 /// `/dev/pad` bytes 12-15 from the page: 12 flags (bit 0 settings loaded,
 /// 1 mono, 2 Japanese voices, 3 vibration off, 4 music off, 5 chat off,
@@ -197,22 +198,48 @@ fn row_text(page: Option<usize>, text_id: u32, values: &[u8; 9]) -> Option<Strin
 
 fn row_draw(c: &mut Cpu, m: &mut Mem) {
     if in_chao_world(c, m) {
-        if let Some(text) = row_text(PAGE.get(), c.r[3], &VALUES.get()) {
-            if let Some(message) = message(c, m, &text) {
-                c.r[5] = message;
-            }
+        let text = match row_text(PAGE.get(), c.r[3], &VALUES.get()) {
+            Some(text) => Some(text.into_bytes()),
+            // The Chao World pause never shows the rows the stage start made
+            // (headless test: only EXTRAS drew), so its CONTINUE/EXIT are made
+            // here too, from the game's own pause text.
+            None => game_row_text(c, m, c.r[3]),
+        };
+        if let Some(message) = text.and_then(|text| message(c, m, &text)) {
+            c.r[5] = message;
         }
     }
     original(c, m, ROW_DRAW);
 }
 
-fn message(c: &mut Cpu, m: &mut Mem, text: &str) -> Option<u32> {
+/// The loaded pause text (r13-0x786C, offsets at +4*id, as fn_80021828 reads
+/// text ids 2/3/4); the English rows when it isn't loaded.
+fn game_row_text(c: &Cpu, m: &Mem, text_id: u32) -> Option<Vec<u8>> {
+    let fallback = match text_id {
+        2 => "CONTINUE",
+        4 => "EXIT",
+        _ => return None,
+    };
+    let table = m.r32(sda(c, TEXT_TABLE));
+    if table >> 24 == 0x80 {
+        let start = table.wrapping_add(m.r32(table + 4 * text_id));
+        let text: Vec<u8> = (start..start + 64)
+            .map(|a| m.r8(a))
+            .take_while(|&b| b != 0)
+            .collect();
+        if start >> 24 == 0x80 && !text.is_empty() && text.len() < 64 {
+            return Some(text);
+        }
+    }
+    Some(fallback.as_bytes().to_vec())
+}
+
+fn message(c: &mut Cpu, m: &mut Mem, bytes: &[u8]) -> Option<u32> {
     let language = m.r8(TEXT_LANGUAGE);
     let mut made = MESSAGES.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(&(_, _, message)) = made.iter().find(|(t, l, _)| t == text && *l == language) {
+    if let Some(&(_, _, message)) = made.iter().find(|(t, l, _)| t == bytes && *l == language) {
         return Some(message);
     }
-    let bytes = text.as_bytes();
     let guest = guest_call(c, m, ALLOC, &[1, bytes.len() as u32 + 1]);
     if guest == 0 {
         return None;
@@ -225,7 +252,7 @@ fn message(c: &mut Cpu, m: &mut Mem, text: &str) -> Option<u32> {
         return None;
     }
     // shortcut: messages are kept for the session (a few dozen short strings), never freed.
-    made.push((text.to_owned(), language, message));
+    made.push((bytes.to_vec(), language, message));
     Some(message)
 }
 
