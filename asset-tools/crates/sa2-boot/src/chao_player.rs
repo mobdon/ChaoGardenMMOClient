@@ -434,6 +434,7 @@ const SHOE_LENGTH_RATIO: f32 = 0.90;
 fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let (Some(tex), Step::Live(chao)) = (SHADOW_TEX.get(), STEP.get()) else { return };
     if OWN_MOTION.get() || std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 { eprintln!("chao-player shoes: own motion {}", OWN_MOTION.get()); }
         return;
     }
     let cwk = m.r32(chao + 0x34);
@@ -470,6 +471,9 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         let centre = bv.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / bv.len().max(1) as f32);
         let boot = ext(bv);
         let len = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| ext(r.verts[node].clone()))).unwrap_or(0.0);
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
+            eprintln!("chao-player shoes: boot {n} obj {obj:#x} boot {boot} foot {len} feet {:?}", FEET.with_borrow(|f| f[n].map(|v| [v[0][3], v[1][3], v[2][3]])));
+        }
         if boot <= 0.0 || len <= 0.0 {
             continue;
         }
