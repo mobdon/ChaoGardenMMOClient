@@ -324,18 +324,7 @@ fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32, b: [f32; 3]) {
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     let cur = mtx(m, cur_ptr);
     let base = mtx(m, m.r32(NJ_BASE_MATRIX));
-    let mut w = inv_mul(&base, &cur);
-    let det = w[0][0] * (w[1][1] * w[2][2] - w[1][2] * w[2][1]) - w[0][1] * (w[1][0] * w[2][2] - w[1][2] * w[2][0]) + w[0][2] * (w[1][0] * w[2][1] - w[1][1] * w[2][0]);
-    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
-        eprintln!("chao-player lvl: ball draw {addr:#x} det {det} centre {b:?} target {target:?}");
-    }
-    // shortcut: a node matrix the hidden draw never filled (det 0) is drawn
-    // world-aligned at the Chao's centre; upgrade once the effect's own
-    // matrix source is filled during the capture walk.
-    if det.abs() < 1e-6 {
-        w = [[1., 0., 0., target[0]], [0., 1., 0., target[1]], [0., 0., 1., target[2]]];
-    }
-    let b = if det.abs() < 1e-6 { target } else { b };
+    let w = inv_mul(&base, &cur);
     let s = BOARD_SCALE;
     // Scale about the ball's centre, then move that centre onto the Chao's.
     let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * b[i] + target[i] - b[i] }));
@@ -662,9 +651,6 @@ fn ev_shape_draw(c: &mut Cpu, m: &mut Mem) {
 fn cnk_cache_draw(c: &mut Cpu, m: &mut Mem) {
     // Sonic's display 0x8007C7B0: with obj2 +0x24 & 0x40008 it draws the
     // spin effect model (0x801E6688 +0xCC / +0x324, efftex) at a node matrix.
-    if LCAP.get() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
-        eprintln!("chao-player lvl: cnk draw lr {:#x} model {:#x}", c.lr, c.r[3]);
-    }
     if LCAP.get() && (c.lr == 0x8007_C7C4 || c.lr == 0x8007_C810) {
         let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
         let w = inv_mul(&mtx(m, m.r32(NJ_BASE_MATRIX)), &cur);
