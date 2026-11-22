@@ -368,7 +368,7 @@ fn section(m: &Mem, text: u32, n: u32) -> u32 {
 /// position is a resident's taskwk +0x14 is dropped; every other one plays.
 fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
     let twp = c.r[pos_reg].wrapping_sub(0x14);
-    if twp != 0 && RESIDENT_TWP.get().contains(&twp) {
+    if twp != 0 && (RESIDENT_TWP.get().contains(&twp) || twp == crate::chao_player::own_twp(m)) {
         return;
     }
     original(c, m, addr);

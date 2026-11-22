@@ -648,6 +648,11 @@ fn follow_ball(m: &mut Mem, chao: u32) {
     }
 }
 
+/// The player's own Chao's taskwk (0 before it exists): its sounds are muted.
+pub fn own_twp(m: &Mem) -> u32 {
+    match STEP.get() { Step::Live(chao) => m.r32(chao + 0x34), _ => 0 }
+}
+
 fn pin(m: &mut Mem, chao: u32, data1: u32) {
     let cw = m.r32(chao + 0x34);
     if cw == 0 {
@@ -731,15 +736,11 @@ const FROM_VOICE_TASK: u32 = 0x8001_2768;
 /// stage's own banks intact; check by ear.
 const LOAD_BANK: u32 = 0x8006_CFEC;
 const WALKER_BANK_2P: u32 = 0x8017_5E9C; // "se_ch_wk_BATTLE.mlt"
-const PLAY_SE: u32 = 0x8006_B978;
-const DARK_CHAO_SOUND: u32 = 0x201E;
 
 fn voice(c: &mut Cpu, m: &mut Mem) {
     // From the start of the run: the drop line plays before the Chao is loaded.
     if c.lr == FROM_VOICE_TASK {
-        if matches!(STEP.get(), Step::Live(_)) {
-            call(c, m, PLAY_SE, &[DARK_CHAO_SOUND, 0, 0, 0]);
-        }
+        // The player never hears their own Chao: the line is dropped.
         return;
     }
     original(c, m, ADX_START_AFS);
