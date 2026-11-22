@@ -46,7 +46,7 @@ public final class LoginActivity extends Activity {
             new SecureStore(this).clear(); OriginalArtwork.clear(this); GardenJobService.cancel(this);
         },"Logged out on this device."));
         status=text(column,"Reading device state…",16);
-        text(column,"The widget shows your Chao as the server has it. Care, minigames and training open in Tiny Garden. Android schedules background reads about every 30 minutes and may delay them. Refresh for current data.",14);
+        text(column,"The widget shows your Chao as the server has it, with Pet and Rest. Minigames and training open in Tiny Garden. Android schedules background reads about every 30 minutes and may delay them. Refresh for current data.",14);
         text(column,"Open Tiny Garden uses the same login in your browser. Your password is never stored; the widget keeps only the key the server gave this login.",14);
         GardenRepository.IO.execute(()->{
             try {
@@ -93,10 +93,16 @@ public final class LoginActivity extends Activity {
         password.setText(""); card.setText("");
         run(()->{
             JSONObject reply=code.isEmpty()?new Gateway(server,null).login(new JSONObject().put("login",name).put("password",secret)):new Gateway(server,code).card();
-            // shortcut: the first Chao on the account, upgrade when the server records which Chao the player picked for the phone.
-            JSONObject first=reply.getJSONArray("chao").getJSONObject(0);
-            JSONObject state=new JSONObject().put("origin",server).put("token",Snapshot.text(first,"token",256))
-                    .put("chaoId",Snapshot.text(first.getJSONObject("player"),"id",128));
+            // The Chao picked on the PC is the one whose model the PC stored; there is no picker here.
+            JSONObject state=null;
+            org.json.JSONArray all=reply.getJSONArray("chao");
+            for(int i=0;i<all.length() && state==null;i++) {
+                JSONObject row=all.getJSONObject(i);
+                String token=Snapshot.text(row,"token",256);
+                try { new Gateway(server,token).ownChao(); } catch(IllegalStateException notPlayed) { continue; }
+                state=new JSONObject().put("origin",server).put("token",token).put("chaoId",Snapshot.text(row.getJSONObject("player"),"id",128));
+            }
+            if(state==null) throw new IllegalStateException("Play once on your PC first. Then your Chao is here.");
             OriginalArtwork.clear(this); new SecureStore(this).write(state); GardenJobService.schedule(this);
             new GardenRepository(this).refresh();
         },"Logged in. Add the widget to your home screen.");

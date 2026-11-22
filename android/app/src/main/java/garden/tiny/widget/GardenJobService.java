@@ -36,7 +36,12 @@ public final class GardenJobService extends JobService {
                 else {
                     JobWorkItem work;
                     while(!stop.get() && (work=params.dequeueWork())!=null) {
-                        repository.refresh();
+                        Intent intent=work.getIntent();
+                        // A care tap is sent once: an OS retry of the same work only reads.
+                        if("care".equals(intent.getAction()) && work.getDeliveryCount()==1) {
+                            try { repository.care(intent.getStringExtra("care")); }
+                            catch(Exception refused) { /* The repository kept the reason for the widget to show. */ }
+                        } else repository.refresh();
                         if(!stop.get()) params.completeWork(work);
                     }
                 }

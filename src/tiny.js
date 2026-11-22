@@ -199,16 +199,6 @@ function seconds(value) { return Number.isFinite(value) ? `${Math.ceil(Math.max(
 
 function renderSlots() {
   try { savedSlots = saves.list(); } catch { savedSlots = []; }
-  const select = $('#tiny-slot');
-  select.replaceChildren();
-  savedSlots.forEach((slot, index) => {
-    const option = document.createElement('option');
-    option.value = String(index);
-    option.textContent = slot.name || 'Saved Chao';
-    option.selected = slot.token === token;
-    select.append(option);
-  });
-  $('#tiny-slot-label').hidden = savedSlots.length < 2;
   return savedSlots;
 }
 
@@ -592,10 +582,6 @@ $('#tiny-take-control').addEventListener('click', async () => {
 $('.tiny-desktop-link').addEventListener('click', event => { event.preventDefault(); requestSave(true); });
 window.addEventListener('online', () => { if (token && !connected) void resume(token); });
 
-$('#tiny-slot').addEventListener('change', event => {
-  const slot = savedSlots[Number(event.target.value)];
-  if (slot) { if (tinyGame && connected) send({ type: 'action', action: 'tiny-stop', sessionId: tinyGame.id }); void resume(slot.token); }
-});
 $('#tiny-games').addEventListener('click', event => {
   const button = event.target.closest('[data-game]');
   if (!button) return;
@@ -833,8 +819,8 @@ async function logIn(form, input) {
   try {
     const chao = await tinyLogin(fetch, input);
     form.reset(); rememberLogin = $('#tiny-remember').checked;
-    for (const row of [...chao].reverse()) { try { saves.record(row.token, row.player); } catch { /* This visit still works without storage. */ } }
-    renderSlots(); await resume(chao[0].token);
+    try { saves.record(chao.token, chao.player); } catch { /* This visit still works without storage. */ }
+    renderSlots(); await resume(chao.token);
   } catch (error) { $('#tiny-login-error').textContent = error.message || 'Could not log in.'; }
   finally { submit.disabled = false; }
 }

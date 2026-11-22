@@ -11,6 +11,7 @@ public final class ServerOriginTest {
         assertEquals("https://garden.example:8443/api/account/login", origin.api("account/login"));
         assertEquals("https://garden.example:8443/api/session", origin.api("session"));
         assertEquals("https://garden.example:8443/api/tiny-chao", origin.api("tiny-chao"));
+        assertEquals("https://garden.example:8443/api/tiny-care", origin.api("tiny-care"));
         assertEquals("https://garden.example:8443/api/assets/tiny-dark-chaos.png", origin.asset("/api/assets/tiny-dark-chaos.png"));
         assertEquals("https://garden.example:8443/tiny.html", origin.garden());
     }

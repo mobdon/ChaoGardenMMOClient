@@ -19,10 +19,10 @@ The script runs `assembleDebug lintDebug testDebugUnitTest assembleDebugAndroidT
 ## Log in and use
 
 1. Install the APK and open Tiny Garden. Enter the HTTPS garden server.
-2. Log in with your username or email and password, or with your memory card code. The app calls `POST /api/account/login` (or `GET /api/card`) and stores only the Chao key the server returns, sealed with Android Keystore. The password is never stored.
+2. The widget shows the Chao picked on the PC (the one whose model the PC stored); there is no picker in the app. Log in with your username or email and password, or with your memory card code. The app calls `POST /api/account/login` (or `GET /api/card`) and stores only the Chao key the server returns, sealed with Android Keystore. The password is never stored.
 3. The widget reads `GET /api/tiny-chao` and `POST /api/session`. Until the same account has played once on its PC the server has no Chao model and the widget says so.
 4. When the stored model is a PNG picture sheet (8 x 8 cells of 96 px) the widget draws your own Chao from its first cell; otherwise it uses the shared Chaos pictures.
-5. Pet and Rest/Wake open Tiny Garden in the browser: care needs a live garden visit, the widget only reads.
+5. Pet and Rest/Wake post to `POST /api/tiny-care` for a Chao that is out in a garden. A tap is sent once and never replayed.
 6. Log out removes the key and cached pictures from the device.
 
 ## Data, art and background work

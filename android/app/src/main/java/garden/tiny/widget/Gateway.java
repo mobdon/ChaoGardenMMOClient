@@ -50,6 +50,14 @@ final class Gateway {
             throw failure;
         }
     }
+    /** Pet, rest or wake a Chao that is out in a garden: {kind} -> {player}. */
+    JSONObject care(String kind) throws Exception {
+        try { return json(request(origin.api("tiny-care"),new JSONObject().put("kind",kind),131072)); }
+        catch(Failure failure) {
+            if(failure.status==409) throw new IllegalStateException("Your Chao is not out in a garden, or was cared for a moment ago.");
+            throw failure;
+        }
+    }
     private static JSONObject json(byte[] bytes) throws Exception { return new JSONObject(new String(bytes,StandardCharsets.UTF_8)); }
     byte[] asset(JSONObject descriptor) throws Exception {
         String hash = descriptor.getString("sha256");

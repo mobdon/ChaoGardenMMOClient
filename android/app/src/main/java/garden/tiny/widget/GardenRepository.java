@@ -26,6 +26,13 @@ final class GardenRepository {
         }
         catch(Exception failure) { fail(state,failure); throw failure; }
     }
+    /** One care tap from the widget; the server applies it and answers with the Chao as it is now. */
+    void care(String kind) throws Exception {
+        JSONObject state=store.read();
+        if(!state.has("token")) return;
+        try { Gateway api=gateway(state); accept(state,AccountAdapter.parse(api.care(kind)),api); }
+        catch(Exception failure) { fail(state,failure); throw failure; }
+    }
     private void accept(JSONObject state,AccountAdapter.AccountView account,Gateway api) throws Exception {
         if(!state.getString("chaoId").equals(account.chaoId)) throw new IllegalStateException("This login now opens a different Chao. Log in again.");
         JSONObject art=OriginalCatalog.forPlayer(account.player);

@@ -105,19 +105,20 @@ public final class GardenWidget extends AppWidgetProvider {
         PendingIntent launch=PendingIntent.getActivity(context,0,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         view.setOnClickPendingIntent(R.id.widget_open,launch);
         view.setOnClickPendingIntent(R.id.widget_avatar,launch);
-        view.setOnClickPendingIntent(R.id.widget_refresh,action(context,"refresh"));
-        // Care needs a live garden visit: both buttons open Tiny Garden.
+        view.setOnClickPendingIntent(R.id.widget_refresh,action(context,"refresh","refresh"));
         JSONObject watch=state.optJSONObject("watch");
-        view.setTextViewText(R.id.widget_pet,"Pet");
-        view.setTextViewText(R.id.widget_feed,watch!=null && "rest".equals(watch.optString("activity"))?"Wake":"Rest");
-        for(int resource:new int[]{R.id.widget_pet,R.id.widget_feed}) {
-            view.setContentDescription(resource,"Open Tiny Garden to care for your Chao");
-            view.setOnClickPendingIntent(resource,launch);
+        for(String care:new String[]{"pet",watch!=null && "rest".equals(watch.optString("activity"))?"wake":"rest"}) {
+            int resource="pet".equals(care)?R.id.widget_pet:R.id.widget_feed;
+            boolean enabled=fresh && watch!=null;
+            view.setBoolean(resource,"setEnabled",enabled);
+            view.setTextViewText(resource,care.equals("pet")?"Pet":care.equals("wake")?"Wake":"Rest");
+            view.setContentDescription(resource,snapshot==null?"Care unavailable. Log in to see your Chao.":watch==null?"Your Chao is not out in a garden":care.equals("pet")?"Pet your Chao":care.equals("wake")?"Wake your Chao":"Let your Chao rest");
+            if(enabled) view.setOnClickPendingIntent(resource,action(context,"care",care));
         }
         return view;
     }
-    private static PendingIntent action(Context context,String kind) {
-        Intent intent=new Intent(context,WidgetActionReceiver.class).setAction(kind).setData(Uri.parse("tinygarden-widget://"+kind));
+    private static PendingIntent action(Context context,String kind,String care) {
+        Intent intent=new Intent(context,WidgetActionReceiver.class).setAction(kind).setData(Uri.parse("tinygarden-widget://"+kind+"/"+care)).putExtra("care",care);
         return PendingIntent.getBroadcast(context,0,intent,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
     }
 }
