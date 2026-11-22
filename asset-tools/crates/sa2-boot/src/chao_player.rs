@@ -687,6 +687,9 @@ fn baked_boot(c: &mut Cpu, m: &mut Mem) -> u32 {
         BAKED_BOOT.set(Some((body, 0)));
         return 0;
     }
+    // Only the strips of his shoe (as the hub's export keeps only the mesh
+    // weighted to the heel): the cached list also holds more of his leg.
+    let (plist, kept, dropped) = shoe_strips(&|a| r16(a) as u16, polys, &shoe);
     let Some(&max) = cache.keys().next_back() else { return 0 };
     // Into the heel's frame.
     let (hr, ht) = w[23];
@@ -700,7 +703,8 @@ fn baked_boot(c: &mut Cpu, m: &mut Mem) -> u32 {
     // Model and object blocks with zeroed room past their Ninja fields
     // (unverified whether the GC draw keeps more per model).
     let (vl_size, model_size, obj_size) = (words * 4, 64, 0x40);
-    let total = vl_size + 2 * (model_size + obj_size);
+    let pl_size = (2 * plist.len() as u32 + 3) & !3;
+    let total = vl_size + 2 * (model_size + obj_size) + pl_size;
     let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
     if mem == 0 {
         eprintln!("chao-player boot: no room to bake his heel/toe ({total} bytes)");
@@ -728,7 +732,11 @@ fn baked_boot(c: &mut Cpu, m: &mut Mem) -> u32 {
     m.w32(a, 0xFF);
     let (m_heel, m_toe) = (mem + vl_size, mem + vl_size + model_size);
     let (o_heel, o_toe) = (mem + vl_size + 2 * model_size, mem + vl_size + 2 * model_size + obj_size);
-    for (mdl, vlist, pl) in [(m_heel, vl, polys), (m_toe, 0, 0)] {
+    let pl_at = o_toe + obj_size;
+    for (i, &w) in plist.iter().enumerate() {
+        m.w16(pl_at + 2 * i as u32, w);
+    }
+    for (mdl, vlist, pl) in [(m_heel, vl, pl_at), (m_toe, 0, 0)] {
         m.w32(mdl, vlist);
         m.w32(mdl + 4, pl);
         for j in 0..3 { m.w32(mdl + 8 + 4 * j, 0); }
@@ -743,7 +751,7 @@ fn baked_boot(c: &mut Cpu, m: &mut Mem) -> u32 {
         m.w32(obj + 44, child);
         m.w32(obj + 48, 0);
     }
-    eprintln!("chao-player boot: baked his heel/toe ({cnt} cache entries, {} set) at {o_heel:#x}", cache.len());
+    eprintln!("chao-player boot: baked his heel/toe ({cnt} cache entries, {} set, shoe {}) at {o_heel:#x}: {kept} shoe strips kept, {dropped} dropped", cache.len(), shoe.len());
     BAKED_BOOT.set(Some((body, o_heel)));
     BAKED_VERTS.set(shoe.iter().filter_map(|i| cache.get(i)).map(|&(p, _)| inv(p, ht)).collect());
     o_heel
@@ -756,6 +764,67 @@ thread_local! {
     static BAKED_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// A Ninja chunk polygon list (big-endian shorts from `start`, to its end
+/// chunk) with only the strips whose vertices are all in `keep`; material
+/// and other state chunks kept, polygon cache/draw chunks (types 4/5)
+/// dropped. Returns the new list and the strip counts kept and dropped.
+/// Strip types 64-75 by their shorts per vertex (index plus UV/normal/
+/// colour); an unknown type is kept whole.
+/// unverified: per-vertex sizes of types 67-69 and 73-75 (not in his shoe so far).
+fn shoe_strips(r16: &dyn Fn(u32) -> u16, start: u32, keep: &std::collections::BTreeSet<u32>) -> (Vec<u16>, usize, usize) {
+    let (mut out, mut kept, mut dropped) = (vec![], 0, 0);
+    let mut a = start;
+    for _ in 0..8192 {
+        let h = r16(a);
+        let t = h & 0xFF;
+        match t {
+            0xFF => break,
+            0 | 4 | 5 => a += 2,
+            1..=7 => { out.push(h); a += 2; }
+            8..=15 => { out.extend([h, r16(a + 2)]); a += 4; }
+            64..=75 => {
+                let size = r16(a + 2) as u32;
+                let end = a + 4 + 2 * size;
+                let base = match t { 64 | 73 => 1, 65 | 66 | 70 => 3, 67 => 4, 71 | 72 | 74 | 75 => 5, _ => 6 };
+                let w = r16(a + 4);
+                let (n, uf) = (w & 0x3FFF, (w >> 14) as u32);
+                let mut p = a + 6;
+                let mut strips: Vec<u16> = vec![];
+                let mut nk = 0u16;
+                for _ in 0..n {
+                    let cnt = (r16(p) as i16).unsigned_abs() as u32;
+                    let s0 = p;
+                    p += 2;
+                    let mut all = true;
+                    for i in 0..cnt {
+                        all &= keep.contains(&(r16(p) as u32));
+                        p += 2 * base + if i >= 2 { 2 * uf } else { 0 };
+                    }
+                    if all {
+                        strips.extend((s0..p).step_by(2).map(r16));
+                        nk += 1;
+                    } else {
+                        dropped += 1;
+                    }
+                }
+                if nk > 0 {
+                    out.extend([h, 1 + strips.len() as u16, ((uf as u16) << 14) | nk]);
+                    out.extend(strips);
+                    kept += nk as usize;
+                }
+                a = end;
+            }
+            _ => {
+                let size = r16(a + 2) as u32;
+                out.extend((a..a + 4 + 2 * size).step_by(2).map(r16));
+                a += 4 + 2 * size;
+            }
+        }
+    }
+    out.push(0x00FF);
+    (out, kept, dropped)
+}
+
 /// The object of node `index` (depth first, as read_chao counts) in a model
 /// tree (NJS_OBJECT: child +0x2C, sibling +0x30), 0 when there is none.
 fn node_obj(m: &Mem, root: u32, index: usize) -> u32 {
@@ -3311,6 +3380,20 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shoe_strips_keeps_only_strips_inside_the_set() {
+        // material (type 16, 2 shorts), UV strip chunk (type 65): strip A
+        // over 1,2,3 (kept), strip B over 1,9,3 (dropped), end.
+        let list: Vec<u16> = vec![0x0010, 2, 0xAAAA, 0xBBBB, 0x0041, 21, 2,
+            3, 1, 0, 0, 2, 0, 0, 3, 0, 0,
+            3, 1, 0, 0, 9, 0, 0, 3, 0, 0, 0x00FF];
+        let r16 = |a: u32| list[(a / 2) as usize];
+        let keep: std::collections::BTreeSet<u32> = [1, 2, 3].into();
+        let (out, kept, dropped) = shoe_strips(&r16, 0, &keep);
+        assert_eq!((kept, dropped), (1, 1));
+        assert_eq!(out, vec![0x0010, 2, 0xAAAA, 0xBBBB, 0x0041, 11, 1, 3, 1, 0, 0, 2, 0, 0, 3, 0, 0, 0x00FF]);
+    }
+
     use super::*;
 
     #[test]
