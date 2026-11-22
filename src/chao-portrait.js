@@ -80,6 +80,30 @@ export async function mountChaoPortrait(canvas, player) {
   const height = max.y - min.y;
   const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
   camera.minZ = 0.01;
+  // The game's own head ball for a default child (ChaoMain.rel): AL_IconDrawSub 0x12B8C quad +-0.55, +0.3 up in view,
+  // squash k = 0.92 + 0.08*(1+sin phase), phase += 0x780/frame; AL_CalcShadowPos 0x100C node 33 + 0.045*sin(psi),
+  // psi += 0x470/frame; AL_CalcIconColor 0x14574 zero-evolution child colour 255,255,76.
+  // shortcut: other body types' ball colours and ring branches are not ported; add them when the portrait shows evolved Chao.
+  const node33 = visual.getDescendants(false).find(node => /^033_object/.test(node.name));
+  if (key.startsWith('chao-body-') && node33) {
+    const ball = B.MeshBuilder.CreatePlane('native-head-ball', { size: 1.1 }, scene);
+    const mat = new B.StandardMaterial('native-head-ball', scene);
+    mat.diffuseTexture = new B.Texture('/api/assets/emotion-sphere.png', scene, true, true, B.Texture.BILINEAR_SAMPLINGMODE);
+    mat.diffuseTexture.hasAlpha = true; mat.useAlphaFromDiffuseTexture = true;
+    mat.disableLighting = true; mat.emissiveColor = new B.Color3(1, 1, 76 / 255); mat.backFaceCulling = false;
+    ball.material = mat; ball.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
+    let phase = 0, psi = 0, ticks = 0;
+    scene.onBeforeRenderObservable.add(() => {
+      ticks += Math.min(engine.getDeltaTime(), 100) * 0.06;
+      for (; ticks >= 1; ticks -= 1) { phase += 0x780; psi += 0x470; }
+      const k = 0.92 + 0.08 * (1 + Math.sin(phase / 0x10000 * 2 * Math.PI));
+      node33.computeWorldMatrix(true);
+      ball.position.copyFrom(node33.getAbsolutePosition());
+      ball.position.y += 0.045 * Math.sin(psi / 0x10000 * 2 * Math.PI);
+      ball.position.addInPlace(camera.getDirection(B.Axis.Y).scale(0.3));
+      ball.scaling.set(k, 2 - k, 1);
+    });
+  }
   engine.runRenderLoop(() => scene.render());
   return dispose;
 }
