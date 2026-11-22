@@ -1821,17 +1821,35 @@ fn motion_log(c: &mut Cpu, m: &mut Mem) {
 }
 
 fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
+    // The player's own Chao from their card: the first hatched Chao (type >= 2,
+    // CHAO_PARAM_GC +0x80) in the loaded Chao save, which ChaoMain fn_60_2C30
+    // walks as (.text 0xDFA0)() + 0xA64 + slot * 0x800, (.text 0xCC98)() slots.
+    // Copied, so the card's own Chao is never changed by the lobby.
+    // No Chao on the card: no default Chao (and never Sonic); the page goes
+    // back to the login (create returns Failed -> no_chao).
     zero(m, INFO, 0x800);
-    // Owner Chao (server game.rs "admin-dark-chaos"): Dark Chaos, type 0x16 in
-    // the byte the game's own egg code sets (2 = child there).
-    // shortcut: alignment and stats are not written yet; their GC offsets in
-    // the save info are unverified.
-    m.w8(INFO + 0x80, 0x16);
-    // Gene "analysed" flag (info+0x438), the 1 AL_GeneAnalyzeCommon (0x1002C)
-    // itself writes. With it 0, CreateChaoExtra runs AL_GeneAnalyze, which
-    // resets the type to 2 (child): seen as type 2 after creation.
-    m.w8(INFO + 0x438, 1);
-    m.w8(INFO + 0x84, 0xFF);
+    let s1 = rt::sec(m, 60, 1);
+    if !chao_world(m) {
+        // Story stages (no Chao save loaded): the Dark Chaos as before.
+        m.w8(INFO + 0x80, 0x16);
+        m.w8(INFO + 0x438, 1);
+        m.w8(INFO + 0x84, 0xFF);
+        return create_from_info(c, m, pos);
+    }
+    let save = call(c, m, s1 + 0xDFA0, &[]).wrapping_add(0xA64);
+    let slots = call(c, m, s1 + 0xCC98, &[]).min(64);
+    let Some(own) = (0..slots).map(|i| save + i * 0x800).find(|&p| m.r8(p + 0x80) >= 2) else {
+        eprintln!("chao-player: no hatched Chao on the card ({slots} slots); back to the login");
+        return Step::Failed;
+    };
+    for o in (0..0x800).step_by(4) {
+        m.w32(INFO + o, m.r32(own + o));
+    }
+    eprintln!("chao-player: the card's Chao at {own:#x}, type {:#x}", m.r8(INFO + 0x80));
+    create_from_info(c, m, pos)
+}
+
+fn create_from_info(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     for (o, w) in pos.into_iter().enumerate() {
         m.w32(POS + 4 * o as u32, w);
     }
