@@ -36,6 +36,10 @@ const AL_CHANGE_AREA: u32 = 0x2_7E00;
 const LAST_AREA: u32 = 12;
 /// The Chao Lobby's stage number (al_stage.h: 7 lobby; 0 is none, while loading).
 const LOBBY: u32 = 7;
+/// ChaoMain .bss (section 5) +0x972E8: the previous stage, returned by
+/// `AL_GetPreStageNumber` 0x27F90 (symbols.txt). Unverified that the lobby
+/// reads it only at its start; the headless arrival check is the test.
+const PRE_STAGE: u32 = 0x9_72E8;
 /// A new player's egg, laid the way ChaoMain's `AL_ItemCreateManagerExecutor`
 /// (0x18F7C, its call at 0x19208) makes a bought egg: a save slot from
 /// `fn_60_2C30` 0x2C30, `AL_GeneCreate` 0x1218C into a 0xC0-byte gene,
@@ -98,7 +102,6 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
                 .filter(|a| (1..=LAST_AREA).contains(a)),
         );
         if AREA.get().is_none() && std::env::var("SA2_TP_ARRIVE").is_ok_and(|v| v.trim() == "1") {
-            AREA.set(Some(1));
             TP_ARRIVE.set(true);
         }
         HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
@@ -144,10 +147,14 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             AREA.set(None);
         }
         // Arrived in the lobby (the player task is up): lay the egg once.
-        // Standing in the garden it went to first: back to the lobby, as through its teleporter.
-        if TP_ARRIVE.get() && now == 1 && m.r32(PLAYERTWP) != 0 {
-            TP_ARRIVE.set(false);
-            guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
+        // Until the player stands in the lobby, its previous stage reads as the
+        // Neutral Garden, so the lobby places the player as arriving from it.
+        if TP_ARRIVE.get() {
+            if now == LOBBY && m.r32(PLAYERTWP) != 0 {
+                TP_ARRIVE.set(false);
+            } else if let Some(bss) = chaomain_section(m, 5) {
+                m.w32(bss + PRE_STAGE, 1);
+            }
         }
         if HATCH.get() && !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
@@ -249,10 +256,17 @@ fn tell_page(area: u32) {
 /// ChaoMain's linked .text (section 1), through the game's module list
 /// (OSModuleInfo: id +0, next +4, section table +0x10). None until linked.
 fn chaomain_text(m: &Mem) -> Option<u32> {
+    chaomain_section(m, 1)
+}
+
+/// A linked ChaoMain section's address (section table entries are 8 bytes:
+/// offset, size; OSLink stores the .bss address there too).
+fn chaomain_section(m: &Mem, n: u32) -> Option<u32> {
     let mut info = m.r32(0x8000_30C8);
     while info != 0 {
         if m.r32(info) == CHAOMAIN {
-            return Some(m.r32(m.r32(info + 0x10) + 8) & !1);
+            let at = m.r32(m.r32(info + 0x10) + n * 8) & !1;
+            return (at != 0).then_some(at);
         }
         info = m.r32(info + 4);
     }
