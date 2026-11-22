@@ -15,6 +15,7 @@ export const TEXTURES = {
   // The extraction script takes this one from whichever menu archive holds it.
   'chao-select-window.png': [MENU_ARCHIVES, 'add_select_race_en'],
   'chao-icon-heart.png': [['al_icon'], 'al_icon05'],
+  'emotion-sphere.png': [['al_icon'], 'al_icon01'],
   'item-panel-fruit.png': [['al_tex_common'], 'panel_fruit'],
   'item-panel-egg.png': [['al_tex_common'], 'panel_egg'],
   ...Object.fromEntries(PANELS.map((name, id) => [`item-panel-${id}.png`, [['al_panel'], `panel_${name}`]])),

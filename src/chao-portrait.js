@@ -3,7 +3,7 @@
 // -0x38E (about -5 deg) as CreateChaoExtra places it (ChaoMain 0x55A20). Used for the MMO card
 // icon (small) and the login screen (big).
 import { captureChaoPose, cloneNativeMotion } from './chao-locomotion.js';
-import { gameChaoGlb } from './game-assets.js';
+import { gameChaoGlb, gameTextureUrl } from './game-assets.js';
 import { applyNativeChaoMaterial } from './chao-materials.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
@@ -107,10 +107,12 @@ async function drawChaoPortrait(canvas, player) {
   // psi += 0x470/frame; AL_CalcIconColor 0x14574 zero-evolution child colour 255,255,76.
   // shortcut: other body types' ball colours and ring branches are not ported; add them when the portrait shows evolved Chao.
   const node33 = visual.getDescendants(false).find(node => /^033_object/.test(node.name));
-  if (key.startsWith('chao-body-') && node33) {
+  if ((key.startsWith('chao-body-') || own && key === 'chao') && node33) {
+    const picture = await gameTextureUrl('emotion-sphere.png') ?? '/api/assets/emotion-sphere.png';
+    if (scene.isDisposed) return () => {};
     const ball = B.MeshBuilder.CreatePlane('native-head-ball', { size: 1.1 }, scene);
     const mat = new B.StandardMaterial('native-head-ball', scene);
-    mat.diffuseTexture = new B.Texture('/api/assets/emotion-sphere.png', scene, true, true, B.Texture.BILINEAR_SAMPLINGMODE);
+    mat.diffuseTexture = new B.Texture(picture, scene, true, true, B.Texture.BILINEAR_SAMPLINGMODE);
     mat.diffuseTexture.hasAlpha = true; mat.useAlphaFromDiffuseTexture = true;
     mat.disableLighting = true; mat.emissiveColor = new B.Color3(1, 1, 76 / 255); mat.backFaceCulling = false;
     ball.material = mat; ball.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
