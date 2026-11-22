@@ -203,7 +203,8 @@ async function start() {
   const audio = new AudioContext({ latencyHint: 'interactive' });
   await audio.audioWorklet.addModule('audio.js');
   const mix = new AudioWorkletNode(audio, 'sa2-mix', { outputChannelCount: [2], processorOptions: { ctl: sh.ctl, audio: sh.audio } });
-  mix.connect(audio.destination);
+  gameVolume = audio.createGain();
+  mix.connect(gameVolume).connect(audio.destination);
   const dpr = devicePixelRatio || 1;
   canvas.width = Math.round(canvas.clientWidth * dpr);
   canvas.height = Math.round(canvas.clientHeight * dpr);
@@ -229,6 +230,7 @@ async function start() {
   if (token) e.SA2_MMO_TOKEN = token;
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
+  if (token) loadSettings(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
@@ -246,6 +248,29 @@ $('go').addEventListener('click', () => start().catch((e) => {
 // ?autostart: start without the button (for testing; sound may stay off).
 if (q.has('autostart')) $('go').click();
 
+// ---- Extras settings (pause menu), saved only on the MMO server ----------
+// The page applies the rows it owns: game volume, chat box, frame cap; voice
+// reads mmoSettings.voiceMode. The game applies its own rows (language, sound mode...).
+let gameVolume = null;
+const mmoSettings = (globalThis.mmoSettings ??= {});
+function applySettings(s) {
+  Object.assign(mmoSettings, s);
+  if (gameVolume && Number.isInteger(mmoSettings.volume)) gameVolume.gain.value = mmoSettings.volume / 10;
+  chat.hidden = mmoSettings.chat === false;
+  if (renderer && mmoSettings.fps) renderer.postMessage({ fps: mmoSettings.fps });
+}
+async function loadSettings(token) {
+  const r = await fetch('/api/settings', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+  if (r?.ok) applySettings((await r.json()).settings || {});
+}
+// The Extras page calls this when a row changes: applied now, saved on the server.
+globalThis.mmoSaveSettings = (changes) => {
+  applySettings(changes);
+  const token = mmoToken();
+  if (token) fetch('/api/settings', { method: 'POST', body: JSON.stringify(changes),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }).catch(() => {});
+};
+
 // ---- chat: world (everyone) and room (this area), relayed by the MMO server --
 // T opens the box; a message starting "/w " goes to world chat, the rest to the room.
 const chat = document.createElement('div');
@@ -262,7 +287,7 @@ function chatLine({ channel, fromName, text }) {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 addEventListener('keydown', (e) => {
-  if (e.code !== 'KeyT' || e.target === chatInput || !room) return;
+  if (e.code !== 'KeyT' || e.target === chatInput || !room || chat.hidden) return;
   e.preventDefault();
   held = 0;
   chatInput.hidden = false;
