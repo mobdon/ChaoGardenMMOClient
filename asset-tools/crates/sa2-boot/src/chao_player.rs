@@ -149,6 +149,12 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
     if let (Step::Live(chao), Some(ang)) = (STEP.get(), CHAR_ANG.get()) {
         if me == chao && PMOVE_CHAO.get() == chao && self_drive(m) {
             let cw = m.r32(chao + 0x34);
+            // SA2_YAW_LOG=1 (debug): every frame, the yaw the character set and
+            // the one the Chao's exec left, with the position, to see a drift or jerk.
+            if std::env::var("SA2_YAW_LOG").is_ok_and(|v| v == "1") {
+                let f = |a: u32| f32::from_bits(m.r32(a));
+                eprintln!("yaw: frame {} char {:#06x} chao {:#06x} pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), ang[1] & 0xFFFF, m.r32(cw + 0x0C) & 0xFFFF, f(cw + 0x14), f(cw + 0x1C));
+            }
             for (i, v) in ang.into_iter().enumerate() {
                 m.w32(cw + 0x08 + 4 * i as u32, v);
             }
