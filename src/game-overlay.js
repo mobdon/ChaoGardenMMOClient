@@ -19,7 +19,7 @@ export function mountOverlay(nextSocket) {
   const send = message => mounted.socket.readyState === WebSocket.OPEN && (mounted.socket.send(JSON.stringify(message)), true);
   // The inventory lives on the Chao stats card (mob): click the card or press Tab.
   const card = document.getElementById('mmo-card');
-  const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:auto;right:auto;left:16px;bottom:72px';
+  const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:120px;right:auto;left:16px;bottom:auto';
   // The game's own stat window rows (stat-ui.js: native frame, font and grade cells), then the native inventory.
   // The game's own medical-chart record page (page A, crop origin x264,y40): name bar, attributes,
   // ability type, portrait box and the five skill rows (y260..388 step 32), filled from the snapshot.
