@@ -420,7 +420,7 @@ async function join(name, token = sessionToken, card = null, owner = false) {
     player = data.player;
     rememberChao();
     // The game's own Chao Lobby is the hub now (mob 2026-11-21); ?oldhub keeps this page as a reference.
-    if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign('/sa2/?stage=90&autostart'); return; }
+    if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign(token || card ? '/sa2/?stage=90&autostart' : '/sa2/?stage=90&hatch=1&autostart'); return; }
     welcome.close();
     connect(sessionToken);
     updatePaused();
