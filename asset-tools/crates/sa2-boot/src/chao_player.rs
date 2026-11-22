@@ -259,6 +259,7 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
         air_shoes(c, m);
+        hammer_gloves(c, m);
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
@@ -444,6 +445,103 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     (c.r, c.f) = regs;
     m.w32(list, keep_list);
     for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, keep_m[r][k].to_bits()); } }
+}
+
+/// Knuckles's Hammer Gloves item (KNUCKMDL 164 right / 165 left = slots
+/// 329/331, KNUCKTEX) on the Chao's arm nodes 3/10, with the client's fit
+/// (src/scene.js gearMountRotation and attachOwnerGear): the glove's source
+/// up/forward (Knuckles142 rest wrist/hand matrices) turned to the Chao's +y/+z,
+/// scaled to 1.12 of the Chao hand's largest extent (hand points past 0.55
+/// of the reach from arm node 3/10 towards its distal marker 4/11), centred
+/// on the hand, then fixed rigidly under the arm node.
+/// The side: the arm node on the Chao's right (-x, facing +z) takes the right glove.
+const GLOVE_REFS: [(u32, [f32; 3], [f32; 3]); 2] = [
+    (329, [0.150_553_9, 0.933_591_6, 0.325_177_2], [-0.984_045_9, 0.173_063_3, -0.041_265_2]),
+    (331, [0.171_001_5, 0.896_849_7, -0.407_944_7], [-0.985_151_6, 0.162_074_6, -0.056_639_6]),
+];
+const GLOVE_SCALE: f32 = 1.12;
+const GLOVE_REACH: f32 = 0.55;
+
+fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
+    let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| (r.worlds(&[]), r.verts.clone())))?;
+    let (w, verts) = rest;
+    if w.len() < 12 {
+        return None;
+    }
+    let world = |n: usize| -> [[f32; 4]; 3] { let (r, t) = w[n]; std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] } else { t[i] })) };
+    let bounds = |pts: &[[f32; 3]]| { let lo = (0..3).map(|k| pts.iter().map(|p| p[k]).fold(f32::MAX, f32::min)).collect::<Vec<_>>(); let hi = (0..3).map(|k| pts.iter().map(|p| p[k]).fold(f32::MIN, f32::max)).collect::<Vec<_>>(); ([0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0), (0..3).map(|k| hi[k] - lo[k]).fold(0.0f32, f32::max)) };
+    // Right arm = the one at -x.
+    let arms = if w[3].1[0] < w[10].1[0] { [(3usize, 4usize), (10, 11)] } else { [(10, 11), (3, 4)] };
+    let mut out = [(0u32, [[0.0f32; 4]; 3]); 2];
+    for (k, &(arm, tip)) in arms.iter().enumerate() {
+        let (model, up, fwd) = GLOVE_REFS[k];
+        let obj = m.r32(MODELS + 4 * model);
+        if !(0x8000_0000..0x8C00_0000).contains(&obj) {
+            return None;
+        }
+        let aw = world(arm);
+        let pts: Vec<[f32; 3]> = verts[arm].iter().map(|&v| apply(&aw, v)).collect();
+        let (sh, hand) = (w[arm].1, w[tip].1);
+        let ax = { let d = [hand[0] - sh[0], hand[1] - sh[1], hand[2] - sh[2]]; let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-6); d.map(|x| x / l) };
+        let dot = |p: &[f32; 3]| (0..3).map(|i| (p[i] - sh[i]) * ax[i]).sum::<f32>();
+        let reach = pts.iter().map(dot).fold(f32::MIN, f32::max);
+        let hp: Vec<[f32; 3]> = pts.iter().filter(|p| dot(p) >= reach * GLOVE_REACH).copied().collect();
+        if hp.is_empty() {
+            return None;
+        }
+        // R maps the glove's source up/forward to +y/+z.
+        let n = |v: [f32; 3]| { let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt(); v.map(|x| x / l) };
+        let (u, f) = (n(up), n(fwd));
+        let x = n([u[1] * f[2] - u[2] * f[1], u[2] * f[0] - u[0] * f[2], u[0] * f[1] - u[1] * f[0]]);
+        let r = [x, u, f];
+        let gr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
+        let gv: Vec<[f32; 3]> = gr.verts.iter().zip(gr.worlds(&[])).flat_map(|(vs, (rr, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|q| rr[i][q] * v[q]).sum::<f32>())).collect::<Vec<_>>()).collect();
+        let src: Vec<[f32; 3]> = gv.iter().map(|p| std::array::from_fn(|i| (0..3).map(|q| r[i][q] * p[q]).sum())).collect();
+        let ((hc, hsize), (sc, ssize)) = (bounds(&hp), bounds(&src));
+        if ssize <= 0.0 {
+            return None;
+        }
+        // SA2_GLOVE_SCALE=k (debug): k times the fitted size.
+        let s = hsize * GLOVE_SCALE / ssize * std::env::var("SA2_GLOVE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * s } else { hc[i] - sc[i] * s }));
+        out[k] = (model, inv_mul(&aw, &desired));
+        let _ = arm;
+    }
+    // Index by arm node: [node 3, node 10].
+    if arms[0].0 == 10 { out.swap(0, 1); }
+    Some(out)
+}
+
+fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
+    let Some(tex) = KNUX_TEX.get() else { return };
+    if OWN_MOTION.get() || std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
+        return;
+    }
+    if GLOVE_FIT.with_borrow(|g| g.is_none()) {
+        let fit = glove_fit(m);
+        if fit.is_some() {
+            eprintln!("chao-player: Hammer Gloves fitted {fit:?}");
+        }
+        GLOVE_FIT.set(fit);
+    }
+    let Some(fit) = GLOVE_FIT.with_borrow(|g| *g) else { return };
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let keep_m = mtx(m, cur_ptr);
+    let list = m.r32(c.r[13].wrapping_sub(0x7228)) + 0x20;
+    let keep_list = m.r32(list);
+    let regs = (c.r, c.f);
+    for (k, (model, local)) in fit.into_iter().enumerate() {
+        let Some(node) = HANDS.with_borrow(|h| h[k]) else { continue };
+        let place = mul34(&node, &local);
+        for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
+        m.w32(list, tex);
+        let lcap = LCAP.replace(false);
+        call(c, m, 0x8011_DF44, &[m.r32(MODELS + 4 * model)]);
+        LCAP.set(lcap);
+    }
+    (c.r, c.f) = regs;
+    m.w32(list, keep_list);
+    for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, keep_m[r][q].to_bits()); } }
 }
 
 /// Place the Chao on the rider right before it draws (after its own exec).
@@ -881,6 +979,10 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
         }
     }
+    if i == 3 || i == 10 {
+        let cur = mtx(m, cur_ptr);
+        HANDS.with_borrow_mut(|h| h[usize::from(i == 10)] = Some(cur));
+    }
     // The foot nodes' view-space matrices, for the boots (next draw).
     if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
         let cur = mtx(m, cur_ptr);
@@ -889,6 +991,10 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
 }
 
 thread_local! {
+    static HANDS: std::cell::RefCell<[Option<[[f32; 4]; 3]>; 2]> = const { std::cell::RefCell::new([None; 2]) };
+    static KNUX_TEX: Cell<Option<u32>> = const { Cell::new(None) };
+    /// Rest fit per Chao arm node (3, 10): local placement under the node.
+    static GLOVE_FIT: std::cell::RefCell<Option<[(u32, [[f32; 4]; 3]); 2]>> = const { std::cell::RefCell::new(None) };
     static FEET: std::cell::RefCell<[Option<[[f32; 4]; 3]>; 2]> = const { std::cell::RefCell::new([None; 2]) };
 }
 
@@ -1205,6 +1311,12 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let mdl = call(c, m, LOAD_MDL, &[SHADOW_MDL_NAME]);
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
+            // Knuckles's textures and models for the Hammer Gloves item (KNUCKTEX /
+            // KNUCKMDL.PRS, main.dol 0x80174F04 / 0x80174F10).
+            let ktex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
+            let kmdl = call(c, m, LOAD_MDL, &[0x8017_4F10]);
+            eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x}");
+            KNUX_TEX.set(Some(ktex).filter(|&t| t != 0));
             // SA2_MODEL_DUMP (debug): every loaded model slot with its node and vertex counts.
             if std::env::var_os("SA2_MODEL_DUMP").is_some() {
                 for k in 0..0x428u32 {
