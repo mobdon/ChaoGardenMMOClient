@@ -620,11 +620,23 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
             put(m);
             call(c, m, 0x8011_DF44, &[overlay]);
         }
+        // The hub's jets (src/chao-attachments.js updateNativeShoeEffects and
+        // the shoe file's provenance): the right shoe's own jet models
+        // TERIOSMDL 96 toe narrow, 97 toe wide, 98 heel wide, 99 heel narrow
+        // (slots 193/195/197/199), one variant at a time: wide when fast,
+        // else narrow; only while moving. They sit in the shoe's own frame,
+        // moved by the shoe file's recentring (its shoeOriginShift
+        // 1.0672683, 0.2922889, -0.2537795 in the hub's X-mirrored space).
+        // (Slots 181/183, drawn before, are models 90/91, not jets.)
+        // unverified: the shift's signs in the game's space (checked by eye).
         if MOVING.get() && !debug_off("jets") {
-            for js in 181..=184u32 {
-                let jo = model_obj(m, js);
+            let wide = LAST_MOTION.get() == 119;
+            let shift: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 1.067_268_3], [0.0, 1.0, 0.0, -0.292_288_9], [0.0, 0.0, 1.0, 0.253_779_5]];
+            let at = if hub != 0 { mul34(&place, &shift) } else { place };
+            for js in if wide { [195u32, 197] } else { [193, 199] } {
+                let jo = shadow_obj(m, js);
                 if (0x8000_0000..0x8C00_0000).contains(&jo) {
-                    put(m);
+                    for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, at[r][k].to_bits()); } }
                     call(c, m, 0x8011_DF44, &[jo]);
                 }
             }
