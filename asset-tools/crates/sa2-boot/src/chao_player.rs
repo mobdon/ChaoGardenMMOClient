@@ -1810,6 +1810,7 @@ fn drop_stage_loads() {
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);
+    crate::card_box::drop_stage_loads();
 }
 
 /// Frames after a stage change before the gear files load. Loading Shadow's
@@ -1860,8 +1861,8 @@ fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
 /// The game's allocator (main.dol 0x8011989C) takes its OS heap index from
 /// the small-data word at r13 - 0x71B4 (29108) and passes it to
 /// OSAllocFromHeap; the gear loads run with it set to heap 1.
-const SY_HEAP_SDA: u32 = 29108;
-const GEAR_HEAP: u32 = 1;
+pub(crate) const SY_HEAP_SDA: u32 = 29108;
+pub(crate) const GEAR_HEAP: u32 = 1;
 
 /// main.dol sound calls by use count: 0x8006B978 (257 callers), 0x8006B1FC
 /// (Sonic's exec at 0x800846FC), 0x8006BB10, 0x8006C78C.
@@ -1918,6 +1919,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         crate::name_tags::flush();
     }
     crate::kinder_chart::frame(c, m);
+    crate::card_box::frame(c, m);
     lobby_exit_hook(c, m);
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
@@ -2349,7 +2351,7 @@ fn setup_and_create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
 /// Chao World (stage 90 and up) has ChaoMain, its motions, textures and
 /// ALW loaded by the game itself: only the player's Chao is created there,
 /// on the game's own module (rt::sec finds it), no second copy.
-fn module_linked(m: &Mem, id: u32) -> bool {
+pub(crate) fn module_linked(m: &Mem, id: u32) -> bool {
     std::iter::successors(Some(m.r32(rt::OS_MODULE_HEAD)), |&i| Some(m.r32(i + 4)))
         .take_while(|&i| i != 0)
         .take(256)

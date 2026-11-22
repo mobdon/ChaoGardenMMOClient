@@ -9,6 +9,7 @@
 
 pub mod audio;
 pub mod card;
+pub mod card_box;
 pub mod card_pack;
 pub mod chao_cache;
 pub mod chao_drive;
@@ -65,6 +66,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     chao_player::install(c, m);
     name_tags::install(c, m);
     kinder_chart::install(c, m);
+    card_box::install(c, m);
     start_stage::install(c, m);
     combat::install(c, m);
     race_control::install(c, m);
