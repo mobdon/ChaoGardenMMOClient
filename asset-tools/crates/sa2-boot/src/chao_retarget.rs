@@ -1,4 +1,4 @@
-//! Sonic's pose on the player Chao: the retarget mob approved in the
+//! Sonic's pose on the player Chao: the retarget from the
 //! preview clips (handoffs/chao-retarget/render2.py `pose`, board.py
 //! `board_tris`), ported 1:1. New Chao MMO hand code; no game data here.
 //!
@@ -7,7 +7,7 @@
 //! `to_chao` turns that into the Chao's model space (Sonic faces -x, the
 //! Chao +z). Output is one world (model-space) matrix per Chao node.
 //!
-//! Rules (mob 2026-11-21): full body frame (LEAN 1), full leg follow, arms
+//! Rules: full body frame (LEAN 1), full leg follow, arms
 //! snap to the Chao's own karate/race arm angles (punches) or copy Sonic 1:1
 //! (grind, board). Board: soles flat on the real deck under Sonic's ankles,
 //! legs keep their rest shape, head tips back at the neck only if it would
@@ -109,7 +109,7 @@ impl ChaoRest {
         let mut extra = vec![None; n];
         let body = body_rot(sonic);
         extra[1] = Some(body);
-        // mob 2026-11-21: the head follows the rider's head node 1:1 (not
+        // The head follows the rider's head node 1:1 (not
         // rigid on the body, which bobs with the run cycle): node 16 gets the
         // head frame in place of the body frame.
         if n > 16 {

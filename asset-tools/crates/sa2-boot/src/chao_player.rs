@@ -127,7 +127,7 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
     CHAO_DRAW.set(draw);
 }
 
-/// mob 2026-11-21 (board.py): Sonic's board drawn at the Chao's size.
+/// Sonic's board drawn at the Chao's size.
 const BOARD_SCALE: f32 = 0.40;
 
 thread_local! {
@@ -708,12 +708,12 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
 }
 
 /// ADX start from an AFS archive; the voice task calls it at 0x80012760
-/// (see walker.rs). mob 2026-11-21: no Sonic lines while the Chao plays.
+/// (see walker.rs). No Sonic lines play while the Chao plays.
 /// shortcut: drops every voice line the voice task starts in the stage, not
 /// only Sonic's; event (cutscene) audio is not covered yet.
 const ADX_START_AFS: u32 = 0x8013_476C;
 const FROM_VOICE_TASK: u32 = 0x8001_2768;
-/// mob 2026-11-21: the Dark Chaos lines "from 2P" = the Dark Chao Walker's own
+/// The Dark Chaos lines come from 2P: the Dark Chao Walker's own
 /// sound (0x201E, walker.rs), in the 2P walker bank, loaded by name with the
 /// game's bank loader and its own string.
 /// shortcut: unverified that loading this bank in City Escape leaves the
@@ -1455,7 +1455,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
                 }
             }
         }
-        // Physics stays native for Knuckles and Rouge (mob's rules).
+        // Physics stays native for Knuckles and Rouge.
         if addr == SONIC_EXEC {
             physics_row(m);
             if !chao_world(m) {
@@ -1485,7 +1485,7 @@ thread_local! {
     static ARM_FWD: Cell<f32> = const { Cell::new(0.0) };
 }
 
-/// mob's approved rules for Knuckles and Rouge (coordinator 2026-11-21):
+/// Rules for Knuckles and Rouge:
 /// punch 1 (Knuckles motion 109) = Chao karate 582, punch 2 (110) = 582
 /// mirrored, punch 3 on (111 uppercut, 138 hammer) = Knuckles retargeted with
 /// the arms biased 0.8 forward; glide (105) = Chao fly 130, climb (100) =
@@ -1503,7 +1503,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     if !(0x8000_0000..0x8C00_0000).contains(&table) {
         return;
     }
-    // The animation state (PC CharObj2 AnimInfo.Current; mob's numbers).
+    // The animation state (PC CharObj2 AnimInfo.Current).
     // SA2_KNUX_STATE=n (debug): treat the rider as in state n, to check a rule.
     let act = std::env::var("SA2_KNUX_STATE").ok().filter(|_| forced_now()).and_then(|v| v.parse().ok()).unwrap_or(idx as u16);
     let actnum = m.r16(table + 0x10 * idx);
@@ -1619,7 +1619,7 @@ fn forced_now() -> bool {
 /// obj2 +0xC0; player 1 obj2 pointer (walker.rs, native).
 const PHYSICS: u32 = 0x8019_6578;
 const P1_OBJ2: u32 = 0x801E_7728;
-/// mob 2026-11-21: off the board mob's Chao moves with Metal Sonic's row;
+/// Off the board the player's Chao moves with Metal Sonic's row;
 /// on the board Sonic's own row as the game set it.
 /// Row = the character id byte obj2+3 (0x8004F838 multiplies it by 0x84);
 /// Metal Sonic's loader 0x80086BA4 stores 0xC there (Sonic's 0x800874C0: 0).
@@ -1632,7 +1632,7 @@ fn physics_row(m: &mut Mem) {
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
-    // mob 2026-11-21: the board has its own physics. The game's row is
+    // The board has its own physics. The game's row is
     // whatever it last wrote there (Metal's is ours), kept for the board.
     let now: Vec<u32> = (0..0x84).step_by(4).map(|o| m.r32(obj2 + 0xC0 + o)).collect();
     let metal = PHYSICS + 0x84 * METAL_ROW;
