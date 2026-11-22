@@ -55,7 +55,7 @@
 
   /* room map */
   #map { display: grid; gap: .6rem; grid-template-columns: repeat(6, minmax(0, 1fr));
-    grid-template-areas: "garden garden hero hero dark dark" "kinder kinder hub hub entrance entrance"; }
+    grid-template-areas: "garden garden hero hero dark dark" "kinder kinder hub hub entrance entrance" "race race race karate karate karate"; }
   @media (max-width: 34rem) { #map { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: none; } #map .room { grid-area: auto !important; } }
   .room { display: grid; grid-template-rows: auto 1fr auto; gap: .35rem; min-height: 6.5rem; padding: .7rem .8rem; text-align: left; background: var(--raised); border-radius: .6rem; }
   .room[data-room="hub"] { min-height: 8.5rem; }
@@ -193,8 +193,8 @@ let token = null, role = null, timer = 0;
 const ROOMS = { garden: ['Chao Garden', 'garden'], hero: ['Hero Garden', 'hero'], dark: ['Dark Garden', 'dark'],
   kindergarten: ['Kindergarten', 'kinder'], hub: ['Chao Lobby', 'hub'], stadium: ['Stadium', 'stadium'],
   'race-entrance': ['Race Entrance', 'entrance'], 'chao-race': ['Chao Race', 'race'], 'chao-karate': ['Chao Karate', 'karate'] };
-// Menu screens and events are not rooms: no tile on the map. Players there still show under Everyone online.
-const MENUS = ['stadium', 'chao-race', 'chao-karate'];
+// The Stadium is a menu screen, not a room: no tile on the map. Players there still show under Everyone online.
+const MENUS = ['stadium'];
 // The server's main stats (server MAIN_STATS).
 const MAIN_STATS = ['swim', 'fly', 'run', 'power', 'stamina'];
 const roomName = (r) => ROOMS[r]?.[0] ?? r;
