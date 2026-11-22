@@ -492,7 +492,7 @@ $('#join-form').addEventListener('submit', async (event) => {
   // The account is made before the page leaves for the game, or the request would be dropped.
   await join($('#chao-name').value, null, null, false, async () => {
     try {
-      const response = await fetch('/api/account/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...account, card: sessionCard }) });
+      const response = await fetch('/api/account/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...account, card: sessionCard, agree: $('#signup-agree').checked }) });
       if (response.ok) return true;
       toast(`${(await response.json().catch(() => ({}))).error || 'Could not make your account.'} Your Chao is saved in this browser's slots.`, 'error');
     } catch { toast('Could not reach the server to make your account.', 'error'); }
