@@ -674,6 +674,33 @@ function gearTuner() {
   const tp = Object.assign(document.createElement('input'), { placeholder: 'teleport to x y z', style: 'width:100%;margin-top:4px' });
   tp.onchange = () => { sets.tp = tp.value.trim().replace(/\s+/g, ','); send(); };
   box.append(fx, mute, tp);
+  // Test accounts only (the server refuses others): POST /api/test/override
+  // sets the server profile's stats and story progress (story thread).
+  const ov = document.createElement('div');
+  ov.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center';
+  const stat = document.createElement('select');
+  for (const k of ['swim', 'fly', 'run', 'power', 'stamina', 'luck', 'intelligence']) stat.append(new Option(k, k));
+  const num = (ph, max) => Object.assign(document.createElement('input'), { type: 'number', min: 0, max, placeholder: ph, style: 'width:52px' });
+  const lv = num('level', 99), gr = num('grade', 5), pt = num('points', 9999);
+  const story = document.createElement('select');
+  for (const k of ['', 'none', 'hero', 'dark', 'all']) story.append(new Option(k ? `story ${k}` : 'story -', k));
+  const apply = Object.assign(document.createElement('button'), { textContent: 'Apply (test account)' });
+  const said = document.createElement('span');
+  apply.onclick = async () => {
+    const body = {};
+    const st = {};
+    if (lv.value !== '') st.level = +lv.value;
+    if (gr.value !== '') st.grade = +gr.value;
+    if (pt.value !== '') st.points = +pt.value;
+    if (Object.keys(st).length) body.stats = { [stat.value]: st };
+    if (story.value) body.story = story.value;
+    try {
+      const r = await fetch('/api/test/override', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${mmoToken()}` }, body: JSON.stringify(body) });
+      said.textContent = r.ok ? 'done' : `refused (${r.status})`;
+    } catch { said.textContent = 'failed'; }
+  };
+  ov.append(stat, lv, gr, pt, story, apply, said);
+  box.append(ov);
   const copy = Object.assign(document.createElement('button'), { textContent: 'Copy values', style: 'margin-top:6px;width:100%' });
   copy.onclick = () => navigator.clipboard?.writeText(text()).catch(() => {});
   // Keys typed into the panel stay away from the game's controls.
