@@ -3589,6 +3589,13 @@ fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     let Some(own) = (0..slots).map(|i| save + i * 0x800).find(|&p| m.r8(p + 0x80) >= 2) else {
         // shortcut: live cards hold no game save yet; until the server profile's
         // Chao is mapped in (open question), the profile's Dark Chaos type is used.
+        // MMO glue: SA2_OWN_RECORD_IN is the server's copy of the player's own
+        // record (a Chao hatched in the lobby is kept there, not on the card).
+        if let Some(bytes) = std::env::var("SA2_OWN_RECORD_IN").ok().and_then(|p| std::fs::read(p).ok()).filter(|b| b.len() == 0x800 && b[0x80] >= 2) {
+            m.load(INFO, &bytes);
+            eprintln!("chao-player: no save Chao on the card; the server's record, type {:#x}", bytes[0x80]);
+            return create_from_info(c, m, pos);
+        }
         // SA2_CARD_CHAO_ONLY=1: no save Chao -> back to the login.
         if std::env::var("SA2_CARD_CHAO_ONLY").is_ok_and(|v| v == "1") {
             eprintln!("chao-player: no hatched Chao on the card ({slots} slots); back to the login");

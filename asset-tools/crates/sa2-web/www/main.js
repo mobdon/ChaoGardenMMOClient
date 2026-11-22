@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32 + 8 + 256 + 4 + 2048), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -220,6 +220,19 @@ function startThread(tid, arg) {
 
 // ---- the MMO server memory card -------------------------------------------
 // The MMO title screen keeps the signed-in Chao's token (src/save-slots.js).
+// The signed-in Chao's record as the server card holds it, before the game
+// starts: a card with no game save takes its own Chao from it (sa2-boot
+// chao_player.rs create). The card lists each Chao with its token.
+async function ownRecord(token) {
+  const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
+  const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
+  const record = r?.ok && (await r.json()).chao?.find((c) => c.token === token)?.record;
+  const bytes = record ? Uint8Array.from(atob(record), (ch) => ch.charCodeAt(0)) : null;
+  if (bytes?.length !== MMO.REC) return;
+  mmoBytes.set(bytes, MMO.OWN + 4);
+  mmoBytes[MMO.OWN] = 1;
+  log(`own record: ${bytes.length} bytes from the server card, type 0x${bytes[0x80].toString(16)}`);
+}
 function mmoToken() {
   try { return localStorage.getItem('chao-garden-session-v1') || ''; } catch { return ''; }
 }
@@ -268,7 +281,7 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476, INFO: 156508, INFO_MAX: 256, OWN: 156772 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -805,6 +818,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
+  if (token) { e.SA2_OWN_RECORD_IN = '/mmo/own-record'; await ownRecord(token).catch(() => {}); }
   if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
