@@ -55,9 +55,19 @@
 //! picks it, a second click sends its id to the page (SA2_BREED_OUT), which
 //! asks the server. The rules stay the server's.
 //!
+//! The page's top box shows the two Chao the way C50C shows the blue
+//! page's portrait (its 0xC9A8..0xCA84: blend and Z modes, F344, the
+//! 640x480 view F244, then per Chao a matrix at a screen point (F16C), a
+//! turn, and the Chao's own two display functions the chart took off its
+//! task). The player's Chao is the chart's portrait Chao drawn again; the
+//! picked partner is a second Chao made as D2A4 makes the portrait, from
+//! its record (SA2_RECORD_IN, as the Chao Transporter reads the card's).
+//! They face each other: the portrait's own turn (0x2000) inward each.
+//!
 //! shortcut: the green page is an empty frame (inventory comes next), and
-//! the breeding page's top box is empty: the two Chao and the mating in it
-//! are not written yet.
+//! the two Chao only stand: the mating and the egg are not written yet.
+//! Unverified until a build run: where the two Chao stand in the box and
+//! which of the two turns faces inward.
 //! shortcut: the picked name is marked with ">" (no flat bar among the
 //! chart's quads is known); upgrade when the pink table's pieces are named.
 //! Unverified until a build run: every text and row position on that page.
@@ -95,6 +105,26 @@ const CLOSE: u32 = 0xD1D4;
 const QUADS: u32 = 0xF9C4;
 const QUAD_STATE: u32 = 0xFC98;
 const TEXT: u32 = 0xD4C4;
+/// The portrait draw's calls (C50C 0xC9A8..0xCA84; DOL targets from the
+/// module's relocations).
+const VIEW_STATE: u32 = 0xF344;
+const VIEW: u32 = 0xF244;
+const SCREEN_POINT: u32 = 0xF16C;
+const GX_SET_BLEND_MODE: u32 = 0x8010_4FF8;
+const GX_SET_Z_MODE: u32 = 0x8010_517C;
+const MODEL_BEGIN: u32 = 0x8012_2B24;
+const SET_LIGHT: u32 = 0x8002_4CB8;
+const STAGE_LIGHT: u32 = 0x803A_D926;
+const NJ_PUSH_MATRIX_EX: u32 = 0x8011_6098;
+const NJ_POP_MATRIX_EX: u32 = 0x8011_60E4;
+const NJ_UNIT_MATRIX: u32 = 0x8011_53E4;
+const NJ_ROTATE_Y: u32 = 0x8011_5828;
+/// ChaoMain .text.
+const CREATE_CHAO_EXTRA: u32 = 0x3148C;
+/// The portrait's depth and turn; the scene's two screen points.
+const DEPTH: f32 = -26.0;
+const TURN: u32 = 0x2000;
+const SCENE: [(f32, f32); 2] = [(390.0, 232.0), (500.0, 232.0)];
 /// ChaoStgKinder rodata: the three pages' quad tables.
 const TABLE: [u32; 3] = [0x1DA4, 0x2134, 0x2464];
 /// What C50C runs before its quads: 0x80122AB4, then the chart atlas
@@ -136,6 +166,8 @@ const EXTRA: u32 = BSS + 0x1100;
 const FRAME: u32 = EXTRA + 6 * 16;
 /// The string [`text`] hands to the chart's text draw.
 const STR: u32 = BSS + 0x1200;
+/// A zero position for the partner Chao's creation.
+const ORIGIN: u32 = BSS + 0x1240;
 const STR_MAX: usize = 63;
 /// The breeding page's list: two columns (the pink page's own x 288 and
 /// 452) of four names in the pink page's list box.
@@ -179,6 +211,10 @@ static CLICK: Global<[u16; 4]> = global!([0; 4]);
 static CLICK_SEEN: Global<u16> = global!(0);
 /// The game's x values of the records [`retab`] rewrote.
 static SAVED: Global<Vec<(u32, u16)>> = global!(Vec::new());
+
+/// The partner Chao in the scene: its id, task and the two display
+/// functions taken off the task (as D2A4 does with the portrait's).
+static PARTNER: Global<Option<(String, u32, [u32; 2])>> = global!(None);
 
 /// The breeding page's feed and the picked Chao's id.
 #[derive(Debug, PartialEq)]
@@ -249,19 +285,105 @@ fn breed_click(x: f32, y: f32) -> bool {
     })
 }
 
+/// A guest call with float arguments (f1..), the caller's put back after.
+fn fcall(c: &mut Cpu, m: &mut Mem, addr: u32, ints: &[u32], floats: &[f32]) {
+    let saved: Vec<_> = (1..=floats.len()).map(|i| c.f[i]).collect();
+    for (i, &v) in floats.iter().enumerate() {
+        c.f[i + 1].ps0 = f64::from(v);
+    }
+    call(c, m, addr, ints);
+    for (i, f) in saved.into_iter().enumerate() {
+        c.f[i + 1] = f;
+    }
+}
+
 /// One string through the chart's own text draw (flags 5 centres it).
 fn text(c: &mut Cpu, m: &mut Mem, s: &str, flags: u32, x: f32, y: f32, size: f32) {
     let mut bytes: Vec<u8> = s.bytes().filter(|b| (0x20..0x7F).contains(b)).take(STR_MAX).collect();
     bytes.push(0);
     m.load(STR, &bytes);
-    let saved = [c.f[1], c.f[2], c.f[3], c.f[4]];
-    for (i, v) in [x, y, 999.0, size].into_iter().enumerate() {
-        c.f[i + 1].ps0 = f64::from(v);
+    fcall(c, m, rt::sec(m, KINDER, 1) + TEXT, &[0, STR, flags], &[x, y, 999.0, size]);
+}
+
+/// The flags D2A4 gives the portrait Chao (chaowk + 0xA0).
+fn portrait_flags(f: u32) -> u32 {
+    (f & !(0x8 | 0x2 | 0x10 | 0x2_0000)) | 0x2000
+}
+
+fn partner_free(c: &mut Cpu, m: &mut Mem) {
+    if let Some((id, task, _)) = PARTNER.replace(None) {
+        if linked(m, CHAOMAIN) {
+            call(c, m, rt::sec(m, CHAOMAIN, 1) + crate::chao_player::KILL_CHAO, &[task]);
+        }
+        if let Ok(id) = id.parse() {
+            crate::chao_cache::set_online(id, false);
+        }
     }
-    call(c, m, rt::sec(m, KINDER, 1) + TEXT, &[0, STR, flags]);
-    for (i, f) in saved.into_iter().enumerate() {
-        c.f[i + 1] = f;
+}
+
+/// Keep the scene's partner Chao the picked one (made on the game's thread).
+fn partner_sync(c: &mut Cpu, m: &mut Mem) {
+    let picked = BREED.with_borrow(|b| b.picked.clone());
+    if PARTNER.with_borrow(|p| p.as_ref().map_or("", |p| p.0.as_str()) == picked) {
+        return;
     }
+    partner_free(c, m);
+    let Ok(id) = picked.parse::<u64>() else { return };
+    let record = std::env::var("SA2_RECORD_IN").ok().and_then(|d| std::fs::read(std::path::Path::new(&d).join(&picked)).ok());
+    // Always the fresh record: KillChao may have cleared the cached one.
+    let info = record.and_then(|r| crate::chao_cache::replace(m, id, &r));
+    let free = crate::chao_player::os_heap_free(m, m.r32(c.r[13].wrapping_sub(0x71B4)));
+    let task = match info {
+        Some(info) if free >= HEAP_NEEDED => {
+            crate::chao_cache::set_online(id, true);
+            m.load(ORIGIN, &[0; 12]);
+            call(c, m, rt::sec(m, CHAOMAIN, 1) + CREATE_CHAO_EXTRA, &[info, 1, 0, ORIGIN, 0])
+        }
+        _ => 0,
+    };
+    eprintln!("kinder-chart: partner {picked}: record {info:x?}, {} KB free, task {task:x}", free / 1024);
+    // No Chao (no record, no memory): remembered so it isn't tried each frame.
+    let mut shows = [0; 2];
+    if task != 0 {
+        let wk = m.r32(task + 0x34);
+        m.w32(wk + 0xA0, portrait_flags(m.r32(wk + 0xA0)));
+        shows = [m.r32(task + 0x14), m.r32(task + 0x20)];
+        m.w32(task + 0x14, 0);
+        m.w32(task + 0x20, 0);
+    }
+    PARTNER.set(Some((picked, task, shows)));
+}
+
+/// The two Chao in the breeding page's top box, as C50C draws the portrait.
+fn scene(c: &mut Cpu, m: &mut Mem, work: u32) {
+    let s1 = rt::sec(m, KINDER, 1);
+    let own = (m.r32(work + 0x18), [m.r32(work + 0x1C), m.r32(work + 0x20)]);
+    let partner = PARTNER.with_borrow(|p| p.as_ref().map_or((0, [0; 2]), |p| (p.1, p.2)));
+    call(c, m, GX_SET_BLEND_MODE, &[1, 4, 5, 0]);
+    call(c, m, GX_SET_Z_MODE, &[1, 7, 1]);
+    call(c, m, s1 + VIEW_STATE, &[]);
+    fcall(c, m, s1 + VIEW, &[0], &[0.0, 640.0, 0.0, 480.0, -1000.0]);
+    call(c, m, MODEL_BEGIN, &[]);
+    call(c, m, SET_LIGHT, &[10]);
+    // The portrait (right of its page) turns 0x10000 - 0x2000; the left
+    // Chao takes the mirrored turn, so the two face each other.
+    let turns = [TURN, 0x1_0000 - TURN];
+    for (i, (task, shows)) in [own, partner].into_iter().enumerate() {
+        if task == 0 {
+            continue;
+        }
+        call(c, m, NJ_PUSH_MATRIX_EX, &[]);
+        call(c, m, NJ_UNIT_MATRIX, &[0]);
+        fcall(c, m, s1 + SCREEN_POINT, &[], &[SCENE[i].0, SCENE[i].1, DEPTH]);
+        call(c, m, NJ_ROTATE_Y, &[0, turns[i]]);
+        for show in shows {
+            if show != 0 {
+                call(c, m, show, &[task]);
+            }
+        }
+        call(c, m, NJ_POP_MATRIX_EX, &[]);
+    }
+    call(c, m, SET_LIGHT, &[m.r8(STAGE_LIGHT) as i8 as u32]);
 }
 
 /// The breeding page's strings.
@@ -438,6 +560,12 @@ fn display(c: &mut Cpu, m: &mut Mem) {
     }
     if page == 4 {
         call(c, m, s1 + QUADS, &[pink + 20 * 16, 24, TINT[1]]);
+        scene(c, m, work);
+        // The Chao's draw leaves its own state: the quads' again.
+        call(c, m, DRAW_BEGIN, &[]);
+        call(c, m, s1 + QUAD_STATE, &[]);
+        call(c, m, s1 + SET_TEXLIST, &[]);
+        call(c, m, SET_TEXTURE, &[ATLAS, 0, 0, 0]);
     }
     for (n, tint) in TINT.into_iter().enumerate() {
         let spans = tab_spans(3 + n as u8);
@@ -488,8 +616,11 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
             m.w8(work + 0x14, 0);
         }
         State::Open { work, .. } => {
-            if PAGE.get() == 4 && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(15) {
-                breed_read();
+            if PAGE.get() == 4 {
+                if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(15) {
+                    breed_read();
+                }
+                partner_sync(c, m);
             }
             click(c, m, work);
         }
@@ -650,6 +781,7 @@ fn delete(c: &mut Cpu, m: &mut Mem) {
     };
     let s1 = rt::sec(m, KINDER, 1);
     untab(m);
+    partner_free(c, m);
     call(c, m, s1 + FREE_PORTRAIT, &[work]);
     call(c, m, SY_FREE, &[m.r32(work + 0x60)]);
     m.w32(task + 0x40, 0);
@@ -724,6 +856,13 @@ mod tests {
     }
 
     #[test]
+    fn the_partner_gets_the_portraits_flags() {
+        // D2A4: clear 0x8, 0x2, 0x10, set 0x2000, clear 0x20000.
+        assert_eq!(portrait_flags(0xFFFF_FFFF), 0xFFFD_FFE5);
+        assert_eq!(portrait_flags(0), 0x2000);
+    }
+
+    #[test]
     fn a_click_in_the_list_is_its_entry() {
         for i in 0..8usize {
             let (x, y) = (LIST_X[i / 4] + 30.0, LIST_Y + LIST_PITCH * (i % 4) as f32 + 9.0);
@@ -750,7 +889,8 @@ mod tests {
             assert!(BASE + 0xDE248 <= BSS);
             assert!(BSS + 0x1A8 <= 0x82A0_0000, "chao_player MOT");
             assert!(FRAME + 8 * 16 <= STR);
-            assert!(STR + STR_MAX as u32 + 1 <= 0x82A0_0000);
+            assert!(STR + STR_MAX as u32 + 1 <= ORIGIN);
+            assert!(ORIGIN + 12 <= 0x82A0_0000);
         }
     }
 

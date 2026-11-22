@@ -294,10 +294,10 @@ async function cardChao(token) {
 // other Chao: /mmo/breed-in is the player's Chao's name, a message, then
 // "id<tab>name" lines. The game sends the picked one back (/mmo/breed-out) and
 // the server decides; its answer becomes the message.
-// Unverified: the server's breed rule was written for a partner in the room;
-// what it answers for one of the player's own Chao is shown as it comes.
+// For a partner on the player's own card the server lays the egg at once
+// (code egg-laid); unverified against a running server.
 const breed = { self: null, revision: 0, message: '', pending: null, seen: 0 };
-const breedCodes = { 'offer-sent': 'Asked. Waiting for an answer.', 'egg-laid': 'An egg was laid!', 'garden-full': 'The garden is full.', 'not-ready': 'Not ready to breed yet.', 'partner-busy': 'That Chao is busy.', 'partner-nest-full': 'Its nest is full.', 'partner-unavailable': 'That Chao is not here.' };
+const breedCodes = { 'offer-sent': 'Asked. Waiting for an answer.', 'egg-laid': 'An egg was laid!', 'garden-full': 'The garden is full.', 'not-ready': 'Not ready to breed yet.', 'stage-conflict': 'Both Chao must be grown up.', 'nest-full': 'Your nest is full.', 'partner-busy': 'That Chao is busy.', 'partner-nest-full': 'Its nest is full.', 'partner-unavailable': 'That Chao is not here.' };
 function breedFeed() {
   const rows = [...cardIds].filter(([, p]) => p.id !== breed.self?.id).map(([n, p]) => `${n}\t${p.name || 'Chao'}`);
   const text = new TextEncoder().encode([breed.self?.name || '', breed.message, ...rows].join('\n') + '\n').subarray(0, MMO.BREED_MAX);
