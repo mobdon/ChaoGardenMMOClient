@@ -179,3 +179,135 @@ fn transporter_parts_keep_source_hashes_and_geometry() {
             .any(|c| !c.vertices.is_empty()));
     }
 }
+
+/// The DLL reader against the SA Tools split of the same model: same tree, same vertices.
+#[test]
+#[ignore = "requires SA2_DATA_DLL (Steam Data_DLL.dll) and the local SA Tools extraction"]
+fn chao_child_from_the_dll_matches_the_split_model() {
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let ours = sa2_asset_tools::chao_dll::read_chao_model(&dll, 0).unwrap();
+    let split = model::read_model(
+        &std::fs::read(
+            root().join(".local/extracted/pc-chao/Chao/models/AL_RootObject/al_ncz.sa2mdl"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ours.nodes.len(), 40);
+    assert_eq!(ours.attachments.len(), 16);
+    for (a, b) in ours.nodes.iter().zip(&split.nodes) {
+        assert_eq!(
+            (a.flags, a.position, a.rotation_bams, a.scale),
+            (b.flags, b.position, b.rotation_bams, b.scale)
+        );
+        assert_eq!(a.attach_offset == 0, b.attach_offset == 0);
+    }
+    for (a, b) in ours.attachments.iter().zip(&split.attachments) {
+        let words = |m: &model::ChunkAttachment| {
+            (
+                m.vertex_chunks
+                    .iter()
+                    .map(|c| {
+                        (
+                            c.kind,
+                            c.flags,
+                            c.index_offset,
+                            c.vertices
+                                .iter()
+                                .map(|v| v.raw_words.clone())
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                // Strips only: the split tool rewrites one specular word of material chunks (DLL 0xFF7F, split 0x007F).
+                m.polygon_chunks
+                    .iter()
+                    .filter(|c| c.kind >= 64)
+                    .map(|c| (c.kind, c.flags, c.raw_words.clone()))
+                    .collect::<Vec<_>>(),
+                m.polygon_chunks
+                    .iter()
+                    .map(|c| (c.kind, c.flags, c.raw_words.len()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(words(a), words(b));
+    }
+}
+
+/// The stand motion's table row and keys from the DLL against the SA Tools split of the same motion.
+#[test]
+#[ignore = "requires SA2_DATA_DLL (Steam Data_DLL.dll) and the local SA Tools extraction"]
+fn chao_stand_motion_from_the_dll_matches_the_split_motion() {
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let ours = sa2_asset_tools::chao_dll::read_chao_motion(&dll, 0).unwrap();
+    // Row 0 as the split's table lists it: LoopProperty 1, TransitionSpeed FFFFFFD8, EndFrame 13, PlaySpeed 0.12.
+    assert_eq!((ours.mode, ours.next, ours.link_step), (1, -1, -40));
+    assert_eq!(
+        (ours.start_frame, ours.end_frame, ours.play_speed),
+        (0., 13., 0.12)
+    );
+    let split = motion::read_motion(
+        &std::fs::read(
+            root().join(".local/extracted/pc-chao/Chao/models/al_motion_table/alm_tati.saanim"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (ours.motion.frame_count, ours.motion.type_flags),
+        (split.frame_count, split.type_flags)
+    );
+    // Decoded values, not raw words: the split tool stores the DLL's -0.0 as 0.0.
+    let keys = |m: &motion::Motion| {
+        m.parts
+            .iter()
+            .map(|p| {
+                p.channels
+                    .iter()
+                    .map(|c| {
+                        let keys = c
+                            .keys
+                            .iter()
+                            .map(|k| (k.frame, k.floats.clone(), k.integers.clone()));
+                        (c.kind.clone(), keys.collect::<Vec<_>>())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(keys(&ours.motion), keys(&split));
+}
+
+/// The child Chao with its stand motion as a GLB, from the real game files only.
+/// Writes the file when SA2_CHAO_GLB_OUT is set (kept local, never committed).
+#[test]
+#[ignore = "requires SA2_DATA_DLL and SA2_GD_PC (Steam resource/gd_PC)"]
+fn chao_child_glb_from_the_game_files() {
+    use sa2_asset_tools::{chao_dll, chao_glb};
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let model = chao_dll::read_chao_model(&dll, 0).unwrap();
+    let stand = chao_dll::read_chao_motion(&dll, 0).unwrap();
+    let pngs = chao_glb::body_textures(
+        &model,
+        &std::fs::read(gd.join("al_body.prs")).unwrap(),
+        &std::fs::read(gd.join("al_nc00.GVP")).unwrap(),
+    )
+    .unwrap();
+    let glb = chao_glb::export(&model, &pngs, &[("alm_tati", &stand)]).unwrap();
+    let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+    let doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+    assert_eq!(doc["nodes"].as_array().unwrap().len(), 40);
+    assert_eq!(
+        doc["nodes"][0]["name"].as_str().unwrap().get(..11),
+        Some("000_object_")
+    );
+    assert_eq!(doc["animations"][0]["name"], "alm_tati");
+    let speed =
+        &doc["asset"]["extras"]["chaoBehaviour"]["clips"][0]["tableProperties"]["PlaySpeed"];
+    assert_eq!(speed.as_f64().unwrap() as f32, 0.12);
+    if let Some(out) = std::env::var_os("SA2_CHAO_GLB_OUT") {
+        std::fs::write(out, &glb).unwrap();
+    }
+}
