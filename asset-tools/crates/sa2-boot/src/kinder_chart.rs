@@ -643,10 +643,22 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
         let chao = crate::chao_player::player_chao();
         eprintln!("kinder-chart: Tab (Chao World {in_world}, Chao {chao:x?}, {:?})", STATE.get());
     }
+    if !in_world {
+        WAITING.set(0);
+    }
     match STATE.get() {
-        State::Closed if press && in_world => {
-            if let Some(chao) = crate::chao_player::player_chao() {
-                STATE.set(open(c, m, chao));
+        // A Tab the heap refused is kept for a while: the chart opens when
+        // the memory is there; Tab again gives it up.
+        State::Closed if in_world && (press || WAITING.get() > 0) => {
+            let waited = WAITING.replace(0);
+            if !(press && waited > 0) {
+                if let Some(chao) = crate::chao_player::player_chao() {
+                    if heap_ok(c, m, press) {
+                        STATE.set(open(c, m, chao));
+                    } else {
+                        WAITING.set(next_wait(press, waited));
+                    }
+                }
             }
         }
         State::Open { work, .. } if press => {
@@ -715,13 +727,30 @@ fn name_codes(name: &[u8]) -> [u8; 7] {
 /// the free heap is logged at every open.
 use crate::chao_player::REMOTE_CHAO_BYTES as HEAP_NEEDED;
 
-fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
+/// Frames a refused Tab still waits for memory (ten seconds).
+const WAIT: u32 = 600;
+static WAITING: Global<u32> = global!(0);
+
+/// The frames left to wait after a refusal: a press starts the wait.
+fn next_wait(press: bool, waited: u32) -> u32 {
+    if press { WAIT } else { waited - 1 }
+}
+
+/// Whether the game heap has room for the portrait Chao (seen in a build
+/// run: 56 KB free right after arriving in the lobby, 126 KB and more a few
+/// seconds later; ten opens with the check, no crash).
+fn heap_ok(c: &Cpu, m: &Mem, log: bool) -> bool {
     let free = crate::chao_player::os_heap_free(m, m.r32(c.r[13].wrapping_sub(0x71B4)));
-    eprintln!("kinder-chart: {} KB free in the game heap", free / 1024);
-    if free < HEAP_NEEDED {
-        eprintln!("kinder-chart: not opened, the portrait Chao needs {} KB", HEAP_NEEDED / 1024);
-        return State::Closed;
+    if log {
+        eprintln!("kinder-chart: {} KB free in the game heap", free / 1024);
+        if free < HEAP_NEEDED {
+            eprintln!("kinder-chart: waiting, the portrait Chao needs {} KB", HEAP_NEEDED / 1024);
+        }
     }
+    free >= HEAP_NEEDED
+}
+
+fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
     let borrowed = !linked(m, KINDER);
     if borrowed && !borrow(c, m) {
         return State::Closed;
@@ -928,6 +957,13 @@ mod tests {
         m.w32(s4 + 0x298, 0x1234);
         m.w32(s4 + 0x2A0, 0xBF86_0EBF);
         assert_eq!(title_records(&m, s4), [0xE8, 0x1C8, 0x1D8].map(|o| s4 + o));
+    }
+
+    #[test]
+    fn a_refused_tab_waits_ten_seconds() {
+        assert_eq!(next_wait(true, 0), WAIT);
+        assert_eq!(next_wait(false, WAIT), WAIT - 1);
+        assert_eq!(next_wait(false, 1), 0, "then it is given up");
     }
 
     #[test]
