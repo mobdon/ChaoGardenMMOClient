@@ -561,6 +561,13 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     let foot: Vec<[f32; 3]> = foot_v.iter().map(|v| std::array::from_fn(|i| rt[i] + (0..3).map(|k| rr[i][k] * v[k]).sum::<f32>())).collect();
     let x = [BOOT_UP[1] * BOOT_FWD[2] - BOOT_UP[2] * BOOT_FWD[1], BOOT_UP[2] * BOOT_FWD[0] - BOOT_UP[0] * BOOT_FWD[2], BOOT_UP[0] * BOOT_FWD[1] - BOOT_UP[1] * BOOT_FWD[0]];
     let mount = [x, BOOT_UP, BOOT_FWD];
+    // Native frame instead of the hub's Babylon numbers (they are in a mirrored
+    // space): the boot is modelled in Shadow's foot node frame, so turn it by
+    // Shadow's rest foot rotation (node 24, his model space) and his facing
+    // (-x) to the Chao's (+z).
+    let mount = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
+        .map(|rf| crate::skate::mul(&[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], &crate::skate::unit(&rf)))
+        .unwrap_or(mount);
     // SA2_BOOT_FIX="rx,ry,rz" (debug, degrees): a turn after the hub mount, to
     // find the handedness difference between the hub (Babylon) and the game.
     let mount = match std::env::var("SA2_BOOT_FIX").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()) {
