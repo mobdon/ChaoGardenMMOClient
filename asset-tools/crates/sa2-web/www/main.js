@@ -30,6 +30,7 @@ function log(text, err) {
 const sh = {
   ctl: new SharedArrayBuffer(64),
   pad: new SharedArrayBuffer(16),
+  egg: new SharedArrayBuffer(4),
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
@@ -38,6 +39,8 @@ const sh = {
   pages: new SharedArrayBuffer(4 + 65536),
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
+// A named egg hatches in the Chao Lobby (sa2_boot::start_stage reads /dev/egg).
+window.sa2HatchEgg = () => Atomics.add(new Int32Array(sh.egg), 0, 1);
 
 // ---- input --------------------------------------------------------------
 // Bits as the game reads them (sa2-web-game KEYS): A D S W, Space, E,

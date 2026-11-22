@@ -14,8 +14,8 @@ const DISC_BLOCK = 128 << 10;
 const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
-const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15;
-const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES };
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15, DEV_EGG = 16;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES, 'dev/egg': DEV_EGG };
 const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_GXPAGES;
 // /dev/gxpages as read since it was opened: the decoder's page bits (main.js sh.pages).
 const gxPages = { bytes: new Uint8Array(0), pos: 0 };
@@ -444,6 +444,14 @@ const wasi = {
       dv().setUint32(nr, total, true);
       return 0;
     }
+    // /dev/egg: named eggs queued by the page (main.js sa2HatchEgg), taken by this read.
+    if (fd === DEV_EGG) {
+      const [[p, len] = []] = iovs(iov, n);
+      let total = 0;
+      if (len >= 4) { dv().setUint32(p, Atomics.exchange(sh.egg, 0, 0), true); total = 4; }
+      dv().setUint32(nr, total, true);
+      return 0;
+    }
     if (fd === DEV_PAD) {
       let total = 0;
       for (const [p, len] of iovs(iov, n)) {
@@ -691,7 +699,7 @@ onmessage = (ev) => {
   const m = ev.data;
   if (m.init) {
     mem = m.memory;
-    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), egg: new Int32Array(m.egg), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
     args = m.args;
     env = m.env;
     if (m.picked && m.picked.length) pick(m.picked);
