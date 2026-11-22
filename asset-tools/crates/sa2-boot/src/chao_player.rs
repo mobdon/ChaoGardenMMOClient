@@ -1787,6 +1787,15 @@ fn no_chao() {
     }
 }
 
+/// SA2_MOTION_LOG (debug): every AL_SetMotionLink(task, motion) a Chao makes,
+/// with its caller, to read the native walk/run motion numbers from the game.
+fn motion_log(c: &mut Cpu, m: &mut Mem) {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!("motion f{f}: task {:#x} motion {} lr {:#x} (sec1 +{:#x})", c.r[3], c.r[4], c.lr, c.lr.wrapping_sub(rt::sec(m, 60, 1)));
+    let a = rt::sec(m, 60, 1) + AL_SET_MOTION_LINK;
+    rel_original(c, m, a, motion_log);
+}
+
 fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     zero(m, INFO, 0x800);
     // Owner Chao (server game.rs "admin-dark-chaos"): Dark Chaos, type 0x16 in
@@ -1813,6 +1822,9 @@ fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     c.rt.set_override(s1 + CHAO_DISPLAY, chao_display);
     c.rt.set_override(s1 + CHAO_EXEC, chao_exec);
     c.rt.set_override(s1 + AL_NODE_TRANSFORM, chao_node);
+    if std::env::var_os("SA2_MOTION_LOG").is_some() {
+        c.rt.set_override(s1 + AL_SET_MOTION_LINK, motion_log);
+    }
     for (a, f) in AL_WALKERS.iter().zip([w0 as rt::Func, w1, w2, w3, w4, w5]) {
         c.rt.set_override(s1 + a, f);
     }
