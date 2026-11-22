@@ -666,6 +666,17 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         let (u, f) = (n(up), n(fwd));
         let x = n([u[1] * f[2] - u[2] * f[1], u[2] * f[0] - u[0] * f[2], u[0] * f[1] - u[1] * f[0]]);
         let r = [x, u, f];
+        // Point the fist out along the arm (shoulder -> hand marker), not the
+        // Chao's +z: the glove's forward goes to the arm direction, its up stays
+        // world up (flattened against the arm).
+        let r = if std::env::var("SA2_GLOVE_FWD_Z").is_ok() { r } else {
+            let a = n([ax[0], 0.0, ax[2]]);
+            let y = [0.0, 1.0, 0.0];
+            let x2 = n([y[1] * a[2] - y[2] * a[1], y[2] * a[0] - y[0] * a[2], y[0] * a[1] - y[1] * a[0]]);
+            // columns x2, y, a: maps +x/+y/+z to them.
+            let b: [[f32; 3]; 3] = std::array::from_fn(|i| [x2[i], y[i], a[i]]);
+            crate::skate::mul(&b, &r)
+        };
         let gr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
         let gv: Vec<[f32; 3]> = gr.verts.iter().zip(gr.worlds(&[])).flat_map(|(vs, (rr, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|q| rr[i][q] * v[q]).sum::<f32>())).collect::<Vec<_>>()).collect();
         let src: Vec<[f32; 3]> = gv.iter().map(|p| std::array::from_fn(|i| (0..3).map(|q| r[i][q] * p[q]).sum())).collect();
