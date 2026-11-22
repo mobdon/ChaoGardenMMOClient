@@ -90,6 +90,8 @@
   .line button { visibility: hidden; }
   .line:hover button, .line:focus-within button { visibility: visible; }
   @media (hover: none) { .line button { visibility: visible; } }
+  #reports .line { grid-template-columns: auto auto minmax(0, 1fr) auto auto; }
+  #reports .line button { visibility: visible; }
   .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: .45rem .6rem; border-top: 1px solid var(--line); white-space: nowrap; }
@@ -169,6 +171,10 @@
     <header><h2 id="audit-title">Audit log</h2><span class="dim">Newest first</span></header>
     <div class="scroll" style="max-height:20rem;overflow-y:auto"><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>On</th></tr></thead><tbody id="audit"></tbody></table></div>
   </section>
+  <section class="pane below" aria-labelledby="reports-title">
+    <header><h2 id="reports-title">Reports</h2><span id="reports-count" class="dim"></span></header>
+    <div id="reports"></div>
+  </section>
   <section class="pane below" aria-labelledby="chat-title">
     <header><h2 id="chat-title">Chat</h2><span id="chat-scope" class="dim"></span></header>
     <div id="chat"></div>
@@ -190,7 +196,7 @@ const ROOMS = { garden: ['Chao Garden', 'garden'], hero: ['Hero Garden', 'hero']
 // The server's main stats (server MAIN_STATS).
 const MAIN_STATS = ['swim', 'fly', 'run', 'power', 'stamina'];
 const roomName = (r) => ROOMS[r]?.[0] ?? r;
-let picked = null, last = { players: [], lines: [], board: [] };
+let picked = null, last = { players: [], lines: [], board: [], reports: [] };
 const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
 async function call(path, body) {
   const r = await fetch(path, {
@@ -311,7 +317,7 @@ function pick(room) {
   draw();
 }
 function draw() {
-  const { players, lines, board } = last;
+  const { players, lines, board, reports } = last;
   // Map: one tile per room, made once and updated in place so focus and hover survive a refresh.
   const rooms = [...new Set([...Object.keys(ROOMS), ...players.map((p) => p.room)])];
   for (const room of rooms) {
@@ -371,6 +377,19 @@ function draw() {
   }));
   if (!chat.length) $('chat').append(el('p', 'No chat here yet.', 'dim'));
   if (stuck) $('chat').scrollTop = $('chat').scrollHeight;
+  // Reports: open ones, oldest first; Done closes one for every staff member
+  $('reports-count').textContent = reports.length ? `${reports.length} open` : '';
+  $('reports').replaceChildren(...reports.map((r) => {
+    const row = el('div', null, 'line'), where = players.find((o) => o.id === r.targetId)?.room;
+    const done = el('button', 'Done', 'small');
+    done.onclick = async () => { try { await call('/api/panel/reports/done', { id: r.id }); refresh(); } catch (e) { $('note').textContent = e.message; } };
+    const what = `${r.byName} reported ${r.targetName}` + (r.text ? `: "${r.text}"` : r.reason ? `: ${r.reason}` : '');
+    row.append(el('span', new Date(r.at * 1000).toLocaleTimeString([], { timeStyle: 'short' }), 'dim num'), el('span', where ? roomName(where) : 'offline', 'tag'), el('span', what, 'text'));
+    if (where) { const show = el('button', 'Show room', 'small'); show.onclick = () => { if (picked !== where) pick(where); scrollTo({ top: 0, behavior: 'smooth' }); }; row.append(show); }
+    row.append(done);
+    return row;
+  }));
+  if (!reports.length) $('reports').append(el('p', 'No open reports.', 'dim'));
   // Leaderboard: an online row jumps to that player's room
   $('board').replaceChildren(...board.map((p, i) => {
     const tr = el('tr'), where = players.find((o) => o.id === p.id)?.room;
@@ -385,8 +404,8 @@ function draw() {
 async function refresh() {
   if (!token) return;
   try {
-    const [status, list, chat, board] = await Promise.all([call('/api/panel/status'), call('/api/panel/players'), call('/api/panel/chat'), call('/api/panel/leaderboard')]);
-    last = { players: list.players, lines: chat.lines, board: board.players };
+    const [status, list, chat, board, filed] = await Promise.all([call('/api/panel/status'), call('/api/panel/players'), call('/api/panel/chat'), call('/api/panel/leaderboard'), call('/api/panel/reports')]);
+    last = { players: list.players, lines: chat.lines, board: board.players, reports: filed.reports };
     const parts = [[status.online, 'online'], [span(status.uptimeSeconds), 'up']];
     $('status').replaceChildren(...parts.map(([n, word]) => { const s = el('span'); s.append(el('b', n), ` ${word}`); return s; }));
     if (status.listening?.length) $('status').append(el('span', `Listening: ${status.listening.map((l) => `${l.staff} in ${roomName(l.room)}`).join(', ')}`));
