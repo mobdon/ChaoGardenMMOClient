@@ -29,6 +29,7 @@ pub mod snap;
 pub mod start_stage;
 pub mod race_probe;
 pub mod steam_sound;
+pub mod tiny_transporter;
 pub mod vi;
 pub mod walker;
 pub mod wide;
