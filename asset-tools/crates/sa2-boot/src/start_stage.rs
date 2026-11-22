@@ -219,6 +219,10 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
+    // AL_SHAPE_ELEMENT (0x34 bytes, chao.h): CreateChaoExtra runs AL_GeneAnalyze
+    // on a fresh gene, which resets param type to child, then fn_60_209C8 copies
+    // the element's type (+0) over it; that is the type the shape init sees.
+    let elem = pos + 0x10;
     let player = m.r32(PLAYERTWP) + 0x14;
     let mut twp = [0; 3];
     for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
@@ -226,10 +230,14 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
             m.w32(param + i, 0);
         }
         m.w8(param + 0x80, ty);
+        for i in (0..0x34).step_by(4) {
+            m.w32(elem + i, 0);
+        }
+        m.w8(elem, ty);
         m.w32(pos, (f32::from_bits(m.r32(player)) + dx).to_bits());
         m.w32(pos + 4, m.r32(player + 4));
         m.w32(pos + 8, (f32::from_bits(m.r32(player + 8)) + dz).to_bits());
-        let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, 0, pos, 0]);
+        let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, elem, pos, 0]);
         if task != 0 {
             twp[n] = m.r32(task + 0x34);
         }
