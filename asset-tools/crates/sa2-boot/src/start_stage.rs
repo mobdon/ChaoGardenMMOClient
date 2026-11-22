@@ -164,6 +164,8 @@ static TO_STAGE_SELECT: Global<bool> = global!(false);
 const ADVERTISE: u32 = 91;
 const MENU_SCREEN: u32 = 0x6_2054;
 const SCREEN_STAGE_SELECT: u32 = 3;
+/// advertiseD .text fn_91_2BB38: the Stage Select's setup, called before screen 3.
+const STAGE_SELECT_SETUP: u32 = 0x2BB38;
 /// Game state byte advertiseD reads to open its menu instead of the title.
 const GO_TO_MENU: u32 = 0x5B;
 static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
@@ -181,7 +183,7 @@ pub(crate) fn to_stage_select_pending() -> bool {
 /// screen dispatcher for the Stage Select, and log its top state and screen.
 /// Unverified: that the request field is honoured from the title state; the
 /// log shows which top state the menu is in when the request lands.
-fn stage_select_frame(m: &mut Mem) {
+fn stage_select_frame(c: &mut Cpu, m: &mut Mem) {
     let Some(bss) = module_section(m, ADVERTISE, 6) else { return };
     let now = (m.r32(bss), m.r32(bss + MENU_SCREEN), m.r32(bss + MENU_SCREEN + 4));
     if MENU_SEEN.replace(now) != now {
@@ -192,10 +194,16 @@ fn stage_select_frame(m: &mut Mem) {
     // fn_91_30A0C leads to). Set the current screen instead, once, while the
     // screen struct is fresh from that init, so the Stage Select's exec
     // (fn_91_2BC44) starts from its own first step.
-    // Unverified: that the Stage Select needs nothing from screen 7 first.
+    // Both of the menu's own ways to screen 3 (advertiseD .text 0x27448 and
+    // 0x2C2EC) first call fn_91_2BB38, the Stage Select's setup: skipped, its
+    // pictures drew as grey noise (headless, with and without the gear).
     if now.1 == SCREEN_STAGE_SELECT {
         TO_STAGE_SELECT.set(false);
-    } else {
+    } else if let Some(text) = module_section(m, ADVERTISE, 1) {
+        // SA2_SS_SETUP=0 (debug): without the setup call, as before.
+        if !std::env::var("SA2_SS_SETUP").is_ok_and(|v| v == "0") {
+            guest_call(c, m, text + STAGE_SELECT_SETUP, &[]);
+        }
         m.w32(bss + MENU_SCREEN, SCREEN_STAGE_SELECT);
         m.w32(bss + MENU_SCREEN + 4, 0);
     }
@@ -322,7 +330,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         crate::tiny_transporter::frame(c, m);
     }
     if TO_STAGE_SELECT.get() {
-        stage_select_frame(m);
+        stage_select_frame(c, m);
     }
     if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
         // The game's own way on from here is its title and menus. advertiseD's

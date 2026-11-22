@@ -170,7 +170,12 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
                 let f = |a: u32| f32::from_bits(m.r32(a));
                 eprintln!("yaw: frame {} char {:#06x} chao {:#06x} pos ({:.2},{:.2})", sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed), ang[1] & 0xFFFF, m.r32(cw + 0x0C) & 0xFFFF, f(cw + 0x14), f(cw + 0x1C));
             }
+            // Only the heading: his pitch and roll (he leans into slopes and
+            // his run) laid the Chao over, face down (live play, build 16).
+            // SA2_CHAO_TILT=1 (debug): his whole angle.
+            let tilt = std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
             for (i, v) in ang.into_iter().enumerate() {
+                let _ = tilt;
                 m.w32(cw + 0x08 + 4 * i as u32, v);
             }
         }
@@ -496,13 +501,13 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
     Some(tune_matrix(&v))
 }
 
-/// The fists' set place, from the gear tuner (mob's "fist0" line:
-/// dx dy dz rx ry rz scale); fist1 is fist0 mirrored across the Chao's
-/// middle (x and the turns about y and z flip).
-/// unverified: that the two plates' fitted frames mirror in x (checked by eye).
+/// The fists' set places, both from the gear tuner by hand ("fist0" and
+/// "fist1" lines: dx dy dz rx ry rz scale). The left plate (331) is the
+/// right one's (329) mirror along its own z, not x, and each is fitted to
+/// its own arm, so the two lines differ in more than a sign.
 const FIST_SET: [[f32; 7]; 2] = [
-    [0.3, 1.26, -2.08, -60.0, 10.0, 0.0, 1.35],
-    [-0.3, 1.26, -2.08, -60.0, -10.0, -0.0, 1.35],
+    [0.3, 1.26, -2.2, -60.0, 10.0, 0.0, 1.35],
+    [0.3, 1.26, 1.8, 60.0, -10.0, 0.0, 1.35],
 ];
 
 /// A tuner line "dx dy dz rx ry rz scale" as a matrix in the piece's own
@@ -1486,6 +1491,26 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
 
 /// Place the Chao on the rider right before it draws (after its own exec).
 fn chao_display(c: &mut Cpu, m: &mut Mem) {
+    // The player's own Chao in self mode is drawn upright: the character's
+    // exec leaves his pitch and roll (slope and run lean) in the shared task
+    // work after the Chao's exec, and the draw laid the Chao flat with them.
+    // SA2_CHAO_TILT=1 (debug): drawn with his tilt.
+    let task = c.r[3];
+    let cw = m.r32(task + 0x34);
+    let own = matches!(STEP.get(), Step::Live(ch) if ch == task) && cw != 0 && self_drive(m) && !std::env::var("SA2_CHAO_TILT").is_ok_and(|v| v == "1");
+    let keep = (m.r32(cw.wrapping_add(0x08)), m.r32(cw.wrapping_add(0x10)));
+    if own {
+        m.w32(cw + 0x08, 0);
+        m.w32(cw + 0x10, 0);
+    }
+    chao_display_inner(c, m);
+    if own {
+        m.w32(cw + 0x08, keep.0);
+        m.w32(cw + 0x10, keep.1);
+    }
+}
+
+fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     if remote_offscreen(m, c.r[3]) {
         return;
     }
@@ -2654,6 +2679,7 @@ fn debug_teleport(m: &mut Mem, task: u32) {
 }
 
 thread_local! {
+    static LEAVE_DONE: Cell<bool> = const { Cell::new(false) };
     static TP_DONE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
@@ -2698,7 +2724,11 @@ thread_local! {
 /// Self mode with the Chao posed from the hidden character's skeleton
 /// (default; SA2_CHAO_RETARGET=0: the Chao's own motions).
 fn self_retarget(m: &Mem) -> bool {
-    self_drive(m) && !std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "0")
+    // Off by default: the retargeted body lay flat and upside down in live
+    // play (build 16 and test copy run r107). The Chao keeps its own rig and
+    // motions with the hub's skate overlay (skate.rs) while it wears the
+    // shoes, as the hub does. SA2_CHAO_RETARGET=1 (debug): his skeleton.
+    self_drive(m) && std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")
 }
 
 thread_local! {
@@ -2946,6 +2976,14 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     debug_teleport(m, task);
     crate::card_box::frame(c, m);
     lobby_exit_hook(c, m);
+    // SA2_LEAVE_AT=frame (debug): leave Chao World for the Stage Select once
+    // at that frame, as the lobby exit does (to test the Stage Select headless).
+    if chao_world(m) && module_linked(m, 60) && std::env::var("SA2_LEAVE_AT").ok().and_then(|v| v.trim().parse::<u64>().ok())
+        .is_some_and(|f| sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= f) && !LEAVE_DONE.replace(true) {
+        eprintln!("chao-player: debug leave -> the game's Stage Select");
+        crate::start_stage::to_stage_select();
+        call(c, m, rt::sec(m, 60, 1) + LEAVE_CHAO_WORLD, &[]);
+    }
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
     // uses it; 7 = the lobby), to test the gear across a second change.
