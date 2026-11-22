@@ -484,7 +484,11 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         // 19-49): the right boot on node 6, mirrored in x for node 13, fitted in
         // the Chao's rest model space, then carried by the animated foot node.
         if chao_world(m) {
-            if let Some(place) = hub_boot_place(m, n, node, &br, &bv) {
+            let hp = hub_boot_place(m, n, node, &br, &bv);
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+                eprintln!("chao-player boot {n}: place {:?} foot {:?}", hp.map(|p| [p[0][3], p[1][3], p[2][3], p[0][0], p[1][1], p[2][2]]), FEET.with_borrow(|f| f[n].map(|v| [v[0][3], v[1][3], v[2][3]])));
+            }
+            if let Some(place) = hp {
                 for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
                 m.w32(list, tex);
                 let lcap = LCAP.replace(false);
