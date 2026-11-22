@@ -1655,9 +1655,6 @@ fn chao_world(m: &Mem) -> bool {
     m.r16(STAGE_NUM) as i16 >= 90
 }
 
-/// playertwp[0] (main.dol .bss, GSNE8P symbols).
-const PLAYERTWP: u32 = 0x801E_7768;
-
 /// SA2_CHAO_SELF=1: in Chao World the player's Chao drives itself
 /// (chao_drive.rs) and Sonic's exec and display do not run at all.
 fn self_drive(m: &Mem) -> bool {
@@ -1766,15 +1763,23 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     let mut data1 = m.r32(task + 0x34);
     if let (true, Step::Live(chao)) = (me, STEP.get()) {
-        // The Chao is the player: it moves itself and the game's player 1
-        // task-work pointer is its own, so camera and objects follow it.
+        // The Chao is the player: it moves itself, and the character's task
+        // work mirrors its facing and position (with the action state and
+        // flags when the character's exec moved it), so camera and objects
+        // that read playertwp[0] follow the Chao. playertwp[0] itself stays
+        // the character's own: the Chao's task work is freed when the area
+        // changes, which would leave playertwp[0] dangling.
         data1 = m.r32(chao + 0x34);
+        let own = m.r32(task + 0x34);
         if data1 != 0 {
             if !pmove {
                 crate::chao_drive::drive(c, m, chao, rt::sec(m, 60, 1));
             }
-            if !std::env::var("SA2_CHAO_PTWP").is_ok_and(|v| v == "0") {
-                m.w32(PLAYERTWP, data1);
+            let from: u32 = if pmove { 0x00 } else { 0x08 };
+            if own != 0 {
+                for o in (from..0x20).step_by(4) {
+                    m.w32(own + o, m.r32(data1 + o));
+                }
             }
         }
     }
