@@ -56,7 +56,7 @@
 //! the Chao World control lock the Doctor room uses, if any.
 use crate::guest_call as call;
 use sa2_recomp::rt::{self, Cpu, Mem};
-use std::cell::Cell;
+use sa2_recomp::{global, global::Global};
 
 const KINDER: u32 = 74;
 const CHAOMAIN: u32 = 60;
@@ -142,18 +142,18 @@ enum State {
     },
 }
 
-thread_local! {
-    static TAB: Cell<bool> = const { Cell::new(false) };
-    static TAB_WAS: Cell<bool> = const { Cell::new(false) };
-    static STATE: Cell<State> = const { Cell::new(State::Closed) };
-    static PAGE: Cell<u8> = const { Cell::new(0) };
-    /// The page's last left click: canvas x, y (0..=65535), the canvas
-    /// aspect in thousandths (0 = 4:3), a count that changes per click.
-    static CLICK: Cell<[u16; 4]> = const { Cell::new([0; 4]) };
-    static CLICK_SEEN: Cell<u16> = const { Cell::new(0) };
-    /// The game's x values of the records [`retab`] rewrote.
-    static SAVED: std::cell::RefCell<Vec<(u32, u16)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
+// Shared by every game thread (each runs on a host thread of its own): the
+// page's keys arrive on the frame hook's thread, the chart runs on the game's.
+static TAB: Global<bool> = global!(false);
+static TAB_WAS: Global<bool> = global!(false);
+static STATE: Global<State> = global!(State::Closed);
+static PAGE: Global<u8> = global!(0);
+/// The page's last left click: canvas x, y (0..=65535), the canvas
+/// aspect in thousandths (0 = 4:3), a count that changes per click.
+static CLICK: Global<[u16; 4]> = global!([0; 4]);
+static CLICK_SEEN: Global<u16> = global!(0);
+/// The game's x values of the records [`retab`] rewrote.
+static SAVED: Global<Vec<(u32, u16)>> = global!(Vec::new());
 
 /// The page's last left click (/dev/pad bytes 16..24).
 pub fn set_click(x: u16, y: u16, aspect: u16, count: u16) {
@@ -321,12 +321,17 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(DISPLAY, display);
 }
 
-/// Each frame from PADRead (pad.rs): a Tab press in Chao World opens the
-/// chart; a second press closes it.
+/// Each frame from the player's exec (chao_player.rs, the thread that knows
+/// the player's Chao): a Tab press in Chao World opens the chart; a second
+/// press closes it.
 pub fn frame(c: &mut Cpu, m: &mut Mem) {
     let down = TAB.get();
     let press = pressed(down, TAB_WAS.replace(down));
     let in_world = m.r16(STAGE_NUM) as i16 >= 90 && linked(m, CHAOMAIN);
+    if press {
+        let chao = crate::chao_player::player_chao();
+        eprintln!("kinder-chart: Tab (Chao World {in_world}, Chao {chao:x?}, {:?})", STATE.get());
+    }
     match STATE.get() {
         State::Closed if press && in_world => {
             if let Some(chao) = crate::chao_player::player_chao() {
@@ -384,6 +389,15 @@ fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
     let info = call(c, m, c1 + CHAO_INFO, &[chao]);
     m.w32(work + 0xC, info);
     let msg = call(c, m, c1 + MSG_LOAD, &[s4 + MSG_NAME]);
+    if msg == 0 {
+        // The chart reads its strings through this pointer without a check.
+        eprintln!("kinder-chart: the chart's messages (MsgAlKinderHe) didn't load");
+        call(c, m, SY_FREE, &[work]);
+        if borrowed {
+            give_back(c, m);
+        }
+        return State::Closed;
+    }
     m.w32(work + 0x60, msg);
     m.load(NAME, b"MMOChart\0");
     let task = call(c, m, CREATE_ELEMENTAL_TASK, &[2, 2, MAIN, NAME]);
