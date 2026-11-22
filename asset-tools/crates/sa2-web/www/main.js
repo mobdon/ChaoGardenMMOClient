@@ -252,9 +252,10 @@ if (q.has('autostart')) $('go').click();
 // The page applies the rows it owns: game volume, chat box, frame cap; voice
 // reads mmoSettings.voiceMode. The game applies its own rows (language, sound mode...).
 let gameVolume = null;
-const mmoSettings = (globalThis.mmoSettings ??= {});
 function applySettings(s) {
+  const opening = s.voiceMode === 'open' && mmoSettings.voiceMode !== 'open';
   Object.assign(mmoSettings, s);
+  if (opening) globalThis.mmoVoiceStart?.().catch(() => {}); // mic refused: stays silent
   if (gameVolume && Number.isInteger(mmoSettings.volume)) gameVolume.gain.value = mmoSettings.volume / 10;
   chat.hidden = mmoSettings.chat === false;
   if (renderer && mmoSettings.fps) renderer.postMessage({ fps: mmoSettings.fps });
