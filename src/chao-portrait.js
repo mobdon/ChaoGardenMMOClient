@@ -68,7 +68,11 @@ async function drawChaoPortrait(canvas, player) {
   const dispose = () => { if (!open) return; open = false; engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
   let key = portraitAsset(player);
   // The player's own game files first: the model and its stand motion (number 0) in one file.
-  const game = name => name in GAME_MODEL ? gameChaoGlb(GAME_MODEL[name], 0) : null;
+  // A family body: the family's models as one morphing model, coloured by the Chao's own values.
+  const body = player.body, first = Number.isInteger(body?.modelBaseIndex) ? body.modelBaseIndex : 0;
+  const look = body && { type: body.type, hPos: body.runPower, vPos: body.swimFly, aPos: body.heroDark, growth: body.growth };
+  const game = name => name.startsWith('chao-body-') ? gameChaoGlb(first, 0, look || undefined, true)
+    : name in GAME_MODEL ? gameChaoGlb(GAME_MODEL[name], 0) : null;
   let own = await game(key);
   let [model, source] = own ? [await parse(key, own)] : await Promise.all([load(key), load('chao-behaviour')]);
   // The family bodies are a local conversion; without them the original child model, as the hub falls back.

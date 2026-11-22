@@ -74,12 +74,29 @@ fn chao_glb(
     model: usize,
     motion: usize,
     ratios: &Ratios,
+    family: bool,
 ) -> sa2_asset_tools::Result<Vec<u8>> {
     use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let index = model;
     let model = chao_dll::read_chao_model(dll, model)?;
     let clip = chao_dll::read_chao_motion(dll, motion)?;
     let slots = chao_palette::read_slots(gvps)?;
     let pngs = chao_glb::body_textures(&model, body, &slots, ratios)?;
+    if family {
+        // The whole body family as morph targets, face parts kept and tagged for the page.
+        let names = chao_glb::family_targets(index)?;
+        let models = names
+            .iter()
+            .map(|(_, i)| chao_dll::read_chao_model(dll, *i))
+            .collect::<sa2_asset_tools::Result<Vec<_>>>()?;
+        let targets: Vec<_> = names.iter().map(|n| n.0.as_str()).zip(&models).collect();
+        let family = chao_glb::Family {
+            name: "family",
+            targets: &targets,
+            texture_names: chao_glb::body_texture_names(body)?,
+        };
+        return chao_glb::export_family(&model, &pngs, &[("motion", &clip)], &[], &family);
+    }
     // shortcut: every portrait Chao gets open eyes and mouth 0; pass the face numbers in when a scene needs others.
     chao_glb::export(
         &model,
@@ -97,14 +114,16 @@ pub fn chao_to_out(
     model: usize,
     motion: usize,
     ratios: &Ratios,
+    family: bool,
 ) -> bool {
-    let made = chao_glb(dll, body, gvps, model, motion, ratios);
+    let made = chao_glb(dll, body, gvps, model, motion, ratios, family);
     let ok = made.is_ok();
     OUT.with(|o| *o.borrow_mut() = made.unwrap_or_default());
     ok
 }
 
 /// `chao_type`, `h_pos`, `v_pos`, `a_pos` and `growth` are the Chao's own values (`Ratios`).
+/// A non-zero `family` writes the body family that starts at `model` as one morphing model.
 ///
 /// # Safety
 /// The three pointer/length pairs must be `buf_alloc`ed buffers: `Data_DLL.dll`, `al_body.prs`
@@ -125,6 +144,7 @@ pub unsafe extern "C" fn chao(
     v_pos: f32,
     a_pos: f32,
     growth: f32,
+    family: u32,
 ) -> i32 {
     let bytes = |p, n| std::slice::from_raw_parts(p, n);
     let ratios = Ratios {
@@ -141,6 +161,7 @@ pub unsafe extern "C" fn chao(
         model,
         motion,
         &ratios,
+        family != 0,
     ) as i32
 }
 
@@ -229,7 +250,8 @@ mod tests {
             &[0u8; 16],
             0,
             0,
-            &Ratios::CHILD
+            &Ratios::CHILD,
+            true
         ));
         assert_eq!(out_len(), 0);
     }
