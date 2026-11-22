@@ -46,3 +46,12 @@ test('a fresh login of the same Chao keeps one slot', () => {
   slots.record(ownerToken, owner);
   assert.equal(JSON.parse(data.getItem(SAVE_SLOTS_KEY)).length, 1);
 });
+
+test('remove forgets one slot and its session', () => {
+  const store = new Map(); const storage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: k => store.delete(k) };
+  const slots = createSaveSlots(storage);
+  slots.record('a'.repeat(64), { id: 1, name: 'A' }); slots.record('b'.repeat(64), { id: 2, name: 'B' });
+  slots.remove('b'.repeat(64));
+  assert.deepEqual(slots.list().map(r => r.name), ['A']);
+  assert.equal(storage.getItem(SESSION_KEY), null);
+});
