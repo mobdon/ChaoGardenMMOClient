@@ -19,6 +19,11 @@ const GLOBAL_MODE: u32 = GAME + 0x80;
 const NEXT_GLOBAL_MODE: u32 = GAME + 0x84;
 const MD_TITLE_INIT: u32 = 1;
 const MD_ACTION_INIT: u32 = 4;
+/// Set when the game leaves a stage for the title: the stage's exec returning
+/// -1 (exit) or -2 (0x800D2EF0, 0x800D2F68), after the stage is torn down the
+/// same way as before a restart's mode 4. Its handler only goes on to mode 13
+/// and the title (0x800D2E8C). At boot it comes before the start.
+const MD_LEFT_STAGE: u32 = 2;
 /// The first global mode after the memory card is read (see top_level).
 const MD_AFTER_CARD: u32 = 12;
 /// The boot logos (Nintendo, SEGA, Sonic Team), timed against frames with SA2_MODE_LOG.
@@ -193,7 +198,8 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
 }
 
 fn top_level(c: &mut Cpu, m: &mut Mem) {
-    if PENDING.get().is_some() && std::env::var("SA2_MODE_LOG").is_ok() {
+    // Every change of global mode, so a run shows which way the game went.
+    {
         let mode = m.r32(GLOBAL_MODE);
         if MODE_SEEN.get() != mode {
             MODE_SEEN.set(mode);
@@ -217,15 +223,18 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if let Some((stage, ch)) = PENDING.take() {
             STARTED.set(true);
             start(c, m, stage, ch);
-        } else if mode == MD_TITLE_INIT && STARTED.get() {
-            // MMO glue: the title never shows. Back at it after the start (a
-            // level's EXIT or end, the lobby's own way out): Chao World, as at
-            // boot. Unverified: that each of those ways reaches this mode.
-            if SHOWN.get().is_none() {
-                SHOWN.set(Some(u32::MAX));
-            }
-            start(c, m, CHAO_WORLD, 0);
         }
+    }
+    if mode == MD_LEFT_STAGE && STARTED.get() {
+        // MMO glue: the title never shows. The game left the stage it was
+        // started in (a level's EXIT, Chao World's own way out): Chao World
+        // again, as at boot. Unverified: an exit that skips this mode (the
+        // exec's -1 path can go to mode 21 then 13, 0x800D2FB0).
+        eprintln!("start-stage: the game left its stage; starting Chao World");
+        if SHOWN.get().is_none() {
+            SHOWN.set(Some(u32::MAX));
+        }
+        start(c, m, CHAO_WORLD, 0);
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
@@ -233,6 +242,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             TO_LOBBY.set(false);
             if now != 0 && now != LOBBY {
                 // The call ChaoMain's own way back to the lobby makes (0xB4F0).
+                eprintln!("start-stage: area {now} to the lobby (pause EXIT)");
                 guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
             }
         }
