@@ -476,7 +476,14 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         let Some(fv) = FEET.with_borrow(|f| f[n]) else { continue };
         let wpos = [fv[0][3], fv[1][3], fv[2][3]];
         // The rider's foot rotation under this view; the Chao foot's view position.
-        let fw = mul34(&base, &skel[foot]);
+        // Native rig (Chao World): the Chao foot node's own rotation, unit-scaled.
+        let fw = if chao_world(m) {
+            let n = |j: usize| (0..3).map(|i| fv[i][j] * fv[i][j]).sum::<f32>().sqrt().max(1e-6);
+            let l = [n(0), n(1), n(2)];
+            std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { fv[i][j] / l[j] } else { fv[i][3] }))
+        } else {
+            mul34(&base, &skel[foot])
+        };
         let place: [[f32; 4]; 3] = std::array::from_fn(|r| std::array::from_fn(|k| if k < 3 { fw[r][k] * s } else { wpos[r] - (0..3).map(|q| fw[r][q] * s * centre[q]).sum::<f32>() }));
         for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
         m.w32(list, tex);
