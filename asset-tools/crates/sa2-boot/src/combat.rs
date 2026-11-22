@@ -140,7 +140,9 @@ fn stage_task(c: &mut Cpu, m: &mut Mem) {
     let exec = rt::sec(m, BIGFOOT, 1) + STAGE_EXEC;
     m.w32(c.r[3] + 0x10, exec);
     eprintln!("combat: stage task {:#x}, no boss, stage update {exec:#x}", c.r[3]);
-    STATE.with_borrow_mut(|s| (s.placed, s.wave, s.slots, s.count) = (false, 0, [None; 2 * HALF], 0));
+    // The game runs this again on every restart after a death, with its SET
+    // table kept: the entries stay owned, the waves start over.
+    STATE.with_borrow_mut(|s| (s.placed, s.wave) = (false, 0));
 }
 
 /// 0x67D4: the waves, then the arena boundary as the game calls it.
@@ -257,7 +259,7 @@ fn waves(s: &mut State, m: &mut Mem, r13: u32, y: f32, radius: f32) {
         m.w32(e + 0xC, 0);
     }
     m.w16(count_at, count as u16);
-    eprintln!("combat: wave {} of {}, SET entries {} -> {count}, object rows {rows:#x}", s.wave, wave_size(s.wave), s.count);
+    eprintln!("combat: wave {}: {} enemies, SET entries {} -> {count}, object rows {rows:#x}", s.wave, wave_size(s.wave), s.count);
     s.count = count;
 }
 
@@ -324,6 +326,16 @@ mod tests {
         waves(&mut s, &mut m, R13, 0.0, 120.0);
         assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (3, 33));
         assert_eq!(m.r16(SET_TABLE + 23 * 0x10 + 2), VALID);
+        // A restart (the stage task runs again) keeps the entries: wave 1
+        // waits for what is left, then reuses them instead of adding more.
+        s.wave = 0;
+        waves(&mut s, &mut m, R13, 0.0, 120.0);
+        assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (0, 33));
+        for i in [23, 24, 29, 30, 31, 32] {
+            m.w16(SET_TABLE + i * 0x10 + 2, 0);
+        }
+        waves(&mut s, &mut m, R13, 0.0, 120.0);
+        assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (1, 33));
         // The game emptied its table: start over from wave 1.
         m.w16(R13 - SET_COUNT, 0);
         waves(&mut s, &mut m, R13, 0.0, 120.0);
