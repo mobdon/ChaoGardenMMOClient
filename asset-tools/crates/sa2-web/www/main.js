@@ -494,6 +494,8 @@ async function start() {
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
+  // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
+  if (q.get('combat') === '1') e.SA2_COMBAT = '1';
   // A new player (no Chao on the card yet): their egg is laid in the lobby.
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();

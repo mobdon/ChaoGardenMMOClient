@@ -17,6 +17,7 @@ pub mod chao_retarget;
 pub mod skate;
 pub mod chao_speed;
 pub mod clock;
+pub mod combat;
 pub mod dvd;
 pub mod gear_pickup;
 #[cfg(not(target_os = "wasi"))]
@@ -63,6 +64,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     name_tags::install(c, m);
     kinder_chart::install(c, m);
     start_stage::install(c, m);
+    combat::install(c, m);
     race_probe::install(c, m);
     pause_extras::install(c, m);
     gear_pickup::install(c, m);

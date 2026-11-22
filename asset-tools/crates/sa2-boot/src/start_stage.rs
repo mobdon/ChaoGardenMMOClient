@@ -164,6 +164,13 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         });
         return;
     }
+    if crate::combat::wanted(stage) {
+        // The combat area (combat.rs): Big Foot's stage, not looked up in the
+        // Stage Select table. Character 0 (Sonic), whose boss it is.
+        PENDING.set(Some((stage, 0)));
+        c.rt.set_override(TOP_LEVEL, top_level);
+        return;
+    }
     let Some(rel) = crate::dvd::read_file("advertiseD.rel") else {
         eprintln!("start-stage: advertiseD.rel not found; booting to the title");
         return;
