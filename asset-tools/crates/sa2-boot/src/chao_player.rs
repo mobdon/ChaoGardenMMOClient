@@ -478,7 +478,11 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
             continue;
         }
         // SA2_SHOE_SCALE=k (debug): k times the fitted size.
-        let s = SHOE_LENGTH_RATIO * len / boot * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        // shortcut: on the native rig the boot is 2.6x the rest fit (measured
+        // headless: at 1x it sits inside the adult foot); upgrade by measuring
+        // the drawn adult foot instead of the rest model's.
+        let native = if chao_world(m) { 2.6 } else { 1.0 };
+        let s = native * SHOE_LENGTH_RATIO * len / boot * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         let _ = (node, &posed, ry, cpos);
         let Some(fv) = FEET.with_borrow(|f| f[n]) else {
             if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 { eprintln!("chao-player shoes: no foot {n}"); }
