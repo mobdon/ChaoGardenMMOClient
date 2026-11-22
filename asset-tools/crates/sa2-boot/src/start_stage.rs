@@ -198,6 +198,9 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             start(c, m, stage, ch);
         }
     }
+    if SHOWN.get().is_some() {
+        crate::tiny_transporter::frame(c, m);
+    }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
         // Once the lobby is running, change area the game's own way.
@@ -403,9 +406,14 @@ fn chaomain_text(m: &Mem) -> Option<u32> {
 /// A linked ChaoMain section's address (section table entries are 8 bytes:
 /// offset, size; OSLink stores the .bss address there too).
 fn chaomain_section(m: &Mem, n: u32) -> Option<u32> {
+    module_section(m, CHAOMAIN, n)
+}
+
+/// A linked REL module's section address, None while it is not linked.
+pub(crate) fn module_section(m: &Mem, module: u32, n: u32) -> Option<u32> {
     let mut info = m.r32(0x8000_30C8);
     while info != 0 {
-        if m.r32(info) == CHAOMAIN {
+        if m.r32(info) == module {
             let at = m.r32(m.r32(info + 0x10) + n * 8) & !1;
             return (at != 0).then_some(at);
         }
