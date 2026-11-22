@@ -163,11 +163,13 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
     }
 }
 
-/// `/dev/pad`: 16 bytes. Keys held (u16, bits as [`KEYS`], bit 15 Tab); then the
+/// `/dev/pad`: 24 bytes. Keys held (u16, bits as [`KEYS`], bit 15 Tab); then the
 /// gamepad: connected (u8), unused (u8), buttons (u16, GC bits), stick
-/// x/y, C-stick x/y (i8), L/R (u8).
-fn read_pad() -> [u8; 16] {
-    let mut b = [0u8; 16];
+/// x/y, C-stick x/y (i8), L/R (u8); 4 bytes not read here; then the last left
+/// click (u16 each): canvas x, y (0..=65535), canvas aspect in thousandths
+/// (0 = 4:3), a count that changes per click.
+fn read_pad() -> [u8; 24] {
+    let mut b = [0u8; 24];
     if let Ok(mut f) = std::fs::File::open("/dev/pad") {
         let _ = f.read_exact(&mut b);
     }
@@ -189,8 +191,12 @@ fn pad() -> PadStatus {
     let h = u16::from_le_bytes([b[0], b[1]]);
     let on = |i: usize| h >> i & 1 != 0;
     let mut p = PadStatus::default();
+    let w = |i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
+    sa2_boot::kinder_chart::set_click(w(16), w(18), w(20), w(22));
+    // The left mouse (key 13) picks the chart's tabs while it is open.
+    let chart = sa2_boot::kinder_chart::is_open();
     for (i, bit) in KEYS.iter().enumerate() {
-        if *bit != 0 && on(i) {
+        if *bit != 0 && on(i) && !(chart && i == 13) {
             p.button |= bit;
         }
     }
