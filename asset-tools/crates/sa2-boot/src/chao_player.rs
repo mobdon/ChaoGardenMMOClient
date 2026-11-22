@@ -493,6 +493,21 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
         DEBUG_SETS.set(sets);
     }
     let v = GEAR_TUNE.with_borrow(|t| t.get(name).copied())?;
+    Some(tune_matrix(&v))
+}
+
+/// The fists' set place, from the gear tuner (mob's "fist0" line:
+/// dx dy dz rx ry rz scale); fist1 is fist0 mirrored across the Chao's
+/// middle (x and the turns about y and z flip).
+/// unverified: that the two plates' fitted frames mirror in x (checked by eye).
+const FIST_SET: [[f32; 7]; 2] = [
+    [0.3, 1.26, -2.08, -60.0, 10.0, 0.0, 1.35],
+    [-0.3, 1.26, -2.08, -60.0, -10.0, -0.0, 1.35],
+];
+
+/// A tuner line "dx dy dz rx ry rz scale" as a matrix in the piece's own
+/// frame (move, then turn x, y, z in degrees, then scale).
+fn tune_matrix(v: &[f32; 7]) -> [[f32; 4]; 3] {
     let (sx, cx) = v[3].to_radians().sin_cos();
     let (sy, cy) = v[4].to_radians().sin_cos();
     let (sz, cz) = v[5].to_radians().sin_cos();
@@ -500,7 +515,7 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
     let r = crate::skate::mul(&rz, &crate::skate::mul(&ry, &rx));
-    Some(std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * v[6] } else { v[i] })))
+    std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * v[6] } else { v[i] }))
 }
 
 /// A debug panel setting ("set key value" in the tuner file), None without one.
@@ -1440,7 +1455,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
     for (k, (model, local)) in fit.into_iter().enumerate() {
         let Some(node) = HANDS.with_borrow(|h| h[k]) else { continue };
         let place = mul34(&node, &local);
-        let place = gear_tune(if k == 0 { "fist0" } else { "fist1" }).map_or(place, |t| mul34(&place, &t));
+        let place = mul34(&place, &gear_tune(if k == 0 { "fist0" } else { "fist1" }).unwrap_or_else(|| tune_matrix(&FIST_SET[k])));
         if f % 300 == 0 {
             let ft = FEET.with_borrow(|x| x[k].map(|v| [v[0][3], v[1][3], v[2][3]]));
             eprintln!("chao-player gloves: {k} arm node at {:?}, fist at {:?}, foot {:?}, local t {:?}", [node[0][3], node[1][3], node[2][3]], [place[0][3], place[1][3], place[2][3]], ft, [local[0][3], local[1][3], local[2][3]]);
