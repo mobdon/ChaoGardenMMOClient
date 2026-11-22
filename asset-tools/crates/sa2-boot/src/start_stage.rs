@@ -108,18 +108,12 @@ static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
 static TUTORIAL_SLOT: Global<u32> = global!(0);
 /// Cocoon timers (section 5 + 0x2A50, read by `ALBHV_Mayu` 0x3AE44) and its
 /// native frames 200/1800/900/900/100 (about 65 s); phases 2-4 cut to 300 frames each
-/// (1200 frames, about 20 s) for the tutorial's evolution only.
-const COCOON_FRAMES: [(u32, u32); 5] = [
-    (0x84, 60),
-    (0x88, 550),
-    (0x8C, 275),
-    (0x90, 275),
-    (0x94, 40),
-];
+/// (1200 frames, about 20 s) for the tutorial's evolution only. Phases 1 and 5 stay native.
+const COCOON_FRAMES: [(u32, u32); 3] = [(0x88, 300), (0x8C, 300), (0x90, 300)];
 /// Frames to keep the short timers before putting the native ones back.
 /// shortcut: shared table, so a garden Chao evolving in this window is also fast; a per-Chao hook would fix that.
 const COCOON_HOLD: u32 = 1300;
-static COCOON_RESTORE: Global<(u32, [u32; 5], u32)> = global!((0, [0; 5], 0));
+static COCOON_RESTORE: Global<(u32, [u32; 3], u32)> = global!((0, [0; 3], 0));
 /// Next guide line to show and frames until it shows.
 static LINE: Global<(usize, u32)> = global!((0, 0));
 
@@ -265,7 +259,7 @@ fn restore_cocoon(m: &mut Mem) {
     for (i, (o, _)) in COCOON_FRAMES.into_iter().enumerate() {
         m.w32(table + o, saved[i]);
     }
-    COCOON_RESTORE.set((0, [0; 5], 0));
+    COCOON_RESTORE.set((0, [0; 3], 0));
 }
 
 /// The tutorial ends when the player reaches the Tails Chao guide: the new
@@ -300,7 +294,7 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
     let table = section(m, text, 5) + lo;
     m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(table + off));
     // Shorten the cocoon's phase timers for this evolution, put back afterwards.
-    let mut saved = [0u32; 5];
+    let mut saved = [0u32; 3];
     for (i, (o, f)) in COCOON_FRAMES.into_iter().enumerate() {
         saved[i] = m.r32(table + o);
         m.w32(table + o, f);
