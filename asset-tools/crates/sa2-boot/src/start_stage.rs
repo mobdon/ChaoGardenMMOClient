@@ -148,6 +148,8 @@ static SHOWN: Global<Option<u32>> = global!(None);
 /// SA2_TP_ARRIVE=1: enter Chao World in the Neutral Garden, then go to the lobby
 /// the game's own way, so it arrives as from a garden teleporter.
 static TP_ARRIVE: Global<bool> = global!(false);
+/// The Chao World area the player was last in (0: none, or already back in the lobby).
+static CAME_FROM: Global<u32> = global!(0);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
 /// The pending start has happened; the title after it means the game came back.
@@ -387,6 +389,24 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             for gene in picked_eggs() {
                 lay_egg_with(c, m, text, gene.as_ref(), false);
+            }
+        }
+        // Back to the lobby from an area: the lobby places the player by its
+        // previous stage (ChaoMain .text 0x27988). A return that passes
+        // through area 13 (0x27DA0, from a garden) leaves 13 there, and the
+        // lobby then uses its default spot (the centre) instead of that
+        // area's door: the area left is put back until the player stands in
+        // the lobby. SA2_DOOR_RETURN=0 (debug): off.
+        if now != LOBBY && now != 13 && (1..=LAST_AREA).contains(&now) {
+            CAME_FROM.set(now);
+        } else if CAME_FROM.get() != 0 && !TP_ARRIVE.get() && !std::env::var("SA2_DOOR_RETURN").is_ok_and(|v| v == "0") {
+            if now == LOBBY && shown == LOBBY && m.r32(PLAYERTWP) != 0 {
+                CAME_FROM.set(0);
+            } else if let Some(bss) = chaomain_section(m, 5) {
+                if m.r32(bss + PRE_STAGE) != CAME_FROM.get() {
+                    eprintln!("start-stage: lobby return from area {} (previous stage read {})", CAME_FROM.get(), m.r32(bss + PRE_STAGE));
+                    m.w32(bss + PRE_STAGE, CAME_FROM.get());
+                }
             }
         }
         if now != shown {
