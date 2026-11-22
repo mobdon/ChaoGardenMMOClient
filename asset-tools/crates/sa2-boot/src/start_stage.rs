@@ -19,6 +19,8 @@ const GLOBAL_MODE: u32 = GAME + 0x80;
 const NEXT_GLOBAL_MODE: u32 = GAME + 0x84;
 const MD_TITLE_INIT: u32 = 1;
 const MD_ACTION_INIT: u32 = 4;
+/// The first global mode after the memory card is read (see top_level).
+const MD_AFTER_CARD: u32 = 12;
 /// The Stage Select's start code reads its stage/character table through the
 /// relocation at advertiseD section 1 + 0x10246 (`lis r3` at 0x10244).
 const TABLE_RELOC: (u8, u32) = (1, 0x10246);
@@ -69,6 +71,8 @@ const SE_AT_POS_TIMER: u32 = 0x8006_AFFC;
 
 /// (stage, character) to start, until it has started.
 static PENDING: Global<Option<(u16, u32)>> = global!(None);
+/// SA2_MODE_LOG: the last global mode logged while a start is pending.
+static MODE_SEEN: Global<u32> = global!(u32::MAX);
 /// SA2_CHAO_AREA: the Chao World area to change to once the lobby is up.
 static AREA: Global<Option<u32>> = global!(None);
 /// Started in Chao World: the last area told to the page (u32::MAX before the first).
@@ -134,7 +138,20 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
 }
 
 fn top_level(c: &mut Cpu, m: &mut Mem) {
-    if m.r32(GLOBAL_MODE) == MD_TITLE_INIT {
+    if PENDING.get().is_some() && std::env::var("SA2_MODE_LOG").is_ok() {
+        let mode = m.r32(GLOBAL_MODE);
+        if MODE_SEEN.get() != mode {
+            MODE_SEEN.set(mode);
+            eprintln!("start-stage: global mode {mode} next {}", m.r32(NEXT_GLOBAL_MODE));
+        }
+    }
+    // Without a memory card the boot reaches MD_TITLE_INIT (1); with one (the
+    // MMO server's card) it goes 0, 2, 13, 21, 22, 13, 14, then 12 and on into
+    // the intro movies without ever reaching 1 (seen with SA2_MODE_LOG). Mode 12
+    // comes after the card is read, so the start happens there too. Unverified:
+    // what mode 12 is in the game's own terms.
+    let mode = m.r32(GLOBAL_MODE);
+    if mode == MD_TITLE_INIT || mode == MD_AFTER_CARD {
         if let Some((stage, ch)) = PENDING.take() {
             start(c, m, stage, ch);
         }
