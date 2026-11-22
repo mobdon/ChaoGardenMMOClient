@@ -231,7 +231,10 @@ function cardRequest(method, body) {
 }
 function cardCheckOut() {
   const r = cardRequest('GET');
-  if (r.status !== 200) return false;
+  if (r.status !== 200) {
+    postMessage({ log: `card: the server didn't check the card out (${r.status})`, err: true, tid });
+    return false;
+  }
   const lease = enc.encode(r.getResponseHeader('x-save-lease') || '');
   new DataView(sh.card.buffer).setBigUint64(0, BigInt(r.getResponseHeader('x-save-revision') || 0), true);
   sh.card.fill(0, 8);
@@ -257,10 +260,11 @@ function cardSend() {
 
 // ---- MMO files (sa2-boot chao_player.rs) ----------------------------------
 // The other players' Chao: the game writes its own pose and record to
-// /mmo/pose-out and /mmo/record-out and reads the others' from /mmo/pose-in
+// /mmo/pose-out and /mmo/record-out (and its Chao's name tag spots to
+// /mmo/tags-out, the Tiny Garden tree icon to /mmo/tree-icon) and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -269,6 +273,8 @@ function mmoRead(path) {
     const len = Math.min(Atomics.load(mmoI32(MMO.POSE_IN), 1), MMO.POSE_IN_MAX);
     return { bytes: b.slice(MMO.POSE_IN + 8, MMO.POSE_IN + 8 + len), ver: 0 };
   }
+  // Chao Karate (sa2-boot karate.rs): the page's [press counter, button].
+  if (path === 'mmo/karate-in') return { bytes: b.slice(MMO.KARATE, MMO.KARATE + 2), ver: 0 };
   const m = /^mmo\/rec\/(\d+)$/.exec(path);
   if (!m) return null;
   const s = mmoSlot(m[1]);
@@ -283,7 +289,9 @@ function mmoSlot(id) {
 }
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
-  const out = path === 'mmo/pose-out' ? [MMO.POSE_OUT, MMO.POSE_OUT_MAX] : path === 'mmo/record-out' ? [MMO.REC_OUT, MMO.REC] : null;
+  if (path === 'mmo/karate-out') return void (sh.mmo[MMO.KARATE + 4] = bytes[0]); // 1: strong moves unlocked
+  const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
+    'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX] }[path] || null;
   if (!out) return;
   const n = Math.min(bytes.length, out[1]);
   sh.mmo.set(bytes.subarray(0, n), out[0] + 8);
@@ -465,7 +473,7 @@ const wasi = {
     if (fd === DEV_PAD) {
       let total = 0;
       for (const [p, len] of iovs(iov, n)) {
-        const k = Math.min(len, 16 - total);
+        const k = Math.min(len, sh.pad.length - total);
         u8().set(sh.pad.subarray(total, total + k), p);
         total += k;
       }

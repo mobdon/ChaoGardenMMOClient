@@ -10,6 +10,8 @@ const SLOT = 96 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 80 
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
 const q = new URLSearchParams(location.search);
+// The MMO has no title or card screen: without a signed-in Chao, go to the login.
+if (!mmoToken()) location.replace('/');
 const wide = q.get('aspect') !== '4:3';
 const fpsCap = Number(q.get('fps')) || 0; // 60: never blend between frames
 
@@ -29,12 +31,12 @@ function log(text, err) {
 
 const sh = {
   ctl: new SharedArrayBuffer(64),
-  pad: new SharedArrayBuffer(16),
+  pad: new SharedArrayBuffer(24),
   egg: new SharedArrayBuffer(4 + 8 * 0xa8),
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -63,24 +65,40 @@ window.sa2HatchEgg = egg => {
 
 // ---- input --------------------------------------------------------------
 // Bits as the game reads them (sa2-web-game KEYS): A D S W, Space, E,
-// Left Shift, Q, R, Enter, Escape, 1, 3, then left and right mouse.
+// Left Shift, Q, R, Enter, Escape, 1, 3, then left and right mouse; bit 15 is Tab
+// (and the gamepad's Back), the Chao World chart (sa2-boot kinder_chart.rs).
 const KEYS = ['KeyA', 'KeyD', 'KeyS', 'KeyW', 'Space', 'KeyE', 'ShiftLeft', 'KeyQ', 'KeyR', 'Enter', 'Escape', 'Digit1', 'Digit3'];
+const TAB = 1 << 15;
 let held = 0;
 function hold(bit, down) {
   held = down ? held | bit : held & ~bit;
 }
 addEventListener('keydown', (e) => {
+  if (e.code === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); hold(TAB, true); return; }
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
   e.preventDefault();
   hold(1 << i, true);
 });
 addEventListener('keyup', (e) => {
+  if (e.code === 'Tab') hold(TAB, false);
   const i = KEYS.indexOf(e.code);
   if (i >= 0) hold(1 << i, false);
 });
 addEventListener('blur', () => (held = 0));
 canvas.addEventListener('mousedown', (e) => e.button === 0 ? hold(1 << 13, true) : e.button === 2 && hold(1 << 14, true));
+// The last left click for the game (pad bytes 16..24, sa2-web-game read_pad): where on the
+// canvas (0..65535 each way), the canvas aspect (ctl[8]), and a count that changes per click.
+let clicks = 0;
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  const r = canvas.getBoundingClientRect();
+  const u = (v) => Math.round(Math.min(1, Math.max(0, v)) * 65535);
+  new DataView(sh.pad).setUint16(16, u((e.clientX - r.left) / r.width), true);
+  new DataView(sh.pad).setUint16(18, u((e.clientY - r.top) / r.height), true);
+  new DataView(sh.pad).setUint16(20, Atomics.load(ctl, 8), true);
+  new DataView(sh.pad).setUint16(22, (clicks = (clicks + 1) & 0xffff), true);
+});
 addEventListener('mouseup', (e) => e.button === 0 ? hold(1 << 13, false) : e.button === 2 && hold(1 << 14, false));
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('dblclick', () => document.fullscreenElement ? document.exitFullscreen() : canvas.requestFullscreen());
@@ -91,10 +109,11 @@ canvas.addEventListener('dblclick', () => document.fullscreenElement ? document.
 const BUTTONS = [[0, 0x0100], [2, 0x0200], [1, 0x0400], [3, 0x0800], [9, 0x1000], [5, 0x0010],
   [14, 0x0001], [15, 0x0002], [13, 0x0004], [12, 0x0008]];
 function writePad() {
-  pad[0] = held & 0xff;
-  pad[1] = held >> 8;
   writeExtras();
   const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find((p) => p && p.connected);
+  const keys = held | (g && g.buttons[8] && g.buttons[8].pressed ? TAB : 0);
+  pad[0] = keys & 0xff;
+  pad[1] = keys >> 8;
   if (!g) {
     pad[2] = 0;
     return;
@@ -151,6 +170,7 @@ function loadedWorker() {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
     else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
+    else if (SHOE_PICKUPS[m.area]) pickedUp(SHOE_PICKUPS[m.area]);
     else if (m.area !== undefined) roomArea(m.area);
     else if (m.extras !== undefined) extrasChanged(...m.extras);
   };
@@ -170,6 +190,15 @@ function startThread(tid, arg) {
 function mmoToken() {
   try { return localStorage.getItem('chao-garden-session-v1') || ''; } catch { return ''; }
 }
+// The game's own shoe upgrade, picked up in a level (sa2_boot::gear_pickup):
+// the server lets this card's Chao wear the shoes from then on.
+const SHOE_PICKUPS = { 252: 'sonic-light-shoes', 251: 'shadow-air-shoes' };
+function pickedUp(item) {
+  const token = mmoToken();
+  if (!token) return;
+  fetch('/api/gear-pickup', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item }) }).then(r => r.ok, () => false).then(ok => ok || log(`could not tell the server about ${item}`, true));
+}
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
 // The game's own Chao Lobby is the MMO hub (mob 2026-11-21): stage 90 with no area.
@@ -185,7 +214,7 @@ function joinRoom(token, zone) {
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
   ws.onmessage = ({ data }) => {
     let m; try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); }
+    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); tagNames(m); }
     if (m.type === 'event') overlay?.event(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
@@ -196,7 +225,7 @@ function joinRoom(token, zone) {
 // with a pose come back as lines "id x y z angle motion frame gear"; Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -205,6 +234,7 @@ const numId = (id) => String(BigInt('0x' + (String(id).replace(/[^0-9a-f]/gi, ''
 let poseSeen = 0, recSeen = 0, poseSent = null, poseSeq = 0, poseFullAt = 0, poseWs = null;
 const recVersions = new Map();
 function mmoTick(token) {
+  karateLocks();
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
   if (seq !== poseSeen && room?.ws.readyState === 1) {
     poseSeen = seq;
@@ -262,6 +292,75 @@ function recordIn(id, bytes) {
   Atomics.add(h, 0, 1);
 }
 
+// ---- name tags (sa2-boot name_tags.rs) -----------------------------------
+// The game writes each tagged Chao's spot once a frame to /mmo/tags-out as
+// lines "label x y" (x, y: normalised device coordinates of its highest node,
+// drawn for 4:3); the tags are the old hub's name plates, drawn over the
+// canvas. Labels: "me", "p<id>" (numId), "r23" / "r24" / "r25" the residents.
+// A Tiny Garden resident (snapshot watch.resident) shows the game's own tree
+// icon (/mmo/tree-icon: u32 width, height, RGBA) on the left inside its tag.
+const RESIDENT_TAGS = { r23: 'Tails · NPC', r24: 'Knuckles · NPC', r25: 'Amy · NPC' };
+const tagInfo = new Map();
+function tagNames(m) {
+  tagInfo.clear();
+  for (const p of m.players || []) {
+    tagInfo.set(p.id === m.selfId ? 'me' : `p${numId(p.id)}`, { name: `${p.admin ? 'ADMIN • ' : ''}${p.name || 'Chao'}`, admin: !!p.admin, tiny: !!p.watch?.resident });
+  }
+}
+let tagLayer = null, tagSeen = -1, tagAt = 0, treeUrl = null;
+const tagEls = new Map();
+function treeIcon() {
+  if (treeUrl !== null) return treeUrl;
+  const h = mmoHead(MMO.TREE);
+  if (!Atomics.load(h, 0)) return null;
+  const v = new DataView(sh.mmo, MMO.TREE + 8), w = v.getUint32(0, true), ht = v.getUint32(4, true);
+  if (!w || !ht || w * ht * 4 + 8 > h[1]) return (treeUrl = '');
+  const c = Object.assign(document.createElement('canvas'), { width: w, height: ht });
+  c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(mmoBytes.slice(MMO.TREE + 16, MMO.TREE + 16 + w * ht * 4)), w, ht), 0, 0);
+  return (treeUrl = c.toDataURL());
+}
+function tagEl(label) {
+  let el = tagEls.get(label);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'tag';
+    el.append(Object.assign(document.createElement('img'), { alt: '' }), document.createElement('span'));
+    tagLayer.append(el);
+    tagEls.set(label, el);
+  }
+  const info = tagInfo.get(label), name = RESIDENT_TAGS[label] || info?.name || '';
+  if (el.lastChild.textContent !== name) el.lastChild.textContent = name;
+  el.classList.toggle('admin', !!info?.admin);
+  const tree = info?.tiny ? treeIcon() : '';
+  el.firstChild.hidden = !tree;
+  if (tree && el.firstChild.src !== tree) el.firstChild.src = tree;
+  return el;
+}
+function drawTags() {
+  if (!tagLayer) {
+    tagLayer = Object.assign(document.createElement('div'), { id: 'tags' });
+    document.body.append(tagLayer);
+  }
+  const h = mmoHead(MMO.TAGS), seq = Atomics.load(h, 0);
+  if (seq !== tagSeen) {
+    tagSeen = seq;
+    tagAt = performance.now();
+    const text = new TextDecoder().decode(mmoBytes.slice(MMO.TAGS + 8, MMO.TAGS + 8 + Math.min(h[1], MMO.TAGS_MAX)));
+    const r = canvas.getBoundingClientRect(), aspect = r.width / Math.max(1, r.height);
+    // render: a wide canvas widens the 3D view, x scaled by (4/3) / aspect (sa2_gx::widescreen).
+    const k = wide && aspect > 4 / 3 ? 4 / 3 / aspect : 1;
+    const shown = new Set();
+    for (const line of text.split('\n')) {
+      const [label, x, y] = line.split(' ');
+      if (!label || !(label in RESIDENT_TAGS || tagInfo.has(label))) continue;
+      const el = tagEl(label);
+      el.style.transform = `translate(${r.left + ((Number(x) * k + 1) / 2) * r.width}px, ${r.top + ((1 - Number(y)) / 2) * r.height}px) translate(-50%, -100%)`;
+      shown.add(label);
+    }
+    for (const [label, el] of tagEls) el.hidden = !shown.has(label);
+  } else if (performance.now() - tagAt > 250) for (const el of tagEls.values()) el.hidden = true; // out of Chao World
+}
+
 // While the boot logos run before an MMO start, the game is covered (plain
 // black, as the page looks before the first frame) and its sound muted.
 function cover(on) {
@@ -277,10 +376,44 @@ function cover(on) {
 
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
+  karateButtons(area === 10 || area === 11);
   const zone = roomZones[area === 0 ? '' : area];
   if (!room || !zone || zone === room.zone) return;
   room.zone = zone;
   if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
+}
+// ---- Chao Karate attack buttons (sa2-boot karate.rs) ----------------------
+// The player's Chao does the pressed attack at its next attack; the game
+// refuses the two strong ones until Power is above 400, and says so here.
+// shortcut: plain page buttons; the game's own font and capsule sprites are
+// not drawn here yet, upgrade when the page can read the player's textures.
+const KARATE_MOVES = [[4, 'Hard Kick'], [7, 'Punch'], [6, 'Beating Up'], [8, 'Windup Punch', true], [5, 'Roundhouse', true]];
+function karateButtons(on) {
+  let bar = document.getElementById('karate');
+  if (!bar && on) {
+    bar = Object.assign(document.createElement('div'), { id: 'karate' });
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;display:flex;gap:.5rem;justify-content:center;z-index:4';
+    for (const [id, name, strong] of KARATE_MOVES) {
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: name });
+      b.style.cssText = 'padding:.45rem 1rem;border-radius:1.2rem;background:#f5a800;color:#fff;font-weight:700;text-shadow:0 1px 2px #000';
+      if (strong) b.dataset.strong = '1';
+      b.addEventListener('click', () => {
+        mmoBytes[MMO.KARATE + 1] = id;
+        mmoBytes[MMO.KARATE]++; // a new press, after its button is in place
+        canvas.focus();
+      });
+      bar.append(b);
+    }
+    document.body.append(bar);
+  }
+  if (bar) bar.style.display = on ? 'flex' : 'none';
+}
+function karateLocks() {
+  for (const b of document.querySelectorAll('#karate [data-strong]')) {
+    b.disabled = !mmoBytes[MMO.KARATE + 4];
+    b.title = b.disabled ? 'Needs Power above 400' : '';
+    b.style.background = b.disabled ? '#666' : '#f5a800';
+  }
 }
 // The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
 function showCard(player) {
@@ -315,6 +448,7 @@ const ticksMain = [];
 // The page's own loop: the controller and the canvas's size, each refresh.
 function frame() {
   writePad();
+  drawTags();
   const dpr = devicePixelRatio || 1;
   const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
   if (renderer && (w !== frame.w || h !== frame.h)) {
@@ -364,7 +498,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_TREE_OUT: '/mmo/tree-icon' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) loadSettings(token);
