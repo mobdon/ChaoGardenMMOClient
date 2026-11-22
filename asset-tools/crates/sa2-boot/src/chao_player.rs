@@ -258,12 +258,61 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
+    } else if n > 0 {
+        // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
+        let obj2 = m.r32(P1_OBJ2);
+        if (0x8000_0000..0x8C00_0000).contains(&obj2) && BALL_STATES.contains(&m.r16(obj2 + OBJ2_ACTION)) {
+            (c.r, c.f[1]) = (regs, f1);
+            ball_draw(c, m, addr);
+        }
     }
     // A new rider skeleton size: its node positions in root space, once.
     if n > 8 && SEEN_SKEL.with_borrow_mut(|s| s.insert((obj, n))) {
         let nodes = NODES.with_borrow(|v| v.clone());
         let p: Vec<[f32; 3]> = nodes.iter().map(|e| { let r = inv_mul(&nodes[0], e); [r[0][3], r[1][3], r[2][3]].map(|x| (x * 1000.0).round() / 1000.0) }).collect();
         eprintln!("chao-player skel: obj {obj:#x} nodes {n} root-space {p:?}");
+    }
+}
+
+/// Animation states in which the rider's own motion draw is his spin ball
+/// (state 30 = PLMOT_BALL: Sonic's display swaps the body for the ball
+/// model, seen with SA2_SHOW_SONIC in Green Forest, lvl9\g30s).
+/// unverified: 11/12 (PLMOT_STARTSPIN/SPINDASH) draw the ball the same way.
+const BALL_STATES: [u16; 3] = [30, 11, 12];
+
+/// The game's own ball draw, scaled to the Chao's size (BOARD_SCALE, the
+/// Sonic -> Chao size mob set for the board) and centred on the Chao.
+fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
+    // The ball's centre: its root node as this frame's capture walked it.
+    let Some(ball) = NODES.with_borrow(|n| n.first().copied()) else { return };
+    let Step::Live(chao) = STEP.get() else { return };
+    let cwk = m.r32(chao + 0x34);
+    // The Chao's centre: its position (chaowk +0x14) raised by its rest mesh centroid height.
+    let cy = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| {
+        let w = r.worlds(&[]);
+        let v: Vec<f32> = r.verts.iter().zip(&w).flat_map(|(vs, (rr, t))| vs.iter().map(move |v| t[1] + (0..3).map(|k| rr[1][k] * v[k]).sum::<f32>())).collect();
+        v.iter().sum::<f32>() / v.len().max(1) as f32
+    })).unwrap_or(0.0);
+    let f = |a: u32| f32::from_bits(m.r32(a));
+    let target = [f(cwk + 0x14), f(cwk + 0x18) + cy, f(cwk + 0x1C)];
+    let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+    let cur = mtx(m, cur_ptr);
+    let base = mtx(m, m.r32(NJ_BASE_MATRIX));
+    let w = inv_mul(&base, &cur);
+    let (s, b) = (BOARD_SCALE, [ball[0][3], ball[1][3], ball[2][3]]);
+    // Scale about the ball's centre, then move that centre onto the Chao's.
+    let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * b[i] + target[i] - b[i] }));
+    let scaled = mul34(&base, &ws);
+    for r in 0..3 {
+        for k in 0..4 {
+            m.w32(cur_ptr + 4 * (4 * r + k) as u32, scaled[r][k].to_bits());
+        }
+    }
+    original(c, m, addr);
+    for r in 0..3 {
+        for k in 0..4 {
+            m.w32(cur_ptr + 4 * (4 * r + k) as u32, cur[r][k].to_bits());
+        }
     }
 }
 
@@ -547,7 +596,7 @@ fn ev_shape_draw(c: &mut Cpu, m: &mut Mem) {
     CAPTURE.set(true);
     original(c, m, EV_SHAPE_DRAW);
     CAPTURE.set(false);
-    let Some(root) = NODES.with_borrow(|n| n.first().copied()) else { return };
+    let Some(root) = SKEL.with_borrow(|n| n.first().copied()) else { return };
     // Sonic faces -x in his model space; the Chao faces +z at yaw 0.
     let (fx, fz) = (-root[0][0], -root[2][0]);
     let yaw = (fx.atan2(fz) * 65536.0 / std::f32::consts::TAU) as i32 as u32;
@@ -1041,7 +1090,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     }
     // The animation state (PC CharObj2 AnimInfo.Current; mob's numbers).
     // SA2_KNUX_STATE=n (debug): treat the rider as in state n, to check a rule.
-    let act = std::env::var("SA2_KNUX_STATE").ok().and_then(|v| v.parse().ok()).unwrap_or(idx as u16);
+    let act = std::env::var("SA2_KNUX_STATE").ok().filter(|_| forced_now()).and_then(|v| v.parse().ok()).unwrap_or(idx as u16);
     let actnum = m.r16(table + 0x10 * idx);
     if LAST_ACT.get() != act {
         eprintln!("chao-player knux: state {act} actnum {actnum}");
@@ -1072,6 +1121,9 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
 /// its efftex ball draw. No input needed to see the ball.
 fn force_sonic_state(m: &mut Mem) {
     let Ok(v) = std::env::var("SA2_SONIC_STATE") else { return };
+    if !forced_now() {
+        return;
+    }
     let obj2 = m.r32(P1_OBJ2);
     if !(0x8000_0000..0x8C00_0000).contains(&obj2) {
         return;
@@ -1083,6 +1135,13 @@ fn force_sonic_state(m: &mut Mem) {
     if let Some(f) = it.next().and_then(|f| u32::from_str_radix(f.trim().trim_start_matches("0x"), 16).ok()) {
         m.w32(obj2 + 0x24, m.r32(obj2 + 0x24) | f);
     }
+}
+
+/// SA2_FORCE_FROM=frame (debug): forced states start at this frame, so the
+/// rider has landed and the camera settled first.
+fn forced_now() -> bool {
+    let from = std::env::var("SA2_FORCE_FROM").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= from
 }
 
 /// Physics table (0x84 bytes a row) that 0x8004F838 copies to the player's
