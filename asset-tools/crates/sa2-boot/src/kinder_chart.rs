@@ -45,8 +45,33 @@
 //!   task's display is a host function that runs B244 for the game's pages
 //!   and only the backdrop (890) and the frame for the MMO pages.
 //!
-//! shortcut: the MMO pages are an empty frame, their contents (inventory,
-//! breeding) come next.
+//! The purple page is breeding: the pink page's own boxes (its records
+//! 20..=43) in the purple tint, and strings through the chart's own text
+//! draw D4C4(_, cp1252 string, flags, f1 x, f2 y, f3 width, f4 size) at the
+//! spots C50C gives the pink page's (title 444,84 size 20 flags 5; headers
+//! x 288, y 110 / 276 / 370 size 16; body y 390 size 20). The page feeds it
+//! (SA2_BREED_IN: the player's Chao's name, a message, the player's Heart
+//! Fruit count (empty: not known), then a line
+//! "id<tab>name" for each of the player's other Chao); a click on a name
+//! picks it, a second click sends its id to the page (SA2_BREED_OUT), which
+//! asks the server. The rules stay the server's.
+//!
+//! The page's top box shows the two Chao the way C50C shows the blue
+//! page's portrait (its 0xC9A8..0xCA84: blend and Z modes, F344, the
+//! 640x480 view F244, then per Chao a matrix at a screen point (F16C), a
+//! turn, and the Chao's own two display functions the chart took off its
+//! task). The player's Chao is the chart's portrait Chao drawn again; the
+//! picked partner is a second Chao made as D2A4 makes the portrait, from
+//! its record (SA2_RECORD_IN, as the Chao Transporter reads the card's).
+//! They face each other: the portrait's own turn (0x2000) inward each.
+//!
+//! shortcut: the green page is an empty frame (inventory comes next), and
+//! the two Chao only stand: the mating and the egg are not written yet.
+//! Unverified until a build run: where the two Chao stand in the box and
+//! which of the two turns faces inward.
+//! shortcut: the picked name is marked with ">" (no flat bar among the
+//! chart's quads is known); upgrade when the pink table's pieces are named.
+//! Unverified until a build run: every text and row position on that page.
 //!
 //! Unverified until a build run: that a widescreen page moves the tab row
 //! the way [`to_game`] undoes (sa2-gx widescreen.rs moves right-hand HUD).
@@ -80,6 +105,27 @@ const SET_TEXLIST: u32 = 0x9C0;
 const CLOSE: u32 = 0xD1D4;
 const QUADS: u32 = 0xF9C4;
 const QUAD_STATE: u32 = 0xFC98;
+const TEXT: u32 = 0xD4C4;
+/// The portrait draw's calls (C50C 0xC9A8..0xCA84; DOL targets from the
+/// module's relocations).
+const VIEW_STATE: u32 = 0xF344;
+const VIEW: u32 = 0xF244;
+const SCREEN_POINT: u32 = 0xF16C;
+const GX_SET_BLEND_MODE: u32 = 0x8010_4FF8;
+const GX_SET_Z_MODE: u32 = 0x8010_517C;
+const MODEL_BEGIN: u32 = 0x8012_2B24;
+const SET_LIGHT: u32 = 0x8002_4CB8;
+const STAGE_LIGHT: u32 = 0x803A_D926;
+const NJ_PUSH_MATRIX_EX: u32 = 0x8011_6098;
+const NJ_POP_MATRIX_EX: u32 = 0x8011_60E4;
+const NJ_UNIT_MATRIX: u32 = 0x8011_53E4;
+const NJ_ROTATE_Y: u32 = 0x8011_5828;
+/// ChaoMain .text.
+const CREATE_CHAO_EXTRA: u32 = 0x3148C;
+/// The portrait's depth and turn; the scene's two screen points.
+const DEPTH: f32 = -26.0;
+const TURN: u32 = 0x2000;
+const SCENE: [(f32, f32); 2] = [(390.0, 232.0), (500.0, 232.0)];
 /// ChaoStgKinder rodata: the three pages' quad tables.
 const TABLE: [u32; 3] = [0x1DA4, 0x2134, 0x2464];
 /// What C50C runs before its quads: 0x80122AB4, then the chart atlas
@@ -119,6 +165,18 @@ const NAME: u32 = BSS + 0x1000;
 /// Quad records built here: the two extra tabs (6), an MMO page's frame (8).
 const EXTRA: u32 = BSS + 0x1100;
 const FRAME: u32 = EXTRA + 6 * 16;
+/// The string [`text`] hands to the chart's text draw.
+const STR: u32 = BSS + 0x1200;
+/// A zero position for the partner Chao's creation.
+const ORIGIN: u32 = BSS + 0x1240;
+const STR_MAX: usize = 63;
+/// The breeding page's list: two columns (the pink page's own x 288 and
+/// 452) of four names in the pink page's list box.
+const LIST_X: [f32; 2] = [288.0, 452.0];
+const LIST_Y: f32 = 298.0;
+const LIST_PITCH: f32 = 18.0;
+const LIST_ROWS: usize = 4;
+const LIST_BOX: (f32, f32) = (281.0, 607.0);
 
 /// Tabs: five across the frame's 360 (x 264..624), in the game's tab row.
 const PAGES: u8 = 5;
@@ -154,6 +212,215 @@ static CLICK: Global<[u16; 4]> = global!([0; 4]);
 static CLICK_SEEN: Global<u16> = global!(0);
 /// The game's x values of the records [`retab`] rewrote.
 static SAVED: Global<Vec<(u32, u16)>> = global!(Vec::new());
+
+/// The partner Chao in the scene: its id, task and the two display
+/// functions taken off the task (as D2A4 does with the portrait's).
+static PARTNER: Global<Option<(String, u32, [u32; 2])>> = global!(None);
+
+/// The breeding page's feed and the picked Chao's id.
+#[derive(Debug, PartialEq)]
+struct Breed {
+    me: String,
+    message: String,
+    /// The player's Heart Fruit count as the page gives it.
+    hearts: String,
+    /// id, name
+    chao: Vec<(String, String)>,
+    picked: String,
+}
+static BREED: Global<Breed> = global!(Breed {
+    me: String::new(),
+    message: String::new(),
+    hearts: String::new(),
+    chao: Vec::new(),
+    picked: String::new(),
+});
+
+/// SA2_BREED_IN's text into the feed (the pick is kept by the caller).
+fn breed_feed(text: &str) -> Breed {
+    let mut lines = text.lines();
+    let mut next = || lines.next().unwrap_or("").trim().to_string();
+    let (me, message, hearts) = (next(), next(), next());
+    let chao = lines
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(id, name)| (id.trim().to_string(), name.trim().to_string()))
+        .filter(|(id, _)| !id.is_empty())
+        .take(LIST_X.len() * LIST_ROWS)
+        .collect();
+    Breed { me, message, hearts, chao, picked: String::new() }
+}
+
+/// The list entry at a game screen position.
+fn row_at(x: f32, y: f32) -> Option<usize> {
+    let row = ((y - LIST_Y) / LIST_PITCH).floor();
+    let inside = x >= LIST_BOX.0 && x < LIST_BOX.1 && row >= 0.0 && row < LIST_ROWS as f32;
+    inside.then(|| usize::from(x >= LIST_X[1] - 6.0) * LIST_ROWS + row as usize)
+}
+
+/// Read the page's feed; a picked Chao that left the list is unpicked.
+fn breed_read() {
+    let Some(text) = std::env::var("SA2_BREED_IN").ok().and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return;
+    };
+    let mut feed = breed_feed(&text);
+    BREED.with_borrow_mut(|b| {
+        if feed.chao.iter().any(|(id, _)| *id == b.picked) {
+            feed.picked = std::mem::take(&mut b.picked);
+        }
+        *b = feed;
+    });
+}
+
+/// A click on the breeding page: a name is picked; the picked name again
+/// goes to the page as the partner to breed with. True when it was a name.
+fn breed_click(x: f32, y: f32) -> bool {
+    let Some(i) = row_at(x, y) else { return false };
+    BREED.with_borrow_mut(|b| {
+        let Some((id, _)) = b.chao.get(i) else { return false };
+        if *id == b.picked {
+            eprintln!("kinder-chart: breed with {id}");
+            if let Ok(path) = std::env::var("SA2_BREED_OUT") {
+                let _ = std::fs::write(path, id);
+            }
+        } else {
+            b.picked = id.clone();
+        }
+        true
+    })
+}
+
+/// A guest call with float arguments (f1..), the caller's put back after.
+fn fcall(c: &mut Cpu, m: &mut Mem, addr: u32, ints: &[u32], floats: &[f32]) {
+    let saved: Vec<_> = (1..=floats.len()).map(|i| c.f[i]).collect();
+    for (i, &v) in floats.iter().enumerate() {
+        c.f[i + 1].ps0 = f64::from(v);
+    }
+    call(c, m, addr, ints);
+    for (i, f) in saved.into_iter().enumerate() {
+        c.f[i + 1] = f;
+    }
+}
+
+/// One string through the chart's own text draw (flags 5 centres it).
+fn text(c: &mut Cpu, m: &mut Mem, s: &str, flags: u32, x: f32, y: f32, size: f32) {
+    let mut bytes: Vec<u8> = s.bytes().filter(|b| (0x20..0x7F).contains(b)).take(STR_MAX).collect();
+    bytes.push(0);
+    m.load(STR, &bytes);
+    fcall(c, m, rt::sec(m, KINDER, 1) + TEXT, &[0, STR, flags], &[x, y, 999.0, size]);
+}
+
+/// The flags D2A4 gives the portrait Chao (chaowk + 0xA0).
+fn portrait_flags(f: u32) -> u32 {
+    (f & !(0x8 | 0x2 | 0x10 | 0x2_0000)) | 0x2000
+}
+
+fn partner_free(c: &mut Cpu, m: &mut Mem) {
+    if let Some((id, task, _)) = PARTNER.replace(None) {
+        if linked(m, CHAOMAIN) {
+            call(c, m, rt::sec(m, CHAOMAIN, 1) + crate::chao_player::KILL_CHAO, &[task]);
+        }
+        if let Ok(id) = id.parse() {
+            crate::chao_cache::set_online(id, false);
+        }
+    }
+}
+
+/// Keep the scene's partner Chao the picked one (made on the game's thread).
+fn partner_sync(c: &mut Cpu, m: &mut Mem) {
+    let picked = BREED.with_borrow(|b| b.picked.clone());
+    if PARTNER.with_borrow(|p| p.as_ref().map_or("", |p| p.0.as_str()) == picked) {
+        return;
+    }
+    partner_free(c, m);
+    let Ok(id) = picked.parse::<u64>() else { return };
+    let record = std::env::var("SA2_RECORD_IN").ok().and_then(|d| std::fs::read(std::path::Path::new(&d).join(&picked)).ok());
+    // Always the fresh record: KillChao may have cleared the cached one.
+    let info = record.and_then(|r| crate::chao_cache::replace(m, id, &r));
+    let free = crate::chao_player::os_heap_free(m, m.r32(c.r[13].wrapping_sub(0x71B4)));
+    let task = match info {
+        Some(info) if free >= HEAP_NEEDED => {
+            crate::chao_cache::set_online(id, true);
+            m.load(ORIGIN, &[0; 12]);
+            call(c, m, rt::sec(m, CHAOMAIN, 1) + CREATE_CHAO_EXTRA, &[info, 1, 0, ORIGIN, 0])
+        }
+        _ => 0,
+    };
+    eprintln!("kinder-chart: partner {picked}: record {info:x?}, {} KB free, task {task:x}", free / 1024);
+    // No Chao (no record, no memory): remembered so it isn't tried each frame.
+    let mut shows = [0; 2];
+    if task != 0 {
+        let wk = m.r32(task + 0x34);
+        m.w32(wk + 0xA0, portrait_flags(m.r32(wk + 0xA0)));
+        shows = [m.r32(task + 0x14), m.r32(task + 0x20)];
+        m.w32(task + 0x14, 0);
+        m.w32(task + 0x20, 0);
+    }
+    PARTNER.set(Some((picked, task, shows)));
+}
+
+/// The two Chao in the breeding page's top box, as C50C draws the portrait.
+fn scene(c: &mut Cpu, m: &mut Mem, work: u32) {
+    let s1 = rt::sec(m, KINDER, 1);
+    let own = (m.r32(work + 0x18), [m.r32(work + 0x1C), m.r32(work + 0x20)]);
+    let partner = PARTNER.with_borrow(|p| p.as_ref().map_or((0, [0; 2]), |p| (p.1, p.2)));
+    call(c, m, GX_SET_BLEND_MODE, &[1, 4, 5, 0]);
+    call(c, m, GX_SET_Z_MODE, &[1, 7, 1]);
+    call(c, m, s1 + VIEW_STATE, &[]);
+    fcall(c, m, s1 + VIEW, &[0], &[0.0, 640.0, 0.0, 480.0, -1000.0]);
+    call(c, m, MODEL_BEGIN, &[]);
+    call(c, m, SET_LIGHT, &[10]);
+    // The portrait (right of its page) turns 0x10000 - 0x2000; the left
+    // Chao takes the mirrored turn, so the two face each other.
+    let turns = [TURN, 0x1_0000 - TURN];
+    for (i, (task, shows)) in [own, partner].into_iter().enumerate() {
+        if task == 0 {
+            continue;
+        }
+        call(c, m, NJ_PUSH_MATRIX_EX, &[]);
+        call(c, m, NJ_UNIT_MATRIX, &[0]);
+        fcall(c, m, s1 + SCREEN_POINT, &[], &[SCENE[i].0, SCENE[i].1, DEPTH]);
+        call(c, m, NJ_ROTATE_Y, &[0, turns[i]]);
+        for show in shows {
+            if show != 0 {
+                call(c, m, show, &[task]);
+            }
+        }
+        call(c, m, NJ_POP_MATRIX_EX, &[]);
+    }
+    call(c, m, SET_LIGHT, &[m.r8(STAGE_LIGHT) as i8 as u32]);
+}
+
+/// The breeding page's strings.
+fn breed_text(c: &mut Cpu, m: &mut Mem) {
+    // Taken out while the game draws: a guest call may switch game threads.
+    let (me, message, hearts, names, picked) = BREED.with_borrow(|b| {
+        let picked = b.chao.iter().position(|(id, _)| *id == b.picked);
+        (b.me.clone(), b.message.clone(), b.hearts.clone(), b.chao.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>(), picked)
+    });
+    text(c, m, "Breeding", 5, 444.0, 84.0, 20.0);
+    let pair = match picked {
+        Some(i) => format!("{me} and {}", names[i]),
+        None => "Pick a partner".to_string(),
+    };
+    text(c, m, &pair, 0, 288.0, 110.0, 16.0);
+    text(c, m, "Your Chao", 0, 288.0, 276.0, 16.0);
+    if !hearts.is_empty() {
+        text(c, m, &format!("Heart Fruit x{hearts}"), 0, LIST_X[1], 276.0, 16.0);
+    }
+    for (i, name) in names.iter().enumerate() {
+        let mark = if picked == Some(i) { ">" } else { " " };
+        let y = LIST_Y + LIST_PITCH * (i % LIST_ROWS) as f32;
+        text(c, m, &format!("{mark}{name}"), 0, LIST_X[i / LIST_ROWS], y, 16.0);
+    }
+    text(c, m, "Message", 0, 288.0, 370.0, 16.0);
+    let line = match (message.is_empty(), names.is_empty(), picked) {
+        (false, ..) => message,
+        (_, true, _) => "You have no other Chao yet.".to_string(),
+        (_, _, Some(i)) => format!("Click {} again to breed.", names[i]),
+        _ => "Click a Chao.".to_string(),
+    };
+    text(c, m, &line, 0, 288.0, 390.0, 20.0);
+}
 
 /// The page's last left click (/dev/pad bytes 16..24).
 pub fn set_click(x: u16, y: u16, aspect: u16, count: u16) {
@@ -298,11 +565,23 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         });
         call(c, m, s1 + QUADS, &[FRAME, 8, TINT[page as usize - 3]]);
     }
+    if page == 4 {
+        call(c, m, s1 + QUADS, &[pink + 20 * 16, 24, TINT[1]]);
+        scene(c, m, work);
+        // The Chao's draw leaves its own state: the quads' again.
+        call(c, m, DRAW_BEGIN, &[]);
+        call(c, m, s1 + QUAD_STATE, &[]);
+        call(c, m, s1 + SET_TEXLIST, &[]);
+        call(c, m, SET_TEXTURE, &[ATLAS, 0, 0, 0]);
+    }
     for (n, tint) in TINT.into_iter().enumerate() {
         let spans = tab_spans(3 + n as u8);
         let to = EXTRA + n as u32 * 48;
         copy_records(m, pink + 8 * 16, to, 3, |i| Some(spans[i as usize]));
         call(c, m, s1 + QUADS, &[to, 3, tint]);
+    }
+    if page == 4 {
+        breed_text(c, m);
     }
 }
 
@@ -343,7 +622,15 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
             // The chart's own close (D1D4 via its B input) is D258: flag off.
             m.w8(work + 0x14, 0);
         }
-        State::Open { work, .. } => click(c, m, work),
+        State::Open { work, .. } => {
+            if PAGE.get() == 4 {
+                if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(15) {
+                    breed_read();
+                }
+                partner_sync(c, m);
+            }
+            click(c, m, work);
+        }
         _ => {}
     }
     CLICK_SEEN.set(CLICK.get()[3]);
@@ -357,9 +644,15 @@ fn click(c: &mut Cpu, m: &mut Mem, work: u32) {
     }
     let (gx, gy) = to_game(x, y, aspect);
     let Some(page) = tab_at(gx, gy) else {
+        if PAGE.get() == 4 && breed_click(gx, gy) {
+            call(c, m, SE_CALL, &[SE_PAGE, 0, 0, 0]);
+        }
         return;
     };
     if page != PAGE.replace(page) {
+        if page == 4 {
+            breed_read();
+        }
         if page < 3 {
             m.w8(work + 0x15, page);
         }
@@ -367,7 +660,37 @@ fn click(c: &mut Cpu, m: &mut Mem, work: u32) {
     }
 }
 
+/// A name as the Chao's record holds it (7 bytes at +0x12, 0 ends):
+/// ChaoMain 1D58C shows code 0x5F as a space and a code below it as the
+/// ASCII character 0x20 above.
+/// shortcut: ASCII only (other characters are left out); the game's table
+/// has more, add them when names need them.
+fn name_codes(name: &[u8]) -> [u8; 7] {
+    let mut out = [0; 7];
+    let codes = name.iter().take_while(|&&b| b != 0).filter_map(|&b| match b {
+        b' ' => Some(0x5F),
+        0x21..=0x7E => Some(b - 0x20),
+        _ => None,
+    });
+    for (o, code) in out.iter_mut().zip(codes) {
+        *o = code;
+    }
+    out
+}
+
+/// The chart's portrait is a whole Chao out of the game heap.
+/// Unverified: a build run crashed inside the portrait's creation once in
+/// two opens; too little heap is the cause that fits, not a proven one, so
+/// the free heap is logged at every open.
+use crate::chao_player::REMOTE_CHAO_BYTES as HEAP_NEEDED;
+
 fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
+    let free = crate::chao_player::os_heap_free(m, m.r32(c.r[13].wrapping_sub(0x71B4)));
+    eprintln!("kinder-chart: {} KB free in the game heap", free / 1024);
+    if free < HEAP_NEEDED {
+        eprintln!("kinder-chart: not opened, the portrait Chao needs {} KB", HEAP_NEEDED / 1024);
+        return State::Closed;
+    }
     let borrowed = !linked(m, KINDER);
     if borrowed && !borrow(c, m) {
         return State::Closed;
@@ -387,6 +710,10 @@ fn open(c: &mut Cpu, m: &mut Mem, chao: u32) -> State {
         return State::Closed;
     }
     m.w32(work + 8, chao);
+    // The server's name for the Chao (the page's SA2_NAME_IN), into its record.
+    if let Some(name) = std::env::var("SA2_NAME_IN").ok().and_then(|p| std::fs::read(p).ok()).filter(|n| n.first().is_some_and(|&b| b != 0)) {
+        m.load(m.r32(m.r32(chao + 0x34) + 0x5C) + 0x12, &name_codes(&name));
+    }
     let info = call(c, m, c1 + CHAO_INFO, &[chao]);
     m.w32(work + 0xC, info);
     let msg = call(c, m, c1 + MSG_LOAD, &[s4 + MSG_NAME]);
@@ -461,6 +788,7 @@ fn delete(c: &mut Cpu, m: &mut Mem) {
     };
     let s1 = rt::sec(m, KINDER, 1);
     untab(m);
+    partner_free(c, m);
     call(c, m, s1 + FREE_PORTRAIT, &[work]);
     call(c, m, SY_FREE, &[m.r32(work + 0x60)]);
     m.w32(task + 0x40, 0);
@@ -518,6 +846,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_name_becomes_the_records_codes() {
+        assert_eq!(name_codes(b"Tester\0"), [0x34, 0x45, 0x53, 0x54, 0x45, 0x52, 0]);
+        assert_eq!(name_codes(b"A b\0zz"), [0x21, 0x5F, 0x42, 0, 0, 0, 0]);
+        assert_eq!(name_codes(b"LongerName"), [0x2C, 0x4F, 0x4E, 0x47, 0x45, 0x52, 0x2E]);
+    }
+
+    #[test]
+    fn the_breeding_feed_is_name_message_then_chao() {
+        let b = breed_feed("Tester\nNot now.\n3\n12\tMika\n\tnoid\nbad line\n34\tTails2\n");
+        assert_eq!((b.me.as_str(), b.message.as_str(), b.hearts.as_str()), ("Tester", "Not now.", "3"));
+        assert_eq!(b.chao, [("12".to_string(), "Mika".to_string()), ("34".to_string(), "Tails2".to_string())]);
+        assert_eq!(breed_feed("").chao.len(), 0);
+        let many: String = (0..20).map(|i| format!("{i}\tC{i}\n")).collect();
+        assert_eq!(breed_feed(&format!("a\n\n\n{many}")).chao.len(), 8, "what the list box holds");
+    }
+
+    #[test]
+    fn the_partner_gets_the_portraits_flags() {
+        // D2A4: clear 0x8, 0x2, 0x10, set 0x2000, clear 0x20000.
+        assert_eq!(portrait_flags(0xFFFF_FFFF), 0xFFFD_FFE5);
+        assert_eq!(portrait_flags(0), 0x2000);
+    }
+
+    #[test]
+    fn a_click_in_the_list_is_its_entry() {
+        for i in 0..8usize {
+            let (x, y) = (LIST_X[i / 4] + 30.0, LIST_Y + LIST_PITCH * (i % 4) as f32 + 9.0);
+            assert_eq!(row_at(x, y), Some(i));
+        }
+        assert_eq!(row_at(300.0, 290.0), None, "above the list");
+        assert_eq!(row_at(300.0, 371.0), None, "below the list");
+        assert_eq!(row_at(270.0, 300.0), None, "left of the box");
+        assert_eq!(row_at(610.0, 300.0), None, "right of the box");
+    }
+
+    #[test]
     fn tab_opens_once_per_press() {
         assert!(pressed(true, false));
         assert!(!pressed(true, true));
@@ -531,7 +895,9 @@ mod tests {
         const {
             assert!(BASE + 0xDE248 <= BSS);
             assert!(BSS + 0x1A8 <= 0x82A0_0000, "chao_player MOT");
-            assert!(FRAME + 8 * 16 <= 0x82A0_0000);
+            assert!(FRAME + 8 * 16 <= STR);
+            assert!(STR + STR_MAX as u32 + 1 <= ORIGIN);
+            assert!(ORIGIN + 12 <= 0x82A0_0000);
         }
     }
 

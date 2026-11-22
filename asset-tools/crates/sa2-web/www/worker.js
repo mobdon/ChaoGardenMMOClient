@@ -264,7 +264,7 @@ function cardSend() {
 // /mmo/tags-out, the Tiny Garden tree icon to /mmo/tree-icon) and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -275,6 +275,13 @@ function mmoRead(path) {
   }
   // Chao Karate (sa2-boot karate.rs): the page's [press counter, button].
   if (path === 'mmo/karate-in') return { bytes: b.slice(MMO.KARATE, MMO.KARATE + 2), ver: 0 };
+  // The player's Chao's name (sa2-boot kinder_chart.rs): 7 bytes, 0 ends.
+  if (path === 'mmo/name-in') return { bytes: b.slice(MMO.NAME, MMO.NAME + 7), ver: 0 };
+  // The chart's breeding page (sa2-boot kinder_chart.rs).
+  if (path === 'mmo/breed-in') {
+    const len = Math.min(Atomics.load(mmoI32(MMO.BREED), 1), MMO.BREED_MAX);
+    return { bytes: b.slice(MMO.BREED + 8, MMO.BREED + 8 + len), ver: 0 };
+  }
   // The memory card's Chao for the Chao Transporter (sa2-boot tiny_transporter.rs).
   if (path === 'mmo/card-chao') {
     const len = Math.min(Atomics.load(mmoI32(MMO.CARD), 1), MMO.CARD_MAX);
@@ -296,7 +303,7 @@ function mmoSlot(id) {
 function mmoWrite(path, bytes) {
   if (path === 'mmo/karate-out') return void (sh.mmo[MMO.KARATE + 4] = bytes[0]); // 1: strong moves unlocked
   const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
-    'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX], 'mmo/tiny-pick': [MMO.PICK, MMO.PICK_MAX] }[path] || null;
+    'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX], 'mmo/tiny-pick': [MMO.PICK, MMO.PICK_MAX], 'mmo/breed-out': [MMO.BREED_OUT, MMO.BREED_OUT_MAX] }[path] || null;
   if (!out) return;
   const n = Math.min(bytes.length, out[1]);
   sh.mmo.set(bytes.subarray(0, n), out[0] + 8);
