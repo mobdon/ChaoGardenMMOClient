@@ -316,12 +316,22 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         eprintln!("chao-player lvl: frame {f} draw {addr:#x} obj {obj:#x} motion {mot:#x} nodes {n}");
     }
     if n >= 56 {
-        SKEL.set(NODES.with_borrow(|n| n.clone()));
+        let nodes = NODES.with_borrow(|n| n.clone());
+        // Self mode: captured under the scaled view, back to full size.
+        let nodes = match SELF_SCALE.get() {
+            Some((cur, curs)) => nodes.iter().map(|e| mul34(&cur, &inv_mul(&curs, e))).collect(),
+            None => nodes,
+        };
+        SKEL.set(nodes);
         if SELF_CAP.get() {
             return;
         }
         RIDER_OBJ.set(obj);
         air_shoes(c, m);
+    } else if n > 0 && SELF_CAP.get() {
+        // Self mode: the ball as he draws it, under the view scaled to the Chao.
+        (c.r, c.f[1]) = (regs, f1);
+        original(c, m, addr);
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
@@ -1969,11 +1979,34 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // His display walked for his skeleton only (SKEL), drawing nothing
         // and no gear (the Chao's draw carries it).
         if self_retarget(m) {
+            // His effects (the jump's spin ball) are drawn, at the Chao's
+            // size: the view is scaled by BOARD_SCALE about the Chao's spot
+            // for the call (current and base matrix), and the captured
+            // skeleton is taken back to full size.
+            let Step::Live(chao) = STEP.get() else { return };
+            let cw = m.r32(chao + 0x34);
+            let p = [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(cw + o)));
+            let s = BOARD_SCALE;
+            let t: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { if i == j { s } else { 0.0 } } else { (1.0 - s) * p[i] }));
+            let (cur_ptr, base_ptr) = (m.r32(NJ_CURRENT_MATRIX), m.r32(NJ_BASE_MATRIX));
+            let (cur, base) = (mtx(m, cur_ptr), mtx(m, base_ptr));
+            let put = |m: &mut Mem, a: u32, x: &[[f32; 4]; 3]| for r in 0..3 { for k in 0..4 { m.w32(a + 4 * (4 * r + k) as u32, x[r][k].to_bits()); } };
+            let (curs, bases) = (mul34(&cur, &t), mul34(&base, &t));
+            put(m, cur_ptr, &curs);
+            if base_ptr != cur_ptr {
+                put(m, base_ptr, &bases);
+            }
+            SELF_SCALE.set(Some((cur, curs)));
             SELF_CAP.set(true);
             LCAP.set(true);
             original(c, m, addr);
             LCAP.set(false);
             SELF_CAP.set(false);
+            SELF_SCALE.set(None);
+            put(m, cur_ptr, &cur);
+            if base_ptr != cur_ptr {
+                put(m, base_ptr, &base);
+            }
         }
         return;
     }
@@ -2093,6 +2126,8 @@ fn self_retarget(m: &Mem) -> bool {
 thread_local! {
     /// The character's display is walked only for SKEL (self mode).
     static SELF_CAP: Cell<bool> = const { Cell::new(false) };
+    /// The view before and after the self-mode scale (to undo it on the skeleton).
+    static SELF_SCALE: Cell<Option<([[f32; 4]; 3], [[f32; 4]; 3])>> = const { Cell::new(None) };
 }
 
 fn chao_world(m: &Mem) -> bool {
