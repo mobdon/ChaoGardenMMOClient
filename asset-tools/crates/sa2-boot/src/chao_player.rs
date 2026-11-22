@@ -103,7 +103,7 @@ pub(crate) fn behavior(c: &mut Cpu, m: &mut Mem) {
         }
     }
     // Other players' Chao are draw-only: no local AI.
-    if REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && (e.task == c.r[3] || m.r32(e.task + 0x34) == c.r[3]))) {
+    if REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && !e.idle && (e.task == c.r[3] || m.r32(e.task + 0x34) == c.r[3]))) {
         return;
     }
     let a = rt::sec(m, 60, 1) + AL_BEHAVIOR_CONTROL;
@@ -118,7 +118,7 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
     // ChaoMain's per-frame work) runs every REMOTE_FAR_EVERY frames; its
     // position still follows every frame and it is drawn every frame.
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    let skip = REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == c.r[3] && (e.offscreen || (e.rank >= REMOTE_NEAR && (f + e.rank as u64) % REMOTE_FAR_EVERY != 0))));
+    let skip = REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && !e.idle && e.task == c.r[3] && (e.offscreen || (e.rank >= REMOTE_NEAR && (f + e.rank as u64) % REMOTE_FAR_EVERY != 0))));
     if skip {
         return;
     }
@@ -2253,6 +2253,14 @@ mod tests {
     use crate::chao_retarget::ChaoRest;
 
     #[test]
+    fn pose_in_lines_are_posed_or_idle() {
+        assert_eq!(parse_idle("42 idle"), Some(42));
+        assert_eq!(parse_idle("42 1 2 3 0 1 0 0"), None);
+        assert_eq!(parse_remote("42 idle"), None);
+        assert_eq!(parse_remote("42 1 2 3 9 1 0 0"), Some((42, [1.0, 2.0, 3.0], 9, 1)));
+    }
+
+    #[test]
     fn mirror_pairs_left_right_and_keeps_winding() {
         let i3 = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
         // root, a midline head, a left and a right hand
@@ -2300,6 +2308,9 @@ struct Remote {
     rank: usize,
     /// Outside the view at its last display: no exec, no draw.
     offscreen: bool,
+    /// Its player is away in Tiny Chao Garden: the Chao lives here on the
+    /// game's own Chao AI (no pose to follow, its exec runs every frame).
+    idle: bool,
 }
 
 /// Remote Chao drawn at once in an area: the nearest ones; the rest stay
@@ -2333,6 +2344,12 @@ fn export_pose(m: &Mem) {
     let _ = std::fs::write(&path, line);
 }
 
+/// A pose-in line "id idle": a Chao whose player is away in Tiny Chao Garden.
+fn parse_idle(line: &str) -> Option<u64> {
+    let (id, rest) = line.split_once(' ')?;
+    (rest.trim() == "idle").then(|| id.parse().ok())?
+}
+
 fn parse_remote(line: &str) -> Option<(u64, [f32; 3], u32, u32)> {
     let v: Vec<&str> = line.split_whitespace().collect();
     let f = |i: usize| v.get(i)?.parse::<f32>().ok();
@@ -2348,7 +2365,16 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
     if f >= IMPORT_AT.get() {
         IMPORT_AT.set(f + EXPORT_EVERY);
         let text = std::env::var("SA2_POSE_IN").ok().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-        for (id, p, a, mo) in text.lines().filter_map(parse_remote) {
+        // An idle Chao has no pose: it appears where the player's own Chao
+        // stands when it is first seen (an MMO placement choice) and then
+        // moves by its own AI.
+        let here = match STEP.get() {
+            Step::Live(own) => { let cw = m.r32(own + 0x34); [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(cw + o))) }
+            _ => [0.0; 3],
+        };
+        let posed = text.lines().filter_map(parse_remote).map(|r| (r, false));
+        let idle = text.lines().filter_map(parse_idle).map(|id| ((id, here, 0, STAND_MOTION), true));
+        for ((id, p, a, mo), idle) in posed.chain(idle).collect::<Vec<_>>() {
             import_record(m, id);
             // shortcut: a remote record is the owner's own save info until the
             // server relays each Chao's record; get_or_load keeps it per id.
@@ -2356,8 +2382,11 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
             crate::chao_cache::get_or_load(m, id, &info, 0, false);
             crate::chao_cache::set_online(id, true);
             REMOTE.with_borrow_mut(|r| {
-                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0, rank: usize::MAX, offscreen: false });
-                if e.samples.back().is_none_or(|s| s.1 != p || s.2 != a as u16 || s.3 != mo) {
+                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0, rank: usize::MAX, offscreen: false, idle });
+                e.idle = idle;
+                if idle && !e.samples.is_empty() {
+                    // Keeps its first spot: only a posed Chao follows samples.
+                } else if e.samples.back().is_none_or(|s| s.1 != p || s.2 != a as u16 || s.3 != mo) {
                     e.samples.push_back((now, p, a as u16, mo));
                     while e.samples.len() > 4 {
                         e.samples.pop_front();
@@ -2420,7 +2449,7 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
     // A new motion number plays the Chao's own motion.
     let changes: Vec<(u32, u32)> = REMOTE.with_borrow_mut(|r| r.values_mut().filter_map(|e| {
         let mo = e.samples.back()?.3;
-        (e.task != 0 && mo != e.motion).then(|| { e.motion = mo; (e.task, mo) })
+        (e.task != 0 && !e.idle && mo != e.motion).then(|| { e.motion = mo; (e.task, mo) })
     }).collect());
     for (t, mo) in changes {
         call(c, m, s1 + AL_SET_MOTION_LINK, &[t, mo]);
@@ -2444,7 +2473,7 @@ fn tag_label(m: &Mem, task: u32) -> Option<String> {
 fn remote_pin(m: &mut Mem, task: u32) {
     let now = std::time::Instant::now();
     let Some((p, a)) = REMOTE.with_borrow(|r| {
-        let e = r.values().find(|e| e.task == task && task != 0)?;
+        let e = r.values().find(|e| e.task == task && task != 0 && !e.idle)?;
         let t = now.checked_sub(REMOTE_DELAY)?;
         let s = &e.samples;
         let i = s.iter().rposition(|x| x.0 <= t).unwrap_or(0);

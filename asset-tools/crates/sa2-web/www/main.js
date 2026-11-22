@@ -222,7 +222,8 @@ function joinRoom(token, zone) {
 }
 // ---- the other players' Chao (sa2-boot chao_player.rs, worker.js MMO files) --
 // The game's own pose goes to the room each 100 ms; the room's other players
-// with a pose come back as lines "id x y z angle motion frame gear"; Chao
+// with a pose come back as lines "id x y z angle motion frame gear" (a Tiny
+// Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
 const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384 };
@@ -263,6 +264,8 @@ function othersIn(m, token) {
     if (p.id === m.selfId) continue;
     const c = p.chaoPose;
     if (c) lines.push([numId(p.id), c.x, c.y, c.z, c.angle | 0, c.motion | 0, c.frame || 0, c.gear | 0].join(' '));
+    // Away in Tiny Chao Garden (the server's resident): the Chao stays in its garden on the game's own AI.
+    else if (p.watch?.resident) lines.push(`${numId(p.id)} idle`);
     if (p.chaoRecordVersion !== undefined && recVersions.get(p.id) !== p.chaoRecordVersion) {
       recVersions.set(p.id, p.chaoRecordVersion);
       fetch(`/api/chao-record/${encodeURIComponent(p.id)}`, { headers: { Authorization: `Bearer ${token}` } })
