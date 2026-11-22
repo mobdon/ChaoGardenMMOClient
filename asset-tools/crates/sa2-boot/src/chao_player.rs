@@ -673,12 +673,12 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
                 for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
                 m.w32(list, tex);
                 let lcap = LCAP.replace(false);
-                // Shadow's own shoe: the foot node of his body model (nodes
-                // 14/24) with its children, under the Air Shoes item model
-                // (the item alone is not his shoe). SA2_SHADOW_FOOT=0 (debug):
-                // the item alone.
+                // SA2_SHADOW_FOOT=1 (debug): also the foot node of his body
+                // model (nodes 14/24) with its children. Off: his body is a
+                // weighted model, and a subtree drawn alone stretched into a
+                // screen-sized mesh once he moved (test copy, run r52).
                 let foot_obj = node_obj(m, RIDER_OBJ.get(), foot);
-                if foot_obj != 0 && !std::env::var("SA2_SHADOW_FOOT").is_ok_and(|v| v == "0") {
+                if foot_obj != 0 && std::env::var("SA2_SHADOW_FOOT").is_ok_and(|v| v == "1") {
                     let sib = m.r32(foot_obj + 0x30);
                     m.w32(foot_obj + 0x30, 0);
                     // The node's own rest offset is in its object: draw it at the boot's place.
@@ -2515,6 +2515,12 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
             let mdl = load_models(c, m, SHADOW_MDL_NAME);
             SHADOW_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
+            // Every TERIOSMDL model by slot with its node and vertex counts (to find his shoe models).
+            let all: Vec<String> = LAST_LOAD.with_borrow(|l| l.iter().map(|(&k, &o)| {
+                let r = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]);
+                format!("{k}:{}n/{}v", r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>())
+            }).collect());
+            eprintln!("chao-player: TERIOSMDL slots {}", all.join(" "));
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
             if tex == 0 {
