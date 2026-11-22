@@ -141,6 +141,16 @@
       <div id="players"></div>
     </section>
   </div>
+  <section class="pane below" aria-labelledby="own-title" data-admin>
+    <header><h2 id="own-title">Your Chao</h2><span class="dim">Sets your own Chao only. Each use is in the audit log.</span></header>
+    <form id="override" class="row">
+      <label class="row dim">Story <select id="story"><option value="">Leave as is</option><option value="none">Nothing cleared</option><option value="hero">Hero cleared</option><option value="dark">Dark cleared</option><option value="all">Everything cleared</option></select></label>
+      <label class="row dim">Main stats level <input id="level" type="number" min="0" max="99" placeholder="as is" style="width:6rem"></label>
+      <label class="row dim">Grade, 0 to 5 <input id="grade" type="number" min="0" max="5" placeholder="as is" style="width:6rem"></label>
+      <button class="small">Apply</button>
+      <span id="applied" class="dim" aria-live="polite"></span>
+    </form>
+  </section>
   <section class="pane below" aria-labelledby="chat-title">
     <header><h2 id="chat-title">Chat</h2><span id="chat-scope" class="dim"></span></header>
     <div id="chat"></div>
@@ -159,6 +169,8 @@ let token = null, role = null, timer = 0;
 const ROOMS = { garden: ['Chao Garden', 'garden'], hero: ['Hero Garden', 'hero'], dark: ['Dark Garden', 'dark'],
   kindergarten: ['Kindergarten', 'kinder'], hub: ['Chao Lobby', 'hub'], stadium: ['Stadium', 'stadium'],
   'race-entrance': ['Race Entrance', 'entrance'], 'chao-race': ['Chao Race', 'race'], 'chao-karate': ['Chao Karate', 'karate'] };
+// The server's main stats (server MAIN_STATS).
+const MAIN_STATS = ['swim', 'fly', 'run', 'power', 'stamina'];
 const roomName = (r) => ROOMS[r]?.[0] ?? r;
 let picked = null, last = { players: [], lines: [], board: [] };
 const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
@@ -220,6 +232,18 @@ $('invisible').onclick = async () => {
   $('note').textContent = '';
   try { await call('/api/panel/invisible', { on }); $('invisible').setAttribute('aria-pressed', on); refresh(); }
   catch (e) { $('note').textContent = e.message; }
+};
+$('override').onsubmit = async (e) => {
+  e.preventDefault();
+  $('note').textContent = ''; $('applied').textContent = '';
+  const body = {}, stat = {};
+  if ($('story').value) body.story = $('story').value;
+  if ($('level').value !== '') stat.level = Number($('level').value);
+  if ($('grade').value !== '') stat.grade = Number($('grade').value);
+  if (Object.keys(stat).length) body.stats = Object.fromEntries(MAIN_STATS.map((s) => [s, stat]));
+  if (!Object.keys(body).length) { $('applied').textContent = 'Nothing chosen.'; return; }
+  try { await call('/api/panel/override', body); $('applied').textContent = 'Applied.'; refresh(); }
+  catch (err) { $('note').textContent = err.message; }
 };
 function pick(room) {
   picked = picked === room ? null : room;
