@@ -1356,14 +1356,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
     return item;
   }
 
-  function addNPC(id, name, x, z, form, action, asset = null) {
+  function addNPC(id, name, x, z, form, asset = null) {
     const chao = makeChao({ id, name, x, z, form, asset }, true);
-    chao.action = action;
     chao.root.parent = world;
     chao.root.position.set(x, 0, z);
     chao.root.scaling.setAll(0.9);
     groundAnchors.push({ node: chao.root });
-    for (const mesh of chao.root.getChildMeshes()) mesh.metadata = { ...mesh.metadata, action };
     animatedDecor.push({ node: chao.root, kind: 'npc', phase: x, chao });
   }
 
@@ -1447,9 +1445,9 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
         portal(17, -13, 'DARK GARDEN', '#cbb5e8', 'dark');
         portal(-17, 5, 'NEUTRAL GARDEN', '#b3e2b0', 'garden');
         portal(17, 5, 'GARDEN CIRCUIT', '#b4e3df', 'race');
-        addNPC('trainer', 'Knuckles · Trainer', 7, 2, 'normal', 'train-power', 'knuckles');
-        addNPC('race-guide', 'Tails · Race Guide', 12, 6, 'hero', 'race', 'tails');
-        addNPC('merchant', 'Amy Chao · Market', -4, 8, 'normal', 'shop', 'amy');
+        addNPC('knuckles', 'Knuckles', 7, 2, 'normal', 'knuckles');
+        addNPC('tails', 'Tails', 12, 6, 'hero', 'tails');
+        addNPC('amy', 'Amy', -4, 8, 'normal', 'amy');
       } else portal(0, 8, 'BACK TO HUB', '#f2cf78', 'hub');
       const waterfall = box('waterfall', [-27, -4, -8], [2.2, 10, 0.28], '#a8dadd');
       waterfall.material = material('#a8dadd', 0.12, 0.75);
