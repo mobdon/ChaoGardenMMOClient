@@ -524,7 +524,7 @@ pub fn body_texture_names(al_body_prs: &[u8]) -> Result<BTreeMap<u16, String>> {
 /// the hero and dark child sets, as the game's child blend moves toward them by alignment.
 pub fn family_targets(base: usize) -> Result<Vec<(String, usize)>> {
     const SHAPES: [&str; 6] = ["z", "n", "s", "f", "r", "p"];
-    if base % 6 != 0 || base > 102 || (6..18).contains(&base) {
+    if !base.is_multiple_of(6) || base > 102 || (6..18).contains(&base) {
         return Err(Error::invalid("not the first model of a body family"));
     }
     let mut out: Vec<_> = (1..6).map(|k| (SHAPES[k].to_owned(), base + k)).collect();
