@@ -89,7 +89,7 @@ export async function playBreedingScene(host) {
   const pair = [-1.5, 1.5].map((x, n) => {
     const entries = container.instantiateModelsToScene(name => name, false);
     const root = entries.rootNodes[0];
-    root.position.x = x; root.rotation = new B.Vector3(0, n ? -Math.PI / 2 : Math.PI / 2, 0); // face each other, 3.0 apart (touching)
+    root.position.x = x; root.rotate(B.Axis.Y, n ? -Math.PI / 2 : Math.PI / 2); // a turn on top of the loader's own root turn // face each other, 3.0 apart (touching)
     for (const g of entries.animationGroups) g.stop();
     return { root, groups: new Map(entries.animationGroups.map(g => [g.name, g])), playing: null };
   });
