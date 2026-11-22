@@ -19,6 +19,15 @@ const GLOBAL_MODE: u32 = GAME + 0x80;
 const NEXT_GLOBAL_MODE: u32 = GAME + 0x84;
 const MD_TITLE_INIT: u32 = 1;
 const MD_ACTION_INIT: u32 = 4;
+/// The first global mode after the memory card is read (see top_level).
+const MD_AFTER_CARD: u32 = 12;
+/// The boot logos (Nintendo, SEGA, Sonic Team), timed against frames with SA2_MODE_LOG.
+const MD_LOGOS: u32 = 22;
+/// /dev/area values outside the area numbers: cover / uncover the game.
+const PAGE_COVER: u32 = 254;
+const PAGE_UNCOVER: u32 = 253;
+/// The page is covering the logos.
+static LOGOS_HIDDEN: Global<bool> = global!(false);
 /// The Stage Select's start code reads its stage/character table through the
 /// relocation at advertiseD section 1 + 0x10246 (`lis r3` at 0x10244).
 const TABLE_RELOC: (u8, u32) = (1, 0x10246);
@@ -34,9 +43,12 @@ const AL_CHANGE_AREA: u32 = 0x2_7E00;
 /// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 5 Entrance/race,
 /// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
 const LAST_AREA: u32 = 12;
-/// The lobby's own area number: ChaoMain starts in it (0x28944 `li r3, 7`) and
-/// its own way back to the lobby is the area change with 7 (0xB4EC..0xB4F0).
-const LOBBY: u32 = 7;
+/// The Chao Lobby's stage number (al_stage.h: 7 lobby; 0 is none, while loading).
+pub(crate) const LOBBY: u32 = 7;
+/// ChaoMain .bss (section 5) +0x972E8: the previous stage, returned by
+/// `AL_GetPreStageNumber` 0x27F90 (symbols.txt). Unverified that the lobby
+/// reads it only at its start; the headless arrival check is the test.
+const PRE_STAGE: u32 = 0x9_72E8;
 /// A new player's egg, laid the way ChaoMain's `AL_ItemCreateManagerExecutor`
 /// (0x18F7C, its call at 0x19208) makes a bought egg: a save slot from
 /// `fn_60_2C30` 0x2C30, `AL_GeneCreate` 0x1218C into a 0xC0-byte gene,
@@ -97,10 +109,15 @@ const SE_AT_POS_TIMER: u32 = 0x8006_AFFC;
 
 /// (stage, character) to start, until it has started.
 static PENDING: Global<Option<(u16, u32)>> = global!(None);
+/// SA2_MODE_LOG: the last global mode logged while a start is pending.
+static MODE_SEEN: Global<u32> = global!(u32::MAX);
 /// SA2_CHAO_AREA: the Chao World area to change to once the lobby is up.
 static AREA: Global<Option<u32>> = global!(None);
 /// Started in Chao World: the last area told to the page (u32::MAX before the first).
 static SHOWN: Global<Option<u32>> = global!(None);
+/// SA2_TP_ARRIVE=1: enter Chao World in the Neutral Garden, then go to the lobby
+/// the game's own way, so it arrives as from a garden teleporter.
+static TP_ARRIVE: Global<bool> = global!(false);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
 /// The pause menu's EXIT asked for the lobby ([`go_lobby`]).
@@ -113,18 +130,12 @@ static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
 static TUTORIAL_SLOT: Global<u32> = global!(0);
 /// Cocoon timers (section 5 + 0x2A50, read by `ALBHV_Mayu` 0x3AE44) and its
 /// native frames 200/1800/900/900/100 (about 65 s); phases 2-4 cut to 300 frames each
-/// (1200 frames, about 20 s) for the tutorial's evolution only.
-const COCOON_FRAMES: [(u32, u32); 5] = [
-    (0x84, 60),
-    (0x88, 550),
-    (0x8C, 275),
-    (0x90, 275),
-    (0x94, 40),
-];
+/// (1200 frames, about 20 s) for the tutorial's evolution only. Phases 1 and 5 stay native.
+const COCOON_FRAMES: [(u32, u32); 3] = [(0x88, 300), (0x8C, 300), (0x90, 300)];
 /// Frames to keep the short timers before putting the native ones back.
 /// shortcut: shared table, so a garden Chao evolving in this window is also fast; a per-Chao hook would fix that.
 const COCOON_HOLD: u32 = 1300;
-static COCOON_RESTORE: Global<(u32, [u32; 5], u32)> = global!((0, [0; 5], 0));
+static COCOON_RESTORE: Global<(u32, [u32; 3], u32)> = global!((0, [0; 3], 0));
 /// Next guide line to show and frames until it shows.
 static LINE: Global<(usize, u32)> = global!((0, 0));
 
@@ -146,6 +157,9 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .filter(|a| (1..=LAST_AREA).contains(a)),
         );
+        if AREA.get().is_none() && std::env::var("SA2_TP_ARRIVE").is_ok_and(|v| v.trim() == "1") {
+            TP_ARRIVE.set(true);
+        }
         HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
         c.rt.set_override(TOP_LEVEL, top_level);
         c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
@@ -176,31 +190,60 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
 }
 
 fn top_level(c: &mut Cpu, m: &mut Mem) {
-    if m.r32(GLOBAL_MODE) == MD_TITLE_INIT {
+    if PENDING.get().is_some() && std::env::var("SA2_MODE_LOG").is_ok() {
+        let mode = m.r32(GLOBAL_MODE);
+        if MODE_SEEN.get() != mode {
+            MODE_SEEN.set(mode);
+            eprintln!("start-stage: global mode {mode} next {}", m.r32(NEXT_GLOBAL_MODE));
+        }
+    }
+    // Without a memory card the boot reaches MD_TITLE_INIT (1); with one (the
+    // MMO server's card) it goes 0, 2, 13, 21, 22, 13, 14, then 12 and on into
+    // the intro movies without ever reaching 1 (seen with SA2_MODE_LOG). Mode 12
+    // comes after the card is read, so the start happens there too. Unverified:
+    // what mode 12 is in the game's own terms.
+    let mode = m.r32(GLOBAL_MODE);
+    // MMO glue: the boot logos (mode 22) can't be cut short (the game finishes
+    // work there the start needs), so the page covers them while a start is
+    // pending: /dev/area 254 = covering on, 253 = off.
+    if PENDING.get().is_some() && (mode == MD_LOGOS) != LOGOS_HIDDEN.get() {
+        LOGOS_HIDDEN.set(mode == MD_LOGOS);
+        tell_page(if mode == MD_LOGOS { PAGE_COVER } else { PAGE_UNCOVER });
+    }
+    if mode == MD_TITLE_INIT || mode == MD_AFTER_CARD {
         if let Some((stage, ch)) = PENDING.take() {
             start(c, m, stage, ch);
         }
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
-        let now = lobby_is_0(guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]));
+        let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
         if TO_LOBBY.get() {
             TO_LOBBY.set(false);
-            if now != 0 {
+            if now != 0 && now != LOBBY {
                 // The call ChaoMain's own way back to the lobby makes (0xB4F0).
                 guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
             }
         }
-        // Once the lobby (area 0) is running, change area the game's own way.
-        if let (Some(area), 0) = (AREA.get(), now) {
+        // Once the lobby is running, change area the game's own way.
+        if let (Some(area), LOBBY) = (AREA.get(), now) {
             guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
             AREA.set(None);
         }
         // Arrived in the lobby (the player task is up): lay the egg once.
-        if HATCH.get() && now == 0 && m.r32(PLAYERTWP) != 0 {
+        // Until the player stands in the lobby, its previous stage reads as the
+        // Neutral Garden, so the lobby places the player as arriving from it.
+        if TP_ARRIVE.get() {
+            if now == LOBBY && m.r32(PLAYERTWP) != 0 {
+                TP_ARRIVE.set(false);
+            } else if let Some(bss) = chaomain_section(m, 5) {
+                m.w32(bss + PRE_STAGE, 1);
+            }
+        }
+        if HATCH.get() && !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
             lay_egg(c, m, text);
         }
-        if now != 0 {
+        if now != LOBBY {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
         } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
@@ -208,37 +251,25 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             residents(c, m, text);
         }
         restore_cocoon(m);
-        if now == 0 && TUTORIAL_SLOT.get() != 0 {
+        if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
             tutorial(c, m, text);
         }
         if now != shown {
             SHOWN.set(Some(now));
-            tell_page(now);
+            // The page's rooms know the lobby as area 0.
+            tell_page(if now == LOBBY { 0 } else { now });
         }
     }
+    crate::race_probe::frame(c, m);
     original(c, m, TOP_LEVEL);
 }
 
-/// The lobby as 0, the number the rest of this glue and the page use for it.
-fn lobby_is_0(area: u32) -> u32 {
-    if area == LOBBY {
-        0
-    } else {
-        area
-    }
-}
-
-/// The Chao World area the player is in (0 = lobby), when the game was
-/// started in Chao World and ChaoMain is loaded.
+/// The Chao World area the player is in ([`LOBBY`] = lobby, 0 while loading),
+/// when the game was started in Chao World and ChaoMain is loaded.
 pub(crate) fn chao_area(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
     SHOWN.get()?;
     let text = chaomain_text(m)?;
-    Some(lobby_is_0(guest_call(
-        c,
-        m,
-        text + AL_GET_STAGE_NUMBER,
-        &[],
-    )))
+    Some(guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]))
 }
 
 /// Change to the lobby on the next frame, outside the pause.
@@ -272,6 +303,10 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
+    // AL_SHAPE_ELEMENT (0x34 bytes, chao.h): CreateChaoExtra runs AL_GeneAnalyze
+    // on a fresh gene, which resets param type to child, then fn_60_209C8 copies
+    // the element's type (+0) over it; that is the type the shape init sees.
+    let elem = pos + 0x10;
     let player = m.r32(PLAYERTWP) + 0x14;
     let mut twp = [0; 3];
     for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
@@ -279,10 +314,14 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
             m.w32(param + i, 0);
         }
         m.w8(param + 0x80, ty);
+        for i in (0..0x34).step_by(4) {
+            m.w32(elem + i, 0);
+        }
+        m.w8(elem, ty);
         m.w32(pos, (f32::from_bits(m.r32(player)) + dx).to_bits());
         m.w32(pos + 4, m.r32(player + 4));
         m.w32(pos + 8, (f32::from_bits(m.r32(player + 8)) + dz).to_bits());
-        let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, 0, pos, 0]);
+        let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, elem, pos, 0]);
         if task != 0 {
             twp[n] = m.r32(task + 0x34);
         }
@@ -304,7 +343,7 @@ fn restore_cocoon(m: &mut Mem) {
     for (i, (o, _)) in COCOON_FRAMES.into_iter().enumerate() {
         m.w32(table + o, saved[i]);
     }
-    COCOON_RESTORE.set((0, [0; 5], 0));
+    COCOON_RESTORE.set((0, [0; 3], 0));
 }
 
 /// The tutorial ends when the player reaches the Tails Chao guide: the new
@@ -336,10 +375,13 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
         return;
     }
     let (lo, off) = FULL_GROWTH;
-    let table = section(m, text, 5) + lo;
+    let Some(bss) = chaomain_section(m, 5) else {
+        return;
+    };
+    let table = bss + lo;
     m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(table + off));
     // Shorten the cocoon's phase timers for this evolution, put back afterwards.
-    let mut saved = [0u32; 5];
+    let mut saved = [0u32; 3];
     for (i, (o, f)) in COCOON_FRAMES.into_iter().enumerate() {
         saved[i] = m.r32(table + o);
         m.w32(table + o, f);
@@ -347,19 +389,6 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
     COCOON_RESTORE.set((table, saved, COCOON_HOLD));
     TUTORIAL_SLOT.set(0);
     LINE.set((0, 0));
-}
-
-/// ChaoMain's section `n` address, from the same module entry as `text`.
-fn section(m: &Mem, text: u32, n: u32) -> u32 {
-    let mut info = m.r32(0x8000_30C8);
-    while info != 0 {
-        let table = m.r32(info + 0x10);
-        if m.r32(table + 8) & !1 == text {
-            return m.r32(table + n * 8) & !1;
-        }
-        info = m.r32(info + 4);
-    }
-    0
 }
 
 /// The hub's character Chao make no Chao sounds: a positional sound whose
@@ -398,10 +427,17 @@ fn tell_page(area: u32) {
 /// ChaoMain's linked .text (section 1), through the game's module list
 /// (OSModuleInfo: id +0, next +4, section table +0x10). None until linked.
 fn chaomain_text(m: &Mem) -> Option<u32> {
+    chaomain_section(m, 1)
+}
+
+/// A linked ChaoMain section's address (section table entries are 8 bytes:
+/// offset, size; OSLink stores the .bss address there too).
+fn chaomain_section(m: &Mem, n: u32) -> Option<u32> {
     let mut info = m.r32(0x8000_30C8);
     while info != 0 {
         if m.r32(info) == CHAOMAIN {
-            return Some(m.r32(m.r32(info + 0x10) + 8) & !1);
+            let at = m.r32(m.r32(info + 0x10) + n * 8) & !1;
+            return (at != 0).then_some(at);
         }
         info = m.r32(info + 4);
     }

@@ -13,7 +13,10 @@ export function createSaveSlots(storage) {
     if (legacy && /^[a-f0-9]{64}$/i.test(legacy) && !rows.some(row => row.token === legacy)) {
       rows.push({ token: legacy, name: 'Your saved Chao', lastPlayedAt: 0 });
     }
-    return [...new Map(rows.map(row => [row.token, row])).values()].sort((a, b) => (b.lastPlayedAt || 0) - (a.lastPlayedAt || 0));
+    const sorted = [...new Map(rows.map(row => [row.token, row])).values()].sort((a, b) => (b.lastPlayedAt || 0) - (a.lastPlayedAt || 0));
+    // One slot per Chao: a fresh login of the same Chao (new token) replaces its older slots.
+    const seen = new Set();
+    return sorted.filter(row => !row.id || (!seen.has(row.id) && seen.add(row.id)));
   }
 
   function record(token, player, savedAt, card) {
@@ -26,9 +29,14 @@ export function createSaveSlots(storage) {
       ...(savedAt === undefined ? {} : { savedAt }),
       ...(card ? { card } : {}),
     };
-    storage.setItem(SAVE_SLOTS_KEY, JSON.stringify([row, ...rows.filter(item => item.token !== token)]));
+    storage.setItem(SAVE_SLOTS_KEY, JSON.stringify([row, ...rows.filter(item => item.token !== token && item.id !== player.id)]));
     storage.setItem(SESSION_KEY, token);
     return row;
   }
-  return { list, record };
+  /** Forget one slot on this browser; the Chao stays on the server and its card code brings it back. */
+  function remove(token) {
+    storage.setItem(SAVE_SLOTS_KEY, JSON.stringify(list().filter(row => row.token !== token)));
+    if (storage.getItem(SESSION_KEY) === token) storage.removeItem(SESSION_KEY);
+  }
+  return { list, record, remove };
 }

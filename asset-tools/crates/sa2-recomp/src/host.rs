@@ -72,10 +72,10 @@ fn io_touch(a: u32, write: bool) {
 fn boot_globals(m: &mut Mem) {
     m.w32(0x8000_0020, 0x0D15_EA5E);
     m.w32(0x8000_0024, 1);
-    m.w32(0x8000_0028, rt::MEM1);
+    m.w32(0x8000_0028, rt::mem1());
     m.w32(0x8000_002C, 0x1000_0006); // retail console
     m.w32(0x8000_00CC, 0); // NTSC
-    m.w32(0x8000_00F0, rt::MEM1);
+    m.w32(0x8000_00F0, rt::mem1());
     m.w32(0x8000_00F8, 162_000_000); // bus clock
     m.w32(0x8000_00FC, 486_000_000); // CPU clock
 }

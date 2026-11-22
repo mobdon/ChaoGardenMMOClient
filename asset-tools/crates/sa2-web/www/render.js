@@ -63,7 +63,7 @@ onmessage = async (ev) => {
       if (e.data.log) postMessage({ log: e.data.log });
       else decoded = ` (decode ${e.data.ms.toFixed(1)} ms)`;
     };
-    dec.postMessage({ module, memory: wasm.memory, ctl: m.ctl, slots: m.slots });
+    dec.postMessage({ module, memory: wasm.memory, ctl: m.ctl, slots: m.slots, pages: m.pages });
     requestAnimationFrame(frame);
   } catch (e) {
     postMessage({ log: `screen: ${e}` });

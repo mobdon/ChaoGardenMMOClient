@@ -353,8 +353,9 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
             continue;
         }
         let fmt = if want_cmpr { CMPR } else { RGB5A3 };
-        // GVR flags byte (PuyoTools): low nibble 1 mips, 2/8 palette; high nibble
-        // palette format. Mips only where the GC texture has them.
+        // Mip levels only where the GC texture has them (GVRT flags bit 0):
+        // Steam's chain on a GC texture without mips garbled "Licensed by
+        // Nintendo" (256x32) on the logo screen.
         let gc_flags = skel[10];
         let full = (dds.w.max(dds.h).trailing_zeros() + 1) as usize;
         let levels = if gc_flags & 1 != 0 && dds.levels.len() >= full {
@@ -373,8 +374,7 @@ pub fn pak_to_prs(pak: &[u8], skeleton_prs: &[u8]) -> Option<Vec<u8>> {
                 (_, Kind::Rgba) => rgba_to_rgb5a3(level, w, h),
             });
         }
-        // Steam's texture is direct colour: drop the GC palette flags, which
-        // made indexed GC textures (sky, billboards) read as grey noise.
+        // Steam's texture is direct colour: drop GC palette flags (0x2/0x8), which made indexed GC textures (City Escape sky, billboards, truck) read as grey noise.
         let mip = u8::from(levels > 1);
         out[entry + 30] = mip;
         out[entry + 31] = fmt;

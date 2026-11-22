@@ -10,6 +10,9 @@
 pub mod audio;
 pub mod card;
 pub mod card_pack;
+pub mod chao_cache;
+pub mod chao_player;
+pub mod chao_retarget;
 pub mod clock;
 pub mod dvd;
 #[cfg(not(target_os = "wasi"))]
@@ -25,6 +28,7 @@ pub mod serve;
 #[cfg(not(target_os = "wasi"))]
 pub mod snap;
 pub mod start_stage;
+pub mod race_probe;
 pub mod steam_sound;
 pub mod vi;
 pub mod walker;
@@ -47,7 +51,9 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     card::install(c, m);
     wide::install(c, m);
     walker::install(c, m);
+    chao_player::install(c, m);
     start_stage::install(c, m);
+    race_probe::install(c, m);
     pause_extras::install(c, m);
 }
 

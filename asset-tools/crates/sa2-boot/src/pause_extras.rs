@@ -318,7 +318,7 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
         let area = crate::start_stage::chao_area(c, m);
         if cursor == 2 && exit_stays_in_chao_world(area) {
             // The game's own CONTINUE closes the pause; the lobby follows.
-            if area != Some(0) {
+            if area != Some(crate::start_stage::LOBBY) {
                 crate::start_stage::go_lobby();
             }
             m.w8(sda(c, CURSOR), 0);
@@ -332,7 +332,8 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
 /// (area 4: back to the race entrance, fn_8001F368 0x8001FE58..0x8001FE88)
 /// and when the game was not started in Chao World (area unknown).
 fn exit_stays_in_chao_world(area: Option<u32>) -> bool {
-    area.is_some_and(|a| a != 4)
+    // 0: Chao World is still loading.
+    area.is_some_and(|a| a != 4 && a != 0)
 }
 
 /// The page's `/dev/extras` (sa2-web worker.js): setting `i` changed to `v`.
@@ -398,7 +399,11 @@ mod tests {
     #[test]
     fn exit_goes_to_the_lobby_except_from_the_race() {
         assert!(exit_stays_in_chao_world(Some(1)), "garden: to the lobby");
-        assert!(exit_stays_in_chao_world(Some(0)), "lobby: close the pause");
+        assert!(exit_stays_in_chao_world(Some(7)), "lobby: close the pause");
+        assert!(
+            !exit_stays_in_chao_world(Some(0)),
+            "loading: the game's own"
+        );
         assert!(!exit_stays_in_chao_world(Some(4)), "race: the game's own");
         assert!(!exit_stays_in_chao_world(None), "not started in Chao World");
     }
