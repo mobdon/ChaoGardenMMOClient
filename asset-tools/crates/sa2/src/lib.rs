@@ -9,6 +9,7 @@ pub mod board_motion;
 mod board_replay;
 pub mod chao_dll;
 pub mod chao_glb;
+pub mod chao_palette;
 pub mod chao_pipe;
 pub mod character_animations;
 pub mod character_motions;

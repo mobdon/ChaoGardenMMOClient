@@ -32,13 +32,13 @@ export function convertTexture(x, prs, name) {
 }
 
 /** One Chao model with one motion (clip name `motion`) as GLB bytes, or null. `x` is game-texture.wasm's exports. */
-export function convertChao(x, dll, body, palette, model, motion) {
-  const inputs = [dll, body, palette].map(bytes => {
+export function convertChao(x, dll, body, palettes, model, motion, look = {}) {
+  const inputs = [dll, body, palettes].map(bytes => {
     const p = x.buf_alloc(bytes.length);
     new Uint8Array(x.memory.buffer, p, bytes.length).set(bytes);
     return [p, bytes.length];
   });
-  const ok = x.chao(...inputs.flat(), model, motion);
+  const ok = x.chao(...inputs.flat(), model, motion, look.type ?? 2, look.hPos ?? 0, look.vPos ?? 0, look.aPos ?? 0, look.growth ?? 0);
   for (const [p, length] of inputs) x.buf_free(p, length);
   return ok ? new Uint8Array(x.memory.buffer, x.out_ptr(), x.out_len()).slice() : null;
 }
@@ -61,15 +61,28 @@ function gameFile(path) {
 }
 const archive = name => gameFile(`${name}.prs`);
 
+// The game's body palette files in its own table order (same list as chao_palette::SLOT_FILES).
+const PALETTES = ['nc00', 'nc01', ...['z', 'n', 's', 'f', 'r', 'p'].map(s => `hc${s}`), 'dc',
+  ...['hn', 'hs', 'hf', 'hr', 'hp'].flatMap(f => ['z', 'n', 's', 'f', 'r', 'p'].map(s => f + s))];
+let palettes;
+const bodyPalettes = () => palettes ??= Promise.all(PALETTES.map(n => gameFile(`al_${n}.GVP`))).then(all => {
+  if (all.includes(null)) return palettes = null;
+  const joined = new Uint8Array(all.reduce((n, f) => n + f.length, 0));
+  all.reduce((at, f) => (joined.set(f, at), at + f.length), 0);
+  return joined;
+});
+
 /**
  * GLB bytes of the game's Chao model `model` (its index in the game's own model table) playing
  * motion number `motion`, built from the player's game folder; null when it can't be read.
+ * `look` is the Chao's own { type, hPos, vPos, aPos, growth } (a new child when left out): the
+ * game blends the body colours from them.
  */
-export function gameChaoGlb(model, motion) {
-  const key = `${model}:${motion}`;
+export function gameChaoGlb(model, motion, look) {
+  const key = `${model}:${motion}:${look ? [look.type, look.hPos, look.vPos, look.aPos, look.growth] : ''}`;
   if (!models.has(key)) models.set(key, (async () => {
-    const [dll, body, palette] = await Promise.all(['DLL/Win32/Data_DLL.dll', 'al_body.prs', 'al_nc00.GVP'].map(gameFile));
-    return dll && body && palette ? convertChao(await converter(), dll, body, palette, model, motion) : null;
+    const [dll, body, colours] = await Promise.all([gameFile('DLL/Win32/Data_DLL.dll'), gameFile('al_body.prs'), bodyPalettes()]);
+    return dll && body && colours ? convertChao(await converter(), dll, body, colours, model, motion, look) : null;
   })().catch(() => null).then(glb => { if (!glb) models.delete(key); return glb; }));
   return models.get(key);
 }

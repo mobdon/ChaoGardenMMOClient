@@ -3,9 +3,10 @@
 //! archive from the player's own game folder; nothing is fetched from a server.
 //! JS calls `buf_alloc`, copies the archive and the texture name in, calls `convert`,
 //! reads `out_ptr`/`out_len`, then `buf_free`s both buffers. `chao` does the same for one
-//! Chao model with one motion as a GLB, from `Data_DLL.dll`, `al_body.prs` and `al_nc00.GVP`.
+//! Chao model with one motion as a GLB, from `Data_DLL.dll`, `al_body.prs` and the palette files.
 //! Build: `cargo build --release --target wasm32-unknown-unknown`.
 
+use sa2_asset_tools::chao_palette::Ratios;
 use std::cell::RefCell;
 
 /// Largest decompressed archive we accept (the readers' own bound elsewhere).
@@ -64,18 +65,21 @@ pub unsafe extern "C" fn convert(
 }
 
 /// The Chao model `AL_RootObject[model]` of `Data_DLL.dll` with motion `al_motion_table[motion]`
-/// (named `motion`) as a GLB, textured from `al_body.prs` and the child palette `al_nc00.GVP`.
+/// (named `motion`) as a GLB, textured from `al_body.prs` with the game's blend of the 39
+/// palette files (`gvps`, concatenated in `chao_palette::SLOT_FILES` order) for `ratios`.
 fn chao_glb(
     dll: &[u8],
     body: &[u8],
-    gvp: &[u8],
+    gvps: &[u8],
     model: usize,
     motion: usize,
+    ratios: &Ratios,
 ) -> sa2_asset_tools::Result<Vec<u8>> {
-    use sa2_asset_tools::{chao_dll, chao_glb};
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
     let model = chao_dll::read_chao_model(dll, model)?;
     let clip = chao_dll::read_chao_motion(dll, motion)?;
-    let pngs = chao_glb::body_textures(&model, body, gvp)?;
+    let slots = chao_palette::read_slots(gvps)?;
+    let pngs = chao_glb::body_textures(&model, body, &slots, ratios)?;
     // shortcut: every portrait Chao gets open eyes and mouth 0; pass the face numbers in when a scene needs others.
     chao_glb::export(
         &model,
@@ -86,15 +90,25 @@ fn chao_glb(
 }
 
 /// Converts one Chao; the GLB (or nothing on error) is kept for `out_ptr`/`out_len`.
-pub fn chao_to_out(dll: &[u8], body: &[u8], gvp: &[u8], model: usize, motion: usize) -> bool {
-    let made = chao_glb(dll, body, gvp, model, motion);
+pub fn chao_to_out(
+    dll: &[u8],
+    body: &[u8],
+    gvps: &[u8],
+    model: usize,
+    motion: usize,
+    ratios: &Ratios,
+) -> bool {
+    let made = chao_glb(dll, body, gvps, model, motion, ratios);
     let ok = made.is_ok();
     OUT.with(|o| *o.borrow_mut() = made.unwrap_or_default());
     ok
 }
 
+/// `chao_type`, `h_pos`, `v_pos`, `a_pos` and `growth` are the Chao's own values (`Ratios`).
+///
 /// # Safety
-/// The three pointer/length pairs must be `buf_alloc`ed buffers: `Data_DLL.dll`, `al_body.prs`, `al_nc00.GVP`.
+/// The three pointer/length pairs must be `buf_alloc`ed buffers: `Data_DLL.dll`, `al_body.prs`
+/// and the 39 palette files.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn chao(
@@ -102,18 +116,31 @@ pub unsafe extern "C" fn chao(
     dll_len: usize,
     body: *const u8,
     body_len: usize,
-    gvp: *const u8,
-    gvp_len: usize,
+    gvps: *const u8,
+    gvps_len: usize,
     model: usize,
     motion: usize,
+    chao_type: u32,
+    h_pos: f32,
+    v_pos: f32,
+    a_pos: f32,
+    growth: f32,
 ) -> i32 {
     let bytes = |p, n| std::slice::from_raw_parts(p, n);
+    let ratios = Ratios {
+        chao_type: chao_type as u8,
+        h_pos,
+        v_pos,
+        a_pos,
+        growth,
+    };
     chao_to_out(
         bytes(dll, dll_len),
         bytes(body, body_len),
-        bytes(gvp, gvp_len),
+        bytes(gvps, gvps_len),
         model,
         motion,
+        &ratios,
     ) as i32
 }
 
@@ -196,7 +223,14 @@ mod tests {
 
     #[test]
     fn bad_chao_inputs_give_nothing() {
-        assert!(!chao_to_out(&[0u8; 64], &[0u8; 16], &[0u8; 16], 0, 0));
+        assert!(!chao_to_out(
+            &[0u8; 64],
+            &[0u8; 16],
+            &[0u8; 16],
+            0,
+            0,
+            &Ratios::CHILD
+        ));
         assert_eq!(out_len(), 0);
     }
 }

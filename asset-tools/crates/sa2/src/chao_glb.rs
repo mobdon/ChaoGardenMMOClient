@@ -3,6 +3,7 @@
 //! each attachment's strips as that node's mesh, and motions baked one key per native
 //! frame. Nothing is retargeted, recoloured or rescaled; hidden nodes stay undrawn.
 use crate::chao_dll::ChaoMotion;
+use crate::chao_palette::{Colors, Ratios};
 use crate::model::Model;
 use crate::pose::{evaluate_model_pose, Matrix4};
 use crate::visual::{read_strips, Material};
@@ -278,17 +279,19 @@ pub const OPEN_EYES_NO_MOUTH: [usize; 3] = [19, 22, 27];
 const MAX_ARCHIVE: usize = 16 << 20;
 
 /// One PNG per texture index `model` names, from `al_body.prs` (the Chao texture list,
-/// in archive order). The three indexed child body textures take banks 0, 1 and 2 of
-/// the neutral child palette `al_nc00.GVP` (mapping: SA Tools ChaoPalettes.cs); any
-/// other indexed texture is an error rather than a guessed palette.
+/// in archive order). Indexed body textures 0..17 take the bank TexBankList gives them
+/// (texture id = row * 3 + bank) from the game's blend of `palettes` for this Chao; an
+/// indexed texture the Chao's type has no palette for is an error, not a guessed palette.
 pub fn body_textures(
     model: &Model,
     al_body_prs: &[u8],
-    child_gvp: &[u8],
+    palettes: &[Colors],
+    ratios: &Ratios,
 ) -> Result<BTreeMap<u16, Vec<u8>>> {
     let data = crate::archive::decompress_prs(al_body_prs, MAX_ARCHIVE)?;
     let entries = crate::archive::read_gvm(&data)?;
-    let palette = crate::texture::read_gvp(child_gvp)?;
+    let row = crate::chao_palette::rows(ratios.chao_type).map(|r| r.1);
+    let palette = crate::chao_palette::blend(palettes, ratios)?;
     let mut pngs = BTreeMap::new();
     let ids = model
         .attachments
@@ -302,10 +305,11 @@ pub fn body_textures(
         let entry = entries
             .get(id as usize)
             .ok_or_else(|| Error::invalid(format!("texture index {id} outside al_body")))?;
-        let bank = ["al_child02", "al_child03", "al_child04"]
-            .iter()
-            .position(|n| entry.name.eq_ignore_ascii_case(n));
-        let colors = bank.map(|b| palette.bank(b, 16)).transpose()?;
+        let id3 = id as usize;
+        let colors = match &palette {
+            Some(p) if row == Some(id3 / 3) => Some(&p[id3 % 3 * 16..][..16]),
+            _ => None,
+        };
         let mut png = Vec::new();
         crate::texture::decode_gvr(entry.data, colors)?.write_png(&mut png)?;
         pngs.insert(id, png);

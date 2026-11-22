@@ -284,7 +284,7 @@ fn chao_stand_motion_from_the_dll_matches_the_split_motion() {
 #[test]
 #[ignore = "requires SA2_DATA_DLL and SA2_GD_PC (Steam resource/gd_PC)"]
 fn chao_child_glb_from_the_game_files() {
-    use sa2_asset_tools::{chao_dll, chao_glb};
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
     let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
     let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
     let model = chao_dll::read_chao_model(&dll, 0).unwrap();
@@ -292,7 +292,8 @@ fn chao_child_glb_from_the_game_files() {
     let pngs = chao_glb::body_textures(
         &model,
         &std::fs::read(gd.join("al_body.prs")).unwrap(),
-        &std::fs::read(gd.join("al_nc00.GVP")).unwrap(),
+        &chao_palettes(&gd),
+        &chao_palette::Ratios::CHILD,
     )
     .unwrap();
     let glb = chao_glb::export(
@@ -319,5 +320,42 @@ fn chao_child_glb_from_the_game_files() {
     assert_eq!(speed.as_f64().unwrap() as f32, 0.12);
     if let Some(out) = std::env::var_os("SA2_CHAO_GLB_OUT") {
         std::fs::write(out, &glb).unwrap();
+    }
+}
+
+fn chao_palettes(gd: &std::path::Path) -> Vec<sa2_asset_tools::chao_palette::Colors> {
+    use sa2_asset_tools::chao_palette::{read_slots, SLOT_FILES};
+    let files: Vec<u8> = SLOT_FILES
+        .iter()
+        .flat_map(|name| std::fs::read(gd.join(format!("{name}.GVP"))).unwrap())
+        .collect();
+    read_slots(&files).unwrap()
+}
+
+/// Every model of AL_RootObject converts, each with the type whose palette row holds its
+/// indexed textures (family = index / 6, type = family + 2, children all type 2); and a new
+/// child's blend is al_nc00 itself.
+#[test]
+#[ignore = "requires SA2_DATA_DLL and SA2_GD_PC (Steam resource/gd_PC)"]
+fn every_chao_body_converts_with_its_blended_palette() {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let dll = std::fs::read(std::env::var_os("SA2_DATA_DLL").expect("set SA2_DATA_DLL")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let body = std::fs::read(gd.join("al_body.prs")).unwrap();
+    let slots = chao_palettes(&gd);
+    let child = chao_palette::blend(&slots, &chao_palette::Ratios::CHILD).unwrap();
+    assert_eq!(child, Some(slots[0]));
+    for index in 0..144 {
+        let family = index / 6;
+        let ratios = chao_palette::Ratios {
+            chao_type: if family < 3 { 2 } else { family as u8 + 2 },
+            h_pos: 0.4,
+            v_pos: -0.7,
+            a_pos: if family == 2 { -1. } else { 1. },
+            growth: 0.5,
+        };
+        let model = chao_dll::read_chao_model(&dll, index).unwrap();
+        chao_glb::body_textures(&model, &body, &slots, &ratios)
+            .unwrap_or_else(|e| panic!("model {index}: {e}"));
     }
 }
