@@ -582,7 +582,21 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     };
     let shoe: Vec<[f32; 3]> = bv.iter().map(|v| std::array::from_fn(|i| (0..3).map(|k| mount[i][k] * v[k]).sum::<f32>())).collect();
     let bounds = |p: &[[f32; 3]]| p.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), v| (std::array::from_fn(|i| lo[i].min(v[i])), std::array::from_fn(|i| hi[i].max(v[i]))));
-    let ((flo, fhi), (slo, shi)) = (bounds(&foot), bounds(&shoe));
+    let ((mut flo, mut fhi), (slo, shi)) = (bounds(&foot), bounds(&shoe));
+    // The drawn foot mesh's size against the rest model's (same node frame).
+    let d = DRAWN_FOOT.get();
+    if (0x8000_0000..0x8C00_0000).contains(&d) {
+        let dv = crate::chao_retarget::read_chao(&|a| _m.r32(a), d, [vec![], vec![]]).verts.first().cloned().unwrap_or_default();
+        let ext = |p: &[[f32; 3]]| (0..3).map(|k| { let (l, h) = p.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); h - l }).fold(0.0f32, f32::max);
+        let (de, re) = (ext(&dv), ext(&foot_v));
+        if de > 0.0 && re > 0.0 && (de / re - 1.0).abs() > 0.01 {
+            let r = de / re;
+            let c: [f32; 3] = std::array::from_fn(|i| (flo[i] + fhi[i]) / 2.0);
+            flo = std::array::from_fn(|i| c[i] + (flo[i] - c[i]) * r);
+            fhi = std::array::from_fn(|i| c[i] + (fhi[i] - c[i]) * r);
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 { eprintln!("chao-player boot fit: drawn foot {de} vs rest {re}"); }
+        }
+    }
     if foot.is_empty() || shoe.is_empty() || shi[2] - slo[2] <= 0.0 { return None; }
     // SA2_SHOE_SCALE=k (debug): k times the hub fit, to see it in a check.
     let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
@@ -1121,6 +1135,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         // The player's Chao on its native rig: its foot nodes for the boots.
         if NATIVE_DRAW.get() {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
+            if i == 6 { DRAWN_FOOT.set(c.r[3]); }
             // The hands as this native draw places them, for the hammer gloves.
             record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
@@ -1227,6 +1242,9 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
 
 thread_local! {
     static RIDER_OBJ: Cell<u32> = const { Cell::new(0) };
+    /// The foot node object (6) the native draw walked this frame: the drawn
+    /// (adult) foot, whose mesh may differ in size from the rest model's.
+    static DRAWN_FOOT: Cell<u32> = const { Cell::new(0) };
     static RIDER_REST: std::cell::RefCell<Option<(u32, Vec<[[f32; 3]; 3]>)>> = const { std::cell::RefCell::new(None) };
 }
 
