@@ -500,6 +500,27 @@ thread_local! {
     static GEAR_TUNE: std::cell::RefCell<std::collections::BTreeMap<String, [f32; 7]>> = Default::default();
 }
 
+/// The object of node `index` (depth first, as read_chao counts) in a model
+/// tree (NJS_OBJECT: child +0x2C, sibling +0x30), 0 when there is none.
+fn node_obj(m: &Mem, root: u32, index: usize) -> u32 {
+    let ok = |o: u32| (0x8000_0000..0x8C00_0000).contains(&o);
+    if !ok(root) {
+        return 0;
+    }
+    let (mut stack, mut n) = (vec![root], 0usize);
+    while let Some(o) = stack.pop() {
+        if n == index {
+            return o;
+        }
+        n += 1;
+        let (child, sib) = (m.r32(o + 0x2C), m.r32(o + 0x30));
+        if ok(sib) { stack.push(sib); }
+        if ok(child) { stack.push(child); }
+        if n > 512 { break; }
+    }
+    0
+}
+
 /// Knuckles's fist for a Hammer Gloves plate: right plate 329 with fist 163,
 /// left 331 with 161 (KNUCKMDL 80/81, the pair the slot log showed as hands).
 /// unverified: which of 161/163 is his right fist (by analogy with Shadow's
@@ -626,6 +647,24 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
                 for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
                 m.w32(list, tex);
                 let lcap = LCAP.replace(false);
+                // Shadow's own shoe under the Air Shoes item: the foot node of
+                // his body model (nodes 14/24, the frame the boot is modelled
+                // in), drawn alone with its children (mob: the feet need
+                // Shadow's real shoe, not only the item's rings).
+                // SA2_SHADOW_FOOT=0 (debug): the item alone.
+                let foot_obj = node_obj(m, RIDER_OBJ.get(), foot);
+                if foot_obj != 0 && !std::env::var("SA2_SHADOW_FOOT").is_ok_and(|v| v == "0") {
+                    let sib = m.r32(foot_obj + 0x30);
+                    m.w32(foot_obj + 0x30, 0);
+                    // The node's own rest offset is in its object: draw it at the boot's place.
+                    let keep: Vec<u32> = (0x08..0x2C).step_by(4).map(|o| m.r32(foot_obj + o)).collect();
+                    for o in (0x08..0x20).step_by(4) { m.w32(foot_obj + o, 0); }
+                    for o in (0x20..0x2C).step_by(4) { m.w32(foot_obj + o, 1.0f32.to_bits()); }
+                    call(c, m, 0x8011_DF44, &[foot_obj]);
+                    for (i, o) in (0x08..0x2C).step_by(4).enumerate() { m.w32(foot_obj + o, keep[i]); }
+                    m.w32(foot_obj + 0x30, sib);
+                    for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } }
+                }
                 call(c, m, 0x8011_DF44, &[obj]);
                 // Heel/toe jets (Shadow's right jets 96-99 = slots 181-184, the
                 // hub's: modelled in the same foot frame as the boot) while moving.
