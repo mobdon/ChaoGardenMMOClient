@@ -782,9 +782,10 @@ const GLOVE_REFS: [(u32, [f32; 3], [f32; 3]); 2] = [
     (329, [0.150_553_9, 0.933_591_6, 0.325_177_2], [-0.984_045_9, 0.173_063_3, -0.041_265_2]),
     (331, [0.171_001_5, 0.896_849_7, -0.407_944_7], [-0.985_151_6, 0.162_074_6, -0.056_639_6]),
 ];
-/// shortcut: 1.6 of the hand's size by mob's ask (bigger than the hub's 1.12);
-/// the gear tuner (?geartune=1) gives the measured value to commit.
-const GLOVE_SCALE: f32 = 1.6;
+/// shortcut: Knuckles's fist at 1.0 of the Chao hand's size, so his cuff keeps
+/// his proportions round the Chao's thin wrist (1.6 swallowed the arm); the
+/// gear tuner (?geartune=1) gives the measured value to commit.
+const GLOVE_SCALE: f32 = 1.0;
 /// KNUCKMDL body model 142 in the model table (slot 2n+1).
 const KNUX_BODY_SLOT: u32 = 285;
 const GLOVE_REACH: f32 = 0.55;
