@@ -1249,6 +1249,9 @@ fn glove_native() -> bool {
 fn glove_up() -> f32 {
     std::env::var("SA2_GLOVE_UP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.35)
 }
+fn glove_roll() -> f32 {
+    std::env::var("SA2_GLOVE_ROLL").ok().and_then(|v| v.parse().ok()).unwrap_or(-90.0)
+}
 fn glove_out() -> f32 {
     std::env::var("SA2_GLOVE_OUT").ok().and_then(|v| v.parse().ok()).unwrap_or(-10.0)
 }
@@ -1379,6 +1382,20 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
             std::array::from_fn(|i| wrist[i] - cc[i] * s)
         } else {
             std::array::from_fn(|i| hc[i] - sc[i] * s)
+        };
+        // Rolled about the arm's own axis (shoulder -> hand) through the
+        // cuff's centre: the side frame turns off the outside of the arm.
+        // SA2_GLOVE_ROLL (degrees, debug); mirrored for the left arm.
+        let roll = glove_roll() * if sh[0] < 0.0 { 1.0 } else { -1.0 };
+        let (r, t) = if roll == 0.0 { (r, t) } else {
+            let (sn, cs) = roll.to_radians().sin_cos();
+            let k = ax;
+            let kx = [[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]];
+            let rot: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| f32::from(u8::from(i == j)) * cs + sn * kx[i][j] + (1.0 - cs) * k[i] * k[j]));
+            // Keep the cuff's centre (t + s * sc) where it was.
+            let c: [f32; 3] = std::array::from_fn(|i| t[i] + s * sc[i]);
+            let rc: [f32; 3] = std::array::from_fn(|i| (0..3).map(|q| rot[i][q] * sc[q]).sum::<f32>());
+            (crate::skate::mul(&rot, &r), std::array::from_fn(|i| c[i] - s * rc[i]))
         };
         let desired: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * s } else { t[i] }));
         // Swung out from the hips about the Chao's forward axis (+z) through
