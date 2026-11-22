@@ -566,6 +566,9 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     let ((flo, fhi), (slo, shi)) = (bounds(&foot), bounds(&shoe));
     if foot.is_empty() || shoe.is_empty() || shi[2] - slo[2] <= 0.0 { return None; }
     let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]);
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
+        eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
+    }
     let fc: [f32; 3] = std::array::from_fn(|i| (flo[i] + fhi[i]) / 2.0);
     let scn: [f32; 3] = std::array::from_fn(|i| (slo[i] + shi[i]) / 2.0);
     let pos = [fc[0] - scn[0] * sc, flo[1] - slo[1] * sc, fc[2] - scn[2] * sc];
