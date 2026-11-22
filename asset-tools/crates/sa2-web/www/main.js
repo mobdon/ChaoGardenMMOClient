@@ -283,13 +283,19 @@ async function cardChao(token) {
   try {
     const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
     const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
-    let list = r?.ok ? ((await r.json()).chao || []).map((c) => c.player) : [];
-    if (!list.length && cardSelf) list = [cardSelf];
+    let list = r?.ok ? (await r.json()).chao || [] : [];
+    if (!list.length && cardSelf) list = [{ player: cardSelf }];
     const lines = [];
-    for (const player of list) {
-      const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!rec.ok) continue;
-      recordIn(numId(player.id), new Uint8Array(await rec.arrayBuffer()));
+    for (const { player, record } of list) {
+      // The card's own copy of the record (base64, 2048 bytes) where the
+      // server sends one; else the room's copy, there only for a Chao online here.
+      let bytes = record ? Uint8Array.from(atob(record), (ch) => ch.charCodeAt(0)) : null;
+      if (bytes?.length !== MMO.REC) {
+        const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!rec.ok) continue;
+        bytes = new Uint8Array(await rec.arrayBuffer());
+      }
+      recordIn(numId(player.id), bytes);
       cardIds.set(numId(player.id), player);
       lines.push(numId(player.id));
     }
@@ -385,7 +391,9 @@ function mmoTick(token) {
     pickSeen = pseq;
     // The Chao picked in the Chao Transporter becomes the phone's: its picture
     // sheet (src/tiny-sheet.js) goes to the server, which keeps one per card.
-    const picked = cardIds.get(new TextDecoder().decode(mmoBytes.slice(MMO.PICK + 8, MMO.PICK + 8 + pick[1])));
+    const id = new TextDecoder().decode(mmoBytes.slice(MMO.PICK + 8, MMO.PICK + 8 + pick[1]));
+    // Id 0: the signed-in Chao, listed by the game itself when this page listed none.
+    const picked = cardIds.get(id) ?? (id === '0' ? cardSelf : undefined);
     if (picked) import('/src/tiny-sheet.js').then((m) => m.renderTinySheet(picked)).then((sheet) => {
       console.log('tiny-transporter: picked', picked.id, sheet ? `sheet ${sheet.size} bytes` : 'no sheet');
       return sheet && fetch(`/api/tiny-chao?chao=${encodeURIComponent(picked.id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' }, body: sheet });
