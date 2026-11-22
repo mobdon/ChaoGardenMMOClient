@@ -455,7 +455,9 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     let posed = POSED.with_borrow(|p| p.clone());
     let skel = SKEL.with_borrow(|s| s.clone());
-    if (posed.len() < 14 && !chao_world(m)) || skel.len() != 62 {
+    // Chao World places the boots from the Chao's own feet (hub fit): no
+    // rider skeleton needed there, and in self mode there is none.
+    if !chao_world(m) && (posed.len() < 14 || skel.len() != 62) {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player shoes: skipped (posed {}, skel {})", posed.len(), skel.len());
         }
@@ -808,6 +810,13 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
         CHAO_NODE.set(0);
         rel_original(c, m, a, chao_display);
         NATIVE_DRAW.set(false);
+        // Self mode: no rider display walks, which is where the gear was drawn
+        // (level_capture); draw it here, from the feet and hands this native
+        // draw just recorded.
+        if self_drive(m) {
+            hammer_gloves(c, m);
+            air_shoes(c, m);
+        }
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
             let rest = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.nodes.len()));
             eprintln!("chao-player native: walked {} node transforms, rest model nodes {rest:?}, hands {:?}", CHAO_NODE.get(), HANDS.with_borrow(|h| h.map(|x| x.map(|v| [v[0][3], v[1][3], v[2][3]]))));
@@ -1727,6 +1736,12 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     if PMOVE_CHAO.replace(chao) != chao {
         m.w32(cw, m.r32(own));
         eprintln!("chao-drive: player move on the Chao's body (twp {cw:#x}, character twp {own:#x}, state {})", m.r8(own));
+        // The Chao takes over as the player where it was made, maybe inside
+        // the lobby exit's trigger: ask again only after it has left it once.
+        if module_linked(m, LOBBY_MODULE) {
+            c.rt.set_override(rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC, lobby_exit_exec);
+            EXIT_REARM.set(true);
+        }
     }
     if mw != 0 {
         m.w16(mw + 0x40, m.r16(mw + 0x40) | 0x10);
@@ -1774,7 +1789,31 @@ fn drop_stage_loads() {
 /// found yet); raise it if a slow load still collides.
 const GEAR_LOAD_DELAY: u64 = 180;
 
+/// ChaoStgLobby (module 65): ALO_LobbyExitExecutor's exec (.text 0x634).
+/// In its mode 1 it waits while its twp flag 0x100 is set until no player
+/// touches its trigger (CCL_IsHitPlayer, main.dol 0x80005F88), clears the
+/// flag, and only the next touch opens the "Exit from Chao garden" window.
+/// The game sets the flag when it creates the exit, so a player placed
+/// inside must leave first; the Chao becoming the player later starts a
+/// new "arrival", so the flag is set again then (MMO glue).
+const LOBBY_MODULE: u32 = 65;
+const LOBBY_EXIT_EXEC: u32 = 0x634;
+const EXIT_FLAG_LEFT_FIRST: u16 = 0x100;
+
+fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
+    if EXIT_REARM.replace(false) {
+        let twp = m.r32(c.r[3] + 0x34);
+        // Only in its waiting mode 1 (mode 4 is the open window).
+        if twp != 0 && m.r8(twp) == 1 {
+            m.w16(twp + 4, m.r16(twp + 4) | EXIT_FLAG_LEFT_FIRST);
+        }
+    }
+    let a = rt::sec(m, LOBBY_MODULE, 1) + LOBBY_EXIT_EXEC;
+    rel_original(c, m, a, lobby_exit_exec);
+}
+
 thread_local! {
+    static EXIT_REARM: Cell<bool> = const { Cell::new(false) };
     static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
     static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
