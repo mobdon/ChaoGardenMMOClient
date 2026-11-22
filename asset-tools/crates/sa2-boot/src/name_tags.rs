@@ -13,7 +13,7 @@
 //! per label is logged with its node count to check.
 use crate::original;
 use sa2_recomp::rt::{Cpu, Mem};
-use std::cell::{Cell, RefCell};
+use sa2_recomp::{global, global::Global};
 
 /// GXSetProjection(mtx, type) (sa2 stage_objects/messenger/shadow.rs).
 const GX_SET_PROJECTION: u32 = 0x8010_5678;
@@ -26,13 +26,13 @@ struct Drawing {
     nodes: u32,
 }
 
-thread_local! {
-    static PROJ: Cell<Option<[[f32; 4]; 4]>> = const { Cell::new(None) };
-    static CUR: RefCell<Option<Drawing>> = const { RefCell::new(None) };
-    static FRAME: RefCell<Vec<(String, f32, f32)>> = const { RefCell::new(Vec::new()) };
-    static SAID: RefCell<std::collections::BTreeSet<String>> = const { RefCell::new(std::collections::BTreeSet::new()) };
-    static TREE_DONE: Cell<bool> = const { Cell::new(false) };
-}
+// Shared by every game thread: each GameCube OS thread runs on a host thread
+// of its own, and the projection may be set on another one than the draw.
+static PROJ: Global<Option<[[f32; 4]; 4]>> = global!(None);
+static CUR: Global<Option<Drawing>> = global!(None);
+static FRAME: Global<Vec<(String, f32, f32)>> = global!(Vec::new());
+static SAID: Global<std::collections::BTreeSet<String>> = global!(std::collections::BTreeSet::new());
+static TREE_DONE: Global<bool> = global!(false);
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if std::env::var("SA2_TAGS_OUT").is_ok() {
