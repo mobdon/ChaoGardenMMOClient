@@ -15,10 +15,12 @@ pub mod chao_player;
 pub mod chao_retarget;
 pub mod clock;
 pub mod dvd;
+pub mod gear_pickup;
 #[cfg(not(target_os = "wasi"))]
 pub mod gamepad;
 pub mod gx;
 pub mod io;
+pub mod kinder_chart;
 #[cfg(not(target_os = "wasi"))]
 pub mod mmo;
 pub mod name_tags;
@@ -54,8 +56,10 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     walker::install(c, m);
     chao_player::install(c, m);
     name_tags::install(c, m);
+    kinder_chart::install(c, m);
     start_stage::install(c, m);
     race_probe::install(c, m);
+    gear_pickup::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).

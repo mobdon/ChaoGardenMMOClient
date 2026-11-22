@@ -1313,6 +1313,14 @@ fn pose_chao() {
     POSED.set(posed);
 }
 
+/// The player's own Chao task once it exists (for the Chao World chart).
+pub fn player_chao() -> Option<u32> {
+    match STEP.get() {
+        Step::Live(chao) => Some(chao),
+        _ => None,
+    }
+}
+
 fn call(c: &mut Cpu, m: &mut Mem, f: u32, args: &[u32]) -> u32 {
     crate::guest_call(c, m, f, args)
 }

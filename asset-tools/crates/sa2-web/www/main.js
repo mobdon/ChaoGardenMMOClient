@@ -65,19 +65,23 @@ window.sa2HatchEgg = egg => {
 
 // ---- input --------------------------------------------------------------
 // Bits as the game reads them (sa2-web-game KEYS): A D S W, Space, E,
-// Left Shift, Q, R, Enter, Escape, 1, 3, then left and right mouse.
+// Left Shift, Q, R, Enter, Escape, 1, 3, then left and right mouse; bit 15 is Tab
+// (and the gamepad's Back), the Chao World chart (sa2-boot kinder_chart.rs).
 const KEYS = ['KeyA', 'KeyD', 'KeyS', 'KeyW', 'Space', 'KeyE', 'ShiftLeft', 'KeyQ', 'KeyR', 'Enter', 'Escape', 'Digit1', 'Digit3'];
+const TAB = 1 << 15;
 let held = 0;
 function hold(bit, down) {
   held = down ? held | bit : held & ~bit;
 }
 addEventListener('keydown', (e) => {
+  if (e.code === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); hold(TAB, true); return; }
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
   e.preventDefault();
   hold(1 << i, true);
 });
 addEventListener('keyup', (e) => {
+  if (e.code === 'Tab') hold(TAB, false);
   const i = KEYS.indexOf(e.code);
   if (i >= 0) hold(1 << i, false);
 });
@@ -93,9 +97,10 @@ canvas.addEventListener('dblclick', () => document.fullscreenElement ? document.
 const BUTTONS = [[0, 0x0100], [2, 0x0200], [1, 0x0400], [3, 0x0800], [9, 0x1000], [5, 0x0010],
   [14, 0x0001], [15, 0x0002], [13, 0x0004], [12, 0x0008]];
 function writePad() {
-  pad[0] = held & 0xff;
-  pad[1] = held >> 8;
   const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find((p) => p && p.connected);
+  const keys = held | (g && g.buttons[8] && g.buttons[8].pressed ? TAB : 0);
+  pad[0] = keys & 0xff;
+  pad[1] = keys >> 8;
   if (!g) {
     pad[2] = 0;
     return;
@@ -152,6 +157,7 @@ function loadedWorker() {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
     else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
+    else if (SHOE_PICKUPS[m.area]) pickedUp(SHOE_PICKUPS[m.area]);
     else if (m.area !== undefined) roomArea(m.area);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
@@ -169,6 +175,15 @@ function startThread(tid, arg) {
 // The MMO title screen keeps the signed-in Chao's token (src/save-slots.js).
 function mmoToken() {
   try { return localStorage.getItem('chao-garden-session-v1') || ''; } catch { return ''; }
+}
+// The game's own shoe upgrade, picked up in a level (sa2_boot::gear_pickup):
+// the server lets this card's Chao wear the shoes from then on.
+const SHOE_PICKUPS = { 252: 'sonic-light-shoes', 251: 'shadow-air-shoes' };
+function pickedUp(item) {
+  const token = mmoToken();
+  if (!token) return;
+  fetch('/api/gear-pickup', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item }) }).then(r => r.ok, () => false).then(ok => ok || log(`could not tell the server about ${item}`, true));
 }
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
