@@ -31,7 +31,7 @@ function log(text, err) {
 
 const sh = {
   ctl: new SharedArrayBuffer(64),
-  pad: new SharedArrayBuffer(16),
+  pad: new SharedArrayBuffer(24),
   egg: new SharedArrayBuffer(4 + 8 * 0xa8),
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
@@ -87,6 +87,18 @@ addEventListener('keyup', (e) => {
 });
 addEventListener('blur', () => (held = 0));
 canvas.addEventListener('mousedown', (e) => e.button === 0 ? hold(1 << 13, true) : e.button === 2 && hold(1 << 14, true));
+// The last left click for the game (pad bytes 16..24, sa2-web-game read_pad): where on the
+// canvas (0..65535 each way), the canvas aspect (ctl[8]), and a count that changes per click.
+let clicks = 0;
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  const r = canvas.getBoundingClientRect();
+  const u = (v) => Math.round(Math.min(1, Math.max(0, v)) * 65535);
+  new DataView(sh.pad).setUint16(16, u((e.clientX - r.left) / r.width), true);
+  new DataView(sh.pad).setUint16(18, u((e.clientY - r.top) / r.height), true);
+  new DataView(sh.pad).setUint16(20, Atomics.load(ctl, 8), true);
+  new DataView(sh.pad).setUint16(22, (clicks = (clicks + 1) & 0xffff), true);
+});
 addEventListener('mouseup', (e) => e.button === 0 ? hold(1 << 13, false) : e.button === 2 && hold(1 << 14, false));
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('dblclick', () => document.fullscreenElement ? document.exitFullscreen() : canvas.requestFullscreen());
