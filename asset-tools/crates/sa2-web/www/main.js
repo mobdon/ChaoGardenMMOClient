@@ -446,11 +446,18 @@ chat.id = 'chat';
 chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-input" maxlength="200" placeholder="Room chat (/w for world)" aria-label="Chat message" hidden>';
 document.body.append(chat);
 const chatLog = chat.firstChild, chatInput = chat.lastChild;
-function chatLine({ channel, fromId, fromName, text }) {
+// Muting adds a "Muted" line; clicking that line unmutes (the server keeps the list).
+function muteClick(fromId, fromName, muted) {
+  room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId, muted }));
+  chatLine({ channel: 'system', fromName: muted ? 'Muted' : 'Unmuted', text: muted ? `${fromName} (click to unmute)` : fromName,
+    onclick: muted && (() => muteClick(fromId, fromName, false)) });
+}
+function chatLine({ channel, fromId, fromName, text, onclick }) {
   const line = document.createElement('div');
   line.className = channel;
   if (fromId) line.title = `Click to mute ${fromName}`;
-  if (fromId) line.onclick = () => { room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId })); chatLine({ channel: 'system', fromName: 'Muted', text: fromName }); };
+  if (fromId) line.onclick = () => muteClick(fromId, fromName, true);
+  if (onclick) line.onclick = onclick;
   line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
   chatLog.append(line);
   while (chatLog.childElementCount > 50) chatLog.firstChild.remove();
