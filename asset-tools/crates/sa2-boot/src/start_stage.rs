@@ -19,6 +19,11 @@ const GLOBAL_MODE: u32 = GAME + 0x80;
 const NEXT_GLOBAL_MODE: u32 = GAME + 0x84;
 const MD_TITLE_INIT: u32 = 1;
 const MD_ACTION_INIT: u32 = 4;
+/// Set when the game leaves a stage for the title: the stage's exec returning
+/// -1 (exit) or -2 (0x800D2EF0, 0x800D2F68), after the stage is torn down the
+/// same way as before a restart's mode 4. Its handler only goes on to mode 13
+/// and the title (0x800D2E8C). At boot it comes before the start.
+const MD_LEFT_STAGE: u32 = 2;
 /// The first global mode after the memory card is read (see top_level).
 const MD_AFTER_CARD: u32 = 12;
 /// The boot logos (Nintendo, SEGA, Sonic Team), timed against frames with SA2_MODE_LOG.
@@ -148,11 +153,16 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     else {
         return;
     };
+    // Every MMO start: Chao that must stay silent (see quiet_residents).
+    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
+    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
+        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
+    });
     if stage == CHAO_WORLD {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
         PENDING.set(Some((CHAO_WORLD, 0)));
-        chao_world_glue(c);
+        SHOWN.set(Some(u32::MAX));
         c.rt.set_override(TOP_LEVEL, top_level);
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
@@ -187,17 +197,9 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     }
 }
 
-/// The Chao World glue: the area told to the page, the lobby's residents.
-fn chao_world_glue(c: &mut Cpu) {
-    SHOWN.set(Some(u32::MAX));
-    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
-    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
-        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
-    });
-}
-
 fn top_level(c: &mut Cpu, m: &mut Mem) {
-    if PENDING.get().is_some() && std::env::var("SA2_MODE_LOG").is_ok() {
+    // Every change of global mode, so a run shows which way the game went.
+    {
         let mode = m.r32(GLOBAL_MODE);
         if MODE_SEEN.get() != mode {
             MODE_SEEN.set(mode);
@@ -221,15 +223,18 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if let Some((stage, ch)) = PENDING.take() {
             STARTED.set(true);
             start(c, m, stage, ch);
-        } else if mode == MD_TITLE_INIT && STARTED.get() {
-            // MMO glue: the title never shows. Back at it after the start (a
-            // level's EXIT or end, the lobby's own way out): Chao World, as at
-            // boot. Unverified: that each of those ways reaches this mode.
-            if SHOWN.get().is_none() {
-                chao_world_glue(c);
-            }
-            start(c, m, CHAO_WORLD, 0);
         }
+    }
+    if mode == MD_LEFT_STAGE && STARTED.get() {
+        // MMO glue: the title never shows. The game left the stage it was
+        // started in (a level's EXIT, Chao World's own way out): Chao World
+        // again, as at boot. Unverified: an exit that skips this mode (the
+        // exec's -1 path can go to mode 21 then 13, 0x800D2FB0).
+        eprintln!("start-stage: the game left its stage; starting Chao World");
+        if SHOWN.get().is_none() {
+            SHOWN.set(Some(u32::MAX));
+        }
+        start(c, m, CHAO_WORLD, 0);
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
@@ -237,6 +242,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             TO_LOBBY.set(false);
             if now != 0 && now != LOBBY {
                 // The call ChaoMain's own way back to the lobby makes (0xB4F0).
+                eprintln!("start-stage: area {now} to the lobby (pause EXIT)");
                 guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
             }
         }
@@ -412,7 +418,10 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
 /// position is a resident's taskwk +0x14 is dropped; every other one plays.
 fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
     let twp = c.r[pos_reg].wrapping_sub(0x14);
-    if twp != 0 && RESIDENT_TWP.get().contains(&twp) {
+    // The residents, and the player's own Chao (never heard by its player).
+    if twp != 0
+        && (RESIDENT_TWP.get().contains(&twp) || twp == crate::chao_player::own_chao_twp(m))
+    {
         return;
     }
     original(c, m, addr);

@@ -65,6 +65,8 @@ enum Step {
 
 thread_local! {
     static STEP: Cell<Step> = const { Cell::new(Step::Wait(0)) };
+    /// The frame the Chao went live (see `starting`).
+    static LIVE_SINCE: Cell<u64> = const { Cell::new(0) };
     /// Sonic's data1 (position +0x14, rotation +0x08) for the Chao's display.
     static RIDER: Cell<u32> = const { Cell::new(0) };
     /// Rider position at the previous Chao display (for the emotion ball).
@@ -723,10 +725,29 @@ const WALKER_BANK_2P: u32 = 0x8017_5E9C; // "se_ch_wk_BATTLE.mlt"
 const PLAY_SE: u32 = 0x8006_B978;
 const DARK_CHAO_SOUND: u32 = 0x201E;
 
+/// MMO choice: how long after the Chao appears a level counts as starting
+/// (frames; about 10 s), with no replacement voice line.
+const START_FRAMES: u64 = 600;
+
+fn starting() -> bool {
+    let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    now.saturating_sub(LIVE_SINCE.get()) < START_FRAMES
+}
+
+/// The own Chao's taskwk (task +0x34), 0 while it isn't out: its own Chao
+/// sounds are not played to its player (start_stage's positional sound hooks).
+pub(crate) fn own_chao_twp(m: &Mem) -> u32 {
+    match STEP.get() {
+        Step::Live(task) => m.r32(task + 0x34),
+        _ => 0,
+    }
+}
+
 fn voice(c: &mut Cpu, m: &mut Mem) {
     // From the start of the run: the drop line plays before the Chao is loaded.
     if c.lr == FROM_VOICE_TASK {
-        if matches!(STEP.get(), Step::Live(_)) {
+        // Chao World, and the start of a level: the line is only dropped.
+        if matches!(STEP.get(), Step::Live(_)) && !chao_world(m) && !starting() {
             call(c, m, PLAY_SE, &[DARK_CHAO_SOUND, 0, 0, 0]);
         }
         return;
@@ -1782,6 +1803,7 @@ fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
         call(c, m, LOAD_BANK, &[WALKER_BANK_2P]);
     }
     call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, STAND_MOTION]);
+    LIVE_SINCE.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
     Step::Live(chao)
 }
 

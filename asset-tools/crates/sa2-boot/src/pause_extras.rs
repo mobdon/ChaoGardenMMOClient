@@ -75,8 +75,6 @@ const CHAO_WORLD: u16 = 0x5A;
 const PAUSED: u16 = 0x11;
 /// Text ids of the three pause rows (fn_8001E12C).
 const ROW_TEXT: [u32; 3] = [2, 3, 4];
-/// The row messages the stage start made (fn_80021828): CONTINUE, RESTART, EXIT.
-const ROW_MESSAGES: [u32; 3] = [0x7A80, 0x7A7C, 0x7A78];
 const REPEAT: u32 = 0x7A74; // i16 cursor hold counter; the cursor moves at 0
 /// A level's four rows: CONTINUE, RESTART, EXTRAS, EXIT.
 const LEVEL_EXTRAS: u8 = 2;
@@ -214,32 +212,25 @@ fn row_text(page: Option<usize>, text_id: u32, values: &[u8; 9]) -> Option<Strin
 }
 
 fn row_draw(c: &mut Cpu, m: &mut Mem) {
-    if in_chao_world(c, m) {
-        let text = match row_text(PAGE.get(), c.r[3], &VALUES.get()) {
-            Some(text) => Some(text.into_bytes()),
-            // The Chao World pause never shows the rows the stage start made
-            // (headless test: only EXTRAS drew), so its CONTINUE/EXIT are made
-            // here too, from the game's own pause text.
-            None => game_row_text(c, m, c.r[3]),
-        };
-        if let Some(message) = text.and_then(|text| message(c, m, &text)) {
-            c.r[5] = message;
-        }
-    } else if in_level(c, m) {
-        let slot = ROW_TEXT.iter().position(|&t| t == c.r[3]);
-        let message = match (PAGE.get(), slot) {
-            (_, None) => None,
-            (Some(_), _) => row_text(PAGE.get(), c.r[3], &VALUES.get())
-                .and_then(|text| message(c, m, text.as_bytes())),
-            (None, Some(slot)) => match TOP.get() + slot as u8 {
-                LEVEL_EXTRAS => message(c, m, EXTRAS.as_bytes()),
+    let level = in_level(c, m);
+    let slot = ROW_TEXT.iter().position(|&t| t == c.r[3]);
+    if let (true, Some(slot)) = (level || in_chao_world(c, m), slot) {
+        // The pause never shows the rows the stage start made (headless tests:
+        // only EXTRAS drew, in Chao World and in a level), so the game's rows
+        // are made here too, from its own pause text.
+        let text = match (PAGE.get(), level) {
+            (Some(_), _) => row_text(PAGE.get(), c.r[3], &VALUES.get()).map(String::into_bytes),
+            (None, false) if slot == 1 => Some(EXTRAS.into()),
+            (None, false) => game_row_text(c, m, c.r[3]),
+            (None, true) => match TOP.get() + slot as u8 {
+                LEVEL_EXTRAS => Some(EXTRAS.into()),
                 row => {
                     let game_row = usize::from(row - u8::from(row > LEVEL_EXTRAS));
-                    Some(m.r32(sda(c, ROW_MESSAGES[game_row])))
+                    game_row_text(c, m, ROW_TEXT[game_row])
                 }
             },
         };
-        if let Some(message) = message {
+        if let Some(message) = text.and_then(|text| message(c, m, &text)) {
             c.r[5] = message;
         }
     }
@@ -269,6 +260,7 @@ fn level_step(top: u8, cursor: u8, down: bool) -> (u8, bool) {
 fn game_row_text(c: &Cpu, m: &Mem, text_id: u32) -> Option<Vec<u8>> {
     let fallback = match text_id {
         2 => "CONTINUE",
+        3 => "RESTART",
         4 => "EXIT",
         _ => return None,
     };
@@ -392,6 +384,9 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
             return;
         }
         let area = crate::start_stage::chao_area(c, m);
+        if cursor == 2 {
+            eprintln!("pause-extras: EXIT picked, Chao World area {area:?}, level rows {level}");
+        }
         if cursor == 2 && exit_stays_in_chao_world(area) {
             // The game's own CONTINUE closes the pause; the lobby follows.
             if area != Some(crate::start_stage::LOBBY) {
