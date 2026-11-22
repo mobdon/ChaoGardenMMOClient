@@ -111,15 +111,17 @@ const DELETE: u32 = 0x7E00_0010;
 const DISPLAY: u32 = 0x7E00_0014;
 
 /// The box in the game's 640x480 screen: left, top, and the width between
-/// its two 16-wide corner columns. Rows: 24 (top), 24, 16 (bottom).
+/// its two 16-wide corner columns. Rows: 24 (top), 24, 16 (bottom). `s`
+/// shrinks the whole box about its top left corner (an MMO choice).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
     pub x: f32,
     pub y: f32,
     pub inner: f32,
+    pub s: f32,
 }
 
-static PLACE: Global<Place> = global!(Place { x: 16.0, y: 14.0, inner: 168.0 });
+static PLACE: Global<Place> = global!(Place { x: 16.0, y: 14.0, inner: 168.0, s: 0.7 });
 static TASK: Global<u32> = global!(0);
 /// The page's canvas width / height in thousandths (0 = 4:3).
 static ASPECT: Global<u16> = global!(0);
@@ -150,15 +152,15 @@ type Piece = (u32, i32, i32, f32, f32, f32);
 /// row hangs above its line, the others below theirs; the middle column
 /// stretches to the inner width.
 fn pieces(p: Place) -> [Piece; 9] {
-    let (l, r) = (p.x + 16.0, p.x + 16.0 + p.inner);
+    let (l, r) = (p.x + 16.0 * p.s, p.x + (16.0 + p.inner) * p.s);
     let mid = (l + r) / 2.0;
-    let rows = [(p.y + 24.0, 1), (p.y + 24.0, -1), (p.y + 48.0, -1)];
+    let rows = [(p.y + 24.0 * p.s, 1), (p.y + 24.0 * p.s, -1), (p.y + 48.0 * p.s, -1)];
     std::array::from_fn(|i| {
         let (y, v) = rows[i / 3];
         match i % 3 {
-            0 => (i as u32, 1, v, l, y, 1.0),
-            1 => (i as u32, 0, v, mid, y, p.inner),
-            _ => (i as u32, -1, v, r, y, 1.0),
+            0 => (i as u32, 1, v, l, y, p.s),
+            1 => (i as u32, 0, v, mid, y, p.inner * p.s),
+            _ => (i as u32, -1, v, r, y, p.s),
         }
     })
 }
@@ -167,12 +169,17 @@ fn pieces(p: Place) -> [Piece; 9] {
 /// straight sides, one inside the round corners.
 fn fills(p: Place) -> [(f32, f32, f32, f32); 2] {
     let w = p.inner + 32.0;
-    [(p.x + 2.0, p.y + 12.0, w - 4.0, 40.0), (p.x + 10.0, p.y + 3.0, w - 20.0, 58.0)]
+    [(2.0, 12.0, w - 4.0, 40.0), (10.0, 3.0, w - 20.0, 58.0)].map(|(x, y, w, h)| (p.x + x * p.s, p.y + y * p.s, w * p.s, h * p.s))
 }
 
 /// Where the portrait Chao stands (its feet) on the screen.
 fn portrait_point(p: Place) -> (f32, f32) {
-    (p.x + 34.0, p.y + 56.0)
+    (p.x + 34.0 * p.s, p.y + 56.0 * p.s)
+}
+
+/// The portrait's depth at a box scale; it stays in front of the white.
+fn chao_depth(s: f32) -> f32 {
+    (CHAO_DEPTH / s).max(CLEAR_DEPTH + 4.0)
 }
 
 /// A screen point at a depth in view space, as ChaoMain 0x4F400 and its
@@ -373,7 +380,7 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         call(c, m, GX_SET_Z_MODE, &[1, 7, 0]);
         m.w32(colour, PIECE_SHADE);
         for (i, h, v, x, y, w) in pieces(p) {
-            fcall(c, m, c1 + SPRITE, &[COPIES + i * RECORD, 0, h as u32, v as u32], &[x, y, DEPTH, w, 1.0]);
+            fcall(c, m, c1 + SPRITE, &[COPIES + i * RECORD, 0, h as u32, v as u32], &[x, y, DEPTH, w, p.s]);
         }
         WHITENING.set(false);
         m.w32(colour, keep);
@@ -381,17 +388,21 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         call(c, m, GX_SET_TEV_SWAP_MODE_TABLE, &[1, 0, 0, 0, 3]);
     }
     let (name, rings) = FEED.with_borrow(|f| f.clone());
-    text(c, m, &name, p.x + 66.0, p.y + 10.0, 20.0);
+    let at = |x: f32, y: f32| (p.x + x * p.s, p.y + y * p.s);
+    let (tx, ty) = at(66.0, 10.0);
+    text(c, m, &name, tx, ty, 20.0 * p.s);
+    let (tx, ty) = at(66.0, 34.0);
     // The ring line gives way to the egg notice while it is up.
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) < EGGS.get().1 {
-        text(c, m, "Egg received!", p.x + 66.0, p.y + 34.0, 14.0);
+        text(c, m, "Egg received!", tx, ty, 14.0 * p.s);
     } else if let Some(rings) = rings {
-        text(c, m, &format!("Rings {rings}"), p.x + 66.0, p.y + 34.0, 16.0);
+        text(c, m, &format!("Rings {rings}"), tx, ty, 16.0 * p.s);
     }
     let Some((chao, shows)) = PORTRAIT.get().filter(|p| p.0 != 0) else { return };
     let fov = call(c, m, NJ_GET_CURRENT_FOV, &[]) as i32;
     let tan = (fov as f32 / 2.0 * std::f32::consts::TAU / 65536.0).tan();
-    let [x, y, z] = view_point(portrait_point(p), CHAO_DEPTH, tan);
+    // Further away is smaller: the Chao shrinks with the box.
+    let [x, y, z] = view_point(portrait_point(p), chao_depth(p.s), tan);
     call(c, m, GX_SET_BLEND_MODE, &[1, 4, 5, 0]);
     call(c, m, GX_SET_Z_MODE, &[1, 3, 1]);
     call(c, m, MODEL_BEGIN, &[]);
@@ -413,13 +424,15 @@ fn display(c: &mut Cpu, m: &mut Mem) {
 mod tests {
     use super::*;
 
-    const P: Place = Place { x: 16.0, y: 14.0, inner: 128.0 };
+    const P: Place = Place { x: 16.0, y: 14.0, inner: 128.0, s: 1.0 };
 
     #[test]
     fn the_portrait_stands_inside_its_part_of_the_box() {
         let (sx, sy) = portrait_point(P);
         assert!(fills(P).iter().any(|&(x, y, w, h)| sx > x && sx < x + w && sy > y && sy <= y + h));
         assert!(CLEAR_DEPTH < CHAO_DEPTH);
+        // A smaller box puts the Chao further back, still before the white.
+        assert!(chao_depth(0.7) < CHAO_DEPTH && chao_depth(0.1) > CLEAR_DEPTH);
         // Screen centre is straight ahead; left of it is -x, above it +y (90 degree view).
         assert_eq!(view_point((320.0, 240.0), -31.0, 1.0), [0.0, 0.0, -31.0]);
         let [vx, vy, _] = view_point((0.0, 0.0), -32.0, 1.0);
@@ -444,6 +457,17 @@ mod tests {
         for (x, y, w, h) in fills(P) {
             assert!(x > P.x && y > P.y && x + w < P.x + 160.0 && y + h < P.y + 64.0);
         }
+    }
+
+    #[test]
+    fn a_smaller_box_shrinks_about_its_top_left_corner() {
+        let h = Place { s: 0.5, ..P };
+        let (full, half) = (pieces(P), pieces(h));
+        for (a, b) in full.iter().zip(half) {
+            assert_eq!(((a.3 - P.x) / 2.0, (a.4 - P.y) / 2.0, a.5 / 2.0), (b.3 - P.x, b.4 - P.y, b.5));
+        }
+        assert_eq!(fills(h)[0], (17.0, 20.0, 78.0, 20.0));
+        assert_eq!(portrait_point(h), (33.0, 42.0));
     }
 
     #[test]
