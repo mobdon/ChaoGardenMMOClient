@@ -99,6 +99,9 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
     let fifo = QUEUED.with_borrow_mut(std::mem::take);
     // Only the RAM pages changed since the last job go (GX_DELTA); the page
     // keeps the rest. Copying all of RAM each frame halved the frame rate at 48 MB.
+    // SA2_PROFILE: "gx decode" here is the page compare + job build, "window
+    // render" the write to /dev/gx (it waits while the page holds both slots).
+    let t_compare = std::time::Instant::now();
     let job = SHADOW.with_borrow_mut(|shadow| {
         if shadow.len() != m.ram.len() {
             shadow.clear();
@@ -130,10 +133,17 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
         job.extend_from_slice(&pages);
         job
     });
+    if sa2_boot::prof::on() {
+        sa2_boot::prof::add(&sa2_boot::prof::GX, t_compare);
+    }
+    let t_send = std::time::Instant::now();
     let sent = std::fs::OpenOptions::new()
         .append(true)
         .open("/dev/gx")
         .and_then(|mut f| f.write_all(&job));
+    if sa2_boot::prof::on() {
+        sa2_boot::prof::add(&sa2_boot::prof::RENDER, t_send);
+    }
     if let Err(e) = sent {
         static SAID: std::sync::Once = std::sync::Once::new();
         SAID.call_once(|| eprintln!("gx: /dev/gx: {e}"));

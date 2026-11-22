@@ -87,6 +87,13 @@ struct Tracked<'a> {
 }
 
 impl GxMemory for Tracked<'_> {
+    fn view(&self, addr: u32, len: usize) -> Option<&[u8]> {
+        let p = (addr & 0x3FFF_FFFF) as usize;
+        self.ram.get(p..p.checked_add(len)?)
+    }
+    fn touch(&self, addr: u32, len: usize) {
+        let _ = self.read(addr, len.min(self.ram.len().saturating_sub((addr & 0x3FFF_FFFF) as usize)));
+    }
     fn read(&self, addr: u32, len: usize) -> Option<&[u8]> {
         let p = (addr & 0x3FFF_FFFF) as usize;
         let bytes = self.ram.get(p..p.checked_add(len)?)?;

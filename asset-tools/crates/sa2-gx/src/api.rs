@@ -71,6 +71,13 @@ use std::sync::Arc;
 /// Read access to the game's memory (GameCube addresses).
 pub trait GxMemory {
     fn read(&self, addr: u32, len: usize) -> Option<&[u8]>;
+    /// A read that only sets up a view (a vertex array's whole window); the
+    /// bytes actually used are reported with [`Self::touch`].
+    fn view(&self, addr: u32, len: usize) -> Option<&[u8]> {
+        self.read(addr, len)
+    }
+    /// `len` bytes at `addr` were used through a [`Self::view`].
+    fn touch(&self, _addr: u32, _len: usize) {}
 }
 
 /// Main RAM as one slice starting at physical address 0; cached
@@ -534,7 +541,11 @@ impl Gx {
             .clone()
     }
 
-    fn array_views<'m>(&self, mem: &'m dyn GxMemory) -> [GxArray<'m>; ATTR_COUNT] {
+    fn array_views<'m>(
+        &self,
+        mem: &'m dyn GxMemory,
+        used: &'m [std::cell::Cell<usize>; ATTR_COUNT],
+    ) -> [GxArray<'m>; ATTR_COUNT] {
         let mut out = [GxArray::default(); ATTR_COUNT];
         for a in attr::POS..=attr::TEX7 {
             let (base, stride) = self.arrays[(a - attr::POS) as usize];
@@ -544,7 +555,7 @@ impl Gx {
             // The array runs to the end of RAM; reads past it give zeros.
             let mut len = 0x40_0000usize;
             let data = loop {
-                if let Some(d) = mem.read(base, len) {
+                if let Some(d) = mem.view(base, len) {
                     break d;
                 }
                 len /= 2;
@@ -552,7 +563,7 @@ impl Gx {
                     break &[][..];
                 }
             };
-            out[a as usize] = GxArray { data, stride };
+            out[a as usize] = GxArray { data, stride, used: Some(&used[a as usize]) };
         }
         out
     }
@@ -811,12 +822,20 @@ impl Gx {
 
     fn run_draws(&mut self, dl: &[u8], mem: &dyn GxMemory) {
         let (loader, layout) = self.loader();
-        let arrays = self.array_views(mem);
+        let used: [std::cell::Cell<usize>; ATTR_COUNT] = Default::default();
+        let arrays = self.array_views(mem, &used);
         let mut data = loader.parse_display_list(dl, 0);
         if data.indices.is_empty() {
             return;
         }
         loader.load_vertex_data(&mut data, dl, &arrays);
+        // The part of each array window the draws indexed.
+        for a in attr::POS..=attr::TEX7 {
+            let n = used[a as usize].get();
+            if n > 0 {
+                mem.touch(self.arrays[(a - attr::POS) as usize].0, n);
+            }
+        }
         let (material, params, draw_params) = self.snapshot(mem);
         self.frame.draws.push(DrawCmd {
             material,
