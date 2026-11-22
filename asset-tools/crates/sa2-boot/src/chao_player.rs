@@ -1748,7 +1748,23 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     }
 }
 
+/// A new stage (not a Chao World area change): the game has released the
+/// last stage's memory, so the textures, models and motions this module
+/// loaded there are gone. Forget them so they load again; drawing the gear
+/// from the freed models hung the game after a level EXIT into Chao World
+/// (frames stopped right after the new Chao's first draw).
+/// Unverified: which allocations the stage change frees; this drops all of them.
+fn drop_stage_loads() {
+    SHADOW_TEX.set(None);
+    KNUX_TEX.set(None);
+    EXTRA_MODELS.with_borrow_mut(|e| e.clear());
+    GLOVE_FIT.set(None);
+    SHADOW_MOVES.set(false);
+    BOARD.set(None);
+}
+
 thread_local! {
+    static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
@@ -1798,6 +1814,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let stage = m.r16(STAGE_NUM) ^ (area << 8);
     if LIVE_STAGE.replace(stage) != stage {
         RIDER.set(0);
+        if LIVE_STAGE_NUM.replace(m.r16(STAGE_NUM)) != m.r16(STAGE_NUM) {
+            drop_stage_loads();
+        }
         if let Step::Live(_) = STEP.get() {
             STEP.set(Step::Wait(0));
         }
