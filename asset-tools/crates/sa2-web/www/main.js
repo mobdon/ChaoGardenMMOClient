@@ -45,6 +45,7 @@ function hold(bit, down) {
   held = down ? held | bit : held & ~bit;
 }
 addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return; // typing in chat, not playing
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
   e.preventDefault();
@@ -152,6 +153,7 @@ function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
   room = { ws, zone };
   ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone }));
+  ws.onmessage = ({ data }) => { try { const m = JSON.parse(data); if (m.kind === 'chat') chatLine(m); } catch {} };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
 }
@@ -243,3 +245,36 @@ $('go').addEventListener('click', () => start().catch((e) => {
 }));
 // ?autostart: start without the button (for testing; sound may stay off).
 if (q.has('autostart')) $('go').click();
+
+// ---- chat: world (everyone) and room (this area), relayed by the MMO server --
+// T opens the box; a message starting "/w " goes to world chat, the rest to the room.
+const chat = document.createElement('div');
+chat.id = 'chat';
+chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-input" maxlength="200" placeholder="Room chat (/w for world)" aria-label="Chat message" hidden>';
+document.body.append(chat);
+const chatLog = chat.firstChild, chatInput = chat.lastChild;
+function chatLine({ channel, fromName, text }) {
+  const line = document.createElement('div');
+  line.className = channel;
+  line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
+  chatLog.append(line);
+  while (chatLog.childElementCount > 50) chatLog.firstChild.remove();
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyT' || e.target === chatInput || !room) return;
+  e.preventDefault();
+  held = 0;
+  chatInput.hidden = false;
+  chatInput.focus();
+});
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { chatInput.value = ''; chatInput.blur(); }
+  if (e.key !== 'Enter') return;
+  const world = chatInput.value.startsWith('/w ');
+  const text = (world ? chatInput.value.slice(3) : chatInput.value).trim();
+  if (text && room?.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chat', channel: world ? 'world' : 'room', text }));
+  chatInput.value = '';
+  chatInput.blur();
+});
+chatInput.addEventListener('blur', () => (chatInput.hidden = true));
