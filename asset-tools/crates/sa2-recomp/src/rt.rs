@@ -391,6 +391,19 @@ pub fn divwu(a: u32, b: u32) -> u32 {
 pub fn rs(v: f64) -> f64 {
     v as f32 as f64
 }
+/// Fused `a * c + b` with one rounding, as fmadd and ps_madd compute it.
+/// On wasm `f64::mul_add` is a software libm `fma`. When `a` and `c` both
+/// hold f32 values (always so for paired singles) their product is exact
+/// in f64 (24 + 24 bits < 53, no overflow or underflow), so the plain
+/// add rounds once and matches `mul_add` bit for bit; NaN fails the check.
+#[inline]
+pub fn madd(a: f64, c: f64, b: f64) -> f64 {
+    if rs(a) == a && rs(c) == c {
+        a * c + b
+    } else {
+        a.mul_add(c, b)
+    }
+}
 #[inline]
 pub fn fctiw(v: f64, trunc: bool) -> f64 {
     let t = if trunc { v.trunc() } else { v.round_ties_even() };
