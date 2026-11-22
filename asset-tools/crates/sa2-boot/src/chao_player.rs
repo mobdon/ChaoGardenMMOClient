@@ -1112,6 +1112,16 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let mdl = call(c, m, LOAD_MDL, &[SHADOW_MDL_NAME]);
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
+            // SA2_MODEL_DUMP (debug): every loaded model slot with its node and vertex counts.
+            if std::env::var_os("SA2_MODEL_DUMP").is_some() {
+                for k in 0..0x428u32 {
+                    let o = m.r32(MODELS + 4 * k);
+                    if (0x8000_0000..0x8C00_0000).contains(&o) {
+                        let r = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]);
+                        eprintln!("model {k}: {o:#x} nodes {} verts {}", r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>());
+                    }
+                }
+            }
         }
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
