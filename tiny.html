@@ -32,6 +32,11 @@
             </div>
             <label id="tiny-slot-label" class="slot-label" hidden>Saved Chao<select id="tiny-slot" aria-label="Choose a saved Chao"></select></label>
             <div id="tiny-auth" class="tiny-auth"><p id="tiny-auth-message">Looking for this browser's saved Chao…</p><a href="/?tiny=1" class="text-link">Load a save at the garden title <span>↗</span></a></div>
+            <form id="tiny-pair-code" class="tiny-pairing" hidden>
+              <p>Pair this phone once: open the Chao Transporter on your PC and type the code it shows.</p>
+              <label>Code from your PC<input name="code" required autocomplete="off" maxlength="6" spellcheck="false" autocapitalize="characters" /></label>
+              <button class="small-button" type="submit">Pair this phone</button>
+            </form>
             <form id="tiny-pairing" class="tiny-pairing" hidden>
               <p>Pair this phone using a short-lived invitation approved on your desktop.</p>
               <label>Invitation ID<input name="pairingId" required autocomplete="off" maxlength="128" spellcheck="false" /></label>

@@ -13,7 +13,7 @@ const v2 = { ok: true, accounts: { version: 2, activityLeases: true, intentSeque
   authentication: ['websocket-first-frame'] } };
 const credential = 'a'.repeat(64);
 
-function harness(statuses) {
+function harness(statuses, paired = true) {
   const requests = [], sockets = [], accountReads = [], notices = [], nodes = new Map();
   let retries = 0;
   const context = vm.createContext({ supportsTinyAccounts, AbortController,
@@ -21,7 +21,7 @@ function harness(statuses) {
     pendingSave: false, returnAfterSave: false, socket: null, connected: false, connecting: false,
     tinyGame: null, controlsSession: '', pendingStart: false, pendingStop: false,
     token: null, player: null, careState: null, lastSyncedAt: null, lastCachedAt: 0, lastSavedAt: null, lastResultId: null,
-    savedSlots: [], storage: {}, secureTransport: true, loopback: true,
+    savedSlots: [], storage: {}, secureTransport: true, loopback: true, deviceKey: () => paired ? 'device-key' : null,
     accountV2: false, knownAccountV2: false, capabilities: {},
     setTimeout: () => 1, clearTimeout() {}, resetMovement() {}, renderPlayer() {}, renderGame() {},
     connectionLabel() {}, rememberPlayer() {}, renderSlots() {}, readTinyCache: () => null,
@@ -61,6 +61,15 @@ test('pre-pairing v2 discovery remains sticky across a different saved credentia
   assert.equal(h.accountReads.length, 0); assert.equal(h.sockets.length, 0);
   assert.equal(h.context.knownAccountV2, true);
   assert.match(source, /then\(status => \{\s*selectAccountProtocol\(status\);/);
+});
+
+test('an unpaired phone resumes its Chao but is asked to pair instead of opening a socket', async () => {
+  const h = harness([{ ok: true }], false);
+  await h.context.resume(credential);
+  assert.deepEqual(h.requests.map(request => request.path), ['/api/status', '/api/session']);
+  assert.equal(h.sockets.length, 0); assert.equal(h.retries(), 0);
+  assert.equal(h.context.$('#tiny-pair-code').hidden, false);
+  assert.match(h.notices.at(-1), /Pair this phone/);
 });
 
 test('fresh loopback legacy visits remain supported, but advertised unsupported accounts fail closed', async () => {

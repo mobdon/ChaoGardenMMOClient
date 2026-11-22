@@ -33,6 +33,9 @@ let storage;
 try { storage = window.localStorage; } catch { storage = { getItem: () => null, setItem: () => {} }; }
 const saves = createSaveSlots(storage);
 let savedSlots = [];
+// This phone's pairing key for a Chao (from /api/pair/claim), kept so the pairing is one-time.
+const DEVICE_KEY = 'chao-tiny-device:';
+const deviceKey = id => { try { return id ? storage.getItem(DEVICE_KEY + id) : null; } catch { return null; } };
 let socket = null;
 let token = null;
 let player = null;
@@ -453,7 +456,7 @@ function consumeSnapshot(next) {
 
 function openSocket(activeToken, generation) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const current = new WebSocket(`${protocol}//${location.host}/ws?tiny=1${accountV2 ? '' : `&token=${encodeURIComponent(activeToken)}`}`);
+  const current = new WebSocket(`${protocol}//${location.host}/ws?tiny=1${accountV2 ? '' : `&token=${encodeURIComponent(activeToken)}&device=${encodeURIComponent(deviceKey(player?.id) || '')}`}`);
   socket = current;
   current.onopen = () => {
     if (generation !== connectionGeneration) { current.close(); return; }
@@ -543,12 +546,14 @@ async function resume(activeToken) {
       if (generation !== connectionGeneration || !result) return;
       player = result.snapshot.self;
     } else {
-      if (!loopback) { const error = new Error('This server needs secure device pairing before phone play is available.'); error.retry = false; throw error; }
       const response = await fetch('/api/session', { method: 'POST', signal: abort.signal, redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: activeToken, resumeOnly: true }) });
       const data = await response.json();
       if (generation !== connectionGeneration) return;
       if (!response.ok || !data.player || typeof data.token !== 'string') { const error = new Error(data.error || 'This saved Chao is not available on this server.'); error.retry = response.status >= 500; throw error; }
       player = data.player; token = data.token;
+      // Tiny Garden connects only from the phone paired with this Chao (one-time code from the PC).
+      if (!deviceKey(player.id)) { $('#tiny-pair-code').hidden = false; const error = new Error('Pair this phone with your PC to play here.'); error.retry = false; throw error; }
+      $('#tiny-pair-code').hidden = true;
     }
     rememberPlayer(); renderSlots(); renderPlayer(); openSocket(token, generation);
   } catch (error) {
@@ -809,6 +814,24 @@ else {
   }).catch(() => {});
 }
 
+$('#tiny-pair-code').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget, submit = form.querySelector('button');
+  const code = String(new FormData(form).get('code') || '').trim();
+  const card = savedSlots.find(row => row.token === token)?.card;
+  if (!code || submit.disabled) return;
+  if (!card) { $('#tiny-session-notice').textContent = 'Log in at the garden title on this phone first, then pair.'; return; }
+  submit.disabled = true; $('#tiny-session-notice').textContent = 'Pairing…';
+  try {
+    const response = await fetch('/api/pair/claim', { method: 'POST', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card, code }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || typeof data.deviceKey !== 'string' || typeof data.chao?.token !== 'string') throw new Error(data.error || 'Pairing failed. Get a new code on your PC.');
+    storage.setItem(DEVICE_KEY + data.chao.player.id, data.deviceKey);
+    form.reset(); $('#tiny-session-notice').textContent = 'Phone paired.';
+    resume(data.chao.token);
+  } catch (error) { $('#tiny-session-notice').textContent = error.message; }
+  finally { submit.disabled = false; }
+});
 $('#tiny-pairing').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget, submit = form.querySelector('button');
