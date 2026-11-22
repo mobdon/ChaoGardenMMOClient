@@ -66,3 +66,5 @@
 .auth-tabs button { padding: 13px; border: 1px solid #305681; border-radius: 5px 13px 5px 5px; background: #07172e; color: #a4c2e2; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; }
 .auth-tabs button[aria-selected="true"] { background: linear-gradient(105deg, #0f4ca5, #187ad4); color: white; border-color: transparent; border-bottom: 3px solid #ffd139; }
 .auth-tabs button:focus-visible { outline: 2px solid #ffd139; outline-offset: 2px; }
+.title-screen .remember-me { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: #a4c2e2; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.title-screen .remember-me input { flex: none; width: 16px; height: 16px; padding: 0; accent-color: #ffd139; }
