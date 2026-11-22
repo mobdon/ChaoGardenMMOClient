@@ -547,17 +547,38 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
     for o in (0x20..0x2C).step_by(4) { m.w32(heel + o, 1.0f32.to_bits()); }
     let br = crate::chao_retarget::read_chao(&|a| m.r32(a), heel, [vec![], vec![]]);
     let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
+    for (i, o) in (0x08..0x34).step_by(4).enumerate() { m.w32(heel + o, keep[i]); }
     let node = SHOES[n].0;
     let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
     if let Some(place) = hp.map(|p| gear_tune(if n == 0 { "boot0" } else { "boot1" }).map_or(p, |t| mul34(&p, &t))) {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
-            eprintln!("chao-player boot {n}: Shadow heel {heel:#x} ({} nodes, {} vertices), overlay {overlay:#x}", br.nodes.len(), bv.len());
+            let (lo, hi) = bv.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(l, h), v| (std::array::from_fn(|i| l[i].min(v[i])), std::array::from_fn(|i| h[i].max(v[i]))));
+            eprintln!("chao-player boot {n}: Shadow heel {heel:#x} ({} nodes, {} vertices, box {lo:?}..{hi:?}, per node {:?}), overlay {overlay:#x}, place scale {:.3}", br.nodes.len(), bv.len(), br.verts.iter().map(Vec::len).collect::<Vec<_>>(), (0..3).map(|i| place[i][0] * place[i][0]).sum::<f32>().sqrt());
         }
         let put = |m: &mut Mem| for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } };
         m.w32(list, tex);
         let lcap = LCAP.replace(false);
-        put(m);
-        call(c, m, 0x8011_DF44, &[heel]);
+        // His heel/toe vertices are weighted to the leg above them, so the
+        // heel alone drew stretched across the screen (run r61): the whole
+        // body is drawn, placed so its heel lands on the boot's place, with
+        // every node's polygons off except heel 23 and toe 24 (their
+        // vertices still run, filling the weights).
+        let body = RIDER_OBJ.get();
+        let w = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
+        if let Some(&(hr, ht)) = w.get(23) {
+            let w23: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { hr[i][j] } else { ht[i] }));
+            let id: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| f32::from(u8::from(i == j))));
+            let at = mul34(&place, &inv_mul(&w23, &id));
+            let plists: Vec<(u32, u32)> = (0..w.len()).filter(|&k| k != 23 && k != 24).filter_map(|k| {
+                let o = node_obj(m, body, k);
+                let model = if o != 0 { m.r32(o + 4) } else { 0 };
+                (0x8000_0000..0x8C00_0000).contains(&model).then(|| (model, m.r32(model + 4)))
+            }).collect();
+            for &(model, _) in &plists { m.w32(model + 4, 0); }
+            for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, at[r][k].to_bits()); } }
+            call(c, m, 0x8011_DF44, &[body]);
+            for &(model, pl) in &plists { m.w32(model + 4, pl); }
+        }
         if (0x8000_0000..0x8C00_0000).contains(&overlay) {
             put(m);
             call(c, m, 0x8011_DF44, &[overlay]);
@@ -573,7 +594,6 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
         }
         LCAP.set(lcap);
     }
-    for (i, o) in (0x08..0x34).step_by(4).enumerate() { m.w32(heel + o, keep[i]); }
 }
 
 /// The object of node `index` (depth first, as read_chao counts) in a model
