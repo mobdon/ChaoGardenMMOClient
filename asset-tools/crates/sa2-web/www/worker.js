@@ -275,8 +275,8 @@ function mmoRead(path) {
   }
   // Chao Karate (sa2-boot karate.rs): the page's [press counter, button].
   if (path === 'mmo/karate-in') return { bytes: b.slice(MMO.KARATE, MMO.KARATE + 2), ver: 0 };
-  // The player's Chao's name (sa2-boot kinder_chart.rs): 7 bytes, 0 ends.
-  if (path === 'mmo/name-in') return { bytes: b.slice(MMO.NAME, MMO.NAME + 7), ver: 0 };
+  // The player's Chao's name (sa2-boot kinder_chart.rs): 7 bytes, 0 ends; then the count of eggs received (card_box.rs).
+  if (path === 'mmo/name-in') return { bytes: b.slice(MMO.NAME, MMO.NAME + 8), ver: 0 };
   // The server's skill numbers for the player's Chao (sa2-boot chao_player.rs
   // take_skills): 7 x [level, progress, points u16 big-endian]; no file until
   // the server has answered a record upload.
@@ -320,7 +320,7 @@ function mmoSlot(id) {
 }
 // A file the game wrote, on close.
 function mmoWrite(path, bytes) {
-  if (path === 'mmo/karate-out') return void sh.mmo.set(bytes.subarray(0, 2), MMO.KARATE + 4); // [strong moves unlocked, press that is done]
+  if (path === 'mmo/karate-out') return void sh.mmo.set(bytes.subarray(0, 3), MMO.KARATE + 4); // [strong moves unlocked, press that is done, bout on]
   const out = { 'mmo/pose-out': [MMO.POSE_OUT, MMO.POSE_OUT_MAX], 'mmo/record-out': [MMO.REC_OUT, MMO.REC],
     'mmo/tags-out': [MMO.TAGS, MMO.TAGS_MAX], 'mmo/tree-icon': [MMO.TREE, MMO.TREE_MAX], 'mmo/tiny-pick': [MMO.PICK, MMO.PICK_MAX], 'mmo/breed-out': [MMO.BREED_OUT, MMO.BREED_OUT_MAX], 'mmo/story-out': [MMO.STORY_OUT, MMO.STORY_OUT_MAX], 'mmo/info-out': [MMO.INFO, MMO.INFO_MAX] }[path] || null;
   if (!out) return;

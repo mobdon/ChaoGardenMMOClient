@@ -146,7 +146,11 @@ static MACHINE: Global<(u32, u32)> = global!((0, 0));
 static HIT_HOOKED: Global<bool> = global!(false);
 /// What the log last said of the machine: its task, and how it was touched (0 no, 1 the game's hit, 2 reach).
 static SAID: Global<(u32, u8)> = global!((0, 0));
-static PLACED: Global<bool> = global!(false);
+/// Frames the debug placement has been held (see PLACE_FRAMES).
+static PLACED: Global<u32> = global!(0);
+/// The debug placement is held this long: the Chao that drives itself is made
+/// a few frames after the machine, and must be put there too.
+const PLACE_FRAMES: u32 = 180;
 
 /// Each frame in Chao World: once module 73 is linked (again), point its
 /// sprites at the Tiny Chao Garden art and hook its menu.
@@ -162,12 +166,16 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     // there, e.g. on the machine's spot to test its opening without the walk.
     let (_, slot) = MACHINE.get();
     let player = m.r32(PLAYERTWP);
-    if slot != 0 && m.r32(slot) != 0 && player != 0 && !PLACED.get() {
+    if slot != 0 && m.r32(slot) != 0 && player != 0 && PLACED.get() < PLACE_FRAMES {
         if let Some(at) = std::env::var("SA2_CHAO_AT").ok().and_then(|v| place(&v)) {
-            PLACED.set(true);
-            eprintln!("tiny-transporter: debug, player put at {at:?}");
-            for (o, v) in [0x14, 0x18, 0x1C].into_iter().zip(at) {
-                m.wf32(player + o, f64::from(v));
+            if PLACED.replace(PLACED.get() + 1) == 0 {
+                eprintln!("tiny-transporter: debug, player put at {at:?}");
+            }
+            // The Chao too: when it drives itself the character stays behind.
+            for twp in [player, crate::chao_player::own_twp(m)].into_iter().filter(|&t| t != 0) {
+                for (o, v) in [0x14, 0x18, 0x1C].into_iter().zip(at) {
+                    m.wf32(twp + o, f64::from(v));
+                }
             }
         }
     }
@@ -204,14 +212,17 @@ fn hit(c: &mut Cpu, m: &mut Mem) {
     let (machine, player) = (pos(m.r32(task + 0x34)), m.r32(PLAYERTWP));
     let how = if c.r[3] != 0 {
         1
-    } else if player != 0 && in_reach(pos(player), machine) {
+    // The character, or the player's Chao when it drives itself and the
+    // character stays where it arrived.
+    } else if player != 0 && [player, crate::chao_player::own_twp(m)].into_iter().any(|t| t != 0 && in_reach(pos(t), machine)) {
         c.r[3] = player;
         2
     } else {
         0
     };
     if SAID.replace((task, how)) != (task, how) {
-        eprintln!("tiny-transporter: machine at {machine:?}, touched: {}", ["no", "the game's own hit", "by reach"][how as usize]);
+        let own = crate::chao_player::own_twp(m);
+        eprintln!("tiny-transporter: machine at {machine:?}, character at {:?}, Chao at {:?}, touched: {}", (player != 0).then(|| pos(player)), (own != 0).then(|| pos(own)), ["no", "the game's own hit", "by reach"][how as usize]);
     }
 }
 

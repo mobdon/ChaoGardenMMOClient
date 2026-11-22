@@ -57,9 +57,12 @@ const NJ_GET_CURRENT_FOV: u32 = 0x8011_26A8;
 /// The Chao Select window's turn and depth for its Chao (ChaoMain 0x55A20:
 /// -5 degrees, rodata 0x9A8C).
 const TURN: u32 = 0xFC72;
-const CHAO_DEPTH: f32 = -31.0;
-/// Far behind everything, as the chart's portrait clear (Kinder 0xF244).
-const CLEAR_DEPTH: f32 = -1000.0;
+/// Deeper than the window's own -31 so the Chao is smaller: in a build
+/// shot it stood 63 screen units tall at -31, the box is 64.
+const CHAO_DEPTH: f32 = -46.0;
+/// Behind the Chao and inside the room's far plane: at -1000 the quad was
+/// cut away and a near wall hid the Chao (build shots).
+const CLEAR_DEPTH: f32 = -80.0;
 /// The language byte the chart's text reads (0 = Japanese font rows).
 const LANGUAGE: u32 = 0x801C_C168 + 0x11;
 
@@ -87,8 +90,9 @@ const ART: &[u8] = b"AL_TEX_ENT_COMMON_EN\0";
 const ART_INDEX: u32 = 3;
 /// The window's depth (ChaoMain rodata 0x9A04).
 const DEPTH: f32 = -34.0;
-/// Shade for the window pieces: frame 0.61 green -> 0.81, stripes 0.39 -> 0.88.
-const PIECE_SHADE: u32 = 0xB0B0_B0FF;
+/// Shade for the window pieces: frame 0.61 green -> 0.91, stripes 0.39 -> 0.94
+/// (0.81 / 0.88 read as a grey box in a build shot).
+const PIECE_SHADE: u32 = 0xD8D8_D8FF;
 const WHITE: u32 = 0xFFFF_FFFF;
 
 // Scratch past the chart's (kinder_chart.rs uses 0x8288_1000..0x8288_1300).
@@ -124,6 +128,17 @@ static WHITENING: Global<bool> = global!(false);
 /// The portrait Chao's task (0: none could be made) and its two display functions.
 static PORTRAIT: Global<Option<(u32, [u32; 2])>> = global!(None);
 static FEED: Global<(String, Option<u32>)> = global!((String::new(), None));
+/// The page's count of eggs received (byte 7 of SA2_NAME_IN) as last read,
+/// and the frame the notice stays up to.
+static EGGS: Global<(u8, u64)> = global!((0, 0));
+/// The notice's time on screen (an MMO choice): 5 s at 60 frames a second.
+const NOTICE_FRAMES: u64 = 300;
+/// The game's sound call and its menu confirm chime (pause_extras.rs).
+/// shortcut: a stand-in, the game's own item pickup sound id is not known
+/// yet; take it from an SA2_SE_LOG run of a garden pickup.
+const SE_CALL: u32 = 0x8006_B978;
+const SE_NOTICE: u32 = 0x8002;
+
 
 /// One window piece: record (0..=8 = the window's 10..=18), x anchor,
 /// y anchor, x, y, width scale.
@@ -153,14 +168,9 @@ fn fills(p: Place) -> [(f32, f32, f32, f32); 2] {
     [(p.x + 2.0, p.y + 12.0, w - 4.0, 40.0), (p.x + 10.0, p.y + 3.0, w - 20.0, 58.0)]
 }
 
-/// The portrait's part of the box: 44 wide at the left (x, y, width, height).
-fn portrait_rect(p: Place) -> (f32, f32, f32, f32) {
-    (p.x + 10.0, p.y + 3.0, 44.0, 58.0)
-}
-
 /// Where the portrait Chao stands (its feet) on the screen.
 fn portrait_point(p: Place) -> (f32, f32) {
-    (p.x + 32.0, p.y + 58.0)
+    (p.x + 34.0, p.y + 56.0)
 }
 
 /// A screen point at a depth in view space, as ChaoMain 0x4F400 and its
@@ -275,7 +285,20 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     }
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(30) {
         let read = |var: &str| std::env::var(var).ok().and_then(|p| std::fs::read(p).ok());
-        FEED.set((read("SA2_NAME_IN").map(|b| name_of(&b)).unwrap_or_default(), read("SA2_RINGS_IN").and_then(|b| rings_of(&b))));
+        let name = read("SA2_NAME_IN");
+        // An egg came (the server's event, counted by the page): the sound
+        // now, the notice in the box for a while.
+        let (seen, until) = EGGS.get();
+        let eggs = name.as_ref().and_then(|b| b.get(7).copied()).unwrap_or(seen);
+        if eggs != seen {
+            let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+            EGGS.set((eggs, now + NOTICE_FRAMES));
+            eprintln!("card-box: egg received, notice up");
+            call(c, m, SE_CALL, &[SE_NOTICE, 0, 0, 0]);
+        } else {
+            EGGS.set((seen, until));
+        }
+        FEED.set((name.map(|b| name_of(&b)).unwrap_or_default(), read("SA2_RINGS_IN").and_then(|b| rings_of(&b))));
     }
     // An area change frees the task without a word: its display slot tells.
     let task = TASK.get();
@@ -325,15 +348,13 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         call(c, m, c1 + SPRITE_BLEND, &[]);
         WHITENING.set(true);
         m.w32(colour, WHITE);
-        // The portrait's part, far behind and into the depth buffer, so the
-        // Chao is not hidden by what the room drew there.
+        // The white goes behind the Chao and into the depth buffer, so
+        // what the room drew there does not hide the Chao.
         call(c, m, GX_SET_Z_MODE, &[1, 7, 1]);
-        let (x, y, w, h) = portrait_rect(p);
-        fcall(c, m, c1 + SPRITE, &[COPIES + FILL * RECORD, 0, -1i32 as u32, -1i32 as u32], &[x, y, CLEAR_DEPTH, w, h]);
-        call(c, m, GX_SET_Z_MODE, &[1, 7, 0]);
         for (x, y, w, h) in fills(p) {
-            fcall(c, m, c1 + SPRITE, &[COPIES + FILL * RECORD, 0, -1i32 as u32, -1i32 as u32], &[x, y, DEPTH, w, h]);
+            fcall(c, m, c1 + SPRITE, &[COPIES + FILL * RECORD, 0, -1i32 as u32, -1i32 as u32], &[x, y, CLEAR_DEPTH, w, h]);
         }
+        call(c, m, GX_SET_Z_MODE, &[1, 7, 0]);
         m.w32(colour, PIECE_SHADE);
         for (i, h, v, x, y, w) in pieces(p) {
             fcall(c, m, c1 + SPRITE, &[COPIES + i * RECORD, 0, h as u32, v as u32], &[x, y, DEPTH, w, 1.0]);
@@ -344,9 +365,12 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         call(c, m, GX_SET_TEV_SWAP_MODE_TABLE, &[1, 0, 0, 0, 3]);
     }
     let (name, rings) = FEED.with_borrow(|f| f.clone());
-    text(c, m, &name, p.x + 60.0, p.y + 10.0, 20.0);
-    if let Some(rings) = rings {
-        text(c, m, &format!("Rings {rings}"), p.x + 60.0, p.y + 34.0, 16.0);
+    text(c, m, &name, p.x + 66.0, p.y + 10.0, 20.0);
+    // The ring line gives way to the egg notice while it is up.
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) < EGGS.get().1 {
+        text(c, m, "Egg received!", p.x + 66.0, p.y + 34.0, 14.0);
+    } else if let Some(rings) = rings {
+        text(c, m, &format!("Rings {rings}"), p.x + 66.0, p.y + 34.0, 16.0);
     }
     let Some((chao, shows)) = PORTRAIT.get().filter(|p| p.0 != 0) else { return };
     let fov = call(c, m, NJ_GET_CURRENT_FOV, &[]) as i32;
@@ -377,9 +401,9 @@ mod tests {
 
     #[test]
     fn the_portrait_stands_inside_its_part_of_the_box() {
-        let (x, y, w, h) = portrait_rect(P);
         let (sx, sy) = portrait_point(P);
-        assert!(sx > x && sx < x + w && sy > y && sy <= y + h);
+        assert!(fills(P).iter().any(|&(x, y, w, h)| sx > x && sx < x + w && sy > y && sy <= y + h));
+        assert!(CLEAR_DEPTH < CHAO_DEPTH);
         // Screen centre is straight ahead; left of it is -x, above it +y (90 degree view).
         assert_eq!(view_point((320.0, 240.0), -31.0, 1.0), [0.0, 0.0, -31.0]);
         let [vx, vy, _] = view_point((0.0, 0.0), -32.0, 1.0);

@@ -16,6 +16,10 @@
 //! - Action 6 (Beating Up, motion 0x245) has its own handler fn_72_BDBC in the
 //!   action jump table (sec5 0x17290) but no caller in this module passes 6 to
 //!   fn_72_B620. Unverified: that the game ever plays it in a bout.
+//! - A bout's two fighter tasks are at *lbl_72_bss_8 +0x10 and +0x14
+//!   (fn_72_5020 creates them; fn_72_13258 tests both the same way). The page
+//!   shows its buttons only while both are set. Unverified: that the game
+//!   clears them when it returns to the mode select.
 use crate::chao_player::rel_original;
 use sa2_recomp::rt::{Cpu, Mem, OS_MODULE_HEAD};
 use sa2_recomp::{global, global::Global};
@@ -33,10 +37,10 @@ const WINDUP_PUNCH: u8 = 8;
 static HOOKED: Global<u32> = global!(0);
 /// Press counter of the last button used, so one press is one attack.
 static USED: Global<u8> = global!(0);
-/// Told to the page: strong moves unlocked (0/1), and the press counter of the
+/// Told to the page: strong moves unlocked (0/1), the press counter of the
 /// last used button whose attack is over (the page takes no new move until
-/// its own counter matches).
-static TOLD: Global<(u8, u8)> = global!((0, 0));
+/// its own counter matches), and whether a bout is on (0/1).
+static TOLD: Global<(u8, u8, u8)> = global!((0, 0, 0));
 
 /// The attack the player's Chao does: the pressed button when the game allows
 /// it (the two strong moves need attack above 1600), else the game's own pick.
@@ -60,7 +64,7 @@ fn pick(c: &mut Cpu, m: &mut Mem) {
     let attack = f32::from_bits(m.r32(work + 0x2C));
     // The player's fighter is approaching again: its last attack is over.
     if player && !is_attack(before) {
-        tell(u8::from(attack > STRONG_ABOVE), USED.get());
+        tell(u8::from(attack > STRONG_ABOVE), USED.get(), TOLD.get().2);
     }
     rel_original(c, m, HOOKED.get() + ATTACK_PICK, pick);
     let native = m.r8(action);
@@ -81,12 +85,12 @@ fn pressed() -> Option<[u8; 2]> {
     std::fs::read(std::env::var("SA2_KARATE_IN").ok()?).ok()?.first_chunk().copied()
 }
 
-/// SA2_KARATE_OUT: [strong moves unlocked, press counter that is done].
-fn tell(strong: u8, done: u8) {
-    if TOLD.get() != (strong, done) {
-        TOLD.set((strong, done));
+/// SA2_KARATE_OUT: [strong moves unlocked, press counter that is done, bout on].
+fn tell(strong: u8, done: u8, bout: u8) {
+    if TOLD.get() != (strong, done, bout) {
+        TOLD.set((strong, done, bout));
         if let Ok(p) = std::env::var("SA2_KARATE_OUT") {
-            let _ = std::fs::write(p, [strong, done]);
+            let _ = std::fs::write(p, [strong, done, bout]);
         }
     }
 }
@@ -97,9 +101,11 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     if std::env::var_os("SA2_KARATE_IN").is_none() {
         return;
     }
-    let text = text(m).unwrap_or(0);
+    let (text, bss) = sections(m).unwrap_or((0, 0));
     let old = HOOKED.get();
     if text == old {
+        let (strong, done, _) = TOLD.get();
+        tell(strong, done, u8::from(text != 0 && bout_on(m.r32(bss + 8), |a| m.r32(a))));
         return;
     }
     if old != 0 {
@@ -109,24 +115,39 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
         c.rt.set_override(text + ATTACK_PICK, pick);
         // A press left over from an earlier bout is not carried into this one.
         USED.set(pressed().map_or(0, |p| p[0]));
-        tell(0, USED.get());
+        tell(0, USED.get(), 0);
     }
     c.rt.modules_changed();
     HOOKED.set(text);
 }
 
-/// The linked Karate module's .text (section 1), or None.
-fn text(m: &Mem) -> Option<u32> {
+/// Both fighter tasks of the bout state at `state` (*lbl_72_bss_8) exist.
+fn bout_on(state: u32, r32: impl Fn(u32) -> u32) -> bool {
+    state != 0 && r32(state + 0x10) != 0 && r32(state + 0x14) != 0
+}
+
+/// The linked Karate module's .text and .bss (sections 1 and 6), or None.
+fn sections(m: &Mem) -> Option<(u32, u32)> {
     std::iter::successors(Some(m.r32(OS_MODULE_HEAD)), |&i| Some(m.r32(i + 4)))
         .take_while(|&i| i != 0)
         .take(256)
         .find(|&i| m.r32(i) == KARATE)
-        .map(|i| m.r32(m.r32(i + 0x10) + 8) & !1)
+        .map(|i| m.r32(i + 0x10))
+        .map(|t| (m.r32(t + 8) & !1, m.r32(t + 48) & !1))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bout_is_on_only_with_both_fighters() {
+        let mem = |f0: u32, f1: u32| move |a: u32| [f0, f1][usize::from(a == 0x114)];
+        assert!(!bout_on(0, mem(1, 1)));
+        assert!(!bout_on(0x100, mem(1, 0)));
+        assert!(!bout_on(0x100, mem(0, 1)));
+        assert!(bout_on(0x100, mem(1, 1)));
+    }
 
     #[test]
     fn karate_button_keeps_the_power_gate() {
