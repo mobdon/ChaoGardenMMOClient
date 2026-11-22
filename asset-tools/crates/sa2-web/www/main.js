@@ -316,9 +316,8 @@ function breedFeed() {
 function breedSnapshot(m) {
   breed.self = m.players.find((p) => p.id === m.selfId) || null;
   breed.revision = m.life?.revision ?? breed.revision;
-  // Heart Fruit by the server catalog's own name (no id is assumed here).
-  const heart = (m.care?.catalog?.fruits || []).filter((f) => /heart/i.test(f?.name || '')).map((f) => `fruit:${f.id}`);
-  breed.hearts = heart.length ? String(heart.reduce((n, id) => n + (m.care.inventory?.[id] || 0), 0)) : '';
+  // The Heart Fruit is the server's sa2-fruit:10 (its inventory key).
+  breed.hearts = m.care?.inventory ? String(m.care.inventory['sa2-fruit:10'] || 0) : '';
   breedFeed();
 }
 function breedEvent(m) {
