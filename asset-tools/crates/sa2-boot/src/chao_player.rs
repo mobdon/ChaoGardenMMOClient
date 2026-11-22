@@ -261,7 +261,7 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
-        if (0x8000_0000..0x8C00_0000).contains(&obj2) && BALL_STATES.contains(&m.r16(obj2 + OBJ2_ACTION)) {
+        if (0x8000_0000..0x8C00_0000).contains(&obj2) && in_ball(m, obj2) {
             (c.r, c.f[1]) = (regs, f1);
             ball_draw(c, m, addr);
         }
@@ -274,11 +274,31 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
 }
 
-/// Animation states in which the rider's own motion draw is his spin ball
-/// (state 30 = PLMOT_BALL: Sonic's display swaps the body for the ball
-/// model, seen with SA2_SHOW_SONIC in Green Forest, lvl9\g30s).
-/// unverified: 11/12 (PLMOT_STARTSPIN/SPINDASH) draw the ball the same way.
-const BALL_STATES: [u16; 3] = [30, 11, 12];
+/// State 30 (PLMOT_BALL): the rider's motion draw is the ball model alone
+/// (SA2_SHOW_SONIC in Green Forest, lvl9\g30s). Forced 11/12 drew the body
+/// (lvl9\g11s, g12s).
+const BALL_STATE: u32 = 30;
+
+/// The rider is in the ball: his state's PL_ACTION entry (obj2 +0x198,
+/// 0x10 bytes each) plays the same motion number as state 30's, so every
+/// state the game itself draws as the ball (spin dash, homing) counts.
+fn in_ball(m: &Mem, obj2: u32) -> bool {
+    let table = m.r32(obj2 + OBJ2_PLACTPTR);
+    if !(0x8000_0000..0x8C00_0000).contains(&table) {
+        return false;
+    }
+    let act = u32::from(m.r16(obj2 + OBJ2_ACTION));
+    let ball = m.r16(table + 0x10 * BALL_STATE);
+    if !SAID_BALL.replace(true) {
+        let all: Vec<u32> = (0..256).filter(|&i| m.r16(table + 0x10 * i) == ball).collect();
+        eprintln!("chao-player ball: motion {ball} in states {all:?}");
+    }
+    m.r16(table + 0x10 * act) == ball
+}
+
+thread_local! {
+    static SAID_BALL: Cell<bool> = const { Cell::new(false) };
+}
 
 /// The game's own ball draw, scaled to the Chao's size (BOARD_SCALE, the
 /// Sonic -> Chao size mob set for the board) and centred on the Chao.
