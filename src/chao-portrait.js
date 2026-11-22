@@ -3,7 +3,8 @@
 // -0x38E (about -5 deg) as CreateChaoExtra places it (ChaoMain 0x55A20). Used for the MMO card
 // icon (small) and the login screen (big).
 import { captureChaoPose, cloneNativeMotion } from './chao-locomotion.js';
-import { gameChaoGlb, gameTextureUrl } from './game-assets.js';
+import { gameChaoGlb, gameHeadBallTables, gameTextureUrl } from './game-assets.js';
+import { headBallColour } from './chao-head-ball.js';
 import { applyNativeChaoMaterial } from './chao-materials.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { configureChaoFace, loadChaoFaceManifest, resetChaoFace, stepChaoFace } from './chao-face.js';
@@ -109,17 +110,19 @@ async function drawChaoPortrait(canvas, player) {
   camera.minZ = 0.01;
   // The game's own head ball for a default child (ChaoMain.rel): AL_IconDrawSub 0x12B8C quad +-0.55, +0.3 up in view,
   // squash k = 0.92 + 0.08*(1+sin phase), phase += 0x780/frame; AL_CalcShadowPos 0x100C node 33 + 0.045*sin(psi),
-  // psi += 0x470/frame; AL_CalcIconColor 0x14574 zero-evolution child colour 255,255,76.
-  // shortcut: other body types' ball colours and ring branches are not ported; add them when the portrait shows evolved Chao.
+  // psi += 0x470/frame; colour by AL_CalcIconColor 0x14574 (chao-head-ball.js), a fresh child's 255,255,76 without the tables.
+  // shortcut: the ring and other ball shapes are not ported; add them when the portrait needs them.
   const node33 = visual.getDescendants(false).find(node => /^033_object/.test(node.name));
   if ((key.startsWith('chao-body-') || own && key === 'chao') && node33) {
     const picture = await gameTextureUrl('emotion-sphere.png') ?? '/api/assets/emotion-sphere.png';
+    const tables = look && await gameHeadBallTables();
+    const [r, g, b] = tables && headBallColour(tables, look) || [255, 255, 76];
     if (scene.isDisposed) return () => {};
     const ball = B.MeshBuilder.CreatePlane('native-head-ball', { size: 1.1 }, scene);
     const mat = new B.StandardMaterial('native-head-ball', scene);
     mat.diffuseTexture = new B.Texture(picture, scene, true, true, B.Texture.BILINEAR_SAMPLINGMODE);
     mat.diffuseTexture.hasAlpha = true; mat.useAlphaFromDiffuseTexture = true;
-    mat.disableLighting = true; mat.emissiveColor = new B.Color3(1, 1, 76 / 255); mat.backFaceCulling = false;
+    mat.disableLighting = true; mat.emissiveColor = new B.Color3(r / 255, g / 255, b / 255); mat.backFaceCulling = false;
     ball.material = mat; ball.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
     let phase = 0, psi = 0, ticks = 0;
     scene.onBeforeRenderObservable.add(() => {

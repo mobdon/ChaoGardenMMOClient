@@ -133,19 +133,31 @@ export function gameEggGlb(hatching = false) {
   });
 }
 
+/** `length` bytes at file offset `at` of the player's own Steam sonic2app.exe, or null. */
+async function exeBytes(at, length) {
+  try {
+    steam ??= import('./game-files.js').then(m => m.savedHandles()).then(h => h.steam);
+    const file = await (await (await steam).getFileHandle('sonic2app.exe')).getFile();
+    // shortcut: only the Steam build of this size is traced, another build gets nothing; add its offsets when one turns up.
+    if (file.size !== 21858816) return null;
+    return new Uint8Array(await file.slice(at, at + length).arrayBuffer());
+  } catch { return null; }
+}
+
 /**
  * The game's 13 body colours as [r, g, b, a], index = colour number - 1 (Steam sonic2app.exe .data
  * 0x129844C, file offset 0xE95E4C; the same 13 rows as the GameCube gxColorTable), or null.
  */
 export async function gameBodyColours() {
-  try {
-    steam ??= import('./game-files.js').then(m => m.savedHandles()).then(h => h.steam);
-    const file = await (await (await steam).getFileHandle('sonic2app.exe')).getFile();
-    // shortcut: only the Steam build of this size is traced, another build gets no colours; add its offset when one turns up.
-    if (file.size !== 21858816) return null;
-    const bytes = new Uint8Array(await file.slice(0xE95E4C, 0xE95E4C + 52).arrayBuffer());
-    return Array.from({ length: 13 }, (_, i) => [...bytes.subarray(i * 4, i * 4 + 4)]);
-  } catch { return null; }
+  const bytes = await exeBytes(0xE95E4C, 52);
+  return bytes && Array.from({ length: 13 }, (_, i) => [...bytes.subarray(i * 4, i * 4 + 4)]);
+}
+
+/** The game's head ball colour tables [neutral, hero, dark], 108 bytes each (Steam .data VA 0x13536D8, 0x1353748,
+ *  0x13537C8; the same bytes as GC ChaoMain.rel .data 0x2FDC, 0x3048, 0x30B4), or null. */
+export async function gameHeadBallTables() {
+  const tables = await Promise.all([0xF510D8, 0xF51148, 0xF511C8].map(at => exeBytes(at, 108)));
+  return tables.every(Boolean) ? tables : null;
 }
 
 /** The texture names of game archive `name` (without `.prs`) in its own order, or null. */
