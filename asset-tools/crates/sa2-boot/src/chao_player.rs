@@ -2179,8 +2179,11 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             let ktex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
             let kmdl = load_models(c, m, 0x8017_4F10);
             KNUX_MODELS.set(LAST_LOAD.with_borrow(|l| l.clone()));
-            eprintln!("chao-player: boot slots 161/163 -> {:#x}/{:#x}, glove slots 329/331 -> {:#x}/{:#x}, Knuckles body 285 -> {:#x}",
-                model_obj(m, 161), model_obj(m, 163), knux_obj(m, 329), knux_obj(m, 331), knux_obj(m, KNUX_BODY_SLOT));
+            // Node and vertex counts name each model (Shadow's boot: 2 nodes, 174 vertices).
+            let size = |o: u32| if (0x8000_0000..0x8C00_0000).contains(&o) { let r = crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]); (r.nodes.len(), r.verts.iter().map(Vec::len).sum::<usize>()) } else { (0, 0) };
+            eprintln!("chao-player: boot slots 161/163 -> {:#x} {:?} / {:#x} {:?} (table {:#x}/{:#x}), glove slots 329/331 -> {:#x} {:?} / {:#x} {:?}, Knuckles body 285 -> {:#x} {:?}",
+                model_obj(m, 161), size(model_obj(m, 161)), model_obj(m, 163), size(model_obj(m, 163)), m.r32(MODELS + 4 * 161), m.r32(MODELS + 4 * 163),
+                knux_obj(m, 329), size(knux_obj(m, 329)), knux_obj(m, 331), size(knux_obj(m, 331)), knux_obj(m, KNUX_BODY_SLOT), size(knux_obj(m, KNUX_BODY_SLOT)));
             m.w32(heap_var, keep_heap);
             eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x} (heap {GEAR_HEAP}, was {keep_heap})");
             KNUX_TEX.set(Some(ktex).filter(|&t| t != 0));
