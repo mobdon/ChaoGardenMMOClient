@@ -68,11 +68,12 @@ async function drawChaoPortrait(canvas, player) {
   const dispose = () => { if (!open) return; open = false; engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
   let key = portraitAsset(player);
   // The player's own game files first: the model and its stand motion (number 0) in one file.
-  const own = key in GAME_MODEL ? await gameChaoGlb(GAME_MODEL[key], 0) : null;
+  const game = name => name in GAME_MODEL ? gameChaoGlb(GAME_MODEL[name], 0) : null;
+  let own = await game(key);
   let [model, source] = own ? [await parse(key, own)] : await Promise.all([load(key), load('chao-behaviour')]);
-  if (own) source = model;
   // The family bodies are a local conversion; without them the original child model, as the hub falls back.
-  if (!model && key.startsWith('chao-body-')) model = await load(key = 'chao');
+  if (!model && key.startsWith('chao-body-')) model = (own = await game(key = 'chao')) ? await parse(key, own) : await load(key);
+  if (own) source = model;
   if (!model) { dispose(); return () => {}; }
   const entries = model.instantiateModelsToScene(name => name, false);
   for (const group of entries.animationGroups) group.stop();
