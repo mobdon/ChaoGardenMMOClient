@@ -140,8 +140,20 @@ fn chao_exec(c: &mut Cpu, m: &mut Mem) {
     // 0x1454: keep the pose for the draw walker only, or the exec uses up
     // the node indices 0..39 and the draw gets none.
     let draw = CHAO_DRAW.replace(false);
+    let me = c.r[3];
     rel_original(c, m, a, chao_exec);
     CHAO_DRAW.set(draw);
+    // The character's exec owns the heading while it moves the Chao: the
+    // Chao's own exec turning its angle afterwards made it drift round when
+    // walking sideways (mob). unverified: which Chao step turns it.
+    if let (Step::Live(chao), Some(ang)) = (STEP.get(), CHAR_ANG.get()) {
+        if me == chao && PMOVE_CHAO.get() == chao && self_drive(m) {
+            let cw = m.r32(chao + 0x34);
+            for (i, v) in ang.into_iter().enumerate() {
+                m.w32(cw + 0x08 + 4 * i as u32, v);
+            }
+        }
+    }
 }
 
 /// mob 2026-11-21 (board.py): Sonic's board drawn at the Chao's size.
@@ -1907,6 +1919,7 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     IN_PMOVE.set(false);
     m.w32(own, m.r32(cw));
     m.w32(own + 4, m.r32(cw + 4));
+    CHAR_ANG.set(Some([m.r32(cw + 0x08), m.r32(cw + 0x0C), m.r32(cw + 0x10)]));
     m.w32(cw, chao_head[0]);
     m.w32(cw + 4, chao_head[1]);
     m.w32(task + 0x34, own);
@@ -2027,6 +2040,8 @@ thread_local! {
     static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
     static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
+    /// The heading the character's exec left on the Chao's body (twp +0x08..).
+    static CHAR_ANG: Cell<Option<[u32; 3]>> = const { Cell::new(None) };
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
     static SELF_LOGGED: Cell<bool> = const { Cell::new(false) };
