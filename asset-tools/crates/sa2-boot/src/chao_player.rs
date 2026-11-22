@@ -2365,6 +2365,8 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
     let next = match STEP.get() {
         // let the stage settle for a second before loading
         Step::Wait(n) if n < 60 => Step::Wait(n + 1),
+        // Leaving by the lobby exit: no new Chao while the game goes to its menu.
+        Step::Wait(_) if crate::start_stage::to_stage_select_pending() => Step::Wait(60),
         Step::Wait(_) if chao_world(m) => {
             if module_linked(m, 60) { create(c, m, pos) } else { Step::Wait(60) }
         }
@@ -2609,6 +2611,7 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
     c.rt.set_override(s1 + AL_BEHAVIOR_CONTROL, behavior);
     c.rt.set_override(s1 + CHAO_DISPLAY, chao_display);
     c.rt.set_override(s1 + CHAO_EXEC, chao_exec);
+    c.rt.set_override(s1 + AL_IS_ON_SCREEN3, on_screen3);
     c.rt.set_override(s1 + AL_NODE_TRANSFORM, chao_node);
     if std::env::var_os("SA2_MOTION_LOG").is_some() {
         c.rt.set_override(s1 + AL_SET_MOTION_LINK, motion_log);
@@ -3129,6 +3132,25 @@ fn raise_chao_limit(m: &mut Mem) {
 /// rather than read from its projection; upgrade with the real FOV if Chao pop.
 const REMOTE_VIEW_SLOPE: f32 = 2.0;
 const REMOTE_VIEW_MARGIN: f32 = 8.0;
+
+/// ChaoMain AL_IsOnScreen3 (.text 0x1A590): the Chao draw (al_draw_9 0x82B0)
+/// skips a Chao whose projected bounds fall outside 0..640 x 0..480, the GC's
+/// 4:3 screen, so on the browser's wide view the player's and other players'
+/// Chao vanished well before the screen edge (mob: they fade before they get
+/// off screen). Those Chao always pass; remote_offscreen already culls other
+/// players' Chao by a wide view cone, and the game's other Chao keep the test.
+const AL_IS_ON_SCREEN3: u32 = 0x1_A590;
+
+fn on_screen3(c: &mut Cpu, m: &mut Mem) {
+    let t = c.r[3];
+    let ours = matches!(STEP.get(), Step::Live(ch) if ch == t) || REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && e.task == t));
+    let a = rt::sec(m, 60, 1) + AL_IS_ON_SCREEN3;
+    // The original still runs: it also stores the camera distance the draw uses.
+    rel_original(c, m, a, on_screen3);
+    if ours {
+        c.r[3] = 1;
+    }
+}
 
 fn remote_offscreen(m: &Mem, task: u32) -> bool {
     if task == 0 || !REMOTE.with_borrow(|r| r.values().any(|e| e.task == task)) {

@@ -170,6 +170,11 @@ pub(crate) fn to_stage_select() {
     TO_STAGE_SELECT.set(true);
 }
 
+/// Leaving for the Stage Select: the player's Chao is not made again meanwhile.
+pub(crate) fn to_stage_select_pending() -> bool {
+    TO_STAGE_SELECT.get()
+}
+
 /// While going to the Stage Select: once the menu module is up, ask its
 /// screen dispatcher for the Stage Select, and log its top state and screen.
 /// Unverified: that the request field is honoured from the title state; the
@@ -180,10 +185,17 @@ fn stage_select_frame(m: &mut Mem) {
     if MENU_SEEN.replace(now) != now {
         eprintln!("start-stage: menu state {} screen {} next {}", now.0, now.1, now.2);
     }
+    // The menu's own transitions do not take the next field from just any
+    // screen (build 11: "screen 7 next 3" stayed on 7, the screen menu init
+    // fn_91_30A0C leads to). Set the current screen instead, once, while the
+    // screen struct is fresh from that init, so the Stage Select's exec
+    // (fn_91_2BC44) starts from its own first step.
+    // Unverified: that the Stage Select needs nothing from screen 7 first.
     if now.1 == SCREEN_STAGE_SELECT {
         TO_STAGE_SELECT.set(false);
     } else {
-        m.w32(bss + MENU_SCREEN + 4, SCREEN_STAGE_SELECT);
+        m.w32(bss + MENU_SCREEN, SCREEN_STAGE_SELECT);
+        m.w32(bss + MENU_SCREEN + 4, 0);
     }
 }
 /// The lobby's residents are out (cleared when the game leaves the lobby).
