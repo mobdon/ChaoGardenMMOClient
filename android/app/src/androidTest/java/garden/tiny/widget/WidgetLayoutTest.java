@@ -147,7 +147,9 @@ public final class WidgetLayoutTest extends TestCase {
         assertTrue(Arrays.asList(info.requestedPermissions).contains("android.permission.INTERNET"));
         for (String permission : info.requestedPermissions) {
             assertTrue("Unexpected Android permission: " + permission,
-                    permission.equals("android.permission.INTERNET") || permission.equals("android.permission.ACCESS_NETWORK_STATE"));
+                    permission.equals("android.permission.INTERNET") || permission.equals("android.permission.ACCESS_NETWORK_STATE")
+                    // Not in the manifest: an Android 17 phone listed it for this app by itself (cause unverified). Still network only.
+                    || permission.equals("android.permission.ACCESS_LOCAL_NETWORK"));
         }
         assertEquals(0, info.applicationInfo.flags & ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC);
         assertEquals(0, info.applicationInfo.flags & ApplicationInfo.FLAG_ALLOW_BACKUP);
