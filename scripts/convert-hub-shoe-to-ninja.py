@@ -56,7 +56,9 @@ def convert(path):
             idx = [t[0] for t in accessor(j, blob, p['indices'])]
             tex = j['materials'][p['material']]['extras']['sa2Source']['textureIndex']
             base = len(verts)
-            verts += [(pos[k], nor[k]) for k in range(len(pos))]
+            # The hub's glTF root mirrors the source X (src/chao-attachments.js):
+            # mirrored back, its mount turns the shoe flat (height 2.6, length 5.1).
+            verts += [((-pos[k][0], pos[k][1], pos[k][2]), (-nor[k][0], nor[k][1], nor[k][2])) for k in range(len(pos))]
             prims.append((tex, [(base + idx[k], uv[idx[k]]) for k in range(len(idx))]))
     vl = b''
     for start in range(0, len(verts), PER_CHUNK):
