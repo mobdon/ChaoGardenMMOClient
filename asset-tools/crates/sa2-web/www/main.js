@@ -75,6 +75,7 @@ function hold(bit, down) {
 }
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return; // typing in chat, not playing
+  if (karateKey(e)) return;
   if (e.code === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); hold(TAB, true); return; }
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -482,7 +483,7 @@ function karateButtons(on) {
     bar = Object.assign(document.createElement('div'), { id: 'karate' });
     bar.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;display:flex;gap:.5rem;justify-content:center;z-index:4';
     for (const [id, name, strong] of KARATE_MOVES) {
-      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: name });
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: `${bar.children.length + 1} ${name}` });
       b.style.cssText = 'padding:.45rem 1rem;border-radius:1.2rem;background:#f5a800;color:#fff;font-weight:700;text-shadow:0 1px 2px #000';
       if (strong) b.dataset.strong = '1';
       b.addEventListener('click', () => {
@@ -495,6 +496,14 @@ function karateButtons(on) {
     document.body.append(bar);
   }
   if (bar) bar.style.display = on ? 'flex' : 'none';
+}
+// Keys 1 to 5 press the buttons while they show (1 and 3 are the game's L and R elsewhere).
+function karateKey(e) {
+  const bar = document.getElementById('karate'), n = '12345'.indexOf(e.key);
+  if (!bar || bar.style.display === 'none' || n < 0 || e.ctrlKey || e.altKey || e.metaKey) return false;
+  e.preventDefault();
+  if (!e.repeat && !bar.children[n].disabled) bar.children[n].click();
+  return true;
 }
 function karateLocks() {
   for (const b of document.querySelectorAll('#karate [data-strong]')) {
@@ -585,6 +594,7 @@ async function start() {
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';
+  if (/^\d+$/.test(q.get('wave') || '')) e.SA2_COMBAT_WAVE = q.get('wave');
   // A new player (no Chao on the card yet): their egg is laid in the lobby.
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
