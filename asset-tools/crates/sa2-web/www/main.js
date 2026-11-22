@@ -6,7 +6,7 @@
 // [3..4] slot length, [5] slot the game fills next, [6] sound written,
 // [7] sound read, [8] canvas aspect (render.js), [9] sound dropouts, [10] sound skips.
 
-const SLOT = 64 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 48 fits; more needs a bigger slot)
+const SLOT = 96 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 80 fits; more needs a bigger slot)
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
 const q = new URLSearchParams(location.search);
@@ -212,11 +212,11 @@ function mmoTick(token) {
       const text = new TextDecoder().decode(mmoBytes.slice(MMO.POSE_OUT + 8, MMO.POSE_OUT + 8 + pose[1]));
       // Only the keys that changed, with a sequence number; the whole pose
       // each second and after joining or changing room (server merges keys).
-      const pose = JSON.parse(text), now = performance.now(), full = !poseSent || room.ws !== poseWs || now - poseFullAt > 1000;
+      const cur = JSON.parse(text), now = performance.now(), full = !poseSent || room.ws !== poseWs || now - poseFullAt > 1000;
       const out = { seq: ++poseSeq };
-      for (const k of ['x', 'y', 'z', 'angle', 'motion', 'frame', 'gear']) if (full || pose[k] !== poseSent[k]) out[k] = pose[k];
+      for (const k of ['x', 'y', 'z', 'angle', 'motion', 'frame', 'gear']) if (full || cur[k] !== poseSent[k]) out[k] = cur[k];
       if (full) poseFullAt = now, poseWs = room.ws;
-      poseSent = pose;
+      poseSent = cur;
       if (full || Object.keys(out).length > 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-pose', pose: out }));
     } catch {}
   }
