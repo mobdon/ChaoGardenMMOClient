@@ -472,7 +472,7 @@ const wasi = {
     if (fd === DEV_PAD) {
       let total = 0;
       for (const [p, len] of iovs(iov, n)) {
-        const k = Math.min(len, 16 - total);
+        const k = Math.min(len, sh.pad.length - total);
         u8().set(sh.pad.subarray(total, total + k), p);
         total += k;
       }
