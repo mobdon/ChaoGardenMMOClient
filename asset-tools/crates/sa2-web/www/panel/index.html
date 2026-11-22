@@ -20,6 +20,8 @@
   [hidden] { display: none !important; }
   h1 { font-size: 1.15rem; margin: 0; letter-spacing: -.01em; }
   h2 { font-size: 1rem; margin: 0; }
+  h3 { font-size: .85rem; font-weight: 500; color: var(--dim); margin: 1rem 0 .5rem; }
+  td.wrap { white-space: normal; overflow-wrap: anywhere; max-width: 28rem; }
   .dim { color: var(--dim); }
   .num { font-variant-numeric: tabular-nums; }
   input, select, button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: .4rem; padding: .5rem .65rem; }
@@ -150,6 +152,22 @@
       <button class="small">Apply</button>
       <span id="applied" class="dim" aria-live="polite"></span>
     </form>
+    <h3>Test buttons</h3>
+    <div id="grants" class="row"></div>
+  </section>
+  <section class="pane below" aria-labelledby="staff-title" data-admin>
+    <header><h2 id="staff-title">Staff</h2><span class="dim">A new key replaces that person's old one and signs them out.</span></header>
+    <div id="staff"></div>
+    <form id="give" class="row" style="margin-top:.8rem">
+      <label class="row dim">Username or email <input id="give-who" required></label>
+      <label class="row dim">Role <select id="give-role"><option value="moderator">Moderator</option><option value="admin">Admin</option><option value="none">None (remove)</option></select></label>
+      <button class="small">Set role</button>
+    </form>
+    <p id="newkey" hidden class="row"><span></span><a id="keyfile" class="tag staff" download>Save key file</a><span class="dim">Shown once. Hand it to them yourself.</span></p>
+  </section>
+  <section class="pane below" aria-labelledby="audit-title" data-admin>
+    <header><h2 id="audit-title">Audit log</h2><span class="dim">Newest first</span></header>
+    <div class="scroll" style="max-height:20rem;overflow-y:auto"><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>On</th></tr></thead><tbody id="audit"></tbody></table></div>
   </section>
   <section class="pane below" aria-labelledby="chat-title">
     <header><h2 id="chat-title">Chat</h2><span id="chat-scope" class="dim"></span></header>
@@ -187,6 +205,7 @@ async function call(path, body) {
 }
 function signOut(why = '') {
   token = null; clearInterval(timer); listening = false; following = null;
+  $('newkey').hidden = true; URL.revokeObjectURL($('keyfile').href); $('keyfile').removeAttribute('href');
   $('panel').hidden = true; $('login').hidden = false; $('error').textContent = why; $('password').value = '';
 }
 $('out').onclick = () => signOut();
@@ -208,6 +227,7 @@ $('login').onsubmit = async (e) => {
   for (const o of document.querySelectorAll('[data-admin]')) o.hidden = role !== 'admin';
   $('login').hidden = true; $('panel').hidden = false; $('password').value = ''; $('key').value = '';
   refresh(); timer = setInterval(refresh, 3000);
+  adminStart().catch((err) => ($('note').textContent = err.message));
 };
 const until = (t) => t > 4e12 ? 'until lifted' : `until ${new Date(t * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`;
 const span = (s) => { const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24); return d ? `${d} d ${h % 24} h` : h ? `${h} h ${m % 60} min` : `${m} min`; };
@@ -244,6 +264,46 @@ $('override').onsubmit = async (e) => {
   if (!Object.keys(body).length) { $('applied').textContent = 'Nothing chosen.'; return; }
   try { await call('/api/panel/override', body); $('applied').textContent = 'Applied.'; refresh(); }
   catch (err) { $('note').textContent = err.message; }
+};
+// Admin tools: test buttons come from the server's list, so a new one needs no page change.
+async function adminRefresh() {
+  if (role !== 'admin') return;
+  const [{ staff }, { entries }] = await Promise.all([call('/api/panel/staff'), call('/api/panel/audit')]);
+  $('staff').replaceChildren(...staff.map(([name, r]) => { const row = el('div', null, 'row'); row.append(el('b', name), el('span', r, 'tag staff')); return row; }));
+  $('audit').replaceChildren(...entries.map((e) => {
+    const tr = el('tr');
+    tr.append(el('td', new Date(e.at * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' }), 'dim'), el('td', e.actor), el('td', e.action), el('td', e.target, 'wrap dim'));
+    return tr;
+  }));
+}
+async function adminStart() {
+  if (role !== 'admin') return;
+  const { grants } = await call('/api/panel/grants');
+  $('grants').replaceChildren(...grants.map((g) => {
+    const b = el('button', g.label, 'small'); b.type = 'button';
+    b.onclick = async () => {
+      $('note').textContent = '';
+      try { const r = await call('/api/panel/grant', { id: g.id }); $('applied').textContent = `${g.label}: done. Rings ${r.rings.toLocaleString()}, gear ${(r.foundGear ?? []).join(', ') || 'none'}.`; refresh(); }
+      catch (e) { $('note').textContent = e.message; }
+    };
+    return b;
+  }));
+}
+$('give').onsubmit = async (e) => {
+  e.preventDefault();
+  $('note').textContent = ''; $('newkey').hidden = true;
+  try {
+    const r = await call('/api/panel/staff', { login: $('give-who').value, role: $('give-role').value });
+    if (r.key) {
+      $('newkey').firstElementChild.textContent = `New key for ${r.username}:`;
+      URL.revokeObjectURL($('keyfile').href);
+      $('keyfile').href = URL.createObjectURL(new Blob([r.key], { type: 'text/plain' }));
+      $('keyfile').download = `${r.username}-panel.key`;
+      $('newkey').hidden = false;
+    }
+    $('give-who').value = '';
+    adminRefresh();
+  } catch (err) { $('note').textContent = err.message; }
 };
 function pick(room) {
   picked = picked === room ? null : room;
@@ -331,6 +391,7 @@ async function refresh() {
     $('status').replaceChildren(...parts.map(([n, word]) => { const s = el('span'); s.append(el('b', n), ` ${word}`); return s; }));
     if (status.listening?.length) $('status').append(el('span', `Listening: ${status.listening.map((l) => `${l.staff} in ${roomName(l.room)}`).join(', ')}`));
     draw();
+    await adminRefresh();
   } catch (e) { if (token) $('note').textContent = e.message; }
 }
 // Voice: 16-bit 8 kHz mono frames, the same form the game page plays.

@@ -31,6 +31,9 @@
 .save-slot-arrow { color: #ffdc5d; font-size: 20px; }
 .save-empty { margin: 0; padding: 15px; font-size: 11px; line-height: 1.6; border: 1px dashed #315378; color: #9ab5d2; border-radius: 7px; }
 .new-chao { margin: 17px 0; border-bottom: 1px solid #1e3756; padding-bottom: 15px; }
+.new-chao .agree { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; color: #a4c2e2; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; line-height: 1.4; cursor: pointer; }
+.new-chao .agree input { flex: none; width: 18px; height: 18px; margin: 0; padding: 0; accent-color: #ffd139; }
+.new-chao .agree a { color: #ffda57; }
 .new-chao summary { cursor: pointer; color: #a4c2e2; font-size: 9px; font-weight: 800; letter-spacing: 1px; }
 .title-screen form { margin: 16px 0 0; }
 .title-screen label { font-size: 8px; color: #9ab8d6; }
