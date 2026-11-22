@@ -165,6 +165,123 @@ pub unsafe extern "C" fn chao(
     ) as i32
 }
 
+fn keep(made: sa2_asset_tools::Result<Vec<u8>>) -> i32 {
+    let ok = made.is_ok();
+    OUT.with(|o| *o.borrow_mut() = made.unwrap_or_default());
+    ok as i32
+}
+
+/// Model `model` as a new child with every motion in `motions` (clips named `m<number>`).
+fn chao_set(
+    dll: &[u8],
+    body: &[u8],
+    gvps: &[u8],
+    model: usize,
+    motions: &[u8],
+) -> sa2_asset_tools::Result<Vec<u8>> {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let numbers: Vec<usize> = motions
+        .iter()
+        .step_by(2)
+        .zip(motions.iter().skip(1).step_by(2))
+        .map(|(low, high)| usize::from(u16::from_le_bytes([*low, *high])))
+        .collect();
+    let clips = numbers
+        .iter()
+        .map(|n| Ok((format!("m{n}"), chao_dll::read_chao_motion(dll, *n)?)))
+        .collect::<sa2_asset_tools::Result<Vec<_>>>()?;
+    let clips: Vec<_> = clips
+        .iter()
+        .map(|(name, clip)| (name.as_str(), clip))
+        .collect();
+    let model = chao_dll::read_chao_model(dll, model)?;
+    let slots = chao_palette::read_slots(gvps)?;
+    let pngs = chao_glb::body_textures(&model, body, &slots, &Ratios::CHILD)?;
+    chao_glb::export(&model, &pngs, &clips, &chao_glb::OPEN_EYES_NO_MOUTH)
+}
+
+/// A Chao with several motions, kept for `out_ptr`/`out_len`. `motions` is a list of
+/// little-endian u16 motion numbers.
+///
+/// # Safety
+/// The four pointer/length pairs must be `buf_alloc`ed buffers: `Data_DLL.dll`, `al_body.prs`,
+/// the 39 palette files and the motion list.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn chao_motions(
+    dll: *const u8,
+    dll_len: usize,
+    body: *const u8,
+    body_len: usize,
+    gvps: *const u8,
+    gvps_len: usize,
+    motions: *const u8,
+    motions_len: usize,
+    model: usize,
+) -> i32 {
+    let bytes = |p, n| std::slice::from_raw_parts(p, n);
+    keep(chao_set(
+        bytes(dll, dll_len),
+        bytes(body, body_len),
+        bytes(gvps, gvps_len),
+        model,
+        bytes(motions, motions_len),
+    ))
+}
+
+/// The garden egg from the game program: the one-piece egg with its shake (`Egg`), or with
+/// `hatching` the two-shell egg with both hatch motions (`Pon`, `Kyoro`).
+fn egg_glb(
+    exe: &[u8],
+    body: &[u8],
+    gvps: &[u8],
+    hatching: bool,
+) -> sa2_asset_tools::Result<Vec<u8>> {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let motion = |va, parts| chao_dll::read_motion_at(exe, va, parts, false);
+    let (root, clips) = if hatching {
+        (
+            chao_dll::HATCHING_EGG,
+            vec![
+                ("Pon", motion(chao_dll::HATCH_PON, 3)?),
+                ("Kyoro", motion(chao_dll::HATCH_KYORO, 3)?),
+            ],
+        )
+    } else {
+        (
+            chao_dll::EGG,
+            vec![("Egg", motion(chao_dll::EGG_SHAKE, 1)?)],
+        )
+    };
+    let clips: Vec<_> = clips.iter().map(|(name, clip)| (*name, clip)).collect();
+    let model = chao_dll::read_model_at(exe, root)?;
+    let slots = chao_palette::read_slots(gvps)?;
+    let pngs = chao_glb::body_textures(&model, body, &slots, &Ratios::CHILD)?;
+    chao_glb::export(&model, &pngs, &clips, &[])
+}
+
+/// # Safety
+/// The three pointer/length pairs must be `buf_alloc`ed buffers: `sonic2app.exe`, `al_body.prs`
+/// and the 39 palette files.
+#[no_mangle]
+pub unsafe extern "C" fn egg(
+    exe: *const u8,
+    exe_len: usize,
+    body: *const u8,
+    body_len: usize,
+    gvps: *const u8,
+    gvps_len: usize,
+    hatching: u32,
+) -> i32 {
+    let bytes = |p, n| std::slice::from_raw_parts(p, n);
+    keep(egg_glb(
+        bytes(exe, exe_len),
+        bytes(body, body_len),
+        bytes(gvps, gvps_len),
+        hatching != 0,
+    ))
+}
+
 /// The texture names of archive `prs` in its own order, one per line, kept for `out_ptr`/`out_len`.
 ///
 /// # Safety

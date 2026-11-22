@@ -89,6 +89,50 @@ export function gameChaoGlb(model, motion, look, family = false) {
   return models.get(key);
 }
 
+// Runs one converter export over whole input files; the made file's bytes, or null.
+function convertWith(x, name, inputs, ...numbers) {
+  const held = inputs.map(bytes => {
+    const p = x.buf_alloc(bytes.length);
+    new Uint8Array(x.memory.buffer, p, bytes.length).set(bytes);
+    return [p, bytes.length];
+  });
+  const ok = x[name](...held.flat(), ...numbers);
+  for (const [p, length] of held) x.buf_free(p, length);
+  return ok ? new Uint8Array(x.memory.buffer, x.out_ptr(), x.out_len()).slice() : null;
+}
+const remembered = (key, make) => {
+  if (!models.has(key)) models.set(key, make().catch(() => null).then(glb => { if (!glb) models.delete(key); return glb; }));
+  return models.get(key);
+};
+
+/**
+ * GLB bytes of the game's Chao model `model` as a new child with every motion number in `motions`
+ * (clips named `m<number>`, each with its motion table row in the file's extras), or null.
+ */
+export function gameChaoMotionsGlb(model, motions) {
+  return remembered(`motions:${model}:${motions}`, async () => {
+    const [dll, body, colours] = await Promise.all([gameFile('DLL/Win32/Data_DLL.dll'), gameFile('al_body.prs'), bodyPalettes()]);
+    return dll && body && colours
+      ? convertWith(await converter(), 'chao_motions', [dll, body, colours, new Uint8Array(new Uint16Array(motions).buffer)], model) : null;
+  });
+}
+
+/**
+ * GLB bytes of the garden egg from the game program: the one-piece egg with its shake motion `Egg`,
+ * or with `hatching` the two-shell egg with the hatch motions `Pon` and `Kyoro`; null without the files.
+ */
+export function gameEggGlb(hatching = false) {
+  return remembered(`egg:${hatching}`, async () => {
+    steam ??= import('./game-files.js').then(m => m.savedHandles()).then(h => h.steam);
+    const file = await (await (await steam).getFileHandle('sonic2app.exe')).getFile();
+    // shortcut: only the Steam build of this size is traced, another build gets no egg; add its addresses when one turns up.
+    if (file.size !== 21858816) return null;
+    const [body, colours] = await Promise.all([gameFile('al_body.prs'), bodyPalettes()]);
+    return body && colours
+      ? convertWith(await converter(), 'egg', [new Uint8Array(await file.arrayBuffer()), body, colours], hatching ? 1 : 0) : null;
+  });
+}
+
 /**
  * The game's 13 body colours as [r, g, b, a], index = colour number - 1 (Steam sonic2app.exe .data
  * 0x129844C, file offset 0xE95E4C; the same 13 rows as the GameCube gxColorTable), or null.

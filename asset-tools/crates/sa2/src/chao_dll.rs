@@ -56,6 +56,9 @@ fn export_slot(image: &PeImage, name: &str, index: usize, stride: usize) -> Resu
 /// A row of `al_motion_table` with its motion's keyframes (rotation keys are 16-bit).
 #[derive(Debug)]
 pub struct ChaoMotion {
+    /// The motion's number in al_motion_table; `None` for a motion from outside the table,
+    /// whose row values below are then empty.
+    pub number: Option<usize>,
     /// Word 1 of the row, as stored (the game's motion mode).
     pub mode: u32,
     pub next: i32,
@@ -78,6 +81,7 @@ pub fn read_chao_motion(dll: &[u8], number: usize) -> Result<ChaoMotion> {
     };
     let row = export_slot(&image, "al_motion_table", number, MOTION_ROW)?;
     Ok(ChaoMotion {
+        number: Some(number),
         mode: r.u32(row + 4)?,
         next: r.u32(row + 8)? as i32,
         link_step: r.u32(row + 12)? as i32,
@@ -96,14 +100,64 @@ pub fn read_chao_model(dll: &[u8], index: usize) -> Result<Model> {
         image: &image,
     };
     let root_offset = r.u32(export_slot(&image, "AL_RootObject", index, 4)?)?;
+    model_in(&r, root_offset)
+}
+
+/// The chunk model whose root node sits at virtual address `va` of PE image `file`
+/// (for models the image does not export, by a traced address).
+pub fn read_model_at(file: &[u8], va: u32) -> Result<Model> {
+    let image = read_pe(file)?;
+    model_in(
+        &ImageWords {
+            data: file,
+            image: &image,
+        },
+        va,
+    )
+}
+
+/// The motion at virtual address `va` of PE image `file`, for a model of `parts` animated nodes.
+pub fn read_motion_at(
+    file: &[u8],
+    va: u32,
+    parts: u32,
+    short_rotation: bool,
+) -> Result<ChaoMotion> {
+    let image = read_pe(file)?;
+    let r = ImageWords {
+        data: file,
+        image: &image,
+    };
+    Ok(ChaoMotion {
+        number: None,
+        mode: 0,
+        next: 0,
+        link_step: 0,
+        start_frame: 0.,
+        end_frame: 0.,
+        play_speed: 0.,
+        motion: read_motion_in(&r, va, parts, short_rotation)?,
+    })
+}
+
+/// Steam `sonic2app.exe` addresses of the garden egg (SA Tools PC_SA2 ChaoCommon split list,
+/// image base 0x400000 added): the one-piece egg and its 16-frame shake, the two-shell
+/// hatching egg and its two hatch motions (27 and 20 frames).
+pub const EGG: u32 = 0x125_D334;
+pub const EGG_SHAKE: u32 = 0x125_C11C;
+pub const HATCHING_EGG: u32 = 0x125_CC64;
+pub const HATCH_PON: u32 = 0x125_C6C4;
+pub const HATCH_KYORO: u32 = 0x125_CC9C;
+
+fn model_in(r: &ImageWords, root_offset: u32) -> Result<Model> {
     let mut budget = DecodeBudget::new();
-    let nodes = read_nodes_in(&r, root_offset, false, &mut budget)?;
+    let nodes = read_nodes_in(r, root_offset, false, &mut budget)?;
     let mut attachments = Vec::new();
     let mut seen = BTreeSet::new();
     for node in &nodes {
         if node.attach_offset != 0 && seen.insert(node.attach_offset) {
             attachments.push(read_chunk_attachment_in(
-                &r,
+                r,
                 node.attach_offset,
                 &mut budget,
             )?);

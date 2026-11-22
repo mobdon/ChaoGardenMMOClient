@@ -70,9 +70,14 @@ function glbExtras(bytes) {
 /** Play the scene in `host` (a small box in the menu). Resolves when it ends; never throws. */
 export async function playBreedingScene(host) {
   const B = await import('@babylonjs/core'); await import('@babylonjs/loaders/glTF/index.js');
-  const response = await fetch('/api/assets/chao-behaviour.glb').catch(() => null);
-  if (!response?.ok) return false;
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  // The player's own game files first: the child with the four motions the scene plays.
+  const game = await import('./game-assets.js').catch(() => null);
+  let bytes = await game?.gameChaoMotionsGlb(0, Object.values(STATE));
+  if (!bytes) {
+    const response = await fetch('/api/assets/chao-behaviour.glb').catch(() => null);
+    if (!response?.ok) return false;
+    bytes = new Uint8Array(await response.arrayBuffer());
+  }
   const rows = new Map((glbExtras(bytes)?.chaoBehaviour?.clips ?? []).map(row => [row.nativeState, row]));
   const canvas = document.createElement('canvas'); canvas.className = 'breeding-scene'; canvas.width = 480; canvas.height = 300;
   canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'Your Chao breeding');
@@ -103,7 +108,8 @@ export async function playBreedingScene(host) {
   });
   const jingle = new Audio('/api/assets/jingle-chao-g-dance.mp3');
   // The game's own egg (object_alo_dummyegg), shown plain (EggColor 0, al_egg01) when it's laid.
-  const eggModel = fetch('/api/assets/chao-egg.glb').then(r => r.ok ? r.arrayBuffer() : null)
+  const eggModel = Promise.resolve(game?.gameEggGlb(false))
+    .then(own => own || fetch('/api/assets/chao-egg.glb').then(r => r.ok ? r.arrayBuffer() : null))
     .then(buffer => buffer && B.LoadAssetContainerAsync(new Uint8Array(buffer), scene, { pluginExtension: '.glb' })).catch(() => null);
   const layEgg = () => void eggModel.then(egg => {
     if (!egg) return;

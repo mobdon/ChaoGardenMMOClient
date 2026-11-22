@@ -427,3 +427,46 @@ fn every_chao_family_writes_with_its_morph_targets() {
         }
     }
 }
+
+/// The garden egg models and motions read from the game program at their traced addresses.
+#[test]
+#[ignore = "requires SA2_EXE (Steam sonic2app.exe) and SA2_GD_PC"]
+fn garden_eggs_from_the_game_program() {
+    use sa2_asset_tools::{chao_dll, chao_glb, chao_palette};
+    let exe = std::fs::read(std::env::var_os("SA2_EXE").expect("set SA2_EXE")).unwrap();
+    let gd = PathBuf::from(std::env::var_os("SA2_GD_PC").expect("set SA2_GD_PC"));
+    let body = std::fs::read(gd.join("al_body.prs")).unwrap();
+    let slots = chao_palettes(&gd);
+    let frames = |va, parts| chao_dll::read_motion_at(&exe, va, parts, false).unwrap();
+    let (shake, pon, kyoro) = (
+        frames(chao_dll::EGG_SHAKE, 1),
+        frames(chao_dll::HATCH_PON, 3),
+        frames(chao_dll::HATCH_KYORO, 3),
+    );
+    assert_eq!(
+        [
+            shake.motion.frame_count,
+            pon.motion.frame_count,
+            kyoro.motion.frame_count
+        ],
+        [16, 27, 20]
+    );
+    for (va, nodes, clips) in [
+        (chao_dll::EGG, 1, vec![("Egg", &shake)]),
+        (
+            chao_dll::HATCHING_EGG,
+            3,
+            vec![("Pon", &pon), ("Kyoro", &kyoro)],
+        ),
+    ] {
+        let model = chao_dll::read_model_at(&exe, va).unwrap();
+        assert_eq!(model.nodes.len(), nodes);
+        let pngs =
+            chao_glb::body_textures(&model, &body, &slots, &chao_palette::Ratios::CHILD).unwrap();
+        let glb = chao_glb::export(&model, &pngs, &clips, &[]).unwrap();
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
+        assert_eq!(doc["animations"].as_array().unwrap().len(), clips.len());
+        assert!(doc["asset"]["extras"]["chaoBehaviour"]["clips"][0]["tableProperties"].is_null());
+    }
+}

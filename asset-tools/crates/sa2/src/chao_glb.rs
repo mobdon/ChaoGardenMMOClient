@@ -401,7 +401,11 @@ pub fn export_family(
             return Err(Error::invalid("motion animates no node of this model"));
         }
         animations.push(json!({"name":name,"samplers":gl_samplers,"channels":channels}));
-        rows.push(json!({"nativeName":name,"tableProperties":{"LoopProperty":clip.mode,"NextAnimation":clip.next,
+        let Some(number) = clip.number else {
+            rows.push(json!({"nativeName":name}));
+            continue;
+        };
+        rows.push(json!({"nativeName":name,"nativeState":number,"tableProperties":{"LoopProperty":clip.mode,"NextAnimation":clip.next,
             "TransitionSpeed":clip.link_step,"StartFrame":clip.start_frame,"EndFrame":clip.end_frame,"PlaySpeed":clip.play_speed}}));
     }
     for (parent, node) in mouth_nodes {
