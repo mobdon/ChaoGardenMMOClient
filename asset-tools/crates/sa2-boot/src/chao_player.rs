@@ -1283,7 +1283,7 @@ fn zero(m: &mut Mem, a: u32, n: u32) {
 }
 
 fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    if matches!(STEP.get(), Step::Live(_)) && (m.r16(STAGE_NUM) as i16) < 90 {
+    if matches!(STEP.get(), Step::Live(_)) {
         // The rider's own display, walked for his node matrices, drawing nothing.
         LCAP.set(true);
         original(c, m, addr);
@@ -1294,16 +1294,32 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
 }
 
 /// The stage number (i16 at 0x803AD820); 90 and up are Chao World, where the
-/// game loads ChaoMain itself: the player Chao (its own ChaoMain copy at
-/// BASE) would collide with it (web lobby: "no function at 0x812012d0",
-/// lr inside BASE).
+/// game loads ChaoMain itself: a second copy at BASE collided with it (web
+/// lobby: "no function at 0x812012d0", lr inside BASE), so there the
+/// player's Chao is created on the game's own module.
 const STAGE_NUM: u32 = 0x803A_D820;
+
+fn chao_world(m: &Mem) -> bool {
+    m.r16(STAGE_NUM) as i16 >= 90
+}
+
+thread_local! {
+    static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
+}
 
 fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let task = c.r[3];
     original(c, m, addr);
-    if m.r16(STAGE_NUM) as i16 >= 90 {
-        return;
+    // A new stage or Chao World area drops the Chao task:
+    // create the player's Chao again.
+    // In Chao World the area is ChaoMain's AL_GetStageNumber (.text 0x27FA0).
+    let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
+    let stage = m.r16(STAGE_NUM) ^ (area << 8);
+    if LIVE_STAGE.replace(stage) != stage {
+        RIDER.set(0);
+        if let Step::Live(_) = STEP.get() {
+            STEP.set(Step::Wait(0));
+        }
     }
     let data1 = m.r32(task + 0x34);
     if data1 == 0 {
@@ -1320,7 +1336,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // The Hammer Gloves item in Knuckles's and Rouge's levels: Knuckles's
         // models are there in his own; Rouge's need KNUCKMDL. KNUCKTEX is
         // loaded once for the glove's own list.
-        if addr == KNUX_EXEC && KNUX_TEX.get().is_none() && !std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
+        if !chao_world(m) && addr == KNUX_EXEC && KNUX_TEX.get().is_none() && !std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
             let obj2 = m.r32(P1_OBJ2);
             let tex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
             if m.r32(MODELS + 4 * 329) == 0 {
@@ -1331,7 +1347,10 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         }
         // Shadow's textures and models for the Dark Chao's ball, once, in
         // Sonic's levels (playerwk +1 = 0, the byte Sonic's display picks his models by).
-        if addr == SONIC_EXEC && m.r8(m.r32(P1_OBJ2) + 1) == 0 && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
+        // shortcut: not in Chao World yet: models loaded there broke the next
+        // area change (OSFreeToHeap at 0xffffffe4, lvl9 gdn), so the Chao goes
+        // without Shadow's ball, shoes and gloves there.
+        if !chao_world(m) && addr == SONIC_EXEC && m.r8(m.r32(P1_OBJ2) + 1) == 0 && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
             let mdl = call(c, m, LOAD_MDL, &[SHADOW_MDL_NAME]);
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
@@ -1356,7 +1375,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
             physics_row(m);
-            shadow_moves(c, m);
+            if !chao_world(m) {
+                shadow_moves(c, m);
+            }
             force_sonic_state(m);
         } else {
             knuckles_rules(c, m, chao);
@@ -1556,6 +1577,9 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
     let next = match STEP.get() {
         // let the stage settle for a second before loading
         Step::Wait(n) if n < 60 => Step::Wait(n + 1),
+        Step::Wait(_) if chao_world(m) => {
+            if module_linked(m, 60) { create(c, m, pos) } else { Step::Wait(60) }
+        }
         Step::Wait(_) => {
             write_str(m, b"ChaoMain.prs");
             m.w32(SIZE, 0);
@@ -1626,6 +1650,20 @@ fn setup_and_create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     }
     call(c, m, s1 + 0x1FA10, &[]);
     call(c, m, s1 + 0x29344, &[]); // ALW_Create
+    create(c, m, pos)
+}
+
+/// Chao World (stage 90 and up) has ChaoMain, its motions, textures and
+/// ALW loaded by the game itself: only the player's Chao is created there,
+/// on the game's own module (rt::sec finds it), no second copy.
+fn module_linked(m: &Mem, id: u32) -> bool {
+    std::iter::successors(Some(m.r32(rt::OS_MODULE_HEAD)), |&i| Some(m.r32(i + 4)))
+        .take_while(|&i| i != 0)
+        .take(256)
+        .any(|i| m.r32(i) == id)
+}
+
+fn create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     zero(m, INFO, 0x800);
     // Owner Chao (server game.rs "admin-dark-chaos"): Dark Chaos, type 0x16 in
     // the byte the game's own egg code sets (2 = child there).
@@ -1640,6 +1678,7 @@ fn setup_and_create(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) -> Step {
     for (o, w) in pos.into_iter().enumerate() {
         m.w32(POS + 4 * o as u32, w);
     }
+    let s1 = rt::sec(m, 60, 1);
     let chao = call(c, m, s1 + 0x3148C, &[INFO, 0, 0, POS, 0]);
     if chao == 0 {
         eprintln!("chao-player: CreateChaoExtra returned 0");
