@@ -444,10 +444,31 @@ async function insertCard(code) {
     showTitle();
   } catch (error) { $('#join-error').textContent = error.message; }
 }
-$('#join-form').addEventListener('submit', (event) => {
+// Sign up: the new Chao starts a memory card, then the account is made for that card.
+$('#join-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  let newest; try { newest = saveSlots.list()[0]; } catch { /* no slots */ }
-  void join($('#chao-name').value, null, newest && (newest.card || newest.token));
+  const account = { username: $('#signup-name').value.trim(), email: $('#signup-email').value.trim(), password: $('#signup-password').value };
+  await join($('#chao-name').value, null, null);
+  if (!sessionCard) return;
+  try {
+    const response = await fetch('/api/account/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...account, card: sessionCard }) });
+    if (!response.ok) toast(`${(await response.json()).error || 'Could not make your account.'} Your Chao is saved in this browser's slots.`, 'error');
+  } catch { toast('Could not reach the server to make your account.', 'error'); }
+  $('#signup-password').value = '';
+});
+// Log in: the server opens the account's memory card and its Chao fill the slots.
+$('#login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const response = await fetch('/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+      body: JSON.stringify({ login: $('#login-name').value.trim(), password: $('#login-password').value }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not log in.');
+    $('#login-password').value = '';
+    for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, data.card);
+    const first = data.chao[0];
+    if (first) void join(first.player.name || 'Chao', first.token, data.card); else showTitle();
+  } catch (error) { $('#join-error').textContent = error.message; }
 });
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 showTitle();
