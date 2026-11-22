@@ -109,6 +109,7 @@ fn os_link(c: &mut Cpu, m: &mut Mem) {
     if c.r[3] != 0 && m.r32(module) == BIGFOOT {
         let s1 = rt::sec(m, BIGFOOT, 1);
         TEXT.set(s1);
+        eprintln!("combat: Big Foot linked, section 1 at {s1:#x}");
         c.rt.set_override(s1 + STAGE_TASK, stage_task);
         c.rt.set_override(s1 + STAGE_EXEC, stage_exec);
     }
@@ -138,6 +139,7 @@ fn stage_task(c: &mut Cpu, m: &mut Mem) {
     }
     let exec = rt::sec(m, BIGFOOT, 1) + STAGE_EXEC;
     m.w32(c.r[3] + 0x10, exec);
+    eprintln!("combat: stage task {:#x}, no boss, stage update {exec:#x}", c.r[3]);
     STATE.with_borrow_mut(|s| (s.placed, s.wave, s.slots, s.count) = (false, 0, [None; 2 * HALF], 0));
 }
 
@@ -255,6 +257,7 @@ fn waves(s: &mut State, m: &mut Mem, r13: u32, y: f32, radius: f32) {
         m.w32(e + 0xC, 0);
     }
     m.w16(count_at, count as u16);
+    eprintln!("combat: wave {} of {}, SET entries {} -> {count}, object rows {rows:#x}", s.wave, wave_size(s.wave), s.count);
     s.count = count;
 }
 
