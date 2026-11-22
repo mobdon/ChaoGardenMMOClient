@@ -1,5 +1,5 @@
 // Chao MMO glue: the inventory on the Chao stats card over the game page (/sa2/), with
-// breeding and Tiny Garden opened from inside it (mob 2026-11-21). It reuses the
+// breeding and Tiny Garden opened from inside it. It reuses the
 // hub page's own modules and the game page's room socket.
 import './style.css';
 import './sonic.css';
@@ -17,7 +17,7 @@ export function mountOverlay(nextSocket) {
   mounted = { socket: nextSocket };
   const el = (tag, text, className) => { const n = document.createElement(tag); if (text) n.textContent = text; if (className) n.className = className; return n; };
   const send = message => mounted.socket.readyState === WebSocket.OPEN && (mounted.socket.send(JSON.stringify(message)), true);
-  // The inventory lives on the Chao stats card (mob): click the card or press Tab.
+  // The inventory lives on the Chao stats card: click the card or press Tab.
   const card = document.getElementById('mmo-card');
   const panel = el('section', undefined, 'garden-care-panel'); panel.hidden = true; panel.style.cssText = 'position:fixed;top:120px;right:auto;left:16px;bottom:auto';
   // The game's own stat window rows (stat-ui.js: native frame, font and grade cells), then the native inventory.

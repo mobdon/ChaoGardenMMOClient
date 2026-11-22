@@ -6,10 +6,12 @@
 // [3..4] slot length, [5] slot the game fills next, [6] sound written,
 // [7] sound read, [8] canvas aspect (render.js), [9] sound dropouts, [10] sound skips.
 
-const SLOT = 40 << 20; // a frame's pipe bytes and 24 MiB of RAM
+const SLOT = 64 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 48 fits; more needs a bigger slot)
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
 const q = new URLSearchParams(location.search);
+// The MMO has no title or card screen: without a signed-in Chao, go to the login.
+if (!mmoToken()) location.replace('/');
 const wide = q.get('aspect') !== '4:3';
 const fpsCap = Number(q.get('fps')) || 0; // 60: never blend between frames
 
@@ -33,6 +35,9 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064), // the MMO files (worker.js, MMO)
+  // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
+  pages: new SharedArrayBuffer(4 + 65536),
 };
 const ctl = new Int32Array(sh.ctl), pad = new Uint8Array(sh.pad);
 
@@ -45,6 +50,7 @@ function hold(bit, down) {
   held = down ? held | bit : held & ~bit;
 }
 addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return; // typing in chat, not playing
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
   e.preventDefault();
@@ -68,6 +74,7 @@ const BUTTONS = [[0, 0x0100], [2, 0x0200], [1, 0x0400], [3, 0x0800], [9, 0x1000]
 function writePad() {
   pad[0] = held & 0xff;
   pad[1] = held >> 8;
+  writeExtras();
   const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find((p) => p && p.connected);
   if (!g) {
     pad[2] = 0;
@@ -108,6 +115,36 @@ function pickedFiles() {
 // (tests: the browser's automation can't fill a folder input).
 const addedFiles = [];
 window.pickFolder = (mount, entries) => entries.forEach(([p, f]) => addedFiles.push([`${mount}/${p}`, f]));
+// The files the player picked once on the MMO login page (src/game-files.js, same site's IndexedDB).
+async function savedFolders() {
+  const db = await new Promise((resolve) => {
+    const r = indexedDB.open('sa2-game-files', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('handles');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+  });
+  if (!db) return;
+  const get = (key) => new Promise((resolve) => {
+    const r = db.transaction('handles').objectStore('handles').get(key);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+  });
+  const walk = async (dir, path) => {
+    for await (const entry of dir.values()) {
+      if (entry.kind === 'directory') await walk(entry, `${path}${entry.name}/`);
+      else addedFiles.push([`steam/${path}${entry.name}`, await entry.getFile()]);
+    }
+  };
+  for (const [key, handle] of [['steam', await get('steam')], ['disc', await get('disc')]]) {
+    if (!handle) continue;
+    if (await handle.queryPermission({ mode: 'read' }) !== 'granted') {
+      log(`game files: no read access to the picked ${key === 'steam' ? 'Steam folder' : 'disc image'}; log in again to allow it`, true);
+      continue;
+    }
+    if (key === 'steam') await walk(handle, '');
+    else addedFiles.push(['@disc', await handle.getFile()]);
+  }
+}
 
 // ---- threads ------------------------------------------------------------
 let module, memory, env, workers = 0;
@@ -124,6 +161,9 @@ function loadedWorker() {
     else if (m.crash) log(`game thread ${m.tid} stopped: ${m.crash}`, true);
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
+    else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
+    else if (m.area !== undefined) roomArea(m.area);
+    else if (m.extras !== undefined) extrasChanged(...m.extras);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
   w.postMessage({ init: true, module, memory, env, picked, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
@@ -143,32 +183,121 @@ function mmoToken() {
 }
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
-const roomZones = { 1: 'garden', 2: 'hero', 3: 'dark', 5: 'race' };
+// The game's own Chao Lobby is the MMO hub: stage 90 with no area.
+// One server room per ChaoMain area (server CHAO_WORLD_ZONES).
+const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 4: 'chao-race', 5: 'race-entrance', 6: 'kindergarten', 9: 'stadium', 10: 'chao-karate', 11: 'chao-karate' };
+let room = null;
 function joinRoom(token, zone) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws?token=${encodeURIComponent(token)}`);
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: zone }));
+  room = { ws, zone };
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: room.zone }));
   // The MMO overlay (Inventory, breeding, Tiny Garden) is the client's own module; the game boots without it.
   let overlay = null;
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
   ws.onmessage = ({ data }) => {
     let m; try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); }
+    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); }
     if (m.type === 'event') overlay?.event(m);
+    if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
-  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, zone), 3000); };
+  ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
+}
+// ---- the other players' Chao (sa2-boot chao_player.rs, worker.js MMO files) --
+// The game's own pose goes to the room each 100 ms; the room's other players
+// with a pose come back as lines "id x y z angle motion frame gear"; Chao
+// records go to and from the server by version. The server routes may not
+// exist yet: failures stay quiet.
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32 };
+const mmoBytes = new Uint8Array(sh.mmo);
+globalThis.sa2Mmo = sh.mmo; // for checks from the console
+const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
+// The game keys remote Chao by a number: the first 52 bits of the player id.
+const numId = (id) => String(BigInt('0x' + (String(id).replace(/[^0-9a-f]/gi, '').slice(0, 13) || '0')));
+let poseSeen = 0, recSeen = 0;
+const recVersions = new Map();
+function mmoTick(token) {
+  const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
+  if (seq !== poseSeen && room?.ws.readyState === 1) {
+    poseSeen = seq;
+    try {
+      const text = new TextDecoder().decode(mmoBytes.slice(MMO.POSE_OUT + 8, MMO.POSE_OUT + 8 + pose[1]));
+      room.ws.send(JSON.stringify({ type: 'action', action: 'chao-pose', pose: JSON.parse(text) }));
+    } catch {}
+  }
+  const rec = mmoHead(MMO.REC_OUT), rseq = Atomics.load(rec, 0);
+  if (rseq !== recSeen) {
+    recSeen = rseq;
+    const body = mmoBytes.slice(MMO.REC_OUT + 8, MMO.REC_OUT + 8 + rec[1]);
+    fetch('/api/chao-record', { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' }, body }).catch(() => {});
+  }
+}
+function othersIn(m, token) {
+  const lines = [];
+  for (const p of m.players || []) {
+    if (p.id === m.selfId) continue;
+    const c = p.chaoPose;
+    if (c) lines.push([numId(p.id), c.x, c.y, c.z, c.angle | 0, c.motion | 0, c.frame || 0, c.gear | 0].join(' '));
+    if (p.chaoRecordVersion !== undefined && recVersions.get(p.id) !== p.chaoRecordVersion) {
+      recVersions.set(p.id, p.chaoRecordVersion);
+      fetch(`/api/chao-record/${encodeURIComponent(p.id)}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => b && recordIn(numId(p.id), new Uint8Array(b))).catch(() => {});
+    }
+  }
+  const text = new TextEncoder().encode(lines.join('\n') + (lines.length ? '\n' : ''));
+  const n = Math.min(text.length, MMO.POSE_IN_MAX);
+  mmoBytes.set(text.subarray(0, n), MMO.POSE_IN + 8);
+  Atomics.store(mmoHead(MMO.POSE_IN), 1, n);
+}
+// A remote Chao's record into its slot (by id, else the first free one), with a new version.
+function recordIn(id, bytes) {
+  const v = new DataView(sh.mmo);
+  let slot = -1, free = -1;
+  for (let i = 0; i < MMO.NSLOT; i++) {
+    const k = String(v.getBigUint64(MMO.SLOTS + i * MMO.SLOT, true));
+    if (k === id) slot = i;
+    if (k === '0' && free < 0) free = i;
+  }
+  if (slot < 0) slot = free;
+  if (slot < 0) return;
+  const at = MMO.SLOTS + slot * MMO.SLOT, h = new Int32Array(sh.mmo, at + 8, 2);
+  mmoBytes.set(bytes.subarray(0, MMO.REC), at + 16);
+  h[1] = Math.min(bytes.length, MMO.REC);
+  v.setBigUint64(at, BigInt(id), true);
+  Atomics.add(h, 0, 1);
+}
+
+// While the boot logos run before an MMO start, the game is covered (plain
+// black, as the page looks before the first frame) and its sound muted.
+function cover(on) {
+  let c = document.getElementById('mmo-cover');
+  if (!c) {
+    c = Object.assign(document.createElement('div'), { id: 'mmo-cover' });
+    c.style.cssText = 'position:fixed;inset:0;background:#000;z-index:5;pointer-events:none';
+    document.body.append(c);
+  }
+  c.style.display = on ? 'block' : 'none';
+  if (gameVolume) gameVolume.gain.value = on ? 0 : Number.isInteger(mmoSettings.volume) ? mmoSettings.volume / 10 : 1;
+}
+
+// The game changed Chao World area (its own teleporters): follow it into that room.
+function roomArea(area) {
+  const zone = roomZones[area === 0 ? '' : area];
+  if (!room || !zone || zone === room.zone) return;
+  room.zone = zone;
+  if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
 }
 // The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
 function showCard(player) {
-  if (!player) return;
   const card = document.getElementById('mmo-card');
+  if (!player || !card) return; // the card element comes from the MMO overlay
   card.style.display = 'flex';
   // The player's own Chao as the game's Chao Select shows it (src/chao-portrait.js); drawn once.
   const icon = card.querySelector('.icon');
   if (!icon.dataset.chao) {
     icon.dataset.chao = '1';
-    const canvas = Object.assign(document.createElement('canvas'), { width: 128, height: 160 });
-    canvas.style.cssText = 'position:static;width:64px;height:80px;display:block'; // the page pins every canvas full-screen
+    const canvas = Object.assign(document.createElement('canvas'), { width: 96, height: 120 });
+    canvas.style.cssText = 'width:48px;height:60px;display:block';
     icon.replaceChildren(canvas);
     import('/src/chao-portrait.js').then(m => m.mountChaoPortrait(canvas, player)).catch(() => {});
   }
@@ -208,6 +337,7 @@ setInterval(() => {
 
 async function start() {
   $('go').disabled = true;
+  await savedFolders().catch((e) => log(`game files: ${e}`, true));
   picked = pickedFiles();
   status.textContent = 'loading…';
   if (!crossOriginIsolated) throw new Error('the page needs cross-origin isolation (open it from the local server)');
@@ -215,8 +345,8 @@ async function start() {
   await audio.audioWorklet.addModule('audio.js');
   const mix = new AudioWorkletNode(audio, 'sa2-mix', { outputChannelCount: [2], processorOptions: { ctl: sh.ctl, audio: sh.audio } });
   // Master volume for the MMO sound corner (src/game-overlay.js).
-  globalThis.sa2Gain = audio.createGain();
-  mix.connect(globalThis.sa2Gain).connect(audio.destination);
+  gameVolume = globalThis.sa2Gain = audio.createGain();
+  mix.connect(gameVolume).connect(audio.destination);
   const dpr = devicePixelRatio || 1;
   canvas.width = Math.round(canvas.clientWidth * dpr);
   canvas.height = Math.round(canvas.clientHeight * dpr);
@@ -226,7 +356,7 @@ async function start() {
     if (ev.data.status) picture = ev.data.status;
     else if (ev.data.log) log(ev.data.log, true);
   };
-  renderer.postMessage({ canvas: off, ctl: sh.ctl, slots: sh.slots, wide, fpsCap }, [off]);
+  renderer.postMessage({ canvas: off, ctl: sh.ctl, slots: sh.slots, pages: sh.pages, wide, fpsCap }, [off]);
   // Steam first: its files win, a picked disc only fills what Steam lacks.
   const e = await (await fetch('env.json')).json();
   delete e.SA2_DISC_FIRST;
@@ -236,11 +366,16 @@ async function start() {
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
+  // A new player (no Chao on the card yet): their egg is laid in the lobby.
+  if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
-  if (token && roomZones[q.get('area')]) joinRoom(token, roomZones[q.get('area')]);
+  if (token) loadSettings(token);
+  if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
+  if (token) setInterval(() => mmoTick(token), 100);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
   memory = new WebAssembly.Memory({ initial: PAGES_START, maximum: PAGES_MAX, shared: true });
@@ -256,3 +391,148 @@ $('go').addEventListener('click', () => start().catch((e) => {
 }));
 // ?autostart: start without the button (for testing; sound may stay off).
 if (q.has('autostart')) $('go').click();
+
+// ---- Extras settings (pause menu), saved only on the MMO server ----------
+// The page applies the rows it owns: game volume, chat box, frame cap; voice
+// reads mmoSettings.voiceMode. The game applies its own rows (language, sound mode...).
+let gameVolume = null;
+function applySettings(s) {
+  const opening = s.voiceMode === 'open' && mmoSettings.voiceMode !== 'open';
+  Object.assign(mmoSettings, s);
+  if (opening) globalThis.mmoVoiceStart?.().catch(() => {}); // mic refused: stays silent
+  if (gameVolume && Number.isInteger(mmoSettings.volume)) gameVolume.gain.value = mmoSettings.volume / 10;
+  chat.hidden = mmoSettings.chat === false;
+  if (renderer && mmoSettings.fps) renderer.postMessage({ fps: mmoSettings.fps });
+}
+async function loadSettings(token) {
+  const r = await fetch('/api/settings', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+  if (r?.ok) applySettings((await r.json()).settings || {});
+  settingsLoaded = true;
+}
+// The game's pause Extras pages (sa2_boot::pause_extras): its rows, in its order,
+// and the bytes it reads back on /dev/pad 12-15.
+const THEMES = ['def', 'sn', 'sd', 'tl', 'kn', 'rg', 'am', 'eg', 'ma', 'ch', 'se'];
+const EXTRAS_ROWS = [
+  ['voiceLanguage', ['english', 'japanese']], ['sound', ['stereo', 'mono']], ['vibration', [true, false]],
+  ['menuTheme', THEMES], ['voiceMode', ['hold', 'open']], ['chat', [true, false]],
+  ['volume', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], ['music', [true, false]], ['fps', [60, 120, 165]],
+];
+function extrasChanged(row, choice) {
+  const [key, choices] = EXTRAS_ROWS[row] || [];
+  if (key && choice < choices.length) mmoSaveSettings({ [key]: choices[choice] });
+}
+let settingsLoaded = false;
+function writeExtras() {
+  const s = mmoSettings, bit = (on, n) => (on ? 1 << n : 0);
+  pad[12] = bit(settingsLoaded, 0) | bit(s.sound === 'mono', 1) | bit(s.voiceLanguage === 'japanese', 2)
+    | bit(s.vibration === false, 3) | bit(s.music === false, 4) | bit(s.chat === false, 5) | bit(s.voiceMode === 'open', 6);
+  pad[13] = Number.isInteger(s.volume) ? s.volume : 10;
+  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps));
+  pad[15] = Math.max(0, THEMES.indexOf(s.menuTheme));
+}
+
+// The Extras page calls this when a row changes: applied now, saved on the server.
+globalThis.mmoSaveSettings = (changes) => {
+  applySettings(changes);
+  const token = mmoToken();
+  if (token) fetch('/api/settings', { method: 'POST', body: JSON.stringify(changes),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }).catch(() => {});
+};
+
+// ---- chat: world (everyone) and room (this area), relayed by the MMO server --
+// T opens the box; a message starting "/w " goes to world chat, the rest to the room.
+const chat = document.createElement('div');
+chat.id = 'chat';
+chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-input" maxlength="200" placeholder="Room chat (/w for world)" aria-label="Chat message" hidden>';
+document.body.append(chat);
+const chatLog = chat.firstChild, chatInput = chat.lastChild;
+function chatLine({ channel, fromId, fromName, text }) {
+  const line = document.createElement('div');
+  line.className = channel;
+  if (fromId) line.title = `Click to mute ${fromName}`;
+  if (fromId) line.onclick = () => { room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId })); chatLine({ channel: 'system', fromName: 'Muted', text: fromName }); };
+  line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
+  chatLog.append(line);
+  while (chatLog.childElementCount > 50) chatLog.firstChild.remove();
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyT' || e.target === chatInput || !room || chat.hidden) return;
+  e.preventDefault();
+  held = 0;
+  chatInput.hidden = false;
+  chatInput.focus();
+});
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { chatInput.value = ''; chatInput.blur(); }
+  if (e.key !== 'Enter') return;
+  const world = chatInput.value.startsWith('/w ');
+  const text = (world ? chatInput.value.slice(3) : chatInput.value).trim();
+  if (text && room?.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chat', channel: world ? 'world' : 'room', text }));
+  chatInput.value = '';
+  chatInput.blur();
+});
+chatInput.addEventListener('blur', () => (chatInput.hidden = true));
+
+// ---- proximity voice: hold V to talk --------------------------------------
+// Mic audio goes only to the MMO server (never player to player, so no one sees
+// another player's address); the server relays it to Chao within its radius.
+// 8 kHz 16-bit mono in 60 ms frames keeps each message under the server's 2 KB cap.
+const VOICE_RATE = 8000, VOICE_FRAME = 480;
+let voiceCtx = null, voiceMic = null, talking = false;
+// MMO settings the game's own options menu sets (saved on the server by that menu).
+// voiceMode: 'hold' (hold V to talk) or 'open' (open mic).
+const mmoSettings = (globalThis.mmoSettings ??= { voiceMode: 'hold' });
+const voiceAt = new Map(); // sender id -> next play time, so frames queue back to back
+async function voiceStart() {
+  voiceCtx ??= new AudioContext();
+  if (voiceMic) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  const src = voiceCtx.createMediaStreamSource(stream);
+  const proc = voiceCtx.createScriptProcessor(2048, 1, 1);
+  const step = voiceCtx.sampleRate / VOICE_RATE;
+  let pending = [], phase = 0;
+  proc.onaudioprocess = ({ inputBuffer }) => {
+    const input = inputBuffer.getChannelData(0);
+    // Open mic sends only while the player speaks (level gate), not room hiss.
+    const speaking = talking || (mmoSettings.voiceMode === 'open' && Math.hypot(...input) / Math.sqrt(input.length) > 0.02);
+    if (!speaking || room?.ws.readyState !== 1) { pending = []; return; }
+    for (; phase < input.length; phase += step) pending.push(Math.max(-1, Math.min(1, input[phase | 0])) * 32767);
+    phase -= input.length;
+    while (pending.length >= VOICE_FRAME) {
+      const pcm = new Int16Array(pending.splice(0, VOICE_FRAME));
+      const data = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
+      room.ws.send(JSON.stringify({ type: 'action', action: 'voice', data }));
+    }
+  };
+  src.connect(proc);
+  proc.connect(voiceCtx.createGain()).connect(voiceCtx.destination); // gain 1 on silence: keeps the processor running
+  voiceMic = { stream, proc };
+}
+function voicePlay({ fromId, fromName, volume, data }) {
+  if (!voiceCtx) return; // the server never sends voice from players you muted
+  // A new voice nearby gets one clickable line, so it can be muted like chat.
+  if (!voiceAt.has(fromId)) chatLine({ channel: 'system', fromId, fromName, text: 'is talking nearby (click to mute)' }); // browsers allow audio only after the first key or click
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+  const buf = voiceCtx.createBuffer(1, pcm.length, VOICE_RATE);
+  buf.getChannelData(0).set(Float32Array.from(pcm, (v) => v / 32768));
+  const node = voiceCtx.createBufferSource();
+  node.buffer = buf;
+  const gain = voiceCtx.createGain();
+  gain.gain.value = Math.max(0, Math.min(1, volume));
+  node.connect(gain).connect(voiceCtx.destination);
+  const at = Math.max(voiceCtx.currentTime + 0.05, voiceAt.get(fromId) ?? 0);
+  node.start(at);
+  voiceAt.set(fromId, at + buf.duration);
+}
+addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyV' || e.repeat || e.target instanceof HTMLInputElement || !room) return;
+  talking = true;
+  voiceStart().catch(() => (talking = false));
+});
+addEventListener('keyup', (e) => { if (e.code === 'KeyV') talking = false; });
+addEventListener('blur', () => (talking = false));
+for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => { voiceCtx ??= new AudioContext(); if (mmoSettings.voiceMode === 'open') voiceStart().catch(() => {}); }, { once: true });
+// The options menu calls this after switching voiceMode to 'open' (needs the mic now).
+globalThis.mmoVoiceStart = () => voiceStart();

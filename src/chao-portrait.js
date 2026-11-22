@@ -4,7 +4,8 @@
 // icon (small) and the login screen (big).
 import { captureChaoPose, cloneNativeMotion } from './chao-locomotion.js';
 
-const TURN = -0x38e / 0x10000 * Math.PI * 2;
+// Babylon is left-handed and mirrors the game's X, so the game's -0x38E turn is +0x38E here.
+const TURN = 0x38e / 0x10000 * Math.PI * 2;
 
 /** Same Chaos family pick as the hub; everyone else the base Chao model. */
 export function portraitAsset(player) {

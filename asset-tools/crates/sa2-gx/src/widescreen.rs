@@ -7,7 +7,7 @@ use crate::api::{DrawCmd, Frame};
 use crate::vtx::{InputFormat, VertexInput};
 
 /// How far toward the screen edge side HUD moves, as a share of the extra
-/// width: Steam's 16:9 HUD (mob's 2560x1440 City Escape screenshot) sits
+/// width: Steam's 16:9 HUD (a 2560x1440 City Escape screenshot) sits
 /// about 8.2% in from each side, where the game's 4:3 layout puts it 2.5% in;
 /// 0.494 of the extra width lands it there.
 pub const STEAM_EDGE: f32 = 0.494;

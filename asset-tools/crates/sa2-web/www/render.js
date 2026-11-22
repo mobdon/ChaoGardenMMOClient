@@ -3,7 +3,7 @@
 // neither decoding nor drawing holds up the page's input.
 import init, { Screen } from './pkg/sa2_web.js';
 
-let screen, ctl, wide, fpsCap;
+let screen, ctl, wide, fpsCap, maxFps = 0, lastDraw = 0;
 let size = [1, 1];
 let shown = 0, blend = false, decoded = '';
 // Game frames that arrived together and were never on screen (a hitch).
@@ -12,6 +12,9 @@ const prof = { draw: 0, pics: 0 };
 const ticks = [];
 
 function frame(now) {
+  // Extras frame cap (60/120/165): skip display refreshes that come too soon.
+  if (maxFps && now - lastDraw < 1000 / maxFps - 1) return requestAnimationFrame(frame);
+  lastDraw = now;
   // The display's rate: blend between game frames when it is above 60.
   ticks.push(now);
   if (ticks.length > 60) ticks.shift();
@@ -44,6 +47,10 @@ onmessage = async (ev) => {
     size = m.size;
     return;
   }
+  if (m.fps) {
+    maxFps = m.fps;
+    return;
+  }
   try {
     ({ wide, fpsCap } = m);
     ctl = new Int32Array(m.ctl);
@@ -56,7 +63,7 @@ onmessage = async (ev) => {
       if (e.data.log) postMessage({ log: e.data.log });
       else decoded = ` (decode ${e.data.ms.toFixed(1)} ms)`;
     };
-    dec.postMessage({ module, memory: wasm.memory, ctl: m.ctl, slots: m.slots });
+    dec.postMessage({ module, memory: wasm.memory, ctl: m.ctl, slots: m.slots, pages: m.pages });
     requestAnimationFrame(frame);
   } catch (e) {
     postMessage({ log: `screen: ${e}` });
