@@ -18,6 +18,23 @@ use std::io::{Read, Write};
 
 /// GX job framing on `/dev/gx`: magic, XFB address, pipe length, RAM length.
 pub const GX_MAGIC: u32 = 0x4758_4A42; // "GXJB"
+/// Delta job: magic, XFB, pipe length, RAM length, page count; the pipe
+/// bytes; then each changed page as its index (u32) and [`PAGE`] bytes.
+pub const GX_DELTA: u32 = 0x4758_4A44; // "GXJD"
+pub const PAGE: usize = 4096;
+/// Frames between full RAM compares (see copy_disp).
+const FULL_EVERY: u64 = 60;
+
+/// The pages the page's decoder read for its last frame (bit n = page n),
+/// or None when the page doesn't say (no /dev/gxpages, or nothing yet).
+fn used_pages() -> Option<Vec<u32>> {
+    let bytes = std::fs::read("/dev/gxpages").ok()?;
+    let words: Vec<u32> = bytes.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+    (!words.is_empty()).then_some(words)
+}
+
+/// RAM as the page last got it.
+static SHADOW: Global<Vec<u8>> = global!(Vec::new());
 
 /// Run main.dol (paths from the page's args) until the tab closes.
 pub fn main(dispatch: fn(u32) -> Option<Func>, register: fn(&mut Runtime)) {
@@ -80,15 +97,43 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
         f(c, m);
     }
     let fifo = QUEUED.with_borrow_mut(std::mem::take);
-    let mut head = Vec::with_capacity(16 + fifo.len());
-    for v in [GX_MAGIC, dest, fifo.len() as u32, m.ram.len() as u32] {
-        head.extend(v.to_le_bytes());
-    }
-    head.extend_from_slice(&fifo);
+    // Only the RAM pages changed since the last job go (GX_DELTA); the page
+    // keeps the rest. Copying all of RAM each frame halved the frame rate at 48 MB.
+    let job = SHADOW.with_borrow_mut(|shadow| {
+        if shadow.len() != m.ram.len() {
+            shadow.clear();
+            shadow.resize(m.ram.len(), 0);
+        }
+        // Only the pages the decoder read for the last frame are compared
+        // (/dev/gxpages, one bit a page); all of RAM on the first frame, every
+        // FULL_EVERY frames and with SA2_GX_FULLSCAN. A page a frame newly
+        // needs arrives one frame late.
+        let frame = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        let used = if frame % FULL_EVERY == 0 || std::env::var_os("SA2_GX_FULLSCAN").is_some() { None } else { used_pages() };
+        let mut pages = Vec::new();
+        for (i, (now, was)) in m.ram.chunks(PAGE).zip(shadow.chunks_mut(PAGE)).enumerate() {
+            if used.as_ref().is_some_and(|u| u.get(i >> 5).is_none_or(|w| w & (1 << (i & 31)) == 0)) {
+                continue;
+            }
+            if now != was {
+                was.copy_from_slice(now);
+                pages.extend((i as u32).to_le_bytes());
+                pages.extend_from_slice(now);
+            }
+        }
+        let count = (pages.len() / (4 + PAGE)) as u32;
+        let mut job = Vec::with_capacity(20 + fifo.len() + pages.len());
+        for v in [GX_DELTA, dest, fifo.len() as u32, m.ram.len() as u32, count] {
+            job.extend(v.to_le_bytes());
+        }
+        job.extend_from_slice(&fifo);
+        job.extend_from_slice(&pages);
+        job
+    });
     let sent = std::fs::OpenOptions::new()
         .append(true)
         .open("/dev/gx")
-        .and_then(|mut f| f.write_all(&head).and_then(|()| f.write_all(&m.ram)));
+        .and_then(|mut f| f.write_all(&job));
     if let Err(e) = sent {
         static SAID: std::sync::Once = std::sync::Once::new();
         SAID.call_once(|| eprintln!("gx: /dev/gx: {e}"));
