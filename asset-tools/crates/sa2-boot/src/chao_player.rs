@@ -443,7 +443,7 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
     let posed = POSED.with_borrow(|p| p.clone());
     let skel = SKEL.with_borrow(|s| s.clone());
-    if posed.len() < 14 || skel.len() != 62 {
+    if (posed.len() < 14 && !chao_world(m)) || skel.len() != 62 {
         return;
     }
     let models: Vec<u32> = std::env::var("SA2_SHOE_MODELS").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect()).unwrap_or_default();
@@ -622,6 +622,19 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // ChaoMain queues the model draw past this call (no walker runs inside
     // it, ev28), so the flag stays on for the frame while in a cutscene.
     CHAO_DRAW.set(ev);
+    if live && RIDER.get() != 0 {
+        // The rest model, for the boots' size (level_pose reads it when retargeting).
+        let cw = m.r32(c.r[3] + 0x34);
+        let root = if cw == 0 { 0 } else { m.r32(cw + 0x510) };
+        if (0x8000_0000..0x8C00_0000).contains(&root) {
+            CHAO_REST.with_borrow_mut(|r| if r.is_none() { *r = Some(crate::chao_retarget::read_chao(&|a| m.r32(a), root, [vec![], vec![]])); });
+        }
+        NATIVE_DRAW.set(true);
+        CHAO_NODE.set(0);
+        rel_original(c, m, a, chao_display);
+        NATIVE_DRAW.set(false);
+        return;
+    }
     if ev {
         write_pose(m, c.r[3]);
     }
@@ -986,7 +999,16 @@ walker_probe!(w0 = 0, w1 = 1, w2 = 2, w3 = 3, w4 = 4, w5 = 5);
 fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if !CHAO_DRAW.get() {
         let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
-        return rel_original(c, m, a, chao_node);
+        rel_original(c, m, a, chao_node);
+        // The player's Chao on its native rig: its foot nodes for the boots.
+        if NATIVE_DRAW.get() {
+            let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
+            if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
+                let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+                FEET.with_borrow_mut(|f| f[k] = Some(cur));
+            }
+        }
+        return;
     }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     // In a stage the display resets the count; in a cutscene, each frame.
@@ -1272,6 +1294,8 @@ fn level_pose(m: &Mem, chao: u32) {
 thread_local! {
     /// POSED holds world matrices (seated on the board), not Chao-local ones.
     static POSED_WORLD: Cell<bool> = const { Cell::new(false) };
+    /// The player's Chao is being drawn on its native rig (Chao World).
+    static NATIVE_DRAW: Cell<bool> = const { Cell::new(false) };
 }
 
 /// While a board drew this or last frame: seat the posed Chao on it
