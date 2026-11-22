@@ -69,6 +69,7 @@ const BUTTONS = [[0, 0x0100], [2, 0x0200], [1, 0x0400], [3, 0x0800], [9, 0x1000]
 function writePad() {
   pad[0] = held & 0xff;
   pad[1] = held >> 8;
+  writeExtras();
   const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find((p) => p && p.connected);
   if (!g) {
     pad[2] = 0;
@@ -126,6 +127,7 @@ function loadedWorker() {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
     else if (m.area !== undefined) roomArea(m.area);
+    else if (m.extras !== undefined) extrasChanged(...m.extras);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
   w.postMessage({ init: true, module, memory, env, picked, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
@@ -203,7 +205,8 @@ async function start() {
   const audio = new AudioContext({ latencyHint: 'interactive' });
   await audio.audioWorklet.addModule('audio.js');
   const mix = new AudioWorkletNode(audio, 'sa2-mix', { outputChannelCount: [2], processorOptions: { ctl: sh.ctl, audio: sh.audio } });
-  mix.connect(audio.destination);
+  gameVolume = audio.createGain();
+  mix.connect(gameVolume).connect(audio.destination);
   const dpr = devicePixelRatio || 1;
   canvas.width = Math.round(canvas.clientWidth * dpr);
   canvas.height = Math.round(canvas.clientHeight * dpr);
@@ -229,6 +232,7 @@ async function start() {
   if (token) e.SA2_MMO_TOKEN = token;
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
+  if (token) loadSettings(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
   status.textContent = 'compiling the game…';
   module = await WebAssembly.compileStreaming(fetch('game.wasm'));
@@ -245,6 +249,53 @@ $('go').addEventListener('click', () => start().catch((e) => {
 }));
 // ?autostart: start without the button (for testing; sound may stay off).
 if (q.has('autostart')) $('go').click();
+
+// ---- Extras settings (pause menu), saved only on the MMO server ----------
+// The page applies the rows it owns: game volume, chat box, frame cap; voice
+// reads mmoSettings.voiceMode. The game applies its own rows (language, sound mode...).
+let gameVolume = null;
+function applySettings(s) {
+  const opening = s.voiceMode === 'open' && mmoSettings.voiceMode !== 'open';
+  Object.assign(mmoSettings, s);
+  if (opening) globalThis.mmoVoiceStart?.().catch(() => {}); // mic refused: stays silent
+  if (gameVolume && Number.isInteger(mmoSettings.volume)) gameVolume.gain.value = mmoSettings.volume / 10;
+  chat.hidden = mmoSettings.chat === false;
+  if (renderer && mmoSettings.fps) renderer.postMessage({ fps: mmoSettings.fps });
+}
+async function loadSettings(token) {
+  const r = await fetch('/api/settings', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+  if (r?.ok) applySettings((await r.json()).settings || {});
+  settingsLoaded = true;
+}
+// The game's pause Extras pages (sa2_boot::pause_extras): its rows, in its order,
+// and the bytes it reads back on /dev/pad 12-15.
+const THEMES = ['def', 'sn', 'sd', 'tl', 'kn', 'rg', 'am', 'eg', 'ma', 'ch', 'se'];
+const EXTRAS_ROWS = [
+  ['voiceLanguage', ['english', 'japanese']], ['sound', ['stereo', 'mono']], ['vibration', [true, false]],
+  ['menuTheme', THEMES], ['voiceMode', ['hold', 'open']], ['chat', [true, false]],
+  ['volume', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], ['music', [true, false]], ['fps', [60, 120, 165]],
+];
+function extrasChanged(row, choice) {
+  const [key, choices] = EXTRAS_ROWS[row] || [];
+  if (key && choice < choices.length) mmoSaveSettings({ [key]: choices[choice] });
+}
+let settingsLoaded = false;
+function writeExtras() {
+  const s = mmoSettings, bit = (on, n) => (on ? 1 << n : 0);
+  pad[12] = bit(settingsLoaded, 0) | bit(s.sound === 'mono', 1) | bit(s.voiceLanguage === 'japanese', 2)
+    | bit(s.vibration === false, 3) | bit(s.music === false, 4) | bit(s.chat === false, 5) | bit(s.voiceMode === 'open', 6);
+  pad[13] = Number.isInteger(s.volume) ? s.volume : 10;
+  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps));
+  pad[15] = Math.max(0, THEMES.indexOf(s.menuTheme));
+}
+
+// The Extras page calls this when a row changes: applied now, saved on the server.
+globalThis.mmoSaveSettings = (changes) => {
+  applySettings(changes);
+  const token = mmoToken();
+  if (token) fetch('/api/settings', { method: 'POST', body: JSON.stringify(changes),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }).catch(() => {});
+};
 
 // ---- chat: world (everyone) and room (this area), relayed by the MMO server --
 // T opens the box; a message starting "/w " goes to world chat, the rest to the room.
@@ -264,7 +315,7 @@ function chatLine({ channel, fromId, fromName, text }) {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 addEventListener('keydown', (e) => {
-  if (e.code !== 'KeyT' || e.target === chatInput || !room) return;
+  if (e.code !== 'KeyT' || e.target === chatInput || !room || chat.hidden) return;
   e.preventDefault();
   held = 0;
   chatInput.hidden = false;

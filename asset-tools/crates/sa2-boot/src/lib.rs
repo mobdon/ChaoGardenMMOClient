@@ -19,6 +19,7 @@ pub mod io;
 #[cfg(not(target_os = "wasi"))]
 pub mod mmo;
 pub mod pad;
+pub mod pause_extras;
 pub mod prof;
 pub mod serve;
 #[cfg(not(target_os = "wasi"))]
@@ -47,6 +48,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     wide::install(c, m);
     walker::install(c, m);
     start_stage::install(c, m);
+    pause_extras::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).
