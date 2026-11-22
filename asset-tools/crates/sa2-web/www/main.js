@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -258,13 +258,36 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
 // The game keys remote Chao by a number: the first 52 bits of the player id.
 const numId = (id) => String(BigInt('0x' + (String(id).replace(/[^0-9a-f]/gi, '').slice(0, 13) || '0')));
-let poseSeen = 0, recSeen = 0, poseSent = null, poseSeq = 0, poseFullAt = 0, poseWs = null;
+let poseSeen = 0, recSeen = 0, pickSeen = 0, poseSent = null, poseSeq = 0, poseFullAt = 0, poseWs = null;
+// The memory card's Chao for the Chao Transporter's picker (sa2-boot
+// tiny_transporter.rs): their ids to /mmo/card-chao in the card's order, their
+// records to the record slots. A Chao that never played has no record and is
+// left out. The card code is the login page's (src/save-slots.js).
+const cardIds = new Map(); // numId -> the server's Chao id
+async function cardChao(token) {
+  try {
+    const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
+    if (!card) return;
+    const r = await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
+    const lines = [];
+    for (const { player } of r.ok ? (await r.json()).chao || [] : []) {
+      const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!rec.ok) continue;
+      recordIn(numId(player.id), new Uint8Array(await rec.arrayBuffer()));
+      cardIds.set(numId(player.id), player.id);
+      lines.push(numId(player.id));
+    }
+    const text = new TextEncoder().encode(lines.join('\n') + '\n').subarray(0, MMO.CARD_MAX);
+    mmoBytes.set(text, MMO.CARD + 8);
+    Atomics.store(mmoHead(MMO.CARD), 1, text.length);
+  } catch {}
+}
 const recVersions = new Map();
 function mmoTick(token) {
   karateLocks();
@@ -282,6 +305,14 @@ function mmoTick(token) {
       poseSent = cur;
       if (full || Object.keys(out).length > 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-pose', pose: out }));
     } catch {}
+  }
+  const pick = mmoHead(MMO.PICK), pseq = Atomics.load(pick, 0);
+  if (pseq !== pickSeen) {
+    pickSeen = pseq;
+    // The Chao picked in the Chao Transporter. Its picture sheet for the phone
+    // (PUT /api/tiny-chao?chao=<id>) is not made yet, so nothing is sent.
+    globalThis.sa2TinyPick = cardIds.get(new TextDecoder().decode(mmoBytes.slice(MMO.PICK + 8, MMO.PICK + 8 + pick[1])));
+    console.log('tiny-transporter: picked', globalThis.sa2TinyPick);
   }
   const rec = mmoHead(MMO.REC_OUT), rseq = Atomics.load(rec, 0);
   if (rseq !== recSeen) {
@@ -547,9 +578,10 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_TREE_OUT: '/mmo/tree-icon' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
+  if (token) cardChao(token);
   if (token) loadSettings(token);
   if (token && q.get('stage') === '90' && roomZones[q.get('area') ?? '']) joinRoom(token, roomZones[q.get('area') ?? '']);
   if (token) setInterval(() => mmoTick(token), 100);
