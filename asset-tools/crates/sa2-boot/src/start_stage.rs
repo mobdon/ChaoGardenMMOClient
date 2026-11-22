@@ -291,6 +291,10 @@ const ROAM_SECS: u64 = 300;
 /// to the next area, staggered so they are apart. Every client reads the same
 /// clock, so all players see them in the same area.
 fn roam_area(n: usize) -> u32 {
+    // The guide stays in the lobby by the arrival teleporter.
+    if n == STANDING {
+        return LOBBY;
+    }
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
