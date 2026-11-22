@@ -10,6 +10,8 @@ const SLOT = 64 << 20; // a frame's pipe bytes and the game RAM (SA2_MEM1_MB 48 
 const AUDIO_RING = 1 << 15; // samples (a power of two), half a second
 const PAGES_START = 1024, PAGES_MAX = 16384; // 64 MiB to 1 GiB, as the game build links (browsers commit the maximum)
 const q = new URLSearchParams(location.search);
+// The MMO has no title or card screen: without a signed-in Chao, go to the login.
+if (!mmoToken()) location.replace('/');
 const wide = q.get('aspect') !== '4:3';
 const fpsCap = Number(q.get('fps')) || 0; // 60: never blend between frames
 
