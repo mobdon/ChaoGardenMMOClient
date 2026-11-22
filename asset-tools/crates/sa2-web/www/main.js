@@ -329,7 +329,8 @@ function breedSnapshot(m) {
   breedFeed();
 }
 function breedEvent(m) {
-  if (m.kind === 'life-egg-laid') breed.message = `An egg was laid with ${m.partnerName || 'your Chao'}!`;
+  // The card box says so with a sound (sa2-boot card_box.rs): a count in the name slot's spare byte.
+  if (m.kind === 'life-egg-laid') { breed.message = `An egg was laid with ${m.partnerName || 'your Chao'}!`; mmoBytes[MMO.NAME + 7]++; }
   else if (m.kind === 'life-result' && m.requestId === breed.pending) breed.message = breedCodes[m.code] || (m.accepted ? 'Done.' : `Not now (${m.code}).`);
   else return;
   breedFeed();

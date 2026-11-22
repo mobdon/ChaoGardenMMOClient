@@ -128,6 +128,17 @@ static WHITENING: Global<bool> = global!(false);
 /// The portrait Chao's task (0: none could be made) and its two display functions.
 static PORTRAIT: Global<Option<(u32, [u32; 2])>> = global!(None);
 static FEED: Global<(String, Option<u32>)> = global!((String::new(), None));
+/// The page's count of eggs received (byte 7 of SA2_NAME_IN) as last read,
+/// and the frame the notice stays up to.
+static EGGS: Global<(u8, u64)> = global!((0, 0));
+/// The notice's time on screen (an MMO choice): 5 s at 60 frames a second.
+const NOTICE_FRAMES: u64 = 300;
+/// The game's sound call and its menu confirm chime (pause_extras.rs).
+/// shortcut: a stand-in, the game's own item pickup sound id is not known
+/// yet; take it from an SA2_SE_LOG run of a garden pickup.
+const SE_CALL: u32 = 0x8006_B978;
+const SE_NOTICE: u32 = 0x8002;
+
 
 /// One window piece: record (0..=8 = the window's 10..=18), x anchor,
 /// y anchor, x, y, width scale.
@@ -274,7 +285,20 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     }
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(30) {
         let read = |var: &str| std::env::var(var).ok().and_then(|p| std::fs::read(p).ok());
-        FEED.set((read("SA2_NAME_IN").map(|b| name_of(&b)).unwrap_or_default(), read("SA2_RINGS_IN").and_then(|b| rings_of(&b))));
+        let name = read("SA2_NAME_IN");
+        // An egg came (the server's event, counted by the page): the sound
+        // now, the notice in the box for a while.
+        let (seen, until) = EGGS.get();
+        let eggs = name.as_ref().and_then(|b| b.get(7).copied()).unwrap_or(seen);
+        if eggs != seen {
+            let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+            EGGS.set((eggs, now + NOTICE_FRAMES));
+            eprintln!("card-box: egg received, notice up");
+            call(c, m, SE_CALL, &[SE_NOTICE, 0, 0, 0]);
+        } else {
+            EGGS.set((seen, until));
+        }
+        FEED.set((name.map(|b| name_of(&b)).unwrap_or_default(), read("SA2_RINGS_IN").and_then(|b| rings_of(&b))));
     }
     // An area change frees the task without a word: its display slot tells.
     let task = TASK.get();
@@ -342,7 +366,10 @@ fn display(c: &mut Cpu, m: &mut Mem) {
     }
     let (name, rings) = FEED.with_borrow(|f| f.clone());
     text(c, m, &name, p.x + 66.0, p.y + 10.0, 20.0);
-    if let Some(rings) = rings {
+    // The ring line gives way to the egg notice while it is up.
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) < EGGS.get().1 {
+        text(c, m, "Egg received!", p.x + 66.0, p.y + 34.0, 14.0);
+    } else if let Some(rings) = rings {
         text(c, m, &format!("Rings {rings}"), p.x + 66.0, p.y + 34.0, 16.0);
     }
     let Some((chao, shows)) = PORTRAIT.get().filter(|p| p.0 != 0) else { return };
