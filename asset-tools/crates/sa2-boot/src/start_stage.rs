@@ -411,8 +411,11 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
     eprintln!("tutorial: egg laid, save slot {slot:#x}");
-    SLOT_SEEN.set((slot, 0, 0));
-    TUTORIAL_SLOT.set(slot);
+    // The tutorial runs only with SA2_TUTORIAL=1: a start with the egg crashed the lobby on arrival.
+    if std::env::var("SA2_TUTORIAL").is_ok_and(|v| v.trim() == "1") {
+        SLOT_SEEN.set((slot, 0, 0));
+        TUTORIAL_SLOT.set(slot);
+    }
 }
 
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
