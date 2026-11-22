@@ -252,6 +252,10 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         original(c, m, addr);
     }
     let n = NODES.with_borrow(|n| n.len());
+    // Any rider (Knuckles's and Rouge's skeletons too): once a frame.
+    if n > 8 {
+        hammer_gloves(c, m);
+    }
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if f % 60 == 0 {
         eprintln!("chao-player lvl: frame {f} draw {addr:#x} obj {obj:#x} motion {mot:#x} nodes {n}");
@@ -259,7 +263,6 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if n >= 56 {
         SKEL.set(NODES.with_borrow(|n| n.clone()));
         air_shoes(c, m);
-        hammer_gloves(c, m);
     } else if n > 0 {
         // In the ball the motion draw is the ball model alone (2 nodes, lvl9\g30b).
         let obj2 = m.r32(P1_OBJ2);
@@ -514,7 +517,8 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
 
 fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
     let Some(tex) = KNUX_TEX.get() else { return };
-    if OWN_MOTION.get() || std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") || GLOVE_FRAME.replace(f) == f {
         return;
     }
     if GLOVE_FIT.with_borrow(|g| g.is_none()) {
@@ -955,8 +959,11 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
     rel_original(c, m, a, chao_node);
+    // The hands as the Chao's own motion places them (replaced below when posed).
+    record_hand(m, i, cur_ptr);
     if MIRROR.get() {
-        return mirror_node(m, i, cur_ptr);
+        mirror_node(m, i, cur_ptr);
+        return record_hand(m, i, cur_ptr);
     }
     let Some((r, t)) = POSED.with_borrow(|p| p.get(i).copied()) else {
         if i == 40 && !SAID_NODE.replace(true) {
@@ -979,10 +986,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             m.w32(cur_ptr + 4 * (4 * row + col) as u32, v.to_bits());
         }
     }
-    if i == 3 || i == 10 {
-        let cur = mtx(m, cur_ptr);
-        HANDS.with_borrow_mut(|h| h[usize::from(i == 10)] = Some(cur));
-    }
+    record_hand(m, i, cur_ptr);
     // The foot nodes' view-space matrices, for the boots (next draw).
     if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
         let cur = mtx(m, cur_ptr);
@@ -990,7 +994,16 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     }
 }
 
+/// Arm nodes 3/10's view-space matrices from this draw walk, for the gloves.
+fn record_hand(m: &Mem, i: usize, cur_ptr: u32) {
+    if i == 3 || i == 10 {
+        let cur = mtx(m, cur_ptr);
+        HANDS.with_borrow_mut(|h| h[usize::from(i == 10)] = Some(cur));
+    }
+}
+
 thread_local! {
+    static GLOVE_FRAME: Cell<u64> = const { Cell::new(u64::MAX) };
     static HANDS: std::cell::RefCell<[Option<[[f32; 4]; 3]>; 2]> = const { std::cell::RefCell::new([None; 2]) };
     static KNUX_TEX: Cell<Option<u32>> = const { Cell::new(None) };
     /// Rest fit per Chao arm node (3, 10): local placement under the node.
@@ -1304,6 +1317,18 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // the rider's B is its own move, not Pet (action 31). Each frame, as
         // the Chao's behaviours may enable touch again (AL_EnableTouch 0x5AB0).
         call(c, m, rt::sec(m, 60, 1) + AL_DISABLE_NADE, &[chao]);
+        // The Hammer Gloves item in Knuckles's and Rouge's levels: Knuckles's
+        // models are there in his own; Rouge's need KNUCKMDL. KNUCKTEX is
+        // loaded once for the glove's own list.
+        if addr == KNUX_EXEC && KNUX_TEX.get().is_none() && !std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") {
+            let obj2 = m.r32(P1_OBJ2);
+            let tex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
+            if m.r32(MODELS + 4 * 329) == 0 {
+                call(c, m, LOAD_MDL, &[0x8017_4F10]);
+            }
+            eprintln!("chao-player: Hammer Gloves textures {tex:#x} (rider {})", m.r8(obj2 + 1));
+            KNUX_TEX.set(Some(tex).filter(|&t| t != 0));
+        }
         // Shadow's textures and models for the Dark Chao's ball, once, in
         // Sonic's levels (playerwk +1 = 0, the byte Sonic's display picks his models by).
         if addr == SONIC_EXEC && m.r8(m.r32(P1_OBJ2) + 1) == 0 && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
