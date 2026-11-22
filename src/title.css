@@ -34,6 +34,8 @@
 .title-screen form { margin: 16px 0 0; }
 .title-screen label { font-size: 8px; color: #9ab8d6; }
 .title-screen form > div { display: flex; gap: 7px; }
+.title-screen form > div input { flex: 1; min-width: 0; }
+.title-screen form > div .primary-button { flex: none; width: auto; }
 .title-screen input { min-width: 0; flex: 1; background: #07172e; border: 1px solid #305681; padding: 12px; color: white; font-size: 12px; margin: 0; }
 .title-screen #join-button { width: auto; min-width: 115px; padding: 10px 15px; border-radius: 5px; background: #ffdc5d; color: #0e2e54; white-space: nowrap; }
 .title-screen form small { display: block; color: #7896b6; font-size: 8px; margin-top: 8px; }
@@ -60,3 +62,18 @@
 .card-code code { display: block; font-size: 12px; color: #ffd84d; word-spacing: 4px; overflow-wrap: anywhere; margin: 4px 0; }
 .card-code button { font: inherit; color: white; background: #143a66; border: 1px solid #315a87; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
 .card-code small { display: block; margin-top: 6px; }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 17px 0 0; }
+.auth-tabs button { padding: 13px; border: 1px solid #305681; border-radius: 5px 13px 5px 5px; background: #07172e; color: #a4c2e2; font-size: 11px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; }
+.auth-tabs button[aria-selected="true"] { background: linear-gradient(105deg, #0f4ca5, #187ad4); color: white; border-color: transparent; border-bottom: 3px solid #ffd139; }
+.auth-tabs button:focus-visible { outline: 2px solid #ffd139; outline-offset: 2px; }
+.title-screen .remember-me { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: #a4c2e2; letter-spacing: 0; text-transform: none; cursor: pointer; }
+.title-screen .remember-me input { flex: none; width: 16px; height: 16px; padding: 0; accent-color: #ffd139; }
+/* The player's Chao as the Chao Select window draws it, big on the left. */
+#title-portrait { position: absolute; inset: 0; width: 100%; height: 100%; }
+.game-files { margin: 18px 0 6px; padding: 16px; border: 1px solid #305681; border-radius: 5px 13px 5px 5px; background: #07172e; }
+.game-files p { margin: 10px 0 12px; font-size: 11px; line-height: 1.6; color: #a4c2e2; }
+.game-files small { display: block; margin-top: 10px; font-size: 9px; color: #7d9cc0; }
+.game-files-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.game-files-buttons .primary-button { width: auto; flex: none; }
+.game-files-alt { background: none; border: 0; padding: 4px 0; color: #ffd139; font-size: 11px; text-decoration: underline; cursor: pointer; }
+.game-files[data-picked="true"] #game-files-state { color: #6eecc2; }

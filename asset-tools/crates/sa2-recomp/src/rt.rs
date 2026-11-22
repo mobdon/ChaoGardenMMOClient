@@ -219,7 +219,12 @@ pub fn backedge(c: &mut Cpu, m: &mut Mem) {
 
 /// Call the function at `addr` (bl, bctrl, blrl and tail calls all end here).
 pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    let n = CALLS.fetch_add(1, Relaxed);
+    // A plain load and store, not an atomic add: the count and the trace ring
+    // are diagnostics (crash reports, the call budget), and the locked add on
+    // shared memory for every guest call was ~5% of the game thread. Threads
+    // racing here may drop a count.
+    let n = CALLS.load(Relaxed);
+    CALLS.store(n.wrapping_add(1), Relaxed);
     RING[n as usize % TRACE].store(addr, Relaxed);
     if c.rt.budget != 0 && n >= c.rt.budget {
         panic!("sa2-recomp: call budget of {} reached at {addr:#010x}", c.rt.budget);
@@ -238,16 +243,38 @@ pub fn sec(m: &Mem, id: u32, sec: u32) -> u32 {
     let mut info = m.r32(OS_MODULE_HEAD);
     while info != 0 {
         if m.r32(info) == id {
-            LINKED.with_borrow_mut(|l| l.insert(id, info));
+            remember_linked(id, info);
             return m.r32(m.r32(info + 0x10) + sec * 8) & !1;
         }
         info = m.r32(info + 4);
     }
     // Unlinked but still in memory (the game runs a module's code after
     // OSUnlink, e.g. its epilog): its section table is still there.
-    match LINKED.with_borrow(|l| l.get(&id).copied()) {
+    match linked_info(id) {
         Some(info) => m.r32(m.r32(info + 0x10) + sec * 8) & !1,
         None => panic!("sa2-recomp: module {id} is not linked"),
+    }
+}
+
+/// Module ids below this keep their last OSModuleInfo in a lock-free slot:
+/// `sec` runs on every REL address and a mutex plus SipHash insert there
+/// cost ~9% of the game thread. 0 means none (the module list ends at 0).
+const FAST_IDS: usize = 256;
+static LINKED_FAST: [AtomicU32; FAST_IDS] = [const { AtomicU32::new(0) }; FAST_IDS];
+
+fn remember_linked(id: u32, info: u32) {
+    match LINKED_FAST.get(id as usize) {
+        Some(slot) => slot.store(info, Relaxed),
+        None => LINKED.with_borrow_mut(|l| {
+            l.insert(id, info);
+        }),
+    }
+}
+
+fn linked_info(id: u32) -> Option<u32> {
+    match LINKED_FAST.get(id as usize) {
+        Some(slot) => Some(slot.load(Relaxed)).filter(|&i| i != 0),
+        None => LINKED.with_borrow(|l| l.get(&id).copied()),
     }
 }
 
@@ -390,6 +417,19 @@ pub fn divwu(a: u32, b: u32) -> u32 {
 #[inline]
 pub fn rs(v: f64) -> f64 {
     v as f32 as f64
+}
+/// Fused `a * c + b` with one rounding, as fmadd and ps_madd compute it.
+/// On wasm `f64::mul_add` is a software libm `fma`. When `a` and `c` both
+/// hold f32 values (always so for paired singles) their product is exact
+/// in f64 (24 + 24 bits < 53, no overflow or underflow), so the plain
+/// add rounds once and matches `mul_add` bit for bit; NaN fails the check.
+#[inline]
+pub fn madd(a: f64, c: f64, b: f64) -> f64 {
+    if rs(a) == a && rs(c) == c {
+        a * c + b
+    } else {
+        a.mul_add(c, b)
+    }
 }
 #[inline]
 pub fn fctiw(v: f64, trunc: bool) -> f64 {

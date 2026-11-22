@@ -17,7 +17,7 @@
           <button class="nav-button active" data-panel="world">The world</button>
           <button class="nav-button" data-panel="character">My Chao <span class="key-hint">C</span></button>
           <button class="nav-button" data-panel="journal">Journal <span class="key-hint">J</span></button>
-          <button id="school-open" hidden>Kindergarten</button>
+          <button class="nav-button" id="school-open" hidden>Kindergarten</button>
           <button class="nav-button" id="shop-open">Chao shop <span class="key-hint">B</span></button>
           <button class="nav-button" id="care-open" aria-pressed="false">Garden care <span class="key-hint">G</span></button>
           <button class="nav-button" id="breeding-open" aria-pressed="false">Breeding</button>
@@ -62,6 +62,7 @@
           <button id="owner-dark-form" class="owner-form-button" hidden>ADMIN · Dark Chaos form <span>✦</span></button>
           <button id="owner-walker" class="owner-form-button" hidden aria-pressed="false">Pilot Dark Chao Walker <span>↗</span></button>
           <button id="owner-air-shoes" class="owner-form-button" hidden aria-pressed="false">Equip Shadow’s Air Shoes ↗</button>
+          <button id="owner-light-shoes" class="owner-form-button" hidden aria-pressed="false">Equip Sonic’s Light Shoes ↗</button>
           <button id="owner-hammer-gloves" class="owner-form-button" hidden aria-pressed="false">Equip Knuckles’ Hammer Gloves ↗</button>
           <button id="owner-metal-chao" class="owner-form-button" hidden aria-pressed="false">Equip Metal Sonic Chao look ↗</button>
         </details>
@@ -89,8 +90,8 @@
 
       <footer class="bottom-hud">
         <section class="chao-card glass" aria-label="Player status">
-          <div class="chao-avatar"><svg viewBox="0 0 64 64" aria-hidden="true"><ellipse cx="32" cy="45" rx="17" ry="14" fill="#72c9e0"/><path d="M14 27c0-12 8-16 18-21 1 8 18 8 18 21 0 12-8 18-18 18S14 39 14 27" fill="#8bdcf0"/><ellipse cx="25" cy="29" rx="3" ry="5" fill="#173f44"/><ellipse cx="39" cy="29" rx="3" ry="5" fill="#173f44"/><circle cx="32" cy="3" r="3" fill="#f9d674"/><ellipse cx="21" cy="58" rx="8" ry="5" fill="#ffe2a0"/><ellipse cx="43" cy="58" rx="8" ry="5" fill="#ffe2a0"/></svg></div>
-          <div class="chao-status"><div><strong id="hud-name">Your Chao</strong><span id="hud-form">NEUTRAL</span></div><div class="health-track"><span id="health-fill"></span></div><small id="hud-health">100 / 100 HP</small></div>
+          <span id="hud-icon" class="save-slot-icon chao-avatar">◉</span>
+          <div class="chao-status"><strong id="hud-name">Your Chao</strong></div>
           <div class="ring-count"><span class="ring-icon"></span><strong id="ring-count">20</strong><small>RINGS</small></div>
         </section>
         <section class="action-bar glass" aria-label="Activities">
@@ -107,15 +108,17 @@
       <div class="touch-pad" aria-label="Touch movement"><button data-direction="up" aria-label="Move forward">↑</button><button data-direction="left" aria-label="Move left">←</button><button data-direction="down" aria-label="Move backward">↓</button><button data-direction="right" aria-label="Move right">→</button></div>
 
       <dialog id="welcome-dialog" class="welcome-dialog title-screen" aria-labelledby="title-heading">
-        <div class="title-art" aria-hidden="true"><img src="/api/assets/login-chao.png" alt=""/><span class="title-orbit">RAISE CHAOS.</span><span class="title-art-caption">SMALL CHAO. / LIMITLESS POTENTIAL.</span></div>
+        <div class="title-art" aria-hidden="true"><canvas id="title-portrait" width="1024" height="1280"></canvas><span class="title-orbit">RAISE CHAOS.</span><span class="title-art-caption">SMALL CHAO. / LIMITLESS POTENTIAL.</span></div>
         <div class="title-content">
           <div class="title-brand"><span>◉</span> CHAO GARDEN <b>ONLINE</b></div>
           <div class="title-kicker">YOUR NEXT ADVENTURE STARTS HERE</div>
           <h2 id="title-heading">A LITTLE<br>MORE <em>CHAOS.</em></h2>
           <p class="title-intro">Your garden. Your rivals. Your legend.</p>
-          <section class="save-select" aria-labelledby="save-select-heading"><div class="title-section-label"><h3 id="save-select-heading">CONTINUE YOUR STORY</h3><span>LOCAL SLOTS</span></div><div id="save-slots"></div></section>
-          <details class="new-chao"><summary>＋ START WITH A NEW CHAO</summary><form id="join-form"><label for="chao-name">YOUR CHAO’S NAME</label><div><input id="chao-name" name="name" maxlength="7" autocomplete="nickname" value="Chao" required/><button id="join-button" class="primary-button" type="submit">Let’s go ↗</button></div><small>Goes on your memory card with your other Chao, up to 8.</small></form></details>
-          <details class="new-chao insert-card"><summary>▣ INSERT A MEMORY CARD</summary><form id="card-form"><label for="card-code">MEMORY CARD CODE</label><div><input id="card-code" name="code" autocomplete="off" spellcheck="false" placeholder="xxxx xxxx xxxx …" required/><button class="primary-button" type="submit">Insert ↗</button></div><small>Brings back every Chao on your card from another browser or device.</small></form></details>
+          <section class="save-select" aria-labelledby="save-select-heading"><div class="title-section-label"><h3 id="save-select-heading">PICK YOUR CHAO</h3><span>ON THE SERVER</span></div><div id="save-slots"></div></section>
+          <div class="auth-tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-auth="login-form">Log in</button><button type="button" role="tab" aria-selected="false" data-auth="join-form">Sign up</button><button type="button" role="tab" aria-selected="false" data-auth="card-form">Memory card</button></div>
+          <div class="new-chao"><form id="login-form"><label for="login-name">USERNAME OR EMAIL</label><input id="login-name" name="username" autocomplete="username" required/><label for="login-password">PASSWORD</label><div><input id="login-password" name="password" type="password" autocomplete="current-password" required/><button class="primary-button" type="submit">Log in ↗</button></div><label class="remember-me"><input id="remember-me" type="checkbox" checked/> Remember me on this device</label></form><form id="join-form" hidden><label for="signup-name">USERNAME</label><input id="signup-name" name="username" autocomplete="username" minlength="3" maxlength="20" pattern="[A-Za-z0-9_\-]+" required/><label for="signup-email">EMAIL</label><input id="signup-email" name="email" type="email" autocomplete="email" required/><label for="signup-password">PASSWORD</label><input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required/><label for="chao-name">YOUR CHAO’S NAME</label><div><input id="chao-name" name="name" maxlength="7" autocomplete="nickname" value="Chao" required/><button id="join-button" class="primary-button" type="submit">Let’s go ↗</button></div><small>Goes on your memory card with your other Chao, up to 8.</small></form><form id="card-form" hidden><label for="card-code">MEMORY CARD CODE</label><div><input id="card-code" name="code" autocomplete="off" spellcheck="false" placeholder="xxxx xxxx xxxx …" required/><button class="primary-button" type="submit">Insert ↗</button></div><small>Brings back every Chao on your card from another browser or device.</small></form></div>
+          <section id="game-files" class="game-files" hidden aria-labelledby="game-files-heading"><div class="title-section-label"><h3 id="game-files-heading">YOUR GAME FILES</h3><span id="game-files-state">NOT PICKED</span></div><p>Sonic Adventure 2 runs from your own copy. Pick it once here: it stays on your computer and is never uploaded.</p><div class="game-files-buttons"><button id="pick-steam" class="primary-button" type="button">Choose Steam game folder ↗</button><button id="pick-disc" class="game-files-alt" type="button">or a GameCube disc image</button></div><small>Steam: steamapps/common/Sonic Adventure 2</small></section>
+          <button id="owner-login" class="text-button" type="button">Owner login (this PC only) ↗</button>
           <p id="join-error" role="alert"></p>
           <div class="title-footer"><a class="title-tiny-link" href="/tiny.html">TAKE THE LITTLE ADVENTURE WITH YOU · TINY GARDEN ↗</a><div class="welcome-requirements"><span id="install-status-dot" class="status-dot"></span><span id="install-status">Checking local SA2 files…</span></div><small>Progress is saved by the game server. Slots remember this browser’s Chao.<br>SA2 runs from your own Steam folder or GameCube disc.</small></div>
         </div>

@@ -543,12 +543,15 @@ async function resume(activeToken) {
       if (generation !== connectionGeneration || !result) return;
       player = result.snapshot.self;
     } else {
-      if (!loopback) { const error = new Error('This server needs secure device pairing before phone play is available.'); error.retry = false; throw error; }
       const response = await fetch('/api/session', { method: 'POST', signal: abort.signal, redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: activeToken, resumeOnly: true }) });
       const data = await response.json();
       if (generation !== connectionGeneration) return;
       if (!response.ok || !data.player || typeof data.token !== 'string') { const error = new Error(data.error || 'This saved Chao is not available on this server.'); error.retry = response.status >= 500; throw error; }
       player = data.player; token = data.token;
+      // The phone works once the same account has played on its PC: that stores the player's own Chao model.
+      const model = await fetch('/api/tiny-chao', { signal: abort.signal, cache: 'no-store', redirect: 'error', headers: { Authorization: `Bearer ${token}` } });
+      if (generation !== connectionGeneration) return;
+      if (!model.ok) { const error = new Error(model.status === 404 ? 'Play once on your PC first. Then your Chao is here.' : 'Your Chao could not be loaded. Reconnect to try again.'); error.retry = model.status >= 500; throw error; }
     }
     rememberPlayer(); renderSlots(); renderPlayer(); openSocket(token, generation);
   } catch (error) {

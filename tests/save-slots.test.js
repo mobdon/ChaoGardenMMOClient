@@ -38,3 +38,20 @@ test('a slot remembers the memory card its Chao is on', () => {
   slots.record(token, { id: 'one', name: 'One' }); // later saves keep the card
   assert.equal(slots.list()[0].card, card);
 });
+
+test('a fresh login of the same Chao keeps one slot', () => {
+  const data = storage({ [SAVE_SLOTS_KEY]: JSON.stringify([1, 2, 3].map(n => ({ token: String(n).repeat(64), id: 'owner', name: 'Chaos', lastPlayedAt: n }))) });
+  const slots = createSaveSlots(data);
+  assert.deepEqual(slots.list().map(row => row.token), ['3'.repeat(64)]);
+  slots.record(ownerToken, owner);
+  assert.equal(JSON.parse(data.getItem(SAVE_SLOTS_KEY)).length, 1);
+});
+
+test('remove forgets one slot and its session', () => {
+  const store = new Map(); const storage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: k => store.delete(k) };
+  const slots = createSaveSlots(storage);
+  slots.record('a'.repeat(64), { id: 1, name: 'A' }); slots.record('b'.repeat(64), { id: 2, name: 'B' });
+  slots.remove('b'.repeat(64));
+  assert.deepEqual(slots.list().map(r => r.name), ['A']);
+  assert.equal(storage.getItem(SESSION_KEY), null);
+});

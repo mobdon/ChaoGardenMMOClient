@@ -1,9 +1,13 @@
 import './style.css';
 import './sonic.css';
 import './title.css';
+import { allowSavedFiles, canPickFolders, pickGameFiles, savedHandles } from './game-files.js';
+import { applyGameTextureStyles } from './game-assets.js';
 import { createGarden } from './scene.js';
 import { createGameAudio } from './audio.js';
-import { createStageSelect } from './stages.js';
+import { createStageSelect, SA2_PAGE } from './stages.js';
+// ChaoMain area numbers: 1 Neutral, 2 Hero, 3 Dark, 5 race Entrance.
+const chaoWorldAreas = { garden: 1, hero: 2, dark: 3, race: 5 };
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createGardenCare } from './garden-care.js';
@@ -21,6 +25,7 @@ let socket;
 let snapshot;
 let player;
 let sessionToken = localStorage.getItem(tokenKey);
+let loggedIn = null; // the server-confirmed card code after a login; the Chao select shows only then
 let sessionCard = null; // the memory card code, when this browser has it
 let reconnectTimer;
 let currentPanel = 'world';
@@ -167,15 +172,31 @@ async function showCard(line, token) {
   } catch { /* No server reachable: the slot shows no card line. */ }
 }
 
+// The login screen's big Chao: the picked (or last) Chao, else the base Chao.
+let portraitKey = null, disposePortrait = () => {};
+function showPortrait(slot) {
+  const key = `${slot.token || ''}`;
+  if (key === portraitKey) return;
+  portraitKey = key; disposePortrait();
+  void import('./chao-portrait.js').then(m => m.mountChaoPortrait($('#title-portrait'), slot)).then(d => { disposePortrait = d; }).catch(() => {});
+}
 function showTitle() {
   const container = $('#save-slots');
   container.replaceChildren();
   let slots = [];
   try { slots = saveSlots.list(); } catch { /* Storage may be unavailable in private browser settings. */ }
+  // Logged in: only the Chao the server just confirmed for this account's card.
+  if (loggedIn) slots = slots.filter(slot => slot.card === loggedIn);
+  showPortrait((loggedIn && slots[0]) || {}); // a default Chao until a login
   const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
-    const icon = document.createElement('span'); icon.className = 'save-slot-icon'; icon.textContent = slot.admin ? '✦' : '◉';
+    const icon = document.createElement('span'); icon.className = 'save-slot-icon';
+    // Big: the slot's own Chao as the game's Chao Select draws it.
+    const portrait = Object.assign(document.createElement('canvas'), { width: 240, height: 300 });
+    portrait.style.cssText = 'width:120px;height:150px;display:block';
+    icon.append(portrait);
+    void import('./chao-portrait.js').then(m => m.mountChaoPortrait(portrait, slot)).catch(() => {});
     const meta = document.createElement('span'); meta.className = 'save-slot-meta';
     const name = document.createElement('strong'); name.textContent = slot.name || 'Saved Chao';
     const info = document.createElement('small');
@@ -186,8 +207,20 @@ function showTitle() {
     const card = document.createElement('small'); card.className = 'save-slot-card'; meta.append(card);
     void showCard(card, slot.token);
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
-    button.append(icon, meta, arrow);
+    const remove = document.createElement('span'); remove.className = 'save-slot-delete'; remove.role = 'button'; remove.tabIndex = 0;
+    remove.textContent = '✕'; remove.title = 'Delete this Chao';
+    remove.addEventListener('click', event => {
+      event.stopPropagation();
+      if (!confirm(`Delete ${slot.name || 'this Chao'} forever? It is removed from the server and its memory card code can't bring it back.`)) return;
+      void fetch('/api/chao', { method: 'DELETE', headers: { Authorization: `Bearer ${slot.token}` } }).then(async response => {
+        // 401: the server no longer knows this token, so only the local slot is left to clear.
+        if (!response.ok && response.status !== 401) { alert((await response.json().catch(() => ({}))).error || 'Could not delete this Chao.'); return; }
+        saveSlots.remove(slot.token); showTitle();
+      }, () => alert('Could not reach the server.'));
+    });
+    button.append(icon, meta, remove, arrow);
     button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
+    for (const pick of ['pointerenter', 'focus']) button.addEventListener(pick, () => showPortrait(slot));
     const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
     if (shownCards.has(cardCode)) { container.append(button); continue; }
     shownCards.add(cardCode);
@@ -200,10 +233,10 @@ function showTitle() {
     code.append(summary, value, copy, warn);
     container.append(button, code);
   }
-  if (!slots.length) {
-    const empty = document.createElement('p'); empty.className = 'save-empty'; empty.textContent = 'A new story is waiting. Name your first Chao below.'; container.append(empty);
-  }
-  $('.new-chao').open = !slots.length;
+  // Slots only show once this browser has logged in to a Chao.
+  $('.save-select').hidden = !slots.length || !loggedIn;
+  // Logged in: the Chao select replaces the login forms.
+  for (const box of document.querySelectorAll('.auth-tabs, .title-screen .new-chao')) box.hidden = !!loggedIn && slots.length > 0;
   if (!welcome.open) welcome.showModal();
   updatePaused();
 }
@@ -299,6 +332,8 @@ function render(next) {
     attackButton.title = mounted ? 'Fire the Dark Chao Walker cannon (F)' : 'Attack a nearby robot (F)';
   }
   $('#school-open').hidden=player.zone!=='hub';
+  // A hub portal into a garden or the race opens the game's own Chao World area (sa2_boot::start_stage).
+  if (lastZone === 'hub' && chaoWorldAreas[player.zone]) location.assign(`${SA2_PAGE}?stage=90&area=${chaoWorldAreas[player.zone]}`);
   if ($('#school-dialog').open) renderSchool();
   garden?.setSnapshot(next);
   garden?.setCare?.(next.care, player);
@@ -314,9 +349,7 @@ function render(next) {
   $('#online-count').textContent = `${online} Chao`;
   const form = ({ normal: 'Neutral', hero: 'Hero', dark: 'Dark', chaos: 'Chaos' })[player.form] || 'Neutral';
   $('#hud-name').textContent = player.name;
-  $('#hud-form').textContent = `${player.form === 'chaos' && player.alignment <= -60 ? 'Dark Chaos' : form}${player.admin ? ' · ADMIN' : ''}`;
-  $('#hud-health').textContent = `${player.hp} / ${player.maxHp} HP`;
-  $('#health-fill').style.width = `${player.hp / player.maxHp * 100}%`;
+  $('#hud-icon').textContent = player.admin ? '✦' : '◉'; // same icon as the Chao select
   $('#ring-count').textContent = player.rings.toLocaleString();
   $('#profile-name').textContent = player.name;
   $('#profile-form').textContent = `${player.form === 'chaos' && player.alignment <= -60 ? 'Dark Chaos' : form} · Happiness ${player.happiness} · Energy ${player.energy}`;
@@ -330,6 +363,7 @@ function render(next) {
   walkerButton.textContent = player.vehicle === 'dark-chao-walker' ? 'Leave Dark Chao Walker ↙' : 'Pilot Dark Chao Walker ↗';
   for (const [selector, slot, item, label] of [
     ['#owner-air-shoes', 'footwear', 'shadow-air-shoes', 'Shadow’s Air Shoes'],
+    ['#owner-light-shoes', 'footwear', 'sonic-light-shoes', 'Sonic’s Light Shoes'],
     ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves', 'Knuckles’ Hammer Gloves'],
     ['#owner-metal-chao', 'look', 'metal-sonic-chao', 'Metal Sonic Chao look'],
   ]) {
@@ -401,20 +435,25 @@ function connect(token) {
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken, card = null) {
+async function join(name, token = sessionToken, card = null, owner = false) {
   if (joining) return;
+  // The game needs the player's own files: the local server's, or ones picked on this page.
+  if (!(await gameFilesReady())) { $('#join-error').textContent = 'Pick your game files first.'; $('#pick-steam').focus(); return; }
+  void allowSavedFiles().then(() => applyGameTextureStyles()); // still inside the click: renews read access for the game page
   joining = true;
   $('#join-button').disabled = true;
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
   $('#join-error').textContent = '';
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}) }) });
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}), ...(owner ? { ownerLogin: true } : {}) }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
     sessionCard = data.card || card;
     player = data.player;
     rememberChao();
+    // The game's own Chao Lobby is the hub now; ?oldhub keeps this page as a reference.
+    if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign(token || card ? '/sa2/?stage=90' : '/sa2/?stage=90&hatch=1'); return; }
     welcome.close();
     connect(sessionToken);
     updatePaused();
@@ -442,13 +481,72 @@ async function insertCard(code) {
     showTitle();
   } catch (error) { $('#join-error').textContent = error.message; }
 }
-$('#join-form').addEventListener('submit', (event) => {
+// Sign up: the new Chao starts a memory card, then the account is made for that card.
+$('#join-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  let newest; try { newest = saveSlots.list()[0]; } catch { /* no slots */ }
-  void join($('#chao-name').value, null, newest && (newest.card || newest.token));
+  const account = { username: $('#signup-name').value.trim(), email: $('#signup-email').value.trim(), password: $('#signup-password').value };
+  await join($('#chao-name').value, null, null);
+  if (!sessionCard) return;
+  try {
+    const response = await fetch('/api/account/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...account, card: sessionCard }) });
+    if (!response.ok) toast(`${(await response.json()).error || 'Could not make your account.'} Your Chao is saved in this browser's slots.`, 'error');
+  } catch { toast('Could not reach the server to make your account.', 'error'); }
+  $('#signup-password').value = '';
 });
+// Log in / Sign up tabs: one form shows at a time.
+document.querySelectorAll('.auth-tabs button').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('.auth-tabs button').forEach(other => {
+    other.setAttribute('aria-selected', String(other === tab));
+    $(`#${other.dataset.auth}`).hidden = other !== tab;
+  });
+}));
+// Log in: the server opens the account's memory card and its Chao fill the slots.
+$('#login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (rememberedSlot) {
+    // The saved card code is checked with the server, which lists the Chao on it.
+    try {
+      const response = await fetch('/api/card', { headers: { Authorization: `Bearer ${rememberedSlot.card}` }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, rememberedSlot.card);
+      loggedIn = rememberedSlot.card; showTitle();
+    } catch {
+      rememberedSlot = null; $('#login-password').value = '';
+      $('#join-error').textContent = 'Your saved login ran out. Type your password once more.';
+    }
+    return;
+  }
+  try {
+    const response = await fetch('/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+      body: JSON.stringify({ login: $('#login-name').value.trim(), password: $('#login-password').value }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not log in.');
+    $('#login-password').value = '';
+    // Remember me keeps the Chao's session key (never the password) so the next visit logs straight in.
+    const remember = $('#remember-me').checked;
+    try { if (remember) localStorage.setItem(REMEMBER_KEY, $('#login-name').value.trim()); else localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ }
+    if (remember) for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, data.card);
+    for (const chao of data.chao) if (!remember) saveSlots.record(chao.token, chao.player, undefined, data.card);
+    loggedIn = data.card; showTitle();
+  } catch (error) { $('#join-error').textContent = error.message; }
+});
+// Local owner login: only answered by a loopback server started with CHAO_OWNER_BOOTSTRAP.
+$('#owner-login').addEventListener('click', () => void join('Chao', null, null, true));
 welcome.addEventListener('cancel', (event) => event.preventDefault());
+const REMEMBER_KEY = 'chao-garden-remember-v1';
 showTitle();
+// Remembered on this device: the login form comes filled in, so Log in is one click.
+// The password box only shows dots; the saved Chao session key logs in, never a stored password.
+let rememberedSlot = null;
+try {
+  const name = localStorage.getItem(REMEMBER_KEY);
+  rememberedSlot = name && saveSlots.list()[0];
+  if (rememberedSlot) { $('#login-name').value = name; $('#login-password').value = '••••••••'; showPortrait(rememberedSlot); }
+} catch { /* storage blocked: an empty login */ }
+for (const field of ['#login-name', '#login-password']) $(field).addEventListener('input', () => {
+  if (rememberedSlot) { rememberedSlot = null; $('#login-password').value = ''; }
+});
 
 async function saveAndLeave(destination) {
   if (saving || !player) return;
@@ -470,6 +568,8 @@ async function saveAndLeave(destination) {
     connected(false); $('#connection-text').textContent = 'Title screen';
     for (const dialog of [shopDialog, stagesDialog, setupDialog]) if (dialog.open) dialog.close();
     if (destination) { location.assign(destination); return; }
+    try { localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ } // back to the title = logged out
+    loggedIn = null;
     panel('world'); showTitle();
   } catch (error) { toast(error.message, 'error'); }
   finally { pendingSave = null; saving = false; button.disabled = false; button.textContent = originalLabel; updatePaused(); }
@@ -503,6 +603,25 @@ function renderSetup(data) {
   item('Local model conversion', data.imports?.chao ? 'Original Chao GLB is ready for the browser loader.' : 'The garden currently uses procedural proxy art. Native asset conversion is the next step.', data.imports?.garden ? 'Original Neutral garden geometry also converted; scene scale and collision validation pending.' : null);
 }
 
+// ---- the player's game files (src/game-files.js) ----
+async function gameFilesReady() {
+  if (setup?.found) return true;
+  const saved = await savedHandles();
+  return !!(saved.steam || saved.disc);
+}
+async function showGameFiles() {
+  const saved = await savedHandles();
+  const picked = saved.steam?.name || saved.disc?.name;
+  $('#game-files').hidden = !!setup?.found; // the local server already has them
+  $('#game-files').dataset.picked = String(!!picked);
+  $('#game-files-state').textContent = picked ? `PICKED · ${picked.toUpperCase()}` : 'NOT PICKED';
+  if (!canPickFolders) $('#game-files p').textContent = 'Picking your game files needs Chrome or Edge on a computer.';
+  $('#pick-steam').disabled = $('#pick-disc').disabled = !canPickFolders;
+}
+for (const [button, kind] of [['#pick-steam', 'steam'], ['#pick-disc', 'disc']]) $(button).addEventListener('click', async () => {
+  try { await pickGameFiles(kind); $('#join-error').textContent = ''; } catch (error) { if (error?.name !== 'AbortError') $('#join-error').textContent = 'Could not open those files.'; }
+  void showGameFiles();
+});
 async function loadStatus() {
   try {
     const response = await fetch('/api/status');
@@ -512,7 +631,9 @@ async function loadStatus() {
     $('#install-status').textContent = setup.found ? 'SA2 files found' : 'Local SA2 installation not found';
     $('#install-status-dot').className = `status-dot ${setup.found ? 'connected' : 'error'}`;
     renderSetup(setup);
+    void showGameFiles();
   } catch {
+    void showGameFiles();
     $('.welcome-requirements').hidden = true; // only the local dev bridge reports install files
     $('#setup-content').textContent = 'The local bridge is unavailable. Start it with npm run dev.';
   }
@@ -530,7 +651,8 @@ function openSchool(){
   renderSchool();$('#school-name').value=player.name;
   $('#school-dialog').showModal();updatePaused();
 }
-$('#school-open').addEventListener('click',openSchool);
+// The game's own Kindergarten (Chao World area 6) via the shared Chao World entry.
+$('#school-open').addEventListener('click',()=>window.location.assign('/sa2/?stage=90&area=6'));
 $('#school-close').addEventListener('click',()=>$('#school-dialog').close());
 $('#school-dialog').addEventListener('close',updatePaused);
 $('#school-name-form').addEventListener('submit',event=>{
@@ -583,6 +705,7 @@ $('#owner-dark-form').addEventListener('click', () => action('admin-dark-chaos')
 $('#owner-walker').addEventListener('click', () => action(player?.vehicle === 'dark-chao-walker' ? 'dismount-vehicle' : 'mount-dark-walker'));
 for (const [selector, slot, item] of [
   ['#owner-air-shoes', 'footwear', 'shadow-air-shoes'],
+  ['#owner-light-shoes', 'footwear', 'sonic-light-shoes'],
   ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves'],
   ['#owner-metal-chao', 'look', 'metal-sonic-chao'],
 ]) {

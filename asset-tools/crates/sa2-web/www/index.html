@@ -18,6 +18,14 @@
   #status { position: fixed; left: .6rem; bottom: .5rem; color: var(--dim); font-size: 12px; pointer-events: none; text-shadow: 0 0 3px #000; }
   #log { position: fixed; left: .6rem; right: .6rem; bottom: 1.8rem; max-height: 40vh; overflow: auto; margin: 0; font: 12px ui-monospace, monospace; color: #fbb; white-space: pre-wrap; pointer-events: none; text-shadow: 0 0 3px #000; }
 </style>
+<style>
+#chat{position:fixed;left:12px;bottom:12px;width:min(360px,calc(100vw - 24px));font:14px/1.35 system-ui,sans-serif;color:#fff;text-shadow:0 1px 2px #000;z-index:10}
+#chat-log{max-height:30vh;overflow-y:auto}
+#chat-log div{cursor:pointer}
+#chat-log .system{color:#aaa}
+#chat-log .world{color:#ffd65a}
+#chat-input{width:100%;box-sizing:border-box;margin-top:4px;padding:6px 8px;border:0;border-radius:4px;background:rgba(0,0,0,.6);color:#fff;font:inherit}
+</style>
 </head>
 <body>
 <canvas id="screen" tabindex="0" aria-label="Game screen"></canvas>
@@ -30,6 +38,7 @@
   <p>W A S D move &middot; Space jump (A) &middot; E or Left Shift action (B) &middot; Q (X) &middot; R (Y) &middot; Enter start &middot; 1 and 3 (L and R) &middot; a gamepad works too &middot; double-click for full screen</p>
   <button id="go">Play</button>
 </div></div>
+<div id="mmo-card" aria-live="polite" style="position:fixed;left:16px;top:16px;display:none;gap:10px;align-items:center;padding:8px 14px;border-radius:12px;background:rgba(255,255,255,.85);color:#16325c;font:600 15px system-ui;pointer-events:none;z-index:5"><span class="icon" style="color:#f5b800"></span><span class="name"></span><span>&#9711; <span class="rings"></span></span></div>
 <pre id="log" aria-live="polite"></pre>
 <div id="status"></div>
 <script type="module" src="main.js"></script>

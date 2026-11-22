@@ -13,7 +13,7 @@ const v2 = { ok: true, accounts: { version: 2, activityLeases: true, intentSeque
   authentication: ['websocket-first-frame'] } };
 const credential = 'a'.repeat(64);
 
-function harness(statuses) {
+function harness(statuses, played = true) {
   const requests = [], sockets = [], accountReads = [], notices = [], nodes = new Map();
   let retries = 0;
   const context = vm.createContext({ supportsTinyAccounts, AbortController,
@@ -32,6 +32,7 @@ function harness(statuses) {
     async fetch(path, options) {
       requests.push({ path, options });
       if (path === '/api/status') return { ok: true, json: async () => statuses.shift() };
+      if (path === '/api/tiny-chao') return { ok: played, status: played ? 200 : 404 };
       if (path === '/api/session') return { ok: true, json: async () => ({ token: credential, player: { id: 'canonical-chao' } }) };
       throw new Error(`Unexpected request ${path}`);
     } });
@@ -63,10 +64,19 @@ test('pre-pairing v2 discovery remains sticky across a different saved credentia
   assert.match(source, /then\(status => \{\s*selectAccountProtocol\(status\);/);
 });
 
+test('a phone whose account has not played on PC yet is told so and opens no socket', async () => {
+  const h = harness([{ ok: true }], false);
+  await h.context.resume(credential);
+  assert.deepEqual(h.requests.map(request => request.path), ['/api/status', '/api/session', '/api/tiny-chao']);
+  assert.equal(h.requests[2].options.headers.Authorization, `Bearer ${credential}`);
+  assert.equal(h.sockets.length, 0); assert.equal(h.retries(), 0);
+  assert.match(h.notices.at(-1), /Play once on your PC first/);
+});
+
 test('fresh loopback legacy visits remain supported, but advertised unsupported accounts fail closed', async () => {
   const legacy = harness([{ ok: true }]);
   await legacy.context.resume(credential);
-  assert.deepEqual(legacy.requests.map(request => request.path), ['/api/status', '/api/session']);
+  assert.deepEqual(legacy.requests.map(request => request.path), ['/api/status', '/api/session', '/api/tiny-chao']);
   assert.deepEqual(JSON.parse(legacy.requests[1].options.body), { token: credential, resumeOnly: true });
   assert.equal(legacy.sockets[0].v2, false);
   assert.equal(legacy.context.knownAccountV2, false);

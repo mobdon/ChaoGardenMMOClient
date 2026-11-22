@@ -55,6 +55,8 @@ pub type VatFormat = [VtxAttrFmt; ATTR_COUNT];
 pub struct GxArray<'a> {
     pub data: &'a [u8],
     pub stride: usize,
+    /// The bytes indexed so far (an end offset), when the caller tracks it.
+    pub used: Option<&'a std::cell::Cell<usize>>,
 }
 
 /// Shader inputs. Texture matrix indices are packed four to a vec4, and
@@ -693,6 +695,10 @@ impl VtxLoader {
                         match d.output {
                             OutputMode::VertexData => {
                                 let arr = &arrays[a as usize];
+                                if let Some(u) = arr.used {
+                                    // An attribute is at most 32 bytes past its index's start.
+                                    u.set(u.get().max(idx * arr.stride + arr.stride.max(32)));
+                                }
                                 self.write_attr(a, f, arr.data, idx * arr.stride, dst, k);
                             }
                             OutputMode::Index => {
@@ -1069,6 +1075,7 @@ mod tests {
         arrays[attr::POS as usize] = GxArray {
             data: &pos,
             stride: 6,
+            used: None,
         };
         let d = loader.run_vertices(&dl, &arrays);
         assert_eq!(d.vertex_count, 4);

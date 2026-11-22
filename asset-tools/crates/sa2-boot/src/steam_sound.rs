@@ -7,7 +7,7 @@
 //! to stop. Those messages play Steam cue `<name><bank:03><sequence:03>`
 //! through the AX mix. Every message still reaches the game's own sequencer,
 //! so the disc path is untouched (with banks present nothing registers here).
-//! shortcut: gains are linear (CC/127, SYNTH volume/1000) and pan is linear; pitch bend is ignored (its range in gcax is unproven); fix from gcax's own curves if mob hears a difference.
+//! shortcut: gains are linear (CC/127, SYNTH volume/1000) and pan is linear; pitch bend is ignored (its range in gcax is unproven); fix from gcax's own curves if it sounds different.
 use crate::audio::{FRAME, RATE};
 use sa2_asset_tools::{audio::decode_adx, csb};
 use sa2_recomp::rt::{Cpu, Mem};
@@ -27,6 +27,9 @@ struct Bank {
     name: String,
     csb: Vec<u8>,
     cues: csb::Bank,
+    /// Cues decoded so far, by sequence: a cue's ADX decodes once, not on
+    /// every play (decoding runs on the game thread that starts the sound).
+    decoded: BTreeMap<u32, Option<Arc<Cue>>>,
 }
 
 /// A decoded cue: interleaved PCM, and where the looped part starts.
@@ -106,6 +109,7 @@ pub fn missing_bank(files: &dyn GameFiles, request: &str) {
                         name: stem.to_string(),
                         csb: bytes,
                         cues,
+                        decoded: BTreeMap::new(),
                     },
                 );
             }),
@@ -151,20 +155,21 @@ fn cue(bank: &Bank, n: u32, seq: u32) -> Option<Cue> {
 }
 
 fn start(bank: u32, seq: u32) -> Option<Voice> {
-    BANKS.with_borrow(|b| {
-        let k = b.get(&bank)?;
-        let c = cue(k, bank, seq);
-        if c.is_none() {
-            eprintln!("steam sound: no cue {}{bank:03}{seq:03}", k.name);
+    BANKS.with_borrow_mut(|b| {
+        let k = b.get_mut(&bank)?;
+        if !k.decoded.contains_key(&seq) {
+            let c = cue(k, bank, seq);
+            if c.is_none() {
+                eprintln!("steam sound: no cue {}{bank:03}{seq:03}", k.name);
+            }
+            let c = c.filter(|c| c.rate > 0 && !c.pcm.is_empty()).map(Arc::new);
+            k.decoded.insert(seq, c);
         }
-        let c = c.filter(|c| c.rate > 0 && !c.pcm.is_empty())?;
+        let c = k.decoded.get(&seq)?.clone()?;
         if std::env::var_os("SA2_TRACE_SOUND").is_some() {
             eprintln!("steam sound: play {}{bank:03}{seq:03}", k.name);
         }
-        Some(Voice {
-            cue: Arc::new(c),
-            pos: 0.0,
-        })
+        Some(Voice { cue: c, pos: 0.0 })
     })
 }
 
@@ -228,6 +233,8 @@ pub fn mix(out: &mut [[i32; 2]; FRAME]) {
                         }
                     }
                 }
+                // Linear interpolation: nearest-sample resampling of Steam's
+                // 22.05/44.1 kHz cues to the mix rate sounded distorted.
                 let n = v.cue.channels;
                 let j = if i + 1 < frames {
                     i + 1

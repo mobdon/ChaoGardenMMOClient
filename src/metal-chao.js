@@ -8,7 +8,7 @@ export const METAL_CHAO_LOOK = 'metal-sonic-chao';
 // One rigged model: Metal Sonic's own skeleton, skinned body in Chao form and his own motions
 // (scripts/metal-chao/skin.py, converted locally from the player's Steam files, never in Git).
 export const METAL_CHAO_RIG = 'metal-chao-rigged';
-// Metal Sonic's whole body replaces the Chao's (mob: 'all metal sonic body but in chao form'): every Chao mesh hides.
+// Metal Sonic's whole body replaces the Chao's: every Chao mesh hides.
 export const METAL_CHAO_HIDDEN = new Set(Array.from({ length: 40 }, (_, index) => index));
 
 let skin = null;

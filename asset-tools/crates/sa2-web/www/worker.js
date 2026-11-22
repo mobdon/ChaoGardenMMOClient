@@ -14,9 +14,9 @@ const DISC_BLOCK = 128 << 10;
 const blockSize = (path) => (isPicked(path) && picked.get(path.toLowerCase())?.read ? DISC_BLOCK : BLOCK);
 // Fixed numbers for the devices, the same in every thread (a file opened on
 // one game thread may be written on another, as the sound file is).
-const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15, DEV_EGG = 16;
-const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES, 'dev/egg': DEV_EGG };
-const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_GXPAGES;
+const PREOPEN = 3, DEV_AUDIO = 10, DEV_GX = 11, DEV_PAD = 12, DEV_CARD = 13, DEV_AREA = 14, DEV_GXPAGES = 15, DEV_EGG = 16, DEV_EXTRAS = 17;
+const DEVICES = { 'dev/audio': DEV_AUDIO, 'dev/gx': DEV_GX, 'dev/pad': DEV_PAD, 'dev/card': DEV_CARD, 'dev/area': DEV_AREA, 'dev/gxpages': DEV_GXPAGES, 'dev/egg': DEV_EGG, 'dev/extras': DEV_EXTRAS };
+const isDevice = (fd) => fd >= DEV_AUDIO && fd <= DEV_EXTRAS;
 // /dev/gxpages as read since it was opened: the decoder's page bits (main.js sh.pages).
 const gxPages = { bytes: new Uint8Array(0), pos: 0 };
 
@@ -425,6 +425,7 @@ const wasi = {
       else if (fd === DEV_AUDIO) audioWrite(bytes);
       else if (fd === DEV_CARD) card.out.push(bytes.slice());
       else if (fd === DEV_AREA) postMessage({ area: bytes[bytes.length - 1] }); // sa2_boot::start_stage
+      else if (fd === DEV_EXTRAS) postMessage({ extras: [bytes[0], bytes[1]] }); // sa2_boot::pause_extras
       else if (fds.get(fd)?.out) fds.get(fd).out.push(bytes.slice());
       else return E.BADF;
       total += len;

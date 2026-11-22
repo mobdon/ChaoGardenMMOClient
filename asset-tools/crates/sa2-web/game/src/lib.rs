@@ -81,7 +81,11 @@ fn setup(c: &mut Cpu, m: &mut Mem) {
 }
 
 /// Pipe bytes of the frame being built.
-static QUEUED: Global<Vec<u8>> = global!(Vec::new());
+/// Per thread (the game thread both writes the pipe and ends the frame): a
+/// lock per pipe write was ~9% of the game thread in a browser profile.
+thread_local! {
+    static QUEUED: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 
 fn pipe_write(_a: u32, size: u32, v: u32) {
     let b = v.to_be_bytes();
@@ -99,6 +103,9 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
     let fifo = QUEUED.with_borrow_mut(std::mem::take);
     // Only the RAM pages changed since the last job go (GX_DELTA); the page
     // keeps the rest. Copying all of RAM each frame halved the frame rate at 48 MB.
+    // SA2_PROFILE: "gx decode" here is the page compare + job build, "window
+    // render" the write to /dev/gx (it waits while the page holds both slots).
+    let t_compare = std::time::Instant::now();
     let job = SHADOW.with_borrow_mut(|shadow| {
         if shadow.len() != m.ram.len() {
             shadow.clear();
@@ -109,10 +116,18 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
         // FULL_EVERY frames and with SA2_GX_FULLSCAN. A page a frame newly
         // needs arrives one frame late.
         let frame = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-        let used = if frame % FULL_EVERY == 0 || std::env::var_os("SA2_GX_FULLSCAN").is_some() { None } else { used_pages() };
+        let used = if frame == 0 || std::env::var_os("SA2_GX_FULLSCAN").is_some() { None } else { used_pages() };
+        // The safety net, spread out: each frame also compares the next
+        // 1/FULL_EVERY of RAM, so all of it is covered once every FULL_EVERY
+        // frames without one long frame (a whole-RAM compare at 192 MB was a
+        // once-a-second hitch).
+        let total = m.ram.len().div_ceil(PAGE);
+        let slice = total.div_ceil(FULL_EVERY as usize).max(1);
+        let sweep = (frame as usize % FULL_EVERY as usize) * slice;
+        let sweep = sweep..(sweep + slice).min(total);
         let mut pages = Vec::new();
         for (i, (now, was)) in m.ram.chunks(PAGE).zip(shadow.chunks_mut(PAGE)).enumerate() {
-            if used.as_ref().is_some_and(|u| u.get(i >> 5).is_none_or(|w| w & (1 << (i & 31)) == 0)) {
+            if !sweep.contains(&i) && used.as_ref().is_some_and(|u| u.get(i >> 5).is_none_or(|w| w & (1 << (i & 31)) == 0)) {
                 continue;
             }
             if now != was {
@@ -130,10 +145,17 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
         job.extend_from_slice(&pages);
         job
     });
+    if sa2_boot::prof::on() {
+        sa2_boot::prof::add(&sa2_boot::prof::GX, t_compare);
+    }
+    let t_send = std::time::Instant::now();
     let sent = std::fs::OpenOptions::new()
         .append(true)
         .open("/dev/gx")
         .and_then(|mut f| f.write_all(&job));
+    if sa2_boot::prof::on() {
+        sa2_boot::prof::add(&sa2_boot::prof::RENDER, t_send);
+    }
     if let Err(e) = sent {
         static SAID: std::sync::Once = std::sync::Once::new();
         SAID.call_once(|| eprintln!("gx: /dev/gx: {e}"));
@@ -144,8 +166,9 @@ fn copy_disp(c: &mut Cpu, m: &mut Mem) {
 /// Each OS frame: controller 1 from the page, then hold the game to 60.
 /// SA2_INPUT presses are added, as in the window (the keyboard works
 /// throughout and has the pad to itself once the script is done).
-fn frame(_c: &mut Cpu, _m: &mut Mem) {
+fn frame(c: &mut Cpu, m: &mut Mem) {
     let mut p = pad();
+    sa2_boot::pause_extras::apply(c, m);
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
     if let Some(s) = sa2_boot::pad::script(f) {
         p.button |= s.button;
@@ -153,9 +176,14 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
             p.stick = s.stick;
         }
     }
+    sa2_boot::pause_extras::set_input(p.button, p.stick[0]);
     sa2_boot::pad::set_port0(p);
     let t = std::time::Instant::now();
-    pace();
+    // Hidden boot logos before an MMO start: no 60 Hz wait, so they pass in
+    // a second or two instead of ~9 (MMO glue; the logos still run in full).
+    if !sa2_boot::start_stage::logos_hidden() {
+        pace();
+    }
     // SA2_PROFILE: where each second's frame time went (game, limiter sleep).
     if sa2_boot::prof::on() {
         sa2_boot::prof::add(&sa2_boot::prof::SLEEP, t);
@@ -165,7 +193,8 @@ fn frame(_c: &mut Cpu, _m: &mut Mem) {
 
 /// `/dev/pad`: 24 bytes. Keys held (u16, bits as [`KEYS`], bit 15 Tab); then the
 /// gamepad: connected (u8), unused (u8), buttons (u16, GC bits), stick
-/// x/y, C-stick x/y (i8), L/R (u8); 4 bytes not read here; then the last left
+/// x/y, C-stick x/y (i8), L/R (u8); the Extras settings
+/// ([`sa2_boot::pause_extras::set_page_settings`], 4 bytes); then the last left
 /// click (u16 each): canvas x, y (0..=65535), canvas aspect in thousandths
 /// (0 = 4:3), a count that changes per click.
 fn read_pad() -> [u8; 24] {
@@ -188,6 +217,7 @@ const KEYS: [u16; 15] = [
 /// desktop window combines them.
 fn pad() -> PadStatus {
     let b = read_pad();
+    sa2_boot::pause_extras::set_page_settings([b[12], b[13], b[14], b[15]]);
     let h = u16::from_le_bytes([b[0], b[1]]);
     let on = |i: usize| h >> i & 1 != 0;
     let mut p = PadStatus::default();

@@ -78,7 +78,6 @@ fn read(c: &mut Cpu, m: &mut Mem) {
     for (i, p) in PADS.get().iter().enumerate() {
         to_guest(m, base + 12 * i as u32, p);
     }
-    crate::kinder_chart::frame(c, m);
     c.r[3] = 0;
 }
 
@@ -246,6 +245,11 @@ pub fn opened(name: &str) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push((name.to_lowercase(), frame));
+}
+
+/// This frame's port 0, as the game's PADRead will see it.
+pub fn port0() -> PadStatus {
+    PADS.get()[0]
 }
 
 /// Controller port 0 only (the others stay disconnected).

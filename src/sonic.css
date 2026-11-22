@@ -68,11 +68,11 @@ dialog{background:#f4f9fff7;border-color:#e8f3ff;color:#123e7a}.welcome-dialog{b
 :is(#character-panel,#breeding-panel) .stat-row { position: relative; isolation: isolate; display: grid; grid-template-columns: 76px 1fr 34px; grid-template-rows: 22px 10px; align-items: center; gap: 4px 10px; padding: 11px 12px 12px; min-height: 64px; border-radius: 13px; background: #454fe7; color: white; }
 .native-stat-frame { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; overflow: hidden; image-rendering: pixelated; }
 :is(#character-panel,#breeding-panel) .stat-name { color: white; font-size: 12px; font-weight: 800; text-transform: capitalize; grid-column: 1; grid-row: 1; }
-:is(#character-panel,#breeding-panel) .native-stat-label { width: var(--sprite-width); height: var(--sprite-height); background: url('/api/assets/chao-stat-panel.png') var(--sprite-x) var(--sprite-y) / 256px 128px no-repeat; color: transparent; image-rendering: pixelated; }
+:is(#character-panel,#breeding-panel) .native-stat-label { width: var(--sprite-width); height: var(--sprite-height); background: var(--stat-panel-url, none) var(--sprite-x) var(--sprite-y) / 256px 128px no-repeat; color: transparent; image-rendering: pixelated; }
 :is(#character-panel,#breeding-panel) .stat-level { color: white; font-size: 15px; font-weight: 800; grid-column: 2; grid-row: 1; letter-spacing: 1px; }
 :is(#character-panel,#breeding-panel) .stat-grade { grid-column: 3; grid-row: 1 / 3; display: grid; place-items: center; min-width: 29px; height: 32px; color: #ffeb7b; background: #173e9b; border: 1px solid #ffdc63; border-radius: 7px; font-size: 9px; font-weight: 900; }
 :is(#character-panel,#breeding-panel) .native-grade { color: transparent; position: relative; }
-:is(#character-panel,#breeding-panel) .native-grade::after { content: ''; position: absolute; width: 22px; height: 22px; background: url('/api/assets/chao-stat-font.png') var(--grade-x) var(--grade-y) / 512px 256px no-repeat; image-rendering: pixelated; }
+:is(#character-panel,#breeding-panel) .native-grade::after { content: ''; position: absolute; width: 22px; height: 22px; background: var(--stat-font-url, none) var(--grade-x) var(--grade-y) / 512px 256px no-repeat; image-rendering: pixelated; }
 :is(#character-panel,#breeding-panel) .stat-bar { grid-column: 2; grid-row: 2; background: #1e379e; height: 6px; border-radius: 4px; overflow: hidden; }
 :is(#character-panel,#breeding-panel) .stat-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #84f4e2, #ffe37a); border-radius: inherit; }
 :is(#character-panel,#breeding-panel) .stat-points { grid-column: 1; grid-row: 2; font-size: 8px; letter-spacing: .4px; color: #f2f8ff; font-variant-numeric: tabular-nums; }
