@@ -1094,6 +1094,8 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         // The player's Chao on its native rig: its foot nodes for the boots.
         if NATIVE_DRAW.get() {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
+            // The hands as this native draw places them, for the hammer gloves.
+            record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
             if MOVING.get() && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
