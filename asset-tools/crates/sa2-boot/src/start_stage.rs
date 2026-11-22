@@ -148,11 +148,16 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     else {
         return;
     };
+    // Every MMO start: Chao that must stay silent (see quiet_residents).
+    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
+    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
+        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
+    });
     if stage == CHAO_WORLD {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
         PENDING.set(Some((CHAO_WORLD, 0)));
-        chao_world_glue(c);
+        SHOWN.set(Some(u32::MAX));
         c.rt.set_override(TOP_LEVEL, top_level);
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
@@ -187,15 +192,6 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     }
 }
 
-/// The Chao World glue: the area told to the page, the lobby's residents.
-fn chao_world_glue(c: &mut Cpu) {
-    SHOWN.set(Some(u32::MAX));
-    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
-    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
-        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
-    });
-}
-
 fn top_level(c: &mut Cpu, m: &mut Mem) {
     if PENDING.get().is_some() && std::env::var("SA2_MODE_LOG").is_ok() {
         let mode = m.r32(GLOBAL_MODE);
@@ -226,7 +222,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             // level's EXIT or end, the lobby's own way out): Chao World, as at
             // boot. Unverified: that each of those ways reaches this mode.
             if SHOWN.get().is_none() {
-                chao_world_glue(c);
+                SHOWN.set(Some(u32::MAX));
             }
             start(c, m, CHAO_WORLD, 0);
         }
@@ -411,7 +407,10 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
 /// position is a resident's taskwk +0x14 is dropped; every other one plays.
 fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
     let twp = c.r[pos_reg].wrapping_sub(0x14);
-    if twp != 0 && RESIDENT_TWP.get().contains(&twp) {
+    // The residents, and the player's own Chao (never heard by its player).
+    if twp != 0
+        && (RESIDENT_TWP.get().contains(&twp) || twp == crate::chao_player::own_chao_twp(m))
+    {
         return;
     }
     original(c, m, addr);
