@@ -310,14 +310,16 @@ fn text(c: &mut Cpu, m: &mut Mem, s: &str, flags: u32, x: f32, y: f32, size: f32
 }
 
 /// The flags D2A4 gives the portrait Chao (chaowk + 0xA0).
-fn portrait_flags(f: u32) -> u32 {
+pub(crate) fn portrait_flags(f: u32) -> u32 {
     (f & !(0x8 | 0x2 | 0x10 | 0x2_0000)) | 0x2000
 }
 
 fn partner_free(c: &mut Cpu, m: &mut Mem) {
     if let Some((id, task, _)) = PARTNER.replace(None) {
         if linked(m, CHAOMAIN) {
-            call(c, m, rt::sec(m, CHAOMAIN, 1) + crate::chao_player::KILL_CHAO, &[task]);
+            // FreeTask, not KillChao: the partner's record is chao_cache's
+            // shared copy of another player's Chao, which KillChao zeroes.
+            call(c, m, crate::chao_player::FREE_TASK, &[task]);
         }
         if let Ok(id) = id.parse() {
             crate::chao_cache::set_online(id, false);

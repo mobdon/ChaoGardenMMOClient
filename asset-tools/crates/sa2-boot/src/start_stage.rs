@@ -170,6 +170,11 @@ pub(crate) fn to_stage_select() {
     TO_STAGE_SELECT.set(true);
 }
 
+/// Leaving for the Stage Select: the player's Chao is not made again meanwhile.
+pub(crate) fn to_stage_select_pending() -> bool {
+    TO_STAGE_SELECT.get()
+}
+
 /// While going to the Stage Select: once the menu module is up, ask its
 /// screen dispatcher for the Stage Select, and log its top state and screen.
 /// Unverified: that the request field is honoured from the title state; the
@@ -180,10 +185,17 @@ fn stage_select_frame(m: &mut Mem) {
     if MENU_SEEN.replace(now) != now {
         eprintln!("start-stage: menu state {} screen {} next {}", now.0, now.1, now.2);
     }
+    // The menu's own transitions do not take the next field from just any
+    // screen (build 11: "screen 7 next 3" stayed on 7, the screen menu init
+    // fn_91_30A0C leads to). Set the current screen instead, once, while the
+    // screen struct is fresh from that init, so the Stage Select's exec
+    // (fn_91_2BC44) starts from its own first step.
+    // Unverified: that the Stage Select needs nothing from screen 7 first.
     if now.1 == SCREEN_STAGE_SELECT {
         TO_STAGE_SELECT.set(false);
     } else {
-        m.w32(bss + MENU_SCREEN + 4, SCREEN_STAGE_SELECT);
+        m.w32(bss + MENU_SCREEN, SCREEN_STAGE_SELECT);
+        m.w32(bss + MENU_SCREEN + 4, 0);
     }
 }
 /// The lobby's residents are out (cleared when the game leaves the lobby).
@@ -576,7 +588,10 @@ fn roam_live(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
                 m.w32(twp[n] + 0x0C, yaw);
             }
             None => {
-                guest_call(c, m, text + crate::chao_player::KILL_CHAO, &[task[n]]);
+                // FreeTask, not KillChao: KillChao zeroes the Chao's save
+                // record (AL_ClearChaoParam), and a resident who comes back
+                // later is made again from that record.
+                guest_call(c, m, crate::chao_player::FREE_TASK, &[task[n]]);
                 (twp[n], task[n], leaving[n]) = (0, 0, 0);
             }
         }
@@ -606,6 +621,12 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
             m.w32(param + i, 0);
         }
         m.w8(param + 0x80, ty);
+        // As chao_player's own Chao (Dark Chaos 0x16, drawn adult): marked
+        // analysed (+0x438) with +0x84 = 0xFF, so the gene analysis does not
+        // reset it to a child (the residents crawled as babies, mob).
+        // Unverified beyond that: the meaning of +0x84.
+        m.w8(param + 0x438, 1);
+        m.w8(param + 0x84, 0xFF);
         for i in (0..0x34).step_by(4) {
             m.w32(elem + i, 0);
         }
@@ -794,6 +815,11 @@ fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
     // The hidden character's own movement sounds (footsteps, skate jets)
     // while its exec moves the player's Chao.
     if crate::chao_player::character_sounds_muted() {
+        return;
+    }
+    // Chao voices (the 0x60xx Chao bank, e.g. ChaoMain fn_60_4BA6C's random
+    // 0x6014/0x6015/0x601C) are not played: Chao in the MMO are silent (mob).
+    if crate::chao_player::chao_voice(c.r[3]) {
         return;
     }
     original(c, m, addr);

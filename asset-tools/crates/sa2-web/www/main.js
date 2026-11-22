@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 32), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 32), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -265,7 +265,7 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, SKILLS: 155440 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -597,25 +597,60 @@ function karateLocks() {
     b.style.background = b.disabled ? '#666' : '#f5a800';
   }
 }
-// The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
+// The player's card box is the game's own (sa2-boot card_box.rs): the page feeds it the name and the rings.
 function showCard(player) {
-  // The player's Chao's name for the game's own chart (sa2-boot kinder_chart.rs): 7 bytes, 0 ends.
-  if (player) mmoBytes.set(new TextEncoder().encode(`${player.name || ''}\0\0\0\0\0\0\0`).subarray(0, 7), MMO.NAME);
+  if (!player) return;
+  // 7 bytes, 0 ends (also the game's chart, sa2-boot kinder_chart.rs).
+  mmoBytes.set(new TextEncoder().encode(`${player.name || ''}\0\0\0\0\0\0\0`).subarray(0, 7), MMO.NAME);
+  new DataView(sh.mmo).setUint32(MMO.RINGS, player.rings || 0, true);
+  // The old web card stays as an unseen click spot over the game's box: it opens
+  // the web inventory (src/game-overlay.js) until the chart's inventory page is there.
   const card = document.getElementById('mmo-card');
-  if (!player || !card) return; // the card element comes from the MMO overlay
-  card.style.display = 'flex';
-  // The player's own Chao as the game's Chao Select shows it (src/chao-portrait.js); drawn once.
-  const icon = card.querySelector('.icon');
-  if (!icon.dataset.chao) {
-    icon.dataset.chao = '1';
-    const canvas = Object.assign(document.createElement('canvas'), { width: 96, height: 120 });
-    canvas.style.cssText = 'width:48px;height:60px;display:block';
-    icon.replaceChildren(canvas);
-    import('/src/chao-portrait.js').then(m => m.mountChaoPortrait(canvas, player)).catch(() => {});
-  }
-  card.querySelector('.name').textContent = player.name;
-  card.querySelector('.rings').textContent = player.rings.toLocaleString();
+  if (card) card.style.cssText += ';display:block;opacity:0;left:2.5vw;top:3vh;width:25vw;height:13vh;padding:0';
 }
+// ?geartune=1 (debug): move, turn and resize each gear piece live on the
+// player's Chao (sa2-boot chao_player.rs reads /mmo/gear-tune: one line per
+// piece "name dx dy dz rx ry rz scale", offsets in the piece's own frame,
+// degrees); "Copy values" puts the lines on the clipboard.
+function gearTuner() {
+  const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2' };
+  const keys = [['dx', -3, 3, 0.02], ['dy', -3, 3, 0.02], ['dz', -3, 3, 0.02], ['rx', -180, 180, 1], ['ry', -180, 180, 1], ['rz', -180, 180, 1], ['scale', 0.2, 3, 0.01]];
+  const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
+  const text = () => Object.entries(vals).map(([p, v]) => [p, ...keys.map(([k]) => v[k])].join(' ')).join('\n') + '\n';
+  const send = () => {
+    const b = new TextEncoder().encode(text()).subarray(0, MMO.GEAR_MAX);
+    mmoBytes.set(b, MMO.GEAR + 8);
+    Atomics.store(mmoHead(MMO.GEAR), 1, b.length);
+    Atomics.store(mmoHead(MMO.GEAR), 0, 1);
+  };
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;right:8px;top:8px;z-index:99;background:#000c;color:#fff;font:12px sans-serif;padding:8px;border-radius:6px;width:230px';
+  const pick = document.createElement('select');
+  for (const [p, label] of Object.entries(pieces)) pick.append(new Option(label, p));
+  box.append('Gear tuner ', pick);
+  const rows = keys.map(([k, lo, hi, step]) => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px';
+    const r = Object.assign(document.createElement('input'), { type: 'range', min: lo, max: hi, step, style: 'flex:1' });
+    const n = Object.assign(document.createElement('input'), { type: 'number', min: lo, max: hi, step, style: 'width:58px' });
+    const set = (v) => { vals[pick.value][k] = +v; r.value = n.value = v; send(); };
+    r.oninput = () => set(r.value);
+    n.onchange = () => set(n.value);
+    row.append(k, r, n);
+    box.append(row);
+    return () => { r.value = n.value = vals[pick.value][k]; };
+  });
+  pick.onchange = () => rows.forEach((f) => f());
+  const copy = Object.assign(document.createElement('button'), { textContent: 'Copy values', style: 'margin-top:6px;width:100%' });
+  copy.onclick = () => navigator.clipboard?.writeText(text()).catch(() => {});
+  // Keys typed into the panel stay away from the game's controls.
+  box.addEventListener('keydown', (ev) => ev.stopPropagation());
+  box.append(copy);
+  document.body.append(box);
+  rows.forEach((f) => f());
+  send();
+}
+
 // Hold the card while the game runs: renew its lease (10 minutes on the
 // server) and give the Chao back when the tab closes.
 function keepCard(token) {
@@ -678,6 +713,8 @@ async function start() {
   // Signed in on the Chao MMO title screen (same site): the server memory card is in slot A.
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
+  // ?geartune=1 (debug): the gear tuner panel (gearTuner) and its file.
+  if (q.get('geartune') === '1') { e.SA2_GEAR_TUNE = '/mmo/gear-tune'; gearTuner(); }
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';
@@ -686,7 +723,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_RINGS_IN: '/mmo/rings-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_STORY_IN: '/mmo/story-in', SA2_STORY_OUT: '/mmo/story-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick', SA2_SKILLS_IN: '/mmo/skills-in' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) cardChao(token), storyLoad(token);

@@ -264,7 +264,7 @@ function cardSend() {
 // /mmo/tags-out, the Tiny Garden tree icon to /mmo/tree-icon) and reads the others' from /mmo/pose-in
 // and /mmo/rec/<id>. They live in a buffer the page shares (main.js, MMO):
 // the page sends and fetches them over the MMO server.
-const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, SKILLS: 155440 };
+const MMO = { POSE_OUT: 0, POSE_OUT_MAX: 256, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, SKILLS: 156476 };
 function mmoI32(at) { return new Int32Array(sh.mmo.buffer, at, 2); }
 // Bytes of a file the game reads, or null when it doesn't exist.
 function mmoRead(path) {
@@ -281,12 +281,20 @@ function mmoRead(path) {
   // take_skills): 7 x [level, progress, points u16 big-endian]; no file until
   // the server has answered a record upload.
   if (path === 'mmo/skills-in') return b[MMO.SKILLS] ? { bytes: b.slice(MMO.SKILLS + 1, MMO.SKILLS + 29), ver: 0 } : null;
+  // The player's rings for the card box (sa2-boot card_box.rs): 4 bytes, little endian.
+  if (path === 'mmo/rings-in') return { bytes: b.slice(MMO.RINGS, MMO.RINGS + 4), ver: 0 };
   // The stages the server lets this card start (sa2-boot story.rs); no file
   // until the page has the server's list, so the game keeps its own flags.
   if (path === 'mmo/story-in') {
     const h = mmoI32(MMO.STORY);
     if (!Atomics.load(h, 0)) return null;
     return { bytes: b.slice(MMO.STORY + 8, MMO.STORY + 8 + Math.min(Atomics.load(h, 1), MMO.STORY_MAX)), ver: 0 };
+  }
+  // ?geartune=1 (debug): the gear tuner's per-piece offsets (chao_player.rs).
+  if (path === 'mmo/gear-tune') {
+    const h = mmoI32(MMO.GEAR);
+    if (!Atomics.load(h, 0)) return null;
+    return { bytes: b.slice(MMO.GEAR + 8, MMO.GEAR + 8 + Math.min(Atomics.load(h, 1), MMO.GEAR_MAX)), ver: 0 };
   }
   // The chart's breeding page (sa2-boot kinder_chart.rs).
   if (path === 'mmo/breed-in') {
