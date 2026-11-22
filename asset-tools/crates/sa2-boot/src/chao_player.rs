@@ -65,6 +65,8 @@ enum Step {
 
 thread_local! {
     static STEP: Cell<Step> = const { Cell::new(Step::Wait(0)) };
+    /// The frame the Chao went live (see `starting`).
+    static LIVE_SINCE: Cell<u64> = const { Cell::new(0) };
     /// Sonic's data1 (position +0x14, rotation +0x08) for the Chao's display.
     static RIDER: Cell<u32> = const { Cell::new(0) };
     /// Rider position at the previous Chao display (for the emotion ball).
@@ -927,6 +929,24 @@ const FROM_VOICE_TASK: u32 = 0x8001_2768;
 /// stage's own banks intact; check by ear.
 const LOAD_BANK: u32 = 0x8006_CFEC;
 const WALKER_BANK_2P: u32 = 0x8017_5E9C; // "se_ch_wk_BATTLE.mlt"
+
+/// MMO choice: how long after the Chao appears a level counts as starting
+/// (frames; about 10 s), with no replacement voice line.
+const START_FRAMES: u64 = 600;
+
+fn starting() -> bool {
+    let now = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    now.saturating_sub(LIVE_SINCE.get()) < START_FRAMES
+}
+
+/// The own Chao's taskwk (task +0x34), 0 while it isn't out: its own Chao
+/// sounds are not played to its player (start_stage's positional sound hooks).
+pub(crate) fn own_chao_twp(m: &Mem) -> u32 {
+    match STEP.get() {
+        Step::Live(task) => m.r32(task + 0x34),
+        _ => 0,
+    }
+}
 
 fn voice(c: &mut Cpu, m: &mut Mem) {
     // From the start of the run: the drop line plays before the Chao is loaded.
@@ -2250,6 +2270,7 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
         call(c, m, LOAD_BANK, &[WALKER_BANK_2P]);
     }
     call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, STAND_MOTION]);
+    LIVE_SINCE.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
     Step::Live(chao)
 }
 
@@ -2512,6 +2533,14 @@ const RECORD_EVERY: u64 = 180;
 thread_local! {
     static RECORD_SENT: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
     static RECORD_SEEN: std::cell::RefCell<std::collections::BTreeMap<u64, std::time::SystemTime>> = Default::default();
+}
+
+/// The own Chao's save record (the pointer at chaowk +0x5C) while it is
+/// live, for glue that hands it to the game (race_control).
+pub(crate) fn own_record(m: &Mem) -> Option<u32> {
+    let Step::Live(chao) = STEP.get() else { return None };
+    let rec = m.r32(m.r32(chao + 0x34) + 0x5C);
+    (0x8000_0000..0x8C00_0000).contains(&rec).then_some(rec)
 }
 
 fn export_record(m: &Mem) {

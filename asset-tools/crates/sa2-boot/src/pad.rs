@@ -32,6 +32,11 @@ pub fn set(pads: [PadStatus; 4]) {
     PADS.set(pads);
 }
 
+/// Port 0's stick X this frame (-128..127), for glue that steers with it.
+pub fn stick_x() -> i8 {
+    PADS.get()[0].stick[0]
+}
+
 fn to_guest(m: &mut Mem, a: u32, p: &PadStatus) {
     m.w16(a, p.button);
     let b = [

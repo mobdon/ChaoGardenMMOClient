@@ -36,6 +36,7 @@ pub mod serve;
 pub mod snap;
 pub mod start_stage;
 pub mod karate;
+pub mod race_control;
 pub mod race_probe;
 pub mod steam_sound;
 pub mod tiny_transporter;
@@ -65,6 +66,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     kinder_chart::install(c, m);
     start_stage::install(c, m);
     combat::install(c, m);
+    race_control::install(c, m);
     race_probe::install(c, m);
     pause_extras::install(c, m);
     gear_pickup::install(c, m);
