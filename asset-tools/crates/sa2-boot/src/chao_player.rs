@@ -888,6 +888,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     // one exec (0x8009F8A0) with their own displays (coordinator notes).
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
+    c.rt.set_override(DESTROY_TASK, destroy_task);
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
         c.rt.set_override(DRAW_MOTION, trace_draw_motion);
         c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
@@ -2093,6 +2094,15 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
         Step::Wait(_) if chao_world(m) => {
             if module_linked(m, 60) { create(c, m, pos) } else { Step::Wait(60) }
         }
+        // A level restarted with the copy at BASE still linked: no second
+        // read or link; its world task again if that was destroyed too.
+        // Unverified: that the copy's texture lists survive a restart.
+        Step::Wait(_) if !linked_copies(m, &[BASE]).is_empty() => {
+            if BASE_TASK_GONE.replace(false) {
+                call(c, m, rt::sec(m, 60, 1) + 0x29344, &[]); // ALW_Create
+            }
+            create(c, m, pos)
+        }
         Step::Wait(_) => {
             write_str(m, b"ChaoMain.prs");
             m.w32(SIZE, 0);
@@ -2207,6 +2217,40 @@ pub(crate) fn unlink_copies(c: &mut Cpu, m: &mut Mem) {
         call(c, m, sa2_recomp::os::OS_UNLINK, &[base]);
     }
     STEP.set(Step::Wait(0));
+}
+
+/// DestroyTask (main.dol 0x80071AF0, GSNE8P symbols). A level restart after
+/// the player's deaths destroys the tasks and runs the stage task again with
+/// the same stage number, so the stage check in exec never saw it: STEP kept
+/// naming the freed Chao task, its work was written every frame into memory
+/// the game had handed to new tasks, and the task loop later called heap data
+/// (Big Foot combat: "no function at 0x80d74ac0", lr 0x80070928).
+const DESTROY_TASK: u32 = 0x8007_1AF0;
+/// Task exec pointer (task +0x10).
+const TASK_EXEC: u32 = 0x10;
+
+thread_local! {
+    /// A task running the ChaoMain copy at BASE (the copy's ALW world task)
+    /// was destroyed: the copy's setup must create it again.
+    static BASE_TASK_GONE: Cell<bool> = const { Cell::new(false) };
+}
+
+fn destroy_task(c: &mut Cpu, m: &mut Mem) {
+    let t = c.r[3];
+    if let Step::Live(chao) = STEP.get() {
+        if t == chao {
+            eprintln!("chao-player: the game destroyed the player's Chao task {t:#x}; making it again");
+            STEP.set(Step::Wait(0));
+            RIDER.set(0);
+        }
+    }
+    REMOTE.with_borrow_mut(|r| r.values_mut().filter(|e| e.task == t).for_each(|e| e.task = 0));
+    let exec = m.r32(t + TASK_EXEC);
+    if !linked_copies(m, &[BASE]).is_empty() && (BASE..BSS).contains(&exec) {
+        BASE_TASK_GONE.set(true);
+    }
+    c.r[3] = t;
+    original(c, m, DESTROY_TASK);
 }
 
 /// Which of `bases` are OSModuleInfo addresses on the OS module list.
