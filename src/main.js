@@ -179,7 +179,12 @@ function showTitle() {
   const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
-    const icon = document.createElement('span'); icon.className = 'save-slot-icon'; icon.textContent = slot.admin ? '✦' : '◉';
+    const icon = document.createElement('span'); icon.className = 'save-slot-icon';
+    // Big: the slot's own Chao as the game's Chao Select draws it.
+    const portrait = Object.assign(document.createElement('canvas'), { width: 240, height: 300 });
+    portrait.style.cssText = 'width:120px;height:150px;display:block';
+    icon.append(portrait);
+    void import('./chao-portrait.js').then(m => m.mountChaoPortrait(portrait, slot)).catch(() => {});
     const meta = document.createElement('span'); meta.className = 'save-slot-meta';
     const name = document.createElement('strong'); name.textContent = slot.name || 'Saved Chao';
     const info = document.createElement('small');

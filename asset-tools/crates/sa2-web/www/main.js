@@ -163,7 +163,15 @@ function showCard(player) {
   if (!player) return;
   const card = document.getElementById('mmo-card');
   card.style.display = 'flex';
-  card.querySelector('.icon').textContent = player.admin ? '\u2726' : '\u25c9';
+  // The player's own Chao as the game's Chao Select shows it (src/chao-portrait.js); drawn once.
+  const icon = card.querySelector('.icon');
+  if (!icon.dataset.chao) {
+    icon.dataset.chao = '1';
+    const canvas = Object.assign(document.createElement('canvas'), { width: 96, height: 120 });
+    canvas.style.cssText = 'width:48px;height:60px;display:block';
+    icon.replaceChildren(canvas);
+    import('/src/chao-portrait.js').then(m => m.mountChaoPortrait(canvas, player)).catch(() => {});
+  }
   card.querySelector('.name').textContent = player.name;
   card.querySelector('.rings').textContent = player.rings.toLocaleString();
 }
