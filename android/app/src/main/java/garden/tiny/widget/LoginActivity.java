@@ -30,6 +30,8 @@ public final class LoginActivity extends Activity {
         });
         text(column,"Tiny Garden",28);
         text(column,"Log in with your garden account. Your Chao is here after you have played once on your PC.",16);
+        // Above the form: at the end of this long column it sits off screen, behind the navigation bar.
+        status=text(column,"Reading device state…",16);
         origin=field(column,"HTTPS server origin (https://garden.example)",false);
         login=field(column,"Username or email",false);
         password=field(column,"Password",true);
@@ -45,7 +47,6 @@ public final class LoginActivity extends Activity {
         forget=button(column,"Log out on this device",v->run(()->{
             new SecureStore(this).clear(); OriginalArtwork.clear(this); GardenJobService.cancel(this);
         },"Logged out on this device."));
-        status=text(column,"Reading device state…",16);
         text(column,"The widget shows your Chao as the server has it, with Pet and Rest. Minigames and training open in Tiny Garden. Android schedules background reads about every 30 minutes and may delay them. Refresh for current data.",14);
         text(column,"Open Tiny Garden uses the same login in your browser. Your password is never stored; the widget keeps only the key the server gave this login.",14);
         GardenRepository.IO.execute(()->{
@@ -59,8 +60,9 @@ public final class LoginActivity extends Activity {
         TextView view=new TextView(this); view.setText(value); view.setTextSize(size); view.setPadding(0,dp(12),0,dp(12)); parent.addView(view); return view;
     }
     private EditText field(LinearLayout parent,String hint,boolean secret) {
-        text(parent,hint,14);
-        EditText view=new EditText(this); view.setSingleLine(true); view.setHint(hint);
+        // One visible label above the field; a hint inside as well was cut off on a narrow screen.
+        EditText view=new EditText(this); view.setSingleLine(true); view.setId(View.generateViewId());
+        text(parent,hint,14).setLabelFor(view.getId());
         view.setInputType(InputType.TYPE_CLASS_TEXT|(secret?InputType.TYPE_TEXT_VARIATION_PASSWORD:InputType.TYPE_TEXT_VARIATION_URI));
         view.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
         parent.addView(view,new LinearLayout.LayoutParams(-1,dp(56))); return view;
