@@ -526,6 +526,55 @@ thread_local! {
     static GEAR_TUNE: std::cell::RefCell<std::collections::BTreeMap<String, [f32; 7]>> = Default::default();
 }
 
+/// Shadow's Air Shoes as the client exports them (docs/UPGRADES.md): his own
+/// heel/toe mesh from body model 65 (left heel node 23 with toe 24, drawn in
+/// the heel's frame) with the Air Shoes overlay 79 (slot 159) on it, at the
+/// hub's boot place on Chao foot `n`. TERIOSMDL 80/81 (slots 161/163) are
+/// hand models, which the feet drew before (test copy, run r58).
+/// SA2_SHADOW_BOOT=0 (debug): the old slot draw.
+fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list: u32) {
+    let heel = node_obj(m, RIDER_OBJ.get(), 23);
+    let overlay = model_obj(m, 159);
+    if heel == 0 {
+        return;
+    }
+    // The heel drawn alone in its own frame: its offset, rotation and scale
+    // cleared and its sibling cut for the draw, put back after.
+    let keep: Vec<u32> = (0x08..0x34).step_by(4).map(|o| m.r32(heel + o)).collect();
+    m.w32(heel + 0x30, 0);
+    for o in (0x08..0x20).step_by(4) { m.w32(heel + o, 0); }
+    for o in (0x20..0x2C).step_by(4) { m.w32(heel + o, 1.0f32.to_bits()); }
+    let br = crate::chao_retarget::read_chao(&|a| m.r32(a), heel, [vec![], vec![]]);
+    let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
+    let node = SHOES[n].0;
+    let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
+    if let Some(place) = hp.map(|p| gear_tune(if n == 0 { "boot0" } else { "boot1" }).map_or(p, |t| mul34(&p, &t))) {
+        if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
+            eprintln!("chao-player boot {n}: Shadow heel {heel:#x} ({} nodes, {} vertices), overlay {overlay:#x}", br.nodes.len(), bv.len());
+        }
+        let put = |m: &mut Mem| for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, place[r][k].to_bits()); } };
+        m.w32(list, tex);
+        let lcap = LCAP.replace(false);
+        put(m);
+        call(c, m, 0x8011_DF44, &[heel]);
+        if (0x8000_0000..0x8C00_0000).contains(&overlay) {
+            put(m);
+            call(c, m, 0x8011_DF44, &[overlay]);
+        }
+        if MOVING.get() && !debug_off("jets") {
+            for js in 181..=184u32 {
+                let jo = model_obj(m, js);
+                if (0x8000_0000..0x8C00_0000).contains(&jo) {
+                    put(m);
+                    call(c, m, 0x8011_DF44, &[jo]);
+                }
+            }
+        }
+        LCAP.set(lcap);
+    }
+    for (i, o) in (0x08..0x34).step_by(4).enumerate() { m.w32(heel + o, keep[i]); }
+}
+
 /// The object of node `index` (depth first, as read_chao counts) in a model
 /// tree (NJS_OBJECT: child +0x2C, sibling +0x30), 0 when there is none.
 fn node_obj(m: &Mem, root: u32, index: usize) -> u32 {
@@ -641,6 +690,10 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let regs = (c.r, c.f);
     let ext = |vs: Vec<[f32; 3]>| (0..3).map(|k| { let (lo, hi) = vs.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v[k]), h.max(v[k]))); hi - lo }).fold(0.0f32, f32::max);
     for (n, &(node, foot, model)) in SHOES.iter().enumerate() {
+        if chao_world(m) && models.is_empty() && !std::env::var("SA2_SHADOW_BOOT").is_ok_and(|v| v == "0") {
+            shadow_boot(c, m, n, tex, cur_ptr, list);
+            continue;
+        }
         // Chao World: the right boot (78 = slot 163) on both feet, as the hub does.
         let model = models.get(n).copied().unwrap_or(if chao_world(m) { 163 } else { model });
         let obj = shadow_obj(m, model);
