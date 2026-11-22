@@ -83,8 +83,8 @@ const GUIDE: usize = 1;
 /// + 0x2A50 and `lfs f1, 0x48(r3)` (recompiled p2.rs).
 const FULL_GROWTH: (u32, u32) = (0x2A50, 0x48);
 const GROWTH: u32 = 0xC0;
-/// How close (world units, squared) the player must come to the guide.
-const REACH_SQ: f32 = 2.0 * 2.0;
+/// How close (world units, squared) the player must come to the guide (an MMO choice).
+const REACH_SQ: f32 = 5.0 * 5.0;
 /// What the guide says, one line at a time, while the player stays near it.
 /// The first and last are the game's own lobby hint lines (Steam
 /// gd_PC/Message/mhChaoLobbye.prs, s2392 and s2393); the middle two are MMO text.
@@ -143,6 +143,9 @@ const COCOON_FRAMES: [(u32, u32); 3] = [(0x88, 300), (0x8C, 300), (0x90, 300)];
 /// shortcut: shared table, so a garden Chao evolving in this window is also fast; a per-Chao hook would fix that.
 const COCOON_HOLD: u32 = 1300;
 static COCOON_RESTORE: Global<(u32, [u32; 3], u32)> = global!((0, [0; 3], 0));
+/// The new Chao's (save slot, type, growth bits) last logged, and frames the tutorial has run.
+static SLOT_SEEN: Global<(u32, u8, u32)> = global!((0, 0, 0));
+static LOG_FRAMES: Global<u32> = global!(0);
 /// Next guide line to show and frames until it shows.
 static LINE: Global<(usize, u32)> = global!((0, 0));
 
@@ -262,7 +265,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
                 m.w32(bss + PRE_STAGE, 1);
             }
         }
-        if HATCH.get() && !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
+        if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
             lay_egg(c, m, text);
         }
@@ -274,6 +277,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             residents(c, m, text);
         }
         restore_cocoon(m);
+        watch_slot(m);
         if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
             tutorial(c, m, text);
         }
@@ -319,6 +323,8 @@ fn lay_egg(c: &mut Cpu, m: &mut Mem, text: u32) {
     guest_call(c, m, text + AL_GENE_CREATE, &[gene]);
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
+    eprintln!("tutorial: egg laid, save slot {slot:#x}");
+    SLOT_SEEN.set((slot, 0, 0));
     TUTORIAL_SLOT.set(slot);
 }
 
@@ -350,8 +356,23 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
             twp[n] = m.r32(task + 0x34);
         }
     }
+    eprintln!("tutorial: residents' taskwks {twp:x?} (guide is [{GUIDE}])");
     RESIDENT_TWP.set(twp);
     c.r[1] = sp;
+}
+
+/// Logs the new Chao's type (param +0x80) and growth when either changes:
+/// egg, hatch, cocoon, adult.
+fn watch_slot(m: &Mem) {
+    let (slot, ty, growth) = SLOT_SEEN.get();
+    if slot == 0 {
+        return;
+    }
+    let now = (slot, m.r8(slot + 0x80), m.r32(slot + GROWTH));
+    if now != (slot, ty, growth) {
+        SLOT_SEEN.set(now);
+        eprintln!("tutorial: slot type {} growth {}", now.1, f32::from_bits(now.2));
+    }
 }
 
 /// Puts the cocoon's native phase timers back once the tutorial's evolution is over.
@@ -367,6 +388,7 @@ fn restore_cocoon(m: &mut Mem) {
     for (i, (o, _)) in COCOON_FRAMES.into_iter().enumerate() {
         m.w32(table + o, saved[i]);
     }
+    eprintln!("tutorial: cocoon timers back to {saved:?}");
     COCOON_RESTORE.set((0, [0; 3], 0));
 }
 
@@ -377,9 +399,23 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
     if guide == 0 {
         return;
     }
-    let (p, o) = (m.r32(PLAYERTWP) + 0x14, guide + 0x14);
-    let d = |i| f32::from_bits(m.r32(p + i)) - f32::from_bits(m.r32(o + i));
-    if d(0) * d(0) + d(8) * d(8) > REACH_SQ {
+    // The player is the hidden character or, as its own Chao, that Chao: the nearer one counts.
+    let o = guide + 0x14;
+    let dist_sq = |twp: u32| {
+        let d = |i| f32::from_bits(m.r32(twp + 0x14 + i)) - f32::from_bits(m.r32(o + i));
+        d(0) * d(0) + d(8) * d(8)
+    };
+    let own = crate::chao_player::own_chao_twp(m);
+    let mut near = dist_sq(m.r32(PLAYERTWP));
+    if own != 0 {
+        near = near.min(dist_sq(own));
+    }
+    let frames = LOG_FRAMES.get();
+    LOG_FRAMES.set(frames + 1);
+    if frames % 120 == 0 {
+        eprintln!("tutorial: {:.1} from the guide (reach {:.1})", near.sqrt(), REACH_SQ.sqrt());
+    }
+    if near > REACH_SQ {
         return;
     }
     let (line, wait) = LINE.get();
@@ -393,7 +429,10 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
             for (i, b) in words.bytes().chain([0]).enumerate() {
                 m.w8(buf + i as u32, b);
             }
-            guest_call(c, m, text + AL_MESSAGE, &[buf]);
+            let r = guest_call(c, m, text + AL_MESSAGE, &[buf]);
+            eprintln!("tutorial: line {line} shown, window call returned {r:#x}");
+        } else {
+            eprintln!("tutorial: line {line} not shown, no memory for it");
         }
         LINE.set((line + 1, LINE_FRAMES));
         return;
@@ -410,6 +449,11 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
         saved[i] = m.r32(table + o);
         m.w32(table + o, f);
     }
+    eprintln!(
+        "tutorial: growth set to {} (bits {:#x}); cocoon timers {saved:?} now 300 each",
+        f32::from_bits(m.r32(table + off)),
+        m.r32(table + off)
+    );
     COCOON_RESTORE.set((table, saved, COCOON_HOLD));
     TUTORIAL_SLOT.set(0);
     LINE.set((0, 0));
