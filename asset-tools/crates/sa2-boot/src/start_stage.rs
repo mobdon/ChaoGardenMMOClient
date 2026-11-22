@@ -191,6 +191,12 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             HATCH.set(false);
             lay_egg(c, m, text);
         }
+        // Eggs the player picked and named on the page hatch here too.
+        if !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
+            for _ in 0..picked_eggs() {
+                lay_egg(c, m, text);
+            }
+        }
         if now != LOBBY {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
@@ -206,6 +212,17 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     crate::race_probe::frame(c, m);
     original(c, m, TOP_LEVEL);
+}
+
+/// How many named eggs the page has queued since the last read (/dev/egg:
+/// a little-endian u32, cleared by the read; absent outside the browser).
+fn picked_eggs() -> u32 {
+    use std::io::Read;
+    let mut b = [0u8; 4];
+    match std::fs::File::open("/dev/egg").and_then(|mut f| f.read_exact(&mut b)) {
+        Ok(()) => u32::from_le_bytes(b),
+        Err(_) => 0,
+    }
 }
 
 /// The game's own egg at the player's feet, with guest scratch for the gene
