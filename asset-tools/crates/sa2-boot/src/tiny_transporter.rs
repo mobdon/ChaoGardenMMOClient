@@ -45,6 +45,16 @@
 //!   answers 4 with 2 to close it; 0x52BAC is 0 once its panels are gone;
 //! - Chao records: .bss +0x3D08 + side * 0x60, three pages of 8 pointers.
 
+//!
+//! The machine in the gardens (ChaoMain .text 0x2EE08 makes it, a set object;
+//! its update 0x2F0CC) opens the menu when the player's collision touches its
+//! first collision shape: 0x80005F88(task, 0) answers non-zero. That shape
+//! (ChaoMain .data +0xBB18C) is a cylinder of radius 1.3 at (-0.4, 2, 0) from
+//! the machine's spot. The MMO's player is a Chao; so that walking into the
+//! machine always opens it, the same question is also answered by reach when
+//! the game's own answer is no (MMO glue; whether the game's own hit fires
+//! for the Chao is unverified live, the log says which one did).
+
 use crate::start_stage::module_section;
 use sa2_recomp::rt::{self, Cpu, Mem};
 use sa2_recomp::{global, global::Global};
@@ -81,6 +91,20 @@ const PHASE_LEAVE: u32 = 0x12;
 const PHASE_LEAVE_WAIT: u32 = 0x13;
 
 const CHAOMAIN: u32 = 60;
+/// The machine's update, and where it keeps its task (.bss).
+const MACHINE_EXEC: u32 = 0x2F0CC;
+const MACHINE_TASK: u32 = 0x50AC8;
+/// "Which player touches collision shape r4 of task r3" (0 = none).
+const HIT: u32 = 0x8000_5F88;
+const PLAYERTWP: u32 = 0x801E_7768;
+/// The machine's first collision shape: its radius and its offset from the
+/// machine's spot (ChaoMain .data +0xBB18C), and its height.
+const TRIGGER_R: f32 = 1.3;
+const TRIGGER_OFF: f32 = 0.4;
+const TRIGGER_H: f32 = 4.0;
+/// The player's own width for the reach (an MMO choice; the Chao's collision
+/// size is not read).
+const PLAYER_R: f32 = 2.0;
 const PICKER_NEW: u32 = 0x5287C;
 const PICKER_BUSY: u32 = 0x52BAC;
 const PICKER_SET_STATE: u32 = 0x52C5C;
@@ -112,10 +136,22 @@ static CARD: Global<Vec<u64>> = global!(Vec::new());
 /// is overridden to answer with it (0 = not overridden).
 static SHOWN: Global<u32> = global!(0);
 static HELD_AT: Global<u32> = global!(0);
+/// ChaoMain's (.text + MACHINE_EXEC, .bss + MACHINE_TASK) this frame (0 = not linked).
+static MACHINE: Global<(u32, u32)> = global!((0, 0));
+static HIT_HOOKED: Global<bool> = global!(false);
+/// What the log last said of the machine: its task, and how it was touched (0 no, 1 the game's hit, 2 reach).
+static SAID: Global<(u32, u8)> = global!((0, 0));
 
 /// Each frame in Chao World: once module 73 is linked (again), point its
 /// sprites at the Tiny Chao Garden art and hook its menu.
 pub fn frame(c: &mut Cpu, m: &mut Mem) {
+    MACHINE.set(match (module_section(m, CHAOMAIN, 1), module_section(m, CHAOMAIN, 6)) {
+        (Some(text), Some(bss)) => (text + MACHINE_EXEC, bss + MACHINE_TASK),
+        _ => (0, 0),
+    });
+    if !HIT_HOOKED.replace(true) {
+        c.rt.set_override(HIT, hit);
+    }
     let Some(text) = module_section(m, MODULE, 1) else {
         TEXT.set(0);
         unhold(c);
@@ -134,6 +170,36 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     c.rt.set_override(text + DROP_OFF, drop_off);
     c.rt.set_override(text + SOCKET, socket);
     c.rt.set_override(text + CATEGORY_BAR, category_bar);
+}
+
+/// The game's hit question; for the machine's first shape, also yes when the
+/// player stands within reach of it.
+fn hit(c: &mut Cpu, m: &mut Mem) {
+    let (task, shape) = (c.r[3], c.r[4]);
+    crate::original(c, m, HIT);
+    let (exec, slot) = MACHINE.get();
+    if shape != 0 || exec == 0 || m.r32(slot) != task || m.r32(task + 0x10) != exec {
+        return;
+    }
+    let pos = |twp: u32| [0x14, 0x18, 0x1C].map(|o| m.rf32(twp + o) as f32);
+    let (machine, player) = (pos(m.r32(task + 0x34)), m.r32(PLAYERTWP));
+    let how = if c.r[3] != 0 {
+        1
+    } else if player != 0 && in_reach(pos(player), machine) {
+        c.r[3] = player;
+        2
+    } else {
+        0
+    };
+    if SAID.replace((task, how)) != (task, how) {
+        eprintln!("tiny-transporter: machine at {machine:?}, touched: {}", ["no", "the game's own hit", "by reach"][how as usize]);
+    }
+}
+
+/// The player at `player` stands on the machine's trigger shape.
+fn in_reach(player: [f32; 3], machine: [f32; 3]) -> bool {
+    let flat = (player[0] - machine[0]).hypot(player[2] - machine[2]);
+    flat <= TRIGGER_R + TRIGGER_OFF + PLAYER_R && (player[1] - machine[1]).abs() <= TRIGGER_H
 }
 
 fn entry(data: u32, i: u32) -> u32 {
@@ -379,6 +445,13 @@ mod tests {
         assert_eq!(one_side(3, 0), (4, 2)); // onto side 0: OK instead
         assert_eq!(one_side(4, 2), (4, 2)); // OK
         assert_eq!(one_side(3, 2), (3, 2)); // Back
+    }
+
+    #[test]
+    fn reach_is_the_trigger_shape_and_the_player_width() {
+        assert!(in_reach([3.0, 1.0, 0.0], [0.0, 0.0, 0.0]));
+        assert!(!in_reach([4.0, 0.0, 0.0], [0.0, 0.0, 0.0]));
+        assert!(!in_reach([0.0, 5.0, 0.0], [0.0, 0.0, 0.0])); // a floor above
     }
 
     #[test]
