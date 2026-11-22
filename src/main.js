@@ -21,6 +21,7 @@ let socket;
 let snapshot;
 let player;
 let sessionToken = localStorage.getItem(tokenKey);
+let loggedIn = null; // the server-confirmed card code after a login; the Chao select shows only then
 let sessionCard = null; // the memory card code, when this browser has it
 let reconnectTimer;
 let currentPanel = 'world';
@@ -174,6 +175,8 @@ function showTitle() {
   container.replaceChildren();
   let slots = [];
   try { slots = saveSlots.list(); } catch { /* Storage may be unavailable in private browser settings. */ }
+  // Logged in: only the Chao the server just confirmed for this account's card.
+  if (loggedIn) slots = slots.filter(slot => slot.card === loggedIn);
   const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
@@ -203,7 +206,9 @@ function showTitle() {
     container.append(button, code);
   }
   // Slots only show once this browser has logged in to a Chao.
-  $('.save-select').hidden = !slots.length;
+  $('.save-select').hidden = !slots.length || !loggedIn;
+  // Logged in: the Chao select replaces the login forms.
+  for (const box of document.querySelectorAll('.auth-tabs, .title-screen .new-chao')) box.hidden = !!loggedIn && slots.length > 0;
   if (!welcome.open) welcome.showModal();
   updatePaused();
 }
@@ -464,6 +469,20 @@ document.querySelectorAll('.auth-tabs button').forEach(tab => tab.addEventListen
 // Log in: the server opens the account's memory card and its Chao fill the slots.
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (rememberedSlot) {
+    // The saved card code is checked with the server, which lists the Chao on it.
+    try {
+      const response = await fetch('/api/card', { headers: { Authorization: `Bearer ${rememberedSlot.card}` }, cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, rememberedSlot.card);
+      loggedIn = rememberedSlot.card; showTitle();
+    } catch {
+      rememberedSlot = null; $('#login-password').value = '';
+      $('#join-error').textContent = 'Your saved login ran out. Type your password once more.';
+    }
+    return;
+  }
   try {
     const response = await fetch('/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
       body: JSON.stringify({ login: $('#login-name').value.trim(), password: $('#login-password').value }) });
@@ -472,20 +491,26 @@ $('#login-form').addEventListener('submit', async (event) => {
     $('#login-password').value = '';
     // Remember me keeps the Chao's session key (never the password) so the next visit logs straight in.
     const remember = $('#remember-me').checked;
-    try { if (remember) localStorage.setItem(REMEMBER_KEY, '1'); else localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ }
+    try { if (remember) localStorage.setItem(REMEMBER_KEY, $('#login-name').value.trim()); else localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ }
     if (remember) for (const chao of data.chao) saveSlots.record(chao.token, chao.player, undefined, data.card);
-    const first = data.chao[0];
-    if (first) void join(first.player.name || 'Chao', first.token, data.card); else showTitle();
+    for (const chao of data.chao) if (!remember) saveSlots.record(chao.token, chao.player, undefined, data.card);
+    loggedIn = data.card; showTitle();
   } catch (error) { $('#join-error').textContent = error.message; }
 });
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 const REMEMBER_KEY = 'chao-garden-remember-v1';
 showTitle();
-// Remembered on this device: log straight back in to the last Chao.
+// Remembered on this device: the login form comes filled in, so Log in is one click.
+// The password box only shows dots; the saved Chao session key logs in, never a stored password.
+let rememberedSlot = null;
 try {
-  const last = localStorage.getItem(REMEMBER_KEY) && saveSlots.list()[0];
-  if (last) void join(last.name || 'Chao', last.token, last.card);
-} catch { /* storage blocked: stay on the login */ }
+  const name = localStorage.getItem(REMEMBER_KEY);
+  rememberedSlot = name && saveSlots.list()[0];
+  if (rememberedSlot) { $('#login-name').value = name; $('#login-password').value = '••••••••'; }
+} catch { /* storage blocked: an empty login */ }
+for (const field of ['#login-name', '#login-password']) $(field).addEventListener('input', () => {
+  if (rememberedSlot) { rememberedSlot = null; $('#login-password').value = ''; }
+});
 
 async function saveAndLeave(destination) {
   if (saving || !player) return;
@@ -508,6 +533,7 @@ async function saveAndLeave(destination) {
     for (const dialog of [shopDialog, stagesDialog, setupDialog]) if (dialog.open) dialog.close();
     if (destination) { location.assign(destination); return; }
     try { localStorage.removeItem(REMEMBER_KEY); } catch { /* storage blocked */ } // back to the title = logged out
+    loggedIn = null;
     panel('world'); showTitle();
   } catch (error) { toast(error.message, 'error'); }
   finally { pendingSave = null; saving = false; button.disabled = false; button.textContent = originalLabel; updatePaused(); }
