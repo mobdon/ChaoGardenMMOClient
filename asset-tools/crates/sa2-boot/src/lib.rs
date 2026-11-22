@@ -14,6 +14,7 @@ pub mod chao_cache;
 pub mod chao_player;
 pub mod chao_retarget;
 pub mod clock;
+pub mod combat;
 pub mod dvd;
 #[cfg(not(target_os = "wasi"))]
 pub mod gamepad;
@@ -52,6 +53,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     walker::install(c, m);
     chao_player::install(c, m);
     start_stage::install(c, m);
+    combat::install(c, m);
     race_probe::install(c, m);
 }
 
