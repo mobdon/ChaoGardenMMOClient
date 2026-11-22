@@ -119,7 +119,7 @@ async function assetManifest(records) {
     nativeModel: `.local/extracted/pc-chao/Chao/models/AL_RootObject/al_${nativeName}.sa2mdl`,
     textures: `.local/extracted/textures/al_body + al_eye${name === 'chao' ? '; original al_nc00.GVP banks 0/1/2' : ''}`,
     animations: ['alm_tati.saanim (Idle)', 'alm_aruki_ncz.saanim (Walk)'],
-    adaptations: ['Omit two half-closed eyelid overlays', ['tails', 'knuckles', 'amy'].includes(name) ? 'Preserve original white eye texture and dark pupils' : name === 'chao' ? 'Remove white matte from original pupil sprite' : 'Preserve original Chaos Chao eye texture', 'Opaque body materials; only explicit pupil cutouts may mask geometry', 'Omit alternative mouth overlays in default face'],
+    adaptations: ['Omit two half-closed eyelid overlays', ['tails', 'knuckles', 'amy', 'chao'].includes(name) ? 'Preserve original white eye texture and dark pupils' : 'Preserve original Chaos Chao eye texture', 'Opaque body materials; no texture masks geometry', 'Omit alternative mouth overlays in default face'],
     outputs: [await output(`.local/imports/${name}.glb`)],
   });
   for (const [name, archive, exportName] of [['garden', 'neut', 'objLandTableNeut'], ['hero-garden', 'hero', 'objLandTableHero'], ['dark-garden', 'dark', 'objLandTableDark']]) entries.push({
