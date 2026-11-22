@@ -127,6 +127,7 @@ function loadedWorker() {
     else if (m.crash) log(`game thread ${m.tid} stopped: ${m.crash}`, true);
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
+    else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
     else if (m.area !== undefined) roomArea(m.area);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
@@ -228,6 +229,19 @@ function recordIn(id, bytes) {
   h[1] = Math.min(bytes.length, MMO.REC);
   v.setBigUint64(at, BigInt(id), true);
   Atomics.add(h, 0, 1);
+}
+
+// While the boot logos run before an MMO start, the game is covered (plain
+// black, as the page looks before the first frame) and its sound muted.
+function cover(on) {
+  let c = document.getElementById('mmo-cover');
+  if (!c) {
+    c = Object.assign(document.createElement('div'), { id: 'mmo-cover' });
+    c.style.cssText = 'position:fixed;inset:0;background:#000;z-index:5;pointer-events:none';
+    document.body.append(c);
+  }
+  c.style.display = on ? 'block' : 'none';
+  if (globalThis.sa2Gain) globalThis.sa2Gain.gain.value = on ? 0 : 1;
 }
 
 // The game changed Chao World area (its own teleporters): follow it into that room.
