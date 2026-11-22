@@ -238,10 +238,8 @@ function showTitle() {
     code.append(summary, value, copy, warn);
     container.append(button, code);
   }
-  if (!slots.length) {
-    const empty = document.createElement('p'); empty.className = 'save-empty'; empty.textContent = 'A new story is waiting. Name your first Chao below.'; container.append(empty);
-  }
-  $('.new-chao').open = !slots.length;
+  // Slots only show once this browser has logged in to a Chao.
+  $('.save-select').hidden = !slots.length;
   if (!welcome.open) welcome.showModal();
   updatePaused();
 }
