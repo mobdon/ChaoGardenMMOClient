@@ -716,7 +716,9 @@ const GLOVE_REFS: [(u32, [f32; 3], [f32; 3]); 2] = [
     (329, [0.150_553_9, 0.933_591_6, 0.325_177_2], [-0.984_045_9, 0.173_063_3, -0.041_265_2]),
     (331, [0.171_001_5, 0.896_849_7, -0.407_944_7], [-0.985_151_6, 0.162_074_6, -0.056_639_6]),
 ];
-const GLOVE_SCALE: f32 = 1.12;
+/// shortcut: 1.6 of the hand's size by mob's ask (bigger than the hub's 1.12);
+/// the gear tuner (?geartune=1) gives the measured value to commit.
+const GLOVE_SCALE: f32 = 1.6;
 /// KNUCKMDL body model 142 in the model table (slot 2n+1).
 const KNUX_BODY_SLOT: u32 = 285;
 const GLOVE_REACH: f32 = 0.55;
@@ -813,9 +815,10 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // wrist, where the hand starts along the arm, instead of the glove's
         // centre on the hand's centre.
         // Native mount: the glove's origin (Knuckles's hand node) on the
-        // Chao's hand marker node.
+        // Chao's wrist (where the hand starts along the arm), so the arm goes
+        // through the cuff (mob 2026-11-22: bigger, higher on the wrist).
         let t: [f32; 3] = if native.is_some() && !std::env::var("SA2_GLOVE_PIVOT").is_ok() {
-            hand
+            std::array::from_fn(|i| sh[i] + ax[i] * reach * GLOVE_REACH)
         } else if std::env::var("SA2_GLOVE_PIVOT").is_ok_and(|v| v == "wrist") {
             let along = |p: &[f32; 3]| (0..3).map(|i| p[i] * ax[i]).sum::<f32>();
             let (lo, hi) = src.iter().map(along).fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v), h.max(v)));
