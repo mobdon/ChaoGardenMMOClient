@@ -52,20 +52,37 @@ const RESIDENTS: [(u8, f32, f32); 3] = [(0x18, 7.0, 2.0), (0x17, 12.0, 6.0), (0x
 const CREATE_CHAO_EXTRA: u32 = 0x3_148C;
 /// CHAO_PARAM_GC is 0x800 bytes; `type` at +0x80 (al_chao_info.h).
 const PARAM_SIZE: u32 = 0x800;
-/// New-player tutorial (MMO glue): two Omochao (al_chao_info.h TYPE_OMOCHAO
-/// 0x1B), made like the residents. Reaching the second one ends it: the new
-/// Chao's growth (CHAO_PARAM_GC +0xA8 body, +0x18 `growth` = +0xC0) is set to
-/// the value ChaoMain 0x1531C compares it with; that function then starts the
+/// New-player tutorial (MMO glue): the lobby's Tails Chao (a resident, see
+/// RESIDENTS) is the guide. Reaching it ends the tutorial: the new Chao's
+/// growth (CHAO_PARAM_GC +0xA8 body, +0x18 `growth` = +0xC0) is set to the
+/// value ChaoMain 0x1531C compares it with; that function then starts the
 /// game's own cocoon (`ALBHV_Mayu` 0x3AE44) for a child (type 2) Chao.
-/// Offsets from the arrival spot are an MMO choice (unchecked against the
-/// lobby's garden entrances).
-const OMOCHAO: [(u8, f32, f32); 2] = [(0x1B, 3.0, 3.0), (0x1B, 0.0, -14.0)];
+/// ChaoMain never creates TYPE_OMOCHAO itself, so Omochao can't be used here.
+const GUIDE: usize = 1;
 /// ChaoMain 0x1531C loads the full-growth value with `lis r3` of section 5
 /// + 0x2A50 and `lfs f1, 0x48(r3)` (recompiled p2.rs).
 const FULL_GROWTH: (u32, u32) = (0x2A50, 0x48);
 const GROWTH: u32 = 0xC0;
-/// How close (world units, squared) the player must come to the second Omochao.
+/// How close (world units, squared) the player must come to the guide.
 const REACH_SQ: f32 = 2.0 * 2.0;
+/// What the guide says, one line at a time, while the player stays near it.
+/// The first and last are the game's own lobby hint lines (Steam
+/// gd_PC/Message/mhChaoLobbye.prs, s2392 and s2393); the middle two are MMO text.
+const GUIDE_LINES: [&str; 4] = [
+    "Welcome to Chao world!",
+    "Press Tab to see your\nChao's card.",
+    "Your items are in the\ninventory on that card.",
+    "Get to the Chao garden from here.",
+];
+/// Frames each line stays up before the next one.
+/// shortcut: timed, not closed by the player; switch to the window's own close once it is traced.
+const LINE_FRAMES: u32 = 240;
+/// ChaoMain's message window (the one its own warnings use, fn 0x1CE28):
+/// 0x1E030(text) opens it with mode 5. Unverified beyond that native use.
+const AL_MESSAGE: u32 = 0x1_E030;
+/// main.dol allocator as the message window task calls it (0x800DF630:
+/// r3=1, r4=size). Unverified name; used to keep the lines in guest memory.
+const ALLOC: u32 = 0x8011_97FC;
 /// main.dol `playertwp` .bss 0x801E7768 (taskwk*[]); taskwk +0x14 is pos.
 const PLAYERTWP: u32 = 0x801E_7768;
 /// main.dol positional sound calls ChaoMain makes for a Chao's voice, each
@@ -86,9 +103,25 @@ static HATCH: Global<bool> = global!(false);
 /// The lobby's residents are out (cleared when the game leaves the lobby).
 static RESIDENTS_OUT: Global<bool> = global!(false);
 /// The residents' taskwks, so their Chao sounds stay silent.
-static RESIDENT_TWP: Global<[u32; 5]> = global!([0; 5]);
+static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
 /// The new player's Chao save slot while the tutorial runs (0 = no tutorial).
 static TUTORIAL_SLOT: Global<u32> = global!(0);
+/// Cocoon timers (section 5 + 0x2A50, read by `ALBHV_Mayu` 0x3AE44) and its
+/// native frames 200/1800/900/900/100 (about 65 s); phases 2-4 cut to 300 frames each
+/// (1200 frames, about 20 s) for the tutorial's evolution only.
+const COCOON_FRAMES: [(u32, u32); 5] = [
+    (0x84, 60),
+    (0x88, 550),
+    (0x8C, 275),
+    (0x90, 275),
+    (0x94, 40),
+];
+/// Frames to keep the short timers before putting the native ones back.
+/// shortcut: shared table, so a garden Chao evolving in this window is also fast; a per-Chao hook would fix that.
+const COCOON_HOLD: u32 = 1300;
+static COCOON_RESTORE: Global<(u32, [u32; 5], u32)> = global!((0, [0; 5], 0));
+/// Next guide line to show and frames until it shows.
+static LINE: Global<(usize, u32)> = global!((0, 0));
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -157,13 +190,14 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
         if now != 0 {
             RESIDENTS_OUT.set(false);
-            RESIDENT_TWP.set([0; 5]);
+            RESIDENT_TWP.set([0; 3]);
         } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
             RESIDENTS_OUT.set(true);
             residents(c, m, text);
         }
+        restore_cocoon(m);
         if now == 0 && TUTORIAL_SLOT.get() != 0 {
-            tutorial(m, text);
+            tutorial(c, m, text);
         }
         if now != shown {
             SHOWN.set(Some(now));
@@ -200,13 +234,8 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
     let player = m.r32(PLAYERTWP) + 0x14;
-    let mut twp = [0; 5];
-    let omochao = if TUTORIAL_SLOT.get() != 0 {
-        &OMOCHAO[..]
-    } else {
-        &[]
-    };
-    for (n, &(ty, dx, dz)) in RESIDENTS.iter().chain(omochao).enumerate() {
+    let mut twp = [0; 3];
+    for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
         for i in (0..PARAM_SIZE).step_by(4) {
             m.w32(param + i, 0);
         }
@@ -223,22 +252,62 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     c.r[1] = sp;
 }
 
-/// The tutorial ends when the player reaches the second Omochao: the new
-/// Chao's growth goes to full, and ChaoMain's own check evolves it.
-fn tutorial(m: &mut Mem, text: u32) {
-    let omochao = RESIDENT_TWP.get()[4];
-    if omochao == 0 {
+/// Puts the cocoon's native phase timers back once the tutorial's evolution is over.
+fn restore_cocoon(m: &mut Mem) {
+    let (table, saved, left) = COCOON_RESTORE.get();
+    if table == 0 {
         return;
     }
-    let (p, o) = (m.r32(PLAYERTWP) + 0x14, omochao + 0x14);
+    if left > 0 {
+        COCOON_RESTORE.set((table, saved, left - 1));
+        return;
+    }
+    for (i, (o, _)) in COCOON_FRAMES.into_iter().enumerate() {
+        m.w32(table + o, saved[i]);
+    }
+    COCOON_RESTORE.set((0, [0; 5], 0));
+}
+
+/// The tutorial ends when the player reaches the Tails Chao guide: the new
+/// Chao's growth goes to full, and ChaoMain's own check evolves it.
+fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
+    let guide = RESIDENT_TWP.get()[GUIDE];
+    if guide == 0 {
+        return;
+    }
+    let (p, o) = (m.r32(PLAYERTWP) + 0x14, guide + 0x14);
     let d = |i| f32::from_bits(m.r32(p + i)) - f32::from_bits(m.r32(o + i));
     if d(0) * d(0) + d(8) * d(8) > REACH_SQ {
         return;
     }
+    let (line, wait) = LINE.get();
+    if wait > 0 {
+        LINE.set((line, wait - 1));
+        return;
+    }
+    if let Some(words) = GUIDE_LINES.get(line) {
+        let buf = guest_call(c, m, ALLOC, &[1, words.len() as u32 + 1]);
+        if buf != 0 {
+            for (i, b) in words.bytes().chain([0]).enumerate() {
+                m.w8(buf + i as u32, b);
+            }
+            guest_call(c, m, text + AL_MESSAGE, &[buf]);
+        }
+        LINE.set((line + 1, LINE_FRAMES));
+        return;
+    }
     let (lo, off) = FULL_GROWTH;
-    let hi = (section(m, text, 5) + lo).wrapping_add(0x8000) & 0xFFFF_0000;
-    m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(hi + off));
+    let table = section(m, text, 5) + lo;
+    m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(table + off));
+    // Shorten the cocoon's phase timers for this evolution, put back afterwards.
+    let mut saved = [0u32; 5];
+    for (i, (o, f)) in COCOON_FRAMES.into_iter().enumerate() {
+        saved[i] = m.r32(table + o);
+        m.w32(table + o, f);
+    }
+    COCOON_RESTORE.set((table, saved, COCOON_HOLD));
     TUTORIAL_SLOT.set(0);
+    LINE.set((0, 0));
 }
 
 /// ChaoMain's section `n` address, from the same module entry as `text`.
