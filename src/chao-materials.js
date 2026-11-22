@@ -98,6 +98,8 @@ export function applyNativeChaoMaterial(key, mat) {
   mat.useAlphaFromAlbedoTexture = mat.transparencyMode === 1;
   if (nativeBlend) {
     mat.transparencyMode = 2; mat.useAlphaFromAlbedoTexture = true;
+    // Babylon reads a texture's alpha only when the texture says it has one; the GLB export marked these opaque.
+    if (texture) texture.hasAlpha = true;
     mat.alphaMode = Engine.ALPHA_COMBINE; mat.backFaceCulling = false;
   }
   if (solidCharacterPart) {
