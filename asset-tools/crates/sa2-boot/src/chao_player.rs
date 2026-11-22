@@ -997,6 +997,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
             physics_row(m);
+            force_sonic_state(m);
         } else {
             knuckles_rules(c, m, chao);
         }
@@ -1063,6 +1064,25 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
     OWN_MOTION.set(own.is_some());
     MIRROR.set(mirror);
     ARM_FWD.set(fwd);
+}
+
+/// SA2_SONIC_STATE=n[,flags] (debug): hold the rider in animation state n
+/// (obj2 +0x178; 30 = ball, PLMOT_BALL) and OR `flags` (hex) into obj2
+/// +0x24, the word Sonic's display (0x8007C770) tests with 0x40008 before
+/// its efftex ball draw. No input needed to see the ball.
+fn force_sonic_state(m: &mut Mem) {
+    let Ok(v) = std::env::var("SA2_SONIC_STATE") else { return };
+    let obj2 = m.r32(P1_OBJ2);
+    if !(0x8000_0000..0x8C00_0000).contains(&obj2) {
+        return;
+    }
+    let mut it = v.split(',');
+    if let Some(n) = it.next().and_then(|n| n.trim().parse::<u16>().ok()) {
+        m.w16(obj2 + OBJ2_ACTION, n);
+    }
+    if let Some(f) = it.next().and_then(|f| u32::from_str_radix(f.trim().trim_start_matches("0x"), 16).ok()) {
+        m.w32(obj2 + 0x24, m.r32(obj2 + 0x24) | f);
+    }
 }
 
 /// Physics table (0x84 bytes a row) that 0x8004F838 copies to the player's
