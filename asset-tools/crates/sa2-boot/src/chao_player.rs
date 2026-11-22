@@ -1755,6 +1755,7 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
 /// (frames stopped right after the new Chao's first draw).
 /// Unverified: which allocations the stage change frees; this drops all of them.
 fn drop_stage_loads() {
+    GEAR_LOAD_AT.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) + GEAR_LOAD_DELAY);
     SHADOW_TEX.set(None);
     KNUX_TEX.set(None);
     EXTRA_MODELS.with_borrow_mut(|e| e.clear());
@@ -1763,7 +1764,16 @@ fn drop_stage_loads() {
     BOARD.set(None);
 }
 
+/// Frames after a stage change before the gear files load. Loading Shadow's
+/// and Knuckles's files right after a level EXIT, while Chao World was still
+/// loading behind its card, hung the game in a main.dol loop (0x8013B82C..
+/// 0x8013E8E0); with that load off the lobby came up (test build 5).
+/// shortcut: a fixed delay, not the game's own "stage loaded" state (not
+/// found yet); raise it if a slow load still collides.
+const GEAR_LOAD_DELAY: u64 = 180;
+
 thread_local! {
+    static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
     static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
@@ -1899,11 +1909,15 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if addr == SONIC_EXEC && SHADOW_TEX.get().is_none() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player: rider char {} (shadow tex not loaded yet)", m.r8(m.r32(P1_OBJ2) + 1));
         }
-        if addr == SONIC_EXEC && (m.r8(m.r32(P1_OBJ2) + 1) == 0 || chao_world(m)) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
+        if addr == SONIC_EXEC && (m.r8(m.r32(P1_OBJ2) + 1) == 0 || chao_world(m)) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")
+            && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= GEAR_LOAD_AT.get() {
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
             let mdl = load_models(c, m, SHADOW_MDL_NAME);
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
+            if tex == 0 {
+                GEAR_LOAD_AT.set(u64::MAX); // no retry every frame; the next stage tries again
+            }
             // Knuckles's textures and models for the Hammer Gloves item (KNUCKTEX /
             // KNUCKMDL.PRS, main.dol 0x80174F04 / 0x80174F10).
             let ktex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
