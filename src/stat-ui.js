@@ -6,8 +6,8 @@ function nativeLabel(name) {
   return nativeText(labels[name] || name, 'stat-name native-stat-name', !!labels[name]);
 }
 
-const grades = ['E', 'D', 'C', 'B', 'A', 'S'];
-const gradeCells = { S: [88, 44], A: [198, 22], B: [220, 22], C: [242, 22], D: [264, 22], E: [286, 22] };
+export const grades = ['E', 'D', 'C', 'B', 'A', 'S'];
+export const gradeCells = { S: [88, 44], A: [198, 22], B: [220, 22], C: [242, 22], D: [264, 22], E: [286, 22] };
 
 function nativeFrame() {
   const ns = 'http://www.w3.org/2000/svg';
