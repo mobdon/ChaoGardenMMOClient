@@ -533,6 +533,7 @@ thread_local! {
 /// hand models, which the feet drew before (test copy, run r58).
 /// SA2_SHADOW_BOOT=0 (debug): the old slot draw.
 fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list: u32) {
+    ensure_rider_rest(m); // sets RIDER_OBJ (his body model) in self mode
     let heel = node_obj(m, RIDER_OBJ.get(), 23);
     let overlay = model_obj(m, 159);
     if heel == 0 {
