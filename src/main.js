@@ -1,6 +1,7 @@
 import './style.css';
 import './sonic.css';
 import './title.css';
+import { allowSavedFiles, canPickFolders, pickGameFiles, savedHandles } from './game-files.js';
 import { createGarden } from './scene.js';
 import { createGameAudio } from './audio.js';
 import { createStageSelect } from './stages.js';
@@ -418,6 +419,9 @@ function connect(token) {
 
 async function join(name, token = sessionToken, card = null) {
   if (joining) return;
+  // The game needs the player's own files: the local server's, or ones picked on this page.
+  if (!(await gameFilesReady())) { $('#join-error').textContent = 'Pick your game files first.'; $('#pick-steam').focus(); return; }
+  void allowSavedFiles(); // still inside the click: renews read access for the game page
   joining = true;
   $('#join-button').disabled = true;
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
@@ -577,6 +581,25 @@ function renderSetup(data) {
   item('Local model conversion', data.imports?.chao ? 'Original Chao GLB is ready for the browser loader.' : 'The garden currently uses procedural proxy art. Native asset conversion is the next step.', data.imports?.garden ? 'Original Neutral garden geometry also converted; scene scale and collision validation pending.' : null);
 }
 
+// ---- the player's game files (src/game-files.js) ----
+async function gameFilesReady() {
+  if (setup?.found) return true;
+  const saved = await savedHandles();
+  return !!(saved.steam || saved.disc);
+}
+async function showGameFiles() {
+  const saved = await savedHandles();
+  const picked = saved.steam?.name || saved.disc?.name;
+  $('#game-files').hidden = !!setup?.found; // the local server already has them
+  $('#game-files').dataset.picked = String(!!picked);
+  $('#game-files-state').textContent = picked ? `PICKED · ${picked.toUpperCase()}` : 'NOT PICKED';
+  if (!canPickFolders) $('#game-files p').textContent = 'Picking your game files needs Chrome or Edge on a computer.';
+  $('#pick-steam').disabled = $('#pick-disc').disabled = !canPickFolders;
+}
+for (const [button, kind] of [['#pick-steam', 'steam'], ['#pick-disc', 'disc']]) $(button).addEventListener('click', async () => {
+  try { await pickGameFiles(kind); $('#join-error').textContent = ''; } catch (error) { if (error?.name !== 'AbortError') $('#join-error').textContent = 'Could not open those files.'; }
+  void showGameFiles();
+});
 async function loadStatus() {
   try {
     const response = await fetch('/api/status');
@@ -586,7 +609,9 @@ async function loadStatus() {
     $('#install-status').textContent = setup.found ? 'SA2 files found' : 'Local SA2 installation not found';
     $('#install-status-dot').className = `status-dot ${setup.found ? 'connected' : 'error'}`;
     renderSetup(setup);
+    void showGameFiles();
   } catch {
+    void showGameFiles();
     $('.welcome-requirements').hidden = true; // only the local dev bridge reports install files
     $('#setup-content').textContent = 'The local bridge is unavailable. Start it with npm run dev.';
   }

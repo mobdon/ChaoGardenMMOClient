@@ -113,6 +113,36 @@ function pickedFiles() {
 // (tests: the browser's automation can't fill a folder input).
 const addedFiles = [];
 window.pickFolder = (mount, entries) => entries.forEach(([p, f]) => addedFiles.push([`${mount}/${p}`, f]));
+// The files the player picked once on the MMO login page (src/game-files.js, same site's IndexedDB).
+async function savedFolders() {
+  const db = await new Promise((resolve) => {
+    const r = indexedDB.open('sa2-game-files', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('handles');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+  });
+  if (!db) return;
+  const get = (key) => new Promise((resolve) => {
+    const r = db.transaction('handles').objectStore('handles').get(key);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+  });
+  const walk = async (dir, path) => {
+    for await (const entry of dir.values()) {
+      if (entry.kind === 'directory') await walk(entry, `${path}${entry.name}/`);
+      else addedFiles.push([`steam/${path}${entry.name}`, await entry.getFile()]);
+    }
+  };
+  for (const [key, handle] of [['steam', await get('steam')], ['disc', await get('disc')]]) {
+    if (!handle) continue;
+    if (await handle.queryPermission({ mode: 'read' }) !== 'granted') {
+      log(`game files: no read access to the picked ${key === 'steam' ? 'Steam folder' : 'disc image'}; log in again to allow it`, true);
+      continue;
+    }
+    if (key === 'steam') await walk(handle, '');
+    else addedFiles.push(['@disc', await handle.getFile()]);
+  }
+}
 
 // ---- threads ------------------------------------------------------------
 let module, memory, env, workers = 0;
@@ -303,6 +333,7 @@ setInterval(() => {
 
 async function start() {
   $('go').disabled = true;
+  await savedFolders().catch((e) => log(`game files: ${e}`, true));
   picked = pickedFiles();
   status.textContent = 'loading…';
   if (!crossOriginIsolated) throw new Error('the page needs cross-origin isolation (open it from the local server)');

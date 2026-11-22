@@ -70,3 +70,10 @@
 .title-screen .remember-me input { flex: none; width: 16px; height: 16px; padding: 0; accent-color: #ffd139; }
 /* The player's Chao as the Chao Select window draws it, big on the left. */
 #title-portrait { position: absolute; inset: 0; width: 100%; height: 100%; }
+.game-files { margin: 18px 0 6px; padding: 16px; border: 1px solid #305681; border-radius: 5px 13px 5px 5px; background: #07172e; }
+.game-files p { margin: 10px 0 12px; font-size: 11px; line-height: 1.6; color: #a4c2e2; }
+.game-files small { display: block; margin-top: 10px; font-size: 9px; color: #7d9cc0; }
+.game-files-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.game-files-buttons .primary-button { width: auto; flex: none; }
+.game-files-alt { background: none; border: 0; padding: 4px 0; color: #ffd139; font-size: 11px; text-decoration: underline; cursor: pointer; }
+.game-files[data-picked="true"] #game-files-state { color: #6eecc2; }
