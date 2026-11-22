@@ -1,5 +1,5 @@
 //! Plain checks of the Metal Harbor stage objects ported without an oracle
-//! (mob's rule): every routine decodes its constants from stg10D.rel and
+//! (project rule): every routine decodes its constants from stg10D.rel and
 //! gives the expected shape of result for a few inputs, and the Steam REL
 //! (which the port follows wherever the copies differ) gives the same
 //! results as the disc one. Needs the GameCube disc REL (SA2_GC_REL_DIR)

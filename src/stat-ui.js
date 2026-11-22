@@ -6,8 +6,8 @@ function nativeLabel(name) {
   return nativeText(labels[name] || name, 'stat-name native-stat-name', !!labels[name]);
 }
 
-const grades = ['E', 'D', 'C', 'B', 'A', 'S'];
-const gradeCells = { S: [88, 44], A: [198, 22], B: [220, 22], C: [242, 22], D: [264, 22], E: [286, 22] };
+export const grades = ['E', 'D', 'C', 'B', 'A', 'S'];
+export const gradeCells = { S: [88, 44], A: [198, 22], B: [220, 22], C: [242, 22], D: [264, 22], E: [286, 22] };
 
 function nativeFrame() {
   const ns = 'http://www.w3.org/2000/svg';
@@ -17,7 +17,7 @@ function nativeFrame() {
   svg.setAttribute('aria-hidden', 'true');
   svg.classList.add('native-stat-frame');
   const image = document.createElementNS(ns, 'image');
-  image.setAttribute('href', '/api/assets/chao-stat-panel.png');
+  import('./game-assets.js').then(m => m.gameTextureUrl('chao-stat-panel.png')).then(url => url && image.setAttribute('href', url), () => {});
   image.setAttribute('width', '256'); image.setAttribute('height', '128');
   svg.append(image);
   return svg;
@@ -38,12 +38,13 @@ export function createStatRow(name) {
 
 export function updateStatRow(row, name, stat) {
   const level = Math.max(0, Math.min(99, Number(stat.level) || 0));
-  const hidden = name === 'luck' || name === 'intelligence';
+  // Luck/Intelligence have a hidden 0-255 grade with no native letter; a maxed one shows the S icon.
+  const hidden = (name === 'luck' || name === 'intelligence') && stat.grade !== 255;
   row.querySelector('.stat-bar>span').style.width = `${level / 99 * 100}%`;
   row.querySelector('.stat-bar').setAttribute('aria-label', `${name} level ${level} of 99`);
   row.querySelector('.stat-level').textContent = `Lv. ${String(level).padStart(2, '0')}`;
   const grade = row.querySelector('.stat-grade');
-  grade.textContent = hidden ? (stat.grade === 255 ? 'MAX' : String(stat.grade)) : grades[stat.grade] || 'E';
+  grade.textContent = hidden ? String(stat.grade) : stat.grade === 255 ? 'S' : grades[stat.grade] || 'E';
   grade.setAttribute('aria-label', hidden ? `${name} hidden grade ${stat.grade} of 255` : `${name} grade ${grade.textContent}`);
   grade.classList.toggle('native-grade', !hidden);
   if (!hidden) {

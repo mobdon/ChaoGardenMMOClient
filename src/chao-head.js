@@ -38,11 +38,10 @@ export function createSteadyHead(imported) {
       mode = disposed ? 'disposed' : !available ? 'unavailable' : 'mounted';
       return;
     }
-    // Native idle/walk retain their entire head motion. Running fades toward
-    // the standing anchor; a skate's small vertical stroke uses its actual
-    // source phase, never wall time or the underlying native Run119 motion.
+    // Native idle/walk/run keep their entire head motion (the run's head bob is
+    // native). Only a skate locks the head; its small stroke uses its source phase.
     const skate = unit(skateBlend);
-    const locking = gait === 'Run' || skate > 0;
+    const locking = skate > 0;
     dt = Number.isFinite(dt) ? Math.max(0, Math.min(.1, dt)) : 0;
     const target = locking ? 1 : 0;
     blendProgress += Math.sign(target - blendProgress)

@@ -874,7 +874,7 @@ pub fn thin_load(mh: &MetalHarbor<'_>, loader: u32) -> Result<Value> {
     Err(invalid())
 }
 
-// ---- Ported straight from the disc code without an oracle (mob's rule for
+// ---- Ported straight from the disc code without an oracle (project rule for
 // the remaining objects). Calls name a pointer argument by the field it
 // addresses ("work+0x14": the task work at +0x34 plus 0x14; "dyn": the
 // block at task +0x38; "colli": the collision info at task +0x3C; "child":

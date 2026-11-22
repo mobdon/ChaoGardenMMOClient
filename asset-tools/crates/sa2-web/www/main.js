@@ -74,6 +74,7 @@ function hold(bit, down) {
   held = down ? held | bit : held & ~bit;
 }
 addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement) return; // typing in chat, not playing
   if (e.code === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); hold(TAB, true); return; }
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -153,6 +154,36 @@ function pickedFiles() {
 // (tests: the browser's automation can't fill a folder input).
 const addedFiles = [];
 window.pickFolder = (mount, entries) => entries.forEach(([p, f]) => addedFiles.push([`${mount}/${p}`, f]));
+// The files the player picked once on the MMO login page (src/game-files.js, same site's IndexedDB).
+async function savedFolders() {
+  const db = await new Promise((resolve) => {
+    const r = indexedDB.open('sa2-game-files', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('handles');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+  });
+  if (!db) return;
+  const get = (key) => new Promise((resolve) => {
+    const r = db.transaction('handles').objectStore('handles').get(key);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+  });
+  const walk = async (dir, path) => {
+    for await (const entry of dir.values()) {
+      if (entry.kind === 'directory') await walk(entry, `${path}${entry.name}/`);
+      else addedFiles.push([`steam/${path}${entry.name}`, await entry.getFile()]);
+    }
+  };
+  for (const [key, handle] of [['steam', await get('steam')], ['disc', await get('disc')]]) {
+    if (!handle) continue;
+    if (await handle.queryPermission({ mode: 'read' }) !== 'granted') {
+      log(`game files: no read access to the picked ${key === 'steam' ? 'Steam folder' : 'disc image'}; log in again to allow it`, true);
+      continue;
+    }
+    if (key === 'steam') await walk(handle, '');
+    else addedFiles.push(['@disc', await handle.getFile()]);
+  }
+}
 
 // ---- threads ------------------------------------------------------------
 let module, memory, env, workers = 0;
@@ -201,7 +232,7 @@ function pickedUp(item) {
 }
 // In a Chao World area from a hub portal, stay in that zone's shared room on
 // the MMO server (same socket and messages as the hub page, src/main.js).
-// The game's own Chao Lobby is the MMO hub (mob 2026-11-21): stage 90 with no area.
+// The game's own Chao Lobby is the MMO hub: stage 90 with no area.
 // One server room per ChaoMain area (server CHAO_WORLD_ZONES).
 const roomZones = { '': 'hub', 1: 'garden', 2: 'hero', 3: 'dark', 4: 'chao-race', 5: 'race-entrance', 6: 'kindergarten', 9: 'stadium', 10: 'chao-karate', 11: 'chao-karate' };
 let room = null;
@@ -216,6 +247,7 @@ function joinRoom(token, zone) {
     let m; try { m = JSON.parse(data); } catch { return; }
     if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); tagNames(m); }
     if (m.type === 'event') overlay?.event(m);
+    if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
@@ -383,13 +415,15 @@ function cover(on) {
     document.body.append(c);
   }
   c.style.display = on ? 'block' : 'none';
-  if (globalThis.sa2Gain) globalThis.sa2Gain.gain.value = on ? 0 : 1;
+  if (gameVolume) gameVolume.gain.value = on ? 0 : Number.isInteger(mmoSettings.volume) ? mmoSettings.volume / 10 : 1;
 }
 
 // The game changed Chao World area (its own teleporters): follow it into that room.
 function roomArea(area) {
   karateButtons(area === 10 || area === 11);
   const zone = roomZones[area === 0 ? '' : area];
+  // Arrived in Chao World from a level (the pause menu's EXIT): no room yet.
+  if (!room && zone && mmoToken()) return joinRoom(mmoToken(), zone);
   if (!room || !zone || zone === room.zone) return;
   room.zone = zone;
   if (room.ws.readyState === 1) room.ws.send(JSON.stringify({ type: 'action', action: 'chao-world', area: zone }));
@@ -429,8 +463,8 @@ function karateLocks() {
 }
 // The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
 function showCard(player) {
-  if (!player) return;
   const card = document.getElementById('mmo-card');
+  if (!player || !card) return; // the card element comes from the MMO overlay
   card.style.display = 'flex';
   // The player's own Chao as the game's Chao Select shows it (src/chao-portrait.js); drawn once.
   const icon = card.querySelector('.icon');
@@ -478,6 +512,7 @@ setInterval(() => {
 
 async function start() {
   $('go').disabled = true;
+  await savedFolders().catch((e) => log(`game files: ${e}`, true));
   picked = pickedFiles();
   status.textContent = 'loading…';
   if (!crossOriginIsolated) throw new Error('the page needs cross-origin isolation (open it from the local server)');
@@ -592,11 +627,18 @@ chat.id = 'chat';
 chat.innerHTML = '<div id="chat-log" aria-live="polite"></div><input id="chat-input" maxlength="200" placeholder="Room chat (/w for world)" aria-label="Chat message" hidden>';
 document.body.append(chat);
 const chatLog = chat.firstChild, chatInput = chat.lastChild;
-function chatLine({ channel, fromId, fromName, text }) {
+// Muting adds a "Muted" line; clicking that line unmutes (the server keeps the list).
+function muteClick(fromId, fromName, muted) {
+  room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId, muted }));
+  chatLine({ channel: 'system', fromName: muted ? 'Muted' : 'Unmuted', text: muted ? `${fromName} (click to unmute)` : fromName,
+    onclick: muted && (() => muteClick(fromId, fromName, false)) });
+}
+function chatLine({ channel, fromId, fromName, text, onclick }) {
   const line = document.createElement('div');
   line.className = channel;
   if (fromId) line.title = `Click to mute ${fromName}`;
-  if (fromId) line.onclick = () => { room?.ws.send(JSON.stringify({ type: 'action', action: 'mute', playerId: fromId })); chatLine({ channel: 'system', fromName: 'Muted', text: fromName }); };
+  if (fromId) line.onclick = () => muteClick(fromId, fromName, true);
+  if (onclick) line.onclick = onclick;
   line.textContent = `${channel === 'world' ? '[World] ' : ''}${fromName}: ${text}`; // textContent: never HTML
   chatLog.append(line);
   while (chatLog.childElementCount > 50) chatLog.firstChild.remove();

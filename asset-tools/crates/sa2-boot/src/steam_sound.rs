@@ -7,7 +7,7 @@
 //! to stop. Those messages play Steam cue `<name><bank:03><sequence:03>`
 //! through the AX mix. Every message still reaches the game's own sequencer,
 //! so the disc path is untouched (with banks present nothing registers here).
-//! shortcut: gains are linear (CC/127, SYNTH volume/1000) and pan is linear; pitch bend is ignored (its range in gcax is unproven); fix from gcax's own curves if mob hears a difference.
+//! shortcut: gains are linear (CC/127, SYNTH volume/1000) and pan is linear; pitch bend is ignored (its range in gcax is unproven); fix from gcax's own curves if it sounds different.
 use crate::audio::{FRAME, RATE};
 use sa2_asset_tools::{audio::decode_adx, csb};
 use sa2_recomp::rt::{Cpu, Mem};
@@ -233,6 +233,8 @@ pub fn mix(out: &mut [[i32; 2]; FRAME]) {
                         }
                     }
                 }
+                // Linear interpolation: nearest-sample resampling of Steam's
+                // 22.05/44.1 kHz cues to the mix rate sounded distorted.
                 let n = v.cue.channels;
                 let j = if i + 1 < frames {
                     i + 1
