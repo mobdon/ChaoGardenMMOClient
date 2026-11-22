@@ -136,6 +136,8 @@ impl DirFiles {
             .to_lowercase()
             .strip_suffix(".prs")
             .and_then(|p| p.rsplit_once('/'))
+            // The HD objtex_common made Dry Lagoon (stage 18) crash at its first frame; Steam's own copy runs.
+            .filter(|(_, stem)| *stem != "objtex_common")
             .map(|(dir, stem)| self.root.join(format!("{dir}/PRS/{stem}.pak")))
             .filter(|p| p.is_file());
         if !is_font(path) && pak.is_none() {
