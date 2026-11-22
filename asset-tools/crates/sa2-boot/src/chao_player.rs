@@ -650,6 +650,14 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         // The boot's vertices in its own model space (its nodes carry the rest
         // offset from Shadow's foot): centred on the Chao foot below.
         let br = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
+        // Only Shadow's shoe (TERIOSMDL 80/81: 2 nodes, 174 vertices): another
+        // file's model in these slots (a hand) is never drawn on the feet.
+        if models.is_empty() && (br.nodes.len() != 2 || br.verts.iter().map(Vec::len).sum::<usize>() != 174) {
+            if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
+                eprintln!("chao-player shoes: slot {model} holds {obj:#x} ({} nodes), not Shadow's shoe; not drawn", br.nodes.len());
+            }
+            continue;
+        }
         let bv: Vec<[f32; 3]> = br.verts.iter().zip(br.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
         let centre = bv.iter().fold([0.0f32; 3], |a, v| [a[0] + v[0], a[1] + v[1], a[2] + v[2]]).map(|x| x / bv.len().max(1) as f32);
         let boot = ext(bv.clone());
