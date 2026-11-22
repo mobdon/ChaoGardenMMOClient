@@ -45,8 +45,22 @@
 //!   task's display is a host function that runs B244 for the game's pages
 //!   and only the backdrop (890) and the frame for the MMO pages.
 //!
-//! shortcut: the MMO pages are an empty frame, their contents (inventory,
-//! breeding) come next.
+//! The purple page is breeding: the pink page's own boxes (its records
+//! 20..=43) in the purple tint, and strings through the chart's own text
+//! draw D4C4(_, cp1252 string, flags, f1 x, f2 y, f3 width, f4 size) at the
+//! spots C50C gives the pink page's (title 444,84 size 20 flags 5; headers
+//! x 288, y 110 / 276 / 370 size 16; body y 390 size 20). The page feeds it
+//! (SA2_BREED_IN: the player's Chao's name, a message, then a line
+//! "id<tab>name" for each of the player's other Chao); a click on a name
+//! picks it, a second click sends its id to the page (SA2_BREED_OUT), which
+//! asks the server. The rules stay the server's.
+//!
+//! shortcut: the green page is an empty frame (inventory comes next), and
+//! the breeding page's top box is empty: the two Chao and the mating in it
+//! are not written yet.
+//! shortcut: the picked name is marked with ">" (no flat bar among the
+//! chart's quads is known); upgrade when the pink table's pieces are named.
+//! Unverified until a build run: every text and row position on that page.
 //!
 //! Unverified until a build run: that a widescreen page moves the tab row
 //! the way [`to_game`] undoes (sa2-gx widescreen.rs moves right-hand HUD).
@@ -80,6 +94,7 @@ const SET_TEXLIST: u32 = 0x9C0;
 const CLOSE: u32 = 0xD1D4;
 const QUADS: u32 = 0xF9C4;
 const QUAD_STATE: u32 = 0xFC98;
+const TEXT: u32 = 0xD4C4;
 /// ChaoStgKinder rodata: the three pages' quad tables.
 const TABLE: [u32; 3] = [0x1DA4, 0x2134, 0x2464];
 /// What C50C runs before its quads: 0x80122AB4, then the chart atlas
@@ -119,6 +134,16 @@ const NAME: u32 = BSS + 0x1000;
 /// Quad records built here: the two extra tabs (6), an MMO page's frame (8).
 const EXTRA: u32 = BSS + 0x1100;
 const FRAME: u32 = EXTRA + 6 * 16;
+/// The string [`text`] hands to the chart's text draw.
+const STR: u32 = BSS + 0x1200;
+const STR_MAX: usize = 63;
+/// The breeding page's list: two columns (the pink page's own x 288 and
+/// 452) of four names in the pink page's list box.
+const LIST_X: [f32; 2] = [288.0, 452.0];
+const LIST_Y: f32 = 298.0;
+const LIST_PITCH: f32 = 18.0;
+const LIST_ROWS: usize = 4;
+const LIST_BOX: (f32, f32) = (281.0, 607.0);
 
 /// Tabs: five across the frame's 360 (x 264..624), in the game's tab row.
 const PAGES: u8 = 5;
@@ -154,6 +179,119 @@ static CLICK: Global<[u16; 4]> = global!([0; 4]);
 static CLICK_SEEN: Global<u16> = global!(0);
 /// The game's x values of the records [`retab`] rewrote.
 static SAVED: Global<Vec<(u32, u16)>> = global!(Vec::new());
+
+/// The breeding page's feed and the picked Chao's id.
+#[derive(Debug, PartialEq)]
+struct Breed {
+    me: String,
+    message: String,
+    /// id, name
+    chao: Vec<(String, String)>,
+    picked: String,
+}
+static BREED: Global<Breed> = global!(Breed {
+    me: String::new(),
+    message: String::new(),
+    chao: Vec::new(),
+    picked: String::new(),
+});
+
+/// SA2_BREED_IN's text into the feed (the pick is kept by the caller).
+fn breed_feed(text: &str) -> Breed {
+    let mut lines = text.lines();
+    let mut next = || lines.next().unwrap_or("").trim().to_string();
+    let (me, message) = (next(), next());
+    let chao = lines
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(id, name)| (id.trim().to_string(), name.trim().to_string()))
+        .filter(|(id, _)| !id.is_empty())
+        .take(LIST_X.len() * LIST_ROWS)
+        .collect();
+    Breed { me, message, chao, picked: String::new() }
+}
+
+/// The list entry at a game screen position.
+fn row_at(x: f32, y: f32) -> Option<usize> {
+    let row = ((y - LIST_Y) / LIST_PITCH).floor();
+    let inside = x >= LIST_BOX.0 && x < LIST_BOX.1 && row >= 0.0 && row < LIST_ROWS as f32;
+    inside.then(|| usize::from(x >= LIST_X[1] - 6.0) * LIST_ROWS + row as usize)
+}
+
+/// Read the page's feed; a picked Chao that left the list is unpicked.
+fn breed_read() {
+    let Some(text) = std::env::var("SA2_BREED_IN").ok().and_then(|p| std::fs::read_to_string(p).ok()) else {
+        return;
+    };
+    let mut feed = breed_feed(&text);
+    BREED.with_borrow_mut(|b| {
+        if feed.chao.iter().any(|(id, _)| *id == b.picked) {
+            feed.picked = std::mem::take(&mut b.picked);
+        }
+        *b = feed;
+    });
+}
+
+/// A click on the breeding page: a name is picked; the picked name again
+/// goes to the page as the partner to breed with. True when it was a name.
+fn breed_click(x: f32, y: f32) -> bool {
+    let Some(i) = row_at(x, y) else { return false };
+    BREED.with_borrow_mut(|b| {
+        let Some((id, _)) = b.chao.get(i) else { return false };
+        if *id == b.picked {
+            eprintln!("kinder-chart: breed with {id}");
+            if let Ok(path) = std::env::var("SA2_BREED_OUT") {
+                let _ = std::fs::write(path, id);
+            }
+        } else {
+            b.picked = id.clone();
+        }
+        true
+    })
+}
+
+/// One string through the chart's own text draw (flags 5 centres it).
+fn text(c: &mut Cpu, m: &mut Mem, s: &str, flags: u32, x: f32, y: f32, size: f32) {
+    let mut bytes: Vec<u8> = s.bytes().filter(|b| (0x20..0x7F).contains(b)).take(STR_MAX).collect();
+    bytes.push(0);
+    m.load(STR, &bytes);
+    let saved = [c.f[1], c.f[2], c.f[3], c.f[4]];
+    for (i, v) in [x, y, 999.0, size].into_iter().enumerate() {
+        c.f[i + 1].ps0 = f64::from(v);
+    }
+    call(c, m, rt::sec(m, KINDER, 1) + TEXT, &[0, STR, flags]);
+    for (i, f) in saved.into_iter().enumerate() {
+        c.f[i + 1] = f;
+    }
+}
+
+/// The breeding page's strings.
+fn breed_text(c: &mut Cpu, m: &mut Mem) {
+    // Taken out while the game draws: a guest call may switch game threads.
+    let (me, message, names, picked) = BREED.with_borrow(|b| {
+        let picked = b.chao.iter().position(|(id, _)| *id == b.picked);
+        (b.me.clone(), b.message.clone(), b.chao.iter().map(|(_, n)| n.clone()).collect::<Vec<_>>(), picked)
+    });
+    text(c, m, "Breeding", 5, 444.0, 84.0, 20.0);
+    let pair = match picked {
+        Some(i) => format!("{me} and {}", names[i]),
+        None => "Pick a partner".to_string(),
+    };
+    text(c, m, &pair, 0, 288.0, 110.0, 16.0);
+    text(c, m, "Your Chao", 0, 288.0, 276.0, 16.0);
+    for (i, name) in names.iter().enumerate() {
+        let mark = if picked == Some(i) { ">" } else { " " };
+        let y = LIST_Y + LIST_PITCH * (i % LIST_ROWS) as f32;
+        text(c, m, &format!("{mark}{name}"), 0, LIST_X[i / LIST_ROWS], y, 16.0);
+    }
+    text(c, m, "Message", 0, 288.0, 370.0, 16.0);
+    let line = match (message.is_empty(), names.is_empty(), picked) {
+        (false, ..) => message,
+        (_, true, _) => "You have no other Chao yet.".to_string(),
+        (_, _, Some(i)) => format!("Click {} again to breed.", names[i]),
+        _ => "Click a Chao.".to_string(),
+    };
+    text(c, m, &line, 0, 288.0, 390.0, 20.0);
+}
 
 /// The page's last left click (/dev/pad bytes 16..24).
 pub fn set_click(x: u16, y: u16, aspect: u16, count: u16) {
@@ -298,11 +436,17 @@ fn display(c: &mut Cpu, m: &mut Mem) {
         });
         call(c, m, s1 + QUADS, &[FRAME, 8, TINT[page as usize - 3]]);
     }
+    if page == 4 {
+        call(c, m, s1 + QUADS, &[pink + 20 * 16, 24, TINT[1]]);
+    }
     for (n, tint) in TINT.into_iter().enumerate() {
         let spans = tab_spans(3 + n as u8);
         let to = EXTRA + n as u32 * 48;
         copy_records(m, pink + 8 * 16, to, 3, |i| Some(spans[i as usize]));
         call(c, m, s1 + QUADS, &[to, 3, tint]);
+    }
+    if page == 4 {
+        breed_text(c, m);
     }
 }
 
@@ -343,7 +487,12 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
             // The chart's own close (D1D4 via its B input) is D258: flag off.
             m.w8(work + 0x14, 0);
         }
-        State::Open { work, .. } => click(c, m, work),
+        State::Open { work, .. } => {
+            if PAGE.get() == 4 && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).is_multiple_of(15) {
+                breed_read();
+            }
+            click(c, m, work);
+        }
         _ => {}
     }
     CLICK_SEEN.set(CLICK.get()[3]);
@@ -357,9 +506,15 @@ fn click(c: &mut Cpu, m: &mut Mem, work: u32) {
     }
     let (gx, gy) = to_game(x, y, aspect);
     let Some(page) = tab_at(gx, gy) else {
+        if PAGE.get() == 4 && breed_click(gx, gy) {
+            call(c, m, SE_CALL, &[SE_PAGE, 0, 0, 0]);
+        }
         return;
     };
     if page != PAGE.replace(page) {
+        if page == 4 {
+            breed_read();
+        }
         if page < 3 {
             m.w8(work + 0x15, page);
         }
@@ -559,6 +714,28 @@ mod tests {
     }
 
     #[test]
+    fn the_breeding_feed_is_name_message_then_chao() {
+        let b = breed_feed("Tester\nNot now.\n12\tMika\n\tnoid\nbad line\n34\tTails2\n");
+        assert_eq!((b.me.as_str(), b.message.as_str()), ("Tester", "Not now."));
+        assert_eq!(b.chao, [("12".to_string(), "Mika".to_string()), ("34".to_string(), "Tails2".to_string())]);
+        assert_eq!(breed_feed("").chao.len(), 0);
+        let many: String = (0..20).map(|i| format!("{i}\tC{i}\n")).collect();
+        assert_eq!(breed_feed(&format!("a\n\n{many}")).chao.len(), 8, "what the list box holds");
+    }
+
+    #[test]
+    fn a_click_in_the_list_is_its_entry() {
+        for i in 0..8usize {
+            let (x, y) = (LIST_X[i / 4] + 30.0, LIST_Y + LIST_PITCH * (i % 4) as f32 + 9.0);
+            assert_eq!(row_at(x, y), Some(i));
+        }
+        assert_eq!(row_at(300.0, 290.0), None, "above the list");
+        assert_eq!(row_at(300.0, 371.0), None, "below the list");
+        assert_eq!(row_at(270.0, 300.0), None, "left of the box");
+        assert_eq!(row_at(610.0, 300.0), None, "right of the box");
+    }
+
+    #[test]
     fn tab_opens_once_per_press() {
         assert!(pressed(true, false));
         assert!(!pressed(true, true));
@@ -572,7 +749,8 @@ mod tests {
         const {
             assert!(BASE + 0xDE248 <= BSS);
             assert!(BSS + 0x1A8 <= 0x82A0_0000, "chao_player MOT");
-            assert!(FRAME + 8 * 16 <= 0x82A0_0000);
+            assert!(FRAME + 8 * 16 <= STR);
+            assert!(STR + STR_MAX as u32 + 1 <= 0x82A0_0000);
         }
     }
 

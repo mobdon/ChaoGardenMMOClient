@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -246,8 +246,8 @@ function joinRoom(token, zone) {
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
   ws.onmessage = ({ data }) => {
     let m; try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); tagNames(m); }
-    if (m.type === 'event') overlay?.event(m);
+    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m); }
+    if (m.type === 'event') { overlay?.event(m); breedEvent(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
@@ -259,7 +259,7 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -287,11 +287,49 @@ async function cardChao(token) {
     const text = new TextEncoder().encode(lines.join('\n') + '\n').subarray(0, MMO.CARD_MAX);
     mmoBytes.set(text, MMO.CARD + 8);
     Atomics.store(mmoHead(MMO.CARD), 1, text.length);
+    breedFeed();
   } catch {}
+}
+// The chart's breeding page (sa2-boot kinder_chart.rs) lists the player's
+// other Chao: /mmo/breed-in is the player's Chao's name, a message, then
+// "id<tab>name" lines. The game sends the picked one back (/mmo/breed-out) and
+// the server decides; its answer becomes the message.
+// Unverified: the server's breed rule was written for a partner in the room;
+// what it answers for one of the player's own Chao is shown as it comes.
+const breed = { self: null, revision: 0, message: '', pending: null, seen: 0 };
+const breedCodes = { 'offer-sent': 'Asked. Waiting for an answer.', 'egg-laid': 'An egg was laid!', 'garden-full': 'The garden is full.', 'not-ready': 'Not ready to breed yet.', 'partner-busy': 'That Chao is busy.', 'partner-nest-full': 'Its nest is full.', 'partner-unavailable': 'That Chao is not here.' };
+function breedFeed() {
+  const rows = [...cardIds].filter(([, p]) => p.id !== breed.self?.id).map(([n, p]) => `${n}\t${p.name || 'Chao'}`);
+  const text = new TextEncoder().encode([breed.self?.name || '', breed.message, ...rows].join('\n') + '\n').subarray(0, MMO.BREED_MAX);
+  mmoBytes.set(text, MMO.BREED + 8);
+  Atomics.store(mmoHead(MMO.BREED), 1, text.length);
+}
+function breedSnapshot(m) {
+  breed.self = m.players.find((p) => p.id === m.selfId) || null;
+  breed.revision = m.life?.revision ?? breed.revision;
+  breedFeed();
+}
+function breedEvent(m) {
+  if (m.kind === 'life-egg-laid') breed.message = `An egg was laid with ${m.partnerName || 'your Chao'}!`;
+  else if (m.kind === 'life-result' && m.requestId === breed.pending) breed.message = breedCodes[m.code] || (m.accepted ? 'Done.' : `Not now (${m.code}).`);
+  else return;
+  breedFeed();
+}
+function breedPick() {
+  const out = mmoHead(MMO.BREED_OUT), seq = Atomics.load(out, 0);
+  if (seq === breed.seen) return;
+  breed.seen = seq;
+  const partner = cardIds.get(new TextDecoder().decode(mmoBytes.slice(MMO.BREED_OUT + 8, MMO.BREED_OUT + 8 + out[1])));
+  if (!partner || room?.ws.readyState !== 1) return;
+  breed.pending = crypto.randomUUID();
+  room.ws.send(JSON.stringify({ type: 'life', requestId: breed.pending, expectedRevision: breed.revision, intent: { kind: 'breed', partnerId: partner.id } }));
+  breed.message = `Asking for ${partner.name || 'your Chao'}...`;
+  breedFeed();
 }
 const recVersions = new Map();
 function mmoTick(token) {
   karateLocks();
+  breedPick();
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
   if (seq !== poseSeen && room?.ws.readyState === 1) {
     poseSeen = seq;
@@ -593,7 +631,7 @@ async function start() {
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) cardChao(token);
