@@ -218,7 +218,7 @@ fn group_centres(frame: &Frame, first: usize) -> Vec<Option<f32>> {
 }
 
 /// Drawn with no view transform (vertices already in view space): 2D quads.
-fn is_view_space(d: &DrawCmd) -> bool {
+pub(crate) fn is_view_space(d: &DrawCmd) -> bool {
     !d.material.use_pn_mtx_idx
         && d.draw_params.pos_mtx[0]
             == [
