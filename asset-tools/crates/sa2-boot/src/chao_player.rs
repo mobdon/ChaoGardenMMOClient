@@ -609,7 +609,10 @@ fn chao_display(c: &mut Cpu, m: &mut Mem) {
     // In a stage: ChaoMain's draw walker (.text 0x88CC, from the display's
     // 0x8260) calls the node transform 0x1454 per node; chao_node replaces
     // each result with the retargeted pose (Chao-local, posed below).
-    if live && RIDER.get() != 0 {
+    // Chao World: the native Chao rig and its own motions draw it (no rider
+    // skeleton copied onto it); elsewhere the rider's pose is retargeted.
+    // SA2_CHAO_RETARGET=1 (debug): retarget in Chao World too.
+    if live && RIDER.get() != 0 && (!chao_world(m) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
