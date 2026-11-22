@@ -1995,7 +1995,7 @@ fn se_log(c: &mut Cpu, m: &mut Mem, at: u32) {
     if SE_LOG.get() {
         eprintln!("se: {at:#x} id {:#x} r4 {:#x} lr {:#x} pmove {}", c.r[3], c.r[4], c.lr, IN_PMOVE.get());
     }
-    if at == SE_CALLS[0] && IN_PMOVE.get() {
+    if at == SE_CALLS[0] && (IN_PMOVE.get() || chao_voice(c.r[3])) {
         // shortcut: no sound slot reported to the caller (-1); the callers
         // seen (0x80080CFC) ignore it.
         c.r[3] = u32::MAX;
@@ -2006,6 +2006,13 @@ fn se_log(c: &mut Cpu, m: &mut Mem, at: u32) {
 
 thread_local! {
     static SE_LOG: Cell<bool> = Cell::new(std::env::var("SA2_SE_LOG").is_ok_and(|v| v == "1"));
+}
+
+/// A Chao voice sound id (the 0x60xx Chao bank).
+/// shortcut: the whole 0x6000..0x60FF range is taken as Chao voices from the
+/// ids seen in a lobby run (0x6014, 0x6015, 0x601C); check a garden by ear.
+pub(crate) fn chao_voice(id: u32) -> bool {
+    (0x6000..0x6100).contains(&id)
 }
 
 /// The character's exec is running on the Chao's body (player_move): its own

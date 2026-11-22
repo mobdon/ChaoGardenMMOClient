@@ -621,6 +621,12 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
             m.w32(param + i, 0);
         }
         m.w8(param + 0x80, ty);
+        // As chao_player's own Chao (Dark Chaos 0x16, drawn adult): marked
+        // analysed (+0x438) with +0x84 = 0xFF, so the gene analysis does not
+        // reset it to a child (the residents crawled as babies, mob).
+        // Unverified beyond that: the meaning of +0x84.
+        m.w8(param + 0x438, 1);
+        m.w8(param + 0x84, 0xFF);
         for i in (0..0x34).step_by(4) {
             m.w32(elem + i, 0);
         }
@@ -809,6 +815,11 @@ fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
     // The hidden character's own movement sounds (footsteps, skate jets)
     // while its exec moves the player's Chao.
     if crate::chao_player::character_sounds_muted() {
+        return;
+    }
+    // Chao voices (the 0x60xx Chao bank, e.g. ChaoMain fn_60_4BA6C's random
+    // 0x6014/0x6015/0x601C) are not played: Chao in the MMO are silent (mob).
+    if crate::chao_player::chao_voice(c.r[3]) {
         return;
     }
     original(c, m, addr);
