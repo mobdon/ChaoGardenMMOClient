@@ -68,8 +68,5 @@
 .auth-tabs button:focus-visible { outline: 2px solid #ffd139; outline-offset: 2px; }
 .title-screen .remember-me { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: #a4c2e2; letter-spacing: 0; text-transform: none; cursor: pointer; }
 .title-screen .remember-me input { flex: none; width: 16px; height: 16px; padding: 0; accent-color: #ffd139; }
-/* The Chao Garden save's own card icon (frame 0 of 8 32x32 frames), drawn large and pixel-sharp.
-   shortcut: frame 0 only; animate once the game's icon speed is read from its CARD calls. */
-.title-card-icon { position: absolute; left: 50%; top: 46%; width: min(384px, 70%); aspect-ratio: 1; transform: translate(-50%, -50%); background: url('/api/assets/card-icon-sheet.png') 0 0 / 800% 100% no-repeat; image-rendering: pixelated; animation: card-float 4s ease-in-out infinite; }
-@keyframes card-float { 50% { transform: translate(-50%, calc(-50% - 14px)); } }
-@media (prefers-reduced-motion: reduce) { .title-card-icon { animation: none; } }
+/* The player's Chao as the Chao Select window draws it, big on the left. */
+#title-portrait { position: absolute; inset: 0; width: 100%; height: 100%; }

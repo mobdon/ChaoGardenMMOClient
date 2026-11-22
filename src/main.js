@@ -170,6 +170,14 @@ async function showCard(line, token) {
   } catch { /* No server reachable: the slot shows no card line. */ }
 }
 
+// The login screen's big Chao: the picked (or last) Chao, else the base Chao.
+let portraitKey = null, disposePortrait = () => {};
+function showPortrait(slot) {
+  const key = `${slot.token || ''}`;
+  if (key === portraitKey) return;
+  portraitKey = key; disposePortrait();
+  void import('./chao-portrait.js').then(m => m.mountChaoPortrait($('#title-portrait'), slot)).then(d => { disposePortrait = d; }).catch(() => {});
+}
 function showTitle() {
   const container = $('#save-slots');
   container.replaceChildren();
@@ -177,6 +185,7 @@ function showTitle() {
   try { slots = saveSlots.list(); } catch { /* Storage may be unavailable in private browser settings. */ }
   // Logged in: only the Chao the server just confirmed for this account's card.
   if (loggedIn) slots = slots.filter(slot => slot.card === loggedIn);
+  showPortrait((loggedIn && slots[0]) || {}); // a default Chao until a login
   const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
@@ -193,6 +202,7 @@ function showTitle() {
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
     button.append(icon, meta, arrow);
     button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
+    for (const pick of ['pointerenter', 'focus']) button.addEventListener(pick, () => showPortrait(slot));
     const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
     if (shownCards.has(cardCode)) { container.append(button); continue; }
     shownCards.add(cardCode);
@@ -506,7 +516,7 @@ let rememberedSlot = null;
 try {
   const name = localStorage.getItem(REMEMBER_KEY);
   rememberedSlot = name && saveSlots.list()[0];
-  if (rememberedSlot) { $('#login-name').value = name; $('#login-password').value = '••••••••'; }
+  if (rememberedSlot) { $('#login-name').value = name; $('#login-password').value = '••••••••'; showPortrait(rememberedSlot); }
 } catch { /* storage blocked: an empty login */ }
 for (const field of ['#login-name', '#login-password']) $(field).addEventListener('input', () => {
   if (rememberedSlot) { rememberedSlot = null; $('#login-password').value = ''; }
