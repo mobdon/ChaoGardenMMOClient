@@ -1943,6 +1943,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
                 let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
                 FEET.with_borrow_mut(|f| f[k] = Some(cur));
+                hide_foot(m, m.r32(NJ_CURRENT_MATRIX));
             }
         }
         return crate::name_tags::node(mtx(m, m.r32(NJ_CURRENT_MATRIX)));
@@ -2003,6 +2004,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
         let cur = mtx(m, cur_ptr);
         FEET.with_borrow_mut(|f| f[k] = Some(cur));
+        hide_foot(m, cur_ptr);
     }
 }
 
@@ -2135,6 +2137,16 @@ thread_local! {
     static SONIC_MODELS: std::cell::RefCell<std::collections::BTreeMap<u32, u32>> = Default::default();
     /// This draw's view-space matrices of the Chao nodes the try-on uses.
     static NODE_MATS: std::cell::RefCell<std::collections::BTreeMap<usize, [[f32; 4]; 3]>> = Default::default();
+}
+
+/// Under the hub's shoes the Chao's own foot is not drawn, as the hub hides
+/// the foot meshes its footwear covers (src/scene.js attachOwnerGear): the
+/// foot node's matrix is collapsed to its origin after the shoe's mount
+/// was taken from it. Only the player's own Chao wears the shoes.
+fn hide_foot(m: &mut Mem, cur_ptr: u32) {
+    if HUB_SHOE.get().is_some_and(|o| o != 0) && !debug_off("shoes") && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+        for r in 0..3 { for k in 0..3 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, 0); } }
+    }
 }
 
 /// Arm nodes 3/10's view-space matrices from this draw walk, for the gloves.
