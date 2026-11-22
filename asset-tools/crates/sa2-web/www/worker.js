@@ -444,11 +444,20 @@ const wasi = {
       dv().setUint32(nr, total, true);
       return 0;
     }
-    // /dev/egg: named eggs queued by the page (main.js sa2HatchEgg), taken by this read.
+    // /dev/egg: named eggs queued by the page (main.js sa2HatchEgg), taken by this
+    // read: a u32 count, then that many 0xA8-byte slots.
     if (fd === DEV_EGG) {
       const [[p, len] = []] = iovs(iov, n);
       let total = 0;
-      if (len >= 4) { dv().setUint32(p, Atomics.exchange(sh.egg, 0, 0), true); total = 4; }
+      const count = new Int32Array(sh.egg.buffer, 0, 1), k = Math.min(Atomics.load(count, 0), 8);
+      if (len >= 4 + k * 0xa8) {
+        u8().set(sh.egg.subarray(4, 4 + k * 0xa8), p + 4);
+        dv().setUint32(p, k, true);
+        Atomics.sub(count, 0, k);
+        // Anything queued while reading moves down to the front.
+        sh.egg.copyWithin(4, 4 + k * 0xa8);
+        total = 4 + k * 0xa8;
+      }
       dv().setUint32(nr, total, true);
       return 0;
     }
@@ -699,7 +708,7 @@ onmessage = (ev) => {
   const m = ev.data;
   if (m.init) {
     mem = m.memory;
-    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), egg: new Int32Array(m.egg), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
+    sh = { ctl: new Int32Array(m.ctl), pad: new Uint8Array(m.pad), egg: new Uint8Array(m.egg), card: new Uint8Array(m.card), audio: new Int16Array(m.audio), slots: m.slots.map((s) => new Uint8Array(s)), mmo: new Uint8Array(m.mmo), pages: new Int32Array(m.pages) };
     args = m.args;
     env = m.env;
     if (m.picked && m.picked.length) pick(m.picked);
