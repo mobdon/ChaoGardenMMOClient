@@ -89,6 +89,21 @@ export function gameChaoGlb(model, motion, look, family = false) {
   return models.get(key);
 }
 
+/**
+ * The game's 13 body colours as [r, g, b, a], index = colour number - 1 (Steam sonic2app.exe .data
+ * 0x129844C, file offset 0xE95E4C; the same 13 rows as the GameCube gxColorTable), or null.
+ */
+export async function gameBodyColours() {
+  try {
+    steam ??= import('./game-files.js').then(m => m.savedHandles()).then(h => h.steam);
+    const file = await (await (await steam).getFileHandle('sonic2app.exe')).getFile();
+    // shortcut: only the Steam build of this size is traced, another build gets no colours; add its offset when one turns up.
+    if (file.size !== 21858816) return null;
+    const bytes = new Uint8Array(await file.slice(0xE95E4C, 0xE95E4C + 52).arrayBuffer());
+    return Array.from({ length: 13 }, (_, i) => [...bytes.subarray(i * 4, i * 4 + 4)]);
+  } catch { return null; }
+}
+
 /** The texture names of game archive `name` (without `.prs`) in its own order, or null. */
 export async function gameArchiveNames(name) {
   const prs = await archive(name), x = prs && await converter();
