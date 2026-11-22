@@ -588,6 +588,7 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     // space): the boot is modelled in Shadow's foot node frame, so turn it by
     // Shadow's rest foot rotation (node 24, his model space) and his facing
     // (-x) to the Chao's (+z).
+    ensure_rider_rest(_m);
     let mount = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(24).copied()))
         .map(|rf| crate::skate::mul(&[[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], &crate::skate::unit(&rf)))
         .unwrap_or(mount);
@@ -622,9 +623,11 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     }
     if foot.is_empty() || shoe.is_empty() || shi[2] - slo[2] <= 0.0 { return None; }
     // SA2_SHOE_SCALE=k (debug): k times the hub fit, to see it in a check.
-    // shortcut: 1.7x matches the hub render by eye (0-HUB-reference); the
-    // computed fit alone sits inside the foot. Find the measuring difference.
-    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.7);
+    // shortcut: 1.4x by eye on the self-driven Chao with the character's own
+    // rest foot as the mount (lobby close-ups: 1.0 sits inside the foot, 1.6
+    // swallows it); rider mode used 1.7 with the hub mount. The computed fit
+    // alone sits inside the foot: find the measuring difference.
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.4);
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
         eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
     }
@@ -918,6 +921,15 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     }
     // Sonic, Shadow and Metal share one exec and display; Knuckles and Rouge
     // one exec (0x8009F8A0) with their own displays (coordinator notes).
+    // SA2_SE_LOG=1 (debug): the game's other sound calls too (the positional
+    // ones are logged in start_stage), with the caller, to find which sound
+    // a moving Chao makes.
+    if std::env::var("SA2_SE_LOG").is_ok_and(|v| v == "1") {
+        c.rt.set_override(SE_CALLS[0], |c, m| se_log(c, m, SE_CALLS[0]));
+        c.rt.set_override(SE_CALLS[1], |c, m| se_log(c, m, SE_CALLS[1]));
+        c.rt.set_override(SE_CALLS[2], |c, m| se_log(c, m, SE_CALLS[2]));
+        c.rt.set_override(SE_CALLS[3], |c, m| se_log(c, m, SE_CALLS[3]));
+    }
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     c.rt.set_override(DESTROY_TASK, destroy_task);
@@ -1297,6 +1309,27 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         let cur = mtx(m, cur_ptr);
         FEET.with_borrow_mut(|f| f[k] = Some(cur));
     }
+}
+
+/// Self mode has no rider display to capture the rider's model from, so
+/// the boots' mount (Shadow's rest foot, node 24) had no rest pose and fell
+/// back to the hub's mirrored numbers (boot sideways, test build 9). Take the
+/// character's body model from the model table instead: the first loaded slot
+/// whose model has the rider skeleton's 62 nodes.
+/// shortcut: "first 62-node model" stands in for the character's body slot
+/// (not yet read from playerwk); in Chao World only the character's set is loaded.
+fn ensure_rider_rest(m: &Mem) {
+    if RIDER_REST.with_borrow(|r| r.is_some()) || sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 != 0 {
+        return;
+    }
+    let found = (0..0x428u32).map(|k| model_obj(m, k)).filter(|o| (0x8000_0000..0x8C00_0000).contains(o)).find(|&o| crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62);
+    let Some(obj) = found else { return };
+    let rr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]).worlds(&[]);
+    let r0 = rr.first().map(|x| x.0).unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    let inv0 = crate::skate::inv(&r0);
+    eprintln!("chao-player: rider rest pose from model {obj:#x} (62 nodes)");
+    RIDER_OBJ.set(obj);
+    RIDER_REST.set(Some((obj, rr.into_iter().map(|(rot, _)| crate::skate::mul(&inv0, &rot)).collect())));
 }
 
 /// One skate-mapped node: rotation from skate::desired (Chao model space,
@@ -1750,7 +1783,9 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     m.w32(task + 0x34, cw);
     m.w32(cw + 0x2C, m.r32(own + 0x2C));
     c.r[3] = task;
+    IN_PMOVE.set(true);
     original(c, m, addr);
+    IN_PMOVE.set(false);
     m.w32(task + 0x34, own);
     m.w32(cw + 0x2C, chao_cwp);
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
@@ -1766,6 +1801,8 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
 /// (frames stopped right after the new Chao's first draw).
 /// Unverified: which allocations the stage change frees; this drops all of them.
 fn drop_stage_loads() {
+    RIDER_REST.set(None);
+    RIDER_OBJ.set(0);
     GEAR_LOAD_AT.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) + GEAR_LOAD_DELAY);
     SHADOW_TEX.set(None);
     KNUX_TEX.set(None);
@@ -1820,7 +1857,29 @@ fn lobby_exit_exec(c: &mut Cpu, m: &mut Mem) {
     rel_original(c, m, at, lobby_exit_exec);
 }
 
+/// The game's allocator (main.dol 0x8011989C) takes its OS heap index from
+/// the small-data word at r13 - 0x71B4 (29108) and passes it to
+/// OSAllocFromHeap; the gear loads run with it set to heap 1.
+const SY_HEAP_SDA: u32 = 29108;
+const GEAR_HEAP: u32 = 1;
+
+/// main.dol sound calls by use count: 0x8006B978 (257 callers), 0x8006B1FC
+/// (Sonic's exec at 0x800846FC), 0x8006BB10, 0x8006C78C.
+const SE_CALLS: [u32; 4] = [0x8006_B978, 0x8006_B1FC, 0x8006_BB10, 0x8006_C78C];
+
+fn se_log(c: &mut Cpu, m: &mut Mem, at: u32) {
+    eprintln!("se: {at:#x} id {:#x} r4 {:#x} lr {:#x} pmove {}", c.r[3], c.r[4], c.lr, IN_PMOVE.get());
+    original(c, m, at);
+}
+
+/// The character's exec is running on the Chao's body (player_move): its own
+/// movement sounds are not played (start_stage's positional sound hooks).
+pub(crate) fn character_sounds_muted() -> bool {
+    IN_PMOVE.get()
+}
+
 thread_local! {
+    static IN_PMOVE: Cell<bool> = const { Cell::new(false) };
     static EXIT_HOOKED: Cell<u32> = const { Cell::new(0) };
     static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
     static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
@@ -1962,6 +2021,11 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         }
         if addr == SONIC_EXEC && (m.r8(m.r32(P1_OBJ2) + 1) == 0 || chao_world(m)) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")
             && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= GEAR_LOAD_AT.get() {
+            // The gear goes in game heap 1: in heap 0 it took ~1.5 MB of the
+            // lobby's 3.93 MB, leaving 0.05 MB (menus thread, build 7 heap log).
+            let heap_var = c.r[13].wrapping_sub(SY_HEAP_SDA);
+            let keep_heap = m.r32(heap_var);
+            m.w32(heap_var, GEAR_HEAP);
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
             let mdl = load_models(c, m, SHADOW_MDL_NAME);
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
@@ -1973,7 +2037,8 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
             // KNUCKMDL.PRS, main.dol 0x80174F04 / 0x80174F10).
             let ktex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
             let kmdl = load_models(c, m, 0x8017_4F10);
-            eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x}");
+            m.w32(heap_var, keep_heap);
+            eprintln!("chao-player: Knuckles's textures {ktex:#x}, models {kmdl:#x} (heap {GEAR_HEAP}, was {keep_heap})");
             KNUX_TEX.set(Some(ktex).filter(|&t| t != 0));
             // SA2_MODEL_DUMP (debug): every loaded model slot with its node and vertex counts.
             if std::env::var_os("SA2_MODEL_DUMP").is_some() {
