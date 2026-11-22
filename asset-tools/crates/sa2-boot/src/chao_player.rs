@@ -1641,6 +1641,18 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
 /// player's Chao is created on the game's own module.
 const STAGE_NUM: u32 = 0x803A_D820;
 
+/// Free bytes in OS heap `h` (its free list, HeapArray 0x803ADC68).
+pub(crate) fn os_heap_free(m: &Mem, h: u32) -> u32 {
+    let mut free = 0u32;
+    let mut cell = m.r32(m.r32(0x803A_DC68) + 12 * h + 4);
+    for _ in 0..100_000 {
+        if !(0x8000_0000..0x8C00_0000).contains(&cell) { break; }
+        free += m.r32(cell + 8);
+        cell = m.r32(cell + 4);
+    }
+    free
+}
+
 /// SA2_HEAP_LOG=n (debug): every n frames, the OS heaps (HeapArray
 /// 0x803ADC68: size, free list, allocated list per 12-byte descriptor) as
 /// total and free bytes, and the arena (0x803ADC70/74).
@@ -1659,13 +1671,7 @@ fn heap_log(m: &Mem) {
         if size < 0 {
             continue;
         }
-        let mut free = 0u32;
-        let mut cell = m.r32(d + 4);
-        for _ in 0..100_000 {
-            if !(0x8000_0000..0x8C00_0000).contains(&cell) { break; }
-            free += m.r32(cell + 8);
-            cell = m.r32(cell + 4);
-        }
+        let free = os_heap_free(m, h);
         out.push(format!("heap {h}: {:.2} MB, free {:.2} MB", mb(size as u32), mb(free)));
     }
     eprintln!("chao-player heap: frame {f} stage {} arena {:#x}-{:#x} {}", m.r16(STAGE_NUM), m.r32(0x803A_DC70), m.r32(0x803A_DC74), out.join("; "));
@@ -2634,7 +2640,7 @@ const REMOTE_HEAP_END: u32 = 0x8500_0000;
 /// The heap index the game's wrappers see while a remote Chao is created.
 const REMOTE_HEAP: u32 = 0x5243; // not a valid OS heap index
 /// One Chao task's heap use, measured (remote tasks 0x11CC0 apart), rounded up.
-const REMOTE_CHAO_BYTES: u32 = 0x1_4000;
+pub(crate) const REMOTE_CHAO_BYTES: u32 = 0x1_4000;
 const OS_ALLOC_FROM_HEAP: u32 = 0x800E_4554;
 const OS_FREE_TO_HEAP: u32 = 0x800E_4650;
 
