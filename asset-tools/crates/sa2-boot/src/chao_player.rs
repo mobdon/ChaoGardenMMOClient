@@ -97,6 +97,10 @@ fn behavior(c: &mut Cpu, m: &mut Mem) {
             return;
         }
     }
+    // Other players' Chao are draw-only: no local AI.
+    if REMOTE.with_borrow(|r| r.values().any(|e| e.task != 0 && (e.task == c.r[3] || m.r32(e.task + 0x34) == c.r[3]))) {
+        return;
+    }
     let a = rt::sec(m, 60, 1) + AL_BEHAVIOR_CONTROL;
     rel_original(c, m, a, behavior);
 }
@@ -104,6 +108,7 @@ fn behavior(c: &mut Cpu, m: &mut Mem) {
 /// Pin before the Chao's own exec too, so its emotion ball and shadow are
 /// computed at the rider's position this frame.
 fn chao_exec(c: &mut Cpu, m: &mut Mem) {
+    remote_pin(m, c.r[3]);
     if let Step::Live(chao) = STEP.get() {
         if c.r[3] == chao {
             pin(m, chao, RIDER.get());
@@ -1377,6 +1382,10 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let area = if chao_world(m) && module_linked(m, 60) { call(c, m, rt::sec(m, 60, 1) + 0x27FA0, &[]) as u16 } else { 0 };
     // Offline players' cached Chao leave after the grace period.
     crate::chao_cache::tick();
+    if chao_world(m) && matches!(STEP.get(), Step::Live(_)) && module_linked(m, 60) {
+        export_pose(m);
+        remote_tick(c, m);
+    }
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that
     // frame, with ChaoMain's own area change (.text 0x27E00, as start_stage
     // uses it; 7 = the lobby), to test the gear across a second change.
@@ -1394,6 +1403,8 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if let Step::Live(_) = STEP.get() {
             STEP.set(Step::Wait(0));
         }
+        // The game dropped the remote Chao's tasks too.
+        REMOTE.with_borrow_mut(|r| r.values_mut().for_each(|e| e.task = 0));
     }
     let data1 = m.r32(task + 0x34);
     if data1 == 0 {
@@ -1511,6 +1522,7 @@ fn knuckles_rules(c: &mut Cpu, m: &mut Mem, chao: u32) {
         if let Some(mo) = own {
             let s1 = rt::sec(m, 60, 1);
             call(c, m, s1 + AL_SET_MOTION_LINK, &[chao, mo]);
+            LAST_MOTION.set(mo);
         }
     }
     OWN_MOTION.set(own.is_some());
@@ -1794,4 +1806,162 @@ mod tests {
         let det = |a: &[[f32; 4]; 3]| a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
         assert_eq!(det(&r), det(&l));
     }
+}
+
+
+// ---- Other players' Chao (MMO glue): pose export/import, draw-only. ----
+
+/// The pose record, one JSON line, as the server relays it ("chao-pose"
+/// action; others get it as players[i].chaoPose):
+/// {"x","y","z": world position, "angle": yaw BAMS 0..65535, "motion": the
+/// Chao motion last set with AL_SetMotionLink (1 = stand while it copies
+/// the rider's pose), "frame": 0.0, "gear": bits 1 shoes, 2 gloves, 4 ball}.
+/// Written about 10 times a second to SA2_POSE_OUT (a file; the browser page
+/// passes a device path and sends each line over the MMO websocket).
+const EXPORT_EVERY: u64 = 6;
+
+thread_local! {
+    static LAST_MOTION: Cell<u32> = const { Cell::new(STAND_MOTION) };
+    static REMOTE: std::cell::RefCell<std::collections::BTreeMap<u64, Remote>> = Default::default();
+    static IMPORT_AT: Cell<u64> = const { Cell::new(0) };
+}
+
+struct Remote {
+    /// The game task, 0 while it has none (far away or after an area change).
+    task: u32,
+    /// (time received, position, yaw BAMS, motion)
+    samples: std::collections::VecDeque<(std::time::Instant, [f32; 3], u16, u32)>,
+    last_seen: std::time::Instant,
+    motion: u32,
+}
+
+/// Remote Chao drawn at once in an area: the nearest ones; the rest stay
+/// cached. SA2_REMOTE_MAX overrides it (for the 8/16/24 measurement).
+const REMOTE_MAX: usize = 8;
+/// Shown this far behind the newest update, sliding between updates.
+const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+/// A player missing from the input this long is offline: their Chao leaves.
+const REMOTE_GONE: std::time::Duration = std::time::Duration::from_secs(1);
+/// ChaoMain KillChao (.text 0x31450).
+const KILL_CHAO: u32 = 0x31450;
+
+fn export_pose(m: &Mem) {
+    let Ok(path) = std::env::var("SA2_POSE_OUT") else { return };
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let Step::Live(chao) = STEP.get() else { return };
+    if f % EXPORT_EVERY != 0 {
+        return;
+    }
+    let cw = m.r32(chao + 0x34);
+    let g = |a: u32| f32::from_bits(m.r32(a));
+    let obj2 = m.r32(P1_OBJ2);
+    let ball = (0x8000_0000..0x8C00_0000).contains(&obj2) && in_ball(m, obj2);
+    let gear = u32::from(SHADOW_TEX.get().is_some()) | (u32::from(KNUX_TEX.get().is_some()) << 1) | (u32::from(ball) << 2);
+    let line = format!("{{\"x\":{},\"y\":{},\"z\":{},\"angle\":{},\"motion\":{},\"frame\":0.0,\"gear\":{}}}\n",
+        g(cw + 0x14), g(cw + 0x18), g(cw + 0x1C), m.r32(cw + 0x0C) & 0xFFFF, LAST_MOTION.get(), gear);
+    let _ = std::fs::write(&path, line);
+}
+
+fn parse_remote(line: &str) -> Option<(u64, [f32; 3], u32, u32)> {
+    let v: Vec<&str> = line.split_whitespace().collect();
+    let f = |i: usize| v.get(i)?.parse::<f32>().ok();
+    Some((v.first()?.parse().ok()?, [f(1)?, f(2)?, f(3)?], v.get(4)?.parse().ok()?, v.get(5)?.parse().ok()?))
+}
+
+/// SA2_POSE_IN: a file of lines "id x y z angle motion frame gear" (the
+/// page writes the snapshot's chaoPose records there; a test feeds a
+/// synthetic file). Read about 10 times a second.
+fn remote_tick(c: &mut Cpu, m: &mut Mem) {
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let now = std::time::Instant::now();
+    if f >= IMPORT_AT.get() {
+        IMPORT_AT.set(f + EXPORT_EVERY);
+        let text = std::env::var("SA2_POSE_IN").ok().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        for (id, p, a, mo) in text.lines().filter_map(parse_remote) {
+            // shortcut: a remote record is the owner's own save info until the
+            // server relays each Chao's record; get_or_load keeps it per id.
+            let info: Vec<u8> = (0..0x800).map(|i| m.r8(INFO + i)).collect();
+            crate::chao_cache::get_or_load(m, id, &info, 0, false);
+            crate::chao_cache::set_online(id, true);
+            REMOTE.with_borrow_mut(|r| {
+                let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0 });
+                if e.samples.back().is_none_or(|s| s.1 != p || s.2 != a as u16 || s.3 != mo) {
+                    e.samples.push_back((now, p, a as u16, mo));
+                    while e.samples.len() > 4 {
+                        e.samples.pop_front();
+                    }
+                }
+                e.last_seen = now;
+            });
+        }
+    }
+    let s1 = rt::sec(m, 60, 1);
+    // Offline: the task leaves at once; the cache keeps the record for its grace.
+    let gone: Vec<(u64, u32)> = REMOTE.with_borrow(|r| r.iter().filter(|(_, e)| now.duration_since(e.last_seen) > REMOTE_GONE).map(|(&id, e)| (id, e.task)).collect());
+    for (id, task) in gone {
+        if task != 0 {
+            call(c, m, s1 + KILL_CHAO, &[task]);
+        }
+        crate::chao_cache::set_online(id, false);
+        REMOTE.with_borrow_mut(|r| r.remove(&id));
+        eprintln!("chao-player remote: {id} offline");
+    }
+    // The nearest few get a game task; farther ones lose theirs.
+    let rider = RIDER.get();
+    let rp = if rider != 0 { [0x14, 0x18, 0x1C].map(|o| f32::from_bits(m.r32(rider + o))) } else { [0.0; 3] };
+    let max = std::env::var("SA2_REMOTE_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(REMOTE_MAX);
+    let pos: Vec<(u64, [f32; 3])> = REMOTE.with_borrow(|r| r.iter().filter_map(|(&id, e)| e.samples.back().map(|s| (id, s.1))).collect());
+    let d2 = |p: [f32; 3]| (0..3).map(|k| (p[k] - rp[k]).powi(2)).sum::<f32>();
+    let mut order = pos.clone();
+    order.sort_by(|a, b| d2(a.1).total_cmp(&d2(b.1)));
+    for (n, (id, p)) in order.into_iter().enumerate() {
+        let task = REMOTE.with_borrow(|r| r[&id].task);
+        if n < max && task == 0 {
+            let Some(info) = crate::chao_cache::info_addr(id) else { continue };
+            for (o, v) in p.into_iter().enumerate() {
+                m.w32(POS + 4 * o as u32, v.to_bits());
+            }
+            let t = call(c, m, s1 + 0x3148C, &[info, 0, 0, POS, 0]);
+            eprintln!("chao-player remote: {id} task {t:#x}");
+            REMOTE.with_borrow_mut(|r| if let Some(e) = r.get_mut(&id) { e.task = t; e.motion = 0; });
+        } else if n >= max && task != 0 {
+            call(c, m, s1 + KILL_CHAO, &[task]);
+            REMOTE.with_borrow_mut(|r| if let Some(e) = r.get_mut(&id) { e.task = 0; });
+        }
+    }
+    // A new motion number plays the Chao's own motion.
+    let changes: Vec<(u32, u32)> = REMOTE.with_borrow_mut(|r| r.values_mut().filter_map(|e| {
+        let mo = e.samples.back()?.3;
+        (e.task != 0 && mo != e.motion).then(|| { e.motion = mo; (e.task, mo) })
+    }).collect());
+    for (t, mo) in changes {
+        call(c, m, s1 + AL_SET_MOTION_LINK, &[t, mo]);
+    }
+}
+
+/// Before a remote Chao's exec: its position and yaw REMOTE_DELAY behind
+/// the newest update, interpolated between the two updates around that time.
+fn remote_pin(m: &mut Mem, task: u32) {
+    let now = std::time::Instant::now();
+    let Some((p, a)) = REMOTE.with_borrow(|r| {
+        let e = r.values().find(|e| e.task == task && task != 0)?;
+        let t = now.checked_sub(REMOTE_DELAY)?;
+        let s = &e.samples;
+        let i = s.iter().rposition(|x| x.0 <= t).unwrap_or(0);
+        let a0 = *s.get(i)?;
+        let b0 = *s.get(i + 1).unwrap_or(&a0);
+        let span = b0.0.duration_since(a0.0).as_secs_f32().max(1e-3);
+        let k = (t.saturating_duration_since(a0.0).as_secs_f32() / span).clamp(0.0, 1.0);
+        let p: [f32; 3] = std::array::from_fn(|j| a0.1[j] + (b0.1[j] - a0.1[j]) * k);
+        let d = b0.2.wrapping_sub(a0.2) as i16 as f32;
+        Some((p, (a0.2 as f32 + d * k) as i32 as u32 & 0xFFFF))
+    }) else { return };
+    let cw = m.r32(task + 0x34);
+    if cw == 0 {
+        return;
+    }
+    for (i, v) in p.into_iter().enumerate() {
+        m.w32(cw + 0x14 + 4 * i as u32, v.to_bits());
+    }
+    m.w32(cw + 0x0C, a);
 }
