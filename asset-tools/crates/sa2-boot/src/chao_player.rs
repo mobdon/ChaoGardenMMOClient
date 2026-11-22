@@ -80,6 +80,7 @@ const AL_SET_MOTION_LINK: u32 = 0x1B504;
 const AL_DISABLE_NADE: u32 = 0x5A3C;
 /// Motion the garden trace shows while a Chao stands thinking (ALBHV_Think).
 const STAND_MOTION: u32 = 1;
+// Chao World stand: alm_tati (motion 0), as the hub's idle.
 
 /// Run a REL function that this module overrides, by dropping the override
 /// for the one call.
@@ -599,7 +600,9 @@ fn hub_boot_place(_m: &Mem, n: usize, node: usize, br: &crate::chao_retarget::Ch
     }
     if foot.is_empty() || shoe.is_empty() || shi[2] - slo[2] <= 0.0 { return None; }
     // SA2_SHOE_SCALE=k (debug): k times the hub fit, to see it in a check.
-    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+    // shortcut: 1.7x matches the hub render by eye (0-HUB-reference); the
+    // computed fit alone sits inside the foot. Find the measuring difference.
+    let sc = (fhi[2] - flo[2]) * SHOE_LENGTH_RATIO / (shi[2] - slo[2]) * std::env::var("SA2_SHOE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.7);
     if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 600 == 0 {
         eprintln!("chao-player boot fit: foot {:?}..{:?} shoe {:?}..{:?} scale {sc}", flo, fhi, slo, shi);
     }
@@ -1660,6 +1663,20 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let lp = LAST_RIDER_POS.replace(pos);
         let d2: f32 = (0..3).map(|i| { let d = f32::from_bits(pos[i]) - f32::from_bits(lp[i]); d * d }).sum();
         MOVING.set(d2 > 0.01 * 0.01);
+        // Chao World: the hub's gait (mmo-play src/chao-locomotion.js) with the
+        // game's own motions: AL_motion_table 0 alm_tati (stand), 578
+        // alm_aruki_ncz (walk), 119 alm_run (run); common-motions.ini.
+        // shortcut: walk/run switch at 1.0 / 0.9 units a frame (hysteresis as
+        // the hub's 1.05/0.95); not yet scaled to the hub's speed units.
+        if chao_world(m) {
+            let d = d2.sqrt();
+            let last = LAST_MOTION.get();
+            let want = if d < 0.01 { 0 } else if d >= if last == 119 { 0.9 } else { 1.0 } { 119 } else { 578 };
+            if want != last {
+                call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
+                LAST_MOTION.set(want);
+            }
+        }
         pin(m, chao, data1);
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player: type {:#x} analysed {} yaw rider {:#x} chao {:#x}", m.r8(INFO + 0x80), m.r8(INFO + 0x438), m.r32(data1 + 0x0C), m.r32(m.r32(chao + 0x34) + 0x0C));
