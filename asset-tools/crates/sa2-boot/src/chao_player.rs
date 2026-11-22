@@ -2494,13 +2494,14 @@ fn pose_chao(upright: bool) {
     });
     let posed = CHAO_REST.with_borrow(|r| match (r, sonic.len()) {
         _ if OWN_MOTION.get() => vec![],
+        (Some(rest), 62) if upright && !std::env::var("SA2_CHAO_LEAN").is_ok_and(|v| v == "1") => rest.pose_upright(&sonic, ARM_FWD.get()),
         (Some(rest), 62) => {
             let mut p = rest.pose(&sonic, false, ARM_FWD.get());
             // Chao World self mode: the body keeps the Chao's own upright
             // tilt (Shadow's run lean laid it flat, face down, on the Chao);
             // the whole pose turns about the body node back to its rest up.
             // SA2_CHAO_LEAN=1 (debug): his lean as it is.
-            if upright && p.len() > 1 && !std::env::var("SA2_CHAO_LEAN").is_ok_and(|v| v == "1") {
+            if false && upright && p.len() > 1 {
                 let rest_up = { let r = rest.worlds(&[])[1].0; [r[0][1], r[1][1], r[2][1]] };
                 let (br, bp) = p[1];
                 let up = [br[0][1], br[1][1], br[2][1]];
@@ -2728,7 +2729,7 @@ fn self_retarget(m: &Mem) -> bool {
     // play (build 16 and test copy run r107). The Chao keeps its own rig and
     // motions with the hub's skate overlay (skate.rs) while it wears the
     // shoes, as the hub does. SA2_CHAO_RETARGET=1 (debug): his skeleton.
-    self_drive(m) && std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")
+    self_drive(m) && !std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "0")
 }
 
 thread_local! {
