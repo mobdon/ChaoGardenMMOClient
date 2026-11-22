@@ -65,6 +65,24 @@ const FULL_GROWTH: (u32, u32) = (0x2A50, 0x48);
 const GROWTH: u32 = 0xC0;
 /// How close (world units, squared) the player must come to the guide.
 const REACH_SQ: f32 = 2.0 * 2.0;
+/// What the guide says, one line at a time, while the player stays near it.
+/// The first and last are the game's own lobby hint lines (Steam
+/// gd_PC/Message/mhChaoLobbye.prs, s2392 and s2393); the middle two are MMO text.
+const GUIDE_LINES: [&str; 4] = [
+    "Welcome to Chao world!",
+    "Press Tab to see your\nChao's card.",
+    "Your items are in the\ninventory on that card.",
+    "Get to the Chao garden from here.",
+];
+/// Frames each line stays up before the next one.
+/// shortcut: timed, not closed by the player; switch to the window's own close once it is traced.
+const LINE_FRAMES: u32 = 240;
+/// ChaoMain's message window (the one its own warnings use, fn 0x1CE28):
+/// 0x1E030(text) opens it with mode 5. Unverified beyond that native use.
+const AL_MESSAGE: u32 = 0x1_E030;
+/// main.dol allocator as the message window task calls it (0x800DF630:
+/// r3=1, r4=size). Unverified name; used to keep the lines in guest memory.
+const ALLOC: u32 = 0x8011_97FC;
 /// main.dol `playertwp` .bss 0x801E7768 (taskwk*[]); taskwk +0x14 is pos.
 const PLAYERTWP: u32 = 0x801E_7768;
 /// main.dol positional sound calls ChaoMain makes for a Chao's voice, each
@@ -88,6 +106,8 @@ static RESIDENTS_OUT: Global<bool> = global!(false);
 static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
 /// The new player's Chao save slot while the tutorial runs (0 = no tutorial).
 static TUTORIAL_SLOT: Global<u32> = global!(0);
+/// Next guide line to show and frames until it shows.
+static LINE: Global<(usize, u32)> = global!((0, 0));
 
 pub fn install(c: &mut Cpu, _m: &mut Mem) {
     let Some(stage) = std::env::var("SA2_START_STAGE")
@@ -162,7 +182,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             residents(c, m, text);
         }
         if now == 0 && TUTORIAL_SLOT.get() != 0 {
-            tutorial(m, text);
+            tutorial(c, m, text);
         }
         if now != shown {
             SHOWN.set(Some(now));
@@ -219,7 +239,7 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
 
 /// The tutorial ends when the player reaches the Tails Chao guide: the new
 /// Chao's growth goes to full, and ChaoMain's own check evolves it.
-fn tutorial(m: &mut Mem, text: u32) {
+fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
     let guide = RESIDENT_TWP.get()[GUIDE];
     if guide == 0 {
         return;
@@ -229,10 +249,27 @@ fn tutorial(m: &mut Mem, text: u32) {
     if d(0) * d(0) + d(8) * d(8) > REACH_SQ {
         return;
     }
+    let (line, wait) = LINE.get();
+    if wait > 0 {
+        LINE.set((line, wait - 1));
+        return;
+    }
+    if let Some(words) = GUIDE_LINES.get(line) {
+        let buf = guest_call(c, m, ALLOC, &[1, words.len() as u32 + 1]);
+        if buf != 0 {
+            for (i, b) in words.bytes().chain([0]).enumerate() {
+                m.w8(buf + i as u32, b);
+            }
+            guest_call(c, m, text + AL_MESSAGE, &[buf]);
+        }
+        LINE.set((line + 1, LINE_FRAMES));
+        return;
+    }
     let (lo, off) = FULL_GROWTH;
     let hi = (section(m, text, 5) + lo).wrapping_add(0x8000) & 0xFFFF_0000;
     m.w32(TUTORIAL_SLOT.get() + GROWTH, m.r32(hi + off));
     TUTORIAL_SLOT.set(0);
+    LINE.set((0, 0));
 }
 
 /// ChaoMain's section `n` address, from the same module entry as `text`.
