@@ -165,6 +165,26 @@ pub unsafe extern "C" fn chao(
     ) as i32
 }
 
+/// The texture names of archive `prs` in its own order, one per line, kept for `out_ptr`/`out_len`.
+///
+/// # Safety
+/// `prs`/`prs_len` must be a `buf_alloc`ed buffer.
+#[no_mangle]
+pub unsafe extern "C" fn names(prs: *const u8, prs_len: usize) -> i32 {
+    let made = sa2_asset_tools::archive::decompress_prs(
+        std::slice::from_raw_parts(prs, prs_len),
+        MAX_ARCHIVE,
+    )
+    .and_then(|data| {
+        let entries = sa2_asset_tools::archive::read_gvm(&data)?;
+        let names: Vec<_> = entries.iter().map(|e| e.name.to_string()).collect();
+        Ok(names.join("\n").into_bytes())
+    });
+    let ok = made.is_ok();
+    OUT.with(|o| *o.borrow_mut() = made.unwrap_or_default());
+    ok as i32
+}
+
 #[no_mangle]
 pub extern "C" fn out_ptr() -> *const u8 {
     OUT.with(|o| o.borrow().as_ptr())

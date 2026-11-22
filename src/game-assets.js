@@ -89,10 +89,24 @@ export function gameChaoGlb(model, motion, look, family = false) {
   return models.get(key);
 }
 
-/** A blob: URL of the game picture `alias`, or null when the game files or the picture can't be read. */
+/** The texture names of game archive `name` (without `.prs`) in its own order, or null. */
+export async function gameArchiveNames(name) {
+  const prs = await archive(name), x = prs && await converter();
+  if (!prs) return null;
+  const p = x.buf_alloc(prs.length);
+  new Uint8Array(x.memory.buffer, p, prs.length).set(prs);
+  const ok = x.names(p, prs.length);
+  x.buf_free(p, prs.length);
+  return ok ? new TextDecoder().decode(new Uint8Array(x.memory.buffer, x.out_ptr(), x.out_len())).split('\n') : null;
+}
+
+/**
+ * A blob: URL of the game picture `alias` (a TEXTURES key, or `archive/texture`), or null when the
+ * game files or the picture can't be read.
+ */
 export function gameTextureUrl(alias) {
   if (!urls.has(alias)) urls.set(alias, (async () => {
-    const [from, name] = TEXTURES[alias] ?? [[], ''];
+    const [from, name] = TEXTURES[alias] ?? (alias.includes('/') ? [[alias.split('/')[0]], alias.split('/')[1]] : [[], '']);
     for (const archiveName of from) {
       const prs = await archive(archiveName);
       const png = prs && convertTexture(await converter(), prs, name);
