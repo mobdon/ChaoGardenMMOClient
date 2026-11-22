@@ -26,6 +26,7 @@ pub mod serve;
 #[cfg(not(target_os = "wasi"))]
 pub mod snap;
 pub mod start_stage;
+pub mod race_probe;
 pub mod steam_sound;
 pub mod vi;
 pub mod walker;
@@ -50,6 +51,7 @@ pub fn install_all(c: &mut Cpu, m: &mut Mem, files: Box<dyn sa2_runtime::dvd::Ga
     walker::install(c, m);
     chao_player::install(c, m);
     start_stage::install(c, m);
+    race_probe::install(c, m);
 }
 
 /// Read a NUL-terminated guest string (at most 255 bytes).
