@@ -1889,6 +1889,26 @@ fn heap_log(m: &Mem) {
     eprintln!("chao-player heap: frame {f} stage {} arena {:#x}-{:#x} {}", m.r16(STAGE_NUM), m.r32(0x803A_DC70), m.r32(0x803A_DC74), out.join("; "));
 }
 
+/// SA2_INFO_OUT=<file> (debug panel): twice a second a line with the OS
+/// heaps' free space, the player's and other players' Chao, stage, area and
+/// the player's Chao's place, for the page's info overlay.
+fn info_out(m: &Mem, area: u16) {
+    let Ok(path) = std::env::var("SA2_INFO_OUT") else { return };
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    if f % 30 != 0 {
+        return;
+    }
+    let num = m.r32(0x803A_DC6C).min(4);
+    let heaps: Vec<String> = (0..num).map(|h| format!("h{h} {} KB", os_heap_free(m, h) / 1024)).collect();
+    let remote = REMOTE.with_borrow(|r| (r.len(), r.values().filter(|e| e.task != 0).count()));
+    let place = match STEP.get() {
+        Step::Live(chao) => { let cw = m.r32(chao + 0x34); let g = |o: u32| f32::from_bits(m.r32(cw + o)); format!("({:.0}, {:.0}, {:.0})", g(0x14), g(0x18), g(0x1C)) }
+        s => format!("{s:?}"),
+    };
+    let line = format!("frame {f} stage {} area {area}\n{}\nothers {} ({} drawn)\nChao {place}\n", m.r16(STAGE_NUM), heaps.join(", "), remote.0, remote.1);
+    let _ = std::fs::write(path, line);
+}
+
 fn chao_world(m: &Mem) -> bool {
     m.r16(STAGE_NUM) as i16 >= 90
 }
@@ -2113,6 +2133,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         crate::name_tags::flush();
     }
     crate::kinder_chart::frame(c, m);
+    info_out(m, area);
     crate::card_box::frame(c, m);
     lobby_exit_hook(c, m);
     // SA2_CHAO_AREA_AT=frame,area (debug): change Chao World area once at that

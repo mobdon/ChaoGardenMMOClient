@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32 + 8 + 128 + 8 + 8 + 8 + 1024 + 4 + 8 + 256), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -265,7 +265,7 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32, STORY: 155288, STORY_MAX: 128, STORY_OUT: 155424, STORY_OUT_MAX: 8, GEAR: 155440, GEAR_MAX: 1024, RINGS: 156472, INFO: 156476, INFO_MAX: 256 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -654,6 +654,14 @@ function gearTuner() {
   // Keys typed into the panel stay away from the game's controls.
   box.addEventListener('keydown', (ev) => ev.stopPropagation());
   box.append(copy);
+  // Info overlay: the game's line from /mmo/info-out (heap, Chao, area, place).
+  const info = document.createElement('pre');
+  info.style.cssText = 'margin:6px 0 0;white-space:pre-wrap;font:11px monospace';
+  box.append(info);
+  setInterval(() => {
+    const n = Math.min(Atomics.load(mmoHead(MMO.INFO), 1), MMO.INFO_MAX);
+    if (n > 0) info.textContent = new TextDecoder().decode(mmoBytes.slice(MMO.INFO + 8, MMO.INFO + 8 + n));
+  }, 500);
   document.body.append(box);
   rows.forEach((f) => f());
   send();
@@ -722,7 +730,7 @@ async function start() {
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
   // ?geartune=1 (debug): the gear tuner panel (gearTuner) and its file.
-  if (q.get('geartune') === '1') { e.SA2_GEAR_TUNE = '/mmo/gear-tune'; gearTuner(); }
+  if (q.get('geartune') === '1') { e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out'; gearTuner(); }
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';
