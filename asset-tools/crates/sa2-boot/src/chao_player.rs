@@ -679,7 +679,9 @@ fn pin(m: &mut Mem, chao: u32, data1: u32) {
     // Upright: only the rider's yaw. Its pitch/roll would tip the Chao while
     // the emotion ball stays world-up above where the head would be.
     m.w32(cw + 0x08, 0);
-    m.w32(cw + 0x0C, m.r32(data1 + 0x0C));
+    // SA2_CHAO_YAW_OFS (BAMS, debug until measured): the Chao's facing vs the rider's.
+    let ofs = std::env::var("SA2_CHAO_YAW_OFS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+    m.w32(cw + 0x0C, m.r32(data1 + 0x0C).wrapping_add(ofs) & 0xFFFF);
     m.w32(cw + 0x10, 0);
 }
 
