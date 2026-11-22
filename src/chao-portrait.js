@@ -29,8 +29,20 @@ function glbExtras(bytes) {
   } catch { return null; }
 }
 
+// One Chao per canvas at a time: a mount that starts while another is still loading would put two engines
+// on one canvas, and neither draws. Each mount waits for the one before it, clears it, and gives way to a newer one.
+const mounts = new WeakMap();
+
 /** Render `player`'s Chao into `canvas`. Returns a dispose function; a missing asset leaves the canvas empty. */
-export async function mountChaoPortrait(canvas, player) {
+export function mountChaoPortrait(canvas, player) {
+  const before = mounts.get(canvas) || Promise.resolve(() => {});
+  const task = before.then(dispose => { dispose(); return mounts.get(canvas) === task ? drawChaoPortrait(canvas, player) : () => {}; })
+    .catch(() => () => {});
+  mounts.set(canvas, task);
+  return task;
+}
+
+async function drawChaoPortrait(canvas, player) {
   const B = await import('@babylonjs/core'); await import('@babylonjs/loaders/glTF/index.js');
   const load = async key => {
     const response = await fetch(`/api/assets/${key}.glb`).catch(() => null);
@@ -47,7 +59,8 @@ export async function mountChaoPortrait(canvas, player) {
   };
   const engine = new B.Engine(canvas, true, { alpha: true }), scene = new B.Scene(engine);
   scene.clearColor = new B.Color4(0, 0, 0, 0);
-  const dispose = () => { engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
+  let open = true; // the page and the next mount may both clear it
+  const dispose = () => { if (!open) return; open = false; engine.stopRenderLoop(); scene.dispose(); engine.dispose(); };
   let key = portraitAsset(player);
   let [model, source] = await Promise.all([load(key), load('chao-behaviour')]);
   // The family bodies are a local conversion; without them the original child model, as the hub falls back.
