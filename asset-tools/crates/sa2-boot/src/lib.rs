@@ -27,6 +27,7 @@ pub mod serve;
 #[cfg(not(target_os = "wasi"))]
 pub mod snap;
 pub mod start_stage;
+pub mod karate;
 pub mod race_probe;
 pub mod steam_sound;
 pub mod vi;
