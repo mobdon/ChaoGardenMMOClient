@@ -11,6 +11,7 @@
 //! `/dev/extras`, and the page saves it on the MMO server.
 //! In a level (three rows already: CONTINUE, RESTART, EXIT) the same window
 //! scrolls through four rows, EXTRAS between RESTART and EXIT.
+//! A level's EXIT leaves the level the game's own way and then starts Chao World.
 //! EXIT goes back to the lobby instead of leaving Chao World (see [`exit_stays_in_chao_world`]).
 //! Addresses: GSNE8P main.dol, traced in fn_8001E12C / fn_8001B404 /
 //! fn_8001F368 (see the pause trace notes).
@@ -378,7 +379,10 @@ fn pause_exec(c: &mut Cpu, m: &mut Mem) {
     }
     let extras_row = if level { LEVEL_EXTRAS - TOP.get() } else { 1 };
     if pad != 0 && m.r32(pad + 0x10) & mask != 0 {
-        if level && TOP.get() == 1 && cursor == 0 {
+        if level && TOP.get() == 1 && cursor == 2 {
+            // EXIT: the game's own way out of the level, then the lobby.
+            crate::start_stage::lobby_after_exit(c);
+        } else if level && TOP.get() == 1 && cursor == 0 {
             // RESTART scrolled to the top row: the game's own row 1.
             m.w8(sda(c, CURSOR), 1);
         } else if cursor == extras_row {

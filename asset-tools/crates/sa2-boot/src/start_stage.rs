@@ -150,7 +150,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         // Character 0 (Sonic): the Chao World branch takes the cursor's
         // character; any character enters the same Chao World.
         PENDING.set(Some((CHAO_WORLD, 0)));
-        SHOWN.set(Some(u32::MAX));
+        chao_world_glue(c);
         AREA.set(
             std::env::var("SA2_CHAO_AREA")
                 .ok()
@@ -161,11 +161,6 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
             TP_ARRIVE.set(true);
         }
         HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
-        c.rt.set_override(TOP_LEVEL, top_level);
-        c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
-        c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
-            quiet_residents(c, m, SE_AT_POS_TIMER, 8)
-        });
         return;
     }
     let Some(rel) = crate::dvd::read_file("advertiseD.rel") else {
@@ -186,6 +181,27 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
         None => eprintln!(
             "start-stage: stage {stage} is not in the game's Stage Select; booting to the title"
         ),
+    }
+}
+
+/// The Chao World glue: the area told to the page, the lobby's residents.
+fn chao_world_glue(c: &mut Cpu) {
+    SHOWN.set(Some(u32::MAX));
+    c.rt.set_override(TOP_LEVEL, top_level);
+    c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
+    c.rt.set_override(SE_AT_POS_TIMER, |c, m| {
+        quiet_residents(c, m, SE_AT_POS_TIMER, 8)
+    });
+}
+
+/// A level started from the MMO is being left with the pause menu's EXIT:
+/// start Chao World (the lobby) once the game is back at the mode a start
+/// happens in, as at boot. Unverified: that the game's own exit from a level
+/// passes through one of those modes (SA2_MODE_LOG prints them).
+pub(crate) fn lobby_after_exit(c: &mut Cpu) {
+    if std::env::var("SA2_START_STAGE").is_ok() {
+        PENDING.set(Some((CHAO_WORLD, 0)));
+        chao_world_glue(c);
     }
 }
 
