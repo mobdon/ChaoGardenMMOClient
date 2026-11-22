@@ -247,6 +247,8 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   }
 
   function gearFor(data) {
+    // Dev test copy only (?devgear): every Chao wears the owner gear, for hub-vs-game checks.
+    if (new URLSearchParams(location.search).has('devgear')) return { footwear: 'shadow-air-shoes', hands: 'knuckles-hammer-gloves', look: null };
     return {
       footwear: data.admin && data.gear?.footwear === 'shadow-air-shoes' ? 'shadow-air-shoes' : null,
       hands: data.admin && data.gear?.hands === 'knuckles-hammer-gloves' ? 'knuckles-hammer-gloves' : null,
