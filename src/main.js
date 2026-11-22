@@ -533,8 +533,6 @@ $('#login-form').addEventListener('submit', async (event) => {
     loggedIn = data.card; showTitle();
   } catch (error) { $('#join-error').textContent = error.message; }
 });
-// Local owner login: only answered by a loopback server started with CHAO_OWNER_BOOTSTRAP.
-$('#owner-login').addEventListener('click', () => void join('Chao', null, null, true));
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 const REMEMBER_KEY = 'chao-garden-remember-v1';
 showTitle();
