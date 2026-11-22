@@ -1234,6 +1234,14 @@ const GLOVE_SCALE: f32 = 1.0;
 /// KNUCKMDL body model 142 in the model table (slot 2n+1).
 const KNUX_BODY_SLOT: u32 = 285;
 const GLOVE_REACH: f32 = 0.55;
+/// The hub's glove: the Hammer Gloves cuff alone, 1.12 of the Chao palm's
+/// largest extent, centred on the palm (src/scene.js attachOwnerGear).
+const HUB_GLOVE_SCALE: f32 = 1.12;
+/// SA2_GLOVE_NATIVE=1 (debug): the older fit on Knuckles's hand frame with
+/// his fist under the cuff. Default: the hub's fit, as the hub draws it.
+fn glove_native() -> bool {
+    std::env::var("SA2_GLOVE_NATIVE").is_ok_and(|v| v == "1")
+}
 /// Where along the arm (shoulder 0 -> hand tip 1) the glove's origin (his
 /// wrist) sits, and how far the fists turn out from the hips (degrees):
 /// a presentation fit, not game data. SA2_GLOVE_UP / SA2_GLOVE_OUT override.
@@ -1260,7 +1268,9 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         let (model, up, fwd) = GLOVE_REFS[k];
         // The hub's vectors are in its glTF space, whose root mirrors the
         // source x (chao-attachments.js note): mirror them back for the game.
-        let (up, fwd) = if std::env::var("SA2_GLOVE_NOMIRROR").is_ok() { (up, fwd) } else { ([-up[0], up[1], up[2]], [-fwd[0], fwd[1], fwd[2]]) };
+        // The hub mirrors them only because its glTF root mirrors X; the
+        // game's plate is in Knuckles's own coordinates: as read.
+        let (up, fwd) = if !glove_native() || std::env::var("SA2_GLOVE_NOMIRROR").is_ok() { (up, fwd) } else { ([-up[0], up[1], up[2]], [-fwd[0], fwd[1], fwd[2]]) };
         let obj = knux_obj(m, model);
         if !(0x8000_0000..0x8C00_0000).contains(&obj) {
             return None;
@@ -1286,7 +1296,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
         // 42 left, the frames the hub vectors were read from) and his facing
         // (-x) to the Chao's (+z), as the boots do with Shadow's foot.
         // SA2_GLOVE_HUB=1 (debug): the hub's vectors instead.
-        let native = (!std::env::var("SA2_GLOVE_HUB").is_ok_and(|v| v == "1")).then(|| {
+        let native = glove_native().then(|| {
             let body = knux_obj(m, KNUX_BODY_SLOT);
             if !(0x8000_0000..0x8C00_0000).contains(&body) { return None; }
             let kr = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]).worlds(&[]);
@@ -1350,7 +1360,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
             ssize
         };
         // SA2_GLOVE_SCALE=k (debug): k times the fitted size.
-        let s = hsize * GLOVE_SCALE / ssize * std::env::var("SA2_GLOVE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        let s = hsize * if native.is_some() { GLOVE_SCALE } else { HUB_GLOVE_SCALE } / ssize * std::env::var("SA2_GLOVE_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
         // SA2_GLOVE_PIVOT=wrist (debug): the glove's end nearest the shoulder
         // (its cuff: the vertices in the first 15% along the arm) sits on the
         // wrist, where the hand starts along the arm, instead of the glove's
@@ -1422,7 +1432,7 @@ fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
         // Knuckles's own fist under the plate (same frame: both are built on
         // his hand node).
         let fist = knux_obj(m, knux_fist(model));
-        if (0x8000_0000..0x8C00_0000).contains(&fist) {
+        if glove_native() && (0x8000_0000..0x8C00_0000).contains(&fist) {
             for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
             call(c, m, 0x8011_DF44, &[fist]);
         }
