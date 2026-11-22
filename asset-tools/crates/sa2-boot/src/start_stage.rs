@@ -214,13 +214,14 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
                 lay_egg_with(c, m, text, gene.as_ref());
             }
         }
-        if now != LOBBY {
+        if now != shown {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
             STANDING_TASK.set(0);
-        } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
+        }
+        if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
             RESIDENTS_OUT.set(true);
-            residents(c, m, text);
+            residents(c, m, text, now);
         }
         if now != shown {
             SHOWN.set(Some(now));
@@ -282,7 +283,23 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
 }
 
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
-fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
+/// The Chao World areas the residents roam: lobby, Neutral, Hero, Dark Garden.
+const ROAM: [u32; 4] = [LOBBY, 1, 2, 3];
+const ROAM_SECS: u64 = 300;
+
+/// Where resident `n` is now: every 5 minutes of wall-clock time each moves
+/// to the next area, staggered so they are apart. Every client reads the same
+/// clock, so all players see them in the same area.
+fn roam_area(n: usize) -> u32 {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    ROAM[((t / ROAM_SECS) as usize + n) % ROAM.len()]
+}
+
+// shortcut: a resident only appears or leaves when the player enters an area,
+// not at the 5-minute mark itself; despawn live once KillChao's address is known.
+fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
@@ -294,6 +311,9 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     let mut twp = [0; 3];
     let mut standing_task = 0;
     for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
+        if roam_area(n) != now {
+            continue;
+        }
         for i in (0..PARAM_SIZE).step_by(4) {
             m.w32(param + i, 0);
         }
@@ -315,7 +335,8 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32) {
     }
     RESIDENT_TWP.set(twp);
     c.r[1] = sp;
-    if twp[STANDING] != 0 {
+    // Tails stands as the guide only by the lobby's arrival teleporter.
+    if twp[STANDING] != 0 && now == LOBBY {
         // chao_player's AI hook skips the standing resident; install it if
         // the player-Chao has not.
         let a = text + AL_BEHAVIOR_CONTROL;
