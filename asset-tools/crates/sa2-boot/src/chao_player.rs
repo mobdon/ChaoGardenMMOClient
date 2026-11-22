@@ -487,7 +487,13 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
         let fw = if chao_world(m) {
             let n = |j: usize| (0..3).map(|i| fv[i][j] * fv[i][j]).sum::<f32>().sqrt().max(1e-6);
             let l = [n(0), n(1), n(2)];
-            std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { fv[i][j] / l[j] } else { fv[i][3] }))
+            let u: [[f32; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| fv[i][j] / l[j]));
+            // The boot is modelled on Shadow's foot (forward -x); the Chao's is +z:
+            // a quarter turn about y (SA2_SHOE_TURN=k: k quarter turns, debug).
+            let k = std::env::var("SA2_SHOE_TURN").ok().and_then(|v| v.parse::<i32>().ok()).unwrap_or(1).rem_euclid(4);
+            let (sn, cs) = [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)][k as usize];
+            let f = [[cs, 0.0, sn], [0.0, 1.0, 0.0], [-sn, 0.0, cs]];
+            std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { (0..3).map(|q| u[i][q] * f[q][j]).sum() } else { fv[i][3] }))
         } else {
             mul34(&base, &skel[foot])
         };
