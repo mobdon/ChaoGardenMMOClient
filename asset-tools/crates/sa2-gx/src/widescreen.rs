@@ -183,7 +183,9 @@ pub fn widen(frame: &mut Frame, aspect: f32) {
 fn group_centres(frame: &Frame, first: usize) -> Vec<Option<f32>> {
     const GAP: f32 = 0.12;
     let piece = |d: &DrawCmd| {
-        extent(d).filter(|&(a, b, t, btm)| is_hud(d) && !(a <= -0.95 && b >= 0.95) && btm - t < 1.8)
+        extent(d).filter(|&(a, b, t, btm)| {
+            is_hud(d) && !(a <= -0.95 && b >= 0.95) && btm - t < 1.8
+        })
     };
     let mut out = vec![None; frame.draws.len()];
     let mut group: Vec<usize> = Vec::new();
