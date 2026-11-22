@@ -329,6 +329,7 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         };
         SKEL.set(nodes);
         if SELF_CAP.get() {
+            RIDER_OBJ.set(obj);
             return;
         }
         RIDER_OBJ.set(obj);
@@ -2544,7 +2545,9 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
     if self_drive(m) {
         // His display walked for his skeleton only (SKEL), drawing nothing
         // and no gear (the Chao's draw carries it).
-        if self_retarget(m) {
+        // Always in self mode: the hub's skate overlay (skate_node) reads his
+        // live pose, also when his whole skeleton is not copied on the Chao.
+        if !std::env::var("SA2_SELF_CAP").is_ok_and(|v| v == "0") {
             // His effects (the jump's spin ball) are drawn, at the Chao's
             // size: the view is scaled by BOARD_SCALE about the Chao's spot
             // for the call (current and base matrix), and the captured
@@ -2693,7 +2696,7 @@ fn spin_flash(c: &mut Cpu, m: &mut Mem) {
     let w = m.r32(c.r[3] + 0x40);
     let Step::Live(chao) = STEP.get() else { return original(c, m, SPIN_FLASH_DISP) };
     let cw = m.r32(chao + 0x34);
-    if !self_retarget(m) || w == 0 || cw == 0 || m.r8(w + 1) != 0 {
+    if !self_drive(m) || w == 0 || cw == 0 || m.r8(w + 1) != 0 {
         return original(c, m, SPIN_FLASH_DISP);
     }
     let keep: Vec<u32> = (0..4).map(|i| m.r32(w + 4 + 4 * i)).collect();
@@ -2729,7 +2732,10 @@ fn self_retarget(m: &Mem) -> bool {
     // play (build 16 and test copy run r107). The Chao keeps its own rig and
     // motions with the hub's skate overlay (skate.rs) while it wears the
     // shoes, as the hub does. SA2_CHAO_RETARGET=1 (debug): his skeleton.
-    self_drive(m) && !std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "0")
+    // Off by default: the hub's way is the Chao's own rig and motions at its
+    // own scale with the skate overlay (skate.rs) from his live pose.
+    // SA2_CHAO_RETARGET=1 (debug): his limb directions copied on the Chao.
+    self_drive(m) && std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")
 }
 
 thread_local! {
