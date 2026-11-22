@@ -638,6 +638,20 @@ fn watch_slot(m: &Mem) {
     }
 }
 
+/// Logs the new Chao's type (param +0x80) and growth when either changes:
+/// egg, hatch, cocoon, adult.
+fn watch_slot(m: &Mem) {
+    let (slot, ty, growth) = SLOT_SEEN.get();
+    if slot == 0 {
+        return;
+    }
+    let now = (slot, m.r8(slot + 0x80), m.r32(slot + GROWTH));
+    if now != (slot, ty, growth) {
+        SLOT_SEEN.set(now);
+        eprintln!("tutorial: slot type {} growth {}", now.1, f32::from_bits(now.2));
+    }
+}
+
 /// Puts the cocoon's native phase timers back once the tutorial's evolution is over.
 fn restore_cocoon(m: &mut Mem) {
     let (table, saved, left) = COCOON_RESTORE.get();
