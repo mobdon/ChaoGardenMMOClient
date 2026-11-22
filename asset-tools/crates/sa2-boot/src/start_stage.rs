@@ -162,6 +162,8 @@ static TO_STAGE_SELECT: Global<bool> = global!(false);
 const ADVERTISE: u32 = 91;
 const MENU_SCREEN: u32 = 0x6_2054;
 const SCREEN_STAGE_SELECT: u32 = 3;
+/// Game state byte advertiseD reads to open its menu instead of the title.
+const GO_TO_MENU: u32 = 0x5B;
 static MENU_SEEN: Global<(u32, u32, u32)> = global!((u32::MAX, u32::MAX, u32::MAX));
 
 pub(crate) fn to_stage_select() {
@@ -307,8 +309,14 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         stage_select_frame(m);
     }
     if mode == MD_LEFT_STAGE && STARTED.get() && TO_STAGE_SELECT.get() {
-        // The game's own way on from here is its title and menus.
-        eprintln!("start-stage: left Chao World by the lobby exit; on to the game's menus");
+        // The game's own way on from here is its title and menus. advertiseD's
+        // start (.text 0x1DD4..0x1E04) skips the title for its menu (init
+        // fn_91_30A0C, exec fn_91_30AE4) while game state +0x5B is non-zero;
+        // with it 0 it picks by +0x45, and the title demo ran (test build 9).
+        if m.r8(GAME + GO_TO_MENU) == 0 {
+            eprintln!("start-stage: left Chao World by the lobby exit; on to the game's menu");
+            m.w8(GAME + GO_TO_MENU, 1);
+        }
     } else if mode == MD_LEFT_STAGE && STARTED.get() {
         // MMO glue: the title never shows. The game left the stage it was
         // started in (a level's EXIT, Chao World's own way out): Chao World
@@ -385,6 +393,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     crate::race_control::frame(c, m);
     crate::race_probe::frame(c, m);
     crate::karate::frame(c, m);
+    crate::story::frame(c, m);
     original(c, m, TOP_LEVEL);
 }
 
@@ -774,7 +783,17 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
 /// position is a resident's taskwk +0x14 is dropped; every other one plays.
 fn quiet_residents(c: &mut Cpu, m: &mut Mem, addr: u32, pos_reg: usize) {
     let twp = c.r[pos_reg].wrapping_sub(0x14);
+    // SA2_SE_LOG=1 (debug): every positional sound with its id, caller and
+    // the task work it is placed at, to name a sound heard in a run.
+    if std::env::var("SA2_SE_LOG").is_ok_and(|v| v == "1") {
+        eprintln!("se: {addr:#x} id {:#x} lr {:#x} at twp {twp:#x} pmove {}", c.r[3], c.lr, crate::chao_player::character_sounds_muted());
+    }
     if twp != 0 && (RESIDENT_TWP.get().contains(&twp) || twp == crate::chao_player::own_twp(m)) {
+        return;
+    }
+    // The hidden character's own movement sounds (footsteps, skate jets)
+    // while its exec moves the player's Chao.
+    if crate::chao_player::character_sounds_muted() {
         return;
     }
     original(c, m, addr);
