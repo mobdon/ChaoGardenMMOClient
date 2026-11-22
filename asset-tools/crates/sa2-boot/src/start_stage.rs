@@ -173,6 +173,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
             tell_page(if now == LOBBY { 0 } else { now });
         }
     }
+    crate::race_probe::frame(c, m);
     original(c, m, TOP_LEVEL);
 }
 
