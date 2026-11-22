@@ -263,7 +263,9 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
         let obj2 = m.r32(P1_OBJ2);
         if (0x8000_0000..0x8C00_0000).contains(&obj2) && in_ball(m, obj2) {
             (c.r, c.f[1]) = (regs, f1);
-            ball_draw(c, m, addr);
+            // The ball's centre: its root node as this frame's capture walked it.
+            let Some(b) = NODES.with_borrow(|n| n.first().map(|r| [r[0][3], r[1][3], r[2][3]])) else { return };
+            ball_draw(c, m, addr, b);
         }
     }
     // A new rider skeleton size: its node positions in root space, once.
@@ -292,6 +294,12 @@ fn in_ball(m: &Mem, obj2: u32) -> bool {
     if !SAID_BALL.replace(true) {
         let all: Vec<u32> = (0..256).filter(|&i| m.r16(table + 0x10 * i) == ball).collect();
         eprintln!("chao-player ball: motion {ball} in states {all:?}");
+        if std::env::var_os("SA2_PLACT_DUMP").is_some() {
+            for i in 0..160 {
+                let e: Vec<u16> = (0..8).map(|k| m.r16(table + 0x10 * i + 2 * k)).collect();
+                eprintln!("plact {i}: {e:04x?}");
+            }
+        }
     }
     m.r16(table + 0x10 * act) == ball
 }
@@ -302,9 +310,7 @@ thread_local! {
 
 /// The game's own ball draw, scaled to the Chao's size (BOARD_SCALE, the
 /// Sonic -> Chao size mob set for the board) and centred on the Chao.
-fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
-    // The ball's centre: its root node as this frame's capture walked it.
-    let Some(ball) = NODES.with_borrow(|n| n.first().copied()) else { return };
+fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32, b: [f32; 3]) {
     let Step::Live(chao) = STEP.get() else { return };
     let cwk = m.r32(chao + 0x34);
     // The Chao's centre: its position (chaowk +0x14) raised by its rest mesh centroid height.
@@ -318,8 +324,19 @@ fn ball_draw(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
     let cur = mtx(m, cur_ptr);
     let base = mtx(m, m.r32(NJ_BASE_MATRIX));
-    let w = inv_mul(&base, &cur);
-    let (s, b) = (BOARD_SCALE, [ball[0][3], ball[1][3], ball[2][3]]);
+    let mut w = inv_mul(&base, &cur);
+    let det = w[0][0] * (w[1][1] * w[2][2] - w[1][2] * w[2][1]) - w[0][1] * (w[1][0] * w[2][2] - w[1][2] * w[2][0]) + w[0][2] * (w[1][0] * w[2][1] - w[1][1] * w[2][0]);
+    if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+        eprintln!("chao-player lvl: ball draw {addr:#x} det {det} centre {b:?} target {target:?}");
+    }
+    // shortcut: a node matrix the hidden draw never filled (det 0) is drawn
+    // world-aligned at the Chao's centre; upgrade once the effect's own
+    // matrix source is filled during the capture walk.
+    if det.abs() < 1e-6 {
+        w = [[1., 0., 0., target[0]], [0., 1., 0., target[1]], [0., 0., 1., target[2]]];
+    }
+    let b = if det.abs() < 1e-6 { target } else { b };
+    let s = BOARD_SCALE;
     // Scale about the ball's centre, then move that centre onto the Chao's.
     let ws: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { w[i][j] * s } else { w[i][3] * s + (1.0 - s) * b[i] + target[i] - b[i] }));
     let scaled = mul34(&base, &ws);
@@ -643,6 +660,16 @@ fn ev_shape_draw(c: &mut Cpu, m: &mut Mem) {
 /// While a Sonic model is walked: record the node's world matrix
 /// (inv(base) * current), draw nothing.
 fn cnk_cache_draw(c: &mut Cpu, m: &mut Mem) {
+    // Sonic's display 0x8007C7B0: with obj2 +0x24 & 0x40008 it draws the
+    // spin effect model (0x801E6688 +0xCC / +0x324, efftex) at a node matrix.
+    if LCAP.get() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+        eprintln!("chao-player lvl: cnk draw lr {:#x} model {:#x}", c.lr, c.r[3]);
+    }
+    if LCAP.get() && (c.lr == 0x8007_C7C4 || c.lr == 0x8007_C810) {
+        let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+        let w = inv_mul(&mtx(m, m.r32(NJ_BASE_MATRIX)), &cur);
+        return ball_draw(c, m, CNK_CACHE_DRAW, [w[0][3], w[1][3], w[2][3]]);
+    }
     if !CAPTURE.get() {
         return original(c, m, CNK_CACHE_DRAW);
     }
