@@ -80,6 +80,32 @@ export async function mountChaoPortrait(canvas, player) {
   const height = max.y - min.y;
   const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
   camera.minZ = 0.01;
+  // The head ball as ChaoMain.rel (GSNE8P) draws it for a child with no evolution; other types are not covered yet.
+  // AL_IconDrawSub 0x12B8C: quad +-0.55 (rodata F90/F94), view-space y +0.3 (F98), AL_ICON tex 0, scale (k, 2-k),
+  // k = 0.92 + 0.08*(1 + sin phase), phase += 0x780/frame (fn_60_13340); SRC_ALPHA/INV_SRC_ALPHA.
+  // AL_CalcShadowPos 0x100C: base = node 33 translation, y + 0.045*sin(psi), psi += 0x470/frame.
+  // AL_CalcIconColor 0x14574: child with zero evolution = .data 0x2FDC = (255, 255, 76).
+  // shortcut: the quad's view-space z 0.3 and the follow spring are left out (a standing Chao), port them for a moving one.
+  const node33 = visual.getDescendants(false).find(node => /^033_object/.test(node.name));
+  if (key.startsWith('chao-body-') && node33) {
+    const ball = B.MeshBuilder.CreatePlane('native-head-ball', { size: 1.1 }, scene);
+    const mat = new B.StandardMaterial('native-head-ball', scene);
+    mat.diffuseTexture = new B.Texture('/api/assets/emotion-sphere.png', scene, true, true, B.Texture.BILINEAR_SAMPLINGMODE);
+    mat.diffuseTexture.hasAlpha = true; mat.useAlphaFromDiffuseTexture = true;
+    mat.disableLighting = true; mat.emissiveColor = new B.Color3(1, 1, 76 / 255); mat.backFaceCulling = false;
+    ball.material = mat; ball.billboardMode = B.Mesh.BILLBOARDMODE_ALL;
+    let phase = 0, psi = 0, ticks = 0;
+    scene.onBeforeRenderObservable.add(() => {
+      ticks += Math.min(engine.getDeltaTime(), 100) * 0.06;
+      for (; ticks >= 1; ticks -= 1) { phase += 0x780; psi += 0x470; }
+      const k = 0.92 + 0.08 * (1 + Math.sin(phase / 0x10000 * 2 * Math.PI));
+      node33.computeWorldMatrix(true);
+      ball.position.copyFrom(node33.getAbsolutePosition());
+      ball.position.y += 0.045 * Math.sin(psi / 0x10000 * 2 * Math.PI);
+      ball.position.addInPlace(camera.getDirection(B.Axis.Y).scale(0.3));
+      ball.scaling.set(k, 2 - k, 1);
+    });
+  }
   engine.runRenderLoop(() => scene.render());
   return dispose;
 }
