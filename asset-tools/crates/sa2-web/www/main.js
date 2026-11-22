@@ -69,6 +69,7 @@ const BUTTONS = [[0, 0x0100], [2, 0x0200], [1, 0x0400], [3, 0x0800], [9, 0x1000]
 function writePad() {
   pad[0] = held & 0xff;
   pad[1] = held >> 8;
+  writeExtras();
   const g = [...(navigator.getGamepads ? navigator.getGamepads() : [])].find((p) => p && p.connected);
   if (!g) {
     pad[2] = 0;
@@ -126,6 +127,7 @@ function loadedWorker() {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
     else if (m.area !== undefined) roomArea(m.area);
+    else if (m.extras !== undefined) extrasChanged(...m.extras);
   };
   w.onerror = (e) => log(`game thread: ${e.message}`, true);
   w.postMessage({ init: true, module, memory, env, picked, args: ['sa2-host', '/research/main.dol', '/research/symbols.txt'], ...sh });
@@ -263,7 +265,30 @@ function applySettings(s) {
 async function loadSettings(token) {
   const r = await fetch('/api/settings', { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
   if (r?.ok) applySettings((await r.json()).settings || {});
+  settingsLoaded = true;
 }
+// The game's pause Extras pages (sa2_boot::pause_extras): its rows, in its order,
+// and the bytes it reads back on /dev/pad 12-15.
+const THEMES = ['def', 'sn', 'sd', 'tl', 'kn', 'rg', 'am', 'eg', 'ma', 'ch', 'se'];
+const EXTRAS_ROWS = [
+  ['voiceLanguage', ['english', 'japanese']], ['sound', ['stereo', 'mono']], ['vibration', [true, false]],
+  ['menuTheme', THEMES], ['voiceMode', ['hold', 'open']], ['chat', [true, false]],
+  ['volume', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], ['music', [true, false]], ['fps', [60, 120, 165]],
+];
+function extrasChanged(row, choice) {
+  const [key, choices] = EXTRAS_ROWS[row] || [];
+  if (key && choice < choices.length) mmoSaveSettings({ [key]: choices[choice] });
+}
+let settingsLoaded = false;
+function writeExtras() {
+  const s = mmoSettings, bit = (on, n) => (on ? 1 << n : 0);
+  pad[12] = bit(settingsLoaded, 0) | bit(s.sound === 'mono', 1) | bit(s.voiceLanguage === 'japanese', 2)
+    | bit(s.vibration === false, 3) | bit(s.music === false, 4) | bit(s.chat === false, 5) | bit(s.voiceMode === 'open', 6);
+  pad[13] = Number.isInteger(s.volume) ? s.volume : 10;
+  pad[14] = Math.max(0, [60, 120, 165].indexOf(s.fps));
+  pad[15] = Math.max(0, THEMES.indexOf(s.menuTheme));
+}
+
 // The Extras page calls this when a row changes: applied now, saved on the server.
 globalThis.mmoSaveSettings = (changes) => {
   applySettings(changes);
