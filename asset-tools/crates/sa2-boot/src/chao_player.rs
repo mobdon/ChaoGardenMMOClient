@@ -2464,7 +2464,7 @@ const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
 const REMOTE_GONE: std::time::Duration = std::time::Duration::from_secs(1);
 /// ChaoMain KillChao (.text 0x31450).
-const KILL_CHAO: u32 = 0x31450;
+pub(crate) const KILL_CHAO: u32 = 0x31450;
 
 fn export_pose(m: &Mem) {
     let Ok(path) = std::env::var("SA2_POSE_OUT") else { return };
