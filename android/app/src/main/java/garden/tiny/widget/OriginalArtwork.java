@@ -39,9 +39,25 @@ final class OriginalArtwork {
         } catch(Exception unavailable) { return null; }
     }
     static void clear(Context context) {
-        new File(context.getFilesDir(),"portrait.tag").delete(); new File(context.getFilesDir(),"portrait.png").delete();
+        new File(context.getFilesDir(),"portrait.tag").delete(); new File(context.getFilesDir(),"portrait.png").delete(); new File(context.getFilesDir(),"own.png").delete();
+    }
+    /** Keeps the player's own Chao pictures (8 x 8 sheet of 96 px cells) when their PC stored a PNG sheet. */
+    static void saveOwn(Context context, byte[] model) throws Exception {
+        File file=new File(context.getFilesDir(),"own.png");
+        if(model.length<8 || model[0]!=(byte)0x89 || model[1]!='P' || model[2]!='N' || model[3]!='G') { file.delete(); return; }
+        java.nio.file.Files.write(file.toPath(),model);
+    }
+    private static Bitmap own(Context context) {
+        Bitmap sheet=BitmapFactory.decodeFile(new File(context.getFilesDir(),"own.png").toString());
+        if(sheet==null || sheet.getWidth()!=768 || sheet.getHeight()!=768) return null;
+        Bitmap portrait=Bitmap.createBitmap(256,256,Bitmap.Config.ARGB_8888);
+        // The first cell: standing, facing the viewer.
+        new Canvas(portrait).drawBitmap(sheet,new Rect(0,0,96,96),new RectF(24,24,232,232),new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG));
+        return onGrass(portrait,new JSONObject());
     }
     static Bitmap forSnapshot(Context context, Snapshot snapshot) {
+        Bitmap own=own(context);
+        if (own != null) return own;
         if (snapshot.appearance == null || !snapshot.form.toLowerCase(java.util.Locale.ROOT).contains("chaos")) return null;
         try { return onGrass(portrait(context, null, snapshot.appearance), snapshot.appearance); }
         catch (Exception unavailable) {
