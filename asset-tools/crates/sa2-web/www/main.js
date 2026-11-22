@@ -199,6 +199,7 @@ function joinRoom(token, zone) {
     if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); }
     if (m.type === 'event') overlay?.event(m);
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
+    else if (m.kind === 'chat-delete') chatLog.querySelector(`[data-line="${Number(m.line)}"]`)?.remove(); // removed by staff
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
   ws.onclose = ({ code }) => { if (code !== 4001) setTimeout(() => joinRoom(token, room.zone), 3000); };
@@ -454,9 +455,10 @@ function muteClick(fromId, fromName, muted) {
   chatLine({ channel: 'system', fromName: muted ? 'Muted' : 'Unmuted', text: muted ? `${fromName} (click to unmute)` : fromName,
     onclick: muted && (() => muteClick(fromId, fromName, false)) });
 }
-function chatLine({ channel, fromId, fromName, text, onclick }) {
+function chatLine({ channel, fromId, fromName, text, onclick, line: number }) {
   const line = document.createElement('div');
   line.className = channel;
+  if (number) line.dataset.line = number;
   if (fromId) line.title = `Click to mute ${fromName}`;
   if (fromId) line.onclick = () => muteClick(fromId, fromName, true);
   if (onclick) line.onclick = onclick;
