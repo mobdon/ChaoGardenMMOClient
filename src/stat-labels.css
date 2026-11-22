@@ -21,7 +21,7 @@
   top: 0;
   width: 16px;
   height: 16px;
-  background: url('/api/assets/chao-stat-font.png') var(--glyph-x) var(--glyph-y) / 372.363636px 186.181818px no-repeat;
+  background: var(--stat-font-url, none) var(--glyph-x) var(--glyph-y) / 372.363636px 186.181818px no-repeat;
   image-rendering: pixelated;
 }
 /* Keep real text for assistive technology and show it if the native asset fails. */

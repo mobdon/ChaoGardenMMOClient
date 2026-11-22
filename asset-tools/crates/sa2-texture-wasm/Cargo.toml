@@ -1,0 +1,24 @@
+[package]
+name = "sa2-texture-wasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+description = "One named texture of a game PRS texture archive as a PNG, as a small wasm module for the browser"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sa2-asset-tools = { path = "../sa2" }
+
+[dev-dependencies]
+png = "0.17.16"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+

@@ -17,7 +17,7 @@ function nativeFrame() {
   svg.setAttribute('aria-hidden', 'true');
   svg.classList.add('native-stat-frame');
   const image = document.createElementNS(ns, 'image');
-  image.setAttribute('href', '/api/assets/chao-stat-panel.png');
+  import('./game-assets.js').then(m => m.gameTextureUrl('chao-stat-panel.png')).then(url => url && image.setAttribute('href', url), () => {});
   image.setAttribute('width', '256'); image.setAttribute('height', '128');
   svg.append(image);
   return svg;
