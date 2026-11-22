@@ -238,16 +238,38 @@ pub fn sec(m: &Mem, id: u32, sec: u32) -> u32 {
     let mut info = m.r32(OS_MODULE_HEAD);
     while info != 0 {
         if m.r32(info) == id {
-            LINKED.with_borrow_mut(|l| l.insert(id, info));
+            remember_linked(id, info);
             return m.r32(m.r32(info + 0x10) + sec * 8) & !1;
         }
         info = m.r32(info + 4);
     }
     // Unlinked but still in memory (the game runs a module's code after
     // OSUnlink, e.g. its epilog): its section table is still there.
-    match LINKED.with_borrow(|l| l.get(&id).copied()) {
+    match linked_info(id) {
         Some(info) => m.r32(m.r32(info + 0x10) + sec * 8) & !1,
         None => panic!("sa2-recomp: module {id} is not linked"),
+    }
+}
+
+/// Module ids below this keep their last OSModuleInfo in a lock-free slot:
+/// `sec` runs on every REL address and a mutex plus SipHash insert there
+/// cost ~9% of the game thread. 0 means none (the module list ends at 0).
+const FAST_IDS: usize = 256;
+static LINKED_FAST: [AtomicU32; FAST_IDS] = [const { AtomicU32::new(0) }; FAST_IDS];
+
+fn remember_linked(id: u32, info: u32) {
+    match LINKED_FAST.get(id as usize) {
+        Some(slot) => slot.store(info, Relaxed),
+        None => LINKED.with_borrow_mut(|l| {
+            l.insert(id, info);
+        }),
+    }
+}
+
+fn linked_info(id: u32) -> Option<u32> {
+    match LINKED_FAST.get(id as usize) {
+        Some(slot) => Some(slot.load(Relaxed)).filter(|&i| i != 0),
+        None => LINKED.with_borrow(|l| l.get(&id).copied()),
     }
 }
 
