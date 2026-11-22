@@ -252,6 +252,8 @@ function joinRoom(token, zone) {
       // The picker's list once the signed-in Chao is known; asked again (every 10 s) until it has a record.
       if (self && !cardIds.size && Date.now() - cardAt > 10000) { cardAt = Date.now(); cardSelf = self; cardChao(token); }
       if (self) firstSheet(self, token);
+      // Dev (admin) accounts always get the dev menu (gear tuner, debug toggles, info).
+      if (self?.admin && !tunerShown) { tunerShown = true; gearTuner(); }
       showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
     }
     if (m.type === 'event') { overlay?.event(m); breedEvent(m); }
@@ -632,6 +634,7 @@ function showCard(player) {
 // player's Chao (sa2-boot chao_player.rs reads /mmo/gear-tune: one line per
 // piece "name dx dy dz rx ry rz scale", offsets in the piece's own frame,
 // degrees); "Copy values" puts the lines on the clipboard.
+let tunerShown = false;
 function gearTuner() {
   const pieces = { fist0: 'Fist 1', fist1: 'Fist 2', boot0: 'Shoe 1', boot1: 'Shoe 2', sunglasses: 'Sunglasses', necklace: 'Air Necklace', sflame: 'Flame Ring (Shadow)', lshoe0: 'Light Shoe 1', lshoe1: 'Light Shoe 2', ring: 'Flame Ring (Sonic)', bracelet: 'Bounce Bracelet' };
   const keys = [['dx', -3, 3, 0.02], ['dy', -3, 3, 0.02], ['dz', -3, 3, 0.02], ['rx', -180, 180, 1], ['ry', -180, 180, 1], ['rz', -180, 180, 1], ['scale', 0.2, 3, 0.01]];
@@ -787,7 +790,10 @@ async function start() {
   // ?stage=N from the Chao MMO's Stage Select: start that stage from boot (sa2_boot::start_stage).
   if (/^\d+$/.test(q.get('stage') || '')) e.SA2_START_STAGE = q.get('stage');
   // ?geartune=1 (debug): the gear tuner panel (gearTuner) and its file.
-  if (q.get('geartune') === '1') { e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out'; gearTuner(); }
+  // The game reads its files always (empty until a panel writes them): a
+  // dev account's panel opens once the room says it is an admin.
+  e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out';
+  if (q.get('geartune') === '1' && !tunerShown) { tunerShown = true; gearTuner(); }
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';

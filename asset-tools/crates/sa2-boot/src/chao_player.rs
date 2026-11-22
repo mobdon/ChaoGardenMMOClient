@@ -1986,7 +1986,7 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
             }
         });
         if RIDER.get() == 0 {
-            pose_chao();
+            pose_chao(false);
         }
     }
     let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
@@ -2106,7 +2106,7 @@ const TRY_ON: [(&str, u8, u32, usize); 7] = [
 ];
 
 fn try_on(c: &mut Cpu, m: &mut Mem) {
-    if std::env::var_os("SA2_GEAR_TUNE").is_none() || debug_off("tryon") {
+    if debug_set("tryon").as_deref() != Some("1") {
         return;
     }
     if SONIC_TEX.get().is_none() {
@@ -2307,7 +2307,7 @@ fn write_pose(m: &mut Mem, chao: u32) {
             *r = Some(rest);
         }
     });
-    pose_chao();
+    pose_chao(false);
     let seated = seat(m);
     let mut nodes = vec![];
     fn walk(m: &Mem, o: u32, out: &mut Vec<u32>) {
@@ -2363,7 +2363,7 @@ fn level_pose(m: &Mem, chao: u32) {
             *r = Some(rest);
         }
     });
-    pose_chao();
+    pose_chao(self_retarget(m));
     POSED_WORLD.set(false);
     // SA2_HEAD_LOG=a-b (debug): the posed head (node 16) and body (node 1)
     // up vectors and the rider's spine 2->34 each frame, to see head jitter.
@@ -2436,7 +2436,7 @@ fn seat(m: &Mem) -> Option<([[f32; 3]; 3], [f32; 3])> {
 }
 
 /// Retarget Sonic's skeleton (made model-space by his root) onto the Chao.
-fn pose_chao() {
+fn pose_chao(upright: bool) {
     let sonic: Vec<[[f32; 4]; 3]> = SKEL.with_borrow(|s| {
         if s.len() < 56 {
             return vec![];
@@ -2448,7 +2448,25 @@ fn pose_chao() {
     });
     let posed = CHAO_REST.with_borrow(|r| match (r, sonic.len()) {
         _ if OWN_MOTION.get() => vec![],
-        (Some(rest), 62) => rest.pose(&sonic, false, ARM_FWD.get()),
+        (Some(rest), 62) => {
+            let mut p = rest.pose(&sonic, false, ARM_FWD.get());
+            // Chao World self mode: the body keeps the Chao's own upright
+            // tilt (Shadow's run lean laid it flat, face down, on the Chao);
+            // the whole pose turns about the body node back to its rest up.
+            // SA2_CHAO_LEAN=1 (debug): his lean as it is.
+            if upright && p.len() > 1 && !std::env::var("SA2_CHAO_LEAN").is_ok_and(|v| v == "1") {
+                let rest_up = { let r = rest.worlds(&[])[1].0; [r[0][1], r[1][1], r[2][1]] };
+                let (br, bp) = p[1];
+                let up = [br[0][1], br[1][1], br[2][1]];
+                let fix = crate::chao_retarget::rot_between(up, rest_up);
+                for (r, t) in p.iter_mut() {
+                    *r = crate::skate::mul(&fix, r);
+                    let d = [t[0] - bp[0], t[1] - bp[1], t[2] - bp[2]];
+                    *t = std::array::from_fn(|i| bp[i] + (0..3).map(|k| fix[i][k] * d[k]).sum::<f32>());
+                }
+            }
+            p
+        }
         _ => vec![],
     });
     POSED.set(posed);
