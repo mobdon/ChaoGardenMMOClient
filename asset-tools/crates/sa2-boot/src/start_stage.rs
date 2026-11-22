@@ -285,11 +285,9 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
 /// The hub's character Chao, with normal Chao AI, near where the player arrives.
 /// The residents' round: a garden, back to the lobby, then the next garden.
 const ROAM: [u32; 6] = [1, LOBBY, 2, LOBBY, 3, LOBBY];
-const ROAM_SECS: u64 = 300;
-
-/// Where resident `n` is now: every 5 minutes of wall-clock time each moves
-/// to the next area, staggered so they are apart. Every client reads the same
-/// clock, so all players see them in the same area.
+/// Where resident `n` is now. Each stays a random 2 to 5 minutes, then moves on
+/// along ROAM. The waits come from a hash of the day, the Chao and the hop, so
+/// every client reads the same schedule from the wall clock.
 fn roam_area(n: usize) -> u32 {
     // The guide stays in the lobby by the arrival teleporter.
     if n == STANDING {
@@ -298,7 +296,39 @@ fn roam_area(n: usize) -> u32 {
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    ROAM[((t / ROAM_SECS) as usize + n) % ROAM.len()]
+    ROAM[roam_hop(n as u64, t) % ROAM.len()]
+}
+
+/// The hop resident `n` is on at unix time `t` (restarts each UTC day).
+fn roam_hop(n: u64, t: u64) -> usize {
+    let (day, mut left) = (t / 86_400, t % 86_400);
+    let mut hop = 0u64;
+    loop {
+        // splitmix64 of (day, n, hop): 120..=300 s.
+        let mut z = (day << 20 ^ n << 16 ^ hop).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ z >> 30).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ z >> 27).wrapping_mul(0x94D0_49BB_1331_11EB);
+        let wait = 120 + (z ^ z >> 31) % 181;
+        if left < wait {
+            return (hop + n * 2 + day) as usize;
+        }
+        left -= wait;
+        hop += 1;
+    }
+}
+
+#[test]
+fn roam_waits_two_to_five_minutes() {
+    let mut last = roam_hop(1, 0);
+    let mut since = 0;
+    for t in 1..86_400 {
+        let h = roam_hop(1, t);
+        since += 1;
+        if h != last {
+            assert!((120..=300).contains(&since), "{since}");
+            (last, since) = (h, 0);
+        }
+    }
 }
 
 // shortcut: a resident only appears or leaves when the player enters an area,
