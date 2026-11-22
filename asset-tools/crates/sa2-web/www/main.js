@@ -283,13 +283,19 @@ async function cardChao(token) {
   try {
     const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
     const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
-    let list = r?.ok ? ((await r.json()).chao || []).map((c) => c.player) : [];
-    if (!list.length && cardSelf) list = [cardSelf];
+    let list = r?.ok ? (await r.json()).chao || [] : [];
+    if (!list.length && cardSelf) list = [{ player: cardSelf }];
     const lines = [];
-    for (const player of list) {
-      const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!rec.ok) continue;
-      recordIn(numId(player.id), new Uint8Array(await rec.arrayBuffer()));
+    for (const { player, record } of list) {
+      // The card's own copy of the record (base64, 2048 bytes) where the
+      // server sends one; else the room's copy, there only for a Chao online here.
+      let bytes = record ? Uint8Array.from(atob(record), (ch) => ch.charCodeAt(0)) : null;
+      if (bytes?.length !== MMO.REC) {
+        const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!rec.ok) continue;
+        bytes = new Uint8Array(await rec.arrayBuffer());
+      }
+      recordIn(numId(player.id), bytes);
       cardIds.set(numId(player.id), player);
       lines.push(numId(player.id));
     }
