@@ -246,7 +246,12 @@ function joinRoom(token, zone) {
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
   ws.onmessage = ({ data }) => {
     let m; try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m); }
+    if (m.type === 'snapshot') {
+      const self = m.players.find(p => p.id === m.selfId);
+      // The picker's list once the signed-in Chao is known; asked again (every 10 s) until it has a record.
+      if (self && !cardIds.size && Date.now() - cardAt > 10000) { cardAt = Date.now(); cardSelf = self; cardChao(token); }
+      showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
+    }
     if (m.type === 'event') { overlay?.event(m); breedEvent(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
   };
@@ -269,15 +274,18 @@ let poseSeen = 0, recSeen = 0, pickSeen = 0, poseSent = null, poseSeq = 0, poseF
 // The memory card's Chao for the Chao Transporter's picker (sa2-boot
 // tiny_transporter.rs): their ids to /mmo/card-chao in the card's order, their
 // records to the record slots. A Chao that never played has no record and is
-// left out. The card code is the login page's (src/save-slots.js).
+// left out. The card code is the login page's (src/save-slots.js); a browser
+// without one lists the signed-in Chao alone (cardSelf, from the room).
 const cardIds = new Map(); // numId -> the server's Chao (player)
+let cardSelf = null, cardAt = 0;
 async function cardChao(token) {
   try {
     const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
-    if (!card) return;
-    const r = await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
+    const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
+    let list = r?.ok ? ((await r.json()).chao || []).map((c) => c.player) : [];
+    if (!list.length && cardSelf) list = [cardSelf];
     const lines = [];
-    for (const { player } of r.ok ? (await r.json()).chao || [] : []) {
+    for (const player of list) {
       const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!rec.ok) continue;
       recordIn(numId(player.id), new Uint8Array(await rec.arrayBuffer()));
