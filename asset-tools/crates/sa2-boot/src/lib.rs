@@ -36,6 +36,7 @@ pub mod serve;
 pub mod snap;
 pub mod start_stage;
 pub mod karate;
+pub mod story;
 pub mod race_control;
 pub mod race_probe;
 pub mod steam_sound;
