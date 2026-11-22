@@ -6,7 +6,7 @@
 //! than the game's 60, widened to the canvas unless 4:3 is asked for.
 #![forbid(unsafe_code)]
 
-use sa2_gx::api::{Frame, Ram};
+use sa2_gx::api::{Frame, GxMemory, Ram};
 use sa2_gx::fifo::GxFifo;
 use sa2_gx::gpu::GxRenderer;
 use sa2_gx::interp::Tween;
@@ -73,6 +73,34 @@ pub struct Decoder {
     /// The game RAM as the page last patched it (changed-page jobs, GXJD):
     /// kept here so only changed pages are written each frame.
     ram: Vec<u8>,
+    /// The 4 KiB RAM pages the last changed-page job's decode read, one bit
+    /// each: the game sends only these pages' changes (see `used_at`).
+    used: Vec<u32>,
+}
+
+/// The kept RAM, noting each 4 KiB page the decode reads.
+struct Tracked<'a> {
+    ram: &'a [u8],
+    used: std::cell::RefCell<&'a mut Vec<u32>>,
+    /// The last page marked: most reads stay on one page (vertex arrays).
+    last: std::cell::Cell<usize>,
+}
+
+impl GxMemory for Tracked<'_> {
+    fn read(&self, addr: u32, len: usize) -> Option<&[u8]> {
+        let p = (addr & 0x3FFF_FFFF) as usize;
+        let bytes = self.ram.get(p..p.checked_add(len)?)?;
+        let (first, end) = (p >> 12, (p + len.max(1) - 1) >> 12);
+        if first == end && first == self.last.get() {
+            return Some(bytes);
+        }
+        self.last.set(first);
+        let mut used = self.used.borrow_mut();
+        for page in first..=end {
+            used[page >> 5] |= 1 << (page & 31);
+        }
+        Some(bytes)
+    }
 }
 
 #[wasm_bindgen]
@@ -83,6 +111,7 @@ impl Decoder {
             fifo: GxFifo::default(),
             job: Vec::new(),
             ram: Vec::new(),
+            used: Vec::new(),
         }
     }
 
@@ -105,9 +134,21 @@ impl Decoder {
     /// Decode a changed-page job: its pipe bytes copied in with [`Self::job_at`],
     /// its pages already written into the kept RAM.
     pub fn decode_pages(&mut self, now_ms: f64, aspect: f32) -> Result<(), JsValue> {
-        self.fifo.write(&self.job, &Ram(&self.ram));
+        self.used.clear();
+        self.used.resize(self.ram.len().div_ceil(4096 * 32), 0);
+        let mem = Tracked { ram: &self.ram, used: std::cell::RefCell::new(&mut self.used), last: std::cell::Cell::new(usize::MAX) };
+        self.fifo.write(&self.job, &mem);
         self.finish(now_ms, aspect);
         Ok(())
+    }
+
+    /// The pages the last [`Self::decode_pages`] read: `used_len` u32 words
+    /// of bits (bit n = 4 KiB page n) at this address.
+    pub fn used_at(&self) -> *const u32 {
+        self.used.as_ptr()
+    }
+    pub fn used_len(&self) -> usize {
+        self.used.len()
     }
 
     /// Decode the job copied in (at `now_ms`, `performance.now()`), widened
