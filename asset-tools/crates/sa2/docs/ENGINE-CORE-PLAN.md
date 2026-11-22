@@ -6,12 +6,12 @@ renderer path. It expands Phase 1 of [PORT-PLAN.md](PORT-PLAN.md) (issue
 [#440](https://github.com/mobdon/ChaoGardenMMOClient/issues/440)) and the
 renderer, camera and web-build parts of Phases 2 and 3 (#441, #442).
 
-**First target (mob's choice): Iron Gate played with its native character,
+**First target (project decision): Iron Gate played with its native character,
 Mech Eggman, in a browser.** The stage loads exactly as the one-player story does:
 loader 0x800B5D2C (PhysicsArray row 7), G+0x1E = 0. The walker exec 0x800B3A8C
 is ported in PR #435. This plan makes the engine able to run that stage's tasks
 around it. Playing as a Chao (the Chao Walker rows) is deferred until after the
-full port (mob, November 20, 2026); ENGINE-MAP.md 8a/8b keep the trace for then.
+full port (decided November 20, 2026); ENGINE-MAP.md 8a/8b keep the trace for then.
 
 ## Rules (from PORT-PLAN.md, restated for this work)
 
@@ -78,7 +78,7 @@ tasks keep their player work here, it is **not** collision), name +0x44.
 Each milestone is one PR (or a few small ones), linked to #440 unless noted.
 Each one ends with tests that compare against main.dol.
 
-### E0. Trace the engine (read-only, on mob's PC) — **done**
+### E0. Trace the engine (read-only, on the owner's PC) — **done**
 
 Result: [ENGINE-MAP.md](ENGINE-MAP.md). Its corrections are folded in below
 and its "Unresolved" list feeds E1–E7. The item list is kept as written; its
@@ -315,7 +315,7 @@ E0 trace ─┬─ E1 tasks ── E2 frame ──┬─ E4 stage load ── E5
           └─ E7 renderer (native part, GX stream) ──┴─ E8 web build (#441)
 ```
 
-E0 needs mob's PC (main.dol and symbols.txt are local). E1 and E3 can start as
+E0 needs the owner's PC (main.dol and symbols.txt are local). E1 and E3 can start as
 soon as their part of E0 is written. E7's native part can run in parallel with
 E1–E5.
 

@@ -3,7 +3,9 @@ import './sonic.css';
 import './title.css';
 import { createGarden } from './scene.js';
 import { createGameAudio } from './audio.js';
-import { createStageSelect } from './stages.js';
+import { createStageSelect, SA2_PAGE } from './stages.js';
+// ChaoMain area numbers: 1 Neutral, 2 Hero, 3 Dark, 5 race Entrance.
+const chaoWorldAreas = { garden: 1, hero: 2, dark: 3, race: 5 };
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createGardenCare } from './garden-care.js';
@@ -301,6 +303,8 @@ function render(next) {
     attackButton.title = mounted ? 'Fire the Dark Chao Walker cannon (F)' : 'Attack a nearby robot (F)';
   }
   $('#school-open').hidden=player.zone!=='hub';
+  // A hub portal into a garden or the race opens the game's own Chao World area (sa2_boot::start_stage).
+  if (lastZone === 'hub' && chaoWorldAreas[player.zone]) location.assign(`${SA2_PAGE}?stage=90&area=${chaoWorldAreas[player.zone]}`);
   if ($('#school-dialog').open) renderSchool();
   garden?.setSnapshot(next);
   garden?.setCare?.(next.care, player);
@@ -403,14 +407,14 @@ function connect(token) {
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken, card = null) {
+async function join(name, token = sessionToken, card = null, owner = false) {
   if (joining) return;
   joining = true;
   $('#join-button').disabled = true;
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
   $('#join-error').textContent = '';
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}) }) });
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}), ...(owner ? { ownerLogin: true } : {}) }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
@@ -449,6 +453,8 @@ $('#join-form').addEventListener('submit', (event) => {
   let newest; try { newest = saveSlots.list()[0]; } catch { /* no slots */ }
   void join($('#chao-name').value, null, newest && (newest.card || newest.token));
 });
+// Local owner login: only answered by a loopback server started with CHAO_OWNER_BOOTSTRAP.
+$('#owner-login').addEventListener('click', () => void join('Chao', null, null, true));
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 showTitle();
 
@@ -532,7 +538,8 @@ function openSchool(){
   renderSchool();$('#school-name').value=player.name;
   $('#school-dialog').showModal();updatePaused();
 }
-$('#school-open').addEventListener('click',openSchool);
+// The game's own Kindergarten (Chao World area 6) via the shared Chao World entry.
+$('#school-open').addEventListener('click',()=>window.location.assign('/sa2/?stage=90&area=6'));
 $('#school-close').addEventListener('click',()=>$('#school-dialog').close());
 $('#school-dialog').addEventListener('close',updatePaused);
 $('#school-name-form').addEventListener('submit',event=>{
