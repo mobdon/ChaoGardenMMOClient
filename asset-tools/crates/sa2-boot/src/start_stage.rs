@@ -34,6 +34,8 @@ const AL_CHANGE_AREA: u32 = 0x2_7E00;
 /// ChaoMain area numbers 1..=12 (1 Neutral, 2 Hero, 3 Dark, 5 Entrance/race,
 /// 9 Stadium, 10 Karate); 0 is the lobby Chao World starts in.
 const LAST_AREA: u32 = 12;
+/// The Chao Lobby's stage number (al_stage.h: 7 lobby; 0 is none, while loading).
+const LOBBY: u32 = 7;
 /// A new player's egg, laid the way ChaoMain's `AL_ItemCreateManagerExecutor`
 /// (0x18F7C, its call at 0x19208) makes a bought egg: a save slot from
 /// `fn_60_2C30` 0x2C30, `AL_GeneCreate` 0x1218C into a 0xC0-byte gene,
@@ -67,6 +69,9 @@ static PENDING: Global<Option<(u16, u32)>> = global!(None);
 static AREA: Global<Option<u32>> = global!(None);
 /// Started in Chao World: the last area told to the page (u32::MAX before the first).
 static SHOWN: Global<Option<u32>> = global!(None);
+/// SA2_TP_ARRIVE=1: enter Chao World in the Neutral Garden, then go to the lobby
+/// the game's own way, so it arrives as from a garden teleporter.
+static TP_ARRIVE: Global<bool> = global!(false);
 /// SA2_HATCH_EGG=1: lay a new player's egg where they arrive in the lobby.
 static HATCH: Global<bool> = global!(false);
 /// The lobby's residents are out (cleared when the game leaves the lobby).
@@ -92,6 +97,10 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
                 .and_then(|v| v.trim().parse::<u32>().ok())
                 .filter(|a| (1..=LAST_AREA).contains(a)),
         );
+        if AREA.get().is_none() && std::env::var("SA2_TP_ARRIVE").is_ok_and(|v| v.trim() == "1") {
+            AREA.set(Some(1));
+            TP_ARRIVE.set(true);
+        }
         HATCH.set(std::env::var("SA2_HATCH_EGG").is_ok_and(|v| v.trim() == "1"));
         c.rt.set_override(TOP_LEVEL, top_level);
         c.rt.set_override(SE_AT_POS, |c, m| quiet_residents(c, m, SE_AT_POS, 7));
@@ -129,17 +138,22 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
-        // Once the lobby (area 0) is running, change area the game's own way.
-        if let (Some(area), 0) = (AREA.get(), now) {
+        // Once the lobby is running, change area the game's own way.
+        if let (Some(area), LOBBY) = (AREA.get(), now) {
             guest_call(c, m, text + AL_CHANGE_AREA, &[area]);
             AREA.set(None);
         }
         // Arrived in the lobby (the player task is up): lay the egg once.
-        if HATCH.get() && now == 0 && m.r32(PLAYERTWP) != 0 {
+        // Standing in the garden it went to first: back to the lobby, as through its teleporter.
+        if TP_ARRIVE.get() && now == 1 && m.r32(PLAYERTWP) != 0 {
+            TP_ARRIVE.set(false);
+            guest_call(c, m, text + AL_CHANGE_AREA, &[LOBBY]);
+        }
+        if HATCH.get() && !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
             lay_egg(c, m, text);
         }
-        if now != 0 {
+        if now != LOBBY {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
         } else if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
@@ -148,7 +162,8 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         }
         if now != shown {
             SHOWN.set(Some(now));
-            tell_page(now);
+            // The page's rooms know the lobby as area 0.
+            tell_page(if now == LOBBY { 0 } else { now });
         }
     }
     original(c, m, TOP_LEVEL);
