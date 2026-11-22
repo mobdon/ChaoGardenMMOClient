@@ -443,6 +443,13 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
             (n.len() == 7).then(|| (v[0].to_string(), [n[0], n[1], n[2], n[3], n[4], n[5], n[6]]))
         }).collect();
         GEAR_TUNE.set(map);
+        // "set key value" lines: the panel's effect toggles and sound mute list.
+        let sets = text.lines().filter_map(|l| {
+            let mut w = l.splitn(3, ' ');
+            (w.next()? == "set").then_some(())?;
+            Some((w.next()?.to_string(), w.next().unwrap_or("").trim().to_string()))
+        }).collect();
+        DEBUG_SETS.set(sets);
     }
     let v = GEAR_TUNE.with_borrow(|t| t.get(name).copied())?;
     let (sx, cx) = v[3].to_radians().sin_cos();
@@ -455,7 +462,25 @@ fn gear_tune(name: &str) -> Option<[[f32; 4]; 3]> {
     Some(std::array::from_fn(|i| std::array::from_fn(|j| if j < 3 { r[i][j] * v[6] } else { v[i] })))
 }
 
+/// A debug panel setting ("set key value" in the tuner file), None without one.
+fn debug_set(key: &str) -> Option<String> {
+    std::env::var_os("SA2_GEAR_TUNE")?;
+    let _ = gear_tune("");
+    DEBUG_SETS.with_borrow(|s| s.get(key).cloned())
+}
+
+/// A debug toggle that is switched off in the panel.
+fn debug_off(key: &str) -> bool {
+    debug_set(key).is_some_and(|v| v == "0")
+}
+
+/// Sound ids muted in the panel's list (hex, comma or space separated).
+fn debug_muted(id: u32) -> bool {
+    debug_set("mute").is_some_and(|l| l.split([',', ' ']).filter_map(|x| u32::from_str_radix(x.trim().trim_start_matches("0x"), 16).ok()).any(|x| x == id))
+}
+
 thread_local! {
+    static DEBUG_SETS: std::cell::RefCell<std::collections::BTreeMap<String, String>> = Default::default();
     static GEAR_TUNE_AT: Cell<u64> = const { Cell::new(u64::MAX) };
     static GEAR_TUNE: std::cell::RefCell<std::collections::BTreeMap<String, [f32; 7]>> = Default::default();
 }
@@ -518,7 +543,7 @@ const SHOE_LENGTH_RATIO: f32 = 0.90;
 /// Chao foot position is last frame's pose.
 fn air_shoes(c: &mut Cpu, m: &mut Mem) {
     let (Some(tex), Step::Live(chao)) = (SHADOW_TEX.get(), STEP.get()) else { return };
-    if OWN_MOTION.get() || std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+    if OWN_MOTION.get() || std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") || debug_off("shoes") {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 { eprintln!("chao-player shoes: own motion {}", OWN_MOTION.get()); }
         return;
     }
@@ -582,7 +607,7 @@ fn air_shoes(c: &mut Cpu, m: &mut Mem) {
                 // Heel/toe jets (Shadow's right jets 96-99 = slots 181-184, the
                 // hub's: modelled in the same foot frame as the boot) while moving.
                 // shortcut: all four drawn; the hub picks narrow/wide by speed.
-                if MOVING.get() {
+                if MOVING.get() && !debug_off("jets") {
                     for js in 181..=184u32 {
                         let jo = model_obj(m, js);
                         if (0x8000_0000..0x8C00_0000).contains(&jo) {
@@ -859,7 +884,7 @@ fn glove_fit(m: &Mem) -> Option<[(u32, [[f32; 4]; 3]); 2]> {
 fn hammer_gloves(c: &mut Cpu, m: &mut Mem) {
     let Some(tex) = KNUX_TEX.get() else { return };
     let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
-    if std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") || GLOVE_FRAME.replace(f) == f {
+    if std::env::var("SA2_HAMMER_GLOVES").is_ok_and(|v| v == "0") || debug_off("fists") || GLOVE_FRAME.replace(f) == f {
         return;
     }
     if GLOVE_FIT.with_borrow(|g| g.is_none()) {
@@ -2012,10 +2037,10 @@ pub(crate) const GEAR_HEAP: u32 = 1;
 const SE_CALLS: [u32; 4] = [0x8006_B978, 0x8006_B1FC, 0x8006_BB10, 0x8006_C78C];
 
 fn se_log(c: &mut Cpu, m: &mut Mem, at: u32) {
-    if SE_LOG.get() {
+    if SE_LOG.get() || debug_set("selog").is_some_and(|v| v == "1") {
         eprintln!("se: {at:#x} id {:#x} r4 {:#x} lr {:#x} pmove {}", c.r[3], c.r[4], c.lr, IN_PMOVE.get());
     }
-    if at == SE_CALLS[0] && (IN_PMOVE.get() || chao_voice(c.r[3])) {
+    if at == SE_CALLS[0] && (IN_PMOVE.get() || chao_voice(c.r[3]) || debug_muted(c.r[3])) {
         // shortcut: no sound slot reported to the caller (-1); the callers
         // seen (0x80080CFC) ignore it.
         c.r[3] = u32::MAX;

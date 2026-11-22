@@ -611,7 +611,7 @@ function gearTuner() {
   const vals = Object.fromEntries(Object.keys(pieces).map((p) => [p, { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, scale: 1 }]));
   const text = () => Object.entries(vals).map(([p, v]) => [p, ...keys.map(([k]) => v[k])].join(' ')).join('\n') + '\n';
   const send = () => {
-    const b = new TextEncoder().encode(text()).subarray(0, MMO.GEAR_MAX);
+    const b = new TextEncoder().encode(text() + setText()).subarray(0, MMO.GEAR_MAX);
     mmoBytes.set(b, MMO.GEAR + 8);
     Atomics.store(mmoHead(MMO.GEAR), 1, b.length);
     Atomics.store(mmoHead(MMO.GEAR), 0, 1);
@@ -634,6 +634,21 @@ function gearTuner() {
     return () => { r.value = n.value = vals[pick.value][k]; };
   });
   pick.onchange = () => rows.forEach((f) => f());
+  // Debug toggles and the sound mute list: "set key value" lines in the same file.
+  const sets = { fists: '1', shoes: '1', jets: '1', selog: '0', mute: '' };
+  const setText = () => Object.entries(sets).map(([k, v]) => `set ${k} ${v}`).join('\n') + '\n';
+  const fx = document.createElement('div');
+  fx.style.cssText = 'margin-top:6px;display:flex;flex-wrap:wrap;gap:6px';
+  for (const k of ['fists', 'shoes', 'jets', 'selog']) {
+    const cb = Object.assign(document.createElement('input'), { type: 'checkbox', checked: sets[k] === '1' });
+    cb.onchange = () => { sets[k] = cb.checked ? '1' : '0'; send(); };
+    const l = document.createElement('label');
+    l.append(cb, k === 'selog' ? 'sound log' : k);
+    fx.append(l);
+  }
+  const mute = Object.assign(document.createElement('input'), { placeholder: 'mute ids, e.g. 2003,601c', style: 'width:100%;margin-top:4px' });
+  mute.onchange = () => { sets.mute = mute.value.replace(/\s+/g, ','); send(); };
+  box.append(fx, mute);
   const copy = Object.assign(document.createElement('button'), { textContent: 'Copy values', style: 'margin-top:6px;width:100%' });
   copy.onclick = () => navigator.clipboard?.writeText(text()).catch(() => {});
   // Keys typed into the panel stay away from the game's controls.
