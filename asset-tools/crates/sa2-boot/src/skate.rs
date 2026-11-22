@@ -6,17 +6,19 @@
 //! is weighted, capped, and put on the Chao node's rest world rotation.
 type M3 = [[f32; 3]; 3];
 
-/// (Chao node, rider node, weight, cap in degrees), shadow-skate.js 40-47, 165-170.
-/// shortcut: the feet (6 <- 23, 13 <- 13) are left on their native motion: the
-/// overlay's foot turn swung the boots off the drawn feet; add them back once
-/// the heel frames are checked against the hub.
-pub const MAP: [(usize, usize, f32, f32); 6] = [
-    (1, 4, 1.0, 180.0),  // body: Shadow's own lean 1:1 (owner rule), no cap
-    (14, 44, 1.0, 180.0), // head: fully Shadow's while skating (no native bounce)
-    (3, 37, 1.0, 75.0),  // left upper arm
-    (4, 40, 1.0, 75.0),  // left hand
-    (10, 56, 1.0, 75.0), // right upper arm
-    (11, 59, 1.0, 75.0), // right hand
+/// (Chao node, rider node, weight, cap in degrees): the hub's own table
+/// (src/shadow-skate.js TARGETS, SKATE_ROTATION_LIMITS: body 24, head 18,
+/// arms and hands 75, feet 50; SKATE_ROTATION_WEIGHTS: head 0.35).
+/// Rider nodes: body 4, head 44, arms 37/40 and 56/59, heels 23/13.
+pub const MAP: [(usize, usize, f32, f32); 8] = [
+    (1, 4, 1.0, 24.0),    // body
+    (14, 44, 0.35, 18.0), // head
+    (3, 37, 1.0, 75.0),   // left upper arm
+    (4, 40, 1.0, 75.0),   // left hand
+    (10, 56, 1.0, 75.0),  // right upper arm
+    (11, 59, 1.0, 75.0),  // right hand
+    (6, 23, 1.0, 50.0),   // left foot
+    (13, 13, 1.0, 50.0),  // right foot
 ];
 
 const A: M3 = [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]];
