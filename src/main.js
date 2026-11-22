@@ -195,7 +195,14 @@ function showTitle() {
     const card = document.createElement('small'); card.className = 'save-slot-card'; meta.append(card);
     void showCard(card, slot.token);
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
-    button.append(icon, meta, arrow);
+    const remove = document.createElement('span'); remove.className = 'save-slot-delete'; remove.role = 'button'; remove.tabIndex = 0;
+    remove.textContent = '✕'; remove.title = 'Remove this Chao from this browser';
+    remove.addEventListener('click', event => {
+      event.stopPropagation();
+      if (!confirm(`Remove ${slot.name || 'this Chao'} from this login screen? Its memory card code still brings it back.`)) return;
+      saveSlots.remove(slot.token); showTitle();
+    });
+    button.append(icon, meta, remove, arrow);
     button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
     const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
     if (shownCards.has(cardCode)) { container.append(button); continue; }
