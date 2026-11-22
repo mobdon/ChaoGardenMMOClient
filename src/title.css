@@ -41,8 +41,6 @@
 .title-screen form small { display: block; color: #7896b6; font-size: 8px; margin-top: 8px; }
 .title-screen #join-error { color: #ffb9a9; text-align: left; font-size: 11px; }
 .title-footer { margin-top: auto; padding-top: 18px; }
-.title-tiny-link { display: block; margin: 0 0 16px; color: #ffdc5d; font-size: 8px; letter-spacing: 1px; line-height: 1.8; text-decoration: none; }
-.title-tiny-link:hover { text-decoration: underline; }
 .title-footer .welcome-requirements { justify-content: flex-start; color: #a9c0d9; font-size: 9px; }
 .title-footer > small { color: #647f9f; font-size: 8px; line-height: 1.8; }
 @media(max-width: 720px) {
