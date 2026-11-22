@@ -1116,6 +1116,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         // Physics stays native for Knuckles and Rouge (mob's rules).
         if addr == SONIC_EXEC {
             physics_row(m);
+            shadow_moves(c, m);
             force_sonic_state(m);
         } else {
             knuckles_rules(c, m, chao);
@@ -1205,6 +1206,61 @@ fn force_sonic_state(m: &mut Mem) {
     if let Some(f) = it.next().and_then(|f| u32::from_str_radix(f.trim().trim_start_matches("0x"), 16).ok()) {
         m.w32(obj2 + 0x24, m.r32(obj2 + 0x24) | f);
     }
+}
+
+/// Sonic's and Shadow's action tables in main.dol (PL_ACTION, 0x10-byte
+/// rows: motion u16, model u16, mode u16, next u16, blend f32, speed f32);
+/// Sonic's loader stores Sonic's at playerwk +0x198.
+const SONIC_ACTIONS: u32 = 0x801B_762C;
+const SHADOW_ACTIONS: u32 = 0x801B_82DC;
+const ACTION_ROWS: u32 = 160;
+/// The game's motion file load by name (Sonic's loader at 0x80087640) into
+/// the motion table 0x801E5D28 (8-byte entries, motion at +4).
+const LOAD_MTN: u32 = 0x8005_0094;
+const MOTIONS: u32 = 0x801E_5D28;
+const SHADOW_MTN_NAME: u32 = 0x8017_4918; // "TERIOSMTN.PRS"
+/// Sonic's table with Shadow's rows where Shadow plays his own motion (Chao RAM).
+const MIXED_ACTIONS: u32 = 0x82F0_2000;
+
+thread_local! {
+    static SHADOW_MOVES: Cell<bool> = const { Cell::new(false) };
+}
+
+/// mob 2026-11-22: off the board in Sonic's levels the owner's Chao moves
+/// like Shadow (physics stays Metal's row). Every state whose Shadow row plays
+/// a different motion number takes Shadow's row (motion, blend, speed; Sonic's
+/// model field kept), from Shadow's own motion file loaded once.
+fn shadow_moves(c: &mut Cpu, m: &mut Mem) {
+    let obj2 = m.r32(P1_OBJ2);
+    if !(0x8000_0000..0x8C00_0000).contains(&obj2) || m.r8(obj2 + 1) != 0 || std::env::var("SA2_SHADOW_MOVES").is_ok_and(|v| v == "0") {
+        return;
+    }
+    if !SHADOW_MOVES.replace(true) {
+        let rows: Vec<u32> = (0..ACTION_ROWS).filter(|&i| m.r16(SONIC_ACTIONS + 0x10 * i) != m.r16(SHADOW_ACTIONS + 0x10 * i)).collect();
+        let need: Vec<u32> = rows.iter().map(|&i| u32::from(m.r16(SHADOW_ACTIONS + 0x10 * i))).collect();
+        // Keep every motion Sonic already has; take only Shadow's own ones.
+        let keep: Vec<u32> = (0..0x960).step_by(4).map(|o| m.r32(MOTIONS + o)).collect();
+        let mtn = call(c, m, LOAD_MTN, &[SHADOW_MTN_NAME]);
+        for (k, o) in (0..0x960u32).step_by(4).enumerate() {
+            if !need.contains(&(o / 8)) {
+                m.w32(MOTIONS + o, keep[k]);
+            }
+        }
+        for o in (0..0x10 * ACTION_ROWS).step_by(4) {
+            m.w32(MIXED_ACTIONS + o, m.r32(SONIC_ACTIONS + o));
+        }
+        for &i in &rows {
+            let (d, s) = (MIXED_ACTIONS + 0x10 * i, SHADOW_ACTIONS + 0x10 * i);
+            m.w16(d, m.r16(s));
+            for o in [4, 6, 8, 0xC] {
+                m.w32(d + o, m.r32(s + o));
+            }
+        }
+        eprintln!("chao-player: Shadow's motions {mtn:#x}; states {rows:?} -> motions {need:?}");
+    }
+    let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+    let board = BOARD.with_borrow(|b| b.as_ref().is_some_and(|b| f <= b.0 + 2));
+    m.w32(obj2 + OBJ2_PLACTPTR, if board { SONIC_ACTIONS } else { MIXED_ACTIONS });
 }
 
 /// SA2_FORCE_FROM=frame (debug): forced states start at this frame, so the
