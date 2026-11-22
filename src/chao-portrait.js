@@ -80,12 +80,10 @@ export async function mountChaoPortrait(canvas, player) {
   const height = max.y - min.y;
   const camera = new B.ArcRotateCamera('camera', Math.PI / 2, Math.PI / 2.1, height * 2.4, new B.Vector3(0, min.y + height / 2, 0), scene);
   camera.minZ = 0.01;
-  // The head ball as ChaoMain.rel (GSNE8P) draws it for a child with no evolution; other types are not covered yet.
-  // AL_IconDrawSub 0x12B8C: quad +-0.55 (rodata F90/F94), view-space y +0.3 (F98), AL_ICON tex 0, scale (k, 2-k),
-  // k = 0.92 + 0.08*(1 + sin phase), phase += 0x780/frame (fn_60_13340); SRC_ALPHA/INV_SRC_ALPHA.
-  // AL_CalcShadowPos 0x100C: base = node 33 translation, y + 0.045*sin(psi), psi += 0x470/frame.
-  // AL_CalcIconColor 0x14574: child with zero evolution = .data 0x2FDC = (255, 255, 76).
-  // shortcut: the quad's view-space z 0.3 and the follow spring are left out (a standing Chao), port them for a moving one.
+  // The game's own head ball for a default child (ChaoMain.rel): AL_IconDrawSub 0x12B8C quad +-0.55, +0.3 up in view,
+  // squash k = 0.92 + 0.08*(1+sin phase), phase += 0x780/frame; AL_CalcShadowPos 0x100C node 33 + 0.045*sin(psi),
+  // psi += 0x470/frame; AL_CalcIconColor 0x14574 zero-evolution child colour 255,255,76.
+  // shortcut: other body types' ball colours and ring branches are not ported; add them when the portrait shows evolved Chao.
   const node33 = visual.getDescendants(false).find(node => /^033_object/.test(node.name));
   if (key.startsWith('chao-body-') && node33) {
     const ball = B.MeshBuilder.CreatePlane('native-head-ball', { size: 1.1 }, scene);

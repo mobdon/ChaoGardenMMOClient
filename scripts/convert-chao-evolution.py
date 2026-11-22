@@ -489,15 +489,14 @@ def convert_family(base, targets, preview):
 
 
 def export_face_textures():
-    """Copy original eye images; child-style pupils get the existing matte cutout."""
+    """Copy the original eye images as the game draws them, white included."""
     folder = EXTRACTED / 'textures/al_eye'
     names = [row.split(',')[1] for row in (folder / 'index.txt').read_text().splitlines() if ',' in row]
     eyes = []
     for filename in names:
         stem = Path(filename).stem
-        cut = shared.normal_eye_cutout(folder / filename)
         out = OUTPUT / f'chao-eye-{stem.lower()}.png'
-        out.write_bytes(cut.read_bytes())
+        out.write_bytes((folder / filename).read_bytes())
         eyes.append(out.name)
     return eyes
 
