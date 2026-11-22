@@ -231,8 +231,33 @@ pub fn call(c: &mut Cpu, m: &mut Mem, addr: u32) {
     }
     match c.rt.lookup(m, addr) {
         Some(f) => f(c, m),
-        None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x})", c.lr),
+        None => panic!("sa2-recomp: no function at {addr:#010x} (lr {:#010x}, {})", c.lr, module_at(m, c.lr)),
     }
+}
+
+/// The linked module and section holding `a` ("module 60 sec 1 +0x1b0a8"),
+/// for the panic above: a caller in a REL is only an address otherwise.
+/// Reads RAM directly and bounded, since the module list may be damaged.
+fn module_at(m: &Mem, a: u32) -> String {
+    let r = |p: u32| -> Option<u32> {
+        let o = p.checked_sub(0x8000_0000)? as usize;
+        Some(u32::from_be_bytes(m.ram.get(o..o.checked_add(4)?)?.try_into().ok()?))
+    };
+    let mut info = r(OS_MODULE_HEAD).unwrap_or(0);
+    for _ in 0..64 {
+        let (Some(id), Some(n), Some(tab)) = (r(info), r(info.wrapping_add(0xC)), r(info.wrapping_add(0x10))) else { break };
+        for s in 0..n.min(32) {
+            let e = tab.wrapping_add(s * 8);
+            if let (Some(at), Some(len)) = (r(e), r(e.wrapping_add(4))) {
+                let at = at & !1;
+                if at != 0 && (at..at.saturating_add(len)).contains(&a) {
+                    return format!("module {id} sec {s} +{:#x}", a - at);
+                }
+            }
+        }
+        info = r(info.wrapping_add(4)).unwrap_or(0);
+    }
+    "in no linked module".into()
 }
 
 /// OS module queue head (OSModuleInfo list linked by OSLink).
@@ -683,5 +708,28 @@ pub fn psq_store(c: &Cpu, m: &mut Mem, ea: u32, w: bool, i: usize, f: Fpr) {
             7 => m.w16(ea + 2 * k, q.clamp(-32768.0, 32767.0) as i16 as u16),
             _ => m.wf32(ea + 4 * k, v),
         }
+    }
+}
+
+#[cfg(test)]
+mod module_at_tests {
+    use super::*;
+
+    #[test]
+    fn names_the_module_section_and_offset_of_an_address() {
+        let mut m = Mem { ram: vec![0; 0x4000], lc: Vec::new(), io_read: |_, _| 0, io_write: |_, _, _| {} };
+        let mut w = |a: u32, v: u32| m.ram[(a - 0x8000_0000) as usize..][..4].copy_from_slice(&v.to_be_bytes());
+        // One module (id 60) at 0x80003200: 2 sections, table at 0x80003300.
+        w(OS_MODULE_HEAD, 0x8000_3200);
+        w(0x8000_3200, 60);
+        w(0x8000_320C, 2);
+        w(0x8000_3210, 0x8000_3300);
+        w(0x8000_3308, 0x8120_0001); // section 1: executable bit set
+        w(0x8000_330C, 0x2_0000);
+        assert_eq!(module_at(&m, 0x8121_B0A8), "module 60 sec 1 +0x1b0a8");
+        assert_eq!(module_at(&m, 0x85FE_73BE), "in no linked module");
+        // A damaged list (a link pointing outside RAM) ends the search.
+        m.ram[0x3204..0x3208].copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+        assert_eq!(module_at(&m, 0x9000_0000), "in no linked module");
     }
 }
