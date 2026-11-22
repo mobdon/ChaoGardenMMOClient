@@ -1233,6 +1233,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
     c.rt.set_override(DESTROY_TASK, destroy_task);
+    c.rt.set_override(SPIN_FLASH_DISP, spin_flash);
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
         c.rt.set_override(DRAW_MOTION, trace_draw_motion);
         c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
@@ -2115,6 +2116,33 @@ fn debug_teleport(m: &mut Mem, task: u32) {
 
 thread_local! {
     static TP_DONE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The character's jump spin flash, its own task (main.dol display 0x8008B0CC:
+/// work at task +0x40: +1 player, +4 position, +0x1C uniform scale, drawn
+/// with njTranslateEx/njScale). Self mode: shrunk to the Chao's size
+/// (BOARD_SCALE) about the Chao's spot, as the character's own display is.
+const SPIN_FLASH_DISP: u32 = 0x8008_B0CC;
+fn spin_flash(c: &mut Cpu, m: &mut Mem) {
+    let w = m.r32(c.r[3] + 0x40);
+    let Step::Live(chao) = STEP.get() else { return original(c, m, SPIN_FLASH_DISP) };
+    let cw = m.r32(chao + 0x34);
+    if !self_retarget(m) || w == 0 || cw == 0 || m.r8(w + 1) != 0 {
+        return original(c, m, SPIN_FLASH_DISP);
+    }
+    let keep: Vec<u32> = (0..4).map(|i| m.r32(w + 4 + 4 * i)).collect();
+    let (s, keep_scale) = (BOARD_SCALE, m.r32(w + 0x1C));
+    for i in 0..3u32 {
+        let p = f32::from_bits(m.r32(cw + 0x14 + 4 * i));
+        let v = f32::from_bits(keep[i as usize]);
+        m.w32(w + 4 + 4 * i, (p + (v - p) * s).to_bits());
+    }
+    m.w32(w + 0x1C, (f32::from_bits(keep_scale) * s).to_bits());
+    original(c, m, SPIN_FLASH_DISP);
+    for i in 0..3u32 {
+        m.w32(w + 4 + 4 * i, keep[i as usize]);
+    }
+    m.w32(w + 0x1C, keep_scale);
 }
 
 /// Self mode with the Chao posed from the hidden character's skeleton
