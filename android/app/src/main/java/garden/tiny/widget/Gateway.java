@@ -13,26 +13,52 @@ import java.security.MessageDigest;
 final class Gateway {
     static final class Failure extends IOException {
         final int status;
-        Failure(int status) { super(status == 401 || status == 403 ? "Device access expired or revoked. Pair again."
-                : status == 404 || status == 501 ? "This Rust server does not support the widget API yet."
+        Failure(int status) { super(status == 401 || status == 403 ? "Your login ran out. Log in again."
+                : status == 404 || status == 501 ? "This server does not support the widget yet."
                 : status == 409 ? "Garden changed. Refresh before another action."
                 : "Garden request failed (HTTP " + status + ")."); this.status=status; }
     }
     private final ServerOrigin origin;
     private final String token;
     Gateway(String origin, String token) { this.origin=new ServerOrigin(origin); this.token=token; }
-    JSONObject claim(JSONObject body) throws Exception {
-        try { return new JSONObject(new String(request(origin.api("pairing/claim"),body,131072),StandardCharsets.UTF_8)); }
+    /** The normal account login: {login, password} -> {card, chao:[{token, player}]}. */
+    JSONObject login(JSONObject body) throws Exception {
+        try { return json(request(origin.api("account/login"),body,131072)); }
         catch(Failure failure) {
-            if(failure.status==401) throw new IllegalStateException("Pairing invitation is invalid, expired or already used. Approve a new desktop invitation.");
+            if(failure.status==401) throw new IllegalStateException("Wrong username or password.");
+            if(failure.status==429) throw new IllegalStateException("Too many tries. Wait a minute and try again.");
             throw failure;
         }
     }
-    JSONObject account() throws Exception { return accountRequest("account",null); }
-    JSONObject accountRequest(String path,JSONObject body) throws Exception {
-        if(!java.util.Arrays.asList("account","lease","intent").contains(path)) throw new IllegalArgumentException("Invalid account endpoint");
-        return new JSONObject(new String(request(origin.api(path),body,131072),StandardCharsets.UTF_8));
+    /** The Chao on a memory card; this gateway's token is the card code. */
+    JSONObject card() throws Exception {
+        try { return json(request(origin.api("card"),null,131072)); }
+        catch(Failure failure) {
+            if(failure.status==404) throw new IllegalStateException("Memory card was not found.");
+            throw failure;
+        }
     }
+    /** The Chao this token opens, as the server has it now. */
+    JSONObject session() throws Exception {
+        return json(request(origin.api("session"),new JSONObject().put("token",token).put("resumeOnly",true),131072));
+    }
+    /** The player's own Chao model, stored by their PC. Missing until they have played there once. */
+    byte[] ownChao() throws Exception {
+        try { return request(origin.api("tiny-chao"),null,4194304); }
+        catch(Failure failure) {
+            if(failure.status==404) throw new IllegalStateException("Play once on your PC first. Then your Chao is here.");
+            throw failure;
+        }
+    }
+    /** Pet, rest or wake a Chao that is out in a garden: {kind} -> {player}. */
+    JSONObject care(String kind) throws Exception {
+        try { return json(request(origin.api("tiny-care"),new JSONObject().put("kind",kind),131072)); }
+        catch(Failure failure) {
+            if(failure.status==409) throw new IllegalStateException("Your Chao is not out in a garden, or was cared for a moment ago.");
+            throw failure;
+        }
+    }
+    private static JSONObject json(byte[] bytes) throws Exception { return new JSONObject(new String(bytes,StandardCharsets.UTF_8)); }
     byte[] asset(JSONObject descriptor) throws Exception {
         String hash = descriptor.getString("sha256");
         if (!hash.matches("[a-f0-9]{64}")) throw new IOException("Missing original asset provenance");
@@ -48,7 +74,7 @@ final class Gateway {
         try {
             connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(8000); connection.setReadTimeout(8000);
-            connection.setRequestProperty("Accept", "application/json, image/png");
+            connection.setRequestProperty("Accept", "application/json, image/png, model/gltf-binary");
             connection.setRequestProperty("Cache-Control", "no-store");
             if (token != null && !token.trim().isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + token);
             if (body != null) {

@@ -36,7 +36,7 @@ const sh = {
   audio: new SharedArrayBuffer(AUDIO_RING * 2),
   slots: [new SharedArrayBuffer(SLOT), new SharedArrayBuffer(SLOT)],
   card: new SharedArrayBuffer(64), // the server card's revision and lease (worker.js)
-  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32), // the MMO files (worker.js, MMO)
+  mmo: new SharedArrayBuffer(67864 + 32 * 2064 + 8 + 8 + 4096 + 8 + 16384 + 8 + 256 + 8 + 32 + 8 + 8 + 512 + 8 + 32), // the MMO files (worker.js, MMO)
   // The RAM pages the decoder read for its last frame: [0] word count, then bits (decode.js, worker.js /dev/gxpages).
   pages: new SharedArrayBuffer(4 + 65536),
 };
@@ -75,6 +75,7 @@ function hold(bit, down) {
 }
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return; // typing in chat, not playing
+  if (karateKey(e)) return;
   if (e.code === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); hold(TAB, true); return; }
   const i = KEYS.indexOf(e.code);
   if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -245,8 +246,13 @@ function joinRoom(token, zone) {
   import('/src/game-overlay.js').then(m => { overlay = m.mountOverlay(ws); }).catch(() => {});
   ws.onmessage = ({ data }) => {
     let m; try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'snapshot') { showCard(m.players.find(p => p.id === m.selfId)); overlay?.snapshot(m); othersIn(m, token); tagNames(m); }
-    if (m.type === 'event') overlay?.event(m);
+    if (m.type === 'snapshot') {
+      const self = m.players.find(p => p.id === m.selfId);
+      // The picker's list once the signed-in Chao is known; asked again (every 10 s) until it has a record.
+      if (self && !cardIds.size && Date.now() - cardAt > 10000) { cardAt = Date.now(); cardSelf = self; cardChao(token); }
+      showCard(self); overlay?.snapshot(m); othersIn(m, token); tagNames(m); breedSnapshot(m);
+    }
+    if (m.type === 'event') { overlay?.event(m); breedEvent(m); }
     if (m.kind === 'chat') chatLine(m); else if (m.kind === 'voice') voicePlay(m);
   };
   // 4001: this card's Chao went out somewhere else; don't fight over it.
@@ -258,7 +264,7 @@ function joinRoom(token, zone) {
 // Garden resident with no pose as "id idle"); Chao
 // records go to and from the server by version. The server routes may not
 // exist yet: failures stay quiet.
-const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32 };
+const MMO = { POSE_OUT: 0, REC_OUT: 264, REC: 2048, POSE_IN: 2320, POSE_IN_MAX: 65536, SLOTS: 67864, SLOT: 2064, NSLOT: 32, KARATE: 133912, TAGS: 133920, TAGS_MAX: 4096, TREE: 138024, TREE_MAX: 16384, CARD: 154416, CARD_MAX: 256, PICK: 154680, PICK_MAX: 32, NAME: 154720, BREED: 154728, BREED_MAX: 512, BREED_OUT: 155248, BREED_OUT_MAX: 32 };
 const mmoBytes = new Uint8Array(sh.mmo);
 globalThis.sa2Mmo = sh.mmo; // for checks from the console
 const mmoHead = (at) => new Int32Array(sh.mmo, at, 2);
@@ -268,15 +274,18 @@ let poseSeen = 0, recSeen = 0, pickSeen = 0, poseSent = null, poseSeq = 0, poseF
 // The memory card's Chao for the Chao Transporter's picker (sa2-boot
 // tiny_transporter.rs): their ids to /mmo/card-chao in the card's order, their
 // records to the record slots. A Chao that never played has no record and is
-// left out. The card code is the login page's (src/save-slots.js).
+// left out. The card code is the login page's (src/save-slots.js); a browser
+// without one lists the signed-in Chao alone (cardSelf, from the room).
 const cardIds = new Map(); // numId -> the server's Chao (player)
+let cardSelf = null, cardAt = 0;
 async function cardChao(token) {
   try {
     const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
-    if (!card) return;
-    const r = await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
+    const r = card && await fetch('/api/card', { headers: { Authorization: `Bearer ${card}` } });
+    let list = r?.ok ? ((await r.json()).chao || []).map((c) => c.player) : [];
+    if (!list.length && cardSelf) list = [cardSelf];
     const lines = [];
-    for (const { player } of r.ok ? (await r.json()).chao || [] : []) {
+    for (const player of list) {
       const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!rec.ok) continue;
       recordIn(numId(player.id), new Uint8Array(await rec.arrayBuffer()));
@@ -286,11 +295,52 @@ async function cardChao(token) {
     const text = new TextEncoder().encode(lines.join('\n') + '\n').subarray(0, MMO.CARD_MAX);
     mmoBytes.set(text, MMO.CARD + 8);
     Atomics.store(mmoHead(MMO.CARD), 1, text.length);
+    breedFeed();
   } catch {}
+}
+// The chart's breeding page (sa2-boot kinder_chart.rs) lists the player's
+// other Chao: /mmo/breed-in is the player's Chao's name, a message, the Heart Fruit count, then
+// "id<tab>name" lines. The game sends the picked one back (/mmo/breed-out) and
+// the server decides; its answer becomes the message.
+// Line 3 is the player's Heart Fruit count (empty when the server's fruit
+// names aren't known). For a partner on the player's own card the server lays the egg at once
+// (code egg-laid); unverified against a running server.
+const breed = { self: null, revision: 0, message: '', pending: null, seen: 0, hearts: '' };
+const breedCodes = { 'offer-sent': 'Asked. Waiting for an answer.', 'egg-laid': 'An egg was laid!', 'garden-full': 'The garden is full.', 'not-ready': 'Not ready to breed yet.', 'stage-conflict': 'Both Chao must be grown up.', 'nest-full': 'Your nest is full.', 'partner-busy': 'That Chao is busy.', 'partner-nest-full': 'Its nest is full.', 'partner-unavailable': 'That Chao is not here.' };
+function breedFeed() {
+  const rows = [...cardIds].filter(([, p]) => p.id !== breed.self?.id).map(([n, p]) => `${n}\t${p.name || 'Chao'}`);
+  const text = new TextEncoder().encode([breed.self?.name || '', breed.message, breed.hearts, ...rows].join('\n') + '\n').subarray(0, MMO.BREED_MAX);
+  mmoBytes.set(text, MMO.BREED + 8);
+  Atomics.store(mmoHead(MMO.BREED), 1, text.length);
+}
+function breedSnapshot(m) {
+  breed.self = m.players.find((p) => p.id === m.selfId) || null;
+  breed.revision = m.life?.revision ?? breed.revision;
+  // The Heart Fruit is the server's sa2-fruit:10 (its inventory key).
+  breed.hearts = m.care?.inventory ? String(m.care.inventory['sa2-fruit:10'] || 0) : '';
+  breedFeed();
+}
+function breedEvent(m) {
+  if (m.kind === 'life-egg-laid') breed.message = `An egg was laid with ${m.partnerName || 'your Chao'}!`;
+  else if (m.kind === 'life-result' && m.requestId === breed.pending) breed.message = breedCodes[m.code] || (m.accepted ? 'Done.' : `Not now (${m.code}).`);
+  else return;
+  breedFeed();
+}
+function breedPick() {
+  const out = mmoHead(MMO.BREED_OUT), seq = Atomics.load(out, 0);
+  if (seq === breed.seen) return;
+  breed.seen = seq;
+  const partner = cardIds.get(new TextDecoder().decode(mmoBytes.slice(MMO.BREED_OUT + 8, MMO.BREED_OUT + 8 + out[1])));
+  if (!partner || room?.ws.readyState !== 1) return;
+  breed.pending = crypto.randomUUID();
+  room.ws.send(JSON.stringify({ type: 'life', requestId: breed.pending, expectedRevision: breed.revision, intent: { kind: 'breed', partnerId: partner.id } }));
+  breed.message = `Asking for ${partner.name || 'your Chao'}...`;
+  breedFeed();
 }
 const recVersions = new Map();
 function mmoTick(token) {
   karateLocks();
+  breedPick();
   const pose = mmoHead(MMO.POSE_OUT), seq = Atomics.load(pose, 0);
   if (seq !== poseSeen && room?.ws.readyState === 1) {
     poseSeen = seq;
@@ -474,10 +524,11 @@ function karateButtons(on) {
     bar = Object.assign(document.createElement('div'), { id: 'karate' });
     bar.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;display:flex;gap:.5rem;justify-content:center;z-index:4';
     for (const [id, name, strong] of KARATE_MOVES) {
-      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: name });
+      const b = Object.assign(document.createElement('button'), { type: 'button', textContent: `${bar.children.length + 1} ${name}` });
       b.style.cssText = 'padding:.45rem 1rem;border-radius:1.2rem;background:#f5a800;color:#fff;font-weight:700;text-shadow:0 1px 2px #000';
       if (strong) b.dataset.strong = '1';
       b.addEventListener('click', () => {
+        if (karateBusy()) return;
         mmoBytes[MMO.KARATE + 1] = id;
         mmoBytes[MMO.KARATE]++; // a new press, after its button is in place
         canvas.focus();
@@ -488,15 +539,29 @@ function karateButtons(on) {
   }
   if (bar) bar.style.display = on ? 'flex' : 'none';
 }
+// Keys 1 to 5 press the buttons while they show (1 and 3 are the game's L and R elsewhere).
+function karateKey(e) {
+  const bar = document.getElementById('karate'), n = '12345'.indexOf(e.key);
+  if (!bar || bar.style.display === 'none' || n < 0 || e.ctrlKey || e.altKey || e.metaKey) return false;
+  e.preventDefault();
+  if (!e.repeat && !bar.children[n].disabled) bar.children[n].click();
+  return true;
+}
+// A chosen move is seen through: no new move until the game says that press is done.
+const karateBusy = () => mmoBytes[MMO.KARATE] !== mmoBytes[MMO.KARATE + 5];
 function karateLocks() {
-  for (const b of document.querySelectorAll('#karate [data-strong]')) {
-    b.disabled = !mmoBytes[MMO.KARATE + 4];
-    b.title = b.disabled ? 'Needs Power above 400' : '';
+  const busy = karateBusy();
+  for (const b of document.querySelectorAll('#karate button')) {
+    const locked = b.dataset.strong && !mmoBytes[MMO.KARATE + 4];
+    b.disabled = busy || locked;
+    b.title = locked ? 'Needs Power above 400' : '';
     b.style.background = b.disabled ? '#666' : '#f5a800';
   }
 }
 // The MMO player card over the game (name, Chao select icon, rings); it never takes focus.
 function showCard(player) {
+  // The player's Chao's name for the game's own chart (sa2-boot kinder_chart.rs): 7 bytes, 0 ends.
+  if (player) mmoBytes.set(new TextEncoder().encode(`${player.name || ''}\0\0\0\0\0\0\0`).subarray(0, 7), MMO.NAME);
   const card = document.getElementById('mmo-card');
   if (!player || !card) return; // the card element comes from the MMO overlay
   card.style.display = 'flex';
@@ -577,11 +642,12 @@ async function start() {
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';
+  if (/^\d+$/.test(q.get('wave') || '')) e.SA2_COMBAT_WAVE = q.get('wave');
   // A new player (no Chao on the card yet): their egg is laid in the lobby.
   if (q.get('hatch') === '1') e.SA2_HATCH_EGG = '1';
   const token = mmoToken();
   if (token) e.SA2_MMO_TOKEN = token;
-  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick' });
+  if (token) Object.assign(e, { SA2_POSE_OUT: '/mmo/pose-out', SA2_POSE_IN: '/mmo/pose-in', SA2_RECORD_OUT: '/mmo/record-out', SA2_RECORD_IN: '/mmo/rec', SA2_KARATE_IN: '/mmo/karate-in', SA2_KARATE_OUT: '/mmo/karate-out', SA2_TAGS_OUT: '/mmo/tags-out', SA2_NAME_IN: '/mmo/name-in', SA2_BREED_IN: '/mmo/breed-in', SA2_BREED_OUT: '/mmo/breed-out', SA2_TREE_OUT: '/mmo/tree-icon', SA2_CARD_CHAO: '/mmo/card-chao', SA2_TINY_PICK_OUT: '/mmo/tiny-pick' });
   env = Object.entries(e).map(([k, v]) => `${k}=${v}`);
   if (token) keepCard(token);
   if (token) cardChao(token);

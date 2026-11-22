@@ -877,6 +877,24 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     if std::env::var_os("SA2_HEAP_LOG").is_some() {
         sa2_recomp::os::add_frame_hook(|_, m| heap_log(m));
     }
+    // SA2_HANG_LOG=1 (debug): a thread that prints the latest guest calls when
+    // frames stop for 5 s while calls go on (a guest loop that never ends).
+    if std::env::var("SA2_HANG_LOG").is_ok_and(|v| v.trim() == "1") {
+        std::thread::spawn(|| {
+            use std::sync::atomic::Ordering::Relaxed;
+            let (mut f0, mut said) = (u64::MAX, 0u64);
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let f = sa2_recomp::host::FRAMES.load(Relaxed);
+                if f == f0 && said != f {
+                    said = f;
+                    let t: Vec<String> = sa2_recomp::rt::trace().iter().map(|a| format!("{a:#x}")).collect();
+                    eprintln!("hang: frame {f} for 5 s, calls {}, last calls {}", sa2_recomp::rt::CALLS.load(Relaxed), t.join(" "));
+                }
+                f0 = f;
+            }
+        });
+    }
     if !std::env::var("SA2_CHAO_PLAYER").is_ok_and(|v| v.trim() == "1") {
         return;
     }
@@ -888,6 +906,7 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     // one exec (0x8009F8A0) with their own displays (coordinator notes).
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
+    c.rt.set_override(DESTROY_TASK, destroy_task);
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
         c.rt.set_override(DRAW_MOTION, trace_draw_motion);
         c.rt.set_override(0x8011_DF44, |c, m| ev_draw(c, m, 0x8011_DF44));
@@ -1641,6 +1660,18 @@ fn display(c: &mut Cpu, m: &mut Mem, addr: u32) {
 /// player's Chao is created on the game's own module.
 const STAGE_NUM: u32 = 0x803A_D820;
 
+/// Free bytes in OS heap `h` (its free list, HeapArray 0x803ADC68).
+pub(crate) fn os_heap_free(m: &Mem, h: u32) -> u32 {
+    let mut free = 0u32;
+    let mut cell = m.r32(m.r32(0x803A_DC68) + 12 * h + 4);
+    for _ in 0..100_000 {
+        if !(0x8000_0000..0x8C00_0000).contains(&cell) { break; }
+        free += m.r32(cell + 8);
+        cell = m.r32(cell + 4);
+    }
+    free
+}
+
 /// SA2_HEAP_LOG=n (debug): every n frames, the OS heaps (HeapArray
 /// 0x803ADC68: size, free list, allocated list per 12-byte descriptor) as
 /// total and free bytes, and the arena (0x803ADC70/74).
@@ -1659,13 +1690,7 @@ fn heap_log(m: &Mem) {
         if size < 0 {
             continue;
         }
-        let mut free = 0u32;
-        let mut cell = m.r32(d + 4);
-        for _ in 0..100_000 {
-            if !(0x8000_0000..0x8C00_0000).contains(&cell) { break; }
-            free += m.r32(cell + 8);
-            cell = m.r32(cell + 4);
-        }
+        let free = os_heap_free(m, h);
         out.push(format!("heap {h}: {:.2} MB, free {:.2} MB", mb(size as u32), mb(free)));
     }
     eprintln!("chao-player heap: frame {f} stage {} arena {:#x}-{:#x} {}", m.r16(STAGE_NUM), m.r32(0x803A_DC70), m.r32(0x803A_DC74), out.join("; "));
@@ -1729,7 +1754,33 @@ fn player_move(c: &mut Cpu, m: &mut Mem, addr: u32, task: u32, chao: u32) {
     }
 }
 
+/// A new stage (not a Chao World area change): the game has released the
+/// last stage's memory, so the textures, models and motions this module
+/// loaded there are gone. Forget them so they load again; drawing the gear
+/// from the freed models hung the game after a level EXIT into Chao World
+/// (frames stopped right after the new Chao's first draw).
+/// Unverified: which allocations the stage change frees; this drops all of them.
+fn drop_stage_loads() {
+    GEAR_LOAD_AT.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) + GEAR_LOAD_DELAY);
+    SHADOW_TEX.set(None);
+    KNUX_TEX.set(None);
+    EXTRA_MODELS.with_borrow_mut(|e| e.clear());
+    GLOVE_FIT.set(None);
+    SHADOW_MOVES.set(false);
+    BOARD.set(None);
+}
+
+/// Frames after a stage change before the gear files load. Loading Shadow's
+/// and Knuckles's files right after a level EXIT, while Chao World was still
+/// loading behind its card, hung the game in a main.dol loop (0x8013B82C..
+/// 0x8013E8E0); with that load off the lobby came up (test build 5).
+/// shortcut: a fixed delay, not the game's own "stage loaded" state (not
+/// found yet); raise it if a slow load still collides.
+const GEAR_LOAD_DELAY: u64 = 180;
+
 thread_local! {
+    static GEAR_LOAD_AT: Cell<u64> = const { Cell::new(0) };
+    static LIVE_STAGE_NUM: Cell<u16> = const { Cell::new(u16::MAX) };
     static PMOVE_CHAO: Cell<u32> = const { Cell::new(0) };
     static AREA_DONE: Cell<bool> = const { Cell::new(false) };
     static LIVE_STAGE: Cell<u16> = const { Cell::new(u16::MAX) };
@@ -1779,6 +1830,9 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
     let stage = m.r16(STAGE_NUM) ^ (area << 8);
     if LIVE_STAGE.replace(stage) != stage {
         RIDER.set(0);
+        if LIVE_STAGE_NUM.replace(m.r16(STAGE_NUM)) != m.r16(STAGE_NUM) {
+            drop_stage_loads();
+        }
         if let Step::Live(_) = STEP.get() {
             STEP.set(Step::Wait(0));
         }
@@ -1861,11 +1915,15 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
         if addr == SONIC_EXEC && SHADOW_TEX.get().is_none() && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             eprintln!("chao-player: rider char {} (shadow tex not loaded yet)", m.r8(m.r32(P1_OBJ2) + 1));
         }
-        if addr == SONIC_EXEC && (m.r8(m.r32(P1_OBJ2) + 1) == 0 || chao_world(m)) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0") {
+        if addr == SONIC_EXEC && (m.r8(m.r32(P1_OBJ2) + 1) == 0 || chao_world(m)) && SHADOW_TEX.get().is_none() && std::env::var("SA2_BALL_SH").map_or(true, |v| v != "0")
+            && sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) >= GEAR_LOAD_AT.get() {
             let tex = call(c, m, LOAD_TEX, &[SHADOW_TEX_NAME]);
             let mdl = load_models(c, m, SHADOW_MDL_NAME);
             eprintln!("chao-player: Shadow's textures {tex:#x} ({} entries), models {mdl:#x}", if tex != 0 { m.r32(tex + 4) } else { 0 });
             SHADOW_TEX.set(Some(tex).filter(|&t| t != 0));
+            if tex == 0 {
+                GEAR_LOAD_AT.set(u64::MAX); // no retry every frame; the next stage tries again
+            }
             // Knuckles's textures and models for the Hammer Gloves item (KNUCKTEX /
             // KNUCKMDL.PRS, main.dol 0x80174F04 / 0x80174F10).
             let ktex = call(c, m, LOAD_TEX, &[0x8017_4F04]);
@@ -2093,6 +2151,15 @@ fn tick(c: &mut Cpu, m: &mut Mem, pos: [u32; 3]) {
         Step::Wait(_) if chao_world(m) => {
             if module_linked(m, 60) { create(c, m, pos) } else { Step::Wait(60) }
         }
+        // A level restarted with the copy at BASE still linked: no second
+        // read or link; its world task again if that was destroyed too.
+        // Unverified: that the copy's texture lists survive a restart.
+        Step::Wait(_) if !linked_copies(m, &[BASE]).is_empty() => {
+            if BASE_TASK_GONE.replace(false) {
+                call(c, m, rt::sec(m, 60, 1) + 0x29344, &[]); // ALW_Create
+            }
+            create(c, m, pos)
+        }
         Step::Wait(_) => {
             write_str(m, b"ChaoMain.prs");
             m.w32(SIZE, 0);
@@ -2207,6 +2274,40 @@ pub(crate) fn unlink_copies(c: &mut Cpu, m: &mut Mem) {
         call(c, m, sa2_recomp::os::OS_UNLINK, &[base]);
     }
     STEP.set(Step::Wait(0));
+}
+
+/// DestroyTask (main.dol 0x80071AF0, GSNE8P symbols). A level restart after
+/// the player's deaths destroys the tasks and runs the stage task again with
+/// the same stage number, so the stage check in exec never saw it: STEP kept
+/// naming the freed Chao task, its work was written every frame into memory
+/// the game had handed to new tasks, and the task loop later called heap data
+/// (Big Foot combat: "no function at 0x80d74ac0", lr 0x80070928).
+const DESTROY_TASK: u32 = 0x8007_1AF0;
+/// Task exec pointer (task +0x10).
+const TASK_EXEC: u32 = 0x10;
+
+thread_local! {
+    /// A task running the ChaoMain copy at BASE (the copy's ALW world task)
+    /// was destroyed: the copy's setup must create it again.
+    static BASE_TASK_GONE: Cell<bool> = const { Cell::new(false) };
+}
+
+fn destroy_task(c: &mut Cpu, m: &mut Mem) {
+    let t = c.r[3];
+    if let Step::Live(chao) = STEP.get() {
+        if t == chao {
+            eprintln!("chao-player: the game destroyed the player's Chao task {t:#x}; making it again");
+            STEP.set(Step::Wait(0));
+            RIDER.set(0);
+        }
+    }
+    REMOTE.with_borrow_mut(|r| r.values_mut().filter(|e| e.task == t).for_each(|e| e.task = 0));
+    let exec = m.r32(t + TASK_EXEC);
+    if !linked_copies(m, &[BASE]).is_empty() && (BASE..BSS).contains(&exec) {
+        BASE_TASK_GONE.set(true);
+    }
+    c.r[3] = t;
+    original(c, m, DESTROY_TASK);
 }
 
 /// Which of `bases` are OSModuleInfo addresses on the OS module list.
@@ -2383,7 +2484,7 @@ const REMOTE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 /// A player missing from the input this long is offline: their Chao leaves.
 const REMOTE_GONE: std::time::Duration = std::time::Duration::from_secs(1);
 /// ChaoMain KillChao (.text 0x31450).
-const KILL_CHAO: u32 = 0x31450;
+pub(crate) const KILL_CHAO: u32 = 0x31450;
 
 fn export_pose(m: &Mem) {
     let Ok(path) = std::env::var("SA2_POSE_OUT") else { return };
@@ -2634,7 +2735,7 @@ const REMOTE_HEAP_END: u32 = 0x8500_0000;
 /// The heap index the game's wrappers see while a remote Chao is created.
 const REMOTE_HEAP: u32 = 0x5243; // not a valid OS heap index
 /// One Chao task's heap use, measured (remote tasks 0x11CC0 apart), rounded up.
-const REMOTE_CHAO_BYTES: u32 = 0x1_4000;
+pub(crate) const REMOTE_CHAO_BYTES: u32 = 0x1_4000;
 const OS_ALLOC_FROM_HEAP: u32 = 0x800E_4554;
 const OS_FREE_TO_HEAP: u32 = 0x800E_4650;
 

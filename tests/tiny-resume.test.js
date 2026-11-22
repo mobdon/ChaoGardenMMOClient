@@ -24,7 +24,7 @@ function harness(statuses, played = true) {
     savedSlots: [], storage: {}, secureTransport: true, loopback: true,
     accountV2: false, knownAccountV2: false, capabilities: {},
     setTimeout: () => 1, clearTimeout() {}, resetMovement() {}, renderPlayer() {}, renderGame() {},
-    connectionLabel() {}, rememberPlayer() {}, renderSlots() {}, readTinyCache: () => null,
+    connectionLabel() {}, rememberPlayer() {}, useOwnChao() {}, renderSlots() {}, readTinyCache: () => null,
     notice: text => notices.push(text), scheduleReconnect() { retries++; },
     $(selector) { if (!nodes.has(selector)) nodes.set(selector, {}); return nodes.get(selector); },
     account: { disconnect() {}, async connect(input) { accountReads.push(input); return { snapshot: { self: { id: 'canonical-chao' } } }; } },

@@ -6,6 +6,12 @@ const atlases = new Map(variants.map(variant => {
   image.src = `/api/assets/tiny-${variant}-chaos.png`;
   return [variant, image];
 }));
+// The player's own Chao pictures, in the same sheet layout (8 x 8 cells of 96 px), stored by their PC.
+let own = null;
+export function setOwnAtlas(id, blob) {
+  if (own) URL.revokeObjectURL(own.image.src);
+  const image = new Image(); image.src = URL.createObjectURL(blob); own = { id, image };
+}
 const flame = new Image();
 flame.src = '/api/assets/chao-flame.png';
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -39,7 +45,7 @@ export function nativeDirection(x, y, previous = 0) {
 
 export function drawTinyAvatar(context, profile, x, y, size, options = {}) {
   const variant = chaosVariant(profile);
-  const image = atlases.get(variant);
+  const image = own && profile?.id === own.id && own.image.complete && own.image.naturalWidth === 768 ? own.image : atlases.get(variant);
   const time = reducedMotion.matches ? 0 : options.time || 0;
   if (!image?.complete || image.naturalWidth !== 768 || image.naturalHeight !== 768) {
     // A neutral UI marker is used until verified art is available; a normal

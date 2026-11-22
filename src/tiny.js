@@ -1,12 +1,13 @@
 import './tiny.css';
 import { createSaveSlots } from './save-slots.js';
 import { createStatRow, updateStatRow } from './stat-ui.js';
-import { chaosVariant, chaoFormLabel, drawTinyAvatar, nativeDirection } from './tiny-avatar.js';
+import { chaosVariant, chaoFormLabel, drawTinyAvatar, nativeDirection, setOwnAtlas } from './tiny-avatar.js';
 import { createTinyWatch } from './tiny-watch.js';
 import { createTinyTraining } from './tiny-training.js';
 import { createTinyItems } from './tiny-items.js';
 import { durableTinyResult, readTinyCache, writeTinyCache, observedTime } from './tiny-state.js';
 import { createTinyAccount, supportsTinyAccounts } from './tiny-account.js';
+import { tinyLogin } from './tiny-login.js';
 
 const $ = selector => document.querySelector(selector);
 const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
@@ -198,16 +199,6 @@ function seconds(value) { return Number.isFinite(value) ? `${Math.ceil(Math.max(
 
 function renderSlots() {
   try { savedSlots = saves.list(); } catch { savedSlots = []; }
-  const select = $('#tiny-slot');
-  select.replaceChildren();
-  savedSlots.forEach((slot, index) => {
-    const option = document.createElement('option');
-    option.value = String(index);
-    option.textContent = slot.name || 'Saved Chao';
-    option.selected = slot.token === token;
-    select.append(option);
-  });
-  $('#tiny-slot-label').hidden = savedSlots.length < 2;
   return savedSlots;
 }
 
@@ -227,7 +218,7 @@ function renderPlayer() {
   $('#tiny-form').textContent = chaoFormLabel(player);
   $('#tiny-rings').textContent = displayNumber(player.rings);
   $('#tiny-auth').hidden = connected;
-  $('#tiny-pairing').hidden = connected || !accountV2;
+  $('#tiny-login').hidden = connected;
   $('#tiny-stats-empty').hidden = !!player.stats;
   for (const name of statNames) {
     const stat = player.stats?.[name];
@@ -492,13 +483,19 @@ function openSocket(activeToken, generation) {
     notice('Connection lost. Controls stopped. An unfinished round may be canceled by the server.', true);
     if (event.code === 4001) { $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = event.reason || 'Another Chao from this memory card is out now.'; return; }
     if (event.code !== 1008) scheduleReconnect(activeToken);
-    else { $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = 'Load this saved Chao again at the garden title.'; }
+    else { $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = 'Log in again to bring your Chao back.'; $('#tiny-login').hidden = false; }
   };
 }
 
 function scheduleReconnect(activeToken) {
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => resume(activeToken), Math.min(15_000, 2_000 * 2 ** Math.min(retryCount++, 3)));
+}
+
+// The player's own Chao pictures, when their PC stored a picture sheet.
+async function useOwnChao(response, id) {
+  const sheet = await response.blob?.();
+  if (sheet?.type === 'image/png') setOwnAtlas(id, sheet);
 }
 
 function selectAccountProtocol(status) {
@@ -537,7 +534,6 @@ async function resume(activeToken) {
     if (generation !== connectionGeneration) return;
     selectAccountProtocol(status);
     capabilities = status?.tinyGarden || {};
-    $('#tiny-pairing').hidden = !accountV2;
     if (accountV2) {
       const result = await account.connect({ token: activeToken, status });
       if (generation !== connectionGeneration || !result) return;
@@ -552,12 +548,13 @@ async function resume(activeToken) {
       const model = await fetch('/api/tiny-chao', { signal: abort.signal, cache: 'no-store', redirect: 'error', headers: { Authorization: `Bearer ${token}` } });
       if (generation !== connectionGeneration) return;
       if (!model.ok) { const error = new Error(model.status === 404 ? 'Play once on your PC first. Then your Chao is here.' : 'Your Chao could not be loaded. Reconnect to try again.'); error.retry = model.status >= 500; throw error; }
+      void useOwnChao(model, player.id);
     }
     rememberPlayer(); renderSlots(); renderPlayer(); openSocket(token, generation);
   } catch (error) {
     if (generation !== connectionGeneration) return;
     connecting = false; connectionLabel('offline', 'Save unavailable');
-    $('#tiny-auth').hidden = false; $('#tiny-auth-message').textContent = error.message;
+    $('#tiny-auth').hidden = false; $('#tiny-login').hidden = false; $('#tiny-auth-message').textContent = error.message;
     notice(error.message, true); renderGame();
     if (error.retry !== false) scheduleReconnect(activeToken);
   } finally {
@@ -585,10 +582,6 @@ $('#tiny-take-control').addEventListener('click', async () => {
 $('.tiny-desktop-link').addEventListener('click', event => { event.preventDefault(); requestSave(true); });
 window.addEventListener('online', () => { if (token && !connected) void resume(token); });
 
-$('#tiny-slot').addEventListener('change', event => {
-  const slot = savedSlots[Number(event.target.value)];
-  if (slot) { if (tinyGame && connected) send({ type: 'action', action: 'tiny-stop', sessionId: tinyGame.id }); void resume(slot.token); }
-});
 $('#tiny-games').addEventListener('click', event => {
   const button = event.target.closest('[data-game]');
   if (!button) return;
@@ -806,35 +799,35 @@ draw();
 const initialSlots = renderSlots();
 if (initialSlots.length) void resume(initialSlots[0].token);
 else {
-  $('#tiny-auth-message').textContent = 'No saved Chao is connected in this browser. Load an existing save or pair this phone.'; connectionLabel('offline', 'No save connected');
+  $('#tiny-auth-message').textContent = 'Log in to see your Chao.'; connectionLabel('offline', 'Not logged in');
   void fetch('/api/status', { cache: 'no-store', redirect: 'error' }).then(response => response.ok ? response.json() : null).then(status => {
-    selectAccountProtocol(status); capabilities = status?.tinyGarden || {}; $('#tiny-pairing').hidden = !accountV2 || !secureTransport; renderGame();
+    selectAccountProtocol(status); capabilities = status?.tinyGarden || {}; renderGame();
   }).catch(() => {});
 }
 
-$('#tiny-pairing').addEventListener('submit', async event => {
-  event.preventDefault();
-  const form = event.currentTarget, submit = form.querySelector('button');
-  const values = new FormData(form);
-  const payload = { pairingId: String(values.get('pairingId') || '').trim(), pairingSecret: String(values.get('pairingSecret') || '').trim() };
-  if (!accountV2 || !secureTransport || !payload.pairingId || !payload.pairingSecret || submit.disabled) return;
-  form.reset(); submit.disabled = true; $('#tiny-session-notice').textContent = 'Waiting for pairing confirmation…';
-  const pairingGeneration = connectionGeneration;
-  const abortPairing = new AbortController();
-  const pairingDeadline = setTimeout(() => abortPairing.abort(), 10_000);
+// The same login as the PC title page: username or email with a password, or the memory card code.
+let rememberLogin = true;
+document.querySelectorAll('#tiny-login .auth-tabs button').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('#tiny-login .auth-tabs button').forEach(other => {
+    other.setAttribute('aria-selected', String(other === tab)); $(`#${other.dataset.auth}`).hidden = other !== tab;
+  });
+}));
+async function logIn(form, input) {
+  const submit = form.querySelector('button');
+  if (submit.disabled) return;
+  submit.disabled = true; $('#tiny-login-error').textContent = '';
   try {
-    const response = await fetch('/api/pairing/claim', { method: 'POST', signal: abortPairing.signal, cache: 'no-store', credentials: 'omit', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const result = await response.json();
-    if (pairingGeneration !== connectionGeneration) return;
-    if (!response.ok || !/^[a-f0-9]{64}$/i.test(result.token || '') || typeof result.identity?.chaoId !== 'string') throw new Error('The invitation is invalid, expired or already used. Create a new desktop-approved invitation.');
-    // Preserve the new device credential even if the first synchronization fails.
-    // This placeholder contains no cached stats, inventory or progression.
-    try { saves.record(result.token, { id: result.identity.chaoId, name: 'Paired Chao' }); } catch { /* The credential remains available for this visit. */ }
-    $('#tiny-session-notice').textContent = 'Device paired. Syncing the same saved Chao…';
-    await resume(result.token);
-  } catch (error) { if (pairingGeneration === connectionGeneration) $('#tiny-session-notice').textContent = error.name === 'AbortError' ? 'Pairing was not confirmed. Check the desktop invitation before creating a new one.' : error.message || 'Pairing could not be confirmed.'; }
-  finally { clearTimeout(pairingDeadline); submit.disabled = false; }
-});
+    const chao = await tinyLogin(fetch, input);
+    form.reset(); rememberLogin = $('#tiny-remember').checked;
+    try { saves.record(chao.token, chao.player); } catch { /* This visit still works without storage. */ }
+    renderSlots(); await resume(chao.token);
+  } catch (error) { $('#tiny-login-error').textContent = error.message || 'Could not log in.'; }
+  finally { submit.disabled = false; }
+}
+$('#tiny-login-form').addEventListener('submit', event => { event.preventDefault(); void logIn(event.currentTarget, { login: $('#tiny-login-name').value.trim(), password: $('#tiny-login-password').value }); });
+$('#tiny-card-form').addEventListener('submit', event => { event.preventDefault(); void logIn(event.currentTarget, { code: $('#tiny-card-code').value }); });
+// Without "Remember me" the login ends with the visit.
+window.addEventListener('pagehide', () => { if (!rememberLogin) { try { for (const slot of saves.list()) saves.remove(slot.token); } catch { /* storage blocked */ } } });
 
 let installPrompt;
 window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; $('#tiny-install').hidden = false; });

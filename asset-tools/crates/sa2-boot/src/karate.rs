@@ -33,8 +33,10 @@ const WINDUP_PUNCH: u8 = 8;
 static HOOKED: Global<u32> = global!(0);
 /// Press counter of the last button used, so one press is one attack.
 static USED: Global<u8> = global!(0);
-/// Last "strong moves unlocked" value told to the page (2 = nothing yet).
-static TOLD: Global<u8> = global!(2);
+/// Told to the page: strong moves unlocked (0/1), and the press counter of the
+/// last used button whose attack is over (the page takes no new move until
+/// its own counter matches).
+static TOLD: Global<(u8, u8)> = global!((0, 0));
 
 /// The attack the player's Chao does: the pressed button when the game allows
 /// it (the two strong moves need attack above 1600), else the game's own pick.
@@ -54,17 +56,18 @@ fn pick(c: &mut Cpu, m: &mut Mem) {
     let work = m.r32(c.r[3] + 0x40);
     let action = m.r32(work + 0xC);
     let before = m.r8(action);
+    let player = m.r16(work + 2) == 0;
+    let attack = f32::from_bits(m.r32(work + 0x2C));
+    // The player's fighter is approaching again: its last attack is over.
+    if player && !is_attack(before) {
+        tell(u8::from(attack > STRONG_ABOVE), USED.get());
+    }
     rel_original(c, m, HOOKED.get() + ATTACK_PICK, pick);
     let native = m.r8(action);
-    if m.r16(work + 2) != 0 || is_attack(before) || !is_attack(native) {
+    if !player || is_attack(before) || !is_attack(native) {
         return;
     }
-    let attack = f32::from_bits(m.r32(work + 0x2C));
-    tell(attack);
-    // The page's file: [press counter, button].
-    let Some(&[seq, button]) = std::env::var("SA2_KARATE_IN").ok().and_then(|p| std::fs::read(p).ok()).as_deref().and_then(|b| b.first_chunk::<2>()) else {
-        return;
-    };
+    let Some([seq, button]) = pressed() else { return };
     if seq == USED.get() {
         return;
     }
@@ -73,13 +76,17 @@ fn pick(c: &mut Cpu, m: &mut Mem) {
     m.w8(action, choose(native, button, attack));
 }
 
-/// SA2_KARATE_OUT: one byte, 1 when the strong moves are unlocked.
-fn tell(attack: f32) {
-    let strong = u8::from(attack > STRONG_ABOVE);
-    if TOLD.get() != strong {
-        TOLD.set(strong);
+/// The page's file SA2_KARATE_IN: [press counter, button].
+fn pressed() -> Option<[u8; 2]> {
+    std::fs::read(std::env::var("SA2_KARATE_IN").ok()?).ok()?.first_chunk().copied()
+}
+
+/// SA2_KARATE_OUT: [strong moves unlocked, press counter that is done].
+fn tell(strong: u8, done: u8) {
+    if TOLD.get() != (strong, done) {
+        TOLD.set((strong, done));
         if let Ok(p) = std::env::var("SA2_KARATE_OUT") {
-            let _ = std::fs::write(p, [strong]);
+            let _ = std::fs::write(p, [strong, done]);
         }
     }
 }
@@ -100,7 +107,9 @@ pub fn frame(c: &mut Cpu, m: &mut Mem) {
     }
     if text != 0 {
         c.rt.set_override(text + ATTACK_PICK, pick);
-        TOLD.set(2);
+        // A press left over from an earlier bout is not carried into this one.
+        USED.set(pressed().map_or(0, |p| p[0]));
+        tell(0, USED.get());
     }
     c.rt.modules_changed();
     HOOKED.set(text);

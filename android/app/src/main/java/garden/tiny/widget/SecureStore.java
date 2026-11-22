@@ -13,7 +13,7 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
-/** All device credentials, care capabilities, pending operations and snapshot bytes encrypted at rest. */
+/** The login key and snapshot bytes, encrypted at rest. */
 final class SecureStore {
     private final SharedPreferences prefs;
     SecureStore(Context context) { prefs=context.getSharedPreferences("device-v1",Context.MODE_PRIVATE); }

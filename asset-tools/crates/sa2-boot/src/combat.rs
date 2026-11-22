@@ -62,6 +62,10 @@ const HALF: usize = 88;
 
 struct State {
     placed: bool,
+    /// The player's last position, logged when the stage starts over.
+    at: [f32; 3],
+    /// Frames since the stage (re)started.
+    frames: u32,
     wave: usize,
     /// The SET table entry each record slot owns.
     slots: [Option<u32>; 2 * HALF],
@@ -74,6 +78,8 @@ struct State {
 
 static STATE: Global<State> = global!(State {
     placed: false,
+    at: [0.0; 3],
+    frames: 0,
     wave: 0,
     slots: [None; 2 * HALF],
     count: 0,
@@ -139,8 +145,11 @@ fn stage_task(c: &mut Cpu, m: &mut Mem) {
     }
     let exec = rt::sec(m, BIGFOOT, 1) + STAGE_EXEC;
     m.w32(c.r[3] + 0x10, exec);
-    eprintln!("combat: stage task {:#x}, no boss, stage update {exec:#x}", c.r[3]);
-    STATE.with_borrow_mut(|s| (s.placed, s.wave, s.slots, s.count) = (false, 0, [None; 2 * HALF], 0));
+    let (at, frames) = STATE.with_borrow(|s| (s.at, s.frames));
+    eprintln!("combat: stage task {:#x}, no boss, stage update {exec:#x}, after {frames} frames, player was at {at:?}", c.r[3]);
+    // The game runs this again on every restart after a death, with its SET
+    // table kept: the entries stay owned, the waves start over.
+    STATE.with_borrow_mut(|s| (s.placed, s.wave, s.frames) = (false, first_wave(), 0));
 }
 
 /// 0x67D4: the waves, then the arena boundary as the game calls it.
@@ -153,9 +162,16 @@ fn stage_exec(c: &mut Cpu, m: &mut Mem) {
         let (x, yz, radius) = (m.rf32(s4 + BOSS_X), m.rf32(s4 + BOSS_YZ), m.rf32(s4 + RADIUS));
         let r13 = c.r[13];
         STATE.with_borrow_mut(|s| {
+            let pos = m.r32(PLAYERTWP) + 0x14;
+            s.at = [0, 4, 8].map(|o| m.rf32(pos + o) as f32);
+            s.frames += 1;
+            // The player's path through the first seconds of each try (frame
+            // 1 is where the game itself put the player).
+            if s.frames <= 600 && (s.frames <= 3 || s.frames % 60 == 0) {
+                eprintln!("combat: frame {}: player at {:?}", s.frames, s.at);
+            }
             if !s.placed {
                 s.placed = true;
-                let pos = m.r32(PLAYERTWP) + 0x14;
                 m.wf32(pos, -x);
                 m.wf32(pos + 4, yz);
                 m.wf32(pos + 8, yz);
@@ -167,7 +183,7 @@ fn stage_exec(c: &mut Cpu, m: &mut Mem) {
                 }
                 s.pool = Some(pool);
             }
-            waves(s, m, r13, yz as f32, radius as f32);
+            waves(s, m, r13, -x as f32, yz as f32, radius as f32);
         });
     }
     let bound = rt::sec(m, BIGFOOT, 1) + ARENA_BOUND;
@@ -190,6 +206,13 @@ fn pool(set: &[u8]) -> Vec<(u16, [u8; 0x20])> {
         .collect()
 }
 
+/// SA2_COMBAT_WAVE=n starts at wave n (a headless run cannot clear a wave,
+/// so this is how a bigger wave gets looked at); the count before it.
+fn first_wave() -> usize {
+    let n = std::env::var("SA2_COMBAT_WAVE").ok().and_then(|v| v.trim().parse().ok());
+    n.unwrap_or(1usize).clamp(1, HALF) - 1
+}
+
 /// Wave n has 2n enemies, up to one half of the records.
 fn wave_size(wave: usize) -> usize {
     (2 * wave).min(HALF)
@@ -203,12 +226,12 @@ fn rand(s: &mut u32) -> f32 {
 }
 
 /// Start the next wave once every enemy of the last one is destroyed.
-fn waves(s: &mut State, m: &mut Mem, r13: u32, y: f32, radius: f32) {
+fn waves(s: &mut State, m: &mut Mem, r13: u32, start_x: f32, y: f32, radius: f32) {
     let count_at = r13.wrapping_sub(SET_COUNT);
     let mut count = u32::from(m.r16(count_at));
     if count < s.count {
         // The game emptied its SET table (a restart): the entries are gone.
-        (s.slots, s.wave) = ([None; 2 * HALF], 0);
+        (s.slots, s.wave) = ([None; 2 * HALF], first_wave());
     }
     s.count = count;
     let entry = |i: u32| SET_TABLE + i * 0x10;
@@ -230,8 +253,11 @@ fn waves(s: &mut State, m: &mut Mem, r13: u32, y: f32, radius: f32) {
         }
         let (x, z) = loop {
             let (x, z) = (rand(&mut s.rng) * 2.0 - 1.0, rand(&mut s.rng) * 2.0 - 1.0);
-            if x * x + z * z <= 1.0 {
-                break (x * radius, z * radius);
+            let (x, z) = (x * radius, z * radius);
+            // Inside the arena, and not within half its radius of where the
+            // player starts (an MMO choice: no enemy on top of the start).
+            if x * x + z * z <= radius * radius && (x - start_x).powi(2) + (z - y).powi(2) >= radius * radius / 4.0 {
+                break (x, z);
             }
         };
         rec[..2].copy_from_slice(&row.to_be_bytes());
@@ -257,7 +283,7 @@ fn waves(s: &mut State, m: &mut Mem, r13: u32, y: f32, radius: f32) {
         m.w32(e + 0xC, 0);
     }
     m.w16(count_at, count as u16);
-    eprintln!("combat: wave {} of {}, SET entries {} -> {count}, object rows {rows:#x}", s.wave, wave_size(s.wave), s.count);
+    eprintln!("combat: wave {}: {} enemies, SET entries {} -> {count}, object rows {rows:#x}", s.wave, wave_size(s.wave), s.count);
     s.count = count;
 }
 
@@ -297,8 +323,8 @@ mod tests {
             m.w32(ROWS + u32::from(row) * 0x10 + 0xC, at);
         }
         m.w16(R13 - SET_COUNT, 23);
-        let mut s = State { placed: true, wave: 0, slots: [None; 2 * HALF], count: 0, rng: 1, pool: Some(pool(&set())) };
-        waves(&mut s, &mut m, R13, 0.0, 120.0);
+        let mut s = State { placed: true, at: [0.0; 3], frames: 0, wave: 0, slots: [None; 2 * HALF], count: 0, rng: 1, pool: Some(pool(&set())) };
+        waves(&mut s, &mut m, R13, -90.0, 0.0, 120.0);
         assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (1, 25));
         for i in 23..25 {
             let e = SET_TABLE + i * 0x10;
@@ -307,26 +333,37 @@ mod tests {
             assert!([33, 35].contains(&m.r16(rec)));
             let (x, z) = (m.rf32(rec + 8), m.rf32(rec + 16));
             assert!(x * x + z * z <= 120.0 * 120.0 && m.rf32(rec + 12) == 0.0);
+            assert!((x + 90.0).powi(2) + z * z >= 60.0 * 60.0);
         }
         // Nothing new while one enemy is left.
         m.w16(SET_TABLE + 23 * 0x10 + 2, 0);
-        waves(&mut s, &mut m, R13, 0.0, 120.0);
+        waves(&mut s, &mut m, R13, -90.0, 0.0, 120.0);
         assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (1, 25));
         // All destroyed: wave 2 has four, in the other half of the records.
         m.w16(SET_TABLE + 24 * 0x10 + 2, 0);
-        waves(&mut s, &mut m, R13, 0.0, 120.0);
+        waves(&mut s, &mut m, R13, -90.0, 0.0, 120.0);
         assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (2, 29));
         assert_eq!(m.r32(SET_TABLE + 25 * 0x10 + 8), RECORDS);
         // Wave 3 takes wave 1's entries again instead of new ones.
         for i in 25..29 {
             m.w16(SET_TABLE + i * 0x10 + 2, 0);
         }
-        waves(&mut s, &mut m, R13, 0.0, 120.0);
+        waves(&mut s, &mut m, R13, -90.0, 0.0, 120.0);
         assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (3, 33));
         assert_eq!(m.r16(SET_TABLE + 23 * 0x10 + 2), VALID);
+        // A restart (the stage task runs again) keeps the entries: wave 1
+        // waits for what is left, then reuses them instead of adding more.
+        s.wave = 0;
+        waves(&mut s, &mut m, R13, -90.0, 0.0, 120.0);
+        assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (0, 33));
+        for i in [23, 24, 29, 30, 31, 32] {
+            m.w16(SET_TABLE + i * 0x10 + 2, 0);
+        }
+        waves(&mut s, &mut m, R13, -90.0, 0.0, 120.0);
+        assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (1, 33));
         // The game emptied its table: start over from wave 1.
         m.w16(R13 - SET_COUNT, 0);
-        waves(&mut s, &mut m, R13, 0.0, 120.0);
+        waves(&mut s, &mut m, R13, -90.0, 0.0, 120.0);
         assert_eq!((s.wave, m.r16(R13 - SET_COUNT)), (1, 2));
         assert_eq!(wave_size(1000), HALF);
     }

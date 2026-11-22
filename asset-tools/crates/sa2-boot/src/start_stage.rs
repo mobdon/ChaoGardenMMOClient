@@ -100,12 +100,14 @@ const PARAM_SIZE: u32 = 0x800;
 /// game's own cocoon (`ALBHV_Mayu` 0x3AE44) for a child (type 2) Chao.
 /// ChaoMain never creates TYPE_OMOCHAO itself, so Omochao can't be used here.
 const GUIDE: usize = 1;
+/// CHAO_PARAM_GC `type` (+0x80) of a child Chao (al_chao_info.h TYPE_CHILD).
+const CHILD: u8 = 2;
 /// ChaoMain 0x1531C loads the full-growth value with `lis r3` of section 5
 /// + 0x2A50 and `lfs f1, 0x48(r3)` (recompiled p2.rs).
 const FULL_GROWTH: (u32, u32) = (0x2A50, 0x48);
 const GROWTH: u32 = 0xC0;
-/// How close (world units, squared) the player must come to the guide.
-const REACH_SQ: f32 = 2.0 * 2.0;
+/// How close (world units, squared) the player must come to the guide (an MMO choice).
+const REACH_SQ: f32 = 5.0 * 5.0;
 /// What the guide says, one line at a time, while the player stays near it.
 /// The first and last are the game's own lobby hint lines (Steam
 /// gd_PC/Message/mhChaoLobbye.prs, s2392 and s2393); the middle two are MMO text.
@@ -154,6 +156,11 @@ static TO_LOBBY: Global<bool> = global!(false);
 static RESIDENTS_OUT: Global<bool> = global!(false);
 /// The residents' taskwks, so their Chao sounds stay silent.
 static RESIDENT_TWP: Global<[u32; 3]> = global!([0; 3]);
+/// The residents' tasks, and how many frames each has been walking out (0: staying).
+static RESIDENT_TASK: Global<[u32; 3]> = global!([0; 3]);
+static LEAVING: Global<[u32; 3]> = global!([0; 3]);
+/// Where the player arrived in this area: residents come in and go out there.
+static ENTRY: Global<[f32; 3]> = global!([0.0; 3]);
 /// The new player's Chao save slot while the tutorial runs (0 = no tutorial).
 static TUTORIAL_SLOT: Global<u32> = global!(0);
 /// Cocoon timers (section 5 + 0x2A50, read by `ALBHV_Mayu` 0x3AE44) and its
@@ -164,6 +171,9 @@ const COCOON_FRAMES: [(u32, u32); 3] = [(0x88, 300), (0x8C, 300), (0x90, 300)];
 /// shortcut: shared table, so a garden Chao evolving in this window is also fast; a per-Chao hook would fix that.
 const COCOON_HOLD: u32 = 1300;
 static COCOON_RESTORE: Global<(u32, [u32; 3], u32)> = global!((0, [0; 3], 0));
+/// The new Chao's (save slot, type, growth bits) last logged, and frames the tutorial has run.
+static SLOT_SEEN: Global<(u32, u8, u32)> = global!((0, 0, 0));
+static LOG_FRAMES: Global<u32> = global!(0);
 /// Next guide line to show and frames until it shows.
 static LINE: Global<(usize, u32)> = global!((0, 0));
 
@@ -298,7 +308,7 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
                 m.w32(bss + PRE_STAGE, 1);
             }
         }
-        if HATCH.get() && !TP_ARRIVE.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
+        if HATCH.get() && now == LOBBY && m.r32(PLAYERTWP) != 0 {
             HATCH.set(false);
             lay_egg_with(c, m, text, None);
         }
@@ -311,13 +321,20 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
         if now != shown {
             RESIDENTS_OUT.set(false);
             RESIDENT_TWP.set([0; 3]);
+            RESIDENT_TASK.set([0; 3]);
+            LEAVING.set([0; 3]);
             STANDING_TASK.set(0);
         }
         if !RESIDENTS_OUT.get() && m.r32(PLAYERTWP) != 0 {
             RESIDENTS_OUT.set(true);
-            residents(c, m, text, now);
+            let at = m.r32(PLAYERTWP) + 0x14;
+            ENTRY.set([0, 4, 8].map(|o| f32::from_bits(m.r32(at + o))));
+            residents(c, m, text, now, &[0, 1, 2]);
+        } else if RESIDENTS_OUT.get() {
+            roam_live(c, m, text, now);
         }
         restore_cocoon(m);
+        watch_slot(m);
         if now == LOBBY && TUTORIAL_SLOT.get() != 0 {
             tutorial(c, m, text);
         }
@@ -393,8 +410,10 @@ fn lay_egg_with(c: &mut Cpu, m: &mut Mem, text: u32, from_server: Option<&Vec<u8
     }
     guest_call(c, m, text + CREATE_EGG, &[gene, slot, 0, pos, 3]);
     c.r[1] = sp;
-    // The tutorial is off until it is checked (SA2_TUTORIAL=1 turns it on).
+    eprintln!("tutorial: egg laid, save slot {slot:#x}");
+    // The tutorial runs only with SA2_TUTORIAL=1: a start with the egg crashed the lobby on arrival.
     if std::env::var("SA2_TUTORIAL").is_ok_and(|v| v.trim() == "1") {
+        SLOT_SEEN.set((slot, 0, 0));
         TUTORIAL_SLOT.set(slot);
     }
 }
@@ -435,6 +454,15 @@ fn roam_hop(n: u64, t: u64) -> usize {
 }
 
 #[test]
+fn walking_out_steps_toward_the_way_out_and_stops_there() {
+    let (x, z, yaw) = walk_step([0.0, 5.0, 0.0], [0.0, 0.0, 10.0]).unwrap();
+    assert_eq!((x, z, yaw), (0.0, WALK_OUT_SPEED, 0));
+    let (x, _, yaw) = walk_step([0.0, 0.0, 0.0], [10.0, 0.0, 0.0]).unwrap();
+    assert_eq!((x, yaw), (WALK_OUT_SPEED, 0x4000));
+    assert_eq!(walk_step([0.0, 0.0, 9.5], [0.0, 3.0, 10.0]), None);
+}
+
+#[test]
 fn roam_waits_two_to_five_minutes() {
     let mut last = roam_hop(1, 0);
     let mut since = 0;
@@ -448,9 +476,71 @@ fn roam_waits_two_to_five_minutes() {
     }
 }
 
-// shortcut: a resident only appears or leaves when the player enters an area,
-// not at the 5-minute mark itself; despawn live once KillChao's address is known.
-fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
+/// A walking-out resident's step (an MMO choice, under the 1.0 a frame where
+/// chao_player's gait turns to a run), the reach that counts as the way out,
+/// and the frames after which it leaves wherever it is.
+const WALK_OUT_SPEED: f32 = 0.5;
+const WALK_OUT_REACH: f32 = 1.0;
+const WALK_OUT_FRAMES: u32 = 20 * 60;
+/// AL_motion_table 578 alm_aruki_ncz (walk), as chao_player's gait uses it.
+const WALK_MOTION: u32 = 578;
+
+/// One step from `pos` toward `to` on the ground plane: the new x and z and
+/// the yaw facing the way (None: arrived).
+fn walk_step(pos: [f32; 3], to: [f32; 3]) -> Option<(f32, f32, u32)> {
+    let (dx, dz) = (to[0] - pos[0], to[2] - pos[2]);
+    let d = dx.hypot(dz);
+    if d <= WALK_OUT_REACH {
+        return None;
+    }
+    let yaw = (dx.atan2(dz) * 65536.0 / std::f32::consts::TAU) as i32 as u32 & 0xFFFF;
+    Some((pos[0] + dx / d * WALK_OUT_SPEED, pos[2] + dz / d * WALK_OUT_SPEED, yaw))
+}
+
+/// While the player stays in an area: a roaming resident whose time here is up
+/// walks to where the player came in and leaves there, and one whose time
+/// here starts comes in there. Unverified live. There is no fade yet: the
+/// Chao's draw has no known alpha control.
+fn roam_live(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
+    let (mut twp, mut task, mut leaving) = (RESIDENT_TWP.get(), RESIDENT_TASK.get(), LEAVING.get());
+    let entry = ENTRY.get();
+    for n in (0..RESIDENTS.len()).filter(|&n| n != STANDING) {
+        let here = roam_area(n) == now;
+        if task[n] == 0 {
+            if here {
+                residents(c, m, text, now, &[n]);
+                (twp[n], task[n]) = (RESIDENT_TWP.get()[n], RESIDENT_TASK.get()[n]);
+            }
+            continue;
+        }
+        if leaving[n] == 0 {
+            if here {
+                continue;
+            }
+            guest_call(c, m, text + AL_SET_MOTION_LINK, &[task[n], WALK_MOTION]);
+        }
+        leaving[n] += 1;
+        let at = twp[n] + 0x14;
+        let pos = [0, 4, 8].map(|o| f32::from_bits(m.r32(at + o)));
+        match walk_step(pos, entry).filter(|_| leaving[n] < WALK_OUT_FRAMES) {
+            Some((x, z, yaw)) => {
+                m.w32(at, x.to_bits());
+                m.w32(at + 8, z.to_bits());
+                m.w32(twp[n] + 0x0C, yaw);
+            }
+            None => {
+                guest_call(c, m, text + crate::chao_player::KILL_CHAO, &[task[n]]);
+                (twp[n], task[n], leaving[n]) = (0, 0, 0);
+            }
+        }
+    }
+    RESIDENT_TWP.set(twp);
+    RESIDENT_TASK.set(task);
+    LEAVING.set(leaving);
+}
+
+/// Make the residents `which` that are in area `now`, by the entry point.
+fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32, which: &[usize]) {
     let sp = c.r[1];
     c.r[1] = sp - 0x100 - PARAM_SIZE;
     let (param, pos) = (c.r[1] + 0x10, c.r[1] + 0x10 + PARAM_SIZE);
@@ -458,11 +548,11 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
     // on a fresh gene, which resets param type to child, then fn_60_209C8 copies
     // the element's type (+0) over it; that is the type the shape init sees.
     let elem = pos + 0x10;
-    let player = m.r32(PLAYERTWP) + 0x14;
-    let mut twp = [0; 3];
+    let entry = ENTRY.get();
+    let (mut twp, mut tasks) = (RESIDENT_TWP.get(), RESIDENT_TASK.get());
     let mut standing_task = 0;
     for (n, (ty, dx, dz)) in RESIDENTS.into_iter().enumerate() {
-        if roam_area(n) != now {
+        if !which.contains(&n) || roam_area(n) != now {
             continue;
         }
         for i in (0..PARAM_SIZE).step_by(4) {
@@ -473,21 +563,24 @@ fn residents(c: &mut Cpu, m: &mut Mem, text: u32, now: u32) {
             m.w32(elem + i, 0);
         }
         m.w8(elem, ty);
-        m.w32(pos, (f32::from_bits(m.r32(player)) + dx).to_bits());
-        m.w32(pos + 4, m.r32(player + 4));
-        m.w32(pos + 8, (f32::from_bits(m.r32(player + 8)) + dz).to_bits());
+        m.w32(pos, (entry[0] + dx).to_bits());
+        m.w32(pos + 4, entry[1].to_bits());
+        m.w32(pos + 8, (entry[2] + dz).to_bits());
         let task = guest_call(c, m, text + CREATE_CHAO_EXTRA, &[param, 1, elem, pos, 0]);
         if task != 0 {
             twp[n] = m.r32(task + 0x34);
+            tasks[n] = task;
             if n == STANDING {
                 standing_task = task;
             }
         }
     }
+    eprintln!("tutorial: residents' taskwks {twp:x?} (guide is [{GUIDE}])");
     RESIDENT_TWP.set(twp);
+    RESIDENT_TASK.set(tasks);
     c.r[1] = sp;
     // Tails stands as the guide only by the lobby's arrival teleporter.
-    if twp[STANDING] != 0 && now == LOBBY {
+    if standing_task != 0 && now == LOBBY {
         // chao_player's AI hook skips the standing resident; install it if
         // the player-Chao has not.
         let a = text + AL_BEHAVIOR_CONTROL;
@@ -510,10 +603,12 @@ pub(crate) fn resident_type(m: &Mem, task: u32) -> Option<u8> {
 /// The standing resident's task (0 = none).
 static STANDING_TASK: Global<u32> = global!(0);
 
-/// True for the standing resident's task or its taskwk (AL_BehaviorControl's r3).
+/// True for the task or taskwk (AL_BehaviorControl's r3) of a resident that
+/// runs no AI: the standing one, and one walking out.
 pub(crate) fn standing_resident(m: &Mem, r3: u32) -> bool {
-    let task = STANDING_TASK.get();
-    task != 0 && (r3 == task || r3 == m.r32(task + 0x34))
+    let (tasks, leaving) = (RESIDENT_TASK.get(), LEAVING.get());
+    let out = (0..3).filter(|&n| leaving[n] != 0).map(|n| tasks[n]);
+    std::iter::once(STANDING_TASK.get()).chain(out).any(|task| task != 0 && (r3 == task || r3 == m.r32(task + 0x34)))
 }
 
 /// ChaoMain's section `n` address, from the same module entry as `text`.
@@ -529,6 +624,20 @@ fn section(m: &Mem, text: u32, n: u32) -> u32 {
     0
 }
 
+/// Logs the new Chao's type (param +0x80) and growth when either changes:
+/// egg, hatch, cocoon, adult.
+fn watch_slot(m: &Mem) {
+    let (slot, ty, growth) = SLOT_SEEN.get();
+    if slot == 0 {
+        return;
+    }
+    let now = (slot, m.r8(slot + 0x80), m.r32(slot + GROWTH));
+    if now != (slot, ty, growth) {
+        SLOT_SEEN.set(now);
+        eprintln!("tutorial: slot type {} growth {}", now.1, f32::from_bits(now.2));
+    }
+}
+
 /// Puts the cocoon's native phase timers back once the tutorial's evolution is over.
 fn restore_cocoon(m: &mut Mem) {
     let (table, saved, left) = COCOON_RESTORE.get();
@@ -542,6 +651,7 @@ fn restore_cocoon(m: &mut Mem) {
     for (i, (o, _)) in COCOON_FRAMES.into_iter().enumerate() {
         m.w32(table + o, saved[i]);
     }
+    eprintln!("tutorial: cocoon timers back to {saved:?}");
     COCOON_RESTORE.set((0, [0; 3], 0));
 }
 
@@ -549,12 +659,28 @@ fn restore_cocoon(m: &mut Mem) {
 /// Chao's growth goes to full, and ChaoMain's own check evolves it.
 fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
     let guide = RESIDENT_TWP.get()[GUIDE];
-    if guide == 0 {
+    // Nothing starts until the egg has hatched: the slot's type is 1 for the
+    // egg (seen in a run's log) and 2 for the child the cocoon check wants.
+    if guide == 0 || m.r8(TUTORIAL_SLOT.get() + 0x80) != CHILD {
         return;
     }
-    let (p, o) = (m.r32(PLAYERTWP) + 0x14, guide + 0x14);
-    let d = |i| f32::from_bits(m.r32(p + i)) - f32::from_bits(m.r32(o + i));
-    if d(0) * d(0) + d(8) * d(8) > REACH_SQ {
+    // The player is the hidden character or, as its own Chao, that Chao: the nearer one counts.
+    let o = guide + 0x14;
+    let dist_sq = |twp: u32| {
+        let d = |i| f32::from_bits(m.r32(twp + 0x14 + i)) - f32::from_bits(m.r32(o + i));
+        d(0) * d(0) + d(8) * d(8)
+    };
+    let own = crate::chao_player::own_chao_twp(m);
+    let mut near = dist_sq(m.r32(PLAYERTWP));
+    if own != 0 {
+        near = near.min(dist_sq(own));
+    }
+    let frames = LOG_FRAMES.get();
+    LOG_FRAMES.set(frames + 1);
+    if frames % 120 == 0 {
+        eprintln!("tutorial: {:.1} from the guide (reach {:.1})", near.sqrt(), REACH_SQ.sqrt());
+    }
+    if near > REACH_SQ {
         return;
     }
     let (line, wait) = LINE.get();
@@ -563,12 +689,23 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
         return;
     }
     if let Some(words) = GUIDE_LINES.get(line) {
+        // shortcut: the window call crashed a run (bad address inside ChaoMain) and is untraced,
+        // so the lines only show with SA2_TUTORIAL_TEXT=1; make it the default once the call is proven.
+        if !std::env::var("SA2_TUTORIAL_TEXT").is_ok_and(|v| v.trim() == "1") {
+            eprintln!("tutorial: line {line} skipped (SA2_TUTORIAL_TEXT is off)");
+            LINE.set((line + 1, LINE_FRAMES));
+            return;
+        }
         let buf = guest_call(c, m, ALLOC, &[1, words.len() as u32 + 1]);
+        eprintln!("tutorial: line {line} buffer {buf:#x}, calling the window");
         if buf != 0 {
             for (i, b) in words.bytes().chain([0]).enumerate() {
                 m.w8(buf + i as u32, b);
             }
-            guest_call(c, m, text + AL_MESSAGE, &[buf]);
+            let r = guest_call(c, m, text + AL_MESSAGE, &[buf]);
+            eprintln!("tutorial: line {line} shown, window call returned {r:#x}");
+        } else {
+            eprintln!("tutorial: line {line} not shown, no memory for it");
         }
         LINE.set((line + 1, LINE_FRAMES));
         return;
@@ -585,6 +722,11 @@ fn tutorial(c: &mut Cpu, m: &mut Mem, text: u32) {
         saved[i] = m.r32(table + o);
         m.w32(table + o, f);
     }
+    eprintln!(
+        "tutorial: growth set to {} (bits {:#x}); cocoon timers {saved:?} now 300 each",
+        f32::from_bits(m.r32(table + off)),
+        m.r32(table + off)
+    );
     COCOON_RESTORE.set((table, saved, COCOON_HOLD));
     TUTORIAL_SLOT.set(0);
     LINE.set((0, 0));
