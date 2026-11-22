@@ -95,9 +95,18 @@ impl GxMemory for Tracked<'_> {
             return Some(bytes);
         }
         self.last.set(first);
+        // Whole words at a time: sa2-gx views each vertex array as a 4 MiB
+        // window (api.rs array_views), so ranges of ~1024 pages are common.
         let mut used = self.used.borrow_mut();
-        for page in first..=end {
-            used[page >> 5] |= 1 << (page & 31);
+        let (fw, ew) = (first >> 5, end >> 5);
+        let head = u32::MAX << (first & 31);
+        let tail = u32::MAX >> (31 - (end & 31));
+        if fw == ew {
+            used[fw] |= head & tail;
+        } else {
+            used[fw] |= head;
+            used[fw + 1..ew].fill(u32::MAX);
+            used[ew] |= tail;
         }
         Some(bytes)
     }
