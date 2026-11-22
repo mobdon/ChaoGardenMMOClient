@@ -72,11 +72,13 @@ fn trs(m: &Matrix4) -> Result<([f32; 3], [f32; 4], [f32; 3])> {
 }
 
 /// `model` with `clips` (name, motion) as one GLB. `pngs` holds one PNG per texture
-/// index the model's materials name; an index without a PNG is an error.
+/// index the model's materials name; an index without a PNG is an error. Nodes listed in
+/// `undrawn` (tree order numbers) keep their place in the tree but get no mesh.
 pub fn export(
     model: &Model,
     pngs: &BTreeMap<u16, Vec<u8>>,
     clips: &[(&str, &ChaoMotion)],
+    undrawn: &[usize],
 ) -> Result<Vec<u8>> {
     let rest = evaluate_model_pose(model, None, 0.)?;
     let index_of: BTreeMap<u32, usize> = model
@@ -110,7 +112,7 @@ pub fn export(
         }
         if let Some(attachment) = attachments
             .get(&pose.attach_offset)
-            .filter(|_| pose.flags & HIDE == 0)
+            .filter(|_| pose.flags & HIDE == 0 && !undrawn.contains(&i))
         {
             let mut vertices = BTreeMap::new();
             for chunk in &attachment.vertex_chunks {
@@ -266,6 +268,11 @@ pub fn export(
     }
     pack(&doc, buffers)
 }
+
+/// Face nodes the game does not draw on a Chao with its eyes open and mouth number 0:
+/// eyelids 19 and 22 are skipped while CloseAng == -0x4000 (al_draw_B, ChaoMain 0x8CD4..0x8EA8),
+/// and mouth 0 puts the fully transparent al_mouth01 on both mouth slots of node 27 (fn_60_17964).
+pub const OPEN_EYES_NO_MOUTH: [usize; 3] = [19, 22, 27];
 
 /// Largest decompressed texture archive accepted.
 const MAX_ARCHIVE: usize = 16 << 20;

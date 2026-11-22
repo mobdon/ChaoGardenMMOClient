@@ -76,7 +76,13 @@ fn chao_glb(
     let model = chao_dll::read_chao_model(dll, model)?;
     let clip = chao_dll::read_chao_motion(dll, motion)?;
     let pngs = chao_glb::body_textures(&model, body, gvp)?;
-    chao_glb::export(&model, &pngs, &[("motion", &clip)])
+    // shortcut: every portrait Chao gets open eyes and mouth 0; pass the face numbers in when a scene needs others.
+    chao_glb::export(
+        &model,
+        &pngs,
+        &[("motion", &clip)],
+        &chao_glb::OPEN_EYES_NO_MOUTH,
+    )
 }
 
 /// Converts one Chao; the GLB (or nothing on error) is kept for `out_ptr`/`out_len`.

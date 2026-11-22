@@ -295,7 +295,13 @@ fn chao_child_glb_from_the_game_files() {
         &std::fs::read(gd.join("al_nc00.GVP")).unwrap(),
     )
     .unwrap();
-    let glb = chao_glb::export(&model, &pngs, &[("alm_tati", &stand)]).unwrap();
+    let glb = chao_glb::export(
+        &model,
+        &pngs,
+        &[("alm_tati", &stand)],
+        &chao_glb::OPEN_EYES_NO_MOUTH,
+    )
+    .unwrap();
     let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
     let doc: Value = serde_json::from_slice(&glb[20..20 + json_len]).unwrap();
     assert_eq!(doc["nodes"].as_array().unwrap().len(), 40);
@@ -304,6 +310,10 @@ fn chao_child_glb_from_the_game_files() {
         Some("000_object_")
     );
     assert_eq!(doc["animations"][0]["name"], "alm_tati");
+    for node in chao_glb::OPEN_EYES_NO_MOUTH {
+        assert!(doc["nodes"][node]["mesh"].is_null());
+    }
+    assert!(doc["nodes"][18]["mesh"].is_number() && doc["nodes"][21]["mesh"].is_number());
     let speed =
         &doc["asset"]["extras"]["chaoBehaviour"]["clips"][0]["tableProperties"]["PlaySpeed"];
     assert_eq!(speed.as_f64().unwrap() as f32, 0.12);
