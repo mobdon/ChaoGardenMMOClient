@@ -11,7 +11,7 @@ type M3 = [[f32; 3]; 3];
 /// overlay's foot turn swung the boots off the drawn feet; add them back once
 /// the heel frames are checked against the hub.
 pub const MAP: [(usize, usize, f32, f32); 6] = [
-    (1, 4, 1.0, 24.0),   // body
+    (1, 4, 1.0, 180.0),  // body: Shadow's own lean 1:1 (owner rule), no cap
     (14, 44, 1.0, 180.0), // head: fully Shadow's while skating (no native bounce)
     (3, 37, 1.0, 75.0),  // left upper arm
     (4, 40, 1.0, 75.0),  // left hand
