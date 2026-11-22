@@ -269,7 +269,7 @@ let poseSeen = 0, recSeen = 0, pickSeen = 0, poseSent = null, poseSeq = 0, poseF
 // tiny_transporter.rs): their ids to /mmo/card-chao in the card's order, their
 // records to the record slots. A Chao that never played has no record and is
 // left out. The card code is the login page's (src/save-slots.js).
-const cardIds = new Map(); // numId -> the server's Chao id
+const cardIds = new Map(); // numId -> the server's Chao (player)
 async function cardChao(token) {
   try {
     const card = JSON.parse(localStorage.getItem('chao-garden-slots-v1') || '[]').find((r) => r.token === token)?.card;
@@ -280,7 +280,7 @@ async function cardChao(token) {
       const rec = await fetch(`/api/chao-record/${encodeURIComponent(player.id)}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!rec.ok) continue;
       recordIn(numId(player.id), new Uint8Array(await rec.arrayBuffer()));
-      cardIds.set(numId(player.id), player.id);
+      cardIds.set(numId(player.id), player);
       lines.push(numId(player.id));
     }
     const text = new TextEncoder().encode(lines.join('\n') + '\n').subarray(0, MMO.CARD_MAX);
@@ -309,10 +309,13 @@ function mmoTick(token) {
   const pick = mmoHead(MMO.PICK), pseq = Atomics.load(pick, 0);
   if (pseq !== pickSeen) {
     pickSeen = pseq;
-    // The Chao picked in the Chao Transporter. Its picture sheet for the phone
-    // (PUT /api/tiny-chao?chao=<id>) is not made yet, so nothing is sent.
-    globalThis.sa2TinyPick = cardIds.get(new TextDecoder().decode(mmoBytes.slice(MMO.PICK + 8, MMO.PICK + 8 + pick[1])));
-    console.log('tiny-transporter: picked', globalThis.sa2TinyPick);
+    // The Chao picked in the Chao Transporter becomes the phone's: its picture
+    // sheet (src/tiny-sheet.js) goes to the server, which keeps one per card.
+    const picked = cardIds.get(new TextDecoder().decode(mmoBytes.slice(MMO.PICK + 8, MMO.PICK + 8 + pick[1])));
+    if (picked) import('/src/tiny-sheet.js').then((m) => m.renderTinySheet(picked)).then((sheet) => {
+      console.log('tiny-transporter: picked', picked.id, sheet ? `sheet ${sheet.size} bytes` : 'no sheet');
+      return sheet && fetch(`/api/tiny-chao?chao=${encodeURIComponent(picked.id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' }, body: sheet });
+    }).then((r) => r && console.log('tiny-transporter: sheet stored', r.status)).catch((e) => console.log('tiny-transporter: sheet failed', String(e)));
   }
   const rec = mmoHead(MMO.REC_OUT), rseq = Atomics.load(rec, 0);
   if (rseq !== recSeen) {
