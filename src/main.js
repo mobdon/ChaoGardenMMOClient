@@ -5,7 +5,9 @@ import { allowSavedFiles, canPickFolders, pickGameFiles, savedHandles } from './
 import { applyGameTextureStyles } from './game-assets.js';
 import { createGarden } from './scene.js';
 import { createGameAudio } from './audio.js';
-import { createStageSelect } from './stages.js';
+import { createStageSelect, SA2_PAGE } from './stages.js';
+// ChaoMain area numbers: 1 Neutral, 2 Hero, 3 Dark, 5 race Entrance.
+const chaoWorldAreas = { garden: 1, hero: 2, dark: 3, race: 5 };
 import { createStatRow, updateStatRow } from './stat-ui.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';
 import { createGardenCare } from './garden-care.js';
@@ -191,7 +193,12 @@ function showTitle() {
   const shownCards = new Set();
   for (const slot of slots) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'save-slot';
-    const icon = document.createElement('span'); icon.className = 'save-slot-icon'; icon.textContent = slot.admin ? '✦' : '◉';
+    const icon = document.createElement('span'); icon.className = 'save-slot-icon';
+    // Big: the slot's own Chao as the game's Chao Select draws it.
+    const portrait = Object.assign(document.createElement('canvas'), { width: 240, height: 300 });
+    portrait.style.cssText = 'width:120px;height:150px;display:block';
+    icon.append(portrait);
+    void import('./chao-portrait.js').then(m => m.mountChaoPortrait(portrait, slot)).catch(() => {});
     const meta = document.createElement('span'); meta.className = 'save-slot-meta';
     const name = document.createElement('strong'); name.textContent = slot.name || 'Saved Chao';
     const info = document.createElement('small');
@@ -202,7 +209,18 @@ function showTitle() {
     const card = document.createElement('small'); card.className = 'save-slot-card'; meta.append(card);
     void showCard(card, slot.token);
     const arrow = document.createElement('span'); arrow.className = 'save-slot-arrow'; arrow.textContent = '↗';
-    button.append(icon, meta, arrow);
+    const remove = document.createElement('span'); remove.className = 'save-slot-delete'; remove.role = 'button'; remove.tabIndex = 0;
+    remove.textContent = '✕'; remove.title = 'Delete this Chao';
+    remove.addEventListener('click', event => {
+      event.stopPropagation();
+      if (!confirm(`Delete ${slot.name || 'this Chao'} forever? It is removed from the server and its memory card code can't bring it back.`)) return;
+      void fetch('/api/chao', { method: 'DELETE', headers: { Authorization: `Bearer ${slot.token}` } }).then(async response => {
+        // 401: the server no longer knows this token, so only the local slot is left to clear.
+        if (!response.ok && response.status !== 401) { alert((await response.json().catch(() => ({}))).error || 'Could not delete this Chao.'); return; }
+        saveSlots.remove(slot.token); showTitle();
+      }, () => alert('Could not reach the server.'));
+    });
+    button.append(icon, meta, remove, arrow);
     button.addEventListener('click', () => void join(slot.name || 'Chao', slot.token, slot.card));
     for (const pick of ['pointerenter', 'focus']) button.addEventListener(pick, () => showPortrait(slot));
     const cardCode = slot.card || slot.token; // Chao from before cards: the token is the card
@@ -316,6 +334,8 @@ function render(next) {
     attackButton.title = mounted ? 'Fire the Dark Chao Walker cannon (F)' : 'Attack a nearby robot (F)';
   }
   $('#school-open').hidden=player.zone!=='hub';
+  // A hub portal into a garden or the race opens the game's own Chao World area (sa2_boot::start_stage).
+  if (lastZone === 'hub' && chaoWorldAreas[player.zone]) location.assign(`${SA2_PAGE}?stage=90&area=${chaoWorldAreas[player.zone]}`);
   if ($('#school-dialog').open) renderSchool();
   garden?.setSnapshot(next);
   garden?.setCare?.(next.care, player);
@@ -331,9 +351,7 @@ function render(next) {
   $('#online-count').textContent = `${online} Chao`;
   const form = ({ normal: 'Neutral', hero: 'Hero', dark: 'Dark', chaos: 'Chaos' })[player.form] || 'Neutral';
   $('#hud-name').textContent = player.name;
-  $('#hud-form').textContent = `${player.form === 'chaos' && player.alignment <= -60 ? 'Dark Chaos' : form}${player.admin ? ' · ADMIN' : ''}`;
-  $('#hud-health').textContent = `${player.hp} / ${player.maxHp} HP`;
-  $('#health-fill').style.width = `${player.hp / player.maxHp * 100}%`;
+  $('#hud-icon').textContent = player.admin ? '✦' : '◉'; // same icon as the Chao select
   $('#ring-count').textContent = player.rings.toLocaleString();
   $('#profile-name').textContent = player.name;
   $('#profile-form').textContent = `${player.form === 'chaos' && player.alignment <= -60 ? 'Dark Chaos' : form} · Happiness ${player.happiness} · Energy ${player.energy}`;
@@ -347,6 +365,7 @@ function render(next) {
   walkerButton.textContent = player.vehicle === 'dark-chao-walker' ? 'Leave Dark Chao Walker ↙' : 'Pilot Dark Chao Walker ↗';
   for (const [selector, slot, item, label] of [
     ['#owner-air-shoes', 'footwear', 'shadow-air-shoes', 'Shadow’s Air Shoes'],
+    ['#owner-light-shoes', 'footwear', 'sonic-light-shoes', 'Sonic’s Light Shoes'],
     ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves', 'Knuckles’ Hammer Gloves'],
     ['#owner-metal-chao', 'look', 'metal-sonic-chao', 'Metal Sonic Chao look'],
   ]) {
@@ -418,7 +437,7 @@ function connect(token) {
   socket.onerror = () => connected(false);
 }
 
-async function join(name, token = sessionToken, card = null) {
+async function join(name, token = sessionToken, card = null, owner = false) {
   if (joining) return;
   // The game needs the player's own files: the local server's, or ones picked on this page.
   if (!(await gameFilesReady())) { $('#join-error').textContent = 'Pick your game files first.'; $('#pick-steam').focus(); return; }
@@ -428,13 +447,15 @@ async function join(name, token = sessionToken, card = null) {
   document.querySelectorAll('.save-slot').forEach(button => { button.disabled = true; });
   $('#join-error').textContent = '';
   try {
-    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}) }) });
+    const response = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, token, resumeOnly: !!token, ...(card && !token ? { card } : {}), ...(owner ? { ownerLogin: true } : {}) }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not join the garden.');
     sessionToken = data.token;
     sessionCard = data.card || card;
     player = data.player;
     rememberChao();
+    // The game's own Chao Lobby is the hub now; ?oldhub keeps this page as a reference.
+    if (!new URLSearchParams(location.search).has('oldhub')) { window.location.assign(token || card ? '/sa2/?stage=90' : '/sa2/?stage=90&hatch=1'); return; }
     welcome.close();
     connect(sessionToken);
     updatePaused();
@@ -512,6 +533,8 @@ $('#login-form').addEventListener('submit', async (event) => {
     loggedIn = data.card; showTitle();
   } catch (error) { $('#join-error').textContent = error.message; }
 });
+// Local owner login: only answered by a loopback server started with CHAO_OWNER_BOOTSTRAP.
+$('#owner-login').addEventListener('click', () => void join('Chao', null, null, true));
 welcome.addEventListener('cancel', (event) => event.preventDefault());
 const REMEMBER_KEY = 'chao-garden-remember-v1';
 showTitle();
@@ -630,7 +653,8 @@ function openSchool(){
   renderSchool();$('#school-name').value=player.name;
   $('#school-dialog').showModal();updatePaused();
 }
-$('#school-open').addEventListener('click',openSchool);
+// The game's own Kindergarten (Chao World area 6) via the shared Chao World entry.
+$('#school-open').addEventListener('click',()=>window.location.assign('/sa2/?stage=90&area=6'));
 $('#school-close').addEventListener('click',()=>$('#school-dialog').close());
 $('#school-dialog').addEventListener('close',updatePaused);
 $('#school-name-form').addEventListener('submit',event=>{
@@ -684,6 +708,7 @@ $('#owner-dark-form').addEventListener('click', () => action('admin-dark-chaos')
 $('#owner-walker').addEventListener('click', () => action(player?.vehicle === 'dark-chao-walker' ? 'dismount-vehicle' : 'mount-dark-walker'));
 for (const [selector, slot, item] of [
   ['#owner-air-shoes', 'footwear', 'shadow-air-shoes'],
+  ['#owner-light-shoes', 'footwear', 'sonic-light-shoes'],
   ['#owner-hammer-gloves', 'hands', 'knuckles-hammer-gloves'],
   ['#owner-metal-chao', 'look', 'metal-sonic-chao'],
 ]) {

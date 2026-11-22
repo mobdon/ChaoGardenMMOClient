@@ -61,3 +61,13 @@ python -I serve.py --game <sa2-host.wasm> --mount steam=<Steam SA2 folder> `
 Keys: W A S D move, Space = A, E or Left Shift = B, Q = X, R = Y, Enter = Start,
 1 and 3 = L and R; mouse left = B, right = A; a standard gamepad works too.
 Double-click the picture for full screen.
+
+## Hosted build
+
+`serve.py ... --export site/` writes a static site instead of serving: the
+page, the game build, the recompiled modules and main.dol (the `--file` and
+`--mount` paths) under `fs/`, and `fs-index.json`, which answers the game's
+file listings with no server. The `steam` and `disc` mounts are never
+copied: players pick their own Steam folder or disc on the start screen.
+The host must send the `_headers` file's cross-origin isolation headers.
+`site/` is generated output; it never goes in git.

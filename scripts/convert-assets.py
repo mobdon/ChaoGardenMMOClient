@@ -285,7 +285,22 @@ def export_scene(name, source, texture_pack):
         bpy.context.view_layer.update()
     target = OUTPUT / f'{name}.glb'
     temporary = OUTPUT / f'{name}.converting.glb'
-    bpy.ops.export_scene.gltf(filepath=str(temporary), export_format='GLB', export_animations=True, use_active_scene=True, export_vertex_color='ACTIVE')
+    # Carry each part's own Ninja material (SA IO saio_material) into glTF extras so the
+    # client draws it the way the game does (blend, wrap, lighting, env map).
+    for material in bpy.data.materials:
+        ninja = getattr(material, 'saio_material', None)
+        if ninja is None:
+            continue
+        material['ninja'] = {
+            'diffuse': list(ninja.diffuse), 'specular': list(ninja.specular), 'ambient': list(ninja.ambient),
+            'useAlpha': bool(ninja.use_alpha), 'doubleSided': bool(ninja.double_sided),
+            'srcAlpha': str(ninja.source_alpha), 'dstAlpha': str(ninja.destination_alpha),
+            'ignoreDiffuse': bool(ninja.ignore_diffuse), 'ignoreSpecular': bool(ninja.ignore_specular),
+            'ignoreAmbient': bool(ninja.ignore_ambient), 'useEnvironment': bool(ninja.use_environment),
+            'clampU': bool(ninja.clamp_u), 'clampV': bool(ninja.clamp_v),
+            'mirrorU': bool(ninja.mirror_u), 'mirrorV': bool(ninja.mirror_v),
+        }
+    bpy.ops.export_scene.gltf(filepath=str(temporary), export_format='GLB', export_animations=True, use_active_scene=True, export_vertex_color='ACTIVE', export_extras=True)
     if texture_pack != 'al_body':
         # Legacy garden textures/vertex colors contain their lighting. A
         # standard unlit glTF baseline preserves them across modern engines.

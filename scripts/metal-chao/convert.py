@@ -4,7 +4,7 @@ python3 scripts/metal-chao/convert.py "<Sonic Adventure 2 install>"
 Reads resource/gd_PC/metalsonicmdl.prs (model 418, Metal Sonic), metalsonictex.prs and
 DLL/Win32/Data_DLL.dll (AL_RootObject, the Chao). Writes .local/imports/metal-chao/:
 one GLB per part in its Chao node's own frame (parented like a worn hat), the body skin
-texture, and parts.json. Part sizes and spots are mob's styling choices (2026-11-21), not
+texture, and parts.json. Part sizes and spots are styling choices (2026-11-21), not
 game data; every mesh, UV and texture pixel is the game's own.
 """
 import json, os, struct, subprocess, sys
@@ -63,7 +63,7 @@ def placed(surfaces, scale, src, dst, keep=None, to_local=np.eye(4)):
                            for t in s['tris'] if keep is None or keep(t)]} for s in surfaces]
 
 def belly(surface, W):
-    # The Chao body mesh shrunk about its own node (mob: belly too big); the client scales that mesh the same.
+    # The Chao body mesh shrunk about its own node (smaller belly); the client scales that mesh the same.
     o = W[:3, 3]; k = np.array(STYLE['belly'])  # slimmer more than shorter, so the limbs stay attached
     return {**surface, 'tris': [[(o + (v[0] - o) * k, v[1], v[2]) for v in t] for t in surface['tris']]}
 
@@ -72,7 +72,7 @@ def build():
     CS = [belly(s, CW[1]) if s['node'] == 1 else s for s in CS]
     def box(nodes):
         P = points([s for s in CS if s['node'] in nodes]); return P.min(0), P.max(0)
-    # Metal Sonic's own whole body in Chao form (mob: 'all metal sonic body but in chao form', 'a mix' of proportions).
+    # Metal Sonic's own whole body in Chao form, proportions mixed.
     # Posed and proportioned through his own skeleton, so his weighted skin bends and stretches at the joints
     # instead of tearing: head scaled at the neck, arms at the shoulders, legs at the hips.
     pose = {44: np.diag([STYLE['head']] * 3 + [1]), 37: np.diag([STYLE['arms']] * 3 + [1]), 56: np.diag([STYLE['arms']] * 3 + [1]),
@@ -84,7 +84,7 @@ def build():
         Wn = {n['i']: n['W'] for n in metal(pose).nodes}; W3 = Wn[node][:3, :3]
         P = np.eye(4); P[:3, :3] = np.linalg.inv(W3) @ turn(Wn[child][:3, 3] - Wn[node][:3, 3], target) @ W3
         pose[node] = pose.get(node, np.eye(4)) @ P
-    # Arms held out like a normal Chao's (mob: full arms, not crossed): straighten the elbows (bind pose bends the claws
+    # Arms held out like a normal Chao's (full arms, not crossed): straighten the elbows (bind pose bends the claws
     # in to the hips), then aim each arm along the Chao's own left arm (AL_RootObject node 3 -> 4), mirrored, lifted out.
     ca = CW[4][:3, 3] - CW[3][:3, 3]; g = np.radians(STYLE['armSpread'])
     ca = np.array([ca[0] * np.cos(g) - ca[1] * np.sin(g), ca[0] * np.sin(g) + ca[1] * np.cos(g), ca[2]])

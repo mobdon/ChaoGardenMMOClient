@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { nativePhonePreview } from './scripts/native-phone-preview.mjs';
+import { widgetOriginalArt } from './scripts/widget-art.mjs';
 
 const privateDirectory = /(?:^|\/)(?:\.local|\.codex-attachments|server|scripts|tests)(?:\/|$)/i;
 
@@ -56,7 +57,7 @@ function nativeChaoShadowPreview() {
 }
 
 export default defineConfig({
-  plugins: [privateSourceBoundary(), nativeChaoShadowPreview(), nativePhonePreview(fileURLToPath(new URL('.', import.meta.url)))],
+  plugins: [privateSourceBoundary(), widgetOriginalArt(), nativeChaoShadowPreview(), nativePhonePreview(fileURLToPath(new URL('.', import.meta.url)))],
   server: {
     host: '127.0.0.1',
     port: Number(process.env.FRONTEND_PORT || 5173),

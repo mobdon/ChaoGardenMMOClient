@@ -10,7 +10,7 @@ import { attachNativeGardenExit, nativeGardenExitAction } from './garden-exits.j
 import { createShadowSkate, observeSkateMotion } from './shadow-skate.js';
 import { attachNativeLocomotion, captureChaoPose, createNativeMotionState, createGaitControls, updateNativeLocomotion, smoothObservedSpeed, stepInputPace } from './chao-locomotion.js';
 import { CHAO_GEAR_JOINTS, CHAO_HAT_NODE, animalPartAssets, hatAssets, CHAO_SHOE_LENGTH_RATIO, CHAO_SHOE_REFERENCE_SIDE, attachRigidGearAtRest, chestSurfacePoint, collectNativeShoeParts, mirroredShadowShoeRest, shadowShoeMountRotation, updateNativeShoeEffects } from './chao-attachments.js';
-import { restoreNativeChaosSampling } from './chao-materials.js';
+import { applyNinjaEnvironment, restoreNativeChaosSampling } from './chao-materials.js';
 import { createSteadyHead } from './chao-head.js';
 import { attachChaoBody, bodyAssetFor } from './chao-body.js';
 import { applyChaoLook, loadChaoLookManifest } from './chao-look.js';
@@ -66,6 +66,12 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
   camera.inertia = 0.8;
   camera.checkCollisions = true;
   camera.collisionRadius = new Vector3(0.12, 0.12, 0.12);
+  // Terrain collisions push the orbit up; remember the player's own angle/zoom and ease back once clear.
+  let cameraHome = { beta: camera.beta, radius: camera.radius }, cameraCollidedAt = -1, cameraDragging = false;
+  camera.onCollide = () => { cameraCollidedAt = performance.now(); };
+  canvas.addEventListener('pointerdown', () => { cameraDragging = true; });
+  window.addEventListener('pointerup', () => { if (cameraDragging) cameraHome = { beta: camera.beta, radius: camera.radius }; cameraDragging = false; });
+  canvas.addEventListener('wheel', () => requestAnimationFrame(() => { cameraHome.radius = camera.radius; }), { passive: true });
   camera.attachControl(canvas, true);
   camera.inputs.attached.keyboard?.detachControl();
   if (camera.inputs.attached.pointers) camera.inputs.attached.pointers.buttons = [2];
@@ -242,7 +248,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
 
   function gearFor(data) {
     return {
-      footwear: data.admin && data.gear?.footwear === 'shadow-air-shoes' ? 'shadow-air-shoes' : null,
+      footwear: data.admin && ['shadow-air-shoes', 'sonic-light-shoes'].includes(data.gear?.footwear) ? data.gear.footwear : null,
       hands: data.admin && data.gear?.hands === 'knuckles-hammer-gloves' ? 'knuckles-hammer-gloves' : null,
       look: data.admin && data.gear?.look === METAL_CHAO_LOOK ? METAL_CHAO_LOOK : null,
     };
@@ -286,11 +292,17 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           knuckles: ['al_knuckles.sa2mdl_3', 'al_knuckles.sa2mdl_5', 'al_knuckles.sa2mdl_6', 'al_knuckles.sa2mdl_7'],
           amy: ['al_amy.sa2mdl_2', 'al_amy.sa2mdl_4', 'al_amy.sa2mdl_5', 'al_amy.sa2mdl_6'],
         };
+        // al_knuckles.sa2mdl texture chunk 0x45F8 (attach 0x4684, chest mark): Ninja flags 0x94 = flip U + clamp V.
+        // The glTF export dropped it; restore it on that one mesh.
+        if (key === 'knuckles') for (const mesh of container.meshes) {
+          const texture = /0022D7AC/i.test(mesh.name) ? mesh.material?.albedoTexture : null;
+          if (texture) { texture.wrapU = Texture.MIRROR_ADDRESSMODE; texture.wrapV = Texture.CLAMP_ADDRESSMODE; }
+        }
         const isFamilyBody = key.startsWith('chao-body-');
         const isCharacter = isFamilyBody || Object.hasOwn(faceMaterials, key);
         const isCinematicEmerald = /^emerald-(red|blue|green|cyan|purple|yellow|white)$/.test(key);
         const isNativeWalker = key === 'dark-chao-walker';
-        const isNativeGear = /^(shadow-air-shoes|knuckles-hammer-gloves)-(left|right)$/.test(key);
+        const isNativeGear = /^(shadow-air-shoes|sonic-light-shoes|knuckles-hammer-gloves)-(left|right)$/.test(key);
         const isNativeWalkerEffect = key === 'dark-walker-shot' || key === 'dark-walker-booster';
         for (const mat of container.materials) {
           if ('albedoColor' in mat) {
@@ -347,10 +359,24 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
             mat.alpha = 1;
             // Family bodies keep the original eye and mouth overlays; only those mask.
             const facePart = isFamilyBody ? /al_eye|al_mouth/i.test(mat.albedoTexture?.name || '') : faceMaterials[key]?.includes(mat.name);
-            const solidCharacterPart = isCharacter && !facePart;
+            // The game blends these Chaos textures (SRC_ALPHA/INV_SRC_ALPHA, strips flagged USE_ALPHA in
+            // al_dchaos/al_hchaos/al_nchaos.sa2mdl); the GLB export marked them opaque.
+            // Converted with scripts/convert-assets.py: the part's own Ninja material in glTF extras.
+            const ninja = mat.metadata?.gltf?.extras?.ninja;
+            const nativeBlend = ninja ? ninja.useAlpha && !facePart : /al_(dcha01|hcha00|ncha0[012])/i.test(mat.albedoTexture?.name || '');
+            const texture = mat.albedoTexture;
+            if (ninja && texture) {
+              texture.wrapU = ninja.mirrorU ? Texture.MIRROR_ADDRESSMODE : ninja.clampU ? Texture.CLAMP_ADDRESSMODE : Texture.WRAP_ADDRESSMODE;
+              texture.wrapV = ninja.mirrorV ? Texture.MIRROR_ADDRESSMODE : ninja.clampV ? Texture.CLAMP_ADDRESSMODE : Texture.WRAP_ADDRESSMODE;
+            }
+            const solidCharacterPart = isCharacter && !facePart && !nativeBlend;
             mat.transparencyMode = solidCharacterPart ? 0 : mat.transparencyMode === 2 || mat.transparencyMode === 3 ? 1 : mat.transparencyMode ?? 0;
             mat.alphaCutOff = 0.45;
             mat.useAlphaFromAlbedoTexture = mat.transparencyMode === 1;
+            if (nativeBlend) {
+              mat.transparencyMode = 2; mat.useAlphaFromAlbedoTexture = true;
+              mat.alphaMode = Engine.ALPHA_COMBINE; mat.backFaceCulling = false;
+            }
             if (solidCharacterPart) {
               mat.opacityTexture = null;
               mat.alphaMode = Engine.ALPHA_DISABLE;
@@ -359,6 +385,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
               mat.twoSidedLighting = true;
             }
             restoreNativeChaosSampling(key, mat);
+            applyNinjaEnvironment(mat);
           }
         }
         return container;
@@ -1655,12 +1682,7 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
       if (!item.nativeMotion?.available || !Number.isFinite(item.nativeMotion.frame)) item.imported?.skate?.apply();
     }
     for (const item of playerMeshes.values()) groundImportedFeet(item);
-    for (const item of playerMeshes.values()) {
-      const skate = item.imported?.skate?.diagnostics;
-      item.imported?.steadyHead?.update(renderDelta, { mounted: !!item.vehicleKey,
-        gait: item.nativeGait || 'Idle', skateBlend: item.nativeMotion?.available && Number.isFinite(item.nativeMotion.frame) ? 0 : skate?.blend || 0, skatePhase: skate?.phase || 0 });
-      item.imported?.steadyHead?.apply();
-    }
+    // No head lock: native motions and Shadow's skate rigging drive the head themselves.
     for (const item of animatedDecor) if (item.kind === 'npc') groundImportedFeet(item.chao);
   });
   scene.onBeforeRenderObservable.add(() => {
@@ -1792,6 +1814,16 @@ export function createGarden(canvas, { onInput = () => {}, onAction = () => {}, 
           selfVehicleActive = mounted;
         }
         const target = item.root.position.add(new Vector3(0, mounted ? item.vehicle.height * 0.55 : 0.28, 0));
+        if (!cameraDragging && performance.now() - cameraCollidedAt > 250) {
+          camera.beta += (cameraHome.beta - camera.beta) * Math.min(1, dt * 4);
+          camera.radius += (cameraHome.radius - camera.radius) * Math.min(1, dt * 4);
+        }
+        // Third person: while walking forward the orbit swings back behind the Chao (same aim as the R key).
+        if (item.moving && (keys.has('KeyW') || keys.has('ArrowUp'))) {
+          const behind = -Math.PI / 2 - item.root.rotation.y;
+          const turn = Math.atan2(Math.sin(behind - camera.alpha), Math.cos(behind - camera.alpha));
+          camera.alpha += turn * Math.min(1, dt * 3);
+        }
         // Preserve the player's orbit when translating its focus. The target
         // property setter otherwise rebuilds alpha/beta/radius from the old
         // camera position, immediately undoing the mounted fit and zoom.
