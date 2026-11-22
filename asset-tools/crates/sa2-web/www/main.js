@@ -202,6 +202,7 @@ function loadedWorker() {
     else if (m.exit !== undefined) log(`the game ended (exit ${m.exit})`, true);
     else if (m.done) workers--;
     else if (m.area === 254 || m.area === 253) cover(m.area === 254); // sa2_boot::start_stage: boot logos
+    else if (m.area === 250) location.replace('/'); // sa2-boot chao_player.rs: the player's Chao could not be made, back to the login
     else if (SHOE_PICKUPS[m.area]) pickedUp(SHOE_PICKUPS[m.area]);
     else if (m.area !== undefined) roomArea(m.area);
     else if (m.extras !== undefined) extrasChanged(...m.extras);
