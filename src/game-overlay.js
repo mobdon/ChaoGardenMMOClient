@@ -99,8 +99,9 @@ export function mountOverlay(nextSocket) {
   const breeding = createBreedingMenu({ root: breedingRoot, send, playScene: host => import('./breeding-scene.js').then(m => m.playBreedingScene(host)) });
   // Like the game's chart, every open starts on the blue page.
   const toggle = () => { panel.hidden = !panel.hidden; if (!panel.hidden) show(0); document.getElementById('screen')?.focus(); };
-  if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory (Tab)'; card.addEventListener('click', toggle); }
-  addEventListener('keydown', event => { if (event.key === 'Tab') { event.preventDefault(); toggle(); } }, true);
+  if (card) { card.style.pointerEvents = 'auto'; card.style.cursor = 'pointer'; card.title = 'Inventory'; card.addEventListener('click', toggle); }
+  // Tab opens the game's own chart (sa2-boot kinder_chart.rs); this panel opens from the card only.
+  addEventListener('keydown', event => { if (event.key === 'Tab') event.preventDefault(); }, true);
   breedButton.addEventListener('click', () => { breedingRoot.hidden = !breedingRoot.hidden; });
   mounted.api = {
     snapshot(next) {
