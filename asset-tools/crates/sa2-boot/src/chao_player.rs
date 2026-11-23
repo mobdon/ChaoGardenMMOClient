@@ -903,20 +903,31 @@ fn jet_log(m: &Mem, hub_verts: &[[f32; 3]]) {
 /// /mmo-assets/shadow-air-shoes-right.njsh (SA2_HUB_SHOE overrides; local
 /// game-derived data, never in git) into game heap 1 once per load. 0 without it.
 fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
-    if let Some(o) = HUB_SHOE.get() {
+    let path = std::env::var("SA2_HUB_SHOE").unwrap_or_else(|_| "/mmo-assets/shadow-air-shoes-right.njsh".into());
+    shoe_file(c, m, &HUB_SHOE, &HUB_SHOE_VERTS, &path)
+}
+
+type ShoeCell = std::thread::LocalKey<Cell<Option<u32>>>;
+type ShoeVerts = std::thread::LocalKey<std::cell::RefCell<Vec<[f32; 3]>>>;
+
+/// A rigid shoe file (.njsh, scripts/convert-hub-shoe-to-ninja.py) read into
+/// game heap 1 once per stage load: its object (0 without the file) in
+/// `cell`, its vertices for the fit in `verts`. The Air Shoes and Sonic's
+/// Light Shoes both come through here.
+fn shoe_file(c: &mut Cpu, m: &mut Mem, cell: &'static ShoeCell, verts_out: &'static ShoeVerts, path: &str) -> u32 {
+    if let Some(o) = cell.get() {
         return o;
     }
-    let path = std::env::var("SA2_HUB_SHOE").unwrap_or_else(|_| "/mmo-assets/shadow-air-shoes-right.njsh".into());
-    let Ok(b) = std::fs::read(&path) else {
-        eprintln!("chao-player boot: no hub shoe at {path}");
-        HUB_SHOE.set(Some(0));
+    let Ok(b) = std::fs::read(path) else {
+        eprintln!("chao-player boot: no shoe file at {path}");
+        cell.set(Some(0));
         return 0;
     };
     let u = |o: usize| b.get(o..o + 4).map_or(0, |x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]));
     let (n, vlen, plen) = (u(4), u(8) as usize, u(12) as usize);
     if &b[..4.min(b.len())] != b"NJSH" || b.len() < 16 + vlen + plen {
         eprintln!("chao-player boot: {path} is not a hub shoe file");
-        HUB_SHOE.set(Some(0));
+        cell.set(Some(0));
         return 0;
     }
     // A shoe file made before the converter wrote material chunks has none
@@ -932,7 +943,7 @@ fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
     let total = (vlen + plen) as u32 + model + obj + 8;
     let mem = call(c, m, OS_ALLOC_FROM_HEAP, &[GEAR_HEAP, total]);
     if mem == 0 {
-        HUB_SHOE.set(Some(0));
+        cell.set(Some(0));
         return 0;
     }
     zero(m, mem, total);
@@ -955,9 +966,9 @@ fn hub_shoe(c: &mut Cpu, m: &mut Mem) -> u32 {
         for k in 0..cnt { let p = a + 8 + 24 * k; verts.push([f(p), f(p + 4), f(p + 8)]); }
         a += 4 + 4 * size;
     }
-    eprintln!("chao-player boot: hub shoe {path} ({n} vertices, {} read) at {o:#x}", verts.len());
-    HUB_SHOE_VERTS.set(verts);
-    HUB_SHOE.set(Some(o));
+    eprintln!("chao-player boot: shoe file {path} ({n} vertices, {} read) at {o:#x}", verts.len());
+    verts_out.set(verts);
+    cell.set(Some(o));
     o
 }
 
@@ -2932,7 +2943,7 @@ fn try_on(c: &mut Cpu, m: &mut Mem) {
         // The Light Shoes sit on the feet as the Air Shoes do; without that
         // place (no foot drawn yet) they are not drawn.
         let (obj, place) = if key.starts_with("lshoe") {
-            let Some((o, p)) = light_shoe_place(m, node) else { continue };
+            let Some((o, p)) = light_shoe_place(c, m, node) else { continue };
             (o, p)
         } else {
             (obj, mul34(&at, &half))
@@ -2948,58 +2959,41 @@ fn try_on(c: &mut Cpu, m: &mut Mem) {
     for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, keep_m[r][q].to_bits()); } }
 }
 
-/// Sonic's Light Shoes item on Chao foot `node` (6 or 13). The item model is
-/// only the piece that sits on top of his shoe (first try, fitted to the
-/// Chao's foot as if it were a whole shoe: drawn waist-high and three times
-/// too big), so the thing fitted is his own foot: his left heel and toe
-/// meshes (body nodes 23 and 24, at rest) go through the Air Shoes' fit
-/// (boot_place: centred on the Chao's foot, sole on its lowest point, 0.90
-/// of its length times the same 1.6, carried by the foot node) at the Air
-/// Shoes' set size (BOOT_TUNE), and the item is drawn in that same frame.
-/// One item (SONICMDL 14, slot 29, his left) for both feet, mirrored in x on
-/// node 13, as the Air Shoes. Returns the item model and its view-space place.
-/// unverified: which of his two foot nodes the item is modelled on (the one
-/// in whose frame the item's box sits nearest his foot's, logged once); that
-/// slot 29 is the left; his foot meshes are read as plain node-local vertices.
-fn light_shoe_place(m: &Mem, node: usize) -> Option<(u32, [[f32; 4]; 3])> {
+/// Sonic's Light Shoes on Chao foot `node` (6 or 13), made and drawn the way
+/// the Air Shoes are: one rigid shoe file (his own right heel/toe mesh from
+/// his body model with the Light Shoes item on it, scripts/convert-light-shoes.py
+/// then scripts/convert-hub-shoe-to-ninja.py, read from the site's
+/// /mmo-assets/sonic-light-shoes-right.njsh; SA2_LIGHT_SHOE overrides), through
+/// the same fit (boot_place) at the Air Shoes' set size (BOOT_TUNE), mirrored
+/// in x on node 13. Returns the shoe object and its view-space place; None
+/// without the file. (Before: the item alone, a heel piece with no shoe.)
+fn light_shoe_place(c: &mut Cpu, m: &mut Mem, node: usize) -> Option<(u32, [[f32; 4]; 3])> {
     let n = SHOES.iter().position(|s| s.0 == node)?;
-    let obj = SONIC_MODELS.with_borrow(|s| s.get(&29).copied())?;
-    if !(0x8000_0000..0x8C00_0000).contains(&obj) {
+    let path = std::env::var("SA2_LIGHT_SHOE").unwrap_or_else(|_| "/mmo-assets/sonic-light-shoes-right.njsh".into());
+    let obj = shoe_file(c, m, &LIGHT_SHOE, &LIGHT_SHOE_VERTS, &path);
+    if obj == 0 {
         return None;
     }
-    if LIGHT_FIT.with_borrow(|f| f.is_none()) {
-        let centre = |p: &[[f32; 3]]| -> [f32; 3] { let (lo, hi) = p.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(l, h), v| (std::array::from_fn(|i| l[i].min(v[i])), std::array::from_fn(|i| h[i].max(v[i])))); std::array::from_fn(|i| (lo[i] + hi[i]) / 2.0) };
-        let sr = crate::chao_retarget::read_chao(&|a| m.r32(a), obj, [vec![], vec![]]);
-        let item: Vec<[f32; 3]> = sr.verts.iter().zip(sr.worlds(&[])).flat_map(|(vs, (r, t))| vs.iter().map(move |v| std::array::from_fn(|i| t[i] + (0..3).map(|k| r[i][k] * v[k]).sum::<f32>())).collect::<Vec<_>>()).collect();
-        let body = SONIC_MODELS.with_borrow(|s| s.values().copied().find(|&o| (0x8000_0000..0x8C00_0000).contains(&o) && crate::chao_retarget::read_chao(&|a| m.r32(a), o, [vec![], vec![]]).nodes.len() == 62))?;
-        let rest = crate::chao_retarget::read_chao(&|a| m.r32(a), body, [vec![], vec![]]);
-        let w = rest.worlds(&[]);
-        let m34 = |(r, t): ([[f32; 3]; 3], [f32; 3])| -> [[f32; 4]; 3] { std::array::from_fn(|i| [r[i][0], r[i][1], r[i][2], t[i]]) };
-        // His foot (heel 23 and toe 24) in each of the two nodes' frames.
-        let foot_in = |frame: usize| -> Vec<[f32; 3]> {
-            [23usize, 24].into_iter().flat_map(|i| { let rel = inv_mul(&m34(w[frame]), &m34(w[i])); rest.verts[i].iter().map(move |&v| apply(&rel, v)).collect::<Vec<_>>() }).collect()
-        };
-        if item.is_empty() || rest.verts[23].is_empty() {
-            return None;
-        }
-        let ic = centre(&item);
-        let d = |frame: usize| { let c = centre(&foot_in(frame)); (0..3).map(|k| (c[k] - ic[k]).powi(2)).sum::<f32>().sqrt() };
-        let pick = if d(23) <= d(24) { 23 } else { 24 };
-        let foot = foot_in(pick);
-        let turn = [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]];
-        let mount = crate::skate::mul(&turn, &crate::skate::unit(&crate::skate::mul(&crate::skate::inv(&w[0].0), &w[pick].0)));
-        eprintln!("chao-player light shoes: item SONICMDL slot 29 object {obj:#x}: {} nodes, {} vertices; Sonic's body {body:#x}; item box centre {ic:?} is {:.2} from his foot's in node 23's frame, {:.2} in node 24's: node {pick}; foot {} vertices", sr.nodes.len(), item.len(), d(23), d(24), foot.len());
-        LIGHT_FIT.set(Some((mount, foot)));
-    }
-    let (mount, foot) = LIGHT_FIT.with_borrow(|f| f.clone())?;
-    let place = boot_place(m, n, node, &foot, Some(mount))?;
+    let verts = LIGHT_SHOE_VERTS.with_borrow(|v| v.clone());
+    let x = [LIGHT_UP[1] * LIGHT_FWD[2] - LIGHT_UP[2] * LIGHT_FWD[1], LIGHT_UP[2] * LIGHT_FWD[0] - LIGHT_UP[0] * LIGHT_FWD[2], LIGHT_UP[0] * LIGHT_FWD[1] - LIGHT_UP[1] * LIGHT_FWD[0]];
+    let place = boot_place(m, n, node, &verts, Some([x, LIGHT_UP, LIGHT_FWD]))?;
     Some((obj, mul34(&place, &tune_matrix(&BOOT_TUNE))))
 }
 
+/// The Light Shoe file's own up and toe directions, as BOOT_UP / BOOT_FWD are
+/// the Air Shoe file's: up is the export's exportedPropStandingUp for Sonic's
+/// right heel (-0.8284783, -0.5575026, -0.0530512) with x negated (the file
+/// is mirrored back in x); forward is up turned a quarter in the file's xy
+/// plane, which is how the Air Shoes' pair relate.
+/// unverified: that rule for forward on Sonic's shoe (seen on the foot, not measured).
+const LIGHT_UP: [f32; 3] = [0.828_478_3, -0.557_502_6, -0.053_051_2];
+const LIGHT_FWD: [f32; 3] = [-0.558_288_4, -0.829_646_1, 0.0];
+
 thread_local! {
-    /// The Light Shoes' mount and Sonic's foot vertices in that frame, once read.
-    static LIGHT_FIT: std::cell::RefCell<Option<([[f32; 3]; 3], Vec<[f32; 3]>)>> = const { std::cell::RefCell::new(None) };
+    static LIGHT_SHOE: Cell<Option<u32>> = const { Cell::new(None) };
+    static LIGHT_SHOE_VERTS: std::cell::RefCell<Vec<[f32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
 
 thread_local! {
     static SONIC_TEX: Cell<Option<u32>> = const { Cell::new(None) };
@@ -3023,7 +3017,10 @@ fn record_foot(m: &mut Mem, i: usize, cur_ptr: u32) {
 }
 
 fn hide_foot(m: &mut Mem, cur_ptr: u32) {
-    if HUB_SHOE.get().is_some_and(|o| o != 0) && !debug_off("shoes") && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
+    let air = HUB_SHOE.get().is_some_and(|o| o != 0) && !debug_off("shoes") && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0");
+    // Also under Sonic's Light Shoes while the tuner shows them.
+    let light = LIGHT_SHOE.get().is_some_and(|o| o != 0) && debug_set("tryon").as_deref() == Some("1") && !(debug_off("lshoe0") && debug_off("lshoe1"));
+    if air || light {
         for r in 0..3 { for k in 0..3 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, 0); } }
     }
 }
@@ -3724,6 +3721,7 @@ fn drop_stage_loads() {
     SHADOW_MODELS.with_borrow_mut(|e| e.clear());
     BAKED_BOOT.set(None);
     HUB_SHOE.set(None);
+    LIGHT_SHOE.set(None);
     GLOVE_FIT.set(None);
     SHADOW_MOVES.set(false);
     BOARD.set(None);

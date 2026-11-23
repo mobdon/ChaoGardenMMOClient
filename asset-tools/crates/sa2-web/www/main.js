@@ -905,6 +905,20 @@ function gearTuner() {
   document.body.append(box);
   rows.forEach((f) => f());
   send();
+  return box;
+}
+// The dev menu's button: opens the Gear tuner (made on the first click) and closes it again.
+function gearButton(open) {
+  const b = Object.assign(document.createElement('button'), { textContent: 'Gear', tabIndex: -1,
+    style: 'position:fixed;right:8px;top:8px;z-index:100;font:12px sans-serif;opacity:.75' });
+  let box = null;
+  b.onclick = () => {
+    if (box) box.hidden = !box.hidden;
+    else { box = gearTuner(); box.style.top = '36px'; }
+    b.blur(); // the game's keys do not press the button
+  };
+  document.body.append(b);
+  if (open) b.onclick();
 }
 
 // Hold the card while the game runs: renew its lease (10 minutes on the
@@ -973,7 +987,9 @@ async function start() {
   // The game reads its files always (empty until a panel writes them): a
   // dev account's panel opens once the room says it is an admin.
   e.SA2_GEAR_TUNE = '/mmo/gear-tune'; e.SA2_INFO_OUT = '/mmo/info-out';
-  if (q.get('geartune') === '1' && !tunerShown) { tunerShown = true; gearTuner(); }
+  // The Gear tuner (dev menu) is there in every stage as a small closed "Gear" button;
+  // ?geartune=1 starts it opened. Nothing is sent to the game until it is first opened.
+  if (!tunerShown) { tunerShown = true; gearButton(q.get('geartune') === '1'); }
   if (/^\d+$/.test(q.get('area') || '')) e.SA2_CHAO_AREA = q.get('area');
   // ?stage=60&combat=1: Big Foot's arena as the combat area (sa2_boot::combat).
   if (q.get('combat') === '1') e.SA2_COMBAT = '1';
