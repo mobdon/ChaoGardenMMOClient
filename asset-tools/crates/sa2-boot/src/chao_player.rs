@@ -3028,10 +3028,15 @@ fn remote_tick(c: &mut Cpu, m: &mut Mem) {
         let idle = text.lines().filter_map(parse_idle).map(|id| ((id, here, 0, STAND_MOTION), true));
         for ((id, p, a, mo), idle) in posed.chain(idle).collect::<Vec<_>>() {
             import_record(m, id);
-            // shortcut: a remote record is the owner's own save info until the
-            // server relays each Chao's record; get_or_load keeps it per id.
-            let info: Vec<u8> = (0..0x800).map(|i| m.r8(INFO + i)).collect();
-            crate::chao_cache::get_or_load(m, id, &info, 0, false);
+            if std::env::var_os("SA2_RECORD_IN").is_none() {
+                // No record relay (a local pose test): the player's own save info.
+                let info: Vec<u8> = (0..0x800).map(|i| m.r8(INFO + i)).collect();
+                crate::chao_cache::get_or_load(m, id, &info, 0, false);
+            } else if crate::chao_cache::info_addr(id).is_none() {
+                // Its own record has not come from the server yet: not drawn
+                // (never as a copy of the viewer's Chao).
+                continue;
+            }
             crate::chao_cache::set_online(id, true);
             REMOTE.with_borrow_mut(|r| {
                 let e = r.entry(id).or_insert_with(|| Remote { task: 0, samples: Default::default(), last_seen: now, motion: 0, rank: usize::MAX, offscreen: false, idle });
