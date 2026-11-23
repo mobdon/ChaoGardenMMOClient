@@ -580,7 +580,7 @@ fn shadow_boot(c: &mut Cpu, m: &mut Mem, n: usize, tex: u32, cur_ptr: u32, list:
     let bv = if hub != 0 { HUB_SHOE_VERTS.with_borrow(|v| v.clone()) } else if baked_boot(c, m) != 0 { BAKED_VERTS.with_borrow(|v| v.clone()) } else { bv };
     let node = SHOES[n].0;
     let hp = if bv.is_empty() { None } else { hub_boot_place(m, n, node, &br, &bv) };
-    if let Some(place) = hp.map(|p| gear_tune(if n == 0 { "boot0" } else { "boot1" }).map_or(p, |t| mul34(&p, &t))) {
+    if let Some(place) = hp.map(|p| mul34(&p, &gear_tune(if n == 0 { "boot0" } else { "boot1" }).unwrap_or_else(|| tune_matrix(&BOOT_TUNE)))) {
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
             let (lo, hi) = bv.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(l, h), v| (std::array::from_fn(|i| l[i].min(v[i])), std::array::from_fn(|i| h[i].max(v[i]))));
             eprintln!("chao-player boot {n}: Shadow heel {heel:#x} ({} nodes, {} vertices, box {lo:?}..{hi:?}, per node {:?}), overlay {overlay:#x}, place scale {:.3}", br.nodes.len(), bv.len(), br.verts.iter().map(Vec::len).collect::<Vec<_>>(), (0..3).map(|i| place[i][0] * place[i][0]).sum::<f32>().sqrt());
@@ -2179,15 +2179,18 @@ thread_local! {
 /// the panel to move into place ("Copy values" gives the numbers to commit).
 /// Sonic's items need SONICMDL/SONICTEX, loaded once into heap 1 here.
 /// (panel key, file, model slot, Chao node: 1 body, 16 head, 3/10 arms, 6/13 feet)
-const TRY_ON: [(&str, u8, u32, usize); 7] = [
-    ("sunglasses", b'K', 323, 16), // KNUCKMDL 161
-    ("necklace", b'K', 337, 1),    // KNUCKMDL 168
-    ("sflame", b'T', 201, 3),      // TERIOSMDL 100
-    ("lshoe0", b'S', 27, 6),       // SONICMDL 13 (right)
-    ("lshoe1", b'S', 29, 13),      // SONICMDL 14 (left)
-    ("ring", b'S', 51, 10),        // SONICMDL 25 Flame Ring
-    ("bracelet", b'S', 53, 3),     // SONICMDL 26 Bounce Bracelet
+const TRY_ON: [(&str, u8, u32, usize, [f32; 7]); 7] = [
+    ("sunglasses", b'K', 323, 16, [0.0, -0.5, -0.64, -180.0, -90.0, 0.0, 1.6]),  // KNUCKMDL 161, set in the tuner
+    ("necklace", b'K', 337, 1, [0.0, -0.16, 1.8, -155.0, 90.0, -155.0, 1.41]),   // KNUCKMDL 168, set in the tuner
+    ("sflame", b'T', 201, 3, TUNE_NONE),                                        // TERIOSMDL 100
+    ("lshoe0", b'S', 27, 6, TUNE_NONE),                                          // SONICMDL 13 (right)
+    ("lshoe1", b'S', 29, 13, TUNE_NONE),                                         // SONICMDL 14 (left)
+    ("ring", b'S', 51, 10, TUNE_NONE),                                           // SONICMDL 25 Flame Ring
+    ("bracelet", b'S', 53, 3, [0.58, -0.76, -0.12, 171.0, 88.0, 0.0, 1.46]),     // SONICMDL 26, set in the tuner
 ];
+const TUNE_NONE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+/// The hub shoes' set size from the tuner (0.75 of the fit).
+const BOOT_TUNE: [f32; 7] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.75];
 
 fn try_on(c: &mut Cpu, m: &mut Mem) {
     if debug_set("tryon").as_deref() != Some("1") {
@@ -2212,7 +2215,7 @@ fn try_on(c: &mut Cpu, m: &mut Mem) {
     let keep_list = m.r32(list);
     let regs = (c.r, c.f);
     let lcap = LCAP.replace(false);
-    for &(key, file, slot, node) in &TRY_ON {
+    for &(key, file, slot, node, set) in &TRY_ON {
         if slot == 0 || debug_off(key) {
             continue;
         }
@@ -2225,7 +2228,7 @@ fn try_on(c: &mut Cpu, m: &mut Mem) {
         let (Some(tex), true) = (tex.filter(|&t| t != 0), (0x8000_0000..0x8C00_0000).contains(&obj)) else { continue };
         let half: [[f32; 4]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| if i == j { 0.5 } else { 0.0 }));
         let place = mul34(&at, &half);
-        let place = gear_tune(key).map_or(place, |t| mul34(&place, &t));
+        let place = mul34(&place, &gear_tune(key).unwrap_or_else(|| tune_matrix(&set)));
         for r in 0..3 { for q in 0..4 { m.w32(cur_ptr + 4 * (4 * r + q) as u32, place[r][q].to_bits()); } }
         m.w32(list, tex);
         call(c, m, 0x8011_DF44, &[obj]);

@@ -655,6 +655,11 @@ function gearTuner() {
   // The fists' set place (sa2-boot chao_player.rs FIST_SET): the panel starts from it.
   Object.assign(vals.fist0, { dx: 0.3, dy: 1.26, dz: -2.2, rx: -60, ry: 10, rz: 0, scale: 1.35 });
   Object.assign(vals.fist1, { dx: 0.3, dy: 1.26, dz: 1.8, rx: 60, ry: -10, rz: 0, scale: 1.35 });
+  // The other set places (chao_player.rs TRY_ON, BOOT_TUNE).
+  vals.boot0.scale = vals.boot1.scale = 0.75;
+  Object.assign(vals.sunglasses, { dx: 0, dy: -0.5, dz: -0.64, rx: -180, ry: -90, rz: 0, scale: 1.6 });
+  Object.assign(vals.necklace, { dx: 0, dy: -0.16, dz: 1.8, rx: -155, ry: 90, rz: -155, scale: 1.41 });
+  Object.assign(vals.bracelet, { dx: 0.58, dy: -0.76, dz: -0.12, rx: 171, ry: 88, rz: 0, scale: 1.46 });
   const text = () => Object.entries(vals).map(([p, v]) => [p, ...keys.map(([k]) => v[k])].join(' ')).join('\n') + '\n';
   const send = () => {
     const b = new TextEncoder().encode(text() + setText()).subarray(0, MMO.GEAR_MAX);
