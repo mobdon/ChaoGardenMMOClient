@@ -30,6 +30,8 @@ use std::cell::Cell;
 const SONIC_EXEC: u32 = 0x8008_3E44;
 const SONIC_DISP: u32 = 0x8007_BFF4;
 const KNUX_EXEC: u32 = 0x8009_F8A0;
+/// Tails's and Eggman's walkers (coordinator note 2026-11-23; unverified here).
+const WALKER_EXEC: u32 = 0x800B_3A8C;
 const KNUX_DISP: u32 = 0x8009_9BA0;
 const ROUGE_DISP: u32 = 0x8009_8280;
 const READ_FILE: u32 = 0x8001_ACAC;
@@ -324,6 +326,8 @@ fn level_capture(c: &mut Cpu, m: &mut Mem, addr: u32) {
             None => nodes,
         };
         SKEL.set(nodes);
+        // The motion and frame this skeleton was drawn with (stride_lock).
+        RIDER_MOTION.set((mot, f1.ps0 as f32));
         if SELF_CAP.get() {
             RIDER_OBJ.set(obj);
             return;
@@ -1524,6 +1528,11 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     if remote_offscreen(m, c.r[3]) {
         return;
     }
+    // The walker's pilot (own_pilot) draws the player's Chao at the seat:
+    // its task's own display, at the hidden character, stands down.
+    if PILOT_SEAT.get().is_none() && pilot_recent() && matches!(STEP.get(), Step::Live(ch) if ch == c.r[3]) {
+        return;
+    }
     if idle_hidden(m, c.r[3]) {
         return;
     }
@@ -1550,7 +1559,8 @@ fn chao_display_inner(c: &mut Cpu, m: &mut Mem) {
     // display, drawing nothing) poses the Chao, so it walks, runs and skates
     // with his motions. SA2_CHAO_RETARGET=1 (debug): also outside self mode;
     // =0: the Chao's own motions.
-    if live && RIDER.get() != 0 && (!chao_world(m) || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
+    // The walker's pilot sits on its native rig (no rider skeleton there).
+    if PILOT_SEAT.get().is_none() && live && RIDER.get() != 0 && (!chao_world(m) || (self_retarget(m) && self_in_motion()) || std::env::var("SA2_CHAO_RETARGET").is_ok_and(|v| v == "1")) {
         level_pose(m, c.r[3]);
         CHAO_DRAW.set(true);
         CHAO_NODE.set(0);
@@ -1628,6 +1638,57 @@ pub fn own_twp(m: &Mem) -> u32 {
     match STEP.get() { Step::Live(chao) => m.r32(chao + 0x34), _ => 0 }
 }
 
+thread_local! {
+    /// own_pilot is drawing the Chao at this matrix (view space) right now.
+    static PILOT_SEAT: Cell<Option<[[f32; 4]; 3]>> = const { Cell::new(None) };
+    /// The frame own_pilot last drew the Chao in.
+    static PILOT_FRAME: Cell<u64> = const { Cell::new(u64::MAX) };
+    /// own_pilot was called in this run: the walker exec makes the Chao.
+    static PILOT_USED: Cell<bool> = const { Cell::new(false) };
+    static PILOT_SAID: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The pilot was drawn this frame or the last: the Chao task's own display
+/// (at the hidden character) stands down.
+fn pilot_recent() -> bool {
+    sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed).wrapping_sub(PILOT_FRAME.get()) <= 1
+}
+
+/// For the Chao Walker (walker.rs): draw the player's own Chao as the pilot.
+/// `seat`: Ninja's current matrix at the walker's seat node (view space,
+/// camera included), read in the walker's per-node callback. The Chao's own
+/// display draws it right now with that matrix in place of its own placement
+/// (so its size is the matrix's scale; scale 1 = the Chao model's own units,
+/// its rest height is logged once), on its native rig in its current motion.
+/// Returns true only when the Chao drew its nodes in this call. The first
+/// call also lets the walker exec (0x800B3A8C) load and make the Chao.
+/// unverified: not run in a walker stage from this tree (walker.rs calls it
+/// from another branch). Its emotion ball and shadow stay with the Chao
+/// task's own position (the walker's), not the seat.
+pub(crate) fn own_pilot(c: &mut Cpu, m: &mut Mem, seat: &[[f32; 4]; 3]) -> bool {
+    PILOT_USED.set(true);
+    let Step::Live(chao) = STEP.get() else { return false };
+    if RIDER.get() == 0 || m.r32(chao + 0x34) == 0 || !module_linked(m, 60) {
+        return false;
+    }
+    let keep = (c.r, c.f, c.lr);
+    PILOT_SEAT.set(Some(*seat));
+    CHAO_NODE.set(0);
+    c.r[3] = chao;
+    chao_display(c, m);
+    PILOT_SEAT.set(None);
+    (c.r, c.f, c.lr) = keep;
+    let drew = CHAO_NODE.get() > 0;
+    if drew {
+        PILOT_FRAME.set(sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed));
+        if !PILOT_SAID.replace(true) {
+            let h = CHAO_REST.with_borrow(|r| r.as_ref().map(|r| r.height()));
+            eprintln!("chao-player pilot: drawn at the seat ({} nodes), Chao rest model height {h:?} in its own units", CHAO_NODE.get());
+        }
+    }
+    drew
+}
+
 fn pin(m: &mut Mem, chao: u32, data1: u32) {
     let cw = m.r32(chao + 0x34);
     if cw == 0 {
@@ -1702,6 +1763,8 @@ pub fn install(c: &mut Cpu, _m: &mut Mem) {
     }
     c.rt.set_override(SONIC_EXEC, |c, m| exec(c, m, SONIC_EXEC));
     c.rt.set_override(KNUX_EXEC, |c, m| exec(c, m, KNUX_EXEC));
+    // The walkers' exec: only once walker.rs asks for the pilot (own_pilot).
+    c.rt.set_override(WALKER_EXEC, |c, m| if PILOT_USED.get() { exec(c, m, WALKER_EXEC) } else { original(c, m, WALKER_EXEC) });
     c.rt.set_override(DESTROY_TASK, destroy_task);
     c.rt.set_override(SPIN_FLASH_DISP, spin_flash);
     if std::env::var_os("SA2_TRACE_EVDRAW").is_some() {
@@ -2000,6 +2063,12 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
     if !CHAO_DRAW.get() {
         let a = rt::sec(m, 60, 1) + AL_NODE_TRANSFORM;
         if NATIVE_DRAW.get() && CHAO_NODE.get() == 0 {
+            // The walker's pilot: the seat matrix in place of the display's
+            // own placement; every node below inherits it.
+            if let Some(seat) = PILOT_SEAT.get() {
+                let cur_ptr = m.r32(NJ_CURRENT_MATRIX);
+                for r in 0..3 { for k in 0..4 { m.w32(cur_ptr + 4 * (4 * r + k) as u32, seat[r][k].to_bits()); } }
+            }
             CHAO_PLACE.set(mtx(m, m.r32(NJ_CURRENT_MATRIX)));
         }
         rel_original(c, m, a, chao_node);
@@ -2007,15 +2076,20 @@ fn chao_node(c: &mut Cpu, m: &mut Mem) {
         if NATIVE_DRAW.get() {
             let i = CHAO_NODE.replace(CHAO_NODE.get() + 1);
             if i == 6 { DRAWN_FOOT.set(c.r[3]); }
-            // The hands as this native draw places them, for the hammer gloves.
-            record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
+            let own = mtx(m, m.r32(NJ_CURRENT_MATRIX));
             // Wearing Shadow's shoes and moving: the web hub's skate overlay
             // (skate.rs) on its 8 mapped nodes, from the rider's live pose.
             if skate_blend(i == 0) > 0.0 && SHADOW_TEX.get().is_some() && !std::env::var("SA2_AIR_SHOES").is_ok_and(|v| v == "0") {
                 if let Some(&(_, src, w, cap)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
+                    let (w, cap) = crate::skate::limits(i, w, cap, &std::env::var("SA2_SKATE_CAPS").unwrap_or_default());
                     skate_node(m, i, src, w, cap);
                 }
             }
+            // The hands as this draw places them, for the hammer gloves: after
+            // the skate overlay, or the gloves stay on the Chao's own run arms
+            // while the arm meshes take the skate pose (up to 75 degrees apart).
+            record_hand(m, i, m.r32(NJ_CURRENT_MATRIX));
+            track_log(m, i, &own);
             if let Some(k) = SHOES.iter().position(|s| s.0 == i) {
                 let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
                 FEET.with_borrow_mut(|f| f[k] = Some(cur));
@@ -2107,6 +2181,95 @@ fn ensure_rider_rest(m: &Mem) {
     RIDER_REST.set(Some((obj, rr.into_iter().map(|(rot, _)| crate::skate::mul(&inv0, &rot)).collect())));
 }
 
+/// MOTION_CTRL at chaowk +0xAC (research gsne8p-disc/chao/pseudo/motion-engine.md,
+/// decomp motion.h): flag u16 +0, curr_num +4, minfo[0] at +0x18 = {u16
+/// mode; f32 frame +4, start +8, end +0xC, spd +0x10}.
+const CHAO_MOTION_CTRL: u32 = 0xAC;
+thread_local! {
+    /// The rider's last full-skeleton motion draw: (NJS_MOTION, frame).
+    static RIDER_MOTION: Cell<(u32, f32)> = const { Cell::new((0, 0.0)) };
+}
+
+/// Where the Chao's stride frame goes so its cycle phase moves `blend` of
+/// the way (the short way round) to the rider's phase; both phases 0..1.
+pub(crate) fn locked_phase(chao: f32, rider: f32, blend: f32) -> f32 {
+    let err = (rider - chao + 1.5).rem_euclid(1.0) - 0.5;
+    (chao + err * blend).rem_euclid(1.0)
+}
+
+/// The Chao's own walk/run supplies the leg pivots under the feet that take
+/// the rider's rotations: its cycle is kept on the rider's stride, as the hub
+/// does (mmo-play src/shadow-skate.js apply(): run.goToFrame(locked)), or
+/// the feet turn in his rhythm on legs that step in another.
+/// Presentation rule from the hub, not game data: phase 0 of the Chao's
+/// cycle is put on phase 0 of the rider's motion (unverified that both start
+/// on the same foot).
+fn stride_lock(m: &mut Mem, chao: u32) {
+    let b = skate_blend(false);
+    let (cw, obj2) = (m.r32(chao + 0x34), m.r32(P1_OBJ2));
+    if b <= 0.0 || cw == 0 || !(0x8000_0000..0x8C00_0000).contains(&obj2) || std::env::var("SA2_STRIDE_LOCK").is_ok_and(|v| v == "0") {
+        return;
+    }
+    let f = |m: &Mem, a: u32| f32::from_bits(m.r32(a));
+    // The rider's motion draw of the last frame: NJS_MOTION (nbFrame u32 +4)
+    // and the frame it was drawn at.
+    let (mot, nframe) = RIDER_MOTION.get();
+    if !(0x8000_0000..0x8C00_0000).contains(&mot) {
+        return;
+    }
+    let n = m.r32(mot + 4) as f32;
+    let ctrl = cw + CHAO_MOTION_CTRL;
+    // Not while the Chao's motion is blending to another (flag 0x2, link).
+    // shortcut: a rider motion under 8 frames (his 2-frame stand, drawn for the
+    // first frames of a move) has no stride to lock to; upgrade with his
+    // action state if a short stride motion turns up.
+    if n < 8.0 || !nframe.is_finite() || m.r16(ctrl) & 2 != 0 {
+        return;
+    }
+    let (frame, start, end) = (f(m, ctrl + 0x1C), f(m, ctrl + 0x20), f(m, ctrl + 0x24));
+    let len = end - start;
+    if !(len > 0.0) || !frame.is_finite() {
+        return;
+    }
+    let to = start + locked_phase((frame - start) / len, nframe / n, b) * len;
+    m.w32(ctrl + 0x1C, to.to_bits());
+    if std::env::var("SA2_TRACK_LOG").is_ok_and(|v| v == "1") {
+        eprintln!("stride: chao motion {} frame {frame:.2} -> {to:.2} of {start:.0}..{end:.0}, rider frame {nframe:.2} of {n:.0}, blend {b:.2}", m.r32(ctrl + 4));
+    }
+}
+
+thread_local! {
+    static TRACK_LINE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// SA2_TRACK_LOG=1 (debug): one line per drawn frame for the skate-mapped
+/// Chao nodes, in degrees: `node: s (the rider node's turn from its rest,
+/// seen in the Chao's facing) / c (the drawn Chao node's turn from its rest)
+/// / e (between the two) / o (between the drawn node and the Chao's own
+/// motion before the overlay)`, with the blend and the Chao's motion.
+fn track_log(m: &Mem, i: usize, own: &[[f32; 4]; 3]) {
+    if !std::env::var("SA2_TRACK_LOG").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let r3 = |x: &[[f32; 4]; 3]| -> [[f32; 3]; 3] { std::array::from_fn(|a| std::array::from_fn(|b| x[a][b])) };
+    if let Some(&(_, src, ..)) = crate::skate::MAP.iter().find(|e| e.0 == i) {
+        let now = SKEL.with_borrow(|s| (s.len() == 62).then(|| r3(&inv_mul(&s[0], &s[src]))));
+        let rest = RIDER_REST.with_borrow(|r| r.as_ref().and_then(|(_, v)| v.get(src).copied()));
+        let chao_rest = CHAO_REST.with_borrow(|r| r.as_ref().and_then(|r| r.worlds(&[]).get(i).map(|x| x.0)));
+        if let (Some(now), Some(rest), Some(chao_rest)) = (now, rest, chao_rest) {
+            let p = CHAO_PLACE.get();
+            let cur = mtx(m, m.r32(NJ_CURRENT_MATRIX));
+            let (s, c, e) = crate::skate::track(&now, &rest, &r3(&inv_mul(&p, &cur)), &chao_rest);
+            let o = crate::skate::angle_between(&r3(own), &r3(&cur));
+            TRACK_LINE.with_borrow_mut(|l| l.push_str(&format!(" {i}: s{s:.0} c{c:.0} e{e:.0} o{o:.0}")));
+        }
+    }
+    if i == 14 {
+        let f = sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!("track: f{f} blend {:.2} motion {}{}", skate_blend(false), LAST_MOTION.get(), TRACK_LINE.take());
+    }
+}
+
 /// One skate-mapped node: rotation from skate::desired (Chao model space,
 /// under the Chao's placement), position kept as the native pose drew it.
 fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
@@ -2148,7 +2311,14 @@ fn skate_node(m: &mut Mem, i: usize, src: usize, w: f32, cap: f32) {
 /// `step`: advance one frame (once per draw, at node 0).
 fn skate_blend(step: bool) -> f32 {
     if step {
-        let target = if MOVING.get() && LAST_MOTION.get() == 119 { 1.0f32 } else { 0.0 };
+        // While it moves at all (walk 578 or run 119): the hidden character's
+        // skeleton is in its walk, run or skate then, and the Chao's body,
+        // head, arms and feet follow it. (Only from the run on, the Chao's own
+        // walk played for the first half second of every move and followed
+        // nothing: test copy run t1, e up to 100 degrees at blend 0.)
+        // SA2_SKATE_RUN_ONLY=1 (debug): only while it runs, as before.
+        let run_only = std::env::var("SA2_SKATE_RUN_ONLY").is_ok_and(|v| v == "1");
+        let target = if MOVING.get() && (LAST_MOTION.get() == 119 || (!run_only && LAST_MOTION.get() == 578)) { 1.0f32 } else { 0.0 };
         let p = SKATE_PROGRESS.get();
         let dt = if target > p { 1.0 / (0.42 * 60.0) } else { 1.0 / (0.28 * 60.0) };
         SKATE_PROGRESS.set(p + (target - p).clamp(-dt, dt));
@@ -3192,6 +3362,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
                 call(c, m, rt::sec(m, 60, 1) + AL_SET_MOTION_LINK, &[chao, want]);
                 LAST_MOTION.set(want);
             }
+            stride_lock(m, chao);
         }
         pin(m, chao, data1);
         if sa2_recomp::host::FRAMES.load(std::sync::atomic::Ordering::Relaxed) % 300 == 0 {
@@ -3272,7 +3443,7 @@ fn exec(c: &mut Cpu, m: &mut Mem, addr: u32) {
                 shadow_moves(c, m);
             }
             force_sonic_state(m);
-        } else {
+        } else if addr == KNUX_EXEC {
             knuckles_rules(c, m, chao);
         }
         return;
@@ -3775,6 +3946,15 @@ fn create_at(c: &mut Cpu, m: &mut Mem, pos: [u32; 3], param: u32) -> Step {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stride_lock_takes_the_short_way_round() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(super::locked_phase(0.2, 0.6, 1.0), 0.6));
+        assert!(near(super::locked_phase(0.2, 0.6, 0.0), 0.2));
+        // 0.9 -> 0.1 goes forward through the wrap, not back through 0.5.
+        assert!(near(super::locked_phase(0.9, 0.1, 0.25), 0.95));
+        assert!(near(super::locked_phase(0.1, 0.9, 0.25), 0.05));
+    }
     #[test]
     fn shoe_strips_keeps_only_strips_inside_the_set() {
         // material (type 16, 2 shorts), UV strip chunk (type 65): strip A
