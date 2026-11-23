@@ -56,6 +56,7 @@ fn compare_installed_init_and_contact() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let stdout = String::from_utf8(o.stdout).unwrap();
+    let mut alt_cases = 0;
     let mut entry_cases = 0;
     let mut counts = [0; 21];
     let gd = PathBuf::from(env::var_os("SA2_SET_DIR").unwrap());
@@ -65,7 +66,19 @@ fn compare_installed_init_and_contact() {
     for line in stdout.lines() {
         let v: Vec<_> = line.split_whitespace().collect();
         let n = |i: usize| v[i].parse::<i32>().unwrap();
-        if v[0] == "ENTRY" {
+        if v[0] == "ALT" {
+            let mut phase = v[5].parse::<f32>().unwrap();
+            let sound = program
+                .alternate_motion(n(1), n(2) != 0, n(3) as i8, n(4) as u16, &mut phase)
+                .unwrap();
+            assert_eq!(phase.to_bits(), v[6].parse::<u32>().unwrap(), "{line}");
+            assert_eq!(
+                sound,
+                (n(7) != 0).then(|| (n(7) as u16, v[8].parse::<u32>().unwrap() as i32, n(9) != 0)),
+                "{line}"
+            );
+            alt_cases += 1;
+        } else if v[0] == "ENTRY" {
             let checked = n(1) == 0 && n(2) == 0;
             let byte = program
                 .update_entry(
@@ -386,6 +399,7 @@ fn compare_installed_init_and_contact() {
             counts[1] += 1;
         }
     }
+    assert_eq!(alt_cases, 192);
     assert_eq!(entry_cases, 200);
     assert_eq!(
         counts,

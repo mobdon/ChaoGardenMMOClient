@@ -51,6 +51,9 @@ def hook(uc,pc,size,_):
         assert reg(3)==hit
         if pc==LOCAL:assert reg(4)==2
         observed.append({MAIN1:'main1',MAIN2:'main2',LOCAL:'local'}[pc])
+    elif pc==SOUND and mode=='alternate':
+        assert reg(5)==1 and reg(7)==30 and reg(8)==WORK+0x14 and reg(4) in (WORK,TASK)
+        observed.append((reg(3),reg(6),int(reg(4)==TASK)))
     elif pc==SOUND:
         assert [reg(i) for i in range(4,9)]==[TASK,1,30,180,WORK+0x14]
         observed.append(str(reg(3)))
@@ -132,7 +135,22 @@ for tick,shadow_result,expected in [(31,0.,False),(32,-1000000.,True),(63,0.,Fal
     assert u.reg_read(R.UC_PPC_REG_PC)==BASE+0x2d668
     assert shadow_calls==([((0,-271,0),(4.5,-5.25,17.0))] if expected else [])
     assert get(WORK+0x28,'I')==int.from_bytes(struct.pack(">f",-1000000. if tick<64 else -0.),'big')
-for pc in (BASE+0x2d868,BASE+0x2da4c,BASE+0x2dd10):
+# Alternate pre-contact branch: run the original float update, compare, and sound call.
+map_page(const_base+0x21b720)
+for at,size in [(0x21b720,8),(0x21dd40,8),(0x21dde8,8)]:
+    u.mem_write(const_base+at,d[ss[5][0]+at:ss[5][0]+at+size])
+u.mem_write(DATA+4*0x100000+0xc78,d[ss[4][0]+0xc78:ss[4][0]+0xc80])
+mode='alternate'
+u.hook_add(UC_HOOK_CODE,lambda uc,pc,size,data:uc.emu_stop(),begin=BASE+0x2da4c,end=BASE+0x2da4c)
+for x,latch,gate,timer,phase in itertools.product((-2,1,2,4),(0,1),(0,-1),(0,16,32769,65535),(0.,8.875,18.875)):
+    put(WORK+8,'i',x);put(WORK+1,'B',latch);put(WORK+6,'H',timer);put(WORK+0x24,'f',phase)
+    put(GLOBAL+0x37,'b',gate);setreg(26,TASK);setreg(27,WORK);setreg(28,GLOBAL+0x37)
+    observed=[];u.emu_start(BASE+0x2d674,BASE+0x2da4c,count=96)
+    assert u.reg_read(R.UC_PPC_REG_PC)==BASE+0x2da4c
+    assert len(observed)==(gate==0)
+    print('ALT',x,latch,gate,timer,phase,get(WORK+0x24,'I'),*(observed[0] if observed else (0,0,0)))
+mode='contact'
+for pc in (BASE+0x2d868,BASE+0x2dd10):
     u.hook_add(UC_HOOK_CODE,lambda uc,pc,size,data:uc.emu_stop(),begin=pc,end=pc)
 for active,gate,timer,ptr in itertools.product((0,1),(0,1),(0,58,59,60,65535),(0,1)):
     observed=[];setreg(26,TASK);setreg(27,WORK);setreg(28,GLOBAL+0x37)

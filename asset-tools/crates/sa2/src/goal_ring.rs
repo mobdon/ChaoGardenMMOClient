@@ -74,6 +74,8 @@ pub struct Program {
     texture_lod_bits: [u32; 2],
     pub radii: [f32; 2],
     pub spin: [i32; 2],
+    alternate_steps: [f32; 2],
+    alternate_lengths: [u32; 2],
     shadow_unset: u32,
     shadow_lift: f32,
     update_period: u32,
@@ -326,6 +328,40 @@ struct ActionServices {
     scalar: u32,
 }
 impl Program {
+    /// Pre-contact animation and sound branch. The caller resets work +0x24
+    /// when the subsequent contact check latches for the first time.
+    pub fn alternate_motion(
+        &self,
+        angle: i32,
+        latched: bool,
+        gate: i8,
+        timer: u16,
+        phase: &mut f32,
+    ) -> Result<Option<(u16, i32, bool)>> {
+        if angle % 3 == 0 {
+            return Err(Error::invalid(
+                "alternate motion requires a nonregular goal",
+            ));
+        }
+        if gate != 0 {
+            return Ok(None);
+        }
+        let doubled = 2 * i32::from(timer);
+        if angle % 3 == 1 {
+            let i = usize::from(latched);
+            *phase += self.alternate_steps[i];
+            if *phase > (self.alternate_lengths[i] - 1) as f32 {
+                *phase = 0.;
+            }
+            Ok(Some(if latched {
+                (0x100e, 30, true)
+            } else {
+                (0x100d, 30 - doubled, true)
+            }))
+        } else {
+            Ok(Some((0x1012, i32::from((-doubled) as i16), false)))
+        }
+    }
     /// None: the range helper ended this invocation before the byte-3 store.
     pub fn update_entry(
         &self,
@@ -1449,6 +1485,11 @@ impl Program {
                 "f71c40ff683f066ca642043ea644764f38da6e86d8c5ddb926f04972dcd08e34",
             ),
             (
+                0x46c,
+                0x18c,
+                "9445d49a04160d24969efde631ef257a6834dd7fa4d7aa4971669c5aac51895d",
+            ),
+            (
                 0x5f8,
                 0x68,
                 "96efb20d8a54e6dbe19cb4d2020ca30e248e21466929d49fba85e4bd0dc11650",
@@ -1464,7 +1505,7 @@ impl Program {
                 return Err(invalid());
             }
         }
-        let section_word = |hi, lo, section| -> Result<u32> {
+        let section_field = |hi, lo, section, field: usize| -> Result<u32> {
             let a = rel.reference(1, init + hi).ok_or_else(invalid)?;
             let b = rel.reference(1, init + lo).ok_or_else(invalid)?;
             if (
@@ -1473,9 +1514,21 @@ impl Program {
             {
                 return Err(invalid());
             }
-            word(rel.data(section)?, a.addend as usize)
+            word(rel.data(section)?, a.addend as usize + field)
         };
+        let section_word = |hi, lo, section| section_field(hi, lo, section, 0);
         let constant = |hi, lo| section_word(hi, lo, 5);
+        let alternate_steps = [
+            f32::from_bits(constant(0x546, 0x54a)?),
+            f32::from_bits(constant(0x4c2, 0x4c6)?),
+        ];
+        let alternate_lengths = [
+            section_field(0x55e, 0x562, 5, 4)?,
+            section_field(0x4da, 0x4de, 5, 4)?,
+        ];
+        if alternate_lengths.contains(&0) {
+            return Err(invalid());
+        }
         let shadow_unset = section_word(0x3fe, 0x402, 4)?;
         if section_word(0x2c6, 0x2ca, 4)? != shadow_unset {
             return Err(invalid());
@@ -1493,6 +1546,9 @@ impl Program {
         ];
         let rise = f32::from_bits(constant(0x632, 0x636)?);
         for (offset, addr) in [
+            (0x538, 0x8006ad94),
+            (0x5c4, 0x8006ad94),
+            (0x5f0, 0x8006ad94),
             (0x458, 0x80067888),
             (0xaf8, 0x80065148),
             (0xb04, 0x80071878),
@@ -1544,6 +1600,8 @@ impl Program {
             regular_shape_offset,
             radii,
             spin,
+            alternate_steps,
+            alternate_lengths,
             shadow_unset,
             shadow_lift,
             update_period,
@@ -2548,6 +2606,7 @@ struct UpdateEntry {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GoalSample {
+    alternate_timer: Option<u16>,
     entry: Option<UpdateEntry>,
     hit: Hit,
     game_byte_23: i8,
@@ -2778,12 +2837,28 @@ pub fn replay(
     }
     let mut slot_words = r.initial_slot_words.unwrap_or(p.initial_slot_words);
     let mut frames = vec![];
+    let alternate = r
+        .frames
+        .iter()
+        .any(|f| matches!(f,GoalFrame::Sample(s) if s.alternate_timer.is_some()));
+    let mut phase = 0f32;
     for observation in r.frames {
-        let (hit, game_byte, motion_gate, entry) = match observation {
-            GoalFrame::Hit(hit) => (hit, game_byte, None, None),
-            GoalFrame::Sample(s) => (s.hit, s.game_byte_23, s.game_byte_37, s.entry),
+        let (hit, game_byte, motion_gate, entry, alt_timer) = match observation {
+            GoalFrame::Hit(hit) => (hit, game_byte, None, None, None),
+            GoalFrame::Sample(s) => (
+                s.hit,
+                s.game_byte_23,
+                s.game_byte_37,
+                s.entry,
+                s.alternate_timer,
+            ),
         };
-        if motion_gate.is_some() && r.lifecycle.is_none() {
+        if alternate && (alt_timer.is_none() || motion_gate.is_none() || angle_x % 3 == 0) {
+            return Err(Error::invalid(
+                "alternate tracking requires a nonregular goal and timer/gate on every frame",
+            ));
+        }
+        if motion_gate.is_some() && r.lifecycle.is_none() && !alternate {
             return Err(Error::invalid(
                 "per-frame motion gate requires regular goal lifecycle",
             ));
@@ -2840,8 +2915,20 @@ pub fn replay(
                 p.rise,
             );
         }
+        let alt_sound = if let Some(timer) = alt_timer {
+            p.alternate_motion(angle_x,was_latched,motion_gate.unwrap(),timer,&mut phase)?.map(|(code,r6,task)|json!({"target":0x8006ad94u32,"code":code,"owner":if task {"task"}else{"work"},"r5":1,"r6":r6,"r7":30,"position":center}))
+        } else {
+            None
+        };
         let calls = state.step(angle_x, game_byte, hit, p.local_effect)?;
         let mut frame = json!({"calls":calls,"latched":state.latched,"resetScaleY":!was_latched && state.latched});
+        if alternate {
+            if !was_latched && state.latched {
+                phase = 0.;
+            }
+            frame["alternateMotion"] =
+                json!({"phaseBits":phase.to_bits(),"soundBeforeContact":alt_sound});
+        }
         if let Some(shadow) = shadow {
             frame["shadow"] = shadow;
         }
