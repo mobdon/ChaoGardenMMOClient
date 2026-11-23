@@ -165,6 +165,15 @@ pub(crate) const STADIUM: u32 = 9;
 /// .text 0x60C). Read from the generated code; unverified live.
 const GARDEN_FLAG_ON: u32 = 0xCC1C;
 const KINDER_DOOR: u32 = 4;
+/// ChaoMain .text: tests garden flag bits. The lobby makes its Hero door
+/// (to area 2) on bit 0x10 and its Dark door (to area 3) on bit 0x40
+/// (ChaoStgLobby .text 0x1DC, 0x234; the lobby model at 0x2E4).
+const GARDEN_FLAG: u32 = 0xCC54;
+const LOBBY_MODULE: u32 = 65;
+/// ChaoStgLobby's .text is under this size (its last function starts at 0x1C30).
+const LOBBY_TEXT: u32 = 0x2000;
+/// The ChaoMain .text the garden locks were hooked for (0 = none).
+static LOCKS_AT: Global<u32> = global!(0);
 /// The lobby exit was walked into (chao_player): leave for the game's own
 /// Stage Select instead of starting Chao World again.
 static TO_STAGE_SELECT: Global<bool> = global!(false);
@@ -362,6 +371,10 @@ fn top_level(c: &mut Cpu, m: &mut Mem) {
     }
     if let (Some(shown), Some(text)) = (SHOWN.get(), chaomain_text(m)) {
         let now = guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]);
+        if LOCKS_AT.replace(text) != text {
+            c.rt.set_override(text + AL_CHANGE_AREA, change_area);
+            c.rt.set_override(text + GARDEN_FLAG, garden_flag);
+        }
         // MMO glue: the Kindergarten door is there from the first visit (the
         // game opens it after the Neutral Garden). Each frame: the card's save
         // may load after ChaoMain links.
@@ -494,6 +507,50 @@ pub(crate) fn chao_area(c: &mut Cpu, m: &mut Mem) -> Option<u32> {
     SHOWN.get()?;
     let text = chaomain_text(m)?;
     Some(guest_call(c, m, text + AL_GET_STAGE_NUMBER, &[]))
+}
+
+/// MMO glue: SA2_GARDENS (the page, from the server's alignment rule) names
+/// the gardens this player may enter: 'h' Hero (area 2), 'd' Dark (area 3).
+/// Unset (no MMO): nothing is locked beyond the game's own rule.
+fn garden_locked(area: u32, allowed: Option<&str>) -> bool {
+    let key = match area {
+        2 => 'h',
+        3 => 'd',
+        _ => return false,
+    };
+    allowed.is_some_and(|v| !v.contains(key))
+}
+
+fn gardens() -> Option<String> {
+    std::env::var("SA2_GARDENS").ok()
+}
+
+/// ChaoMain's area change: never into a locked garden, whoever asks (a door,
+/// SA2_CHAO_AREA, a go-to).
+fn change_area(c: &mut Cpu, m: &mut Mem) {
+    if garden_locked(c.r[3], gardens().as_deref()) {
+        eprintln!("start-stage: area {} is locked for this Chao; staying", c.r[3]);
+        return;
+    }
+    let at = LOCKS_AT.get() + AL_CHANGE_AREA;
+    crate::chao_player::rel_original(c, m, at, change_area);
+}
+
+/// ChaoMain's garden flag test, for the lobby alone: a locked garden has no
+/// door (and the lobby's model without it), as before the game unlocks it.
+fn garden_flag(c: &mut Cpu, m: &mut Mem) {
+    let area = match c.r[3] {
+        0x10 => 2,
+        0x40 => 3,
+        _ => 0,
+    };
+    let lobby = module_section(m, LOBBY_MODULE, 1).is_some_and(|t| (t..t + LOBBY_TEXT).contains(&c.lr));
+    if lobby && garden_locked(area, gardens().as_deref()) {
+        c.r[3] = 0;
+        return;
+    }
+    let at = LOCKS_AT.get() + GARDEN_FLAG;
+    crate::chao_player::rel_original(c, m, at, garden_flag);
 }
 
 /// Change to `area` on the next frame, outside the pause.
@@ -1072,6 +1129,14 @@ mod tests {
             p += 8;
         }
         r
+    }
+
+    #[test]
+    fn only_hero_and_dark_lock_and_only_under_the_mmo() {
+        assert!(garden_locked(2, Some("")) && garden_locked(3, Some("h")));
+        assert!(!garden_locked(2, Some("h")) && !garden_locked(3, Some("hd")));
+        assert!(!garden_locked(1, Some("")) && !garden_locked(6, Some("")));
+        assert!(!garden_locked(2, None));
     }
 
     #[test]
