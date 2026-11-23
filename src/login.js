@@ -1,5 +1,4 @@
-import './style.css';
-import './sonic.css';
+import './shared-ui.css';
 import './login.css';
 import { allowSavedFiles, canPickFolders, pickGameFiles, savedHandles } from './game-files.js';
 import { applyGameTextureStyles } from './game-assets.js';

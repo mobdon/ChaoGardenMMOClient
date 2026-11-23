@@ -1,8 +1,7 @@
 // Chao MMO glue: the inventory on the Chao stats card over the game page (/sa2/), with
 // breeding and Tiny Garden opened from inside it. It reuses the
 // hub page's own modules and the game page's room socket.
-import './style.css';
-import './sonic.css';
+import './shared-ui.css';
 import { createGardenCare } from './garden-care.js';
 import { createBreedingMenu } from './breeding-menu.js';
 import { createSaveSlots, SESSION_KEY } from './save-slots.js';

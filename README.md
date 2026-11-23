@@ -26,6 +26,9 @@ The server binds to loopback. Multiplayer currently means multiple local browser
 
 ## Controls
 
+> The controls and the playable slice below describe the first web hub, which now lives in `archive/old-hub`. The live pages are the login page, Tiny Garden, the widget and phone previews, and the game page.
+
+
 | Input | Action |
 | --- | --- |
 | WASD / arrow keys | Move relative to the camera |
